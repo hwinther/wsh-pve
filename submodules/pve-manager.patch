@@ -1,0 +1,285 @@
+diff --git a/.vscode/settings.json b/.vscode/settings.json
+new file mode 100644
+index 00000000..cd36107c
+--- /dev/null
++++ b/.vscode/settings.json
+@@ -0,0 +1,3 @@
++{
++    "prettier.enable": false
++}
+\ No newline at end of file
+diff --git a/README.md b/README.md
+new file mode 100644
+index 00000000..abcf075f
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,16 @@
++## pve-manager extensions
++
++This is a collection pve UI extensions that cover the edge cases I've encountered with my usage pattern
++
++- Add ne2k_pci and pcnet to network card selector
++- Add sb16, adlib and pcspk to audio device selector (this will only work in combination with spice for now)
++- Add cirrus as an explicit choice to VGA driver selector (while this can already be achieved through windows version in OS selection below version 6 (win2k, winxp) I prefer to define this explicitly)
++
++TODO
++
++- Create a public apt package repository
++- Setup CI to deploy to the apt repo
++- Add VNC audio support
++- Add support for selecting in UI and using other architectures such as sparc64
++- Add support for selecting floppy images in UI
++- Add support for adding/changing hookscripts in UI
+diff --git a/www/manager6/Makefile b/www/manager6/Makefile
+index 2c3a822b..ce946a2b 100644
+--- a/www/manager6/Makefile
++++ b/www/manager6/Makefile
+@@ -259,6 +259,7 @@ JSSRC= 							\
+ 	qemu/Options.js					\
+ 	qemu/PCIEdit.js					\
+ 	qemu/ProcessorEdit.js				\
++	qemu/QemuArchEdit.js				\
+ 	qemu/QemuBiosEdit.js				\
+ 	qemu/RNGEdit.js					\
+ 	qemu/SSHKey.js					\
+diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
+index 77b2b2fc..52a41894 100644
+--- a/www/manager6/Parser.js
++++ b/www/manager6/Parser.js
+@@ -114,7 +114,7 @@ Ext.define('PVE.Parser', {
+ 
+ 	    let match_res;
+ 
+-	    if ((match_res = p.match(/^(ne2k_pci|e1000e?|e1000-82540em|e1000-82544gc|e1000-82545em|vmxnet3|rtl8139|pcnet|virtio|ne2k_isa|i82551|i82557b|i82559er)(=([0-9a-f]{2}(:[0-9a-f]{2}){5}))?$/i)) !== null) {
++	    if ((match_res = p.match(/^(lance|sunhme|ne2k_pci|e1000e?|e1000-82540em|e1000-82544gc|e1000-82545em|vmxnet3|rtl8139|pcnet|virtio|ne2k_isa|i82551|i82557b|i82559er)(=([0-9a-f]{2}(:[0-9a-f]{2}){5}))?$/i)) !== null) {
+ 		res.model = match_res[1].toLowerCase();
+ 		if (match_res[3]) {
+ 		    res.macaddr = match_res[3];
+diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
+index f5608944..a0f7b059 100644
+--- a/www/manager6/Utils.js
++++ b/www/manager6/Utils.js
+@@ -505,6 +505,16 @@ Ext.define('PVE.Utils', {
+ 	    return "SeaBIOS";
+ 	} else if (value === 'ovmf') {
+ 	    return "OVMF (UEFI)";
++	} else if (value === 'openbios-sparc32') { // TODO: don't repeat these names in both combo selector and render function?
++	    return "OpenBIOS (sparc only)";
++	} else if (value === 'openbios-sparc64') { // TODO: also handle architectural different defaults (not all default to SeaBIOS)
++	    return "OpenBIOS (sparc64 only)";
++	} else if (value === 'ss5.bin') {
++	    return "SS5 PROM (sparc only)";
++	} else if (value === 'ss10_v2.25_rom') {
++	    return "SS10 PROM (sparc only)";
++	} else if (value === 'ss20_v2.25_rom') {
++	    return "SS20 PROM (sparc only)";
+ 	} else {
+ 	    return value;
+ 	}
+@@ -597,6 +607,9 @@ Ext.define('PVE.Utils', {
+     kvm_vga_drivers: {
+ 	'__default__': Proxmox.Utils.defaultText,
+ 	std: gettext('Standard VGA'),
++	tcx: 'TCX framebuffer (sparc only)', // TODO: when using sparc or other platforms there should be separate combo data sources
++	cg3: 'CG3 framebuffer (sparc only)',
++	cirrus: 'Cirrus VGA',
+ 	vmware: gettext('VMware compatible'),
+ 	qxl: 'SPICE',
+ 	qxl2: 'SPICE dual monitor',
+diff --git a/www/manager6/form/NetworkCardSelector.js b/www/manager6/form/NetworkCardSelector.js
+index 55563016..75ca93db 100644
+--- a/www/manager6/form/NetworkCardSelector.js
++++ b/www/manager6/form/NetworkCardSelector.js
+@@ -7,5 +7,9 @@ Ext.define('PVE.form.NetworkCardSelector', {
+ 	['virtio', 'VirtIO (' + gettext('paravirtualized') + ')'],
+ 	['rtl8139', 'Realtek RTL8139'],
+ 	['vmxnet3', 'VMware vmxnet3'],
++	["ne2k_pci", "RTL8029 NE2000 PCI"],
++	['pcnet', 'AMD PCnet FAST'],
++	['sunhme', 'Sun Happy Meal (sparc64 only)'],
++	['lance', 'Lance Am7990 (sparc only)'],
+     ],
+ });
+diff --git a/www/manager6/form/QemuBiosSelector.js b/www/manager6/form/QemuBiosSelector.js
+index f9d047c0..d6e944ae 100644
+--- a/www/manager6/form/QemuBiosSelector.js
++++ b/www/manager6/form/QemuBiosSelector.js
+@@ -9,6 +9,11 @@ Ext.define('PVE.form.QemuBiosSelector', {
+ 	    ['__default__', PVE.Utils.render_qemu_bios('')],
+ 	    ['seabios', PVE.Utils.render_qemu_bios('seabios')],
+ 	    ['ovmf', PVE.Utils.render_qemu_bios('ovmf')],
++	    ['openbios-sparc32', 'OpenBIOS (sparc only)'], // TODO: limit choices based on arch/platform
++	    ['openbios-sparc64', 'OpenBIOS (sparc64 only)'],
++	    ['ss5.bin', 'SS5 PROM (sparc only)'],
++	    ['ss10_v2.25_rom', 'SS10 PROM (sparc only)'],
++	    ['ss20_v2.25_rom', 'SS20 PROM (sparc only)'],
+ 	];
+ 
+ 	me.callParent();
+diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
+index e7861ceb..49bb97dc 100644
+--- a/www/manager6/qemu/AudioEdit.js
++++ b/www/manager6/qemu/AudioEdit.js
+@@ -23,9 +23,13 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+ 	value: 'ich9-intel-hda',
+ 	fieldLabel: gettext('Audio Device'),
+ 	comboItems: [
+-	    ['ich9-intel-hda', 'ich9-intel-hda'],
+-	    ['intel-hda', 'intel-hda'],
+-	    ['AC97', 'AC97'],
++	    ['ich9-intel-hda', 'Intel HD Audio (ich9)'],
++	    ['intel-hda', 'Intel HD Audio (ich6)'],
++	    ['AC97', 'Intel AC97 Audio'],
++	    ['sb16', 'Creative Sound Blaster 16 (isa)'],
++	    ['adlib', 'Yamaha YM3812 (isa)'],
++	    ['pcspk', 'PC Speaker'],
++	    ['sb16-adlib-pcspk', 'Combination of sb16, adlib and pcspk'],
+ 	],
+     }, {
+ 	name: 'driver',
+diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
+index 3cc16205..4f090573 100644
+--- a/www/manager6/qemu/CDEdit.js
++++ b/www/manager6/qemu/CDEdit.js
+@@ -66,7 +66,7 @@ Ext.define('PVE.qemu.CDInputPanel', {
+ 
+ 	if (!me.confid) {
+ 	    me.bussel = Ext.create('PVE.form.ControllerSelector', {
+-		withVirtIO: false,
++		withVirtIO: true,
+ 	    });
+ 	    items.push(me.bussel);
+ 	}
+diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
+index e1902695..38409034 100644
+--- a/www/manager6/qemu/HardwareView.js
++++ b/www/manager6/qemu/HardwareView.js
+@@ -169,6 +169,21 @@ Ext.define('PVE.qemu.HardwareView', {
+ 		    return PVE.Utils.render_qemu_machine(value);
+ 		},
+ 	    },
++	    arch: {
++			header: 'Architecture',
++			group: 90,
++			never_delete: true,
++			editor: caps.vms['VM.Config.Options'] ? 'PVE.qemu.QemuArchEdit' : undefined,
++			defaultValue: '',
++			iconCls: 'cogs',
++			renderer: function(value, metaData, record, rowIndex, colIndex, store, pending) {
++				let arch = me.getObjectValue('arch', undefined, pending);
++				if (arch) {
++					return arch === '__default__' ? '[Default (x86_64)]' : '[' + arch + ']';
++				}
++				return value === '__default__' ? 'Default (x86_64)' : value;
++			},
++	    },
+ 	    scsihw: {
+ 		header: gettext('SCSI Controller'),
+ 		iconCls: 'database',
+@@ -738,6 +753,13 @@ Ext.define('PVE.qemu.HardwareView', {
+ 				disabled: !caps.nodes['Sys.Console'],
+ 				handler: editorFactory('RNGEdit'),
+ 			    },
++			    {
++				text: gettext("Architecture"),
++				itemId: 'addArch',
++				iconCls: 'fa fa-fw fa-cogs black',
++				disabled: false, // !caps.nodes['VM.Config.Arch'],
++				handler: editorFactory('QemuArchEdit'),
++			    },
+ 			],
+ 		    }),
+ 		},
+diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
+index a697cd34..ddad4bce 100644
+--- a/www/manager6/qemu/MachineEdit.js
++++ b/www/manager6/qemu/MachineEdit.js
+@@ -24,7 +24,10 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 	    let version = me.lookup('version');
+ 	    let store = version.getStore();
+ 	    let oldRec = store.findRecord('id', version.getValue(), 0, false, false, true);
+-	    let type = value === 'q35' ? 'q35' : 'i440fx';
++	    let type = 'i440fx';
++	    if (value === 'q35') { type = 'q35'; }
++	    if (value === 'virt') { type = 'virt'; }
++	    if (value === 'sun') { type = 'sun'; }
+ 	    store.clearFilter();
+ 	    store.addFilter(val => val.data.id === 'latest' || val.data.type === type);
+ 	    if (!me.getView().isWindows) {
+@@ -85,7 +88,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 
+ 	if (values.machine !== '__default__' && values.machine !== 'q35') {
+ 	    values.version = values.machine;
+-	    values.machine = values.version.match(/q35/) ? 'q35' : '__default__';
++	    // values.machine = values.version.match(/q35/) ? 'q35' : '__default__';
++	    if (values.version.match(/q35/)) {
++	        values.machine = 'q35';
++	    } else if (values.version.match(/virt/)) {
++	        values.machine = 'virt';
++	    } else if (values.version.match(/sun/)) {
++	        values.machine = 'sun';
++	    } else {
++	        values.machine = '__default__';
++	    }
+ 
+ 	    // avoid hiding a pinned version
+ 	    me.setAdvancedVisible(true);
+@@ -102,6 +114,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 	comboItems: [
+ 	    ['__default__', PVE.Utils.render_qemu_machine('')],
+ 	    ['q35', 'q35'],
++	    ['virt', 'aarch64 virt'],
++	    ['sun', 'sparc64 sun'],
+ 	],
+ 	bind: {
+ 	    value: '{type}',
+diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
+new file mode 100644
+index 00000000..50d9d225
+--- /dev/null
++++ b/www/manager6/qemu/QemuArchEdit.js
+@@ -0,0 +1,44 @@
++Ext.define('PVE.form.QemuArchSelector', {
++    extend: 'Proxmox.form.KVComboBox',
++    alias: ['widget.pveQemuArchSelector'],
++
++    initComponent: function() {
++	var me = this;
++
++        me.comboItems = [
++	    ['__default__', 'Default (x86_64)'],
++	    ['x86_64', 'x86_64'],
++	    ['aarch64', 'aarch64'],
++	    ['sparc', 'sparc'],
++	    ['sparc64', 'sparc64'],
++	];
++
++	me.callParent();
++    },
++});
++
++Ext.define('PVE.qemu.ArchEdit', {
++    extend: 'Proxmox.window.Edit',
++    alias: 'widget.pveQemuArchEdit',
++
++    onlineHelp: 'qm_options',
++    subject: 'Architecture',
++    autoLoad: true,
++
++    viewModel: {
++	data: {
++	    arch: '__default__',
++	},
++    },
++
++    items: [
++	{
++	    xtype: 'pveQemuArchSelector',
++	    onlineHelp: 'qm_options',
++	    name: 'arch',
++	    value: '__default__',
++	    bind: '{arch}',
++	    fieldLabel: 'ARCH',
++	},
++    ],
++});

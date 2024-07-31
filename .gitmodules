@@ -1,0 +1,3 @@
+[submodule "submodules/pve-manager"]
+	path = submodules/pve-manager
+	url = git@github.com:hwinther/pve-manager.git
