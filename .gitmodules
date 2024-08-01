@@ -1,3 +1,6 @@
 [submodule "submodules/pve-manager"]
 	path = submodules/pve-manager
 	url = git@github.com:hwinther/pve-manager.git
+[submodule "submodules/qemu-server"]
+	path = submodules/qemu-server
+	url = git@github.com:hwinther/qemu-server.git
