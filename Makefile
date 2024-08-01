@@ -1,2 +1,12 @@
-all:
-	sudo docker build . -f submodules/pve-manager.Dockerfile
+all: check-and-reinit-submodules build
+
+.PHONY: check-and-reinit-submodules
+check-and-reinit-submodules:
+	@if git submodule status | egrep -q '^[-+]' ; then \
+		echo "INFO: Need to reinitialize git submodules"; \
+		git submodule update --init --recursive; \
+	fi
+
+.PHONY: build
+build:
+	sudo ./docker-build.sh
