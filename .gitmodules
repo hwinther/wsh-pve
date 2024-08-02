@@ -6,4 +6,4 @@
 	url = git@github.com:hwinther/qemu-server.git
 [submodule "submodules/pve-qemu"]
 	path = submodules/pve-qemu
-	url = git@github.com:hwinther/pve-qemu.git
+	url = https://github.com/hwinther/pve-qemu.git
