@@ -19,7 +19,7 @@ COPY submodules/pve-manager.patch /src/submodules/pve-manager.patch
 COPY .git /src/.git
 WORKDIR /src/submodules/pve-manager
 RUN patch -p1 -i ../pve-manager.patch
-# TODO add changelog entry and increment version
+# TODO: add changelog entry and increment version
 RUN make deb
 
 FROM debian AS final
