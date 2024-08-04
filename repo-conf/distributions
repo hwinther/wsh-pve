@@ -1,0 +1,8 @@
+Origin: WshPve
+Label: wsh-pve
+Suite: stable
+Codename: bookworm
+Architectures: amd64 source
+Components: main
+Description: Apt repository for project wsh-pve
+SignWith: 6082CB267FE62087F23F343910DD95462E417289
