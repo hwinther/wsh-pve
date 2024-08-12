@@ -64,9 +64,9 @@ jobs:
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init --remote submodules/$submodule
+          git checkout -- .gitmodules # revert the change to .gitmodules
 
           git status
-          git checkout -- .gitmodules # revert the change to .gitmodules
           if output=$(git status --porcelain) && [ -z "$output" ]; then
             # Working directory clean - do nothing
             echo Working directory clean

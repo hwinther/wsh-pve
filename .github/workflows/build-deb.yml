@@ -36,3 +36,4 @@ jobs:
           docker rm -v $id
 
           ls -la
+          ls -la build
