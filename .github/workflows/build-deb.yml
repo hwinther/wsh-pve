@@ -45,9 +45,8 @@ jobs:
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
           docker push $tag_latest
 
-          # id=$(docker create wsh-${{ inputs.package }})
-          # docker cp $id:/opt/repo/ ./build/
-          # docker rm -v $id
-
-          # ls -la
-          # ls -la build
+          # test/list content of image:
+          id=$(docker create $tag_latest)
+          docker cp $id:/opt/repo/ ./build/
+          docker rm -v $id
+          ls -la build
