@@ -27,8 +27,8 @@ jobs:
       repository: hwinther/qemu-server
     secrets: inherit
 
-  # pve-qemu:
-  #   uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
-  #   with:
-  #     repository: hwinther/pve-qemu
-  #   secrets: inherit
+  pve-qemu:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/pve-qemu
+    secrets: inherit
