@@ -29,5 +29,5 @@ RUN make deb
 # COPY --from=build /src/submodules/pve-manager/*.deb /opt/repo/
 # CMD ["bash"]
 
-FROM scratch
-COPY --from=build /src/submodules/pve-manager/*.deb /
+FROM scratch AS final
+COPY --from=build /src/submodules/pve-manager/*.deb /opt/repo/

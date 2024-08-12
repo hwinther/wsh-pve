@@ -26,7 +26,10 @@ WORKDIR /src/submodules/pve-qemu
 # TODO: add changelog entry and increment version
 RUN make deb
 
-FROM debian:12 AS final
-RUN mkdir /opt/repo
+# FROM debian:12 AS final
+# RUN mkdir /opt/repo
+# COPY --from=build /src/submodules/pve-qemu/*.deb /opt/repo/
+# CMD ["bash"]
+
+FROM scratch AS final
 COPY --from=build /src/submodules/pve-qemu/*.deb /opt/repo/
-CMD ["bash"]
