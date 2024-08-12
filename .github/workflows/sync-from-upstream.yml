@@ -61,7 +61,7 @@ jobs:
           submodule=$(echo ${{ inputs.repository }} | sed -e 's|hwinther/||')
           echo submodule=$submodule
 
-          git submodule update --remote submodules/$submodule
+          git submodule update --init --remote submodules/$submodule
           git push --force-with-lease origin master
 
           # cd submodules/$submodule
