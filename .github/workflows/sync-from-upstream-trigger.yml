@@ -1,4 +1,4 @@
-name: Updates master branch from upstream repository
+name: Updates upstream repositories
 
 on:
   workflow_dispatch:

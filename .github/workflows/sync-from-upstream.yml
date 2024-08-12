@@ -23,13 +23,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.inputs.repository }}
-          ref: "master"
+        #with:
+        #  repository: ${{ github.event.inputs.repository }}
+        #  ref: "master"
 
       - run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git clone https://github.com/${{ github.event.inputs.repository }}
+          echo basename=$(basename ${{ github.event.inputs.repository }})
+          cd $(basename ${{ github.event.inputs.repository }})
 
           upstream_repo=$(echo ${{ github.event.inputs.repository }} | sed -e 's/hwinther/proxmox/')
           echo upstream_repo=$upstream_repo
