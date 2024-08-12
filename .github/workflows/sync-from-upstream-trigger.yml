@@ -10,6 +10,10 @@ on:
       - ".github/workflows/sync-from-upstream.yml"
       - ".github/workflows/sync-from-upstream-trigger.yml"
 
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
 jobs:
   sync-pve-manager:
     uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
