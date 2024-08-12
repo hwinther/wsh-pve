@@ -2,26 +2,40 @@ name: Updates master branch from upstream repository
 
 on:
   workflow_dispatch:
-  # TODO: input
+    inputs:
+      repository:
+        description: "The repository to sync from"
+        required: true
+        default: "hwinther/pve-manager"
+        type: string
+  workflow_call:
+    inputs:
+      repository:
+        description: "The repository to sync from"
+        required: true
+        default: "hwinther/pve-manager"
+        type: string
 
 jobs:
   update:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        repository: ''
-        ref: 'master'
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.repository }}
+          ref: "master"
 
-    - run: |
-        repo=$(echo ${{ github.repository }} | sed -e 's/hwinther/proxmox/')
-        echo repo=$repo
-        git remote add upstream https://github.com/$repo.git
-        git fetch upstream
-        git config user.name "${{ github.actor }}"
-        git config user.email "${{ github.actor }}@users.noreply.github.com"
-        git checkout master
-        git rebase upstream/master
-        git push --force-with-lease origin master
+      - run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          upstream_repo=$(echo ${{ github.event.inputs.repository }} | sed -e 's/hwinther/proxmox/')
+          echo upstream_repo=$upstream_repo
+          git remote add upstream https://github.com/$upstream_repo.git
+          git fetch upstream
+
+          git checkout master
+          git rebase upstream/master
+          git push --force-with-lease origin master

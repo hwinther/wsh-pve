@@ -1,0 +1,23 @@
+name: Updates master branch from upstream repository
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "12 20 * * *"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/sync-from-upstream.yml"
+      - ".github/workflows/sync-from-upstream-trigger.yml"
+
+jobs:
+  sync-pve-manager:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/pve-manager
+    secrets: inherit
+  sync-qemu-server:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/qemu-server
+    secrets: inherit
