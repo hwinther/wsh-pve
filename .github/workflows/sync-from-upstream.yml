@@ -65,8 +65,7 @@ jobs:
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init --remote submodules/$submodule
 
-          git status
           git add submodules/$submodule
           git commit -m "Update submodule $submodule"
-          git pull --rebase
+          git pull --rebase origin main
           git push origin main
