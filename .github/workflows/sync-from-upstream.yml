@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       repository:
-        description: "The repository to sync from"
+        description: "The repository to sync"
         required: true
         default: "hwinther/pve-manager"
         type: string
   workflow_call:
     inputs:
       repository:
-        description: "The repository to sync from"
+        description: "The repository to sync"
         required: true
         default: "hwinther/pve-manager"
         type: string

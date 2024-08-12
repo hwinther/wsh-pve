@@ -1,0 +1,37 @@
+name: Build debian package for submodule
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "The package to build"
+        required: true
+        default: "pve-manager"
+        type: string
+  workflow_call:
+    inputs:
+      package:
+        description: "The package to build"
+        required: true
+        default: "pve-manager"
+        type: string
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+
+      - run: |
+          git submodule update --init submodules/${{ inputs.package }}
+
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t wsh-${{ inputs.package }}
+          id=$(docker create wsh-${{ inputs.package }})
+          docker cp $id:/opt/repo/ ./build/
+          docker rm -v $id
+
+          ls -la
