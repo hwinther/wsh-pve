@@ -19,7 +19,7 @@
 # FROM install AS build
 FROM ghcr.io/hwinther/wsh-pve/pve-build:12 AS build
 COPY submodules/pve-qemu /src/submodules/pve-qemu
-# COPY submodules/pve-qemu.patch /src/submodules/pve-qemu.patch
+COPY submodules/pve-qemu.patch /src/submodules/pve-qemu.patch
 COPY .git /src/.git
 WORKDIR /src/submodules/pve-qemu
 RUN patch -p1 -i ../pve-qemu.patch
