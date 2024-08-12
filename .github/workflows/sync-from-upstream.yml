@@ -65,8 +65,17 @@ jobs:
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init --remote submodules/$submodule
 
-          git add submodules/$submodule
+          git status
           git checkout -- .gitmodules # revert the change to .gitmodules
-          git commit -m "Update submodule $submodule"
-          git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
-          git push origin main
+          if output=$(git status --porcelain) && [ -z "$output" ]; then
+            # Working directory clean - do nothing
+            echo Working directory clean
+            exit 0
+          else 
+            # Uncommitted changes
+            echo Add and commit changes
+            git add submodules/$submodule
+            git commit -m "Update submodule $submodule"
+            git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
+            git push origin main
+          fi
