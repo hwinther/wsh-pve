@@ -17,7 +17,7 @@ on:
         type: string
 
 jobs:
-  update:
+  sync-from-upstream:
     runs-on: ubuntu-latest
 
     steps:
@@ -44,3 +44,25 @@ jobs:
           git checkout master
           git rebase upstream/master
           git push --force-with-lease origin master
+
+  update-submodule:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+
+      - run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          submodule=$(echo ${{ inputs.repository }} | sed -e 's|hwinther/||')
+          echo submodule=$submodule
+
+          git submodule update --remote submodules/$submodule
+          git push --force-with-lease origin master
+
+          # cd submodules/$submodule
+          # git checkout master

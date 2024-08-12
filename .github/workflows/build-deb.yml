@@ -27,8 +27,7 @@ jobs:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
       - run: |
-          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
-          git remote -v
+          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t wsh-${{ inputs.package }}
