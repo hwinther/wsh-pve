@@ -27,5 +27,7 @@ jobs:
 
       - name: Build the docker image
         run: |
-          docker build . -t ghcr.io/hwinther/wsh-pve:latest -f build.Dockerfile
-          docker push ghcr.io/hwinther/wsh-pve:latest
+          tag=ghcr.io/hwinther/wsh-pve/pve-build:latest
+          echo tag=$tag
+          docker build . -t $tag -f build.Dockerfile
+          docker push $tag
