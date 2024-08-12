@@ -70,6 +70,7 @@ jobs:
           if output=$(git status --porcelain) && [ -z "$output" ]; then
             # Working directory clean - do nothing
             echo Working directory clean
+            echo "changed=false" >> $GITHUB_OUTPUT
             exit 0
           else 
             # Uncommitted changes
@@ -78,4 +79,5 @@ jobs:
             git commit -m "Update submodule $submodule"
             git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
             git push origin main
+            echo "changed=true" >> $GITHUB_OUTPUT
           fi

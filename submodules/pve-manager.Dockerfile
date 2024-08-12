@@ -24,7 +24,10 @@ RUN patch -p1 -i ../pve-manager.patch
 # TODO: add changelog entry and increment version
 RUN make deb
 
-FROM debian:12 AS final
-RUN mkdir /opt/repo
-COPY --from=build /src/submodules/pve-manager/*.deb /opt/repo/
-CMD ["bash"]
+# FROM debian:12 AS final
+# RUN mkdir /opt/repo
+# COPY --from=build /src/submodules/pve-manager/*.deb /opt/repo/
+# CMD ["bash"]
+
+FROM scratch
+COPY --from=build /src/submodules/pve-manager/*.deb /

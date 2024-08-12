@@ -16,6 +16,10 @@ on:
         default: "pve-manager"
         type: string
 
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,14 +30,24 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - run: |
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
-          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t wsh-${{ inputs.package }}
-          id=$(docker create wsh-${{ inputs.package }})
-          docker cp $id:/opt/repo/ ./build/
-          docker rm -v $id
+          tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
+          docker push $tag_latest
 
-          ls -la
-          ls -la build
+          # id=$(docker create wsh-${{ inputs.package }})
+          # docker cp $id:/opt/repo/ ./build/
+          # docker rm -v $id
+
+          # ls -la
+          # ls -la build
