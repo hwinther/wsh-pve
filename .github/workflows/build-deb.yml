@@ -17,7 +17,7 @@ on:
         type: string
 
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,6 +27,7 @@ jobs:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
       - run: |
+          git remote -v
           git submodule update --init submodules/${{ inputs.package }}
 
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t wsh-${{ inputs.package }}
