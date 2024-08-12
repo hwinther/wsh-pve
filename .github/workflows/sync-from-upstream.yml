@@ -48,6 +48,9 @@ jobs:
   update-submodule:
     runs-on: ubuntu-latest
     needs: [sync-from-upstream]
+    outputs:
+      changed: ${{ steps.update-submodule.outputs.changed }}
+      submodule: ${{ steps.update-submodule.outputs.submodule }}
 
     steps:
       - name: Checkout
@@ -55,12 +58,15 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
-      - run: |
+      - name: Update submodule
+        id: update-submodule
+        run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
           submodule=$(echo ${{ inputs.repository }} | sed -e 's|hwinther/||')
           echo submodule=$submodule
+          echo "submodule=$submodule" >> $GITHUB_OUTPUT
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init --remote submodules/$submodule
@@ -81,3 +87,11 @@ jobs:
             git push origin main
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
+
+  build-deb-when-changed:
+    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    needs: [update-submodule]
+    if: ${{ needs.update-submodule.outputs.changed == 'true' }}
+    with:
+      package: ${{ needs.update-submodule.outputs.submodule }}
+    secrets: inherit
