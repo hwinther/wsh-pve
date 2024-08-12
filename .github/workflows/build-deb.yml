@@ -27,6 +27,7 @@ jobs:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
       - run: |
+          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
           git remote -v
           git submodule update --init submodules/${{ inputs.package }}
 
