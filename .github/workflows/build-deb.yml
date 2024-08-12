@@ -47,7 +47,7 @@ jobs:
           docker push $tag_latest
 
           # test/list content of image:
-          id=$(docker create $tag_latest)
-          docker cp $id:/opt/repo/ ./build/
-          docker rm -v $id
-          ls -la build
+          # id=$(docker create $tag_latest)
+          # docker cp $id:/opt/repo/ ./build/
+          # docker rm -v $id
+          # ls -la build
