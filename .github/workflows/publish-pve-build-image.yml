@@ -1,0 +1,27 @@
+name: Publish PVE docker build image to GitHub Container Registry
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/public-pve-build-image.yml"
+      - "build.Dockerfile"
+
+jobs:
+  publish-docker-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the docker image
+        run: |
+          docker build . -t ghcr.io/hwinther/wsh-pve:latest -f build.Dockerfile
+          docker push ghcr.io/hwinther/wsh-pve:latest
