@@ -5,7 +5,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - ".github/workflows/public-pve-build-image.yml"
+      - ".github/workflows/publish-pve-build-image.yml"
       - "build.Dockerfile"
 
 permissions:
