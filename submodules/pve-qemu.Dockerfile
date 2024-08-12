@@ -23,7 +23,8 @@ COPY submodules/pve-qemu /src/submodules/pve-qemu
 COPY .git /src/.git
 WORKDIR /src/submodules/pve-qemu
 # TODO: add patches: RUN patch -p1 -i ../pve-qemu.patch
-# TODO: add changelog entry and increment version
+ENV EMAIL=docker@wsh.no
+RUN dch -l +wsh -D bookworm "Add WSH patches"
 RUN make deb
 
 # FROM debian:12 AS final

@@ -21,7 +21,8 @@ COPY submodules/pve-manager.patch /src/submodules/pve-manager.patch
 COPY .git /src/.git
 WORKDIR /src/submodules/pve-manager
 RUN patch -p1 -i ../pve-manager.patch
-# TODO: add changelog entry and increment version
+ENV EMAIL=docker@wsh.no
+RUN dch -l +wsh -D bookworm "Add WSH patches"
 RUN make deb
 
 # FROM debian:12 AS final

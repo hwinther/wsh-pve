@@ -25,7 +25,8 @@ WORKDIR /src/submodules/qemu-server
 RUN patch -p1 -i ../qemu-server.patch
 # TODO: fix the tests instead of skipping them
 ENV DEB_BUILD_OPTIONS=nocheck
-# TODO: add changelog entry and increment version
+ENV EMAIL=docker@wsh.no
+RUN dch -l +wsh -D bookworm "Add WSH patches"
 RUN make deb
 
 # FROM debian:12 AS final
