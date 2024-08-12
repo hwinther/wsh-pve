@@ -68,4 +68,5 @@ jobs:
           git status
           git add submodules/$submodule
           git commit -m "Update submodule $submodule"
+          git pull --rebase
           git push origin main
