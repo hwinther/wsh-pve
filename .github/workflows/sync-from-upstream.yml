@@ -66,6 +66,7 @@ jobs:
           git submodule update --init --remote submodules/$submodule
 
           git add submodules/$submodule
+          git checkout -- .gitmodules # revert the change to .gitmodules
           git commit -m "Update submodule $submodule"
-          git pull --rebase origin main
+          git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
           git push origin main
