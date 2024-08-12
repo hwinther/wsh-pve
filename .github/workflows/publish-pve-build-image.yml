@@ -8,6 +8,10 @@ on:
       - ".github/workflows/public-pve-build-image.yml"
       - "build.Dockerfile"
 
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
 jobs:
   publish-docker-image:
     runs-on: ubuntu-latest
