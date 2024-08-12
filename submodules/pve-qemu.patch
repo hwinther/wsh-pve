@@ -1,0 +1,40 @@
+diff --git a/debian/control b/debian/control
+index b228c00..23999f0 100644
+--- a/debian/control
++++ b/debian/control
+@@ -60,6 +60,8 @@ Depends: ceph-common (>= 0.48),
+          libusb-1.0-0 (>= 1.0.17-1),
+          libusbredirparser1 (>= 0.6-2),
+          libuuid1,
++         libsdl2-2.0-0,
++         libgtk-3-0,
+          ${misc:Depends},
+          ${shlibs:Depends},
+ Recommends: numactl,
+diff --git a/debian/rules b/debian/rules
+index 51f56c5..d0d6039 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -43,19 +43,19 @@ endif
+            --localstatedir=/var \
+            --prefix=/usr \
+            --sysconfdir=/etc \
+-           --target-list=$(HOST_CPU)-softmmu,aarch64-softmmu \
++           --target-list=$(HOST_CPU)-softmmu,aarch64-softmmu,sparc-softmmu,sparc64-softmmu \
+            --with-suffix="kvm" \
+            --with-pkgversion="${DEB_SOURCE}_${DEB_VERSION_UPSTREAM_REVISION}" \
+            --audio-drv-list="alsa" \
+            --datadir=/usr/share \
+            --libexecdir=/usr/lib/kvm \
+            --disable-capstone \
+-           --disable-gtk \
++           --enable-gtk \
+            --disable-guest-agent \
+            --disable-guest-agent-msi \
+            --disable-libnfs \
+            --disable-libssh \
+-           --disable-sdl \
++           --enable-sdl \
+            --disable-smartcard \
+            --disable-strip \
+            --disable-xen \
