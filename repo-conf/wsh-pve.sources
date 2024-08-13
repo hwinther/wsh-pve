@@ -1,6 +1,6 @@
 Types: deb
-URIs: http://examplesite.github.io/debian/
-Suites: sid
+URIs: http://pve-test3.osl.wsh.no/
+Suites: bookworm
 Components: main
 Signed-By:
  -----BEGIN PGP PUBLIC KEY BLOCK-----
