@@ -5,4 +5,4 @@ Codename: bookworm
 Architectures: amd64 source
 Components: main
 Description: Apt repository for project wsh-pve
-SignWith: 6082CB267FE62087F23F343910DD95462E417289
+SignWith: DCE56A79F1A14BF110B7B74386C3B9485CA734A3
