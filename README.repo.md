@@ -1,3 +1,16 @@
+# Repo notes/instructions
+
+Prerequisites: docker or podman for building the repo, nginx or similar to host it
+
+1. Create the .gpg local file from secrets storage or generate a new one via gpg --full-generate-key and then export it, further details related to exporting the key pair and thumbprint can be found further down in this readme.
+2. Run repo-update.sh or repo-update.ps1 depending on your platform - type in the gpg password to sign the packages
+3. Host the repo folder, optionally using the nginx/nginx-site.conf configuration file, an example command is at the bottom of the sh/ps1 files.
+
+Rerun step 2 when new packages come out.
+TODO: automate this further in the future
+
+## Old notes
+
 First run dch in the root folder of the git repo:
 
 $ dch
@@ -11,7 +24,6 @@ Finally add the deb package to the repo from the /mnt/dev/repo-root folder:
 
 $ reprepro -Vb . includedeb bookworm /mnt/dev/crono/pve-manager/pve-manager_8.2.4+wsh1_amd64.deb
 $ reprepro -Vb . includedeb bookworm /mnt/dev/crono/qemu-server/qemu-server_8.2.2+wsh1_amd64.deb
-
 
 # On the next machine:
 # (Key generated via: gpg --armor --output wsh-pve.gpg.key --export-options export-minimal --export 6082CB267FE62087F23F343910DD95462E417289)
