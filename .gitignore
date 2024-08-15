@@ -1,1 +1,6 @@
 build/
+.gpg
+repo/db/*
+repo/dists/*
+repo/incoming/*
+repo/pool/*
