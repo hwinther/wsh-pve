@@ -1,3 +1,16 @@
+diff --git a/Makefile b/Makefile
+index f23b041..cad0c22 100644
+--- a/Makefile
++++ b/Makefile
+@@ -26,8 +26,6 @@ PC_BIOS_FW_PURGE_LIST_IN = \
+ 	hppa-firmware.img \
+ 	hppa-firmware64.img \
+ 	openbios-ppc \
+-	openbios-sparc32 \
+-	openbios-sparc64 \
+ 	palcode-clipper \
+ 	s390-ccw.img \
+ 	s390-netboot.img \
 diff --git a/debian/control b/debian/control
 index b228c00..14e16fc 100644
 --- a/debian/control
@@ -11,8 +24,26 @@ index b228c00..14e16fc 100644
           libuuid1,
           ${misc:Depends},
           ${shlibs:Depends},
+diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
+index 6fb5116..799c744 100644
+--- a/debian/pve-qemu-kvm.lintian-overrides
++++ b/debian/pve-qemu-kvm.lintian-overrides
+@@ -1,7 +1,13 @@
+ pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/openbios-sparc32]
++pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/openbios-sparc64]
+ pve-qemu-kvm: binary-from-other-architecture [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: binary-from-other-architecture [usr/share/kvm/openbios-sparc32]
++pve-qemu-kvm: binary-from-other-architecture [usr/share/kvm/openbios-sparc64]
+ pve-qemu-kvm: embedded-javascript-library please use * [usr/share/doc/pve-qemu-kvm/kvm/_static/*]
+ pve-qemu-kvm: groff-message *: warning [*]: can't break line [usr/share/man/*]
+ pve-qemu-kvm: groff-message *: warning [*]: cannot adjust line [usr/share/man/*]
+ pve-qemu-kvm: statically-linked-binary [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc32]
++pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
+ pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..d0d6039 100755
+index 51f56c5..659693c 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -43,19 +43,19 @@ endif
@@ -38,3 +69,12 @@ index 51f56c5..d0d6039 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
+@@ -148,7 +148,7 @@ binary-arch: build install
+ #	dh_installinfo
+ 	dh_installman
+ 	dh_link
+-	dh_strip --dbgsym-migration='pve-qemu-kvm-dbg (<<8.0.0-1~)'
++	dh_strip --dbgsym-migration='pve-qemu-kvm-dbg (<<8.0.0-1~)' --exclude="openbios"
+ 	dh_compress
+ 	dh_fixperms
+ #	dh_perl
