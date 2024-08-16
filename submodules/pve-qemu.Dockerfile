@@ -15,5 +15,4 @@ RUN ls -l /src/submodules/pve-qemu/*.deb
 
 FROM scratch AS final
 COPY --from=build /src/submodules/pve-qemu/*.deb /opt/repo/
-RUN ls -l /opt/repo
 CMD ["bash"]
