@@ -8,6 +8,11 @@ on:
         required: true
         default: "pve-manager"
         type: string
+      version_increments:
+        description: "Patch level"
+        required: false
+        default: 1
+        type: number
   workflow_call:
     inputs:
       package:
@@ -15,6 +20,11 @@ on:
         required: true
         default: "pve-manager"
         type: string
+      version_increments:
+        description: "Patch level"
+        required: false
+        default: 1
+        type: number
 
 permissions:
   # for ghcr.io (docker registry):
@@ -38,12 +48,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        env:
+          VERSION_INCREMENTS: "${{ github.event.inputs.version_increments }}"
         run: |
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
+          docker build . --build-arg VERSION_INCREMENTS=$VERSION_INCREMENTS -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
           docker push $tag_latest
 
           # test/list content of image:
