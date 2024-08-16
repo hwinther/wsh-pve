@@ -20,7 +20,7 @@ jobs:
       pve-manager: ${{ steps.changes.outputs.pve-manager }}
       pve-qemu: ${{ steps.changes.outputs.pve-qemu }}
       qemu-server: ${{ steps.changes.outputs.qemu-server }}
-      pve-manager-count: ${{ steps.patch-count.outputs.pve_manager_changes }}
+      pve-manager-count: ${{ steps.patch-count.outputs.pve-manager_changes }}
       pve-qemu-count: ${{ steps.patch-count.outputs.pve-qemu_changes }}
       qemu-server-count: ${{ steps.patch-count.outputs.qemu-server_changes }}
     steps:
@@ -42,12 +42,12 @@ jobs:
         pve_manager_changes=$(git log --follow --pretty=oneline -- submodules/pve-manager.patch | wc -l)
         pve_qemu_changes=$(git log --follow --pretty=oneline -- submodules/pve-qemu.patch | wc -l)
         qemu_server_changes=$(git log --follow --pretty=oneline -- submodules/qemu-server.patch | wc -l)
-        echo "pve_manager_changes=$pve_manager_changes" >> $GITHUB_OUTPUT
-        echo "pve_manager_changes=$pve_manager_changes"
-        echo "pve_qemu_changes=$pve_qemu_changes" >> $GITHUB_OUTPUT
-        echo "pve_qemu_changes=$pve_qemu_changes"
-        echo "qemu_server_changes=$qemu_server_changes" >> $GITHUB_OUTPUT
-        echo "qemu_server_changes=$qemu_server_changes"
+        echo "pve-manager_changes=$pve_manager_changes" >> $GITHUB_OUTPUT
+        echo "pve-manager_changes=$pve_manager_changes"
+        echo "pve-qemu_changes=$pve_qemu_changes" >> $GITHUB_OUTPUT
+        echo "pve-qemu_changes=$pve_qemu_changes"
+        echo "qemu-server_changes=$qemu_server_changes" >> $GITHUB_OUTPUT
+        echo "qemu-server_changes=$qemu_server_changes"
 
   build-pve-manager-deb-when-changed:
     uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
