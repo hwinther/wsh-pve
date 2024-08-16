@@ -13,8 +13,8 @@ RUN for i in $(seq 1 ${VERSION_INCREMENTS}); do \
 done
 RUN grep "\+wsh" debian/changelog
 RUN make deb
+RUN ls -l /src/submodules/qemu-server/*.deb
 
 FROM scratch AS final
 COPY --from=build /src/submodules/qemu-server/*.deb /opt/repo/
-RUN ls -l /opt/repo
 CMD ["bash"]
