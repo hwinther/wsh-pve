@@ -11,6 +11,7 @@ RUN for i in $(seq 1 ${VERSION_INCREMENTS}); do \
 done
 RUN grep "\+wsh" debian/changelog
 RUN make deb
+RUN ls -l /src/submodules/pve-qemu/*.deb
 
 FROM scratch AS final
 COPY --from=build /src/submodules/pve-qemu/*.deb /opt/repo/
