@@ -74,7 +74,7 @@ index 51f56c5..659693c 100755
  	dh_installman
  	dh_link
 -	dh_strip --dbgsym-migration='pve-qemu-kvm-dbg (<<8.0.0-1~)'
-+	dh_strip --dbgsym-migration='pve-qemu-kvm-dbg (<<8.0.0-1~)' --exclude="openbios"
++	dh_strip --dbgsym-migration='pve-qemu-kvm-dbg (<<8.0.0-1~)'  --exclude="openbios"
  	dh_compress
  	dh_fixperms
  #	dh_perl
