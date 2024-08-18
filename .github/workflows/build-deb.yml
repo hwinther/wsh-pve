@@ -60,7 +60,9 @@ jobs:
 
           GIT_CHANGES=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
           docker run --rm -v .:/src -w /src/submodules/${{ inputs.package }} -e EMAIL=docker@wsh.no -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$GIT_CHANGES"
+          echo "\n\n**********************\nChangelog entries related to WSH:\n"
           grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog
+          echo "\n**********************\n\n"
 
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
@@ -71,7 +73,7 @@ jobs:
           git diff -p submodules/${{ inputs.package }}/debian/changelog > submodules/${{ inputs.package }}.changelog.patch
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"
-          # git push origin
+          git push origin
 
           # test/list content of image:
           # id=$(docker create $tag_latest)
