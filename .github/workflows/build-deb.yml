@@ -62,9 +62,9 @@ jobs:
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
           GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
           docker run --rm -v .:/src -w /src/submodules/${{ inputs.package }} -e DEBEMAIL="$GIT_EMAIL" -e DEBFULLNAME="$GIT_AUTHOR" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$GIT_SUBJECT"
-          echo "\n\n**********************\nChangelog entries related to WSH:\n"
+          echo -e "\n\n**********************\nChangelog entries related to WSH:\n"
           grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog
-          echo "\n**********************\n\n"
+          echo -e "\n**********************\n\n"
 
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
