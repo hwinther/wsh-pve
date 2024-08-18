@@ -11,8 +11,8 @@ on:
       version_increments:
         description: "Patch level"
         required: false
-        default: 1
-        type: number
+        default: "1"
+        type: string
   workflow_call:
     inputs:
       package:
@@ -23,8 +23,8 @@ on:
       version_increments:
         description: "Patch level"
         required: false
-        default: 1
-        type: number
+        default: "1"
+        type: string
 
 permissions:
   # for ghcr.io (docker registry):
