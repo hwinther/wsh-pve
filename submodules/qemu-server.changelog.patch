@@ -1,0 +1,14 @@
+diff --git a/debian/changelog b/debian/changelog
+index ddb70dc..7db1b7f 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,9 @@
++qemu-server (8.2.4+wsh1) bookworm; urgency=medium
++
++  * Improve changelog
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 18 Aug 2024 20:25:22 +0000
++
+ qemu-server (8.2.4) bookworm; urgency=medium
+ 
+   * fix #5528: ensure cgroup limits like CPU weight are set correctly and in
