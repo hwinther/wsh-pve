@@ -1,12 +1,12 @@
-name: Publish PVE build image
+name: Publish djgpp build image
 
 on:
   workflow_dispatch:
   push:
     branches: ["main"]
     paths:
-      - ".github/workflows/publish-pve-build-image.yml"
-      - "build.Dockerfile"
+      - ".github/workflows/publish-djgpp-build-image.yml"
+      - "djgpp.Dockerfile"
 
 permissions:
   # for ghcr.io (docker registry):
@@ -27,8 +27,8 @@ jobs:
 
       - name: Build the docker image
         run: |
-          tag=ghcr.io/hwinther/wsh-pve/pve-build:12
-          tag_latest=ghcr.io/hwinther/wsh-pve/pve-build:latest
+          tag=ghcr.io/hwinther/wsh-pve/djgpp-build:12
+          tag_latest=ghcr.io/hwinther/wsh-pve/djgpp-build:latest
           echo tag=$tag tag_latest=$tag_latest
           docker build . -t $tag -t $tag_latest -f build.Dockerfile
           docker push $tag
