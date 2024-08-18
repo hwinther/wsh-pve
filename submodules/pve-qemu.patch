@@ -25,10 +25,10 @@ index b228c00..14e16fc 100644
           ${misc:Depends},
           ${shlibs:Depends},
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
-index 6fb5116..799c744 100644
+index 6fb5116..1f68e64 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
 +++ b/debian/pve-qemu-kvm.lintian-overrides
-@@ -1,7 +1,13 @@
+@@ -1,7 +1,14 @@
  pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/hppa-firmware.img]
 +pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/openbios-sparc32]
 +pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/openbios-sparc64]
@@ -42,8 +42,9 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc32]
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: latest-changelog-entry-without-new-date [usr/share/doc/pve-qemu-kvm/changelog.Debian.gz]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..659693c 100755
+index 51f56c5..ce898d6 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -43,19 +43,19 @@ endif
