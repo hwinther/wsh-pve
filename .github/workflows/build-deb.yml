@@ -54,12 +54,21 @@ jobs:
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
+          #pushd submodules/${{ inputs.package }}
+          #patch -p1 -i ../${{ inputs.package }}.changelog.patch
+          #popd
+
+          GIT_CHANGES=$(git log -1 --pretty=format:%s -- ../qemu-server.patch)
+          docker run --rm -v .:/src -w /src/submodules/${{ inputs.package }} -e EMAIL=docker@wsh.no -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$GIT_CHANGES"
+          grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog
+
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          docker build . --build-arg VERSION_INCREMENTS=$VERSION_INCREMENTS -v submodules/${{ inputs.package }}.changelog.patch:/tmp/changelog.patch -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
           docker push $tag_latest
 
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git diff -p submodules/${{ inputs.package }}/debian/changelog > submodules/${{ inputs.package }}.changelog.patch
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"
           # git push origin
