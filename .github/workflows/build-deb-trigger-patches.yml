@@ -61,7 +61,6 @@ jobs:
     if: ${{ needs.check.outputs.pve-manager == 'true' }}
     with:
       package: pve-manager
-      version_increments: ${{ needs.check.outputs.pve-manager-count }}
     secrets: inherit
 
   build-pve-qemu-deb-when-changed:
@@ -70,7 +69,6 @@ jobs:
     if: ${{ needs.check.outputs.pve-qemu == 'true' }}
     with:
       package: pve-qemu
-      version_increments: ${{ needs.check.outputs.pve-qemu-count }}
     secrets: inherit
 
   build-qemu-server-deb-when-changed:
@@ -79,12 +77,10 @@ jobs:
     if: ${{ needs.check.outputs.qemu-server == 'true' }}
     with:
       package: qemu-server
-      version_increments: ${{ needs.check.outputs.qemu-server-count }}
     secrets: inherit
 
   # debug-workflow:
   #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@feature/branch/name
   #   with:
   #     package: pve-manager
-  #     version_increments: 2
   #   secrets: inherit
