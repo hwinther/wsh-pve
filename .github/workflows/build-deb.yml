@@ -51,12 +51,15 @@ jobs:
         env:
           VERSION_INCREMENTS: ${{ inputs.version_increments }}
         run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
-          #pushd submodules/${{ inputs.package }}
-          #patch -p1 -i ../${{ inputs.package }}.changelog.patch
-          #popd
+          pushd submodules/${{ inputs.package }}
+          patch -p1 -i ../${{ inputs.package }}.changelog.patch
+          popd
 
           GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
@@ -70,17 +73,9 @@ jobs:
           docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
           docker push $tag_latest
 
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
           pushd submodules/${{ inputs.package }}
           git diff -p debian/changelog > ../${{ inputs.package }}.changelog.patch
           popd
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"
           git push origin
-
-          # test/list content of image:
-          # id=$(docker create $tag_latest)
-          # docker cp $id:/opt/repo/ ./build/
-          # docker rm -v $id
-          # ls -la build
