@@ -62,9 +62,10 @@ jobs:
           WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+]+)\).*$/\1/; s/\+/\-/")
           echo "WSH_VERSION=$WSH_VERSION"
 
+          tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest -t $WSH_VERSION
-          docker push $WSH_VERSION
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest
+          docker push $tag_wsh_version
           docker push $tag_latest
 
           pushd submodules/${{ inputs.package }}
