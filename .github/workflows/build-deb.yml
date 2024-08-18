@@ -59,7 +59,7 @@ jobs:
           echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
           grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog
           echo -e "\n\n*********************************\n\n\n\n"
-          WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+]+)\).*$/\1/; s/\+/\-/")
+          WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+\-]+)\).*$/\1/; s/\+/\-/")
           echo "WSH_VERSION=$WSH_VERSION"
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
