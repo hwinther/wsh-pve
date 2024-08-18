@@ -55,8 +55,14 @@ jobs:
           git submodule update --init submodules/${{ inputs.package }}
 
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          docker build . --build-arg VERSION_INCREMENTS=$VERSION_INCREMENTS -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
+          docker build . --build-arg VERSION_INCREMENTS=$VERSION_INCREMENTS -v submodules/${{ inputs.package }}.changelog.patch:/tmp/changelog.patch -f submodules/${{ inputs.package }}.Dockerfile -t $tag_latest
           docker push $tag_latest
+
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add submodules/${{ inputs.package }}.changelog.patch
+          git commit -m "Update changelog for ${{ inputs.package }}"
+          # git push origin
 
           # test/list content of image:
           # id=$(docker create $tag_latest)

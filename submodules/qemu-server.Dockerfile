@@ -8,10 +8,10 @@ RUN patch -p1 -i ../qemu-server.patch
 # TODO: fix the tests instead of skipping them
 ENV DEB_BUILD_OPTIONS=nocheck
 ENV EMAIL=docker@wsh.no
-RUN for i in $(seq 1 ${VERSION_INCREMENTS}); do \
-    dch -l +wsh -D bookworm "Add WSH patches"; \
-    done
+RUN GIT_CHANGES=$(git log -1 --pretty=format:%s -- ../qemu-server.patch)\
+    dch -l +wsh -D bookworm "${GIT_CHANGES}"
 RUN grep "\+wsh" debian/changelog
+RUN git diff -p debian/changelog > /tmp/changelog.diff
 RUN make deb
 RUN ls -l /src/submodules/qemu-server/*.deb
 
