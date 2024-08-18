@@ -5,7 +5,7 @@ index 46371ae..9e50ea4 100644
 @@ -1,3 +1,9 @@
 +pve-qemu-kvm (9.0.2-2+wsh1) bookworm; urgency=medium
 +
-+  * Add lintian override for patches
++  * Add pve-qemu WSH patches
 +
 + -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 18 Aug 2024 21:12:59 +0000
 +
