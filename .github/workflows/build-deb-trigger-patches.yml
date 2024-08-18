@@ -82,9 +82,9 @@ jobs:
       version_increments: ${{ needs.check.outputs.qemu-server-count }}
     secrets: inherit
 
-  debug-workflow:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@bugfix/fix-workflow-issues
-    with:
-      package: pve-manager
-      version_increments: 2
-    secrets: inherit
+  # debug-workflow:
+  #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@feature/branch/name
+  #   with:
+  #     package: pve-manager
+  #     version_increments: 2
+  #   secrets: inherit
