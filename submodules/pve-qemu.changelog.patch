@@ -1,0 +1,14 @@
+diff --git a/debian/changelog b/debian/changelog
+index 46371ae..9e50ea4 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,9 @@
++pve-qemu-kvm (9.0.2-2+wsh1) bookworm; urgency=medium
++
++  * Add lintian override for patches
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 18 Aug 2024 21:12:59 +0000
++
+ pve-qemu-kvm (9.0.2-2) bookworm; urgency=medium
+ 
+   * actually update submodule to QEMU 9.0.2. The previous release was still
