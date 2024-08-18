@@ -70,7 +70,9 @@ jobs:
 
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git diff -p submodules/${{ inputs.package }}/debian/changelog > submodules/${{ inputs.package }}.changelog.patch
+          pushd submodules/${{ inputs.package }}
+          git diff -p debian/changelog > ../${{ inputs.package }}.changelog.patch
+          popd
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"
           git push origin
