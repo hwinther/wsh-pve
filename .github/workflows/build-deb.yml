@@ -11,8 +11,8 @@ on:
       version_increments:
         description: "Patch level"
         required: false
-        default: "1"
-        type: string
+        default: 1
+        type: number
   workflow_call:
     inputs:
       package:
@@ -23,8 +23,8 @@ on:
       version_increments:
         description: "Patch level"
         required: false
-        default: "1"
-        type: string
+        default: 1
+        type: number
 
 permissions:
   # for ghcr.io (docker registry):
@@ -49,7 +49,7 @@ jobs:
 
       - name: Build and push
         env:
-          VERSION_INCREMENTS: "${{ github.event.inputs.version_increments }}"
+          VERSION_INCREMENTS: ${{ inputs.version_increments }}
         run: |
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
