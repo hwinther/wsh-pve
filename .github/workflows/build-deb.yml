@@ -8,22 +8,12 @@ on:
         required: true
         default: "pve-manager"
         type: string
-      version_increments:
-        description: "Patch level"
-        required: false
-        default: "1"
-        type: string
   workflow_call:
     inputs:
       package:
         description: "The package to build"
         required: true
         default: "pve-manager"
-        type: string
-      version_increments:
-        description: "Patch level"
-        required: false
-        default: "1"
         type: string
 
 permissions:
@@ -49,8 +39,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        env:
-          VERSION_INCREMENTS: ${{ inputs.version_increments }}
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
@@ -58,9 +46,11 @@ jobs:
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
           git submodule update --init submodules/${{ inputs.package }}
 
-          pushd submodules/${{ inputs.package }}
-          patch -p1 -i ../${{ inputs.package }}.changelog.patch
-          popd
+          if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
+            pushd submodules/${{ inputs.package }}
+            patch -p1 -i ../${{ inputs.package }}.changelog.patch
+            popd
+          fi
 
           GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
