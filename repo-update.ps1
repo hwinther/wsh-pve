@@ -14,7 +14,7 @@ else {
 }
 
 # Note: do not push this image to a remote registry as it contains the gpg key
-& $DOCKER build . -t repo -f repo.Dockerfile
+& $DOCKER build . -t repo -f repo.Dockerfile --pull
 & $DOCKER run --rm -v repo:/opt/repo -it localhost/repo bash -c "cd /opt/repo && reprepro -Vb . includedeb bookworm /opt/repo-incoming/*.deb"
 
 # Optionally, run a container with the repo mounted at /opt/repo
