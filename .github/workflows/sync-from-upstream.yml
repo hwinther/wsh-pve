@@ -72,7 +72,7 @@ jobs:
           # git submodule update --init --remote submodules/$submodule
           pushd submodules/$submodule
           git fetch origin
-          changelogChanges=$(git diff ..master -- debian/changelog | wc -l)
+          changelogChanges=$(git diff ..origin/master -- debian/changelog | wc -l)
           if [ $changelogChanges -eq 0 ]; then
             echo No changes in debian/changelog
             echo "changed=false" >> $GITHUB_OUTPUT
