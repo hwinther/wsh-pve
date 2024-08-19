@@ -7,3 +7,6 @@
 [submodule "submodules/pve-qemu"]
 	path = submodules/pve-qemu
 	url = https://github.com/hwinther/pve-qemu.git
+[submodule "submodules/qemu-3dfx"]
+	path = submodules/qemu-3dfx
+	url = https://github.com/hwinther/qemu-3dfx
