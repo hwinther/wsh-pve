@@ -1,0 +1,14 @@
+diff --git a/debian/changelog b/debian/changelog
+index cccc1975..468e01e5 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,9 @@
++pve-manager (8.2.4+wsh1) bookworm; urgency=medium
++
++  * Add pve-manager submodule
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 19 Aug 2024 15:38:29 +0000
++
+ pve-manager (8.2.4) bookworm; urgency=medium
+ 
+   * pvestatd: clear trailing newlines
