@@ -69,17 +69,18 @@ jobs:
           echo "submodule=$submodule" >> $GITHUB_OUTPUT
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
-          # git submodule update --init --remote submodules/$submodule
-          pushd submodules/$submodule
-          git fetch origin
-          changelogChanges=$(git diff ..origin/master -- debian/changelog | wc -l)
+          git submodule update --init --remote submodules/$submodule
+          # pushd submodules/$submodule
+          # git fetch
+          # changelogChanges=$(git diff ..master -- debian/changelog | wc -l)
+          changelogChanges=$(git diff --submodule=diff -- debian/changelog | wc -l)
           if [ $changelogChanges -eq 0 ]; then
             echo No changes in debian/changelog
             echo "changed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-          git pull
-          popd
+          # git pull
+          # popd
           git checkout -- .gitmodules # revert the change to .gitmodules
 
           git status
