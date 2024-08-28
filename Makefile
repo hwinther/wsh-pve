@@ -33,6 +33,7 @@ test:
 
 QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
 PVE_MANAGER_FILES := js/pvemanagerlib.js css/ext6-pve.css
+PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
 
 .PHONY: dev-links
@@ -72,6 +73,13 @@ dev-links:
 			$(ECHO) "INFO: Creating symlink to /usr/share/pve-manager/$$item"; \
             ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/$$item" "/usr/share/pve-manager/$$item"; \
         fi; \
+	done
+
+.PHONY: apply-patches
+apply-patches:
+	$(Q)for submodule in $(PATCH_SUBMODULES); do \
+		$(ECHO) "INFO: Applying patch for submodule: $$submodule"; \
+		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
 	done
 
 .PHONY: help
