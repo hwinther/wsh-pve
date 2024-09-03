@@ -82,6 +82,14 @@ apply-patches:
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
 	done
 
+.PHONY: build-qemu-3dfx
+build-qemu-3dfx:
+	mkdir -p submodules/pve-qemu/debian/patches/wsh
+	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch
+	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series
+	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/
+	cd submodules/pve-qemu && make deb
+
 .PHONY: help
 help:
 	@echo "Usage: make [target]"
