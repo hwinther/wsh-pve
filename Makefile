@@ -35,7 +35,6 @@ QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Ma
 PVE_MANAGER_FILES := js/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
-REV := $(shell git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
 
 .PHONY: dev-links
 dev-links:
@@ -83,8 +82,12 @@ apply-patches:
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
 	done
 
-.PHONY: build-qemu-3dfx
-build-qemu-3dfx:
+.PHONY: prepare-qemu-3dfx build-qemu-3dfx
+prepare-qemu-3dfx:
+	git submodule update --init submodules/qemu-3dfx
+
+REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
+build-qemu-3dfx: prepare-qemu-3dfx
 	cd submodules/pve-qemu && make submodule && cd ../../; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
@@ -109,8 +112,8 @@ build-3dfx-drivers:
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build
 
 	mkdir -p build && rm -rf build/3dfx build/mesa
-	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile
-	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile
+	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a
+	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
 .PHONY: help
 help:
