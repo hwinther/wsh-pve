@@ -35,6 +35,7 @@ QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Ma
 PVE_MANAGER_FILES := js/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
+REV := $(shell git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
 
 .PHONY: dev-links
 dev-links:
@@ -84,11 +85,32 @@ apply-patches:
 
 .PHONY: build-qemu-3dfx
 build-qemu-3dfx:
-	mkdir -p submodules/pve-qemu/debian/patches/wsh
-	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch
-	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series
-	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/
+	cd submodules/pve-qemu && make submodule && cd ../../; \
+	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
+	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
+	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
+	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
+	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	cd submodules/pve-qemu && make deb
+
+.PHONY: clean-qemu-3dfx
+clean-qemu-3dfx:
+	rm -rf submodules/pve-qemu/debian/patches/wsh submodules/pve-qemu/qemu/hw/3dfx submodules/pve-qemu/qemu/hw/mesa; \
+	cd submodules/pve-qemu && git checkout debian/patches/series && make clean
+
+.PHONY: build-3dfx-drivers
+build-3dfx-drivers:
+	git submodule update --init submodules/qemu-3dfx
+
+	podman run --rm -v .git:/src/.git -v "./submodules/qemu-3dfx":"/src/submodules/qemu-3dfx" -w /src/submodules/qemu-3dfx/wrappers/3dfx -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+	podman run --rm -v .git:/src/.git -v "./submodules/qemu-3dfx":"/src/submodules/qemu-3dfx" -w /src/submodules/qemu-3dfx/wrappers/mesa -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+
+	ls -la submodules/qemu-3dfx/wrappers/3dfx/build
+	ls -la submodules/qemu-3dfx/wrappers/mesa/build
+
+	mkdir -p build && rm -rf build/3dfx build/mesa
+	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile
+	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile
 
 .PHONY: help
 help:
