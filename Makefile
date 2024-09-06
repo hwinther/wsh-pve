@@ -18,6 +18,11 @@ check-and-reinit-submodules:
 		git submodule update --init; \
 	fi
 
+.PHONY: build-containers
+build-containers:
+	sudo docker build . -f build.Dockerfile -t wsh-pve-deb-build
+	sudo docker build . -f djgpp.Dockerfile -t wsh-pve-djgpp-build
+
 .PHONY: build
 build:
 	sudo ./docker-build.sh
@@ -82,7 +87,8 @@ apply-patches:
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
 	done
 
-.PHONY: prepare-qemu-3dfx build-qemu-3dfx
+.PHONY: 3dfx prepare-qemu-3dfx build-qemu-3dfx
+3dfx: clean-qemu-3dfx prepare-qemu-3dfx build-qemu-3dfx
 prepare-qemu-3dfx:
 	git submodule update --init submodules/qemu-3dfx
 
