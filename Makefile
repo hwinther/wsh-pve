@@ -87,6 +87,13 @@ apply-patches:
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
 	done
 
+.PHONY: update-patches
+update-patches:
+	$(Q)for submodule in $(PATCH_SUBMODULES); do \
+		$(ECHO) "INFO: Creating patch for submodule: $$submodule"; \
+		git -C submodules/$$submodule diff -p > submodules/$$submodule.patch; \
+	done
+
 .PHONY: 3dfx prepare-qemu-3dfx build-qemu-3dfx
 3dfx: clean-qemu-3dfx prepare-qemu-3dfx build-qemu-3dfx
 prepare-qemu-3dfx:
