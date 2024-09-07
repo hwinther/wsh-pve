@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index cccc1975..468e01e5 100644
+index cccc1975..5cabeb8f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,3 +1,9 @@
+@@ -1,3 +1,15 @@
++pve-manager (8.2.4+wsh2) bookworm; urgency=medium
++
++  * Update pve-manager patch
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 07 Sep 2024 21:43:25 +0000
++
 +pve-manager (8.2.4+wsh1) bookworm; urgency=medium
 +
 +  * Add pve-manager submodule
