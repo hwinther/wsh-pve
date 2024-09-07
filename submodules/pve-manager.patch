@@ -1,35 +1,3 @@
-diff --git a/.vscode/settings.json b/.vscode/settings.json
-new file mode 100644
-index 00000000..cd36107c
---- /dev/null
-+++ b/.vscode/settings.json
-@@ -0,0 +1,3 @@
-+{
-+    "prettier.enable": false
-+}
-\ No newline at end of file
-diff --git a/README.md b/README.md
-new file mode 100644
-index 00000000..abcf075f
---- /dev/null
-+++ b/README.md
-@@ -0,0 +1,16 @@
-+## pve-manager extensions
-+
-+This is a collection pve UI extensions that cover the edge cases I've encountered with my usage pattern
-+
-+- Add ne2k_pci and pcnet to network card selector
-+- Add sb16, adlib and pcspk to audio device selector (this will only work in combination with spice for now)
-+- Add cirrus as an explicit choice to VGA driver selector (while this can already be achieved through windows version in OS selection below version 6 (win2k, winxp) I prefer to define this explicitly)
-+
-+TODO
-+
-+- Create a public apt package repository
-+- Setup CI to deploy to the apt repo
-+- Add VNC audio support
-+- Add support for selecting in UI and using other architectures such as sparc64
-+- Add support for selecting floppy images in UI
-+- Add support for adding/changing hookscripts in UI
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
 index 2c3a822b..ce946a2b 100644
 --- a/www/manager6/Makefile
@@ -117,7 +85,7 @@ index f9d047c0..d6e944ae 100644
  
  	me.callParent();
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index e7861ceb..49bb97dc 100644
+index e7861ceb..b44a0955 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
 @@ -23,9 +23,13 @@ Ext.define('PVE.qemu.AudioInputPanel', {
@@ -137,6 +105,16 @@ index e7861ceb..49bb97dc 100644
  	],
      }, {
  	name: 'driver',
+@@ -34,6 +38,9 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+ 	fieldLabel: gettext('Backend Driver'),
+ 	comboItems: [
+ 	    ['spice', 'SPICE'],
++		['alsa', 'ALSA (local sound)'],
++		['pa', 'PulseAudio (local sound)'],
++		['pipewire', 'PipeWire (local sound)'],
+ 	    ['none', `${Proxmox.Utils.NoneText} (${gettext('Dummy Device')})`],
+ 	],
+     }],
 diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
 index 3cc16205..4f090573 100644
 --- a/www/manager6/qemu/CDEdit.js
@@ -151,7 +129,7 @@ index 3cc16205..4f090573 100644
  	    items.push(me.bussel);
  	}
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index e1902695..38409034 100644
+index e1902695..4b77735b 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -169,6 +169,21 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -166,9 +144,9 @@ index e1902695..38409034 100644
 +			defaultValue: '',
 +			iconCls: 'cogs',
 +			renderer: function(value, metaData, record, rowIndex, colIndex, store, pending) {
-+				let arch = me.getObjectValue('arch', undefined, pending);
++				let arch = me.getObjectValue('arch', '__default__', pending);
 +				if (arch) {
-+					return arch === '__default__' ? '[Default (x86_64)]' : '[' + arch + ']';
++					return arch === '__default__' ? 'Default (x86_64)' : arch;
 +				}
 +				return value === '__default__' ? 'Default (x86_64)' : value;
 +			},
@@ -184,7 +162,7 @@ index e1902695..38409034 100644
 +				text: gettext("Architecture"),
 +				itemId: 'addArch',
 +				iconCls: 'fa fa-fw fa-cogs black',
-+				disabled: false, // !caps.nodes['VM.Config.Arch'],
++				disabled: !caps.nodes['VM.Config.Arch'],
 +				handler: editorFactory('QemuArchEdit'),
 +			    },
  			],
@@ -258,7 +236,7 @@ index 00000000..50d9d225
 +    },
 +});
 +
-+Ext.define('PVE.qemu.ArchEdit', {
++Ext.define('PVE.qemu.QemuArchEdit', {
 +    extend: 'Proxmox.window.Edit',
 +    alias: 'widget.pveQemuArchEdit',
 +
@@ -279,7 +257,7 @@ index 00000000..50d9d225
 +	    name: 'arch',
 +	    value: '__default__',
 +	    bind: '{arch}',
-+	    fieldLabel: 'ARCH',
++	    fieldLabel: 'Architecture',
 +	},
 +    ],
 +});

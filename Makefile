@@ -78,7 +78,8 @@ dev-links:
 			$(ECHO) "INFO: Creating symlink to /usr/share/pve-manager/$$item"; \
             ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/$$item" "/usr/share/pve-manager/$$item"; \
         fi; \
-	done
+	done; \
+	unlink $(CURRENT_DIR)/submodules/pve-manager/www/js
 
 .PHONY: apply-patches
 apply-patches:
@@ -139,6 +140,8 @@ help:
 	@echo "  clean:                Clean the project"
 	@echo "  test:                 Run tests"
 	@echo "  dev-links:            Create symlinks for QemuServer files"
+	@echo "  clean-qemu-3dfx:      Clean QEMU 3dfx"
+	@echo "  build-3dfx-drivers:   Build 3dfx drivers"
 	@echo "  help:                 Show this help message"
 	@echo ""
 	@echo "Variables:"
@@ -152,6 +155,8 @@ help:
 	@echo "  make clean"
 	@echo "  make test"
 	@echo "  make dev-links"
+	@echo "  make clean-qemu-3dfx"
+	@echo "  make build-3dfx-drivers"
 	@echo "  make help"
 	@echo ""
 	@echo "For more information, see the README.md file."
