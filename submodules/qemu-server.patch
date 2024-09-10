@@ -1,5 +1,5 @@
 diff --git a/PVE/QemuServer.pm b/PVE/QemuServer.pm
-index 88c274d..b6d8ef4 100644
+index b26da50..1ce59c5 100644
 --- a/PVE/QemuServer.pm
 +++ b/PVE/QemuServer.pm
 @@ -184,7 +184,7 @@ my $vga_fmt = {
@@ -11,7 +11,7 @@ index 88c274d..b6d8ef4 100644
      },
      memory => {
  	description => "Sets the VGA memory (in MiB). Has no effect with serial display.",
-@@ -220,7 +220,7 @@ my $ivshmem_fmt = {
+@@ -220,12 +220,12 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
  	type => 'string',
@@ -20,6 +20,12 @@ index 88c274d..b6d8ef4 100644
  	description =>  "Configure an audio device."
      },
      driver =>  {
+ 	type => 'string',
+-	enum => ['spice', 'none'],
++	enum => ['spice', 'alsa', 'pa', 'pipewire', 'none'],
+ 	default => 'spice',
+ 	optional => 1,
+ 	description => "Driver backend for the audio device."
 @@ -664,7 +664,7 @@ EODESCR
      bios => {
  	optional => 1,
@@ -80,7 +86,23 @@ index 88c274d..b6d8ef4 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
  	push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
  	push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -3312,6 +3333,8 @@ sub get_ovmf_files($$$) {
+@@ -3103,7 +3124,14 @@ sub audio_devs {
+ 	die "unkown audio device '$audio->{dev}', implement me!";
+     }
+ 
+-    push @$devs, '-audiodev', "$audio->{backend},id=$audio->{backend_id}";
++	my $audioOptions = "";
++
++	print "Audio backend: $audio->{backend}\n";
++	if ($audio->{backend} eq 'pa') {
++		$audioOptions = ",server=unix:/tmp/pulse-server";
++	}
++
++    push @$devs, '-audiodev', "$audio->{backend},id=$audio->{backend_id}$audioOptions";
+ 
+     return $devs;
+ }
+@@ -3312,6 +3340,8 @@ sub get_ovmf_files($$$) {
  }
  
  my $Arch2Qemu = {
@@ -89,7 +111,7 @@ index 88c274d..b6d8ef4 100644
      aarch64 => '/usr/bin/qemu-system-aarch64',
      x86_64 => '/usr/bin/qemu-system-x86_64',
  };
-@@ -3447,7 +3470,7 @@ sub query_understood_cpu_flags {
+@@ -3447,7 +3477,7 @@ sub query_understood_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -98,7 +120,7 @@ index 88c274d..b6d8ef4 100644
  
      return (!defined($conf->{bios}) || $conf->{bios} eq 'seabios') &&
  	$vga->{type} && $vga->{type} =~ m/^(serial\d+|none)$/;
-@@ -3650,9 +3673,13 @@ sub config_to_command {
+@@ -3650,9 +3680,13 @@ sub config_to_command {
  		$value =~ s/,/,,/g;
  		$smbios_string .= "," . $key . "=" . $value if $value;
  	    }
@@ -114,7 +136,7 @@ index 88c274d..b6d8ef4 100644
  	}
      }
  
-@@ -3666,6 +3693,10 @@ sub config_to_command {
+@@ -3666,6 +3700,10 @@ sub config_to_command {
  	push $cmd->@*, '-drive', $var_drive_str;
      }
  
@@ -125,7 +147,7 @@ index 88c274d..b6d8ef4 100644
      if ($q35) { # tell QEMU to load q35 config early
  	# we use different pcie-port hardware for qemu >= 4.0 for passthrough
  	if (min_version($machine_version, 4, 0)) {
-@@ -3684,9 +3715,11 @@ sub config_to_command {
+@@ -3684,9 +3722,11 @@ sub config_to_command {
      }
  
      # add usb controllers
@@ -137,7 +159,7 @@ index 88c274d..b6d8ef4 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3705,7 +3738,6 @@ sub config_to_command {
+@@ -3705,7 +3745,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -145,23 +167,27 @@ index 88c274d..b6d8ef4 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) = PVE::QemuServer::PCI::print_hostpci_devices(
  	$vmid, $conf, $devices, $vga, $winversion, $bridges, $arch, $machine_type, $bootorder);
-@@ -3792,7 +3824,14 @@ sub config_to_command {
+@@ -3792,7 +3831,18 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if  defined($conf->{reboot}) && $conf->{reboot} == 0;
  
 -    if ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none'){
-+    if ($vga->{type} && $arch =~ m/^sparc/) {
++	if (1 == 1) { # TODO: check display option, maybe add a vga-local display type
++    # if ($vga->{type} && $arch =~ m/^sparc/) {
 +        push @$cmd, '-vga', $vga->{type};
++		push @$cmd, '-display', 'sdl'; # TODO: or gtk, need sdl for 3dfx passthru
 +
 +	    # TODO: if special mode
 +	    #my $socket = PVE::QemuServer::Helpers::vnc_socket($vmid);
 +	    #push @$cmd,  '-vnc', "unix:$socket,password=on";
-+		$ENV{DISPLAY} = ':0'
++		$ENV{DISPLAY} = ':0';
++		#$ENV{XDG_RUNTIME_DIR} = '/run/user/1000';
++		$ENV{XDG_RUNTIME_DIR} = '/tmp/xdg-root';
 +    } elsif ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none'){
  	push @$devices, '-device', print_vga_device(
  	    $conf, $vga, $arch, $machine_version, $machine_type, undef, $qxlnum, $bridges);
  
-@@ -3831,11 +3870,13 @@ sub config_to_command {
+@@ -3831,11 +3881,13 @@ sub config_to_command {
  	push @$rtcFlags, 'base=localtime';
      }
  
@@ -175,7 +201,7 @@ index 88c274d..b6d8ef4 100644
  
      PVE::QemuServer::Memory::config(
  	$conf, $vmid, $sockets, $cores, $hotplug_features->{memory}, $cmd);
-@@ -4003,8 +4044,10 @@ sub config_to_command {
+@@ -4003,8 +4055,10 @@ sub config_to_command {
  		$queues = ",num_queues=$drive->{queues}";
  	    }
  
@@ -187,7 +213,7 @@ index 88c274d..b6d8ef4 100644
  	    $scsicontroller->{$controller}=1;
  	}
  
-@@ -4047,12 +4090,27 @@ sub config_to_command {
+@@ -4047,12 +4101,27 @@ sub config_to_command {
  	$d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
  	my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -217,7 +243,7 @@ index 88c274d..b6d8ef4 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -4076,7 +4134,7 @@ sub config_to_command {
+@@ -4076,7 +4145,7 @@ sub config_to_command {
      # pci.4 is nested in pci.1
      $bridges->{1} = 1 if $bridges->{4};
  
@@ -226,7 +252,7 @@ index 88c274d..b6d8ef4 100644
  	if (min_version($machine_version, 2, 3)) {
  	   $bridges->{1} = 1;
  	   $bridges->{2} = 1;
-@@ -4099,6 +4157,8 @@ sub config_to_command {
+@@ -4099,6 +4168,8 @@ sub config_to_command {
  	} else {
  	    unshift @$devices, '-device', $devstr if $k > 0;
  	}
@@ -235,7 +261,7 @@ index 88c274d..b6d8ef4 100644
      }
  
      if (!$kvm) {
-@@ -5917,6 +5977,9 @@ sub vm_start_nolock {
+@@ -5916,6 +5987,9 @@ sub vm_start_nolock {
  		$tpmpid = start_swtpm($storecfg, $vmid, $tpm, $migratedfrom);
  	    }
  
@@ -259,7 +285,7 @@ index 6e98c09..56e69e4 100644
  
      if (my $size = $res->{size}) {
 diff --git a/PVE/QemuServer/Machine.pm b/PVE/QemuServer/Machine.pm
-index cc92e7e..bb0bfec 100644
+index a3917da..c98de20 100644
 --- a/PVE/QemuServer/Machine.pm
 +++ b/PVE/QemuServer/Machine.pm
 @@ -18,7 +18,7 @@ my $machine_fmt = {

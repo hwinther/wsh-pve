@@ -12,15 +12,17 @@ index f23b041..cad0c22 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index b228c00..14e16fc 100644
+index b228c00..266190d 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -59,6 +59,8 @@ Depends: ceph-common (>= 0.48),
+@@ -59,6 +59,10 @@ Depends: ceph-common (>= 0.48),
           libspice-server1 (>= 0.14.0~),
           libusb-1.0-0 (>= 1.0.17-1),
           libusbredirparser1 (>= 0.6-2),
 +         libsdl2-2.0-0,
 +         libgtk-3-0,
++         libpulsecommon-16.1,
++         libpipewire-0.3,
           libuuid1,
           ${misc:Depends},
           ${shlibs:Depends},
@@ -43,7 +45,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..ce898d6 100755
+index 51f56c5..c62b0e3 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -43,19 +43,19 @@ endif
@@ -54,7 +56,8 @@ index 51f56c5..ce898d6 100755
 +	    --target-list=$(HOST_CPU)-softmmu,aarch64-softmmu,sparc-softmmu,sparc64-softmmu \
  	    --with-suffix="kvm" \
  	    --with-pkgversion="${DEB_SOURCE}_${DEB_VERSION_UPSTREAM_REVISION}" \
- 	    --audio-drv-list="alsa" \
+-	    --audio-drv-list="alsa" \
++	    --audio-drv-list="alsa,pa,pipewire" \
  	    --datadir=/usr/share \
  	    --libexecdir=/usr/lib/kvm \
  	    --disable-capstone \
