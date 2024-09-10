@@ -37,7 +37,7 @@ test:
 	@echo "TODO: Add tests"
 
 QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
-PVE_MANAGER_FILES := js/pvemanagerlib.js css/ext6-pve.css
+PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
 
@@ -51,35 +51,47 @@ dev-links:
 	fi
 
 	$(Q)for item in $(QEMU_SERVER_FILES); do \
-		if [ -L "/usr/share/perl5/$$item" ]; then \
-			$(ECHO) "INFO: /usr/share/perl5/$$item is already a symlink"; \
-		elif [ -e "/usr/share/perl5/$$item" ]; then \
-			$(ECHO) "INFO: /usr/share/perl5/$$item exists but is not a symlink"; \
-			rm -f "/usr/share/perl5/$$item"; \
+		symlink_path="/usr/share/perl5/$$item"; \
+		if [ -L "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path is already a symlink"; \
+		elif [ -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path exists but is not a symlink"; \
+			rm -f "$$symlink_path"; \
 		fi; \
-		if [ ! -e "/usr/share/perl5/$$item" ]; then \
-			$(ECHO) "INFO: Creating symlink to /usr/share/perl5/$$item"; \
-            ln -s "$(CURRENT_DIR)/submodules/qemu-server/$$item" "/usr/share/perl5/$$item"; \
-        fi; \
+		if [ ! -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
+			ln -s "$(CURRENT_DIR)/submodules/qemu-server/$$item" "$$symlink_path"; \
+		fi; \
 	done
 
-	$(Q)if [ ! -e "$(CURRENT_DIR)/submodules/pve-manager/www/js" ]; then \
-		$(ECHO) "INFO: Creating symlink to $(CURRENT_DIR)/submodules/pve-manager/www/js"; \
-		ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/manager6" "$(CURRENT_DIR)/submodules/pve-manager/www/js"; \
-	fi; \
-	for item in $(PVE_MANAGER_FILES); do \
-		if [ -L "/usr/share/pve-manager/$$item" ]; then \
-			$(ECHO) "INFO: /usr/share/pve-manager/$$item is already a symlink"; \
-		elif [ -e "/usr/share/pve-manager/$$item" ]; then \
-			$(ECHO) "INFO: /usr/share/pve-manager/$$item exists but is not a symlink"; \
-			rm -f "/usr/share/pve-manager/$$item"; \
+	$(Q)for item in $(PVE_MANAGER_FILES); do \
+		symlink_path="/usr/share/pve-manager/$$(echo $$item | sed 's/manager6/js/')"; \
+		echo $$symlink_path; \
+		if [ -L "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path is already a symlink"; \
+		elif [ -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path exists but is not a symlink"; \
+			rm -f "$$symlink_path"; \
 		fi; \
-		if [ ! -e "/usr/share/pve-manager/$$item" ]; then \
-			$(ECHO) "INFO: Creating symlink to /usr/share/pve-manager/$$item"; \
-            ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/$$item" "/usr/share/pve-manager/$$item"; \
+		if [ ! -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
+            ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/$$item" "$$symlink_path"; \
         fi; \
 	done; \
-	unlink $(CURRENT_DIR)/submodules/pve-manager/www/js
+
+.PHONY: qemu-server
+qemu-server:
+	$(Q)if [ $$(id -u) -eq 0 ]; then \
+		$(ECHO) "INFO: Running as root"; \
+	else \
+		echo "ERROR: This target must be run as root"; \
+		exit 1; \
+	fi; \
+	systemctl restart pveproxy pvedaemon
+
+.PHONY: pve-manager
+pve-manager:
+	$(Q)make -C submodules/pve-manager/www/manager6 pvemanagerlib.js
 
 .PHONY: apply-patches
 apply-patches:
