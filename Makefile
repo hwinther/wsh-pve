@@ -27,9 +27,14 @@ build-containers:
 build:
 	sudo ./docker-build.sh
 
-.PHONY: clean
+.PHONY: unapply-patches clean
 clean:
 	$(ECHO) "INFO: Cleaning up"
+	$(Q)qemu_path="submodules/pve-qemu/qemu"; \
+	if [ -e "$$qemu_path" ]; then \
+		$(ECHO) "INFO: Removing $$qemu_path"; \
+		git submodule deinit --force "$$qemu_path"; \
+	fi; \
 	git submodule deinit --all
 
 .PHONY: test
@@ -98,6 +103,13 @@ apply-patches:
 	$(Q)for submodule in $(PATCH_SUBMODULES); do \
 		$(ECHO) "INFO: Applying patch for submodule: $$submodule"; \
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
+	done
+
+.PHONY: unapply-patches
+unapply-patches:
+	$(Q)for submodule in $(PATCH_SUBMODULES); do \
+		$(ECHO) "INFO: Applying patch for submodule: $$submodule"; \
+		patch -d submodules/$$submodule -p1 -R -i ../$$submodule.patch; \
 	done
 
 .PHONY: update-patches
