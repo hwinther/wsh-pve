@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index ddb70dc..4b95421 100644
+index ddb70dc..f377dbd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,3 +1,9 @@
+@@ -1,3 +1,15 @@
++qemu-server (8.2.4+wsh2) bookworm; urgency=medium
++
++  * Add experimental audio support
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 10 Sep 2024 22:01:09 +0000
++
 +qemu-server (8.2.4+wsh1) bookworm; urgency=medium
 +
 +  * Add qemu-server patch and related build files
