@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 46371ae..952e90a 100644
+index 9cf815c..853ff5a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (9.0.2-2+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (9.0.2-3+wsh1) bookworm; urgency=medium
 +
-+  * Remove unused lintian override
++  * Add experimental audio support
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 18 Aug 2024 21:34:54 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Wed, 11 Sep 2024 21:42:53 +0000
 +
-+pve-qemu-kvm (9.0.2-2+wsh1) bookworm; urgency=medium
-+
-+  * Add pve-qemu WSH patches
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 18 Aug 2024 21:12:59 +0000
-+
- pve-qemu-kvm (9.0.2-2) bookworm; urgency=medium
+ pve-qemu-kvm (9.0.2-3) bookworm; urgency=medium
  
-   * actually update submodule to QEMU 9.0.2. The previous release was still
-     based on 9.0.0 by mistake.
+   * pick up fix for VirtIO PCI regressions
  
-  -- Proxmox Support Team <support@proxmox.com>  Wed, 07 Aug 2024 10:16:01 +0200
+   * pick up stable fixes for 9.0, including fixes for VirtIO-net, ARM and
+     x86(_64) emulation, CVEs to harden NBD server against malicious clients,
+     as well as a few others (VNC, physmem, Intel IOMMU, ...).
  
- pve-qemu-kvm (9.0.2-1) bookworm; urgency=medium
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 06 Sep 2024 16:21:42 +0200
  
-   * update submodule and patches to QEMU 9.0.2. While our version had most
