@@ -9,6 +9,12 @@ else
   ECHO := echo > /dev/null
 endif
 
+ifeq ($(FORCE),1)
+  F := -f
+else
+  F := 
+endif
+
 all: check-and-reinit-submodules build
 
 .PHONY: check-and-reinit-submodules
@@ -27,15 +33,19 @@ build-containers:
 build:
 	sudo ./docker-build.sh
 
-.PHONY: unapply-patches clean
-clean:
+.PHONY: clean
+clean: unapply-patches
 	$(ECHO) "INFO: Cleaning up"
 	$(Q)qemu_path="submodules/pve-qemu/qemu"; \
 	if [ -e "$$qemu_path" ]; then \
-		$(ECHO) "INFO: Removing $$qemu_path"; \
-		git submodule deinit --force "$$qemu_path"; \
+		if [ -z "$(ls -A qemu_path)" ]; then \
+			$(ECHO) "INFO: Ignoring $$qemu_path"; \
+		else \
+			$(ECHO) "INFO: Removing $$qemu_path"; \
+			git submodule deinit $(F) "$$qemu_path"; \
+		fi; \
 	fi; \
-	git submodule deinit --all
+	git submodule deinit --all $(F)
 
 .PHONY: test
 test:
@@ -45,6 +55,7 @@ QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Ma
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
+BRANCH_NAME := local_patches
 
 .PHONY: dev-links
 dev-links:
@@ -100,6 +111,7 @@ pve-manager:
 
 .PHONY: apply-patches
 apply-patches:
+	git submodule update --init
 	$(Q)for submodule in $(PATCH_SUBMODULES); do \
 		$(ECHO) "INFO: Applying patch for submodule: $$submodule"; \
 		patch -d submodules/$$submodule -p1 -i ../$$submodule.patch; \
@@ -108,15 +120,26 @@ apply-patches:
 .PHONY: unapply-patches
 unapply-patches:
 	$(Q)for submodule in $(PATCH_SUBMODULES); do \
-		$(ECHO) "INFO: Applying patch for submodule: $$submodule"; \
-		patch -d submodules/$$submodule -p1 -R -i ../$$submodule.patch; \
+		$(ECHO) "INFO: Applying reverse patch for submodule: $$submodule"; \
+		current_branch=$$(git -C submodules/$$submodule rev-parse --abbrev-ref HEAD); \
+        if [ "$$current_branch" = "$(BRANCH_NAME)" ]; then \
+            $(ECHO) "INFO: Restoring staged files in branch $(BRANCH_NAME) for submodule: $$submodule"; \
+            git -C submodules/$$submodule restore --staged .; \
+        fi; \
+		patch -d submodules/$$submodule -p1 -R --no-backup-if-mismatch $(F) -i ../$$submodule.patch; \
 	done
 
 .PHONY: update-patches
 update-patches:
 	$(Q)for submodule in $(PATCH_SUBMODULES); do \
 		$(ECHO) "INFO: Creating patch for submodule: $$submodule"; \
-		git -C submodules/$$submodule diff -p > submodules/$$submodule.patch; \
+		current_branch=$$(git -C submodules/$$submodule rev-parse --abbrev-ref HEAD); \
+        if [ "$$current_branch" != "$(BRANCH_NAME)" ]; then \
+            $(ECHO) "INFO: Checking out branch $(BRANCH_NAME) for submodule: $$submodule"; \
+            git -C submodules/$$submodule checkout -b $(BRANCH_NAME); \
+        fi; \
+		git -C submodules/$$submodule add .; \
+		git -C submodules/$$submodule diff --staged -p > submodules/$$submodule.patch; \
 	done
 
 .PHONY: 3dfx prepare-qemu-3dfx build-qemu-3dfx
