@@ -48,7 +48,7 @@ jobs:
 
           if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
             pushd submodules/${{ inputs.package }}
-            patch -p1 -i ../${{ inputs.package }}.changelog.patch
+            patch -p1 -u --fuzz=10 --no-backup-if-mismatch --reject-file=/dev/null -i ../${{ inputs.package }}.changelog.patch
             popd
           fi
 
@@ -69,7 +69,7 @@ jobs:
           docker push $tag_latest
 
           pushd submodules/${{ inputs.package }}
-          git diff -p debian/changelog > ../${{ inputs.package }}.changelog.patch
+          git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
           popd
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"

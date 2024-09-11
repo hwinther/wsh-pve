@@ -2,7 +2,7 @@ diff --git a/debian/changelog b/debian/changelog
 index ddb70dc..f377dbd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,3 +1,15 @@
+@@ -1,10 +1,22 @@
 +qemu-server (8.2.4+wsh2) bookworm; urgency=medium
 +
 +  * Add experimental audio support
@@ -18,3 +18,10 @@ index ddb70dc..f377dbd 100644
  qemu-server (8.2.4) bookworm; urgency=medium
  
    * fix #5528: ensure cgroup limits like CPU weight are set correctly and in
+     the same way for both cases, the cold-start and when changing while the VM
+     is running
+ 
+   * fix #5619: honor link-down setting when hot-plugging NIC
+ 
+   * resume: bump timeout for query-status, as activating the block drives in
+     QEMU on resume can take a bit of time during which the QEMU process might
