@@ -15,7 +15,15 @@ else
   F := 
 endif
 
-DOCKER=podman
+ifeq ($(shell command -v podman 2> /dev/null),)
+	ifeq ($(shell command -v docker 2> /dev/null),)
+		$(error Neither podman nor docker is installed.)
+	else
+		DOCKER=docker
+	endif
+else
+	DOCKER=podman
+endif
 
 all: check-and-reinit-submodules build
 
@@ -32,26 +40,29 @@ build-containers:
 	sudo docker build . -f djgpp.Dockerfile -t wsh-pve-djgpp-build
 
 .PHONY: build
-build: unapply-patches pve-manager qemu-server pve-qemu
+build: pve-manager qemu-server pve-qemu
 	echo Building all
 
 .PHONY: pve-manager
 pve-manager:
-	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager; \
+	$(ECHO) "INFO: Building pve-manager deb package"; \
+	$(Q)$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager; \
 	id=$$($(DOCKER) create wsh-pve-manager); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
 
 .PHONY: qemu-server
 qemu-server:
-	$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server; \
+	$(ECHO) "INFO: Building qemu-server deb package"; \
+	$(Q)$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server; \
 	id=$$($(DOCKER) create qemu-server); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
 
 .PHONY: pve-qemu
 pve-qemu:
-	$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu; \
+	$(ECHO) "INFO: Building pve-qemu deb package"; \
+	$(Q)$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu; \
 	id=$$($(DOCKER) create pve-qemu); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
@@ -202,12 +213,29 @@ build-3dfx-drivers:
 	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
+.PHONY: repo-update
+repo-update:
+	$(Q)if [ $$(id -u) -eq 0 ]; then \
+		$(ECHO) "INFO: Running as root"; \
+	else \
+		echo "ERROR: This target must be run as root"; \
+		exit 1; \
+	fi
+
+	# Note: do not push this image to a remote registry as it contains the gpg key
+	$(DOCKER) build . -t repo -f repo.Dockerfile --pull
+	$(DOCKER) run --rm -v ./repo:/opt/repo -it repo bash -c "cd /opt/repo && reprepro -Vb . includedeb bookworm /opt/repo-incoming/*.deb"
+
+	# Optionally, run a container with the repo mounted at /opt/repo
+	# $(DOCKER) run --rm -v repo:/opt/repo -v nginx/nginx-site.conf:/etc/nginx/conf.d/default.conf -p 8080:80 -it nginx
+
 .PHONY: help
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all:                  Build the project"
+	@echo "  all:                  Initialize submodules and build the project"
+	@echo "  dev: 				   Create symlinks for QemuServer files and restart services"
 	@echo "  check-and-reinit-submodules: Check and reinitialize git submodules"
 	@echo "  build:                Build the project"
 	@echo "  clean:                Clean the project"
@@ -215,6 +243,8 @@ help:
 	@echo "  dev-links:            Create symlinks for QemuServer files"
 	@echo "  clean-qemu-3dfx:      Clean QEMU 3dfx"
 	@echo "  build-3dfx-drivers:   Build 3dfx drivers"
+	@echo "  repo:                 Build and run the Docker container for the repo"
+	@echo "  run-repo-container:   Optionally, run a container with the repo mounted at /opt/repo"
 	@echo "  help:                 Show this help message"
 	@echo ""
 	@echo "Variables:"
@@ -230,6 +260,8 @@ help:
 	@echo "  make dev-links"
 	@echo "  make clean-qemu-3dfx"
 	@echo "  make build-3dfx-drivers"
+	@echo "  make repo"
+	@echo "  make run-repo-container"
 	@echo "  make help"
 	@echo ""
 	@echo "For more information, see the README.md file."
