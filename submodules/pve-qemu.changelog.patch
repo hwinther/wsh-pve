@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9cf815c..853ff5a 100644
+index 9cf815c..788636e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-qemu-kvm (9.0.2-3+wsh2) bookworm; urgency=medium
++
++  * Remove unused dependencies
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 12 Sep 2024 16:38:00 +0000
++
 +pve-qemu-kvm (9.0.2-3+wsh1) bookworm; urgency=medium
 +
 +  * Add experimental audio support
