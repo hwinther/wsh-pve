@@ -15,6 +15,8 @@ else
   F := 
 endif
 
+DOCKER=podman
+
 all: check-and-reinit-submodules build
 
 .PHONY: check-and-reinit-submodules
@@ -30,8 +32,29 @@ build-containers:
 	sudo docker build . -f djgpp.Dockerfile -t wsh-pve-djgpp-build
 
 .PHONY: build
-build:
-	sudo ./docker-build.sh
+build: unapply-patches pve-manager qemu-server pve-qemu
+	echo Building all
+
+.PHONY: pve-manager
+pve-manager:
+	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager; \
+	id=$$($(DOCKER) create wsh-pve-manager); \
+	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
+	$(DOCKER) rm -v $$id
+
+.PHONY: qemu-server
+qemu-server:
+	$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server; \
+	id=$$($(DOCKER) create qemu-server); \
+	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
+	$(DOCKER) rm -v $$id
+
+.PHONY: pve-qemu
+pve-qemu:
+	$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu; \
+	id=$$($(DOCKER) create pve-qemu); \
+	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
+	$(DOCKER) rm -v $$id
 
 .PHONY: clean
 clean: unapply-patches
@@ -95,8 +118,11 @@ dev-links:
         fi; \
 	done; \
 
-.PHONY: qemu-server
-qemu-server:
+.PHONY: dev
+dev: dev-links qemu-server-dev pve-manager-dev
+
+.PHONY: qemu-server-dev
+qemu-server-dev:
 	$(Q)if [ $$(id -u) -eq 0 ]; then \
 		$(ECHO) "INFO: Running as root"; \
 	else \
@@ -105,8 +131,8 @@ qemu-server:
 	fi; \
 	systemctl restart pveproxy pvedaemon
 
-.PHONY: pve-manager
-pve-manager:
+.PHONY: pve-manager-dev
+pve-manager-dev:
 	$(Q)make -C submodules/pve-manager/www/manager6 pvemanagerlib.js
 
 .PHONY: apply-patches
