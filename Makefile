@@ -163,7 +163,7 @@ unapply-patches:
             $(ECHO) "INFO: Restoring staged files in branch $(BRANCH_NAME) for submodule: $$submodule"; \
             git -C submodules/$$submodule restore --staged .; \
         fi; \
-		patch -d submodules/$$submodule -p1 -R --no-backup-if-mismatch $(F) -i ../$$submodule.patch; \
+		patch -d submodules/$$submodule -p1 -R --no-backup-if-mismatch -r - $(F) -i ../$$submodule.patch; \
 	done
 
 .PHONY: update-patches
