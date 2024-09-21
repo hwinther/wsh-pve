@@ -46,7 +46,7 @@ build: pve-manager qemu-server pve-qemu
 .PHONY: pve-manager
 pve-manager:
 	$(Q)$(ECHO) "INFO: Building pve-manager deb package"; \
-	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager; \
+	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager --pull; \
 	id=$$($(DOCKER) create wsh-pve-manager); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
@@ -54,7 +54,7 @@ pve-manager:
 .PHONY: qemu-server
 qemu-server:
 	$(Q)$(ECHO) "INFO: Building qemu-server deb package"; \
-	$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server; \
+	$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server --pull; \
 	id=$$($(DOCKER) create qemu-server); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
@@ -62,7 +62,7 @@ qemu-server:
 .PHONY: pve-qemu
 pve-qemu:
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
-	$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu; \
+	$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu --pull; \
 	id=$$($(DOCKER) create pve-qemu); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
