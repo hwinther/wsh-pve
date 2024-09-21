@@ -1,3 +1,17 @@
 {
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "cSpell.words": [
+        "alsa",
+        "localuser",
+        "memfd",
+        "pipewire",
+        "pulseaudio",
+        "pvedaemon",
+        "pvemanagerlib",
+        "pveproxy",
+        "srwxrwxrwx",
+        "usermod",
+        "virtio",
+        "xhost"
+    ]
 }

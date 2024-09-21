@@ -21,7 +21,7 @@ Note: There are still manual steps in this process due to the pvemanagerlib.js f
 
 Once the packages have been installed on a PVE host, the proxmox frontend will have additional options, some of which are listed here:
 
-* Support for sparc32 guests with openbios or original boot PROMS (TODO: merge into deb)
+* Support for sparc32 guests with OpenBios or original boot PROMS (TODO: merge into deb)
   * This is often limited to SuperSparc 5, single cpu and 512mb ram, depending on the OS and other details.
   * TODO: include ready-to-use SUN formatted raw images
   * Audio does not seem to work, but network is working so long as it is present when solaris is installed
@@ -29,14 +29,14 @@ Once the packages have been installed on a PVE host, the proxmox frontend will h
 
 * TODO: add feature for floppy mounting
 
-* Selecting an archictecture and CPU outside of the default x86(-64) set
+* Selecting an architecture and CPU outside of the default x86(-64) set
 
 * Support for forwarding GTK/SDL UI and alsa/pulseaudio/pipewire audio to the host.
 * The reason behind this is that old operating systems do not have matching virtio drivers, and some even benefit from the older devices such as cirrus or cg3 display. Those displays can not be used in combination with SPICE and VNC can be challenging to use especially with the mouse pointer bug (which is hacked together through a mousepad driver for operating systems that recognize such a device)
 * TODO: In a future version I will add support for running UI/audio through a sunshine container so that the host does not need to be running a graphical interface.
 * TODO: Alternatively you can pipe to another desktop machine on your network.
 
-* Operating systems that are known to work (TODO: link to separate guides for these) are Linux as old as 2.x, SunOS 2.4 and up, MSDOS 3 and up (performance improved with a curated collection of drivers and patches), Windows 1.x and up, Windows 9x with vbe enhanced drivers and 3dfx/mesa passthrough for 3d acceleration via patched 3d drivers
+* Operating systems that are known to work (TODO: link to separate guides for these) are Linux as old as 2.x, SunOS 2.4 and up, MS-DOS 3 and up (performance improved with a curated collection of drivers and patches), Windows 1.x and up, Windows 9x with vbe enhanced drivers and 3dfx/mesa passthrough for 3d acceleration via patched 3d drivers
   * Additional guides, driver packs etc will be added at a later time
 
 ### Graphical forwarding to host
