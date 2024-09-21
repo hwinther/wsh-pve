@@ -69,6 +69,10 @@ load-module module-native-protocol-unix auth-group=audio socket=/tmp/pulse-serve
 sudo usermod -aG audio root
 ```
 
+TODO: start pulseaudio inside a headless container running sunshine
+~ $ export XDG_RUNTIME_DIR=$TMPDIR
+~ $ pulseaudio --start --exit-idle-time=-1
+
 #### Pipewire
 
 * Add the following to the file `/usr/share/pipewire/pipewire-pulse.conf` under the addresses section:
