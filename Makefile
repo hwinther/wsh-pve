@@ -46,7 +46,7 @@ build: pve-manager qemu-server pve-qemu
 .PHONY: pve-manager
 pve-manager:
 	$(Q)$(ECHO) "INFO: Building pve-manager deb package"; \
-	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager --pull; \
+	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager --pull -v /run/systemd/journal/socket:/run/systemd/journal/socket; \
 	id=$$($(DOCKER) create wsh-pve-manager); \
 	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
 	$(DOCKER) rm -v $$id
