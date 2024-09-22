@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index cccc1975..ce9d264d 100644
+index 5bcbd764..77e67fc4 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+pve-manager (8.2.4+wsh3) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (8.2.6+wsh1) bookworm; urgency=medium
 +
 +  * Update pve-manager patch
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 12 Sep 2024 14:44:23 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 22 Sep 2024 21:52:38 +0000
 +
-+pve-manager (8.2.4+wsh2) bookworm; urgency=medium
-+
-+  * Update pve-manager patch
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 07 Sep 2024 21:43:25 +0000
-+
-+pve-manager (8.2.4+wsh1) bookworm; urgency=medium
-+
-+  * Add pve-manager submodule
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 19 Aug 2024 15:38:29 +0000
-+
- pve-manager (8.2.4) bookworm; urgency=medium
+ pve-manager (8.2.6) bookworm; urgency=medium
  
-   * pvestatd: clear trailing newlines
+   * fix #5731: vzdump jobs: fix execution of converted jobs
  
-   * www: advanced backup: add pbs change detection mode selector
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 20 Sep 2024 17:47:17 +0200
  
-   * vzdump: add pbs-change-detection-mode to config template
+ pve-manager (8.2.5) bookworm; urgency=medium
  
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 10 Jun 2024 13:59:52 +0200
- 
+   * ui: qemu hardware: use background delay for asynchronous remove tasks so
+     that the task log window doesn't get shown if the task already finished.
