@@ -11,7 +11,7 @@ index 2c3a822b..ce946a2b 100644
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index 77b2b2fc..52a41894 100644
+index 07eb9b17..aa955705 100644
 --- a/www/manager6/Parser.js
 +++ b/www/manager6/Parser.js
 @@ -114,7 +114,7 @@ Ext.define('PVE.Parser', {
@@ -24,10 +24,10 @@ index 77b2b2fc..52a41894 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index f5608944..a0f7b059 100644
+index db86fa9a..1fabdd01 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
-@@ -505,6 +505,16 @@ Ext.define('PVE.Utils', {
+@@ -506,6 +506,16 @@ Ext.define('PVE.Utils', {
  	    return "SeaBIOS";
  	} else if (value === 'ovmf') {
  	    return "OVMF (UEFI)";
@@ -44,7 +44,7 @@ index f5608944..a0f7b059 100644
  	} else {
  	    return value;
  	}
-@@ -597,6 +607,9 @@ Ext.define('PVE.Utils', {
+@@ -598,6 +608,9 @@ Ext.define('PVE.Utils', {
      kvm_vga_drivers: {
  	'__default__': Proxmox.Utils.defaultText,
  	std: gettext('Standard VGA'),
@@ -85,10 +85,22 @@ index f9d047c0..d6e944ae 100644
  
  	me.callParent();
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index e7861ceb..b44a0955 100644
+index e7861ceb..423730a6 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
-@@ -23,9 +23,13 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+@@ -17,15 +17,25 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+ 	};
+     },
+ 
++	viewModel: {
++		data: {
++			showServerField: false,
++		},
++	},
++
+     items: [{
+ 	name: 'device',
+ 	xtype: 'proxmoxKVComboBox',
  	value: 'ich9-intel-hda',
  	fieldLabel: gettext('Audio Device'),
  	comboItems: [
@@ -105,7 +117,7 @@ index e7861ceb..b44a0955 100644
  	],
      }, {
  	name: 'driver',
-@@ -34,6 +38,9 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+@@ -34,9 +44,35 @@ Ext.define('PVE.qemu.AudioInputPanel', {
  	fieldLabel: gettext('Backend Driver'),
  	comboItems: [
  	    ['spice', 'SPICE'],
@@ -114,7 +126,34 @@ index e7861ceb..b44a0955 100644
 +		['pipewire', 'PipeWire (local sound)'],
  	    ['none', `${Proxmox.Utils.NoneText} (${gettext('Dummy Device')})`],
  	],
-     }],
+-    }],
++    listeners: {
++		change: function(field, value) {
++			const panel = this.up('pveAudioInputPanel');
++			panel.viewModel.set('showServerField', value === 'pa');
++			const server = field.up('form').getForm().findField('server');
++			if (server) {
++				if (value !== 'pa') {
++					server.setValue('');
++				} else if (server.value === '' && server.originalValue !== '') {
++					server.setValue(server.originalValue);
++				}
++			}
++		},
++	},
++	}, {
++		xtype: 'textfield',
++		name: 'server',
++		value: '',
++		bind: {
++			hidden: '{!showServerField}',
++		},
++		fieldLabel: 'Server',
++		emptyText: 'unix:/tmp/pulse-server',
++	}],
+ });
+ 
+ Ext.define('PVE.qemu.AudioEdit', {
 diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
 index 3cc16205..4f090573 100644
 --- a/www/manager6/qemu/CDEdit.js
@@ -128,8 +167,30 @@ index 3cc16205..4f090573 100644
  	    });
  	    items.push(me.bussel);
  	}
+diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
+index 7acc25d6..2e06da46 100644
+--- a/www/manager6/qemu/DisplayEdit.js
++++ b/www/manager6/qemu/DisplayEdit.js
+@@ -73,7 +73,16 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+ 	    emptyText: '{memoryEmptyText}',
+ 	    disabled: '{matchNonGUIOption}',
+ 	},
+-    }],
++    }, {
++		xtype: 'textfield',
++		name: 'server',
++		value: '',
++		bind: {
++			hidden: '{!showServerField}',
++		},
++		fieldLabel: 'Server',
++		emptyText: '1.2.3.4:0',
++	}],
+ 
+     advancedItems: [
+ 	{
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index e1902695..4b77735b 100644
+index 86d5f4cf..fae14c5e 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -169,6 +169,21 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -213,7 +274,7 @@ index a697cd34..ddad4bce 100644
  	    value: '{type}',
 diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
 new file mode 100644
-index 00000000..50d9d225
+index 00000000..c2f5f4f4
 --- /dev/null
 +++ b/www/manager6/qemu/QemuArchEdit.js
 @@ -0,0 +1,44 @@
