@@ -4,3 +4,4 @@ repo/db/*
 repo/dists/*
 repo/incoming/*
 repo/pool/*
+repo-incoming/*

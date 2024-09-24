@@ -220,11 +220,12 @@ repo-update:
 	else \
 		echo "ERROR: This target must be run as root"; \
 		exit 1; \
-	fi
+	fi; \
+	mkdir -p repo/db repo/dists repo/incoming repo/pool
 
 	# Note: do not push this image to a remote registry as it contains the gpg key
 	$(DOCKER) build . -t repo -f repo.Dockerfile --pull
-	$(DOCKER) run --rm -v ./repo:/opt/repo -it repo bash -c "cd /opt/repo && reprepro -Vb . includedeb bookworm /opt/repo-incoming/*.deb"
+	$(DOCKER) run --rm -v ./repo:/opt/repo -it repo bash -c "cd /opt/repo && cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
 	# Optionally, run a container with the repo mounted at /opt/repo
 	# $(DOCKER) run --rm -v repo:/opt/repo -v nginx/nginx-site.conf:/etc/nginx/conf.d/default.conf -p 8080:80 -it nginx
