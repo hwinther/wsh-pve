@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5bcbd764..77e67fc4 100644
+index 61bd8602..54e5df50 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (8.2.6+wsh1) bookworm; urgency=medium
++pve-manager (8.2.7+wsh1) bookworm; urgency=medium
 +
-+  * Update pve-manager patch
++  * Add remote audio and display support
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 22 Sep 2024 21:52:38 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 24 Sep 2024 18:52:33 +0000
 +
- pve-manager (8.2.6) bookworm; urgency=medium
+ pve-manager (8.2.7) bookworm; urgency=medium
  
-   * fix #5731: vzdump jobs: fix execution of converted jobs
+   * api: add missing schema annotations for download endpoints and adapt
+     existing ones to renaming the respective property to 'download_allowed'.
  
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 20 Sep 2024 17:47:17 +0200
+   * pvesh: limit download handling to annotated endpoints to unify the
+     behaviour with pve-http-server.
  
- pve-manager (8.2.5) bookworm; urgency=medium
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Sep 2024 11:43:24 +0200
  
-   * ui: qemu hardware: use background delay for asynchronous remove tasks so
-     that the task log window doesn't get shown if the task already finished.
