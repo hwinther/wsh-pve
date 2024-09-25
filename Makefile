@@ -90,6 +90,9 @@ PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
 BRANCH_NAME := local_patches
+GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
+GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
+GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
 
 .PHONY: dev-links
 dev-links:
@@ -218,11 +221,17 @@ build-3dfx-drivers:
 pve-qemu-7.2-sparc:
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc deb package"; \
 	git submodule update --init submodules/pve-qemu; \
-	$(DOCKER) build . -f submodules/pve-qemu-7.2-sparc.Dockerfile -t wsh-pve-qemu-7.2-sparc --pull; \
-	id=$$($(DOCKER) create wsh-pve-qemu-7.2-sparc); \
+	git -C submodules/pve-qemu reset --hard; \
+	git -C submodules/pve-qemu checkout 93d558c1eef8f3ec76983cbe6848b0dc606ea5f1; \
+	git -C submodules/pve-qemu submodule update --recursive; \
+	patch -d submodules/pve-qemu -p1 -i ../pve-qemu-7.2-sparc.patch; \
 	mkdir -p build/pve-qemu-7.2-sparc; \
-	$(DOCKER) cp $$id:/opt/bin/pve-qemu-7.2-sparc/ ./build/pve-qemu-7.2-sparc/; \
-	$(DOCKER) rm -v $$id
+	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
+	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -it ghcr.io/hwinther/wsh-pve/pve-build:12 bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
+	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
+	git -C submodules/pve-qemu reset --hard; \
+	git submodule update --init submodules/pve-qemu; \
+	git -C submodules/pve-qemu submodule update --recursive
 
 .PHONY: repo-update
 repo-update:
