@@ -192,7 +192,8 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
-	cd submodules/pve-qemu && make deb
+	mkdir -p build/pve-qemu-3dfx; \
+	cd submodules/pve-qemu && make deb && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 ../../build/pve-qemu-3dfx; \
 
 .PHONY: clean-qemu-3dfx
 clean-qemu-3dfx:
@@ -212,6 +213,16 @@ build-3dfx-drivers:
 	mkdir -p build && rm -rf build/3dfx build/mesa
 	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
+
+.PHONY: pve-qemu-7.2-sparc
+pve-qemu-7.2-sparc:
+	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc deb package"; \
+	git submodule update --init submodules/pve-qemu; \
+	$(DOCKER) build . -f submodules/pve-qemu-7.2-sparc.Dockerfile -t wsh-pve-qemu-7.2-sparc --pull; \
+	id=$$($(DOCKER) create wsh-pve-qemu-7.2-sparc); \
+	mkdir -p build/pve-qemu-7.2-sparc; \
+	$(DOCKER) cp $$id:/opt/bin/pve-qemu-7.2-sparc/ ./build/pve-qemu-7.2-sparc/; \
+	$(DOCKER) rm -v $$id
 
 .PHONY: repo-update
 repo-update:

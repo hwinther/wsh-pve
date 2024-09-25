@@ -1,0 +1,28 @@
+diff --git a/debian/rules b/debian/rules
+index e69ba47..ce87794 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -51,19 +51,19 @@ ${BUILDDIR}/config.status: configure
+ 	--localstatedir=/var \
+ 	--prefix=/usr \
+ 	--sysconfdir=/etc \
+-	--target-list=$(ARCH)-softmmu,aarch64-softmmu \
++	--target-list=$(ARCH)-softmmu,aarch64-softmmu,sparc-softmmu,sparc64-softmmu \
+ 	--with-suffix="kvm" \
+ 	--with-pkgversion="${DEB_SOURCE}_${DEB_VERSION_UPSTREAM_REVISION}" \
+-	--audio-drv-list="alsa" \
++	--audio-drv-list="alsa,pa" \
+ 	--datadir=/usr/share \
+ 	--libexecdir=/usr/lib/kvm \
+ 	--disable-capstone \
+-	--disable-gtk \
++	--enable-gtk \
+ 	--disable-guest-agent \
+ 	--disable-guest-agent-msi \
+ 	--disable-libnfs \
+ 	--disable-libssh \
+-	--disable-sdl \
++	--enable-sdl \
+ 	--disable-smartcard \
+ 	--disable-strip \
+ 	--disable-xen \
