@@ -20,4 +20,6 @@ RUN apt-get install --no-install-recommends --assume-yes meson check libacl1-dev
 RUN apt-get install --no-install-recommends --assume-yes devscripts libdistro-info-perl
 # For additional audio support
 RUN apt-get install --no-install-recommends --assume-yes libasound2-dev libpulse-dev libpipewire-0.3-dev
+# For pve-qemu-7.2-sparc build
+RUN apt-get install --no-install-recommends --assume-yes texi2html texinfo
 RUN apt-get clean
