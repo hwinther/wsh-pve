@@ -69,6 +69,7 @@ jobs:
           podman push $tag_wsh_version
           podman push $tag_latest
 
+          git pull
           pushd submodules/${{ inputs.package }}
           git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
           popd
