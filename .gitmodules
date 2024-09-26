@@ -10,3 +10,6 @@
 [submodule "submodules/qemu-3dfx"]
 	path = submodules/qemu-3dfx
 	url = https://github.com/hwinther/qemu-3dfx
+[submodule "submodules/sparc"]
+	path = submodules/sparc
+	url = git@github.com:hwinther/sparc.git
