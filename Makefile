@@ -93,6 +93,7 @@ BRANCH_NAME := local_patches
 GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
 GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
 GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
+GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 
 .PHONY: dev-links
 dev-links:
@@ -189,14 +190,24 @@ prepare-qemu-3dfx:
 
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
 build-qemu-3dfx: prepare-qemu-3dfx
-	cd submodules/pve-qemu && make submodule && cd ../../; \
+	git submodule update --init submodules/pve-qemu; \
+	git -C submodules/pve-qemu reset --hard; \
+	rm -rf submodules/pve-qemu/qemu; \
+	cd submodules/pve-qemu && make distclean && make submodule && cd ../../; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
+	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/pve-qemu-3dfx; \
-	cd submodules/pve-qemu && make deb && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 ../../build/pve-qemu-3dfx; \
+	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
+	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -it ghcr.io/hwinther/wsh-pve/pve-build:12 bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
+	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
+	git -C submodules/pve-qemu reset --hard; \
+	git submodule update --init submodules/pve-qemu; \
+	git -C submodules/pve-qemu submodule update --recursive
+	#cd submodules/pve-qemu && make deb && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 ../../build/pve-qemu-3dfx; \
 
 .PHONY: clean-qemu-3dfx
 clean-qemu-3dfx:
