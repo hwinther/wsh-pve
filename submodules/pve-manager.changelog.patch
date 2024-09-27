@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 61bd8602..54e5df50 100644
+index 916a356f..fd22ae63 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-manager (8.2.7+wsh2) bookworm; urgency=medium
++
++  * Add remote audio and display support
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 27 Sep 2024 21:55:14 +0000
++
 +pve-manager (8.2.7+wsh1) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
