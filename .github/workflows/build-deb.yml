@@ -66,13 +66,13 @@ jobs:
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
           sudo apt install -y podman
           podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
-          podman push $tag_wsh_version
-          podman push $tag_latest
+          # podman push $tag_wsh_version
+          # podman push $tag_latest
 
-          git pull
-          pushd submodules/${{ inputs.package }}
-          git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
-          popd
-          git add submodules/${{ inputs.package }}.changelog.patch
-          git commit -m "Update changelog for ${{ inputs.package }}"
-          git push origin
+          # git pull
+          # pushd submodules/${{ inputs.package }}
+          # git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
+          # popd
+          # git add submodules/${{ inputs.package }}.changelog.patch
+          # git commit -m "Update changelog for ${{ inputs.package }}"
+          # git push origin
