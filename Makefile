@@ -25,6 +25,17 @@ else
 	DOCKER=podman
 endif
 
+QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
+PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
+PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
+CURRENT_DIR = $(shell pwd)
+BRANCH_NAME := local_patches
+GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
+GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
+GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
+GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
+GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
+
 all: check-and-reinit-submodules build
 
 .PHONY: check-and-reinit-submodules
@@ -40,7 +51,7 @@ build-containers:
 	sudo docker build . -f djgpp.Dockerfile -t wsh-pve-djgpp-build
 
 .PHONY: build
-build: pve-manager qemu-server pve-qemu
+build: pve-manager qemu-server pve-qemu-bundle
 	echo Building all
 
 .PHONY: pve-manager
@@ -62,10 +73,36 @@ qemu-server:
 .PHONY: pve-qemu
 pve-qemu:
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
-	$(DOCKER) build . -f submodules/pve-qemu.Dockerfile -t wsh-pve-qemu --pull; \
-	id=$$($(DOCKER) create pve-qemu); \
-	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
-	$(DOCKER) rm -v $$id
+	git submodule update --init submodules/pve-qemu; \
+	git -C submodules/pve-qemu reset --hard; \
+	rm -rf submodules/pve-qemu/qemu; \
+	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+		-w /src/submodules/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build:/src/build \
+		-v $(CURRENT_DIR)/submodules/sparc:/src/submodules/sparc \
+		-w /src/submodules/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		bash -c "make distclean && make deb || true"; \
+	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/
+	$(MAKE) restore-pve-qemu
+
+restore-pve-qemu:
+	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
+	git -C submodules/pve-qemu reset --hard; \
+	git submodule update --init submodules/pve-qemu; \
+	git -C submodules/pve-qemu submodule update --recursive; \
+	rm -rf submodules/pve-qemu/pve-qemu-kvm-*
 
 .PHONY: clean
 clean: unapply-patches
@@ -80,20 +117,6 @@ clean: unapply-patches
 		fi; \
 	fi; \
 	git submodule deinit --all $(F)
-
-.PHONY: test
-test:
-	@echo "TODO: Add tests"
-
-QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
-PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
-PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
-CURRENT_DIR = $(shell pwd)
-BRANCH_NAME := local_patches
-GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
-GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
-GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
-GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 
 .PHONY: dev-links
 dev-links:
@@ -183,6 +206,11 @@ update-patches:
 		git -C submodules/$$submodule diff --staged -p > submodules/$$submodule.patch; \
 	done
 
+.PHONY: pve-qemu-bundle
+pve-qemu-bundle: pve-qemu-7.2-sparc build-qemu-3dfx pve-qemu
+	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
+	echo "TODO: figure out the order"
+
 .PHONY: 3dfx prepare-qemu-3dfx build-qemu-3dfx
 3dfx: clean-qemu-3dfx prepare-qemu-3dfx build-qemu-3dfx
 prepare-qemu-3dfx:
@@ -201,13 +229,24 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/pve-qemu-3dfx; \
-	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
-	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -it ghcr.io/hwinther/wsh-pve/pve-build:12 bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
-	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
-	git -C submodules/pve-qemu reset --hard; \
-	git submodule update --init submodules/pve-qemu; \
-	git -C submodules/pve-qemu submodule update --recursive
-	#cd submodules/pve-qemu && make deb && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 ../../build/pve-qemu-3dfx; \
+	rm -f build/pve-qemu-3dfx/*; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-w /src/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx \
+		-w /src/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/";
+	$(MAKE) restore-pve-qemu
 
 .PHONY: clean-qemu-3dfx
 clean-qemu-3dfx:
@@ -237,12 +276,24 @@ pve-qemu-7.2-sparc:
 	git -C submodules/pve-qemu submodule update --recursive; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu-7.2-sparc.patch; \
 	mkdir -p build/pve-qemu-7.2-sparc; \
-	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
-	$(DOCKER) run --rm --pull always -v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu -w /src/pve-qemu -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc -e DEBEMAIL="$(GIT_EMAIL)" -e DEBFULLNAME="$(GIT_AUTHOR)" -it ghcr.io/hwinther/wsh-pve/pve-build:12 bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
-	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
-	git -C submodules/pve-qemu reset --hard; \
-	git submodule update --init submodules/pve-qemu; \
-	git -C submodules/pve-qemu submodule update --recursive
+	rm -f build/pve-qemu-7.2-sparc/*; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-w /src/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
+	$(DOCKER) run --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc \
+		-w /src/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/";
+	$(MAKE) restore-pve-qemu
 
 .PHONY: repo-update
 repo-update:
