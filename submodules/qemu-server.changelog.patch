@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index ddb70dc..edd724c 100644
+index ddb70dc..e824cc6 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
+@@ -1,10 +1,34 @@
++qemu-server (8.2.4+wsh4) bookworm; urgency=medium
++
++  * Add remote audio and display support
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 24 Oct 2024 20:21:31 +0000
++
 +qemu-server (8.2.4+wsh3) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
