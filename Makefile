@@ -326,7 +326,7 @@ pve-qemu-7.2-sparc:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::endgroup::"; \
