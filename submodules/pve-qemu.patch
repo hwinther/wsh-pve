@@ -61,7 +61,7 @@ index 51f56c5..b7886ea 100755
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
-+    # Add extra binaries, sparc backport and 3dfx passthrough
++	# Add extra binaries, sparc backport and 3dfx passthrough
 +	cp ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc $(destdir)/usr/bin/qemu-system-sparc-7.2
 +	cp ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc64 $(destdir)/usr/bin/qemu-system-sparc64-7.2
 +	cp ../../../build/pve-qemu-3dfx/qemu-system-x86_64 $(destdir)/usr/bin/qemu-system-x86_64-3dfx
