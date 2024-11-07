@@ -44,25 +44,31 @@ jobs:
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
-          git submodule update --init submodules/${{ inputs.package }}
+          # git submodule update --init submodules/${{ inputs.package }}
 
-          if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
-            pushd submodules/${{ inputs.package }}
-            patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../${{ inputs.package }}.changelog.patch || rm ../${{ inputs.package }}.changelog.patch
-            popd
-          fi
+          # if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
+          #   pushd submodules/${{ inputs.package }}
+          #   patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../${{ inputs.package }}.changelog.patch || rm ../${{ inputs.package }}.changelog.patch
+          #   popd
+          # fi
 
-          echo "::group::Add tag to submodule"
-          GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
-          GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
-          GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
-          docker run --rm -v .:/src -w /src/submodules/${{ inputs.package }} -e DEBEMAIL="$GIT_EMAIL" -e DEBFULLNAME="$GIT_AUTHOR" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$GIT_SUBJECT"
-          echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
-          grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog
-          echo -e "\n\n*********************************\n\n\n\n"
-          WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+\-]+)\).*$/\1/; s/\+/\-/")
-          echo "WSH_VERSION=$WSH_VERSION"
-          echo "::endgroup::"
+          # echo "::group::Add tag to submodule"
+          # GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
+          # GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
+          # GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
+          # docker run --rm \
+          #   -v .:/src \
+          #   -w /src/submodules/${{ inputs.package }} \
+          #   -e DEBEMAIL="$GIT_EMAIL" \
+          #   -e DEBFULLNAME="$GIT_AUTHOR" \
+          #   -t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+          #   dch -l +wsh -D bookworm "$GIT_SUBJECT"
+          # echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
+          # grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog
+          # echo -e "\n\n*********************************\n\n\n\n"
+          # WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+\-]+)\).*$/\1/; s/\+/\-/")
+          # echo "WSH_VERSION=$WSH_VERSION"
+          # echo "::endgroup::"
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
