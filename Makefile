@@ -218,6 +218,10 @@ prepare-qemu-3dfx:
 
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
 build-qemu-3dfx: prepare-qemu-3dfx
+	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::group::Build build-qemu-3dfx"; \
+	fi; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu reset --hard; \
 	rm -rf submodules/pve-qemu/qemu; \
@@ -247,7 +251,10 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/";
-	$(MAKE) restore-pve-qemu
+	$(MAKE) restore-pve-qemu; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::endgroup::"; \
+	fi
 
 .PHONY: clean-qemu-3dfx
 clean-qemu-3dfx:
