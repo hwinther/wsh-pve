@@ -73,6 +73,9 @@ qemu-server:
 .PHONY: pve-qemu
 pve-qemu:
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::group::Build pve-qemu deb package"; \
+	fi; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu reset --hard; \
 	rm -rf submodules/pve-qemu/qemu; \
@@ -94,8 +97,11 @@ pve-qemu:
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true"; \
-	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/
-	$(MAKE) restore-pve-qemu
+	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/; \
+	$(MAKE) restore-pve-qemu; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::endgroup::"; \
+	fi
 
 restore-pve-qemu:
 	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
@@ -154,7 +160,7 @@ dev-links:
 			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
             ln -s "$(CURRENT_DIR)/submodules/pve-manager/www/$$item" "$$symlink_path"; \
         fi; \
-	done; \
+	done
 
 .PHONY: dev
 dev: dev-links qemu-server-dev pve-manager-dev
@@ -220,7 +226,7 @@ REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*
 build-qemu-3dfx: prepare-qemu-3dfx
 	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::group::Build build-qemu-3dfx"; \
+    	echo "::group::Build pve-qemu with 3dfx support"; \
 	fi; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu reset --hard; \
@@ -250,7 +256,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/";
+		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::endgroup::"; \
@@ -277,9 +283,9 @@ build-3dfx-drivers:
 
 .PHONY: pve-qemu-7.2-sparc
 pve-qemu-7.2-sparc:
-	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc deb package"; \
+	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::group::Build pve-qemu-7.2-sparc"; \
+    	echo "::group::Build pve-qemu 7.2 sparc"; \
 	fi; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu reset --hard; \
@@ -303,7 +309,7 @@ pve-qemu-7.2-sparc:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/";
+		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::endgroup::"; \
