@@ -99,7 +99,7 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "make distclean && make deb || true"; \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true"; \
 	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
@@ -265,7 +265,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::endgroup::"; \
