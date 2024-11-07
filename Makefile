@@ -231,17 +231,17 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	mkdir -p build/pve-qemu-3dfx; \
 	rm -f build/pve-qemu-3dfx/*; \
 	$(DOCKER) run --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
-		-w /src/pve-qemu \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx \
-		-w /src/pve-qemu \
+		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
@@ -278,17 +278,17 @@ pve-qemu-7.2-sparc:
 	mkdir -p build/pve-qemu-7.2-sparc; \
 	rm -f build/pve-qemu-7.2-sparc/*; \
 	$(DOCKER) run --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
-		-w /src/pve-qemu \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-v $(CURRENT_DIR)/submodules/submodules/pve-qemu:/src/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc \
-		-w /src/pve-qemu \
+		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
