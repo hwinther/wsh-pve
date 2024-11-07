@@ -88,7 +88,7 @@ pve-qemu:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -98,7 +98,7 @@ pve-qemu:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true"; \
 	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/; \
 	$(MAKE) restore-pve-qemu; \
@@ -255,7 +255,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -264,7 +264,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
@@ -280,8 +280,19 @@ clean-qemu-3dfx:
 build-3dfx-drivers:
 	git submodule update --init submodules/qemu-3dfx
 
-	$(DOCKER) run --rm -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx -w /src/submodules/qemu-3dfx/wrappers/3dfx -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
-	$(DOCKER) run --rm -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx -w /src/submodules/qemu-3dfx/wrappers/mesa -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+    $(DOCKER) run --rm \
+        -v $(CURRENT_DIR)/.git:/src/.git \
+        -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -w /src/submodules/qemu-3dfx/wrappers/3dfx \
+        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+
+    $(DOCKER) run --rm \
+        -v $(CURRENT_DIR)/.git:/src/.git \
+        -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -w /src/submodules/qemu-3dfx/wrappers/mesa \
+        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
 
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build
@@ -309,7 +320,7 @@ pve-qemu-7.2-sparc:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -318,7 +329,7 @@ pve-qemu-7.2-sparc:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
 	$(MAKE) restore-pve-qemu; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
