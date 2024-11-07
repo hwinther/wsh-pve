@@ -228,9 +228,9 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
-	mkdir -p $(CURRENT_DIR)/build/pve-qemu-3dfx; \
-	rm -f $(CURRENT_DIR)/build/pve-qemu-3dfx/*; \
-	ls -la $(CURRENT_DIR)/build/pve-qemu-3dfx; \
+	mkdir -p build/pve-qemu-3dfx; \
+	rm -f build/pve-qemu-3dfx/*; \
+	ls -la build/pve-qemu-3dfx; \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
@@ -271,6 +271,9 @@ build-3dfx-drivers:
 .PHONY: pve-qemu-7.2-sparc
 pve-qemu-7.2-sparc:
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc deb package"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::group::Build pve-qemu-7.2-sparc"; \
+	fi; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu reset --hard; \
 	git -C submodules/pve-qemu checkout 93d558c1eef8f3ec76983cbe6848b0dc606ea5f1; \
@@ -294,7 +297,10 @@ pve-qemu-7.2-sparc:
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-it ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/";
-	$(MAKE) restore-pve-qemu
+	$(MAKE) restore-pve-qemu; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+    	echo "::endgroup::"; \
+	fi
 
 .PHONY: repo-update
 repo-update:
