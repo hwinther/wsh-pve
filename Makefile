@@ -278,27 +278,23 @@ clean-qemu-3dfx:
 
 .PHONY: build-3dfx-drivers
 build-3dfx-drivers:
-	git submodule update --init submodules/qemu-3dfx
-
+	git submodule update --init submodules/qemu-3dfx; \
     $(DOCKER) run --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
         ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
-        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
-
+        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
     $(DOCKER) run --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
         ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
-        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
-
-	ls -la submodules/qemu-3dfx/wrappers/3dfx/build
-	ls -la submodules/qemu-3dfx/wrappers/mesa/build
-
-	mkdir -p build && rm -rf build/3dfx build/mesa
-	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a
+        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
+	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
+	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
+	mkdir -p build && rm -rf build/3dfx build/mesa; \
+	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a; \
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
 .PHONY: pve-qemu-7.2-sparc
