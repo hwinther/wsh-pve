@@ -2,7 +2,7 @@ name: Build debian package for submodule when patch files are changed
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feat/add-extra-binaries-to-pve-qemu"]
     paths:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
