@@ -64,8 +64,11 @@ jobs:
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          sudo apt install -y podman
-          podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
+
+          make pve-qemu-bundle
+
+          # sudo apt install -y podman
+          # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
           # podman push $tag_wsh_version
           # podman push $tag_latest
 
