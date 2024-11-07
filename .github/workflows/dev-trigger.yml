@@ -5,6 +5,10 @@ on:
       branches:
         - "feat/add-extra-binaries-to-pve-qemu"
 
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
 jobs:
   dev:
     uses: ./.github/workflows/build-deb.yml
