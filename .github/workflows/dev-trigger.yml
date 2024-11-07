@@ -1,0 +1,13 @@
+name: dev trigger
+
+on:
+  push:
+      branches:
+        - "feat/add-extra-binaries-to-pve-qemu"
+
+jobs:
+  dev:
+    uses: ./.github/workflows/build-deb.yml
+    secrets: inherit
+    with:
+      package: 'pve-qemu'
