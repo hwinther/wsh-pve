@@ -52,6 +52,7 @@ jobs:
             popd
           fi
 
+          echo "::group::Add tag to submodule"
           GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
           GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
@@ -61,11 +62,12 @@ jobs:
           echo -e "\n\n*********************************\n\n\n\n"
           WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+\-]+)\).*$/\1/; s/\+/\-/")
           echo "WSH_VERSION=$WSH_VERSION"
+          echo "::endgroup::"
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          make pve-qemu-bundle VERBOSE=2
+          make pve-qemu-bundle VERBOSE=2 DOCKER=docker
 
           # sudo apt install -y podman
           # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
@@ -79,3 +81,9 @@ jobs:
           # git add submodules/${{ inputs.package }}.changelog.patch
           # git commit -m "Update changelog for ${{ inputs.package }}"
           # git push origin
+
+      - name: Upload build folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: build/

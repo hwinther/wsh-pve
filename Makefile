@@ -15,14 +15,16 @@ else
   F := 
 endif
 
-ifeq ($(shell command -v podman 2> /dev/null),)
-	ifeq ($(shell command -v docker 2> /dev/null),)
-		$(error Neither podman nor docker is installed.)
+ifeq ($(origin DOCKER), undefined)
+	ifeq ($(shell command -v podman 2> /dev/null),)
+		ifeq ($(shell command -v docker 2> /dev/null),)
+			$(error Neither podman nor docker is installed.)
+		else
+			DOCKER=docker
+		endif
 	else
-		DOCKER=docker
+		DOCKER=podman
 	endif
-else
-	DOCKER=podman
 endif
 
 QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
