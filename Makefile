@@ -286,7 +286,7 @@ pve-qemu-7.2-sparc:
 		-t ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/pve-qemu \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc \
 		-w /src/submodules/pve-qemu \
