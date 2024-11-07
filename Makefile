@@ -228,8 +228,9 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
-	mkdir -p build/pve-qemu-3dfx; \
-	rm -f build/pve-qemu-3dfx/*; \
+	mkdir -p $(CURRENT_DIR)/build/pve-qemu-3dfx; \
+	rm -f $(CURRENT_DIR)/build/pve-qemu-3dfx/*; \
+	ls -la $(CURRENT_DIR)/build/pve-qemu-3dfx; \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
@@ -257,8 +258,8 @@ clean-qemu-3dfx:
 build-3dfx-drivers:
 	git submodule update --init submodules/qemu-3dfx
 
-	podman run --rm -v .git:/src/.git -v "./submodules/qemu-3dfx":"/src/submodules/qemu-3dfx" -w /src/submodules/qemu-3dfx/wrappers/3dfx -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
-	podman run --rm -v .git:/src/.git -v "./submodules/qemu-3dfx":"/src/submodules/qemu-3dfx" -w /src/submodules/qemu-3dfx/wrappers/mesa -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+	$(DOCKER) run --rm -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx -w /src/submodules/qemu-3dfx/wrappers/3dfx -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
+	$(DOCKER) run --rm -v $(CURRENT_DIR)/.git:/src/.git -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx -w /src/submodules/qemu-3dfx/wrappers/mesa -it ghcr.io/hwinther/wsh-pve/djgpp-build:12 bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"
 
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build
@@ -277,7 +278,6 @@ pve-qemu-7.2-sparc:
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu-7.2-sparc.patch; \
 	mkdir -p build/pve-qemu-7.2-sparc; \
 	rm -f build/pve-qemu-7.2-sparc/*; \
-	echo CURRENT_DIR=$(CURRENT_DIR); \
 	$(DOCKER) run --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
