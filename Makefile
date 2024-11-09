@@ -269,6 +269,7 @@ build-qemu-3dfx: prepare-qemu-3dfx restore-pve-qemu
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::group::Build pve-qemu with 3dfx support"; \
 	fi; \
+	cd submodules/pve-qemu && make submodule && cd ../../; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
