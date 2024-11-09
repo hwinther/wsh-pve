@@ -81,6 +81,7 @@ qemu-server:
 .PHONY: pve-qemu
 pve-qemu:
 	@set -e; \
+	
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::group::Build pve-qemu deb package"; \
@@ -235,6 +236,7 @@ prepare-qemu-3dfx:
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
 build-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
+
 	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::group::Build pve-qemu with 3dfx support"; \
@@ -307,6 +309,7 @@ build-3dfx-drivers:
 .PHONY: pve-qemu-7.2-sparc
 pve-qemu-7.2-sparc:
 	@set -e; \
+
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
     	echo "::group::Build pve-qemu 7.2 sparc"; \
@@ -387,6 +390,9 @@ help:
 	@echo "  make dev-links"
 	@echo "  make clean-qemu-3dfx"
 	@echo "  make build-3dfx-drivers"
+	@echo "  make pve-qemu-7.2-sparc"
+	@echo "  make build-qemu-3dfx"
+	@echo "  make pve-qemu-bundle"
 	@echo "  make repo"
 	@echo "  make run-repo-container"
 	@echo "  make help"
