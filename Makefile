@@ -27,6 +27,12 @@ ifeq ($(origin DOCKER), undefined)
 	endif
 endif
 
+ifeq ($(origin DOCKER_ARG), undefined)
+	DOCKER_ARG :=
+else
+	DOCKER_ARG := $(DOCKER_ARG) 
+endif
+
 QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
@@ -83,14 +89,14 @@ pve-qemu:
 	git -C submodules/pve-qemu reset --hard; \
 	rm -rf submodules/pve-qemu/qemu; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build:/src/build \
@@ -250,14 +256,14 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	pwd; \
 	echo -e "\n\n\n\n"; \
 
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx \
@@ -279,13 +285,13 @@ clean-qemu-3dfx:
 .PHONY: build-3dfx-drivers
 build-3dfx-drivers:
 	git submodule update --init submodules/qemu-3dfx; \
-    $(DOCKER) run --rm \
+    $(DOCKER) run $(DOCKER_ARG)--rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
         ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
         bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
-    $(DOCKER) run --rm \
+    $(DOCKER) run $(DOCKER_ARG)--rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
@@ -311,14 +317,14 @@ pve-qemu-7.2-sparc:
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu-7.2-sparc.patch; \
 	mkdir -p build/pve-qemu-7.2-sparc; \
 	rm -f build/pve-qemu-7.2-sparc/*; \
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
-	$(DOCKER) run --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG)--rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc \
