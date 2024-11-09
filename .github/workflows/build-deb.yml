@@ -73,7 +73,7 @@ jobs:
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker'
+          make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker --user root'
 
           # sudo apt install -y podman
           # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
