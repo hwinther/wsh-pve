@@ -114,6 +114,7 @@ pve-qemu:
 
 restore-pve-qemu:
 	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
+	cd submodules/pve-qemu && make distclean && cd ..; \
 	git -C submodules/pve-qemu reset --hard; \
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu submodule update --recursive; \
