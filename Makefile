@@ -79,8 +79,9 @@ qemu-server:
 	$(DOCKER) rm -v $$id
 
 .PHONY: pve-qemu
-pve-qemu: restore-pve-qemu
+pve-qemu:
 	@set -e; \
+	$(MAKE) restore-pve-qemu; \
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
@@ -110,8 +111,9 @@ pve-qemu: restore-pve-qemu
 	fi
 
 .PHONY: pve-qemu-7.2-sparc
-pve-qemu-7.2-sparc: restore-pve-qemu
+pve-qemu-7.2-sparc:
 	@set -e; \
+	$(MAKE) restore-pve-qemu; \
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
@@ -262,8 +264,9 @@ prepare-qemu-3dfx:
 	git submodule update --init submodules/qemu-3dfx
 
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
-build-qemu-3dfx: prepare-qemu-3dfx restore-pve-qemu
+build-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
+	$(MAKE) restore-pve-qemu; \
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
