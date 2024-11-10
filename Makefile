@@ -85,9 +85,10 @@ pve-qemu:
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::group::Build pve-qemu deb package"; \
+		echo "::group::Build pve-qemu deb package"; \
 	fi; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
+	mkdir -p build/repo; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
@@ -104,10 +105,9 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true"; \
-	cp -f submodules/pve-qemu/pve-qemu*.deb build/repo/; \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu*.deb /src/build/repo/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::endgroup::"; \
+		echo "::endgroup::"; \
 	fi
 
 .PHONY: pve-qemu-7.2-sparc
@@ -117,7 +117,7 @@ pve-qemu-7.2-sparc:
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::group::Build pve-qemu 7.2 sparc"; \
+		echo "::group::Build pve-qemu 7.2 sparc"; \
 	fi; \
 	rm -rf submodules/pve-qemu/qemu; \
 	git -C submodules/pve-qemu checkout 93d558c1eef8f3ec76983cbe6848b0dc606ea5f1; \
@@ -142,7 +142,7 @@ pve-qemu-7.2-sparc:
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::endgroup::"; \
+		echo "::endgroup::"; \
 	fi
 
 restore-pve-qemu:
@@ -270,7 +270,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::group::Build pve-qemu with 3dfx support"; \
+		echo "::group::Build pve-qemu with 3dfx support"; \
 	fi; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	git -C submodules/pve-qemu submodule update --init qemu; \
@@ -304,7 +304,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-    	echo "::endgroup::"; \
+		echo "::endgroup::"; \
 	fi
 
 .PHONY: clean-qemu-3dfx
