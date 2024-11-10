@@ -30,7 +30,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..b7886ea 100755
+index 51f56c5..e39870d 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -43,19 +43,19 @@ endif
@@ -57,21 +57,40 @@ index 51f56c5..b7886ea 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -119,6 +119,13 @@ install: build
+@@ -119,6 +119,32 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
-+	# Add extra binaries, sparc backport and 3dfx passthrough
++# Add extra binaries, sparc backport and 3dfx passthrough
++ifneq ("$(wildcard ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc)", "")
 +	cp ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc $(destdir)/usr/bin/qemu-system-sparc-7.2
++endif
++
++ifneq ("$(wildcard ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc64)", "")
 +	cp ../../../build/pve-qemu-7.2-sparc/qemu-system-sparc64 $(destdir)/usr/bin/qemu-system-sparc64-7.2
++endif
++
++ifneq ("$(wildcard ../../../build/pve-qemu-3dfx/qemu-system-x86_64)", "")
 +	cp ../../../build/pve-qemu-3dfx/qemu-system-x86_64 $(destdir)/usr/bin/qemu-system-x86_64-3dfx
-+	# Add extra system-sparc bios images
-+	cp ../../sparc/ss5.bin ../../sparc/ss10_v2.25_rom ../../sparc/ss20_v2.25_rom $(destdir)/usr/share/kvm/
++endif
++
++# Add extra system-sparc bios images
++ifneq ("$(wildcard ../../sparc/ss5.bin)", "")
++	cp ../../sparc/ss5.bin $(destdir)/usr/share/kvm/
++endif
++
++ifneq ("$(wildcard ../../sparc/ss10_v2.25_rom)", "")
++	cp ../../sparc/ss10_v2.25_rom $(destdir)/usr/share/kvm/
++endif
++
++ifneq ("$(wildcard ../../sparc/ss20_v2.25_rom)", "")
++	cp ../../sparc/ss20_v2.25_rom $(destdir)/usr/share/kvm/
++endif
 +
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-flags.pl > $(flagfile)
  	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machinefile)
-@@ -148,7 +155,7 @@ binary-arch: build install
+@@ -148,7 +174,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
