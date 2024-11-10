@@ -73,7 +73,7 @@ jobs:
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
           # make ${{ inputs.package == 'pve-qemu' && 'build-qemu-3dfx' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
 
           # sudo apt install -y podman
