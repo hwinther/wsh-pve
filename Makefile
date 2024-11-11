@@ -66,7 +66,7 @@ pve-manager-clean:
 	$(Q)$(ECHO) "INFO: Cleaning pve-manager"; \
 	rm -rf submodules/pve-manager; \
 	git submodule update --init submodules/pve-manager; \
-	$(MAKE) restore-pve-qemu
+	$(MAKE) pve-manager
 
 .PHONY: pve-manager
 pve-manager:
@@ -94,7 +94,7 @@ qemu-server-clean:
 	$(Q)$(ECHO) "INFO: Cleaning qemu-server"; \
 	rm -rf submodules/qemu-server; \
 	git submodule update --init submodules/qemu-server; \
-	$(MAKE) restore-pve-qemu
+	$(MAKE) qemu-server
 
 .PHONY: qemu-server
 qemu-server:
