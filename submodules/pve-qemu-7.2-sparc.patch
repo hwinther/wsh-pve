@@ -1,16 +1,16 @@
-diff --git a/Makefile b/Makefile
-index 8be4721..6dac168 100644
---- a/Makefile
-+++ b/Makefile
-@@ -33,7 +33,7 @@ $(BUILDDIR): keycodemapdb | submodule
- deb kvm: $(DEBS)
- $(DEB_DBG): $(DEB)
- $(DEB): $(BUILDDIR)
--	cd $(BUILDDIR); dpkg-buildpackage -b -us -uc -j
-+	cd $(BUILDDIR); dpkg-buildpackage -b -us -uc -j4
- 	lintian $(DEBS)
- 
- .PHONY: update
+diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
+index ba50e51..523e848 100644
+--- a/debian/pve-qemu-kvm.lintian-overrides
++++ b/debian/pve-qemu-kvm.lintian-overrides
+@@ -1,4 +1,4 @@
+-pve-qemu-kvm: arch-dependent-file-in-usr-share usr/share/kvm/hppa-firmware.img
+-pve-qemu-kvm: binary-from-other-architecture usr/share/kvm/hppa-firmware.img
+-pve-qemu-kvm: unstripped-binary-or-object usr/share/kvm/hppa-firmware.img
+-pve-qemu-kvm: statically-linked-binary usr/share/kvm/hppa-firmware.img
++pve-qemu-kvm: arch-dependent-file-in-usr-share [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: binary-from-other-architecture [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
++pve-qemu-kvm: statically-linked-binary [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
 index e69ba47..ce87794 100755
 --- a/debian/rules

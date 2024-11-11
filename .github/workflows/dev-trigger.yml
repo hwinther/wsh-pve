@@ -1,0 +1,18 @@
+name: dev trigger
+
+on:
+  workflow_dispatch:
+  # push:
+  #     branches:
+  #       - "feat/add-extra-binaries-to-pve-qemu"
+
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
+jobs:
+  dev:
+    uses: ./.github/workflows/build-deb.yml
+    secrets: inherit
+    with:
+      package: 'qemu-server'

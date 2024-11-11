@@ -52,20 +52,33 @@ jobs:
             popd
           fi
 
+          echo "::group::Add tag to submodule"
           GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
           GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
-          docker run --rm -v .:/src -w /src/submodules/${{ inputs.package }} -e DEBEMAIL="$GIT_EMAIL" -e DEBFULLNAME="$GIT_AUTHOR" -t ghcr.io/hwinther/wsh-pve/pve-build:12 dch -l +wsh -D bookworm "$GIT_SUBJECT"
+          docker run --rm \
+            -v .:/src \
+            -w /src/submodules/${{ inputs.package }} \
+            -e DEBEMAIL="$GIT_EMAIL" \
+            -e DEBFULLNAME="$GIT_AUTHOR" \
+            ghcr.io/hwinther/wsh-pve/pve-build:12 \
+            dch -l +wsh -D bookworm "$GIT_SUBJECT"
           echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
           grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog
           echo -e "\n\n*********************************\n\n\n\n"
           WSH_VERSION=$(grep "\+wsh" submodules/${{ inputs.package }}/debian/changelog | head -1 | sed -E "s/^.*\(([0-9a-z\.\+\-]+)\).*$/\1/; s/\+/\-/")
           echo "WSH_VERSION=$WSH_VERSION"
+          echo "::endgroup::"
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
-          sudo apt install -y podman
-          podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
+
+          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+
+          ls -la build/*
+          buildPath=$(realpath build)
+          echo podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
+          podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
           podman push $tag_wsh_version
           podman push $tag_latest
 
@@ -76,3 +89,9 @@ jobs:
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }}"
           git push origin
+
+      - name: Upload build folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: build/
