@@ -1,39 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ddb70dc..e824cc6 100644
+index 1c6e989..af9ae76 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,34 @@
-+qemu-server (8.2.4+wsh4) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (8.2.5+wsh1) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 24 Oct 2024 20:21:31 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 11 Nov 2024 20:21:11 +0000
 +
-+qemu-server (8.2.4+wsh3) bookworm; urgency=medium
-+
-+  * Add remote audio and display support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 23 Sep 2024 20:16:57 +0000
-+
-+qemu-server (8.2.4+wsh2) bookworm; urgency=medium
-+
-+  * Add experimental audio support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 10 Sep 2024 22:01:09 +0000
-+
-+qemu-server (8.2.4+wsh1) bookworm; urgency=medium
-+
-+  * Add qemu-server patch and related build files
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 18 Aug 2024 21:07:55 +0000
-+
- qemu-server (8.2.4) bookworm; urgency=medium
+ qemu-server (8.2.5) bookworm; urgency=medium
  
-   * fix #5528: ensure cgroup limits like CPU weight are set correctly and in
-     the same way for both cases, the cold-start and when changing while the VM
-     is running
+   * remote migration: fix online migration via API clients
  
-   * fix #5619: honor link-down setting when hot-plugging NIC
+   * fix #5714: fix calloc parameter ordering
  
-   * resume: bump timeout for query-status, as activating the block drives in
-     QEMU on resume can take a bit of time during which the QEMU process might
+   * fix typos in user-visible strings
+ 
+   * api: status: add some missing description for status return properties
+ 
