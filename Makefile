@@ -90,13 +90,33 @@ pve-manager:
 		echo "::endgroup::"; \
 	fi
 
+qemu-server-clean:
+	$(Q)$(ECHO) "INFO: Cleaning qemu-server"; \
+	rm -rf submodules/qemu-server; \
+	git submodule update --init submodules/qemu-server; \
+	$(MAKE) restore-pve-qemu
+
 .PHONY: qemu-server
 qemu-server:
 	$(Q)$(ECHO) "INFO: Building qemu-server deb package"; \
-	$(DOCKER) build . -f submodules/qemu-server.Dockerfile -t wsh-qemu-server --pull; \
-	id=$$($(DOCKER) create qemu-server); \
-	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
-	$(DOCKER) rm -v $$id
+		if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::group::Building qemu-server deb package"; \
+	fi; \
+	patch -d submodules/qemu-server -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../qemu-server.patch; \
+	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/qemu-server:/src/submodules/qemu-server \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build/repo:/build/repo \
+		-w /src/submodules/qemu-server \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-e DEB_BUILD_OPTIONS=nocheck \
+		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		bash -c "git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb || true && cp -f qemu-server_*.deb /build/repo/"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::endgroup::"; \
+	fi
 
 .PHONY: pve-qemu
 pve-qemu:
