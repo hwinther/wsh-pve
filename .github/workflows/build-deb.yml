@@ -44,13 +44,13 @@ jobs:
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
-          # git submodule update --init submodules/${{ inputs.package }}
+          git submodule update --init submodules/${{ inputs.package }}
 
-          # if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
-          #   pushd submodules/${{ inputs.package }}
-          #   patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../${{ inputs.package }}.changelog.patch || rm ../${{ inputs.package }}.changelog.patch
-          #   popd
-          # fi
+          if [ -f submodules/${{ inputs.package }}.changelog.patch ]; then
+            pushd submodules/${{ inputs.package }}
+            patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../${{ inputs.package }}.changelog.patch || rm ../${{ inputs.package }}.changelog.patch
+            popd
+          fi
 
           # echo "::group::Add tag to submodule"
           # GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
@@ -73,19 +73,21 @@ jobs:
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
-          # make ${{ inputs.package == 'pve-qemu' && 'build-qemu-3dfx' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+          #sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
 
           # sudo apt install -y podman
           # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
-          # podman push $tag_wsh_version
-          # podman push $tag_latest
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest # -v /run/systemd/journal/socket:/run/systemd/journal/socket
+          docker push $tag_wsh_version
+          docker push $tag_latest
 
-          # git pull
-          # pushd submodules/${{ inputs.package }}
-          # git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
-          # popd
-          # git add submodules/${{ inputs.package }}.changelog.patch
+          git pull
+          pushd submodules/${{ inputs.package }}
+          git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
+          popd
+          git add submodules/${{ inputs.package }}.changelog.patch
+          git diff # TEST
           # git commit -m "Update changelog for ${{ inputs.package }}"
           # git push origin
 

@@ -89,6 +89,9 @@ pve-qemu:
 	fi; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/repo; \
+	if [ -f submodules/pve-qemu.changelog.patch ]; then; \
+		cd submodules/pve-qemu && patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch || rm ../pve-qemu.changelog.patch && cd ../../; \
+	fi; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
