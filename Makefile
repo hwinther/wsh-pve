@@ -151,8 +151,12 @@ restore-pve-qemu:
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu submodule update --recursive
 
+restore-sparc:
+	$(ECHO) "INFO: Restoring sparc submodule"; \
+	git submodule update --init submodules/sparc
+
 .PHONY: pve-qemu-bundle
-pve-qemu-bundle: pve-qemu-7.2-sparc build-qemu-3dfx pve-qemu
+pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc build-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
 
@@ -274,15 +278,9 @@ build-qemu-3dfx: prepare-qemu-3dfx
 	fi; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	git -C submodules/pve-qemu submodule update --init qemu; \
-	ls -la submodules/pve-qemu; \
-	ls -la submodules/pve-qemu/qemu; \
-	ls -la submodules; \
-	ls -la submodules/qemu-3dfx; \
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
-	id; \
-	ls -la submodules/pve-qemu/qemu/hw; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/pve-qemu-3dfx; \
