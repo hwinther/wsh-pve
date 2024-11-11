@@ -1,9 +1,10 @@
 name: dev trigger
 
 on:
-  push:
-      branches:
-        - "feat/add-extra-binaries-to-pve-qemu"
+  workflow_dispatch:
+  # push:
+  #     branches:
+  #       - "feat/add-extra-binaries-to-pve-qemu"
 
 permissions:
   # for ghcr.io (docker registry):
