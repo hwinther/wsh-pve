@@ -89,6 +89,7 @@ pve-qemu:
 	fi; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/repo; \
+	git -C submodules/pve-qemu submodule update --init qemu; \
 	if [ -f "submodules/pve-qemu.changelog.patch" ]; then \
 		cd submodules/pve-qemu && patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch || rm ../pve-qemu.changelog.patch && cd ../../; \
 	fi; \
