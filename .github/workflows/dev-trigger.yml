@@ -14,4 +14,4 @@ jobs:
     uses: ./.github/workflows/build-deb.yml
     secrets: inherit
     with:
-      package: 'pve-qemu'
+      package: 'pve-manager'
