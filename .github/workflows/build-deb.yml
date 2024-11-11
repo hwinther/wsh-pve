@@ -79,7 +79,7 @@ jobs:
           # sudo apt install -y podman
           # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
           buildPath=$(realpath build)
-          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v $buildPAth:/build
+          docker build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v $buildPath:/build
           docker push $tag_wsh_version
           docker push $tag_latest
 

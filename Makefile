@@ -62,13 +62,33 @@ build-containers:
 build: pve-manager qemu-server pve-qemu-bundle
 	echo Building all
 
+pve-manager-clean:
+	$(Q)$(ECHO) "INFO: Cleaning pve-manager"; \
+	rm -rf submodules/pve-manager; \
+	git submodule update --init submodules/pve-manager; \
+	$(MAKE) restore-pve-qemu
+
 .PHONY: pve-manager
 pve-manager:
 	$(Q)$(ECHO) "INFO: Building pve-manager deb package"; \
-	$(DOCKER) build . -f submodules/pve-manager.Dockerfile -t wsh-pve-manager --pull -v /run/systemd/journal/socket:/run/systemd/journal/socket; \
-	id=$$($(DOCKER) create wsh-pve-manager); \
-	$(DOCKER) cp $$id:/opt/repo/ ./build/; \
-	$(DOCKER) rm -v $$id
+		if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::group::Building pve-manager deb package"; \
+	fi; \
+	patch -d submodules/pve-manager -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-manager.patch; \
+	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-manager:/src/submodules/pve-manager \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build/repo:/build/repo \
+		-w /src/submodules/pve-manager \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-e RUST_BACKTRACE=full \
+		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
+		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb || true && cp -f pve-manager_*.deb /build/repo/"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::endgroup::"; \
+	fi
 
 .PHONY: qemu-server
 qemu-server:
@@ -85,7 +105,7 @@ pve-qemu:
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu deb package"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-		echo "::group::Build pve-qemu deb package"; \
+		echo "::group::Building pve-qemu deb package"; \
 	fi; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/repo; \
@@ -121,7 +141,7 @@ pve-qemu-7.2-sparc:
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-		echo "::group::Build pve-qemu 7.2 sparc"; \
+		echo "::group::Building pve-qemu 7.2 sparc"; \
 	fi; \
 	rm -rf submodules/pve-qemu/qemu; \
 	git -C submodules/pve-qemu checkout 93d558c1eef8f3ec76983cbe6848b0dc606ea5f1; \
@@ -278,7 +298,7 @@ build-qemu-3dfx: prepare-qemu-3dfx
 
 	$(Q)$(ECHO) "INFO: Building pve-qemu with 3dfx support"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-		echo "::group::Build pve-qemu with 3dfx support"; \
+		echo "::group::Building pve-qemu with 3dfx support"; \
 	fi; \
 	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
 	git -C submodules/pve-qemu submodule update --init qemu; \
