@@ -105,7 +105,7 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		ghcr.io/hwinther/wsh-pve/pve-build:12 \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu*.deb /src/build/repo/"; \
+		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu-kvm_*.deb /src/build/repo/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
