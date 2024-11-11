@@ -73,11 +73,8 @@ jobs:
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          #sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
-          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
 
-          # sudo apt install -y podman
-          # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
           ls -la build/*
           buildPath=$(realpath build)
           echo podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
@@ -90,9 +87,8 @@ jobs:
           git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
           popd
           git add submodules/${{ inputs.package }}.changelog.patch
-          git diff # TEST
-          # git commit -m "Update changelog for ${{ inputs.package }}"
-          # git push origin
+          git commit -m "Update changelog for ${{ inputs.package }}"
+          git push origin
 
       - name: Upload build folder
         uses: actions/upload-artifact@v4
