@@ -80,10 +80,10 @@ jobs:
           # podman build . -f submodules/${{ inputs.package }}.Dockerfile -t $tag_wsh_version -t $tag_latest -v /run/systemd/journal/socket:/run/systemd/journal/socket
           ls -la build/*
           buildPath=$(realpath build)
-          echo docker build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
-          docker build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
-          docker push $tag_wsh_version
-          docker push $tag_latest
+          echo podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
+          podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
+          podman push $tag_wsh_version
+          podman push $tag_latest
 
           git pull
           pushd submodules/${{ inputs.package }}
