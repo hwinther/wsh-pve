@@ -1,27 +1,22 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9cf815c..788636e 100644
+index 4c67909..0f32851 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (9.0.2-3+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,17 @@
++pve-qemu-kvm (9.0.2-4+wsh1) bookworm; urgency=medium
 +
-+  * Remove unused dependencies
++  * Feat: Add extra binaries to pve qemu and reworked the pipeline
++    process for local testing via makefile targets (#4)
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 12 Sep 2024 16:38:00 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 12 Nov 2024 07:47:18 +0000
 +
-+pve-qemu-kvm (9.0.2-3+wsh1) bookworm; urgency=medium
-+
-+  * Add experimental audio support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Wed, 11 Sep 2024 21:42:53 +0000
-+
+ pve-qemu-kvm (9.0.2-4) bookworm; urgency=medium
+ 
+   * async snapshot: ensure any dynamic vCPU-throttling applied for
+     auto-converge gets always disabled again after finishing the snapshot.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Sun, 10 Nov 2024 11:23:09 +0100
+ 
  pve-qemu-kvm (9.0.2-3) bookworm; urgency=medium
  
    * pick up fix for VirtIO PCI regressions
- 
-   * pick up stable fixes for 9.0, including fixes for VirtIO-net, ARM and
-     x86(_64) emulation, CVEs to harden NBD server against malicious clients,
-     as well as a few others (VNC, physmem, Intel IOMMU, ...).
- 
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 06 Sep 2024 16:21:42 +0200
- 
