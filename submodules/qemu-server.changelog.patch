@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 06743f6..ab13f4b 100644
+index 06743f6..17ae3fb 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.2.6+wsh2) bookworm; urgency=medium
++
++  * Add remote audio and display support
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 19 Nov 2024 20:21:41 +0000
++
 +qemu-server (8.2.6+wsh1) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
