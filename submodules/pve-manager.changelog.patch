@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 864895ab..d8d51a0c 100644
+index ad28247d..e9f85d41 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (8.2.8+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (8.2.10+wsh1) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 19 Nov 2024 20:21:34 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Wed, 20 Nov 2024 20:21:33 +0000
 +
-+pve-manager (8.2.8+wsh1) bookworm; urgency=medium
-+
-+  * Add remote audio and display support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 11 Nov 2024 23:10:16 +0000
-+
- pve-manager (8.2.8) bookworm; urgency=medium
+ pve-manager (8.2.10) bookworm; urgency=medium
  
-   * fix #5734: provide missing methods for Proxmox.Utils for mobile UI
+   * ui: firewall: add sdn as valid scope to IP-set selector
  
-   * api: subscription update: report error if removing ceph-auth file fails
+   * ui: firewall: add forward direction to rule panel
  
-   * add module to centrally track Ceph release info for the backend
+   * ui: sdn: add firewall panel
  
-   * pveceph: prompt user on TTY about installing experimental version
+   * ui: firewall: show warning when creating forward rules
  
