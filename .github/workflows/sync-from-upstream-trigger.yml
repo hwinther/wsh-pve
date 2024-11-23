@@ -32,3 +32,9 @@ jobs:
     with:
       repository: hwinther/pve-qemu
     secrets: inherit
+
+  qemu-3dfx:
+      uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+      with:
+        repository: hwinther/qemu-3dfx
+      secrets: inherit

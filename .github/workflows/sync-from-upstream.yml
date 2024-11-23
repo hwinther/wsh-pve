@@ -93,7 +93,12 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
             echo -e "\n\nSubmodule diff:"
             git diff --submodule=diff
-            exit 0
+
+            if [ "${{ inputs.repository }}" == "hwinther/qemu-3dfx" ]; then
+              echo "qemu-3dfx is a special case, updating the reference to the submodule"
+            else
+              exit 0
+            fi
           fi
 
           git status
