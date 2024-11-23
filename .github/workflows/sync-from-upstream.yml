@@ -11,7 +11,7 @@ on:
       build_deb:
         description: "Build debian package when changes are detected"
         required: false
-        default: true
+        default: false
         type: boolean
   workflow_call:
     inputs:
@@ -23,7 +23,7 @@ on:
       build_deb:
         description: "Build debian package when changes are detected"
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
