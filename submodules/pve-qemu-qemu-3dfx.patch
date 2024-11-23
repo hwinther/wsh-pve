@@ -1,8 +1,8 @@
 diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
-index 931f74256e..b6e24d6332 100644
+index 931f74256e..89434380d4 100644
 --- a/accel/kvm/kvm-all.c
 +++ b/accel/kvm/kvm-all.c
-@@ -1487,6 +1487,41 @@ static int kvm_dirty_ring_init(KVMState *s)
+@@ -1487,6 +1487,42 @@ static int kvm_dirty_ring_init(KVMState *s)
      return 0;
  }
  
@@ -39,6 +39,7 @@ index 931f74256e..b6e24d6332 100644
 +    section.nonvolatile = mr.nonvolatile;
 +
 +    kvm_set_phys_mem(kml, &section, add);
++    object_unref(OBJECT(&mr));
 +}
 +
  static void kvm_region_add(MemoryListener *listener,
@@ -78,18 +79,21 @@ index 5c21b0c4db..364b0ff7c9 100644
  
  void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
 diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
-index 27a68071d7..2fabf14676 100644
+index 27a68071d7..b69ea9809c 100644
 --- a/include/hw/i386/pc.h
 +++ b/include/hw/i386/pc.h
-@@ -187,6 +187,22 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
+@@ -187,6 +187,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
  
  #define TYPE_PORT92 "port92"
  
-+#if (((QEMU_VERSION_MAJOR << 8) | \
-+      (QEMU_VERSION_MINOR << 4) | \
-+       QEMU_VERSION_MICRO) < 0x510)
++#if (((QEMU_VERSION_MAJOR << 12) | (QEMU_VERSION_MINOR << 8) \
++     | QEMU_VERSION_MICRO) < 0x5100)
 +#define qdev_new(x)         qdev_create(NULL,x)
 +#define sysbus_realize(x,y) qdev_init_nofail((DeviceState *)x)
++#endif
++#if (((QEMU_VERSION_MAJOR << 12) | (QEMU_VERSION_MINOR << 8) \
++     | QEMU_VERSION_MICRO) < 0x9132)
++#define device_class_set_legacy_reset(x,y) x->reset = y
 +#endif
 +/* GLIDE pass-through */
 +#define TYPE_GLIDEPT "glidept"
@@ -231,7 +235,7 @@ index c644222982..1d87b78c00 100644
                  break;
              case QEMU_OPTION_m:
 diff --git a/target/i386/whpx/whpx-all.c b/target/i386/whpx/whpx-all.c
-index 31eec7048c..bf2ea36247 100644
+index 31eec7048c..54e021c263 100644
 --- a/target/i386/whpx/whpx-all.c
 +++ b/target/i386/whpx/whpx-all.c
 @@ -10,6 +10,7 @@
@@ -242,7 +246,7 @@ index 31eec7048c..bf2ea36247 100644
  #include "exec/address-spaces.h"
  #include "exec/ioport.h"
  #include "gdbstub/helpers.h"
-@@ -2364,6 +2365,38 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
+@@ -2364,6 +2365,39 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
                          memory_region_is_rom(mr), mr->name);
  }
  
@@ -276,6 +280,7 @@ index 31eec7048c..bf2ea36247 100644
 +    section.nonvolatile = mr.nonvolatile;
 +
 +    whpx_process_section(&section, add);
++    object_unref(OBJECT(&mr));
 +}
 +
  static void whpx_region_add(MemoryListener *listener,
