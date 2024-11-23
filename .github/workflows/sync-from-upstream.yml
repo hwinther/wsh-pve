@@ -52,7 +52,7 @@ jobs:
 
           upstream_user="proxmox"
           if [ "$basename" == "qemu-3dfx" ]; then upstream_user="kjliew"; fi
-          upstream_repo=$(echo ${{ inputs.repository }} | sed -e 's/hwinther/$upstream_user/')
+          upstream_repo=$(echo ${{ inputs.repository }} | sed -e "s/hwinther/$upstream_user/")
           echo upstream_repo=$upstream_repo
           git remote add upstream https://github.com/$upstream_repo.git
           git fetch upstream
