@@ -8,6 +8,11 @@ on:
         required: true
         default: "hwinther/pve-manager"
         type: string
+      build_deb:
+        description: "Build debian package when changes are detected"
+        required: false
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       repository:
@@ -15,6 +20,15 @@ on:
         required: true
         default: "hwinther/pve-manager"
         type: string
+      build_deb:
+        description: "Build debian package when changes are detected"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
 
 jobs:
   sync-from-upstream:
@@ -99,7 +113,7 @@ jobs:
   build-deb-when-changed:
     uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
     needs: [update-submodule]
-    if: ${{ needs.update-submodule.outputs.changed == 'true' }}
+    if: ${{ needs.update-submodule.outputs.changed == 'true' && inputs.build_deb == true }}
     with:
       package: ${{ needs.update-submodule.outputs.submodule }}
     secrets: inherit
