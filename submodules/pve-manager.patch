@@ -1,5 +1,5 @@
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index 2c3a822b..ce946a2b 100644
+index c94a5cdf..84e7c852 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -259,6 +259,7 @@ JSSRC= 							\
@@ -24,7 +24,7 @@ index 07eb9b17..aa955705 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index db86fa9a..1fabdd01 100644
+index 97dbbae2..8d0efc0e 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -506,6 +506,16 @@ Ext.define('PVE.Utils', {
@@ -168,10 +168,10 @@ index 3cc16205..4f090573 100644
  	    items.push(me.bussel);
  	}
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 7acc25d6..2e06da46 100644
+index 7acc25d6..8dc1a14a 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
-@@ -73,7 +73,16 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -73,7 +73,21 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
  	    emptyText: '{memoryEmptyText}',
  	    disabled: '{matchNonGUIOption}',
  	},
@@ -185,15 +185,20 @@ index 7acc25d6..2e06da46 100644
 +		},
 +		fieldLabel: 'Server',
 +		emptyText: '1.2.3.4:0',
++	}, {
++	    xtype: 'proxmoxcheckbox',
++	    fieldLabel: gettext('Enable 3DFX/Mesa'),
++	    name: 'mesa',
++	    uncheckedValue: 0,
 +	}],
  
      advancedItems: [
  	{
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index 86d5f4cf..fae14c5e 100644
+index 59e670db..e54b4844 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -169,6 +169,21 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -173,6 +173,21 @@ Ext.define('PVE.qemu.HardwareView', {
  		    return PVE.Utils.render_qemu_machine(value);
  		},
  	    },
@@ -215,7 +220,7 @@ index 86d5f4cf..fae14c5e 100644
  	    scsihw: {
  		header: gettext('SCSI Controller'),
  		iconCls: 'database',
-@@ -738,6 +753,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -745,6 +760,13 @@ Ext.define('PVE.qemu.HardwareView', {
  				disabled: !caps.nodes['Sys.Console'],
  				handler: editorFactory('RNGEdit'),
  			    },
