@@ -96,16 +96,9 @@ jobs:
 
             if [ "${{ inputs.repository }}" == "hwinther/qemu-3dfx" ]; then
               echo "qemu-3dfx is a special case, updating the reference to the submodule but skipping build"
-              echo Add and commit changes
-              git add submodules/$submodule
-              git commit -m "Update submodule $submodule"
-              git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
-              git push origin main
-              echo "changed=false" >> $GITHUB_OUTPUT
+            else
               exit 0
             fi
-            
-            exit 0
           fi
 
           git status
@@ -121,7 +114,12 @@ jobs:
             git commit -m "Update submodule $submodule"
             git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
             git push origin main
-            echo "changed=true" >> $GITHUB_OUTPUT
+            if [ "${{ inputs.repository }}" == "hwinther/qemu-3dfx" ]; then
+              echo "skipping build for qemu-3dfx (setting changed=false)"
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
           fi
 
   build-deb-when-changed:
