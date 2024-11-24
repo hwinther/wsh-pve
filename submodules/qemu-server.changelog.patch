@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 06743f6..17ae3fb 100644
+index e686bac..4b499c1 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (8.2.6+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (8.3.0+wsh1) bookworm; urgency=medium
 +
 +  * Add remote audio and display support
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 19 Nov 2024 20:21:41 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 24 Nov 2024 00:11:28 +0000
 +
-+qemu-server (8.2.6+wsh1) bookworm; urgency=medium
-+
-+  * Add remote audio and display support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 11 Nov 2024 23:08:58 +0000
-+
- qemu-server (8.2.6) bookworm; urgency=medium
+ qemu-server (8.3.0) bookworm; urgency=medium
  
-   * vm start: add syslog info with which PID a VM process was started
+   * api: import working storage: improve error message
  
-   * pci: avoid the hard requirement for a passthrough device to be reset on
-     start to fix a recent regression from improving error handling from the
-     pve-common package.
+   * migration: drop outdated check that was introduced for PVE 7.2 to PVE 7.3
+     to guard against (relatively low) fallout of the newly introduced
+     cloudinit section in the VM config. This check can sometimes trigger as
+     false-positive.
  
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 11 Nov 2024 20:38:25 +0100
- 
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 20 Nov 2024 12:12:00 +0100
