@@ -407,7 +407,7 @@ help:
 	@echo "  clean-qemu-3dfx:      Clean QEMU 3dfx"
 	@echo "  build-3dfx-drivers:   Build 3dfx drivers"
 	@echo "  repo:                 Build and run the Docker container for the repo"
-	@echo "  run-repo-container:   Optionally, run a container with the repo mounted at /opt/repo"
+	@echo "  repo-update:          Run the repo container and fetch newest packages to combine into a debian repo folder structure on local disk
 	@echo "  help:                 Show this help message"
 	@echo ""
 	@echo "Variables:"
@@ -427,7 +427,7 @@ help:
 	@echo "  make pve-qemu-3dfx"
 	@echo "  make pve-qemu-bundle"
 	@echo "  make repo"
-	@echo "  make run-repo-container"
+	@echo "  make repo-update"
 	@echo "  make help"
 	@echo ""
 	@echo "For more information, see the README.md file."
