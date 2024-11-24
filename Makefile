@@ -354,8 +354,8 @@ clean-qemu-3dfx:
 	rm -rf submodules/pve-qemu/debian/patches/wsh submodules/pve-qemu/qemu/hw/3dfx submodules/pve-qemu/qemu/hw/mesa; \
 	cd submodules/pve-qemu && git checkout debian/patches/series && make clean
 
-.PHONY: build-3dfx-drivers
-build-3dfx-drivers:
+.PHONY: 3dfx-drivers
+3dfx-drivers:
 	git submodule update --init submodules/qemu-3dfx; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
@@ -368,7 +368,7 @@ build-3dfx-drivers:
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
         ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
-        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
+        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
 	mkdir -p build && rm -rf build/3dfx build/mesa; \
@@ -405,9 +405,9 @@ help:
 	@echo "  test:                 Run tests"
 	@echo "  dev-links:            Create symlinks for QemuServer files"
 	@echo "  clean-qemu-3dfx:      Clean QEMU 3dfx"
-	@echo "  build-3dfx-drivers:   Build 3dfx drivers"
+	@echo "  3dfx-drivers:   Build 3dfx drivers"
 	@echo "  repo:                 Build and run the Docker container for the repo"
-	@echo "  repo-update:          Run the repo container and fetch newest packages to combine into a debian repo folder structure on local disk
+	@echo "  repo-update:          Run the repo container and fetch newest packages to combine into a debian repo folder structure on local disk"
 	@echo "  help:                 Show this help message"
 	@echo ""
 	@echo "Variables:"
@@ -422,7 +422,7 @@ help:
 	@echo "  make test"
 	@echo "  make dev-links"
 	@echo "  make clean-qemu-3dfx"
-	@echo "  make build-3dfx-drivers"
+	@echo "  make 3dfx-drivers"
 	@echo "  make pve-qemu-7.2-sparc"
 	@echo "  make pve-qemu-3dfx"
 	@echo "  make pve-qemu-bundle"
