@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4c67909..6eb5c39 100644
+index 4c67909..6937aaf 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,24 @@
+@@ -1,10 +1,31 @@
++pve-qemu-kvm (9.0.2-4+wsh3) bookworm; urgency=medium
++
++  * Feat: Add extra binaries to pve qemu and reworked the pipeline
++    process for local testing via makefile targets (#4)
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 24 Nov 2024 00:52:42 +0000
++
 +pve-qemu-kvm (9.0.2-4+wsh2) bookworm; urgency=medium
 +
 +  * Feat: Add extra binaries to pve qemu and reworked the pipeline
