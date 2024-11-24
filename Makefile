@@ -200,7 +200,7 @@ restore-sparc:
 	git submodule update --init submodules/sparc
 
 .PHONY: pve-qemu-bundle
-pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc build-qemu-3dfx pve-qemu
+pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
 
@@ -306,13 +306,13 @@ update-patches:
 		git -C submodules/$$submodule diff --staged -p > submodules/$$submodule.patch; \
 	done
 
-.PHONY: 3dfx prepare-qemu-3dfx build-qemu-3dfx
-3dfx: clean-qemu-3dfx prepare-qemu-3dfx build-qemu-3dfx
+.PHONY: 3dfx prepare-qemu-3dfx pve-qemu-3dfx
+3dfx: clean-qemu-3dfx prepare-qemu-3dfx pve-qemu-3dfx
 prepare-qemu-3dfx:
 	git submodule update --init submodules/qemu-3dfx
 
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
-build-qemu-3dfx: prepare-qemu-3dfx
+pve-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
 	$(MAKE) restore-pve-qemu; \
 
@@ -424,7 +424,7 @@ help:
 	@echo "  make clean-qemu-3dfx"
 	@echo "  make build-3dfx-drivers"
 	@echo "  make pve-qemu-7.2-sparc"
-	@echo "  make build-qemu-3dfx"
+	@echo "  make pve-qemu-3dfx"
 	@echo "  make pve-qemu-bundle"
 	@echo "  make repo"
 	@echo "  make run-repo-container"
