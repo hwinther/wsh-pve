@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 0184181f..01b2373e 100644
+index 0184181f..27927f60 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
+@@ -1,10 +1,28 @@
++pve-manager (8.3.0+wsh3) bookworm; urgency=medium
++
++  * Add 3dfx/mesa guest configuration
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 29 Nov 2024 20:21:27 +0000
++
 +pve-manager (8.3.0+wsh2) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
