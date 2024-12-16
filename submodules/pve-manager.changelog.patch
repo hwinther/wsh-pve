@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 0184181f..27927f60 100644
+index a5426d9f..2cd0f406 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+pve-manager (8.3.0+wsh3) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (8.3.1+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 29 Nov 2024 20:21:27 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 16 Dec 2024 20:21:41 +0000
 +
-+pve-manager (8.3.0+wsh2) bookworm; urgency=medium
-+
-+  * Add 3dfx/mesa guest configuration
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 24 Nov 2024 21:17:28 +0000
-+
-+pve-manager (8.3.0+wsh1) bookworm; urgency=medium
-+
-+  * Add remote audio and display support
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 24 Nov 2024 00:07:57 +0000
-+
- pve-manager (8.3.0) bookworm; urgency=medium
+ pve-manager (8.3.1) bookworm; urgency=medium
  
-   * ceph: drop preview flag for the Ceph Squid release
+   * ui: sdn firewall: add online help reference
  
-   * aplinfo: update TurnkeyLinux key after expiry
+   * ui: cluster join info: add clipboard icon to "Copy Information" button
  
-   * update shipped aplliance info index
+   * external metric server: influxdb: always quote tags
  
-   * ui: firewall rules: add empty text to grid
+   * api: notification targets: fix permission check for POST/PUT
  
