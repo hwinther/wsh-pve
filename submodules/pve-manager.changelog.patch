@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a5426d9f..2cd0f406 100644
+index f290c69e..96df4c32 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (8.3.1+wsh1) bookworm; urgency=medium
++pve-manager (8.3.2+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 16 Dec 2024 20:21:41 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 20 Jan 2025 20:21:01 +0000
 +
- pve-manager (8.3.1) bookworm; urgency=medium
+ pve-manager (8.3.2) bookworm; urgency=medium
  
-   * ui: sdn firewall: add online help reference
+   * api: network: add return schema for interface listing
  
-   * ui: cluster join info: add clipboard icon to "Copy Information" button
+   * ui: ceph pool: indentation clean-up
  
-   * external metric server: influxdb: always quote tags
+   * ui: ceph: don't set default size/min-size when editing existing pool
  
-   * api: notification targets: fix permission check for POST/PUT
+   * ui: ceph pool: add opt-in column for the configured pool application
  
