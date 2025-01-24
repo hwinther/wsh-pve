@@ -1,43 +1,22 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4c67909..6def600 100644
+index fadc85b..bec85ab 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,38 @@
-+pve-qemu-kvm (9.0.2-4+wsh4) bookworm; urgency=medium
+@@ -1,10 +1,17 @@
++pve-qemu-kvm (9.1.2-1+wsh1) bookworm; urgency=medium
 +
 +  * Feat: Add extra binaries to pve qemu and reworked the pipeline
 +    process for local testing via makefile targets (#4)
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Wed, 11 Dec 2024 20:52:51 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 24 Jan 2025 20:41:31 +0000
 +
-+pve-qemu-kvm (9.0.2-4+wsh3) bookworm; urgency=medium
-+
-+  * Feat: Add extra binaries to pve qemu and reworked the pipeline
-+    process for local testing via makefile targets (#4)
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 24 Nov 2024 00:52:42 +0000
-+
-+pve-qemu-kvm (9.0.2-4+wsh2) bookworm; urgency=medium
-+
-+  * Feat: Add extra binaries to pve qemu and reworked the pipeline
-+    process for local testing via makefile targets (#4)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 22 Nov 2024 23:50:32 +0000
-+
-+pve-qemu-kvm (9.0.2-4+wsh1) bookworm; urgency=medium
-+
-+  * Feat: Add extra binaries to pve qemu and reworked the pipeline
-+    process for local testing via makefile targets (#4)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 12 Nov 2024 07:47:18 +0000
-+
+ pve-qemu-kvm (9.1.2-1) bookworm; urgency=medium
+ 
+   * update submodule and patches to QEMU 9.1.2
+ 
+   * improve error handling and edge cases with fleecing backups.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 11 Dec 2024 16:47:21 +0100
+ 
  pve-qemu-kvm (9.0.2-4) bookworm; urgency=medium
  
-   * async snapshot: ensure any dynamic vCPU-throttling applied for
-     auto-converge gets always disabled again after finishing the snapshot.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Sun, 10 Nov 2024 11:23:09 +0100
- 
- pve-qemu-kvm (9.0.2-3) bookworm; urgency=medium
- 
-   * pick up fix for VirtIO PCI regressions
