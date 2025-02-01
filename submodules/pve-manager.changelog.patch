@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f290c69e..96df4c32 100644
+index 545ec76e..719d8719 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (8.3.2+wsh1) bookworm; urgency=medium
++pve-manager (8.3.3+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 20 Jan 2025 20:21:01 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 01 Feb 2025 22:08:38 +0000
 +
+ pve-manager (8.3.3) bookworm; urgency=medium
+ 
+   * update shipped appliance info index
+ 
+   * add missing htmlEncode for some UI elements
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 20 Jan 2025 11:37:32 +0100
+ 
  pve-manager (8.3.2) bookworm; urgency=medium
- 
-   * api: network: add return schema for interface listing
- 
-   * ui: ceph pool: indentation clean-up
- 
-   * ui: ceph: don't set default size/min-size when editing existing pool
- 
-   * ui: ceph pool: add opt-in column for the configured pool application
  
