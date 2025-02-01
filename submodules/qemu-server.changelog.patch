@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 063e27a6..3a2c3183 100644
+index 7d440810..0d27209f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (8.3.1+wsh1) bookworm; urgency=medium
++qemu-server (8.3.6+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 09 Dec 2024 20:21:47 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 01 Feb 2025 22:11:02 +0000
 +
- qemu-server (8.3.1) bookworm; urgency=medium
+ qemu-server (8.3.6) bookworm; urgency=medium
  
-   * api: clone vm: make error for unsupported volumes appear in a
-     deterministic order and include the ID of the problematic volume.
+   * api: do not set an empty machine option when pinning
  
-   * fix #3588: helper: consider NIC count for config-specific timeout
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 20 Jan 2025 14:45:58 +0100
  
-  -- Proxmox Support Team <support@proxmox.com>  Thu, 05 Dec 2024 12:38:12 +0100
+ qemu-server (8.3.5) bookworm; urgency=medium
  
- qemu-server (8.3.0) bookworm; urgency=medium
+   * unify CDROM medium hotplug and startup code
+ 
