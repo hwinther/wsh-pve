@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 7d440810..0d27209f 100644
+index 7d440810..d971b7cd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.3.6+wsh2) bookworm; urgency=medium
++
++  * Add 3dfx/mesa guest configuration
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 04 Feb 2025 20:21:22 +0000
++
 +qemu-server (8.3.6+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
