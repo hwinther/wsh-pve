@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 7d440810..d971b7cd 100644
+index 90f24779..059e9542 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (8.3.6+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (8.3.7+wsh1) bookworm; urgency=medium
 +
 +  * Add 3dfx/mesa guest configuration
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 04 Feb 2025 20:21:22 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 18 Feb 2025 20:21:55 +0000
 +
-+qemu-server (8.3.6+wsh1) bookworm; urgency=medium
-+
-+  * Add 3dfx/mesa guest configuration
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 01 Feb 2025 22:11:02 +0000
-+
+ qemu-server (8.3.7) bookworm; urgency=medium
+ 
+   * api: fix ova live import of disks by using correct format for source image
+ 
+   * qmp helpers: use the HMP interface as a stopgap to deal with QEMU 9.2's
+     stricter requirements for the serialized format sent over the QMP.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 04 Feb 2025 17:12:25 +0100
+ 
  qemu-server (8.3.6) bookworm; urgency=medium
- 
-   * api: do not set an empty machine option when pinning
- 
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 20 Jan 2025 14:45:58 +0100
- 
- qemu-server (8.3.5) bookworm; urgency=medium
- 
-   * unify CDROM medium hotplug and startup code
- 
