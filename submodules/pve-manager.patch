@@ -24,7 +24,7 @@ index 07eb9b17..aa955705 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 97dbbae2..8d0efc0e 100644
+index 90011a8f..b8f80289 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -506,6 +506,16 @@ Ext.define('PVE.Utils', {
@@ -168,7 +168,7 @@ index 3cc16205..4f090573 100644
  	    items.push(me.bussel);
  	}
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 7acc25d6..8dc1a14a 100644
+index c8a67017..fca59f15 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
 @@ -73,7 +73,21 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
@@ -195,7 +195,7 @@ index 7acc25d6..8dc1a14a 100644
      advancedItems: [
  	{
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index 59e670db..e54b4844 100644
+index c6d193fc..246ac172 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -173,6 +173,21 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -220,7 +220,7 @@ index 59e670db..e54b4844 100644
  	    scsihw: {
  		header: gettext('SCSI Controller'),
  		iconCls: 'database',
-@@ -745,6 +760,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -748,6 +763,13 @@ Ext.define('PVE.qemu.HardwareView', {
  				disabled: !caps.nodes['Sys.Console'],
  				handler: editorFactory('RNGEdit'),
  			    },
