@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 90f24779..059e9542 100644
+index 49bda363..8a0a46c8 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (8.3.7+wsh1) bookworm; urgency=medium
++qemu-server (8.3.8+wsh1) bookworm; urgency=medium
 +
-+  * Add 3dfx/mesa guest configuration
++  * Move helper qemu server helper and reset line drift
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 18 Feb 2025 20:21:55 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 22 Feb 2025 20:59:03 +0000
 +
- qemu-server (8.3.7) bookworm; urgency=medium
+ qemu-server (8.3.8) bookworm; urgency=medium
  
-   * api: fix ova live import of disks by using correct format for source image
+   * resume: error out if VM is a template
  
-   * qmp helpers: use the HMP interface as a stopgap to deal with QEMU 9.2's
-     stricter requirements for the serialized format sent over the QMP.
+   * backup: also restore VM power state for early failures
  
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 04 Feb 2025 17:12:25 +0100
+   * config: add special class that prevents writing the configuration
  
- qemu-server (8.3.6) bookworm; urgency=medium
+   * fix #6007: template backup: use minimized configuration for handling the full vm start
+ 
