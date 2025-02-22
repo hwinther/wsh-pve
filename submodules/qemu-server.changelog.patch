@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 49bda363..8a0a46c8 100644
+index 49bda363..87fe3c3d 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.3.8+wsh2) bookworm; urgency=medium
++
++  * Fix variable comparison
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 22 Feb 2025 21:42:49 +0000
++
 +qemu-server (8.3.8+wsh1) bookworm; urgency=medium
 +
 +  * Move helper qemu server helper and reset line drift
