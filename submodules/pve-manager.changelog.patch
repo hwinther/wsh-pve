@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 545ec76e..a6db6fb6 100644
+index 82b09641..c84c08e2 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (8.3.3+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (8.3.4+wsh1) bookworm; urgency=medium
 +
-+  * Add 3dfx/mesa guest configuration
++  * Move helper qemu server helper and reset line drift
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 18 Feb 2025 20:22:02 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 22 Feb 2025 20:59:03 +0000
 +
-+pve-manager (8.3.3+wsh1) bookworm; urgency=medium
-+
-+  * Add 3dfx/mesa guest configuration
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 01 Feb 2025 22:08:38 +0000
-+
- pve-manager (8.3.3) bookworm; urgency=medium
+ pve-manager (8.3.4) bookworm; urgency=medium
  
-   * update shipped appliance info index
- 
-   * add missing htmlEncode for some UI elements
- 
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 20 Jan 2025 11:37:32 +0100
- 
- pve-manager (8.3.2) bookworm; urgency=medium
+   * fix #5699: add support to define a HTTP header from which the real IP of a
+     connection should be parsed from. This can be useful for setups with a
+     reverse proxy in front of the API server. On top of that add support for
+     optionally configuring an allow-list of IP networks that the real source
+     IP must match one to allow the connection to be handled.
+     The related config variables are named `PROXY_REAL_IP_HEADER` and
+     `PROXY_REAL_IP_ALLOW_FROM` respectively.
  
