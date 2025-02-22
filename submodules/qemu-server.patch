@@ -1,5 +1,5 @@
 diff --git a/PVE/QemuServer.pm b/PVE/QemuServer.pm
-index 9d06ac8b..3891defb 100644
+index 9d06ac8b..21ee8c8b 100644
 --- a/PVE/QemuServer.pm
 +++ b/PVE/QemuServer.pm
 @@ -185,7 +185,7 @@ my $vga_fmt = {
@@ -241,7 +241,7 @@ index 9d06ac8b..3891defb 100644
 +	if ($vga->{type} && defined($vga->{server}) && $vga->{server} ne '') {
 +		# TODO: gtk/sdl need sdl for 3dfx passthru, should ,gl=on be default?
 +		my $displayType = 'gtk';
-+		if ($vga->{mesa} == 1) {
++		if (defined($vga->{mesa}) && $vga->{mesa} == 1) {
 +			$displayType = 'sdl';
 +		}
 +		print "-- Using $displayType display with $vga->{type} driver and host $vga->{server}\n";
