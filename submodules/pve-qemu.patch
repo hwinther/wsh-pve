@@ -30,9 +30,18 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..e39870d 100755
+index 51f56c5..2532d30 100755
 --- a/debian/rules
 +++ b/debian/rules
+@@ -18,7 +18,7 @@ machinefile := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
+ BUILDDIR=build
+ 
+ # FIXME: pass to configure as --extra-cflags=CFLAGS ?! also LDFLAGS?
+-CFLAGS += -Wall
++CFLAGS += -Wall -mcrc32  # crc32 added for qemu-3dfx mesa hw
+ 
+ export CFLAGS
+ 
 @@ -43,19 +43,19 @@ endif
  	    --localstatedir=/var \
  	    --prefix=/usr \
