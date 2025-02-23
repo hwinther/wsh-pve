@@ -353,7 +353,7 @@ index 1041c1dd..3770a75c 100644
  
      if (my $size = $res->{size}) {
 diff --git a/PVE/QemuServer/Helpers.pm b/PVE/QemuServer/Helpers.pm
-index 8e9f4fc0..e2ca00b8 100644
+index 8e9f4fc0..06dd8f76 100644
 --- a/PVE/QemuServer/Helpers.pm
 +++ b/PVE/QemuServer/Helpers.pm
 @@ -22,11 +22,14 @@ windows_version
@@ -373,19 +373,22 @@ index 8e9f4fc0..e2ca00b8 100644
      return '/usr/bin/kvm' if get_host_arch() eq $arch; # i.e. native arch
  
      my $cmd = $arch_to_qemu_binary->{$arch}
-@@ -45,7 +48,11 @@ my $kvm_mtime = {};
+@@ -45,8 +48,13 @@ my $kvm_mtime = {};
  sub kvm_user_version {
      my ($binary) = @_;
  
 -    $binary //= get_command_for_arch(get_host_arch()); # get the native arch by default
+-    my $st = stat($binary);
 +    my $hardcoded_vga_no_mesa = {
 +        mesa => 0,
 +    };
 +
 +    $binary //= get_command_for_arch(get_host_arch(), $hardcoded_vga_no_mesa); # get the native arch by default
-     my $st = stat($binary);
++    my $st = stat($binary)
++    or die "unable to stat file '$binary' - $!\n"; # most likely one of the additional binaries provided by the wsh patches have failed to build and are missing from the debian package
  
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
+     return $kvm_user_version->{$binary} if $kvm_user_version->{$binary} &&
 diff --git a/PVE/QemuServer/Machine.pm b/PVE/QemuServer/Machine.pm
 index f1acde8f..eae192f6 100644
 --- a/PVE/QemuServer/Machine.pm
