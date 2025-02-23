@@ -1,22 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index d84b462..04a4afe 100644
+index acb2720..e60801f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,17 @@
-+pve-qemu-kvm (9.1.2-3+wsh1) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (9.2.0-1+wsh1) bookworm; urgency=medium
 +
-+  * Feat: Add extra binaries to pve qemu and reworked the pipeline
-+    process for local testing via makefile targets (#4)
++  * Add flag for mesa hw build
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 04 Feb 2025 20:41:47 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 23 Feb 2025 16:01:03 +0000
 +
+ pve-qemu-kvm (9.2.0-1) bookworm; urgency=medium
+ 
+   * update submodule and patches to QEMU 9.2.0
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 04 Feb 2025 08:49:20 +0100
+ 
  pve-qemu-kvm (9.1.2-3) bookworm; urgency=medium
  
    * async snapshot: explicitly specify raw format when loading the VM state
      file
- 
-   * vma create: rework CLI parameters for passing disk to a more structured
-     style and use that to allow explicitly specifying the format
- 
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 24 Jan 2025 16:12:34 +0100
- 
