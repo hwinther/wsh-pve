@@ -1,0 +1,38 @@
+{
+	"folders": [
+		{
+			"path": "../",
+			"name": "wsh-pve (all folders)"
+		},
+		{
+			"path": "../submodules/pve-manager",
+			"name": "pve-manager (submodule)"
+		},
+		{
+			"path": "../submodules/pve-qemu",
+			"name": "pve-qemu (submodule)"
+		},
+		{
+			"path": "../submodules/pve-qemu/qemu",
+			"name": "pve-qemu qemu (submodule)"
+		},
+		{
+			"path": "../submodules/qemu-3dfx",
+			"name": "qemu-3dfx (submodule)"
+		},
+		{
+			"path": "../submodules/qemu-server",
+			"name": "qemu-server (submodule)"
+		},
+		{
+			"path": "../submodules/sparc",
+			"name": "sparc (submodule)"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"nmmintrin.h": "c",
+			"smmintrin.h": "c"
+		}
+	}
+}
