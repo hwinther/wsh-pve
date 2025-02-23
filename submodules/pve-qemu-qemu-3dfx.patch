@@ -1,8 +1,8 @@
 diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
-index 931f74256e..89434380d4 100644
+index 801cff16a5..19aff68147 100644
 --- a/accel/kvm/kvm-all.c
 +++ b/accel/kvm/kvm-all.c
-@@ -1487,6 +1487,42 @@ static int kvm_dirty_ring_init(KVMState *s)
+@@ -1666,6 +1666,42 @@ static int kvm_dirty_ring_init(KVMState *s)
      return 0;
  }
  
@@ -46,13 +46,13 @@ index 931f74256e..89434380d4 100644
                             MemoryRegionSection *section)
  {
 diff --git a/hw/i386/pc.c b/hw/i386/pc.c
-index 5c21b0c4db..364b0ff7c9 100644
+index 317aaca25a..ea91c0b5e0 100644
 --- a/hw/i386/pc.c
 +++ b/hw/i386/pc.c
-@@ -1265,6 +1265,28 @@ void pc_basic_device_init(struct PCMachineState *pcms,
+@@ -1236,6 +1236,28 @@ void pc_basic_device_init(struct PCMachineState *pcms,
      /* Super I/O */
      pc_superio_init(isa_bus, create_fdctrl, pcms->i8042_enabled,
-                     pcms->vmport != ON_OFF_AUTO_ON);
+                     pcms->vmport != ON_OFF_AUTO_ON, &error_fatal);
 +    /* Glide pass-through */
 +    glidept_mm_init();
 +    /* MESA pass-through */
@@ -79,10 +79,10 @@ index 5c21b0c4db..364b0ff7c9 100644
  
  void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
 diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
-index 27a68071d7..b69ea9809c 100644
+index 14ee06287d..a833ccb166 100644
 --- a/include/hw/i386/pc.h
 +++ b/include/hw/i386/pc.h
-@@ -187,6 +187,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
+@@ -204,6 +204,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
  
  #define TYPE_PORT92 "port92"
  
@@ -109,12 +109,12 @@ index 27a68071d7..b69ea9809c 100644
  void pc_system_flash_create(PCMachineState *pcms);
  void pc_system_flash_cleanup_unused(PCMachineState *pcms);
 diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
-index fad9a7e8ff..a89ecc837b 100644
+index c3a60b2890..dea41861eb 100644
 --- a/include/sysemu/kvm.h
 +++ b/include/sysemu/kvm.h
-@@ -437,6 +437,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
+@@ -470,6 +470,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
  
- #endif /* NEED_CPU_H */
+ #endif /* COMPILING_PER_TARGET */
  
 +void kvm_update_guest_pa_range(uint64_t start_pa, uint64_t size, void *host_va, int readonly, int add);
 +
@@ -122,7 +122,7 @@ index fad9a7e8ff..a89ecc837b 100644
  
  void kvm_init_cpu_signals(CPUState *cpu);
 diff --git a/include/sysemu/whpx.h b/include/sysemu/whpx.h
-index 781ca5b2b6..932c484b73 100644
+index 00ff409b68..86efeb5c63 100644
 --- a/include/sysemu/whpx.h
 +++ b/include/sysemu/whpx.h
 @@ -19,6 +19,8 @@
@@ -135,10 +135,10 @@ index 781ca5b2b6..932c484b73 100644
  bool whpx_apic_in_platform(void);
  
 diff --git a/include/ui/console.h b/include/ui/console.h
-index 0bc7a00ac0..235e542dcb 100644
+index 46b3128185..4f0fd0ebda 100644
 --- a/include/ui/console.h
 +++ b/include/ui/console.h
-@@ -154,6 +154,8 @@ typedef struct QemuUIInfo {
+@@ -153,6 +153,8 @@ typedef struct QemuUIInfo {
      uint32_t  width;
      uint32_t  height;
      uint32_t  refresh_rate;
@@ -147,7 +147,7 @@ index 0bc7a00ac0..235e542dcb 100644
  } QemuUIInfo;
  
  /* cursor data format is 32bit RGBA */
-@@ -403,6 +405,7 @@ void graphic_console_set_hwops(QemuConsole *con,
+@@ -381,6 +383,7 @@ void graphic_console_set_hwops(QemuConsole *con,
                                 void *opaque);
  void graphic_console_close(QemuConsole *con);
  
@@ -155,7 +155,7 @@ index 0bc7a00ac0..235e542dcb 100644
  void graphic_hw_update(QemuConsole *con);
  void graphic_hw_update_done(QemuConsole *con);
  void graphic_hw_invalidate(QemuConsole *con);
-@@ -497,4 +500,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
+@@ -475,4 +478,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
                                        size_t size,
                                        Error **errp);
  
@@ -176,10 +176,10 @@ index 0bc7a00ac0..235e542dcb 100644
 +
  #endif
 diff --git a/meson.build b/meson.build
-index 91a0aa64c6..1454c553c5 100644
+index 147097c652..a1eef584a1 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -1423,6 +1423,7 @@ else
+@@ -1561,6 +1561,7 @@ else
      error('sdl-image required, but SDL was @0@'.format(
            get_option('sdl').disabled() ? 'disabled' : 'not found'))
    endif
@@ -187,7 +187,7 @@ index 91a0aa64c6..1454c553c5 100644
    sdl_image = not_found
  endif
  
-@@ -3492,6 +3493,8 @@ if have_system or have_user
+@@ -3706,6 +3707,8 @@ if have_system or have_user
                           arguments: ['@INPUT@', '@EXTRA_ARGS@', '-o', '@OUTPUT@'])
    subdir('libdecnumber')
    subdir('target')
@@ -196,7 +196,7 @@ index 91a0aa64c6..1454c553c5 100644
  endif
  
  subdir('audio')
-@@ -3832,6 +3835,11 @@ foreach target : target_dirs
+@@ -4121,6 +4124,11 @@ foreach target : target_dirs
    target_inc = [include_directories('target' / config_target['TARGET_BASE_ARCH'])]
    if host_os == 'linux'
      target_inc += include_directories('linux-headers', is_system: true)
@@ -209,10 +209,10 @@ index 91a0aa64c6..1454c553c5 100644
    if target.endswith('-softmmu')
      target_type='system'
 diff --git a/system/vl.c b/system/vl.c
-index c644222982..1d87b78c00 100644
+index 2f855d83fb..9e537b76a8 100644
 --- a/system/vl.c
 +++ b/system/vl.c
-@@ -863,6 +863,13 @@ static MachineClass *find_default_machine(GSList *machines)
+@@ -871,6 +871,13 @@ static MachineClass *find_default_machine(GSList *machines)
      return default_machineclass;
  }
  
@@ -226,7 +226,7 @@ index c644222982..1d87b78c00 100644
  static void version(void)
  {
      printf("QEMU emulator version " QEMU_FULL_VERSION "\n"
-@@ -3001,6 +3008,7 @@ void qemu_init(int argc, char **argv)
+@@ -3004,6 +3011,7 @@ void qemu_init(int argc, char **argv)
                  break;
              case QEMU_OPTION_version:
                  version();
@@ -235,7 +235,7 @@ index c644222982..1d87b78c00 100644
                  break;
              case QEMU_OPTION_m:
 diff --git a/target/i386/whpx/whpx-all.c b/target/i386/whpx/whpx-all.c
-index 31eec7048c..54e021c263 100644
+index a6674a826d..9eccb490be 100644
 --- a/target/i386/whpx/whpx-all.c
 +++ b/target/i386/whpx/whpx-all.c
 @@ -10,6 +10,7 @@
@@ -246,7 +246,7 @@ index 31eec7048c..54e021c263 100644
  #include "exec/address-spaces.h"
  #include "exec/ioport.h"
  #include "gdbstub/helpers.h"
-@@ -2364,6 +2365,39 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
+@@ -2365,6 +2366,39 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
                          memory_region_is_rom(mr), mr->name);
  }
  
@@ -287,10 +287,10 @@ index 31eec7048c..54e021c263 100644
                             MemoryRegionSection *section)
  {
 diff --git a/ui/console.c b/ui/console.c
-index 43226c5c14..d42e98630e 100644
+index 5165f17125..41fa868605 100644
 --- a/ui/console.c
 +++ b/ui/console.c
-@@ -124,6 +124,11 @@ static void gui_setup_refresh(DisplayState *ds)
+@@ -126,6 +126,11 @@ static void gui_setup_refresh(DisplayState *ds)
      }
  }
  
@@ -302,7 +302,7 @@ index 43226c5c14..d42e98630e 100644
  void graphic_hw_update_done(QemuConsole *con)
  {
      if (con) {
-@@ -138,6 +143,8 @@ void graphic_hw_update(QemuConsole *con)
+@@ -140,6 +145,8 @@ void graphic_hw_update(QemuConsole *con)
          return;
      }
      if (con->hw_ops->gfx_update) {
@@ -312,7 +312,7 @@ index 43226c5c14..d42e98630e 100644
          async = con->hw_ops->gfx_update_async;
      }
 diff --git a/ui/sdl2.c b/ui/sdl2.c
-index 0a0eb5a42d..a589316be8 100644
+index bd4f5a9da1..f1e67282dd 100644
 --- a/ui/sdl2.c
 +++ b/ui/sdl2.c
 @@ -25,6 +25,7 @@
@@ -323,7 +323,7 @@ index 0a0eb5a42d..a589316be8 100644
  #include "qemu/cutils.h"
  #include "ui/console.h"
  #include "ui/input.h"
-@@ -581,6 +582,29 @@ static void handle_mousewheel(SDL_Event *ev)
+@@ -584,6 +585,29 @@ static void handle_mousewheel(SDL_Event *ev)
      qemu_input_event_sync();
  }
  
@@ -353,7 +353,7 @@ index 0a0eb5a42d..a589316be8 100644
  static void handle_windowevent(SDL_Event *ev)
  {
      struct sdl2_console *scon = get_scon_from_window(ev->window.windowID);
-@@ -605,6 +629,7 @@ static void handle_windowevent(SDL_Event *ev)
+@@ -608,6 +632,7 @@ static void handle_windowevent(SDL_Event *ev)
          sdl2_redraw(scon);
          break;
      case SDL_WINDOWEVENT_FOCUS_GAINED:
@@ -361,7 +361,7 @@ index 0a0eb5a42d..a589316be8 100644
          win32_kbd_set_grab(gui_grab);
          if (qemu_console_is_graphic(scon->dcl.con)) {
              win32_kbd_set_window(sdl2_win32_get_hwnd(scon));
-@@ -627,7 +652,7 @@ static void handle_windowevent(SDL_Event *ev)
+@@ -630,7 +655,7 @@ static void handle_windowevent(SDL_Event *ev)
          if (qemu_console_is_graphic(scon->dcl.con)) {
              win32_kbd_set_window(NULL);
          }
@@ -370,7 +370,7 @@ index 0a0eb5a42d..a589316be8 100644
              sdl_grab_end(scon);
          }
          break;
-@@ -794,6 +819,361 @@ static void sdl_cleanup(void)
+@@ -797,6 +822,361 @@ static void sdl_cleanup(void)
      SDL_QuitSubSystem(SDL_INIT_VIDEO);
  }
  
@@ -732,7 +732,7 @@ index 0a0eb5a42d..a589316be8 100644
  static const DisplayChangeListenerOps dcl_2d_ops = {
      .dpy_name             = "sdl2-2d",
      .dpy_gfx_update       = sdl2_2d_update,
-@@ -949,6 +1329,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+@@ -952,6 +1332,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
      g_free(dir);
      if (icon) {
          SDL_SetWindowIcon(sdl2_console[0].real_window, icon);
