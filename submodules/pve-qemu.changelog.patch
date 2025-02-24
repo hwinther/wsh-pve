@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index acb2720..e60801f 100644
+index acb2720..c42b0de 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-qemu-kvm (9.2.0-1+wsh2) bookworm; urgency=medium
++
++  * Add flag for mesa hw build
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 24 Feb 2025 20:52:23 +0000
++
 +pve-qemu-kvm (9.2.0-1+wsh1) bookworm; urgency=medium
 +
 +  * Add flag for mesa hw build
