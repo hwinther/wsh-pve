@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 82b09641..c84c08e2 100644
+index 82b09641..ffb17256 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-manager (8.3.4+wsh2) bookworm; urgency=medium
++
++  * Move helper qemu server helper and reset line drift
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 06 Mar 2025 20:21:20 +0000
++
 +pve-manager (8.3.4+wsh1) bookworm; urgency=medium
 +
 +  * Move helper qemu server helper and reset line drift
