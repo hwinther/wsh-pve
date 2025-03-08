@@ -1,3 +1,129 @@
+diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
+index 975291f6..8665af6f 100644
+--- a/www/css/ext6-pve.css
++++ b/www/css/ext6-pve.css
+@@ -764,3 +764,121 @@ table.osds td:first-of-type {
+ .pmx-column-wrapped > div {
+     white-space: pre-wrap;
+ }
++
++/*
++Alternate theme test
++https://www.reddit.com/r/Proxmox/comments/1j509hi/bringing_life_into_theme_colorful_icons/
++https://www.reddit.com/user/regs01/
++*/
++
++/* MIT or CC-PD */
++
++/* Top toolbar */
++.fa-play           { color: #3bc72f !important; }
++.fa-undo           { color: #2087fe !important; }
++.fa-power-off      { color: #ed0909 !important; }
++.fa-terminal       { color: #13b70e !important; }
++.fa-ellipsis-v     { color: #343434 !important; }
++.fa-question-circle { color: #0b97fd !important; }
++.fa-window-restore { color: #feb40c !important; }
++.fa-filter         { color: #3bc72f !important; }
++.fa-pencil-square-o { color: #56bbe8 !important; }
++
++/* Node sidebar */
++.fa-search         { color: #1384ff !important; }
++:not(span, #button-1015-btnEl) > 
++.fa-book           { color: #f42727 !important; }
++.fa-sticky-note-o  { color: #d9cf07 !important; }
++.fa-cloud          { color: #adaeae !important; }
++.fa-gear,
++.fa-cogs           { color: #09afe1 !important; }
++.fa-refresh        { color: #1384ff !important; }
++.fa-shield         { color: #5ed12b !important; }
++.fa-hdd-o          { color: #8f9aae !important; }
++.fa-floppy-o       { color: #0531cf !important; }
++.fa-files-o,
++.fa-retweet        { color: #9638d0 !important; }
++.fa-history        { color: #3884d0 !important; }
++.fa-list,
++.fa-list-alt       { color: #c6c834 !important; }
++.fa-support        { color: #ff1c1c !important; }
++.fa-unlock         { color: #feb40c !important; }
++.fa-eye            { color: #007ce4 !important; }
++.fa-file-o         { color: #087cd8 !important; }
++.fa-file-code-o    { color: #087cd8 !important; }
++
++.fa-exchange       { color: #5ed12b !important; }
++.fa-certificate    { color: #fec634 !important; }
++.fa-globe          { color: #087cd8 !important; }
++.fa-clock-o        { color: #22bde0 !important; }
++
++.fa-square,
++.fa-square-o       { color: #70a1c8 !important; }
++.fa-folder         { color: #f4d216 !important; }
++.fa-th-large       { color: #5288b2 !important; }
++
++:not(span, #button-1015-btnEl) > 
++.fa-user,
++.fa-user-o         { color: #5ed12b !important; }
++.fa-key            { color: #fec634 !important; }
++.fa-group,
++.fa-users          { color: #007ce4 !important; }
++.fa-tags           { color: #56bbe8 !important; }
++.fa-male           { color: #f42727 !important; } 
++.fa-address-book-o { color: #d9ca56 !important; }
++
++.fa-heartbeat      { color: #ed0909 !important; }  
++.fa-bar-chart      { color: #56bbe8 !important; }  
++.fa-folder-o       { color: #fec634 !important; }
++.fa-bell-o         { color: #5ed12b !important; }
++.fa-comments-o     { color: #0b97fd !important; }
++.fa-map-signs      { color: #e26767 !important; }
++
++.fa-external-link  { color: #e26767 !important; }
++.fa-list-ol        { color: #5ed12b !important; }
++
++.fa-microchip      { color: #fec634 !important; }
++
++.fa-info           { color: #007ce4 !important; }
++
++.fa-bolt           { color: #fec634 !important; }
++
++/* Content */
++.pmx-itype-icon-memory::before, .pve-itype-icon-memory::before,
++.pmx-itype-icon-processor::before, .pve-itype-icon-cpu::before
++{ 
++    content: '';
++    position: absolute;
++    background-image: inherit !important;
++    background-size: inherit !important;
++    background-position: inherit !important;
++    background-repeat: no-repeat !important;
++    left: 0px !important;
++    top: 0px !important;
++    width: 100% !important;
++    height: 100% !important;
++}  
++
++.pmx-itype-icon-memory::before,
++.pve-itype-icon-memory::before 
++{ filter: invert(0.4) sepia(1) saturate(2) hue-rotate(90deg) brightness(0.9); }
++
++.pmx-itype-icon-processor::before,
++.pve-itype-icon-cpu::before 
++{ filter: invert(0.4) sepia(1) saturate(2) hue-rotate(180deg) brightness(0.9); }  
++
++.fa-network-wired,
++.fa-sdn { filter: invert(0.5) sepia(1) saturate(40) hue-rotate(100deg); }
++.fa-ceph { filter: invert(0.5) sepia(1) saturate(40) hue-rotate(0deg); }
++.pve-itype-treelist-item-icon-cdrom { filter: invert(0.5) sepia(0) saturate(40) hue-rotate(0deg); }
++
++/* Datacenter sidebar */
++.fa-server         { color: #3564da !important; }
++.fa-building       { color: #6035da !important; }
++:not(span, #button-1015-btnEl) > 
++.fa-desktop        { color: #56bbe8 } 
++.fa-desktop.stopped { color: #c4c4c4 !important; }
++.fa-th             { color: #28d118 !important; }
++.fa-database       { color: #70a1c8 !important; }
++
++.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
 index c94a5cdf..84e7c852 100644
 --- a/www/manager6/Makefile
