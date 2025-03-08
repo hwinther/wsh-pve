@@ -23,8 +23,8 @@ jobs:
           cat <<EOF > .gpg-password
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
-          
-          make repo-update
+
+          sudo make repo-update
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4
