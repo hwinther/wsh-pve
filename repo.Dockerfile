@@ -17,4 +17,5 @@ ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
 RUN cat /tmp/.gpg-key | gpg --import --batch
 RUN gpg --list-keys
+COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]

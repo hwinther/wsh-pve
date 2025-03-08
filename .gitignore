@@ -1,5 +1,5 @@
 build/
-.gpg
+.gpg*
 repo/db/*
 repo/dists/*
 repo/incoming/*

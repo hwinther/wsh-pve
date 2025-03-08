@@ -387,7 +387,10 @@ repo-update:
 
 	# Note: do not push this image to a remote registry as it contains the gpg key
 	$(DOCKER) build . -t repo -f repo.Dockerfile --pull
-	$(DOCKER) run --rm -v ./repo:/opt/repo -it repo bash -c "cd /opt/repo && cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+	$(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo --env-file .gpg-password -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+
+	# Interactive password prompt
+	# $(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
 	# Optionally, run a container with the repo mounted at /opt/repo
 	# $(DOCKER) run --rm -v repo:/opt/repo -v nginx/nginx-site.conf:/etc/nginx/conf.d/default.conf -p 8080:80 -it nginx
