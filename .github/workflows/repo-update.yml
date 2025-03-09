@@ -7,11 +7,19 @@ on:
       - feat/public-deb-repo
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    concurrency: ci-${{ github.ref }} # Recommended if you intend to make multiple deployments in quick succession.
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
@@ -35,7 +43,20 @@ jobs:
           echo docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
           docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
-      - name: Deploy 🚀
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          folder: repo
+          # Upload entire repository
+          path: "."
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # - name: Deploy 🚀
+      #   uses: JamesIves/github-pages-deploy-action@v4
+      #   with:
+      #     folder: repo
