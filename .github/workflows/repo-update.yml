@@ -32,7 +32,7 @@ jobs:
           mkdir -p repo/db repo/dists repo/incoming repo/pool
           docker build . -t repo -f repo.Dockerfile --build-arg SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} --pull
           export SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
-          docker run --rm -v $PWD/repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY=/dev/console -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+          docker run --rm -v $PWD/repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4
