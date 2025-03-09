@@ -60,7 +60,7 @@ jobs:
         run: |
           mkdir -p github-pages
           cp -r docs/dist/* github-pages/
-          cp -r repo github-pages/
+          cp -r repo github-pages/debian
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
