@@ -28,11 +28,9 @@ ARG GPG_PASSPHRASE
 RUN /usr/bin/echo -e "use-agent\npinentry-mode loopback" > "$HOME/gpg.conf"
 RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME/gpg-agent.conf"
 
-RUN TEMPFILE=`mktemp` && \
-    echo `date` > $TEMPFILE && \
-    GPG_TTY=$(tty) && \
-    gpg --batch --no-tty --passphrase-file /tmp/.gpg-password --clearsign -a --output /dev/null $TEMPFILE && \
-    rm -f $TEMPFILE
+RUN echo `date` > /tmp/.tmpfile
+RUN export GPG_TTY=$(tty) && gpg --batch --no-tty --passphrase-file /tmp/.gpg-password --clearsign -a --output /dev/null /tmp/.tmpfile
+RUN rm -f /tmp/.tmpfile
 
 RUN gpg --list-keys
 COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
