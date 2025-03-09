@@ -1,8 +1,9 @@
-FROM debian:12-slim AS install
-LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install --no-install-recommends --assume-yes nginx reprepro expect nano && apt-get clean
+#FROM debian:12-slim AS install
+#LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
+#ENV DEBIAN_FRONTEND=noninteractive
+#RUN apt-get update && apt-get install --no-install-recommends --assume-yes nginx reprepro expect nano && apt-get clean
 
+FROM ghcr.io/hwinther/wsh-pve/reprepro:latest AS install
 FROM ghcr.io/hwinther/wsh-pve/qemu-server:latest AS qemu-server
 FROM ghcr.io/hwinther/wsh-pve/pve-qemu:latest AS pve-qemu
 FROM ghcr.io/hwinther/wsh-pve/pve-manager:latest AS pve-manager
