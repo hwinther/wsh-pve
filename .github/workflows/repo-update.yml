@@ -31,7 +31,7 @@ jobs:
           mkdir -p repo/db repo/dists repo/incoming repo/pool
           podman build . -t repo -f repo.Dockerfile --pull
           export SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
-          podman run --rm -v ./repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY=/dev/console -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+          podman run --rm -v ./repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY=/dev/console -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4
