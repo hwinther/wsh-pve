@@ -7,6 +7,8 @@ on:
     paths:
       - ".github/workflows/publish-pve-build-image.yml"
       - "build.Dockerfile"
+  schedule:
+    - cron: '30 5 1 * *'
 
 permissions:
   # for ghcr.io (docker registry):
