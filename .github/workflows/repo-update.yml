@@ -27,8 +27,6 @@ jobs:
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
 
-          ls -la
-
           # sudo make repo-update
 
           mkdir -p repo/db repo/dists repo/incoming repo/pool

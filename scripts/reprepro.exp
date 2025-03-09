@@ -1,5 +1,5 @@
 #!/usr/bin/expect -f
-set timeout 5
+set timeout 30
 set passphrase "$env(SIGNING_PASSWORD)"
 
 # Call reprepro with variable length arguments, so that this script
