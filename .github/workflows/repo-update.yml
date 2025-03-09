@@ -41,9 +41,10 @@ jobs:
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
 
-          mkdir -p repo/db repo/dists repo/incoming repo/pool
-          docker build . -t repo -f repo.Dockerfile --pull
-          docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo --env-file .gpg-password-env -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+          sudo make repo-update
+          # mkdir -p repo/db repo/dists repo/incoming repo/pool
+          # docker build . -t repo -f repo.Dockerfile --pull
+          # docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo --env-file .gpg-password-env -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - uses: actions/setup-node@v4
         name: Setup node (npm)
