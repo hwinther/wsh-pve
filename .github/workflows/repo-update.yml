@@ -35,13 +35,32 @@ jobs:
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
 
-          # sudo make repo-update
-
           mkdir -p repo/db repo/dists repo/incoming repo/pool
           docker build . -t repo -f repo.Dockerfile --pull  # --build-arg GPG_PASSPHRASE=${{ secrets.GPG_PASSWORD }}
-          echo command:
-          echo docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
           docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+
+      - uses: actions/setup-node@v4
+        name: Setup node (npm)
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: "docs/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          npm ci
+
+      - name: Build docs
+        working-directory: docs
+        run: |
+          npm run build
+
+      - name: Collect files for deployment
+        run: |
+          mkdir -p github-pages
+          copy -r docs/dist github-pages/
+          copy -r repo github-pages/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -49,13 +68,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "repo"
+          path: github-pages
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      # - name: Deploy 🚀
-      #   uses: JamesIves/github-pages-deploy-action@v4
-      #   with:
-      #     folder: repo
