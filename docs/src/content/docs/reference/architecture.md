@@ -16,7 +16,7 @@ Currently the supported values are:
 
 ## X86_64 - 64bit intel
 
-This is the default and as WSH PVE is currently only targeted against the same architecture, it means running VMs as usual.
+This is the default and as WSH PVE is currently only targeted against the same architecture, it means running VMs as usual, the `qemu-system-x86-64` binary will be used.
 
 ## Aarch64 - 64bit ARM
 
