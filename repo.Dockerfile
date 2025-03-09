@@ -1,7 +1,3 @@
-#FROM debian:12-slim AS install
-#LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
-#ENV DEBIAN_FRONTEND=noninteractive
-#RUN apt-get update && apt-get install --no-install-recommends --assume-yes nginx reprepro expect nano && apt-get clean
 FROM ghcr.io/hwinther/wsh-pve/reprepro:latest AS install
 
 FROM ghcr.io/hwinther/wsh-pve/qemu-server:latest AS qemu-server
@@ -15,24 +11,10 @@ COPY --from=pve-qemu /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-manager /opt/repo/*.deb /opt/repo-incoming/
 
 WORKDIR /opt/repo
-# ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
-#COPY .gpg-password-env /tmp/.gpg-password-env
-#COPY .gpg-password /tmp/.gpg-password
-
 RUN cat /tmp/.gpg-key | gpg --import --batch
-#ARG GPG_PASSPHRASE
-# RUN echo ${SIGNING_PASSWORD} | gpg --pinentry-mode loopback --batch --yes --passphrase-fd 0 /tmp/.gpg-key
-# RUN cat your-passphrase-file.txt | gpg --pinentry-mode loopback --passphrase-fd 0 --sign your-file-to-sign.txt 
-
-# RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
-# RUN gpg --pinentry-mode loopback --passphrase-file=/tmp/.gpg-password /tmp/.gpg-key
-
 RUN /usr/bin/echo -e "use-agent\npinentry-mode loopback" > "$HOME/.gnupg/gpg.conf"
 RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME/.gnupg/gpg-agent.conf"
-
-#RUN /usr/bin/echo test > /tmp/.tmpfile && export GPG_TTY=$(tty) && gpg --batch --no-tty --passphrase-file /tmp/.gpg-password --clearsign -a --output /dev/null /tmp/.tmpfile && rm -f /tmp/.tmpfile
-
 RUN gpg --list-keys
 COPY --chmod=755 scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]

@@ -2,10 +2,13 @@
   "makefile.configureOnOpen": false,
   "cSpell.words": [
     "alsa",
+    "clearsign",
     "dists",
+    "hwinther",
     "includedeb",
     "localuser",
     "memfd",
+    "pinentry",
     "pipewire",
     "pulseaudio",
     "pvedaemon",
