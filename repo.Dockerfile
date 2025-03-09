@@ -28,7 +28,7 @@ ARG GPG_PASSPHRASE
 RUN /usr/bin/echo -e "use-agent\npinentry-mode loopback" > "$HOME/gpg.conf"
 RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME/gpg-agent.conf"
 
-RUN echo `date` > /tmp/.tmpfile
+RUN /usr/bin/echo `date` > /tmp/.tmpfile
 RUN export GPG_TTY=$(tty) && gpg --batch --no-tty --passphrase-file /tmp/.gpg-password --clearsign -a --output /dev/null /tmp/.tmpfile
 RUN rm -f /tmp/.tmpfile
 
