@@ -24,6 +24,8 @@ jobs:
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
 
+          ls -la
+
           sudo make repo-update
 
       - name: Deploy 🚀
