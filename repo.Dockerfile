@@ -15,10 +15,12 @@ COPY --from=pve-manager /opt/repo/*.deb /opt/repo-incoming/
 WORKDIR /opt/repo
 # ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
+COPY .gpg-password /tmp/.gpg-password
 # RUN cat /tmp/.gpg-key | gpg --import --batch
-ARG SIGNING_PASSWORD
-RUN echo ${SIGNING_PASSWORD} | gpg --pinentry-mode loopback --batch --yes --passphrase-fd 0 /tmp/.gpg-key
+# ARG SIGNING_PASSWORD
+# RUN echo ${SIGNING_PASSWORD} | gpg --pinentry-mode loopback --batch --yes --passphrase-fd 0 /tmp/.gpg-key
 # RUN cat your-passphrase-file.txt | gpg --pinentry-mode loopback --passphrase-fd 0 --sign your-file-to-sign.txt 
+RUN gpg --pinentry-mode loopback --passphrase-file=/tmp/.gpg-password /tmp/.gpg-key
 RUN gpg --list-keys
 # RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
 COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
