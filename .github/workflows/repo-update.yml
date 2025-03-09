@@ -26,7 +26,9 @@ jobs:
 
           ls -la
 
-          sudo make repo-update
+          # sudo make repo-update
+          docker build . -t repo -f repo.Dockerfile --pull
+          docker run --rm -v ./repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4
