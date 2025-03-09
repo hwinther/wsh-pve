@@ -3,7 +3,8 @@ name: Publish reprepro (debian repo) image
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - feat/public-deb-repo
     paths:
       - ".github/workflows/publish-reprepro-image.yml"
       - "reprepro.Dockerfile"
