@@ -17,7 +17,6 @@ ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
 RUN cat /tmp/.gpg-key | gpg --import --batch
 RUN gpg --list-keys
-RUN ls -la /usr/bin/pinentry*
-RUN update-alternatives --set pinentry /usr/bin/pinentry-tty >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
+RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
 COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]
