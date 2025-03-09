@@ -16,12 +16,23 @@ WORKDIR /opt/repo
 # ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
 COPY .gpg-password /tmp/.gpg-password
-# RUN cat /tmp/.gpg-key | gpg --import --batch
-# ARG SIGNING_PASSWORD
+
+RUN cat /tmp/.gpg-key | gpg --import --batch
+ARG GPG_PASSPHRASE
 # RUN echo ${SIGNING_PASSWORD} | gpg --pinentry-mode loopback --batch --yes --passphrase-fd 0 /tmp/.gpg-key
 # RUN cat your-passphrase-file.txt | gpg --pinentry-mode loopback --passphrase-fd 0 --sign your-file-to-sign.txt 
-RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
-RUN gpg --pinentry-mode loopback --passphrase-file=/tmp/.gpg-password /tmp/.gpg-key
+
+# RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
+# RUN gpg --pinentry-mode loopback --passphrase-file=/tmp/.gpg-password /tmp/.gpg-key
+
+RUN /usr/bin/echo -e "use-agent\npinentry-mode loopback" > "$HOME/gpg.conf"
+RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME/gpg-agent.conf"
+
+RUN TEMPFILE=`mktemp` && \
+    echo `date` > $TEMPFILE && \
+    gpg --batch --no-tty --passphrase-file <(echo "${GPG_PASSPHRASE}") --clearsign -a --output /dev/null $TEMPFILE && \
+    rm -f $TEMPFILE
+
 RUN gpg --list-keys
 COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]

@@ -30,8 +30,7 @@ jobs:
           # sudo make repo-update
 
           mkdir -p repo/db repo/dists repo/incoming repo/pool
-          docker build . -t repo -f repo.Dockerfile --build-arg SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} --pull
-          export SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
+          docker build . -t repo -f repo.Dockerfile --build-arg GPG_PASSPHRASE=${{ secrets.GPG_PASSWORD }} --pull
           docker run --rm -v $PWD/repo:/opt/repo -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - name: Deploy 🚀
