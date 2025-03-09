@@ -30,6 +30,7 @@ RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME
 
 RUN TEMPFILE=`mktemp` && \
     echo `date` > $TEMPFILE && \
+    GPG_TTY=$(tty) && \
     gpg --batch --no-tty --passphrase-file /tmp/.gpg-password --clearsign -a --output /dev/null $TEMPFILE && \
     rm -f $TEMPFILE
 
