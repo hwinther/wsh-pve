@@ -31,6 +31,8 @@ jobs:
 
           mkdir -p repo/db repo/dists repo/incoming repo/pool
           docker build . -t repo -f repo.Dockerfile --pull  # --build-arg GPG_PASSPHRASE=${{ secrets.GPG_PASSWORD }}
+          echo command:
+          echo docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY=$(tty) -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
           docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo -e SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }} -e GPG_TTY=$(tty) -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
       - name: Deploy 🚀
