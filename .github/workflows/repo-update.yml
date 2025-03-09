@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - feat/public-deb-repo
+  workflow_run:
+    workflows: [Build debian package for submodule]
+    types: [completed]
 
 permissions:
   contents: read
