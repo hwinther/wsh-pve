@@ -1,17 +1,23 @@
 {
-    "makefile.configureOnOpen": false,
-    "cSpell.words": [
-        "alsa",
-        "localuser",
-        "memfd",
-        "pipewire",
-        "pulseaudio",
-        "pvedaemon",
-        "pvemanagerlib",
-        "pveproxy",
-        "srwxrwxrwx",
-        "usermod",
-        "virtio",
-        "xhost"
-    ]
+  "makefile.configureOnOpen": false,
+  "cSpell.words": [
+    "alsa",
+    "clearsign",
+    "dists",
+    "hwinther",
+    "includedeb",
+    "localuser",
+    "memfd",
+    "pinentry",
+    "pipewire",
+    "pulseaudio",
+    "pvedaemon",
+    "pvemanagerlib",
+    "pveproxy",
+    "reprepro",
+    "srwxrwxrwx",
+    "usermod",
+    "virtio",
+    "xhost"
+  ]
 }

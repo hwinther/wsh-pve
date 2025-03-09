@@ -1,7 +1,4 @@
-FROM debian:12-slim AS install
-LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install --no-install-recommends --assume-yes nginx reprepro expect nano && apt-get clean
+FROM ghcr.io/hwinther/wsh-pve/reprepro:latest AS install
 
 FROM ghcr.io/hwinther/wsh-pve/qemu-server:latest AS qemu-server
 FROM ghcr.io/hwinther/wsh-pve/pve-qemu:latest AS pve-qemu
@@ -12,10 +9,12 @@ RUN mkdir -p /opt/repo-incoming
 COPY --from=qemu-server /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-qemu /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-manager /opt/repo/*.deb /opt/repo-incoming/
+
 WORKDIR /opt/repo
-ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
 RUN cat /tmp/.gpg-key | gpg --import --batch
+RUN /usr/bin/echo -e "use-agent\npinentry-mode loopback" > "$HOME/.gnupg/gpg.conf"
+RUN /usr/bin/echo -e "allow-preset-passphrase\nallow-loopback-pinentry" > "$HOME/.gnupg/gpg-agent.conf"
 RUN gpg --list-keys
-COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
+COPY --chmod=755 scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]

@@ -2,13 +2,30 @@ name: Update github pages with the most recent debian packages
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/repo-update.yml'
+  workflow_run:
+    workflows: 
+      - 'Build debian package for submodule'
+    types: [completed]
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    concurrency: ci-${{ github.ref }} # Recommended if you intend to make multiple deployments in quick succession.
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
@@ -20,15 +37,45 @@ jobs:
           ${{ secrets.GPG_KEY }}
           EOF
 
-          cat <<EOF > .gpg-password
+          cat <<EOF > .gpg-password-env
           SIGNING_PASSWORD=${{ secrets.GPG_PASSWORD }}
           EOF
 
-          ls -la
+          mkdir -p repo/db repo/dists repo/incoming repo/pool
+          docker build . -t repo -f repo.Dockerfile --pull
+          docker run --rm -v "$PWD/repo:/opt/repo" -w /opt/repo --env-file .gpg-password-env -e GPG_TTY="$(tty)" -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && /usr/local/bin/reprepro.exp -- -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
 
-          sudo make repo-update
-
-      - name: Deploy 🚀
-        uses: JamesIves/github-pages-deploy-action@v4
+      - uses: actions/setup-node@v4
+        name: Setup node (npm)
         with:
-          folder: repo
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: "docs/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          npm ci
+
+      - name: Build docs
+        working-directory: docs
+        run: |
+          npm run build
+
+      - name: Collect files for deployment
+        run: |
+          mkdir -p github-pages
+          cp -r docs/dist/* github-pages/
+          cp -r repo github-pages/debian
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: github-pages
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
