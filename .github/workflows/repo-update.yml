@@ -2,6 +2,9 @@ name: Update github pages with the most recent debian packages
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/public-deb-repo
 
 permissions:
   contents: write

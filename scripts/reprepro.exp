@@ -9,7 +9,7 @@ spawn reprepro {*}$argv
 expect {
     timeout                     {send_error "\nFailed to get password prompt\n";
                                  exit 1}
-    "Please enter the passphrase*"  {send -- "$passphrase\r";
+    "passphrase*"  {send -- "$passphrase\r";
                                  send_user " *** entering passphrase ***";
                                  exp_continue}
 }
