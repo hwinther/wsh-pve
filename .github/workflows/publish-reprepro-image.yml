@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/public-deb-repo
+      - main
     paths:
       - ".github/workflows/publish-reprepro-image.yml"
       - "reprepro.Dockerfile"
