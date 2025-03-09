@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/public-deb-repo
+      - main
+    paths:
+      - '.github/workflows/repo-update.yml'
   workflow_run:
     workflows: [Build debian package for submodule]
     types: [completed]
