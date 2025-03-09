@@ -59,7 +59,7 @@ jobs:
       - name: Collect files for deployment
         run: |
           mkdir -p github-pages
-          cp -r docs/dist github-pages/
+          cp -r docs/dist/* github-pages/
           cp -r repo github-pages/
 
       - name: Setup Pages
