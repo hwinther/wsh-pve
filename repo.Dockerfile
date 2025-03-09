@@ -13,10 +13,12 @@ COPY --from=qemu-server /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-qemu /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-manager /opt/repo/*.deb /opt/repo-incoming/
 WORKDIR /opt/repo
-ENV GPG_TTY=/dev/console
+# ENV GPG_TTY=/dev/console
 COPY .gpg /tmp/.gpg-key
-RUN cat /tmp/.gpg-key | gpg --import --batch
+# RUN cat /tmp/.gpg-key | gpg --import --batch
+ARG SIGNING_PASSWORD
+RUN echo ${SIGNING_PASSWORD} | gpg --batch --yes --passphrase-fd 0 /tmp/.gpg-key
 RUN gpg --list-keys
-RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
+# RUN update-alternatives --set pinentry /usr/bin/pinentry-curses >/dev/null || gpg-connect-agent reloadagent /bye >/dev/null
 COPY scripts/reprepro.exp /usr/local/bin/reprepro.exp
 CMD ["bash"]
