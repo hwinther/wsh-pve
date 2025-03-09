@@ -8,7 +8,7 @@ Run `make build-containers` to build the PVE build image which creates debian pa
 This is an optional step as the packages are already available in this github repository.
 
 Run `make all` to build the debian packages and copy them into the build directory.
-Run `./repo-update.sh` to populate a debian package repository under the repo directory, you will need a gpg key in order to sign the packages.
+Run `make repo-update` to populate a debian package repository under the repo directory, you will need a gpg key in order to sign the packages.
 
 Run `make 3dfx` to build the qemu-3dfx windows drivers and a patched version of the PVE QEMU package which supports passthrough
 

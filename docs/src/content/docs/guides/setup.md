@@ -3,9 +3,25 @@ title: Setup Guide
 description: Setting up the debian repository source and installing the packages
 ---
 
-Guides lead a user through a specific task they want to accomplish, often with a sequence of steps.
-Writing a good guide requires thinking about what your users are trying to do.
+The following steps describe how you can add the PVE WSH debian repository in your proxmox cluster nodes.
 
-## Further reading
+You can choose to only install the packages on a few nodes in a given cluster, but you will not be able to migrate or restore guests with the extended configuration values to non-compatible PVE nodes.
 
-- Read [about how-to guides](https://diataxis.fr/how-to-guides/) in the Diátaxis framework
+## Installing the repository
+
+```bash
+# Add the repository signing key
+wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
+
+# Add the repository
+wget -O /etc/apt/sources.list.d/wsh-pve.list http://debian.wshosting.no/debian/conf/wsh-pve.list
+
+# Update repository cache and show packages that can be installed
+apt update && apt list --upgradable
+pve-manager/stable 8.3.5+wsh1 all [upgradable from: 8.3.4+wsh1]
+pve-qemu-kvm/stable 9.2.0-1+wsh2 amd64 [upgradable from: 9.1.2-3+wsh1]
+qemu-server/stable 8.3.8+wsh3 amd64 [upgradable from: 8.3.8+wsh2]
+
+# Install the replacement packages
+apt full-upgrade
+```
