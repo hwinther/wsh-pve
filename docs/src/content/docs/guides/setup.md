@@ -11,17 +11,17 @@ You can choose to only install the packages on a few nodes in a given cluster, b
 
 ```bash
 # Add the repository signing key
-wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
+sudo wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
 
 # Add the repository
-wget -O /etc/apt/sources.list.d/wsh-pve.list http://debian.wshosting.no/debian/conf/wsh-pve.list
+sudo wget -O /etc/apt/sources.list.d/wsh-pve.list http://debian.wshosting.no/debian/conf/wsh-pve.list
 
 # Update repository cache and show packages that can be installed
-apt update && apt list --upgradable
+sudo apt update && sudo apt list --upgradable
 pve-manager/stable 8.3.5+wsh1 all [upgradable from: 8.3.4+wsh1]
 pve-qemu-kvm/stable 9.2.0-1+wsh2 amd64 [upgradable from: 9.1.2-3+wsh1]
 qemu-server/stable 8.3.8+wsh3 amd64 [upgradable from: 8.3.8+wsh2]
 
 # Install the replacement packages
-apt full-upgrade
+sudo apt full-upgrade
 ```

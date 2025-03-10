@@ -5,7 +5,7 @@ description: Reference page for the architecture hardware panel
 
 Architecture is a hardware element that is added by this extension.
 If it has not been set on a guest, it defaults to the host architecture (typically x86_64).
-By setting it to another architecture you change which qemu system is emulated, and specifically which qemu-system-[platform] binary will be used when starting the VM.
+By setting it to another architecture you change which qemu system is emulated, and specifically which `qemu-system-[arch]` binary will be used when starting the VM.
 
 Currently the supported values are:
 
@@ -16,7 +16,7 @@ Currently the supported values are:
 
 ## X86_64 - 64bit intel
 
-This is the default and as WSH PVE is currently only targeted against the same architecture, it means running VMs as usual, the `qemu-system-x86-64` binary will be used.
+This is the default architecture for WSH PVE, which currently targets only x86_64. Running VMs with this architecture will use the `qemu-system-x86_64` binary.
 
 ## Aarch64 - 64bit ARM
 
