@@ -1,6 +1,6 @@
 ---
 title: Audio Device Reference
-description: A reference page in my new Starlight docs site.
+description: A reference page for the audio device hardware panel.
 ---
 
 QEMU offers various audio devices and outputs to emulate sound hardware in virtual machines. This page outlines the available audio devices and configuration options for managing audio in QEMU. It supports both modern and older audio devices, ensuring compatibility with many guest operating systems. Additionally, QEMU supports network forwarding for remote audio configurations, allowing audio streams to be forwarded over a network connection.
@@ -31,7 +31,7 @@ The additional backend drivers support both local and remote audio output.
 
 The audio server option enables configuring unix sockets for a local audio pipeline, or a remote host.
 
-![Audio driver menu](../../../assets/audio.png)
+![Audio menu](../../../assets/audio.png)
 
 - server (default value `unix:/tmp/pulse-server`)
 
