@@ -2,6 +2,10 @@
 
 WSH Proxmox Virtualization Environment patches
 
+## Getting started
+
+To get started continue to the [setup guide](https://debian.wshosting.no/guides/setup/)
+
 ## Build
 
 Run `make build-containers` to build the PVE build image which creates debian packages from the submodules and the djgpp build image which is used to build windows drivers.
