@@ -1,5 +1,5 @@
 ---
-title: Example Reference
+title: Network Device Reference
 description: A reference page in my new Starlight docs site.
 ---
 
