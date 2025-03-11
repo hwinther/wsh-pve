@@ -1,0 +1,47 @@
+version: 2
+updates:
+- package-ecosystem: "github-actions"
+  directories:
+  - "/"
+  - "/.github/actions/*/"
+  open-pull-requests-limit: 20
+  target-branch: "main"
+  schedule:
+    interval: "weekly"
+  assignees:
+  - "hwinther"
+
+- package-ecosystem: "docker"
+  directories:
+  - "/"
+  open-pull-requests-limit: 20
+  target-branch: "main"
+  schedule:
+    interval: "weekly"
+  assignees:
+  - "hwinther"
+
+- package-ecosystem: "npm"
+  directory: "/docs"
+  open-pull-requests-limit: 20
+  target-branch: "main"
+  schedule:
+    interval: "weekly"
+    day: "sunday"
+  assignees:
+  - "hwinther"
+  ignore:
+  - dependency-name: "*"
+    update-types: [ "version-update:semver-patch" ]
+  # groups:
+  #   types:
+  #     patterns:
+  #     - "@types/*"
+  #   eslint:
+  #     patterns:
+  #     - "eslint"
+  #     - "eslint-*"
+  #     - "@eslint/*"
+  #     - "@typescript-eslint/*"
+  #     - "*/eslint-plugin"
+  #     - "*/eslint-plugin-*"
