@@ -1,6 +1,6 @@
 ---
 title: Floppy Device Reference
-description: A reference page in my new Starlight docs site.
+description: A reference page for the floppy hardware panel.
 ---
 
 Reference pages are ideal for outlining how things work in terse and clear terms.

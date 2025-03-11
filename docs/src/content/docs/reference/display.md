@@ -9,7 +9,7 @@ The PVE WSH patches add graphic cards to the UI and adds support for X forwardin
 ## Graphic card options
 
 - tcx: TCX framebuffer (sparc only)
-- cg3: CG3 framebuffer (sparc only)
+- cg3: CG3 framebuffer (sparc only), this is the preferred graphics card for sparc
 - cirrus: Cirrus VGA - for MSDOS or other very old operating systems that can use a VESA1.2 compatible driver (but are too old to use generic SVGA/VESA2 - TODO: verify and add citation for the last part)
 
 ![Graphics card selection](../../../assets/displaycard.png)
