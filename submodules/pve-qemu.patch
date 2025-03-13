@@ -11,6 +11,51 @@ index f23b041..cad0c22 100644
  	palcode-clipper \
  	s390-ccw.img \
  	s390-netboot.img \
+diff --git a/debian/parse-machines.pl b/debian/parse-machines.pl
+index a0f449c..f30c684 100755
+--- a/debian/parse-machines.pl
++++ b/debian/parse-machines.pl
+@@ -14,12 +14,34 @@ while (<STDIN>) {
+ 
+     s/^\s+//;
+     my @machine = split(/\s+/);
+-    next if $machine[0] !~ m/^pc-(i440fx|q35)-(.+)$/;
+-    push @$machines, {
+-        'id' => $machine[0],
+-        'type' => $1,
+-        'version' => $2,
+-    };
++    if ($machine[0] =~ m/^pc-(i440fx|q35)-(.+)$/) {
++        push @$machines, {
++            'id' => $machine[0],
++            'type' => $1,
++            'version' => $2,
++        };
++    }
++    elsif ($machine[0] =~ m/^(virt)-(.+)$/) {
++        push @$machines, {
++            'id' => $machine[0],
++            'type' => $1,
++            'version' => $2,
++        };
++    }
++    elsif ($machine[0] =~ m/^(sun)(4[a-z]{1})$/) {
++        push @$machines, {
++            'id' => $machine[0],
++            'type' => $1,
++            'version' => $2,
++        };
++    }
++    elsif ($machine[0] =~ m/^(SS-\d+)$/) {
++        push @$machines, {
++            'id' => $machine[0],
++            'type' => 'sun',
++            'version' => $1,
++        };
++    }
+ }
+ 
+ die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
@@ -30,7 +75,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..2532d30 100755
+index 51f56c5..c324ecb 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -18,7 +18,7 @@ machinefile := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
@@ -66,7 +111,7 @@ index 51f56c5..2532d30 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -119,6 +119,32 @@ install: build
+@@ -119,10 +119,41 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
@@ -98,8 +143,19 @@ index 51f56c5..2532d30 100755
 +
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-flags.pl > $(flagfile)
- 	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machinefile)
-@@ -148,7 +174,7 @@ binary-arch: build install
+-	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machinefile)
+-
++	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > /tmp/x86_64_machines
++	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > /tmp/aarch64_machines
++	$(destdir)/usr/bin/qemu-system-sparc -machine help | ./debian/parse-machines.pl > /tmp/sparc_machines
++	$(destdir)/usr/bin/qemu-system-sparc64 -machine help | ./debian/parse-machines.pl > /tmp/sparc64_machines
++	jq -s 'add' /tmp/x86_64_machines /tmp/aarch64_machines /tmp/sparc_machines /tmp/sparc64_machines > $(machinefile)
++	rm -f /tmp/x86_64_machines /tmp/aarch64_machines /tmp/sparc_machines /tmp/sparc64_machines
++	
+ # Build architecture-independent files here.
+ binary-indep: build install
+ # We have nothing to do by default.
+@@ -148,7 +179,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link

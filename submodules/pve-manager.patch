@@ -150,7 +150,7 @@ index 07eb9b17..aa955705 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 90011a8f..b8f80289 100644
+index aa415759..bbcdb385 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -506,6 +506,16 @@ Ext.define('PVE.Utils', {
@@ -361,7 +361,7 @@ index c6d193fc..246ac172 100644
  		    }),
  		},
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index a697cd34..ddad4bce 100644
+index a697cd34..edf887cd 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -24,7 +24,10 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -376,17 +376,16 @@ index a697cd34..ddad4bce 100644
  	    store.clearFilter();
  	    store.addFilter(val => val.data.id === 'latest' || val.data.type === type);
  	    if (!me.getView().isWindows) {
-@@ -85,7 +88,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -85,7 +88,15 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
  	if (values.machine !== '__default__' && values.machine !== 'q35') {
  	    values.version = values.machine;
 -	    values.machine = values.version.match(/q35/) ? 'q35' : '__default__';
-+	    // values.machine = values.version.match(/q35/) ? 'q35' : '__default__';
 +	    if (values.version.match(/q35/)) {
 +	        values.machine = 'q35';
 +	    } else if (values.version.match(/virt/)) {
 +	        values.machine = 'virt';
-+	    } else if (values.version.match(/sun/)) {
++	    } else if (values.version.match(/SS-\d+|sun4\w/)) {
 +	        values.machine = 'sun';
 +	    } else {
 +	        values.machine = '__default__';
@@ -394,12 +393,12 @@ index a697cd34..ddad4bce 100644
  
  	    // avoid hiding a pinned version
  	    me.setAdvancedVisible(true);
-@@ -102,6 +114,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -102,6 +113,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  	comboItems: [
  	    ['__default__', PVE.Utils.render_qemu_machine('')],
  	    ['q35', 'q35'],
-+	    ['virt', 'aarch64 virt'],
-+	    ['sun', 'sparc64 sun'],
++	    ['virt', 'aarch64 (virt)'],
++	    ['sun', 'sparc/sparc64 (sun)'],
  	],
  	bind: {
  	    value: '{type}',
