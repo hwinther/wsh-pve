@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index d04a78c6..45e52ec8 100644
+index d04a78c6..498322b5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-manager (8.3.5+wsh2) bookworm; urgency=medium
++
++  * Add machine values and fix parsing in UI
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 15 Mar 2025 17:58:57 +0000
++
 +pve-manager (8.3.5+wsh1) bookworm; urgency=medium
 +
 +  * Add custom color theme
