@@ -9,10 +9,6 @@ on:
       - '.github/workflows/repo-update.yml'
       - 'docs/**'
   workflow_call:
-  # workflow_run:
-  #   workflows: 
-  #     - 'Build debian package for submodule when patch files are changed'
-  #   types: [completed]
 
 permissions:
   contents: read
