@@ -1,14 +1,16 @@
 name: Build debian package for submodule when patch files are changed
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-      - fix/workflow-doc-chain
+      - 'fix/workflow-doc-chain'
     paths:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
       - "submodules/qemu-server.patch"
+      - ".github/workflows/build-deb-trigger-patches.yml"
 
 permissions:
   # for ghcr.io (docker registry):
