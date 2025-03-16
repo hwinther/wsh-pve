@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index d04a78c6..498322b5 100644
+index d04a78c6..a33f8b55 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
+@@ -1,10 +1,28 @@
++pve-manager (8.3.5+wsh3) bookworm; urgency=medium
++
++  * Improve handling of machine values for sun
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 16 Mar 2025 20:58:52 +0000
++
 +pve-manager (8.3.5+wsh2) bookworm; urgency=medium
 +
 +  * Add machine values and fix parsing in UI
