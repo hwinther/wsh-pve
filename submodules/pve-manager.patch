@@ -150,10 +150,29 @@ index 07eb9b17..aa955705 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index aa415759..bbcdb385 100644
+index aa415759..c09e2d76 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
-@@ -506,6 +506,16 @@ Ext.define('PVE.Utils', {
+@@ -495,8 +495,16 @@ Ext.define('PVE.Utils', {
+ 	return agentstring;
+     },
+ 
+-    render_qemu_machine: function(value) {
+-	return value || Proxmox.Utils.defaultText + ' (i440fx)';
++    render_qemu_machine: function(value, arch) {
++	let defaultValue = 'i440fx';
++	if (arch === 'aarch64') {
++		defaultValue = 'virt';
++	} else if (arch === 'sparc') {
++		defaultValue = 'SS-5 (sun/sparc)';
++	} else if (arch === 'sparc64') {
++		defaultValue = 'sun4u (sun/sparc64)';
++	}
++	return value || Proxmox.Utils.defaultText + ' (' + defaultValue + ')';
+     },
+ 
+     render_qemu_bios: function(value) {
+@@ -506,6 +514,16 @@ Ext.define('PVE.Utils', {
  	    return "SeaBIOS";
  	} else if (value === 'ovmf') {
  	    return "OVMF (UEFI)";
@@ -170,7 +189,7 @@ index aa415759..bbcdb385 100644
  	} else {
  	    return value;
  	}
-@@ -598,6 +608,9 @@ Ext.define('PVE.Utils', {
+@@ -598,6 +616,9 @@ Ext.define('PVE.Utils', {
      kvm_vga_drivers: {
  	'__default__': Proxmox.Utils.defaultText,
  	std: gettext('Standard VGA'),
@@ -321,11 +340,16 @@ index c8a67017..fca59f15 100644
      advancedItems: [
  	{
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index c6d193fc..246ac172 100644
+index c6d193fc..06c2f6fe 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -173,6 +173,21 @@ Ext.define('PVE.qemu.HardwareView', {
- 		    return PVE.Utils.render_qemu_machine(value);
+@@ -170,9 +170,25 @@ Ext.define('PVE.qemu.HardwareView', {
+ 			(!value || value === 'pc' || value === 'q35')) {
+ 			return value === 'q35' ? 'pc-q35-5.1' : 'pc-i440fx-5.1';
+ 		    }
+-		    return PVE.Utils.render_qemu_machine(value);
++			let arch = me.getObjectValue('arch', '__default__', pending);
++		    return PVE.Utils.render_qemu_machine(value, arch);
  		},
  	    },
 +	    arch: {
@@ -346,7 +370,7 @@ index c6d193fc..246ac172 100644
  	    scsihw: {
  		header: gettext('SCSI Controller'),
  		iconCls: 'database',
-@@ -748,6 +763,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -748,6 +764,13 @@ Ext.define('PVE.qemu.HardwareView', {
  				disabled: !caps.nodes['Sys.Console'],
  				handler: editorFactory('RNGEdit'),
  			    },
@@ -361,7 +385,7 @@ index c6d193fc..246ac172 100644
  		    }),
  		},
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index a697cd34..edf887cd 100644
+index a697cd34..ad4b9d9c 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -24,7 +24,10 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -376,7 +400,29 @@ index a697cd34..edf887cd 100644
  	    store.clearFilter();
  	    store.addFilter(val => val.data.id === 'latest' || val.data.type === type);
  	    if (!me.getView().isWindows) {
-@@ -85,7 +88,15 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -53,6 +56,13 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 	    values.machine = values.version;
+ 	    delete values.delete;
+ 	}
++    if (values.machine === 'sun' && (!values.version || values.version === 'latest')) {
++		if (this.arch === 'sparc') {
++			values.machine = 'SS-5';
++		} else if (this.arch === 'sparc64') {
++			values.machine = 'sun4u';
++		}
++    }
+ 	delete values.version;
+ 	if (values.delete === 'machine' && !values.viommu) {
+ 	    return values;
+@@ -64,6 +74,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 
+     setValues: function(values) {
+ 	let me = this;
++	me.arch = values.arch;
+ 
+ 	let machineConf = PVE.Parser.parsePropertyString(values.machine, 'type');
+ 	values.machine = machineConf.type;
+@@ -85,12 +96,30 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
  	if (values.machine !== '__default__' && values.machine !== 'q35') {
  	    values.version = values.machine;
@@ -393,15 +439,41 @@ index a697cd34..edf887cd 100644
  
  	    // avoid hiding a pinned version
  	    me.setAdvancedVisible(true);
-@@ -102,6 +113,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 	}
+ 
++	if (values.machine === '__default__') {
++        if (values.arch === 'aarch64') {
++			values.machine = 'virt';
++		} else if (values.arch === 'sparc') {
++			values.machine = 'sun';
++		} else if (values.arch === 'sparc64') {
++			values.machine = 'sun';
++		}
++	}
++
+ 	this.callParent(arguments);
+     },
+ 
+@@ -100,8 +129,10 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+ 	reference: 'machine',
+ 	fieldLabel: gettext('Machine'),
  	comboItems: [
- 	    ['__default__', PVE.Utils.render_qemu_machine('')],
+-	    ['__default__', PVE.Utils.render_qemu_machine('')],
++	    ['__default__', PVE.Utils.render_qemu_machine('', '')],
  	    ['q35', 'q35'],
 +	    ['virt', 'aarch64 (virt)'],
 +	    ['sun', 'sparc/sparc64 (sun)'],
  	],
  	bind: {
  	    value: '{type}',
+@@ -200,6 +231,7 @@ Ext.define('PVE.qemu.MachineEdit', {
+ 		    machine: conf.machine || '__default__',
+ 		};
+ 		values.isWindows = PVE.Utils.is_windows(conf.ostype);
++		values.arch = conf.arch || '__default__';
+ 		me.setValues(values);
+ 	    },
+ 	});
 diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
 new file mode 100644
 index 00000000..c2f5f4f4
@@ -452,3 +524,16 @@ index 00000000..c2f5f4f4
 +	},
 +    ],
 +});
+diff --git a/www/manager6/qemu/SystemEdit.js b/www/manager6/qemu/SystemEdit.js
+index 592c88ee..a53e9522 100644
+--- a/www/manager6/qemu/SystemEdit.js
++++ b/www/manager6/qemu/SystemEdit.js
+@@ -89,7 +89,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+ 	    value: '__default__',
+ 	    fieldLabel: gettext('Machine'),
+ 	    comboItems: [
+-		['__default__', PVE.Utils.render_qemu_machine('')],
++		['__default__', PVE.Utils.render_qemu_machine('', '')],
+ 		['q35', 'q35'],
+ 	    ],
+ 	},

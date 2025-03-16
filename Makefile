@@ -271,7 +271,7 @@ qemu-server-dev:
 
 .PHONY: pve-manager-dev
 pve-manager-dev:
-	$(Q)make -C submodules/pve-manager/www/manager6 pvemanagerlib.js
+	$(Q)make -C submodules/pve-manager/www/manager6 pvemanagerlib.js && rm -f submodules/pve-manager/www/manager6/.lint-incremental
 
 .PHONY: apply-patches
 apply-patches:
