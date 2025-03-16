@@ -8,10 +8,7 @@ on:
     paths:
       - '.github/workflows/repo-update.yml'
       - 'docs/**'
-  workflow_run:
-    workflows: 
-      - 'Build debian package for submodule'
-    types: [completed]
+  workflow_call:
 
 permissions:
   contents: read

@@ -1,17 +1,24 @@
 name: Build debian package for submodule when patch files are changed
 
 on:
+  workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - main
     paths:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
       - "submodules/qemu-server.patch"
-    # branches: ["feature/branch/name"]
+      - ".github/workflows/build-deb-trigger-patches.yml"
 
 permissions:
   # for ghcr.io (docker registry):
   packages: write
+  # to push changelog after package update:
+  contents: write
+  # for github pages:
+  pages: write
+  id-token: write
 
 jobs:
   check:
@@ -80,7 +87,17 @@ jobs:
     secrets: inherit
 
   # debug-workflow:
-  #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@feature/branch/name
+  #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+  #   needs: [check]
   #   with:
   #     package: pve-manager
   #   secrets: inherit
+
+  update-docs-after-changes:
+    # uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@fix/workflow-doc-chain
+    # needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed, debug-workflow]
+    # if: always()
+    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed]
+    if: ${{ needs.check.outputs.pve-manager == 'true' || needs.check.outputs.pve-qemu == 'true' || needs.check.outputs.qemu-server == 'true' }}
+  
