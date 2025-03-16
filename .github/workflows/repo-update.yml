@@ -10,7 +10,7 @@ on:
       - 'docs/**'
   workflow_run:
     workflows: 
-      - 'Build debian package for submodule'
+      - 'Build debian package for submodule when patch files are changed'
     types: [completed]
 
 permissions:
