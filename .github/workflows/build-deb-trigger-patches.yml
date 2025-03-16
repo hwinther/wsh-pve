@@ -87,18 +87,18 @@ jobs:
       package: qemu-server
     secrets: inherit
 
-  debug-workflow:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
-    needs: [check]
-    with:
-      package: pve-manager
-    secrets: inherit
+  # debug-workflow:
+  #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+  #   needs: [check]
+  #   with:
+  #     package: pve-manager
+  #   secrets: inherit
 
   update-docs-after-changes:
-    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@fix/workflow-doc-chain
-    needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed, debug-workflow]
-    if: always()
-    # uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
-    # needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed]
-    # if: ${{ needs.check.outputs.pve-manager == 'true' || needs.check.outputs.pve-qemu == 'true' || needs.check.outputs.qemu-server == 'true' }}
+    # uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@fix/workflow-doc-chain
+    # needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed, debug-workflow]
+    # if: always()
+    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    needs: [build-pve-manager-deb-when-changed, build-pve-qemu-deb-when-changed, build-qemu-server-deb-when-changed]
+    if: ${{ needs.check.outputs.pve-manager == 'true' || needs.check.outputs.pve-qemu == 'true' || needs.check.outputs.qemu-server == 'true' }}
   
