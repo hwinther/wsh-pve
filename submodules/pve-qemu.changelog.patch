@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index b6a6c59..61ceabd 100644
+index 66be5dd..c2a4d02 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (9.2.0-2+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (9.2.0-3+wsh1) bookworm; urgency=medium
 +
 +  * Add machine values and fix parsing in UI
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Wed, 26 Mar 2025 20:51:37 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 03 Apr 2025 20:51:06 +0000
 +
-+pve-qemu-kvm (9.2.0-2+wsh1) bookworm; urgency=medium
-+
-+  * Add machine values and fix parsing in UI
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 21 Mar 2025 18:36:19 +0000
-+
+ pve-qemu-kvm (9.2.0-3) bookworm; urgency=medium
+ 
+   * revert changes to the High Precision Event Timer (HPET) to fix performance
+     regression
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 26 Mar 2025 09:56:01 +0100
+ 
  pve-qemu-kvm (9.2.0-2) bookworm; urgency=medium
  
    * fix assertion failure when migrating a VM with multiple disks on a
-     replicated ZFS.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 24 Feb 2025 17:33:34 +0100
- 
- pve-qemu-kvm (9.2.0-1) bookworm; urgency=medium
- 
-   * update submodule and patches to QEMU 9.2.0
