@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ddb70dc8..8af77a5d 100644
+index 49bda363..a13a0243 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (8.2.4+wsh1) bookworm; urgency=medium
++qemu-server (8.3.8+wsh1) bookworm; urgency=medium
 +
 +  * Add error message when arch binary is missing
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 09 Mar 2025 23:53:00 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 04 Apr 2025 20:21:22 +0000
 +
- qemu-server (8.2.4) bookworm; urgency=medium
+ qemu-server (8.3.8) bookworm; urgency=medium
  
-   * fix #5528: ensure cgroup limits like CPU weight are set correctly and in
-     the same way for both cases, the cold-start and when changing while the VM
-     is running
+   * resume: error out if VM is a template
  
-   * fix #5619: honor link-down setting when hot-plugging NIC
+   * backup: also restore VM power state for early failures
  
-   * resume: bump timeout for query-status, as activating the block drives in
-     QEMU on resume can take a bit of time during which the QEMU process might
+   * config: add special class that prevents writing the configuration
+ 
+   * fix #6007: template backup: use minimized configuration for handling the full vm start
+ 
