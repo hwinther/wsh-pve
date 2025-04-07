@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 49bda363..a13a0243 100644
+index 6de0780d..292a4477 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (8.3.8+wsh1) bookworm; urgency=medium
++qemu-server (8.3.10+wsh1) bookworm; urgency=medium
 +
 +  * Add error message when arch binary is missing
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 04 Apr 2025 20:21:22 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 07 Apr 2025 21:28:10 +0000
 +
- qemu-server (8.3.8) bookworm; urgency=medium
+ qemu-server (8.3.10) bookworm; urgency=medium
  
-   * resume: error out if VM is a template
+   * drive: remove ancient and for a long time unsupported 'cow' from formats.
  
-   * backup: also restore VM power state for early failures
+   * confidential virtualization: add AMD SEV-SNP support.
  
-   * config: add special class that prevents writing the configuration
+   * allow non-root users to add a virtion RNG (random number generator) device
+     using /dev/u?random or /dev/hwrng as source.
  
-   * fix #6007: template backup: use minimized configuration for handling the full vm start
- 
+   * config: add S3 and S4 power state properties to machine option.
