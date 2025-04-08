@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6de0780d..292a4477 100644
+index 6de0780d..87fad8c4 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.3.10+wsh2) bookworm; urgency=medium
++
++  * Add error message when arch binary is missing
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 08 Apr 2025 20:21:39 +0000
++
 +qemu-server (8.3.10+wsh1) bookworm; urgency=medium
 +
 +  * Add error message when arch binary is missing
