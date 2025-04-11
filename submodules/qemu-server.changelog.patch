@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index c531e7d5..990e0637 100644
+index c531e7d5..847b8517 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.3.12+wsh2) bookworm; urgency=medium
++
++  * chore: Update patches to reset offset
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:23:02 +0000
++
 +qemu-server (8.3.12+wsh1) bookworm; urgency=medium
 +
 +  * Add error message when arch binary is missing
