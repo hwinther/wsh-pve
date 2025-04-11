@@ -125,10 +125,10 @@ index 975291f6..8665af6f 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index c94a5cdf..84e7c852 100644
+index fdf0e816..eda8fe66 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -259,6 +259,7 @@ JSSRC= 							\
+@@ -262,6 +262,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -150,7 +150,7 @@ index 07eb9b17..aa955705 100644
  		if (match_res[3]) {
  		    res.macaddr = match_res[3];
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index aa415759..c09e2d76 100644
+index 1f6778cd..2e305a5b 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -495,8 +495,16 @@ Ext.define('PVE.Utils', {
@@ -340,7 +340,7 @@ index c8a67017..fca59f15 100644
      advancedItems: [
  	{
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index c6d193fc..06c2f6fe 100644
+index 480bbb3d..4e4fc360 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -170,9 +170,25 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -370,9 +370,9 @@ index c6d193fc..06c2f6fe 100644
  	    scsihw: {
  		header: gettext('SCSI Controller'),
  		iconCls: 'database',
-@@ -748,6 +764,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -766,6 +782,13 @@ Ext.define('PVE.qemu.HardwareView', {
  				disabled: !caps.nodes['Sys.Console'],
- 				handler: editorFactory('RNGEdit'),
+ 				handler: editorFactory('VirtiofsEdit'),
  			    },
 +			    {
 +				text: gettext("Architecture"),

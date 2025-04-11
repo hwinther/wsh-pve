@@ -75,7 +75,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 51f56c5..c324ecb 100755
+index 5c4e361..8e7cd16 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -18,7 +18,7 @@ machinefile := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
@@ -155,7 +155,7 @@ index 51f56c5..c324ecb 100755
  # Build architecture-independent files here.
  binary-indep: build install
  # We have nothing to do by default.
-@@ -148,7 +179,7 @@ binary-arch: build install
+@@ -147,7 +178,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
