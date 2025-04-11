@@ -102,7 +102,10 @@ jobs:
             exit 1
           fi
 
-          gh release create "${{ inputs.package }}-$WSH_VERSION" \
+          RELEASE_TAG="${{ inputs.package }}-${WSH_VERSION/+/-}"
+          echo "Creating release with tag: $RELEASE_TAG"
+
+          gh release create "$RELEASE_TAG" \
             --title "${{ inputs.package }} v$WSH_VERSION" \
             --notes "Release of ${{ inputs.package }} version $WSH_VERSION" \
             "$DEB_FILE"
