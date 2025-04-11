@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6de0780d..87fad8c4 100644
+index c531e7d5..990e0637 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (8.3.10+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (8.3.12+wsh1) bookworm; urgency=medium
 +
 +  * Add error message when arch binary is missing
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 08 Apr 2025 20:21:39 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:13:13 +0000
 +
-+qemu-server (8.3.10+wsh1) bookworm; urgency=medium
-+
-+  * Add error message when arch binary is missing
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 07 Apr 2025 21:28:10 +0000
-+
- qemu-server (8.3.10) bookworm; urgency=medium
+ qemu-server (8.3.12) bookworm; urgency=medium
  
-   * drive: remove ancient and for a long time unsupported 'cow' from formats.
+   * virtiofs: drop unsafe and problematic writeback option completely fow now.
  
-   * confidential virtualization: add AMD SEV-SNP support.
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 08 Apr 2025 17:30:49 +0200
  
-   * allow non-root users to add a virtion RNG (random number generator) device
-     using /dev/u?random or /dev/hwrng as source.
+ qemu-server (8.3.11) bookworm; urgency=medium
  
-   * config: add S3 and S4 power state properties to machine option.
+   * handle various deprecations of options in upstream QEMU 9.2.
+ 
