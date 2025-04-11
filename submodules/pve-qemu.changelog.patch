@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5ef94ac..0b3ae90 100644
+index f83e130..83862b3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (9.2.0-4+wsh1) bookworm; urgency=medium
++pve-qemu-kvm (9.2.0-5+wsh1) bookworm; urgency=medium
 +
-+  * Add machine values and fix parsing in UI
++  * chore: Update patches to reset offset
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 04 Apr 2025 20:50:49 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:52:56 +0000
 +
+ pve-qemu-kvm (9.2.0-5) bookworm; urgency=medium
+ 
+   * pve backup: backup-access api: simplify bitmap logic
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 04 Apr 2025 16:15:58 +0200
+ 
  pve-qemu-kvm (9.2.0-4) bookworm; urgency=medium
  
    * various async snapshot improvements, inclduing using a dedicated IO thread
      for the state file when doing a live snapshot. That should reduce load on
-     the main thread and for it to get stuck on IO, i.e. same benefits as using
-     a dedicated IO thread for regular drives. This is particularly interesting
-     when the VM state storage is a network storage like NFS. It should also
-     address #6262.
- 
-   * pve backup: implement basic features and API in preperation for external
