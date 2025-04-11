@@ -13,6 +13,11 @@ on:
 permissions:
   # for ghcr.io (docker registry):
   packages: write
+  # to push changelog after package update:
+  contents: write
+  # for github pages:
+  pages: write
+  id-token: write
 
 jobs:
   sync-pve-manager:
