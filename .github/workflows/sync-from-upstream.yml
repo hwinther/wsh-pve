@@ -29,6 +29,8 @@ on:
 permissions:
   # for ghcr.io (docker registry):
   packages: write
+  # for creating releases via build-deb.yml:
+  contents: write
 
 jobs:
   sync-from-upstream:
