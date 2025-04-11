@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6a09f4a2..5481b073 100644
+index 6a09f4a2..712b5e73 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-manager (8.4.1+wsh2) bookworm; urgency=medium
++
++  * chore: Update patches to reset offset
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:23:01 +0000
++
 +pve-manager (8.4.1+wsh1) bookworm; urgency=medium
 +
 +  * Improve handling of machine values for sun
