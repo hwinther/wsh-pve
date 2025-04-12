@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index c531e7d5..847b8517 100644
+index 49bda363..f8fd9aab 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (8.3.12+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (8.3.8+wsh1) bookworm; urgency=medium
 +
 +  * chore: Update patches to reset offset
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:23:02 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 12 Apr 2025 20:21:01 +0000
 +
-+qemu-server (8.3.12+wsh1) bookworm; urgency=medium
-+
-+  * Add error message when arch binary is missing
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 18:13:13 +0000
-+
- qemu-server (8.3.12) bookworm; urgency=medium
+ qemu-server (8.3.8) bookworm; urgency=medium
  
-   * virtiofs: drop unsafe and problematic writeback option completely fow now.
+   * resume: error out if VM is a template
  
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 08 Apr 2025 17:30:49 +0200
+   * backup: also restore VM power state for early failures
  
- qemu-server (8.3.11) bookworm; urgency=medium
+   * config: add special class that prevents writing the configuration
  
-   * handle various deprecations of options in upstream QEMU 9.2.
+   * fix #6007: template backup: use minimized configuration for handling the full vm start
  
