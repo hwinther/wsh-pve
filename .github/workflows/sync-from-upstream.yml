@@ -25,6 +25,10 @@ on:
         required: false
         default: true
         type: boolean
+    outputs:
+      build-deb-when-changed-success:
+        description: "Whether the build-deb-when-changed job succeeded"
+        value: ${{ jobs.build-deb-when-changed.result == 'success' }}
 
 permissions:
   # for ghcr.io (docker registry):

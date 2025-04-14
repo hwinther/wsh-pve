@@ -46,5 +46,11 @@ jobs:
 
   update-docs-after-changes:
     uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
-    needs: [sync-pve-manager, sync-qemu-server, pve-qemu]
+    needs: [sync-pve-manager, sync-qemu-server, pve-qemu, qemu-3dfx]
+    if: |
+      always() && (
+        needs.sync-pve-manager.outputs.build-deb-when-changed-success == 'true' ||
+        needs.sync-qemu-server.outputs.build-deb-when-changed-success == 'true' ||
+        needs.pve-qemu.outputs.build-deb-when-changed-success == 'true'
+      )
     secrets: inherit
