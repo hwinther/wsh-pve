@@ -7,9 +7,13 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "WSH PVE",
-      social: {
-        github: "https://github.com/hwinther/wsh-pve",
-      },
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/hwinther/wsh-pve",
+        },
+      ],
       sidebar: [
         {
           label: "Guides",
