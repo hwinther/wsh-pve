@@ -35,6 +35,9 @@ permissions:
   packages: write
   # for creating releases via build-deb.yml:
   contents: write
+  # for github pages:
+  pages: write
+  id-token: write
 
 jobs:
   sync-from-upstream:
