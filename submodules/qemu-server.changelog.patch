@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index c531e7d5..e10f362e 100644
+index c531e7d5..7332993a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (8.3.12+wsh2) bookworm; urgency=medium
++
++  * fix: Support for sun machine values
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 17 Apr 2025 13:45:18 +0000
++
 +qemu-server (8.3.12+wsh1) bookworm; urgency=medium
 +
 +  * fix: Support for sun machine values
