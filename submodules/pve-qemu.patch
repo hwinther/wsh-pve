@@ -11,6 +11,18 @@ index f23b041..cad0c22 100644
  	palcode-clipper \
  	s390-ccw.img \
  	s390-netboot.img \
+diff --git a/debian/control b/debian/control
+index b228c00..a4dda14 100644
+--- a/debian/control
++++ b/debian/control
+@@ -56,6 +56,7 @@ Depends: ceph-common (>= 0.48),
+          libglusterfs0 | glusterfs-common (>= 5.6),
+          libiscsi4 (>= 1.12.0) | libiscsi7,
+          libjpeg62-turbo,
++         pve-edk2-firmware-aarch64,
+          libspice-server1 (>= 0.14.0~),
+          libusb-1.0-0 (>= 1.0.17-1),
+          libusbredirparser1 (>= 0.6-2),
 diff --git a/debian/parse-machines.pl b/debian/parse-machines.pl
 index a0f449c..f30c684 100755
 --- a/debian/parse-machines.pl
