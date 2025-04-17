@@ -33,6 +33,7 @@
 		"files.associations": {
 			"nmmintrin.h": "c",
 			"smmintrin.h": "c"
-		}
+		},
+		"makefile.configureOnOpen": false
 	}
 }
