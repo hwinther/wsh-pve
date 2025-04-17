@@ -390,7 +390,7 @@ index 8e9f4fc0..06dd8f76 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary} if $kvm_user_version->{$binary} &&
 diff --git a/PVE/QemuServer/Machine.pm b/PVE/QemuServer/Machine.pm
-index 90d78154..0ec976a7 100644
+index 90d78154..48260beb 100644
 --- a/PVE/QemuServer/Machine.pm
 +++ b/PVE/QemuServer/Machine.pm
 @@ -44,7 +44,7 @@ my $machine_fmt = {
@@ -402,6 +402,32 @@ index 90d78154..0ec976a7 100644
  	maxLength => 40,
  	format_description => 'machine type',
  	optional => 1,
+@@ -182,20 +182,18 @@ sub get_machine_pve_revisions {
+     my ($machine_version_str) = @_;
+ 
+     if ($machine_version_str =~ m/^(\d+\.\d+)/) {
+-	return $PVE_MACHINE_VERSION->{$1};
++        return $PVE_MACHINE_VERSION->{$1};
+     }
+ 
+-    die "internal error: cannot get pve version for invalid string '$machine_version_str'";
++    return;  # return undef for invalid version strings
+ }
+ 
+ sub get_pve_version {
+     my ($verstr) = @_;
+ 
+-    if (my $pve_machine = get_machine_pve_revisions($verstr)) {
+-	return $pve_machine->{highest} || die "internal error - machine version '$verstr' missing 'highest'";
+-    }
+-
+-    return 0;
++    my $pve_machine = get_machine_pve_revisions($verstr);
++    return 0 if !$pve_machine;  # return 0 for invalid/unknown versions
++    return $pve_machine->{highest} || 0;  # return 0 if highest is not set
+ }
+ 
+ sub can_run_pve_machine_version {
 diff --git a/PVE/QemuServer/PCI.pm b/PVE/QemuServer/PCI.pm
 index afb60ad2..d0c571dc 100644
 --- a/PVE/QemuServer/PCI.pm
