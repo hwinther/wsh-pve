@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index b6a6c59..503f527 100644
+index f83e130..b724721 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (9.2.0-2+wsh1) bookworm; urgency=medium
++pve-qemu-kvm (9.2.0-5+wsh1) bookworm; urgency=medium
 +
-+  * chore: Update patches to reset offset
++  * fix: Add aarch64 edk2 firmware as a runtime dependency
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 12 Apr 2025 20:50:11 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 18 Apr 2025 15:52:24 +0000
 +
- pve-qemu-kvm (9.2.0-2) bookworm; urgency=medium
+ pve-qemu-kvm (9.2.0-5) bookworm; urgency=medium
  
-   * fix assertion failure when migrating a VM with multiple disks on a
-     replicated ZFS.
+   * pve backup: backup-access api: simplify bitmap logic
  
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 24 Feb 2025 17:33:34 +0100
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 04 Apr 2025 16:15:58 +0200
  
- pve-qemu-kvm (9.2.0-1) bookworm; urgency=medium
+ pve-qemu-kvm (9.2.0-4) bookworm; urgency=medium
  
-   * update submodule and patches to QEMU 9.2.0
+   * various async snapshot improvements, inclduing using a dedicated IO thread
+     for the state file when doing a live snapshot. That should reduce load on
