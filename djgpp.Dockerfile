@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM alpine:3.21 AS watcom
+FROM alpine:3.22 AS watcom
 WORKDIR /watcom
 RUN apk update && apk add wget xz
 RUN wget https://github.com/open-watcom/open-watcom-v2/releases/download/2023-12-01-Build/ow-snapshot.tar.xz
