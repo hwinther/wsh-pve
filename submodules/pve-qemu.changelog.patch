@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index f83e130..b724721 100644
+index f83e130..bff08df 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-qemu-kvm (9.2.0-5+wsh2) bookworm; urgency=medium
++
++  * fix: Add aarch64 edk2 firmware as a runtime dependency
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 17 Jun 2025 20:46:42 +0000
++
 +pve-qemu-kvm (9.2.0-5+wsh1) bookworm; urgency=medium
 +
 +  * fix: Add aarch64 edk2 firmware as a runtime dependency
