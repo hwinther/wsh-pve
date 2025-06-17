@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index d04a78c6..503dcdf3 100644
+index 6a09f4a2..22812f9a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (8.3.5+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (8.4.1+wsh1) bookworm; urgency=medium
 +
 +  * chore: Update patches to reset offset
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sun, 13 Apr 2025 20:21:05 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 17 Jun 2025 20:21:46 +0000
 +
-+pve-manager (8.3.5+wsh1) bookworm; urgency=medium
-+
-+  * chore: Update patches to reset offset
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 11 Apr 2025 22:45:48 +0000
-+
- pve-manager (8.3.5) bookworm; urgency=medium
+ pve-manager (8.4.1) bookworm; urgency=medium
  
-   * update shipped appliance info index
+   * ui: fix regression with checking if volume is QEMU backup, which could
+     block some dialogues like file-restore.
  
-   * fix #6138: ui: storage content: use locale for sorting
+   * ceph versions: do not try to parse empty string and include raw string in
+     error to make this easier to debug.
  
-   * ui: sdn ipam: powerDNS, NetBox, phpIPAM: split layout in two columns
- 
-   * ui: sdn ipam: powerDNS, NetBox, phpIPAM: add fingerprint textfield
+   * ui: backup: hide change mode detection for VMs and non-PBS storage.
  
