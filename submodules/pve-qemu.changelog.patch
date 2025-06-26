@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f83e130..bff08df 100644
+index 1b83384..91b8bfe 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (9.2.0-5+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (10.0.2-1+wsh1) bookworm; urgency=medium
 +
 +  * fix: Add aarch64 edk2 firmware as a runtime dependency
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 17 Jun 2025 20:46:42 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 26 Jun 2025 20:42:58 +0000
 +
-+pve-qemu-kvm (9.2.0-5+wsh1) bookworm; urgency=medium
-+
-+  * fix: Add aarch64 edk2 firmware as a runtime dependency
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 18 Apr 2025 15:52:24 +0000
-+
+ pve-qemu-kvm (10.0.2-1) trixie; urgency=medium
+ 
+   * update QEMU and downstream patches for 10.0.2 release.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 17 Jun 2025 08:38:51 +0200
+ 
  pve-qemu-kvm (9.2.0-5) bookworm; urgency=medium
  
    * pve backup: backup-access api: simplify bitmap logic
  
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 04 Apr 2025 16:15:58 +0200
- 
- pve-qemu-kvm (9.2.0-4) bookworm; urgency=medium
- 
-   * various async snapshot improvements, inclduing using a dedicated IO thread
-     for the state file when doing a live snapshot. That should reduce load on
