@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index c531e7d5..045af3ce 100644
+index 4dc3d9f2..a6ba57a0 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+qemu-server (8.3.12+wsh3) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.0.0+wsh1) bookworm; urgency=medium
 +
 +  * fix: Support for sun machine values
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 17 Jun 2025 00:10:52 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 03 Jul 2025 20:21:36 +0000
 +
-+qemu-server (8.3.12+wsh2) bookworm; urgency=medium
-+
-+  * fix: Support for sun machine values
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 17 Apr 2025 13:45:18 +0000
-+
-+qemu-server (8.3.12+wsh1) bookworm; urgency=medium
-+
-+  * fix: Support for sun machine values
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 17 Apr 2025 13:35:24 +0000
-+
- qemu-server (8.3.12) bookworm; urgency=medium
+ qemu-server (9.0.0) trixie; urgency=medium
  
-   * virtiofs: drop unsafe and problematic writeback option completely fow now.
+   * re-build for Debian 13 Trixie based Proxmox VE 9 releases.
  
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 08 Apr 2025 17:30:49 +0200
+   * move module-load config from /etc to /usr, as a file with the same name in
+     the /etc/modules-load.d/ directory takes precedence over a file in the
+     /usr/lib/modules-load.d/ directory, an admin can still overrides this in a
+     easy manner.
  
- qemu-server (8.3.11) bookworm; urgency=medium
- 
-   * handle various deprecations of options in upstream QEMU 9.2.
- 
+   * drop duplicated network hook script from /var, they have been migrated to
