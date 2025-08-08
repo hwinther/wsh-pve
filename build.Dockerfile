@@ -1,4 +1,4 @@
-FROM debian:12 AS install
+FROM debian:13 AS install
 LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
 COPY pve-dev.list /etc/apt/sources.list.d/
 COPY proxmox-release-bookworm.gpg /etc/apt/trusted.gpg.d/
