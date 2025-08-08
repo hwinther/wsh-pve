@@ -1,4 +1,4 @@
-FROM debian:13 AS install
+FROM debian:trixie AS install
 LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
 COPY proxmox.sources /etc/apt/sources.list.d/
 COPY proxmox-archive-keyring-trixie.gpg /usr/share/keyrings/proxmox-archive-keyring.gpg
