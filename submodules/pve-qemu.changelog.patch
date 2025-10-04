@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 845aa1c..f13321e 100644
+index 4d2870d..d192812 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (10.0.2-3+wsh2) bookworm; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (10.0.2-4+wsh1) bookworm; urgency=medium
 +
 +  * fix: Add aarch64 edk2 firmware as a runtime dependency
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 18 Jul 2025 20:43:04 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 04 Oct 2025 20:42:43 +0000
 +
-+pve-qemu-kvm (10.0.2-3+wsh1) bookworm; urgency=medium
-+
-+  * fix: Add aarch64 edk2 firmware as a runtime dependency
-+
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 15 Jul 2025 20:42:33 +0000
-+
+ pve-qemu-kvm (10.0.2-4) trixie; urgency=medium
+ 
+   * savevm-async: reuse migration blocker check for snapshots/hibernation to
+     avoid crashing a VM when on these actions if its configuration does not
+     support them.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Thu, 17 Jul 2025 23:08:46 +0200
+ 
  pve-qemu-kvm (10.0.2-3) trixie; urgency=medium
  
-   * add backup/zeroinit/track-alloc blockdev patches
- 
-  -- Proxmox Support Team <support@proxmox.com>  Thu, 03 Jul 2025 12:02:03 +0200
- 
- pve-qemu-kvm (10.0.2-2) trixie; urgency=medium
- 
-   * drop support for accessing Gluster based storage directly due to its
-     effective end of support and maintenance. The last upstream release
