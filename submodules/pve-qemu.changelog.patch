@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4d2870d..d192812 100644
+index e89e38d..675405e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.0.2-4+wsh1) bookworm; urgency=medium
++pve-qemu-kvm (10.1.0-1+wsh1) bookworm; urgency=medium
 +
 +  * fix: Add aarch64 edk2 firmware as a runtime dependency
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 04 Oct 2025 20:42:43 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 21 Oct 2025 20:42:53 +0000
 +
+ pve-qemu-kvm (10.1.0-1) trixie; urgency=medium
+ 
+   * update QEMU and downstream patches for 10.1.0 release.
+ 
+   * cherry-pick stable fixes for QEMU 10.1.0, e.g. for live-migration
+     compatibility improvements.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 03 Oct 2025 22:00:56 +0200
+ 
  pve-qemu-kvm (10.0.2-4) trixie; urgency=medium
- 
-   * savevm-async: reuse migration blocker check for snapshots/hibernation to
-     avoid crashing a VM when on these actions if its configuration does not
-     support them.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Thu, 17 Jul 2025 23:08:46 +0200
- 
- pve-qemu-kvm (10.0.2-3) trixie; urgency=medium
- 
