@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index e89e38d..675405e 100644
+index 8c2507a..f43fc4f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.1.0-1+wsh1) bookworm; urgency=medium
++pve-qemu-kvm (10.1.2-1+wsh1) bookworm; urgency=medium
 +
 +  * fix: Add aarch64 edk2 firmware as a runtime dependency
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 21 Oct 2025 20:42:53 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 14 Nov 2025 20:41:14 +0000
 +
- pve-qemu-kvm (10.1.0-1) trixie; urgency=medium
+ pve-qemu-kvm (10.1.2-1) trixie; urgency=medium
  
-   * update QEMU and downstream patches for 10.1.0 release.
+   * fix #6810: fix a potential deadlock upon TMF request cancelling with
+     VirtIO SCSI
  
-   * cherry-pick stable fixes for QEMU 10.1.0, e.g. for live-migration
-     compatibility improvements.
+   * update QEMU and downstream patches for 10.1.2 stable release.
  
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 03 Oct 2025 22:00:56 +0200
+   * cherry pick fix for VFIO regression affecting v10.1, which, e.g., could
+     affect some GPU passthrough setups.
  
- pve-qemu-kvm (10.0.2-4) trixie; urgency=medium
