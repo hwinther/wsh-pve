@@ -29,7 +29,7 @@ jobs:
 
       - name: Build the docker image
         run: |
-          tag=ghcr.io/hwinther/wsh-pve/pve-build:trixie
+          tag=ghcr.io/hwinther/wsh-pve/pve-build:13
           tag_latest=ghcr.io/hwinther/wsh-pve/pve-build:latest
           echo tag=$tag tag_latest=$tag_latest
           docker build . -t $tag -t $tag_latest -f build.Dockerfile
