@@ -1,5 +1,50 @@
+diff --git a/PVE/API2/Qemu.pm b/PVE/API2/Qemu.pm
+index 626cce45..6dd11be9 100644
+--- a/PVE/API2/Qemu.pm
++++ b/PVE/API2/Qemu.pm
+@@ -3145,6 +3145,12 @@ __PACKAGE__->register_method({
+ 		default => 'max(30, vm memory in GiB)',
+ 		optional => 1,
+ 	    },
++		'force-console' => {
++		description => "Attach -monitor stdio to the VM's QEMU process",
++		type => 'boolean',
++		optional => 1,
++		default => 0,
++	    },
+ 	},
+     },
+     returns => {
+diff --git a/PVE/CLI/qm.pm b/PVE/CLI/qm.pm
+index 3e3a4c91..971ae1b4 100755
+--- a/PVE/CLI/qm.pm
++++ b/PVE/CLI/qm.pm
+@@ -1172,6 +1172,23 @@ our $cmddef = {
+ 
+     # FIXME: should be in a power command group?
+     start => [ "PVE::API2::Qemu", 'vm_start', ['vmid'], { %node } , $upid_exit ],
++    'start-console' => [ "PVE::API2::Qemu", 'vm_start', ['vmid'],
++        {
++            node => $nodename,
++            additionalProperties => 0,
++            properties => {
++                skiplock => get_standard_option('skiplock'),
++            },
++            protected => 1,
++            description => "Start virtual machine with console enabled.",
++        },
++        sub {
++            my ($param) = @_;
++            $param->{'force-console'} = 1;
++            return PVE::API2::Qemu->vm_start($param);
++        }
++    ],
++
+     stop => [ "PVE::API2::Qemu", 'vm_stop', ['vmid'], { %node }, $upid_exit ],
+     reset => [ "PVE::API2::Qemu", 'vm_reset', ['vmid'], { %node }, $upid_exit ],
+     shutdown => [ "PVE::API2::Qemu", 'vm_shutdown', ['vmid'], { %node }, $upid_exit ],
 diff --git a/PVE/QemuServer.pm b/PVE/QemuServer.pm
-index ccdceedc..8f3c963a 100644
+index ccdceedc..bb929db5 100644
 --- a/PVE/QemuServer.pm
 +++ b/PVE/QemuServer.pm
 @@ -195,7 +195,7 @@ my $vga_fmt = {
@@ -59,6 +104,15 @@ index ccdceedc..8f3c963a 100644
  };
  
  my $spice_enhancements_fmt = {
+@@ -615,7 +637,7 @@ EODESCR
+ 	description => "Virtual processor architecture. Defaults to the host.",
+ 	optional => 1,
+ 	type => 'string',
+-	enum => [qw(x86_64 aarch64)],
++	enum => [qw(x86_64 aarch64 sparc sparc64)],
+     },
+     smbios1 => {
+ 	description => "Specify SMBIOS type 1 fields.",
 @@ -633,7 +655,7 @@ EODESCR
      bios => {
  	optional => 1,
@@ -185,6 +239,17 @@ index ccdceedc..8f3c963a 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 5) {
+@@ -3542,8 +3599,8 @@ sub config_to_command {
+ 
+     my $use_virtio = 0;
+ 
+-    my $qmpsocket = PVE::QemuServer::Helpers::qmp_socket($vmid);
+-    push @$cmd, '-chardev', "socket,id=qmp,path=$qmpsocket,server=on,wait=off";
++	my $qmpsocket = PVE::QemuServer::Helpers::qmp_socket($vmid);
++	push @$cmd, '-chardev', "socket,id=qmp,path=$qmpsocket,server=on,wait=off";
+     push @$cmd, '-mon', "chardev=qmp,mode=control";
+ 
+     if (min_version($machine_version, 2, 12)) {
 @@ -3577,9 +3634,13 @@ sub config_to_command {
  		$value =~ s/,/,,/g;
  		$smbios_string .= "," . $key . "=" . $value if $value;
@@ -212,7 +277,13 @@ index ccdceedc..8f3c963a 100644
      if ($q35) { # tell QEMU to load q35 config early
  	# we use different pcie-port hardware for qemu >= 4.0 for passthrough
  	if (min_version($machine_version, 4, 0)) {
-@@ -3619,9 +3684,11 @@ sub config_to_command {
+@@ -3614,14 +3679,16 @@ sub config_to_command {
+ 	push @$cmd, $fixups->@*;
+     }
+ 
+-    if ($conf->{vmgenid}) {
++    if ($conf->{vmgenid} && $arch !~ m/^sparc/) {
+ 	push @$devices, '-device', 'vmgenid,guid='.$conf->{vmgenid};
      }
  
      # add usb controllers
@@ -224,7 +295,15 @@ index ccdceedc..8f3c963a 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3640,7 +3707,6 @@ sub config_to_command {
+@@ -3633,14 +3700,13 @@ sub config_to_command {
+ 	$tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
+     }
+ 
+-    if ($tablet) {
++    if ($tablet && $arch !~ m/^sparc/) {
+ 	push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
+ 	my $kbd = print_keyboarddevice_full($conf, $arch);
+ 	push @$devices, '-device', $kbd if defined($kbd);
      }
  
      my $bootorder = device_bootorder($conf);
@@ -232,7 +311,16 @@ index ccdceedc..8f3c963a 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) = PVE::QemuServer::PCI::print_hostpci_devices(
  	$vmid, $conf, $devices, $vga, $winversion, $bridges, $arch, $machine_type, $bootorder);
-@@ -3727,7 +3793,21 @@ sub config_to_command {
+@@ -3662,7 +3728,7 @@ sub config_to_command {
+ 	    # On aarch64, serial0 is the UART device. QEMU only allows
+ 	    # connecting UART devices via the '-serial' command line, as
+ 	    # the device has a fixed slot on the hardware...
+-	    if ($arch eq 'aarch64' && $i == 0) {
++	    if ($arch =~ m/^(aarch64|sparc)/ && $i == 0) {
+ 		push @$devices, '-serial', "chardev:serial$i";
+ 	    } else {
+ 		push @$devices, '-device', "isa-serial,chardev=serial$i";
+@@ -3727,9 +3793,27 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if  defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -252,10 +340,16 @@ index ccdceedc..8f3c963a 100644
 +	    #push @$cmd,  '-vnc', "unix:$socket,password=on";
 +		$ENV{DISPLAY} = $vga->{server};
 +    } elsif ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none'){
++		if ($arch =~ m/^sparc/) {
++			push @$cmd, '-vga', $vga->{type};
++		} else {
  	push @$devices, '-device', print_vga_device(
  	    $conf, $vga, $arch, $machine_version, $machine_type, undef, $qxlnum, $bridges);
++		}
  
-@@ -3766,11 +3846,13 @@ sub config_to_command {
+ 	push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
+ 
+@@ -3766,11 +3850,13 @@ sub config_to_command {
  	push @$rtcFlags, 'base=localtime';
      }
  
@@ -269,7 +363,7 @@ index ccdceedc..8f3c963a 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3940,8 +4022,10 @@ sub config_to_command {
+@@ -3940,8 +4026,10 @@ sub config_to_command {
  		$queues = ",num_queues=$drive->{queues}";
  	    }
  
@@ -281,7 +375,7 @@ index ccdceedc..8f3c963a 100644
  	    $scsicontroller->{$controller}=1;
  	}
  
-@@ -3984,12 +4068,27 @@ sub config_to_command {
+@@ -3984,12 +4072,27 @@ sub config_to_command {
  	$d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
  	my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -311,7 +405,7 @@ index ccdceedc..8f3c963a 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -4013,7 +4112,7 @@ sub config_to_command {
+@@ -4013,7 +4116,7 @@ sub config_to_command {
      # pci.4 is nested in pci.1
      $bridges->{1} = 1 if $bridges->{4};
  
@@ -320,7 +414,7 @@ index ccdceedc..8f3c963a 100644
  	if (min_version($machine_version, 2, 3)) {
  	   $bridges->{1} = 1;
  	   $bridges->{2} = 1;
-@@ -4036,6 +4135,8 @@ sub config_to_command {
+@@ -4036,6 +4139,8 @@ sub config_to_command {
  	} else {
  	    unshift @$devices, '-device', $devstr if $k > 0;
  	}
@@ -329,7 +423,20 @@ index ccdceedc..8f3c963a 100644
      }
  
      if (!$kvm) {
-@@ -5865,6 +5966,9 @@ sub vm_start_nolock {
+@@ -5853,6 +5958,12 @@ sub vm_start_nolock {
+     }
+     $systemd_properties{timeout} = 10 if $statefile; # setting up the scope should be quick
+ 
++	if ($params->{'force-console'}) {
++		print "Adding console options for testing\n";
++		push @$cmd, '-chardev', "stdio,id=qmpconsole,signal=off";
++		push @$cmd, '-mon', "chardev=qmpconsole,mode=readline";
++	}
++
+     my $run_qemu = sub {
+ 	PVE::Tools::run_fork sub {
+ 	    PVE::Systemd::enter_systemd_scope($vmid, "Proxmox VE VM $vmid", %systemd_properties);
+@@ -5865,6 +5976,9 @@ sub vm_start_nolock {
  		$tpmpid = start_swtpm($storecfg, $vmid, $tpm, $migratedfrom);
  	    }
  
@@ -353,14 +460,14 @@ index 81e1aa04..11dbf8a0 100644
  
      if (my $size = $res->{size}) {
 diff --git a/PVE/QemuServer/Helpers.pm b/PVE/QemuServer/Helpers.pm
-index 8e9f4fc0..06dd8f76 100644
+index 8e9f4fc0..0132bfd3 100644
 --- a/PVE/QemuServer/Helpers.pm
 +++ b/PVE/QemuServer/Helpers.pm
 @@ -22,11 +22,14 @@ windows_version
  my $nodename = PVE::INotify::nodename();
  
  my $arch_to_qemu_binary = {
-+    sparc => '/usr/bin/qemu-system-sparc',
++    sparc => '/usr/bin/qemu-system-sparc-7.2',
 +    sparc64 => '/usr/bin/qemu-system-sparc64',
      aarch64 => '/usr/bin/qemu-system-aarch64',
      x86_64 => '/usr/bin/qemu-system-x86_64',
@@ -390,7 +497,7 @@ index 8e9f4fc0..06dd8f76 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary} if $kvm_user_version->{$binary} &&
 diff --git a/PVE/QemuServer/Machine.pm b/PVE/QemuServer/Machine.pm
-index 90d78154..48260beb 100644
+index 90d78154..1af27fb0 100644
 --- a/PVE/QemuServer/Machine.pm
 +++ b/PVE/QemuServer/Machine.pm
 @@ -44,7 +44,7 @@ my $machine_fmt = {
@@ -402,7 +509,16 @@ index 90d78154..48260beb 100644
  	maxLength => 40,
  	format_description => 'machine type',
  	optional => 1,
-@@ -182,20 +182,18 @@ sub get_machine_pve_revisions {
+@@ -94,6 +94,8 @@ sub print_machine {
+ my $default_machines = {
+     x86_64 => 'pc',
+     aarch64 => 'virt',
++    sparc => 'SS-5',
++    sparc64 => 'sun4u',
+ };
+ 
+ sub default_machine_for_arch {
+@@ -182,20 +184,18 @@ sub get_machine_pve_revisions {
      my ($machine_version_str) = @_;
  
      if ($machine_version_str =~ m/^(\d+\.\d+)/) {
@@ -468,3 +584,80 @@ index 017ef9c0..0bbbb829 100644
  	# include usb device config if still on x86 before-xhci machines and if USB 3 is not used
  	push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
+diff --git a/qm b/qm
+index d0e9bc19..27cbfea6 100755
+--- a/qm
++++ b/qm
+@@ -1,8 +1,71 @@
+ #!/usr/bin/perl
++package PVE::CLI::qm;
+ 
+ use strict;
+ use warnings;
+ 
+-use PVE::CLI::qm;
++use PVE::CLIHandler;
++use PVE::Storage;
++use PVE::JSONSchema qw(get_standard_option);
++use PVE::QemuConfig;
++use PVE::QemuServer;
++use PVE::INotify;
++
++use base qw(PVE::CLIHandler);
++
++sub setup_environment {
++    PVE::RPCEnvironment->setup_default_cli_env();
++}
++
++my $nodename = PVE::INotify::nodename();
++
++our $cmddef = {
++    'start-console' => [ __PACKAGE__, 'start_with_console', ['vmid'], undef,
++        sub {
++            my $upid = shift;
++            exit(0) if !$upid;
++            my $status = PVE::Tools::upid_read_status($upid);
++            exit(PVE::Tools::upid_status_is_error($status) ? -1 : 0);
++        }
++    ],
++};
++
++__PACKAGE__->register_method({
++    name => 'start_with_console',
++    path => 'start-console',
++    method => 'POST',
++    description => "Start virtual machine with console enabled.",
++    parameters => {
++        additionalProperties => 0,
++        properties => {
++            vmid => get_standard_option('pve-vmid', {
++                description => "The ID of the VM to start"
++            }),
++            skiplock => {
++                type => 'boolean',
++                description => "Ignore locks - use with care",
++                optional => 1,
++            },
++        },
++    },
++    returns => { type => 'null' },
++    code => sub {
++        my ($param) = @_;
++
++        my $vmid = $param->{vmid};
++        my $skiplock = $param->{skiplock};
++
++        my $storecfg = PVE::Storage::config();
++
++        PVE::QemuConfig->lock_config($vmid, sub {
++            my $conf = PVE::QemuConfig->load_config($vmid);
++            PVE::QemuConfig->check_lock($conf);
++
++            die "you can't start a template\n" if PVE::QemuConfig->is_template($conf);
++
++            PVE::QemuServer::vm_start_nolock($storecfg, $vmid, $conf, $skiplock, undef, {'force-console' => 1});
++        });
++    }
++});
+ 
+ PVE::CLI::qm->run_cli_handler();

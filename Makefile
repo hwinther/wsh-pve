@@ -33,7 +33,7 @@ else
 	DOCKER_ARG := $(DOCKER_ARG)
 endif
 
-QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
+QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/API2/Qemu.pm PVE/CLI/qm.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
