@@ -1,7 +1,7 @@
 FROM debian:13 AS install
 LABEL maintainer="Hans Christian Winther-Sørensen <docker@wsh.no>"
 COPY pve-dev.list /etc/apt/sources.list.d/
-COPY proxmox-release-bookworm.gpg /etc/apt/trusted.gpg.d/
+COPY proxmox-release-trixie.gpg /etc/apt/trusted.gpg.d/
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update
 # For service configuration (perhaps it can be skipped instead?)
