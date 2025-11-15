@@ -9,6 +9,7 @@
     "gnutls",
     "hwinther",
     "includedeb",
+    "keyrings",
     "libacl",
     "libaio",
     "libasound",
