@@ -33,6 +33,8 @@ else
 	DOCKER_ARG := $(DOCKER_ARG)
 endif
 
+DOCKER_TTY := $(if $(DEBUG_SHELL),-it,)
+
 QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/DriveDevice.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/QemuServer/Network.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
@@ -83,7 +85,7 @@ pve-manager:
 		echo "::group::Building pve-manager deb package"; \
 	fi; \
 	patch -d submodules/pve-manager -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-manager.patch; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-manager:/src/submodules/pve-manager \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/repo:/build/repo \
@@ -93,7 +95,7 @@ pve-manager:
 		-e RUST_BACKTRACE=full \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb || true && cp -f pve-manager_*.deb /build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-manager_*.deb /build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
