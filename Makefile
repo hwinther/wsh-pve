@@ -33,7 +33,7 @@ else
 	DOCKER_ARG := $(DOCKER_ARG)
 endif
 
-QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
+QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/DriveDevice.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/QemuServer/Network.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
@@ -238,7 +238,7 @@ dev-links:
 		fi; \
 		if [ ! -e "$$symlink_path" ]; then \
 			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
-			ln -s "$(CURRENT_DIR)/submodules/qemu-server/$$item" "$$symlink_path"; \
+			ln -s "$(CURRENT_DIR)/submodules/qemu-server/src/$$item" "$$symlink_path"; \
 		fi; \
 	done
 
