@@ -113,7 +113,7 @@ qemu-server:
 		echo "::group::Building qemu-server deb package"; \
 	fi; \
 	patch -d submodules/qemu-server -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../qemu-server.patch; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/qemu-server:/src/submodules/qemu-server \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/repo:/build/repo \
@@ -123,7 +123,7 @@ qemu-server:
 		-e DEB_BUILD_OPTIONS=nocheck \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb || true && cp -f qemu-server_*.deb /build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f qemu-server_*.deb /build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
@@ -143,7 +143,7 @@ pve-qemu:
 	if [ -f "submodules/pve-qemu.changelog.patch" ]; then \
 		cd submodules/pve-qemu && patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch || rm ../pve-qemu.changelog.patch && cd ../../; \
 	fi; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
@@ -159,7 +159,7 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu-kvm_*.deb /src/build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-qemu-kvm_*.deb /src/build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
