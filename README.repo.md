@@ -30,10 +30,8 @@ $ reprepro -Vb . includedeb bookworm /mnt/dev/crono/qemu-server/qemu-server_8.2.
 
 # (Key generated via: gpg --armor --output wsh-pve.gpg.key --export-options export-minimal --export 6082CB267FE62087F23F343910DD95462E417289)
 # (Sources file created via this guide https://wiki.debian.org/DebianRepository/SetupWithReprepro)
-# wget -O - http://pve-test3.osl.wsh.no/conf/wsh-pve.gpg.key | apt-key add -
-wget -O - http://pve-test3.osl.wsh.no/conf/wsh-pve.gpg.key | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
 
-wget -O /etc/apt/sources.list.d/wsh-pve.list http://pve-test3/conf/wsh-pve.list
+See [setup docs](docs/src/content/docs/guides/setup.md) for consumer installation instructions.
 
 ## Change password
 

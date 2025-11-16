@@ -1,7 +1,7 @@
 Origin: WshPve
 Label: wsh-pve
 Suite: stable
-Codename: bookworm
+Codename: trixie
 Architectures: amd64 source
 Components: main
 Description: Apt repository for project wsh-pve

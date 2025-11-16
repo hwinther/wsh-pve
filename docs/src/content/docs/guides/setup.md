@@ -11,10 +11,10 @@ You can choose to only install the packages on a few nodes in a given cluster, b
 
 ```bash
 # Add the repository signing key
-sudo wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
+sudo wget -O - /usr/share/keyrings/wsh-pve.gpg | gpg --dearmor -o /etc/apt/keyrings/wsh-pve.gpg
 
 # Add the repository
-sudo wget -O /etc/apt/sources.list.d/wsh-pve.list http://debian.wshosting.no/debian/conf/wsh-pve.list
+sudo wget -O /etc/apt/sources.list.d/wsh-pve.sources http://debian.wshosting.no/debian/conf/wsh-pve.sources
 
 # Update repository cache and show packages that can be installed
 sudo apt update && sudo apt list --upgradable
