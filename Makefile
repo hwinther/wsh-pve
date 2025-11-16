@@ -143,14 +143,14 @@ pve-qemu:
 	if [ -f "submodules/pve-qemu.changelog.patch" ]; then \
 		cd submodules/pve-qemu && patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch || rm ../pve-qemu.changelog.patch && cd ../../; \
 	fi; \
-	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
 		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build:/src/build \
