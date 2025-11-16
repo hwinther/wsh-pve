@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index f23b041..cad0c22 100644
+index eecdf17..75726a2 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -26,8 +26,6 @@ PC_BIOS_FW_PURGE_LIST_IN = \
@@ -12,11 +12,11 @@ index f23b041..cad0c22 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index b228c00..a4dda14 100644
+index 81cc026..9baeca1 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -56,6 +56,7 @@ Depends: ceph-common (>= 0.48),
-          libglusterfs0 | glusterfs-common (>= 5.6),
+@@ -50,6 +50,7 @@ Depends: ceph-common (>= 0.48),
+          iproute2,
           libiscsi4 (>= 1.12.0) | libiscsi7,
           libjpeg62-turbo,
 +         pve-edk2-firmware-aarch64,
@@ -87,7 +87,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 5c4e361..8e7cd16 100755
+index 912456e..1bf183d 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -18,7 +18,7 @@ machinefile := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
