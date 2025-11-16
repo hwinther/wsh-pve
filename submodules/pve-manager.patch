@@ -124,11 +124,8 @@ index 27742a74..055282b6 100644
 +.fa-database       { color: #70a1c8 !important; }
 +
 +.fa-object-group           { color: #56bbe8 !important; }
-diff --git a/www/manager6/.lint-incremental b/www/manager6/.lint-incremental
-new file mode 100644
-index 00000000..e69de29b
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index 495cae76..545eeef1 100644
+index 495cae76..93948c11 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -268,6 +268,7 @@ JSSRC= 							\
@@ -139,15 +136,6 @@ index 495cae76..545eeef1 100644
  	qemu/QemuBiosEdit.js				\
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
-@@ -364,7 +365,7 @@ tidy: $(JSSRC)
- 	proxmox-biome format --fix $?
- 
- .lint-incremental: $(JSSRC)
--	$(BIOME) lint $?
-+	# $(BIOME) lint $?
- 	touch "$@"
- 
- .PHONY: lint
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
 index c063fb03..06e6ba1e 100644
 --- a/www/manager6/Parser.js

@@ -45,14 +45,21 @@ GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-q
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
 
-all: check-and-reinit-submodules build
+all: init-submodules build
 
-.PHONY: check-and-reinit-submodules
-check-and-reinit-submodules:
+.PHONY: init-submodules
+init-submodules:
 	$(Q)if git submodule status | egrep -q '^[-+]' ; then \
 		$(ECHO) "INFO: Need to reinitialize git submodules"; \
 		git submodule update --init; \
 	fi
+
+.PHONY: reset-submodules
+reset-submodules:
+	$(ECHO) "INFO: Deleting and refetching submodules"; \
+	rm -rf submodules/*; \
+	git submodule update --init; \
+	git reset --hard
 
 .PHONY: build-containers
 build-containers:
@@ -401,12 +408,13 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all:                      Initialize submodules and build all components"
-	@echo "  build:                    Build all components (pve-manager, qemu-server, pve-qemu-bundle)"
-	@echo "  build-containers:         Build Docker containers for development"
-	@echo "  check-and-reinit-submodules: Check and reinitialize git submodules"
-	@echo "  clean:                    Clean all submodules and built components"
-	@echo "  dev:                      Set up development environment with symlinks and restart services"
+	@echo "  all:                     Initialize submodules and build all components"
+	@echo "  build:                   Build all components (pve-manager, qemu-server, pve-qemu-bundle)"
+	@echo "  build-containers:        Build Docker containers for development"
+	@echo "  init-submodules:         Check and reinitialize git submodules"
+	@echo "  reset-submodules:        Deletes and initializes git submodules (WARNING: potential loss of data if there are local patches)"
+	@echo "  clean:                   Clean all submodules and built components"
+	@echo "  dev:                     Set up development environment with symlinks and restart services"
 	@echo "  dev-links:               Create symlinks for development files"
 	@echo "  pve-manager:             Build pve-manager deb package"
 	@echo "  pve-manager-clean:       Clean and rebuild pve-manager"
