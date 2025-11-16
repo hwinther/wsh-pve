@@ -43,6 +43,7 @@ GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
 GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
 GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
+DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
 
 all: check-and-reinit-submodules build
 
@@ -84,7 +85,7 @@ pve-manager:
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-e RUST_BACKTRACE=full \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb || true && cp -f pve-manager_*.deb /build/repo/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
@@ -112,7 +113,7 @@ qemu-server:
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-e DEB_BUILD_OPTIONS=nocheck \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		bash -c "git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb || true && cp -f qemu-server_*.deb /build/repo/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
@@ -138,7 +139,7 @@ pve-qemu:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -148,7 +149,7 @@ pve-qemu:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu-kvm_*.deb /src/build/repo/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
@@ -174,7 +175,7 @@ pve-qemu-7.2-sparc:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -183,7 +184,7 @@ pve-qemu-7.2-sparc:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
@@ -334,7 +335,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
@@ -343,7 +344,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		ghcr.io/hwinther/wsh-pve/pve-build:12 \
+		$(DOCKER_BUILD_IMAGE) \
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \

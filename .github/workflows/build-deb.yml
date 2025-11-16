@@ -66,7 +66,7 @@ jobs:
             -w /src/submodules/${{ inputs.package }} \
             -e DEBEMAIL="$GIT_EMAIL" \
             -e DEBFULLNAME="$GIT_AUTHOR" \
-            ghcr.io/hwinther/wsh-pve/pve-build:12 \
+            ghcr.io/hwinther/wsh-pve/pve-build:13 \
             dch -l +wsh -D bookworm "$GIT_SUBJECT"
           echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
           grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog

@@ -1,1 +1,0 @@
-deb [signed-by=/etc/apt/keyrings/wsh-pve.gpg] https://debian.wshosting.no/debian/ bookworm main
