@@ -17,7 +17,7 @@ RUN apt-get install --no-install-recommends --assume-yes libglib2.0-dev libjson-
 # Missing deps for pve-qemu
 RUN apt-get install --no-install-recommends --assume-yes meson check libacl1-dev libaio-dev libattr1-dev libcap-ng-dev libcurl4-gnutls-dev libepoxy-dev libfdt-dev libgbm-dev libglusterfs-dev libgnutls28-dev libiscsi-dev libjpeg-dev libnuma-dev libpci-dev libpixman-1-dev libproxmox-backup-qemu0-dev librbd-dev libsdl1.2-dev libseccomp-dev libslirp-dev libspice-protocol-dev libspice-server-dev libsystemd-dev liburing-dev libusb-1.0-0-dev libusbredirparser-dev libvirglrenderer-dev libzstd-dev python3-sphinx python3-sphinx-rtd-theme python3-venv quilt xfslibs-dev libsdl2-dev libgtk-3-dev
 # Missing deps for pve-manager
-RUN apt-get install --no-install-recommends --assume-yes pve-doc-generator proxmox-biome
+RUN apt-get install --no-install-recommends --assume-yes libpve-network-perl proxmox-biome pve-doc-generator
 # For dch
 RUN apt-get install --no-install-recommends --assume-yes devscripts libdistro-info-perl
 # For additional audio support
