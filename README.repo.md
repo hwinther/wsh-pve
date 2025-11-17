@@ -23,8 +23,8 @@ $ make deb
 Finally add the deb package to the repo from the /mnt/dev/repo-root folder:
 (All of the above, and especially this command should be executed as the regular user account so that file permissions are ok, nothing is installed on the build host, and the gpg keyring is easily located
 
-$ reprepro -Vb . includedeb bookworm /mnt/dev/crono/pve-manager/pve-manager_8.2.4+wsh1_amd64.deb
-$ reprepro -Vb . includedeb bookworm /mnt/dev/crono/qemu-server/qemu-server_8.2.2+wsh1_amd64.deb
+$ reprepro -Vb . includedeb trixie /mnt/dev/user/pve-manager/pve-manager_8.2.4+wsh1_amd64.deb
+$ reprepro -Vb . includedeb trixie /mnt/dev/user/qemu-server/qemu-server_8.2.2+wsh1_amd64.deb
 
 # On the next machine
 

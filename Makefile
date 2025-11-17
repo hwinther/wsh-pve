@@ -46,6 +46,7 @@ GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qem
 GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
+DEBIAN_TAG = trixie
 
 all: init-submodules build
 
@@ -149,7 +150,7 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_PVEQEMU_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -185,7 +186,7 @@ pve-qemu-7.2-sparc:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -346,7 +347,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU3DFX_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -398,10 +399,10 @@ repo-update:
 
 	# Note: do not push this image to a remote registry as it contains the gpg key
 	$(DOCKER) build . -t repo -f repo.Dockerfile --pull
-	$(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo --env-file .gpg-password-env -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+	$(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo --env-file .gpg-password-env -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb $(DEBIAN_TAG) /opt/repo/incoming/*.deb"
 
 	# Interactive password prompt
-	# $(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+	# $(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb $(DEBIAN_TAG) /opt/repo/incoming/*.deb"
 
 	# Optionally, run a container with the repo mounted at /opt/repo
 	# $(DOCKER) run --rm -v repo:/opt/repo -v nginx/nginx-site.conf:/etc/nginx/conf.d/default.conf -p 8080:80 -it nginx
