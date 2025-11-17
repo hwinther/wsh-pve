@@ -46,6 +46,7 @@ GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qem
 GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
+DJGPP_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/djgpp-build:13
 DEBIAN_TAG = trixie
 
 all: init-submodules build
@@ -373,13 +374,13 @@ clean-qemu-3dfx:
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
-        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        $(DJGPP_BUILD_IMAGE) \
         bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
-        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        $(DJGPP_BUILD_IMAGE) \
         bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
