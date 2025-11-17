@@ -1,5 +1,5 @@
 ARG SUNSHINE_VERSION=latest
-ARG SUNSHINE_OS=debian-bookworm
+ARG SUNSHINE_OS=debian-trixie
 #ARG SUNSHINE_OS=ubuntu-22.04
 FROM lizardbyte/sunshine:${SUNSHINE_VERSION}-${SUNSHINE_OS} AS os
 

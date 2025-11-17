@@ -33,7 +33,9 @@ else
 	DOCKER_ARG := $(DOCKER_ARG)
 endif
 
-QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm
+DOCKER_TTY := $(if $(DEBUG_SHELL),-it,)
+
+QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/DriveDevice.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/QemuServer/Network.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
 PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
 CURRENT_DIR = $(shell pwd)
@@ -44,15 +46,24 @@ GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qem
 GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
+DJGPP_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/djgpp-build:13
+DEBIAN_TAG = trixie
 
-all: check-and-reinit-submodules build
+all: init-submodules build
 
-.PHONY: check-and-reinit-submodules
-check-and-reinit-submodules:
+.PHONY: init-submodules
+init-submodules:
 	$(Q)if git submodule status | egrep -q '^[-+]' ; then \
 		$(ECHO) "INFO: Need to reinitialize git submodules"; \
 		git submodule update --init; \
 	fi
+
+.PHONY: reset-submodules
+reset-submodules:
+	$(ECHO) "INFO: Deleting and refetching submodules"; \
+	rm -rf submodules/*; \
+	git submodule update --init; \
+	git reset --hard
 
 .PHONY: build-containers
 build-containers:
@@ -76,7 +87,7 @@ pve-manager:
 		echo "::group::Building pve-manager deb package"; \
 	fi; \
 	patch -d submodules/pve-manager -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-manager.patch; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-manager:/src/submodules/pve-manager \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/repo:/build/repo \
@@ -86,7 +97,7 @@ pve-manager:
 		-e RUST_BACKTRACE=full \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb || true && cp -f pve-manager_*.deb /build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-manager_*.deb /build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
@@ -104,7 +115,7 @@ qemu-server:
 		echo "::group::Building qemu-server deb package"; \
 	fi; \
 	patch -d submodules/qemu-server -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../qemu-server.patch; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/qemu-server:/src/submodules/qemu-server \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build/repo:/build/repo \
@@ -114,7 +125,7 @@ qemu-server:
 		-e DEB_BUILD_OPTIONS=nocheck \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb || true && cp -f qemu-server_*.deb /build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f qemu-server_*.deb /build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
@@ -140,8 +151,8 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_PVEQEMU_SUBJECT)"; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_PVEQEMU_SUBJECT)"; \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
 		-v $(CURRENT_DIR)/build:/src/build \
@@ -150,7 +161,7 @@ pve-qemu:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp -f pve-qemu-kvm_*.deb /src/build/repo/"; \
+		bash -c 'git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-qemu-kvm_*.deb /src/build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
@@ -176,7 +187,7 @@ pve-qemu-7.2-sparc:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_QEMU72_SUBJECT)"; \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU72_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -201,7 +212,8 @@ restore-sparc:
 	git submodule update --init submodules/sparc
 
 .PHONY: pve-qemu-bundle
-pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu
+#pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu # Disable 7.2 until its been retested and patched
+pve-qemu-bundle: restore-sparc pve-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
 
@@ -238,7 +250,7 @@ dev-links:
 		fi; \
 		if [ ! -e "$$symlink_path" ]; then \
 			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
-			ln -s "$(CURRENT_DIR)/submodules/qemu-server/$$item" "$$symlink_path"; \
+			ln -s "$(CURRENT_DIR)/submodules/qemu-server/src/$$item" "$$symlink_path"; \
 		fi; \
 	done
 
@@ -326,6 +338,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
+	patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/pve-qemu-3dfx; \
@@ -336,7 +349,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D bookworm "$(GIT_QEMU3DFX_SUBJECT)"; \
+		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU3DFX_SUBJECT)"; \
 	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -362,13 +375,13 @@ clean-qemu-3dfx:
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
-        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        $(DJGPP_BUILD_IMAGE) \
         bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
-        ghcr.io/hwinther/wsh-pve/djgpp-build:12 \
+        $(DJGPP_BUILD_IMAGE) \
         bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
@@ -388,10 +401,10 @@ repo-update:
 
 	# Note: do not push this image to a remote registry as it contains the gpg key
 	$(DOCKER) build . -t repo -f repo.Dockerfile --pull
-	$(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo --env-file .gpg-password-env -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+	$(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo --env-file .gpg-password-env -i repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && expect /usr/local/bin/reprepro.exp -Vb . includedeb $(DEBIAN_TAG) /opt/repo/incoming/*.deb"
 
 	# Interactive password prompt
-	# $(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb bookworm /opt/repo/incoming/*.deb"
+	# $(DOCKER) run --rm -v ./repo:/opt/repo -w /opt/repo -it repo bash -c "cp /opt/repo-incoming/*.deb /opt/repo/incoming/ && reprepro -Vb . includedeb $(DEBIAN_TAG) /opt/repo/incoming/*.deb"
 
 	# Optionally, run a container with the repo mounted at /opt/repo
 	# $(DOCKER) run --rm -v repo:/opt/repo -v nginx/nginx-site.conf:/etc/nginx/conf.d/default.conf -p 8080:80 -it nginx
@@ -401,12 +414,13 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all:                      Initialize submodules and build all components"
-	@echo "  build:                    Build all components (pve-manager, qemu-server, pve-qemu-bundle)"
-	@echo "  build-containers:         Build Docker containers for development"
-	@echo "  check-and-reinit-submodules: Check and reinitialize git submodules"
-	@echo "  clean:                    Clean all submodules and built components"
-	@echo "  dev:                      Set up development environment with symlinks and restart services"
+	@echo "  all:                     Initialize submodules and build all components"
+	@echo "  build:                   Build all components (pve-manager, qemu-server, pve-qemu-bundle)"
+	@echo "  build-containers:        Build Docker containers for development"
+	@echo "  init-submodules:         Check and reinitialize git submodules"
+	@echo "  reset-submodules:        Deletes and initializes git submodules (WARNING: potential loss of data if there are local patches)"
+	@echo "  clean:                   Clean all submodules and built components"
+	@echo "  dev:                     Set up development environment with symlinks and restart services"
 	@echo "  dev-links:               Create symlinks for development files"
 	@echo "  pve-manager:             Build pve-manager deb package"
 	@echo "  pve-manager-clean:       Clean and rebuild pve-manager"

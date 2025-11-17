@@ -27,7 +27,7 @@ jobs:
 
       - name: Build the docker image
         run: |
-          tag=ghcr.io/hwinther/wsh-pve/djgpp-build:12
+          tag=ghcr.io/hwinther/wsh-pve/djgpp-build:13
           tag_latest=ghcr.io/hwinther/wsh-pve/djgpp-build:latest
           echo tag=$tag tag_latest=$tag_latest
           docker build . -t $tag -t $tag_latest -f djgpp.Dockerfile

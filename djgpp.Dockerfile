@@ -6,7 +6,7 @@ RUN wget https://github.com/open-watcom/open-watcom-v2/releases/download/2023-12
 RUN tar -xvf ow-snapshot.tar.xz ./binl64
 
 # This build process is borrows heavily from revive9x:qemu-3dfx-wrappers
-FROM debian:bookworm-slim AS build-base
+FROM debian:trixie-slim AS build-base
 RUN apt-get update && apt install git build-essential mingw-w64-tools unzip bison flex texinfo curl wget zlib1g-dev -y
 
 FROM build-base AS djgpp

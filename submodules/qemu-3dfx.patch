@@ -1,0 +1,22 @@
+diff --git a/qemu-1/hw/mesa/mglcntx_linux.c b/qemu-1/hw/mesa/mglcntx_linux.c
+index 45984c3..32a8168 100644
+--- a/qemu-1/hw/mesa/mglcntx_linux.c
++++ b/qemu-1/hw/mesa/mglcntx_linux.c
+@@ -676,7 +676,7 @@ void MGLFuncHandler(const char *name)
+     }
+     FUNCP_HANDLER("wglGetSwapIntervalEXT") {
+         if (!xglFuncs.SwapIntervalEXT && xglFuncs.has_mesa_exts) {
+-            uint32_t ret;
++            uint32_t ret = 0;
+             int (*GetSwapIntervalMESA)(void) =
+                 (int (*)(void)) MesaGLGetProc("glXGetSwapIntervalMESA");
+             if (GetSwapIntervalMESA) {
+@@ -692,7 +692,7 @@ void MGLFuncHandler(const char *name)
+                 argsp[0] = 1;
+                 return;
+             }
+-            uint32_t ret;
++            uint32_t ret = 0;
+             glXQueryDrawable(dpy, win, GLX_SWAP_INTERVAL_EXT, &ret);
+             DPRINTF("wglGetSwapIntervalEXT() ret %-24u", ret);
+             argsp[0] = ret;
