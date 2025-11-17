@@ -210,7 +210,8 @@ restore-sparc:
 	git submodule update --init submodules/sparc
 
 .PHONY: pve-qemu-bundle
-pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu
+#pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu # Disable 7.2 until its been retested and patched
+pve-qemu-bundle: restore-sparc pve-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
 
