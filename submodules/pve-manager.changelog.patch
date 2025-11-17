@@ -1,5 +1,5 @@
 diff --git a/debian/changelog b/debian/changelog
-index f75e6c80..3de23709 100644
+index f75e6c80..37e7b5a5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
@@ -7,7 +7,7 @@ index f75e6c80..3de23709 100644
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 17 Nov 2025 23:35:57 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 17 Nov 2025 23:40:44 +0000
 +
  pve-manager (9.0.15) trixie; urgency=medium
  
