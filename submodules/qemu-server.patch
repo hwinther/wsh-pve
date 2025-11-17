@@ -1,5 +1,5 @@
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index ddd30abb..9fcdcf76 100644
+index ddd30abb..58763714 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -165,7 +165,7 @@ my $vga_fmt = {
@@ -208,7 +208,7 @@ index ddd30abb..9fcdcf76 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3403,7 +3468,21 @@ sub config_to_command {
+@@ -3403,9 +3468,27 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -228,10 +228,16 @@ index ddd30abb..9fcdcf76 100644
 +	    #push @$cmd,  '-vnc', "unix:$socket,password=on";
 +		$ENV{DISPLAY} = $vga->{server};
 +    } elsif ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none') {
++        if ($arch =~ m/^sparc/) {
++            push @$cmd, '-vga', $vga->{type};
++        } else {
          push @$devices, '-device',
              print_vga_device($conf, $vga, $arch, $machine_version, undef, $qxlnum, $bridges);
++        }
  
-@@ -3424,6 +3503,7 @@ sub config_to_command {
+         push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
+ 
+@@ -3424,6 +3507,7 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -239,7 +245,7 @@ index ddd30abb..9fcdcf76 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3432,6 +3512,7 @@ sub config_to_command {
+@@ -3432,6 +3516,7 @@ sub config_to_command {
                  $conf, $arch, $kvm, $kvm_off, $machine_version, $winversion, $gpu_passthrough,
              );
      }
@@ -247,7 +253,7 @@ index ddd30abb..9fcdcf76 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3615,9 +3696,11 @@ sub config_to_command {
+@@ -3615,9 +3700,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -260,7 +266,7 @@ index ddd30abb..9fcdcf76 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3689,7 +3772,12 @@ sub config_to_command {
+@@ -3689,7 +3776,12 @@ sub config_to_command {
          $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -274,7 +280,7 @@ index ddd30abb..9fcdcf76 100644
  
          # force +pve1 if machine version 10.0, for host_mtu differentiation
          $version_guard->(10, 0, 1);
-@@ -3705,7 +3793,17 @@ sub config_to_command {
+@@ -3705,7 +3797,17 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -293,7 +299,7 @@ index ddd30abb..9fcdcf76 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3729,7 +3827,7 @@ sub config_to_command {
+@@ -3729,7 +3831,7 @@ sub config_to_command {
      # pci.4 is nested in pci.1
      $bridges->{1} = 1 if $bridges->{4};
  
@@ -302,7 +308,16 @@ index ddd30abb..9fcdcf76 100644
          if (min_version($machine_version, 2, 3)) {
              $bridges->{1} = 1;
              $bridges->{2} = 1;
-@@ -5751,6 +5849,9 @@ sub vm_start_nolock {
+@@ -3758,7 +3860,7 @@ sub config_to_command {
+         push @$machineFlags, 'accel=tcg';
+     }
+     my $power_state_flags =
+-        PVE::QemuServer::Machine::get_power_state_flags($machine_conf, $version_guard);
++        PVE::QemuServer::Machine::get_power_state_flags($machine_conf, $version_guard, $arch);
+     push $cmd->@*, $power_state_flags->@* if defined($power_state_flags);
+ 
+     push @$machineFlags, 'smm=off' if should_disable_smm($conf, $vga, $machine_type);
+@@ -5751,6 +5853,9 @@ sub vm_start_nolock {
                  }
              }
  
@@ -390,7 +405,7 @@ index 35c00754..7e2d7ac8 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index c60ab477..c5380822 100644
+index c60ab477..ca699601 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -51,7 +51,7 @@ my $machine_fmt = {
@@ -402,7 +417,24 @@ index c60ab477..c5380822 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -315,18 +315,15 @@ sub get_machine_pve_revisions {
+@@ -117,6 +117,8 @@ sub print_machine {
+ my $default_machines = {
+     x86_64 => 'pc',
+     aarch64 => 'virt',
++    sparc => 'SS-5',
++    sparc64 => 'sun4u',
+ };
+ 
+ sub default_machine_for_arch {
+@@ -160,6 +162,7 @@ my sub machine_base_type {
+     return 'q35' if $machine_type =~ m/q35/;
+     return 'i440fx' if $machine_type =~ m/^pc/;
+     return 'virt' if $machine_type =~ m/^virt/;
++    return 'sun' if $machine_type =~ m/SS-\d+|sun4\w/;
+ 
+     die "unable to determine machine base type '$machine_type'\n";
+ }
+@@ -315,18 +318,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -425,6 +457,31 @@ index c60ab477..c5380822 100644
  }
  
  sub can_run_pve_machine_version {
+@@ -464,7 +464,7 @@ sub check_and_pin_machine_string {
+ # disable s3/s4 by default for 9.2+pve1 machine types
+ # returns an arrayref of cmdline options for qemu or undef
+ sub get_power_state_flags {
+-    my ($machine_conf, $version_guard) = @_;
++    my ($machine_conf, $version_guard, $arch) = @_;
+ 
+     my $object =
+         $machine_conf->{type} && ($machine_conf->{type} =~ m/q35/) ? "ICH9-LPC" : "PIIX4_PM";
+@@ -479,6 +479,7 @@ sub get_power_state_flags {
+ 
+     my $options = [];
+ 
++    if ($arch !~ m/^sparc/) {
+     # they're enabled by default in QEMU, so only add the flags to disable them
+     if (!$s3) {
+         push $options->@*, '-global', "${object}.disable_s3=1";
+@@ -486,6 +487,7 @@ sub get_power_state_flags {
+     if (!$s4) {
+         push $options->@*, '-global', "${object}.disable_s4=1";
+     }
++    }
+ 
+     if (scalar($options->@*)) {
+         return $options;
 diff --git a/src/PVE/QemuServer/Network.pm b/src/PVE/QemuServer/Network.pm
 index eb8222e8..20be752a 100644
 --- a/src/PVE/QemuServer/Network.pm
