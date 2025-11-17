@@ -250,10 +250,23 @@ index 5fa443f1..12381eaa 100644
  
          me.callParent();
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index ba588edc..b780a26b 100644
+index ba588edc..01ba47ea 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
-@@ -26,6 +26,13 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+@@ -16,6 +16,12 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+         };
+     },
+ 
++    viewModel: {
++        data: {
++            showServerField: false,
++        },
++    },
++
+     items: [
+         {
+             name: 'device',
+@@ -26,6 +32,13 @@ Ext.define('PVE.qemu.AudioInputPanel', {
                  ['ich9-intel-hda', 'ich9-intel-hda'],
                  ['intel-hda', 'intel-hda'],
                  ['AC97', 'AC97'],
@@ -267,7 +280,7 @@ index ba588edc..b780a26b 100644
              ],
          },
          {
-@@ -35,8 +42,34 @@ Ext.define('PVE.qemu.AudioInputPanel', {
+@@ -35,8 +48,34 @@ Ext.define('PVE.qemu.AudioInputPanel', {
              fieldLabel: gettext('Backend Driver'),
              comboItems: [
                  ['spice', 'SPICE'],
@@ -291,8 +304,8 @@ index ba588edc..b780a26b 100644
 +                },
 +            },
 +        }, {
-+            xtype: 'textfield',
 +            name: 'server',
++            xtype: 'textfield',
 +            value: '',
 +            bind: {
 +                hidden: '{!showServerField}',
