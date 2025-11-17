@@ -1,8 +1,8 @@
 diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
-index 801cff16a5..19aff68147 100644
+index 890d5ea9f8..cd7e72960b 100644
 --- a/accel/kvm/kvm-all.c
 +++ b/accel/kvm/kvm-all.c
-@@ -1666,6 +1666,42 @@ static int kvm_dirty_ring_init(KVMState *s)
+@@ -1729,6 +1729,43 @@ static int kvm_dirty_ring_init(KVMState *s)
      return 0;
  }
  
@@ -20,6 +20,7 @@ index 801cff16a5..19aff68147 100644
 +    ram_block.used_length = REAL_HOST_PAGE_ALIGN(size);
 +    ram_block.max_length = REAL_HOST_PAGE_ALIGN(size);
 +    ram_block.fd = -1;
++    ram_block.guest_memfd = -1;
 +    ram_block.page_size = getpagesize();
 +    ram_block.host = host_va;
 +    ram_block.flags |= RAM_PREALLOC;
@@ -46,19 +47,24 @@ index 801cff16a5..19aff68147 100644
                             MemoryRegionSection *section)
  {
 diff --git a/hw/i386/pc.c b/hw/i386/pc.c
-index 317aaca25a..ea91c0b5e0 100644
+index 0861e329b5..d90206e872 100644
 --- a/hw/i386/pc.c
 +++ b/hw/i386/pc.c
-@@ -1236,6 +1236,28 @@ void pc_basic_device_init(struct PCMachineState *pcms,
-     /* Super I/O */
-     pc_superio_init(isa_bus, create_fdctrl, pcms->i8042_enabled,
-                     pcms->vmport != ON_OFF_AUTO_ON, &error_fatal);
+@@ -1218,6 +1218,10 @@ void pc_basic_device_init(struct PCMachineState *pcms,
+             ? ON_OFF_AUTO_OFF : ON_OFF_AUTO_ON;
+     }
+ 
 +    /* Glide pass-through */
 +    glidept_mm_init();
 +    /* MESA pass-through */
 +    mesapt_mm_init();
-+}
-+
+     /* Super I/O */
+     pc_superio_init(isa_bus, create_fdctrl, pcms->i8042_enabled,
+                     pcms->vmport != ON_OFF_AUTO_ON, &error_fatal);
+@@ -1242,6 +1246,23 @@ void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
+     }
+ }
+ 
 +void glidept_mm_init(void)
 +{
 +    DeviceState *glidept_dev = NULL;
@@ -67,7 +73,6 @@ index 317aaca25a..ea91c0b5e0 100644
 +    sysbus_realize(SYS_BUS_DEVICE(glidept_dev), &error_fatal);
 +    sysbus_mmio_map(SYS_BUS_DEVICE(glidept_dev), 0, GLIDEPT_MM_BASE);
 +}
-+
 +void mesapt_mm_init(void)
 +{
 +    DeviceState *mesapt_dev = NULL;
@@ -75,14 +80,16 @@ index 317aaca25a..ea91c0b5e0 100644
 +    mesapt_dev = qdev_new(TYPE_MESAPT);
 +    sysbus_realize(SYS_BUS_DEVICE(mesapt_dev), &error_fatal);
 +    sysbus_mmio_map(SYS_BUS_DEVICE(mesapt_dev), 0, MESAPT_MM_BASE);
- }
- 
- void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
++}
++
+ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs)
+ {
+     qemu_irq *i8259;
 diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
-index 14ee06287d..a833ccb166 100644
+index 79b72c54dd..fb3a8689d4 100644
 --- a/include/hw/i386/pc.h
 +++ b/include/hw/i386/pc.h
-@@ -204,6 +204,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
+@@ -203,6 +203,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
  
  #define TYPE_PORT92 "port92"
  
@@ -108,11 +115,11 @@ index 14ee06287d..a833ccb166 100644
  /* pc_sysfw.c */
  void pc_system_flash_create(PCMachineState *pcms);
  void pc_system_flash_cleanup_unused(PCMachineState *pcms);
-diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
-index c3a60b2890..dea41861eb 100644
---- a/include/sysemu/kvm.h
-+++ b/include/sysemu/kvm.h
-@@ -470,6 +470,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
+diff --git a/include/system/kvm.h b/include/system/kvm.h
+index 3c7d314736..66e86dd5bd 100644
+--- a/include/system/kvm.h
++++ b/include/system/kvm.h
+@@ -471,6 +471,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
  
  #endif /* COMPILING_PER_TARGET */
  
@@ -121,21 +128,20 @@ index c3a60b2890..dea41861eb 100644
  void kvm_cpu_synchronize_state(CPUState *cpu);
  
  void kvm_init_cpu_signals(CPUState *cpu);
-diff --git a/include/sysemu/whpx.h b/include/sysemu/whpx.h
-index 00ff409b68..86efeb5c63 100644
---- a/include/sysemu/whpx.h
-+++ b/include/sysemu/whpx.h
-@@ -19,6 +19,8 @@
- 
- #ifdef CONFIG_WHPX
- 
-+void whpx_update_guest_pa_range(uint64_t start_pa, uint64_t size, void *host_va, int readonly, int add);
-+
- int whpx_enabled(void);
+diff --git a/include/system/whpx.h b/include/system/whpx.h
+index 00f6a3e523..3cfde83371 100644
+--- a/include/system/whpx.h
++++ b/include/system/whpx.h
+@@ -28,6 +28,7 @@ extern bool whpx_allowed;
+ #define whpx_enabled() (whpx_allowed)
  bool whpx_apic_in_platform(void);
- 
+ #else /* !CONFIG_WHPX_IS_POSSIBLE */
++void whpx_update_guest_pa_range(uint64_t start_pa, uint64_t size, void *host_va, int readonly, int add);
+ #define whpx_enabled() 0
+ #define whpx_apic_in_platform() (0)
+ #endif /* !CONFIG_WHPX_IS_POSSIBLE */
 diff --git a/include/ui/console.h b/include/ui/console.h
-index 46b3128185..4f0fd0ebda 100644
+index 98feaa58bd..3576c397a0 100644
 --- a/include/ui/console.h
 +++ b/include/ui/console.h
 @@ -153,6 +153,8 @@ typedef struct QemuUIInfo {
@@ -155,7 +161,7 @@ index 46b3128185..4f0fd0ebda 100644
  void graphic_hw_update(QemuConsole *con);
  void graphic_hw_update_done(QemuConsole *con);
  void graphic_hw_invalidate(QemuConsole *con);
-@@ -475,4 +478,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
+@@ -478,4 +481,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
                                        size_t size,
                                        Error **errp);
  
@@ -176,10 +182,10 @@ index 46b3128185..4f0fd0ebda 100644
 +
  #endif
 diff --git a/meson.build b/meson.build
-index 147097c652..a1eef584a1 100644
+index b7db736bbf..33407b3db0 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -1561,6 +1561,7 @@ else
+@@ -1624,6 +1624,7 @@ else
      error('sdl-image required, but SDL was @0@'.format(
            get_option('sdl').disabled() ? 'disabled' : 'not found'))
    endif
@@ -187,7 +193,7 @@ index 147097c652..a1eef584a1 100644
    sdl_image = not_found
  endif
  
-@@ -3706,6 +3707,8 @@ if have_system or have_user
+@@ -3835,6 +3836,8 @@ if have_system or have_user
                           arguments: ['@INPUT@', '@EXTRA_ARGS@', '-o', '@OUTPUT@'])
    subdir('libdecnumber')
    subdir('target')
@@ -196,7 +202,7 @@ index 147097c652..a1eef584a1 100644
  endif
  
  subdir('audio')
-@@ -4121,6 +4124,11 @@ foreach target : target_dirs
+@@ -4286,6 +4289,11 @@ foreach target : target_dirs
    target_inc = [include_directories('target' / config_target['TARGET_BASE_ARCH'])]
    if host_os == 'linux'
      target_inc += include_directories('linux-headers', is_system: true)
@@ -209,10 +215,10 @@ index 147097c652..a1eef584a1 100644
    if target.endswith('-softmmu')
      target_type='system'
 diff --git a/system/vl.c b/system/vl.c
-index 2f855d83fb..9e537b76a8 100644
+index 3b7057e6c6..234c3b24f5 100644
 --- a/system/vl.c
 +++ b/system/vl.c
-@@ -871,6 +871,13 @@ static MachineClass *find_default_machine(GSList *machines)
+@@ -866,6 +866,13 @@ static MachineClass *find_default_machine(GSList *machines)
      return default_machineclass;
  }
  
@@ -226,7 +232,7 @@ index 2f855d83fb..9e537b76a8 100644
  static void version(void)
  {
      printf("QEMU emulator version " QEMU_FULL_VERSION "\n"
-@@ -3004,6 +3011,7 @@ void qemu_init(int argc, char **argv)
+@@ -3099,6 +3106,7 @@ void qemu_init(int argc, char **argv)
                  break;
              case QEMU_OPTION_version:
                  version();
@@ -235,7 +241,7 @@ index 2f855d83fb..9e537b76a8 100644
                  break;
              case QEMU_OPTION_m:
 diff --git a/target/i386/whpx/whpx-all.c b/target/i386/whpx/whpx-all.c
-index a6674a826d..9eccb490be 100644
+index b72dcff3c8..677fa7e7ba 100644
 --- a/target/i386/whpx/whpx-all.c
 +++ b/target/i386/whpx/whpx-all.c
 @@ -10,6 +10,7 @@
@@ -243,10 +249,10 @@ index a6674a826d..9eccb490be 100644
  #include "qemu/osdep.h"
  #include "cpu.h"
 +#include "exec/ram_addr.h"
- #include "exec/address-spaces.h"
- #include "exec/ioport.h"
+ #include "system/address-spaces.h"
+ #include "system/ioport.h"
  #include "gdbstub/helpers.h"
-@@ -2365,6 +2366,39 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
+@@ -2356,6 +2357,40 @@ static void whpx_process_section(MemoryRegionSection *section, int add)
                          memory_region_is_rom(mr), mr->name);
  }
  
@@ -261,6 +267,7 @@ index a6674a826d..9eccb490be 100644
 +    ram_block.used_length = REAL_HOST_PAGE_ALIGN(size);
 +    ram_block.max_length = REAL_HOST_PAGE_ALIGN(size);
 +    ram_block.fd = -1;
++    ram_block.guest_memfd = -1;
 +    ram_block.page_size = getpagesize();
 +    ram_block.host = host_va;
 +    ram_block.flags |= RAM_PREALLOC;
@@ -287,7 +294,7 @@ index a6674a826d..9eccb490be 100644
                             MemoryRegionSection *section)
  {
 diff --git a/ui/console.c b/ui/console.c
-index 5165f17125..41fa868605 100644
+index 2d00828c53..f1d08ccd3b 100644
 --- a/ui/console.c
 +++ b/ui/console.c
 @@ -126,6 +126,11 @@ static void gui_setup_refresh(DisplayState *ds)
@@ -312,7 +319,7 @@ index 5165f17125..41fa868605 100644
          async = con->hw_ops->gfx_update_async;
      }
 diff --git a/ui/sdl2.c b/ui/sdl2.c
-index bd4f5a9da1..f1e67282dd 100644
+index b00e421f7f..2d4add0d7f 100644
 --- a/ui/sdl2.c
 +++ b/ui/sdl2.c
 @@ -25,6 +25,7 @@
@@ -323,7 +330,7 @@ index bd4f5a9da1..f1e67282dd 100644
  #include "qemu/cutils.h"
  #include "ui/console.h"
  #include "ui/input.h"
-@@ -584,6 +585,29 @@ static void handle_mousewheel(SDL_Event *ev)
+@@ -579,6 +580,29 @@ static void handle_mousewheel(SDL_Event *ev)
      qemu_input_event_sync();
  }
  
@@ -353,47 +360,39 @@ index bd4f5a9da1..f1e67282dd 100644
  static void handle_windowevent(SDL_Event *ev)
  {
      struct sdl2_console *scon = get_scon_from_window(ev->window.windowID);
-@@ -608,6 +632,7 @@ static void handle_windowevent(SDL_Event *ev)
+@@ -603,6 +627,7 @@ static void handle_windowevent(SDL_Event *ev)
          sdl2_redraw(scon);
          break;
      case SDL_WINDOWEVENT_FOCUS_GAINED:
 +        fxui_focus_gained(scon);
-         win32_kbd_set_grab(gui_grab);
-         if (qemu_console_is_graphic(scon->dcl.con)) {
-             win32_kbd_set_window(sdl2_win32_get_hwnd(scon));
-@@ -630,7 +655,7 @@ static void handle_windowevent(SDL_Event *ev)
-         if (qemu_console_is_graphic(scon->dcl.con)) {
-             win32_kbd_set_window(NULL);
-         }
+         /* fall through */
+     case SDL_WINDOWEVENT_ENTER:
+         if (!gui_grab && (qemu_input_is_absolute(scon->dcl.con) || absolute_enabled)) {
+@@ -618,7 +643,8 @@ static void handle_windowevent(SDL_Event *ev)
+         scon->ignore_hotkeys = get_mod_state();
+         break;
+     case SDL_WINDOWEVENT_FOCUS_LOST:
 -        if (gui_grab && !gui_fullscreen) {
 +        if (!fxui_focus_lost() && gui_grab && !gui_fullscreen) {
++            fxui_grab_val(0x80 | gui_grab);
              sdl_grab_end(scon);
          }
          break;
-@@ -797,6 +822,361 @@ static void sdl_cleanup(void)
+@@ -785,6 +811,367 @@ static void sdl_cleanup(void)
      SDL_QuitSubSystem(SDL_INIT_VIDEO);
  }
  
 +static void sdl_display_valid(const char *feat)
 +{
 +    if (!sdl2_console) {
-+        error_report("%s: invalid sdl display. Use -display sdl", feat);
++        error_report("%s: invalid sdl display. Use '-display sdl'", feat);
++        exit(1);
++    }
++    if (sdl2_console[0].opengl) {
++        error_report("%s: qemu-3dfx activation conflicts with display 'sdl,gl=on'", feat);
 +        exit(1);
 +    }
 +}
-+
-+static struct sdl_console_cb {
-+    QEMUTimer *ts;
-+    SDL_Surface *icon;
-+    struct sdl2_console *scon;
-+    int glide_on_mesa;
-+    int gui_saved_res;
-+    int render_pause;
-+    int res, msaa, alpha, dtimer, GLon12;
-+    void *opaque;
-+    void *hnwnd;
-+    void (*cwnd_fn)(void *, void *, void *);
-+} scon_cb;
 +static void sdl_gui_restart(struct sdl2_console *scon, SDL_Surface *icon)
 +{
 +    if (!gui_fullscreen)
@@ -407,105 +406,120 @@ index bd4f5a9da1..f1e67282dd 100644
 +    if (!gui_fullscreen)
 +        SDL_SetWindowPosition(scon->real_window, scon->x, scon->y);
 +}
++
++static struct sdl_console_cb {
++    QEMUTimer *ts;
++    SDL_Surface *icon;
++    struct sdl2_console *scon;
++    int glide_on_mesa, gui_saved_res, render_pause;
++    int res, msaa, alpha, dtimer, GLon12;
++    void *hnwnd, *opaque;
++    void (*cwnd_fn)(void *, void *, void *);
++} scon_cb;
++static void wndproc_fxui_stat(struct sdl_console_cb *s)
++{
++    if (s->render_pause) {
++        SDL_DestroyTexture(s->scon->texture);
++        s->scon->texture = NULL;
++    }
++    else {
++        if (!s->scon->real_renderer)
++            s->scon->real_renderer = SDL_CreateRenderer(s->scon->real_window, -1 ,0);
++        sdl2_2d_switch(&s->scon->dcl, s->scon->surface);
++        if (!gui_fullscreen)
++            SDL_SetWindowPosition(s->scon->real_window, s->scon->x, s->scon->y);
++    }
++}
++static void wndproc_fxui_prepare(struct sdl_console_cb *s)
++{
++    SDL_GL_SetAttribute(SDL_GL_BUFFER_SIZE, 32);
++    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,  24);
++    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
++#ifdef CONFIG_DARWIN
++    if (!s->dtimer)
++        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
++#endif
++    if (s->alpha)
++        SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
++    if (s->msaa) {
++        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, SDL_TRUE);
++        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, s->msaa);
++    }
++    const char hint[] = "opengl";
++    if (!SDL_GetHint(SDL_HINT_RENDER_DRIVER) ||
++        memcmp(SDL_GetHint(SDL_HINT_RENDER_DRIVER), hint, sizeof(hint) - 1)) {
++        SDL_SetHint(SDL_HINT_RENDER_DRIVER, hint);
++        sdl_gui_restart(s->scon, s->icon);
++    }
++    SDL_SysWMinfo wmi;
++    SDL_VERSION(&wmi.version);
++    if (SDL_GetWindowWMInfo(s->scon->real_window, &wmi)) {
++        switch(wmi.subsystem) {
++#if defined(SDL_VIDEO_DRIVER_WINDOWS)
++            case SDL_SYSWM_WINDOWS:
++                s->hnwnd = (void *)wmi.info.win.window;
++                break;
++#endif
++#if defined(SDL_VIDEO_DRIVER_X11)
++            case SDL_SYSWM_X11:
++                s->hnwnd = (void *)wmi.info.x11.window;
++                break;
++#endif
++#if defined(SDL_VIDEO_DRIVER_COCOA)
++            case SDL_SYSWM_COCOA:
++                s->hnwnd = (void *)wmi.info.cocoa.window;
++                break;
++#endif
++            default:
++                s->hnwnd = NULL;
++                break;
++        }
++    }
++    SDL_DestroyTexture(s->scon->texture);
++    SDL_DestroyRenderer(s->scon->real_renderer);
++    s->scon->real_renderer = NULL;
++    s->scon->texture = NULL;
++    s->render_pause = 1;
++    s->scon->winctx = SDL_GL_GetCurrentContext();
++    if (!s->scon->winctx)
++        s->scon->winctx = SDL_GL_CreateContext(s->scon->real_window);
++    if (!s->scon->winctx) {
++        error_report("%s", SDL_GetError());
++        exit(1);
++    }
++    if (!s->opaque)
++        s->cwnd_fn(s->scon->real_window, s->hnwnd, s->opaque);
++    SDL_GL_MakeCurrent(s->scon->real_window, NULL);
++}
++static void wndproc_fxui_release(struct sdl_console_cb *s)
++{
++    if (s->GLon12) {
++        if (!s->scon->real_renderer)
++            s->scon->real_renderer = SDL_CreateRenderer(s->scon->real_window, -1 ,0);
++    }
++    else {
++        SDL_GL_DeleteContext(s->scon->winctx);
++        SDL_GL_ResetAttributes();
++        SDL_ResetHint(SDL_HINT_RENDER_DRIVER);
++        s->scon->winctx = NULL;
++        sdl_gui_restart(s->scon, s->icon);
++    }
++    sdl2_2d_switch(&s->scon->dcl, s->scon->surface);
++    s->render_pause = 0;
++    timer_del(s->ts);
++    timer_free(s->ts);
++    s->ts = NULL;
++}
 +static void sched_wndproc(void *opaque)
 +{
 +    struct sdl_console_cb *s = opaque;
 +
-+    if (s->res == -1) {
-+        if (s->render_pause) {
-+            SDL_DestroyTexture(s->scon->texture);
-+            s->scon->texture = 0;
-+        }
-+        else {
-+            if (!s->scon->real_renderer)
-+                s->scon->real_renderer = SDL_CreateRenderer(s->scon->real_window, -1 ,0);
-+            if (!s->scon->opengl) {
-+                sdl2_2d_switch(&s->scon->dcl, s->scon->surface);
-+                if (!gui_fullscreen)
-+                    SDL_SetWindowPosition(s->scon->real_window, s->scon->x, s->scon->y);
-+            }
-+        }
-+    }
-+    else if (s->gui_saved_res) {
-+        SDL_GL_SetAttribute(SDL_GL_BUFFER_SIZE, 32);
-+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,  24);
-+        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-+#ifdef CONFIG_DARWIN
-+        if (!s->dtimer)
-+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-+#endif
-+        if (s->alpha)
-+            SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
-+        if (s->msaa) {
-+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, SDL_TRUE);
-+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, s->msaa);
-+        }
-+        const char hint[] = "opengl";
-+        if (!SDL_GetHint(SDL_HINT_RENDER_DRIVER) ||
-+            memcmp(SDL_GetHint(SDL_HINT_RENDER_DRIVER), hint, sizeof(hint) - 1)) {
-+            SDL_SetHint(SDL_HINT_RENDER_DRIVER, hint);
-+            sdl_gui_restart(s->scon, s->icon);
-+        }
-+        SDL_SysWMinfo wmi;
-+        SDL_VERSION(&wmi.version);
-+        if (SDL_GetWindowWMInfo(s->scon->real_window, &wmi)) {
-+            switch(wmi.subsystem) {
-+#if defined(SDL_VIDEO_DRIVER_WINDOWS)
-+                case SDL_SYSWM_WINDOWS:
-+                    s->hnwnd = (void *)wmi.info.win.window;
-+                    break;
-+#endif
-+#if defined(SDL_VIDEO_DRIVER_X11)
-+                case SDL_SYSWM_X11:
-+                    s->hnwnd = (void *)wmi.info.x11.window;
-+                    break;
-+#endif
-+#if defined(SDL_VIDEO_DRIVER_COCOA)
-+                case SDL_SYSWM_COCOA:
-+                    s->hnwnd = (void *)wmi.info.cocoa.window;
-+                    break;
-+#endif
-+                default:
-+                    s->hnwnd = 0;
-+                    break;
-+            }
-+        }
-+        SDL_DestroyRenderer(s->scon->real_renderer);
-+        s->scon->real_renderer = 0;
-+        s->scon->winctx = SDL_GL_GetCurrentContext();
-+        s->scon->winctx = (s->scon->winctx)? s->scon->winctx:SDL_GL_CreateContext(s->scon->real_window);
-+        if (!s->scon->winctx) {
-+            error_report("%s", SDL_GetError());
-+            exit(1);
-+        }
-+        s->render_pause = 1;
-+        if (!s->opaque)
-+            s->cwnd_fn(s->scon->real_window, s->hnwnd, opaque);
-+    }
-+    else {
-+        SDL_GL_MakeCurrent(s->scon->real_window, NULL);
-+        SDL_GL_DeleteContext(s->scon->winctx);
-+        s->scon->winctx = 0;
-+        s->render_pause = 0;
-+        SDL_GL_ResetAttributes();
-+        if (!s->GLon12) {
-+            if (s->scon->texture) {
-+                SDL_DestroyTexture(s->scon->texture);
-+                s->scon->texture = 0;
-+            }
-+            SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
-+            sdl_gui_restart(s->scon, s->icon);
-+        }
-+        else {
-+            if (!s->scon->real_renderer)
-+                s->scon->real_renderer = SDL_CreateRenderer(s->scon->real_window, -1 ,0);
-+        }
-+        if (!s->scon->opengl)
-+            sdl2_2d_switch(&s->scon->dcl, s->scon->surface);
-+        timer_del(s->ts);
-+        timer_free(s->ts);
-+        s->ts = 0;
-+    }
++    if (s->res == -1)
++        wndproc_fxui_stat(s);
++    else if (s->gui_saved_res)
++        wndproc_fxui_prepare(s);
++    else
++        wndproc_fxui_release(s);
 +    if (s->res > 0)
 +        SDL_SetWindowSize(s->scon->real_window, (s->res & 0xFFFFU), (s->res >> 0x10));
 +    if (s->opaque || !s->render_pause)
@@ -732,7 +746,18 @@ index bd4f5a9da1..f1e67282dd 100644
  static const DisplayChangeListenerOps dcl_2d_ops = {
      .dpy_name             = "sdl2-2d",
      .dpy_gfx_update       = sdl2_2d_update,
-@@ -952,6 +1332,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+@@ -845,6 +1232,10 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+ 
+     assert(o->type == DISPLAY_TYPE_SDL);
+ 
++#ifdef __linux__
++    if (!display_opengl && !g_getenv("SDL_VIDEODRIVER"))
++        SDL_SetHint(SDL_HINT_VIDEODRIVER, "x11");
++#endif
+     if (SDL_GetHintBoolean("QEMU_ENABLE_SDL_LOGGING", SDL_FALSE)) {
+         SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
+     }
+@@ -937,6 +1328,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
      g_free(dir);
      if (icon) {
          SDL_SetWindowIcon(sdl2_console[0].real_window, icon);

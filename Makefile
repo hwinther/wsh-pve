@@ -338,6 +338,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
 	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
 	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
+	patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
 	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
 	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
 	mkdir -p build/pve-qemu-3dfx; \
