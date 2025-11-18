@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 7d5b367..1cdf8c9 100644
+index 7d5b367..9fae9b1 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-qemu-kvm (10.1.2-2+wsh2) trixie; urgency=medium
++
++  * feat: proxmox 9 patches (#56)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 08:11:01 +0000
++
 +pve-qemu-kvm (10.1.2-2+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
