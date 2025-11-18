@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8c2507a..f43fc4f 100644
+index 7d5b367..1cdf8c9 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.1.2-1+wsh1) bookworm; urgency=medium
++pve-qemu-kvm (10.1.2-2+wsh1) trixie; urgency=medium
 +
-+  * fix: Add aarch64 edk2 firmware as a runtime dependency
++  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 14 Nov 2025 20:41:14 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 00:09:15 +0000
 +
+ pve-qemu-kvm (10.1.2-2) trixie; urgency=medium
+ 
+   * enable FUSE support in preparation to allow FUSE exports of, e.g.,
+     qcow2-formatted TPM state volumes via qemu-storage-daemon.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Thu, 13 Nov 2025 23:55:54 +0100
+ 
  pve-qemu-kvm (10.1.2-1) trixie; urgency=medium
  
    * fix #6810: fix a potential deadlock upon TMF request cancelling with
-     VirtIO SCSI
- 
-   * update QEMU and downstream patches for 10.1.2 stable release.
- 
-   * cherry pick fix for VFIO regression affecting v10.1, which, e.g., could
-     affect some GPU passthrough setups.
- 
