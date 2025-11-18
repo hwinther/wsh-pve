@@ -40,7 +40,7 @@ jobs:
           EOF
 
           sudo make repo-update
-          rm -rf repo/incoming
+          sudo rm -rf repo/incoming
 
       - uses: actions/setup-node@v6
         name: Setup node (npm)
