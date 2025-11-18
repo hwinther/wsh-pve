@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 407c9df7..949ad6ad 100644
+index 27a457a9..3aba9aa5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.0.29+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.0.30+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 16:56:22 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 22:29:08 +0000
 +
-+qemu-server (9.0.29+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 16:44:31 +0000
-+
- qemu-server (9.0.29) trixie; urgency=medium
+ qemu-server (9.0.30) trixie; urgency=medium
  
-   * api: create vm: use ha-manager command to add VM as an HA resource, this
-     fixes adding a VM to HA when using the qm CLI tool directly.
+   * api: add 'allow-ksm' to memory options that are allowed to be configured
+     by non-root users.
  
-   * qmrestore CLI tool: allow starting a VM after it was restored successfully.
- 
-   * qmrestore CLI tool: allow adding a VM as an HA resource after it was
-     restored.
+   * vm start: ovmf: do not auto-enroll Microsoft UEFI CA 2023 for now, as this
+     triggers an active Bitlocker inside the VM and the admin doing the restart
+     of the VM might not have the Bitlocker recovery code available.
+     Instead print a informational message in the start task log for now.
  
