@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 21f4ee68..c7b11bc6 100644
+index 407c9df7..6fd95161 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.0.27+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.0.29+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 08:01:52 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 16:44:31 +0000
 +
-+qemu-server (9.0.27+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 17 Nov 2025 23:43:50 +0000
-+
- qemu-server (9.0.27) trixie; urgency=medium
+ qemu-server (9.0.29) trixie; urgency=medium
  
-   * fix #6985: ovmf: auto-enroll newer Microsoft UEFI CA 2023 for existing
-     Windows 10 and 11, and Windows Server 2016, 2019, 2022 and 2025.
+   * api: create vm: use ha-manager command to add VM as an HA resource, this
+     fixes adding a VM to HA when using the qm CLI tool directly.
  
-   * cpu config: introduce vendor-agnostic 'nested-virt' CPU flag. The flag
-     will automatically resolve to the flag required for the current CPU vendor
-     of the host.
-     This flag should be combined with a vendor-specific vCPU type, e.g. like
-     EPYC-v4 or Cooperlake-v2, matching your host CPU vendor, otherwise nested
+   * qmrestore CLI tool: allow starting a VM after it was restored successfully.
+ 
+   * qmrestore CLI tool: allow adding a VM as an HA resource after it was
+     restored.
+ 
