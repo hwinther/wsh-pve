@@ -33,7 +33,7 @@ jobs:
       qemu-server-count: ${{ steps.patch-count.outputs.qemu-server_changes }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
