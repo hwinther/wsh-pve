@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 3c66aab0..e59dda3c 100644
+index 5fb18c42..9f06684b 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.0.18+wsh1) trixie; urgency=medium
++pve-manager (9.1.1+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 20:22:22 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 29 Nov 2025 20:21:40 +0000
 +
- pve-manager (9.0.18) trixie; urgency=medium
+ pve-manager (9.1.1) trixie; urgency=medium
  
-   * ui: resource tree: fix rendering of guest text when sorted by name.
+   * ui: storage: oci registry pull: make parsing the reference of a OCI image
+     URL more robust and add a validator to the reference field for better
+     immediate feedback to the user.
  
-   * ui: fix recent regression from wrongly rendering guest entries in the tag
-     view.
+   * ui: storage oci pull: reword empty text for tag field to avoid suggesting
+     that this placeholder is the default value, as we currently do not have
+     any here.
  
-   * ui: console: add a simple heuristic to detect application containers and
-     show a warning for them in the console view, as the console for such
-     containers is (currently) likely not fully functional.
