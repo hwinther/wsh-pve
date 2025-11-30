@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 27a457a9..44d22a05 100644
+index 8949cf23..9617a508 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.0.30+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.0+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 19 Nov 2025 20:21:33 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 30 Nov 2025 20:21:51 +0000
 +
-+qemu-server (9.0.30+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 22:29:08 +0000
-+
- qemu-server (9.0.30) trixie; urgency=medium
+ qemu-server (9.1.0) trixie; urgency=medium
  
-   * api: add 'allow-ksm' to memory options that are allowed to be configured
-     by non-root users.
+   * vm start: check efi vars: add missing newline in print.
  
-   * vm start: ovmf: do not auto-enroll Microsoft UEFI CA 2023 for now, as this
-     triggers an active Bitlocker inside the VM and the admin doing the restart
-     of the VM might not have the Bitlocker recovery code available.
-     Instead print a informational message in the start task log for now.
+   * cpu config: nested-virt: update description of parameter to always
+     recommend a CPU model similar to the host.
+ 
+   * snapshot: prohibit live snapshot (remove) of qcow2 TPM drive on storage
+     with snapshot-as-volume-chain for the time being.
  
