@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8949cf23..9617a508 100644
+index 12c7d7cb..ead38be2 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.0+wsh1) trixie; urgency=medium
++qemu-server (9.1.1+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 30 Nov 2025 20:21:51 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 10 Dec 2025 20:22:26 +0000
 +
- qemu-server (9.1.0) trixie; urgency=medium
+ qemu-server (9.1.1) trixie; urgency=medium
  
-   * vm start: check efi vars: add missing newline in print.
+   * fix #7044: migration: cap the auto-increased allowed-downtime-limit to the
+     maximum value that QEMU supports.
  
-   * cpu config: nested-virt: update description of parameter to always
-     recommend a CPU model similar to the host.
+   * qmp client: bump timeout for synchronous block-dev snapshot commands to
+     one hour, as they can take quite a bit of time, especially with qcow2
+     internal snapshots.
  
-   * snapshot: prohibit live snapshot (remove) of qcow2 TPM drive on storage
-     with snapshot-as-volume-chain for the time being.
- 
+   * qm cleanup: avoid potentially problematic cleanup during rollback.
