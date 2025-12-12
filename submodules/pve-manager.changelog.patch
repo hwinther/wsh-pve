@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5fb18c42..9f06684b 100644
+index a95e6d6a..21db3c2a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.1.1+wsh1) trixie; urgency=medium
++pve-manager (9.1.2+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 29 Nov 2025 20:21:40 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 12 Dec 2025 20:22:06 +0000
 +
- pve-manager (9.1.1) trixie; urgency=medium
+ pve-manager (9.1.2) trixie; urgency=medium
  
-   * ui: storage: oci registry pull: make parsing the reference of a OCI image
-     URL more robust and add a validator to the reference field for better
-     immediate feedback to the user.
+   * pve8to9: improve message for TLS checks in relation to different key bit
+     size for RSA or ECC based keys.
  
-   * ui: storage oci pull: reword empty text for tag field to avoid suggesting
-     that this placeholder is the default value, as we currently do not have
-     any here.
- 
+   * fix #2077: pvenode: drop dependency on GNU readline Perl module in favor
+     of our own PTY module. While it's less flexible, it's much simpler and
+     robust, and–more importantly–it has no issues with being instantiated more
+     than once, which recently became an error in the readline module, breaking
+     EAB ACME integration.
