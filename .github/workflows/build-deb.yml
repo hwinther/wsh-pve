@@ -116,7 +116,7 @@ jobs:
             "$DEB_FILE"
 
       - name: Upload build folder
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: build-${{ inputs.package }}
           path: build/
