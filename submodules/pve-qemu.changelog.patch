@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5045164..19a79cb 100644
+index 92ffeec..53cda09 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (10.1.2-3+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (10.1.2-4+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 20 Nov 2025 20:32:47 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 22 Dec 2025 20:31:41 +0000
 +
-+pve-qemu-kvm (10.1.2-3+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 18 Nov 2025 16:55:33 +0000
-+
+ pve-qemu-kvm (10.1.2-4) trixie; urgency=medium
+ 
+   * fix #7033: backport fixes for write zeroes request alignment to fix qcow2
+     creation on LVM.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 19 Nov 2025 17:36:08 +0100
+ 
  pve-qemu-kvm (10.1.2-3) trixie; urgency=medium
  
    * cherry-pick fix for a regression with VNC clipboard breaking mouse pointer
-     in Windows guests.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 17 Nov 2025 16:42:03 +0100
- 
- pve-qemu-kvm (10.1.2-2) trixie; urgency=medium
- 
-   * enable FUSE support in preparation to allow FUSE exports of, e.g.,
