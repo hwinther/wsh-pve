@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 92ffeec..53cda09 100644
+index 6a789a9..1d71222 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.1.2-4+wsh1) trixie; urgency=medium
++pve-qemu-kvm (10.1.2-5+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 22 Dec 2025 20:31:41 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 27 Dec 2025 21:14:47 +0000
 +
+ pve-qemu-kvm (10.1.2-5) trixie; urgency=medium
+ 
+   * cherry-pick fix for io_uring issue to unbreak backup with TPM disk
+     potentially getting stuck.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 22 Dec 2025 10:22:35 +0100
+ 
  pve-qemu-kvm (10.1.2-4) trixie; urgency=medium
  
    * fix #7033: backport fixes for write zeroes request alignment to fix qcow2
-     creation on LVM.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Wed, 19 Nov 2025 17:36:08 +0100
- 
- pve-qemu-kvm (10.1.2-3) trixie; urgency=medium
- 
-   * cherry-pick fix for a regression with VNC clipboard breaking mouse pointer
