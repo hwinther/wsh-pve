@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a95e6d6a..21db3c2a 100644
+index 35281091..ed6780f3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.1.2+wsh1) trixie; urgency=medium
++pve-manager (9.1.4+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 12 Dec 2025 20:22:06 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 27 Dec 2025 20:39:45 +0000
 +
- pve-manager (9.1.2) trixie; urgency=medium
+ pve-manager (9.1.4) trixie; urgency=medium
  
-   * pve8to9: improve message for TLS checks in relation to different key bit
-     size for RSA or ECC based keys.
+   * api: apt changelog: check for odd package name and ensure arguments are
+     separated from options.
  
-   * fix #2077: pvenode: drop dependency on GNU readline Perl module in favor
-     of our own PTY module. While it's less flexible, it's much simpler and
-     robust, and–more importantly–it has no issues with being instantiated more
-     than once, which recently became an error in the readline module, breaking
-     EAB ACME integration.
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 22 Dec 2025 12:02:58 +0100
+ 
+ pve-manager (9.1.3) trixie; urgency=medium
+ 
+   * ui: ceph install wizard: fix typo.
