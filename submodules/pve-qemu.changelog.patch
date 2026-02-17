@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6a789a9..06d846a 100644
+index 6730313..6ec7119 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-qemu-kvm (10.1.2-5+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (10.1.2-6+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 04 Feb 2026 20:32:47 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 17 Feb 2026 20:24:55 +0000
 +
-+pve-qemu-kvm (10.1.2-5+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 27 Dec 2025 21:14:47 +0000
-+
- pve-qemu-kvm (10.1.2-5) trixie; urgency=medium
+ pve-qemu-kvm (10.1.2-6) trixie; urgency=medium
  
-   * cherry-pick fix for io_uring issue to unbreak backup with TPM disk
-     potentially getting stuck.
+   * fix /usr/bin/kvm symlink to point to actual host architecture.
  
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 22 Dec 2025 10:22:35 +0100
+   * generate list of supported aarch64 machines during build and ship as JSON
+     alongside the existing list for x86-64/amd64 machines in the resulting
+     package.
  
- pve-qemu-kvm (10.1.2-4) trixie; urgency=medium
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 04 Feb 2026 11:05:36 +0100
  
-   * fix #7033: backport fixes for write zeroes request alignment to fix qcow2
