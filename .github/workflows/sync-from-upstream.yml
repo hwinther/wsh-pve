@@ -163,6 +163,7 @@ jobs:
       - name: Create PR for manual fix
         uses: ./.github/actions/create-deb-failure-pr
         with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
           packages: ${{ needs.update-submodule.outputs.submodule }}
           pr_assignee: ${{ inputs.pr_assignee }}
           run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

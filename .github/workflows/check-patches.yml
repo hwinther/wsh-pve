@@ -83,6 +83,7 @@ jobs:
         if: failure() && steps.check.outputs.failed != ''
         uses: ./.github/actions/create-deb-failure-pr
         with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
           packages: ${{ steps.check.outputs.failed }}
           pr_assignee: ${{ github.event.inputs.pr_assignee || 'hwinther' }}
           run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

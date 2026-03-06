@@ -2,6 +2,9 @@ name: Create PR for deb build failure
 description: Creates a branch and PR when deb build fails, assigning the user for manual fix
 
 inputs:
+  token:
+    description: "Token for checkout and gh (e.g. secrets.WORKFLOW_TOKEN PAT)"
+    required: true
   packages:
     description: Failed package names (comma-separated for multiple, e.g. "pve-manager" or "pve-manager, pve-qemu")
     required: true
@@ -26,11 +29,12 @@ runs:
       uses: actions/checkout@v6
       with:
         ref: main
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ inputs.token }}
 
     - name: Create branch and PR for manual fix
       shell: bash
       env:
+        GH_TOKEN: ${{ inputs.token }}
         PACKAGES: ${{ inputs.packages }}
         PR_ASSIGNEE: ${{ inputs.pr_assignee }}
         RUN_URL: ${{ inputs.run_url }}
