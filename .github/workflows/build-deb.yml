@@ -90,7 +90,9 @@ jobs:
             }
           ' submodules/${{ inputs.package }}/debian/changelog)
           [ -z "$PROXMOX_CHANGELOG" ] && PROXMOX_CHANGELOG="(upstream changelog not found)"
-          export PROXMOX_CHANGELOG
+          echo "PROXMOX_CHANGELOG<<PROXMOX_END" >> $GITHUB_ENV
+          echo "$PROXMOX_CHANGELOG" >> $GITHUB_ENV
+          echo "PROXMOX_END" >> $GITHUB_ENV
 
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
@@ -101,7 +103,7 @@ jobs:
           buildPath=$(realpath build)
           echo "Building and pushing with org.opencontainers.image.description from upstream changelog"
           podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build \
-            --label "org.opencontainers.image.description=Proxmox upstream: $PROXMOX_CHANGELOG" \
+            --build-arg "IMAGE_DESCRIPTION=Proxmox upstream: $PROXMOX_CHANGELOG" \
             -t $tag_wsh_version -t $tag_latest
           podman push $tag_wsh_version
           podman push $tag_latest
@@ -118,6 +120,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WSH_VERSION: ${{ env.WSH_VERSION }}
+          PROXMOX_CHANGELOG: ${{ env.PROXMOX_CHANGELOG }}
         run: |
           DEB_FILE=$(find build/repo -name "*.deb" -type f)
           if [ -z "$DEB_FILE" ]; then
@@ -128,9 +131,18 @@ jobs:
           RELEASE_TAG="${{ inputs.package }}-${WSH_VERSION/+/-}"
           echo "Creating release with tag: $RELEASE_TAG"
 
+          RELEASE_NOTES="Release of ${{ inputs.package }} version $WSH_VERSION"
+          if [ -n "$PROXMOX_CHANGELOG" ] && [ "$PROXMOX_CHANGELOG" != "(upstream changelog not found)" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}
+
+          ## Upstream Proxmox changelog
+
+          ${PROXMOX_CHANGELOG}"
+          fi
+
           gh release create "$RELEASE_TAG" \
             --title "${{ inputs.package }} v$WSH_VERSION" \
-            --notes "Release of ${{ inputs.package }} version $WSH_VERSION" \
+            --notes "$RELEASE_NOTES" \
             "$DEB_FILE"
 
       - name: Upload build folder
