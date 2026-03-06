@@ -76,6 +76,22 @@ jobs:
           echo "WSH_VERSION=$WSH_VERSION" >> $GITHUB_ENV
           echo "::endgroup::"
 
+          # Extract upstream Proxmox changelog entry (first non-+wsh) for GHCR package description (max 512 chars)
+          PROXMOX_CHANGELOG=$(awk '
+            /^[a-zA-Z0-9][a-zA-Z0-9+.-]* \([0-9][0-9.]*\)/ && !/\+wsh/ { found=1 }
+            found {
+              block = block $0 " "
+              if (/^ -- /) { 
+                gsub(/  +/, " ", block)
+                gsub(/"/, "\\\"", block)
+                print substr(block, 1, 480)
+                exit
+              }
+            }
+          ' submodules/${{ inputs.package }}/debian/changelog)
+          [ -z "$PROXMOX_CHANGELOG" ] && PROXMOX_CHANGELOG="(upstream changelog not found)"
+          export PROXMOX_CHANGELOG
+
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
@@ -83,8 +99,10 @@ jobs:
 
           ls -la build/*
           buildPath=$(realpath build)
-          echo podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
-          podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build -t $tag_wsh_version -t $tag_latest
+          echo "Building and pushing with org.opencontainers.image.description from upstream changelog"
+          podman build . -f submodules/${{ inputs.package }}.Dockerfile -v $buildPath:/build \
+            --label "org.opencontainers.image.description=Proxmox upstream: $PROXMOX_CHANGELOG" \
+            -t $tag_wsh_version -t $tag_latest
           podman push $tag_wsh_version
           podman push $tag_latest
 
