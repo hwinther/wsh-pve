@@ -1,0 +1,25 @@
+name: Sync pve-qemu from upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "21 20 * * *"
+
+permissions:
+  packages: write
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  sync:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/pve-qemu
+    secrets: inherit
+
+  update-docs:
+    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    needs: [sync]
+    if: needs.sync.outputs.build-deb-when-changed-success == 'true'
+    secrets: inherit

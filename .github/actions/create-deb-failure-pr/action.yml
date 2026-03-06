@@ -1,0 +1,75 @@
+name: Create PR for deb build failure
+description: Creates a branch and PR when deb build fails, assigning the user for manual fix
+
+inputs:
+  packages:
+    description: Failed package names (comma-separated for multiple, e.g. "pve-manager" or "pve-manager, pve-qemu")
+    required: true
+  pr_assignee:
+    description: GitHub username to assign to the PR
+    required: false
+    default: "hwinther"
+  run_url:
+    description: URL of the failed workflow run
+    required: true
+  run_id:
+    description: Workflow run ID (used for branch name)
+    required: true
+  workflow_context:
+    description: Context for PR body (e.g. sync-from-upstream, build-deb-trigger-patches)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        ref: main
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create branch and PR for manual fix
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        PR_ASSIGNEE: ${{ inputs.pr_assignee }}
+        RUN_URL: ${{ inputs.run_url }}
+        RUN_ID: ${{ inputs.run_id }}
+        WORKFLOW_CONTEXT: ${{ inputs.workflow_context }}
+      run: |
+        # Derive branch suffix and title from packages
+        first_package=$(echo "$PACKAGES" | sed 's/,.*//' | tr -d ' ')
+        package_count=$(echo "$PACKAGES" | tr ',' '\n' | wc -l)
+
+        if [ "$package_count" -le 1 ]; then
+          branch_suffix="$first_package"
+          title="Manual fix needed: $first_package deb build failed"
+        else
+          branch_suffix="patches"
+          title="Manual fix needed: deb build failed (patch trigger)"
+        fi
+
+        # Format packages for body (one per line with bullet)
+        packages_formatted=$(echo "$PACKAGES" | tr ',' '\n' | sed 's/^[[:space:]]*//' | sed 's/^/- /')
+
+        git config user.name "${{ github.actor }}"
+        git config user.email "${{ github.actor }}@users.noreply.github.com"
+        branch_name="fix/deb-${branch_suffix}-${RUN_ID}"
+        git checkout -b "$branch_name"
+        git push origin "$branch_name"
+
+        body="The debian package build failed during the ${WORKFLOW_CONTEXT} workflow.
+
+        **Failed packages:**
+        ${packages_formatted}
+
+        **Failed workflow run:** ${RUN_URL}
+
+        Please investigate and push fixes to this branch. Once the build succeeds, merge this PR."
+
+        gh pr create \
+          --base main \
+          --head "$branch_name" \
+          --title "$title" \
+          --body "$body" \
+          --assignee "$PR_ASSIGNEE"
