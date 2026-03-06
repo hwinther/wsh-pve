@@ -1,0 +1,99 @@
+name: Check submodule patches
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_assignee:
+        description: "GitHub username to assign when patch apply fails"
+        required: false
+        default: "hwinther"
+        type: string
+  schedule:
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-patches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fix .gitmodules for CI
+        run: |
+          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
+
+      - name: Check and update patches
+        id: check
+        env:
+          PR_ASSIGNEE: ${{ github.event.inputs.pr_assignee || 'hwinther' }}
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          failed_packages=""
+          changed_packages=""
+
+          for package in pve-manager qemu-server pve-qemu; do
+            echo "::group::Checking $package"
+            git submodule update --init submodules/$package
+
+            # Dry-run: does the patch apply cleanly?
+            if patch -d submodules/$package -p1 --dry-run --no-backup-if-mismatch -i ../$package.patch 2>&1; then
+              # Patch applies - regenerate and check if it changed
+              patch -d submodules/$package -p1 --no-backup-if-mismatch -i ../$package.patch
+              (cd submodules/$package && git add . && git diff --staged -p > ../$package.patch.new)
+              (cd submodules/$package && git reset --hard HEAD)
+
+              if ! diff -q submodules/$package.patch submodules/$package.patch.new >/dev/null 2>&1; then
+                echo "Patch for $package changed (context/line numbers) - will push update"
+                mv submodules/$package.patch.new submodules/$package.patch
+                changed_packages="$changed_packages $package"
+              else
+                rm -f submodules/$package.patch.new
+              fi
+            else
+              echo "Patch for $package FAILED to apply"
+              failed_packages="$failed_packages $package"
+            fi
+            echo "::endgroup::"
+          done
+
+          # Restore .gitmodules
+          git checkout -- .gitmodules
+
+          failed_packages=$(echo "$failed_packages" | xargs | tr ' ' ',')
+          changed_packages=$(echo "$changed_packages" | xargs)
+
+          echo "failed=$failed_packages" >> $GITHUB_OUTPUT
+          echo "changed=$changed_packages" >> $GITHUB_OUTPUT
+
+          if [ -n "$failed_packages" ]; then
+            echo "Failed packages: $failed_packages"
+            exit 1
+          fi
+
+      - name: Create PR on patch failure
+        if: failure() && steps.check.outputs.failed != ''
+        uses: ./.github/actions/create-deb-failure-pr
+        with:
+          packages: ${{ steps.check.outputs.failed }}
+          pr_assignee: ${{ github.event.inputs.pr_assignee || 'hwinther' }}
+          run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          run_id: ${{ github.run_id }}
+          workflow_context: check-patches
+
+      - name: Push updated patches
+        if: success() && steps.check.outputs.changed != ''
+        run: |
+          packages="${{ steps.check.outputs.changed }}"
+          git add $(echo "$packages" | tr ' ' '\n' | sed 's|^|submodules/|;s|$|.patch|')
+          git commit -m "Refresh patches: $(echo $packages | tr ' ' ',')"
+          git pull --rebase origin main
+          git push origin main
