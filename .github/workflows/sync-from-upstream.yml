@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      pr_assignee:
+        description: "GitHub username to assign when deb build fails"
+        required: false
+        default: "hwinther"
+        type: string
   workflow_call:
     inputs:
       repository:
@@ -25,10 +30,18 @@ on:
         required: false
         default: true
         type: boolean
+      pr_assignee:
+        description: "GitHub username to assign when deb build fails"
+        required: false
+        default: "hwinther"
+        type: string
     outputs:
       build-deb-when-changed-success:
         description: "Whether the build-deb-when-changed job succeeded"
         value: ${{ jobs.build-deb-when-changed.result == 'success' }}
+      build-deb-failed:
+        description: "Whether the build-deb-when-changed job failed"
+        value: ${{ jobs.build-deb-when-changed.result == 'failure' }}
 
 permissions:
   # for ghcr.io (docker registry):
@@ -138,3 +151,20 @@ jobs:
     with:
       package: ${{ needs.update-submodule.outputs.submodule }}
     secrets: inherit
+
+  create-pr-on-build-failure:
+    runs-on: ubuntu-latest
+    needs: [update-submodule, build-deb-when-changed]
+    if: failure() && needs.build-deb-when-changed.result == 'failure'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Create PR for manual fix
+        uses: ./.github/actions/create-deb-failure-pr
+        with:
+          packages: ${{ needs.update-submodule.outputs.submodule }}
+          pr_assignee: ${{ inputs.pr_assignee }}
+          run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          run_id: ${{ github.run_id }}
+          workflow_context: sync-from-upstream

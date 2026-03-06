@@ -2,6 +2,12 @@ name: Build debian package for submodule when patch files are changed
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_assignee:
+        description: "GitHub username to assign when deb build fails"
+        required: false
+        default: "hwinther"
+        type: string
   push:
     branches:
       - main
@@ -108,3 +114,40 @@ jobs:
         needs.build-pve-qemu-deb-when-changed.result == 'success' ||
         needs.build-qemu-server-deb-when-changed.result == 'success'
       )
+
+  create-pr-on-build-failure:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        check,
+        build-pve-manager-deb-when-changed,
+        build-pve-qemu-deb-when-changed,
+        build-qemu-server-deb-when-changed,
+      ]
+    if: |
+      failure() && (
+        (needs.check.outputs.pve-manager == 'true' && needs.build-pve-manager-deb-when-changed.result == 'failure') ||
+        (needs.check.outputs.pve-qemu == 'true' && needs.build-pve-qemu-deb-when-changed.result == 'failure') ||
+        (needs.check.outputs.qemu-server == 'true' && needs.build-qemu-server-deb-when-changed.result == 'failure')
+      )
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Set failed packages
+        id: failed
+        run: |
+          packs=""
+          [ "${{ needs.build-pve-manager-deb-when-changed.result }}" == "failure" ] && packs="${packs}pve-manager,"
+          [ "${{ needs.build-pve-qemu-deb-when-changed.result }}" == "failure" ] && packs="${packs}pve-qemu,"
+          [ "${{ needs.build-qemu-server-deb-when-changed.result }}" == "failure" ] && packs="${packs}qemu-server,"
+          echo "packages=${packs%,}" >> $GITHUB_OUTPUT
+
+      - name: Create PR for manual fix
+        uses: ./.github/actions/create-deb-failure-pr
+        with:
+          packages: ${{ steps.failed.outputs.packages }}
+          pr_assignee: ${{ github.event.inputs.pr_assignee || 'hwinther' }}
+          run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          run_id: ${{ github.run_id }}
+          workflow_context: build-deb-trigger-patches

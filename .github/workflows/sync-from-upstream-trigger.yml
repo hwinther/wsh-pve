@@ -2,55 +2,35 @@ name: Updates master branches of local repos from upstream
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "12 20 * * *"
-  push:
-    branches: ["main"]
-    paths:
-      - ".github/workflows/sync-from-upstream.yml"
-      - ".github/workflows/sync-from-upstream-trigger.yml"
 
 permissions:
-  # for ghcr.io (docker registry):
+  actions: write
   packages: write
-  # to push changelog after package update:
   contents: write
-  # for github pages:
   pages: write
   id-token: write
 
 jobs:
-  sync-pve-manager:
-    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
-    with:
-      repository: hwinther/pve-manager
-    secrets: inherit
+  trigger-sync-pve-manager:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync-pve-manager
+        run: gh workflow run sync-pve-manager.yml --ref main
 
-  sync-qemu-server:
-    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
-    with:
-      repository: hwinther/qemu-server
-    secrets: inherit
+  trigger-sync-qemu-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync-qemu-server
+        run: gh workflow run sync-qemu-server.yml --ref main
 
-  pve-qemu:
-    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
-    with:
-      repository: hwinther/pve-qemu
-    secrets: inherit
+  trigger-sync-qemu-3dfx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync-qemu-3dfx
+        run: gh workflow run sync-qemu-3dfx.yml --ref main
 
-  qemu-3dfx:
-    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
-    with:
-      repository: hwinther/qemu-3dfx
-    secrets: inherit
-
-  update-docs-after-changes:
-    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
-    needs: [sync-pve-manager, sync-qemu-server, pve-qemu, qemu-3dfx]
-    if: |
-      always() && (
-        needs.sync-pve-manager.outputs.build-deb-when-changed-success == 'true' ||
-        needs.sync-qemu-server.outputs.build-deb-when-changed-success == 'true' ||
-        needs.pve-qemu.outputs.build-deb-when-changed-success == 'true'
-      )
-    secrets: inherit
+  trigger-sync-pve-qemu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync-pve-qemu
+        run: gh workflow run sync-pve-qemu.yml --ref main

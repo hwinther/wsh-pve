@@ -1,0 +1,19 @@
+name: Sync qemu-3dfx from upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "18 20 * * *"
+
+permissions:
+  packages: write
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  sync:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/qemu-3dfx
+    secrets: inherit
