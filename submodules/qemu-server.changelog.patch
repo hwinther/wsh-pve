@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 2a76c18e..ba1bfc94 100644
+index f4b6e425..085c967e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.4+wsh1) trixie; urgency=medium
++qemu-server (9.1.5+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 20:23:36 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:37:11 +0000
 +
- qemu-server (9.1.4) trixie; urgency=medium
+ qemu-server (9.1.5) trixie; urgency=medium
  
-   * vga: allow live-migration with clipboard with QEMU 10.1, which gained
-     support for doing so.
+   * fix #1964: add 'guest-fsfreeze' QEMU guest agent setting to control
+     whether filesystem freeze/thaw commands are issued for snapshots,
+     replications and clones — not just backups. The previous
+     'freeze-fs-on-backup' setting is deprecated in favor of the new one.
  
-   * fix #6935: vmstatus: use CGroup for host memory usage to avoid performance
-     impact of reading the PSS metrics when there is a significant amount of
-     kernel same-page memory being merged.
- 
-   * migration: vm start: avoid config write when there are left-over VM-state
+   * agent: file-read: allow specifying a byte offset and maximum byte count,
+     and allow keeping the base64-encoding of the response content. This
+     enables reading large files block-by-block and avoids inflated payload
