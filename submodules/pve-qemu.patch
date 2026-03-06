@@ -12,11 +12,14 @@ index eecdf17..75726a2 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index 81cc026..9baeca1 100644
+index 81cc026..3392e7d 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -50,6 +50,7 @@ Depends: ceph-common (>= 0.48),
+@@ -48,8 +48,10 @@ Architecture: any
+ Depends: ceph-common (>= 0.48),
+          fuse3,
           iproute2,
++         libaio1,
           libiscsi4 (>= 1.12.0) | libiscsi7,
           libjpeg62-turbo,
 +         pve-edk2-firmware-aarch64,
@@ -24,14 +27,14 @@ index 81cc026..9baeca1 100644
           libusb-1.0-0 (>= 1.0.17-1),
           libusbredirparser1 (>= 0.6-2),
 diff --git a/debian/parse-machines.pl b/debian/parse-machines.pl
-index a0f449c..f30c684 100755
+index a6c0e8d..f30c684 100755
 --- a/debian/parse-machines.pl
 +++ b/debian/parse-machines.pl
 @@ -14,12 +14,34 @@ while (<STDIN>) {
  
      s/^\s+//;
      my @machine = split(/\s+/);
--    next if $machine[0] !~ m/^pc-(i440fx|q35)-(.+)$/;
+-    next if $machine[0] !~ m/^pc-(i440fx|q35)-(.+)$/ && $machine[0] !~ m/^(virt)-(.+)$/;
 -    push @$machines, {
 -        'id' => $machine[0],
 -        'type' => $1,
@@ -87,10 +90,19 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index 912456e..1bf183d 100755
+index c90db29..85866f0 100755
 --- a/debian/rules
 +++ b/debian/rules
-@@ -18,7 +18,7 @@ machinefile := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
+@@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
+ 
+ machine_file_x86_64 := $(destdir)/usr/share/kvm/machine-versions-x86_64.json
+ machine_file_aarch64 := $(destdir)/usr/share/kvm/machine-versions-aarch64.json
++machine_file_sparc := $(destdir)/usr/share/kvm/machine-versions-sparc.json
++machine_file_sparc64 := $(destdir)/usr/share/kvm/machine-versions-sparc64.json
+ 
+ cpu_models_file_x86_64 := $(destdir)/usr/share/kvm/cpu-models-x86_64.json
+ cpu_models_file_aarch64 := $(destdir)/usr/share/kvm/cpu-models-aarch64.json
+@@ -21,7 +23,7 @@ cpu_models_file_aarch64 := $(destdir)/usr/share/kvm/cpu-models-aarch64.json
  BUILDDIR=build
  
  # FIXME: pass to configure as --extra-cflags=CFLAGS ?! also LDFLAGS?
@@ -99,12 +111,12 @@ index 912456e..1bf183d 100755
  
  export CFLAGS
  
-@@ -43,19 +43,19 @@ endif
+@@ -46,19 +48,19 @@ endif
  	    --localstatedir=/var \
  	    --prefix=/usr \
  	    --sysconfdir=/etc \
--	    --target-list=$(HOST_CPU)-softmmu,aarch64-softmmu \
-+	    --target-list=$(HOST_CPU)-softmmu,aarch64-softmmu,sparc-softmmu,sparc64-softmmu \
+-	    --target-list=x86_64-softmmu,aarch64-softmmu \
++	    --target-list=x86_64-softmmu,aarch64-softmmu,sparc-softmmu,sparc64-softmmu \
  	    --with-suffix="kvm" \
  	    --with-pkgversion="${DEB_SOURCE}_${DEB_VERSION_UPSTREAM_REVISION}" \
 -	    --audio-drv-list="alsa" \
@@ -123,7 +135,7 @@ index 912456e..1bf183d 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -119,10 +119,41 @@ install: build
+@@ -122,12 +124,40 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
@@ -155,19 +167,16 @@ index 912456e..1bf183d 100755
 +
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-flags.pl > $(flagfile)
--	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machinefile)
--
-+	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > /tmp/x86_64_machines
-+	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > /tmp/aarch64_machines
-+	$(destdir)/usr/bin/qemu-system-sparc -machine help | ./debian/parse-machines.pl > /tmp/sparc_machines
-+	$(destdir)/usr/bin/qemu-system-sparc64 -machine help | ./debian/parse-machines.pl > /tmp/sparc64_machines
-+	jq -s 'add' /tmp/x86_64_machines /tmp/aarch64_machines /tmp/sparc_machines /tmp/sparc64_machines > $(machinefile)
-+	rm -f /tmp/x86_64_machines /tmp/aarch64_machines /tmp/sparc_machines /tmp/sparc64_machines
-+	
- # Build architecture-independent files here.
- binary-indep: build install
- # We have nothing to do by default.
-@@ -147,7 +178,7 @@ binary-arch: build install
+ 
+ 	# Supported machine versions are static for a given QEMU binary.
+ 	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machine_file_x86_64)
+ 	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > $(machine_file_aarch64)
++	$(destdir)/usr/bin/qemu-system-sparc -machine help | ./debian/parse-machines.pl > $(machine_file_sparc)
++	$(destdir)/usr/bin/qemu-system-sparc64 -machine help | ./debian/parse-machines.pl > $(machine_file_sparc64)
+ 
+ 	# Supported CPU models are static for a given QEMU binary.
+ 	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-models.pl > $(cpu_models_file_x86_64)
+@@ -162,7 +192,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
@@ -176,3 +185,13 @@ index 912456e..1bf183d 100755
  	dh_compress
  	dh_fixperms
  #	dh_perl
+@@ -170,7 +200,8 @@ binary-arch: build install
+ 	dh_installdeb
+ 	# Debian >= Buster has libglusterfs0 and lots of libgfFOO, upstream has the libs in glusterfs-common
+ 	# pass -x to dpkg-shlibdeps and specify dependencies in d/control instead
+-	dh_shlibdeps -- -xlibglusterfs0 -xlibgfxdr0 -xlibgfrpc0 -xlibgfdb0 -xlibgfchangelog0 -xlibgfapi0
++	# -xlibaio1: qemu-system-sparc-7.2 (from separate build) needs it; image may not have it for shlibdeps; we add libaio1 to Depends
++	dh_shlibdeps -- -xlibaio1 -xlibglusterfs0 -xlibgfxdr0 -xlibgfrpc0 -xlibgfdb0 -xlibgfchangelog0 -xlibgfapi0
+ 	dh_gencontrol
+ 	dh_md5sums
+ 	dh_builddeb
