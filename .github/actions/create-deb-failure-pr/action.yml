@@ -60,6 +60,7 @@ runs:
         git config user.email "${{ github.actor }}@users.noreply.github.com"
         branch_name="fix/deb-${branch_suffix}-${RUN_ID}"
         git checkout -b "$branch_name"
+        git commit --allow-empty -m "Placeholder for manual patch fix - push your changes here"
         git push origin "$branch_name"
 
         body="The debian package build failed during the ${WORKFLOW_CONTEXT} workflow.
