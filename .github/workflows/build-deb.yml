@@ -111,7 +111,7 @@ jobs:
           git diff -p -U10 debian/changelog > ../${{ inputs.package }}.changelog.patch
           popd
           git add submodules/${{ inputs.package }}.changelog.patch
-          git commit -m "Update changelog for ${{ inputs.package }}"
+          git commit -m "Update changelog for ${{ inputs.package }} ($WSH_VERSION)"
           git push origin
 
       - name: Create GitHub Release
