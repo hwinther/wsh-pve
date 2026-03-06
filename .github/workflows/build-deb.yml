@@ -7,14 +7,22 @@ on:
         description: "The package to build"
         required: true
         default: "pve-manager"
-        type: string
+        type: choice
+        options:
+          - pve-manager
+          - pve-qemu
+          - qemu-server
   workflow_call:
     inputs:
       package:
         description: "The package to build"
         required: true
         default: "pve-manager"
-        type: string
+        type: choice
+        options:
+          - pve-manager
+          - pve-qemu
+          - qemu-server
 
 permissions:
   # for ghcr.io (docker registry):
