@@ -18,11 +18,7 @@ on:
         description: "The package to build"
         required: true
         default: "pve-manager"
-        type: choice
-        options:
-          - pve-manager
-          - pve-qemu
-          - qemu-server
+        type: string
 
 permissions:
   # for ghcr.io (docker registry):
