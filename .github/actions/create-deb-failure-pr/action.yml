@@ -21,6 +21,9 @@ inputs:
   workflow_context:
     description: Context for PR body (e.g. sync-from-upstream, build-deb-trigger-patches)
     required: true
+  rej_files_path:
+    description: "Path to collected .rej files (e.g. /tmp/patch-failures) to include in PR"
+    required: false
 
 runs:
   using: composite
@@ -36,6 +39,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         PACKAGES: ${{ inputs.packages }}
+        REJ_FILES_PATH: ${{ inputs.rej_files_path }}
         PR_ASSIGNEE: ${{ inputs.pr_assignee }}
         RUN_URL: ${{ inputs.run_url }}
         RUN_ID: ${{ inputs.run_id }}
@@ -60,7 +64,14 @@ runs:
         git config user.email "${{ github.actor }}@users.noreply.github.com"
         branch_name="fix/deb-${branch_suffix}-${RUN_ID}"
         git checkout -b "$branch_name"
-        git commit --allow-empty -m "Placeholder for manual patch fix - push your changes here"
+
+        if [ -n "$REJ_FILES_PATH" ] && [ -d "$REJ_FILES_PATH" ]; then
+          cp -r "$REJ_FILES_PATH" patch-failures/
+          git add patch-failures/
+          git commit -m "Include rejected hunks (.rej) for manual patch fix"
+        else
+          git commit --allow-empty -m "Placeholder for manual patch fix - push your changes here"
+        fi
         git push origin "$branch_name"
 
         body="The debian package build failed during the ${WORKFLOW_CONTEXT} workflow.
@@ -71,6 +82,11 @@ runs:
         **Failed workflow run:** ${RUN_URL}
 
         Please investigate and push fixes to this branch. Once the build succeeds, merge this PR."
+        if [ -n "$REJ_FILES_PATH" ] && [ -d "$REJ_FILES_PATH" ]; then
+          body="${body}
+
+        **Rejected hunks (.rej files)** are included in the \`patch-failures/\` directory for reference."
+        fi
 
         gh pr create \
           --base main \
