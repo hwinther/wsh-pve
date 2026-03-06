@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6730313..6ec7119 100644
+index ff25a6f..2e21116 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.1.2-6+wsh1) trixie; urgency=medium
++pve-qemu-kvm (10.1.2-7+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 17 Feb 2026 20:24:55 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:40:58 +0000
 +
- pve-qemu-kvm (10.1.2-6) trixie; urgency=medium
+ pve-qemu-kvm (10.1.2-7) trixie; urgency=medium
  
-   * fix /usr/bin/kvm symlink to point to actual host architecture.
+   * fix #7222: add fix for crash caused by zero write during sync drive
+     mirror.
  
-   * generate list of supported aarch64 machines during build and ship as JSON
-     alongside the existing list for x86-64/amd64 machines in the resulting
-     package.
+   * fix #7197: add fix to avoid misaligned BLKZEROOUT casuing a hard error.
  
-  -- Proxmox Support Team <support@proxmox.com>  Wed, 04 Feb 2026 11:05:36 +0100
+   * generate and ship static list of CPU models for x86-64 and aarch64.
  
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 17 Feb 2026 19:22:05 +0100
