@@ -90,7 +90,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index c90db29..85866f0 100755
+index c90db29..7184da0 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -185,13 +185,3 @@ index c90db29..85866f0 100755
  	dh_compress
  	dh_fixperms
  #	dh_perl
-@@ -170,7 +200,8 @@ binary-arch: build install
- 	dh_installdeb
- 	# Debian >= Buster has libglusterfs0 and lots of libgfFOO, upstream has the libs in glusterfs-common
- 	# pass -x to dpkg-shlibdeps and specify dependencies in d/control instead
--	dh_shlibdeps -- -xlibglusterfs0 -xlibgfxdr0 -xlibgfrpc0 -xlibgfdb0 -xlibgfchangelog0 -xlibgfapi0
-+	# -xlibaio1: qemu-system-sparc-7.2 (from separate build) needs it; image may not have it for shlibdeps; we add libaio1 to Depends
-+	dh_shlibdeps -- -xlibaio1 -xlibglusterfs0 -xlibgfxdr0 -xlibgfrpc0 -xlibgfdb0 -xlibgfchangelog0 -xlibgfapi0
- 	dh_gencontrol
- 	dh_md5sums
- 	dh_builddeb
