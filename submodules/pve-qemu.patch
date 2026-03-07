@@ -12,14 +12,11 @@ index eecdf17..75726a2 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index 81cc026..3392e7d 100644
+index 81cc026..9baeca1 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -48,8 +48,10 @@ Architecture: any
- Depends: ceph-common (>= 0.48),
-          fuse3,
+@@ -50,6 +50,7 @@ Depends: ceph-common (>= 0.48),
           iproute2,
-+         libaio1,
           libiscsi4 (>= 1.12.0) | libiscsi7,
           libjpeg62-turbo,
 +         pve-edk2-firmware-aarch64,
