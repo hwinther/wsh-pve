@@ -61,6 +61,11 @@ jobs:
             else
               echo "Patch for $package FAILED to apply"
               failed_packages="$failed_packages $package"
+              # Run patch for real to generate .rej files, then collect them
+              patch -d submodules/$package -p1 -i ../$package.patch || true
+              mkdir -p /tmp/patch-failures/$package
+              (cd submodules/$package && find . -name '*.rej' -exec cp --parents {} /tmp/patch-failures/$package/ \;)
+              (cd submodules/$package && git reset --hard HEAD && git clean -fd)
             fi
             echo "::endgroup::"
           done
@@ -85,6 +90,7 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           packages: ${{ steps.check.outputs.failed }}
+          rej_files_path: /tmp/patch-failures
           pr_assignee: ${{ github.event.inputs.pr_assignee || 'hwinther' }}
           run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           run_id: ${{ github.run_id }}
