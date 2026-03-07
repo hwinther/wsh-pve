@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index f4b6e425..085c967e 100644
+index f4b6e425..7fec17b5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (9.1.5+wsh2) trixie; urgency=medium
++
++  * Manual fix needed: deb build failed (patch trigger) (#75)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 07 Mar 2026 12:09:31 +0000
++
 +qemu-server (9.1.5+wsh1) trixie; urgency=medium
 +
 +  * feat: proxmox 9 patches (#56)
