@@ -125,10 +125,10 @@ index 27742a74..055282b6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index 495cae76..93948c11 100644
+index 4558d53e..6ea1eec7 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -268,6 +268,7 @@ JSSRC= 							\
+@@ -270,6 +270,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -137,7 +137,7 @@ index 495cae76..93948c11 100644
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index c063fb03..06e6ba1e 100644
+index 5e7e87df..0bbd6338 100644
 --- a/www/manager6/Parser.js
 +++ b/www/manager6/Parser.js
 @@ -112,7 +112,7 @@ Ext.define('PVE.Parser', {
@@ -150,7 +150,7 @@ index c063fb03..06e6ba1e 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index ee86dbdb..b99689c1 100644
+index 2992f655..9bfeb4ab 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -208,7 +208,7 @@ index ee86dbdb..b99689c1 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1820,8 +1841,8 @@ Ext.define('PVE.Utils', {
+@@ -1829,8 +1850,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -329,7 +329,7 @@ index 80443b35..eebba0ba 100644
              items.push(me.bussel);
          }
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index a2c28ba7..e22096eb 100644
+index 3f583adb..bd457b09 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
 @@ -74,6 +74,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
