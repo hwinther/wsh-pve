@@ -33,15 +33,11 @@ updates:
   ignore:
   - dependency-name: "*"
     update-types: [ "version-update:semver-patch" ]
-  # groups:
-  #   types:
-  #     patterns:
-  #     - "@types/*"
-  #   eslint:
-  #     patterns:
-  #     - "eslint"
-  #     - "eslint-*"
-  #     - "@eslint/*"
-  #     - "@typescript-eslint/*"
-  #     - "*/eslint-plugin"
-  #     - "*/eslint-plugin-*"
+  groups:
+    types:
+      patterns:
+      - "@types/*"
+    astro:
+      patterns:
+      - "astro"
+      - "@astrojs/*"

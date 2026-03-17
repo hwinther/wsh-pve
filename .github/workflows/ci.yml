@@ -1,0 +1,30 @@
+name: "Continuous Integration (PR build)"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/ci.yml"
+    types: [opened, reopened, labeled, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  packages: read
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  pr-build:
+    uses: hwinther/reusable-workflows/.github/workflows/pr-build.yml@main
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    secrets: inherit
+    with:
+      node_enabled: true
+      node_working_directory: "docs"
