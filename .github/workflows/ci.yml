@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   pr-build:
-    uses: hwinther/reusable-workflows/.github/workflows/pr-build.yml@fix/skip-tests-if-script-doesnt-exist
+    uses: hwinther/reusable-workflows/.github/workflows/pr-build.yml@v1
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     secrets: inherit
     with:
