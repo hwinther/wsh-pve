@@ -1,0 +1,20 @@
+--- src/PVE/QemuServer/Helpers.pm
++++ src/PVE/QemuServer/Helpers.pm
+@@ -25,12 +25,15 @@ our @EXPORT_OK = qw(
+ my $nodename = PVE::INotify::nodename();
+ 
+ my $arch_to_qemu_binary = {
++    sparc => '/usr/bin/qemu-system-sparc',
++    sparc64 => '/usr/bin/qemu-system-sparc64',
+     aarch64 => '/usr/bin/qemu-system-aarch64',
+     x86_64 => '/usr/bin/qemu-system-x86_64',
+ };
+ 
+-sub get_command_for_arch($) {
+-    my ($arch) = @_;
++sub get_command_for_arch($$) {
++    my ($arch, $vga) = @_;
++    return '/usr/bin/qemu-system-x86_64-3dfx' if get_host_arch() eq $arch && defined($vga->{mesa}) && $vga->{mesa} == 1;
+     return '/usr/bin/kvm' if get_host_arch() eq $arch; # i.e. native arch
+ 
+     my $cmd = $arch_to_qemu_binary->{$arch}

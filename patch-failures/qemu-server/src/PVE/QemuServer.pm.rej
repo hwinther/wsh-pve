@@ -1,0 +1,11 @@
+--- src/PVE/QemuServer.pm
++++ src/PVE/QemuServer.pm
+@@ -3003,7 +3059,7 @@ sub query_supported_cpu_flags {
+         if $arch eq "aarch64";
+ 
+     my $kvm_supported = defined(kvm_version());
+-    my $qemu_cmd = PVE::QemuServer::Helpers::get_command_for_arch($arch);
++    my $qemu_cmd = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
+     my $fakevmid = -1;
+     my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
+ 
