@@ -1,45 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4f5ebd0e..55c90936 100644
+index 4ec8e16a..84e78f1d 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,40 @@
-+pve-manager (9.1.6+wsh5) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.1.7+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 27 Mar 2026 20:22:19 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 02 Apr 2026 20:21:42 +0000
 +
-+pve-manager (9.1.6+wsh4) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 08 Mar 2026 08:09:56 +0000
-+
-+pve-manager (9.1.6+wsh3) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:30:17 +0000
-+
-+pve-manager (9.1.6+wsh2) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:23:59 +0000
-+
-+pve-manager (9.1.6+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:16:06 +0000
-+
- pve-manager (9.1.6) trixie; urgency=medium
+ pve-manager (9.1.7) trixie; urgency=medium
  
-   * ui: lxc/MPEdit: add "keepattrs" flag
+   * ui: qga: rename freeze-fs-on-backup checkbox to freeze-fs, reflecting
+     that filesystem freeze/thaw now also applies to snapshots and
+     replication, not just backups.
  
-  -- Proxmox Support Team <support@proxmox.com>  Thu, 12 Feb 2026 15:25:17 +0100
- 
- pve-manager (9.1.5) trixie; urgency=medium
- 
-   * ui: display: update 'live-migration with VNC-clipboard not working' note.
+   * ui: qemu: hardware: efi: suggest enrolling UEFI 2023 certificates from
+     Microsoft when pre-enrolled keys are present but the 2023 certs are
+     missing, as the 2011 certificates expire mid-2026.
  
