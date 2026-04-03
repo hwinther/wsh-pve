@@ -125,10 +125,10 @@ index 27742a74..055282b6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index 4558d53e..6ea1eec7 100644
+index b0c94b32..7cda0054 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -270,6 +270,7 @@ JSSRC= 							\
+@@ -271,6 +271,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -150,7 +150,7 @@ index 5e7e87df..0bbd6338 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 2992f655..9bfeb4ab 100644
+index b36e46fd..5075e720 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -162,7 +162,7 @@ index 2992f655..9bfeb4ab 100644
                  let av = avers.shift();
                  let bv = bvers.shift();
  
-@@ -498,8 +498,16 @@ Ext.define('PVE.Utils', {
+@@ -500,8 +500,16 @@ Ext.define('PVE.Utils', {
              return agentstring;
          },
  
@@ -181,7 +181,7 @@ index 2992f655..9bfeb4ab 100644
          },
  
          render_qemu_bios: function (value) {
-@@ -509,6 +517,16 @@ Ext.define('PVE.Utils', {
+@@ -511,6 +519,16 @@ Ext.define('PVE.Utils', {
                  return 'SeaBIOS';
              } else if (value === 'ovmf') {
                  return 'OVMF (UEFI)';
@@ -198,7 +198,7 @@ index 2992f655..9bfeb4ab 100644
              } else {
                  return value;
              }
-@@ -602,6 +620,9 @@ Ext.define('PVE.Utils', {
+@@ -604,6 +622,9 @@ Ext.define('PVE.Utils', {
          kvm_vga_drivers: {
              __default__: Proxmox.Utils.defaultText,
              std: gettext('Standard VGA'),
@@ -208,7 +208,7 @@ index 2992f655..9bfeb4ab 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1829,8 +1850,8 @@ Ext.define('PVE.Utils', {
+@@ -1856,8 +1877,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -354,7 +354,7 @@ index 3f583adb..bd457b09 100644
      ],
  
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index cf5e2a0f..3a0c37ae 100644
+index e9f84b51..84126f8c 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -193,7 +193,23 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -382,7 +382,7 @@ index cf5e2a0f..3a0c37ae 100644
                  },
              },
              scsihw: {
-@@ -688,10 +704,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -775,10 +791,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -397,7 +397,7 @@ index cf5e2a0f..3a0c37ae 100644
              );
  
              diskaction_btn.setDisabled(
-@@ -817,6 +833,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -904,6 +920,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.nodes['Sys.Console'],
                                  handler: editorFactory('VirtiofsEdit'),
                              },
