@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f4b6e425..57722257 100644
+index 6e3a5602..ac7f1bce 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+qemu-server (9.1.5+wsh3) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.6+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: deb build failed (patch trigger) (#75)
++  * Manual fix needed: qemu-server deb build failed (#92)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 27 Mar 2026 20:27:16 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 03 Apr 2026 10:39:26 +0000
 +
-+qemu-server (9.1.5+wsh2) trixie; urgency=medium
-+
-+  * Manual fix needed: deb build failed (patch trigger) (#75)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 07 Mar 2026 12:09:31 +0000
-+
-+qemu-server (9.1.5+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:37:11 +0000
-+
- qemu-server (9.1.5) trixie; urgency=medium
+ qemu-server (9.1.6) trixie; urgency=medium
  
-   * fix #1964: add 'guest-fsfreeze' QEMU guest agent setting to control
-     whether filesystem freeze/thaw commands are issued for snapshots,
-     replications and clones — not just backups. The previous
-     'freeze-fs-on-backup' setting is deprecated in favor of the new one.
+   * guest agent: rename 'guest-fsfreeze' setting to 'freeze-fs' for
+     consistency with the existing agent sub-property naming. The old name and
+     'freeze-fs-on-backup' are kept as aliases.
  
-   * agent: file-read: allow specifying a byte offset and maximum byte count,
-     and allow keeping the base64-encoding of the response content. This
-     enables reading large files block-by-block and avoids inflated payload
+   * guest agent: fix clone, import and backup not properly checking whether
+     the agent is actually enabled before attempting to freeze guest file
+     systems.
+ 
