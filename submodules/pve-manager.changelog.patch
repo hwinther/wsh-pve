@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4ec8e16a..84e78f1d 100644
+index 0d99b0df..872dbead 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.1.7+wsh1) trixie; urgency=medium
++pve-manager (9.1.8+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager
++  * Manual fix needed: qemu-server deb build failed (#92)
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 02 Apr 2026 20:21:42 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 03 Apr 2026 10:39:27 +0000
 +
- pve-manager (9.1.7) trixie; urgency=medium
+ pve-manager (9.1.8) trixie; urgency=medium
  
-   * ui: qga: rename freeze-fs-on-backup checkbox to freeze-fs, reflecting
-     that filesystem freeze/thaw now also applies to snapshots and
-     replication, not just backups.
+   * ui: datacenter options: add dynamic load scheduler and auto rebalancing
+     configuration for HA cluster resource scheduling, including threshold,
+     hold duration, margin, and method settings.
  
-   * ui: qemu: hardware: efi: suggest enrolling UEFI 2023 certificates from
-     Microsoft when pre-enrolled keys are present but the 2023 certs are
-     missing, as the 2011 certificates expire mid-2026.
+   * api: backup: deprecate the legacy 'starttime' and 'dow' parameters in
+     favor of 'schedule' and drop them from the API response, as they have been
+     superseded since PVE 7.1.
  
