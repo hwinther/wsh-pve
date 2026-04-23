@@ -125,7 +125,7 @@ index 27742a74..055282b6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index b0c94b32..7cda0054 100644
+index b506849d..837bddfe 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -271,6 +271,7 @@ JSSRC= 							\
