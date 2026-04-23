@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6e3a5602..36897c55 100644
+index ba09e1fd..6f6dbc86 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.1.6+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.8+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: qemu-server deb build failed (#92)
++  * Refresh patches: pve-manager,qemu-server
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 22 Apr 2026 20:34:17 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 23 Apr 2026 08:41:24 +0000
 +
-+qemu-server (9.1.6+wsh1) trixie; urgency=medium
-+
-+  * Manual fix needed: qemu-server deb build failed (#92)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 03 Apr 2026 10:39:26 +0000
-+
- qemu-server (9.1.6) trixie; urgency=medium
+ qemu-server (9.1.8) trixie; urgency=medium
  
-   * guest agent: rename 'guest-fsfreeze' setting to 'freeze-fs' for
-     consistency with the existing agent sub-property naming. The old name and
-     'freeze-fs-on-backup' are kept as aliases.
+   * cloud-init: dns: avoid "uninitialized value in split" warning if there is
+     no 'searchdomain' cloud-init setting and also no 'search' setting in the
+     host's resolv.conf.
  
-   * guest agent: fix clone, import and backup not properly checking whether
-     the agent is actually enabled before attempting to freeze guest file
-     systems.
+   * api: dump cloud-init: mask password for user without VM.Config.Cloudinit
+     privilege.
  
+   * api: confirm Sys.Console privilege when creating or restoring a VM and
