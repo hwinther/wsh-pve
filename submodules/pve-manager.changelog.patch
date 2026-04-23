@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 0d99b0df..a7c06111 100644
+index 304d4243..a2789ab1 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.1.8+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.1.9+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: qemu-server deb build failed (#92)
++  * Refresh patches: pve-manager,qemu-server
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 22 Apr 2026 20:32:05 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 23 Apr 2026 08:41:24 +0000
 +
-+pve-manager (9.1.8+wsh1) trixie; urgency=medium
-+
-+  * Manual fix needed: qemu-server deb build failed (#92)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 03 Apr 2026 10:39:27 +0000
-+
- pve-manager (9.1.8) trixie; urgency=medium
+ pve-manager (9.1.9) trixie; urgency=medium
  
-   * ui: datacenter options: add dynamic load scheduler and auto rebalancing
-     configuration for HA cluster resource scheduling, including threshold,
-     hold duration, margin, and method settings.
+   * ui: ha: status: handle the 'fencing' entry when ordering the grid, so it
+     no longer bounces around between API requests on some browsers. Place it
+     directly after 'quorum' for quick visibility.
  
-   * api: backup: deprecate the legacy 'starttime' and 'dow' parameters in
-     favor of 'schedule' and drop them from the API response, as they have been
-     superseded since PVE 7.1.
+   * api: apt package versions: fix typo in libpve-notify-perl package name,
+     which caused the package to be missing from the versions list.
  
+   * fix #6234: ui: ceph: make the CephFS page scrollable along the Y-axis, so
