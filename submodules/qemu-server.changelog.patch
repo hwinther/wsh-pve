@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index ba09e1fd..6f6dbc86 100644
+index ba09e1fd..27df3270 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++qemu-server (9.1.8+wsh2) trixie; urgency=medium
++
++  * Refresh patches: pve-manager,qemu-server
++
++ -- hwinther <hwinther@users.noreply.github.com>  Sat, 25 Apr 2026 20:27:30 +0000
++
 +qemu-server (9.1.8+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager,qemu-server
