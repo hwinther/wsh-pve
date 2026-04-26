@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ba09e1fd..27df3270 100644
+index 236516cc..ba7a60d7 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.1.8+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.9+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager,qemu-server
++  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 25 Apr 2026 20:27:30 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sun, 26 Apr 2026 08:31:23 +0000
 +
-+qemu-server (9.1.8+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager,qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 23 Apr 2026 08:41:24 +0000
-+
- qemu-server (9.1.8) trixie; urgency=medium
+ qemu-server (9.1.9) trixie; urgency=medium
  
-   * cloud-init: dns: avoid "uninitialized value in split" warning if there is
-     no 'searchdomain' cloud-init setting and also no 'search' setting in the
-     host's resolv.conf.
+   * qmp client: set default timeouts for more block-related commands
+     ('block-commit', 'block-stream', 'blockdev-reopen', and others) to avoid
+     the previous five-second fallback failing prematurely while the operation
+     waits for in-flight I/O to drain.
  
-   * api: dump cloud-init: mask password for user without VM.Config.Cloudinit
-     privilege.
- 
-   * api: confirm Sys.Console privilege when creating or restoring a VM and
+   * fix #7066: api: allow live snapshot create and remove for a qcow2 TPM
+     state drive on a storage with the 'snapshot-as-volume-chain' option
+     enabled, by routing the block-level QMP commands for the TPM disk to the
