@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ff25a6f..e0e41d6 100644
+index 271a834..2d43d4c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+pve-qemu-kvm (10.1.2-7+wsh3) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-qemu-kvm (10.2.1-1+wsh1) trixie; urgency=medium
 +
 +  * Manual fix needed: deb build failed (patch trigger) (#75)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 25 Mar 2026 20:46:35 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 04 May 2026 20:54:43 +0000
 +
-+pve-qemu-kvm (10.1.2-7+wsh2) trixie; urgency=medium
-+
-+  * Manual fix needed: deb build failed (patch trigger) (#75)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 07 Mar 2026 12:19:32 +0000
-+
-+pve-qemu-kvm (10.1.2-7+wsh1) trixie; urgency=medium
-+
-+  * feat: proxmox 9 patches (#56)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Mar 2026 21:40:58 +0000
-+
+ pve-qemu-kvm (10.2.1-1) trixie; urgency=medium
+ 
+   * update QEMU and downstream patches for 10.2.1 release.
+ 
+   * cherry-pick various stable fixes to improve 10.2 experience.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 16 Mar 2026 23:05:33 +0100
+ 
  pve-qemu-kvm (10.1.2-7) trixie; urgency=medium
  
-   * fix #7222: add fix for crash caused by zero write during sync drive
-     mirror.
- 
-   * fix #7197: add fix to avoid misaligned BLKZEROOUT casuing a hard error.
- 
-   * generate and ship static list of CPU models for x86-64 and aarch64.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 17 Feb 2026 19:22:05 +0100
