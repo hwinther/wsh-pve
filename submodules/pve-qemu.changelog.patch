@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 271a834..2d43d4c 100644
+index 196cfce..fb5e805 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (10.2.1-1+wsh1) trixie; urgency=medium
++pve-qemu-kvm (10.2.1-2+wsh1) trixie; urgency=medium
 +
 +  * Manual fix needed: deb build failed (patch trigger) (#75)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 04 May 2026 20:54:43 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 05 May 2026 20:50:35 +0000
 +
- pve-qemu-kvm (10.2.1-1) trixie; urgency=medium
+ pve-qemu-kvm (10.2.1-2) trixie; urgency=medium
  
-   * update QEMU and downstream patches for 10.2.1 release.
+   * build system: make: properly use DEB_HOST_ARCH variable instead of
+     DEB_BUILD_ARCH for .deb package names and upload target.
  
-   * cherry-pick various stable fixes to improve 10.2 experience.
+   * build system: d/control: drop redundant library dependencies covered by
+     shlibs:Depends variable.
  
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 16 Mar 2026 23:05:33 +0100
- 
- pve-qemu-kvm (10.1.2-7) trixie; urgency=medium
- 
+   * fix misleading IO wait and pressure stall information (PSI) accounting
+     with io_uring-based event loop. A drive with IO thread being idle resulted
