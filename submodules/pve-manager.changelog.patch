@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 304d4243..3b931914 100644
+index c47e7cf5..a6bfb876 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.1.9+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.1.10+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager,qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 07 May 2026 20:40:41 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Tue, 12 May 2026 20:46:41 +0000
 +
-+pve-manager (9.1.9+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager,qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 23 Apr 2026 08:41:24 +0000
-+
- pve-manager (9.1.9) trixie; urgency=medium
+ pve-manager (9.1.10) trixie; urgency=medium
  
-   * ui: ha: status: handle the 'fencing' entry when ordering the grid, so it
-     no longer bounces around between API requests on some browsers. Place it
-     directly after 'quorum' for quick visibility.
+   * ui: access control: tokens: add a button to regenerate the secret of
+     an existing API token.
  
-   * api: apt package versions: fix typo in libpve-notify-perl package name,
-     which caused the package to be missing from the versions list.
+   * ui: qemu: also use 'x86-64-v2-AES' as default in the dedicated
+     processor edit panel, matching what the create wizard already
+     suggested, so it is harder to accidentally end up on the discouraged
+     backend default 'kvm64' by clearing the field.
  
-   * fix #6234: ui: ceph: make the CephFS page scrollable along the Y-axis, so
