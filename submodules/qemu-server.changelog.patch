@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 236516cc..84c649ac 100644
+index 06468306..dfd2e692 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.1.9+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.10+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 06 May 2026 20:47:36 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 15 May 2026 20:40:15 +0000
 +
-+qemu-server (9.1.9+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 26 Apr 2026 08:31:23 +0000
-+
- qemu-server (9.1.9) trixie; urgency=medium
+ qemu-server (9.1.10) trixie; urgency=medium
  
-   * qmp client: set default timeouts for more block-related commands
-     ('block-commit', 'block-stream', 'blockdev-reopen', and others) to avoid
-     the previous five-second fallback failing prematurely while the operation
-     waits for in-flight I/O to drain.
+   * fix #7383: agent: skip the 'guest-fsfreeze-freeze' QMP command when the
+     guest filesystem is already frozen, to avoid the confusing 'the command is
+     not allowed' error users would otherwise see.
  
-   * fix #7066: api: allow live snapshot create and remove for a qcow2 TPM
-     state drive on a storage with the 'snapshot-as-volume-chain' option
-     enabled, by routing the block-level QMP commands for the TPM disk to the
+   * snapshot: tpm state: fall back to the storage-layer snapshot type when the
+     TPM drive is not handled by the QEMU Storage Daemon, since the drive is in
+     that case not attached to any QMP-managed process.
+ 
