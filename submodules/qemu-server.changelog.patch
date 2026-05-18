@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 06468306..dfd2e692 100644
+index 5fffff9d..fdbeb9fd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.10+wsh1) trixie; urgency=medium
++qemu-server (9.1.12+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 15 May 2026 20:40:15 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Mon, 18 May 2026 20:46:41 +0000
 +
- qemu-server (9.1.10) trixie; urgency=medium
+ qemu-server (9.1.12) trixie; urgency=medium
  
-   * fix #7383: agent: skip the 'guest-fsfreeze-freeze' QMP command when the
-     guest filesystem is already frozen, to avoid the confusing 'the command is
-     not allowed' error users would otherwise see.
- 
-   * snapshot: tpm state: fall back to the storage-layer snapshot type when the
-     TPM drive is not handled by the QEMU Storage Daemon, since the drive is in
-     that case not attached to any QMP-managed process.
- 
+   * cpu config: disable cet-ibt and cet-ss flags for modern Windows by
+     default. the cet-ibt and cet-ss flags cause boot issues for Windows guests
+     with VBS enabled and some other configurations, as reported in our
+     community forum. The flags are exposed by default since QEMU 11.0 and
+     kernel 7.x, which we both started to roll out recently. The flags can be
+     disabled without affecting actual functionality, as they are only for
+     defense-in-depth which can be enabled again once this issue has been
+     properly addressed.
