@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5fffff9d..fdbeb9fd 100644
+index 08f685c2..43c67581 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.12+wsh1) trixie; urgency=medium
++qemu-server (9.1.14+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 18 May 2026 20:46:41 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Tue, 19 May 2026 20:50:11 +0000
 +
- qemu-server (9.1.12) trixie; urgency=medium
+ qemu-server (9.1.14) trixie; urgency=medium
  
-   * cpu config: disable cet-ibt and cet-ss flags for modern Windows by
-     default. the cet-ibt and cet-ss flags cause boot issues for Windows guests
-     with VBS enabled and some other configurations, as reported in our
-     community forum. The flags are exposed by default since QEMU 11.0 and
-     kernel 7.x, which we both started to roll out recently. The flags can be
-     disabled without affecting actual functionality, as they are only for
-     defense-in-depth which can be enabled again once this issue has been
-     properly addressed.
+   * cpu config: expose the QEMU 'level' property. Windows guests with Hyper-V
+     enabled fail to boot with certain CPU types like 'host' or 'max' on recent
+     Intel CPUs unless 'level=30' is set; the workaround previously required
+     custom 'args', which then lost other Proxmox VE CPU configuration. Expose
+     it as a first-class property instead.
+ 
+   * volume rescan: also consider volumes that storage plugins list with only
+     an approximate size, so 'qm rescan' picks up inactive qcow2 LVs on LVM for
