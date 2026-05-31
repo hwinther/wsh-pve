@@ -1,0 +1,10 @@
+--- debian/control
++++ debian/control
+@@ -50,6 +50,7 @@ Depends: ceph-common (>= 0.48),
+          iproute2,
+          libiscsi4 (>= 1.12.0) | libiscsi7,
+          libjpeg62-turbo,
++         pve-edk2-firmware-aarch64,
+          libspice-server1 (>= 0.14.0~),
+          libusb-1.0-0 (>= 1.0.17-1),
+          libusbredirparser1 (>= 0.6-2),
