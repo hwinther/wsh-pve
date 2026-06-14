@@ -1,0 +1,18 @@
+--- src/PVE/QemuServer.pm
++++ src/PVE/QemuServer.pm
+@@ -3279,9 +3335,13 @@ sub config_to_command {
+                 $value =~ s/,/,,/g;
+                 $smbios_string .= "," . $key . "=" . $value if $value;
+             }
+-            push @$cmd, '-smbios', "type=1" . $smbios_string;
++            if ($arch !~ m/^sparc/) {
++                push @$cmd, '-smbios', "type=1" . $smbios_string;
++            }
+         } else {
+-            push @$cmd, '-smbios', "type=1,$conf->{smbios1}";
++            if ($arch !~ m/^sparc/) {
++                push @$cmd, '-smbios', "type=1,$conf->{smbios1}";
++            }
+         }
+     }
+ 
