@@ -9,8 +9,7 @@ The BIOS (Basic Input/Output System) initializes and tests hardware components d
 
 ![BIOS menu](../../../assets/bios.png)
 
-x86_64 and aarch64 can both use OVMF BIOS.
-(TODO: aarch64 required AAVMF_CODE from pve-edk2-firmware-aarch64 which has not been added to the dependency section in debian/rules)
+x86_64 and aarch64 can both use OVMF BIOS. For aarch64 this requires the `AAVMF_CODE` firmware from `pve-edk2-firmware-aarch64`, which is pulled in automatically as a package dependency.
 
 Sparc and sparc64 requires either the version of OpenBIOS that matches the architecture bits, or a PROM file.
 Generally speaking OpenBIOS is more safe and easier to preconfigure and boot.
