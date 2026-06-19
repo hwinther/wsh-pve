@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index eecdf17..75726a2 100644
+index 82edd64..be5006b 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -26,8 +26,6 @@ PC_BIOS_FW_PURGE_LIST_IN = \
@@ -12,17 +12,17 @@ index eecdf17..75726a2 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index 81cc026..9baeca1 100644
+index e3fc9a7..fb52bb9 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -50,6 +50,7 @@ Depends: ceph-common (>= 0.48),
+@@ -49,6 +49,7 @@ Architecture: any
+ Depends: ceph-common (>= 0.48),
+          fuse3,
           iproute2,
-          libiscsi4 (>= 1.12.0) | libiscsi7,
-          libjpeg62-turbo,
 +         pve-edk2-firmware-aarch64,
-          libspice-server1 (>= 0.14.0~),
-          libusb-1.0-0 (>= 1.0.17-1),
-          libusbredirparser1 (>= 0.6-2),
+          ${misc:Depends},
+          ${shlibs:Depends},
+ Recommends: numactl,
 diff --git a/debian/parse-machines.pl b/debian/parse-machines.pl
 index a6c0e8d..f30c684 100755
 --- a/debian/parse-machines.pl
