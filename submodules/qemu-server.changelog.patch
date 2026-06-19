@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8ec122b9..623dc640 100644
+index b8a627bd..c429fa92 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.16+wsh1) trixie; urgency=medium
++qemu-server (9.1.17+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: qemu-server
++  * Manual fix needed: deb build failed (patch trigger) (#143)
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 17 Jun 2026 20:58:51 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 19 Jun 2026 03:38:42 +0000
 +
- qemu-server (9.1.16) trixie; urgency=medium
+ qemu-server (9.1.17) trixie; urgency=medium
  
-   * api schema: vm resume: add description for the nocheck parameter.
+   * cpu flags: include Hyper-V enlightenment flags in supported flags
  
-  -- Proxmox Support Team <support@proxmox.com>  Sun, 24 May 2026 02:01:31 +0200
+   * partially fix #7094: when removing an external snapshot while the VM is
+     running, ensure the snapshot-commit target is large enough, since it might
+     still be smaller if the volume was resized since the snapshot was created
  
- qemu-server (9.1.15) trixie; urgency=medium
- 
-   * cpu models: only include custom CPU models matching the host architecture
-     in the model listing, instead of also showing custom models with an
+   * improve handling of local volumes during migration:
+     - abort early when size or format cannot be determined
