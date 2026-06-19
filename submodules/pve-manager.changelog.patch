@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 763ce3ea..87e7d0a9 100644
+index a792b2c5..06c1e328 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.2+wsh1) trixie; urgency=medium
++pve-manager (9.2.3+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager,qemu-server
++  * Manual fix needed: deb build failed (patch trigger) (#143)
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 24 May 2026 20:32:03 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 19 Jun 2026 03:38:38 +0000
 +
+ pve-manager (9.2.3) trixie; urgency=medium
+ 
+   * ui: storage content: show the owning guest of a volume and add an action
+     to jump to it.
+ 
+   * api schema: cluster options: declare the actual return schema type.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Sun, 24 May 2026 02:05:58 +0200
+ 
  pve-manager (9.2.2) trixie; urgency=medium
- 
-   * sdn: fabrics: wireguard: drop the separate endpoint-port field added to
-     the node-edit window in 9.1.19. The underlying schema change in
-     proxmox-ve-config has been reverted: the endpoint now stores only the
-     host, and the connect port is derived from the referenced interface's
-     listen_port at config-generation time. The clarified "Host that peers
-     connect to" empty-text on the endpoint field is kept.
- 
-   * sdn: fabrics: tighten the fabric and node configuration forms: require at
