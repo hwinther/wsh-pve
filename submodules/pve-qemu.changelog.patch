@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index b3e3187..d1b1edb 100644
+index b3e3187..26837ba 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-qemu-kvm (11.0.0-4+wsh2) trixie; urgency=medium
++
++  * Manual fix needed: deb build failed (patch trigger) (#143)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 19 Jun 2026 04:47:27 +0000
++
 +pve-qemu-kvm (11.0.0-4+wsh1) trixie; urgency=medium
 +
 +  * Manual fix needed: deb build failed (patch trigger) (#143)
