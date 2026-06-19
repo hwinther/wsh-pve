@@ -54,6 +54,10 @@ jobs:
         run: |
           npm ci
 
+      - name: Generate package metadata for docs
+        run: |
+          node scripts/generate-docs-packages.js repo/dists/trixie/main/binary-amd64/Packages
+
       - name: Build docs
         working-directory: docs
         run: |

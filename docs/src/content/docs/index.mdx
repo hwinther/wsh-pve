@@ -3,7 +3,7 @@ title: Welcome to WSH PVE extensions
 description: WSH PVE extensions documentation
 template: splash
 hero:
-  tagline: To get started continue to the setup guide
+  tagline: Extended Proxmox VE packages for retro computing and SPARC guests
   image:
     file: ../../assets/machine.png
   actions:
@@ -17,20 +17,22 @@ hero:
 ---
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
+import PackageVersions from "../../components/PackageVersions.astro";
+
+## Bundled packages
+
+<PackageVersions />
 
 ## Next steps
 
 <CardGrid stagger>
-  <Card title="Update content" icon="pencil">
-    Edit `src/content/docs/index.mdx` to see this page change.
+  <Card title="Setup Guide" icon="rocket">
+    Add the WSH PVE repository and install the replacement packages on your cluster nodes.
   </Card>
-  <Card title="Add new content" icon="add-document">
-    Add Markdown or MDX files to `src/content/docs` to create new pages.
+  <Card title="Reference" icon="open-book">
+    Browse VM configuration options such as machine type, BIOS, display, and audio devices.
   </Card>
-  <Card title="Configure your site" icon="setting">
-    Edit your `sidebar` and other config in `astro.config.mjs`.
-  </Card>
-  <Card title="Read the docs" icon="open-book">
-    Learn more in [the Starlight Docs](https://starlight.astro.build/).
+  <Card title="GitHub repository" icon="github">
+    Source code, build workflows, and release artifacts live on [GitHub](https://github.com/hwinther/wsh-pve).
   </Card>
 </CardGrid>
