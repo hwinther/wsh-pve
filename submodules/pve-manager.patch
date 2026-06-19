@@ -1,5 +1,5 @@
 diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index 27742a74b..055282b64 100644
+index 27742a74..055282b6 100644
 --- a/www/css/ext6-pve.css
 +++ b/www/css/ext6-pve.css
 @@ -694,3 +694,121 @@ table.osds td:first-of-type {
@@ -125,7 +125,7 @@ index 27742a74b..055282b64 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index d4dd3f351..328f5dfcd 100644
+index d4dd3f35..328f5dfc 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -280,6 +280,7 @@ JSSRC= 							\
@@ -137,7 +137,7 @@ index d4dd3f351..328f5dfcd 100644
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index 36df8e9d5..ab6055189 100644
+index 36df8e9d..ab605518 100644
 --- a/www/manager6/Parser.js
 +++ b/www/manager6/Parser.js
 @@ -117,7 +117,7 @@ Ext.define('PVE.Parser', {
@@ -150,7 +150,7 @@ index 36df8e9d5..ab6055189 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 2ed4e65da..7ab9f4566 100644
+index 2ed4e65d..7ab9f456 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -211,7 +211,7 @@ index 2ed4e65da..7ab9f4566 100644
                          ),
                          ['pve-static-mask'],
 diff --git a/www/manager6/form/NetworkCardSelector.js b/www/manager6/form/NetworkCardSelector.js
-index a66304182..0703f3ca5 100644
+index a6630418..0703f3ca 100644
 --- a/www/manager6/form/NetworkCardSelector.js
 +++ b/www/manager6/form/NetworkCardSelector.js
 @@ -7,5 +7,9 @@ Ext.define('PVE.form.NetworkCardSelector', {
@@ -225,7 +225,7 @@ index a66304182..0703f3ca5 100644
      ],
  });
 diff --git a/www/manager6/form/QemuBiosSelector.js b/www/manager6/form/QemuBiosSelector.js
-index 40abb589b..b66ac01cb 100644
+index 40abb589..b66ac01c 100644
 --- a/www/manager6/form/QemuBiosSelector.js
 +++ b/www/manager6/form/QemuBiosSelector.js
 @@ -6,6 +6,11 @@ Ext.define('PVE.form.QemuBiosSelector', {
@@ -241,7 +241,7 @@ index 40abb589b..b66ac01cb 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedFirmware,
 diff --git a/www/manager6/form/QemuMachineSelector.js b/www/manager6/form/QemuMachineSelector.js
-index faeb530af..5b8f9690d 100644
+index faeb530a..5b8f9690 100644
 --- a/www/manager6/form/QemuMachineSelector.js
 +++ b/www/manager6/form/QemuMachineSelector.js
 @@ -5,6 +5,8 @@ Ext.define('PVE.form.QemuMachineSelector', {
@@ -254,7 +254,7 @@ index faeb530af..5b8f9690d 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index f7de1ebe7..9ce7990e9 100644
+index f7de1ebe..9ce7990e 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -340,7 +340,7 @@ index f7de1ebe7..9ce7990e9 100644
                  return Proxmox.Utils.unknownText;
          }
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index ba588edcd..01ba47eac 100644
+index ba588edc..01ba47ea 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
 @@ -16,6 +16,12 @@ Ext.define('PVE.qemu.AudioInputPanel', {
@@ -406,7 +406,7 @@ index ba588edcd..01ba47eac 100644
      ],
  });
 diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
-index c185de533..e807ac49c 100644
+index c185de53..e807ac49 100644
 --- a/www/manager6/qemu/CDEdit.js
 +++ b/www/manager6/qemu/CDEdit.js
 @@ -69,7 +69,7 @@ Ext.define('PVE.qemu.CDInputPanel', {
@@ -419,7 +419,7 @@ index c185de533..e807ac49c 100644
              });
              items.push(me.bussel);
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 3f583adbe..bd457b09e 100644
+index 3f583adb..bd457b09 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
 @@ -74,6 +74,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
@@ -444,7 +444,7 @@ index 3f583adbe..bd457b09e 100644
      ],
  
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index e6c02299a..ab6ab9dbc 100644
+index e6c02299..ab6ab9db 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -789,10 +789,10 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -477,7 +477,7 @@ index e6c02299a..ab6ab9dbc 100644
                      }),
                  },
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index 4b1a9e833..c60dd0010 100644
+index 4b1a9e83..c60dd001 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -51,7 +51,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -554,7 +554,7 @@ index 4b1a9e833..c60dd0010 100644
          this.getController().setArch(values.arch);
 diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
 new file mode 100644
-index 000000000..caa9d6a7b
+index 00000000..caa9d6a7
 --- /dev/null
 +++ b/www/manager6/qemu/QemuArchEdit.js
 @@ -0,0 +1,26 @@
