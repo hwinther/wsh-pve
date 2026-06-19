@@ -370,19 +370,20 @@ clean-qemu-3dfx:
 
 .PHONY: 3dfx-drivers
 3dfx-drivers:
+	set -e; \
 	git submodule update --init submodules/qemu-3dfx; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
 	mkdir -p build && rm -rf build/3dfx build/mesa; \
