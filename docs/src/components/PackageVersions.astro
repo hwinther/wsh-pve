@@ -1,0 +1,103 @@
+---
+import data from "../data/packages.json";
+
+interface Props {
+  showAptExample?: boolean;
+}
+
+const { showAptExample = false } = Astro.props;
+const { packages, generatedAt, source, releasesUrl } = data;
+const generated = new Date(generatedAt).toLocaleString("en-GB", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
+---
+
+<p class="package-meta">
+  Repository packages as of {generated} UTC
+  {source === "repo" ? " (from published repository)" : " (from changelog patches)"}.
+  See all <a href={releasesUrl}>releases on GitHub</a>.
+</p>
+
+<table class="package-table">
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Version</th>
+      <th>Architecture</th>
+      <th>Release</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      packages.map((pkg) => (
+        <tr>
+          <td>
+            <code>{pkg.name}</code>
+          </td>
+          <td>
+            <code>{pkg.version}</code>
+          </td>
+          <td>{pkg.architecture}</td>
+          <td>
+            {pkg.releaseUrl ? (
+              <a href={pkg.releaseUrl}>{pkg.releaseTag}</a>
+            ) : (
+              "—"
+            )}
+          </td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>
+
+{
+  showAptExample && (
+    <pre class="apt-example">
+      <code>
+        {packages
+          .map(
+            (pkg) =>
+              `${pkg.name}/${pkg.suite} ${pkg.version} ${pkg.architecture}`,
+          )
+          .join("\n")}
+      </code>
+    </pre>
+  )
+}
+
+<style>
+  .package-meta {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+    margin-block: 0 1rem;
+  }
+
+  .package-table {
+    border-collapse: collapse;
+    margin-block: 1rem 1.5rem;
+    width: 100%;
+  }
+
+  .package-table th,
+  .package-table td {
+    border-bottom: 1px solid var(--sl-color-gray-5);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+
+  .package-table th {
+    color: var(--sl-color-gray-2);
+    font-weight: 600;
+  }
+
+  .apt-example {
+    background: var(--sl-color-gray-6);
+    border-radius: 0.5rem;
+    margin-block: 1rem 1.5rem;
+    overflow-x: auto;
+    padding: 1rem;
+  }
+</style>

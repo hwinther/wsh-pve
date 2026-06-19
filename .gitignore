@@ -5,3 +5,4 @@ repo/dists/*
 repo/incoming/*
 repo/pool/*
 repo-incoming/*
+docs/src/data/packages.json
