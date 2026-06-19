@@ -1,0 +1,96 @@
+name: Build and publish 3dfx/Mesa drivers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      # the submodule gitlink changes when the pinned qemu-3dfx commit is bumped
+      - "submodules/qemu-3dfx"
+      - ".github/workflows/build-3dfx-drivers.yml"
+
+permissions:
+  # for pulling the djgpp-build image from ghcr.io
+  packages: read
+  # for creating releases
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fix .gitmodules for CI
+        run: sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build 3dfx/Mesa drivers
+        run: |
+          git submodule update --init submodules/qemu-3dfx
+          QEMU3DFX_SHA=$(git -C submodules/qemu-3dfx rev-parse HEAD)
+          QEMU3DFX_SHORT=$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD)
+          echo "QEMU3DFX_SHA=$QEMU3DFX_SHA" >> $GITHUB_ENV
+          echo "QEMU3DFX_SHORT=$QEMU3DFX_SHORT" >> $GITHUB_ENV
+
+          sudo make 3dfx-drivers VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
+          sudo chown -R "$(id -u):$(id -g)" build
+          ls -la build/3dfx build/mesa
+
+      - name: Package drivers
+        run: |
+          PKG="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
+          mkdir -p "dist/${PKG}"
+          cp -r build/3dfx "dist/${PKG}/3dfx"
+          cp -r build/mesa "dist/${PKG}/mesa"
+          printf '%s\n' \
+            "qemu-3dfx guest drivers" \
+            "" \
+            "submodule commit: ${QEMU3DFX_SHA}" \
+            "revision (__REV__): ${QEMU3DFX_SHORT}-" \
+            "" \
+            "These Windows 9x/2000/ME guest drivers must match the host qemu-system" \
+            "binary built from the same qemu-3dfx commit. The pve-qemu-kvm package" \
+            "built against this revision embeds the same __REV__ string, and the" \
+            "wrapper refuses to load against a mismatched host binary." \
+            > "dist/${PKG}/VERSION.txt"
+          (cd dist && zip -r "${PKG}.zip" "${PKG}")
+          ls -la dist
+
+      - name: Create or update release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
+          ZIP="dist/qemu-3dfx-drivers-${QEMU3DFX_SHORT}.zip"
+          printf '%s\n' \
+            "3dfx/Mesa passthrough guest drivers built from qemu-3dfx \`${QEMU3DFX_SHA}\`." \
+            "" \
+            "Install these in the Windows 9x/2000/ME guest to enable 3D acceleration with the" \
+            "matching \`pve-qemu-kvm\` build. The guest driver revision \`${QEMU3DFX_SHORT}-\` must" \
+            "match the host qemu binary, otherwise the wrapper will refuse to load." \
+            > release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" \
+              --title "3dfx/Mesa drivers (${QEMU3DFX_SHORT})" \
+              --notes-file release-notes.md \
+              "$ZIP"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: qemu-3dfx-drivers-${{ env.QEMU3DFX_SHORT }}
+          path: dist/*.zip

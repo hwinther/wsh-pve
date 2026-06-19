@@ -22,6 +22,7 @@ export default defineConfig({
             // Each item here is one entry in the navigation menu.
             { label: "Setup Guide", slug: "guides/setup" },
             { label: "SPARC Guests", slug: "guides/sparc" },
+            { label: "3DFX / Mesa passthrough", slug: "guides/3dfx" },
             { label: "Guest operating systems", slug: "guides/operating-systems" },
           ],
         },

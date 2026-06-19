@@ -23,7 +23,8 @@ Unset by default, if it is set to an X display value such as :0 (or 192.168.0.10
 ## Enable 3DFX/Mesa
 
 Experimental feature - it must be used in conjunction with the 3DFX/MESA drivers in Windows 9x/2000/ME.
-TODO: Driver ISO file and further documentation has to be added
+
+See the [3DFX / Mesa passthrough guide](/guides/3dfx/) for how the host QEMU build and the guest drivers are paired by revision, and where to download the matching driver release.
 
 ## Further reading
 

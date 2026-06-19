@@ -100,6 +100,18 @@ jobs:
           PROXMOX_CHANGELOG_ONELINE=$(echo "$PROXMOX_CHANGELOG" | tr '\n' ' ' | sed 's/  */ /g' | head -c 480)
           [ -z "$PROXMOX_CHANGELOG_ONELINE" ] && PROXMOX_CHANGELOG_ONELINE="(upstream changelog not found)"
 
+          # For the 3dfx-enabled pve-qemu bundle, record the qemu-3dfx revision so users
+          # can pair the host binary with the correct guest driver release.
+          if [ "${{ inputs.package }}" = "pve-qemu" ]; then
+            QEMU3DFX_SHA=$(git rev-parse HEAD:submodules/qemu-3dfx)
+            QEMU3DFX_SHORT=${QEMU3DFX_SHA:0:7}
+            QEMU3DFX_NOTE="Bundled with the 3dfx/Mesa passthrough patch from qemu-3dfx ${QEMU3DFX_SHORT}. For 3D acceleration in Windows 9x/2000/ME guests, install the matching drivers from the qemu-3dfx-drivers-${QEMU3DFX_SHORT} release; the guest driver revision must match the host binary."
+            echo "QEMU3DFX_NOTE<<Q3DFX_END" >> $GITHUB_ENV
+            echo "$QEMU3DFX_NOTE" >> $GITHUB_ENV
+            echo "Q3DFX_END" >> $GITHUB_ENV
+            PROXMOX_CHANGELOG_ONELINE=$(echo "${PROXMOX_CHANGELOG_ONELINE} | ${QEMU3DFX_NOTE}" | head -c 480)
+          fi
+
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
@@ -127,6 +139,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WSH_VERSION: ${{ env.WSH_VERSION }}
           PROXMOX_CHANGELOG: ${{ env.PROXMOX_CHANGELOG }}
+          QEMU3DFX_NOTE: ${{ env.QEMU3DFX_NOTE }}
         run: |
           DEB_FILE=$(find build/repo -name "*.deb" -type f)
           if [ -z "$DEB_FILE" ]; then
@@ -144,6 +157,14 @@ jobs:
           ## Upstream Proxmox changelog
 
           ${PROXMOX_CHANGELOG}"
+          fi
+
+          if [ -n "$QEMU3DFX_NOTE" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}
+
+          ## 3dfx / Mesa drivers
+
+          ${QEMU3DFX_NOTE}"
           fi
 
           gh release create "$RELEASE_TAG" \
