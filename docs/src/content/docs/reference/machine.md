@@ -31,7 +31,12 @@ The `q35` machine type emulates the Intel Q35 chipset, which provides a more mod
 
 ## PVE WSH additions
 
-TODO
+In addition to `i440fx` and `q35` (x86_64), the WSH patches expose machine types for the other architectures in the Machine selector:
+
+- **virt** — the QEMU `virt` machine, used for `aarch64` guests.
+- **sun** — the Sun machine family, used for `sparc` (SS-5) and `sparc64` (sun4u) guests.
+
+The available machine types are filtered by the guest's [architecture](/reference/architecture/); selecting a non-default architecture switches the machine list accordingly.
 
 ## Further reading
 
