@@ -21,6 +21,8 @@ export default defineConfig({
           items: [
             // Each item here is one entry in the navigation menu.
             { label: "Setup Guide", slug: "guides/setup" },
+            { label: "SPARC Guests", slug: "guides/sparc" },
+            { label: "Guest operating systems", slug: "guides/operating-systems" },
           ],
         },
         {

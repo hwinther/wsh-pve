@@ -16,7 +16,7 @@ Generally speaking OpenBIOS is more safe and easier to preconfigure and boot.
 However nothing scratches that nostalgic itch quite like seeing the splash logo and POST from SparcStation 5.
 
 There are a few PROM files included but only SS5, SS10 and SS20 seem to be somewhat stable.
-They each come with hardware layout expectations that must be followed, see one of the SPARC guides for more information.
+They each come with hardware layout expectations that must be followed, see the [SPARC guide](/guides/sparc/) for more information.
 
 ## Further reading
 

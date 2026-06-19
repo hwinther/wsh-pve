@@ -16,7 +16,7 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 import PackageVersions from "../../components/PackageVersions.astro";
 
 ## Bundled packages
@@ -25,14 +25,25 @@ import PackageVersions from "../../components/PackageVersions.astro";
 
 ## Next steps
 
-<CardGrid stagger>
-  <Card title="Setup Guide" icon="rocket">
-    Add the WSH PVE repository and install the replacement packages on your cluster nodes.
-  </Card>
-  <Card title="Reference" icon="open-book">
-    Browse VM configuration options such as machine type, BIOS, display, and audio devices.
-  </Card>
-  <Card title="GitHub repository" icon="github">
-    Source code, build workflows, and release artifacts live on [GitHub](https://github.com/hwinther/wsh-pve).
-  </Card>
+<CardGrid>
+  <LinkCard
+    title="Setup Guide"
+    href="/guides/setup/"
+    description="Add the WSH PVE repository and install the replacement packages on your cluster nodes."
+  />
+  <LinkCard
+    title="Reference"
+    href="/reference/architecture/"
+    description="Browse VM configuration options such as architecture, machine type, BIOS, display, and audio devices."
+  />
+  <LinkCard
+    title="SPARC Guests"
+    href="/guides/sparc/"
+    description="Run 32-bit and 64-bit SPARC guests such as SunOS and Solaris."
+  />
+  <LinkCard
+    title="GitHub repository"
+    href="https://github.com/hwinther/wsh-pve"
+    description="Source code, build workflows, and release artifacts."
+  />
 </CardGrid>

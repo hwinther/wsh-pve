@@ -30,7 +30,7 @@ Note: *Aarch64 will only support serial console*
 
 SPARC (Scalable Processor Architecture) is a RISC (Reduced Instruction Set Computing) architecture developed by Sun Microsystems. The 32-bit version is used in older systems and some embedded applications. When setting a VM to use sparc, the `qemu-system-sparc` binary will be used.
 
-Note: *Only specific configurations are known to work, see one of the guides for hints on how to use this architecture.*
+Note: *Only specific configurations are known to work, see the [SPARC guide](/guides/sparc/) for hints on how to use this architecture.*
 
 ## Sparc64 - 64bit SPARC
 
