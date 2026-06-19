@@ -30,11 +30,24 @@ To find the matching pair:
 
 ## Installing the guest drivers
 
-1. Download `qemu-3dfx-drivers-<shortsha>.zip` from the releases page (matching your `pve-qemu-kvm` version).
-2. The archive contains the `3dfx` (Glide) and `mesa` (OpenGL) wrapper builds.
-3. Transfer the files into the guest and install them in Windows 9x/2000/ME.
+Download `qemu-3dfx-drivers-<shortsha>.zip` from the releases page (matching your `pve-qemu-kvm` version). It extracts to a single folder containing the Glide and OpenGL/Mesa wrappers:
 
-<!-- TODO: detailed per-OS installation steps and screenshots for Win9x / ME / 2000 -->
+`fxmemmap.vxd`, `fxptl.sys`, `glide.dll`, `glide2x.dll`, `glide2x.dxe`, `glide2x.ovl`, `glide3x.dll`, `glide3x.dxe`, `instdrv.exe`, `opengl32.dll`, `wglinfo.exe`
+
+Transfer the files into the guest and install the ones for your Windows version:
+
+**Windows 9x / ME**
+
+- Copy `FXMEMMAP.VXD`, `GLIDE.DLL`, `GLIDE2X.DLL`, and `GLIDE3X.DLL` to `C:\WINDOWS\SYSTEM`
+- Copy `GLIDE2X.OVL` to `C:\WINDOWS`
+- Copy `OPENGL32.DLL` into each game's installation folder
+
+**Windows 2000 / XP**
+
+- Copy `FXPTL.SYS` to `%SystemRoot%\system32\drivers`
+- Copy `GLIDE.DLL`, `GLIDE2X.DLL`, and `GLIDE3X.DLL` to `%SystemRoot%\system32`
+- Run `INSTDRV.EXE` (requires Administrator privileges)
+- Copy `OPENGL32.DLL` into each game's installation folder
 
 ## Further reading
 

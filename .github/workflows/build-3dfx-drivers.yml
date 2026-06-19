@@ -51,8 +51,31 @@ jobs:
         run: |
           PKG="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
           mkdir -p "dist/${PKG}"
-          cp -r build/3dfx "dist/${PKG}/3dfx"
-          cp -r build/mesa "dist/${PKG}/mesa"
+
+          # Collect exactly the guest-install set into one flat folder and fail
+          # the build if the wrapper build silently dropped any artifact.
+          missing=0
+          for f in \
+            build/3dfx/fxmemmap.vxd \
+            build/3dfx/fxptl.sys \
+            build/3dfx/glide.dll \
+            build/3dfx/glide2x.dll \
+            build/3dfx/glide2x.dxe \
+            build/3dfx/glide2x.ovl \
+            build/3dfx/glide3x.dll \
+            build/3dfx/glide3x.dxe \
+            build/3dfx/instdrv.exe \
+            build/mesa/opengl32.dll \
+            build/mesa/wglinfo.exe; do
+            if [ -f "$f" ]; then
+              cp "$f" "dist/${PKG}/"
+            else
+              echo "::error::missing 3dfx/Mesa artifact: $f"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || { echo "one or more driver artifacts were not built"; exit 1; }
+
           printf '%s\n' \
             "qemu-3dfx guest drivers" \
             "" \
@@ -64,8 +87,9 @@ jobs:
             "built against this revision embeds the same __REV__ string, and the" \
             "wrapper refuses to load against a mismatched host binary." \
             > "dist/${PKG}/VERSION.txt"
+
           (cd dist && zip -r "${PKG}.zip" "${PKG}")
-          ls -la dist
+          ls -la "dist/${PKG}"
 
       - name: Create or update release
         env:
