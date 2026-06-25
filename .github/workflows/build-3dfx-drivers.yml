@@ -7,7 +7,6 @@ on:
     paths:
       # the submodule gitlink changes when the pinned qemu-3dfx commit is bumped
       - "submodules/qemu-3dfx"
-      - ".github/workflows/build-3dfx-drivers.yml"
 
 permissions:
   # for pulling the djgpp-build image from ghcr.io

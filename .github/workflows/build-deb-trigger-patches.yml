@@ -15,7 +15,6 @@ on:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
       - "submodules/qemu-server.patch"
-      - ".github/workflows/build-deb-trigger-patches.yml"
 
 permissions:
   # for ghcr.io (docker registry):
