@@ -1,0 +1,10 @@
+# GitVersion configuration for Release Flow
+# https://gitversion.net/docs/reference/configuration
+#
+# Release Flow: main is mainline, release branches (release/X.Y) are created per sprint from main.
+# Release branches are not merged back. Version is extracted from branch name (e.g. release/1.2 -> 1.2.x).
+workflow: GitHubFlow/v1
+
+# Optional overrides - uncomment to customize
+# tag-prefix: '[vV]'
+# mode: ContinuousDelivery

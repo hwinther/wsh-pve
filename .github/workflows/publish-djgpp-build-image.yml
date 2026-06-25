@@ -5,7 +5,6 @@ on:
   push:
     branches: ["main"]
     paths:
-      - ".github/workflows/publish-djgpp-build-image.yml"
       - "djgpp.Dockerfile"
 
 permissions:

@@ -5,7 +5,6 @@ on:
   push:
     branches: ["main"]
     paths:
-      - ".github/workflows/publish-pve-build-image.yml"
       - "build.Dockerfile"
   schedule:
     - cron: "0 19 * * 0"
