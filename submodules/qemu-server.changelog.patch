@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index b8a627bd..0316e1d4 100644
+index b4e72125..1291039e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.1.17+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.18+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: deb build failed (patch trigger) (#143)
++  * Refresh patches: qemu-server
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 27 Jun 2026 20:39:08 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sun, 28 Jun 2026 09:07:47 +0000
 +
-+qemu-server (9.1.17+wsh1) trixie; urgency=medium
-+
-+  * Manual fix needed: deb build failed (patch trigger) (#143)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 19 Jun 2026 03:38:42 +0000
-+
- qemu-server (9.1.17) trixie; urgency=medium
+ qemu-server (9.1.18) trixie; urgency=medium
  
-   * cpu flags: include Hyper-V enlightenment flags in supported flags
+   * fix #7627: network: virtio: disable the host UDP tunnel offload feature by
+     default for new VMs (machine version 11.0+pve1 and later), as it can break
+     connectivity for some guest network setups, in particular VXLAN traffic
+     that leaves the host over a physical NIC. The new per-NIC 'host-tunnel'
+     option allows re-enabling it explicitly.
  
-   * partially fix #7094: when removing an external snapshot while the VM is
-     running, ensure the snapshot-commit target is large enough, since it might
-     still be smaller if the volume was resized since the snapshot was created
- 
-   * improve handling of local volumes during migration:
-     - abort early when size or format cannot be determined
+   * fix #7697: snapshot: correct the hook name checked after thawing the
+     guest, so the post-unfreeze hook runs again and the loop waiting for
