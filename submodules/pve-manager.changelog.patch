@@ -1,33 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a792b2c5..7e2175d3 100644
+index 0c7cc2be..34d05de5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,28 @@
-+pve-manager (9.2.3+wsh3) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.4+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 29 Jun 2026 20:48:40 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Tue, 30 Jun 2026 09:12:36 +0000
 +
-+pve-manager (9.2.3+wsh2) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 19 Jun 2026 09:40:02 +0000
-+
-+pve-manager (9.2.3+wsh1) trixie; urgency=medium
-+
-+  * Manual fix needed: deb build failed (patch trigger) (#143)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 19 Jun 2026 03:38:38 +0000
-+
- pve-manager (9.2.3) trixie; urgency=medium
+ pve-manager (9.2.4) trixie; urgency=medium
  
-   * ui: storage content: show the owning guest of a volume and add an action
-     to jump to it.
+   * fix #4130: external metric server: keep node status updates flowing when a
+     TCP metric server is unreachable. A failed connection previously raised an
+     unhandled exception that aborted the whole node status update, so storage
+     and guest status indicators in the UI eventually turned gray.
  
-   * api schema: cluster options: declare the actual return schema type.
+   * fix #6348: ui: bulk action: render the resource tags in the selection list
+     using the configured tag style instead of plain text.
  
-  -- Proxmox Support Team <support@proxmox.com>  Sun, 24 May 2026 02:05:58 +0200
- 
- pve-manager (9.2.2) trixie; urgency=medium
