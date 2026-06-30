@@ -1,8 +1,8 @@
 diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index 27742a74..055282b6 100644
+index 5c37dd29..6f6513ae 100644
 --- a/www/css/ext6-pve.css
 +++ b/www/css/ext6-pve.css
-@@ -694,3 +694,121 @@ table.osds td:first-of-type {
+@@ -688,3 +688,121 @@ table.osds td:first-of-type {
  .pmx-column-wrapped > div {
      white-space: pre-wrap;
  }
@@ -150,7 +150,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 2ed4e65d..7ab9f456 100644
+index 040b5ae0..f814c1db 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -199,7 +199,7 @@ index 2ed4e65d..7ab9f456 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1897,8 +1913,8 @@ Ext.define('PVE.Utils', {
+@@ -1902,8 +1918,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
