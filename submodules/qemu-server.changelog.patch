@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index b4e72125..c602e488 100644
+index f036d011..e89ec6f7 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.1.18+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.1.19+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 07 Jul 2026 21:40:38 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 15 Jul 2026 21:15:06 +0000
 +
-+qemu-server (9.1.18+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 28 Jun 2026 09:07:47 +0000
-+
- qemu-server (9.1.18) trixie; urgency=medium
+ qemu-server (9.1.19) trixie; urgency=medium
  
-   * fix #7627: network: virtio: disable the host UDP tunnel offload feature by
-     default for new VMs (machine version 11.0+pve1 and later), as it can break
-     connectivity for some guest network setups, in particular VXLAN traffic
-     that leaves the host over a physical NIC. The new per-NIC 'host-tunnel'
-     option allows re-enabling it explicitly.
- 
-   * fix #7697: snapshot: correct the hook name checked after thawing the
-     guest, so the post-unfreeze hook runs again and the loop waiting for
+   * fix #3711: allow removing a VM even if one of its storages no longer
+     exists, instead of aborting the removal and leaving the VM behind. Related
+     handling of storage errors was made more robust and consistent:
+     - check that a volume's storage still exists before the ownership check,
+       and warn instead of silently continuing on a storage error
+     - warn and continue if the linked-clone check errors out, as it runs again
+       later and still blocks removal when clones exist
+     - log the remaining storage and disk-free errors as warnings for
