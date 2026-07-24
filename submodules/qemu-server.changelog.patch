@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f036d011..e89ec6f7 100644
+index ece58fcb..7578f45c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.1.19+wsh1) trixie; urgency=medium
++qemu-server (9.2.0+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 15 Jul 2026 21:15:06 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 24 Jul 2026 21:20:40 +0000
 +
- qemu-server (9.1.19) trixie; urgency=medium
+ qemu-server (9.2.0) trixie; urgency=medium
  
-   * fix #3711: allow removing a VM even if one of its storages no longer
-     exists, instead of aborting the removal and leaving the VM behind. Related
-     handling of storage errors was made more robust and consistent:
-     - check that a volume's storage still exists before the ownership check,
-       and warn instead of silently continuing on a storage error
-     - warn and continue if the linked-clone check errors out, as it runs again
-       later and still blocks removal when clones exist
-     - log the remaining storage and disk-free errors as warnings for
+   * fix #6424: qmp: increase the timeout for the 'quit' command to 60 seconds,
+     so that bulk suspend no longer runs into spurious timeouts. The command
+     itself is fast, but getting its response can take a while when QEMU is
+     already busy with teardown.
+ 
+   * suspend: do not start the VM again after successfully saving its state for
+     hibernation, so it stays stopped and QMP 'quit' is issued cleanly. Requires
+     QEMU 11.0.2 or newer and is version-guarded accordingly.
