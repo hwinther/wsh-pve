@@ -87,7 +87,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index c90db29..7184da0 100755
+index a6b8745..df1bd77 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -132,7 +132,7 @@ index c90db29..7184da0 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -122,12 +124,40 @@ install: build
+@@ -126,6 +128,32 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
@@ -163,8 +163,9 @@ index c90db29..7184da0 100755
 +endif
 +
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
- 	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-flags.pl > $(flagfile)
- 
+ 	./debian/parse-cpu-flags.pl $(destdir)/usr/bin/qemu-system-x86_64 max-x86_64-cpu > $(flagfile)
+ 	# NOTE: If the diff fails here after upgrading the QEMU submodule, check which new flags
+@@ -136,6 +164,8 @@ install: build
  	# Supported machine versions are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machine_file_x86_64)
  	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > $(machine_file_aarch64)
@@ -173,7 +174,7 @@ index c90db29..7184da0 100755
  
  	# Supported CPU models are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-models.pl > $(cpu_models_file_x86_64)
-@@ -162,7 +192,7 @@ binary-arch: build install
+@@ -170,7 +200,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
