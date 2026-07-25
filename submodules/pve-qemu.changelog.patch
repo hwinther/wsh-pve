@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 398272c..e1ca99a 100644
+index 7b2909c..e339754 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (11.0.2-1+wsh1) trixie; urgency=medium
++pve-qemu-kvm (11.0.2-2+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: deb build failed (patch trigger) (#143)
++  * Manual fix needed: pve-qemu deb build failed (#182)
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Tue, 21 Jul 2026 21:47:00 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 25 Jul 2026 23:50:55 +0000
 +
+ pve-qemu-kvm (11.0.2-2) trixie; urgency=medium
+ 
+   * more stable fixes for QEMU 11.0, including various display drivers and the
+     USB subsystem, for virtio-net, virtio-serial, the e1000e, IDE, DMA,
+     intel_iommu, TCG and the RNG devices.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 21 Jul 2026 18:18:08 +0200
+ 
  pve-qemu-kvm (11.0.2-1) trixie; urgency=medium
  
-   * update submodule and patches to QEMU 11.0.2, which brings minor fixes for
-     x86 and ARM emulation, migration, rare block-layer edge cases and VNC
-     memory handling. The downstream stop-gap patch for the trim/drain deadlock
-     with IDE/SATA drives could be dropped, as an equivalent fix landed
-     upstream.
- 
-   * fix #7722: restore PNG support, which is required for the screendump
-     feature and advertised by VNC when available. It regressed because the
