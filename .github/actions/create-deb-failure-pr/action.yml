@@ -1,5 +1,5 @@
 name: Create PR for deb build failure
-description: Creates a branch and PR when deb build fails, assigning the user for manual fix
+description: Creates or updates a single branch and PR when deb build fails, assigning the user for manual fix
 
 inputs:
   token:
@@ -16,8 +16,8 @@ inputs:
     description: URL of the failed workflow run
     required: true
   run_id:
-    description: Workflow run ID (used for branch name)
-    required: true
+    description: Workflow run ID (informational; no longer used for the branch name)
+    required: false
   workflow_context:
     description: Context for PR body (e.g. sync-from-upstream, build-deb-trigger-patches)
     required: true
@@ -34,7 +34,7 @@ runs:
         ref: main
         token: ${{ inputs.token }}
 
-    - name: Create branch and PR for manual fix
+    - name: Create or update branch and PR for manual fix
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -42,7 +42,6 @@ runs:
         REJ_FILES_PATH: ${{ inputs.rej_files_path }}
         PR_ASSIGNEE: ${{ inputs.pr_assignee }}
         RUN_URL: ${{ inputs.run_url }}
-        RUN_ID: ${{ inputs.run_id }}
         WORKFLOW_CONTEXT: ${{ inputs.workflow_context }}
       run: |
         # Derive branch suffix and title from packages
@@ -62,17 +61,26 @@ runs:
 
         git config user.name "${{ github.actor }}"
         git config user.email "${{ github.actor }}@users.noreply.github.com"
-        branch_name="fix/deb-${branch_suffix}-${RUN_ID}"
-        git checkout -b "$branch_name"
+
+        # Stable, per-failure branch name (no run id) so at most ONE PR exists
+        # per failure signature at a time. The checkout step above left us on
+        # the tip of main, so resetting the branch to HEAD here rebases it onto
+        # the latest main on every failure run.
+        branch_name="fix/deb-${branch_suffix}"
+        git checkout -B "$branch_name"
 
         if [ -n "$REJ_FILES_PATH" ] && [ -d "$REJ_FILES_PATH" ]; then
+          rm -rf patch-failures
           cp -r "$REJ_FILES_PATH" patch-failures/
           git add patch-failures/
           git commit -m "Include rejected hunks (.rej) for manual patch fix"
         else
           git commit --allow-empty -m "Placeholder for manual patch fix - push your changes here"
         fi
-        git push origin "$branch_name"
+
+        # Force-push: the branch is always "latest main + this run's rejects",
+        # replacing any previous state so no stale duplicate branches pile up.
+        git push --force origin "$branch_name"
 
         body="The debian package build failed during the ${WORKFLOW_CONTEXT} workflow.
 
@@ -81,16 +89,27 @@ runs:
 
         **Failed workflow run:** ${RUN_URL}
 
-        Please investigate and push fixes to this branch. Once the build succeeds, merge this PR."
+        Please investigate and push fixes to this branch. Once the build succeeds, merge this PR.
+
+        > This branch is refreshed from the latest \`main\` on every failure run, so push fixes only after the most recent run or they may be overwritten."
         if [ -n "$REJ_FILES_PATH" ] && [ -d "$REJ_FILES_PATH" ]; then
           body="${body}
 
         **Rejected hunks (.rej files)** are included in the \`patch-failures/\` directory for reference."
         fi
 
-        gh pr create \
-          --base main \
-          --head "$branch_name" \
-          --title "$title" \
-          --body "$body" \
-          --assignee "$PR_ASSIGNEE"
+        # Reuse the existing open PR for this branch if there is one (the
+        # force-push above already refreshed its diff); otherwise open a new PR.
+        existing_pr=$(gh pr list --head "$branch_name" --state open --json number --jq '.[0].number // ""')
+        if [ -n "$existing_pr" ]; then
+          gh pr edit "$existing_pr" --title "$title" --body "$body" || true
+          gh pr edit "$existing_pr" --add-assignee "$PR_ASSIGNEE" || true
+          echo "Updated existing PR #${existing_pr} for ${branch_name}"
+        else
+          gh pr create \
+            --base main \
+            --head "$branch_name" \
+            --title "$title" \
+            --body "$body" \
+            --assignee "$PR_ASSIGNEE"
+        fi
