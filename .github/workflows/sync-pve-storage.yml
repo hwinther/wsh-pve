@@ -1,0 +1,26 @@
+name: Sync pve-storage from upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "45 20 * * *"
+
+permissions:
+  packages: write
+  contents: write
+  pages: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  sync:
+    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    with:
+      repository: hwinther/pve-storage
+    secrets: inherit
+
+  update-docs:
+    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    needs: [sync]
+    if: needs.sync.outputs.build-deb-when-changed-success == 'true'
+    secrets: inherit
