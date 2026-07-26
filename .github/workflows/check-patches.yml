@@ -40,7 +40,7 @@ jobs:
           failed_packages=""
           changed_packages=""
 
-          for package in pve-manager qemu-server pve-qemu; do
+          for package in pve-manager qemu-server pve-qemu pve-storage; do
             echo "::group::Checking $package"
             git submodule update --init submodules/$package
 

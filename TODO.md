@@ -12,5 +12,4 @@ TODO
 - Setup CI to deploy to the apt repo
 - Add VNC audio support
 - Add support for selecting in UI and using other architectures such as sparc64
-- Add support for selecting floppy images in UI
 - Add support for adding/changing hookscripts in UI

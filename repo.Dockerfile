@@ -3,12 +3,14 @@ FROM ghcr.io/hwinther/wsh-pve/reprepro:latest AS install
 FROM ghcr.io/hwinther/wsh-pve/qemu-server:latest AS qemu-server
 FROM ghcr.io/hwinther/wsh-pve/pve-qemu:latest AS pve-qemu
 FROM ghcr.io/hwinther/wsh-pve/pve-manager:latest AS pve-manager
+FROM ghcr.io/hwinther/wsh-pve/pve-storage:latest AS pve-storage
 
 FROM install AS final
 RUN mkdir -p /opt/repo-incoming
 COPY --from=qemu-server /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-qemu /opt/repo/*.deb /opt/repo-incoming/
 COPY --from=pve-manager /opt/repo/*.deb /opt/repo-incoming/
+COPY --from=pve-storage /opt/repo/*.deb /opt/repo-incoming/
 
 WORKDIR /opt/repo
 COPY .gpg /tmp/.gpg-key

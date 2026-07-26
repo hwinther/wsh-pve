@@ -35,9 +35,10 @@ endif
 
 DOCKER_TTY := $(if $(DEBUG_SHELL),-it,)
 
-QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/DriveDevice.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/QemuServer/Network.pm
+QEMU_SERVER_FILES := PVE/QemuServer.pm PVE/QemuServer/Helpers.pm PVE/QemuServer/Drive.pm PVE/QemuServer/DriveDevice.pm PVE/QemuServer/Machine.pm PVE/QemuServer/PCI.pm PVE/QemuServer/USB.pm PVE/QemuServer/Network.pm PVE/QemuServer/Blockdev.pm PVE/QemuConfig.pm PVE/API2/Qemu.pm
+PVE_STORAGE_FILES := PVE/Storage.pm PVE/Storage/Plugin.pm PVE/Storage/DirPlugin.pm PVE/Storage/NFSPlugin.pm PVE/Storage/CIFSPlugin.pm PVE/Storage/BTRFSPlugin.pm PVE/Storage/CephFSPlugin.pm PVE/API2/Storage/Status.pm
 PVE_MANAGER_FILES := manager6/pvemanagerlib.js css/ext6-pve.css
-PATCH_SUBMODULES := pve-manager pve-qemu qemu-server
+PATCH_SUBMODULES := pve-manager pve-qemu qemu-server pve-storage
 CURRENT_DIR = $(shell pwd)
 BRANCH_NAME := local_patches
 GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
@@ -71,7 +72,7 @@ build-containers:
 	sudo docker build . -f djgpp.Dockerfile -t wsh-pve-djgpp-build
 
 .PHONY: build
-build: pve-manager qemu-server pve-qemu-bundle
+build: pve-manager qemu-server pve-storage pve-qemu-bundle
 	echo Building all
 
 pve-manager-clean:
@@ -126,6 +127,34 @@ qemu-server:
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
 		bash -c 'git config --global --add safe.directory /src/submodules/qemu-server && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f qemu-server_*.deb /build/repo/'; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::endgroup::"; \
+	fi
+
+pve-storage-clean:
+	$(Q)$(ECHO) "INFO: Cleaning pve-storage"; \
+	rm -rf submodules/pve-storage; \
+	git submodule update --init submodules/pve-storage; \
+	$(MAKE) pve-storage
+
+.PHONY: pve-storage
+pve-storage:
+	$(Q)$(ECHO) "INFO: Building pve-storage deb package"; \
+		if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
+		echo "::group::Building pve-storage deb package"; \
+	fi; \
+	patch -d submodules/pve-storage -p1 --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-storage.patch; \
+	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-storage:/src/submodules/pve-storage \
+		-v $(CURRENT_DIR)/.git:/src/.git \
+		-v $(CURRENT_DIR)/build/repo:/build/repo \
+		-w /src/submodules/pve-storage \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-e DEB_BUILD_OPTIONS=nocheck \
+		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
+		$(DOCKER_BUILD_IMAGE) \
+		bash -c 'git config --global --add safe.directory /src/submodules/pve-storage && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f libpve-storage-perl_*.deb /build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi
@@ -251,6 +280,20 @@ dev-links:
 		if [ ! -e "$$symlink_path" ]; then \
 			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
 			ln -s "$(CURRENT_DIR)/submodules/qemu-server/src/$$item" "$$symlink_path"; \
+		fi; \
+	done
+
+	$(Q)for item in $(PVE_STORAGE_FILES); do \
+		symlink_path="/usr/share/perl5/$$item"; \
+		if [ -L "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path is already a symlink"; \
+		elif [ -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: $$symlink_path exists but is not a symlink"; \
+			rm -f "$$symlink_path"; \
+		fi; \
+		if [ ! -e "$$symlink_path" ]; then \
+			$(ECHO) "INFO: Creating symlink to $$symlink_path"; \
+			ln -s "$(CURRENT_DIR)/submodules/pve-storage/src/$$item" "$$symlink_path"; \
 		fi; \
 	done
 
@@ -416,7 +459,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all:                     Initialize submodules and build all components"
-	@echo "  build:                   Build all components (pve-manager, qemu-server, pve-qemu-bundle)"
+	@echo "  build:                   Build all components (pve-manager, qemu-server, pve-storage, pve-qemu-bundle)"
 	@echo "  build-containers:        Build Docker containers for development"
 	@echo "  init-submodules:         Check and reinitialize git submodules"
 	@echo "  reset-submodules:        Deletes and initializes git submodules (WARNING: potential loss of data if there are local patches)"
@@ -429,6 +472,8 @@ help:
 	@echo "  qemu-server:             Build qemu-server deb package"
 	@echo "  qemu-server-clean:       Clean and rebuild qemu-server"
 	@echo "  qemu-server-dev:         Restart PVE services for development"
+	@echo "  pve-storage:             Build pve-storage (libpve-storage-perl) deb package"
+	@echo "  pve-storage-clean:       Clean and rebuild pve-storage"
 	@echo "  pve-qemu:                Build pve-qemu deb package"
 	@echo "  pve-qemu-7.2-sparc:      Build SPARC-specific QEMU 7.2 binaries"
 	@echo "  pve-qemu-3dfx:           Build QEMU with 3dfx support"
