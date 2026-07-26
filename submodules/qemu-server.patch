@@ -1,8 +1,45 @@
-diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index cdf66e89..838d69e3 100644
---- a/src/PVE/QemuServer.pm
-+++ b/src/PVE/QemuServer.pm
-@@ -167,7 +167,7 @@ my $vga_fmt = {
+diff --git c/src/PVE/API2/Qemu.pm i/src/PVE/API2/Qemu.pm
+index 28cbb9b0..f78e8293 100644
+--- c/src/PVE/API2/Qemu.pm
++++ i/src/PVE/API2/Qemu.pm
+@@ -152,6 +152,8 @@ my $check_drive_param = sub {
+             my $vtype = (PVE::Storage::parse_volname($storecfg, $volid))[0];
+             raise_param_exc({ $opt => "explicit 'media=cdrom' is required for iso images" })
+                 if $vtype eq 'iso' && !(defined($drive->{media}) && $drive->{media} eq 'cdrom');
++            raise_param_exc({ $opt => "floppy images can only be attached to floppy drives" })
++                if $vtype eq 'floppy' && $opt !~ m/^floppy\d+$/;
+         }
+ 
+         $extra_checks->($drive) if $extra_checks;
+@@ -194,8 +196,9 @@ my $check_storage_access = sub {
+                 PVE::Storage::check_volume_access($rpcenv, $authuser, $storecfg, $vmid, $volid);
+                 if ($storeid) {
+                     my ($vtype) = PVE::Storage::parse_volname($storecfg, $volid);
+-                    raise_param_exc({ $ds => "content type needs to be 'images' or 'iso'" })
+-                        if $vtype ne 'images' && $vtype ne 'iso';
++                    raise_param_exc(
++                        { $ds => "content type needs to be 'images', 'iso' or 'floppy'" })
++                        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'floppy';
+                 }
+             }
+ 
+@@ -661,8 +664,9 @@ my sub create_disks : prototype($$$$$$$$$$$) {
+             if ($storeid) {
+                 my ($vtype, $volume_format) = (checked_parse_volname($storecfg, $volid))[0, 6];
+ 
+-                die "cannot use volume $volid - content type needs to be 'images' or 'iso'"
+-                    if $vtype ne 'images' && $vtype ne 'iso';
++                die "cannot use volume $volid - content type needs to be 'images', 'iso'"
++                    . " or 'floppy'"
++                    if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'floppy';
+ 
+                 # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
+                 if ($disk->{format} && $disk->{format} ne $volume_format) {
+diff --git c/src/PVE/QemuServer.pm i/src/PVE/QemuServer.pm
+index 9aec7f9c..2294041b 100644
+--- c/src/PVE/QemuServer.pm
++++ i/src/PVE/QemuServer.pm
+@@ -168,7 +168,7 @@ my $vga_fmt = {
          optional => 1,
          default_key => 1,
          enum => [
@@ -11,7 +48,7 @@ index cdf66e89..838d69e3 100644
          ],
      },
      memory => {
-@@ -186,6 +186,20 @@ my $vga_fmt = {
+@@ -187,6 +187,20 @@ my $vga_fmt = {
          enum => ['vnc'],
          optional => 1,
      },
@@ -32,7 +69,7 @@ index cdf66e89..838d69e3 100644
  };
  
  my $ivshmem_fmt = {
-@@ -207,16 +221,30 @@ my $ivshmem_fmt = {
+@@ -208,16 +222,30 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
          type => 'string',
@@ -65,7 +102,7 @@ index cdf66e89..838d69e3 100644
  };
  
  my $spice_enhancements_fmt = {
-@@ -658,7 +686,7 @@ EODESCR
+@@ -659,7 +687,7 @@ EODESCR
      bios => {
          optional => 1,
          type => 'string',
@@ -74,7 +111,28 @@ index cdf66e89..838d69e3 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -2789,6 +2817,7 @@ sub conf_has_audio {
+@@ -1227,6 +1255,8 @@ sub print_drive_commandline_full {
+     my $opts = '';
+     my @qemu_drive_options = qw(media cache rerror werror discard);
+     foreach my $o (@qemu_drive_options) {
++        # QEMU's -drive media option only knows disk|cdrom
++        next if $o eq 'media' && PVE::QemuServer::Drive::drive_is_floppy($drive);
+         $opts .= ",$o=$drive->{$o}" if defined($drive->{$o});
+     }
+ 
+@@ -1281,6 +1311,11 @@ sub print_drive_commandline_full {
+     die "$drive_id: explicit media parameter is required for iso images\n"
+         if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
+ 
++    die "$drive_id: floppy images can only be used with floppy drives\n"
++        if defined($vtype)
++        && $vtype eq 'floppy'
++        && !PVE::QemuServer::Drive::drive_is_floppy($drive);
++
+     if (!drive_is_cdrom($drive)) {
+         my $detectzeroes = PVE::QemuServer::Drive::detect_zeroes_cmdline_option($drive);
+ 
+@@ -2802,6 +2837,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -82,7 +140,7 @@ index cdf66e89..838d69e3 100644
      };
  }
  
-@@ -2805,6 +2834,20 @@ sub audio_devs {
+@@ -2818,6 +2854,20 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -103,7 +161,7 @@ index cdf66e89..838d69e3 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2813,7 +2856,20 @@ sub audio_devs {
+@@ -2826,7 +2876,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -125,7 +183,7 @@ index cdf66e89..838d69e3 100644
  
      return $devs;
  }
-@@ -2953,7 +3009,7 @@ sub vga_conf_has_spice {
+@@ -2966,7 +3029,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -134,7 +192,7 @@ index cdf66e89..838d69e3 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2962,7 +3018,7 @@ sub query_supported_cpu_flags {
+@@ -2975,7 +3038,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -143,7 +201,7 @@ index cdf66e89..838d69e3 100644
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
  
-@@ -3047,7 +3103,7 @@ sub query_supported_cpu_flags {
+@@ -3060,7 +3123,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -152,7 +210,7 @@ index cdf66e89..838d69e3 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3120,7 +3176,7 @@ sub config_to_command {
+@@ -3133,7 +3196,7 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -161,7 +219,7 @@ index cdf66e89..838d69e3 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3226,7 +3282,9 @@ sub config_to_command {
+@@ -3239,7 +3302,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -172,7 +230,7 @@ index cdf66e89..838d69e3 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3246,6 +3304,10 @@ sub config_to_command {
+@@ -3259,6 +3324,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -183,7 +241,7 @@ index cdf66e89..838d69e3 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3264,9 +3326,11 @@ sub config_to_command {
+@@ -3277,9 +3346,11 @@ sub config_to_command {
      }
  
      # add usb controllers
@@ -195,7 +253,7 @@ index cdf66e89..838d69e3 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3285,7 +3349,6 @@ sub config_to_command {
+@@ -3298,7 +3369,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -203,7 +261,7 @@ index cdf66e89..838d69e3 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3376,9 +3439,27 @@ sub config_to_command {
+@@ -3389,9 +3459,27 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -232,7 +290,7 @@ index cdf66e89..838d69e3 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3397,6 +3478,7 @@ sub config_to_command {
+@@ -3410,6 +3498,7 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -240,7 +298,7 @@ index cdf66e89..838d69e3 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3412,6 +3494,7 @@ sub config_to_command {
+@@ -3425,6 +3514,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -248,7 +306,15 @@ index cdf66e89..838d69e3 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3595,9 +3678,11 @@ sub config_to_command {
+@@ -3547,6 +3637,7 @@ sub config_to_command {
+ 
+     my $scsicontroller = {};
+     my $ahcicontroller = {};
++    my $fdccontroller = 0;
+     my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
+ 
+     # Add iscsi initiator name if available
+@@ -3608,9 +3699,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -261,7 +327,21 @@ index cdf66e89..838d69e3 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3669,7 +3754,12 @@ sub config_to_command {
+@@ -3622,6 +3715,13 @@ sub config_to_command {
+                 $ahcicontroller->{$controller} = 1;
+             }
+ 
++            if ($drive->{interface} eq 'floppy') {
++                die "floppy drives are only supported on x86_64\n" if $arch ne 'x86_64';
++                # i440fx has an onboard floppy controller, q35 does not
++                push @$devices, '-device', 'isa-fdc,id=fdc' if $q35 && !$fdccontroller;
++                $fdccontroller = 1;
++            }
++
+             my $live_restore = $live_restore_backing->{$ds};
+ 
+             if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
+@@ -3682,7 +3782,12 @@ sub config_to_command {
          $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -275,7 +355,7 @@ index cdf66e89..838d69e3 100644
  
          # force +pve1 if machine version 10.0, for host_mtu differentiation
          $version_guard->(10, 0, 1);
-@@ -3685,7 +3775,17 @@ sub config_to_command {
+@@ -3698,7 +3803,17 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -294,7 +374,7 @@ index cdf66e89..838d69e3 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3709,7 +3809,7 @@ sub config_to_command {
+@@ -3722,7 +3837,7 @@ sub config_to_command {
      # pci.4 is nested in pci.1
      $bridges->{1} = 1 if $bridges->{4};
  
@@ -303,7 +383,39 @@ index cdf66e89..838d69e3 100644
          if (min_version($machine_version, 2, 3)) {
              $bridges->{1} = 1;
              $bridges->{2} = 1;
-@@ -5792,6 +5892,9 @@ sub vm_start_nolock {
+@@ -4757,7 +4872,8 @@ sub vmconfig_hotplug_pending {
+                 );
+             } elsif (is_valid_drivename($opt)) {
+                 die "skip\n"
+-                    if !$hotplug_features->{disk} || $opt =~ m/(efidisk|ide|sata|tpmstate)(\d+)/;
++                    if !$hotplug_features->{disk}
++                    || $opt =~ m/(efidisk|ide|sata|tpmstate|floppy)(\d+)/;
+                 vm_deviceunplug($vmid, $conf, $opt);
+                 vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
+             } elsif ($opt =~ m/^memory$/) {
+@@ -5216,8 +5332,10 @@ sub vmconfig_update_disk {
+     my $drive = parse_drive($opt, $value);
+ 
+     if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
+-        my $media = $drive->{media} || 'disk';
+-        my $oldmedia = $old_drive->{media} || 'disk';
++        my $default_media =
++            PVE::QemuServer::Drive::drive_is_floppy($drive) ? 'floppy' : 'disk';
++        my $media = $drive->{media} || $default_media;
++        my $oldmedia = $old_drive->{media} || $default_media;
+         die "unable to change media type\n" if $media ne $oldmedia;
+ 
+         if (!drive_is_cdrom($old_drive)) {
+@@ -5314,7 +5432,7 @@ sub vmconfig_update_disk {
+         }
+     }
+ 
+-    die "skip\n" if !$hotplug || $opt =~ m/(ide|sata)(\d+)/;
++    die "skip\n" if !$hotplug || $opt =~ m/(ide|sata|floppy)(\d+)/;
+     # hotplug new disks
+     PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
+     vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
+@@ -5805,6 +5923,9 @@ sub vm_start_nolock {
                  }
              }
  
@@ -313,23 +425,182 @@ index cdf66e89..838d69e3 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-diff --git a/src/PVE/QemuServer/Drive.pm b/src/PVE/QemuServer/Drive.pm
-index b80b7dbb..afc4f2ef 100644
---- a/src/PVE/QemuServer/Drive.pm
-+++ b/src/PVE/QemuServer/Drive.pm
-@@ -847,7 +847,7 @@ sub parse_drive {
+@@ -8206,7 +8327,12 @@ sub bootorder_from_legacy {
+         sub {
+             my ($ds, $drive) = @_;
+ 
+-            if (drive_is_cdrom($drive, 1)) {
++            if (PVE::QemuServer::Drive::drive_is_floppy($drive)) {
++                if ($bootindex_hash->{a}) {
++                    $bootorder->{$ds} = $bootindex_hash->{a};
++                    $bootindex_hash->{a} += 1;
++                }
++            } elsif (drive_is_cdrom($drive, 1)) {
+                 if ($bootindex_hash->{d}) {
+                     $bootorder->{$ds} = $bootindex_hash->{d};
+                     $bootindex_hash->{d} += 1;
+diff --git c/src/PVE/QemuServer/Blockdev.pm i/src/PVE/QemuServer/Blockdev.pm
+index 101c747c..b268f7ee 100644
+--- c/src/PVE/QemuServer/Blockdev.pm
++++ i/src/PVE/QemuServer/Blockdev.pm
+@@ -202,6 +202,10 @@ sub get_node_name_below_throttle {
+ my sub read_only_json_option {
+     my ($drive, $options) = @_;
+ 
++    # floppies are removable media like cdroms, but writable unless ro is set
++    return json_bool($drive->{ro} || $options->{'read-only'})
++        if PVE::QemuServer::Drive::drive_is_floppy($drive);
++
+     return json_bool($drive->{ro} || drive_is_cdrom($drive) || $options->{'read-only'});
+ }
+ 
+@@ -307,7 +311,10 @@ sub generate_file_blockdev {
+         my $st = File::stat::stat($path) or die "stat for '$path' failed - $!\n";
+         my $driver = 'file';
+         if (S_ISCHR($st->mode) || S_ISBLK($st->mode)) {
+-            $driver = drive_is_cdrom($drive) ? 'host_cdrom' : 'host_device';
++            $driver =
++                (drive_is_cdrom($drive) && !PVE::QemuServer::Drive::drive_is_floppy($drive))
++                ? 'host_cdrom'
++                : 'host_device';
+         }
+         $blockdev = { driver => "$driver", filename => "$path" };
+     } else {
+@@ -317,6 +324,10 @@ sub generate_file_blockdev {
+         my $vtype = (PVE::Storage::parse_volname($storecfg, $drive->{file}))[0];
+         die "$drive_id: explicit media parameter is required for iso images\n"
+             if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
++        die "$drive_id: floppy images can only be used with floppy drives\n"
++            if defined($vtype)
++            && $vtype eq 'floppy'
++            && !PVE::QemuServer::Drive::drive_is_floppy($drive);
+ 
+         my $storage_opts = { hints => {} };
+         $storage_opts->{hints}->{'efi-disk'} = 1 if $drive->{interface} eq 'efidisk';
+diff --git c/src/PVE/QemuServer/Drive.pm i/src/PVE/QemuServer/Drive.pm
+index b80b7dbb..6e548dbf 100644
+--- c/src/PVE/QemuServer/Drive.pm
++++ i/src/PVE/QemuServer/Drive.pm
+@@ -23,6 +23,7 @@ our @EXPORT_OK = qw(
+     checked_volume_format
+     drive_is_cloudinit
+     drive_is_cdrom
++    drive_is_floppy
+     parse_drive
+     print_drive
+     storage_allows_io_uring_default
+@@ -155,6 +156,7 @@ my $MAX_IDE_DISKS = 4;
+ my $MAX_SCSI_DISKS = 31;
+ my $MAX_VIRTIO_DISKS = 16;
+ our $MAX_SATA_DISKS = 6;
++our $MAX_FLOPPY_DRIVES = 2;
+ our $MAX_UNUSED_DISKS = 256;
+ our $NEW_DISK_RE = qr!^(([^/:\s]+):)?(\d+(\.\d+)?)$!;
+ 
+@@ -603,6 +605,41 @@ my $tpmstate_desc = {
+ };
+ use constant TPMSTATE_DISK_SIZE => 4 * 1024 * 1024;
+ 
++my $floppy_fmt = {
++    volume => { alias => 'file' },
++    file => {
++        type => 'string',
++        format => 'pve-volume-id-or-qm-path',
++        default_key => 1,
++        format_description => 'volume',
++        description => "The floppy image volume.",
++    },
++    media => {
++        type => 'string',
++        enum => [qw(floppy)],
++        description => "The drive's media type.",
++        default => 'floppy',
++        optional => 1,
++    },
++    format => get_standard_option('pve-qm-image-format'),
++    size => {
++        type => 'string',
++        format => 'disk-size',
++        format_description => 'DiskSize',
++        description => "Disk size. This is purely informational and has no effect.",
++        optional => 1,
++    },
++    %readonly_fmt,
++};
++my $floppydesc = {
++    optional => 1,
++    type => 'string',
++    format => $floppy_fmt,
++    description => "Use volume as floppy disk image (n is 0 to "
++        . ($MAX_FLOPPY_DRIVES - 1) . ").",
++};
++PVE::JSONSchema::register_standard_option("pve-qm-floppy", $floppydesc);
++
+ my $alldrive_fmt = {
+     %drivedesc_base,
+     %iothread_fmt,
+@@ -710,6 +747,12 @@ $drivedesc_hash_with_alloc->{efidisk0} = $desc_with_alloc->('efidisk', $efidisk_
+ $drivedesc_hash->{tpmstate0} = $tpmstate_desc;
+ $drivedesc_hash_with_alloc->{tpmstate0} = $desc_with_alloc->('tpmstate', $tpmstate_desc);
+ 
++for (my $i = 0; $i < $MAX_FLOPPY_DRIVES; $i++) {
++    # floppies only reference existing volumes, so there is no allocation variant
++    $drivedesc_hash->{"floppy$i"} = $floppydesc;
++    $drivedesc_hash_with_alloc->{"floppy$i"} = $floppydesc;
++}
++
+ for (my $i = 0; $i < $MAX_UNUSED_DISKS; $i++) {
+     $drivedesc_hash->{"unused$i"} = $unuseddesc;
+     $drivedesc_hash_with_alloc->{"unused$i"} = $desc_with_alloc->('unused', $unuseddesc);
+@@ -728,6 +771,7 @@ sub valid_drive_names {
+         (map { "sata$_" } (0 .. ($MAX_SATA_DISKS - 1))),
+         'efidisk0',
+         'tpmstate0',
++        (map { "floppy$_" } (0 .. ($MAX_FLOPPY_DRIVES - 1))),
+     );
+ }
+ 
+@@ -758,11 +802,21 @@ sub drive_is_cloudinit {
+     return $drive->{file} =~ m@[:/](?:vm-\d+-)?cloudinit(?:\.$QEMU_FORMAT_RE)?$@;
+ }
+ 
++sub drive_is_floppy {
++    my ($drive) = @_;
++
++    return $drive && $drive->{interface} && ($drive->{interface} eq 'floppy');
++}
++
+ sub drive_is_cdrom {
+     my ($drive, $exclude_cloudinit) = @_;
+ 
+     return 0 if $exclude_cloudinit && drive_is_cloudinit($drive);
+ 
++    # floppies share the removable reference-media semantics of cdroms
++    # (not backed up, not snapshotted, not copied on clone, never freed)
++    return 1 if drive_is_floppy($drive);
++
+     return $drive && $drive->{media} && ($drive->{media} eq 'cdrom');
+ }
+ 
+@@ -847,7 +901,13 @@ sub parse_drive {
  
      if ($res->{media} && ($res->{media} eq 'cdrom')) {
          return if $res->{snapshot} || $res->{format};
 -        return if $res->{interface} eq 'virtio';
 +        #return if $res->{interface} eq 'virtio'; // I have no idea why this was disabled in the first place, so I've basically fucked around and later I might find out :)
++    }
++
++    if ($res->{interface} eq 'floppy') {
++        # floppies are always backed by an image file or volume, host cdrom
++        # passthrough makes no sense here
++        return if $res->{file} eq 'cdrom';
      }
  
      if (my $size = $res->{size}) {
-diff --git a/src/PVE/QemuServer/DriveDevice.pm b/src/PVE/QemuServer/DriveDevice.pm
-index 37b611f0..40c7841f 100644
---- a/src/PVE/QemuServer/DriveDevice.pm
-+++ b/src/PVE/QemuServer/DriveDevice.pm
+diff --git c/src/PVE/QemuServer/DriveDevice.pm i/src/PVE/QemuServer/DriveDevice.pm
+index 37b611f0..4fc7cd5c 100644
+--- c/src/PVE/QemuServer/DriveDevice.pm
++++ i/src/PVE/QemuServer/DriveDevice.pm
 @@ -78,7 +78,9 @@ sub print_drivedevice_full {
          my $device_type =
              PVE::QemuServer::Drive::get_scsi_device_type($drive, $storecfg, $machine_version);
@@ -341,7 +612,24 @@ index 37b611f0..40c7841f 100644
              $device = "scsi-$device_type,bus=$controller_prefix$controller.0,scsi-id=$unit";
          } else {
              $device = "scsi-$device_type,bus=$controller_prefix$controller.0,channel=0,scsi-id=0"
-@@ -192,6 +194,10 @@ sub print_drivedevice_full {
+@@ -165,6 +167,16 @@ sub print_drivedevice_full {
+             }
+         }
+         $device .= ",wwn=$drive->{wwn}" if $drive->{wwn};
++    } elsif ($drive->{interface} eq 'floppy') {
++        # attaches to the isa-fdc controller (onboard on i440fx, added
++        # explicitly for q35 in config_to_command)
++        $device = "floppy,unit=$drive->{index}";
++        # for the switch to -blockdev, there is no blockdev for 'none'
++        if (!min_version($machine_version, 10, 0) || $drive->{file} ne 'none') {
++            $device .= ",drive=drive-$drive_id";
++        }
++        $device .= ",id=$drive_id";
++        $has_write_cache = 0;
+     } elsif ($drive->{interface} eq 'usb') {
+         die "implement me";
+         #  -device ide-drive,bus=ide.1,unit=0,drive=drive-ide0-1-0,id=ide0-1-0
+@@ -192,6 +204,10 @@ sub print_drivedevice_full {
          }
      }
  
@@ -352,10 +640,10 @@ index 37b611f0..40c7841f 100644
      return $device;
  }
  
-diff --git a/src/PVE/QemuServer/Helpers.pm b/src/PVE/QemuServer/Helpers.pm
+diff --git c/src/PVE/QemuServer/Helpers.pm i/src/PVE/QemuServer/Helpers.pm
 index dd17eef5..5f376d5c 100644
---- a/src/PVE/QemuServer/Helpers.pm
-+++ b/src/PVE/QemuServer/Helpers.pm
+--- c/src/PVE/QemuServer/Helpers.pm
++++ i/src/PVE/QemuServer/Helpers.pm
 @@ -26,6 +26,8 @@ our @EXPORT_OK = qw(
  my $nodename = PVE::INotify::nodename();
  
@@ -394,11 +682,11 @@ index dd17eef5..5f376d5c 100644
  
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
-diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 37b272c6..d24c615a 100644
---- a/src/PVE/QemuServer/Machine.pm
-+++ b/src/PVE/QemuServer/Machine.pm
-@@ -57,7 +57,7 @@ my $machine_fmt = {
+diff --git c/src/PVE/QemuServer/Machine.pm i/src/PVE/QemuServer/Machine.pm
+index 35161d1f..64a3a3cf 100644
+--- c/src/PVE/QemuServer/Machine.pm
++++ i/src/PVE/QemuServer/Machine.pm
+@@ -58,7 +58,7 @@ my $machine_fmt = {
          description => "Specifies the QEMU machine type.",
          type => 'string',
          pattern =>
@@ -407,7 +695,7 @@ index 37b272c6..d24c615a 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -123,6 +123,8 @@ sub print_machine {
+@@ -124,6 +124,8 @@ sub print_machine {
  my $default_machines = {
      x86_64 => 'pc',
      aarch64 => 'virt',
@@ -416,7 +704,7 @@ index 37b272c6..d24c615a 100644
  };
  
  sub default_machine_for_arch {
-@@ -166,6 +168,7 @@ my sub machine_base_type {
+@@ -167,6 +169,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -424,7 +712,7 @@ index 37b272c6..d24c615a 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -321,18 +324,15 @@ sub get_machine_pve_revisions {
+@@ -322,18 +325,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -447,7 +735,7 @@ index 37b272c6..d24c615a 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -494,6 +494,7 @@ sub get_power_state_flags {
+@@ -495,6 +495,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -455,7 +743,7 @@ index 37b272c6..d24c615a 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -501,6 +502,7 @@ sub get_power_state_flags {
+@@ -502,6 +503,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -463,10 +751,10 @@ index 37b272c6..d24c615a 100644
  
      if (scalar($options->@*)) {
          return $options;
-diff --git a/src/PVE/QemuServer/Network.pm b/src/PVE/QemuServer/Network.pm
+diff --git c/src/PVE/QemuServer/Network.pm i/src/PVE/QemuServer/Network.pm
 index 11bebdec..a345c463 100644
---- a/src/PVE/QemuServer/Network.pm
-+++ b/src/PVE/QemuServer/Network.pm
+--- c/src/PVE/QemuServer/Network.pm
++++ i/src/PVE/QemuServer/Network.pm
 @@ -28,6 +28,8 @@ my $nic_model_list = [
      'rtl8139',
      'virtio',
@@ -476,10 +764,10 @@ index 11bebdec..a345c463 100644
  ];
  
  my $net_fmt_bridge_descr = <<__EOD__;
-diff --git a/src/PVE/QemuServer/PCI.pm b/src/PVE/QemuServer/PCI.pm
+diff --git c/src/PVE/QemuServer/PCI.pm i/src/PVE/QemuServer/PCI.pm
 index 0b67943c..e276ad81 100644
---- a/src/PVE/QemuServer/PCI.pm
-+++ b/src/PVE/QemuServer/PCI.pm
+--- c/src/PVE/QemuServer/PCI.pm
++++ i/src/PVE/QemuServer/PCI.pm
 @@ -299,6 +299,11 @@ sub print_pci_addr {
  
      my $res = '';
@@ -492,10 +780,10 @@ index 0b67943c..e276ad81 100644
      my $map = get_pci_addr_map();
      if (my $d = $get_addr_mapping_from_id->($map, $id)) {
          # Using same bus slots on all HW, so we need to check special cases here. For aarch64, the
-diff --git a/src/PVE/QemuServer/USB.pm b/src/PVE/QemuServer/USB.pm
+diff --git c/src/PVE/QemuServer/USB.pm i/src/PVE/QemuServer/USB.pm
 index c9408a42..3450c27c 100644
---- a/src/PVE/QemuServer/USB.pm
-+++ b/src/PVE/QemuServer/USB.pm
+--- c/src/PVE/QemuServer/USB.pm
++++ i/src/PVE/QemuServer/USB.pm
 @@ -136,6 +136,8 @@ sub get_usb_controllers {
      if ($arch eq 'aarch64') {
          $pciaddr = print_pci_addr('ehci', $bridges, $arch);
@@ -514,3 +802,50 @@ index c9408a42..3450c27c 100644
          # include usb device config if still on x86 before-xhci machines and if USB 3 is not used
          push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
+diff --git c/src/test/cfg2cmd/floppy.conf i/src/test/cfg2cmd/floppy.conf
+new file mode 100644
+index 00000000..d606dfbf
+--- /dev/null
++++ i/src/test/cfg2cmd/floppy.conf
+@@ -0,0 +1,11 @@
++# TEST: i440fx VM with a boot floppy and a second read-only floppy (onboard fdc, no isa-fdc)
++boot: order=floppy0;scsi0
++cores: 2
++floppy0: local:floppy/dos622-boot.img,size=1440K
++floppy1: local:floppy/drivers.img,ro=1,size=1440K
++memory: 512
++ostype: other
++scsi0: local:100/vm-100-disk-2.qcow2,size=10G
++scsihw: virtio-scsi-pci
++smbios1: uuid=3dd750ce-d910-44d0-9493-525c0be4e687
++vmgenid: 54d1c06c-8f5b-440f-b5b2-6eab1380e13d
+diff --git c/src/test/cfg2cmd/q35-floppy.conf i/src/test/cfg2cmd/q35-floppy.conf
+new file mode 100644
+index 00000000..b6378e36
+--- /dev/null
++++ i/src/test/cfg2cmd/q35-floppy.conf
+@@ -0,0 +1,12 @@
++# TEST: q35 VM with a floppy image and an empty floppy drive (explicit isa-fdc controller)
++boot: order=floppy0;scsi0
++cores: 2
++floppy0: local:floppy/dos622-boot.img,size=1440K
++floppy1: none
++machine: q35
++memory: 512
++ostype: other
++scsi0: local:100/vm-100-disk-2.qcow2,size=10G
++scsihw: virtio-scsi-pci
++smbios1: uuid=3dd750ce-d910-44d0-9493-525c0be4e687
++vmgenid: 54d1c06c-8f5b-440f-b5b2-6eab1380e13d
+diff --git c/src/test/run_config2command_tests.pl i/src/test/run_config2command_tests.pl
+index 47250c67..a2f03f37 100755
+--- c/src/test/run_config2command_tests.pl
++++ i/src/test/run_config2command_tests.pl
+@@ -31,6 +31,7 @@ my $base_env = {
+                 content => {
+                     images => 1,
+                     iso => 1,
++                    floppy => 1,
+                 },
+                 path => '/var/lib/vz',
+                 type => 'dir',
