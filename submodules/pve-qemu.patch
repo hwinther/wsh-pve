@@ -12,10 +12,10 @@ index 82edd64..be5006b 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index e3fc9a7..fb52bb9 100644
+index ea9871d..633dace 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -49,6 +49,7 @@ Architecture: any
+@@ -55,6 +55,7 @@ Architecture: any
  Depends: ceph-common (>= 0.48),
           fuse3,
           iproute2,
