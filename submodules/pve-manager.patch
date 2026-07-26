@@ -1,7 +1,19 @@
-diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index 5c37dd29..6f6513ae 100644
---- a/www/css/ext6-pve.css
-+++ b/www/css/ext6-pve.css
+diff --git c/Makefile i/Makefile
+index 6c8b82e1a..bf3064145 100644
+--- c/Makefile
++++ i/Makefile
+@@ -65,6 +65,7 @@ install: vzdump-hook-script.pl
+ 	install -d $(DESTDIR)/var/lib/vz/images
+ 	install -d $(DESTDIR)/var/lib/vz/template/cache
+ 	install -d $(DESTDIR)/var/lib/vz/template/iso
++	install -d $(DESTDIR)/var/lib/vz/template/floppy
+ 	install -m 0644 vzdump-hook-script.pl $(DOCDIR)/examples/vzdump-hook-script.pl
+ 	install -m 0644 spice-example-sh $(DOCDIR)/examples/spice-example-sh
+ 	set -e && for i in $(SUBDIRS); do $(MAKE) -C $$i $@; done
+diff --git c/www/css/ext6-pve.css i/www/css/ext6-pve.css
+index 5c37dd291..6f6513ae6 100644
+--- c/www/css/ext6-pve.css
++++ i/www/css/ext6-pve.css
 @@ -688,3 +688,121 @@ table.osds td:first-of-type {
  .pmx-column-wrapped > div {
      white-space: pre-wrap;
@@ -124,11 +136,27 @@ index 5c37dd29..6f6513ae 100644
 +.fa-database       { color: #70a1c8 !important; }
 +
 +.fa-object-group           { color: #56bbe8 !important; }
-diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index d4dd3f35..328f5dfc 100644
---- a/www/manager6/Makefile
-+++ b/www/manager6/Makefile
-@@ -280,6 +280,7 @@ JSSRC= 							\
+diff --git c/www/manager6/Makefile i/www/manager6/Makefile
+index d4dd3f351..39b1a7c38 100644
+--- c/www/manager6/Makefile
++++ i/www/manager6/Makefile
+@@ -97,6 +97,7 @@ JSSRC= 							\
+ 	form/MultiFileButton.js				\
+ 	form/TagFieldSet.js				\
+ 	form/IsoSelector.js				\
++	form/FloppySelector.js				\
+ 	grid/BackupView.js				\
+ 	grid/FirewallAliases.js				\
+ 	grid/FirewallOptions.js				\
+@@ -255,6 +256,7 @@ JSSRC= 							\
+ 	qemu/AudioEdit.js				\
+ 	qemu/BootOrderEdit.js				\
+ 	qemu/CDEdit.js					\
++	qemu/FloppyEdit.js				\
+ 	qemu/CIDriveEdit.js				\
+ 	qemu/CloudInit.js				\
+ 	qemu/CmdMenu.js					\
+@@ -280,6 +282,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -136,10 +164,10 @@ index d4dd3f35..328f5dfc 100644
  	qemu/QemuBiosEdit.js				\
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
-diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index 36df8e9d..ab605518 100644
---- a/www/manager6/Parser.js
-+++ b/www/manager6/Parser.js
+diff --git c/www/manager6/Parser.js i/www/manager6/Parser.js
+index 36df8e9d5..ab6055189 100644
+--- c/www/manager6/Parser.js
++++ i/www/manager6/Parser.js
 @@ -117,7 +117,7 @@ Ext.define('PVE.Parser', {
  
                  if (
@@ -149,10 +177,10 @@ index 36df8e9d..ab605518 100644
                      )) !== null
                  ) {
                      res.model = match_res[1].toLowerCase();
-diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 040b5ae0..f814c1db 100644
---- a/www/manager6/Utils.js
-+++ b/www/manager6/Utils.js
+diff --git c/www/manager6/Utils.js i/www/manager6/Utils.js
+index 040b5ae01..a5bd0cc35 100644
+--- c/www/manager6/Utils.js
++++ i/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
                  bvers = b.toString().split('.');
              }
@@ -199,7 +227,23 @@ index 040b5ae0..f814c1db 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1902,8 +1918,8 @@ Ext.define('PVE.Utils', {
+@@ -737,6 +753,7 @@ Ext.define('PVE.Utils', {
+             backup: gettext('Backup'),
+             vztmpl: gettext('Container template'),
+             iso: gettext('ISO image'),
++            floppy: gettext('Floppy image'),
+             rootdir: gettext('Container'),
+             snippets: gettext('Snippets'),
+             import: gettext('Import'),
+@@ -1783,6 +1800,7 @@ Ext.define('PVE.Utils', {
+             rng: 1,
+             tpmstate: 1,
+             virtiofs: 10,
++            floppy: 2,
+         },
+ 
+         // we can have usb6 and up only for specific machine/ostypes
+@@ -1902,8 +1920,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -210,10 +254,143 @@ index 040b5ae0..f814c1db 100644
                              'Ceph',
                          ),
                          ['pve-static-mask'],
-diff --git a/www/manager6/form/NetworkCardSelector.js b/www/manager6/form/NetworkCardSelector.js
-index a6630418..0703f3ca 100644
---- a/www/manager6/form/NetworkCardSelector.js
-+++ b/www/manager6/form/NetworkCardSelector.js
+diff --git c/www/manager6/form/ContentTypeSelector.js i/www/manager6/form/ContentTypeSelector.js
+index 605322516..7e6493900 100644
+--- c/www/manager6/form/ContentTypeSelector.js
++++ i/www/manager6/form/ContentTypeSelector.js
+@@ -10,7 +10,7 @@ Ext.define('PVE.form.ContentTypeSelector', {
+         me.comboItems = [];
+ 
+         if (me.cts === undefined) {
+-            me.cts = ['images', 'iso', 'vztmpl', 'backup', 'rootdir', 'snippets', 'import'];
++            me.cts = ['images', 'iso', 'floppy', 'vztmpl', 'backup', 'rootdir', 'snippets', 'import'];
+         }
+ 
+         Ext.Array.each(me.cts, function (ct) {
+diff --git c/www/manager6/form/FloppySelector.js i/www/manager6/form/FloppySelector.js
+new file mode 100644
+index 000000000..2277bc65e
+--- /dev/null
++++ i/www/manager6/form/FloppySelector.js
+@@ -0,0 +1,114 @@
++Ext.define('PVE.form.FloppySelector', {
++    extend: 'Ext.container.Container',
++    alias: 'widget.pveFloppySelector',
++    mixins: ['Ext.form.field.Field', 'Proxmox.Mixin.CBind'],
++
++    layout: {
++        type: 'vbox',
++        align: 'stretch',
++    },
++
++    nodename: undefined,
++    insideWizard: false,
++    labelWidth: undefined,
++    labelAlign: 'right',
++
++    cbindData: function () {
++        let me = this;
++        return {
++            nodename: me.nodename,
++            insideWizard: me.insideWizard,
++        };
++    },
++
++    getValue: function () {
++        return this.lookup('file').getValue();
++    },
++
++    setValue: function (value) {
++        let me = this;
++        if (!value) {
++            me.lookup('file').reset();
++            return;
++        }
++        var match = value.match(/^([^:]+):/);
++        if (match) {
++            me.lookup('storage').setValue(match[1]);
++            me.lookup('file').setValue(value);
++        }
++    },
++
++    getErrors: function () {
++        let me = this;
++        me.lookup('storage').validate();
++        let file = me.lookup('file');
++        file.validate();
++        let value = file.getValue();
++        if (!value || !value.length) {
++            return ['']; // for validation
++        }
++        return [];
++    },
++
++    setNodename: function (nodename) {
++        let me = this;
++        me.lookup('storage').setNodename(nodename);
++        me.lookup('file').setStorage(undefined, nodename);
++    },
++
++    setDisabled: function (disabled) {
++        let me = this;
++        me.lookup('storage').setDisabled(disabled);
++        me.lookup('file').setDisabled(disabled);
++        return me.callParent([disabled]);
++    },
++
++    referenceHolder: true,
++
++    items: [
++        {
++            xtype: 'pveStorageSelector',
++            reference: 'storage',
++            isFormField: false,
++            fieldLabel: gettext('Storage'),
++            storageContent: 'floppy',
++            allowBlank: false,
++            cbind: {
++                nodename: '{nodename}',
++                autoSelect: '{insideWizard}',
++                insideWizard: '{insideWizard}',
++                disabled: '{disabled}',
++                labelWidth: '{labelWidth}',
++                labelAlign: '{labelAlign}',
++            },
++            listeners: {
++                change: function (f, value) {
++                    let me = this;
++                    let selector = me.up('pveFloppySelector');
++                    selector.lookup('file').setStorage(value);
++                    selector.checkChange();
++                },
++            },
++        },
++        {
++            xtype: 'pveFileSelector',
++            reference: 'file',
++            isFormField: false,
++            storageContent: 'floppy',
++            fieldLabel: gettext('Floppy image'),
++            labelAlign: 'right',
++            cbind: {
++                nodename: '{nodename}',
++                disabled: '{disabled}',
++                labelWidth: '{labelWidth}',
++                labelAlign: '{labelAlign}',
++            },
++            allowBlank: false,
++            listeners: {
++                change: function () {
++                    this.up('pveFloppySelector').checkChange();
++                },
++            },
++        },
++    ],
++});
+diff --git c/www/manager6/form/NetworkCardSelector.js i/www/manager6/form/NetworkCardSelector.js
+index a66304182..0703f3ca5 100644
+--- c/www/manager6/form/NetworkCardSelector.js
++++ i/www/manager6/form/NetworkCardSelector.js
 @@ -7,5 +7,9 @@ Ext.define('PVE.form.NetworkCardSelector', {
          ['virtio', 'VirtIO (' + gettext('paravirtualized') + ')'],
          ['rtl8139', 'Realtek RTL8139'],
@@ -224,10 +401,10 @@ index a6630418..0703f3ca 100644
 +        ['lance', 'Lance Am7990 (sparc only)'],
      ],
  });
-diff --git a/www/manager6/form/QemuBiosSelector.js b/www/manager6/form/QemuBiosSelector.js
-index 40abb589..b66ac01c 100644
---- a/www/manager6/form/QemuBiosSelector.js
-+++ b/www/manager6/form/QemuBiosSelector.js
+diff --git c/www/manager6/form/QemuBiosSelector.js i/www/manager6/form/QemuBiosSelector.js
+index 40abb589b..b66ac01cb 100644
+--- c/www/manager6/form/QemuBiosSelector.js
++++ i/www/manager6/form/QemuBiosSelector.js
 @@ -6,6 +6,11 @@ Ext.define('PVE.form.QemuBiosSelector', {
          ['__default__', PVE.Utils.render_qemu_bios('')],
          ['seabios', PVE.Utils.render_qemu_bios('seabios')],
@@ -240,10 +417,10 @@ index 40abb589..b66ac01c 100644
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedFirmware,
-diff --git a/www/manager6/form/QemuMachineSelector.js b/www/manager6/form/QemuMachineSelector.js
-index faeb530a..5b8f9690 100644
---- a/www/manager6/form/QemuMachineSelector.js
-+++ b/www/manager6/form/QemuMachineSelector.js
+diff --git c/www/manager6/form/QemuMachineSelector.js i/www/manager6/form/QemuMachineSelector.js
+index faeb530af..5b8f9690d 100644
+--- c/www/manager6/form/QemuMachineSelector.js
++++ i/www/manager6/form/QemuMachineSelector.js
 @@ -5,6 +5,8 @@ Ext.define('PVE.form.QemuMachineSelector', {
      comboItems: [
          ['__default__', PVE.Utils.render_qemu_machine('')],
@@ -253,10 +430,10 @@ index faeb530a..5b8f9690 100644
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
-diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index f7de1ebe..9ce7990e 100644
---- a/www/manager6/qemu/Architecture.js
-+++ b/www/manager6/qemu/Architecture.js
+diff --git c/www/manager6/qemu/Architecture.js i/www/manager6/qemu/Architecture.js
+index f7de1ebe7..9ce7990e9 100644
+--- c/www/manager6/qemu/Architecture.js
++++ i/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
          ['__default__', `${Proxmox.Utils.defaultText} (${gettext('Host Architecture')})`],
          ['x86_64', gettext('x86 (64-bit)')],
@@ -339,10 +516,10 @@ index f7de1ebe..9ce7990e 100644
              default:
                  return Proxmox.Utils.unknownText;
          }
-diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index ba588edc..01ba47ea 100644
---- a/www/manager6/qemu/AudioEdit.js
-+++ b/www/manager6/qemu/AudioEdit.js
+diff --git c/www/manager6/qemu/AudioEdit.js i/www/manager6/qemu/AudioEdit.js
+index ba588edcd..01ba47eac 100644
+--- c/www/manager6/qemu/AudioEdit.js
++++ i/www/manager6/qemu/AudioEdit.js
 @@ -16,6 +16,12 @@ Ext.define('PVE.qemu.AudioInputPanel', {
          };
      },
@@ -405,10 +582,22 @@ index ba588edc..01ba47ea 100644
          },
      ],
  });
-diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
-index c185de53..e807ac49 100644
---- a/www/manager6/qemu/CDEdit.js
-+++ b/www/manager6/qemu/CDEdit.js
+diff --git c/www/manager6/qemu/BootOrderEdit.js i/www/manager6/qemu/BootOrderEdit.js
+index 6239aeca6..0f12a83e7 100644
+--- c/www/manager6/qemu/BootOrderEdit.js
++++ i/www/manager6/qemu/BootOrderEdit.js
+@@ -69,6 +69,7 @@ Ext.define('PVE.qemu.BootOrderPanel', {
+     isBootdev: function (dev, value) {
+         return (
+             (this.isDisk(dev) && !this.isCloudinit(value)) ||
++            /^floppy\d+/.test(dev) ||
+             /^net\d+/.test(dev) ||
+             /^hostpci\d+/.test(dev) ||
+             (/^usb\d+/.test(dev) && !/spice/.test(value))
+diff --git c/www/manager6/qemu/CDEdit.js i/www/manager6/qemu/CDEdit.js
+index c185de533..e807ac49c 100644
+--- c/www/manager6/qemu/CDEdit.js
++++ i/www/manager6/qemu/CDEdit.js
 @@ -69,7 +69,7 @@ Ext.define('PVE.qemu.CDInputPanel', {
  
          if (!me.confid) {
@@ -418,10 +607,10 @@ index c185de53..e807ac49 100644
                  nodename: me.nodename,
              });
              items.push(me.bussel);
-diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 3f583adb..bd457b09 100644
---- a/www/manager6/qemu/DisplayEdit.js
-+++ b/www/manager6/qemu/DisplayEdit.js
+diff --git c/www/manager6/qemu/DisplayEdit.js i/www/manager6/qemu/DisplayEdit.js
+index 3f583adbe..bd457b09e 100644
+--- c/www/manager6/qemu/DisplayEdit.js
++++ i/www/manager6/qemu/DisplayEdit.js
 @@ -74,6 +74,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
                  emptyText: '{memoryEmptyText}',
                  disabled: '{matchNonGUIOption}',
@@ -443,11 +632,238 @@ index 3f583adb..bd457b09 100644
          },
      ],
  
-diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index e6c02299..ab6ab9db 100644
---- a/www/manager6/qemu/HardwareView.js
-+++ b/www/manager6/qemu/HardwareView.js
-@@ -789,10 +789,10 @@ Ext.define('PVE.qemu.HardwareView', {
+diff --git c/www/manager6/qemu/FloppyEdit.js i/www/manager6/qemu/FloppyEdit.js
+new file mode 100644
+index 000000000..39eb17884
+--- /dev/null
++++ i/www/manager6/qemu/FloppyEdit.js
+@@ -0,0 +1,194 @@
++Ext.define('PVE.qemu.FloppyInputPanel', {
++    extend: 'Proxmox.panel.InputPanel',
++    alias: 'widget.pveQemuFloppyInputPanel',
++
++    insideWizard: false,
++
++    vmconfig: {}, // used to check for existing devices
++
++    onGetValues: function (values) {
++        var me = this;
++
++        var confid = me.confid || 'floppy' + values.deviceid;
++
++        if (values.mediaType === 'image') {
++            me.drive.file = values.floppyimage;
++        } else {
++            me.drive.file = 'none';
++        }
++
++        if (values.ro) {
++            me.drive.ro = 1;
++        } else {
++            delete me.drive.ro;
++        }
++
++        var params = {};
++
++        params[confid] = PVE.Parser.printQemuDrive(me.drive);
++
++        return params;
++    },
++
++    setVMConfig: function (vmconfig) {
++        var me = this;
++
++        me.vmconfig = Ext.apply({}, vmconfig);
++
++        let field = me.down('field[name=deviceid]');
++        if (field) {
++            for (let i = 0; i < 2; i++) {
++                if (!Ext.isDefined(me.vmconfig[`floppy${i}`])) {
++                    field.setValue(i);
++                    break;
++                }
++            }
++            field.validate();
++        }
++    },
++
++    setDrive: function (drive) {
++        var me = this;
++
++        var values = {};
++        if (drive.file === 'none') {
++            values.mediaType = 'none';
++        } else {
++            values.mediaType = 'image';
++            values.floppyimage = drive.file;
++        }
++        values.ro = drive.ro;
++
++        me.drive = drive;
++
++        me.setValues(values);
++    },
++
++    setNodename: function (nodename) {
++        var me = this;
++
++        me.floppysel.setNodename(nodename);
++    },
++
++    initComponent: function () {
++        var me = this;
++
++        me.drive = {};
++
++        var items = [];
++
++        if (!me.confid) {
++            items.push({
++                xtype: 'proxmoxintegerfield',
++                name: 'deviceid',
++                fieldLabel: gettext('Drive number'),
++                minValue: 0,
++                maxValue: 1,
++                value: '0',
++                allowBlank: false,
++                validator: function (value) {
++                    if (!me.rendered) {
++                        return undefined;
++                    }
++                    if (Ext.isDefined(me.vmconfig[`floppy${value}`])) {
++                        return 'This device is already in use.';
++                    }
++                    return true;
++                },
++            });
++        }
++
++        items.push({
++            xtype: 'radiofield',
++            name: 'mediaType',
++            inputValue: 'image',
++            boxLabel: gettext('Use floppy disk image file'),
++            checked: true,
++            listeners: {
++                change: function (f, value) {
++                    if (!me.rendered) {
++                        return;
++                    }
++                    var imageField = me.down('pveFloppySelector');
++                    imageField.setDisabled(!value);
++                    if (value) {
++                        imageField.validate();
++                    } else {
++                        imageField.reset();
++                    }
++                },
++            },
++        });
++
++        me.floppysel = Ext.create('PVE.form.FloppySelector', {
++            nodename: me.nodename,
++            insideWizard: me.insideWizard,
++            name: 'floppyimage',
++        });
++
++        items.push(me.floppysel);
++
++        items.push({
++            xtype: 'radiofield',
++            name: 'mediaType',
++            inputValue: 'none',
++            boxLabel: gettext('Do not use any media'),
++        });
++
++        items.push({
++            xtype: 'proxmoxcheckbox',
++            name: 'ro',
++            fieldLabel: gettext('Read-only'),
++            uncheckedValue: 0,
++        });
++
++        me.items = items;
++
++        me.callParent();
++    },
++});
++
++Ext.define('PVE.qemu.FloppyEdit', {
++    extend: 'Proxmox.window.Edit',
++
++    width: 400,
++
++    initComponent: function () {
++        var me = this;
++
++        var nodename = me.pveSelNode.data.node;
++        if (!nodename) {
++            throw 'no node name specified';
++        }
++
++        me.isCreate = !me.confid;
++
++        var ipanel = Ext.create('PVE.qemu.FloppyInputPanel', {
++            confid: me.confid,
++            nodename: nodename,
++        });
++
++        Ext.applyIf(me, {
++            subject: gettext('Floppy Drive'),
++            items: [ipanel],
++        });
++
++        me.callParent();
++
++        me.load({
++            success: function (response, options) {
++                ipanel.setVMConfig(response.result.data);
++                if (me.confid) {
++                    let value = response.result.data[me.confid];
++                    let drive = PVE.Parser.parseQemuDrive(me.confid, value);
++                    if (!drive) {
++                        Ext.Msg.alert('Error', 'Unable to parse drive options');
++                        me.close();
++                        return;
++                    }
++                    ipanel.setDrive(drive);
++                }
++            },
++        });
++    },
++});
+diff --git c/www/manager6/qemu/HardwareView.js i/www/manager6/qemu/HardwareView.js
+index e6c02299a..f07944a89 100644
+--- c/www/manager6/qemu/HardwareView.js
++++ i/www/manager6/qemu/HardwareView.js
+@@ -299,6 +299,18 @@ Ext.define('PVE.qemu.HardwareView', {
+             header: gettext('TPM State'),
+             renderer: Ext.htmlEncode,
+         };
++        for (let i = 0; i < PVE.Utils.hardware_counts.floppy; i++) {
++            let confid = 'floppy' + i.toString();
++            rows[confid] = {
++                group: 23,
++                order: i,
++                iconCls: 'floppy-o',
++                editor: caps.vms['VM.Config.CDROM'] ? 'PVE.qemu.FloppyEdit' : undefined,
++                never_delete: !caps.vms['VM.Config.CDROM'],
++                header: gettext('Floppy Drive') + ' (' + confid + ')',
++                renderer: Ext.htmlEncode,
++            };
++        }
+         for (let i = 0; i < PVE.Utils.hardware_counts.usb; i++) {
+             let confid = 'usb' + i.toString();
+             rows[confid] = {
+@@ -741,6 +753,7 @@ Ext.define('PVE.qemu.HardwareView', {
+             me.down('#addCloudinitDrive').setDisabled(
+                 noVMConfigCDROMPerm || noVMConfigCloudinitPerm || hasCloudInit,
+             );
++            me.down('#addFloppy').setDisabled(noVMConfigCDROMPerm || isAtLimit('floppy'));
+ 
+             if (!rec) {
+                 remove_btn.disable();
+@@ -789,10 +802,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -462,7 +878,21 @@ index e6c02299..ab6ab9db 100644
              );
  
              diskaction_btn.setDisabled(
-@@ -918,6 +918,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -849,6 +862,13 @@ Ext.define('PVE.qemu.HardwareView', {
+                                 disabled: !caps.vms['VM.Config.CDROM'],
+                                 handler: editorFactory('CDEdit'),
+                             },
++                            {
++                                text: gettext('Floppy Drive'),
++                                itemId: 'addFloppy',
++                                iconCls: 'fa fa-fw fa-floppy-o black',
++                                disabled: !caps.vms['VM.Config.CDROM'],
++                                handler: editorFactory('FloppyEdit'),
++                            },
+                             {
+                                 text: gettext('Network Device'),
+                                 itemId: 'addNet',
+@@ -918,6 +938,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.nodes['Sys.Console'],
                                  handler: editorFactory('VirtiofsEdit'),
                              },
@@ -476,10 +906,10 @@ index e6c02299..ab6ab9db 100644
                          ],
                      }),
                  },
-diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index 4b1a9e83..c60dd001 100644
---- a/www/manager6/qemu/MachineEdit.js
-+++ b/www/manager6/qemu/MachineEdit.js
+diff --git c/www/manager6/qemu/MachineEdit.js i/www/manager6/qemu/MachineEdit.js
+index 4b1a9e833..c60dd0010 100644
+--- c/www/manager6/qemu/MachineEdit.js
++++ i/www/manager6/qemu/MachineEdit.js
 @@ -51,7 +51,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              if (defaultMachine === 'pc') {
                  defaultMachine = 'i440fx'; // the default in the backend is 'pc' which means 'i440fx' for the qemu machinetype
@@ -552,11 +982,11 @@ index 4b1a9e83..c60dd001 100644
          this.callParent(arguments);
          this.getController().setVersionFilter(values.machine);
          this.getController().setArch(values.arch);
-diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
+diff --git c/www/manager6/qemu/QemuArchEdit.js i/www/manager6/qemu/QemuArchEdit.js
 new file mode 100644
-index 00000000..caa9d6a7
+index 000000000..caa9d6a7b
 --- /dev/null
-+++ b/www/manager6/qemu/QemuArchEdit.js
++++ i/www/manager6/qemu/QemuArchEdit.js
 @@ -0,0 +1,26 @@
 +Ext.define('PVE.qemu.QemuArchEdit', {
 +    extend: 'Proxmox.window.Edit',
@@ -584,3 +1014,39 @@ index 00000000..caa9d6a7
 +        },
 +    ],
 +});
+diff --git c/www/manager6/storage/Browser.js i/www/manager6/storage/Browser.js
+index d02379487..dcf983d28 100644
+--- c/www/manager6/storage/Browser.js
++++ i/www/manager6/storage/Browser.js
+@@ -107,6 +107,19 @@ Ext.define('PVE.storage.Browser', {
+                     useUploadButton: true,
+                 });
+             }
++            if (contents.includes('floppy')) {
++                me.items.push({
++                    xtype: 'pveStorageContentView',
++                    title: gettext('Floppy Images'),
++                    iconCls: 'fa fa-floppy-o',
++                    itemId: 'contentFloppy',
++                    content: 'floppy',
++                    pluginType: plugin,
++                    enableUploadButton: enableUpload,
++                    enableDownloadUrlButton: enableDownloadUrl,
++                    useUploadButton: true,
++                });
++            }
+             if (contents.includes('vztmpl')) {
+                 me.items.push({
+                     xtype: 'pveStorageTemplateView',
+diff --git c/www/manager6/window/UploadToStorage.js i/www/manager6/window/UploadToStorage.js
+index cc53596d8..3132c1e15 100644
+--- c/www/manager6/window/UploadToStorage.js
++++ i/www/manager6/window/UploadToStorage.js
+@@ -11,6 +11,7 @@ Ext.define('PVE.window.UploadToStorage', {
+     acceptedExtensions: {
+         import: ['.ova', '.qcow2', '.raw', '.vmdk'],
+         iso: ['.img', '.iso'],
++        floppy: ['.img', '.ima', '.vfd'],
+         vztmpl: ['.tar.gz', '.tar.xz', '.tar.zst'],
+     },
+ 
