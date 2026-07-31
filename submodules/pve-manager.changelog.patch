@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 0c7cc2be..e9d9ffd1 100644
+index 8bd3f05e..17494f7c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.4+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.5+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 16 Jul 2026 21:13:31 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 31 Jul 2026 21:17:55 +0000
 +
-+pve-manager (9.2.4+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 30 Jun 2026 09:12:36 +0000
-+
- pve-manager (9.2.4) trixie; urgency=medium
+ pve-manager (9.2.5) trixie; urgency=medium
  
-   * fix #4130: external metric server: keep node status updates flowing when a
-     TCP metric server is unreachable. A failed connection previously raised an
-     unhandled exception that aborted the whole node status update, so storage
-     and guest status indicators in the UI eventually turned gray.
- 
-   * fix #6348: ui: bulk action: render the resource tags in the selection list
-     using the configured tag style instead of plain text.
- 
+   * ceph: add guided rolling-restart for Ceph daemons, available both from the
+     API and the web interface, so operators can safely cycle all OSDs,
+     monitors, managers or metadata servers of a cluster after a configuration
+     or kernel change without hand-rolled scripts. Each step waits for the
+     previous daemon to rejoin and gates on Ceph's own 'ok-to-stop' check to
+     keep data placement and quorum available, aborting if the cluster health
+     degrades mid-run. OSD restarts are scoped per node and guarded by 'noout',
+     while monitor, manager and metadata server restarts run cluster-wide. A
