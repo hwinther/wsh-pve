@@ -125,10 +125,10 @@ index 5c37dd29..6f6513ae 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index d4dd3f35..328f5dfc 100644
+index eb0e9d9c..231420af 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -280,6 +280,7 @@ JSSRC= 							\
+@@ -281,6 +281,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
