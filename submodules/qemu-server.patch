@@ -1,5 +1,5 @@
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 9aec7f9c..7b8fbe72 100644
+index c819c837..8b4dd21e 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -168,7 +168,7 @@ my $vga_fmt = {
@@ -74,7 +74,7 @@ index 9aec7f9c..7b8fbe72 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -2802,6 +2830,7 @@ sub conf_has_audio {
+@@ -2815,6 +2843,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -82,7 +82,7 @@ index 9aec7f9c..7b8fbe72 100644
      };
  }
  
-@@ -2818,6 +2847,20 @@ sub audio_devs {
+@@ -2831,6 +2860,20 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -103,7 +103,7 @@ index 9aec7f9c..7b8fbe72 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2826,7 +2869,20 @@ sub audio_devs {
+@@ -2839,7 +2882,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -125,7 +125,7 @@ index 9aec7f9c..7b8fbe72 100644
  
      return $devs;
  }
-@@ -2966,7 +3022,7 @@ sub vga_conf_has_spice {
+@@ -2979,7 +3035,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -134,7 +134,7 @@ index 9aec7f9c..7b8fbe72 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2975,7 +3031,7 @@ sub query_supported_cpu_flags {
+@@ -2988,7 +3044,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -143,7 +143,7 @@ index 9aec7f9c..7b8fbe72 100644
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
  
-@@ -3060,7 +3116,7 @@ sub query_supported_cpu_flags {
+@@ -3073,7 +3129,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -152,7 +152,7 @@ index 9aec7f9c..7b8fbe72 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3133,7 +3189,7 @@ sub config_to_command {
+@@ -3146,7 +3202,7 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -161,7 +161,7 @@ index 9aec7f9c..7b8fbe72 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3239,7 +3295,9 @@ sub config_to_command {
+@@ -3252,7 +3308,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -172,7 +172,7 @@ index 9aec7f9c..7b8fbe72 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3259,6 +3317,10 @@ sub config_to_command {
+@@ -3272,6 +3330,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -183,7 +183,7 @@ index 9aec7f9c..7b8fbe72 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3277,9 +3339,11 @@ sub config_to_command {
+@@ -3290,9 +3352,11 @@ sub config_to_command {
      }
  
      # add usb controllers
@@ -195,7 +195,7 @@ index 9aec7f9c..7b8fbe72 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3298,7 +3362,6 @@ sub config_to_command {
+@@ -3311,7 +3375,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -203,7 +203,7 @@ index 9aec7f9c..7b8fbe72 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3389,9 +3452,27 @@ sub config_to_command {
+@@ -3402,9 +3465,27 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -232,7 +232,7 @@ index 9aec7f9c..7b8fbe72 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3410,6 +3491,7 @@ sub config_to_command {
+@@ -3423,6 +3504,7 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -240,7 +240,7 @@ index 9aec7f9c..7b8fbe72 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3425,6 +3507,7 @@ sub config_to_command {
+@@ -3438,6 +3520,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -248,7 +248,7 @@ index 9aec7f9c..7b8fbe72 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3608,9 +3691,11 @@ sub config_to_command {
+@@ -3621,9 +3704,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -261,7 +261,7 @@ index 9aec7f9c..7b8fbe72 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3682,7 +3767,12 @@ sub config_to_command {
+@@ -3695,7 +3780,12 @@ sub config_to_command {
          $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -275,7 +275,7 @@ index 9aec7f9c..7b8fbe72 100644
  
          # force +pve1 if machine version 10.0, for host_mtu differentiation
          $version_guard->(10, 0, 1);
-@@ -3698,7 +3788,17 @@ sub config_to_command {
+@@ -3711,7 +3801,17 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -294,7 +294,7 @@ index 9aec7f9c..7b8fbe72 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3722,7 +3822,7 @@ sub config_to_command {
+@@ -3735,7 +3835,7 @@ sub config_to_command {
      # pci.4 is nested in pci.1
      $bridges->{1} = 1 if $bridges->{4};
  
@@ -303,7 +303,7 @@ index 9aec7f9c..7b8fbe72 100644
          if (min_version($machine_version, 2, 3)) {
              $bridges->{1} = 1;
              $bridges->{2} = 1;
-@@ -5805,6 +5905,9 @@ sub vm_start_nolock {
+@@ -5818,6 +5918,9 @@ sub vm_start_nolock {
                  }
              }
  
@@ -464,7 +464,7 @@ index 35161d1f..64a3a3cf 100644
      if (scalar($options->@*)) {
          return $options;
 diff --git a/src/PVE/QemuServer/Network.pm b/src/PVE/QemuServer/Network.pm
-index 11bebdec..a345c463 100644
+index b4893c01..527896db 100644
 --- a/src/PVE/QemuServer/Network.pm
 +++ b/src/PVE/QemuServer/Network.pm
 @@ -28,6 +28,8 @@ my $nic_model_list = [
