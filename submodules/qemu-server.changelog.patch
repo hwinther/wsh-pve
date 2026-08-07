@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f6ff2950..71de9d15 100644
+index fa57e923..160d3c0a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.2.2+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.2.4+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 04 Aug 2026 21:36:06 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 07 Aug 2026 20:58:51 +0000
 +
-+qemu-server (9.2.2+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 04 Aug 2026 10:39:07 +0000
-+
- qemu-server (9.2.2) trixie; urgency=medium
+ qemu-server (9.2.4) trixie; urgency=medium
  
-   * improve support for VMs running on the aarch64 (ARM) architecture:
-     - honor the 'pre-enrolled-keys' setting of the EFI disk, which requires a
-       pve-edk2-firmware-aarch64 newer than 4.2025.05-2 for the secure-boot
-       enabled firmware image. Older versions keep the previous behavior and now
-       log a warning pointing at the outdated firmware package.
-     - recognize the EFI firmware pflash devices of QEMU's 'virt' machine, so
-       that cloning a running VM with an EFI disk no longer fails
-     - use the 'virtio-gpu-gl' display device, as QEMU provides only the non-VGA
+   * api: remote migrate tunnel: reject unknown parameters.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 04 Aug 2026 13:38:58 +0200
+ 
+ qemu-server (9.2.3) trixie; urgency=medium
+ 
+   * cpu: default aarch64 guests to a KVM-usable CPU model
+ 
