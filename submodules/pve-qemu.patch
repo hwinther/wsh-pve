@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 82edd64..be5006b 100644
+index 2ead600..3ddd29a 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -26,8 +26,6 @@ PC_BIOS_FW_PURGE_LIST_IN = \
