@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ff9f382..f12bcae 100644
+index d564272..ab20fc9 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (11.0.3-1+wsh1) trixie; urgency=medium
++pve-qemu-kvm (11.0.3-2+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server,pve-qemu
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 07 Aug 2026 21:14:19 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 08 Aug 2026 08:49:54 +0000
 +
+ pve-qemu-kvm (11.0.3-2) trixie; urgency=medium
+ 
+   * add fix for re-entrant DMA issue with LSI SCSI controllers
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 07 Aug 2026 11:00:10 +0200
+ 
  pve-qemu-kvm (11.0.3-1) trixie; urgency=medium
  
    * update submodule and patches to QEMU 11.0.3, which brings fixes for the
      USB, SCSI, NVMe and display device models, corrects SCSI persistent
-     reservation handling and restricts guest-facing DMA paths in the intel-hda
-     and ivshmem devices. All security and stability patches that were
-     backported for the previous release are part of this point release now and
-     could be dropped downstream.
- 
-   * more stable fixes for QEMU 11.0, addressing guest-triggerable assertion
