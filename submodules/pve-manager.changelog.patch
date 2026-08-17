@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8fe0bdb7..002641a4 100644
+index abc433e4..a424432e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.6+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.10+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 03 Aug 2026 21:17:37 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Mon, 17 Aug 2026 20:40:11 +0000
 +
-+pve-manager (9.2.6+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 01 Aug 2026 09:59:27 +0000
-+
- pve-manager (9.2.6) trixie; urgency=medium
+ pve-manager (9.2.10) trixie; urgency=medium
  
-   * fabrics: wireguard: node edit: use network selector for internal nodes,
-     making the semantics of the field more obvious, and entering values less
-     error-prone and manual.
+   * pveperf: make bogomips regular expression case insensitive, other
+     architectures like Loong64 use different capitalization
  
-   * api: apt: versions: track proxmox-enterprise-support-keyring version
+   * ui: LXC templates: hide foreign architectures by default, `arm64` and
+     `amd64` look very similar and can be easily confused
  
-   * ui: ha: node affinity: refactor and extend UI, allow configuring "positive"
-     or "negative" affinity rules. negative affinity allows declaring nodes on
+   * ui: appliance templates: rename the "Package" column to "Name"
+ 
