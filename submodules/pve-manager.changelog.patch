@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index abc433e4..a424432e 100644
+index 37c67de1..00094dae 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.10+wsh1) trixie; urgency=medium
++pve-manager (9.2.11+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 17 Aug 2026 20:40:11 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Tue, 18 Aug 2026 08:36:14 +0000
 +
- pve-manager (9.2.10) trixie; urgency=medium
+ pve-manager (9.2.11) trixie; urgency=medium
  
-   * pveperf: make bogomips regular expression case insensitive, other
-     architectures like Loong64 use different capitalization
+   * ui: certificates, lxc DNS, VM cloud-init and PCI: encode rendered values
+     with htmlEncode.
  
-   * ui: LXC templates: hide foreign architectures by default, `arm64` and
-     `amd64` look very similar and can be easily confused
+   * ui: acme: use improved URL rendering implementation from
+     proxmox-widget-toolkit.
  
-   * ui: appliance templates: rename the "Package" column to "Name"
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 14 Aug 2026 14:27:06 +0200
  
