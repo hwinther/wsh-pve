@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a8facb9b..1e3250c6 100644
+index ba9970a8..836e3264 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.2.5+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.2.6+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server,pve-qemu
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 17 Aug 2026 20:43:22 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sun, 23 Aug 2026 20:39:10 +0000
 +
-+qemu-server (9.2.5+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: qemu-server,pve-qemu
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 08 Aug 2026 08:40:32 +0000
-+
- qemu-server (9.2.5) trixie; urgency=medium
+ qemu-server (9.2.6) trixie; urgency=medium
  
-   * api: create disks: use correct volume name for a cloudinit disk on a
-     snapshot-as-volume-chain storage
+   * cloud-init: commit: activate volume early enough to fix regression with
+     qcow2 on LVM.
  
-   * Improve cross-architecture support for query-machine-capabilities helper.
+   * api: hostpci: restore permission check for 'romfile' option that was
+     accidentally changed when PCI mappings were introduced.
  
-   * fix #7705: blockdev: detach backing chain on disk move/hot-unplug. When
-     using snapshot-as-volume-chain, and doing snapshot, followed by disk move
-     or hot-unplug, followed by removing the snapshot, all while the VM is
+  -- Proxmox Support Team <support@proxmox.com>  Mon, 17 Aug 2026 13:32:45 +0200
+ 
