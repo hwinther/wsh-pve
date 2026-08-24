@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index ba9970a8..836e3264 100644
+index b9905a31..1b7f9e31 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.2.6+wsh1) trixie; urgency=medium
++qemu-server (9.2.7+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: qemu-server,pve-qemu
++  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 23 Aug 2026 20:39:10 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Mon, 24 Aug 2026 08:47:00 +0000
 +
- qemu-server (9.2.6) trixie; urgency=medium
+ qemu-server (9.2.7) trixie; urgency=medium
  
-   * cloud-init: commit: activate volume early enough to fix regression with
-     qcow2 on LVM.
+   * restore: bypass the host page cache when restoring to a ZFS zvol, both for
+     Proxmox Backup Server and for VMA (vzdump) backups. Page writeback hands
+     the restored data to the zvol one page at a time, which forces a
+     read-modify-write of the surrounding volume block and can stall the I/O of
+     other ZFS-backed guests for the duration of the restore.
  
-   * api: hostpci: restore permission check for 'romfile' option that was
-     accidentally changed when PCI mappings were introduced.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Mon, 17 Aug 2026 13:32:45 +0200
- 
+   * d/control: depend on pve-qemu-kvm >= 11.0.3-3, which provides the
+     pbs-restore option needed to skip the page cache on restore.
