@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 37c67de1..00094dae 100644
+index 37c67de1..16cb2e91 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,22 @@
++pve-manager (9.2.11+wsh2) trixie; urgency=medium
++
++  * Refresh patches: pve-manager
++
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 26 Aug 2026 23:26:40 +0000
++
 +pve-manager (9.2.11+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
