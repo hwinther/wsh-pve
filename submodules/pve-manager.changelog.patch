@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 37c67de1..16cb2e91 100644
+index c1183865..ecc3448e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.11+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.12+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 26 Aug 2026 23:26:40 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 27 Aug 2026 18:53:16 +0000
 +
-+pve-manager (9.2.11+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 18 Aug 2026 08:36:14 +0000
-+
- pve-manager (9.2.11) trixie; urgency=medium
+ pve-manager (9.2.12) trixie; urgency=medium
  
-   * ui: certificates, lxc DNS, VM cloud-init and PCI: encode rendered values
-     with htmlEncode.
+   * fix #7136: ui: tree: harmonize folder view resource ordering
  
-   * ui: acme: use improved URL rendering implementation from
-     proxmox-widget-toolkit.
+   * fix #6113: ui: import: allow selecting a resource pool when importing a
+     guest from an OVA file or from VMware ESXi
  
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 14 Aug 2026 14:27:06 +0200
- 
+   * ceph: rolling restart:
+     - allow a restart on a cluster whose only errors are the cephx cipher
+       health checks that Ceph 19.2.6 and 20.2.4 raise. Those made every
