@@ -1,8 +1,8 @@
 diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index 5c37dd29..6f6513ae 100644
+index 32bb511d..37e5a10b 100644
 --- a/www/css/ext6-pve.css
 +++ b/www/css/ext6-pve.css
-@@ -688,3 +688,121 @@ table.osds td:first-of-type {
+@@ -700,3 +700,121 @@ table.osds td:first-of-type {
  .pmx-column-wrapped > div {
      white-space: pre-wrap;
  }
@@ -125,10 +125,10 @@ index 5c37dd29..6f6513ae 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index eb0e9d9c..231420af 100644
+index d2ea786b..32507f78 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -281,6 +281,7 @@ JSSRC= 							\
+@@ -282,6 +282,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
