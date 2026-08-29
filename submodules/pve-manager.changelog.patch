@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index c1183865..1107a9fe 100644
+index fc49cf62..db2560fd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.12+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.14+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 29 Aug 2026 02:48:31 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sat, 29 Aug 2026 13:39:12 +0000
 +
-+pve-manager (9.2.12+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 27 Aug 2026 18:53:16 +0000
-+
- pve-manager (9.2.12) trixie; urgency=medium
+ pve-manager (9.2.14) trixie; urgency=medium
  
-   * fix #7136: ui: tree: harmonize folder view resource ordering
+   * ceph: cephx key migration:
+     - stop reporting an abort that never happened at the end of every apply
+       run, which the lock heartbeat printed when the run released it
+     - never remove the lockbox tag of an encrypted OSD when asked to write the
+       key it already holds, and refuse a value that is not a key, so a mistake
+       cannot leave that OSD unable to unlock
  
-   * fix #6113: ui: import: allow selecting a resource pool when importing a
-     guest from an OVA file or from VMware ESXi
- 
-   * ceph: rolling restart:
-     - allow a restart on a cluster whose only errors are the cephx cipher
-       health checks that Ceph 19.2.6 and 20.2.4 raise. Those made every
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 28 Aug 2026 21:52:48 +0200
