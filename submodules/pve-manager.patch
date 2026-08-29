@@ -137,7 +137,7 @@ index d2ea786b..32507f78 100644
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index 36df8e9d..ab605518 100644
+index cc9c6e9d..2b1585eb 100644
 --- a/www/manager6/Parser.js
 +++ b/www/manager6/Parser.js
 @@ -117,7 +117,7 @@ Ext.define('PVE.Parser', {
