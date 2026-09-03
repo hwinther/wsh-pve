@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index fc49cf62..986e5f9e 100644
+index 8ec2757d..63b66c0f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.14+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.15+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 02 Sep 2026 22:34:45 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 03 Sep 2026 12:38:50 +0000
 +
-+pve-manager (9.2.14+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 29 Aug 2026 13:39:12 +0000
-+
- pve-manager (9.2.14) trixie; urgency=medium
+ pve-manager (9.2.15) trixie; urgency=medium
+ 
+   * fix #7896: ui: qemu: show the effective implicit machine version for
+     Windows guests and avoid accidentally pinning a fallback when changing
+     other machine settings
  
    * ceph: cephx key migration:
-     - stop reporting an abort that never happened at the end of every apply
-       run, which the lock heartbeat printed when the run released it
-     - never remove the lockbox tag of an encrypted OSD when asked to write the
-       key it already holds, and refuse a value that is not a key, so a mistake
-       cannot leave that OSD unable to unlock
- 
-  -- Proxmox Support Team <support@proxmox.com>  Fri, 28 Aug 2026 21:52:48 +0200
+     - name the running consumers of every client key a run rotates, and
+       report the recorded consumers that may still hold a replaced key and
+       could fail on a reconnect or ticket expiry
