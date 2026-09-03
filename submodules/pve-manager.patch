@@ -150,7 +150,7 @@ index cc9c6e9d..2b1585eb 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index c86a00c5..4c714d58 100644
+index 8b99371d..a85f3cc1 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -199,7 +199,7 @@ index c86a00c5..4c714d58 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1895,8 +1911,8 @@ Ext.define('PVE.Utils', {
+@@ -1917,8 +1933,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -444,10 +444,10 @@ index 3f583adb..bd457b09 100644
      ],
  
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index e6c02299..ab6ab9db 100644
+index f7f4b46f..f6926914 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -789,10 +789,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -812,10 +812,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -462,7 +462,7 @@ index e6c02299..ab6ab9db 100644
              );
  
              diskaction_btn.setDisabled(
-@@ -918,6 +918,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -941,6 +941,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.nodes['Sys.Console'],
                                  handler: editorFactory('VirtiofsEdit'),
                              },
@@ -477,7 +477,7 @@ index e6c02299..ab6ab9db 100644
                      }),
                  },
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index 4b1a9e83..c60dd001 100644
+index cd759703..df700db2 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -51,7 +51,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -520,7 +520,7 @@ index 4b1a9e83..c60dd001 100644
  
          let machineConf = PVE.Parser.parsePropertyString(values.machine, 'type');
          values.machine = machineConf.type;
-@@ -113,12 +130,30 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -119,12 +136,30 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
          if (values.machine !== '__default__' && values.machine !== 'q35') {
              values.version = values.machine;
