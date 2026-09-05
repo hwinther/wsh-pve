@@ -1,8 +1,8 @@
 diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index 32bb511d..37e5a10b 100644
+index b1e0b4f8..4b93f5c6 100644
 --- a/www/css/ext6-pve.css
 +++ b/www/css/ext6-pve.css
-@@ -700,3 +700,121 @@ table.osds td:first-of-type {
+@@ -708,3 +708,121 @@ table.osds td:first-of-type {
  .pmx-column-wrapped > div {
      white-space: pre-wrap;
  }
