@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8ec2757d..c5b59a95 100644
+index 5e85d50d..fe3700a6 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.15+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.17+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 04 Sep 2026 22:20:14 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sun, 06 Sep 2026 22:06:17 +0000
 +
-+pve-manager (9.2.15+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 03 Sep 2026 12:38:50 +0000
-+
- pve-manager (9.2.15) trixie; urgency=medium
+ pve-manager (9.2.17) trixie; urgency=medium
  
-   * fix #7896: ui: qemu: show the effective implicit machine version for
-     Windows guests and avoid accidentally pinning a fallback when changing
-     other machine settings
- 
-   * ceph: cephx key migration:
-     - name the running consumers of every client key a run rotates, and
-       report the recorded consumers that may still hold a replaced key and
-       could fail on a reconnect or ticket expiry
+   * ceph: Cephx key migration:
+     - add '--rotate-all-storage-keys' to rotate dedicated users of local RBD
+       and CephFS storages together, excluding external clusters and keeping
+       'client.admin' a separate choice
+     - refuse administrative and storage-user key rotation if any monitor
+       cannot keep both keys valid while consumers refresh
+     - keep both keys valid during rollback until consumers return to the
+       restored key and the operator confirms with
