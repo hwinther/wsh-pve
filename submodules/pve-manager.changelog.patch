@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 5e85d50d..fe3700a6 100644
+index e9a288b3..61c39cdd 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.17+wsh1) trixie; urgency=medium
++pve-manager (9.2.18+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 06 Sep 2026 22:06:17 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 10 Sep 2026 22:31:24 +0000
 +
- pve-manager (9.2.17) trixie; urgency=medium
+ pve-manager (9.2.18) trixie; urgency=medium
  
    * ceph: Cephx key migration:
-     - add '--rotate-all-storage-keys' to rotate dedicated users of local RBD
-       and CephFS storages together, excluding external clusters and keeping
-       'client.admin' a separate choice
-     - refuse administrative and storage-user key rotation if any monitor
-       cannot keep both keys valid while consumers refresh
-     - keep both keys valid during rollback until consumers return to the
-       restored key and the operator confirms with
+     - prevent client-key retirement or recovery changes before consent
+     - avoid unnecessary client reconnects and CephFS remounts caused by
+       monitor elections or older migration records
+     - clarify remaining refresh steps and identify affected nodes and mounts
+ 
+   * ceph: auth status:
+     - show compact key summaries and next steps for pending keys,
