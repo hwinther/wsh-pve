@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index e9a288b3..61c39cdd 100644
+index 17755ab3..50143f32 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.18+wsh1) trixie; urgency=medium
++pve-manager (9.2.19+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 10 Sep 2026 22:31:24 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 11 Sep 2026 22:31:42 +0000
 +
- pve-manager (9.2.18) trixie; urgency=medium
+ pve-manager (9.2.19) trixie; urgency=medium
+ 
+   * pvesh: fix startup failure caused by API endpoints with empty parameter
+     schemas, such as 'pvesh get /cluster/firewall/options'.
  
    * ceph: Cephx key migration:
-     - prevent client-key retirement or recovery changes before consent
-     - avoid unnecessary client reconnects and CephFS remounts caused by
-       monitor elections or older migration records
-     - clarify remaining refresh steps and identify affected nodes and mounts
- 
-   * ceph: auth status:
-     - show compact key summaries and next steps for pending keys,
+     - refuse staged-key confirmation when a visible client's key cannot be
+       identified, rather than treating a new session as proof of refresh
+     - keep device inspection errors concise without hiding short failure
+       reasons; retain full diagnostics with '--verbose'
