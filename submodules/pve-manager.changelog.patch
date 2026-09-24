@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 17755ab3..50143f32 100644
+index 84efd0c1..fb1a4315 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.19+wsh1) trixie; urgency=medium
++pve-manager (9.2.20+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 11 Sep 2026 22:31:42 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 24 Sep 2026 23:11:20 +0000
 +
+ pve-manager (9.2.20) trixie; urgency=medium
+ 
+   * Revert "partially fix #1989: ui: qemu: disk: add qcow2 cache size config"
+     - the corresponding qemu-server changes are not yet rolled out
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Fri, 11 Sep 2026 14:10:20 +0200
+ 
  pve-manager (9.2.19) trixie; urgency=medium
  
    * pvesh: fix startup failure caused by API endpoints with empty parameter
-     schemas, such as 'pvesh get /cluster/firewall/options'.
- 
-   * ceph: Cephx key migration:
-     - refuse staged-key confirmation when a visible client's key cannot be
-       identified, rather than treating a new session as proof of refresh
-     - keep device inspection errors concise without hiding short failure
-       reasons; retain full diagnostics with '--verbose'
