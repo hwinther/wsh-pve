@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index db0a094..f5a64ab 100644
+index 713b3e4..1723236 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-qemu-kvm (11.0.3-3+wsh1) trixie; urgency=medium
++pve-qemu-kvm (11.1.1-1+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server,pve-qemu
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 10 Sep 2026 22:50:44 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Thu, 01 Oct 2026 00:00:51 +0000
 +
- pve-qemu-kvm (11.0.3-3) trixie; urgency=medium
+ pve-qemu-kvm (11.1.1-1) trixie; urgency=medium
  
-   * pbs-restore: add an optional flag to skip the host page cache when
-     restoring a disk image. On ZFS, page writeback hands the restored data to
-     the zvol one page at a time, which forces a read-modify-write of the
-     surrounding volume block and can stall I/O of unrelated VMs for the
-     duration of the restore. qemu-server uses the new flag for restores to
-     zvols.
+   * update submodule and patches to QEMU 11.1.1.
  
-  -- Proxmox Support Team <support@proxmox.com>  Thu, 20 Aug 2026 23:19:02 +0200
+   * the glusterfs block driver is fully dropped from this QEMU version. The
+     Proxmox VE storage plugin was already removed with the release of Proxmox
+     VE 9.0.
+ 
+   * update supported CPU models for amd64/x86_64 adding new versions for some
+     AMD and Intel models, which add GMET/MBEC support.
