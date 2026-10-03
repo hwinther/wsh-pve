@@ -1,0 +1,61 @@
+--- src/PVE/QemuServer.pm
++++ src/PVE/QemuServer.pm
+@@ -3044,7 +3100,7 @@ sub query_supported_cpu_flags {
+     my $flags = {};
+ 
+     my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
+-    my $qemu_cmd = PVE::QemuServer::Helpers::get_command_for_arch($arch);
++    my $qemu_cmd = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
+     my $fakevmid = -1;
+     my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
+ 
+@@ -3352,9 +3414,11 @@ sub config_to_command {
+     }
+ 
+     # add usb controllers
++    if ($arch !~ m/^sparc/) {
+     my @usbcontrollers =
+         PVE::QemuServer::USB::get_usb_controllers($conf, $bridges, $arch, $machine_version);
+     push @$devices, @usbcontrollers if @usbcontrollers;
++    }
+ 
+     my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
+ 
+@@ -3463,9 +3526,27 @@ sub config_to_command {
+ 
+     push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
+ 
+-    if ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none') {
++    $ENV{DISPLAY} = '';
++	if ($vga->{type} && defined($vga->{server}) && $vga->{server} ne '') {
++		# TODO: gtk/sdl need sdl for 3dfx passthru, should ,gl=on be default?
++		my $displayType = 'gtk';
++		if (defined($vga->{mesa}) && $vga->{mesa} == 1) {
++			$displayType = 'sdl';
++		}
++		print "-- Using $displayType display with $vga->{type} driver and host $vga->{server}\n";
++        push @$cmd, '-vga', $vga->{type};
++		push @$cmd, '-display', $displayType;
++	    # TODO: we can also enable VNC here, not sure if there are drawbacks
++	    #my $socket = PVE::QemuServer::Helpers::vnc_socket($vmid);
++	    #push @$cmd,  '-vnc', "unix:$socket,password=on";
++		$ENV{DISPLAY} = $vga->{server};
++    } elsif ($vga->{type} && $vga->{type} !~ m/^serial\d+$/ && $vga->{type} ne 'none') {
++        if ($arch =~ m/^sparc/) {
++            push @$cmd, '-vga', $vga->{type};
++        } else {
+         push @$devices, '-device',
+             print_vga_device($conf, $vga, $arch, $machine_version, undef, $qxlnum, $bridges);
++        }
+ 
+         push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
+ 
+@@ -3815,7 +3915,7 @@ sub config_to_command {
+     # pci.4 is nested in pci.1
+     $bridges->{1} = 1 if $bridges->{4};
+ 
+-    if (!$q35) { # add pci bridges
++    if (!$q35 && $arch !~ m/^sparc/) { # add pci bridges
+         if (min_version($machine_version, 2, 3)) {
+             $bridges->{1} = 1;
+             $bridges->{2} = 1;
