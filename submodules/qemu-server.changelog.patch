@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index b9905a31..0167d5b7 100644
+index 15cc3937..9dbd1a09 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.2.7+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.2.10+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 10 Sep 2026 22:36:17 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Sat, 10 Oct 2026 00:03:04 +0000
 +
-+qemu-server (9.2.7+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: qemu-server
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 24 Aug 2026 08:47:00 +0000
-+
- qemu-server (9.2.7) trixie; urgency=medium
+ qemu-server (9.2.10) trixie; urgency=medium
  
-   * restore: bypass the host page cache when restoring to a ZFS zvol, both for
-     Proxmox Backup Server and for VMA (vzdump) backups. Page writeback hands
-     the restored data to the zvol one page at a time, which forces a
-     read-modify-write of the surrounding volume block and can stall the I/O of
-     other ZFS-backed guests for the duration of the restore.
+   * partially fix #7801: warn when configuring a CDROM drive with a VirtIO
+     driver ISO version that is known to be problematic, or when starting a VM
+     with such an ISO configured
  
-   * d/control: depend on pve-qemu-kvm >= 11.0.3-3, which provides the
-     pbs-restore option needed to skip the page cache on restore.
+   * fix #8030: snapshot: avoid orphaned vmstate volume on failure by moving
+     volume allocation to the end of the vmstate saving helper
+ 
+   * qemu-img: convert: cleanly separate options and arguments
