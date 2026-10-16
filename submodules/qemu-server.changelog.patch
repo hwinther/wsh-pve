@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 15cc3937..9dbd1a09 100644
+index c705f8db..1d793077 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.2.10+wsh1) trixie; urgency=medium
++qemu-server (9.2.11+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 10 Oct 2026 00:03:04 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 16 Oct 2026 22:51:46 +0000
 +
- qemu-server (9.2.10) trixie; urgency=medium
+ qemu-server (9.2.11) trixie; urgency=medium
  
-   * partially fix #7801: warn when configuring a CDROM drive with a VirtIO
-     driver ISO version that is known to be problematic, or when starting a VM
-     with such an ISO configured
+   * hotplug pending: improve handling of machine type, only querying it when
+     required, but use running instance as source
  
-   * fix #8030: snapshot: avoid orphaned vmstate volume on failure by moving
-     volume allocation to the end of the vmstate saving helper
+   * QMP/QGA clients: limit response sizes to protect against misbehaving guests
+     or buggy implementations, improve error handling in guest-file-read
  
-   * qemu-img: convert: cleanly separate options and arguments
+   * monitor: HMP perms: fix permissions for 'gpa2hpa', 'gpa2hva' and 'i' commands
+ 
