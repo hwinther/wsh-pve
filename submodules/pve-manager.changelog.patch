@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 73901f9d..fe79bdaf 100644
+index 00039bcb..7eaa660a 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.21+wsh1) trixie; urgency=medium
++pve-manager (9.2.22+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 15 Oct 2026 23:01:41 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Mon, 19 Oct 2026 23:34:37 +0000
 +
- pve-manager (9.2.21) trixie; urgency=medium
+ pve-manager (9.2.22) trixie; urgency=medium
  
-   * ui: VM CD/DVD drive: change the medium through an API task, so that its
-     warnings, for example about problematic VirtIO driver ISO versions, are
-     shown.
+   * fix #8015: ui: upload and download from URL: let the user choose the
+     format of '.img' images for import content, instead of always treating
+     them as raw images. The '.img' extension is also used for other formats,
+     for example by the qcow2 based Ubuntu cloud images, which were imported as
+     raw disks that did not boot.
  
-   * ui: pool selector: allow typing to search, which helps with many pools.
- 
-   * backup: extracting the configuration of a backup that belongs to no guest,
-     for example a host backup on Proxmox Backup Server, now fails with a clear
+   * fix #6475: ui: upload: show only the name of the selected file, instead of
+     the 'C:\fakepath\' path that browsers report on every platform.
