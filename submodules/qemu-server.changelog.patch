@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index c705f8db..1d793077 100644
+index 272ae816..d439932c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.2.11+wsh1) trixie; urgency=medium
++qemu-server (9.2.12+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: qemu-server
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 16 Oct 2026 22:51:46 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Tue, 20 Oct 2026 23:11:49 +0000
 +
- qemu-server (9.2.11) trixie; urgency=medium
+ qemu-server (9.2.12) trixie; urgency=medium
  
-   * hotplug pending: improve handling of machine type, only querying it when
-     required, but use running instance as source
+   * partially fix #4012: migrate: name the snapshots that still reference a
+     local ISO image when refusing to migrate, as such a reference is not
+     visible in the current VM configuration.
  
-   * QMP/QGA clients: limit response sizes to protect against misbehaving guests
-     or buggy implementations, improve error handling in guest-file-read
- 
-   * monitor: HMP perms: fix permissions for 'gpa2hpa', 'gpa2hva' and 'i' commands
- 
+   * fix #8071, #8092: volume snapshot delete: use the currently attached drive
+     configuration when removing a snapshot of a running VM on storage with
+     snapshot-as-volume-chain. If the disk was re-attached on a different bus or
+     its options changed since the snapshot was taken, the removal failed and
