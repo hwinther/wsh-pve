@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 00039bcb..7eaa660a 100644
+index 17835d97..acb67e09 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.22+wsh1) trixie; urgency=medium
++pve-manager (9.2.23+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 19 Oct 2026 23:34:37 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Fri, 23 Oct 2026 23:05:52 +0000
 +
- pve-manager (9.2.22) trixie; urgency=medium
+ pve-manager (9.2.23) trixie; urgency=medium
  
-   * fix #8015: ui: upload and download from URL: let the user choose the
-     format of '.img' images for import content, instead of always treating
-     them as raw images. The '.img' extension is also used for other formats,
-     for example by the qcow2 based Ubuntu cloud images, which were imported as
-     raw disks that did not boot.
+   * ceph: add Ceph 21.2 Umbrella as an experimental release, which
+     'pveceph install' and the installation wizard offer for testing. This
+     also lets the wizard recognize a cluster that already runs Umbrella when
+     adding a node, instead of reporting that it found no Ceph installation.
  
-   * fix #6475: ui: upload: show only the name of the selected file, instead of
-     the 'C:\fakepath\' path that browsers report on every platform.
+   * ceph: OSD flags: offer the 'noautoscale' flag, which pauses the PG
+     autoscaler for all pools. This helps during maintenance and upgrades, for
+     example to Ceph 21 Umbrella, which doubles the autoscaler's target of PGs
