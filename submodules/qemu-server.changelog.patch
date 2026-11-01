@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 87caa864..a51f76e1 100644
+index 99515f3f..68f4e1f7 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+qemu-server (9.2.13+wsh1) trixie; urgency=medium
++qemu-server (9.2.14+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: qemu-server
++  * Manual fix needed: qemu-server deb build failed (#190)
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 29 Oct 2026 23:57:11 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 01 Nov 2026 19:19:07 +0000
 +
- qemu-server (9.2.13) trixie; urgency=medium
+ qemu-server (9.2.14) trixie; urgency=medium
  
-   * migrate: wait for the 'failing' migration status introduced with QEMU 11.0
-     to transition to 'failed', so that the error reported by QEMU gets logged.
-     Previously, such a migration was aborted with an 'unable to parse
-     migration status' error before QEMU finished its cleanup.
+   * hotplug: fix enabling the tablet and keyboard devices on running aarch64
+     VMs. When disabling the tablet, also remove the keyboard to avoid device
+     mismatches that caused subsequent live migrations to fail.
  
-   * hotplug: name the missing PCI bridge in the error message when hotplugging
-     a device fails because of it.
+   * clone: release IPAM addresses reserved for a clone if cloning fails, so
+     they do not remain allocated to a nonexistent VM.
  
+   * tpm: account for storage allocating TPM volumes larger than 4 MiB. Report
