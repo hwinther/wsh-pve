@@ -57,6 +57,21 @@ export async function vmConfFile(vmid: number): Promise<string> {
   return output
 }
 
+/**
+ * Writes a VM config file directly, bypassing the API's schema check: how a config that the API would
+ * refuse (or one copied from another node) reaches qemu-server.
+ */
+export async function writeConfFile(vmid: number, lines: string[]): Promise<void> {
+  const { code, output } = await pveExec([
+    'sh',
+    '-c',
+    'printf "%s\\n" "$@" > /etc/pve/qemu-server/$0.conf',
+    String(vmid),
+    ...lines,
+  ])
+  expect(code, output).toBe(0)
+}
+
 /** `qm showcmd <vmid>` as one argument per line, plus anything qm printed before it. */
 export async function showcmd(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['qm', 'showcmd', String(vmid), '--pretty'])
