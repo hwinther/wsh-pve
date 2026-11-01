@@ -1,0 +1,21 @@
+# One PVE node for the e2e tests. PVE_IMAGE is the image under test (built from pve/Dockerfile).
+services:
+  pve:
+    image: ${PVE_IMAGE:-wsh-pve-e2e:local}
+    container_name: wsh-pve-e2e
+    hostname: pve
+    # systemd as PID 1, and pmxcfs mounts /etc/pve with FUSE.
+    privileged: true
+    tmpfs:
+      - /run
+      - /run/lock
+    environment:
+      PVE_ROOT_PASSWORD: ${PVE_ROOT_PASSWORD:-e2e-password}
+    ports:
+      - '8006:8006'
+    healthcheck:
+      test: ['CMD-SHELL', 'test -f /run/pve-e2e-ready && curl -skf -o /dev/null https://localhost:8006/']
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 24

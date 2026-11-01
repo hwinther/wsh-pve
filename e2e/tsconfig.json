@@ -1,0 +1,12 @@
+{
+  "extends": "@wshno/tsconfig/node.json",
+  "compilerOptions": {
+    // Playwright transpiles the specs itself, so imports stay extensionless.
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "noEmit": true
+  },
+  "include": ["tests", "playwright.config.ts", "eslint.config.js"],
+  "exclude": ["node_modules", "playwright-report", "test-results"]
+}

@@ -1,0 +1,72 @@
+name: "E2E (PVE container)"
+
+# Boots a single-node PVE in a container with the WSH packages (e2e/pve/Dockerfile) and runs the
+# Playwright suite in e2e/ against it: VM configs created through the API and the web UI, the QEMU
+# command qemu-server builds from them (`qm showcmd`), and whether QEMU accepts that command.
+#
+# The image installs the packages published at debian.wshosting.no, so this checks what users get.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "e2e/**"
+      - "submodules/*.patch"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the PVE image
+        run: |
+          DOCKER_BUILDKIT=1 docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:ci .
+          docker run --rm --entrypoint dpkg-query wsh-pve-e2e:ci -W pve-manager qemu-server pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
+          docker save wsh-pve-e2e:ci | gzip -1 > pve-e2e-image.tar.gz
+
+      - name: Upload the image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pve-e2e-image
+          path: pve-e2e-image.tar.gz
+          retention-days: 3
+
+  e2e:
+    needs: [build]
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+      # The reusable workflow asks for `actions: read` (gh run download of the image artifact); a
+      # caller has to grant at least what the called job asks for.
+      actions: read
+    uses: hwinther/reusable-workflows/.github/workflows/playwright-e2e.yml@83abef784511f6e7704a512164741a9bdebcbf3a # v2.9.1
+    with:
+      compose_file: e2e/docker-compose.e2e.yml
+      playwright_working_directory: e2e
+      playwright_cache_enabled: true
+      node_modules_cache_enabled: true
+      # setup-node's registry-url defaults to GitHub Packages; the e2e deps are public npm.
+      npm_registry_url: https://registry.npmjs.org
+      compose_up_timeout_seconds: 300
+      image_artifacts_json: |
+        {"PVE_IMAGE":"pve-e2e-image"}
+      # The tests also exec into the container (qm showcmd, /etc/pve) via the runner's Docker socket.
+      playwright_env: |
+        PVE_URL=https://localhost:8006
