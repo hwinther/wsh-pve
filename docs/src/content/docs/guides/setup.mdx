@@ -17,10 +17,16 @@ You can choose to only install the packages on a few nodes in a given cluster, b
 
 ```bash
 # Add the repository signing key
-wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/wsh-pve.gpg
+wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | sudo gpg --dearmor --yes -o /usr/share/keyrings/wsh-pve.gpg
 
 # Add the repository
 sudo wget -O /etc/apt/sources.list.d/wsh-pve.sources http://debian.wshosting.no/debian/conf/wsh-pve.sources
+
+# Prefer these packages over the Proxmox ones (see "Keeping the patched packages" below)
+printf 'Package: pve-manager qemu-server pve-qemu-kvm
+Pin: origin debian.wshosting.no
+Pin-Priority: 1001
+' | sudo tee /etc/apt/preferences.d/wsh-pve
 
 # Update repository cache and show packages that can be installed
 sudo apt update && sudo apt list --upgradable
@@ -29,4 +35,28 @@ sudo apt update && sudo apt list --upgradable
 sudo apt full-upgrade
 ```
 
-After `apt update`, the packages listed above should appear as upgradable from the `stable` suite.
+After `apt update`, the packages listed above should appear as upgradable from the `trixie` suite.
+
+## Keeping the patched packages
+
+Each package is the upstream version with a `+wsh1` suffix, e.g. `9.2.24+wsh1`. apt counts that as
+newer than upstream `9.2.24` but older than `9.2.25`, so without the pin above, the day Proxmox
+publishes 9.2.25 a plain `apt full-upgrade` replaces the patched package with the upstream one, and
+the extended configuration values stop working. That window lasts until the matching `+wsh` build
+is published here.
+
+The pin (priority 1001) makes apt keep the version from this repository even when Proxmox has a
+newer one, so upgrades of these three packages only happen when a new `+wsh` build is published.
+Check it with:
+
+```bash
+apt policy pve-manager qemu-server pve-qemu-kvm
+```
+
+The installed version should be the `+wsh` one, with `debian.wshosting.no` at priority 1001.
+
+## Signing key rotation
+
+The repository signing key was replaced on 2026-11-01 (the previous key expired). If `apt update`
+reports a signature error for this repository, download the key again with the first command above;
+`--yes` overwrites the old keyring.
