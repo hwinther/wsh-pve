@@ -28,7 +28,7 @@ $ reprepro -Vb . includedeb trixie /mnt/dev/user/qemu-server/qemu-server_8.2.2+w
 
 # On the next machine
 
-# (Key generated via: gpg --armor --output wsh-pve.gpg.key --export-options export-minimal --export 6082CB267FE62087F23F343910DD95462E417289)
+# (Key generated via: gpg --armor --output wsh-pve.gpg.key --export-options export-minimal --export 59BAC7572E734EDFBDEE1E76E977413A1BE58860)
 # (Sources file created via this guide https://wiki.debian.org/DebianRepository/SetupWithReprepro)
 
 See [setup docs](docs/src/content/docs/guides/setup.md) for consumer installation instructions.
@@ -36,6 +36,29 @@ See [setup docs](docs/src/content/docs/guides/setup.md) for consumer installatio
 ## Change password
 
 gpg -k # list keys to find the id
-gpg --edit-key DCE56A79F1A14BF110B7B74386C3B9485CA734A3
+gpg --edit-key 59BAC7572E734EDFBDEE1E76E977413A1BE58860
 > type passwd then enter old and new password, then save and exit
-gpg --armor --output .gpg --export-secret-keys DCE56A79F1A14BF110B7B74386C3B9485CA734A3
+gpg --armor --output .gpg --export-secret-keys 59BAC7572E734EDFBDEE1E76E977413A1BE58860
+
+## Rotate the signing key
+
+The current key (`59BAC7572E734EDFBDEE1E76E977413A1BE58860`, sign-only, expires 2031-11-01) replaced
+`DCE56A79F1A14BF110B7B74386C3B9485CA734A3`, which expired on 2026-08-13; from then on reprepro failed
+to sign the export ("gpgme gave error GPGME:54: Unusable secret key"). To rotate again, or extend
+before it expires:
+
+```bash
+gpg --quick-generate-key "WsHosting ENK (debian repo signing key) <debian@wsh.no>" rsa4096 sign 5y
+# or extend the current one: gpg --quick-set-expire <fingerprint> 5y
+gpg --armor --export-secret-keys <fingerprint> | gh secret set GPG_KEY -R hwinther/wsh-pve
+gh secret set GPG_PASSWORD -R hwinther/wsh-pve
+gpg --armor --export-options export-minimal --export <fingerprint> > repo/conf/wsh-pve.gpg.key
+```
+
+Then put the fingerprint in `SignWith` in `repo/conf/distributions`. Back up the secret key
+outside GitHub, since secrets can't be read back. Every client then re-downloads the public key (the
+`Signed-By` keyring in `wsh-pve.sources`):
+
+```bash
+wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | sudo gpg --dearmor --yes -o /usr/share/keyrings/wsh-pve.gpg
+```

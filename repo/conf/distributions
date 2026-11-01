@@ -5,4 +5,4 @@ Codename: trixie
 Architectures: amd64 source
 Components: main
 Description: Apt repository for project wsh-pve
-SignWith: DCE56A79F1A14BF110B7B74386C3B9485CA734A3
+SignWith: 59BAC7572E734EDFBDEE1E76E977413A1BE58860
