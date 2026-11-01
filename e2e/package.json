@@ -1,0 +1,24 @@
+{
+  "name": "wsh-pve-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright e2e: a containerized PVE node with the WSH packages; checks VM configs, the generated QEMU commands and the web UI",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report",
+    "typecheck": "tsc",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@wshno/eslint-config": "0.2.0",
+    "@wshno/playwright-config": "0.1.1",
+    "@wshno/prettier-config": "0.1.1",
+    "@wshno/tsconfig": "0.1.1",
+    "eslint": "10.13.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3"
+  },
+  "prettier": "@wshno/prettier-config"
+}

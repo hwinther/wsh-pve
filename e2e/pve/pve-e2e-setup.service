@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare the e2e PVE node (storage, readiness marker)
+After=pve-cluster.service pvedaemon.service pveproxy.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pve-e2e-setup
+
+[Install]
+WantedBy=multi-user.target
