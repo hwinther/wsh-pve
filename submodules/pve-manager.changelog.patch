@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a9bafea3..e1b73fa6 100644
+index 4f7849c1..df03092e 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.24+wsh1) trixie; urgency=medium
++pve-manager (9.2.25+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager
++  * Refresh patches: pve-manager,pve-qemu
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 28 Oct 2026 23:59:40 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Mon, 02 Nov 2026 17:52:16 +0000
 +
- pve-manager (9.2.24) trixie; urgency=medium
+ pve-manager (9.2.25) trixie; urgency=medium
  
-   * api: node shell: harden the console against crafted parameters by only
-     passing the known Ceph version and repository options to the command of
-     the Ceph installation wizard, rejecting any other parameter.
+   * ceph: allow the installation wizard to select any Ceph release supported
+     by the target node, even when the node serving the web interface has a
+     different architecture or Proxmox VE major version.
  
-   * ui: consent banner: fix loading the web interface when the consent text
-     contains a single quote, which broke the JavaScript of the page. This only
-     affected texts set outside the web interface, for example through the API,
-     as the web interface stores them base64-encoded.
+   * ui: virtual machines: only offer TPM 2.0 for aarch64 guests, as TPM 1.2 is
+     not supported by their QEMU device and firmware.
+ 
+   * certificates:
