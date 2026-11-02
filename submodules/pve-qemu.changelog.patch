@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9af5e69..73169a9 100644
+index 9af5e69..755b101 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,17 @@
+@@ -1,10 +1,23 @@
++pve-qemu-kvm (11.1.3-1+wsh2) trixie; urgency=medium
++
++  * Refresh patches: pve-manager,pve-qemu
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Mon, 02 Nov 2026 17:53:27 +0000
++
 +pve-qemu-kvm (11.1.3-1+wsh1) trixie; urgency=medium
 +
 +  * pve-qemu: fix the ESP rejecting Select after a SCSI bus reset
