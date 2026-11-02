@@ -183,3 +183,48 @@ index a6b8745..df1bd77 100755
  	dh_compress
  	dh_fixperms
  #	dh_perl
+diff --git a/debian/patches/series b/debian/patches/series
+index 1828cca..9e8ead3 100644
+--- a/debian/patches/series
++++ b/debian/patches/series
+@@ -64,3 +64,4 @@ pve/0051-PVE-backup-vma-writer-restrict-allowed-archive-membe.patch
+ pve/0052-PVE-backup-vma-fix-checking-for-error-from-registeri.patch
+ pve/0053-PVE-backup-vma-report-errors-from-writer-at-cleanup-.patch
+ pve/0054-PVE-backup-vma-report-why-adding-a-config-or-device-.patch
++wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
+diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
+new file mode 100644
+index 0000000..b4571f3
+--- /dev/null
++++ b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
+@@ -0,0 +1,30 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] esp.c: return to disconnected mode on SCSI bus reset
++
++Since 6f8ce26bb0 ("esp.c: only allow ESP commands permitted in the current
++asc_mode") the ESP raises an illegal command interrupt for commands that
++aren't valid in the tracked asc_mode. esp_bus_reset() resets the SCSI bus but
++leaves asc_mode as it was, so after a driver-issued Bus Reset (0x03) in
++initiator mode the next Select with ATN (0xc2) is rejected
++("esp_invalid_cmd command 0xc2 asc_mode 0x1").
++
++Solaris 2.5.1's esp driver uses bus resets for error recovery and then loops
++on "gross error in esp status (c1)" / "undetermined selection failure", so it
++can no longer boot from CD on sparc32. A bus reset disconnects every device,
++so put the chip back in disconnected mode.
++
++Fixes: 6f8ce26bb0 ("esp.c: only allow ESP commands permitted in the current asc_mode")
++---
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 933271431b..9e8d0d6cfa 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -1122,6 +1122,8 @@ static void esp_soft_reset(ESPState *s)
++ static void esp_bus_reset(ESPState *s)
++ {
++     bus_cold_reset(BUS(&s->bus));
+++    /* A SCSI bus reset disconnects every device: the chip is back in disconnected mode */
+++    s->asc_mode = ESP_ASC_MODE_DIS;
++ }
++ 
++ static void parent_esp_reset(ESPState *s, int irq, int level)
