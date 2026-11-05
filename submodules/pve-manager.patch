@@ -150,7 +150,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 8b99371d..a85f3cc1 100644
+index 7704404c..80b5f98d 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -199,7 +199,7 @@ index 8b99371d..a85f3cc1 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1917,8 +1933,8 @@ Ext.define('PVE.Utils', {
+@@ -1921,8 +1937,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
