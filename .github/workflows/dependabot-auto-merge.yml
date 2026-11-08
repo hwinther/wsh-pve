@@ -1,0 +1,150 @@
+# Synced from wshno/devops settings-sync/files/workflows/dependabot-auto-merge.yml: change it there.
+name: Dependabot auto-merge
+
+# Merges Dependabot patch and minor updates once EVERY check on the PR's head commit is green (CI,
+# e2e when the PR touches the app, scanners). Two stages, so the PR's own (untrusted) run never
+# holds a credential that can merge:
+#
+#   label (pull_request, Dependabot only)  dependabot/fetch-metadata decides: a patch/minor update
+#                                          outside GitHub Actions that touches nothing under
+#                                          .github/ or deploy/ gets the `automerge` label.
+#                                          GITHUB_TOKEN only.
+#   merge (workflow_run, see the list)     runs from main with normal secrets: if the PR still
+#                                          carries `automerge`, every check run on its head commit
+#                                          is done, none failed and at least one build/test check
+#                                          passed, merge it as the wshno-devops-bot App (an App merge
+#                                          triggers the workflows on main; a GITHUB_TOKEN one
+#                                          wouldn't). --match-head-commit never merges a newer push.
+#
+# The path check repeats the targeted CODEOWNERS (workflows, actions, deploy/) because not every
+# repo's ruleset enforces code-owner review. Majors are left for review. Add the `automerge` label by
+# hand to opt another PR in (the merge job still requires every check to be green).
+#
+# Needs: repository variable DEVOPS_BOT_CLIENT_ID and secret DEVOPS_BOT_PRIVATE_KEY.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  # Safe use of workflow_run: no checkout and no artifacts from the PR's run, only API reads and a
+  # merge pinned to the checked head commit. A fork PR can't be Dependabot's or carry the label.
+  #
+  # Workflows that may finish LAST on a PR, so the merge gets a chance to run after them. Names that
+  # don't exist in a repo are ignored, which is what lets one file serve every repo.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows:
+      - Continuous Integration (PR build)
+      - PR build, scan, and E2E
+      - PR build for wsh-site
+      - PR build
+      - CI
+      - E2E (PVE container)
+      - Playwright images
+      - Playwright image
+      - GitHub Actions Security Analysis with zizmor 🌈
+      - Poutine - GitHub Actions SAST
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  label:
+    # The PR author, not github.actor (spoofable, e.g. by a re-run); fetch-metadata also refuses
+    # anything that isn't a Dependabot PR.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Label patch/minor updates for auto-merge
+        if: steps.meta.outputs.package-ecosystem != 'github_actions' && (steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # What the targeted CODEOWNERS covers stays with the owner, ruleset or not.
+          owned=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' \
+            | grep -E '^(\.github/|deploy/)' || true)
+          if [ -n "$owned" ]; then
+            echo "::notice::#$PR touches owner-reviewed paths; not labelling it:"
+            echo "$owned"
+            exit 0
+          fi
+          gh label create automerge -R "$REPO" --color 0E8A16 --description "Merged automatically once every check is green" 2>/dev/null || true
+          gh pr edit "$PR" -R "$REPO" --add-label automerge
+
+  merge:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # GITHUB_TOKEN reads the PR and its check runs; the App token below is only used to merge.
+    permissions:
+      checks: read
+      pull-requests: read
+    concurrency:
+      group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Find a labelled Dependabot PR whose checks are all green
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number,author,labels,headRefOid             --jq ".[] | select(.headRefOid == \"$SHA\" and .author.login == \"app/dependabot\" and any(.labels[]; .name == \"automerge\")) | .number")
+          if [ -z "$pr" ]; then
+            echo "No open, labelled Dependabot PR at $SHA; nothing to do."
+            exit 0
+          fi
+          # Every check run on the head commit: wait for the rest (a later workflow_run retries), stop
+          # on any failure. Skipped and neutral count as passed (e.g. e2e when the PR doesn't touch the
+          # app), but at least one check other than the scanners/labellers must have succeeded, so a
+          # repo without CI on that path never merges on the scanners alone.
+          read -r pending failed built < <(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate             --jq '.check_runs[] | [.status, (.conclusion // ""), .name] | @tsv'             | awk -F'	' '
+                $1 != "completed" {p++}
+                $1 == "completed" && $2 !~ /^(success|skipped|neutral)$/ {f++}
+                $1 == "completed" && $2 == "success" && $3 !~ /^(zizmor|poutine|label|labeler|assign-author)$/ {b++}
+                END {print p+0, f+0, b+0}')
+          echo "PR #$pr at $SHA: $pending pending, $failed failed, $built build/test checks passed"
+          if [ "$failed" -gt 0 ]; then
+            echo "::notice::#$pr has failing checks; leaving it for review."
+            exit 0
+          fi
+          if [ "$pending" -gt 0 ]; then
+            echo "Checks still running; the next completed workflow retries."
+            exit 0
+          fi
+          if [ "$built" -eq 0 ]; then
+            echo "::notice::#$pr has no passing build/test check (only scanners); leaving it for review."
+            exit 0
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      # Only minted when there is something to merge.
+      - name: Mint wshno-devops-bot token
+        if: steps.check.outputs.pr != ''
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DEVOPS_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Merge
+        if: steps.check.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.check.outputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA"
