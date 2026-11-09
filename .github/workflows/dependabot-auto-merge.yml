@@ -32,16 +32,12 @@ on:
   # don't exist in a repo are ignored, which is what lets one file serve every repo.
   workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows:
-      - Continuous Integration (PR build)
-      - PR build, scan, and E2E
-      - PR build for wsh-site
-      - PR build
       - CI
-      - E2E (PVE container)
+      - E2E
+      - zizmor
+      - poutine
       - Playwright images
       - Playwright image
-      - GitHub Actions Security Analysis with zizmor 🌈
-      - Poutine - GitHub Actions SAST
     types: [completed]
 
 permissions: {}
