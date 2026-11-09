@@ -1,4 +1,4 @@
-name: "E2E (PVE container)"
+name: E2E
 
 # Boots a single-node PVE in a container with the WSH packages (e2e/pve/Dockerfile) and runs the
 # Playwright suite in e2e/ against it: VM configs created through the API and the web UI, the QEMU
