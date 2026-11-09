@@ -9,18 +9,25 @@ name: Dependabot auto-merge
 #                                          outside GitHub Actions that touches nothing under
 #                                          .github/ or deploy/ gets the `automerge` label.
 #                                          GITHUB_TOKEN only.
-#   merge (workflow_run, see the list)     runs from main with normal secrets: if the PR still
-#                                          carries `automerge`, every check run on its head commit
-#                                          is done, none failed and at least one build/test check
-#                                          passed, merge it as the wshno-devops-bot App (an App merge
-#                                          triggers the workflows on main; a GITHUB_TOKEN one
-#                                          wouldn't). --match-head-commit never merges a newer push.
+#   check (workflow_run, see the list)     runs from main: if the PR still carries `automerge`,
+#                                          every check run on its head commit is done, none failed
+#                                          and at least one build/test check passed. GITHUB_TOKEN
+#                                          (read) only.
+#   merge (only when check found one)      in the main-only `devops-bot` environment: approve the
+#                                          checked commit and merge it as the wshno-devops-bot App
+#                                          (an App merge triggers the workflows on main; a
+#                                          GITHUB_TOKEN one wouldn't). The approval satisfies a
+#                                          ruleset's required approvals for teams, but never code-
+#                                          owner review (an App can't be a code owner).
+#                                          --match-head-commit never merges a newer push.
 #
 # The path check repeats the targeted CODEOWNERS (workflows, actions, deploy/) because not every
 # repo's ruleset enforces code-owner review. Majors are left for review. Add the `automerge` label by
 # hand to opt another PR in (the merge job still requires every check to be green).
 #
-# Needs: repository variable DEVOPS_BOT_CLIENT_ID and secret DEVOPS_BOT_PRIVATE_KEY.
+# Needs: repository variable DEVOPS_BOT_CLIENT_ID, and secret APP_PRIVATE_KEY (the App's key) in the
+# `devops-bot` environment (synced from wshno/devops: deployment branch policy main only, so a
+# workflow on any other branch can't read it).
 
 on:
   pull_request:
@@ -74,10 +81,11 @@ jobs:
           gh label create automerge -R "$REPO" --color 0E8A16 --description "Merged automatically once every check is green" 2>/dev/null || true
           gh pr edit "$PR" -R "$REPO" --add-label automerge
 
-  merge:
+  check:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # GITHUB_TOKEN reads the PR and its check runs; the App token below is only used to merge.
+    outputs:
+      pr: ${{ steps.check.outputs.pr }}
     permissions:
       checks: read
       pull-requests: read
@@ -123,24 +131,43 @@ jobs:
           fi
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
 
-      # Only minted when there is something to merge.
+  # A separate job so the environment (and its deployment record) is only used for a real merge.
+  merge:
+    needs: check
+    if: needs.check.outputs.pr != ''
+    runs-on: ubuntu-latest
+    environment: devops-bot
+    permissions: {}
+    concurrency:
+      group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}-merge
+      cancel-in-progress: false
+    steps:
       - name: Mint wshno-devops-bot token
-        if: steps.check.outputs.pr != ''
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.DEVOPS_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Merge
-        if: steps.check.outputs.pr != ''
+      # Pinned to the commit whose checks were read; a newer push makes it stale (and the ruleset
+      # dismisses it).
+      - name: Approve
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ steps.check.outputs.pr }}
+          PR: ${{ needs.check.outputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh api "repos/$REPO/pulls/$PR/reviews" -X POST --silent             -f commit_id="$SHA" -f event=APPROVE             -f body="Dependabot patch/minor update: every check on $SHA is green."
+
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.check.outputs.pr }}
           SHA: ${{ github.event.workflow_run.head_sha }}
         run: gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA"
