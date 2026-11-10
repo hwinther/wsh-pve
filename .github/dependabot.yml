@@ -1,144 +1,144 @@
 # Synced from wshno/devops settings-sync/files/dependabot/node.yml (built by
 # settings-sync/dependabot/build.py): change it there. Stack: GitHub Actions, Docker, npm.
 #
-# Directories are single-level wildcards, one per depth ("/", "/*", "/*/*"); directories without a
+# Directories are single-level wildcards, one per depth ('/', '/*', '/*/*'); directories without a
 # manifest are skipped. Cooldown: 7 days, 14 for GitHub Actions, so the synced workflows are updated
 # in wshno/devops (Renovate, 7 days) and synced before Dependabot here proposes the same bump.
 # Groups: a dependency goes to the FIRST group that matches; groups that match nothing are harmless.
 
 version: 2
 updates:
-- package-ecosystem: "github-actions"
-  directories:
-  - "/"
-  - "/.github/actions/*"
-  open-pull-requests-limit: 20
-  schedule:
-    interval: "weekly"
-    day: "sunday"
-  cooldown:
-    default-days: 14
-  assignees:
-  - "hwinther"
-  groups:
-    reusable-workflows:
-      patterns:
-      - "hwinther/reusable-workflows*"
+  - package-ecosystem: 'github-actions'
+    directories:
+      - '/'
+      - '/.github/actions/*'
+    open-pull-requests-limit: 20
+    schedule:
+      interval: 'weekly'
+      day: 'sunday'
+    cooldown:
+      default-days: 14
+    assignees:
+      - 'hwinther'
+    groups:
+      reusable-workflows:
+        patterns:
+          - 'hwinther/reusable-workflows*'
 
-- package-ecosystem: "docker"
-  directories:
-  - "/"
-  - "/*"
-  - "/*/*"
-  - "/.github/actions/*"
-  open-pull-requests-limit: 20
-  schedule:
-    interval: "weekly"
-    day: "sunday"
-  cooldown:
-    default-days: 7
-  assignees:
-  - "hwinther"
-  groups:
-    base-images:
-      patterns:
-      - "*"
+  - package-ecosystem: 'docker'
+    directories:
+      - '/'
+      - '/*'
+      - '/*/*'
+      - '/.github/actions/*'
+    open-pull-requests-limit: 20
+    schedule:
+      interval: 'weekly'
+      day: 'sunday'
+    cooldown:
+      default-days: 7
+    assignees:
+      - 'hwinther'
+    groups:
+      base-images:
+        patterns:
+          - '*'
 
-- package-ecosystem: "npm"
-  directories:
-  - "/"
-  - "/*"
-  - "/*/*"
-  open-pull-requests-limit: 20
-  schedule:
-    interval: "weekly"
-    day: "sunday"
-  cooldown:
-    default-days: 7
-  assignees:
-  - "hwinther"
-  ignore:
-  - dependency-name: "*"
-    update-types: [ "version-update:semver-patch" ]
-  # typescript-eslint, which @wshno/eslint-config builds on, supports TypeScript <6.1. Drop this once a
-  # typescript-eslint release widens that range.
-  - dependency-name: "typescript"
-    versions: [">=6.1"]
-  groups:
-    wshno:
-      patterns:
-      - "@wshno/*"
-      - "eslint"
-      - "prettier"
-    react-router:
-      patterns:
-      - "react-router"
-      - "react-router-*"
-      - "@react-router/*"
-    react:
-      patterns:
-      - "react"
-      - "react-*"
-      - "@types/react*"
-    vite:
-      patterns:
-      - "vite"
-      - "vite-*"
-      - "@vitejs/*"
-    testing:
-      patterns:
-      - "vitest"
-      - "@vitest/*"
-      - "@testing-library/*"
-      - "jsdom"
-      - "msw"
-    playwright:
-      patterns:
-      - "@playwright/*"
-      - "playwright*"
-    tanstack:
-      patterns:
-      - "@tanstack/*"
-    opentelemetry:
-      patterns:
-      - "@opentelemetry/*"
-    stryker:
-      patterns:
-      - "@stryker-mutator/*"
-    astro:
-      patterns:
-      - "astro"
-      - "@astrojs/*"
-    ui-libraries:
-      patterns:
-      - "bootstrap*"
-      - "d3*"
-      - "@visx/*"
-      - "@icon/*"
-      - "jquery*"
-      - "datatables*"
-    eslint:
-      patterns:
-      - "eslint-*"
-      - "@eslint/*"
-      - "typescript-eslint"
-      - "@typescript-eslint/*"
-      - "@eslint-react/*"
-      - "*/eslint-plugin"
-      - "*/eslint-plugin-*"
-      - "globals"
-    types:
-      patterns:
-      - "@types/*"
-    build-tools:
-      patterns:
-      - "typescript"
-      - "typescript-*"
-      - "orval"
-      - "openapi-typescript-codegen"
-    code-quality:
-      patterns:
-      - "@cspell/*"
-    utilities:
-      patterns:
-      - "dotenv"
+  - package-ecosystem: 'npm'
+    directories:
+      - '/'
+      - '/*'
+      - '/*/*'
+    open-pull-requests-limit: 20
+    schedule:
+      interval: 'weekly'
+      day: 'sunday'
+    cooldown:
+      default-days: 7
+    assignees:
+      - 'hwinther'
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-patch']
+      # typescript-eslint, which @wshno/eslint-config builds on, supports TypeScript <6.1. Drop this
+      # once a typescript-eslint release widens that range.
+      - dependency-name: 'typescript'
+        versions: ['>=6.1']
+    groups:
+      wshno:
+        patterns:
+          - '@wshno/*'
+          - 'eslint'
+          - 'prettier'
+      react-router:
+        patterns:
+          - 'react-router'
+          - 'react-router-*'
+          - '@react-router/*'
+      react:
+        patterns:
+          - 'react'
+          - 'react-*'
+          - '@types/react*'
+      vite:
+        patterns:
+          - 'vite'
+          - 'vite-*'
+          - '@vitejs/*'
+      testing:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+          - '@testing-library/*'
+          - 'jsdom'
+          - 'msw'
+      playwright:
+        patterns:
+          - '@playwright/*'
+          - 'playwright*'
+      tanstack:
+        patterns:
+          - '@tanstack/*'
+      opentelemetry:
+        patterns:
+          - '@opentelemetry/*'
+      stryker:
+        patterns:
+          - '@stryker-mutator/*'
+      astro:
+        patterns:
+          - 'astro'
+          - '@astrojs/*'
+      ui-libraries:
+        patterns:
+          - 'bootstrap*'
+          - 'd3*'
+          - '@visx/*'
+          - '@icon/*'
+          - 'jquery*'
+          - 'datatables*'
+      eslint:
+        patterns:
+          - 'eslint-*'
+          - '@eslint/*'
+          - 'typescript-eslint'
+          - '@typescript-eslint/*'
+          - '@eslint-react/*'
+          - '*/eslint-plugin'
+          - '*/eslint-plugin-*'
+          - 'globals'
+      types:
+        patterns:
+          - '@types/*'
+      build-tools:
+        patterns:
+          - 'typescript'
+          - 'typescript-*'
+          - 'orval'
+          - 'openapi-typescript-codegen'
+      code-quality:
+        patterns:
+          - '@cspell/*'
+      utilities:
+        patterns:
+          - 'dotenv'
