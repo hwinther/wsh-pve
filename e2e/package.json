@@ -13,10 +13,10 @@
   "devDependencies": {
     "@types/node": "26.6.5",
     "@wshno/eslint-config": "0.2.0",
-    "@wshno/playwright-config": "0.1.1",
+    "@wshno/playwright-config": "0.3.0",
     "@wshno/prettier-config": "0.1.1",
     "@wshno/tsconfig": "0.1.1",
-    "eslint": "10.13.0",
+    "eslint": "10.14.0",
     "prettier": "3.9.10",
     "typescript": "6.0.3"
   },
