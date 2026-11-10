@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   pr-build:
-    uses: hwinther/reusable-workflows/.github/workflows/pr-build.yml@c1e80ad637dcdd38bb6de0f447475c40a8625141 # v2.9.0
+    uses: hwinther/reusable-workflows/.github/workflows/pr-build.yml@523b5580b380c07200a565f13aae350565418277 # v2.24.0
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     secrets: inherit
     with:
