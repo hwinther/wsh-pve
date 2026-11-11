@@ -150,7 +150,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 7704404c..80b5f98d 100644
+index 61b8def2..c6b44880 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -162,7 +162,7 @@ index 7704404c..80b5f98d 100644
                  let av = avers.shift();
                  let bv = bvers.shift();
  
-@@ -535,6 +535,9 @@ Ext.define('PVE.Utils', {
+@@ -556,6 +556,9 @@ Ext.define('PVE.Utils', {
          render_qemu_machine: function (value, arch = 'x86_64') {
              let machineTextMap = {
                  pc: 'i440fx',
@@ -172,7 +172,7 @@ index 7704404c..80b5f98d 100644
              };
              if (!value) {
                  let machine = PVE.qemu.Architecture.defaultMachines[arch];
-@@ -552,6 +555,16 @@ Ext.define('PVE.Utils', {
+@@ -573,6 +576,16 @@ Ext.define('PVE.Utils', {
                  return 'SeaBIOS';
              } else if (value === 'ovmf') {
                  return 'OVMF (UEFI)';
@@ -189,7 +189,7 @@ index 7704404c..80b5f98d 100644
              } else {
                  return value;
              }
-@@ -645,6 +658,9 @@ Ext.define('PVE.Utils', {
+@@ -666,6 +679,9 @@ Ext.define('PVE.Utils', {
          kvm_vga_drivers: {
              __default__: Proxmox.Utils.defaultText,
              std: gettext('Standard VGA'),
@@ -199,7 +199,7 @@ index 7704404c..80b5f98d 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1921,8 +1937,8 @@ Ext.define('PVE.Utils', {
+@@ -1942,8 +1958,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -444,10 +444,10 @@ index 3f583adb..bd457b09 100644
      ],
  
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index 8b932995..2c0a69a7 100644
+index bc0aa19d..c0fc2714 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -812,10 +812,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -799,10 +799,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -461,8 +461,8 @@ index 8b932995..2c0a69a7 100644
 +                (isDisk && !diskCap),
              );
  
-             diskaction_btn.setDisabled(
-@@ -947,6 +947,13 @@ Ext.define('PVE.qemu.HardwareView', {
+             edit_btn.setText(
+@@ -938,6 +938,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.nodes['Sys.Console'],
                                  handler: editorFactory('VirtiofsEdit'),
                              },
