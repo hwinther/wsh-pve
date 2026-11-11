@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4f7849c1..243eddf6 100644
+index 2f9c2e45..f4aeaa6f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.25+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.26+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager,pve-qemu
++  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Thu, 05 Nov 2026 00:51:48 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 11 Nov 2026 00:36:57 +0000
 +
-+pve-manager (9.2.25+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager,pve-qemu
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Mon, 02 Nov 2026 17:52:16 +0000
-+
- pve-manager (9.2.25) trixie; urgency=medium
+ pve-manager (9.2.26) trixie; urgency=medium
  
-   * ceph: allow the installation wizard to select any Ceph release supported
-     by the target node, even when the node serving the web interface has a
-     different architecture or Proxmox VE major version.
+   * api: backup: extract config: also allow it with the Datastore.Allocate
+     permission on the storage, like restoring a backup does.
  
-   * ui: virtual machines: only offer TPM 2.0 for aarch64 guests, as TPM 1.2 is
-     not supported by their QEMU device and firmware.
+   * fix #8169: api: backup: extract config: allow extracting the
+     configuration of guest backups without a guest ID again, for example of
+     manually renamed backups.
  
-   * certificates:
+   * ceph: osd: create: rewrite an outdated bootstrap-osd keyring with the key
