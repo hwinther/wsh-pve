@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 2f9c2e45..f4aeaa6f 100644
+index 8d4dbeb5..488ba6d3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.26+wsh1) trixie; urgency=medium
++pve-manager (9.2.27+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 11 Nov 2026 00:36:57 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 11 Nov 2026 15:53:41 +0000
 +
- pve-manager (9.2.26) trixie; urgency=medium
+ pve-manager (9.2.27) trixie; urgency=medium
  
-   * api: backup: extract config: also allow it with the Datastore.Allocate
-     permission on the storage, like restoring a backup does.
- 
-   * fix #8169: api: backup: extract config: allow extracting the
-     configuration of guest backups without a guest ID again, for example of
-     manually renamed backups.
- 
-   * ceph: osd: create: rewrite an outdated bootstrap-osd keyring with the key
+   * ui: encode values from the API and other external sources before showing
+     them, so that they cannot inject HTML into the web interface:
+     - guest import wizard: all values taken from the import source, like the
+       disk and network details read from an ESXi VMX file or an OVF.
+     - Ceph service, monitor and OSD details, storage targets and the PBS
+       encryption key fingerprint.
+     - read-only display fields now show their value as plain text by
+       default.
