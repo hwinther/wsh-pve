@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9af5e69..755b101 100644
+index 9af5e69..4f2c260 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,29 @@
++pve-qemu-kvm (11.1.3-1+wsh3) trixie; urgency=medium
++
++  * Refresh patches: pve-manager,pve-qemu
++
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Fri, 13 Nov 2026 01:14:39 +0000
++
 +pve-qemu-kvm (11.1.3-1+wsh2) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager,pve-qemu
