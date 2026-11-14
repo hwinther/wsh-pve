@@ -1,0 +1,7 @@
+--- debian/patches/series
++++ debian/patches/series
+@@ -64,3 +64,4 @@ pve/0051-PVE-backup-vma-writer-restrict-allowed-archive-membe.patch
+ pve/0052-PVE-backup-vma-fix-checking-for-error-from-registeri.patch
+ pve/0053-PVE-backup-vma-report-errors-from-writer-at-cleanup-.patch
+ pve/0054-PVE-backup-vma-report-why-adding-a-config-or-device-.patch
++wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
