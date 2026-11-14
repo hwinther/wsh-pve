@@ -137,7 +137,7 @@ index d2ea786b..32507f78 100644
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
 diff --git a/www/manager6/Parser.js b/www/manager6/Parser.js
-index cc9c6e9d..2b1585eb 100644
+index 36df8e9d..ab605518 100644
 --- a/www/manager6/Parser.js
 +++ b/www/manager6/Parser.js
 @@ -117,7 +117,7 @@ Ext.define('PVE.Parser', {
@@ -150,7 +150,7 @@ index cc9c6e9d..2b1585eb 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 8b99371d..a85f3cc1 100644
+index 61b8def2..c6b44880 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -162,7 +162,7 @@ index 8b99371d..a85f3cc1 100644
                  let av = avers.shift();
                  let bv = bvers.shift();
  
-@@ -535,6 +535,9 @@ Ext.define('PVE.Utils', {
+@@ -556,6 +556,9 @@ Ext.define('PVE.Utils', {
          render_qemu_machine: function (value, arch = 'x86_64') {
              let machineTextMap = {
                  pc: 'i440fx',
@@ -172,7 +172,7 @@ index 8b99371d..a85f3cc1 100644
              };
              if (!value) {
                  let machine = PVE.qemu.Architecture.defaultMachines[arch];
-@@ -552,6 +555,16 @@ Ext.define('PVE.Utils', {
+@@ -573,6 +576,16 @@ Ext.define('PVE.Utils', {
                  return 'SeaBIOS';
              } else if (value === 'ovmf') {
                  return 'OVMF (UEFI)';
@@ -189,7 +189,7 @@ index 8b99371d..a85f3cc1 100644
              } else {
                  return value;
              }
-@@ -645,6 +658,9 @@ Ext.define('PVE.Utils', {
+@@ -666,6 +679,9 @@ Ext.define('PVE.Utils', {
          kvm_vga_drivers: {
              __default__: Proxmox.Utils.defaultText,
              std: gettext('Standard VGA'),
@@ -199,7 +199,7 @@ index 8b99371d..a85f3cc1 100644
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -1917,8 +1933,8 @@ Ext.define('PVE.Utils', {
+@@ -1942,8 +1958,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -254,7 +254,7 @@ index faeb530a..5b8f9690 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index 7b6ef402..af199b52 100644
+index b8412b6f..dec9211a 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -327,8 +327,8 @@ index 7b6ef402..af199b52 100644
 +        sparc64: ['__default__', 'openbios-sparc64'],
      },
  
-     render_vcpu_architecture: function (value) {
-@@ -74,6 +96,10 @@ Ext.define('PVE.qemu.Architecture', {
+     allowedTPMVersions: {
+@@ -79,6 +101,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
@@ -406,7 +406,7 @@ index ba588edc..01ba47ea 100644
      ],
  });
 diff --git a/www/manager6/qemu/CDEdit.js b/www/manager6/qemu/CDEdit.js
-index c185de53..e807ac49 100644
+index 22e511a2..c17a227a 100644
 --- a/www/manager6/qemu/CDEdit.js
 +++ b/www/manager6/qemu/CDEdit.js
 @@ -69,7 +69,7 @@ Ext.define('PVE.qemu.CDInputPanel', {
@@ -444,10 +444,10 @@ index 3f583adb..bd457b09 100644
      ],
  
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index f7f4b46f..f6926914 100644
+index bc0aa19d..c0fc2714 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -812,10 +812,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -799,10 +799,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -461,8 +461,8 @@ index f7f4b46f..f6926914 100644
 +                (isDisk && !diskCap),
              );
  
-             diskaction_btn.setDisabled(
-@@ -941,6 +941,13 @@ Ext.define('PVE.qemu.HardwareView', {
+             edit_btn.setText(
+@@ -938,6 +938,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.nodes['Sys.Console'],
                                  handler: editorFactory('VirtiofsEdit'),
                              },

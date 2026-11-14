@@ -1,21 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index a9bafea3..e1b73fa6 100644
+index 8d4dbeb5..488ba6d3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,16 @@
-+pve-manager (9.2.24+wsh1) trixie; urgency=medium
++pve-manager (9.2.27+wsh1) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 28 Oct 2026 23:59:40 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 11 Nov 2026 15:53:41 +0000
 +
- pve-manager (9.2.24) trixie; urgency=medium
+ pve-manager (9.2.27) trixie; urgency=medium
  
-   * api: node shell: harden the console against crafted parameters by only
-     passing the known Ceph version and repository options to the command of
-     the Ceph installation wizard, rejecting any other parameter.
- 
-   * ui: consent banner: fix loading the web interface when the consent text
-     contains a single quote, which broke the JavaScript of the page. This only
-     affected texts set outside the web interface, for example through the API,
-     as the web interface stores them base64-encoded.
+   * ui: encode values from the API and other external sources before showing
+     them, so that they cannot inject HTML into the web interface:
+     - guest import wizard: all values taken from the import source, like the
+       disk and network details read from an ESXi VMX file or an OVF.
+     - Ceph service, monitor and OSD details, storage targets and the PBS
+       encryption key fingerprint.
+     - read-only display fields now show their value as plain text by
+       default.

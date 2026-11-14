@@ -1,5 +1,5 @@
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index b4a1a38d..ff87a0da 100644
+index 69a2bd64..e15cdf1c 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -170,7 +170,7 @@ my $vga_fmt = {
@@ -304,7 +304,7 @@ index b4a1a38d..ff87a0da 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -5684,6 +5786,9 @@ sub vm_start_nolock {
+@@ -5644,6 +5746,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -315,10 +315,10 @@ index b4a1a38d..ff87a0da 100644
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
 diff --git a/src/PVE/QemuServer/Drive.pm b/src/PVE/QemuServer/Drive.pm
-index 0ca3d636..f061af1d 100644
+index 8b980650..041407a5 100644
 --- a/src/PVE/QemuServer/Drive.pm
 +++ b/src/PVE/QemuServer/Drive.pm
-@@ -969,7 +969,7 @@ sub parse_drive {
+@@ -968,7 +968,7 @@ sub parse_drive {
  
      if ($res->{media} && ($res->{media} eq 'cdrom')) {
          return if $res->{snapshot} || $res->{format};
@@ -354,7 +354,7 @@ index 621fcc2b..d96152ec 100644
  }
  
 diff --git a/src/PVE/QemuServer/Helpers.pm b/src/PVE/QemuServer/Helpers.pm
-index 58b67fd8..afca6208 100644
+index ecd1944f..2a1bb9bc 100644
 --- a/src/PVE/QemuServer/Helpers.pm
 +++ b/src/PVE/QemuServer/Helpers.pm
 @@ -27,6 +27,8 @@ our @EXPORT_OK = qw(
@@ -396,10 +396,10 @@ index 58b67fd8..afca6208 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 79ecbec3..5cfb3a8a 100644
+index fa47d668..dd56f0fe 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
-@@ -58,7 +58,7 @@ my $machine_fmt = {
+@@ -60,7 +60,7 @@ my $machine_fmt = {
          description => "Specifies the QEMU machine type.",
          type => 'string',
          pattern =>
@@ -408,7 +408,7 @@ index 79ecbec3..5cfb3a8a 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -124,6 +124,8 @@ sub print_machine {
+@@ -126,6 +126,8 @@ sub print_machine {
  my $default_machines = {
      x86_64 => 'pc',
      aarch64 => 'virt',
@@ -417,7 +417,7 @@ index 79ecbec3..5cfb3a8a 100644
  };
  
  sub default_machine_for_arch {
-@@ -167,6 +169,7 @@ my sub machine_base_type {
+@@ -169,6 +171,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -425,7 +425,7 @@ index 79ecbec3..5cfb3a8a 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -322,18 +325,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +322,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -448,7 +448,7 @@ index 79ecbec3..5cfb3a8a 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -506,6 +506,7 @@ sub get_power_state_flags {
+@@ -503,6 +503,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -456,7 +456,7 @@ index 79ecbec3..5cfb3a8a 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -513,6 +514,7 @@ sub get_power_state_flags {
+@@ -510,6 +511,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -478,10 +478,10 @@ index b4893c01..527896db 100644
  
  my $net_fmt_bridge_descr = <<__EOD__;
 diff --git a/src/PVE/QemuServer/PCI.pm b/src/PVE/QemuServer/PCI.pm
-index d7dc6121..eb60cc09 100644
+index d54cd8a0..0a8d3192 100644
 --- a/src/PVE/QemuServer/PCI.pm
 +++ b/src/PVE/QemuServer/PCI.pm
-@@ -310,6 +310,11 @@ sub print_pci_addr {
+@@ -312,6 +312,11 @@ sub print_pci_addr {
  
      my $res = '';
  
