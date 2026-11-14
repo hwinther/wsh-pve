@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..25591d1 100644
+index 7b0cba5..c7b6142 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,9 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,10 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -82,6 +82,7 @@ index 7b0cba5..25591d1 100644
 +wsh/0004-hw-char-escc-keep-the-Sun-mouse-in-step-when-the-gue.patch
 +wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch
 +wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch
++wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -1055,6 +1056,116 @@ index 0000000..2942f46
 + 
 +     return g_test_run();
 + }
+diff --git a/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch b/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
+new file mode 100644
+index 0000000..99e12a2
+--- /dev/null
++++ b/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
+@@ -0,0 +1,104 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: am53c974: check that Select with ATN works after
++ a SCSI bus reset
++
++Select target 0 with ATN without DMA, issue a SCSI bus reset, then select
++again. A bus reset disconnects every device, so the second select must be
++accepted; the ESP used to stay in initiator mode and reject it as an
++illegal command, which sets STAT_GE in the status register. Solaris 2.5.1
++resets the bus to recover from errors and then loops on "gross error in
++esp status".
++
++Fails on 6f8ce26bb0 ("esp.c: only allow ESP commands permitted in the
++current asc_mode") through 11.1.3, passes on its parent and with the
++esp_bus_reset() fix.
++---
++ tests/qtest/am53c974-test.c | 68 +++++++++++++++++++++++++++++++++++++
++ 1 file changed, 68 insertions(+)
++
++diff --git a/tests/qtest/am53c974-test.c b/tests/qtest/am53c974-test.c
++index a3667275..ce56d437 100644
++--- a/tests/qtest/am53c974-test.c
+++++ b/tests/qtest/am53c974-test.c
++@@ -289,6 +289,72 @@ static void test_reset_before_transfer_ok(void)
++     qtest_quit(s);
++ }
++ 
+++/* am53c974 at PCI 00:02.0 with BAR0 (I/O) at 0xc000; ESP registers are 4 bytes apart */
+++#define ESP_IO_BASE 0xc000
+++#define ESP_REG(r) (ESP_IO_BASE + (r) * 4)
+++
+++#define ESP_FIFO   0x2
+++#define ESP_CMD    0x3
+++#define ESP_RSTAT  0x4
+++#define ESP_WBUSID 0x4
+++#define ESP_RINTR  0x5
+++
+++#define CMD_BUSRESET 0x03
+++#define CMD_SELATN   0x42
+++
+++#define STAT_GE  0x40
+++#define INTR_RST 0x80
+++
+++/* Select target 0 with ATN, without DMA: IDENTIFY then TEST UNIT READY from the FIFO */
+++static void esp_select_atn_tur(QTestState *s)
+++{
+++    int i;
+++
+++    qtest_outb(s, ESP_REG(ESP_FIFO), 0x80);
+++    for (i = 0; i < 6; i++) {
+++        qtest_outb(s, ESP_REG(ESP_FIFO), 0x00);
+++    }
+++    qtest_outb(s, ESP_REG(ESP_WBUSID), 0);
+++    qtest_outb(s, ESP_REG(ESP_CMD), CMD_SELATN);
+++}
+++
+++/*
+++ * A SCSI bus reset disconnects every device, so the chip is back in
+++ * disconnected mode and Select with ATN is a valid command again. Guests
+++ * such as Solaris 2.5.1 reset the bus to recover from errors and then
+++ * select a target again; an illegal command interrupt there shows up as
+++ * a gross error (STAT_GE) in the status register.
+++ */
+++static void test_select_after_bus_reset_ok(void)
+++{
+++    QTestState *s = qtest_init(
+++        "-device am53c974,id=scsi "
+++        "-device scsi-hd,drive=disk0 -drive "
+++        "id=disk0,if=none,file=null-co://,format=raw -nodefaults");
+++    uint8_t stat, intr;
+++
+++    qtest_outl(s, 0xcf8, 0x80001010);
+++    qtest_outl(s, 0xcfc, ESP_IO_BASE);
+++    qtest_outl(s, 0xcf8, 0x80001004);
+++    qtest_outw(s, 0xcfc, 0x01);
+++
+++    /* Selecting target 0 puts the chip in initiator mode */
+++    esp_select_atn_tur(s);
+++    stat = qtest_inb(s, ESP_REG(ESP_RSTAT));
+++    g_assert_cmphex(stat & STAT_GE, ==, 0);
+++    qtest_inb(s, ESP_REG(ESP_RINTR));
+++
+++    qtest_outb(s, ESP_REG(ESP_CMD), CMD_BUSRESET);
+++    intr = qtest_inb(s, ESP_REG(ESP_RINTR));
+++    g_assert_cmphex(intr & INTR_RST, ==, INTR_RST);
+++
+++    esp_select_atn_tur(s);
+++    stat = qtest_inb(s, ESP_REG(ESP_RSTAT));
+++    g_assert_cmphex(stat & STAT_GE, ==, 0);
+++
+++    qtest_quit(s);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     const char *arch = qtest_get_arch();
++@@ -318,6 +384,8 @@ int main(int argc, char **argv)
++                        test_inflight_cancel_ok);
++         qtest_add_func("am53c974/test_reset_before_transfer_ok",
++                        test_reset_before_transfer_ok);
+++        qtest_add_func("am53c974/test_select_after_bus_reset_ok",
+++                       test_select_after_bus_reset_ok);
++     }
++ 
++     return g_test_run();
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
