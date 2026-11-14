@@ -1185,7 +1185,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index a6b8745..a1317ea 100755
+index a6b8745..7cff357 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -1230,13 +1230,18 @@ index a6b8745..a1317ea 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -126,6 +128,24 @@ install: build
+@@ -126,6 +128,29 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
 +# Add extra binaries: 3dfx passthrough
 +ifneq ("$(wildcard ../../../build/pve-qemu-3dfx/qemu-system-x86_64)", "")
 +	cp ../../../build/pve-qemu-3dfx/qemu-system-x86_64 $(destdir)/usr/bin/qemu-system-x86_64-3dfx
++endif
++
++# openbios-sparc32 with the fixes in wsh-pve's openbios/, over QEMU's prebuilt image
++ifneq ("$(wildcard ../../../build/openbios/openbios-sparc32)", "")
++	cp ../../../build/openbios/openbios-sparc32 $(destdir)/usr/share/kvm/openbios-sparc32
 +endif
 +
 +# Add extra system-sparc bios images
@@ -1255,7 +1260,7 @@ index a6b8745..a1317ea 100755
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	./debian/parse-cpu-flags.pl $(destdir)/usr/bin/qemu-system-x86_64 max-x86_64-cpu > $(flagfile)
  	# NOTE: If the diff fails here after upgrading the QEMU submodule, check which new flags
-@@ -136,6 +156,8 @@ install: build
+@@ -136,6 +161,8 @@ install: build
  	# Supported machine versions are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machine_file_x86_64)
  	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > $(machine_file_aarch64)
@@ -1264,7 +1269,7 @@ index a6b8745..a1317ea 100755
  
  	# Supported CPU models are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-models.pl > $(cpu_models_file_x86_64)
-@@ -170,7 +192,7 @@ binary-arch: build install
+@@ -170,7 +197,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link

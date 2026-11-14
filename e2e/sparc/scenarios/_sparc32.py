@@ -86,9 +86,9 @@ ESP = "/iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000"
 def prom_boot(m, v, target):
     """Get to the PROM prompt and boot `target` ("cdrom" or "disk"), with the console on ttya.
 
-    OpenBIOS: its `cdrom` alias only finds a CD-ROM device, and the OpenBIOS in QEMU 11.1 doesn't
-    reach SCSI target 3 with its `disk` alias (the one in 7.2 does, and boots by itself), so anything
-    else boots by device path. Sun PROMs: input stays on the keyboard while output goes to ttya, so
+    OpenBIOS: its `cdrom` alias only finds a CD-ROM device, and stock OpenBIOS since QEMU 9.2 has no
+    `disk` alias (the packaged one is fixed, and so was the one in 7.2: they boot the disk by
+    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: input stays on the keyboard while output goes to ttya, so
     `ttya io` is typed on the keyboard first."""
     if v["BIOS"].startswith("openbios"):
         if target == "cdrom" and v["CDROM_AS"] != "hd" and v.get("BOOT", "d") == "d":
