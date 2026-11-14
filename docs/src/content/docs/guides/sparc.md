@@ -103,8 +103,9 @@ send-key) to take input from ttya as well; the Solaris installer then runs entir
 ### Booting the installed disk
 
 - Sun PROMs (`ss5.bin`): `boot disk` boots SCSI target 3.
-- OpenBIOS: its `disk` alias doesn't reach target 3 ("No valid state has been set by load or
-  init-program"); give the full path:
+- OpenBIOS: the OpenBIOS in QEMU 11.1 doesn't reach target 3 with its `disk` alias ("No valid
+  state has been set by load or init-program"; the older OpenBIOS in QEMU 7.2 does); give the full
+  path:
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@3,0:a`
 
 ### Graphical install

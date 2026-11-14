@@ -104,7 +104,8 @@ never selects them; run them by hand.
 - **lance MAC:** fixed at `08:00:20:b5:09:67` instead of coming from the VM's `net0`.
 - **Architecture changes:** changing the architecture of an existing VM should be refused.
 - **OpenBIOS boot aliases:** `disk` doesn't reach SCSI target 3 and `cdrom` doesn't find a CD
-  that answers as a disk; boot those by device path.
+  that answers as a disk; boot those by device path. The `disk` alias is a regression in the
+  OpenBIOS that QEMU 11.1 ships: QEMU 7.2's OpenBIOS (v1.1, March 2022) boots target 3 by itself.
 
 ## Candidates from LEMU, not carried
 

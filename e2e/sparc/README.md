@@ -9,17 +9,17 @@ instead of repeated by hand.
   monitor, OCR of the framebuffer (tesseract), and the step log.
 - `scenarios/` are scripts against it. `_sparc32.py` is the SS-5 machine laid out the way qemu-server
   builds an `arch: sparc` VM (disk on SCSI target 3, CD-ROM on target 6 with 512-byte blocks, lance).
-- `Dockerfile` builds the lab with `qemu-system-sparc` from the published `pve-qemu-kvm`, or from an
-  upstream QEMU tag/commit for comparisons.
+- `Dockerfile` builds the lab with `qemu-system-sparc` from the published `pve-qemu-kvm`, the QEMU
+  that PVE runs. `qemu-7.2.Dockerfile` adds an upstream QEMU (7.2.0 by default, built on Debian 12)
+  on top of it, for comparing against the version sparc guests used to run on.
 
 ## Build
 
 From the repository root:
 
 ```sh
-docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .                         # the published build
-docker build -f e2e/sparc/Dockerfile --build-arg QEMU_FROM=upstream \
-  --build-arg QEMU_REF=v7.2.0 -t wsh-sparc-lab:7.2.0 .                            # upstream QEMU 7.2.0
+docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .                             # the published build
+docker build -f e2e/sparc/qemu-7.2.Dockerfile -t wsh-sparc-lab:7.2.0 e2e/sparc        # + upstream QEMU 7.2.0
 ```
 
 ## Run a scenario
@@ -79,7 +79,9 @@ ctl hmp "info registers"         # any monitor command
   (`REFRESH`). Same on 7.2.0 and 11.1.
 - **Terminal keys in the Solaris 2.6 text installer:** Esc-n for Fn; the arrow keys only beep, Ctrl-N
   and Ctrl-P move; Return marks `[X]`.
-- **OpenBIOS's `disk` alias doesn't reach SCSI target 3**: boot the installed disk with
+- **The OpenBIOS in QEMU 11.1 doesn't reach SCSI target 3 with its `disk` alias** ("No valid state
+  has been set by load or init-program"); the OpenBIOS in 7.2.0 (v1.1, March 2022) boots it by
+  itself. `prom_boot()` handles both. With 11.1, boot the installed disk with
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@3,0:a`.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
   panics with `vfs_mountroot: cannot mount root`. qemu-server always makes a sparc CD-ROM a
