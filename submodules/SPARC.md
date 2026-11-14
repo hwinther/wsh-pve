@@ -7,7 +7,6 @@ maintains the patches.
 | Component | Where | What |
 | --- | --- | --- |
 | QEMU | `submodules/pve-qemu.patch` | sparc targets, firmware, machine lists, QEMU fixes as quilt patches |
-| QEMU 7.2 extra | `submodules/pve-qemu-7.2-sparc.patch` | an extra `qemu-system-sparc-7.2` build |
 | Sun PROMs | `submodules/sparc` (private) | `ss5.bin`, `ss10_v2.25_rom`, `ss20_v2.25_rom` |
 | qemu-server | `submodules/qemu-server.patch` | the sparc command line |
 | pve-manager | `submodules/pve-manager.patch` | architecture choice and sparc options in the UI |
@@ -24,8 +23,7 @@ maintains the patches.
   with type `sun`.
 - `debian/pve-qemu-kvm.lintian-overrides`: overrides for the OpenBIOS images (sparc binaries in
   `/usr/share/kvm`).
-- `debian/rules` also copies the Sun PROMs from `submodules/sparc` to `/usr/share/kvm` and the
-  `qemu-system-sparc-7.2`/`qemu-system-sparc64-7.2` binaries when they were built. Both are
+- `debian/rules` also copies the Sun PROMs from `submodules/sparc` to `/usr/share/kvm`. They are
   optional and are left out silently when missing (by design: the build never fails on them).
 
 ### QEMU fixes (`debian/patches/wsh/`)
@@ -52,12 +50,12 @@ The full series (Proxmox's patches + ours) applies on QEMU 11.1.3; no Proxmox pa
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test` (sparc) and `am53c974-test` (i386).
 
-### QEMU 7.2 extra binary
+### QEMU 7.2
 
-`pve-qemu-7.2-sparc.patch` builds pve-qemu 7.2 with the sparc targets (and gtk, sdl and
-PulseAudio). Its `qemu-system-sparc`/`qemu-system-sparc64` are packaged as
-`qemu-system-sparc-7.2`/`qemu-system-sparc64-7.2`, for comparing against the old version. qemu-server
-never selects them; run them by hand.
+The package used to carry an extra `qemu-system-sparc-7.2` build (`pve-qemu-7.2-sparc.patch`, the
+`pve-qemu-7.2-sparc` make target), which qemu-server never selected. With the ESP and ESCC fixes
+the current QEMU runs the sparc guests, so it was removed; it is in the git history. For
+comparisons, `e2e/sparc/qemu-7.2.Dockerfile` builds upstream QEMU 7.2.0 into the sparc lab.
 
 ## qemu-server
 

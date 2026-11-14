@@ -42,7 +42,6 @@ CURRENT_DIR = $(shell pwd)
 BRANCH_NAME := local_patches
 GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
 GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
-GIT_QEMU72_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-7.2-sparc.patch)
 GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
 GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
@@ -166,41 +165,6 @@ pve-qemu:
 		echo "::endgroup::"; \
 	fi
 
-.PHONY: pve-qemu-7.2-sparc
-pve-qemu-7.2-sparc:
-	@set -e; \
-	$(MAKE) restore-pve-qemu; \
-
-	$(Q)$(ECHO) "INFO: Building pve-qemu 7.2 sparc"; \
-	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-		echo "::group::Building pve-qemu 7.2 sparc"; \
-	fi; \
-	rm -rf submodules/pve-qemu/qemu; \
-	git -C submodules/pve-qemu checkout 93d558c1eef8f3ec76983cbe6848b0dc606ea5f1; \
-	git -C submodules/pve-qemu submodule update --recursive; \
-	patch -d submodules/pve-qemu -p1 -i ../pve-qemu-7.2-sparc.patch; \
-	mkdir -p build/pve-qemu-7.2-sparc; \
-	rm -f build/pve-qemu-7.2-sparc/*; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-		-w /src/submodules/pve-qemu \
-		-e DEBEMAIL="$(GIT_EMAIL)" \
-		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU72_SUBJECT)"; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-		-v $(CURRENT_DIR)/.git:/src/.git \
-		-v $(CURRENT_DIR)/build/pve-qemu-7.2-sparc:/build/pve-qemu-7.2-sparc \
-		-w /src/submodules/pve-qemu \
-		-e DEBEMAIL="$(GIT_EMAIL)" \
-		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && make deb || true && cp pve-qemu-kvm-7.2.0/debian/pve-qemu-kvm/usr/bin/qemu-system-sparc* /build/pve-qemu-7.2-sparc/"; \
-	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
-		echo "::endgroup::"; \
-	fi
-
 restore-pve-qemu:
 	$(ECHO) "INFO: Restoring pve-qemu to current head"; \
 	rm -rf submodules/pve-qemu; \
@@ -212,7 +176,6 @@ restore-sparc:
 	git submodule update --init submodules/sparc
 
 .PHONY: pve-qemu-bundle
-#pve-qemu-bundle: restore-sparc pve-qemu-7.2-sparc pve-qemu-3dfx pve-qemu # Disable 7.2 until its been retested and patched
 pve-qemu-bundle: restore-sparc pve-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
@@ -430,7 +393,6 @@ help:
 	@echo "  qemu-server-clean:       Clean and rebuild qemu-server"
 	@echo "  qemu-server-dev:         Restart PVE services for development"
 	@echo "  pve-qemu:                Build pve-qemu deb package"
-	@echo "  pve-qemu-7.2-sparc:      Build SPARC-specific QEMU 7.2 binaries"
 	@echo "  pve-qemu-3dfx:           Build QEMU with 3dfx support"
 	@echo "  pve-qemu-bundle:         Build complete QEMU bundle with SPARC and 3dfx support"
 	@echo "  3dfx:                    Clean, prepare and build QEMU with 3dfx support"
