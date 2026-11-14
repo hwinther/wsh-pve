@@ -1,14 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 97fc676..0db1f1c 100644
+index 97fc676..27d7496 100644
 --- a/debian/changelog
 +++ b/debian/changelog
 @@ -1,10 +1,17 @@
 +pve-qemu-kvm (11.1.3-2+wsh1) trixie; urgency=medium
 +
-+  * pve-qemu: fix the Sun keyboard and mouse on sparc32 (ESCC fixes from
-+    LEMU) (#222)
++  * pve-qemu: qtest for the ESP bus reset fix + upstream bug write-up
++    (#223)
 +
-+ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 14 Nov 2026 21:52:00 +0000
++ -- Hans Christian Winther-Sørensen <hc@wsh.no>  Sat, 14 Nov 2026 21:58:49 +0000
 +
  pve-qemu-kvm (11.1.3-2) trixie; urgency=medium
  
