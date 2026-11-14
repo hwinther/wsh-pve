@@ -69,14 +69,19 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 1828cca..9e8ead3 100644
+index 7b0cba5..25591d1 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -64,3 +64,4 @@ pve/0051-PVE-backup-vma-writer-restrict-allowed-archive-membe.patch
- pve/0052-PVE-backup-vma-fix-checking-for-error-from-registeri.patch
- pve/0053-PVE-backup-vma-report-errors-from-writer-at-cleanup-.patch
- pve/0054-PVE-backup-vma-report-why-adding-a-config-or-device-.patch
+@@ -72,3 +72,9 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+ pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
+ pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
+ pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
 +wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
++wsh/0002-hw-char-escc-name-the-right-interrupt-when-both-chan.patch
++wsh/0003-hw-char-escc-make-the-Sun-keyboard-s-lock-keys-and-k.patch
++wsh/0004-hw-char-escc-keep-the-Sun-mouse-in-step-when-the-gue.patch
++wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch
++wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -113,6 +118,943 @@ index 0000000..b4571f3
 + }
 + 
 + static void parent_esp_reset(ESPState *s, int irq, int level)
+diff --git a/debian/patches/wsh/0002-hw-char-escc-name-the-right-interrupt-when-both-chan.patch b/debian/patches/wsh/0002-hw-char-escc-name-the-right-interrupt-when-both-chan.patch
+new file mode 100644
+index 0000000..d04cf8b
+--- /dev/null
++++ b/debian/patches/wsh/0002-hw-char-escc-name-the-right-interrupt-when-both-chan.patch
+@@ -0,0 +1,278 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/char/escc: name the right interrupt when both channels
++ have one
++
++On a Sun the keyboard and the mouse are the two channels of one chip.
++SunOS 4.1.4 reads RR2 of channel B to learn what to service, and each
++channel wrote its own interrupt there. When a keyboard byte and a mouse
++byte waited together, the channel that was serviced first left "no
++interrupt" behind. SunOS takes that for a special receive condition on
++channel B and reads a byte to throw it away. A mouse byte lost this way
++put the mouse stream out of step, and the pointer jumped. With no mouse
++byte left, SunOS took the interrupt again for ever: the guest hung until
++the next key came, so holding Shift while moving the mouse froze it.
++
++RR2 and RR3 are now worked out from what both channels have pending,
++channel A before channel B, when an interrupt changes and when the
++guest reads them. They count an interrupt only when it is enabled, as
++the interrupt line does.
++
++Each channel also set its interrupt line to what both channels had
++pending. When the other channel was serviced last, the line stayed
++raised with nothing left to service. A line now shows its own channel;
++the Sun and Quadra boards OR the two.
++
++Sending a mouse move and a key press together 300 times in a second
++used to hang SunOS at once. Now the pointer ends on the exact pixel.
++
++Origin: https://github.com/tenox7/lemu/commit/699cc89f715c89caa96dabdd5ce8bc092951c21a
++---
++ hw/char/escc.c | 191 +++++++++++++++++++++++++++++--------------------
++ 1 file changed, 112 insertions(+), 79 deletions(-)
++
++diff --git a/hw/char/escc.c b/hw/char/escc.c
++index 7aae627..12355e3 100644
++--- a/hw/char/escc.c
+++++ b/hw/char/escc.c
++@@ -254,28 +254,122 @@ static uint32_t get_queue(void *opaque)
++     return val;
++ }
++ 
++-static int escc_update_irq_chn(ESCCChannelState *s)
+++/* rx ints enabled, pending */
+++static bool escc_rx_ip(ESCCChannelState *s)
++ {
++-    if ((((s->wregs[W_INTR] & INTR_TXINT) && (s->txint == 1)) ||
++-        /* tx ints enabled, pending */
++-        ((((s->wregs[W_INTR] & INTR_RXMODEMSK) == INTR_RXINT1ST) ||
++-        ((s->wregs[W_INTR] & INTR_RXMODEMSK) == INTR_RXINTALL)) &&
++-            s->rxint == 1) ||
++-        /* rx ints enabled, pending */
++-        ((s->wregs[W_EXTINT] & EXTINT_BRKINT) &&
++-            (s->rregs[R_STATUS] & STATUS_BRK)))) {
++-        /* break int e&p */
++-        return 1;
++-    }
++-    return 0;
+++    uint8_t mode = s->wregs[W_INTR] & INTR_RXMODEMSK;
+++
+++    return s->rxint == 1 &&
+++           (mode == INTR_RXINT1ST || mode == INTR_RXINTALL);
++ }
++ 
+++/* tx ints enabled, pending */
+++static bool escc_tx_ip(ESCCChannelState *s)
+++{
+++    return s->txint == 1 && (s->wregs[W_INTR] & INTR_TXINT);
+++}
+++
+++static int escc_update_irq_chn(ESCCChannelState *s)
+++{
+++    return escc_tx_ip(s) || escc_rx_ip(s) ||
+++           /* break int e&p */
+++           ((s->wregs[W_EXTINT] & EXTINT_BRKINT) &&
+++            (s->rregs[R_STATUS] & STATUS_BRK));
+++}
+++
+++enum {
+++    ESCC_IP_NONE,
+++    ESCC_IP_TX,
+++    ESCC_IP_RX,
+++};
+++
+++/*
+++ * The interrupt that a channel wants serviced first. Receive goes before
+++ * transmit. But once the guest has reset the IUS of a receive interrupt
+++ * and left the character unread, transmit goes first.
+++ */
+++static int escc_chn_ip(ESCCChannelState *s)
+++{
+++    if (escc_rx_ip(s) && s->rxint_under_svc) {
+++        return ESCC_IP_RX;
+++    }
+++    if (escc_tx_ip(s)) {
+++        return ESCC_IP_TX;
+++    }
+++    return escc_rx_ip(s) ? ESCC_IP_RX : ESCC_IP_NONE;
+++}
+++
+++/*
+++ * RR3 of channel A and RR2 of channel B describe both channels. RR3 has
+++ * the pending interrupts. RR2 names the one to service first: channel A
+++ * goes before channel B.
+++ *
+++ * Each channel must not write its own interrupt to RR2. When a keyboard
+++ * byte and a mouse byte waited together, the channel that was serviced
+++ * first then left "no interrupt" in RR2 with the interrupt line still
+++ * raised. SunOS takes that for a special receive condition on channel B
+++ * and reads a byte to throw it away: a lost mouse byte made the pointer
+++ * jump, and with no mouse byte left SunOS hung until the next key.
+++ */
+++static void escc_update_intr_regs(ESCCChannelState *s)
+++{
+++    ESCCChannelState *a = s->chn == escc_chn_a ? s : s->otherchn;
+++    ESCCChannelState *b = a->otherchn;
+++    bool hi = (a->wregs[W_MINTR] | b->wregs[W_MINTR]) & MINTR_STATUSHI;
+++    uint8_t intr = 0, ivec;
+++
+++    if (escc_rx_ip(a)) {
+++        intr |= INTR_RXINTA;
+++    }
+++    if (escc_tx_ip(a)) {
+++        intr |= INTR_TXINTA;
+++    }
+++    if (escc_rx_ip(b)) {
+++        intr |= INTR_RXINTB;
+++    }
+++    if (escc_tx_ip(b)) {
+++        intr |= INTR_TXINTB;
+++    }
+++    a->rregs[R_INTR] = intr;
+++
+++    switch (escc_chn_ip(a)) {
+++    case ESCC_IP_RX:
+++        ivec = hi ? IVEC_HIRXINTA : IVEC_LORXINTA;
+++        break;
+++    case ESCC_IP_TX:
+++        ivec = hi ? IVEC_HITXINTA : IVEC_LOTXINTA;
+++        break;
+++    default:
+++        switch (escc_chn_ip(b)) {
+++        case ESCC_IP_RX:
+++            ivec = hi ? IVEC_HIRXINTB : IVEC_LORXINTB;
+++            break;
+++        case ESCC_IP_TX:
+++            ivec = IVEC_TXINTB;
+++            break;
+++        default:
+++            ivec = hi ? IVEC_HINOINT : IVEC_LONOINT;
+++            break;
+++        }
+++        break;
+++    }
+++    b->rregs[R_IVEC] = ivec;
+++}
+++
+++/*
+++ * Each channel has an interrupt line of its own, and the boards with one
+++ * line for the chip OR the two. So a channel's line shows only what that
+++ * channel has pending. It used to show what both had: when the other
+++ * channel was serviced last, this line stayed raised with nothing left to
+++ * service, and the guest took interrupts for ever.
+++ */
++ static void escc_update_irq(ESCCChannelState *s)
++ {
++     int irq;
++ 
+++    escc_update_intr_regs(s);
+++
++     irq = escc_update_irq_chn(s);
++-    irq |= escc_update_irq_chn(s->otherchn);
++ 
++     trace_escc_update_irq(irq);
++     qemu_set_irq(s->irq, irq);
++@@ -377,26 +471,7 @@ static void escc_reset(DeviceState *d)
++ static inline void set_rxint(ESCCChannelState *s)
++ {
++     s->rxint = 1;
++-    /*
++-     * XXX: missing daisy chaining: escc_chn_b rx should have a lower priority
++-     * than chn_a rx/tx/special_condition service
++-     */
++     s->rxint_under_svc = 1;
++-    if (s->chn == escc_chn_a) {
++-        s->rregs[R_INTR] |= INTR_RXINTA;
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->otherchn->rregs[R_IVEC] = IVEC_HIRXINTA;
++-        } else {
++-            s->otherchn->rregs[R_IVEC] = IVEC_LORXINTA;
++-        }
++-    } else {
++-        s->otherchn->rregs[R_INTR] |= INTR_RXINTB;
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->rregs[R_IVEC] = IVEC_HIRXINTB;
++-        } else {
++-            s->rregs[R_IVEC] = IVEC_LORXINTB;
++-        }
++-    }
++     escc_update_irq(s);
++ }
++ 
++@@ -405,21 +480,6 @@ static inline void set_txint(ESCCChannelState *s)
++     s->txint = 1;
++     if (!s->rxint_under_svc) {
++         s->txint_under_svc = 1;
++-        if (s->chn == escc_chn_a) {
++-            if (s->wregs[W_INTR] & INTR_TXINT) {
++-                s->rregs[R_INTR] |= INTR_TXINTA;
++-            }
++-            if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-                s->otherchn->rregs[R_IVEC] = IVEC_HITXINTA;
++-            } else {
++-                s->otherchn->rregs[R_IVEC] = IVEC_LOTXINTA;
++-            }
++-        } else {
++-            s->rregs[R_IVEC] = IVEC_TXINTB;
++-            if (s->wregs[W_INTR] & INTR_TXINT) {
++-                s->otherchn->rregs[R_INTR] |= INTR_TXINTB;
++-            }
++-        }
++         escc_update_irq(s);
++     }
++ }
++@@ -428,21 +488,6 @@ static inline void clr_rxint(ESCCChannelState *s)
++ {
++     s->rxint = 0;
++     s->rxint_under_svc = 0;
++-    if (s->chn == escc_chn_a) {
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->otherchn->rregs[R_IVEC] = IVEC_HINOINT;
++-        } else {
++-            s->otherchn->rregs[R_IVEC] = IVEC_LONOINT;
++-        }
++-        s->rregs[R_INTR] &= ~INTR_RXINTA;
++-    } else {
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->rregs[R_IVEC] = IVEC_HINOINT;
++-        } else {
++-            s->rregs[R_IVEC] = IVEC_LONOINT;
++-        }
++-        s->otherchn->rregs[R_INTR] &= ~INTR_RXINTB;
++-    }
++     if (s->txint) {
++         set_txint(s);
++     }
++@@ -453,22 +498,6 @@ static inline void clr_txint(ESCCChannelState *s)
++ {
++     s->txint = 0;
++     s->txint_under_svc = 0;
++-    if (s->chn == escc_chn_a) {
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->otherchn->rregs[R_IVEC] = IVEC_HINOINT;
++-        } else {
++-            s->otherchn->rregs[R_IVEC] = IVEC_LONOINT;
++-        }
++-        s->rregs[R_INTR] &= ~INTR_TXINTA;
++-    } else {
++-        s->otherchn->rregs[R_INTR] &= ~INTR_TXINTB;
++-        if (s->wregs[W_MINTR] & MINTR_STATUSHI) {
++-            s->rregs[R_IVEC] = IVEC_HINOINT;
++-        } else {
++-            s->rregs[R_IVEC] = IVEC_LONOINT;
++-        }
++-        s->otherchn->rregs[R_INTR] &= ~INTR_TXINTB;
++-    }
++     if (s->rxint) {
++         set_rxint(s);
++     }
++@@ -690,6 +719,10 @@ static uint64_t escc_mem_read(void *opaque, hwaddr addr,
++     s = &serial->chn[channel];
++     switch (saddr) {
++     case SERIAL_CTRL:
+++        if (s->reg == R_IVEC || s->reg == R_INTR) {
+++            /* The guest may have changed which interrupts are enabled */
+++            escc_update_intr_regs(s);
+++        }
++         trace_escc_mem_readb_ctrl(CHN_C(s), s->reg, s->rregs[s->reg]);
++         ret = s->rregs[s->reg];
++         s->reg = 0;
+diff --git a/debian/patches/wsh/0003-hw-char-escc-make-the-Sun-keyboard-s-lock-keys-and-k.patch b/debian/patches/wsh/0003-hw-char-escc-make-the-Sun-keyboard-s-lock-keys-and-k.patch
+new file mode 100644
+index 0000000..72c8648
+--- /dev/null
++++ b/debian/patches/wsh/0003-hw-char-escc-make-the-Sun-keyboard-s-lock-keys-and-k.patch
+@@ -0,0 +1,140 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/char/escc: make the Sun keyboard's lock keys and key
++ repeat work
++
++A Sun type 4 or 5 keyboard sends one code when a key goes down and one
++when it comes up, also for Caps Lock and Num Lock. The guest turns the
++locks on and off itself, and it repeats a held key itself.
++
++Since 2007 the second press and the first release of Caps Lock and Num
++Lock were dropped, so two presses on the host looked like one long
++press to the guest. In SunOS 4.1.4 every second press did nothing:
++four presses gave ABC, ABC, abc, abc. The Mac's Caps Lock turned the
++guest's on, but not off again.
++
++The host's key repeat was passed on as more key-down codes. SunOS made
++a character from each, on top of its own repeat, so a key held a
++little too long on a host with a short repeat delay typed twice.
++
++Send each press and release once, whatever the key. A key that the Sun
++keyboard does not have is no longer sent as code 0. Left and right
++Control are one key on a Sun keyboard: it comes up with the last one.
++
++Origin: https://github.com/tenox7/lemu/commit/c31ed88ba67130c06731ddbe0a73296c6164f688
++---
++ hw/char/escc.c         | 58 ++++++++++++++++++++----------------------
++ include/hw/char/escc.h |  7 ++++-
++ 2 files changed, 33 insertions(+), 32 deletions(-)
++
++diff --git a/hw/char/escc.c b/hw/char/escc.c
++index 12355e3..a044bb1 100644
++--- a/hw/char/escc.c
+++++ b/hw/char/escc.c
++@@ -381,7 +381,9 @@ static void escc_reset_chn(ESCCChannelState *s)
++     s->rx = s->tx = 0;
++     s->rxint = s->txint = 0;
++     s->rxint_under_svc = s->txint_under_svc = 0;
++-    s->e0_mode = s->led_mode = s->caps_lock_mode = s->num_lock_mode = 0;
+++    s->e0_mode = s->led_mode = 0;
+++    bitmap_zero(s->sunkbd_down, ESCC_SUNKBD_KEYS);
+++    memset(s->sunkbd_count, 0, sizeof(s->sunkbd_count));
++     s->sunmouse_dx = s->sunmouse_dy = s->sunmouse_buttons = 0;
++     clear_queue(s);
++ }
++@@ -838,40 +840,34 @@ static void sunkbd_handle_event(DeviceState *dev, QemuConsole *src,
++     trace_escc_sunkbd_event_in(qcode, QKeyCode_str(qcode),
++                                evt->key.down);
++ 
++-    if (evt->key.key == KEY_CAPSLOCK) {
++-        if (evt->key.down) {
++-            s->caps_lock_mode ^= 1;
++-            if (s->caps_lock_mode == 2) {
++-                return; /* Drop second press */
++-            }
++-        } else {
++-            s->caps_lock_mode ^= 2;
++-            if (s->caps_lock_mode == 3) {
++-                return; /* Drop first release */
++-            }
++-        }
++-    }
++-
++-    if (evt->key.key == KEY_NUMLOCK) {
++-        if (evt->key.down) {
++-            s->num_lock_mode ^= 1;
++-            if (s->num_lock_mode == 2) {
++-                return; /* Drop second press */
++-            }
++-        } else {
++-            s->num_lock_mode ^= 2;
++-            if (s->num_lock_mode == 3) {
++-                return; /* Drop first release */
++-            }
++-        }
++-    }
++-
++-    if (evt->key.key >= qemu_input_map_linux_to_sun_len) {
+++    if (evt->key.key >= qemu_input_map_linux_to_sun_len ||
+++        evt->key.key >= ESCC_SUNKBD_KEYS) {
++         return;
++     }
++ 
++     keycode = qemu_input_map_linux_to_sun[evt->key.key];
++-    if (!evt->key.down) {
+++    if (!keycode || keycode >= ARRAY_SIZE(s->sunkbd_count)) {
+++        /* A Sun keyboard has no such key */
+++        return;
+++    }
+++
+++    /*
+++     * A Sun keyboard sends one code when a key goes down and one when it
+++     * comes up, also for Caps Lock and Num Lock: the guest turns them on
+++     * and off itself, and repeats a held key itself. So the host's key
+++     * repeat is not passed on. Two host keys may be one Sun key (the Sun
+++     * keyboard has one Control key): it comes up with the last of them.
+++     */
+++    if (evt->key.down) {
+++        if (test_and_set_bit(evt->key.key, s->sunkbd_down) ||
+++            s->sunkbd_count[keycode]++) {
+++            return;
+++        }
+++    } else {
+++        if (!test_and_clear_bit(evt->key.key, s->sunkbd_down) ||
+++            --s->sunkbd_count[keycode]) {
+++            return;
+++        }
++         keycode |= 0x80;
++     }
++     trace_escc_sunkbd_event_out(keycode);
++diff --git a/include/hw/char/escc.h b/include/hw/char/escc.h
++index 9e60175..14156eb 100644
++--- a/include/hw/char/escc.h
+++++ b/include/hw/char/escc.h
++@@ -4,6 +4,7 @@
++ #include "chardev/char-fe.h"
++ #include "chardev/char-serial.h"
++ #include "hw/core/sysbus.h"
+++#include "qemu/bitmap.h"
++ #include "ui/input.h"
++ #include "qom/object.h"
++ 
++@@ -29,6 +30,7 @@ typedef struct {
++ } ESCCSERIOQueue;
++ 
++ #define ESCC_SERIAL_REGS 16
+++#define ESCC_SUNKBD_KEYS 0x300
++ typedef struct ESCCChannelState {
++     qemu_irq irq;
++     uint32_t rxint, txint, rxint_under_svc, txint_under_svc;
++@@ -37,7 +39,10 @@ typedef struct ESCCChannelState {
++     uint8_t wregs[ESCC_SERIAL_REGS], rregs[ESCC_SERIAL_REGS];
++     ESCCSERIOQueue queue;
++     CharFrontend chr;
++-    int e0_mode, led_mode, caps_lock_mode, num_lock_mode;
+++    int e0_mode, led_mode;
+++    /* host keys that are down, by Linux key code, and how many per Sun key */
+++    DECLARE_BITMAP(sunkbd_down, ESCC_SUNKBD_KEYS);
+++    uint8_t sunkbd_count[128];
++     int disabled;
++     int clock;
++     uint32_t vmstate_dummy;
+diff --git a/debian/patches/wsh/0004-hw-char-escc-keep-the-Sun-mouse-in-step-when-the-gue.patch b/debian/patches/wsh/0004-hw-char-escc-keep-the-Sun-mouse-in-step-when-the-gue.patch
+new file mode 100644
+index 0000000..1f58620
+--- /dev/null
++++ b/debian/patches/wsh/0004-hw-char-escc-keep-the-Sun-mouse-in-step-when-the-gue.patch
+@@ -0,0 +1,119 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/char/escc: keep the Sun mouse in step when the guest
++ falls behind
++
++A mouse packet has five bytes. When the queue was full, the bytes that
++did not fit were dropped one by one, so the guest got half a packet and
++read the next start byte as motion. And each host event became a
++packet, however many the guest had still to read.
++
++Queue a packet only when all of it fits. While the guest has two
++packets or more to read, motion alone waits and adds up; it is sent,
++with what did not fit in one packet, once the guest has read the
++queue. Button changes never wait.
++
++Origin: https://github.com/tenox7/lemu/commit/181f0f520875f5ec2d2574e28093468e689dbe6a
++---
++ hw/char/escc.c | 53 ++++++++++++++++++++++++++++++++++----------------
++ 1 file changed, 36 insertions(+), 17 deletions(-)
++
++diff --git a/hw/char/escc.c b/hw/char/escc.c
++index a044bb1..2918bef 100644
++--- a/hw/char/escc.c
+++++ b/hw/char/escc.c
++@@ -195,6 +195,7 @@
++ 
++ static uint8_t sunkbd_layout_dip_switch(const char *sunkbd_layout);
++ static void handle_kbd_command(ESCCChannelState *s, int val);
+++static void sunmouse_send(ESCCChannelState *s);
++ static int serial_can_receive(void *opaque);
++ static void serial_receive_byte(ESCCChannelState *s, int ch);
++ 
++@@ -250,6 +251,9 @@ static uint32_t get_queue(void *opaque)
++     trace_escc_get_queue(CHN_C(s), val);
++     if (q->count > 0) {
++         serial_receive_byte(s, 0);
+++    } else if (s->type == escc_mouse) {
+++        /* The guest has caught up: send the motion that was held back */
+++        sunmouse_send(s);
++     }
++     return val;
++ }
++@@ -1018,15 +1022,32 @@ static void sunmouse_handle_event(DeviceState *dev, QemuConsole *src,
++     }
++ }
++ 
++-static void sunmouse_sync(DeviceState *dev)
+++/* MSC protocol: a start byte with the buttons, then two pairs of motion */
+++#define SUNMOUSE_PACKET 5
+++
+++/*
+++ * Send the motion and the buttons as one packet. While the guest has two
+++ * packets or more to read, motion alone waits and adds up, so a burst of
+++ * host events can't fill the queue and leave the pointer behind the mouse.
+++ * get_queue() sends what waited, and what did not fit in one packet, once
+++ * the guest has read everything.
+++ */
+++static void sunmouse_send(ESCCChannelState *s)
++ {
++-    ESCCChannelState *s = (ESCCChannelState *)dev;
++     int ch;
++ 
++     if (s->sunmouse_dx == 0 && s->sunmouse_dy == 0 &&
++         (s->sunmouse_buttons & 0x80) == 0) {
++-            /* Nothing to do after button event filter */
++-            return;
+++        /* Nothing to do after button event filter */
+++        return;
+++    }
+++    if (s->queue.count > ESCC_SERIO_QUEUE_SIZE - SUNMOUSE_PACKET) {
+++        /* Half a packet would put the guest out of step with the stream */
+++        return;
+++    }
+++    if ((s->sunmouse_buttons & 0x80) == 0 &&
+++        s->queue.count >= 2 * SUNMOUSE_PACKET) {
+++        return;
++     }
++ 
++     /* Clear our button event flag */
++@@ -1037,29 +1058,27 @@ static void sunmouse_sync(DeviceState *dev)
++     ch ^= s->sunmouse_buttons;
++     put_queue(s, ch);
++ 
++-    ch = s->sunmouse_dx;
++-    if (ch > 127) {
++-        ch = 127;
++-    } else if (ch < -127) {
++-        ch = -127;
++-    }
+++    ch = MAX(-127, MIN(127, s->sunmouse_dx));
++     put_queue(s, ch & 0xff);
++     s->sunmouse_dx -= ch;
++ 
++-    ch = s->sunmouse_dy;
++-    if (ch > 127) {
++-        ch = 127;
++-    } else if (ch < -127) {
++-        ch = -127;
++-    }
+++    ch = MAX(-127, MIN(127, s->sunmouse_dy));
++     put_queue(s, ch & 0xff);
++     s->sunmouse_dy -= ch;
++ 
++-    /* MSC protocol specifies two extra motion bytes */
+++    /*
+++     * The second pair stays empty: SunOS adds both pairs of a packet in
+++     * one signed byte and stops at 127, so it would lose what is more.
+++     */
++     put_queue(s, 0);
++     put_queue(s, 0);
++ }
++ 
+++static void sunmouse_sync(DeviceState *dev)
+++{
+++    sunmouse_send((ESCCChannelState *)dev);
+++}
+++
++ static const QemuInputHandler sunmouse_handler = {
++     .name  = "QEMU Sun Mouse",
++     .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_REL,
+diff --git a/debian/patches/wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch b/debian/patches/wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch
+new file mode 100644
+index 0000000..1b3b91f
+--- /dev/null
++++ b/debian/patches/wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch
+@@ -0,0 +1,286 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] tests/qtest: test the Sun keyboard and mouse on one escc
++
++sun4m-escc-test checks what SunOS 4.1.4 needs from the chip that has
++the keyboard on channel A and the mouse on channel B: with a byte
++waiting on both, RR2 names the keyboard first and the mouse after it,
++RR3 shows both, and the interrupt stays up until both are read and
++goes down then. It also checks that Caps Lock and a key that the host
++repeats give one code down and one up, that left and right Control
++are one key, and that the mouse sends all of its motion in whole
++packets when the guest reads late.
++
++Origin: https://github.com/tenox7/lemu/commit/c7a18569f2b54fd146f325b7499b89216c7865d4
++---
++ tests/qtest/meson.build       |   3 +-
++ tests/qtest/sun4m-escc-test.c | 247 ++++++++++++++++++++++++++++++++++
++ 2 files changed, 249 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-escc-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 78b3010..e2a41ed 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -199,7 +199,8 @@ qtests_ppc64 = \
++ qtests_sh4 = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : [])
++ qtests_sh4eb = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : [])
++ 
++-qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test'] + \
+++qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
+++                'sun4m-escc-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-escc-test.c b/tests/qtest/sun4m-escc-test.c
++new file mode 100644
++index 0000000..f21ed1f
++--- /dev/null
+++++ b/tests/qtest/sun4m-escc-test.c
++@@ -0,0 +1,247 @@
+++/*
+++ * QTest: the Sun keyboard and mouse on the two channels of one ESCC
+++ *
+++ * On a sun4m machine the keyboard is channel A and the mouse channel B of
+++ * one chip, with one interrupt for both. SunOS 4 reads RR2 of channel B to
+++ * learn which one to service. When a keyboard byte and a mouse byte wait
+++ * together, RR2 must name the keyboard first and the mouse after it, RR3
+++ * must show both, and the interrupt must stay up until both are read and
+++ * go down then. Each key must give one code when it goes down and one when
+++ * it comes up, also Caps Lock and a key that the host repeats, and the
+++ * mouse must send whole packets of five bytes.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++/* SPARCstation 5: the chip, with a register every 2 bytes */
+++#define ESCC            0x71000000ULL
+++#define MS_CTRL         (ESCC + 0)
+++#define MS_DATA         (ESCC + 2)
+++#define KBD_CTRL        (ESCC + 4)
+++#define KBD_DATA        (ESCC + 6)
+++
+++/* The pending interrupts of the machine, and the one of this chip */
+++#define INTCTL_PENDING  0x71e10000ULL
+++#define KBD_MS_IRQ      (1 << 14)
+++
+++#define WR1_RXINTALL    0x10
+++
+++#define RR3_RXINTA      0x20
+++#define RR3_RXINTB      0x04
+++
+++/* RR2 of channel B with the status in bits 1 to 3 */
+++#define RR2_RXINTA      0x0c
+++#define RR2_RXINTB      0x04
+++#define RR2_NOINT       0x06
+++
+++#define SUN_KEY_SHIFT   0x63
+++#define SUN_KEY_CAPS    0x77
+++#define SUN_KEY_X       0x65
+++#define SUN_KEY_CTRL    0x4c
+++#define SUN_KEY_UP      0x80
+++
+++#define MS_START        0x87    /* start of a packet, no button down */
+++
+++static uint8_t rreg(QTestState *qts, uint64_t ctrl, uint8_t reg)
+++{
+++    qtest_writeb(qts, ctrl, reg);
+++    return qtest_readb(qts, ctrl);
+++}
+++
+++static void wreg(QTestState *qts, uint64_t ctrl, uint8_t reg, uint8_t val)
+++{
+++    qtest_writeb(qts, ctrl, reg);
+++    qtest_writeb(qts, ctrl, val);
+++}
+++
+++static bool irq(QTestState *qts)
+++{
+++    return qtest_readl(qts, INTCTL_PENDING) & KBD_MS_IRQ;
+++}
+++
+++static QTestState *start(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5 -display none");
+++
+++    wreg(qts, KBD_CTRL, 1, WR1_RXINTALL);
+++    wreg(qts, MS_CTRL, 1, WR1_RXINTALL);
+++    return qts;
+++}
+++
+++static void key(QTestState *qts, const char *qcode, bool down)
+++{
+++    qtest_qmp_assert_success(qts,
+++        "{ 'execute': 'input-send-event', 'arguments': { 'events': ["
+++        "  { 'type': 'key', 'data': { 'down': %i,"
+++        "    'key': { 'type': 'qcode', 'data': %s } } } ] } }", down, qcode);
+++}
+++
+++static void move(QTestState *qts, int dx)
+++{
+++    qtest_qmp_assert_success(qts,
+++        "{ 'execute': 'input-send-event', 'arguments': { 'events': ["
+++        "  { 'type': 'rel', 'data': { 'axis': 'x', 'value': %d } } ] } }",
+++        dx);
+++}
+++
+++/* Read all that the keyboard has sent, up to len codes */
+++static int kbd_read(QTestState *qts, uint8_t *buf, int len)
+++{
+++    int n = 0;
+++
+++    while (n < len && (rreg(qts, KBD_CTRL, 0) & 1)) {
+++        buf[n++] = qtest_readb(qts, KBD_DATA);
+++    }
+++    return n;
+++}
+++
+++static void test_kbd_and_mouse(void)
+++{
+++    QTestState *qts = start();
+++    int i;
+++
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_NOINT);
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, 0);
+++
+++    /* A key goes down, then the mouse moves, before the guest reads */
+++    key(qts, "shift", true);
+++    move(qts, 2);
+++
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, RR3_RXINTA | RR3_RXINTB);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTA);
+++
+++    /* The keyboard is read: now the mouse is the one to service */
+++    g_assert_cmphex(qtest_readb(qts, KBD_DATA), ==, SUN_KEY_SHIFT);
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, RR3_RXINTB);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTB);
+++
+++    g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, MS_START);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTB);
+++    g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, 2);
+++
+++    /* The key comes up in the middle of the mouse packet: it goes first */
+++    key(qts, "shift", false);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTA);
+++    g_assert_cmphex(qtest_readb(qts, KBD_DATA), ==,
+++                    SUN_KEY_SHIFT | SUN_KEY_UP);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTB);
+++
+++    for (i = 0; i < 3; i++) {
+++        g_assert_true(irq(qts));
+++        g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, 0);
+++    }
+++
+++    /* All read: nothing pending, and the interrupt is down */
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, 0);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_NOINT);
+++
+++    /* The mouse first, the keyboard after it */
+++    move(qts, -3);
+++    key(qts, "ctrl", true);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTA);
+++    for (i = 0; i < 5; i++) {
+++        qtest_readb(qts, MS_DATA);
+++    }
+++    /* Only the keyboard is left: its interrupt must not be lost */
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, RR3_RXINTA);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_RXINTA);
+++    g_assert_cmphex(qtest_readb(qts, KBD_DATA), ==, SUN_KEY_CTRL);
+++    g_assert_false(irq(qts));
+++
+++    qtest_quit(qts);
+++}
+++
+++static void test_keys(void)
+++{
+++    QTestState *qts = start();
+++    uint8_t buf[16];
+++    int n;
+++
+++    /* Caps Lock twice: each press and each release is sent */
+++    key(qts, "caps_lock", true);
+++    key(qts, "caps_lock", false);
+++    key(qts, "caps_lock", true);
+++    key(qts, "caps_lock", false);
+++    n = kbd_read(qts, buf, sizeof(buf));
+++    g_assert_cmpint(n, ==, 4);
+++    g_assert_cmphex(buf[0], ==, SUN_KEY_CAPS);
+++    g_assert_cmphex(buf[1], ==, SUN_KEY_CAPS | SUN_KEY_UP);
+++    g_assert_cmphex(buf[2], ==, SUN_KEY_CAPS);
+++    g_assert_cmphex(buf[3], ==, SUN_KEY_CAPS | SUN_KEY_UP);
+++
+++    /* The host repeats a held key: the Sun keyboard does not */
+++    key(qts, "x", true);
+++    key(qts, "x", true);
+++    key(qts, "x", true);
+++    key(qts, "x", false);
+++    n = kbd_read(qts, buf, sizeof(buf));
+++    g_assert_cmpint(n, ==, 2);
+++    g_assert_cmphex(buf[0], ==, SUN_KEY_X);
+++    g_assert_cmphex(buf[1], ==, SUN_KEY_X | SUN_KEY_UP);
+++
+++    /* Left and right Control are one key: up with the last of them */
+++    key(qts, "ctrl", true);
+++    key(qts, "ctrl_r", true);
+++    key(qts, "ctrl", false);
+++    key(qts, "ctrl_r", false);
+++    n = kbd_read(qts, buf, sizeof(buf));
+++    g_assert_cmpint(n, ==, 2);
+++    g_assert_cmphex(buf[0], ==, SUN_KEY_CTRL);
+++    g_assert_cmphex(buf[1], ==, SUN_KEY_CTRL | SUN_KEY_UP);
+++
+++    /* A key that the Sun keyboard does not have sends nothing */
+++    key(qts, "volumeup", true);
+++    key(qts, "volumeup", false);
+++    g_assert_cmpint(kbd_read(qts, buf, sizeof(buf)), ==, 0);
+++
+++    qtest_quit(qts);
+++}
+++
+++static void test_mouse_packets(void)
+++{
+++    QTestState *qts = start();
+++    int i, n, sum = 0;
+++
+++    /*
+++     * The guest reads nothing while the mouse moves 100 times, and once
+++     * by more than fits in one packet. All of the motion must arrive, in
+++     * whole packets.
+++     */
+++    for (i = 0; i < 100; i++) {
+++        move(qts, 1);
+++    }
+++    move(qts, 300);
+++
+++    for (n = 0; n < 100 && (rreg(qts, MS_CTRL, 0) & 1); n++) {
+++        g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, MS_START);
+++        sum += (int8_t)qtest_readb(qts, MS_DATA);
+++        g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, 0);
+++        g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, 0);
+++        g_assert_cmphex(qtest_readb(qts, MS_DATA), ==, 0);
+++    }
+++    g_assert_cmpint(sum, ==, 400);
+++    /* 2 packets waited, then the rest came 127 at a time */
+++    g_assert_cmpint(n, ==, 6);
+++    g_assert_false(irq(qts));
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("/sun4m/escc/kbd-and-mouse", test_kbd_and_mouse);
+++    qtest_add_func("/sun4m/escc/keys", test_keys);
+++    qtest_add_func("/sun4m/escc/mouse-packets", test_mouse_packets);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch b/debian/patches/wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch
+new file mode 100644
+index 0000000..2942f46
+--- /dev/null
++++ b/debian/patches/wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch
+@@ -0,0 +1,84 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/char/escc: lower the interrupt when the guest resets a
++ channel
++
++A channel reset drops the characters and interrupts that were
++pending, but the interrupt line kept its level until the channel had
++its next interrupt. A guest that reset a channel with a character
++waiting, as when a key was typed while SunOS attached its keyboard,
++then took an interrupt with nothing to service.
++
++Origin: https://github.com/tenox7/lemu/commit/c2c2781eb91ab837e4b8a9c3ae972c3fdd007f34
++---
++ hw/char/escc.c                |  3 +++
++ tests/qtest/sun4m-escc-test.c | 22 +++++++++++++++++++++-
++ 2 files changed, 24 insertions(+), 1 deletion(-)
++
++diff --git a/hw/char/escc.c b/hw/char/escc.c
++index 2918bef..e2caab6 100644
++--- a/hw/char/escc.c
+++++ b/hw/char/escc.c
++@@ -421,6 +421,9 @@ static void escc_soft_reset_chn(ESCCChannelState *s)
++     s->rregs[R_SPEC] |= SPEC_BITS8;
++     s->rregs[R_INTR] = 0;
++     s->rregs[R_MISC] &= MISC_2CLKMISS;
+++
+++    /* What was pending is gone with the reset */
+++    escc_update_irq(s);
++ }
++ 
++ static void escc_hard_reset_chn(ESCCChannelState *s)
++diff --git a/tests/qtest/sun4m-escc-test.c b/tests/qtest/sun4m-escc-test.c
++index f21ed1f..ac76f87 100644
++--- a/tests/qtest/sun4m-escc-test.c
+++++ b/tests/qtest/sun4m-escc-test.c
++@@ -8,7 +8,8 @@
++  * must show both, and the interrupt must stay up until both are read and
++  * go down then. Each key must give one code when it goes down and one when
++  * it comes up, also Caps Lock and a key that the host repeats, and the
++- * mouse must send whole packets of five bytes.
+++ * mouse must send whole packets of five bytes. A channel reset must take
+++ * the interrupt down.
++  *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++@@ -28,6 +29,7 @@
++ #define KBD_MS_IRQ      (1 << 14)
++ 
++ #define WR1_RXINTALL    0x10
+++#define WR9_RESET_A     0x80
++ 
++ #define RR3_RXINTA      0x20
++ #define RR3_RXINTB      0x04
++@@ -235,6 +237,23 @@ static void test_mouse_packets(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_channel_reset(void)
+++{
+++    QTestState *qts = start();
+++
+++    key(qts, "x", true);
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, RR3_RXINTA);
+++
+++    /* The guest resets channel A: the key code and its interrupt are gone */
+++    wreg(qts, KBD_CTRL, 9, WR9_RESET_A);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, KBD_CTRL, 3), ==, 0);
+++    g_assert_cmphex(rreg(qts, MS_CTRL, 2), ==, RR2_NOINT);
+++
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++@@ -242,6 +261,7 @@ int main(int argc, char **argv)
++     qtest_add_func("/sun4m/escc/kbd-and-mouse", test_kbd_and_mouse);
++     qtest_add_func("/sun4m/escc/keys", test_keys);
++     qtest_add_func("/sun4m/escc/mouse-packets", test_mouse_packets);
+++    qtest_add_func("/sun4m/escc/channel-reset", test_channel_reset);
++ 
++     return g_test_run();
++ }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
