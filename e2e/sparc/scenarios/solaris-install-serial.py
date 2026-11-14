@@ -51,7 +51,11 @@ def software(m, v):
 
 
 def disks(m, v):
-    m.send("\r")  # the first entry, c0t3d0; a CD that answers as a disk is listed too (c0t6d0)
+    # The installer selects the boot disk by itself when the PROM names it (OpenBIOS with a working
+    # `disk` alias, "c0t3d0 ... boot disk"); otherwise mark the first entry. A CD that answers as a
+    # disk is listed too (c0t6d0).
+    if not re.search(r"\[X\] c0t3d0", m.screen_text()):
+        m.send("\r")
     m.expect(r"\[X\] c0t3d0", 60, screen=True)
 
 

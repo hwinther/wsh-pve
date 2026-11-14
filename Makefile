@@ -175,8 +175,17 @@ restore-sparc:
 	$(ECHO) "INFO: Restoring sparc submodule"; \
 	git submodule update --init submodules/sparc
 
+# openbios-sparc32 with our patches (openbios/), installed over QEMU's image by debian/rules
+.PHONY: openbios-sparc32
+openbios-sparc32:
+	$(Q)$(ECHO) "INFO: Building openbios-sparc32"; \
+	mkdir -p build/openbios; \
+	rm -f build/openbios/*; \
+	$(DOCKER) build --output type=local,dest=build/openbios -f openbios/Dockerfile openbios \
+		|| echo "WARNING: openbios-sparc32 failed to build, pve-qemu keeps QEMU's image"
+
 .PHONY: pve-qemu-bundle
-pve-qemu-bundle: restore-sparc pve-qemu-3dfx pve-qemu
+pve-qemu-bundle: restore-sparc openbios-sparc32 pve-qemu-3dfx pve-qemu
 	$(Q)$(ECHO) "INFO: Building qemu-bundle deb package"; \
 	echo "TODO: figure out the order"
 
@@ -401,6 +410,7 @@ help:
 	@echo "  prepare-qemu-3dfx:       Initialize 3dfx submodule"
 	@echo "  restore-pve-qemu:        Restore pve-qemu to current head"
 	@echo "  restore-sparc:           Restore SPARC submodule"
+	@echo "  openbios-sparc32:        Build openbios-sparc32 with the patches in openbios/"
 	@echo "  apply-patches:           Apply patches to submodules"
 	@echo "  unapply-patches:         Remove patches from submodules"
 	@echo "  update-patches:          Update patch files from submodule changes"

@@ -1,0 +1,50 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] esp: treat a selection timeout as no device at that target
+
+Since 56fa1b2a72 ("esp: use ESP rather than DMA interrupt to detect end
+of transfer") and c3a19c1e54 ("esp: correctly terminate successful SCSI
+commands"), do_command() only returns non-zero when the status register
+lacks ESP_STAT_TCNT. A selection timeout on an empty target raises
+ESP_INTR_DC with a status of 0, so do_command() returned 0 (success) and
+inquiry() marked every empty target present, with an "UNKNOWN" media type
+read from the IDENTIFY byte left in the buffer.
+
+ob_esp_init() then numbered the empty targets 0-2 before the disk on
+target 3: the disk got only the aliases disk3/hd3, there was no disk alias
+any more, and the default boot-device "disk:a disk" (SPARCstation 5, disk
+on SCSI target 3) failed with "No valid state has been set by load or
+init-program".
+
+Return an error when the selection ends in a disconnect.
+---
+diff --git a/drivers/esp.c b/drivers/esp.c
+index 92f28cc..bd1a497 100644
+--- a/drivers/esp.c
++++ b/drivers/esp.c
+@@ -86,7 +86,7 @@ static void dump_drive(sd_private_t *drive)
+ static int
+ do_command(esp_private_t *esp, sd_private_t *sd, int cmdlen, int replylen)
+ {
+-    int status;
++    int status, intr;
+ 
+     // Set SCSI target
+     esp->ll->regs[ESP_BUSID] = sd->id & 7;
+@@ -104,10 +104,16 @@ do_command(esp_private_t *esp, sd_private_t *sd, int cmdlen, int replylen)
+     // Set ATN, issue command
+     esp->ll->regs[ESP_CMD] = ESP_CMD_SELA | ESP_CMD_DMA;
+     // Wait for ESP to complete
+-    while (!(esp->ll->regs[ESP_INTRPT] & (ESP_INTR_BSERV | ESP_INTR_FDONE | ESP_INTR_DC)));
++    while (!((intr = esp->ll->regs[ESP_INTRPT]) & (ESP_INTR_BSERV | ESP_INTR_FDONE | ESP_INTR_DC)));
+     // Check status
+     status = esp->ll->regs[ESP_STATUS];
+ 
++    /* Selection timed out: there is no device at this target */
++    if (intr & ESP_INTR_DC) {
++        DPRINTF("do_command: id %d, selection timeout\n", sd->id);
++        return -1;
++    }
++
+     DPRINTF("do_command: id %d, cmd[0] 0x%x, status 0x%x\n", sd->id, esp->buffer[1], status);
+ 
+     /* Target didn't want all command data? */

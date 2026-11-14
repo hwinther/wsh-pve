@@ -6,9 +6,9 @@ shut down. Answers the first-boot questions (root password: none) when they come
 
 The scenario boots whatever DISK holds and changes it (first-boot setup, logs): give it a copy.
 
-Boot device: OpenBIOS's `disk` alias does not find the disk on SCSI target 3 ("No valid state has been
-set by load or init-program"), so prom_boot() types the full device path at the `0 >` prompt. The Sun
-PROMs boot target 3 with `boot disk`.
+Boot device: stock OpenBIOS since QEMU 9.2 has no `disk` alias ("No valid state has been set by load
+or init-program"), so prom_boot() types the full device path at the `0 >` prompt; the packaged
+OpenBIOS boots the disk by itself. The Sun PROMs boot target 3 with `boot disk`.
 """
 from _sparc32 import DEFAULTS as BASE, power_off, prom_boot, qemu_args as sparc32_args
 

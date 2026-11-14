@@ -57,6 +57,20 @@ The package used to carry an extra `qemu-system-sparc-7.2` build (`pve-qemu-7.2-
 the current QEMU runs the sparc guests, so it was removed; it is in the git history. For
 comparisons, `e2e/sparc/qemu-7.2.Dockerfile` builds upstream QEMU 7.2.0 into the sparc lab.
 
+### OpenBIOS (`openbios/`)
+
+QEMU ships `openbios-sparc32` prebuilt. `openbios/Dockerfile` builds it from the same OpenBIOS
+commit (`e5ac46dd24` for QEMU 11.1.3) with the patches in `openbios/patches/`, the
+`openbios-sparc32` make target (part of `pve-qemu-bundle`) puts it in `build/openbios/`, and
+`debian/rules` installs it over QEMU's image. Like the other extras, the package falls back to
+QEMU's image when the build fails.
+
+| Patch | Fixes | Upstream |
+| --- | --- | --- |
+| `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
+
+When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patch.
+
 ## qemu-server
 
 `submodules/qemu-server.patch`, everything gated on `arch` matching `sparc`:
@@ -101,9 +115,8 @@ comparisons, `e2e/sparc/qemu-7.2.Dockerfile` builds upstream QEMU 7.2.0 into the
   and the UI don't limit it, and the guide says ~512 MB.
 - **lance MAC:** fixed at `08:00:20:b5:09:67` instead of coming from the VM's `net0`.
 - **Architecture changes:** changing the architecture of an existing VM should be refused.
-- **OpenBIOS boot aliases:** `disk` doesn't reach SCSI target 3 and `cdrom` doesn't find a CD
-  that answers as a disk; boot those by device path. The `disk` alias is a regression in the
-  OpenBIOS that QEMU 11.1 ships: QEMU 7.2's OpenBIOS (v1.1, March 2022) boots target 3 by itself.
+- **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
+  path (`sd@6,0:d`).
 
 ## Candidates from LEMU, not carried
 

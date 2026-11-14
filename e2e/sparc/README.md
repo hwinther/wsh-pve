@@ -79,10 +79,13 @@ ctl hmp "info registers"         # any monitor command
   (`REFRESH`). Same on 7.2.0 and 11.1.
 - **Terminal keys in the Solaris 2.6 text installer:** Esc-n for Fn; the arrow keys only beep, Ctrl-N
   and Ctrl-P move; Return marks `[X]`.
-- **The OpenBIOS in QEMU 11.1 doesn't reach SCSI target 3 with its `disk` alias** ("No valid state
-  has been set by load or init-program"); the OpenBIOS in 7.2.0 (v1.1, March 2022) boots it by
-  itself. `prom_boot()` handles both. With 11.1, boot the installed disk with
-  `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@3,0:a`.
+- **Stock OpenBIOS since QEMU 9.2 has no `disk` alias**: it probes every empty SCSI target as an
+  `UNKNOWN` device, so the disk on target 3 is only `disk3` and the default boot stops with "No
+  valid state has been set by load or init-program". The package carries a fix
+  (`openbios/patches/`); the OpenBIOS in 7.2.0 didn't have the bug. `prom_boot()` handles both:
+  it boots by device path at the `0 >` prompt, or lets OpenBIOS boot by itself.
+- **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
+  (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
   panics with `vfs_mountroot: cannot mount root`. qemu-server always makes a sparc CD-ROM a
   `scsi-cd`. A CD that answers as a disk is also listed as an install target (`c0t6d0`).
