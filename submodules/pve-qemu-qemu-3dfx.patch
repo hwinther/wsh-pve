@@ -1,8 +1,8 @@
 diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
-index 92af42503b..ed650d4487 100644
+index 5433a223e3..217e2c9ebe 100644
 --- a/accel/kvm/kvm-all.c
 +++ b/accel/kvm/kvm-all.c
-@@ -1861,6 +1861,43 @@ static int kvm_dirty_ring_init(KVMState *s)
+@@ -1870,6 +1870,43 @@ static int kvm_dirty_ring_init(KVMState *s)
      return 0;
  }
  
@@ -47,7 +47,7 @@ index 92af42503b..ed650d4487 100644
                             MemoryRegionSection *section)
  {
 diff --git a/accel/whpx/whpx-common.c b/accel/whpx/whpx-common.c
-index b813a5d9d2..f2b0e36efd 100644
+index 247e12db81..2451defddc 100644
 --- a/accel/whpx/whpx-common.c
 +++ b/accel/whpx/whpx-common.c
 @@ -7,6 +7,7 @@
@@ -100,10 +100,10 @@ index b813a5d9d2..f2b0e36efd 100644
                             MemoryRegionSection *section)
  {
 diff --git a/hw/i386/pc.c b/hw/i386/pc.c
-index 4b53b5be4a..98bbeab6f5 100644
+index 862b4a45b4..b022b518a6 100644
 --- a/hw/i386/pc.c
 +++ b/hw/i386/pc.c
-@@ -1130,6 +1130,10 @@ void pc_basic_device_init(struct PCMachineState *pcms,
+@@ -1134,6 +1134,10 @@ void pc_basic_device_init(struct PCMachineState *pcms,
              ? ON_OFF_AUTO_OFF : ON_OFF_AUTO_ON;
      }
  
@@ -114,7 +114,7 @@ index 4b53b5be4a..98bbeab6f5 100644
      /* Super I/O */
      pc_superio_init(isa_bus, create_fdctrl, pcms->i8042_enabled,
                      pcms->vmport != ON_OFF_AUTO_ON, &error_fatal);
-@@ -1154,6 +1158,23 @@ void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
+@@ -1158,6 +1162,23 @@ void pc_nic_init(PCMachineClass *pcmc, ISABus *isa_bus, PCIBus *pci_bus)
      }
  }
  
@@ -139,10 +139,10 @@ index 4b53b5be4a..98bbeab6f5 100644
  {
      qemu_irq *i8259;
 diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
-index 22325324d0..45a539dac6 100644
+index d4b6d3ed57..c804fbbc8c 100644
 --- a/include/hw/i386/pc.h
 +++ b/include/hw/i386/pc.h
-@@ -197,6 +197,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
+@@ -198,6 +198,25 @@ void pc_i8259_create(ISABus *isa_bus, qemu_irq *i8259_irqs);
  
  #define TYPE_PORT92 "port92"
  
@@ -169,10 +169,10 @@ index 22325324d0..45a539dac6 100644
  void pc_system_flash_create(PCMachineState *pcms);
  void pc_system_flash_cleanup_unused(PCMachineState *pcms);
 diff --git a/include/system/kvm.h b/include/system/kvm.h
-index 5fa33eddda..82bb26b0a8 100644
+index 714b8c7b01..a6de29bd94 100644
 --- a/include/system/kvm.h
 +++ b/include/system/kvm.h
-@@ -460,6 +460,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
+@@ -459,6 +459,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
  bool kvm_arch_supports_vmfd_change(void);
  int kvm_arch_on_vmfd_change(MachineState *ms, KVMState *s);
  
@@ -194,10 +194,10 @@ index 4217a27e91..b9c41b84bd 100644
  #define whpx_enabled() 0
  #define whpx_irqchip_in_kernel() (0)
 diff --git a/include/ui/console.h b/include/ui/console.h
-index 08082389f7..69f327bfb0 100644
+index 3634956949..0c6d038f90 100644
 --- a/include/ui/console.h
 +++ b/include/ui/console.h
-@@ -153,6 +153,8 @@ typedef struct QemuUIInfo {
+@@ -115,6 +115,8 @@ typedef struct QemuUIInfo {
      uint32_t  width;
      uint32_t  height;
      uint32_t  refresh_rate;
@@ -206,15 +206,15 @@ index 08082389f7..69f327bfb0 100644
  } QemuUIInfo;
  
  /* cursor data format is 32bit RGBA */
-@@ -381,6 +383,7 @@ void graphic_console_set_hwops(QemuConsole *con,
-                                void *opaque);
- void graphic_console_close(QemuConsole *con);
+@@ -352,6 +354,7 @@ void qemu_graphic_console_set_hwops(QemuConsole *con,
+                                     void *opaque);
+ void qemu_graphic_console_close(QemuConsole *con);
  
 +void graphic_hw_passthrough(QemuConsole *con, bool passthrough);
- void graphic_hw_update(QemuConsole *con);
- void graphic_hw_update_done(QemuConsole *con);
- void graphic_hw_invalidate(QemuConsole *con);
-@@ -478,4 +481,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
+ void qemu_console_hw_update(QemuConsole *con);
+ void qemu_console_hw_update_done(QemuConsole *con);
+ void qemu_console_hw_invalidate(QemuConsole *con);
+@@ -463,4 +466,19 @@ bool qemu_console_fill_device_address(QemuConsole *con,
                                        size_t size,
                                        Error **errp);
  
@@ -235,10 +235,10 @@ index 08082389f7..69f327bfb0 100644
 +
  #endif
 diff --git a/meson.build b/meson.build
-index ab3e97eb9f..9bda013338 100644
+index 398a73c3ce..cdc963f0cf 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -1627,6 +1627,7 @@ else
+@@ -1641,6 +1641,7 @@ else
      error('sdl-image required, but SDL was @0@'.format(
            get_option('sdl').disabled() ? 'disabled' : 'not found'))
    endif
@@ -246,7 +246,7 @@ index ab3e97eb9f..9bda013338 100644
    sdl_image = not_found
  endif
  
-@@ -3806,6 +3807,8 @@ if have_system or have_user
+@@ -3810,6 +3811,8 @@ if have_system or have_user
    subdir('libdecnumber')
    subdir('gdbstub')
    subdir('target')
@@ -255,7 +255,7 @@ index ab3e97eb9f..9bda013338 100644
  endif
  
  if have_block
-@@ -4270,6 +4273,11 @@ foreach target : target_dirs
+@@ -4274,6 +4277,11 @@ foreach target : target_dirs
    target_inc = [include_directories('target' / config_target['TARGET_BASE_ARCH'])]
    if host_os == 'linux'
      target_inc += include_directories('linux-headers', is_system: true)
@@ -268,10 +268,10 @@ index ab3e97eb9f..9bda013338 100644
    if target.endswith('-softmmu')
      target_type='system'
 diff --git a/system/vl.c b/system/vl.c
-index 246623b319..a7316331a5 100644
+index 5a9ac766ce..08118f7375 100644
 --- a/system/vl.c
 +++ b/system/vl.c
-@@ -872,6 +872,13 @@ static MachineClass *find_default_machine(GSList *machines)
+@@ -876,6 +876,13 @@ static MachineClass *find_default_machine(GSList *machines)
      return default_machineclass;
  }
  
@@ -285,7 +285,7 @@ index 246623b319..a7316331a5 100644
  static void version(void)
  {
      printf("QEMU emulator version " QEMU_FULL_VERSION "\n"
-@@ -3100,6 +3107,7 @@ void qemu_init(int argc, char **argv)
+@@ -3127,6 +3134,7 @@ void qemu_init(int argc, char **argv)
                  break;
              case QEMU_OPTION_version:
                  version();
@@ -294,10 +294,10 @@ index 246623b319..a7316331a5 100644
                  break;
              case QEMU_OPTION_m:
 diff --git a/ui/console.c b/ui/console.c
-index f445db1138..2dbc6786ef 100644
+index a8a2a247d8..c9993de913 100644
 --- a/ui/console.c
 +++ b/ui/console.c
-@@ -126,6 +126,11 @@ static void gui_setup_refresh(DisplayState *ds)
+@@ -143,6 +143,11 @@ static void gui_setup_refresh(DisplayState *ds)
      }
  }
  
@@ -306,20 +306,21 @@ index f445db1138..2dbc6786ef 100644
 +    con->ui_info.passthrough = passthrough;
 +}
 +
- void graphic_hw_update_done(QemuConsole *con)
+ void qemu_console_hw_update_done(QemuConsole *con)
  {
      if (con) {
-@@ -140,6 +145,8 @@ void graphic_hw_update(QemuConsole *con)
+@@ -155,7 +160,8 @@ void qemu_console_hw_update(QemuConsole *con)
+     if (!con) {
          return;
      }
-     if (con->hw_ops->gfx_update) {
-+        if (con->ui_info.passthrough) { }
-+        else
-         con->hw_ops->gfx_update(con->hw);
-         async = con->hw_ops->gfx_update_async;
+-    if (!con->hw_ops->gfx_update || con->hw_ops->gfx_update(con->hw)) {
++    if (con->ui_info.passthrough || !con->hw_ops->gfx_update ||
++        con->hw_ops->gfx_update(con->hw)) {
+         qemu_console_hw_update_done(con);
      }
+ }
 diff --git a/ui/sdl2.c b/ui/sdl2.c
-index aaaede56e0..b17f380c46 100644
+index 1c97d23a47..ace92203ed 100644
 --- a/ui/sdl2.c
 +++ b/ui/sdl2.c
 @@ -25,6 +25,7 @@
@@ -330,7 +331,7 @@ index aaaede56e0..b17f380c46 100644
  #include "qemu/cutils.h"
  #include "ui/console.h"
  #include "ui/input.h"
-@@ -588,6 +589,29 @@ static void handle_mousewheel(SDL_Event *ev)
+@@ -590,6 +591,29 @@ static void handle_mousewheel(SDL_Event *ev)
      qemu_input_event_sync();
  }
  
@@ -360,7 +361,7 @@ index aaaede56e0..b17f380c46 100644
  static void handle_windowevent(SDL_Event *ev)
  {
      struct sdl2_console *scon = get_scon_from_window(ev->window.windowID);
-@@ -612,6 +636,7 @@ static void handle_windowevent(SDL_Event *ev)
+@@ -614,6 +638,7 @@ static void handle_windowevent(SDL_Event *ev)
          sdl2_redraw(scon);
          break;
      case SDL_WINDOWEVENT_FOCUS_GAINED:
@@ -368,7 +369,7 @@ index aaaede56e0..b17f380c46 100644
          /* fall through */
      case SDL_WINDOWEVENT_ENTER:
          if (!gui_grab && (qemu_input_is_absolute(scon->dcl.con) || absolute_enabled)) {
-@@ -627,7 +652,8 @@ static void handle_windowevent(SDL_Event *ev)
+@@ -629,7 +654,8 @@ static void handle_windowevent(SDL_Event *ev)
          scon->ignore_hotkeys = get_mod_state();
          break;
      case SDL_WINDOWEVENT_FOCUS_LOST:
@@ -378,7 +379,7 @@ index aaaede56e0..b17f380c46 100644
              sdl_grab_end(scon);
          }
          break;
-@@ -794,6 +820,367 @@ static void sdl_cleanup(void)
+@@ -812,6 +838,367 @@ static void sdl_cleanup(void)
      SDL_QuitSubSystem(SDL_INIT_VIDEO);
  }
  
@@ -718,7 +719,7 @@ index aaaede56e0..b17f380c46 100644
 +        }
 +        else
 +            memcpy(c->data, data, (width * height * sizeof(uint32_t)));
-+        dpy_cursor_define(con, c);
++        qemu_console_set_cursor(con, c);
 +        cursor_unref(c);
 +    }
 +}
@@ -733,7 +734,7 @@ index aaaede56e0..b17f380c46 100644
 +        int64_t curr_time = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
 +        if (!on || (curr_time >= (last_update + GUI_REFRESH_INTERVAL_DEFAULT))) {
 +            last_update = curr_time;
-+            dpy_mouse_set(con, x, y, on);
++            qemu_console_set_mouse(con, x, y, on);
 +        }
 +    }
 +}
@@ -746,7 +747,7 @@ index aaaede56e0..b17f380c46 100644
  static const DisplayChangeListenerOps dcl_2d_ops = {
      .dpy_name             = "sdl2-2d",
      .dpy_gfx_update       = sdl2_2d_update,
-@@ -889,6 +1276,10 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+@@ -908,6 +1295,10 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
  
      assert(o->type == DISPLAY_TYPE_SDL);
  
@@ -757,7 +758,7 @@ index aaaede56e0..b17f380c46 100644
      if (SDL_GetHintBoolean("QEMU_ENABLE_SDL_LOGGING", SDL_FALSE)) {
          SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
      }
-@@ -985,6 +1376,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
+@@ -1002,6 +1393,7 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
      g_free(dir);
      if (icon) {
          SDL_SetWindowIcon(sdl2_console[0].real_window, icon);
