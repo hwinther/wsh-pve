@@ -102,6 +102,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: cat "$RUN_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY" || echo "no summary.md" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Make the results readable
+        if: ${{ !cancelled() }}
+        # The containers write the run directory as root, and the PVE node writes some files 0600.
+        run: docker run --rm -v "$RUN_DIR:/r" --entrypoint chmod "$IMAGE" -R a+rX /r || true
+
       - name: Upload the results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

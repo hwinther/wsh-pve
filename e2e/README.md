@@ -3,7 +3,8 @@
 Playwright tests against a single-node Proxmox VE running in a container with the WSH packages.
 
 - `tests/vm-config.spec.ts`: VMs with WSH options created through the API; checks the stored config,
-  the QEMU command qemu-server builds (`qm showcmd`) and whether QEMU accepts it.
+  the QEMU command qemu-server builds (`qm showcmd`) and whether QEMU accepts it. Also OVMF (UEFI) VMs on
+  x86 (q35, i440fx, with and without an efidisk) and aarch64: two pflash drives and no `-bios`.
 - `tests/ui-hardware.spec.ts`: the pve-manager additions, set through the web UI's Hardware view,
   with the same checks.
 - `tests/floppy.spec.ts`: floppy support across all three packages: the `floppy` storage content
