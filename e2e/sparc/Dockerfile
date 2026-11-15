@@ -9,7 +9,7 @@ FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg python3 python3-pil \
-        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils vpx-tools \
+        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils vpx-tools genisoimage \
     && rm -rf /var/lib/apt/lists/*
 # Recordings (recording.py): vpxenc (vpx-tools, ~5 MB) encodes the framebuffer video, and the
 # asciinema player (pinned version, hash checked) goes next to each run's index.html.
