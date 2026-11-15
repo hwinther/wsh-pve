@@ -49,10 +49,12 @@ and the guest disk.
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
 | `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time and times a CPU-bound command (`BUSY`); the numbers go to `result.json` (`metrics`) | ~3-4 min |
+| `bench.py` | boots an installed Solaris disk, checks the CPUs `psrinfo` lists (`CPUS`, default `SMP`), then times boot to login, a `nawk` loop, `PARALLEL` copies of it at once (default `SMP`), a 64 MB write + `sync` and a raw read, with QEMU's host CPU use idle and during the parallel run; `SOAK` adds a load phase. `init 5` at the end | SS-5: ~5 min, SS-20: ~3 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
-e.g. `TI-SuperSparc-II`; none by default), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
+e.g. `TI-SuperSparc-50`, which the Sun SS-20 PROM needs; none by default), `TCG_THREAD` (`-accel
+tcg,thread=single|multi`), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
 Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
@@ -78,9 +80,10 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | Matrix | Cases | Time |
 | ------ | ----- | ---- |
 | `smoke` | Solaris 2.6 disk with OpenBIOS, 2.5.1 disk with `BIOS=ss5.bin`, 2.6 CD to the installer with OpenBIOS; all SS-5 | ~6 min |
-| `machines` | the 2.6 CD to the installer with OpenBIOS on SS-10 and SS-20, 256 and 512 MB, and SS-20 with `SMP=2` | ~6 min |
+| `machines` | SS-10/SS-20: the 2.6 CD to the installer with OpenBIOS (256 and 512 MB, SS-20 also `SMP=2` and `SMP=4`) and with the Sun SS-20 PROM (`CPU=TI-SuperSparc-50`, 512 MB), the 2.5.1 CD (`CDROM_AS=hd`) with both on SS-20, and the SS-10/SS-20 installed disks to login (OpenBIOS, SS-20 also 512 MB and the Sun PROM) | ~20 min |
 | `display` | `cg3-display.py`: `BIOS=ss5.bin` banner at 1024x768, and the 2.6 disk with OpenBIOS at 1024x768, 1152x900, 1280x1024, 1600x1200 and 1920x1080 | ~19 min |
 | `idle` | `idle.py` on SS-5 with OpenBIOS: Solaris 2.6 with the `pmc` driver (below 10% of a core) and without it (above 80%), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~14 min |
+| `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -88,9 +91,12 @@ every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: Open
 and `sunos-idle=off` is an unknown machine option.
 
 The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
-`solaris-install-serial.py` on SS-5), `sol26-enduser-pmc-installed.raw` (the 2.6 one with the `pmc`
-driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (see "SunOS 4.1.4"), the CD
-`solaris_2.6_598_sparc.iso`.
+`solaris-install-serial.py` on SS-5), `sol26-enduser-ss10-installed.raw`, `sol26-enduser-ss20-installed.raw`
+(the same on SS-10 and SS-20 with OpenBIOS, `MACHINE=SS-10`/`SS-20`, ~8.5 min each) and
+`sol26-enduser-ss20prom-installed.raw` (SS-20 with `BIOS=ss20_v2.25_rom CPU=TI-SuperSparc-50`),
+`sol26-enduser-pmc-installed.raw` (the 2.6 one with the `pmc`
+driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (see "SunOS 4.1.4"), the CDs
+`solaris_2.6_598_sparc.iso` and `solaris_2.5.1_1197.iso`.
 
 `.github/workflows/sparc-lab.yml` runs a matrix (`smoke` unless chosen otherwise) on demand and every
 week, never for pull requests or pushes: it needs the media, on a self-hosted runner labelled
@@ -189,7 +195,18 @@ ctl hmp "info registers"         # any monitor command
 - **The SS-5 installed disks don't boot on SS-10/SS-20.** OpenBIOS loads the kernel and root mounts,
   but Solaris 2.6 then reports `le0: No such device or address` and `mount: /dev/dsk/c0t3d0s6 no
   such device`, and halts for want of /usr (also with `boot disk -r`). The 2.6 CD boots to the
-  installer on both, with 512 MB and with `SMP=2` (OpenBIOS: `CPUs: 2 x TI,TMS390Z55`).
+  installer on both, with 512 MB and with `SMP=2` (OpenBIOS: `CPUs: 2 x TI,TMS390Z55`). An install on
+  SS-10 or SS-20 (`solaris-install-serial.py` unchanged, `MACHINE=SS-20`) boots there.
+- **The Sun SS-10/SS-20 PROMs need `-cpu TI-SuperSparc-40/50/60`.** With QEMU's default
+  (`TI-SuperSparc-II`) they stop at `Cpu #0 Data Access Error`; `boot` then ends QEMU. The SS-10 PROM
+  also needs the SS-20 machine (on SS-10: `Probing Memory Bank #4 Data Access Error`). Results for
+  every PROM tried are in `submodules/SPARC.md` ("SS-10 and SS-20").
+- **Solaris 2.6 with more than one CPU hangs** (SS-20, OpenBIOS): writing 256 MB, sometimes while
+  booting. CPU 0 waits in `xc_sync_cache` for a cross-call the other CPU never answers. The `machines`
+  matrix therefore boots the installed disks with one CPU only.
+- **Solaris 2.6 runs user code 6-9x slower on SS-5 than on SS-20**: its microSPARC window-trap
+  handlers toggle the MMU no-fault bit, and QEMU flushes its whole TLB on each toggle. Kernel work and
+  disk I/O are as fast; NetBSD runs the same `awk` loop equally fast on both (`submodules/SPARC.md`).
 - **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
   (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
