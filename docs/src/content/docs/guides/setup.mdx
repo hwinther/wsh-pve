@@ -23,7 +23,7 @@ wget -O - http://debian.wshosting.no/debian/conf/wsh-pve.gpg.key | sudo gpg --de
 sudo wget -O /etc/apt/sources.list.d/wsh-pve.sources http://debian.wshosting.no/debian/conf/wsh-pve.sources
 
 # Prefer these packages over the Proxmox ones (see "Keeping the patched packages" below)
-printf 'Package: pve-manager qemu-server pve-qemu-kvm
+printf 'Package: pve-manager qemu-server pve-qemu-kvm libpve-storage-perl
 Pin: origin debian.wshosting.no
 Pin-Priority: 1001
 ' | sudo tee /etc/apt/preferences.d/wsh-pve
@@ -46,11 +46,11 @@ the extended configuration values stop working. That window lasts until the matc
 is published here.
 
 The pin (priority 1001) makes apt keep the version from this repository even when Proxmox has a
-newer one, so upgrades of these three packages only happen when a new `+wsh` build is published.
+newer one, so upgrades of these packages only happen when a new `+wsh` build is published.
 Check it with:
 
 ```bash
-apt policy pve-manager qemu-server pve-qemu-kvm
+apt policy pve-manager qemu-server pve-qemu-kvm libpve-storage-perl
 ```
 
 The installed version should be the `+wsh` one, with `debian.wshosting.no` at priority 1001.

@@ -12,6 +12,7 @@ on:
           - pve-manager
           - pve-qemu
           - qemu-server
+          - pve-storage
   workflow_call:
     inputs:
       package:

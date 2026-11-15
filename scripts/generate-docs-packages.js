@@ -18,7 +18,8 @@ const REPO_URL = "https://github.com/hwinther/wsh-pve";
 
 // `name` is the Debian package name (as published in the repo); `releaseName`
 // is the value used as the build input / release tag prefix, which differs for
-// the qemu package (built as `pve-qemu`, published as `pve-qemu-kvm`).
+// the qemu package (built as `pve-qemu`, published as `pve-qemu-kvm`) and the storage
+// library (built as `pve-storage`, published as `libpve-storage-perl`).
 const PACKAGE_DEFS = [
   {
     name: "pve-manager",
@@ -34,6 +35,11 @@ const PACKAGE_DEFS = [
     name: "pve-qemu-kvm",
     releaseName: "pve-qemu",
     patch: "pve-qemu.changelog.patch",
+  },
+  {
+    name: "libpve-storage-perl",
+    releaseName: "pve-storage",
+    patch: "pve-storage.changelog.patch",
   },
 ];
 
@@ -109,7 +115,7 @@ function main() {
       name,
       version,
       architecture:
-        repo?.architecture ?? (name === "pve-manager" ? "all" : "amd64"),
+        repo?.architecture ?? (name === "pve-manager" || name === "libpve-storage-perl" ? "all" : "amd64"),
       suite: "stable",
       ...releaseInfo(releaseName, version),
     };

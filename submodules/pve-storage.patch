@@ -1,0 +1,378 @@
+diff --git a/src/PVE/API2/Storage/Status.pm b/src/PVE/API2/Storage/Status.pm
+index 57ab92b..c6aebb7 100644
+--- a/src/PVE/API2/Storage/Status.pm
++++ b/src/PVE/API2/Storage/Status.pm
+@@ -534,7 +534,7 @@ __PACKAGE__->register_method({
+                 description => "Content type.",
+                 type => 'string',
+                 format => 'pve-storage-content',
+-                enum => ['iso', 'vztmpl', 'import'],
++                enum => ['iso', 'vztmpl', 'import', 'floppy'],
+             },
+             filename => {
+                 description =>
+@@ -599,6 +599,11 @@ __PACKAGE__->register_method({
+                 raise_param_exc({ filename => "wrong file extension" });
+             }
+             $path = PVE::Storage::get_iso_dir($cfg, $storage);
++        } elsif ($content eq 'floppy') {
++            if ($filename !~ m![^/]+$PVE::Storage::FLOPPY_EXT_RE_0$!) {
++                raise_param_exc({ filename => "wrong file extension" });
++            }
++            $path = PVE::Storage::get_floppy_dir($cfg, $storage);
+         } elsif ($content eq 'vztmpl') {
+             if ($filename !~ m![^/]+$PVE::Storage::VZTMPL_EXT_RE_1$!) {
+                 raise_param_exc({ filename => "wrong file extension" });
+@@ -688,7 +693,8 @@ __PACKAGE__->register_method({
+                     }
+                 }
+ 
+-                if ($content eq 'iso') {
++                # floppy images are raw too, refuse e.g. a qcow2 with a backing file
++                if ($content eq 'iso' || $content eq 'floppy') {
+                     PVE::Storage::assert_iso_content($tmpfilename);
+                 }
+ 
+@@ -767,7 +773,7 @@ __PACKAGE__->register_method({
+                 description => "Content type.", # TODO: could be optional & detected in most cases
+                 type => 'string',
+                 format => 'pve-storage-content',
+-                enum => ['iso', 'vztmpl', 'import'],
++                enum => ['iso', 'vztmpl', 'import', 'floppy'],
+             },
+             filename => {
+                 description =>
+@@ -836,6 +842,11 @@ __PACKAGE__->register_method({
+                 raise_param_exc({ filename => "wrong file extension" });
+             }
+             $path = PVE::Storage::get_iso_dir($cfg, $storage);
++        } elsif ($content eq 'floppy') {
++            if ($filename !~ m![^/]+$PVE::Storage::FLOPPY_EXT_RE_0$!) {
++                raise_param_exc({ filename => "wrong file extension" });
++            }
++            $path = PVE::Storage::get_floppy_dir($cfg, $storage);
+         } elsif ($content eq 'vztmpl') {
+             if ($filename !~ m![^/]+$PVE::Storage::VZTMPL_EXT_RE_1$!) {
+                 raise_param_exc({ filename => "wrong file extension" });
+@@ -880,7 +891,8 @@ __PACKAGE__->register_method({
+         $opts->{assert_file_validity} = sub {
+             my ($tmp_path) = @_;
+ 
+-            if ($content eq 'iso') {
++            # floppy images are raw too, refuse e.g. a qcow2 with a backing file
++            if ($content eq 'iso' || $content eq 'floppy') {
+                 PVE::Storage::assert_iso_content($tmp_path);
+             }
+ 
+diff --git a/src/PVE/Storage.pm b/src/PVE/Storage.pm
+index 9db3778..164b049 100755
+--- a/src/PVE/Storage.pm
++++ b/src/PVE/Storage.pm
+@@ -116,6 +116,8 @@ PVE::Storage::Plugin->init();
+ 
+ our $ISO_EXT_RE_0 = qr/\.(?:iso|img)/i;
+ 
++our $FLOPPY_EXT_RE_0 = qr/\.(?:img|ima|vfd)/i;
++
+ our $VZTMPL_EXT_RE_1 = qr/\.(?|(tar)(?!\.)|tar\.(gz|xz|zst|bz2))/i;
+ 
+ our $BACKUP_EXT_RE_2 = qr/\.(tgz|(?:tar|vma)(?:\.(${\PVE::Storage::Plugin::COMPRESSOR_RE}))?)/;
+@@ -565,6 +567,15 @@ sub get_import_dir {
+     return $plugin->get_subdir($scfg, 'import');
+ }
+ 
++sub get_floppy_dir {
++    my ($cfg, $storeid) = @_;
++
++    my $scfg = storage_config($cfg, $storeid);
++    my $plugin = PVE::Storage::Plugin->lookup($scfg->{type});
++
++    return $plugin->get_subdir($scfg, 'floppy');
++}
++
+ sub get_vztmpl_dir {
+     my ($cfg, $storeid) = @_;
+ 
+@@ -630,7 +641,7 @@ sub check_volume_access {
+ 
+         return if $rpcenv->check($user, "/storage/$sid", ['Datastore.Allocate'], 1);
+ 
+-        if ($vtype eq 'iso' || $vtype eq 'vztmpl' || $vtype eq 'import') {
++        if ($vtype eq 'iso' || $vtype eq 'vztmpl' || $vtype eq 'import' || $vtype eq 'floppy') {
+             # require at least read access to storage, (custom) templates/ISOs could be sensitive
+             $rpcenv->check_any(
+                 $user,
+@@ -723,6 +734,7 @@ sub path_to_volume_id {
+         my $plugin = PVE::Storage::Plugin->lookup($scfg->{type});
+         my $imagedir = $plugin->get_subdir($scfg, 'images');
+         my $isodir = $plugin->get_subdir($scfg, 'iso');
++        my $floppydir = $plugin->get_subdir($scfg, 'floppy');
+         my $tmpldir = $plugin->get_subdir($scfg, 'vztmpl');
+         my $backupdir = $plugin->get_subdir($scfg, 'backup');
+         my $snippetsdir = $plugin->get_subdir($scfg, 'snippets');
+@@ -743,6 +755,9 @@ sub path_to_volume_id {
+         } elsif ($path =~ m!^\Q$isodir\E/([^/]+$ISO_EXT_RE_0)$!) {
+             my $name = $1;
+             return ('iso', "$sid:iso/$name");
++        } elsif ($path =~ m!^\Q$floppydir\E/([^/]+$FLOPPY_EXT_RE_0)$!) {
++            my $name = $1;
++            return ('floppy', "$sid:floppy/$name");
+         } elsif ($path =~ m!^\Q$tmpldir\E/([^/]+$VZTMPL_EXT_RE_1)$!) {
+             my $name = $1;
+             return ('vztmpl', "$sid:vztmpl/$name");
+@@ -807,7 +822,7 @@ sub qemu_blockdev_options {
+ 
+     my ($vtype) = $plugin->parse_volname($volname);
+     die "cannot use volume of type '$vtype' as a QEMU blockdevice\n"
+-        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'import';
++        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'import' && $vtype ne 'floppy';
+ 
+     my $blockdev =
+         $plugin->qemu_blockdev_options($scfg, $storeid, $volname, $machine_version, $options);
+@@ -1284,7 +1299,11 @@ sub template_list {
+     my ($cfg, $storeid, $tt) = @_;
+ 
+     die "unknown template type '$tt'\n"
+-        if !($tt eq 'iso' || $tt eq 'vztmpl' || $tt eq 'backup' || $tt eq 'snippets');
++        if !($tt eq 'iso'
++            || $tt eq 'vztmpl'
++            || $tt eq 'backup'
++            || $tt eq 'snippets'
++            || $tt eq 'floppy');
+ 
+     my $ids = $cfg->{ids};
+ 
+@@ -1312,7 +1331,7 @@ sub template_list {
+ sub volume_list {
+     my ($cfg, $storeid, $vmid, $content) = @_;
+ 
+-    my @ctypes = qw(rootdir images vztmpl iso backup snippets import);
++    my @ctypes = qw(rootdir images vztmpl iso backup snippets import floppy);
+ 
+     my $cts = $content ? [$content] : [@ctypes];
+ 
+@@ -2294,7 +2313,7 @@ sub complete_storage_enabled {
+ sub complete_content_type {
+     my ($cmdname, $pname, $cvalue) = @_;
+ 
+-    return [qw(rootdir images vztmpl iso backup snippets import)];
++    return [qw(rootdir images vztmpl iso backup snippets import floppy)];
+ }
+ 
+ sub complete_volume {
+diff --git a/src/PVE/Storage/BTRFSPlugin.pm b/src/PVE/Storage/BTRFSPlugin.pm
+index fa28592..2935198 100644
+--- a/src/PVE/Storage/BTRFSPlugin.pm
++++ b/src/PVE/Storage/BTRFSPlugin.pm
+@@ -37,6 +37,7 @@ sub plugindata {
+                 rootdir => 1,
+                 vztmpl => 1,
+                 iso => 1,
++                floppy => 1,
+                 backup => 1,
+                 snippets => 1,
+                 none => 1,
+diff --git a/src/PVE/Storage/CIFSPlugin.pm b/src/PVE/Storage/CIFSPlugin.pm
+index 54f0f4e..a5fd314 100644
+--- a/src/PVE/Storage/CIFSPlugin.pm
++++ b/src/PVE/Storage/CIFSPlugin.pm
+@@ -118,6 +118,7 @@ sub plugindata {
+                 rootdir => 1,
+                 vztmpl => 1,
+                 iso => 1,
++                floppy => 1,
+                 backup => 1,
+                 snippets => 1,
+                 import => 1,
+diff --git a/src/PVE/Storage/CephFSPlugin.pm b/src/PVE/Storage/CephFSPlugin.pm
+index fbc9711..aa6dc02 100644
+--- a/src/PVE/Storage/CephFSPlugin.pm
++++ b/src/PVE/Storage/CephFSPlugin.pm
+@@ -116,8 +116,10 @@ sub type {
+ 
+ sub plugindata {
+     return {
+-        content =>
+-            [{ vztmpl => 1, iso => 1, backup => 1, snippets => 1, import => 1 }, { backup => 1 }],
++        content => [
++            { vztmpl => 1, iso => 1, floppy => 1, backup => 1, snippets => 1, import => 1 },
++            { backup => 1 },
++        ],
+         'sensitive-properties' => { keyring => 1 },
+     };
+ }
+diff --git a/src/PVE/Storage/DirPlugin.pm b/src/PVE/Storage/DirPlugin.pm
+index 80c4a03..30d3fd3 100644
+--- a/src/PVE/Storage/DirPlugin.pm
++++ b/src/PVE/Storage/DirPlugin.pm
+@@ -30,6 +30,7 @@ sub plugindata {
+                 rootdir => 1,
+                 vztmpl => 1,
+                 iso => 1,
++                floppy => 1,
+                 backup => 1,
+                 snippets => 1,
+                 none => 1,
+diff --git a/src/PVE/Storage/NFSPlugin.pm b/src/PVE/Storage/NFSPlugin.pm
+index 4cc02c9..4893b53 100644
+--- a/src/PVE/Storage/NFSPlugin.pm
++++ b/src/PVE/Storage/NFSPlugin.pm
+@@ -59,6 +59,7 @@ sub plugindata {
+                 rootdir => 1,
+                 vztmpl => 1,
+                 iso => 1,
++                floppy => 1,
+                 backup => 1,
+                 snippets => 1,
+                 import => 1,
+diff --git a/src/PVE/Storage/Plugin.pm b/src/PVE/Storage/Plugin.pm
+index 18e9551..b11b059 100644
+--- a/src/PVE/Storage/Plugin.pm
++++ b/src/PVE/Storage/Plugin.pm
+@@ -825,6 +825,8 @@ sub parse_volname {
+         return ('images', $name, $vmid, undef, undef, $isBase, $format);
+     } elsif ($volname =~ m!^iso/([^/]+$PVE::Storage::ISO_EXT_RE_0)$!) {
+         return ('iso', $1, undef, undef, undef, undef, 'raw');
++    } elsif ($volname =~ m!^floppy/([^/]+$PVE::Storage::FLOPPY_EXT_RE_0)$!) {
++        return ('floppy', $1, undef, undef, undef, undef, 'raw');
+     } elsif ($volname =~ m!^vztmpl/([^/]+$PVE::Storage::VZTMPL_EXT_RE_1)$!) {
+         return ('vztmpl', $1, undef, undef, undef, undef, 'raw');
+     } elsif ($volname =~ m!^backup/([^/]+$PVE::Storage::BACKUP_EXT_RE_2)$!) {
+@@ -947,6 +949,7 @@ my $vtype_subdirs = {
+     images => 'images',
+     rootdir => 'private',
+     iso => 'template/iso',
++    floppy => 'template/floppy',
+     vztmpl => 'template/cache',
+     backup => 'dump',
+     snippets => 'snippets',
+@@ -1816,6 +1819,11 @@ my $get_subdir_files = sub {
+ 
+             $info = { volid => "$sid:iso/$1", format => 'iso' };
+ 
++        } elsif ($tt eq 'floppy') {
++            next if $fn !~ m!/([^/]+$PVE::Storage::FLOPPY_EXT_RE_0)$!i;
++
++            $info = { volid => "$sid:floppy/$1", format => 'raw' };
++
+         } elsif ($tt eq 'vztmpl') {
+             next if $fn !~ m!/([^/]+$PVE::Storage::VZTMPL_EXT_RE_1)$!;
+ 
+@@ -1889,6 +1897,8 @@ sub list_volumes {
+ 
+             if ($type eq 'iso' && !defined($vmid)) {
+                 $data = $get_subdir_files->($storeid, $path, 'iso');
++            } elsif ($type eq 'floppy' && !defined($vmid)) {
++                $data = $get_subdir_files->($storeid, $path, 'floppy');
+             } elsif ($type eq 'vztmpl' && !defined($vmid)) {
+                 $data = $get_subdir_files->($storeid, $path, 'vztmpl');
+             } elsif ($type eq 'backup') {
+@@ -2360,7 +2370,7 @@ sub volume_export_formats {
+             return ();
+         }
+         return ('tar+size') if $format eq 'subvol';
+-        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import)$/;
++        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import|floppy)$/;
+     }
+     return ();
+ }
+@@ -2445,7 +2455,7 @@ sub volume_import {
+             warn $@ if $@;
+             die $err;
+         }
+-    } elsif (grep { $vtype eq $_ } qw(import iso snippets vztmpl)) {
++    } elsif (grep { $vtype eq $_ } qw(import iso snippets vztmpl floppy)) {
+         eval {
+             run_command(['dd', "of=$file", 'conv=excl', 'bs=64k'], input => '<&' . fileno($fh));
+         };
+@@ -2473,7 +2483,7 @@ sub volume_import_formats {
+             return ();
+         }
+         return ('tar+size') if $format eq 'subvol';
+-        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import)$/;
++        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import|floppy)$/;
+     }
+     return ();
+ }
+diff --git a/src/test/parse_volname_test.pm b/src/test/parse_volname_test.pm
+index 0af141a..655b2e8 100644
+--- a/src/test/parse_volname_test.pm
++++ b/src/test/parse_volname_test.pm
+@@ -46,6 +46,24 @@ my $tests = [
+             ['iso', 'some-other-installation-disk.img', undef, undef, undef, undef, 'raw'],
+     },
+     #
++    # floppy
++    #
++    {
++        description => 'Floppy image, img',
++        volname => 'floppy/dos-boot-disk.img',
++        expected => ['floppy', 'dos-boot-disk.img', undef, undef, undef, undef, 'raw'],
++    },
++    {
++        description => 'Floppy image, ima',
++        volname => 'floppy/dos-boot-disk.ima',
++        expected => ['floppy', 'dos-boot-disk.ima', undef, undef, undef, undef, 'raw'],
++    },
++    {
++        description => 'Floppy image, vfd',
++        volname => 'floppy/win98-drivers.vfd',
++        expected => ['floppy', 'win98-drivers.vfd', undef, undef, undef, undef, 'raw'],
++    },
++    #
+     # container templates
+     #
+     {
+diff --git a/src/test/path_to_volume_id_test.pm b/src/test/path_to_volume_id_test.pm
+index dfa51e6..f49983b 100644
+--- a/src/test/path_to_volume_id_test.pm
++++ b/src/test/path_to_volume_id_test.pm
+@@ -27,6 +27,7 @@ my $scfg = {
+                 'rootdir' => 1,
+                 'images' => 1,
+                 'iso' => 1,
++                'floppy' => 1,
+                 'backup' => 1,
+                 'vztmpl' => 1,
+             },
+@@ -121,6 +122,13 @@ my @tests = (
+             'iso', 'local:iso/yet-again-a-installation-disk.iso',
+         ],
+     },
++    {
++        description => 'Floppy file',
++        volname => "$storage_dir/template/floppy/dos-boot-disk.img",
++        expected => [
++            'floppy', 'local:floppy/dos-boot-disk.img',
++        ],
++    },
+     {
+         description => 'CT template, tar.gz',
+         volname => "$storage_dir/template/cache/debian-10.0-standard_10.0-1_amd64.tar.gz",
+diff --git a/src/test/run_volume_access_tests.pl b/src/test/run_volume_access_tests.pl
+index 4790857..b4ea0a3 100755
+--- a/src/test/run_volume_access_tests.pl
++++ b/src/test/run_volume_access_tests.pl
+@@ -21,7 +21,7 @@ my $storage_dir = tempdir(CLEANUP => 1);
+ my $storage_cfg = <<"EOF";
+ dir: dir
+ 	path $storage_dir
+-	content vztmpl,snippets,iso,backup,rootdir,images
++	content vztmpl,snippets,iso,floppy,backup,rootdir,images
+ EOF
+ 
+ my $user_cfg = <<'EOF';
+@@ -109,6 +109,13 @@ my @tests = (
+             'iso' => 1,
+         },
+     },
++    {
++        volid => 'dir:floppy/dos-boot-disk.img',
++        denied_users => {},
++        allowed_types => {
++            'floppy' => 1,
++        },
++    },
+     {
+         volid => 'dir:111/subvol-111-disk-0.subvol',
+         denied_users => {

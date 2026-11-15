@@ -13,3 +13,6 @@
 [submodule "submodules/sparc"]
 	path = submodules/sparc
 	url = git@github.com:hwinther/sparc.git
+[submodule "submodules/pve-storage"]
+	path = submodules/pve-storage
+	url = https://github.com/hwinther/pve-storage.git
