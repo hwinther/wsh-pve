@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..84b4da1 100644
+index 7b0cba5..bd50c1c 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,13 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,14 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -86,6 +86,7 @@ index 7b0cba5..84b4da1 100644
 +wsh/0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB.patch
 +wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch
 +wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch
++wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -1351,6 +1352,374 @@ index 0000000..0030741
 + ERST
 + 
 + #ifdef CONFIG_VNC
+diff --git a/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch b/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
+new file mode 100644
+index 0000000..9f27648
+--- /dev/null
++++ b/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
+@@ -0,0 +1,362 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/misc/slavio_misc: give the sun4m APC its 16 bytes of
++ registers
++
++The firmware describes the power management node with 16 bytes of
++registers (reg 00000004.0a000000.00000010 on the SPARCstation 5, in
++OpenBIOS and in Sun's PROM alike), but QEMU maps one byte. Linux and
++NetBSD only write register 0, to idle the CPU, which is all that QEMU
++implements.
++
++Solaris 2.6's pmc driver binds to that node and lets the kernel's idle
++loop halt the CPU through register 0. It maps all 16 bytes, and at
++attach it writes the registers at offsets 2, 4, 9, 0xa and 0xc and
++reads, modifies and writes the one at offset 5. The first store takes
++a bus error and the kernel panics:
++
++  kernel write fault at addr=0x6a000002 ...
++  panic: trap: unexpected MMU trap
++
++Map 16 bytes. A write to register 0 still raises the CPU halt line, and
++register 0 still reads 0. The other registers keep what was written,
++read it back and are 0 after a reset. With the driver attached, an idle
++Solaris 2.6 on the SPARCstation 5 uses a few percent of a host core
++instead of all of it.
++
++The registers are migrated in a new "apc" section that is sent only
++when one of them is not 0, so the stream of a guest that writes
++register 0 only (Linux, NetBSD) stays as it was. The trace events now
++name the register. The device's instance size was that of slavio_misc;
++use APCState.
++
++The APC is at 0x6a000000 on SS-5, SS-4, SPARCClassic and SPARCbook, at
++0x71300000 on Voyager and at 0xefa000000 on SS-10, SS-20 and SS-600MP;
++16 bytes overlap no other device on any of them.
++
++tests/qtest/sun4m-apc-test checks the size of the region on SS-5, SS-20
++and Voyager, that registers 1 to 15 read back and that a reset clears
++them; and on SS-5 under TCG, that a CPU store to register 2 reads back
++without a fault and leaves the CPU running, while a store to register 0
++halts it.
++---
++ hw/misc/slavio_misc.c        |  72 ++++++++++++++--
++ hw/misc/trace-events         |   4 +-
++ tests/qtest/meson.build      |   2 +-
++ tests/qtest/sun4m-apc-test.c | 160 +++++++++++++++++++++++++++++++++++
++ 4 files changed, 230 insertions(+), 8 deletions(-)
++ create mode 100644 tests/qtest/sun4m-apc-test.c
++
++diff --git a/hw/misc/slavio_misc.c b/hw/misc/slavio_misc.c
++index 3df7d82b8c..24a842d1b2 100644
++--- a/hw/misc/slavio_misc.c
+++++ b/hw/misc/slavio_misc.c
++@@ -67,11 +67,19 @@ typedef struct APCState APCState;
++ DECLARE_INSTANCE_CHECKER(APCState, APC,
++                          TYPE_APC)
++ 
+++/*
+++ * The power management node has 16 bytes of registers. Writing register 0
+++ * idles the CPU until the next interrupt; the others are kept as written.
+++ */
+++#define APC_SIZE 16
+++#define APC_IDLE 0
+++
++ struct APCState {
++     SysBusDevice parent_obj;
++ 
++     MemoryRegion iomem;
++     qemu_irq cpu_halt;
+++    uint8_t regs[APC_SIZE];
++ };
++ 
++ #define MISC_SIZE 1
++@@ -294,16 +302,24 @@ static void apc_mem_writeb(void *opaque, hwaddr addr,
++ {
++     APCState *s = opaque;
++ 
++-    trace_apc_mem_writeb(val & 0xff);
++-    qemu_irq_raise(s->cpu_halt);
+++    trace_apc_mem_writeb(addr, val & 0xff);
+++    if (addr == APC_IDLE) {
+++        qemu_irq_raise(s->cpu_halt);
+++    } else {
+++        s->regs[addr] = val;
+++    }
++ }
++ 
++ static uint64_t apc_mem_readb(void *opaque, hwaddr addr,
++                               unsigned size)
++ {
+++    APCState *s = opaque;
++     uint32_t ret = 0;
++ 
++-    trace_apc_mem_readb(ret);
+++    if (addr != APC_IDLE) {
+++        ret = s->regs[addr];
+++    }
+++    trace_apc_mem_readb(addr, ret);
++     return ret;
++ }
++ 
++@@ -429,10 +445,55 @@ static void apc_init(Object *obj)
++ 
++     /* Power management (APC) XXX: not a Slavio device */
++     memory_region_init_io(&s->iomem, obj, &apc_mem_ops, s,
++-                          "apc", MISC_SIZE);
+++                          "apc", APC_SIZE);
++     sysbus_init_mmio(dev, &s->iomem);
++ }
++ 
+++static void apc_reset_hold(Object *obj, ResetType type)
+++{
+++    APCState *s = APC(obj);
+++
+++    memset(s->regs, 0, sizeof(s->regs));
+++}
+++
+++/*
+++ * Only guests that write the registers other than the idle one (Solaris'
+++ * pmc driver) need them migrated. Linux and NetBSD write register 0 only,
+++ * so their stream stays as it was before the registers were kept.
+++ */
+++static bool apc_regs_needed(void *opaque)
+++{
+++    APCState *s = opaque;
+++    int i;
+++
+++    for (i = 0; i < APC_SIZE; i++) {
+++        if (s->regs[i]) {
+++            return true;
+++        }
+++    }
+++    return false;
+++}
+++
+++static const VMStateDescription vmstate_apc = {
+++    .name = "apc",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = apc_regs_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT8_ARRAY(regs, APCState, APC_SIZE),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
+++static void apc_class_init(ObjectClass *klass, const void *data)
+++{
+++    DeviceClass *dc = DEVICE_CLASS(klass);
+++    ResettableClass *rc = RESETTABLE_CLASS(klass);
+++
+++    rc->phases.hold = apc_reset_hold;
+++    dc->vmsd = &vmstate_apc;
+++}
+++
++ static void slavio_misc_init(Object *obj)
++ {
++     DeviceState *dev = DEVICE(obj);
++@@ -502,8 +563,9 @@ static const TypeInfo slavio_misc_info = {
++ static const TypeInfo apc_info = {
++     .name          = TYPE_APC,
++     .parent        = TYPE_SYS_BUS_DEVICE,
++-    .instance_size = sizeof(MiscState),
+++    .instance_size = sizeof(APCState),
++     .instance_init = apc_init,
+++    .class_init    = apc_class_init,
++ };
++ 
++ static void slavio_misc_register_types(void)
++diff --git a/hw/misc/trace-events b/hw/misc/trace-events
++index c9a868b3ef..97560be221 100644
++--- a/hw/misc/trace-events
+++++ b/hw/misc/trace-events
++@@ -83,8 +83,8 @@ slavio_aux1_mem_writeb(uint32_t val) "Write aux1 0x%02x"
++ slavio_aux1_mem_readb(uint32_t ret) "Read aux1 0x%02x"
++ slavio_aux2_mem_writeb(uint32_t val) "Write aux2 0x%02x"
++ slavio_aux2_mem_readb(uint32_t ret) "Read aux2 0x%02x"
++-apc_mem_writeb(uint32_t val) "Write power management 0x%02x"
++-apc_mem_readb(uint32_t ret) "Read power management 0x%02x"
+++apc_mem_writeb(uint64_t addr, uint32_t val) "Write power management 0x%"PRIx64" = 0x%02x"
+++apc_mem_readb(uint64_t addr, uint32_t ret) "Read power management 0x%"PRIx64" = 0x%02x"
++ slavio_sysctrl_mem_writel(uint32_t val) "Write system control 0x%08x"
++ slavio_sysctrl_mem_readl(uint32_t ret) "Read system control 0x%08x"
++ slavio_led_mem_writew(uint32_t val) "Write diagnostic LED 0x%04x"
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index e2a41ed49f..75ad261ee8 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -200,7 +200,7 @@ qtests_sh4 = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-te
++ qtests_sh4eb = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : [])
++ 
++ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++-                'sun4m-escc-test'] + \
+++                'sun4m-escc-test', 'sun4m-apc-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-apc-test.c b/tests/qtest/sun4m-apc-test.c
++new file mode 100644
++index 0000000000..9d65c99c2f
++--- /dev/null
+++++ b/tests/qtest/sun4m-apc-test.c
++@@ -0,0 +1,160 @@
+++/*
+++ * QTest: the sun4m power management registers (APC)
+++ *
+++ * The firmware describes the power management node with 16 bytes of
+++ * registers, and Solaris' pmc driver maps all of them and writes several
+++ * at attach time. Writing register 0 idles the CPU until the next
+++ * interrupt; the other registers must take a write without a bus error,
+++ * read back what was written, not idle the CPU, and be 0 after a reset.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define APC_SIZE        16
+++
+++/* SPARCstation 5: RAM at 0, the APC at 0x6a000000 */
+++#define SS5_APC         0x6a000000ULL
+++#define RAM_RESULT      0x1000ULL
+++#define RAM_COUNT       0x1004ULL
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t apc;
+++} APCMachine;
+++
+++static const APCMachine machines[] = {
+++    { "SS-5", SS5_APC },
+++    { "SS-20", 0xefa000000ULL },
+++    { "Voyager", 0x71300000ULL },
+++};
+++
+++static void test_regs(const void *data)
+++{
+++    const APCMachine *m = data;
+++    g_autofree char *mtree = NULL;
+++    g_autofree char *region = NULL;
+++    QTestState *qts;
+++    int i;
+++
+++    qts = qtest_initf("-machine %s", m->machine);
+++
+++    mtree = qtest_hmp(qts, "info mtree");
+++    region = g_strdup_printf("%016" PRIx64 "-%016" PRIx64 " (prio 0, i/o): apc",
+++                             m->apc, m->apc + APC_SIZE - 1);
+++    g_assert_nonnull(strstr(mtree, region));
+++
+++    for (i = 1; i < APC_SIZE; i++) {
+++        qtest_writeb(qts, m->apc + i, 0xa0 + i);
+++    }
+++    for (i = 1; i < APC_SIZE; i++) {
+++        g_assert_cmphex(qtest_readb(qts, m->apc + i), ==, 0xa0 + i);
+++    }
+++    /* The idle register reads as 0 */
+++    qtest_writeb(qts, m->apc, 0x01);
+++    g_assert_cmphex(qtest_readb(qts, m->apc), ==, 0);
+++
+++    qtest_system_reset(qts);
+++    for (i = 0; i < APC_SIZE; i++) {
+++        g_assert_cmphex(qtest_readb(qts, m->apc + i), ==, 0);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A boot PROM that writes and reads back APC register 2, stores the value
+++ * at RAM_RESULT, writes 0 to APC register `poke`, then counts at RAM_COUNT
+++ * forever. It runs from reset: MMU off, traps disabled.
+++ */
+++static char *write_prom(uint8_t poke)
+++{
+++    const uint32_t code[] = {
+++        0x031a8000,         /*     sethi %hi(0x6a000000), %g1 */
+++        0x09000004,         /*     sethi %hi(0x1000), %g4 */
+++        0x841020a5,         /*     mov   0xa5, %g2 */
+++        0xc4286002,         /*     stb   %g2, [%g1 + 2] */
+++        0xc6086002,         /*     ldub  [%g1 + 2], %g3 */
+++        0xc6212000,         /*     st    %g3, [%g4] */
+++        0xc0286000 | poke,  /*     stb   %g0, [%g1 + poke] */
+++        0xca012004,         /* 1:  ld    [%g4 + 4], %g5 */
+++        0x8a016001,         /*     add   %g5, 1, %g5 */
+++        0xca212004,         /*     st    %g5, [%g4 + 4] */
+++        0x10bffffd,         /*     ba    1b */
+++        0x01000000,         /*      nop */
+++    };
+++    uint32_t be[ARRAY_SIZE(code)];
+++    char *path = NULL;
+++    int fd, i;
+++
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-apc-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++static QTestState *run_prom(const char *prom)
+++{
+++    QTestState *qts = qtest_initf("-machine SS-5 -accel tcg -bios %s", prom);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++
+++    /* The CPU read back from register 2 what it wrote there */
+++    while (qtest_readl(qts, RAM_RESULT) != 0xa5) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    return qts;
+++}
+++
+++/* Any register but 0: the CPU keeps running */
+++static void test_no_idle(void)
+++{
+++    g_autofree char *prom = write_prom(0xc);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = run_prom(prom);
+++
+++    while (qtest_readl(qts, RAM_COUNT) < 1000) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++/* Register 0: the CPU stops, and with traps disabled nothing wakes it */
+++static void test_idle(void)
+++{
+++    g_autofree char *prom = write_prom(0);
+++    QTestState *qts = run_prom(prom);
+++
+++    g_usleep(200 * 1000);
+++    /* The first round of the loop may run before the CPU stops */
+++    g_assert_cmpuint(qtest_readl(qts, RAM_COUNT), <=, 1);
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    for (i = 0; i < ARRAY_SIZE(machines); i++) {
+++        g_autofree char *name = g_strdup_printf("sun4m-apc/%s/regs",
+++                                                machines[i].machine);
+++        qtest_add_data_func(name, &machines[i], test_regs);
+++    }
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("sun4m-apc/SS-5/no-idle", test_no_idle);
+++        qtest_add_func("sun4m-apc/SS-5/idle", test_idle);
+++    }
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
