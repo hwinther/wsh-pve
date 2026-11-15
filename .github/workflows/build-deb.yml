@@ -57,6 +57,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        env:
+          PACKAGE: ${{ inputs.package }}
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
@@ -126,7 +128,9 @@ jobs:
 
           # The log is also the build log excerpt of the optional-extras report (pve-qemu)
           set -o pipefail
-          sudo make ${{ inputs.package == 'pve-qemu' && 'pve-qemu-bundle' || inputs.package }} VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root' 2>&1 \
+          MAKE_TARGET="$PACKAGE"
+          if [ "$PACKAGE" = pve-qemu ]; then MAKE_TARGET=pve-qemu-bundle; fi
+          sudo make "$MAKE_TARGET" VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root' 2>&1 \
             | tee "$RUNNER_TEMP/make.log"
           set +o pipefail
 
