@@ -94,7 +94,7 @@ EOF
 # shellcheck disable=SC2016
 fix_of() {
     case "$1" in
-        3dfx) echo 'Refresh `submodules/pve-qemu-qemu-3dfx.patch` (and `submodules/qemu-3dfx.patch`) for the QEMU in this pve-qemu: `make pve-qemu-3dfx` shows the rejected hunks.' ;;
+        3dfx) echo 'Refresh `submodules/pve-qemu-qemu-3dfx.patch` (and `submodules/qemu-3dfx.patch`) for the QEMU in this pve-qemu: `scripts/refresh-qemu-3dfx-patch.sh` merges it and leaves the conflicts to resolve; `make pve-qemu-3dfx` builds the result.' ;;
         openbios) echo '`make openbios-sparc32` builds `openbios/Dockerfile` alone. After a QEMU update, check `OPENBIOS_REF` and `openbios/patches/`.' ;;
         sun-proms) echo 'The build needs read access to the private `submodules/sparc` repository (`WORKFLOW_TOKEN`).' ;;
     esac
