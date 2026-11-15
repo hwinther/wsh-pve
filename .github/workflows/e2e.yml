@@ -79,3 +79,19 @@ jobs:
       # The tests also exec into the container (qm showcmd, /etc/pve) via the runner's Docker socket.
       playwright_env: |
         PVE_URL=https://localhost:8006
+
+  # Pushes to main publish the e2e results as the signed OCI artifact
+  # ghcr.io/hwinther/wsh-pve/quality:main and the quality-summary workflow artifact: the devops
+  # report reads it, and pages-after-e2e.yml turns it into the e2e badge on debian.wshosting.no.
+  quality:
+    needs: [e2e]
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: hwinther/reusable-workflows/.github/workflows/quality-artifact.yml@d323062b90d0cb8e76889bc1762db348d90d5d08 # v2.41.3
+    with:
+      tags: |
+        main-${{ github.sha }}
+        main

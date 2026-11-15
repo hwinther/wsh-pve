@@ -65,6 +65,55 @@ jobs:
         run: |
           node scripts/generate-docs-packages.js repo/dists/trixie/main/binary-amd64/Packages
 
+      # Status badges for the README, served at /badges/: the version of every package in the apt
+      # repository, and the e2e test count from the quality summary pages-after-e2e.yml passes in.
+      # Other runs (package builds, docs pushes) have no summary and keep the published e2e badge.
+      - name: Download the e2e quality summary
+        id: summary
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-quality-summary
+          path: ${{ runner.temp }}/quality-summary
+
+      - name: Collect badge data
+        id: badge-data
+        env:
+          SUMMARY_OK: ${{ steps.summary.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          summary=""
+          if [ "$SUMMARY_OK" = "true" ] && [ -f "$RUNNER_TEMP/quality-summary/summary.json" ]; then
+            summary="$RUNNER_TEMP/quality-summary/summary.json"
+          fi
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+
+          # One `pkg-<name>|<name>|<version>` line per package, the highest version when there are several.
+          packages=repo/dists/trixie/main/binary-amd64/Packages
+          {
+            echo "custom<<BADGES_EOF"
+            awk '/^Package:/ { p = $2 } /^Version:/ { print p, $2 }' "$packages" | sort -k1,1 -k2,2V \
+              | awk '{ v[$1] = $2 } END { for (p in v) printf "pkg-%s|%s|%s\n", p, p, v[p] }' | sort
+            pve=$(awk '/^Package: pve-manager$/ { m = 1 } m && /^Version:/ { split($2, a, "."); print a[1] "." a[2]; exit }' "$packages")
+            [ -z "$pve" ] || echo "pve|Proxmox VE|$pve|#e57000"
+            echo "distro|debian|trixie|#a80030"
+            echo "BADGES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render badges
+        uses: hwinther/reusable-workflows/.github/actions/badges@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          quality_summary: ${{ steps.badge-data.outputs.summary }}
+          custom: ${{ steps.badge-data.outputs.custom }}
+          out: badges
+
+      - name: Keep the published e2e badge
+        run: |
+          if [ ! -f badges/tests-e2e.svg ]; then
+            curl -fsSL --retry 2 -o badges/tests-e2e.svg "https://debian.wshosting.no/badges/tests-e2e.svg" \
+              || echo "::notice::No published tests-e2e.svg yet."
+          fi
+
       - name: Build docs
         working-directory: docs
         run: |
@@ -75,6 +124,7 @@ jobs:
           mkdir -p github-pages
           cp -r docs/dist/* github-pages/
           cp -r repo github-pages/debian
+          cp -r badges github-pages/badges
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
