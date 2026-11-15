@@ -10,10 +10,12 @@ permissions: {}
 jobs:
   sync:
     # A caller has to grant at least what the called jobs ask for: sync-from-upstream.yml calls
-    # build-deb.yml (GHCR push, GitHub release), which calls repo-update.yml (GitHub Pages deploy).
+    # build-deb.yml (GHCR push, GitHub release, the pve-qemu optional-extras issue), which calls
+    # repo-update.yml (GitHub Pages deploy).
     permissions:
       contents: write
       packages: write
+      issues: write
       pages: write
       id-token: write
     uses: ./.github/workflows/sync-from-upstream.yml
