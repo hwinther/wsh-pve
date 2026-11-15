@@ -137,7 +137,7 @@ index b1e0b4f8..4b93f5c6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index d2ea786b..13164d22 100644
+index d2ea786b..ae1b20b2 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -97,6 +97,7 @@ JSSRC= 							\
@@ -160,7 +160,7 @@ index d2ea786b..13164d22 100644
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
-+	qemu/QemuArchEdit.js				\
++\
  	qemu/QemuBiosEdit.js				\
  	qemu/RNGEdit.js					\
  	qemu/SSHKey.js					\
@@ -178,7 +178,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 61b8def2..2ece3be6 100644
+index 61b8def2..586eced9 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -190,44 +190,71 @@ index 61b8def2..2ece3be6 100644
                  let av = avers.shift();
                  let bv = bvers.shift();
  
-@@ -556,6 +556,9 @@ Ext.define('PVE.Utils', {
+@@ -556,6 +556,8 @@ Ext.define('PVE.Utils', {
          render_qemu_machine: function (value, arch = 'x86_64') {
              let machineTextMap = {
                  pc: 'i440fx',
 +                virt: 'virt',
-+                'SS-5': 'SS-5 (sun/sparc)',
-+                sun4u: 'sun4u (sun/sparc64)',
++                sun4u: 'sun4u',
              };
              if (!value) {
                  let machine = PVE.qemu.Architecture.defaultMachines[arch];
-@@ -573,6 +576,16 @@ Ext.define('PVE.Utils', {
-                 return 'SeaBIOS';
-             } else if (value === 'ovmf') {
-                 return 'OVMF (UEFI)';
-+            } else if (value === 'openbios-sparc32') { // TODO: don't repeat these names in both combo selector and render function?
-+                return "OpenBIOS (sparc only)";
-+            } else if (value === 'openbios-sparc64') { // TODO: also handle architectural different defaults (not all default to SeaBIOS)
-+                return "OpenBIOS (sparc64 only)";
-+            } else if (value === 'ss5.bin') {
-+                return "SS5 PROM (sparc only)";
-+            } else if (value === 'ss10_v2.25_rom') {
-+                return "SS10 PROM (sparc only)";
-+            } else if (value === 'ss20_v2.25_rom') {
-+                return "SS20 PROM (sparc only)";
-             } else {
-                 return value;
+@@ -565,17 +567,22 @@ Ext.define('PVE.Utils', {
+             return value;
+         },
+ 
++        // arch may also be a firmware category ('sparc:SS-20')
+         render_qemu_bios: function (value, arch = 'x86_64') {
++            let names = PVE.qemu.Architecture.firmwareNames;
+             if (!value) {
+-                let defaultBios = arch === 'aarch64' ? 'OVMF (UEFI)' : 'SeaBIOS';
+-                return `${Proxmox.Utils.defaultText} (${defaultBios})`;
+-            } else if (value === 'seabios') {
+-                return 'SeaBIOS';
+-            } else if (value === 'ovmf') {
+-                return 'OVMF (UEFI)';
+-            } else {
+-                return value;
++                arch = typeof arch === 'string' ? arch.replace(/:.*$/, '') : 'x86_64';
++                let defaultBios = PVE.qemu.Architecture.defaultFirmware[arch] ?? 'seabios';
++                return `${Proxmox.Utils.defaultText} (${names[defaultBios]})`;
              }
-@@ -666,6 +679,9 @@ Ext.define('PVE.Utils', {
++            return names[value] ?? value;
++        },
++
++        // the '__default__' entry of a display selector for the given architecture
++        render_default_vga: function (arch) {
++            let vga = PVE.qemu.Architecture.defaultDisplay[arch];
++            let text = vga ? PVE.Utils.kvm_vga_drivers[vga] : undefined;
++            return text ? `${Proxmox.Utils.defaultText} (${text})` : Proxmox.Utils.defaultText;
+         },
+ 
+         render_dc_ha_opts: function (value) {
+@@ -588,9 +595,11 @@ Ext.define('PVE.Utils', {
+         render_as_property_string: (v) =>
+             !v ? Proxmox.Utils.defaultText : PVE.Parser.printPropertyString(v),
+ 
+-        render_scsihw: function (value) {
++        render_scsihw: function (value, arch) {
+             if (!value || value === '__default__') {
+-                return Proxmox.Utils.defaultText + ' (LSI 53C895A)';
++                // sparc32 has its built-in ESP controller
++                let controller = arch === 'sparc' ? 'ESP' : 'LSI 53C895A';
++                return `${Proxmox.Utils.defaultText} (${controller})`;
+             } else if (value === 'lsi') {
+                 return 'LSI 53C895A';
+             } else if (value === 'lsi53c810') {
+@@ -666,6 +675,9 @@ Ext.define('PVE.Utils', {
          kvm_vga_drivers: {
              __default__: Proxmox.Utils.defaultText,
              std: gettext('Standard VGA'),
-+            tcx: 'TCX framebuffer (sparc only)', // TODO: when using sparc or other platforms there should be separate combo data sources
-+            cg3: 'CG3 framebuffer (sparc only)',
++            tcx: 'TCX framebuffer',
++            cg3: 'CG3 framebuffer',
 +            cirrus: 'Cirrus VGA',
              vmware: gettext('VMware compatible'),
              qxl: 'SPICE',
              qxl2: 'SPICE dual monitor',
-@@ -758,6 +774,7 @@ Ext.define('PVE.Utils', {
+@@ -758,6 +770,7 @@ Ext.define('PVE.Utils', {
              backup: gettext('Backup'),
              vztmpl: gettext('Container template'),
              iso: gettext('ISO image'),
@@ -235,7 +262,7 @@ index 61b8def2..2ece3be6 100644
              rootdir: gettext('Container'),
              snippets: gettext('Snippets'),
              import: gettext('Import'),
-@@ -1801,6 +1818,7 @@ Ext.define('PVE.Utils', {
+@@ -1801,6 +1814,7 @@ Ext.define('PVE.Utils', {
              rng: 1,
              tpmstate: 1,
              virtiofs: 10,
@@ -243,7 +270,7 @@ index 61b8def2..2ece3be6 100644
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1942,8 +1960,8 @@ Ext.define('PVE.Utils', {
+@@ -1942,8 +1956,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -276,6 +303,41 @@ index 60532251..7d9a4a1d 100644
          }
  
          Ext.Array.each(me.cts, function (ct) {
+diff --git a/www/manager6/form/ControllerSelector.js b/www/manager6/form/ControllerSelector.js
+index ceba1561..93d2a335 100644
+--- a/www/manager6/form/ControllerSelector.js
++++ b/www/manager6/form/ControllerSelector.js
+@@ -34,8 +34,16 @@ Ext.define('PVE.form.ControllerSelector', {
+ 
+     updateVMConfig: function (vmconfig) {
+         let me = this;
++        let archChanged = me.vmconfig.arch !== vmconfig.arch;
+         me.vmconfig = Ext.apply({}, vmconfig);
+ 
++        // the wizard's first disk follows a new architecture's default (a Sun's is on SCSI target 3)
++        let [controller, id] = PVE.qemu.Architecture.defaultDiskDrive[vmconfig.arch] ?? [];
++        if (archChanged && controller && !Ext.isDefined(me.vmconfig[`${controller}${id}`])) {
++            me.down('field[name=controller]').setValue(controller);
++            me.down('field[name=deviceid]').setValue(id);
++        }
++
+         me.down('field[name=deviceid]').validate();
+     },
+ 
+@@ -59,6 +67,13 @@ Ext.define('PVE.form.ControllerSelector', {
+             }
+             clist = ['ide', 'scsi', 'sata'];
+         } else {
++            // e.g. a Sun's first disk is on SCSI target 3
++            let [controller, id] = PVE.qemu.Architecture.defaultDiskDrive[arch] ?? [];
++            if (controller && !Ext.isDefined(me.vmconfig[`${controller}${id}`])) {
++                bussel.setValue(controller);
++                deviceid.setValue(id);
++                return;
++            }
+             // in most cases we want to add a disk to the same controller we previously used
+             clist = PVE.Utils.sortByPreviousUsage(me.vmconfig, me.nodename);
+         }
 diff --git a/www/manager6/form/FloppySelector.js b/www/manager6/form/FloppySelector.js
 new file mode 100644
 index 00000000..2277bc65
@@ -397,58 +459,76 @@ index 00000000..2277bc65
 +    ],
 +});
 diff --git a/www/manager6/form/NetworkCardSelector.js b/www/manager6/form/NetworkCardSelector.js
-index a6630418..0703f3ca 100644
+index a6630418..299dca5a 100644
 --- a/www/manager6/form/NetworkCardSelector.js
 +++ b/www/manager6/form/NetworkCardSelector.js
-@@ -7,5 +7,9 @@ Ext.define('PVE.form.NetworkCardSelector', {
+@@ -1,5 +1,5 @@
+ Ext.define('PVE.form.NetworkCardSelector', {
+-    extend: 'Proxmox.form.KVComboBox',
++    extend: 'PVE.form.FilteredKVComboBox',
+     alias: 'widget.pveNetworkCardSelector',
+     comboItems: [
+         ['e1000', 'Intel E1000'],
+@@ -7,5 +7,14 @@ Ext.define('PVE.form.NetworkCardSelector', {
          ['virtio', 'VirtIO (' + gettext('paravirtualized') + ')'],
          ['rtl8139', 'Realtek RTL8139'],
          ['vmxnet3', 'VMware vmxnet3'],
-+        ["ne2k_pci", "RTL8029 NE2000 PCI"],
++        ['ne2k_pci', 'RTL8029 NE2000 PCI'],
 +        ['pcnet', 'AMD PCnet FAST'],
 +        ['sunhme', 'Sun Happy Meal (sparc64 only)'],
 +        ['lance', 'Lance Am7990 (sparc only)'],
      ],
++
++    // sparc32 has only its built-in lance; the other architectures are not filtered
++    allowedValuesPerCategory: {
++        sparc: ['lance'],
++    },
  });
 diff --git a/www/manager6/form/QemuBiosSelector.js b/www/manager6/form/QemuBiosSelector.js
-index 40abb589..b66ac01c 100644
+index 40abb589..e5b942ae 100644
 --- a/www/manager6/form/QemuBiosSelector.js
 +++ b/www/manager6/form/QemuBiosSelector.js
-@@ -6,6 +6,11 @@ Ext.define('PVE.form.QemuBiosSelector', {
+@@ -2,10 +2,13 @@ Ext.define('PVE.form.QemuBiosSelector', {
+     extend: 'PVE.form.FilteredKVComboBox',
+     alias: ['widget.pveQemuBiosSelector'],
+ 
++    // the SS-10 PROM is left out: it runs on no sparc32 profile
+     comboItems: [
          ['__default__', PVE.Utils.render_qemu_bios('')],
-         ['seabios', PVE.Utils.render_qemu_bios('seabios')],
-         ['ovmf', PVE.Utils.render_qemu_bios('ovmf')],
-+        ['openbios-sparc32', 'OpenBIOS (sparc only)'],
-+        ['openbios-sparc64', 'OpenBIOS (sparc64 only)'],
-+        ['ss5.bin', 'SS5 PROM (sparc only)'],
-+        ['ss10_v2.25_rom', 'SS10 PROM (sparc only)'],
-+        ['ss20_v2.25_rom', 'SS20 PROM (sparc only)'],
+-        ['seabios', PVE.Utils.render_qemu_bios('seabios')],
+-        ['ovmf', PVE.Utils.render_qemu_bios('ovmf')],
++        ...['seabios', 'ovmf', 'openbios-sparc64', 'ss5.bin', 'ss20_v2.25_rom'].map((bios) => [
++            bios,
++            PVE.Utils.render_qemu_bios(bios),
++        ]),
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedFirmware,
 diff --git a/www/manager6/form/QemuMachineSelector.js b/www/manager6/form/QemuMachineSelector.js
-index faeb530a..5b8f9690 100644
+index faeb530a..395a09e6 100644
 --- a/www/manager6/form/QemuMachineSelector.js
 +++ b/www/manager6/form/QemuMachineSelector.js
-@@ -5,6 +5,8 @@ Ext.define('PVE.form.QemuMachineSelector', {
+@@ -5,6 +5,10 @@ Ext.define('PVE.form.QemuMachineSelector', {
      comboItems: [
          ['__default__', PVE.Utils.render_qemu_machine('')],
          ['q35', 'q35'],
 +        ['virt', 'aarch64 (virt)'],
-+        ['sun', 'sparc/sparc64 (sun)'],
++        ['SS-10', 'SS-10'],
++        ['SS-20', 'SS-20'],
++        ['sun', 'sparc64 (sun)'],
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..dec9211a 100644
+index b8412b6f..3fca6165 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
          ['__default__', `${Proxmox.Utils.defaultText} (${gettext('Host Architecture')})`],
          ['x86_64', gettext('x86 (64-bit)')],
          ['aarch64', gettext('ARM (64-bit)')],
-+        ['sparc', 'sparc'],
-+        ['sparc64', 'sparc64'],
++        ['sparc', 'SPARC (32-bit)'],
++        ['sparc64', 'SPARC (64-bit)'],
      ],
  
      // filter for PVE.Utils.kvm_ostypes
@@ -457,17 +537,17 @@ index b8412b6f..dec9211a 100644
              ostypes: ['l26', 'other'],
          },
 +        sparc: {
-+            bases: ['Linux', 'Other', 'Solaris'],
++            bases: ['Linux', 'Solaris Kernel', 'Other'],
 +            ostypes: ['l26', 'other', 'solaris'],
 +        },
 +        sparc64: {
-+            bases: ['Linux', 'Other', 'Solaris'],
++            bases: ['Linux', 'Solaris Kernel', 'Other'],
 +            ostypes: ['l26', 'other', 'solaris'],
 +        },
      },
  
      defaultProcessorModel: {
-@@ -32,11 +42,15 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -32,11 +42,70 @@ Ext.define('PVE.qemu.Architecture', {
      defaultMachines: {
          x86_64: 'pc',
          aarch64: 'virt',
@@ -475,15 +555,70 @@ index b8412b6f..dec9211a 100644
 +        sparc64: 'sun4u',
      },
  
++    // the CD-ROM and the first disk on a Sun: SCSI targets 6 and 3
      defaultCDDrive: {
          x86_64: ['ide', 2],
          aarch64: ['scsi', 2],
-+        sparc: ['scsi', 2],
++        sparc: ['scsi', 6],
 +        sparc64: ['scsi', 2],
++    },
++
++    defaultDiskDrive: {
++        sparc: ['scsi', 3],
++    },
++
++    // The sparc32 profiles: the machine, firmware and memory combinations that were tested to run,
++    // mirrored from $SPARC32_PROFILES in qemu-server (PVE::QemuServer::Machine), which validates
++    // them. Per machine: the most memory in MiB and the firmware it runs (the first is the default).
++    // A sparc32 VM always has one CPU; the SS-20 PROM gets its CPU model from qemu-server.
++    sparc32Profiles: {
++        'SS-5': { maxMemory: 256, firmware: ['openbios-sparc32', 'ss5.bin'] },
++        'SS-10': { maxMemory: 512, firmware: ['openbios-sparc32'] },
++        'SS-20': { maxMemory: 512, firmware: ['openbios-sparc32', 'ss20_v2.25_rom'] },
++    },
++
++    // the profile of a sparc32 machine ('__default__' or empty: SS-5)
++    getSparc32Profile: function (machine) {
++        let arch = PVE.qemu.Architecture;
++        if (!machine || machine === '__default__') {
++            machine = arch.defaultMachines.sparc;
++        }
++        return arch.sparc32Profiles[machine.replace(/\+pve\d+$/, '')];
++    },
++
++    // the firmware selector's category: per machine for sparc32 ('sparc:SS-20'), else the arch
++    getFirmwareCategory: function (arch, machine) {
++        if (arch !== 'sparc') {
++            return arch;
++        }
++        let profile = machine && machine !== '__default__' ? machine : 'SS-5';
++        return `sparc:${profile}`;
++    },
++
++    // display names, for both the selectors and the renderers
++    firmwareNames: {
++        seabios: 'SeaBIOS',
++        ovmf: 'OVMF (UEFI)',
++        'openbios-sparc32': 'OpenBIOS',
++        'openbios-sparc64': 'OpenBIOS',
++        'ss5.bin': 'SPARCstation 5 PROM',
++        'ss10_v2.25_rom': 'SPARCstation 10 PROM',
++        'ss20_v2.25_rom': 'SPARCstation 20 PROM',
++    },
++
++    defaultFirmware: {
++        x86_64: 'seabios',
++        aarch64: 'ovmf',
++        sparc: 'openbios-sparc32',
++        sparc64: 'openbios-sparc64',
++    },
++
++    defaultDisplay: {
++        sparc: 'cg3',
      },
  
      allowedScsiHw: {
-@@ -50,21 +64,29 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -50,21 +119,48 @@ Ext.define('PVE.qemu.Architecture', {
              'pvscsi',
          ],
          aarch64: ['virtio-scsi-pci', 'virtio-scsi-single'],
@@ -495,7 +630,7 @@ index b8412b6f..dec9211a 100644
          x86_64: ['__default__', 'q35'], // __default__ is i440fx
 -        aarch64: ['__default__'], // __default__ is virt
 +        aarch64: ['__default__', 'virt'],
-+        sparc: ['__default__', 'sun'],
++        sparc: ['__default__', 'SS-10', 'SS-20'], // __default__ is SS-5
 +        sparc64: ['__default__', 'sun'],
      },
  
@@ -506,25 +641,55 @@ index b8412b6f..dec9211a 100644
 +        sparc64: ['scsi', 'unused'],
      },
  
++    // sparc32 also has one category per machine, 'sparc:<machine>', added from the profiles below
      allowedFirmware: {
          x86_64: ['__default__', 'seabios', 'ovmf'], // default is seabios
          aarch64: ['ovmf'],
-+        sparc: ['__default__', 'openbios-sparc32', 'ss5.bin', 'ss10_v2.25_rom', 'ss20_v2.25_rom'],
++        sparc: ['__default__', 'ss5.bin', 'ss20_v2.25_rom'], // default is OpenBIOS
 +        sparc64: ['__default__', 'openbios-sparc64'],
++    },
++
++    // displays per architecture (PVE.Utils.kvm_vga_drivers); see getAllowedDisplays
++    sparc32Displays: ['cg3', 'tcx'],
++    allowedDisplays: {
++        sparc: ['__default__', 'tcx', 'serial0', 'serial1', 'none'], // default is cg3
++    },
++
++    // x86_64 and aarch64 get every display except the sparc32 framebuffers (PVE.Utils is defined
++    // after this file, so they are added on first use)
++    getAllowedDisplays: function () {
++        let me = PVE.qemu.Architecture;
++        for (const arch of ['x86_64', 'aarch64']) {
++            me.allowedDisplays[arch] ??= Object.keys(PVE.Utils.kvm_vga_drivers).filter(
++                (vga) => !me.sparc32Displays.includes(vga),
++            );
++        }
++        return me.allowedDisplays;
      },
  
      allowedTPMVersions: {
-@@ -79,6 +101,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -79,6 +175,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
 +            case 'sparc':
-+                return 'sparc';
++                return 'SPARC (32-bit)';
 +            case 'sparc64':
-+                return 'sparc64';
++                return 'SPARC (64-bit)';
              default:
                  return Proxmox.Utils.unknownText;
          }
+@@ -109,3 +209,10 @@ Ext.define('PVE.qemu.Architecture', {
+         return (architecture ?? hostArch) === hostArch;
+     },
+ });
++
++// the firmware each sparc32 machine runs, from the profiles (OpenBIOS is the default)
++for (const [machine, profile] of Object.entries(PVE.qemu.Architecture.sparc32Profiles)) {
++    PVE.qemu.Architecture.allowedFirmware[`sparc:${machine}`] = profile.firmware.map((fw) =>
++        fw === PVE.qemu.Architecture.defaultFirmware.sparc ? '__default__' : fw,
++    );
++}
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
 index ba588edc..01ba47ea 100644
 --- a/www/manager6/qemu/AudioEdit.js
@@ -616,11 +781,41 @@ index 22e511a2..c17a227a 100644
                  nodename: me.nodename,
              });
              items.push(me.bussel);
+diff --git a/www/manager6/qemu/CreateWizard.js b/www/manager6/qemu/CreateWizard.js
+index 5eb784c4..7b3cc9f9 100644
+--- a/www/manager6/qemu/CreateWizard.js
++++ b/www/manager6/qemu/CreateWizard.js
+@@ -9,6 +9,7 @@ Ext.define('PVE.qemu.CreateWizard', {
+             current: {
+                 scsihw: '',
+                 architecture: '',
++                machine: '__default__',
+             },
+         },
+         formulas: {
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 3f583adb..bd457b09 100644
+index 3f583adb..20df0d34 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
-@@ -74,6 +74,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -44,13 +44,15 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+     items: [
+         {
+             name: 'type',
+-            xtype: 'proxmoxKVComboBox',
++            xtype: 'pveFilteredKVComboBox',
+             value: '__default__',
+             deleteEmpty: false,
+             fieldLabel: gettext('Graphic card'),
+             comboItems: Object.entries(PVE.Utils.kvm_vga_drivers),
++            allowedValuesPerCategory: PVE.qemu.Architecture.getAllowedDisplays(),
++            setDefaultDisplay: PVE.Utils.render_default_vga,
+             validator: function (v) {
+-                let cfg = this.up('proxmoxWindowEdit').vmconfig || {};
++                let cfg = this.up('proxmoxWindowEdit')?.vmconfig || {};
+ 
+                 if (v.match(/^serial\d+$/) && (!cfg[v] || cfg[v] !== 'socket')) {
+                     let fmt = gettext("Serial interface '{0}' is not correctly configured.");
+@@ -74,6 +76,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
                  emptyText: '{memoryEmptyText}',
                  disabled: '{matchNonGUIOption}',
              },
@@ -641,6 +836,18 @@ index 3f583adb..bd457b09 100644
          },
      ],
  
+@@ -157,6 +173,11 @@ Ext.define('PVE.qemu.DisplayEdit', {
+         me.load({
+             success: function (response) {
+                 me.vmconfig = response.result.data;
++                let arch = PVE.qemu.Architecture.getGuestArchitecture(
++                    me.vmconfig.arch,
++                    me.pveSelNode?.data.node,
++                );
++                me.down('field[name=type]').setCategory(arch);
+                 let vga = me.vmconfig.vga || '__default__';
+                 me.setValues(PVE.Parser.parsePropertyString(vga, 'type'));
+             },
 diff --git a/www/manager6/qemu/FloppyEdit.js b/www/manager6/qemu/FloppyEdit.js
 new file mode 100644
 index 00000000..39eb1788
@@ -842,10 +1049,39 @@ index 00000000..39eb1788
 +    },
 +});
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index bc0aa19d..b617108b 100644
+index bc0aa19d..48e51ecb 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
-@@ -322,6 +322,18 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -65,6 +65,10 @@ Ext.define('PVE.qemu.HardwareView', {
+             cgroupMode: nodeInfo['cgroup-mode'],
+         };
+ 
++        // the defaults some rows show depend on the architecture
++        let guestArch = () =>
++            PVE.qemu.Architecture.getGuestArchitecture(me.getObjectValue('arch'), nodename);
++
+         let rows = {
+             arch: {
+                 header: gettext('vCPU Architecture'),
+@@ -173,7 +177,7 @@ Ext.define('PVE.qemu.HardwareView', {
+                 editor: caps.vms['VM.Config.Options'] ? 'PVE.qemu.BiosEdit' : undefined,
+                 defaultValue: '',
+                 iconCls: 'microchip',
+-                renderer: PVE.Utils.render_qemu_bios,
++                renderer: (value) => PVE.Utils.render_qemu_bios(value, guestArch()),
+             },
+             vga: {
+                 header: gettext('Display'),
+@@ -230,7 +234,7 @@ Ext.define('PVE.qemu.HardwareView', {
+                 header: gettext('SCSI Controller'),
+                 iconCls: 'database',
+                 editor: caps.vms['VM.Config.Options'] ? 'PVE.qemu.ScsiHwEdit' : undefined,
+-                renderer: PVE.Utils.render_scsihw,
++                renderer: (value) => PVE.Utils.render_scsihw(value, guestArch()),
+                 group: 7,
+                 never_delete: true,
+                 defaultValue: '',
+@@ -322,6 +326,18 @@ Ext.define('PVE.qemu.HardwareView', {
              header: gettext('TPM State'),
              renderer: Ext.htmlEncode,
          };
@@ -864,7 +1100,7 @@ index bc0aa19d..b617108b 100644
          for (let i = 0; i < PVE.Utils.hardware_counts.usb; i++) {
              let confid = 'usb' + i.toString();
              rows[confid] = {
-@@ -751,6 +763,7 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -751,6 +767,7 @@ Ext.define('PVE.qemu.HardwareView', {
              me.down('#addCloudinitDrive').setDisabled(
                  noVMConfigCDROMPerm || noVMConfigCloudinitPerm || hasCloudInit,
              );
@@ -872,7 +1108,7 @@ index bc0aa19d..b617108b 100644
  
              if (!rec) {
                  remove_btn.disable();
-@@ -799,10 +812,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -799,10 +816,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -887,7 +1123,7 @@ index bc0aa19d..b617108b 100644
              );
  
              edit_btn.setText(
-@@ -863,6 +876,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -863,6 +880,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.vms['VM.Config.CDROM'],
                                  handler: editorFactory('CDEdit'),
                              },
@@ -901,25 +1137,11 @@ index bc0aa19d..b617108b 100644
                              {
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
-@@ -938,6 +958,13 @@ Ext.define('PVE.qemu.HardwareView', {
-                                 disabled: !caps.nodes['Sys.Console'],
-                                 handler: editorFactory('VirtiofsEdit'),
-                             },
-+                            {
-+                                text: gettext("Architecture"),
-+                                itemId: 'addArch',
-+                                iconCls: 'fa fa-fw fa-cogs black',
-+                                disabled: !caps.nodes['VM.Config.Arch'],
-+                                handler: editorFactory('QemuArchEdit'),
-+                            },
-                         ],
-                     }),
-                 },
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index cd759703..df700db2 100644
+index cd759703..68cc6eef 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
-@@ -51,7 +51,16 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -51,7 +51,18 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              if (defaultMachine === 'pc') {
                  defaultMachine = 'i440fx'; // the default in the backend is 'pc' which means 'i440fx' for the qemu machinetype
              }
@@ -931,20 +1153,20 @@ index cd759703..df700db2 100644
 +                type = 'virt';
 +            } else if (machineType === 'sun') {
 +                type = 'sun';
++            } else if (arch === 'sparc') {
++                type = 'none'; // the sparc32 machines have no versions to pin
 +            } else {
 +                type = defaultMachine;
 +            }
              let store = me.lookup('version').getStore();
              store.clearFilter();
              store.addFilter((val) => val.data.id === 'latest' || val.data.type === type);
-@@ -80,6 +89,13 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -80,6 +91,11 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              values.machine = values.version;
              delete values.delete;
          }
 +        if (values.machine === 'sun' && (!values.version || values.version === 'latest')) {
-+            if (arch === 'sparc') {
-+                values.machine = 'SS-5';
-+            } else if (arch === 'sparc64') {
++            if (arch === 'sparc64') {
 +                values.machine = 'sun4u';
 +            }
 +        }
@@ -959,9 +1181,18 @@ index cd759703..df700db2 100644
  
          let machineConf = PVE.Parser.parsePropertyString(values.machine, 'type');
          values.machine = machineConf.type;
-@@ -119,12 +136,30 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -117,14 +134,36 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
-         if (values.machine !== '__default__' && values.machine !== 'q35') {
+         values.viommu = machineConf.viommu || '__default__';
+ 
+-        if (values.machine !== '__default__' && values.machine !== 'q35') {
++        // sparc32: SS-5 (the default), SS-10 or SS-20, without versions
++        if (values.arch === 'sparc') {
++            values.machine = values.machine.replace(/\+pve\d+$/, '');
++            if (values.machine === defaultMachine) {
++                values.machine = '__default__';
++            }
++        } else if (values.machine !== '__default__' && values.machine !== 'q35') {
              values.version = values.machine;
 -            values.machine = values.version.match(/q35/) ? 'q35' : '__default__';
 +            if (values.version.match(/q35/)) {
@@ -981,8 +1212,6 @@ index cd759703..df700db2 100644
 +        if (values.machine === '__default__') {
 +            if (values.arch === 'aarch64') {
 +                values.machine = 'virt';
-+            } else if (values.arch === 'sparc') {
-+                values.machine = 'sun';
 +            } else if (values.arch === 'sparc64') {
 +                values.machine = 'sun';
 +            }
@@ -991,38 +1220,301 @@ index cd759703..df700db2 100644
          this.callParent(arguments);
          this.getController().setVersionFilter(values.machine);
          this.getController().setArch(values.arch);
-diff --git a/www/manager6/qemu/QemuArchEdit.js b/www/manager6/qemu/QemuArchEdit.js
-new file mode 100644
-index 00000000..caa9d6a7
---- /dev/null
-+++ b/www/manager6/qemu/QemuArchEdit.js
-@@ -0,0 +1,26 @@
-+Ext.define('PVE.qemu.QemuArchEdit', {
-+    extend: 'Proxmox.window.Edit',
-+    alias: 'widget.pveQemuArchEdit',
-+
-+    onlineHelp: 'qm_options',
-+    subject: gettext('Architecture'),
-+    autoLoad: true,
-+
-+    viewModel: {
-+        data: {
-+            arch: '__default__',
+diff --git a/www/manager6/qemu/MemoryEdit.js b/www/manager6/qemu/MemoryEdit.js
+index 0f6bd656..990c2450 100644
+--- a/www/manager6/qemu/MemoryEdit.js
++++ b/www/manager6/qemu/MemoryEdit.js
+@@ -16,6 +16,34 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
+             },
+         },
+ 
++        init: function (view) {
++            let me = this;
++            if (view.insideWizard) {
++                let vm = me.getViewModel();
++                vm.bind('{current.architecture}', () => me.applySparc32Limit());
++                vm.bind('{current.machine}', () => me.applySparc32Limit());
++            }
 +        },
++
++        // the sparc32 machine's most memory (PVE.qemu.Architecture.sparc32Profiles), if any
++        sparc32MaxMemory: function () {
++            let vm = this.getViewModel();
++            if (vm.get('current.architecture') !== 'sparc') {
++                return undefined;
++            }
++            return PVE.qemu.Architecture.getSparc32Profile(vm.get('current.machine'))?.maxMemory;
++        },
++
++        applySparc32Limit: function () {
++            let me = this;
++            let max = me.sparc32MaxMemory();
++            me.getView().setMaxMemory(max);
++            let memory = me.getView().down('pveMemoryField[name=memory]');
++            if (max && memory.getValue() > max) {
++                memory.setValue(max);
++            }
++        },
++
+         setMemory: function () {
+             let me = this;
+             let view = me.getView(),
+@@ -23,15 +51,25 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
+             if (view.insideWizard) {
+                 let memory = view.down('pveMemoryField[name=memory]');
+                 // NOTE: we only set memory but that then sets balloon in its change handler
+-                if (viewModel.get('current.ostype') === 'win11') {
++                if (me.sparc32MaxMemory()) {
++                    memory.setValue(me.sparc32MaxMemory());
++                } else if (viewModel.get('current.ostype') === 'win11') {
+                     memory.setValue('4096');
+                 } else {
+                     memory.setValue('2048');
+                 }
++                me.applySparc32Limit();
+             }
+         },
+     },
+ 
++    // caps the memory field, e.g. at a sparc32 machine's most memory; undefined lifts the cap
++    setMaxMemory: function (max) {
++        let memory = this.down('pveMemoryField[name=memory]');
++        memory?.setMaxValue(max ?? PVE.form.MemoryField.prototype.maxValue);
++        memory?.validate();
 +    },
 +
-+    items: [
-+        {
-+            xtype: 'proxmoxKVComboBox',
-+            onlineHelp: 'qm_options',
-+            name: 'arch',
-+            value: '__default__',
-+            bind: '{arch}',
-+            fieldLabel: gettext('Architecture'),
-+            comboItems: PVE.qemu.Architecture.selection,
+     onGetValues: function (values) {
+         let res = {};
+ 
+@@ -219,6 +257,15 @@ Ext.define('PVE.qemu.MemoryEdit', {
+                 };
+ 
+                 ipanel.setValues(values);
++
++                let nodename = me.pveSelNode?.data.node;
++                let arch = PVE.qemu.Architecture.getGuestArchitecture(data.arch, nodename);
++                if (arch === 'sparc') {
++                    let machine = PVE.Parser.parsePropertyString(data.machine, 'type').type;
++                    ipanel.setMaxMemory(
++                        PVE.qemu.Architecture.getSparc32Profile(machine)?.maxMemory,
++                    );
++                }
+             },
+         });
+     },
+diff --git a/www/manager6/qemu/MultiHDEdit.js b/www/manager6/qemu/MultiHDEdit.js
+index f6b35121..896f80a8 100644
+--- a/www/manager6/qemu/MultiHDEdit.js
++++ b/www/manager6/qemu/MultiHDEdit.js
+@@ -9,6 +9,12 @@ Ext.define('PVE.qemu.MultiHDPanel', {
+     controller: {
+         xclass: 'Ext.app.ViewController',
+ 
++        init: function () {
++            let me = this;
++            // the disks' buses (and a Sun's first disk on target 3) follow the architecture
++            me.getViewModel().bind('{current.architecture}', () => me.updateVMConfig());
 +        },
-+    ],
-+});
++
+         // maxCount is the sum of all controller ids - 1 (ide2 is fixed in the wizard)
+         maxCount:
+             Object.values(PVE.Utils.diskControllerMaxIDs).reduce(
+diff --git a/www/manager6/qemu/NetworkEdit.js b/www/manager6/qemu/NetworkEdit.js
+index 9f992d1d..f875498e 100644
+--- a/www/manager6/qemu/NetworkEdit.js
++++ b/www/manager6/qemu/NetworkEdit.js
+@@ -162,7 +162,9 @@ Ext.define('PVE.qemu.NetworkInputPanel', {
+                 xtype: 'pveNetworkCardSelector',
+                 name: 'model',
+                 fieldLabel: gettext('Model'),
+-                bind: '{networkModel}',
++                bind: me.insideWizard
++                    ? { value: '{networkModel}', category: '{current.architecture}' }
++                    : '{networkModel}',
+                 value: PVE.qemu.OSDefaults.getDefaults().networkCard,
+                 allowBlank: false,
+             },
+@@ -245,6 +247,11 @@ Ext.define('PVE.qemu.NetworkEdit', {
+             success: function (response, options) {
+                 var i, confid;
+                 me.vmconfig = response.result.data;
++                ipanel
++                    .down('field[name=model]')
++                    .setCategory(
++                        PVE.qemu.Architecture.getGuestArchitecture(me.vmconfig.arch, nodename),
++                    );
+                 if (!me.isCreate) {
+                     let value = me.vmconfig[me.confid];
+                     let network = PVE.Parser.parseQemuNetwork(me.confid, value);
+diff --git a/www/manager6/qemu/OSDefaults.js b/www/manager6/qemu/OSDefaults.js
+index df5ad8aa..34ffd30d 100644
+--- a/www/manager6/qemu/OSDefaults.js
++++ b/www/manager6/qemu/OSDefaults.js
+@@ -67,6 +67,20 @@ Ext.define('PVE.qemu.OSDefaults', {
+                 scsihw: 'virtio-scsi-single',
+                 bios: 'ovmf',
+             },
++
++            // the built-in SCSI controller and NIC, for every OS type
++            sparc: {
++                busType: 'scsi',
++                networkCard: 'lance',
++                busPriority: { scsi: 1 },
++                scsihw: '',
++            },
++            sparc64: {
++                busType: 'scsi',
++                networkCard: 'sunhme',
++                busPriority: { scsi: 1 },
++                scsihw: '',
++            },
+         };
+ 
+         // virtio-net is in kernel since 2.6.25
+@@ -125,6 +139,9 @@ Ext.define('PVE.qemu.OSDefaults', {
+             if (os[arch]) {
+                 return os[arch];
+             }
++            if (arch?.startsWith('sparc')) {
++                return PVE.qemu.OSDefaults.generic[arch];
++            }
+ 
+             // default
+             return os.x86_64;
+diff --git a/www/manager6/qemu/ProcessorEdit.js b/www/manager6/qemu/ProcessorEdit.js
+index bc8e4723..1a5df990 100644
+--- a/www/manager6/qemu/ProcessorEdit.js
++++ b/www/manager6/qemu/ProcessorEdit.js
+@@ -115,6 +115,20 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+         me.arch = arch;
+         me.lookup('cputype').setArch(arch);
+         me.lookup('cpuFlags').setArch(arch);
++
++        // sparc32 has one CPU, of the model its machine and firmware call for (qemu-server picks
++        // it): nothing to choose, and the disabled fields aren't submitted
++        let sparc32 = arch === 'sparc';
++        if (sparc32) {
++            me.getViewModel().set({ socketCount: 1, coreCount: 1 });
++            me.lookup('cputype').setEmptyText(
++                `${Proxmox.Utils.defaultText} (${gettext('from machine and firmware')})`,
++            );
++        }
++        for (const ref of ['sockets', 'cores', 'cputype', 'cpuFlags', 'vcpus']) {
++            me.lookup(ref)?.setDisabled(sparc32);
++        }
++        me.lookup('sparc32Hint')?.setHidden(!sparc32);
+     },
+ 
+     setKvm: function (kvm) {
+@@ -129,6 +143,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+         {
+             xtype: 'proxmoxintegerfield',
+             name: 'sockets',
++            reference: 'sockets',
+             minValue: 1,
+             value: '1',
+             fieldLabel: gettext('Sockets'),
+@@ -140,6 +155,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+         {
+             xtype: 'proxmoxintegerfield',
+             name: 'cores',
++            reference: 'cores',
+             minValue: 1,
+             maxValue: 256,
+             value: '1',
+@@ -170,6 +186,15 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+     ],
+ 
+     columnB: [
++        {
++            xtype: 'displayfield',
++            reference: 'sparc32Hint',
++            userCls: 'pmx-hint',
++            hidden: true,
++            value: gettext(
++                'SPARC (32-bit) VMs have one CPU; its model follows the machine and firmware.',
++            ),
++        },
+         {
+             xtype: 'displayfield',
+             userCls: 'pmx-hint',
+@@ -187,6 +212,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+         {
+             xtype: 'proxmoxintegerfield',
+             name: 'vcpus',
++            reference: 'vcpus',
+             minValue: 1,
+             maxValue: 1,
+             value: '',
+diff --git a/www/manager6/qemu/SystemEdit.js b/www/manager6/qemu/SystemEdit.js
+index 8d01c0c4..099e265f 100644
+--- a/www/manager6/qemu/SystemEdit.js
++++ b/www/manager6/qemu/SystemEdit.js
+@@ -14,6 +14,12 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             efidisk: function (get) {
+                 return get('efi') && get('addefi');
+             },
++            // sparc32 machines each run their own firmware (PVE.qemu.Architecture.sparc32Profiles)
++            firmwareCategory: (get) =>
++                PVE.qemu.Architecture.getFirmwareCategory(
++                    get('current.architecture'),
++                    get('current.machine'),
++                ),
+         },
+     },
+ 
+@@ -42,6 +48,13 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             }
+         },
+ 
++        machineChange: function (field, value) {
++            var me = this;
++            if (me.getView().insideWizard) {
++                me.getViewModel().set('current.machine', value);
++            }
++        },
++
+         biosChange: function (field, value) {
+             var me = this;
+             if (me.getView().insideWizard) {
+@@ -56,6 +69,9 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             pveQemuBiosSelector: {
+                 change: 'biosChange',
+             },
++            pveQemuMachineSelector: {
++                change: 'machineChange',
++            },
+             '#': {
+                 afterrender: 'setDefaults',
+             },
+@@ -80,12 +96,17 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+ 
+     column1: [
+         {
+-            xtype: 'proxmoxKVComboBox',
++            xtype: 'pveFilteredKVComboBox',
+             value: '__default__',
+             deleteEmpty: false,
+             fieldLabel: gettext('Graphic card'),
+             name: 'vga',
+             comboItems: Object.entries(PVE.Utils.kvm_vga_drivers),
++            allowedValuesPerCategory: PVE.qemu.Architecture.getAllowedDisplays(),
++            setDefaultDisplay: PVE.Utils.render_default_vga,
++            bind: {
++                category: '{current.architecture}',
++            },
+         },
+         {
+             xtype: 'pveQemuMachineSelector',
+@@ -108,7 +129,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             value: '__default__',
+             fieldLabel: 'BIOS',
+             bind: {
+-                category: '{current.architecture}',
++                category: '{firmwareCategory}',
+             },
+         },
+         {
 diff --git a/www/manager6/storage/Browser.js b/www/manager6/storage/Browser.js
 index d0237948..dcf983d2 100644
 --- a/www/manager6/storage/Browser.js

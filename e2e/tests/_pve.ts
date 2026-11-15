@@ -13,6 +13,13 @@ export interface Pve {
   get: <T>(path: string) => Promise<T>
   post: <T>(path: string, form: Record<string, number | string>) => Promise<T>
   delete: (path: string) => Promise<void>
+  /** A POST/PUT expected to fail: its status and the error text (status line and body). */
+  refused: (method: 'POST' | 'PUT', path: string, form: Record<string, number | string>) => Promise<Refusal>
+}
+
+export interface Refusal {
+  status: number
+  message: string
 }
 
 /** An API client authenticated as root@pam (ticket cookie + CSRF header). */
@@ -34,7 +41,28 @@ export async function pveApi(request: APIRequestContext): Promise<Pve> {
     },
     get: async (path) => unwrap(await request.get(`/api2/json${path}`, { headers })),
     post: async (path, form) => unwrap(await request.post(`/api2/json${path}`, { form, headers })),
+    refused: async (method, path, form) => {
+      const res = await request.fetch(`/api2/json${path}`, { form, headers, method })
+      const body = await res.text()
+      expect(res.ok(), `${method} ${path} succeeded: ${body}`).toBe(false)
+      return { message: `${res.statusText()} ${body}`, status: res.status() }
+    },
   }
+}
+
+/**
+ * Whether the installed qemu-server has the sparc32 profiles (PVE::QemuServer::Machine's
+ * $SPARC32_PROFILES). A probe that answers neither way fails the caller instead of skipping.
+ */
+export async function hasSparcProfiles(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Machine',
+    '-e',
+    'print defined($PVE::QemuServer::Machine::SPARC32_PROFILES) ? "profiles=yes\\n" : "profiles=no\\n"',
+  ])
+  expect(probe.output, probe.output).toMatch(/profiles=(yes|no)/)
+  return probe.output.includes('profiles=yes')
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */
@@ -95,7 +123,9 @@ bin=$1; shift
 args=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -chardev|-mon|-pidfile|-vnc) shift 2; continue ;;
+    # A serial port's socket chardev is kept: the device or -serial that uses it needs it.
+    -chardev) case "$2" in *id=serial*) ;; *) shift 2; continue ;; esac ;;
+    -mon|-pidfile|-vnc) shift 2; continue ;;
     -object) case "$2" in monitor-qmp*) shift 2; continue ;; esac ;;
     # A tap needs the host bridge; a hubport with the same id keeps the NIC's netdev= valid.
     -netdev) case "$2" in *type=tap*)

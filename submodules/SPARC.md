@@ -182,7 +182,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | Voyager | `voyager.bin` | default | 256 | `qemu: fatal: Trap 0x02 (Illegal Instruction)` after `Power-ON Reset` |
 
 The Sun SS-20 PROM reaches `ok` and boots with `-cpu TI-SuperSparc-40`, `-50` or `-60` only.
-qemu-server never passes `-cpu` on sparc, so as configured today the SS-10/SS-20 PROMs can't work.
+qemu-server passes `-cpu TI-SuperSparc-50` for SS-20 with `ss20_v2.25_rom` ("Supported profiles").
 With `-smp 2` the PROM reports `Cpu #1 Nothing there`, Solaris lists one CPU and QEMU burns one host
 core (the second vCPU is never started); with 1024 MB Solaris reports `Memory size: 512 Megabytes`.
 A disk installed with OpenBIOS on SS-20 boots with the Sun SS-20 PROM and the reverse (both SS-20,
@@ -294,40 +294,102 @@ Solaris 2.6 user-space work, not one kind of operation.
   works with 2 CPUs (not benchmarked).
 - RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
   256 in this benchmark.
-- The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60),
-  which qemu-server would have to pass; they bring no speed benefit over OpenBIOS. The SS-10 PROM
-  doesn't run on the SS-10 machine.
+- The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60);
+  qemu-server passes -50 for `ss20_v2.25_rom` on SS-20. They bring no speed benefit over OpenBIOS. The
+  SS-10 PROM doesn't run on the SS-10 machine.
 - Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
   `ross225r.bin` (which runs as a SuperSPARC SS-20).
+
+## Supported profiles
+
+The contract for sparc32 (`arch: sparc`, always TCG, one CPU), from the measurements under "SS-10
+and SS-20". qemu-server holds it as `$SPARC32_PROFILES` in `PVE::QemuServer::Machine` and validates
+and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture.sparc32Profiles`.
+
+| Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs |
+| --- | --- | --- | --- | --- |
+| SS-5 (default) | `openbios-sparc32` (default), `ss5.bin` | none (machine default) | 256 MB | 1 |
+| SS-10 | `openbios-sparc32` | none | 512 MB | 1 |
+| SS-20 | `openbios-sparc32` | none | 512 MB | 1 |
+| SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
+
+- Display: `cg3` (default), `tcx`, `none`, `serial0`/`serial1` (ttya/ttyb). No resolution option
+  (`-g`): qemu-server passes none, so cg3 runs at QEMU's 1024x768.
+- Disk on the built-in ESP at SCSI target 3, CD-ROM at target 6 (`physical_block_size=512`), the
+  built-in lance with `net0`'s MAC, at most one NIC.
+- `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
+  QEMU's SS-10).
+- sparc64 (`sun4u`, `openbios-sparc64`) has no profiles: what worked before still does, nothing more
+  is checked.
 
 ## qemu-server
 
 `submodules/qemu-server.patch`, everything gated on `arch` matching `sparc`:
 
+- **Architecture:** `arch` (the `pve-qm-cpu-arch` option) takes `sparc` and `sparc64`, on create
+  only: changing it on an existing VM is refused for every architecture (x86_64 to aarch64 too), and
+  so is deleting it when that changes the architecture. The CPU model and CPU flag capability APIs
+  return empty lists for sparc.
 - **Binaries:** `sparc` → `/usr/bin/qemu-system-sparc`, `sparc64` → `/usr/bin/qemu-system-sparc64`.
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
-  `SS-\d{1,2}` and `sun4[a-z]`, type `sun`.
+  `SS-\d{1,2}` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type `sun`.
+- **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
+  sockets × cores = 1, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
+  It runs on create (before the config exists), on every config update against the config as it
+  will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
+  vzdump). Reading a config (`GET .../config`, the VM list, `qm config`) never checks it: a config
+  outside the profiles stays readable and is refused only when it is started or changed, with a
+  message naming the allowed values; a change that makes it valid is accepted.
 - **Firmware:** `bios` accepts `openbios-sparc32`, `openbios-sparc64`, `ss5.bin`,
-  `ss10_v2.25_rom`, `ss20_v2.25_rom`.
-- **Display:** `vga` accepts `tcx` and `cg3`, passed as `-vga <type>`.
+  `ss10_v2.25_rom`, `ss20_v2.25_rom`, passed as `-bios`.
+- **CPU:** `-cpu` only from the profile (`TI-SuperSparc-50` for SS-20 + `ss20_v2.25_rom`); the generic
+  `cpu` option is refused on sparc32 and never emitted on sparc or sparc64.
+- **Display:** `vga` accepts `tcx` and `cg3`, passed as `-vga <type>`; sparc32 defaults to `cg3`
+  (QEMU's sun4m has no `std`).
 - **Disks:** sparc32 drives are `scsi-hd`/`scsi-cd` on the built-in ESP
   (`channel=0,scsi-id=<unit>,lun=0`); sparc64 puts the SCSI controller on `pciB`. CD-ROMs get
-  `physical_block_size=512` (Sun drives used 512-byte blocks).
-- **Network:** sparc32 uses the built-in lance (`-net nic,model=lance`, not hot-pluggable);
-  sparc64 puts `sunhme` on `pciB`.
-- **Left out on sparc:** `-smbios`, the CPU type (the machine's default), PCI passthrough
-  (ignored with a message) and USB.
+  `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
+  x86 (the machine version follows the QEMU version), which the backup job finds.
+- **Network:** sparc32 uses the built-in lance (`-net nic,model=lance,macaddr=<net0's MAC>`, not
+  hot-pluggable; sun4m creates one lance and only warns about a second `-net nic`); sparc64 puts
+  `sunhme` on `pciB`.
+- **Serial:** sparc32's serial0/serial1 are the machine's ttya/ttyb, `-serial chardev:serialN` (no
+  `isa-serial`).
+- **Left out on sparc:** `-smbios`, PCI passthrough (ignored with a message), USB and the tablet,
+  vmgenid; sparc32 also gets no virtio-balloon.
+- **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
+  when there is one.
+
+### Backup and restore
+
+Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a guest OS:
+
+- `vzdump --mode stop` and `qmrestore` to a new VMID work for every profile: the restored config
+  equals the original except for the disk volume, and the disk image has the same checksum.
+- `vzdump --mode snapshot` of a running VM works (QEMU's backup job sees the `-blockdev` drives);
+  there is no guest agent, so no fs-freeze.
+- `qm snapshot --vmstate 1` and `qm rollback` work (SS-5 OpenBIOS and SS-20 PROM tested). Before
+  this they failed with `could not read commandline of running machine` (no `-cpu`), then with
+  `unable to parse value of 'runningmachine'` (`SS-5+pve0` didn't match the machine regex).
+- Not tested: live migration (`QemuMigrate` still reads `-cpu` from the running VM, which fails
+  without one), and backups while a guest OS writes.
 
 ## pve-manager
 
 `submodules/pve-manager.patch`:
 
-- `qemu/Architecture.js` and `QemuArchEdit.js`: the Architecture panel with `sparc` and
-  `sparc64`. Each offers Linux/Other/Solaris OS types, the SS-5/sun4u machine, SCSI only, and
-  the matching firmware.
-- Selectors: machine (`SS-5 (sun/sparc)`, `sun4u (sun/sparc64)`), firmware (OpenBIOS, SS5/SS10/SS20
-  PROM), display (TCX, CG3), network (Lance, Sun Happy Meal).
-- The CD, display, audio and hardware views take the architecture into account.
+- `qemu/Architecture.js`: SPARC (32-bit) and SPARC (64-bit) in the create wizard's vCPU
+  Architecture (an advanced option); per architecture the OS types (Linux, Solaris, Other),
+  machines, firmware, displays, SCSI controller and buses; the mirrored sparc32 profiles; the
+  firmware display names that both the selectors and the renderers use.
+- sparc32 in the wizard and the Hardware editors: machine SS-5 (default), SS-10 or SS-20 (no
+  versions), only the firmware the machine runs, memory preset to and capped at the machine's
+  maximum, sockets, cores and CPU type disabled (nothing is submitted), displays cg3 (default), tcx,
+  serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
+  target 6.
+- The architecture of an existing VM is read-only (no editor, no Add → Architecture).
+- Selectors: firmware (OpenBIOS, SPARCstation 5/20 PROM), display (TCX, CG3), network (Lance, Sun
+  Happy Meal).
 
 ## Testing
 
@@ -339,18 +401,19 @@ Solaris 2.6 user-space work, not one kind of operation.
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
 - Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
   results under "SS-10 and SS-20".
+- Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
+  combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
+  backup/restore, and that the lab's machine arguments match `qm showcmd`).
 
 ## Known gaps
 
 - **CD as a disk:** Solaris 2.4 and 2.5.1 only boot their installer from a CD that answers as a
-  disk (`scsi-hd`). qemu-server always makes a sparc CD-ROM a `scsi-cd`.
-- **RAM:** QEMU's SS-5 takes 256 MB at most (`Too much memory for this machine`); Solaris 2.6 on
-  SS-10/SS-20 panics above 512 MB. qemu-server and the UI don't limit either.
-- **CPU model:** the Sun SS-10/SS-20 PROMs need `-cpu TI-SuperSparc-40/50/60`, which qemu-server
-  doesn't pass; Solaris 2.6 hangs with more than one CPU, which nothing prevents ("SS-10 and SS-20").
-- **Machine choice:** the UI offers SS-5 only, though SS-10/SS-20 run Solaris 2.6 user space ~9x
-  faster ("SS-10 and SS-20").
-- **lance MAC:** fixed at `08:00:20:b5:09:67` instead of coming from the VM's `net0`.
-- **Architecture changes:** changing the architecture of an existing VM should be refused.
+  disk (`scsi-hd`). A CD-ROM drive (`media=cdrom`) is always a `scsi-cd`, and the API refuses an ISO
+  volume without `media=cdrom`. Workaround: copy the ISO into a raw disk image of the VM and attach
+  it as `scsi6: <volume>,ro=1,backup=0` (a read-only disk on target 6). A first-class option would be
+  a sparc32-only drive flag; not added.
+- **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
+  Solaris' X server need).
+- **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).

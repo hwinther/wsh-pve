@@ -6,6 +6,7 @@ description: A reference page for the architecture hardware panel
 Architecture is a hardware element that is added by this extension.
 If it has not been set on a guest, it defaults to the host architecture (typically x86_64).
 By setting it to another architecture you change which qemu system is emulated, and specifically which `qemu-system-[arch]` binary will be used when starting the VM.
+It is set when the VM is created and can't be changed afterwards.
 
 Currently the supported values are:
 

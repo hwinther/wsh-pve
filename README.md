@@ -26,7 +26,7 @@ Note: There are still manual steps in this process due to the pvemanagerlib.js f
 Once the packages have been installed on a PVE host, the proxmox frontend will have additional options, some of which are listed here:
 
 * Support for sparc32 guests with OpenBios or original boot PROMS (TODO: merge into deb)
-  * This is often limited to SuperSparc 5, single cpu and 512mb ram, depending on the OS and other details.
+  * Limited to the tested profiles: SS-5 (256 MB), SS-10 or SS-20 (512 MB), one CPU; see the [SPARC guide](https://debian.wshosting.no/guides/sparc/).
   * TODO: include ready-to-use SUN formatted raw images
   * Audio does not seem to work, but network is working so long as it is present when solaris is installed
   * The installation process may take a long time, and CPU usage will be stuck at around 100% on the host - this is normal, but you may want to pin the cpu core to a low frequency core or stick to a test system so that the performance is not reduced for other guests.

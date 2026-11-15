@@ -11,16 +11,18 @@ The Processors panel controls the number of vCPUs and the emulated CPU model. Wh
 | ------------ | --------------- | --------- |
 | x86_64       | i440fx / q35    | Full PVE CPU model list (host, kvm64, named Intel/AMD models, custom) |
 | aarch64      | virt            | A CPU model is applied; defaults are provided by the `virt` machine |
-| sparc        | SS-5            | Not configurable — the machine provides a fixed CPU |
+| sparc        | SS-5            | Not configurable — follows the machine and BIOS |
 | sparc64      | sun4u           | Not configurable — the machine provides a fixed CPU |
 
-For the SPARC architectures the WSH patches intentionally do not emit a `-cpu` argument; the selected machine (SS-5 / sun4u) provides its own processor, so the CPU type field is ignored.
+For sparc32 the CPU follows the [profile](/guides/sparc/#supported-sparc32-profiles): no `-cpu`
+argument (the machine's own CPU), except `-cpu TI-SuperSparc-50` for SS-20 with the Sun PROM. The CPU
+type, sockets and cores can't be set (one CPU). sparc64 gets no `-cpu` argument.
 
 ## SPARC limitations
 
 SPARC emulation is sensitive to the guest operating system:
 
-- sparc32 (SS-5) is usually limited to a **single CPU** and around **512 MB of RAM**, depending on the OS.
+- sparc32 has a **single CPU** and at most **256 MB of RAM** on SS-5, **512 MB** on SS-10/SS-20.
 - Installation can be slow and host CPU usage may sit near 100% for the emulated core — this is expected. Pinning the VM to a low-frequency core, or keeping these guests on a test host, avoids reducing performance for other guests.
 
 ## Further reading

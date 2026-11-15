@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import { hasSparcProfiles, NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
 
 // VMs with the WSH options, created through the API: the stored config, the QEMU command qemu-server
 // builds from it (`qm showcmd`) and whether QEMU accepts that command. This is the layer the
@@ -8,6 +8,14 @@ import { NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile
 // rework silently dropped four hunks).
 
 let pve: Pve
+// The sparc tests marked test.fail(!profiles) show bugs of the qemu-server without the sparc32
+// profiles (the published one until they are released); with the profiles they must pass.
+// TODO: drop the test.fail(!profiles) markers once the profiles are published at debian.wshosting.no.
+let profiles: boolean
+
+test.beforeAll(async () => {
+  profiles = await hasSparcProfiles()
+})
 
 test.beforeEach(async ({ request }) => {
   pve = await pveApi(request)
@@ -118,47 +126,52 @@ test.describe('sparc32, config written to the file', () => {
     expect(await vmConfFile(vmid)).toContain('memory: 128')
   })
 
-  test('the API sets arch (the Architecture panel)', async () => {
-    // KNOWN BUG: `arch` is still enum x86_64/aarch64 (the pve-qm-cpu-arch standard option in
-    // PVE::QemuServer::CPUConfig) and no patch extends it, so saving sparc/sparc64 is refused, and
-    // so is creating a sparc VM.
-    test.fail()
-    await pve.post(`/nodes/${NODE}/qemu/${vmid}/config`, { arch: 'sparc64' })
-    expect(await vmConfFile(vmid)).toContain('arch: sparc64')
+  test('the API keeps arch and refuses to change it', async () => {
+    // KNOWN BUG without the profiles: `arch` was enum x86_64/aarch64 (pve-qm-cpu-arch), so the API
+    // refused sparc/sparc64 outright, and changing an existing VM's arch was not refused.
+    test.fail(!profiles, 'qemu-server without the sparc32 profiles')
+    await pve.post(`/nodes/${NODE}/qemu/${vmid}/config`, { arch: 'sparc' })
+    expect(await vmConfFile(vmid)).toMatch(/^arch: sparc$/m)
+
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu/${vmid}/config`, { arch: 'sparc64' })
+    expect(refused.message).toContain("the architecture of an existing VM can't be changed (it is 'sparc')")
+    expect(await vmConfFile(vmid)).toMatch(/^arch: sparc$/m)
   })
 
   test("the lance NIC uses the config's MAC address", async () => {
-    // KNOWN BUG: the patch hardcodes macaddr=08:00:20:b5:09:67 for lance ("TODO: fix static hw"),
-    // so every sparc32 VM on a bridge has the same MAC.
-    test.fail()
+    // KNOWN BUG without the profiles: macaddr=08:00:20:b5:09:67 was hardcoded for lance, so every
+    // sparc32 VM on a bridge had the same MAC.
+    test.fail(!profiles, 'qemu-server without the sparc32 profiles')
     expect(await showcmd(vmid)).toContain("-net 'nic,model=lance,macaddr=BC:24:11:B2:46:01'")
   })
 })
 
 test.describe('sparc, created through the API', () => {
-  // KNOWN BUG: the API refuses `arch: sparc|sparc64` (see "the API sets arch"). Once
-  // that's fixed these also check the defaults: a sparc VM created without tablet/balloon settings
-  // must not get a usb-tablet or virtio-balloon, which sparc32 doesn't have (and sparc64 has no USB
-  // bus for). test.fail() turns red once it's fixed: remove it then.
-  test.fail()
+  // KNOWN BUG without the profiles: the API refused `arch: sparc|sparc64`. These also check the
+  // defaults: a sparc VM created without tablet/balloon settings must not get a usb-tablet or
+  // virtio-balloon, which sparc32 doesn't have (and sparc64 has no USB bus for), nor a vmgenid.
 
   test('sparc32 (SS-5) with cg3 and lance starts', async () => {
+    test.fail(!profiles, 'qemu-server without the sparc32 profiles')
     const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc32', net0: 'lance,bridge=vmbr0', vga: 'cg3' })
 
     const cmd = await showcmd(vmid)
     expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-sparc \\$/m)
     expect(cmd).toContain('type=SS-5')
+    for (const device of ['usb-tablet', 'virtio-balloon', 'vmgenid']) expect(cmd).not.toContain(device)
 
     const qemu = await qemuAccepts(vmid)
     expect(qemu.code, qemu.output).toBe(0)
   })
 
   test('sparc64 (sun4u) with sunhme starts', async () => {
+    test.fail(!profiles, 'qemu-server without the sparc32 profiles')
     const vmid = await createVm({ arch: 'sparc64', memory: 512, name: 'sparc64', net0: 'sunhme,bridge=vmbr0' })
 
     const cmd = await showcmd(vmid)
     expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-sparc64 \\$/m)
     expect(cmd).toContain('type=sun4u')
+    for (const device of ['usb-tablet', 'vmgenid']) expect(cmd).not.toContain(device)
 
     const qemu = await qemuAccepts(vmid)
     expect(qemu.code, qemu.output).toBe(0)

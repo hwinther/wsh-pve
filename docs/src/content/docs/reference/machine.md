@@ -34,7 +34,8 @@ The `q35` machine type emulates the Intel Q35 chipset, which provides a more mod
 In addition to `i440fx` and `q35` (x86_64), the WSH patches expose machine types for the other architectures in the Machine selector:
 
 - **virt** — the QEMU `virt` machine, used for `aarch64` guests.
-- **sun** — the Sun machine family, used for `sparc` (SS-5) and `sparc64` (sun4u) guests.
+- **SS-5** (default), **SS-10**, **SS-20** — the SPARCstation machines for `sparc` guests (see the [supported profiles](/guides/sparc/#supported-sparc32-profiles)).
+- **sun** — the Sun machine family for `sparc64` (sun4u) guests.
 
 The available machine types are filtered by the guest's [architecture](/reference/architecture/); selecting a non-default architecture switches the machine list accordingly.
 
