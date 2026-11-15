@@ -19,8 +19,9 @@ def run(m, v):
     prom_boot(m, v, "cdrom")
     m.expect(r"SunOS Release 5\.\d", 900)
     m.snap("kernel banner")
-    # 2.6: language; 2.5.1: terminal type (no language/locale prompt)
-    m.expect(r"Select a Language|What type of terminal are you using", 900)
+    # 2.6, 7, 9: language; 2.5.1: terminal type (no language/locale prompt); 8 (Installation CD, Web
+    # Start): the disk for the installer, which needs a Sun-labelled disk (TEMPLATE) to get there
+    m.expect(r"Select a Language|What type of terminal are you using|Do you want to format", 900)
     m.quiet(2, 60)
     m.snap("installer's first question")
     m.stop()
