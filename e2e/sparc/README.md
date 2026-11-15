@@ -59,6 +59,28 @@ tcg,thread=single|multi`), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`)
 `TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
 Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
 
+### The lab and the qemu-server profiles
+
+The variables map onto the sparc32 profiles qemu-server accepts (`submodules/SPARC.md`, "Supported
+profiles"): `MACHINE` is `machine`, `BIOS` is `bios`, `MEM` is `memory`, `VGA` is `vga`, and `CPU` is
+what qemu-server passes for the profile (`TI-SuperSparc-50` for SS-20 with `ss20_v2.25_rom`, the
+`SS20PROM` set in `matrix.py`; none otherwise). The defaults are the default profile (SS-5, OpenBIOS,
+256 MB, cg3). Disk on target 3, CD-ROM on target 6 and the lance NIC are the same in both.
+
+| Lab variables | Profile |
+| ------------- | ------- |
+| defaults | SS-5, OpenBIOS |
+| `BIOS=ss5.bin` | SS-5, `ss5.bin` |
+| `MACHINE=SS-10` (`MEM` up to 512) | SS-10, OpenBIOS |
+| `MACHINE=SS-20` (`MEM` up to 512) | SS-20, OpenBIOS |
+| `SS20PROM` (`MACHINE=SS-20 BIOS=ss20_v2.25_rom CPU=TI-SuperSparc-50`) | SS-20, `ss20_v2.25_rom` |
+
+The lab also runs what the profiles refuse (`SMP` > 1, `MEM` above the limits, other PROMs, `RES`),
+to measure it. `e2e/tests/sparc-profiles.spec.ts` ("the lab runs the same machines") reads
+`DEFAULTS` from `scenarios/_sparc32.py` and `SS20PROM` from `matrix.py` and checks that `qm showcmd`
+for those VMs has the same machine, firmware, CPU, memory, display and device layout, so the two
+can't drift apart unnoticed.
+
 `Machine.cpu_use(seconds, below, above)` measures QEMU's CPU time (utime + stime of all its threads, from
 `/proc/<pid>/stat`) over an interval, in percent of one core. It means something only while the host
 has nothing else to do.
