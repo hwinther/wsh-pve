@@ -13,7 +13,9 @@ FROM ${PVE_IMAGE}
 RUN rm -f /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/ceph.sources \
     && apt-get update \
     && apt-get install --no-install-recommends --assume-yes python3-pil python3-pyte tesseract-ocr \
-        fonts-dejavu-core xz-utils \
+        fonts-dejavu-core xz-utils vpx-tools \
     && rm -rf /var/lib/apt/lists/*
+COPY recording.py /tmp/recording.py
+RUN python3 /tmp/recording.py fetch-player /usr/share/asciinema-player && rm /tmp/recording.py
 COPY . /lab/
 WORKDIR /lab

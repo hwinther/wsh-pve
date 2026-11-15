@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "scripts": {
     "generate-packages": "node ../scripts/generate-docs-packages.js",
+    "fetch-media": "node ../scripts/fetch-docs-media.js",
     "predev": "npm run generate-packages",
     "prebuild": "npm run generate-packages",
     "dev": "astro dev",
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.6",
+    "asciinema-player": "3.17.0",
     "astro": "7.4.12",
     "sharp": "0.35.5"
   }

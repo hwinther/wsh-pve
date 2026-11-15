@@ -19,3 +19,6 @@ pnpm-debug.log*
 
 # macOS-specific files
 .DS_Store
+
+# Recordings the docs embed come from the `media` release (npm run fetch-media; deployed by repo-update.yml)
+public/recordings/

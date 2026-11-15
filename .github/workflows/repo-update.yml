@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Fetch most recent packages and prepare repo folder
         run: |
@@ -125,6 +127,22 @@ jobs:
           cp -r docs/dist/* github-pages/
           cp -r repo github-pages/debian
           cp -r badges github-pages/badges
+
+      # The sparc lab recordings the docs embed (/recordings/): assets of the `media` release, kept
+      # out of git and served from here so they get proper content types (the release serves
+      # octet-stream attachments without CORS). Every Pages deploy goes through this job. Without
+      # the release or an asset the docs show a placeholder instead; the deploy goes on.
+      - name: Fetch the docs recordings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p github-pages/recordings
+          if gh release download media -R "$REPO" --dir github-pages/recordings --clobber; then
+            ls -l github-pages/recordings
+          else
+            echo "::warning::No assets of the media release in $REPO: the docs show placeholders for the recordings."
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

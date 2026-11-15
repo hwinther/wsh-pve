@@ -9,6 +9,7 @@ matched through OCR (tesseract); keys reach the guest's Sun keyboard through QMP
 Run a scenario:   lab.py run scenarios/solaris26-serial-install.py --out /work/run1 [--var KEY=VALUE ...]
 Interactive:      lab.py serve --out /work/s1 -- <qemu args>     (then `lab.py ctl ...` from another shell)
 A PVE VM:         lab.py run <scenario> --pve <vmid> --out ...   (on the PVE node; see PveMachine)
+Recordings:       lab.py cast <run dir> [--max-idle 1] [--speed 2] [--check]   (-> serial.fast.cast)
 """
 import argparse
 import html
@@ -23,6 +24,8 @@ import subprocess
 import sys
 import threading
 import time
+
+import recording
 
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]")
 
@@ -111,6 +114,7 @@ class Machine:
         self.ocr = ocr
         self.t0 = time.time()
         self.raw = open(os.path.join(out, "serial.raw"), "wb")
+        self.cast = recording.CastWriter(os.path.join(out, "serial.cast"), cols, rows, self.t0, init="\x1b)0")
         self.stderr = open(os.path.join(out, "qemu.stderr"), "wb")
         with open(os.path.join(out, "qemu.cmd"), "w", encoding="utf-8") as f:
             f.write(shlex.join(self.args) + "\n")
@@ -147,6 +151,7 @@ class Machine:
                     return
                 self.raw.write(data)
                 self.raw.flush()
+                self.cast.output(data)
                 self.stream.feed(data)
                 self.text += ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
                 self.cond.notify_all()
@@ -258,6 +263,8 @@ class Machine:
             while self.proc.poll() is None:
                 try:
                     self.qmp.cmd("screendump", filename=path)
+                    if getattr(self, "fbrec", None):  # the framebuffer video takes its frames from here
+                        self.fbrec.offer(path)
                 except Exception:
                     pass
                 time.sleep(interval)
@@ -362,8 +369,10 @@ class Machine:
         n = len(self.steps) + 1
         base = f"{n:03d}"
         step = {"n": n, "t": round(self.elapsed(), 1), "title": title}
+        with self.cond:  # the step's marker in the recordings, where in the console output this screen is
+            text = self.screen_text_unlocked()
+            self.mark(f"{n}. {title}")
         if term:
-            text = self.screen_text()
             with open(os.path.join(self.out, f"{base}-ttya.txt"), "w", encoding="utf-8") as f:
                 f.write(text + "\n")
             step["ttya"] = text
@@ -383,13 +392,16 @@ class Machine:
 
     def write_report(self, status=None):
         rows = []
+        rec = getattr(self, "recordings", None) or {}
         for s in self.steps:
             imgs = "".join(
                 f'<a href="{os.path.basename(s[k])}"><img src="{os.path.basename(s[k])}" alt="{k}"></a>'
                 for k in ("ttya_png", "fb_png") if s.get(k))
-            rows.append(f"<section><h2>{s['n']}. {html.escape(s['title'])} <small>{s['t']}s</small></h2>"
+            play = recording.step_links(rec, s["n"]) if rec else ""
+            rows.append(f"<section><h2>{s['n']}. {html.escape(s['title'])} <small>{s['t']}s {play}</small></h2>"
                         f"<div class=imgs>{imgs}</div></section>")
         st = f"<p class=status>{html.escape(status)}</p>" if status else ""
+        st += recording.report_html(self.out, rec) if rec else ""
         with open(os.path.join(self.out, "index.html"), "w", encoding="utf-8") as f:
             f.write("<!doctype html><meta charset=utf-8><title>sparc lab run</title><style>"
                     "body{font:14px system-ui;margin:16px;background:#fff;color:#111}"
@@ -397,6 +409,49 @@ class Machine:
                     ".status{font-weight:bold}code{white-space:pre-wrap}</style>"
                     f"<h1>sparc lab run</h1><p><code>{html.escape(shlex.join(self.args))}</code></p>{st}"
                     + "".join(rows))
+
+    # --- recordings (recording.py) ---------------------------------------------------------------
+
+    def mark(self, label):
+        """A marker in the cast (a chapter in the player) and a cue in the framebuffer video."""
+        self.cast.marker(label)
+        if getattr(self, "fbrec", None):
+            self.fbrec.mark(label)
+
+    def record_fb(self, interval=1.0, max_width=1024):
+        """Keep a framebuffer frame every `interval` seconds for fb.webm, from the display refresh
+        (started at that interval when it isn't running: it is one screendump either way)."""
+        self.fbrec = recording.FbRecorder(self.out, self.elapsed, interval, max_width)
+        self.log(f"framebuffer video: a frame every {interval:g}s")
+        self.refresh(interval)
+
+    def finish_recordings(self, v):
+        """Close the cast, write its viewing copy (serial.fast.cast) and encode the framebuffer video;
+        returns what result.json lists as "recordings"."""
+        self.cast.close()
+        rec = {"cast": "serial.cast", "cast_bytes": self.cast.size, "cast_events": self.cast.events}
+        if self.cast.truncated:
+            rec["cast_truncated"] = True
+        max_idle, speed = float(v.get("CAST_MAX_IDLE") or 1), float(v.get("CAST_SPEED") or 2)
+        try:
+            c = recording.compress_cast(os.path.join(self.out, "serial.cast"),
+                                        os.path.join(self.out, "serial.fast.cast"), max_idle, speed)
+            rec.update(cast_fast="serial.fast.cast", max_idle=max_idle, speed=speed, cast_seconds=c["seconds"],
+                       fast_seconds=c["fast_seconds"], cast_markers=c["steps"])
+        except Exception as e:
+            rec["cast_error"] = f"{type(e).__name__}: {e}"
+        rec["player"] = recording.copy_player(self.out)
+        fb, self.fbrec = getattr(self, "fbrec", None), None
+        if fb:
+            try:
+                rec["fb"] = fb.finish(os.path.join(self.out, "fb.webm"), fps=int(v.get("FB_VIDEO_FPS") or 10),
+                                      speed=float(v.get("FB_VIDEO_SPEED") or 10))
+            except Exception as e:
+                rec["fb"] = {"error": f"{type(e).__name__}: {e}"}
+            self.log("framebuffer video: " + (rec["fb"].get("error") or
+                     f"{rec['fb']['video']}, {rec['fb']['seconds']}s, {rec['fb']['bytes'] >> 10} KiB"))
+        self.recordings = rec
+        return rec
 
     def wait_exit(self, timeout=120):
         """Wait for the guest to power the machine off; returns QEMU's exit code."""
@@ -630,6 +685,7 @@ class PveMachine(Machine):
         self.ocr = ocr
         self.t0 = time.time()
         self.raw = open(os.path.join(out, "serial.raw"), "wb")
+        self.cast = recording.CastWriter(os.path.join(out, "serial.cast"), cols, rows, self.t0, init="\x1b)0")
         self.qmp = PveQmp(self.qmp_path)
         self.ser = None
         if self.serial_path and os.path.exists(self.serial_path) and unix_clients(self.serial_path):
@@ -731,6 +787,7 @@ def cmd_run(a):
     os.makedirs(a.out, exist_ok=True)
     m = attach(a, v) if a.pve else Machine(a.out, sc.qemu_args(v, a.out), ocr=not a.no_ocr)
     m.refresh(float(v.get("REFRESH") or 0))
+    record_fb(m, a, v)
     status, code = "passed", 0
     try:
         sc.run(m, v)
@@ -755,10 +812,27 @@ def cmd_run(a):
             m.proc.wait()
         except KeyboardInterrupt:
             m.stop()
+    elapsed = round(m.elapsed(), 1)
+    rec = m.finish_recordings(v)
+    m.write_report(status)
     with open(os.path.join(a.out, "result.json"), "w", encoding="utf-8") as f:
-        json.dump({"status": status, "code": code, "elapsed": round(m.elapsed(), 1), "vars": v,
-                   "metrics": m.metrics}, f, indent=2)
+        json.dump({"status": status, "code": code, "elapsed": elapsed, "vars": v,
+                   "metrics": m.metrics, "recordings": rec}, f, indent=2)
     return code
+
+
+def has_framebuffer(args):
+    """Whether a QEMU command line has a display device (sparc32: -vga cg3/tcx, its default)."""
+    vga = [args[i + 1] for i, x in enumerate(args[:-1]) if x == "-vga"]
+    return "-nographic" not in args and (not vga or vga[-1] != "none")
+
+
+def record_fb(m, a, v):
+    """The framebuffer video, for a machine with a display: a frame every FB_VIDEO seconds (1; 0 = no
+    video), scaled to at most FB_VIDEO_WIDTH (1024) pixels wide."""
+    interval = float(v.get("FB_VIDEO", "1") or 0)
+    if interval and (v.get("CONSOLE") == "fb" if a.pve else has_framebuffer(m.args)):
+        m.record_fb(interval, int(v.get("FB_VIDEO_WIDTH") or 1024))
 
 
 def attach(a, v):
@@ -790,6 +864,7 @@ def cmd_serve(a):
             a.qemu_args = sc.qemu_args(v, a.out)
     m = attach(a, v) if a.pve else Machine(a.out, a.qemu_args, ocr=not a.no_ocr)
     m.refresh(float(v.get("REFRESH") or 0))
+    record_fb(m, a, v)
     ctl = os.path.join(a.out, "ctl.sock")
     if os.path.exists(ctl):
         os.unlink(ctl)
@@ -806,7 +881,27 @@ def cmd_serve(a):
         # One thread per request, so a long expect() doesn't hold up screendumps.
         threading.Thread(target=serve_one, args=(m, conn), daemon=True).start()
     m.log(f"QEMU exited with {m.proc.returncode}")
+    m.finish_recordings(v)
+    m.write_report()
     return 0
+
+
+def cmd_cast(a):
+    """lab.py cast <run dir or .cast>: check a cast and write its viewing copy with the pauses cut."""
+    src = os.path.join(a.run, "serial.cast") if os.path.isdir(a.run) else a.run
+    problems = recording.check_cast(src)
+    for p in problems[:20]:
+        print(f"{src}: {p}", file=sys.stderr)
+    dst = a.output or os.path.join(os.path.dirname(src), "serial.fast.cast")
+    c = recording.compress_cast(src, dst, a.max_idle, a.speed)
+    print(f"{src}: {c['seconds']:.0f}s, {os.path.getsize(src) >> 10} KiB -> {dst}: {c['fast_seconds']:.0f}s, "
+          f"{os.path.getsize(dst) >> 10} KiB, {len(c['steps'])} step markers")
+    differ = []
+    if a.check:
+        compared, differ = recording.check_steps(os.path.dirname(src) or ".", os.path.basename(src))
+        print(f"replayed: {compared - len(differ)}/{compared} step screens match NNN-ttya.txt"
+              + "".join(f"\n  differs: {d}" for d in differ))
+    return 1 if problems or differ else 0
 
 
 def cmd_ctl(a):
@@ -857,10 +952,17 @@ def main():
     c.add_argument("--out", required=True)
     c.add_argument("op")
     c.add_argument("args", nargs="*")
+    k = sub.add_parser("cast", help="check a run's serial.cast and write a copy with the pauses cut")
+    k.add_argument("run", help="the run directory (its serial.cast) or a .cast file")
+    k.add_argument("--max-idle", type=float, default=1.0, help="longest pause kept, seconds (1)")
+    k.add_argument("--speed", type=float, default=2.0, help="then play this many times faster (2)")
+    k.add_argument("--output", help="where to write the copy (serial.fast.cast next to the cast)")
+    k.add_argument("--check", action="store_true",
+                   help="replay the cast and compare the screen at each step with the lab's NNN-ttya.txt")
     a = p.parse_args()
     if getattr(a, "qemu_args", None) and a.qemu_args[0] == "--":
         a.qemu_args = a.qemu_args[1:]
-    return {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl}[a.cmd](a)
+    return {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast}[a.cmd](a)
 
 
 if __name__ == "__main__":

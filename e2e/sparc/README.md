@@ -7,6 +7,8 @@ instead of repeated by hand.
 
 - `lab.py` is the harness: one QEMU process with its serial port behind a VT100 emulator (pyte), its QMP
   monitor, OCR of the framebuffer (tesseract), and the step log.
+- `recording.py` records each run: the serial console as an asciinema cast, the framebuffer as a
+  time-lapse video (see "Recordings").
 - `scenarios/` are scripts against it. `_sparc32.py` is the machine (SS-5 by default) laid out the way
   qemu-server builds an `arch: sparc` VM (disk on SCSI target 3, CD-ROM on target 6 with 512-byte
   blocks, lance).
@@ -42,8 +44,9 @@ docker run --rm -v /srv/sparc:/srv/sparc wsh-sparc-lab run scenarios/solaris-ins
 
 Exit code 0 = passed, 1 = a step timed out, 2 = QEMU died (a crash: `qemu.stderr` has the message), 3 =
 anything else. The output directory has `index.html`, `steps.log`, `serial.raw` (everything the guest
-wrote to ttya), `qemu.cmd`, `qemu.stderr`, `NNN-ttya.{txt,png}` / `NNN-fb.png` per step, `result.json`
-and the guest disk.
+wrote to ttya), `qemu.cmd`, `qemu.stderr`, `NNN-ttya.{txt,png}` / `NNN-fb.png` per step, `result.json`,
+the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.webm` and `fb.vtt`; see
+"Recordings") and the guest disk.
 
 | Scenario | What it does | Time (11.1, one core) |
 | -------- | ------------ | --------------------- |
@@ -127,7 +130,9 @@ driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (se
 week, never for pull requests or pushes: it needs the media, on a self-hosted runner labelled
 `sparc-lab`. It builds the lab image without cache (so it has the newest published package), mounts
 the three directories (inputs, defaulting to the paths above), puts the table in the job summary,
-uploads everything but the disks as an artifact and removes its run directory.
+uploads everything but the disks as an artifact and removes its run directory. The artifact has every
+case's recordings (see "Recordings"): open a case's `index.html` from the downloaded artifact to play
+them.
 
 ## Attach to a PVE VM
 
@@ -243,6 +248,112 @@ default SCSI controller (`lsi`, "Cannot manage 'SCSI bus controller' PCI device"
 `ide2` (the built-in cmd646); OpenBIOS doesn't boot the device path of the boot order
 (`/pci@1fe,0/pci@1,1/ide@3/cdrom:f`, "No valid state has been set") while `boot cdrom:f` at the
 prompt works; qemu-server still adds a `virtio-balloon-pci` that OpenBIOS can't manage (harmless).
+
+## Recordings
+
+Every run (`run` and `serve`, a QEMU of its own or `--pve`) records the serial console, and with a
+framebuffer a time-lapse video of it, next to the rest of the evidence (`recording.py`):
+
+- **`serial.cast`**: what the guest wrote to the serial console, as an
+  [asciinema v2](https://docs.asciinema.org/manual/asciicast/v2/) cast: a header with the lab's terminal
+  size (80x24), then `[seconds, "o", text]` per read from the socket, timed from the start of the
+  run like `steps.log`, and a `[seconds, "m", "<n>. <title>"]` marker per step, which players show as
+  chapters. The console isn't guaranteed UTF-8 (OpenBIOS and Solaris print ASCII and VT100
+  sequences): bytes are decoded as UTF-8 where they are valid UTF-8 (a character split between two
+  reads waits for the rest) and as Latin-1 otherwise, the way the lab's terminal emulator reads them,
+  so the file is valid JSON and plays as the lab saw it. It starts with `ESC ) 0` (G1 = line drawing),
+  which the emulator assumes. Only output: what the lab types shows as the guest echoes it, and keys
+  typed on the framebuffer keyboard aren't serial output at all. Bounded at 32 MB of output
+  (`LAB_CAST_MAX`; a marker says where it stopped, `serial.raw` keeps everything). Writing it costs
+  nothing measurable (the lab's own CPU time for a 160 s boot was 0.28-0.36 s with and without it). A
+  2.5 min boot is ~25 KB, the 9-10 min Solaris install 170-190 KB.
+- **`serial.fast.cast`**: a viewing copy with every pause cut to 1 s (`CAST_MAX_IDLE`, what the
+  asciinema player's idle time limit does) and then played 2x (`CAST_SPEED`), reads closer than 20 ms
+  merged. The Solaris 2.6 install (553 and 630 s in two runs) plays in 158-183 s (68 KB; 358 s with
+  pauses cut to 2 s alone: the installer's screens and the lab's typing leave hundreds of gaps under
+  a second), a 155 s boot in 17 s.
+- **`fb.webm`** (and **`fb.vtt`**), for a machine with a display (sparc32 with cg3/tcx; in attach mode
+  any VM whose console isn't serial): a frame every second (`FB_VIDEO`, seconds; `0` = no video) taken
+  from the display refresh the lab runs anyway (`REFRESH`: the frames are its screendumps, so there is
+  no second poller and in attach mode no extra QMP connections; without a refresh the recording starts
+  one at that interval), scaled to at most 1024 pixels wide (`FB_VIDEO_WIDTH`), kept only when it
+  differs from the previous one. At the end they are encoded with `vpxenc` (VP9) at 10 frames a second
+  (`FB_VIDEO_FPS`), each shown for its real time divided by 10 (`FB_VIDEO_SPEED`), between one video
+  frame and 2 s: the 227 s `cg3-display.py` run at 1024x768 becomes a 17-19 s video of 270-300 KB
+  (32-35 distinct frames). `fb.vtt` has the steps as captions. Cost on that run: the lab's CPU time
+  went from 0.4 s to 2.4 s over the 224 s (under 1% of a core, the run took as long), plus ~3 s to
+  encode at the end; the frames are PNGs in `_frames/` until then (a few MB at most). `vpx-tools`
+  adds ~4.5 MB to the image; `ffmpeg` would add ~410 MB (258 packages). So it is on by default.
+
+`result.json` lists them under `recordings` (durations, sizes, the step marker times, the video's
+frame counts and encode time), and `index.html` plays them: the viewing copy in the asciinema player
+(a copy of its pinned release next to the page, `asciinema-player.min.js` and `.css`, 200 KB, so the
+page works opened from a downloaded artifact; the cast is inlined because a page opened from disk can't
+fetch files next to it) and the video in a `<video>` element, each step with links that play from
+there. The images fetch the player at build time (`recording.py fetch-player`: asciinema-player
+3.17.0, Apache-2.0, from npm, its integrity hash checked) into `/usr/share/asciinema-player`; without
+it the page links the cast files instead.
+
+Casts contain everything the console showed, including what was typed and echoed (the scenarios'
+root passwords are empty or test values).
+
+`lab.py cast <run dir>` checks a cast (every line JSON, times never going back), writes the viewing
+copy again with other limits (`--max-idle`, `--speed`, `--output`; the docs' install copy is
+`--max-idle 1 --speed 3`, about 2 minutes) and, with `--check`, replays
+the cast through the same terminal emulator and compares the screen at each step marker with that
+step's `NNN-ttya.txt`:
+
+```sh
+docker run --rm -v /mnt/sparc/runs:/mnt/sparc/runs wsh-sparc-lab cast /mnt/sparc/runs/m1/sol26-disk-openbios-ss5 --check
+```
+
+No GIF or SVG rendering: that needs a terminal renderer (agg, svg-term) that isn't in the image; the
+asciinema player is the way to watch them.
+
+### Recordings in the docs
+
+The [SPARC lab recordings](https://debian.wshosting.no/guides/sparc-recordings/) page and the SPARC
+guide embed a few curated recordings. None of them is in git (a re-recording would replace the whole
+file each time): they are the assets of a GitHub release tagged `media` (a prerelease, never
+"latest", not a software release), and `repo-update.yml`, the job behind every Pages deploy, copies
+them into the site as `/recordings/` (`gh release download media`). The site then serves them itself,
+with content types from their extensions (the release serves octet-stream attachments without CORS,
+which neither `<video>` nor the asciinema player's fetch can use). A deploy without the release or an
+asset logs a warning and goes on.
+
+The pages embed them same-site: `<LabCast src="/recordings/<name>.cast" caption="..." />` and
+`<LabVideo src="/recordings/<name>.webm" captions="/recordings/<name>.vtt"
+poster="/recordings/<name>-poster.png" />` (`docs/src/components/`). Where a file isn't there (a
+fork, a local build, a deploy that couldn't fetch the release) they show a short note linking to the
+release instead of a player. For local work, `npm run fetch-media` in `docs/` downloads the release
+assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't need them.
+
+| Asset | From | Made with |
+| ----- | ---- | --------- |
+| `sol26-install-ss5.cast` | `solaris-install-serial.py` on SS-5 (`pve` matrix: `sol26-install-ss5/1-solaris-install-serial`) | `lab.py cast <run> --max-idle 1 --speed 3 --output ...` |
+| `sol26-boot-ss20.cast` | `machines`: `sol26-disk-openbios-ss20` | `--max-idle 1 --speed 1` |
+| `netbsd-sparc64-pve.cast`, `alpine-aarch64-pve.cast` | `pve`: `netbsd-sparc64/1-netbsd-boot-cd`, `alpine-aarch64/1-alpine-boot-cd` | `--max-idle 1 --speed 1` |
+| `sol26-cg3-ss5.webm`, `.vtt`, `-poster.png` | `display`: `sol26-disk-openbios-cg3-1024x768` | its `fb.webm`, `fb.vtt` and `001-fb.png` |
+
+To replace one by hand (the release exists; to create it once:
+`gh release create media --repo hwinther/wsh-pve --prerelease --latest=false --title "sparc lab media"
+--notes "Recordings the docs embed, made by the sparc lab (e2e/sparc). Not a software release."`):
+
+```sh
+python3 lab.py cast <run dir> --max-idle 1 --speed 3 --output sol26-install-ss5.cast
+gh release upload media sol26-install-ss5.cast --repo hwinther/wsh-pve --clobber
+```
+
+The next Pages deploy (any package build, a docs push, the run after E2E, or running "Update github
+pages" by hand) publishes it. `publish_media.py <runs dir> <out dir>` does the table above for a
+whole matrix run (only cases that passed), and the `sparc lab` workflow runs it when started by hand
+with `publish_media` ticked: a separate job (`contents: write`, only for that) takes the run's
+artifact after every case passed and uploads what it found with `--clobber`. It is off by default and
+never runs on the schedule. A new recording needs a row in `publish_media.py` and a component on the
+page.
+
+Keep the clips short and documentary (the recordings show Sun/Oracle software running): no licence
+keys, no media contents.
 
 ## Idle
 

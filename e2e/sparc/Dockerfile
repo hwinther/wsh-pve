@@ -9,8 +9,12 @@ FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg python3 python3-pil \
-        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils \
+        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils vpx-tools \
     && rm -rf /var/lib/apt/lists/*
+# Recordings (recording.py): vpxenc (vpx-tools, ~5 MB) encodes the framebuffer video, and the
+# asciinema player (pinned version, hash checked) goes next to each run's index.html.
+COPY e2e/sparc/recording.py /tmp/recording.py
+RUN python3 /tmp/recording.py fetch-player /usr/share/asciinema-player && rm /tmp/recording.py
 
 COPY proxmox-archive-keyring-trixie.gpg /usr/share/keyrings/proxmox-archive-keyring.gpg
 COPY repo/conf/wsh-pve.gpg.key /tmp/wsh-pve.gpg.key
