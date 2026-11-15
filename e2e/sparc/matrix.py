@@ -31,6 +31,7 @@ SOL26SS10, SOL26SS20 = "sol26-enduser-ss10-installed.raw", "sol26-enduser-ss20-i
 SOL26SS20PROM = "sol26-enduser-ss20prom-installed.raw"
 SS20PROM = {"MACHINE": "SS-20", "BIOS": "ss20_v2.25_rom", "CPU": "TI-SuperSparc-50"}
 CD26, CD251 = "solaris_2.6_598_sparc.iso", "solaris_2.5.1_1197.iso"
+SOLARIS_IDLE = {"TRACE": "sparc_solaris_idle_match", "CPU_BELOW": "10"}
 MATRICES = {
     "smoke": [
         ("sol26-disk-openbios-ss5", "solaris-boot-disk.py", SOL26, None, {}),
@@ -75,11 +76,22 @@ MATRICES = {
           for res in ("1024x768", "1152x900", "1280x1024", "1600x1200", "1920x1080")],
     ],
     # Host CPU use of an idle guest (needs a package with the idle patches, submodules/SPARC.md):
-    # Solaris 2.6 with the pmc driver idles through the APC, without it the CPU spins.
+    # Solaris 2.5.1 and 2.6 are halted in their idle loop by the solaris-idle machine option (on by
+    # default), on SS-5 and SS-20; with it off, 2.6 with the pmc driver still idles through the APC
+    # and without it the CPU spins.
     "idle": [
+        ("sol26-idle-ss5", "idle.py", SOL26, None, {**SOLARIS_IDLE, "TRACE_EXPECT": r"Solaris idle loop \(2\.6"}),
+        ("sol26-noidle-spins-ss5", "idle.py", SOL26, None, {"MACHINE": "SS-5,solaris-idle=off", "CPU_ABOVE": "80"}),
         ("sol26-pmc-idle-ss5", "idle.py", SOL26PMC, None,
          {"CHECK": "modinfo | grep pmc", "CHECK_EXPECT": r"pmc \(Power Management", "CPU_BELOW": "10"}),
-        ("sol26-nopmc-spins-ss5", "idle.py", SOL26, None, {"CPU_ABOVE": "80"}),
+        ("sol26-pmc-noidle-apc-ss5", "idle.py", SOL26PMC, None,
+         {"MACHINE": "SS-5,solaris-idle=off", "CHECK": "modinfo | grep pmc",
+          "CHECK_EXPECT": r"pmc \(Power Management", "CPU_BELOW": "10"}),
+        ("sol26-idle-ss20", "idle.py", SOL26SS20, None,
+         {**SOLARIS_IDLE, "MACHINE": "SS-20", "TRACE_EXPECT": r"Solaris idle loop \(2\.6"}),
+        ("sol26-noidle-spins-ss20", "idle.py", SOL26SS20, None, {"MACHINE": "SS-20,solaris-idle=off", "CPU_ABOVE": "80"}),
+        ("sol251-idle-ss5", "idle.py", SOL251, None,
+         {**SOLARIS_IDLE, "BIOS": "ss5.bin", "TRACE_EXPECT": r"Solaris idle loop \(2\.5\.1"}),
         # SunOS 4.1.4: halted in its idle loop by the sunos-idle machine option (on by default). Its dd
         # takes ~5 ms a block, so a tenth of the count.
         ("sunos414-idle-ss5", "idle.py", SUNOS414, None,

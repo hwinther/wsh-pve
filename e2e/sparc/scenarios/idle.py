@@ -15,9 +15,11 @@ The disk is changed (first boot, logs): give it a copy. Only meaningful on an ot
   CLOCK_SLACK seconds the guest clock may be off after SECONDS   (3)
   BUSY        a CPU-bound command, timed on the host             (dd if=/dev/zero of=/dev/null count=200000)
   BUSY_BELOW  fail unless it takes less than this many seconds   (none)
+  ROUNDS      times `true` is run for the echo latency (0: no latency checks)  (10)
   TRACE_EXPECT a regex that must be in trace.log at the end (with TRACE)  (none)
 
-The metrics (cpu_pct, clock_drift_s, busy_s) go to result.json. Machine options can go with the
+The metrics (cpu_pct, clock_drift_s, busy_s, echo_ms: median host time from Return to the end of
+`true`, sleep10_s: host time of ten `sleep 1`) go to result.json. Machine options can go with the
 machine type, e.g. MACHINE=SS-5,sunos-idle=off.
 """
 import os
@@ -29,7 +31,7 @@ from _sparc32 import DEFAULTS as BASE, login, prom_boot, qemu_args as sparc32_ar
 DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1", "PROMPT": "console login:", "CHECK": "",
             "CHECK_EXPECT": "", "SETTLE": "30", "SECONDS": "60", "CPU_BELOW": "", "CPU_ABOVE": "",
             "CLOCK_SLACK": "3", "BUSY": "dd if=/dev/zero of=/dev/null count=200000", "BUSY_BELOW": "",
-            "TRACE_EXPECT": ""}
+            "ROUNDS": "10", "TRACE_EXPECT": ""}
 
 
 def qemu_args(v, out):
@@ -75,6 +77,14 @@ def run(m, v):
         m.log(f"{v['BUSY']}: {busy:.1f}s")
         if v["BUSY_BELOW"] and busy >= float(v["BUSY_BELOW"]):
             raise AssertionError(f"{v['BUSY']!r} took {busy:.1f}s, expected below {v['BUSY_BELOW']}s")
+    if int(v["ROUNDS"]):
+        # How an idle guest answers: Return to the end of a trivial command, and timed sleeps (the
+        # same commands in sh and csh)
+        times = sorted(run_timed(m, "true")[1] for _ in range(int(v["ROUNDS"])))
+        m.metrics["echo_ms"] = round(1000 * times[len(times) // 2])
+        _, sleeps = run_timed(m, "; ".join(["sleep 1"] * 10))
+        m.metrics["sleep10_s"] = round(sleeps, 1)
+        m.log(f"echo {m.metrics['echo_ms']} ms (median of {len(times)}), 10 x sleep 1: {sleeps:.1f}s")
     m.snap("measured")
     if v["TRACE_EXPECT"]:
         trace = open(os.path.join(m.out, "trace.log"), encoding="utf-8", errors="replace").read()

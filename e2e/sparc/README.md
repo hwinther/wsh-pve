@@ -46,9 +46,9 @@ and the guest disk.
 | -------- | ------------ | --------------------- |
 | `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
-| `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops | ~1 min |
+| `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
-| `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time and times a CPU-bound command (`BUSY`); the numbers go to `result.json` (`metrics`) | ~3-4 min |
+| `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time, times a CPU-bound command (`BUSY`), the echo of `true` and ten `sleep 1`; the numbers go to `result.json` (`metrics`) | ~3-4 min |
 | `bench.py` | boots an installed Solaris disk, checks the CPUs `psrinfo` lists (`CPUS`, default `SMP`), then times boot to login, a `nawk` loop, `PARALLEL` copies of it at once (default `SMP`), a 64 MB write + `sync` and a raw read, with QEMU's host CPU use idle and during the parallel run; `SOAK` adds a load phase. `init 5` at the end | SS-5: ~5 min, SS-20: ~3 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -104,13 +104,13 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `smoke` | Solaris 2.6 disk with OpenBIOS, 2.5.1 disk with `BIOS=ss5.bin`, 2.6 CD to the installer with OpenBIOS; all SS-5 | ~6 min |
 | `machines` | SS-10/SS-20: the 2.6 CD to the installer with OpenBIOS (256 and 512 MB, SS-20 also `SMP=2` and `SMP=4`) and with the Sun SS-20 PROM (`CPU=TI-SuperSparc-50`, 512 MB), the 2.5.1 CD (`CDROM_AS=hd`) with both on SS-20, and the SS-10/SS-20 installed disks to login (OpenBIOS, SS-20 also 512 MB and the Sun PROM) | ~20 min |
 | `display` | `cg3-display.py`: `BIOS=ss5.bin` banner at 1024x768, and the 2.6 disk with OpenBIOS at 1024x768, 1152x900, 1280x1024, 1600x1200 and 1920x1080 | ~19 min |
-| `idle` | `idle.py` on SS-5 with OpenBIOS: Solaris 2.6 with the `pmc` driver (below 10% of a core) and without it (above 80%), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~14 min |
+| `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~35 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
-`idle` needs one with the idle patches (0011-0013): with an older one the `pmc` disk panics at boot
-and `sunos-idle=off` is an unknown machine option.
+`idle` needs one with the idle patches (0011-0016): with an older one the `pmc` disk panics at boot,
+`sunos-idle=off`/`solaris-idle=off` are unknown machine options and Solaris without `pmc` spins.
 
 The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
 `solaris-install-serial.py` on SS-5), `sol26-enduser-ss10-installed.raw`, `sol26-enduser-ss20-installed.raw`
@@ -129,7 +129,8 @@ uploads everything but the disks as an artifact and removes its run directory.
 ## Idle
 
 Which guests stop spinning the host CPU when idle, and the results, are in `submodules/SPARC.md`
-("Idle"). `sol26-enduser-pmc-installed.raw` is `sol26-enduser-installed.raw` with Solaris 2.6's `pmc`
+("Idle"). Solaris 2.5.1-9 idle through the `solaris-idle` machine option (any machine, one CPU);
+`TRACE=sparc_solaris_idle_match` shows which loop layout matched (`2.5.1`, `2.6/7/8`, `9`). `sol26-enduser-pmc-installed.raw` is `sol26-enduser-installed.raw` with Solaris 2.6's `pmc`
 driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then lists `pmc (Power
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 

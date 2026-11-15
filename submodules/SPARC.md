@@ -43,6 +43,9 @@ maintains the patches.
 | `0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-` | The power management (APC) region was 1 byte; the firmware's node says 16. Solaris 2.6's `pmc` driver writes offsets 2-0xc at attach and panicked (`kernel write fault at addr=0x6a000002`). Now 16 bytes: offset 0 halts the CPU as before, the others keep their value; vmstate section only when one is set. Adds qtest `sun4m-apc-test` | ours | not fixed (1 byte in every QEMU release); see `upstream/qemu-sun4m-apc-size.md` |
 | `0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo` | SunOS 4.1.4 spins in its idle loop; the translator recognises the loop and halts the CPU there until the next interrupt | [LEMU `ff3dbc50`](https://github.com/tenox7/lemu/commit/ff3dbc50bcdcbcc346d8742df1e61c1eaf00b3b2) | not in QEMU |
 | `0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau` | `-M <sun4m>,sunos-idle=on\|off` for 0012, on by default, off with `-smp` > 1 | [LEMU `fed03cc7`](https://github.com/tenox7/lemu/commit/fed03cc7f5f7c5d6e5e0144bfc1dad36d4844180) | not in QEMU |
+| `0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop` | Solaris 2.5.1-9 spin in `idle()` on every CPU module but the microSPARC-II with `pmc` (SS-10/SS-20 always); the translator recognises the call of `idle_cpu` in that loop and halts the CPU there until the next interrupt when `disp_nrunnable` is 0 | ours | not in QEMU |
+| `0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def` | `-M <sun4m>,solaris-idle=on\|off` for 0014, on by default, off with `-smp` > 1 | ours | not in QEMU |
+| `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015 | ours | not in QEMU |
 
 The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -55,10 +58,12 @@ The full series (Proxmox's patches + ours) applies on QEMU 11.1.3; no Proxmox pa
 
 0008-0010 and 0012-0013 applied to 11.1.3 with line offsets only (LEMU is on QEMU master).
 `sun4m-apc-test` fails without 0011 (the region is 1 byte, register 2 doesn't read back) and passes
-5/5 with it.
+5/5 with it. `sun4m-solaris-idle-test` passes 5/5 with 0014-0016 (its `idle` case is the `off` case
+inverted: without the halt the loop keeps counting).
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
-taken, and run `sun4m-escc-test` and `sun4m-apc-test` (sparc) and `am53c974-test` (i386).
+taken, and run `sun4m-escc-test`, `sun4m-apc-test` and `sun4m-solaris-idle-test` (sparc) and
+`am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -110,16 +115,58 @@ QEMU keeps a host core at 100% for a guest that spins in its idle loop. Which sp
 | --- | --- | --- |
 | NetBSD 11.1, Linux | yes | their APC driver (`apc0 at sbus0 slot 4 offset 0xa000000`) writes register 0 of the power management node in the idle loop and QEMU halts the CPU until the next interrupt, with or without these patches. Linux not tested here |
 | NetBSD 9.3 | no | its GENERIC kernel has no APC driver (`power-management ... not configured`); neither have the install kernels of 9.3 and 11.1 |
-| Solaris 2.6 | with `pmc` | the `pmc` driver (package `SUNWvygdr.m` on the 2.6 CD, not installed by default) lets the idle loop write APC register 0; needs 0011. Steps below |
+| Solaris 2.5.1-9 | yes | 0014-0015: QEMU recognises the call of `idle_cpu` in the kernel's idle loop and halts the CPU there (`solaris-idle`, on by default; `-M SS-20,solaris-idle=off` turns it off; off with `-smp` > 1). Any CPU module, SS-5 and SS-10/SS-20. `-trace sparc_solaris_idle_match` shows the match |
+| Solaris 2.6 + `pmc` | yes | also without 0014: the `pmc` driver (package `SUNWvygdr.m` on the 2.6 CD, not installed by default) lets the idle loop write APC register 0, SS-5 only; needs 0011. Steps below |
 | SunOS 4.1.4 | yes | 0012-0013: QEMU recognises the kernel's idle loop and halts the CPU there (`sunos-idle`, on by default; `-M SS-5,sunos-idle=off` turns it off; off with `-smp` > 1). `-trace sparc_sunos_idle_match` shows the match |
-| Solaris 2.5.1 | no | no idle path found |
 
-On SS-10 and SS-20 the real machines have no APC, but OpenBIOS creates the `power-management` node there
-too (QEMU maps the device at `0xefa000000`, "XXX should not exist"); the Sun PROMs don't. NetBSD 11.1
-attaches `apc0` on SS-20 with OpenBIOS and idles there (see "SS-10 and SS-20"); Solaris 2.6 with `pmc`
-not tested there.
+**Solaris idle loop.** With one CPU, `idle()` (`uts/common/disp/disp.c`, in the platform `unix`) loops
+`while (ncpus == 1)`: `swtch()` when `CPU->cpu_disp.disp_nrunnable` is not 0, else `(*idle_cpu)()`.
+Only the microSPARC-II module (`FMI,MB86904`, also in `default`) sets `idle_cpu`, to `swift_idle_cpu`,
+which jumps through `pm_platform_power` (genunix): `ddi_no_platform_power` (`retl; mov -1, %o0`) unless
+`pmc` replaced it with its APC write. The SuperSPARC module (`TI,TMS390Z55`) doesn't touch `idle_cpu`,
+so it stays `generic_idle_cpu` (`retl; nop`): 2.6 on SS-5 without `pmc` and every Solaris on SS-10/SS-20
+spin. Disassembled from the installed kernels and the install media (sun4m `unix`):
 
-Solaris 2.6, in the guest, from the 2.6 CD:
+| Release | Kernel | Load of `disp_nrunnable` | Call of `idle_cpu` | Layout |
+| --- | --- | --- | --- | --- |
+| 2.5.1 | Generic_103640-12 | `ld [%i5], %o4` (`%i5` = CPU + 0x48) | `0xf0075ca4` | `2.5.1` |
+| 2.6 | Generic_105181-05 | `ld [%i0 + 0x58], %o0` | `0xf006fa58` | `2.6/7/8` |
+| 7 | Generic_106541-02 | `ld [%i0 + 0x54], %o0` | `0xf006e0f4` | `2.6/7/8` |
+| 8 | Generic_108528-05 | `ld [%i3 + 0x54], %g2` | `0xf006d894` | `2.6/7/8` |
+| 9 | Generic | `ld [%l1 + 0x60], %g2` | `0xf006cb38` | `9` |
+
+Each layout is the words from that load to `call %reg` (load, `cmp`/`tst`, branch, `sethi %hi(idle_cpu)`,
+[`call swtch`, `nop`, `b top`, delay slot], `ld [%y + lo], %z`), with registers, offsets and addresses
+masked; the translator also checks that they use the registers consistently and that the CPU pointer
+isn't overwritten. At the call the helper halts when `disp_nrunnable` is 0 (read again, non-faulting),
+PSR.ET is set, PIL is 0 and no interrupt is pending, after spinning 100 us; the CPU goes on at the call
+after the next interrupt (at least the 100 Hz clock). With one CPU only an interrupt handler can make a
+thread runnable. Halting in place of `idle_cpu` is what `idle_cpu` is for (disp.c: "to stop the
+pipeline and save power"); with `pmc` the APC write and the halt are the same thing. Other kernel
+patch levels than those above weren't available; one compiled differently doesn't match and spins as
+before.
+
+At the installer's first question on SS-20 (OpenBIOS, one CPU, `solaris-boot-cd.py IDLE=60`), each
+release's kernel matched at the address above and QEMU used: 2.5.1 (`CDROM_AS=hd`) 2.2%, 2.6 2.2%,
+7 2.3%, 8 (Installation CD) 3.8%, 9 2.7%; 9 with `solaris-idle=off` 100.5%. Installed 7/8/9 weren't
+tested.
+
+With more than one CPU, `idle()` runs another loop: it polls `disp_getwork()` (work stealing from other
+CPUs' queues) and never calls `idle_cpu`, and `cpu_resched()` doesn't poke an idle CPU (`!CPU_IDLING`),
+so a halted CPU wouldn't see work queued for it until its next interrupt, and only one CPU gets the
+clock. A halt there would need QEMU to wake the CPU on writes to the dispatch queues (or Solaris to poke
+idle CPUs); that's why `solaris-idle` is off with `-smp` > 1 (also moot while 2.6 SMP hangs, "SS-10 and
+SS-20").
+
+Not used: the APC on SS-10/SS-20 (real machines have none, but OpenBIOS creates the `power-management`
+node there, QEMU maps the device at `0xefa000000`, "XXX should not exist"; the Sun PROMs don't): NetBSD
+11.1 attaches `apc0` there and idles, but Solaris only reaches it from the microSPARC-II module, whose
+`swift_idle_cpu` isn't loaded on a SuperSPARC. `pmc` alone can't help there; pointing `idle_cpu` at
+something that calls `pm_platform_power` would take a kernel patch per build (an `/etc/system` `set`
+of a raw address, or a loadable module built with a compiler the guest doesn't have). The viking
+module's sources (`cpu/vik*`) have no power-down or standby code.
+
+Solaris 2.6 + `pmc`, in the guest, from the 2.6 CD (not needed with 0014):
 
 ```sh
 mount -F hsfs -o ro /dev/dsk/c0t6d0s0 /mnt
@@ -148,6 +195,26 @@ shell after login; the `idle` matrix has the cases with 0011-0013 except NetBSD 
 | NetBSD 11.1 | 11.1.3-2+wsh3 | 2.4% | 60 s | 8.5 s |
 | NetBSD 9.3 | with 0011-0013 | 100.6% | 60 s | 7.0 s |
 | NetBSD 9.3 | 11.1.3-2+wsh3 | 100.6% | 61 s | 6.6 s |
+
+With 0011-0016 (the `idle` matrix, OpenBIOS unless stated, one CPU; echo = median host time from Return
+to the end of `true`, 50 ms in every case, the lab's polling step; ten `sleep 1` took 10.1-10.2 s in
+every case):
+
+| Guest | Machine | Host CPU | Guest clock over 60 s | `dd` |
+| --- | --- | --- | --- | --- |
+| Solaris 2.6 | SS-20 | 3.3% | 60 s | 1.8 s |
+| Solaris 2.6, `solaris-idle=off` | SS-20 | 101.6% | 60 s | 2.0 s |
+| Solaris 2.6 | SS-5 | 3.4% | 60 s | 1.6 s |
+| Solaris 2.6, `solaris-idle=off` | SS-5 | 101.6% | 60 s | 1.6 s |
+| Solaris 2.6 + `pmc` | SS-5 | 2.3% | 60 s | 1.8 s |
+| Solaris 2.6 + `pmc`, `solaris-idle=off` | SS-5 | 2.3% | 60 s | 1.7 s |
+| Solaris 2.5.1 (`ss5.bin`) | SS-5 | 3.2% | 60 s | 1.4 s |
+| SunOS 4.1.4 | SS-5 | 2.4% | 60 s | 9.7 s |
+| SunOS 4.1.4, `sunos-idle=off` | SS-5 | 100.3% | 60 s | 9.8 s |
+| NetBSD 11.1 | SS-5 | 2.4% | 60 s | 8.1 s |
+
+The ~1% over `pmc` is the 100 us spin before each halt (100 clock ticks a second); with `pmc` the first
+`idle_cpu` call of that spin halts through the APC.
 
 ### SS-10 and SS-20
 
@@ -248,12 +315,30 @@ range; host seconds): `job` = `nawk 'BEGIN{for(i=0;i<1000000;i++)s=(s+i*i)%9973;
 | SS-20 `ss20_v2.25_rom` -50 256 | 5.3 (5.2-5.6) | 5.3 | 2.0 (1.9-2.1) | 0.3 | 57.8 (57.7-58.3) | 102 | 101 |
 | SS-20 `ss20_v2.25_rom` -50 512 | 5.3 (5.2-5.4) | 5.2 (5.2-5.4) | 1.7 (1.7-1.8) | 0.3 | 57.9 (57.8-58.3) | 102 | 101 |
 
+With 0014-0015 (`solaris-idle`), the same benchmark on fresh copies of the installed disks (`boot` includes
+the first-boot questions, so it isn't comparable with the table above), 11.1.3-2+wsh5 against the
+same package with 0014-0016, alternating, one CPU, OpenBIOS, 256 MB:
+
+| Configuration | job s | parallel s | write s | read s | boot s | host CPU idle | host CPU parallel |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SS-20, wsh5 (3 boots) | 5.3 (5.2-5.6) | 5.1 (5.1-5.3) | 1.9 (1.8-2.0) | 0.3 | 111.4 (110.9-111.4) | 102 | 101 |
+| SS-20, with 0014-0016 (3 boots) | 5.1 (5.0-5.2) | 5.0 (5.0-5.3) | 1.8 (1.8-1.9) | 0.3 (0.3-0.4) | 111.4 (110.0-111.6) | 3.3 | 69 |
+| SS-5, wsh5 (2 boots) | 47.4, 50.2 | 47.6, 49.1 | 1.8, 2.0 | 0.7 | 113.9, 115.6 | 102 | 101 |
+| SS-5, with 0014-0016 (3 boots) | 47.1 (46.8-48.2) | 48.1 (47.7-50.7) | 2.1 (1.9-3.7) | 0.7 (0.7-0.8) | 114.1 (113.7-115.0) | 3.4 | 96 |
+| SS-5, with 0014-0016, `solaris-idle=off` | 47.8 | 46.5 | 1.8 | 0.6 | 114.4 | 102 | 101 |
+
+The jobs, disk times and boot are the same within the noise (the one 3.7 s SS-5 write didn't come
+back in two more boots). "Host CPU parallel" drops because the guest idles for part of the timed
+window (shell start, terminal output) where it used to spin. `SOAK=300` on SS-20 with `solaris-idle`
+passed (job 5.1 s after it); with `solaris-idle`, 4 SS-20 and 5 SS-5 (2.6 and 2.5.1) boots to login
+ended in a clean `init 5`.
+
 - One CPU: SS-10 and SS-20 run the job 9x faster than SS-5; firmware and 256 vs 512 MB make no
   difference. Disk I/O is the same within 0.3 s; boot time (~57 s) is the same everywhere (mostly
   fixed waits, not CPU).
 - More CPUs: one job gets slower (1.7x with 2 CPUs, ~3x with 4), several at once finish sooner than
   one after another on one CPU (2 jobs: 6.5 s vs 10.2 s; 4 jobs: 10.9 s vs 20.4 s), writes take
-  longer, and each idle vCPU burns a host core (Solaris 2.6 has no idle on SS-10/SS-20). And it
+  longer, and each idle vCPU burns a host core (`solaris-idle` is off with more than one CPU). And it
   hangs (above).
 
 **Why SS-5 is slower.** Times in the guest (`/usr/bin/time`, seconds), one CPU, OpenBIOS:
@@ -286,10 +371,10 @@ Solaris 2.6 user-space work, not one kind of operation.
 **Recommended** (from the data above):
 
 - **SS-20 (or SS-10), OpenBIOS, one CPU, 256-512 MB** for Solaris 2.6: ~9x faster user-space than
-  SS-5, the same disk and boot times. Needs its own install on that machine type (the SS-5 disks don't
+  SS-5, the same disk and boot times, and with 0014-0015 an idle guest uses ~3% of a host core. Needs its own install on that machine type (the SS-5 disks don't
   boot there). 2.5.1, 7, 8 and 9 installers also start there.
 - SS-5 + OpenBIOS (or `ss5.bin`), 256 MB stays for what needs SS-5: existing SS-5 disks, Solaris 2.4
-  (Sun PROM only), SunOS 4.1.4, the `pmc` idle setup.
+  (Sun PROM only), SunOS 4.1.4. `pmc` is no longer needed to idle there.
 - Don't offer more than one CPU for Solaris 2.6: it hangs, and one job runs slower. NetBSD's MP kernel
   works with 2 CPUs (not benchmarked).
 - RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
@@ -395,7 +480,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
-- qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011) and `am53c974-test` with 0007; they
+- qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016) and
+  `am53c974-test` with 0007; they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
