@@ -24,6 +24,7 @@ SOL26, SOL251 = "sol26-enduser-installed.raw", "sol251-enduser-installed.raw"
 SOL26PMC = "sol26-enduser-pmc-installed.raw"  # SOL26 + the pmc driver (README: "Idle")
 SUNOS414 = "sunos414-installed.raw"  # Quick Install, Programmer set (README: "SunOS 4.1.4")
 SUNOS = {"PROMPT": "login:", "BUSY": "dd if=/dev/zero of=/dev/null count=20000"}
+NETBSD111 = "netbsd111-installed.raw"  # sysinst Minimal installation (README: "Idle")
 CD26 = "solaris_2.6_598_sparc.iso"
 MATRICES = {
     "smoke": [
@@ -61,6 +62,9 @@ MATRICES = {
          {**SUNOS, "TRACE": "sparc_sunos_idle_match", "TRACE_EXPECT": "SunOS idle loop", "CPU_BELOW": "10"}),
         ("sunos414-noidle-spins-ss5", "idle.py", SUNOS414, None,
          {**SUNOS, "MACHINE": "SS-5,sunos-idle=off", "CPU_ABOVE": "80"}),
+        # NetBSD 11.1's apc driver writes register 0 only, as before the APC got its 16 bytes
+        ("netbsd111-idle-ss5", "idle.py", NETBSD111, None,
+         {"PROMPT": "login:", "CHECK": "dmesg | grep apc", "CHECK_EXPECT": "apc0 at", "CPU_BELOW": "10"}),
     ],
 }
 
