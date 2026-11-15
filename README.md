@@ -1,5 +1,14 @@
 # wsh-pve
 
+| | |
+|---|---|
+| **Packages** | [![Proxmox VE](https://debian.wshosting.no/badges/pve.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) [![Debian](https://debian.wshosting.no/badges/distro.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) [![pve-manager](https://debian.wshosting.no/badges/pkg-pve-manager.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) [![qemu-server](https://debian.wshosting.no/badges/pkg-qemu-server.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) [![pve-qemu-kvm](https://debian.wshosting.no/badges/pkg-pve-qemu-kvm.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) [![libpve-storage-perl](https://debian.wshosting.no/badges/pkg-libpve-storage-perl.svg)](https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages) |
+| **Build and publish** | [![E2E on main](https://github.com/hwinther/wsh-pve/actions/workflows/e2e.yml/badge.svg?branch=main&event=push)](https://github.com/hwinther/wsh-pve/actions/workflows/e2e.yml) [![Apt repository and docs (GitHub Pages)](https://github.com/hwinther/wsh-pve/actions/workflows/repo-update.yml/badge.svg)](https://github.com/hwinther/wsh-pve/actions/workflows/repo-update.yml) [![Submodule patches apply](https://github.com/hwinther/wsh-pve/actions/workflows/check-patches.yml/badge.svg?branch=main)](https://github.com/hwinther/wsh-pve/actions/workflows/check-patches.yml) |
+| **Tests** | [![E2E tests](https://debian.wshosting.no/badges/tests-e2e.svg)](https://github.com/hwinther/wsh-pve/actions/workflows/e2e.yml?query=branch%3Amain+event%3Apush) |
+| **Security** | [![zizmor - GitHub Actions SAST](https://github.com/hwinther/wsh-pve/actions/workflows/zizmor.yml/badge.svg?branch=main)](https://github.com/hwinther/wsh-pve/actions/workflows/zizmor.yml) [![poutine - GitHub Actions SAST](https://github.com/hwinther/wsh-pve/actions/workflows/poutine.yml/badge.svg?branch=main)](https://github.com/hwinther/wsh-pve/actions/workflows/poutine.yml) |
+
+Badges are rendered by [`repo-update.yml`](https://github.com/hwinther/wsh-pve/blob/main/.github/workflows/repo-update.yml) from the apt repository and the quality summary of the newest E2E run on main.
+
 WSH Proxmox Virtualization Environment patches
 
 ## Getting started

@@ -1,0 +1,50 @@
+name: Pages after E2E
+
+# Redeploys debian.wshosting.no after every E2E push run on main (success or failure), so the e2e
+# badge follows the tests and not only package publishing. The summary job fetches that run's
+# quality summary (actions: read) and hands it to repo-update.yml as an artifact of this run,
+# which repo-update.yml reads without extra permissions; its other callers stay as they are.
+
+on:
+  # Never runs code from the triggering run: it only reads that run's quality-summary artifact.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["E2E"]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  summary:
+    # Pushes only: a pull request from a fork can also come from a branch called main.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      contains(fromJSON('["success", "failure"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Download the quality summary of the E2E run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh run download "$RUN_ID" -R "$REPO" -n quality-summary -D quality-summary
+
+      - name: Hand it to repo-update.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-quality-summary
+          path: quality-summary/summary.json
+          retention-days: 1
+
+  pages:
+    needs: [summary]
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/repo-update.yml
+    secrets:
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
