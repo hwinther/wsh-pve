@@ -36,7 +36,7 @@ index 7830d09b..d5a2231d 100644
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 69a2bd64..277efdc4 100644
+index 69a2bd64..721fb942 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -170,7 +170,7 @@ my $vga_fmt = {
@@ -111,7 +111,46 @@ index 69a2bd64..277efdc4 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -1196,6 +1224,8 @@ sub print_drive_commandline_full {
+@@ -1076,6 +1104,8 @@ sub verify_media_type {
+         $etype = 'images';
+     } elsif ($media eq 'cdrom') {
+         $etype = 'iso';
++    } elsif ($media eq 'floppy') {
++        $etype = 'floppy';
+     } else {
+         die "internal error";
+     }
+@@ -1088,6 +1118,9 @@ sub verify_media_type {
+ sub cleanup_drive_path {
+     my ($opt, $storecfg, $drive) = @_;
+ 
++    # floppy drives only know media=floppy, which is their default
++    my $is_floppy = PVE::QemuServer::Drive::drive_is_floppy($drive);
++
+     # try to convert filesystem paths to volume IDs
+ 
+     if (
+@@ -1099,7 +1132,7 @@ sub cleanup_drive_path {
+         my ($vtype, $volid) = PVE::Storage::path_to_volume_id($storecfg, $drive->{file});
+         raise_param_exc({ $opt => "unable to associate path '$drive->{file}' to any storage" })
+             if !$vtype;
+-        $drive->{media} = 'cdrom' if !$drive->{media} && $vtype eq 'iso';
++        $drive->{media} = 'cdrom' if !$drive->{media} && $vtype eq 'iso' && !$is_floppy;
+         verify_media_type($opt, $vtype, $drive->{media});
+         $drive->{file} = $volid;
+     }
+@@ -1107,7 +1140,9 @@ sub cleanup_drive_path {
+     my $file_type = classify_drive_file($drive->{file});
+ 
+     $drive->{media} = 'cdrom'
+-        if !$drive->{media} && ($file_type eq "cdrom" || $file_type eq "none");
++        if !$drive->{media}
++        && !$is_floppy
++        && ($file_type eq "cdrom" || $file_type eq "none");
+ }
+ 
+ sub parse_hotplug_features {
+@@ -1196,6 +1231,8 @@ sub print_drive_commandline_full {
      my $opts = '';
      my @qemu_drive_options = qw(media cache rerror werror discard);
      foreach my $o (@qemu_drive_options) {
@@ -120,7 +159,7 @@ index 69a2bd64..277efdc4 100644
          $opts .= ",$o=$drive->{$o}" if defined($drive->{$o});
      }
  
-@@ -1250,6 +1280,11 @@ sub print_drive_commandline_full {
+@@ -1250,6 +1287,11 @@ sub print_drive_commandline_full {
      die "$drive_id: explicit media parameter is required for iso images\n"
          if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
  
@@ -132,7 +171,7 @@ index 69a2bd64..277efdc4 100644
      if (!drive_is_cdrom($drive)) {
          my $detectzeroes = PVE::QemuServer::Drive::detect_zeroes_cmdline_option($drive);
  
-@@ -2781,6 +2816,7 @@ sub conf_has_audio {
+@@ -2781,6 +2823,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -140,7 +179,7 @@ index 69a2bd64..277efdc4 100644
      };
  }
  
-@@ -2797,6 +2833,20 @@ sub audio_devs {
+@@ -2797,6 +2840,20 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -161,7 +200,7 @@ index 69a2bd64..277efdc4 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2805,7 +2855,20 @@ sub audio_devs {
+@@ -2805,7 +2862,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -183,7 +222,7 @@ index 69a2bd64..277efdc4 100644
  
      return $devs;
  }
-@@ -2965,7 +3028,7 @@ sub vga_conf_has_spice {
+@@ -2965,7 +3035,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -192,7 +231,7 @@ index 69a2bd64..277efdc4 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2974,7 +3037,7 @@ sub query_supported_cpu_flags {
+@@ -2974,7 +3044,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -201,7 +240,7 @@ index 69a2bd64..277efdc4 100644
      my $qemu_binary_version = kvm_user_version($qemu_cmd);
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
-@@ -3059,7 +3122,7 @@ sub query_supported_cpu_flags {
+@@ -3059,7 +3129,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -210,7 +249,7 @@ index 69a2bd64..277efdc4 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3131,7 +3194,7 @@ sub config_to_command {
+@@ -3131,7 +3201,7 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -219,7 +258,7 @@ index 69a2bd64..277efdc4 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3242,7 +3305,9 @@ sub config_to_command {
+@@ -3242,7 +3312,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -230,7 +269,7 @@ index 69a2bd64..277efdc4 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3262,6 +3327,10 @@ sub config_to_command {
+@@ -3262,6 +3334,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -241,7 +280,7 @@ index 69a2bd64..277efdc4 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3276,7 +3345,8 @@ sub config_to_command {
+@@ -3276,7 +3352,8 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -251,7 +290,7 @@ index 69a2bd64..277efdc4 100644
          push @$devices, $bridges->@*;
      }
  
-@@ -3285,8 +3355,10 @@ sub config_to_command {
+@@ -3285,8 +3362,10 @@ sub config_to_command {
      }
  
      # add usb controllers
@@ -262,7 +301,7 @@ index 69a2bd64..277efdc4 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3305,7 +3377,6 @@ sub config_to_command {
+@@ -3305,7 +3384,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -270,7 +309,7 @@ index 69a2bd64..277efdc4 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3391,9 +3462,28 @@ sub config_to_command {
+@@ -3391,9 +3469,28 @@ sub config_to_command {
  
      push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -300,7 +339,7 @@ index 69a2bd64..277efdc4 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3412,6 +3502,7 @@ sub config_to_command {
+@@ -3412,6 +3509,7 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -308,7 +347,7 @@ index 69a2bd64..277efdc4 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3427,6 +3518,7 @@ sub config_to_command {
+@@ -3427,6 +3525,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -316,7 +355,7 @@ index 69a2bd64..277efdc4 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3548,6 +3640,7 @@ sub config_to_command {
+@@ -3548,6 +3647,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -324,7 +363,7 @@ index 69a2bd64..277efdc4 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3609,9 +3702,11 @@ sub config_to_command {
+@@ -3609,9 +3709,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -337,7 +376,7 @@ index 69a2bd64..277efdc4 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3623,6 +3718,13 @@ sub config_to_command {
+@@ -3623,6 +3725,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -346,12 +385,16 @@ index 69a2bd64..277efdc4 100644
 +                # i440fx has an onboard floppy controller, q35 does not
 +                push @$devices, '-device', 'isa-fdc,id=fdc' if $q35 && !$fdccontroller;
 +                $fdccontroller = 1;
++                # QEMU sets the boot order of floppies on the controller, per unit (A/B)
++                push @$devices, '-global',
++                    "isa-fdc.bootindex" . ($drive->{index} ? 'B' : 'A') . "=$drive->{bootindex}"
++                    if $drive->{bootindex};
 +            }
 +
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3682,7 +3784,12 @@ sub config_to_command {
+@@ -3682,7 +3795,12 @@ sub config_to_command {
          $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
@@ -365,7 +408,7 @@ index 69a2bd64..277efdc4 100644
  
          # force +pve1 if machine version 10.0, for host_mtu differentiation
          $version_guard->(10, 0, 1);
-@@ -3697,7 +3804,17 @@ sub config_to_command {
+@@ -3697,7 +3815,17 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -384,7 +427,7 @@ index 69a2bd64..277efdc4 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -4576,7 +4693,8 @@ sub vmconfig_hotplug_pending {
+@@ -4576,7 +4704,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -394,7 +437,7 @@ index 69a2bd64..277efdc4 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -5046,8 +5164,10 @@ sub vmconfig_update_disk {
+@@ -5046,8 +5175,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -407,7 +450,7 @@ index 69a2bd64..277efdc4 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5147,7 +5267,7 @@ sub vmconfig_update_disk {
+@@ -5147,7 +5278,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -416,7 +459,7 @@ index 69a2bd64..277efdc4 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5644,6 +5764,9 @@ sub vm_start_nolock {
+@@ -5644,6 +5775,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -426,7 +469,7 @@ index 69a2bd64..277efdc4 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -8074,7 +8197,12 @@ sub bootorder_from_legacy {
+@@ -8074,7 +8208,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -599,7 +642,7 @@ index 8b980650..1430ba4c 100644
  
      if (my $size = $res->{size}) {
 diff --git a/src/PVE/QemuServer/DriveDevice.pm b/src/PVE/QemuServer/DriveDevice.pm
-index 621fcc2b..305a7287 100644
+index 621fcc2b..89656fd1 100644
 --- a/src/PVE/QemuServer/DriveDevice.pm
 +++ b/src/PVE/QemuServer/DriveDevice.pm
 @@ -99,7 +99,9 @@ sub print_drivedevice_full {
@@ -630,7 +673,18 @@ index 621fcc2b..305a7287 100644
      } elsif ($drive->{interface} eq 'usb') {
          die "implement me";
          #  -device ide-drive,bus=ide.1,unit=0,drive=drive-ide0-1-0,id=ide0-1-0
-@@ -211,6 +223,10 @@ sub print_drivedevice_full {
+@@ -191,7 +203,9 @@ sub print_drivedevice_full {
+         die "unsupported interface type";
+     }
+ 
+-    $device .= ",bootindex=$drive->{bootindex}" if $drive->{bootindex};
++    # the floppy device has no bootindex, its controller does (see config_to_command)
++    $device .= ",bootindex=$drive->{bootindex}"
++        if $drive->{bootindex} && $drive->{interface} ne 'floppy';
+ 
+     if (my $serial = $drive->{serial}) {
+         $serial = _escape_qemu_arg_value(URI::Escape::uri_unescape($serial));
+@@ -211,6 +225,10 @@ sub print_drivedevice_full {
          }
      }
  
@@ -832,6 +886,52 @@ index 00000000..d606dfbf
 +scsihw: virtio-scsi-pci
 +smbios1: uuid=3dd750ce-d910-44d0-9493-525c0be4e687
 +vmgenid: 54d1c06c-8f5b-440f-b5b2-6eab1380e13d
+diff --git a/src/test/cfg2cmd/floppy.conf.cmd b/src/test/cfg2cmd/floppy.conf.cmd
+new file mode 100644
+index 00000000..00658662
+--- /dev/null
++++ b/src/test/cfg2cmd/floppy.conf.cmd
+@@ -0,0 +1,40 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=3dd750ce-d910-44d0-9493-525c0be4e687' \
++  -smp '2,sockets=1,cores=2,maxcpus=2' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -object '{"id":"throttle-drive-scsi0","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-floppy0","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-floppy1","limits":{},"qom-type":"throttle-group"}' \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=54d1c06c-8f5b-440f-b5b2-6eab1380e13d' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'usb-tablet,id=tablet,bus=uhci.0,port=1' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -device 'virtio-scsi-pci,id=scsihw0,bus=pci.0,addr=0x5' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"qcow2","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/100/vm-100-disk-2.qcow2","node-name":"ec11e0572184321efc5835152b95d5d","read-only":false},"node-name":"fc11e0572184321efc5835152b95d5d","read-only":false},"node-name":"drive-scsi0","read-only":false,"throttle-group":"throttle-drive-scsi0"}' \
++  -device 'scsi-hd,bus=scsihw0.0,channel=0,scsi-id=0,lun=0,drive=drive-scsi0,id=scsi0,device_id=drive-scsi0,bootindex=101,write-cache=on' \
++  -global 'isa-fdc.bootindexA=100' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/floppy/dos622-boot.img","node-name":"ed7d92fdd57e51c5af0bfa9b0ae5ebe","read-only":false},"node-name":"fd7d92fdd57e51c5af0bfa9b0ae5ebe","read-only":false},"node-name":"drive-floppy0","read-only":false,"throttle-group":"throttle-drive-floppy0"}' \
++  -device 'floppy,unit=0,drive=drive-floppy0,id=floppy0' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/floppy/drivers.img","node-name":"e36059ee1ed756644a414be453363b2","read-only":true},"node-name":"f36059ee1ed756644a414be453363b2","read-only":true},"node-name":"drive-floppy1","read-only":true,"throttle-group":"throttle-drive-floppy1"}' \
++  -device 'floppy,unit=1,drive=drive-floppy1,id=floppy1' \
++  -machine 'type=pc+pve0'
 diff --git a/src/test/cfg2cmd/q35-floppy.conf b/src/test/cfg2cmd/q35-floppy.conf
 new file mode 100644
 index 00000000..b6378e36
@@ -850,3 +950,46 @@ index 00000000..b6378e36
 +scsihw: virtio-scsi-pci
 +smbios1: uuid=3dd750ce-d910-44d0-9493-525c0be4e687
 +vmgenid: 54d1c06c-8f5b-440f-b5b2-6eab1380e13d
+diff --git a/src/test/cfg2cmd/q35-floppy.conf.cmd b/src/test/cfg2cmd/q35-floppy.conf.cmd
+new file mode 100644
+index 00000000..8a6bcd82
+--- /dev/null
++++ b/src/test/cfg2cmd/q35-floppy.conf.cmd
+@@ -0,0 +1,37 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=3dd750ce-d910-44d0-9493-525c0be4e687' \
++  -smp '2,sockets=1,cores=2,maxcpus=2' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -object '{"id":"throttle-drive-scsi0","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-floppy0","limits":{},"qom-type":"throttle-group"}' \
++  -global 'ICH9-LPC.disable_s3=1' \
++  -global 'ICH9-LPC.disable_s4=1' \
++  -readconfig /usr/share/qemu-server/pve-q35-4.0.cfg \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=54d1c06c-8f5b-440f-b5b2-6eab1380e13d' \
++  -device 'usb-tablet,id=tablet,bus=ehci.0,port=1' \
++  -device 'VGA,id=vga,bus=pcie.0,addr=0x1' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -device 'virtio-scsi-pci,id=scsihw0,bus=pci.0,addr=0x5' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"qcow2","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/100/vm-100-disk-2.qcow2","node-name":"ec11e0572184321efc5835152b95d5d","read-only":false},"node-name":"fc11e0572184321efc5835152b95d5d","read-only":false},"node-name":"drive-scsi0","read-only":false,"throttle-group":"throttle-drive-scsi0"}' \
++  -device 'scsi-hd,bus=scsihw0.0,channel=0,scsi-id=0,lun=0,drive=drive-scsi0,id=scsi0,device_id=drive-scsi0,bootindex=101,write-cache=on' \
++  -device 'isa-fdc,id=fdc' \
++  -global 'isa-fdc.bootindexA=100' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/floppy/dos622-boot.img","node-name":"ed7d92fdd57e51c5af0bfa9b0ae5ebe","read-only":false},"node-name":"fd7d92fdd57e51c5af0bfa9b0ae5ebe","read-only":false},"node-name":"drive-floppy0","read-only":false,"throttle-group":"throttle-drive-floppy0"}' \
++  -device 'floppy,unit=0,drive=drive-floppy0,id=floppy0' \
++  -device 'floppy,unit=1,id=floppy1' \
++  -machine 'type=q35+pve0'
