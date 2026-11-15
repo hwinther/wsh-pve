@@ -112,11 +112,13 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sparc-lab-${{ env.MATRIX }}
-          # matrix.py deletes the disk copies; the exclusions keep a killed run's leftovers out too
+          # matrix.py deletes the disk copies; the exclusions keep a killed run's leftovers out too.
+          # The recordings (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and go along.
           path: |
             ${{ env.RUN_DIR }}
             !${{ env.RUN_DIR }}/**/disk.raw*
             !${{ env.RUN_DIR }}/**/*.sock
+            !${{ env.RUN_DIR }}/**/_frames/**
           retention-days: 14
           if-no-files-found: warn
 

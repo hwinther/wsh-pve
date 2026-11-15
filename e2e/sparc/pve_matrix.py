@@ -51,7 +51,7 @@ MATRICES = {
     ],
 }
 
-LEFTOVERS = ("_fb_poll.png", "_refresh.ppm", "*.sock")
+LEFTOVERS = ("_fb_poll.png", "_refresh.ppm", "*.sock", "_frames")  # the recordings stay
 
 
 def sh(*cmd):
@@ -124,7 +124,7 @@ def run_case(name, config, iso, template, steps, a):
             destroy_vm(vmid)
         for pattern in LEFTOVERS:
             for p in glob.glob(os.path.join(work, "**", pattern), recursive=True):
-                os.unlink(p)
+                shutil.rmtree(p) if os.path.isdir(p) else os.unlink(p)
     failed = next((r for r in results if r["code"]), None)
     return {"code": failed["code"] if failed else 0, "elapsed": round(time.time() - t0, 1),
             "steps": results, "status": failed["status"] if failed else "passed"}

@@ -12,6 +12,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -104,8 +105,10 @@ MATRICES = {
     ],
 }
 
-# Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer.
-LEFTOVERS = ("disk.raw", "*.sock", "_refresh.ppm", "_fb_poll.png")
+# Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer,
+# the frames of the framebuffer video (lab.py removes them once fb.webm is encoded). The recordings
+# (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and stay.
+LEFTOVERS = ("disk.raw", "*.sock", "_refresh.ppm", "_fb_poll.png", "_frames")
 
 
 def run_case(name, scenario, disk, iso, variables, a):
@@ -133,7 +136,7 @@ def run_case(name, scenario, disk, iso, variables, a):
     finally:
         for pattern in LEFTOVERS:
             for p in glob.glob(os.path.join(out, pattern)):
-                os.unlink(p)
+                shutil.rmtree(p) if os.path.isdir(p) else os.unlink(p)
     res.setdefault("elapsed", round(time.time() - t0, 1))
     print(f"=== {name}: {res['status'].splitlines()[0]} ({res['elapsed']}s)", flush=True)
     return res
