@@ -49,6 +49,15 @@ DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
 DJGPP_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/djgpp-build:13
 DEBIAN_TAG = trixie
 
+# The optional extras of pve-qemu-kvm (3dfx, openbios, sun-proms) never fail its build: debian/rules
+# installs each only when it's there. A target whose extra drops out says so in one line of this form
+# (scripts/report-qemu-extras.sh quotes it), plus an annotation in GitHub Actions:
+#   WARNING: optional extra <name> missing: <reason>
+WARN_EXTRA_MISSING = warn_extra_missing() { \
+	echo "WARNING: optional extra $$1 missing: $$2"; \
+	if [ "$(GITHUB_ACTIONS)" = "true" ]; then echo "::warning title=optional extra $$1 missing::$$2"; fi; \
+}
+
 all: init-submodules build
 
 .PHONY: init-submodules
@@ -200,9 +209,16 @@ restore-pve-qemu:
 	git submodule update --init submodules/pve-qemu; \
 	git -C submodules/pve-qemu submodule update --recursive
 
+# The Sun PROMs (a private repository): without access, pve-qemu is built without them
 restore-sparc:
 	$(ECHO) "INFO: Restoring sparc submodule"; \
-	git submodule update --init submodules/sparc
+	$(WARN_EXTRA_MISSING); \
+	git submodule update --init submodules/sparc || true; \
+	missing=""; \
+	for f in ss5.bin ss10_v2.25_rom ss20_v2.25_rom; do [ -s "submodules/sparc/$$f" ] || missing="$$missing $$f"; done; \
+	if [ -n "$$missing" ]; then \
+		warn_extra_missing sun-proms "not in submodules/sparc (private repository: no access?):$$missing"; \
+	fi
 
 # openbios-sparc32 and the cg3 FCode ROM (QEMU,cgthree.bin) with our patches (openbios/), each
 # installed over QEMU's image by debian/rules
@@ -211,8 +227,11 @@ openbios-sparc32:
 	$(Q)$(ECHO) "INFO: Building openbios-sparc32 and QEMU,cgthree.bin"; \
 	mkdir -p build/openbios; \
 	rm -f build/openbios/*; \
-	$(DOCKER) build --output type=local,dest=build/openbios -f openbios/Dockerfile openbios \
-		|| echo "WARNING: openbios-sparc32 failed to build, pve-qemu keeps QEMU's images"
+	$(WARN_EXTRA_MISSING); \
+	$(DOCKER) build --output type=local,dest=build/openbios -f openbios/Dockerfile openbios || true; \
+	if [ ! -s build/openbios/openbios-sparc32 ] || [ ! -s "build/openbios/QEMU,cgthree.bin" ]; then \
+		warn_extra_missing openbios "openbios-sparc32 failed to build, pve-qemu keeps QEMU's images"; \
+	fi
 
 .PHONY: pve-qemu-bundle
 pve-qemu-bundle: restore-sparc openbios-sparc32 pve-qemu-3dfx pve-qemu
@@ -377,6 +396,10 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
+	fi; \
+	$(WARN_EXTRA_MISSING); \
+	if [ ! -s build/pve-qemu-3dfx/qemu-system-x86_64 ]; then \
+		warn_extra_missing 3dfx "the 3dfx build made no qemu-system-x86_64 (patch errors above), pve-qemu ships without qemu-system-x86_64-3dfx"; \
 	fi
 
 .PHONY: clean-qemu-3dfx
