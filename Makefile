@@ -204,14 +204,15 @@ restore-sparc:
 	$(ECHO) "INFO: Restoring sparc submodule"; \
 	git submodule update --init submodules/sparc
 
-# openbios-sparc32 with our patches (openbios/), installed over QEMU's image by debian/rules
+# openbios-sparc32 and the cg3 FCode ROM (QEMU,cgthree.bin) with our patches (openbios/), each
+# installed over QEMU's image by debian/rules
 .PHONY: openbios-sparc32
 openbios-sparc32:
-	$(Q)$(ECHO) "INFO: Building openbios-sparc32"; \
+	$(Q)$(ECHO) "INFO: Building openbios-sparc32 and QEMU,cgthree.bin"; \
 	mkdir -p build/openbios; \
 	rm -f build/openbios/*; \
 	$(DOCKER) build --output type=local,dest=build/openbios -f openbios/Dockerfile openbios \
-		|| echo "WARNING: openbios-sparc32 failed to build, pve-qemu keeps QEMU's image"
+		|| echo "WARNING: openbios-sparc32 failed to build, pve-qemu keeps QEMU's images"
 
 .PHONY: pve-qemu-bundle
 pve-qemu-bundle: restore-sparc openbios-sparc32 pve-qemu-3dfx pve-qemu
