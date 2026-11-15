@@ -6,6 +6,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   the QEMU command qemu-server builds (`qm showcmd`) and whether QEMU accepts it.
 - `tests/ui-hardware.spec.ts`: the pve-manager additions, set through the web UI's Hardware view,
   with the same checks.
+- `tests/floppy.spec.ts`: floppy support across all three packages: the `floppy` storage content
+  type and its upload tab, floppy drives on i440fx and q35 (and their refusal on other
+  architectures), and Hardware → Add → Floppy Drive. Skips itself while the installed qemu-server
+  has no floppy support (until those packages are published).
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
@@ -16,7 +20,7 @@ Known bugs are marked `test.fail()`. They run, and turn red once fixed, so the m
 ## The PVE container
 
 `pve/Dockerfile` (build context: the repository root) installs `pve-manager`, `qemu-server`,
-`pve-qemu-kvm` and `pve-cluster` from Proxmox, with the WSH builds pinned over them. It runs systemd
+`pve-qemu-kvm`, `libpve-storage-perl` and `pve-cluster` from Proxmox, with the WSH builds pinned over them. It runs systemd
 as PID 1 in a privileged container (pmxcfs mounts `/etc/pve` with FUSE), with only pve-cluster,
 pvedaemon and pveproxy, a directory storage and an empty `vmbr0` bridge. No guest is ever started.
 

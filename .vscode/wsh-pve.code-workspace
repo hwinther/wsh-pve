@@ -17,6 +17,10 @@
 			"name": "pve-qemu qemu (submodule)"
 		},
 		{
+			"path": "../submodules/pve-storage",
+			"name": "pve-storage (submodule)"
+		},
+		{
 			"path": "../submodules/qemu-3dfx",
 			"name": "qemu-3dfx (submodule)"
 		},

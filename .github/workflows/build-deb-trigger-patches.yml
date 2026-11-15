@@ -15,6 +15,7 @@ on:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
       - "submodules/qemu-server.patch"
+      - "submodules/pve-storage.patch"
 
 permissions:
   # for ghcr.io (docker registry):
@@ -33,9 +34,11 @@ jobs:
       pve-manager: ${{ steps.changes.outputs.pve-manager }}
       pve-qemu: ${{ steps.changes.outputs.pve-qemu }}
       qemu-server: ${{ steps.changes.outputs.qemu-server }}
+      pve-storage: ${{ steps.changes.outputs.pve-storage }}
       pve-manager-count: ${{ steps.patch-count.outputs.pve-manager_changes }}
       pve-qemu-count: ${{ steps.patch-count.outputs.pve-qemu_changes }}
       qemu-server-count: ${{ steps.patch-count.outputs.qemu-server_changes }}
+      pve-storage-count: ${{ steps.patch-count.outputs.pve-storage_changes }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +56,8 @@ jobs:
               - 'submodules/pve-qemu.patch'
             qemu-server:
               - 'submodules/qemu-server.patch'
+            pve-storage:
+              - 'submodules/pve-storage.patch'
 
       - name: Count amount of commits for each patch file
         id: patch-count
@@ -60,12 +65,15 @@ jobs:
           pve_manager_changes=$(git log --follow --pretty=oneline -- submodules/pve-manager.patch | wc -l)
           pve_qemu_changes=$(git log --follow --pretty=oneline -- submodules/pve-qemu.patch | wc -l)
           qemu_server_changes=$(git log --follow --pretty=oneline -- submodules/qemu-server.patch | wc -l)
+          pve_storage_changes=$(git log --follow --pretty=oneline -- submodules/pve-storage.patch | wc -l)
           echo "pve-manager_changes=$pve_manager_changes" >> $GITHUB_OUTPUT
           echo "pve-manager_changes=$pve_manager_changes"
           echo "pve-qemu_changes=$pve_qemu_changes" >> $GITHUB_OUTPUT
           echo "pve-qemu_changes=$pve_qemu_changes"
           echo "qemu-server_changes=$qemu_server_changes" >> $GITHUB_OUTPUT
           echo "qemu-server_changes=$qemu_server_changes"
+          echo "pve-storage_changes=$pve_storage_changes" >> $GITHUB_OUTPUT
+          echo "pve-storage_changes=$pve_storage_changes"
 
   build-pve-manager-deb-when-changed:
     uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
@@ -91,6 +99,14 @@ jobs:
       package: qemu-server
     secrets: inherit
 
+  build-pve-storage-deb-when-changed:
+    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    needs: [check]
+    if: ${{ needs.check.outputs.pve-storage == 'true' }}
+    with:
+      package: pve-storage
+    secrets: inherit
+
   # debug-workflow:
   #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
   #   needs: [check]
@@ -105,13 +121,15 @@ jobs:
         build-pve-manager-deb-when-changed,
         build-pve-qemu-deb-when-changed,
         build-qemu-server-deb-when-changed,
+        build-pve-storage-deb-when-changed,
       ]
     secrets: inherit
     if: |
       always() && (
         needs.build-pve-manager-deb-when-changed.result == 'success' ||
         needs.build-pve-qemu-deb-when-changed.result == 'success' ||
-        needs.build-qemu-server-deb-when-changed.result == 'success'
+        needs.build-qemu-server-deb-when-changed.result == 'success' ||
+        needs.build-pve-storage-deb-when-changed.result == 'success'
       )
 
   create-pr-on-build-failure:
@@ -122,12 +140,14 @@ jobs:
         build-pve-manager-deb-when-changed,
         build-pve-qemu-deb-when-changed,
         build-qemu-server-deb-when-changed,
+        build-pve-storage-deb-when-changed,
       ]
     if: |
       failure() && (
         (needs.check.outputs.pve-manager == 'true' && needs.build-pve-manager-deb-when-changed.result == 'failure') ||
         (needs.check.outputs.pve-qemu == 'true' && needs.build-pve-qemu-deb-when-changed.result == 'failure') ||
-        (needs.check.outputs.qemu-server == 'true' && needs.build-qemu-server-deb-when-changed.result == 'failure')
+        (needs.check.outputs.qemu-server == 'true' && needs.build-qemu-server-deb-when-changed.result == 'failure') ||
+        (needs.check.outputs.pve-storage == 'true' && needs.build-pve-storage-deb-when-changed.result == 'failure')
       )
     permissions:
       contents: write
@@ -140,6 +160,7 @@ jobs:
           [ "${{ needs.build-pve-manager-deb-when-changed.result }}" == "failure" ] && packs="${packs}pve-manager,"
           [ "${{ needs.build-pve-qemu-deb-when-changed.result }}" == "failure" ] && packs="${packs}pve-qemu,"
           [ "${{ needs.build-qemu-server-deb-when-changed.result }}" == "failure" ] && packs="${packs}qemu-server,"
+          [ "${{ needs.build-pve-storage-deb-when-changed.result }}" == "failure" ] && packs="${packs}pve-storage,"
           echo "packages=${packs%,}" >> $GITHUB_OUTPUT
 
       - name: Create PR for manual fix

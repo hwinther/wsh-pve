@@ -31,7 +31,7 @@ RUN apt-get update \
     && if [ "$PACKAGES" = repo ]; then \
         printf 'Types: deb\nURIs: https://debian.wshosting.no/debian/\nSuites: trixie\nComponents: main\nSigned-By: /usr/share/keyrings/wsh-pve.gpg\n' \
             > /etc/apt/sources.list.d/wsh-pve.sources; \
-        printf 'Package: pve-manager qemu-server pve-qemu-kvm\nPin: origin debian.wshosting.no\nPin-Priority: 1001\n' \
+        printf 'Package: pve-manager qemu-server pve-qemu-kvm libpve-storage-perl\nPin: origin debian.wshosting.no\nPin-Priority: 1001\n' \
             > /etc/apt/preferences.d/wsh-pve; \
     fi
 
@@ -44,7 +44,7 @@ RUN apt-get update \
     && if [ "$PACKAGES" = local ]; then LOCAL_DEBS="$(ls /tmp/debs/*.deb)"; fi \
     && apt-get install --no-install-recommends --assume-yes \
         systemd systemd-sysv dbus iproute2 curl procps \
-        pve-cluster pve-manager qemu-server pve-qemu-kvm proxmox-widget-toolkit \
+        pve-cluster pve-manager qemu-server pve-qemu-kvm libpve-storage-perl proxmox-widget-toolkit \
         $LOCAL_DEBS \
     && rm -rf /var/lib/apt/lists/* /tmp/debs
 

@@ -23,6 +23,12 @@ jobs:
       - name: Trigger sync-qemu-server
         run: gh workflow run sync-qemu-server.yml --ref main
 
+  trigger-sync-pve-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync-pve-storage
+        run: gh workflow run sync-pve-storage.yml --ref main
+
   trigger-sync-qemu-3dfx:
     runs-on: ubuntu-latest
     steps:

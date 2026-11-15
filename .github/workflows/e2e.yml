@@ -46,7 +46,7 @@ jobs:
       - name: Build the PVE image
         run: |
           DOCKER_BUILDKIT=1 docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:ci .
-          docker run --rm --entrypoint dpkg-query wsh-pve-e2e:ci -W pve-manager qemu-server pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
+          docker run --rm --entrypoint dpkg-query wsh-pve-e2e:ci -W pve-manager qemu-server pve-qemu-kvm libpve-storage-perl | tee -a "$GITHUB_STEP_SUMMARY"
           docker save wsh-pve-e2e:ci | gzip -1 > pve-e2e-image.tar.gz
 
       - name: Upload the image
