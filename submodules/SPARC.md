@@ -1,7 +1,7 @@
 # sparc patches
 
 Everything wsh-pve changes to run sparc (32-bit, `arch: sparc`) and sparc64 guests, by
-component. The user guide is `docs/src/content/docs/guides/sparc.md`; this file is for whoever
+component. The user guide is `docs/src/content/docs/guides/sparc.mdx`; this file is for whoever
 maintains the patches.
 
 | Component | Where | What |

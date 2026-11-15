@@ -1,0 +1,80 @@
+---
+title: SPARC lab recordings
+description: Terminal recordings and a framebuffer video of SPARC guests booting and installing under the WSH QEMU, made by the sparc lab
+---
+
+import LabCast from "../../../components/LabCast.astro";
+import LabVideo from "../../../components/LabVideo.astro";
+
+The [sparc lab](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc) records every run it makes:
+the serial console as an [asciinema](https://asciinema.org) recording and, when the guest has a
+framebuffer, a short time-lapse video of it. These few are from the lab's own runs against the
+packaged QEMU; the weekly lab run keeps the recordings of every case in its workflow artifact.
+
+The recordings are documentary: short, time-compressed, from the lab's unattended runs. Pauses
+longer than a second are cut (and the install plays three times as fast); the marks on the progress
+bar are the lab's steps (hover for the title, or use `[` and `]` to jump between them). Space pauses,
+the arrow keys seek.
+
+## Solaris 2.6 text install on SS-5
+
+The End User install from the Solaris 2.6 (5/98) CD on the serial console, as
+`solaris-install-serial.py` drives it (language, terminal type, system identification, software
+group, disk, then the installation itself and `halt`). SS-5, OpenBIOS, 256 MB.
+
+<LabCast
+  src="/recordings/sol26-install-ss5.cast"
+  caption="Solaris 2.6 End User install, SS-5 with OpenBIOS, serial console"
+  poster="npt:0:20"
+/>
+
+## Solaris 2.6 boot on SS-20
+
+An installed Solaris 2.6 disk booting on SS-20 with OpenBIOS (`solaris-boot-disk.py`): the PROM, the
+kernel, the first-boot questions, login, `uname`/`df`/`ifconfig` and `init 5`, which powers the VM off.
+
+<LabCast
+  src="/recordings/sol26-boot-ss20.cast"
+  caption="Solaris 2.6 booting an installed disk, SS-20 with OpenBIOS, serial console"
+  poster="npt:0:10"
+/>
+
+## Through Proxmox VE: NetBSD on sparc64 and Alpine on aarch64
+
+VMs created through the PVE API and started by Proxmox VE (`qm start`), the lab attached to their
+serial socket ([attach mode](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#attach-to-a-pve-vm)).
+
+<LabCast
+  src="/recordings/netbsd-sparc64-pve.cast"
+  caption="NetBSD 11.1 install CD on sparc64 (sun4u, OpenBIOS) under PVE, to the sysinst shell"
+  poster="npt:0:8"
+/>
+
+<LabCast
+  src="/recordings/alpine-aarch64-pve.cast"
+  caption="Alpine Linux 3.19 on aarch64 (virt, AAVMF) under PVE, to a root shell"
+  poster="npt:0:8"
+/>
+
+## Solaris 2.6 on a cg3 framebuffer
+
+The same SS-5 disk with the console on the cg3 (1024x768): the OpenBIOS banner, the kernel messages on
+the framebuffer, the root password questions and the CDE login screen. One frame a second, played ten
+times faster; the captions are the lab's steps.
+
+<LabVideo
+  src="https://github.com/hwinther/wsh-pve/releases/download/media/sol26-cg3-ss5.webm"
+  captions="/recordings/sol26-cg3-ss5.vtt"
+  poster="/recordings/sol26-cg3-ss5-poster.png"
+  width={1024}
+  height={768}
+  caption="Solaris 2.6 on SS-5 with a cg3 framebuffer, OpenBIOS banner to dtlogin (time-lapse, 10x)"
+/>
+
+## Recording your own
+
+Every `lab.py run` writes `serial.cast` (and `serial.fast.cast`, the pauses cut) next to its other
+evidence, and `fb.webm` when the machine has a framebuffer; the run's `index.html` plays both offline.
+`asciinema play serial.cast` plays a cast in a terminal. The lab's
+[README](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#recordings) has the details, and how
+a recording gets onto this page.

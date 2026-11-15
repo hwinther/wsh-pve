@@ -3,6 +3,8 @@ title: SPARC Guests
 description: Running 32-bit and 64-bit SPARC guests on Proxmox VE with the WSH extensions
 ---
 
+import LabCast from "../../../components/LabCast.astro";
+
 The WSH extensions add emulated SPARC and SPARC64 platforms so you can run Sun workstation operating systems such as SunOS / Solaris under Proxmox VE. SPARC emulation is experimental and sensitive to configuration — this guide collects the settings that are known to work.
 
 :::caution
@@ -109,7 +111,17 @@ runs it:
    order to the disk and start it again.
 5. First boot asks for the root password, then shows `console login:`.
 
-With 11.1 the whole End User install takes under 10 minutes on an otherwise idle host.
+With 11.1 the whole End User install takes under 10 minutes on an otherwise idle host. The lab's
+recording of it, its 10 minutes in two (pauses cut to a second, played three times as fast; the
+marks on the progress bar are its steps):
+
+<LabCast
+  src="/recordings/sol26-install-ss5.cast"
+  caption="Solaris 2.6 (5/98) End User install on the serial console: SS-5, OpenBIOS, QEMU 11.1"
+  poster="npt:0:20"
+/>
+
+More recordings, including a cg3 boot, are on [SPARC lab recordings](/guides/sparc-recordings/).
 
 ### Sun PROM console on the serial port
 
@@ -159,7 +171,8 @@ refreshes.
 ## Testing installs automatically
 
 `e2e/sparc` in the repository runs installs and boots unattended against the shipped QEMU, recording
-the serial console and framebuffer screenshots of every step. See its
+the serial console and framebuffer screenshots of every step, the console as a terminal recording and
+the framebuffer as a short video ([examples](/guides/sparc-recordings/)). See its
 [README](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc) for the scenarios and how to write
 new ones.
 

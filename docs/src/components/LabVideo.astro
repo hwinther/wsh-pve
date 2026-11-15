@@ -1,0 +1,43 @@
+---
+// A framebuffer recording made by the sparc lab (fb.webm). Videos are not in the repository: they are
+// assets of the `media` GitHub release (e2e/sparc/README.md, "Recordings in the docs"), so `src` is a
+// release download URL. The step captions (fb.vtt, small) and the poster frame live in
+// public/recordings/, served from this site.
+interface Props {
+  src: string;
+  captions?: string;
+  poster?: string;
+  caption?: string;
+  width?: number;
+  height?: number;
+}
+
+const { src, captions, poster, caption, width, height } = Astro.props;
+---
+
+<figure class="lab-video not-content">
+  <video controls preload="none" poster={poster} width={width} height={height} src={src}>
+    {captions && <track kind="captions" label="Steps" srclang="en" src={captions} default />}
+    <a href={src}>Download the video</a>
+  </video>
+  {
+    caption && (
+      <figcaption>
+        {caption} (<a href={src}>WebM</a>)
+      </figcaption>
+    )
+  }
+</figure>
+
+<style>
+  .lab-video video {
+    width: 100%;
+    height: auto;
+    background: #000;
+  }
+  .lab-video figcaption {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    margin-top: 0.5rem;
+  }
+</style>

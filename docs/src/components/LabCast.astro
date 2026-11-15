@@ -1,0 +1,51 @@
+---
+// A terminal recording (asciinema v2 cast) made by the sparc lab, in the asciinema player
+// (asciinema-player, Apache-2.0). The casts live in public/recordings/; their step markers show as
+// chapters on the player's progress bar.
+interface Props {
+  src: string; // e.g. /recordings/sol26-install-ss5.cast
+  caption?: string;
+  poster?: string; // the frame shown before playing, e.g. "npt:0:30"
+  speed?: number;
+}
+
+const { src, caption, poster = "npt:0:2", speed = 1 } = Astro.props;
+---
+
+<figure class="lab-cast not-content">
+  <div class="lab-cast-player" data-src={src} data-poster={poster} data-speed={speed}>
+    <noscript><a href={src}>{src}</a> (an asciinema recording)</noscript>
+  </div>
+  {
+    caption && (
+      <figcaption>
+        {caption} (<a href={src} download>cast file</a>)
+      </figcaption>
+    )
+  }
+</figure>
+
+<script>
+  import { create } from "asciinema-player";
+  import "asciinema-player/dist/bundle/asciinema-player.css";
+
+  for (const el of document.querySelectorAll<HTMLElement>(".lab-cast-player")) {
+    create(el.dataset.src!, el, {
+      fit: "width",
+      poster: el.dataset.poster,
+      speed: Number(el.dataset.speed) || 1,
+      terminalFontSize: "small",
+    });
+  }
+</script>
+
+<style>
+  .lab-cast {
+    margin: 1.5rem 0;
+  }
+  .lab-cast figcaption {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    margin-top: 0.5rem;
+  }
+</style>
