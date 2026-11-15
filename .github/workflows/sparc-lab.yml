@@ -20,6 +20,7 @@ on:
           - display
           - idle
           - bench
+          - pve
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"
@@ -32,6 +33,7 @@ on:
         default: /mnt/sparc/runs
   schedule:
     - cron: "17 3 * * 0"
+    - cron: "47 4 * * 0" # the pve matrix
 
 permissions:
   contents: read
@@ -47,7 +49,7 @@ jobs:
     permissions:
       contents: read
     env:
-      MATRIX: ${{ inputs.matrix || 'smoke' }}
+      MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || 'smoke' }}
       ISO_DIR: ${{ inputs.iso_dir || '/mnt/sparc/iso' }}
       DISKS_DIR: ${{ inputs.disks_dir || '/srv/sparc/disks' }}
       RUN_DIR: ${{ inputs.runs_dir || '/mnt/sparc/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
@@ -59,16 +61,42 @@ jobs:
           persist-credentials: false
 
       - name: Build the lab image
+        if: ${{ env.MATRIX != 'pve' }}
         run: |
           # --no-cache: the point is the newest published pve-qemu-kvm, not a cached apt layer
           docker build --pull --no-cache -f e2e/sparc/Dockerfile -t "$IMAGE" .
           docker run --rm --entrypoint dpkg-query "$IMAGE" -W pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Run the ${{ env.MATRIX }} matrix
+        if: ${{ env.MATRIX != 'pve' }}
         run: |
           docker run --rm --name "sparc-lab-${GITHUB_RUN_ID}" \
             -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" \
             --entrypoint python3 "$IMAGE" matrix.py "$MATRIX" --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR"
+
+      # pve: VMs created through the API of a PVE node in a container (the e2e image with the lab in
+      # it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py)
+      - name: Build the PVE node with the lab
+        if: ${{ env.MATRIX == 'pve' }}
+        run: |
+          # --no-cache: the newest published qemu-server and pve-qemu-kvm
+          docker build --pull --no-cache -f e2e/pve/Dockerfile -t "$IMAGE-pve" .
+          docker build -f e2e/sparc/pve.Dockerfile --build-arg PVE_IMAGE="$IMAGE-pve" -t "$IMAGE" e2e/sparc
+          docker run --rm --entrypoint dpkg-query "$IMAGE" -W qemu-server pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the pve matrix
+        if: ${{ env.MATRIX == 'pve' }}
+        run: |
+          # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
+          docker run -d --name "sparc-lab-${GITHUB_RUN_ID}" --hostname pve --privileged \
+            --tmpfs /run --tmpfs /run/lock \
+            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "$IMAGE"
+          for _ in $(seq 1 60); do
+            docker exec "sparc-lab-${GITHUB_RUN_ID}" test -f /run/pve-e2e-ready && break
+            sleep 5
+          done
+          docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py pve \
+            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR"
 
       - name: Summary
         if: ${{ !cancelled() }}
@@ -94,3 +122,4 @@ jobs:
           # The run directory belongs to root (the container wrote it), so remove it from a container.
           docker run --rm -v "$(dirname "$RUN_DIR"):/runs" --entrypoint rm "$IMAGE" -rf "/runs/$(basename "$RUN_DIR")" || true
           docker image rm "$IMAGE" || true
+          docker image rm "$IMAGE-pve" 2>/dev/null || true

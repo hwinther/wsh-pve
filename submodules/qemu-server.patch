@@ -132,7 +132,7 @@ index c84f10f8..aecf60fa 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 69a2bd64..478a44ed 100644
+index 69a2bd64..e634c7dc 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -170,7 +170,7 @@ my $vga_fmt = {
@@ -341,7 +341,7 @@ index 69a2bd64..478a44ed 100644
      my ($conf, $vga, $machine) = @_;
  
 -    return if $machine =~ m/^virt/; # there is no smm flag that could be disabled
-+    return if $machine =~ m/^virt/ || $machine =~ m/^SS\-/; # there is no smm flag that could be disabled
++    return if $machine =~ m/^virt/ || $machine =~ m/^(SS-|sun4)/; # there is no smm flag that could be disabled
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
@@ -379,7 +379,7 @@ index 69a2bd64..478a44ed 100644
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
-+    if ($conf->{bios} && ($conf->{bios} eq 'ovmf' || $conf->{arch} && $conf->{arch} =~ m/^sparc/)) {
++    if ($conf->{bios} && $conf->{arch} && $conf->{arch} =~ m/^sparc/) { # OpenBIOS or a Sun PROM; OVMF is a pflash
 +        push @$cmd, '-bios', "$conf->{bios}";
 +    }
 +
@@ -429,9 +429,9 @@ index 69a2bd64..478a44ed 100644
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
-+        if ($arch eq 'sparc') {
++        if ($arch =~ m/^sparc/) {
 +            # sun4m has no ISA bus: serial0/serial1 are its two built-in ports (ttya/ttyb), which
-+            # '-serial' assigns in order
++            # '-serial' assigns in order; sun4u has them on its ebus (an isa-serial would be a third)
 +            my $path = $conf->{"serial$i"};
 +            if (!$path) {
 +                push @$devices, '-serial', 'none' if $i == 0 && $conf->{serial1};

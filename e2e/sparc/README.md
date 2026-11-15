@@ -15,6 +15,9 @@ instead of repeated by hand.
 - `Dockerfile` builds the lab with `qemu-system-sparc` from the published `pve-qemu-kvm`, the QEMU
   that PVE runs. `qemu-7.2.Dockerfile` adds an upstream QEMU (7.2.0 by default, built on Debian 12)
   on top of it, for comparing against the version sparc guests used to run on.
+- Attach mode (`lab.py run --pve <vmid>`) drives a VM that Proxmox VE started instead of its own
+  QEMU; `pve_matrix.py` creates VMs through the PVE API and runs scenarios against them, inside the
+  e2e PVE node with the lab added (`pve.Dockerfile`). See "Attach to a PVE VM".
 
 ## Build
 
@@ -125,6 +128,121 @@ week, never for pull requests or pushes: it needs the media, on a self-hosted ru
 `sparc-lab`. It builds the lab image without cache (so it has the newest published package), mounts
 the three directories (inputs, defaulting to the paths above), puts the table in the job summary,
 uploads everything but the disks as an artifact and removes its run directory.
+
+## Attach to a PVE VM
+
+`lab.py run <scenario> --pve <vmid>` (and `serve --pve <vmid>`) drives a VM that PVE starts, on the
+PVE node itself (where `qm` and `/var/run/qemu-server/` are), instead of starting QEMU:
+
+- **Serial console:** `/var/run/qemu-server/<vmid>.serial<N>`, which the VM has with `serialN: socket`
+  (the port `vga: serialN` names, else the first socket; `--var SERIAL=N` picks another). Same VT100
+  emulation, `expect()`, `send()` and `key()` as with a QEMU of its own.
+- **Monitor:** QMP on `<vmid>.qmp`, one connection per command (send-key, screendump, `hmp()`).
+  QEMU serves one client there at a time, and PVE's own tools (`qm`, pvestatd, the API) connect per
+  command and give up after a few seconds: a lab that stayed connected made `qm sendkey` fail
+  (`unable to connect to VM 100 qmp socket - timeout after 51 retries`) and dropped the QEMU version
+  from `qm status --verbose`. The lab waits its turn while another client has the socket, and waits
+  for QEMU to close each connection before opening the next: a client that connects right after the
+  previous one closed gets the greeting but no replies (seen with QEMU 11.1 under PVE). `qm monitor` /
+  the API's `monitor` call would also work but start a Perl process per key.
+- **Framebuffer:** `screendump` through QMP, so OCR steps work; keys through QMP `send-key`. VNC
+  without a client doesn't refresh the display, so `REFRESH` works as with a QEMU of its own.
+- **Lifecycle:** a stopped VM is started with `qm start` (the lab connects to the serial socket while
+  `qm start` runs; a VM with `freeze: 1` gets `cont` once it is connected, not tested) and stopped with `qm stop` when the
+  scenario ends (`--keep-running` leaves it running and detaches); a running VM is attached to and left
+  running. PVE runs QEMU with `-no-shutdown` and qmeventd ends it when the guest powers off, so a
+  power-off is QEMU's pid (`<vmid>.pid`) going away: `wait_exit()` works, "QEMU died" reports `qm
+  status`, and the exit code isn't visible (taken as 0).
+- **Console ownership:** the lab owns the serial console while it runs. QEMU serves one client per
+  serial socket and a second one waits unanswered, so the lab refuses to start when the socket
+  already has a client (`qm terminal`, the web console's xterm.js), and `qm terminal` gets nothing
+  until the lab is done.
+- **Not the same as starting QEMU:** the VM's hardware is its PVE config, so `qemu_args()` isn't used
+  (`DISK`, `ISO`, `TEMPLATE`, `MACHINE`, ... set nothing). `TRACE` is turned on through the monitor
+  (`logfile` + `trace-event`) once attached, so events before that are missed. `cpu_use()` reads the
+  pid from `<vmid>.pid` and works. Output the guest wrote before the lab connected is lost when
+  attaching to a running VM.
+
+Scenarios run in both modes: `pve_vars()` reads the VM's config (`qm config`) and sets what the
+scenarios read as variables, between the scenario's `DEFAULTS` and `--var`: `ARCH`, `MEM`, `SERIAL`,
+`CONSOLE` (`serial` without a display, else `fb`) and, for `arch: sparc`, `MACHINE`, `BIOS`, `VGA`
+(`none` for `vga: serialN`), `BOOT=c` (qemu-server sets no boot device, so OpenBIOS tries the disk first and
+`prom_boot()` boots the CD at the `0 >` prompt), `CDROM_AS` (`hd` for a target 6 without
+`media=cdrom`) and `REFRESH`. `solaris-install-serial.py` and `solaris-boot-disk.py` ran unchanged
+against a PVE VM; `solaris-boot-cd.py`, `idle.py` and `bench.py` read only these variables but weren't
+run in attach mode; `cg3-display.py` needs `--var GUEST=1` or `GUEST=` (its `qemu_args()` sets it).
+`alpine-boot-cd.py` and `netbsd-boot-cd.py` are attach mode only.
+
+### Provision a Solaris VM on a PVE node
+
+The sparc32 default profile with the text installer on ttya (`vga: serial0`), a Sun-labelled blank
+disk imported from the template as `scsi3`, the Solaris 2.6 CD on target 6:
+
+```sh
+xz -dk sparc-SUN2.9G.raw.template.xz          # the installer lists only Sun-labelled disks
+qm create 100 --arch sparc --name sol26 --memory 256 --ostype solaris --net0 lance,bridge=vmbr0 \
+  --serial0 socket --vga serial0 \
+  --scsi3 local:0,import-from=/root/sparc-SUN2.9G.raw.template,format=raw \
+  --scsi6 local:iso/solaris_2.6_598_sparc.iso,media=cdrom
+python3 lab.py run scenarios/solaris-install-serial.py --pve 100 --out /root/runs/install
+python3 lab.py run scenarios/solaris-boot-disk.py --pve 100 --out /root/runs/boot
+```
+
+(`qm disk import 100 <template.raw> local --format raw` and then `qm set 100 --scsi3 <volume>` does
+the same as `import-from` for an existing VM.) The install ends with `halt`, which powers the VM off;
+the disk then boots first with the CD still attached. Measured in the e2e container (TCG, one guest at a time):
+install 550-575 s, first boot to `console login:`, `uname`/`df`/`ifconfig` and `init 5` 163 s. The lab
+needs `python3-pyte`, `python3-pil`, `tesseract-ocr` and `fonts-dejavu-core` on the node.
+
+### `pve_matrix.py`
+
+`pve_matrix.py pve` creates each VM through the API (`pvesh create /nodes/<node>/qemu`, the media linked
+into the `local` storage), runs its scenarios in `<runs>/<case>/<n>-<scenario>/`, destroys the VM
+and prints a summary like `matrix.py`:
+
+| Case | VM | Scenarios |
+| ---- | -- | --------- |
+| `sol26-install-ss5` | SS-5, OpenBIOS, `vga: serial0`, the SUN2.9G template on target 3, the 2.6 CD on target 6 | `solaris-install-serial.py`, then `solaris-boot-disk.py` |
+| `alpine-aarch64` | `arch: aarch64`, virt, OVMF (AAVMF), `vga: serial0`, the Alpine 3.19 CD on virtio-scsi | `alpine-boot-cd.py`: login prompt, root, `uname -m` |
+| `netbsd-sparc64` | `arch: sparc64`, sun4u, OpenBIOS, `vga: serial0`, the NetBSD 11.1 CD on `ide2` | `netbsd-boot-cd.py`: sysinst, its shell, `uname -m` |
+| `alpine-x86_64` | `kvm: 0`, `vga: std`, `serial0: socket`, the Alpine 3.19 CD on `ide2` | `alpine-boot-cd.py` on the VGA console (OCR, send-key), `uname -m` also through the serial port |
+
+One run took 12 min for `sol26-install-ss5` and about a minute for each of the others.
+
+It runs in the e2e PVE node with the lab added, privileged like the e2e container, the media
+mounted read only:
+
+```sh
+docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:local .
+docker build -f e2e/sparc/pve.Dockerfile -t wsh-pve-lab e2e/sparc
+docker run -d --name pve-lab --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
+  -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/sparc/disks:ro \
+  -v /mnt/sparc/runs:/mnt/sparc/runs wsh-pve-lab
+docker exec pve-lab python3 pve_matrix.py pve --runs /mnt/sparc/runs/p1
+```
+
+The `sparc lab` workflow does this for the `pve` choice, and every week after `smoke` (its own
+schedule), building both images from the published packages. The aarch64 and sparc64 cases need the
+qemu-server fixes below: with a published package that lacks them they fail at `qm start`.
+
+What qemu-server's command line had to change (`submodules/qemu-server.patch`):
+
+- **`-bios ovmf` for every OVMF VM:** the patch passed `bios` as `-bios` for sparc and for `bios:
+  ovmf`. An aarch64 OVMF VM then didn't start (`The contents of the first flash device may be
+  specified with -bios or with -drive if=pflash... but you cannot use both`; x86 OVMF VMs not
+  checked). Now sparc only.
+- **sparc64 `smm=off`:** `should_disable_smm` skipped sun4m but not sun4u, which has no such property:
+  a sparc64 VM with a serial display didn't start (`Property 'sun4u-machine.smm' not found`). Now
+  skipped for `sun4*` too.
+- **sparc64 serial ports:** they were `-device isa-serial`, a third 16550 next to the two the sun4u
+  ebus already has, so OpenBIOS's ttya had no chardev and the socket stayed silent. Now `-serial
+  chardev:serialN` as on sparc32.
+
+Still open on sparc64 (worked around in the case's VM config, not changed): OpenBIOS can't drive the
+default SCSI controller (`lsi`, "Cannot manage 'SCSI bus controller' PCI device"), so the CD goes on
+`ide2` (the built-in cmd646); OpenBIOS doesn't boot the device path of the boot order
+(`/pci@1fe,0/pci@1,1/ide@3/cdrom:f`, "No valid state has been set") while `boot cdrom:f` at the
+prompt works; qemu-server still adds a `virtio-balloon-pci` that OpenBIOS can't manage (harmless).
 
 ## Idle
 

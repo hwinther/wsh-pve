@@ -8,6 +8,7 @@ matched through OCR (tesseract); keys reach the guest's Sun keyboard through QMP
 
 Run a scenario:   lab.py run scenarios/solaris26-serial-install.py --out /work/run1 [--var KEY=VALUE ...]
 Interactive:      lab.py serve --out /work/s1 -- <qemu args>     (then `lab.py ctl ...` from another shell)
+A PVE VM:         lab.py run <scenario> --pve <vmid> --out ...   (on the PVE node; see PveMachine)
 """
 import argparse
 import html
@@ -16,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -455,6 +457,256 @@ def render_terminal(text, path, cols=80, rows=24):
     return path
 
 
+# --- attach mode: a VM that Proxmox VE started --------------------------------------------------------
+
+PVE_RUN = "/var/run/qemu-server"  # <vmid>.pid, <vmid>.qmp, <vmid>.serial<N> of every running VM
+
+
+def qm(*args, check=True):
+    r = subprocess.run(["qm", *map(str, args)], capture_output=True, text=True)
+    if check and r.returncode:
+        raise RuntimeError(f"qm {' '.join(map(str, args))}: {(r.stderr or r.stdout).strip()}")
+    return r.stdout
+
+
+def pve_config(vmid):
+    """The VM's current config (`qm config`) as a dict."""
+    return dict(line.split(": ", 1) for line in qm("config", vmid).splitlines() if ": " in line)
+
+
+def pve_serial(conf):
+    """The serial port the console is on: the one `vga: serialN` names, else the first `serialN: socket`."""
+    vga = conf.get("vga", "").split(",")[0]
+    if vga.startswith("serial") and conf.get(vga) == "socket":
+        return int(vga[6:])
+    return next((n for n in range(4) if conf.get(f"serial{n}") == "socket"), None)
+
+
+def pve_vars(vmid):
+    """The scenario variables that the VM's PVE config decides, so they needn't be repeated with --var:
+    ARCH, MEM, SERIAL, CONSOLE (serial without a display, else fb) and, for sparc32, what _sparc32.py's
+    helpers read (MACHINE, BIOS, VGA, BOOT, CDROM_AS, REFRESH). The VM's hardware itself comes from its
+    config; qemu_args() isn't used."""
+    c = pve_config(vmid)
+    vga = c.get("vga", "").split(",")[0]
+    serial = pve_serial(c)
+    nofb = vga == "none" or vga.startswith("serial")
+    v = {"PVE_VMID": str(vmid), "ARCH": c.get("arch", "x86_64"), "MEM": c.get("memory", ""),
+         "SERIAL": "" if serial is None else str(serial), "CONSOLE": "serial" if nofb else "fb"}
+    if v["ARCH"] == "sparc":
+        # qemu-server passes no -prom-env: OpenBIOS puts its console on ttya only without a framebuffer
+        v.update(MACHINE=c.get("machine", "SS-5"), BIOS=c.get("bios", "openbios-sparc32"), MEM=c.get("memory", "256"),
+                 VGA="none" if nofb else vga or "cg3",
+                 # and no boot device: sun4m boots target 3 (the disk), and the PROM prompt boots the CD
+                 BOOT="c",
+                 CDROM_AS="cd" if "media=cdrom" in c.get("scsi6", "media=cdrom") else "hd",
+                 REFRESH="0" if nofb else "0.5")
+    return v
+
+
+def unix_clients(path):
+    """How many clients a listening Unix socket has now (its accepted connections in /proc/net/unix)."""
+    with open("/proc/net/unix", encoding="ascii") as f:
+        return sum(1 for line in f if line.split()[5:6] == ["03"] and line.rstrip().endswith(" " + path))
+
+
+class PveQmp:
+    """QMP on the VM's <vmid>.qmp socket, one connection per command.
+
+    QEMU serves one client at a time there, and PVE's own tools (qm, pvestatd, the API) connect for
+    every command and give up after a few seconds: a client that stays connected makes `qm sendkey`
+    fail ("unable to connect to VM qmp socket - timeout") and drops the QEMU version from `qm status
+    --verbose`. So this connects, runs one command and disconnects, as PVE does, and waits its turn
+    while another client has the socket."""
+
+    def __init__(self, path, timeout=30):
+        self.path = path
+        self.timeout = timeout
+        self.lock = threading.Lock()
+
+    def cmd(self, name, **args):
+        end = time.time() + self.timeout
+        with self.lock:
+            while True:
+                try:
+                    with socket.socket(socket.AF_UNIX) as s:
+                        s.settimeout(max(1.0, end - time.time()))
+                        s.connect(self.path)
+                        f = s.makefile("rwb")
+                        for req in (None, {"execute": "qmp_capabilities"}, {"execute": name, "arguments": args}):
+                            if req:
+                                f.write(json.dumps(req).encode() + b"\n")
+                                f.flush()
+                            while True:  # the greeting or the reply, skipping events
+                                line = f.readline()
+                                if not line:
+                                    raise QemuDied(f"{self.path}: QMP connection closed")
+                                reply = json.loads(line)
+                                if "event" not in reply:
+                                    break
+                        # Wait for QEMU to close its end: a client that connects before QEMU has
+                        # handled the last one's disconnect gets the greeting but no replies.
+                        try:
+                            s.shutdown(socket.SHUT_WR)
+                            while f.readline():
+                                pass
+                        except OSError:
+                            pass
+                    break
+                except (FileNotFoundError, ConnectionRefusedError) as e:
+                    raise QemuDied(f"{self.path}: {e}")
+                except (BlockingIOError, socket.timeout):  # another client has it
+                    if time.time() > end:
+                        raise RuntimeError(f"QMP {name}: {self.path} busy for {self.timeout}s")
+                    time.sleep(0.2)
+        if "error" in reply:
+            raise RuntimeError(f"QMP {name}: {reply['error'].get('desc')}")
+        return reply.get("return")
+
+
+class PveProcess:
+    """What Machine uses of its QEMU process (pid, poll, wait, kill, returncode), for the QEMU that PVE
+    started for a VM: the pid in <vmid>.pid. PVE runs QEMU with -no-shutdown and qmeventd ends it when
+    the guest powers off, so a power-off shows as the process ending. Its exit code isn't visible and
+    counts as 0."""
+
+    def __init__(self, vmid):
+        self.vmid = vmid
+        with open(f"{PVE_RUN}/{vmid}.pid", encoding="ascii") as f:
+            self.pid = int(f.read().strip())
+        self.returncode = None
+
+    def poll(self):
+        if self.returncode is None:
+            try:
+                with open(f"/proc/{self.pid}/stat", encoding="ascii") as f:
+                    gone = f.read().rsplit(")", 1)[1].split()[0] == "Z"
+            except FileNotFoundError:
+                gone = True
+            if gone:
+                self.returncode = 0
+        return self.returncode
+
+    def wait(self, timeout=None):
+        end = None if timeout is None else time.time() + timeout
+        while self.poll() is None:
+            if end and time.time() > end:
+                raise subprocess.TimeoutExpired(f"VM {self.vmid}", timeout)
+            time.sleep(0.5)
+        return self.returncode
+
+    def kill(self):
+        qm("stop", self.vmid, check=False)
+
+
+class PveMachine(Machine):
+    """A Machine for a VM that Proxmox VE runs, by VMID, on the PVE node (where `qm` and
+    /var/run/qemu-server are): serial I/O on <vmid>.serial<N> (the VM needs `serialN: socket`),
+    monitor commands, screendump and send-key through PveQmp on <vmid>.qmp.
+
+    A stopped VM is started with `qm start` and stopped again by stop() (unless keep); a running one is
+    attached to and left running. The lab owns the serial console while it runs: QEMU serves one
+    client per serial socket, so `qm terminal` or the web console can't share it."""
+
+    def __init__(self, out, vmid, cols=80, rows=24, ocr=True, serial=None, keep=False):
+        import pyte
+
+        if not shutil.which("qm"):
+            raise SystemExit("--pve: run lab.py on the PVE node, where qm and /var/run/qemu-server are")
+        self.out, self.vmid, self.keep = out, str(vmid), keep
+        os.makedirs(out, exist_ok=True)
+        conf = pve_config(vmid)
+        serial = pve_serial(conf) if serial in (None, "") else int(serial)
+        self.serial_path = None if serial is None else f"{PVE_RUN}/{vmid}.serial{serial}"
+        self.qmp_path = f"{PVE_RUN}/{vmid}.qmp"
+        # the terminal and the step log, as in Machine
+        self.screen = pyte.Screen(cols, rows)
+        self.stream = pyte.ByteStream(self.screen)
+        self.stream.select_other_charset("@")
+        self.stream.feed(b"\x1b)0")
+        self.text, self.pos = "", 0
+        self.cond = threading.Condition()
+        self.steps, self.metrics = [], {}
+        self.ocr = ocr
+        self.t0 = time.time()
+        self.raw = open(os.path.join(out, "serial.raw"), "wb")
+        self.qmp = PveQmp(self.qmp_path)
+        self.ser = None
+        if self.serial_path and os.path.exists(self.serial_path) and unix_clients(self.serial_path):
+            raise SystemExit(f"{self.serial_path} already has a client (qm terminal, the web console?): "
+                               "close it, the lab needs the serial console to itself")
+        self.started = "status: running" not in qm("status", vmid)
+        if self.started:
+            # Connect while `qm start` runs, so the console output from the first instruction on is seen.
+            start = subprocess.Popen(["qm", "start", self.vmid], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True)
+            while self.serial_path and not self.ser and start.poll() is None:
+                self.ser = self._try_connect(self.serial_path)
+                time.sleep(0.05)
+            log = start.communicate()[0]
+            with open(os.path.join(out, "qm-start.log"), "w", encoding="utf-8") as f:
+                f.write(log)
+            if start.returncode:
+                raise SystemExit(f"qm start {vmid} failed: {log.strip()[-2000:]}")
+        if self.serial_path and not self.ser:
+            self.ser = self._try_connect(self.serial_path)
+            if not self.ser:
+                raise SystemExit(f"can't connect to {self.serial_path}")
+        if self.ser:
+            threading.Thread(target=self._reader, daemon=True).start()
+        self.proc = PveProcess(self.vmid)
+        with open(f"/proc/{self.proc.pid}/cmdline", "rb") as f:
+            self.args = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+        with open(os.path.join(out, "qemu.cmd"), "w", encoding="utf-8") as f:
+            f.write(shlex.join(self.args) + "\n")
+        if self.started and conf.get("freeze") == "1":
+            self.qmp.cmd("cont")  # `freeze: 1` holds the CPU until now
+        console = f"console on {self.serial_path}" if self.ser else "no serial socket (framebuffer only)"
+        self.log(f"{'started' if self.started else 'attached to running'} VM {vmid} (pid {self.proc.pid}), {console}")
+
+    @staticmethod
+    def _try_connect(path):
+        s = socket.socket(socket.AF_UNIX)
+        try:
+            s.connect(path)
+            return s
+        except OSError:
+            s.close()
+            return None
+
+    def _check_alive(self):
+        if self.proc.poll() is not None:
+            status = qm("status", self.vmid, check=False).strip()
+            raise QemuDied(f"VM {self.vmid} is no longer running ({status}); see `journalctl` and the task log")
+
+    def send(self, text, delay=0.05):
+        if not self.ser:
+            raise RuntimeError(f"VM {self.vmid} has no serial console: give it `serial0: socket`")
+        super().send(text, delay)
+
+    def key(self, *names):
+        if not self.ser:
+            raise RuntimeError(f"VM {self.vmid} has no serial console: give it `serial0: socket`")
+        super().key(*names)
+
+    def trace(self, events):
+        """Turn on QEMU trace events (comma separated) in the running VM, logged to <out>/trace.log."""
+        self.hmp(f"logfile {os.path.join(self.out, 'trace.log')}")
+        for ev in filter(None, events.split(",")):
+            self.hmp(f"trace-event {ev} on")
+        self.log(f"tracing {events}")
+
+    def stop(self):
+        """Stop the VM if the lab started it (`qm stop`), else leave it running; either way detach."""
+        if self.started and not self.keep and self.proc.poll() is None:
+            out = qm("stop", self.vmid, check=False).strip()
+            self.log(f"qm stop {self.vmid}" + (f": {out}" if out else ""))
+        elif self.proc.poll() is None:
+            self.log(f"VM {self.vmid} left running")
+        if self.ser:
+            self.ser.close()
+
+
 # --- command line -----------------------------------------------------------------------------------
 
 def load_scenario(path):
@@ -475,9 +727,9 @@ def parse_vars(items):
 
 def cmd_run(a):
     sc = load_scenario(a.scenario)
-    v = {**getattr(sc, "DEFAULTS", {}), **parse_vars(a.var)}
+    v = {**getattr(sc, "DEFAULTS", {}), **(pve_vars(a.pve) if a.pve else {}), **parse_vars(a.var)}
     os.makedirs(a.out, exist_ok=True)
-    m = Machine(a.out, sc.qemu_args(v, a.out), ocr=not a.no_ocr)
+    m = attach(a, v) if a.pve else Machine(a.out, sc.qemu_args(v, a.out), ocr=not a.no_ocr)
     m.refresh(float(v.get("REFRESH") or 0))
     status, code = "passed", 0
     try:
@@ -495,7 +747,7 @@ def cmd_run(a):
             pass
     m.log(f"result: {status}")
     m.write_report(status)
-    if not a.keep_running:
+    if not a.keep_running or a.pve:  # attached: stop() leaves the VM running with --keep-running
         m.stop()
     else:
         m.log("keeping QEMU running (Ctrl-C to stop)")
@@ -507,6 +759,14 @@ def cmd_run(a):
         json.dump({"status": status, "code": code, "elapsed": round(m.elapsed(), 1), "vars": v,
                    "metrics": m.metrics}, f, indent=2)
     return code
+
+
+def attach(a, v):
+    """--pve: a PveMachine for the VM, with TRACE turned on through the monitor (no -trace to add)."""
+    m = PveMachine(a.out, a.pve, ocr=not a.no_ocr, serial=v.get("SERIAL"), keep=getattr(a, "keep_running", False))
+    if v.get("TRACE"):
+        m.trace(v["TRACE"])
+    return m
 
 
 def serve_one(m, conn):
@@ -522,12 +782,13 @@ def serve_one(m, conn):
 def cmd_serve(a):
     """Start QEMU and take commands on <out>/ctl.sock (one JSON request per connection)."""
     os.makedirs(a.out, exist_ok=True)
-    v = parse_vars(a.var)
+    v = {**(pve_vars(a.pve) if a.pve else {}), **parse_vars(a.var)}
     if a.scenario:
         sc = load_scenario(a.scenario)
         v = {**getattr(sc, "DEFAULTS", {}), **v}
-        a.qemu_args = sc.qemu_args(v, a.out)
-    m = Machine(a.out, a.qemu_args, ocr=not a.no_ocr)
+        if not a.pve:
+            a.qemu_args = sc.qemu_args(v, a.out)
+    m = attach(a, v) if a.pve else Machine(a.out, a.qemu_args, ocr=not a.no_ocr)
     m.refresh(float(v.get("REFRESH") or 0))
     ctl = os.path.join(a.out, "ctl.sock")
     if os.path.exists(ctl):
@@ -584,7 +845,9 @@ def main():
     r.add_argument("--var", action="append", help="KEY=VALUE for the scenario")
     r.add_argument("--no-ocr", action="store_true")
     r.add_argument("--keep-running", action="store_true")
+    r.add_argument("--pve", metavar="VMID", help="drive this PVE VM (on the PVE node) instead of starting QEMU")
     s = sub.add_parser("serve")
+    s.add_argument("--pve", metavar="VMID", help="drive this PVE VM (on the PVE node) instead of starting QEMU")
     s.add_argument("--out", required=True)
     s.add_argument("--no-ocr", action="store_true")
     s.add_argument("--scenario", help="take the QEMU command from this scenario's qemu_args()")

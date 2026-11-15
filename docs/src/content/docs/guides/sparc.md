@@ -163,6 +163,28 @@ the serial console and framebuffer screenshots of every step. See its
 [README](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc) for the scenarios and how to write
 new ones.
 
+### Provisioning a Solaris VM with the lab
+
+The same scenarios can install a VM that Proxmox VE runs. On the node (the lab needs `python3-pyte`,
+`python3-pil`, `tesseract-ocr` and `fonts-dejavu-core`), create the VM with a serial console, the
+unpacked disk template imported as its disk and the CD attached, then run the install and the first
+boot against its VMID:
+
+```sh
+xz -dk sparc-SUN2.9G.raw.template.xz
+qm create 100 --arch sparc --name sol26 --memory 256 --ostype solaris --net0 lance,bridge=vmbr0 \
+  --serial0 socket --vga serial0 \
+  --scsi3 local:0,import-from=/root/sparc-SUN2.9G.raw.template,format=raw \
+  --scsi6 local:iso/solaris_2.6_598_sparc.iso,media=cdrom
+python3 lab.py run scenarios/solaris-install-serial.py --pve 100 --out /root/runs/install
+python3 lab.py run scenarios/solaris-boot-disk.py --pve 100 --out /root/runs/boot
+```
+
+The lab starts the VM with `qm start`, types on its serial socket and uses the monitor (QMP) for keys
+and screenshots; the install (End User, host name `solaris`, no root password) ends powered off, and
+the first boot answers the root password questions and logs in. While the lab runs it owns the serial
+console: close `qm terminal` and the web console first. Each run leaves `index.html` with every step.
+
 ## Further reading
 
 - Read [about the SPARC platform](https://wiki.qemu.org/Documentation/Platforms/SPARC) in the QEMU documentation

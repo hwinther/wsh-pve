@@ -36,6 +36,9 @@ pvedaemon and pveproxy, a directory storage and an empty `vmbr0` bridge. No gues
 - `--build-arg PACKAGES=repo` (default): the packages published at debian.wshosting.no.
 - `--build-arg PACKAGES=local`: the `.deb` files in `pve/debs/` (the build-deb artifacts).
 
+`sparc/pve.Dockerfile` adds the sparc lab to this image; there, guests do run (under TCG): VMs created
+through the API, started by PVE and driven by the lab (`sparc/README.md`, "Attach to a PVE VM").
+
 ## Running
 
 ```bash
