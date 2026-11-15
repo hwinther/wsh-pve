@@ -25,22 +25,46 @@ SOL26PMC = "sol26-enduser-pmc-installed.raw"  # SOL26 + the pmc driver (README: 
 SUNOS414 = "sunos414-installed.raw"  # Quick Install, Programmer set (README: "SunOS 4.1.4")
 SUNOS = {"PROMPT": "login:", "BUSY": "dd if=/dev/zero of=/dev/null count=20000"}
 NETBSD111 = "netbsd111-installed.raw"  # sysinst Minimal installation (README: "Idle")
-CD26 = "solaris_2.6_598_sparc.iso"
+# The same End User install on SS-10 and SS-20 (each machine needs its own install), the last one with
+# the Sun SS-20 PROM. That PROM only runs with -cpu TI-SuperSparc-40/50/60 (submodules/SPARC.md).
+SOL26SS10, SOL26SS20 = "sol26-enduser-ss10-installed.raw", "sol26-enduser-ss20-installed.raw"
+SOL26SS20PROM = "sol26-enduser-ss20prom-installed.raw"
+SS20PROM = {"MACHINE": "SS-20", "BIOS": "ss20_v2.25_rom", "CPU": "TI-SuperSparc-50"}
+CD26, CD251 = "solaris_2.6_598_sparc.iso", "solaris_2.5.1_1197.iso"
 MATRICES = {
     "smoke": [
         ("sol26-disk-openbios-ss5", "solaris-boot-disk.py", SOL26, None, {}),
         ("sol251-disk-ss5bin-ss5", "solaris-boot-disk.py", SOL251, None, {"BIOS": "ss5.bin"}),
         ("sol26-cd-openbios-ss5", "solaris-boot-cd.py", None, CD26, {}),
     ],
-    # The 2.6 CD on SS-10/SS-20. Not the installed disks: they were installed on SS-5, and on these
-    # machines (different device paths) Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and
-    # halts.
+    # SS-10/SS-20: the install CDs, and the disks installed on these machines (an SS-5 disk doesn't
+    # boot there: Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and halts). 512 MB is the
+    # most Solaris 2.6 boots with. The CD reaches the installer with 2 and 4 CPUs, but an installed
+    # 2.6 with more than one CPU hangs (submodules/SPARC.md, "SS-10 and SS-20"), so no SMP disk case.
+    # The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops in its idle loop after "Configuring
+    # devices..." (about 1 boot in 6, OpenBIOS and Sun PROM alike).
     "machines": [
         ("sol26-cd-openbios-ss10", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-10"}),
         ("sol26-cd-openbios-ss10-512m", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-10", "MEM": "512"}),
         ("sol26-cd-openbios-ss20", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20"}),
         ("sol26-cd-openbios-ss20-512m", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20", "MEM": "512"}),
         ("sol26-cd-openbios-ss20-smp2", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20", "SMP": "2"}),
+        ("sol26-cd-openbios-ss20-smp4", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20", "SMP": "4"}),
+        ("sol26-cd-ss20prom-ss20-512m", "solaris-boot-cd.py", None, CD26, {**SS20PROM, "MEM": "512"}),
+        ("sol251-cd-openbios-ss20", "solaris-boot-cd.py", None, CD251, {"MACHINE": "SS-20", "CDROM_AS": "hd"}),
+        ("sol251-cd-ss20prom-ss20", "solaris-boot-cd.py", None, CD251, {**SS20PROM, "CDROM_AS": "hd"}),
+        ("sol26-disk-openbios-ss10", "solaris-boot-disk.py", SOL26SS10, None, {"MACHINE": "SS-10"}),
+        ("sol26-disk-openbios-ss20", "solaris-boot-disk.py", SOL26SS20, None, {"MACHINE": "SS-20"}),
+        ("sol26-disk-openbios-ss20-512m", "solaris-boot-disk.py", SOL26SS20, None, {"MACHINE": "SS-20", "MEM": "512"}),
+        ("sol26-disk-ss20prom-ss20", "solaris-boot-disk.py", SOL26SS20PROM, None, SS20PROM),
+    ],
+    # bench.py: the same jobs on SS-5 and SS-20 (one CPU); the numbers go to result.json. Only
+    # meaningful on an otherwise idle host. The disks are fresh installs, so boot_s includes the
+    # first-boot questions.
+    "bench": [
+        ("bench-sol26-openbios-ss5", "bench.py", SOL26, None, {}),
+        ("bench-sol26-openbios-ss20", "bench.py", SOL26SS20, None, {"MACHINE": "SS-20"}),
+        ("bench-sol26-ss20prom-ss20", "bench.py", SOL26SS20PROM, None, SS20PROM),
     ],
     # cg3 sizes (needs a package with the cg3 patches): OpenBIOS banner and the 2.6 disk to its login
     # prompt with the console on the framebuffer, each screenshot checked for the size; the Sun PROM

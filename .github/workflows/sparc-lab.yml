@@ -19,6 +19,7 @@ on:
           - machines
           - display
           - idle
+          - bench
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"

@@ -9,6 +9,7 @@ Variables (lab.py run ... --var KEY=VALUE):
   MEM       MiB                                              (256)
   SMP       CPUs, -smp only when > 1 (SS-10/SS-20: up to 4)  (1)
   CPU       -cpu model, e.g. TI-SuperSparc-II                (none: the machine's default)
+  TCG_THREAD single | multi: -accel tcg,thread=...          (none: QEMU's default, multi)
   VGA       cg3 | tcx | none                                 (cg3)
   RES       -g WxH[xDEPTH], the framebuffer size              (none: QEMU's 1024x768)
   CONSOLE   serial | fb: where the PROM puts its console     (serial)
@@ -59,7 +60,9 @@ def qemu_args(v, out):
         raise SystemExit("set ISO=<install CD>")
     disk = prepare_disk(v, out)
     fw = os.environ.get("LAB_FIRMWARE", "/usr/share/kvm")
-    args = [v["QEMU"], "-L", fw, "-nodefaults", "-machine", f"accel=tcg,type={v['MACHINE']}",
+    accel = ["-accel", f"tcg,thread={v['TCG_THREAD']}"] if v.get("TCG_THREAD") else []
+    args = [v["QEMU"], "-L", fw, "-nodefaults", *accel,
+            "-machine", f"type={v['MACHINE']}" if accel else f"accel=tcg,type={v['MACHINE']}",
             "-m", v["MEM"], "-bios", v["BIOS"], "-boot", v.get("BOOT", "d")]
     if int(v.get("SMP") or 1) > 1:
         args += ["-smp", v["SMP"]]

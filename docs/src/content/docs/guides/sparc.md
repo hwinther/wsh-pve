@@ -20,9 +20,9 @@ Set this in the VM's [Architecture](/reference/architecture/) panel. Selecting a
 
 ## Recommended hardware layout
 
-- **Machine** — `SS-5` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)).
+- **Machine** — `SS-5` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). For Solaris 2.6, `SS-20` (or `SS-10`) with OpenBIOS and one CPU runs user programs about 9 times faster than `SS-5` on the same host (disk and boot times are the same); it needs its own install on that machine type.
 - **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. The bundled `SS5`, `SS10`, and `SS20` PROM files are the only PROMs that are somewhat stable, and each expects a matching hardware layout (see [BIOS](/reference/bios/)).
-- **Processor / memory** — a single CPU and around 512 MB of RAM for sparc32; the CPU model is fixed by the machine (see [Processors](/reference/processors/)).
+- **Processor / memory** — one CPU for sparc32. RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 Solaris 2.6 boots with up to 512 MB (with more it panics at boot). QEMU emulates up to 4 CPUs on SS-10/SS-20, but Solaris 2.6 with more than one CPU hangs within minutes. The CPU model is fixed by the machine (see [Processors](/reference/processors/)).
 - **Disk** — SCSI bus only.
 - **CD-ROM** — SCSI.
 - **Network** — `lance` (sparc; built into the machine and not hot-pluggable) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
@@ -130,8 +130,12 @@ refreshes.
 ## Known limitations
 
 - Audio does not work on SPARC guests.
-- sparc32 is typically limited to a single CPU and ~512 MB of RAM.
-- Only the `SS5`, `SS10`, and `SS20` PROM files are reasonably stable.
+- sparc32: one CPU (Solaris 2.6 with more hangs); 256 MB on SS-5, 512 MB on SS-10/SS-20.
+- Only the `SS5`, `SS10`, and `SS20` PROM files are reasonably stable. The `SS10` and `SS20` PROMs only
+  run on the SS-20 machine with the CPU model set to `TI-SuperSparc-50` (or `-40`/`-60`), which the VM
+  configuration doesn't pass today; use OpenBIOS on SS-10/SS-20.
+- A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
+  will keep.
 - sparc64 currently seems to only work with the OpenSPARC `disk.s10hw2` image.
 
 ## Testing installs automatically
