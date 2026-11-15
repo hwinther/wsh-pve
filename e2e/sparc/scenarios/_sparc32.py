@@ -119,6 +119,21 @@ def prom_boot(m, v, target):
     m.send(f"boot {target}\r")
 
 
+def login(m, prompt=r"console login:", timeout=1800):
+    """Wait for the login prompt, answering Solaris's first-boot questions (root password: none) on
+    the way, and log in as root."""
+    while True:
+        i = m.expect_any([r"Root password:", r"Re-enter your root password", r"Press Return to continue",
+                          prompt], timeout)
+        if i == 3:
+            break
+        m.snap(["root password", "re-enter root password", "press return"][i])
+        m.send("\r")
+    m.snap("login prompt")
+    m.send("root\r")
+    m.expect(r"#\s*$", 120)
+
+
 def power_off(m, command):
     """Shut the guest down with `command` ("halt", "init 5") and end QEMU. OpenBIOS powers the machine
     off; the Sun PROMs stop at `ok` ("Program terminated"), so QEMU is told to quit there."""

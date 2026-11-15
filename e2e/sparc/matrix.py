@@ -21,6 +21,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # name -> [(case, scenario, installed disk or None, install CD or None, variables)]
 # The installed disks (End User installs by solaris-install-serial.py on SS-5) and the CD.
 SOL26, SOL251 = "sol26-enduser-installed.raw", "sol251-enduser-installed.raw"
+SOL26PMC = "sol26-enduser-pmc-installed.raw"  # SOL26 + the pmc driver (README: "Idle")
+SUNOS414 = "sunos414-installed.raw"  # Quick Install, Programmer set (README: "SunOS 4.1.4")
+SUNOS = {"PROMPT": "login:", "BUSY": "dd if=/dev/zero of=/dev/null count=20000"}
 CD26 = "solaris_2.6_598_sparc.iso"
 MATRICES = {
     "smoke": [
@@ -45,6 +48,19 @@ MATRICES = {
         ("cg3-ss5bin-1024x768", "cg3-display.py", None, None, {"BIOS": "ss5.bin"}),
         *[(f"sol26-disk-openbios-cg3-{res}", "cg3-display.py", SOL26, None, {"RES": res})
           for res in ("1024x768", "1152x900", "1280x1024", "1600x1200", "1920x1080")],
+    ],
+    # Host CPU use of an idle guest (needs a package with the idle patches, submodules/SPARC.md):
+    # Solaris 2.6 with the pmc driver idles through the APC, without it the CPU spins.
+    "idle": [
+        ("sol26-pmc-idle-ss5", "idle.py", SOL26PMC, None,
+         {"CHECK": "modinfo | grep pmc", "CHECK_EXPECT": r"pmc \(Power Management", "CPU_BELOW": "10"}),
+        ("sol26-nopmc-spins-ss5", "idle.py", SOL26, None, {"CPU_ABOVE": "80"}),
+        # SunOS 4.1.4: halted in its idle loop by the sunos-idle machine option (on by default). Its dd
+        # takes ~5 ms a block, so a tenth of the count.
+        ("sunos414-idle-ss5", "idle.py", SUNOS414, None,
+         {**SUNOS, "TRACE": "sparc_sunos_idle_match", "TRACE_EXPECT": "SunOS idle loop", "CPU_BELOW": "10"}),
+        ("sunos414-noidle-spins-ss5", "idle.py", SUNOS414, None,
+         {**SUNOS, "MACHINE": "SS-5,sunos-idle=off", "CPU_ABOVE": "80"}),
     ],
 }
 
@@ -96,10 +112,12 @@ def main():
     for name, scenario, disk, iso, variables in MATRICES[a.matrix]:
         res = run_case(name, scenario, disk, iso, variables, a)
         failed += res["code"] != 0
-        vs = " ".join(f"{k}={v}" for k, v in variables.items())
-        status = res["status"].splitlines()[0].replace("|", "\\|")
+        vs = " ".join(f"{k}={v}" for k, v in variables.items()).replace("|", "\\|")
+        status = res["status"].splitlines()[0][:120].replace("|", "\\|")
+        if res.get("metrics"):
+            status += " (" + ", ".join(f"{k} {val}" for k, val in res["metrics"].items()) + ")"
         rows.append(f"| {name} | {f'`{scenario}` {vs}'.strip()} | {'pass' if res['code'] == 0 else 'FAIL'} | "
-                    f"{res['elapsed']:.0f}s | {status[:120]} |")
+                    f"{res['elapsed']:.0f}s | {status} |")
     table = "\n".join([f"### sparc lab: {a.matrix} ({len(rows) - failed}/{len(rows)} passed)", "",
                        "| Case | Scenario | Result | Time | Status |",
                        "| --- | --- | --- | --- | --- |", *rows])

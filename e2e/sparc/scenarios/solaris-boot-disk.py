@@ -10,7 +10,7 @@ Boot device: stock OpenBIOS since QEMU 9.2 has no `disk` alias ("No valid state 
 or init-program"), so prom_boot() types the full device path at the `0 >` prompt; the packaged
 OpenBIOS boots the disk by itself. The Sun PROMs boot target 3 with `boot disk`.
 """
-from _sparc32 import DEFAULTS as BASE, power_off, prom_boot, qemu_args as sparc32_args
+from _sparc32 import DEFAULTS as BASE, login, power_off, prom_boot, qemu_args as sparc32_args
 
 DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1",
             "COMMANDS": "uname -a; prtconf | head -3; df -k; ifconfig -a"}
@@ -24,16 +24,7 @@ def run(m, v):
     prom_boot(m, v, "disk")
     m.expect(r"SunOS Release", 600)
     m.snap("kernel banner")
-    while True:
-        i = m.expect_any([r"Root password:", r"Re-enter your root password", r"Press Return to continue",
-                          r"console login:"], 1800)
-        if i == 3:
-            break
-        m.snap(["root password", "re-enter root password", "press return", ""][i])
-        m.send("\r")
-    m.snap("console login")
-    m.send("root\r")
-    m.expect(r"#\s*$", 120)
+    login(m)
     m.send(v["COMMANDS"] + "\r")
     m.quiet(5, 120)
     m.snap("system state")

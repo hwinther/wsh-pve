@@ -105,6 +105,7 @@ class Machine:
         self.pos = 0
         self.cond = threading.Condition()
         self.steps = []
+        self.metrics = {}  # measurements for result.json (cpu_use() and the scenario's own)
         self.ocr = ocr
         self.t0 = time.time()
         self.raw = open(os.path.join(out, "serial.raw"), "wb")
@@ -401,6 +402,30 @@ class Machine:
         self.log(f"QEMU exited with {code}")
         return code
 
+    # --- host CPU use ---------------------------------------------------------------------------
+
+    def cpu_seconds(self):
+        """CPU time QEMU has used so far (utime + stime from /proc/<pid>/stat), in seconds."""
+        with open(f"/proc/{self.proc.pid}/stat", encoding="ascii") as f:
+            fields = f.read().rsplit(")", 1)[1].split()  # the name in () may hold spaces
+        return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
+
+    def cpu_use(self, seconds, below=None, above=None):
+        """Host CPU use of QEMU over the next `seconds`, in percent of one core (all its threads).
+        Fails when it isn't below `below` or above `above`. Only meaningful on an otherwise idle
+        host."""
+        c0, t0 = self.cpu_seconds(), time.time()
+        time.sleep(seconds)
+        self._check_alive()
+        pct = 100 * (self.cpu_seconds() - c0) / (time.time() - t0)
+        self.log(f"host CPU use over {seconds}s: {pct:.1f}% of a core")
+        self.metrics["cpu_pct"] = round(pct, 1)
+        if below is not None and pct >= float(below):
+            raise AssertionError(f"host CPU use {pct:.1f}% over {seconds}s, expected below {below}%")
+        if above is not None and pct <= float(above):
+            raise AssertionError(f"host CPU use {pct:.1f}% over {seconds}s, expected above {above}%")
+        return pct
+
     def hmp(self, command):
         """Run a human monitor command (info registers, info mtree, sendkey stop-a, ...)."""
         return self.qmp.cmd("human-monitor-command", **{"command-line": command})
@@ -479,7 +504,8 @@ def cmd_run(a):
         except KeyboardInterrupt:
             m.stop()
     with open(os.path.join(a.out, "result.json"), "w", encoding="utf-8") as f:
-        json.dump({"status": status, "code": code, "elapsed": round(m.elapsed(), 1), "vars": v}, f, indent=2)
+        json.dump({"status": status, "code": code, "elapsed": round(m.elapsed(), 1), "vars": v,
+                   "metrics": m.metrics}, f, indent=2)
     return code
 
 
