@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "scripts": {
     "generate-packages": "node ../scripts/generate-docs-packages.js",
+    "fetch-media": "node ../scripts/fetch-docs-media.js",
     "predev": "npm run generate-packages",
     "prebuild": "npm run generate-packages",
     "dev": "astro dev",

@@ -1,10 +1,11 @@
 ---
-// A framebuffer recording made by the sparc lab (fb.webm). Videos are not in the repository: they are
-// assets of the `media` GitHub release (e2e/sparc/README.md, "Recordings in the docs"), so `src` is a
-// release download URL. The step captions (fb.vtt, small) and the poster frame live in
-// public/recordings/, served from this site.
+// A framebuffer recording made by the sparc lab (fb.webm), with its steps as captions (fb.vtt).
+//
+// Videos aren't in git: they are assets of the `media` release, which repo-update.yml copies into the
+// Pages site as /recordings/ (locally: `npm run fetch-media`), so they are served from this site with
+// a video content type. Where the file isn't there a short note takes the video's place.
 interface Props {
-  src: string;
+  src: string; // e.g. /recordings/sol26-cg3-ss5.webm
   captions?: string;
   poster?: string;
   caption?: string;
@@ -13,21 +14,56 @@ interface Props {
 }
 
 const { src, captions, poster, caption, width, height } = Astro.props;
+const release = "https://github.com/hwinther/wsh-pve/releases/tag/media";
 ---
 
 <figure class="lab-video not-content">
-  <video controls preload="none" poster={poster} width={width} height={height} src={src}>
-    {captions && <track kind="captions" label="Steps" srclang="en" src={captions} default />}
-    <a href={src}>Download the video</a>
-  </video>
+  <div class="lab-video-box" data-src={src} data-poster={poster} data-captions={captions} data-release={release}>
+    <video controls preload="none" width={width} height={height}></video>
+    <noscript><a href={src}>{src}</a> (a video)</noscript>
+  </div>
   {
     caption && (
       <figcaption>
-        {caption} (<a href={src}>WebM</a>)
+        {caption}
+        <span class="lab-video-file">
+          (<a href={src}>WebM</a>)
+        </span>
       </figcaption>
     )
   }
 </figure>
+
+<script>
+  function missing(el: HTMLElement) {
+    el.classList.add("lab-media-missing");
+    el.textContent = "This video isn't available on this copy of the site. It is an asset of the ";
+    const a = document.createElement("a");
+    a.href = el.dataset.release!;
+    a.textContent = "media release";
+    el.append(a, ".");
+    el.closest("figure")?.querySelector(".lab-video-file")?.remove();
+  }
+
+  for (const el of document.querySelectorAll<HTMLElement>(".lab-video-box")) {
+    const video = el.querySelector("video")!;
+    fetch(el.dataset.src!, { method: "HEAD" })
+      .then((r) => {
+        if (!r.ok || (r.headers.get("content-type") || "").startsWith("text/html")) throw new Error();
+        if (el.dataset.poster) video.poster = el.dataset.poster;
+        if (el.dataset.captions) {
+          const track = Object.assign(document.createElement("track"), {
+            kind: "captions", label: "Steps", srclang: "en", src: el.dataset.captions, default: true,
+          });
+          video.append(track);
+        }
+        video.addEventListener("error", () => missing(el));
+        video.preload = "metadata";
+        video.src = el.dataset.src!;
+      })
+      .catch(() => missing(el));
+  }
+</script>
 
 <style>
   .lab-video video {
@@ -39,5 +75,11 @@ const { src, captions, poster, caption, width, height } = Astro.props;
     font-size: var(--sl-text-sm);
     color: var(--sl-color-gray-3);
     margin-top: 0.5rem;
+  }
+  :global(.lab-media-missing) {
+    padding: 1rem;
+    border: 1px dashed var(--sl-color-gray-5);
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
   }
 </style>
