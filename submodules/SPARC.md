@@ -444,8 +444,12 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Network:** sparc32 uses the built-in lance (`-net nic,model=lance,macaddr=<net0's MAC>`, not
   hot-pluggable; sun4m creates one lance and only warns about a second `-net nic`); sparc64 puts
   `sunhme` on `pciB`.
-- **Serial:** sparc32's serial0/serial1 are the machine's ttya/ttyb, `-serial chardev:serialN` (no
-  `isa-serial`).
+- **Serial:** serial0/serial1 are the machine's ttya/ttyb, `-serial chardev:serialN` (no
+  `isa-serial`); on sparc64 too, where an `isa-serial` was a third port beside the ebus ones and
+  OpenBIOS's console never reached the socket.
+- **`smm=off`** is never added on sun4m or sun4u (neither has the property; sun4u failed to start).
+- **`-bios`** only on sparc: it was also passed for `bios: ovmf`, which an aarch64 VM refuses next to
+  its pflash.
 - **Left out on sparc:** `-smbios`, PCI passthrough (ignored with a message), USB and the tablet,
   vmgenid; sparc32 also gets no virtio-balloon.
 - **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
@@ -496,6 +500,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
   combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
   backup/restore, and that the lab's machine arguments match `qm showcmd`).
+- What PVE starts: the lab's attach mode and `pve_matrix.py` (`e2e/sparc/README.md`, "Attach to a PVE
+  VM"; the `pve` choice of the `sparc lab` workflow) create VMs through the API in the e2e container
+  and drive the QEMU that PVE started: the Solaris 2.6 install and first boot on the default SS-5
+  profile, NetBSD 11.1 sparc64 to its shell, Alpine aarch64 and x86_64 to a login.
 
 ## Known gaps
 
