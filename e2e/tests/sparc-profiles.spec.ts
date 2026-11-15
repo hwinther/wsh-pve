@@ -1,18 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
-import {
-  hasSparcProfiles,
-  NODE,
-  PASSWORD,
-  type Pve,
-  pveApi,
-  pveExec,
-  qemuAccepts,
-  showcmd,
-  vmConfFile,
-  writeConfFile,
-} from './_pve'
+import { NODE, PASSWORD, type Pve, pveApi, pveExec, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
 
 // The sparc32 profiles (submodules/SPARC.md, "Supported profiles"): the machine, firmware, CPU and
 // RAM combinations qemu-server accepts for `arch: sparc` and builds the command for, the ones it
@@ -91,11 +80,6 @@ const ISO = `local:iso/${ISO_NAME}`
 let pve: Pve
 
 test.beforeAll(async () => {
-  // TODO: remove this skip once the sparc32 profiles are published at debian.wshosting.no. Until
-  // then the image built from the published packages (the PR and main e2e runs) doesn't have them.
-  // eslint-disable-next-line playwright/no-skipped-test -- conditional, until the packages are published
-  test.skip(!(await hasSparcProfiles()), 'installed qemu-server has no sparc32 profiles (packages not published yet)')
-
   // An empty "install CD" for target 6.
   const { code, output } = await pveExec([
     'sh',

@@ -50,21 +50,6 @@ export async function pveApi(request: APIRequestContext): Promise<Pve> {
   }
 }
 
-/**
- * Whether the installed qemu-server has the sparc32 profiles (PVE::QemuServer::Machine's
- * $SPARC32_PROFILES). A probe that answers neither way fails the caller instead of skipping.
- */
-export async function hasSparcProfiles(): Promise<boolean> {
-  const probe = await pveExec([
-    'perl',
-    '-MPVE::QemuServer::Machine',
-    '-e',
-    'print defined($PVE::QemuServer::Machine::SPARC32_PROFILES) ? "profiles=yes\\n" : "profiles=no\\n"',
-  ])
-  expect(probe.output, probe.output).toMatch(/profiles=(yes|no)/)
-  return probe.output.includes('profiles=yes')
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
