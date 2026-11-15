@@ -1,27 +1,22 @@
 diff --git a/debian/changelog b/debian/changelog
-index 8d4dbeb5..b8608585 100644
+index 2b87a3e7..a6b5bbe4 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+pve-manager (9.2.27+wsh2) trixie; urgency=medium
+@@ -1,10 +1,17 @@
++pve-manager (9.2.28+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager
++  * feat: add first-class floppy disk support (storage, backend and UI)
++    (#183)
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 14 Nov 2026 23:51:51 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 15 Nov 2026 01:00:07 +0000
 +
-+pve-manager (9.2.27+wsh1) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 11 Nov 2026 15:53:41 +0000
-+
- pve-manager (9.2.27) trixie; urgency=medium
+ pve-manager (9.2.28) trixie; urgency=medium
  
-   * ui: encode values from the API and other external sources before showing
-     them, so that they cannot inject HTML into the web interface:
-     - guest import wizard: all values taken from the import source, like the
-       disk and network details read from an ESXi VMX file or an OVF.
-     - Ceph service, monitor and OSD details, storage targets and the PBS
-       encryption key fingerprint.
-     - read-only display fields now show their value as plain text by
-       default.
+   * update shipped appliance info index.
+ 
+   * fix #8292: ui: node summary: stop leaking a repository status widget on
+     every display of the summary, which made the web interface use more and
+     more memory when navigating between nodes.
+ 
+   * api: network: reject interface comments with Mako template tags that
+     start a Python block. If python3-mako is installed, ifupdown2 evaluates
