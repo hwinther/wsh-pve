@@ -2,6 +2,7 @@
 """Run a fixed list of lab cases (scenario + variables) one after another and summarise them.
 
     matrix.py smoke --runs /mnt/sparc/runs/m1 [--disks /srv/sparc/disks] [--iso /mnt/sparc/iso]
+    matrix.py benchdisk --runs /mnt/sparc/runs/b1 [--bench /mnt/sparc/disks/bench-sol26.raw]
 
 Each case runs `lab.py run` in <runs>/<case>/. A case that boots an installed disk gets a sparse copy
 of it there (the image in --disks is never booted), deleted again when the case is done, so <runs>
@@ -38,6 +39,7 @@ DISPLAY_PROFILES = [("openbios-ss5", {}), ("ss5bin-ss5", {"BIOS": "ss5.bin"}),
                     ("openbios-ss10", {"MACHINE": "SS-10"}), ("openbios-ss20", {"MACHINE": "SS-20"}),
                     ("ss20prom-ss20", SS20PROM)]
 DISPLAY_DISKS = [SOL26, SOL26, SOL26SS10, SOL26SS20, SOL26SS20PROM]
+BENCH = {"DISK2": "@bench"}  # the bench disk (--bench), on target 4 read only (README: "The bench disk")
 MATRICES = {
     "smoke": [
         ("sol26-disk-openbios-ss5", "solaris-boot-disk.py", SOL26, None, {}),
@@ -72,6 +74,17 @@ MATRICES = {
         ("bench-sol26-openbios-ss5", "bench.py", SOL26, None, {}),
         ("bench-sol26-openbios-ss20", "bench.py", SOL26SS20, None, {"MACHINE": "SS-20"}),
         ("bench-sol26-ss20prom-ss20", "bench.py", SOL26SS20PROM, None, SS20PROM),
+    ],
+    # bench-disk.py: the bench disk's Dhrystone, Whetstone, Hanoi, nbench and lmbench on every machine
+    # and firmware, one CPU, 256 MB, Solaris 2.6, and 2.5.1 on SS-5. Only meaningful on an otherwise
+    # idle host; ~9-11 min a case (fresh disks: the first boot asks its questions).
+    "benchdisk": [
+        ("benchdisk-sol26-openbios-ss5", "bench-disk.py", SOL26, None, BENCH),
+        ("benchdisk-sol26-ss5bin-ss5", "bench-disk.py", SOL26, None, {**BENCH, "BIOS": "ss5.bin"}),
+        ("benchdisk-sol26-openbios-ss10", "bench-disk.py", SOL26SS10, None, {**BENCH, "MACHINE": "SS-10"}),
+        ("benchdisk-sol26-openbios-ss20", "bench-disk.py", SOL26SS20, None, {**BENCH, "MACHINE": "SS-20"}),
+        ("benchdisk-sol26-ss20prom-ss20", "bench-disk.py", SOL26SS20PROM, None, {**BENCH, **SS20PROM}),
+        ("benchdisk-sol251-ss5bin-ss5", "bench-disk.py", SOL251, None, {**BENCH, "BIOS": "ss5.bin"}),
     ],
     # cg3 sizes (needs a package with the cg3 patches): OpenBIOS banner and the 2.6 disk to its login
     # prompt with the console on the framebuffer, each screenshot checked for the size; the Sun PROM
@@ -169,10 +182,19 @@ MATRICES["sparc64"] = [
 # (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and stay.
 LEFTOVERS = ("disk.raw", "*.sock", "_refresh.ppm", "_fb_poll.png", "_frames")
 
+# bench-disk.py metrics that aren't benchmark results (they stay in the Status column)
+BENCH_META = ("boot_s", "run_s", "run_cpu_pct", "cpus", "mem_mb", "load1_start", "load1_end")
+
 
 def run_case(name, scenario, disk, iso, variables, a):
     out = os.path.join(a.runs, name)
     os.makedirs(out, exist_ok=True)
+    if variables.get("DISK2") == "@bench":
+        variables = {**variables, "DISK2": a.bench}
+        if not os.path.isfile(a.bench):
+            res = {"code": 1, "status": f"bench disk {a.bench} doesn't exist (--bench)", "elapsed": 0}
+            print(f"=== {name}: {res['status']}", flush=True)
+            return res
     cmd = [sys.executable, os.path.join(HERE, "lab.py"), "run", os.path.join(HERE, "scenarios", scenario),
            "--out", out]
     if disk:
@@ -207,22 +229,32 @@ def main():
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
     p.add_argument("--disks", default="/srv/sparc/disks", help="installed disk images (read only)")
     p.add_argument("--iso", default="/mnt/sparc/iso", help="install CDs (read only)")
+    p.add_argument("--bench", default="/mnt/sparc/disks/bench-sol26.raw", help="the bench disk (read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per case")
     a = p.parse_args()
 
-    rows, failed = [], 0
+    rows, failed, bench = [], 0, {}
     for name, scenario, disk, iso, variables in MATRICES[a.matrix]:
         res = run_case(name, scenario, disk, iso, variables, a)
         failed += res["code"] != 0
         vs = " ".join(f"{k}={v}" for k, v in variables.items()).replace("|", "\\|")
         status = res["status"].splitlines()[0][:120].replace("|", "\\|")
-        if res.get("metrics"):
-            status += " (" + ", ".join(f"{k} {val}" for k, val in res["metrics"].items()) + ")"
+        metrics = res.get("metrics") or {}
+        if scenario == "bench-disk.py":  # the BENCH values go to the comparison table below
+            bench[name] = {k: val for k, val in metrics.items() if k not in BENCH_META}
+            metrics = {k: val for k, val in metrics.items() if k in BENCH_META}
+        if metrics:
+            status += " (" + ", ".join(f"{k} {val}" for k, val in metrics.items()) + ")"
         rows.append(f"| {name} | {f'`{scenario}` {vs}'.strip()} | {'pass' if res['code'] == 0 else 'FAIL'} | "
                     f"{res['elapsed']:.0f}s | {status} |")
     table = "\n".join([f"### sparc lab: {a.matrix} ({len(rows) - failed}/{len(rows)} passed)", "",
                        "| Case | Scenario | Result | Time | Status |",
                        "| --- | --- | --- | --- | --- |", *rows])
+    if any(bench.values()):  # one row per benchmark, one column per case
+        names = list(dict.fromkeys(k for m in bench.values() for k in m))
+        table += "\n\n| Benchmark | " + " | ".join(bench) + " |\n|" + " --- |" * (len(bench) + 1)
+        for k in names:
+            table += f"\n| {k} | " + " | ".join(f"{m[k]:g}" if k in m else "" for m in bench.values()) + " |"
     print("\n" + table)
     with open(os.path.join(a.runs, "summary.md"), "w", encoding="utf-8") as f:
         f.write(table + "\n")
