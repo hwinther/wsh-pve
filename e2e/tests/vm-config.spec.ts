@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { hasOvmfWithoutBios, NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import { NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
 
 // VMs with the WSH options, created through the API: the stored config, the QEMU command qemu-server
 // builds from it (`qm showcmd`) and whether QEMU accepts that command. This is the layer the
@@ -108,21 +108,10 @@ test.describe('x86: 3dfx/Mesa pass-through', () => {
 
 // UEFI VMs (`bios: ovmf`). qemu-server loads OVMF as two pflash drives: the firmware code read-only
 // and the EFI vars (the efidisk, or a temporary copy without one). `-bios` is for the sparc firmware
-// only (the sparc32 tests below check that it's still there); qemu-server 9.2.15+wsh2 also passed
+// only (the sparc32 tests below check that it's still there); qemu-server up to 9.2.15+wsh2 also passed
 // `-bios ovmf` for every OVMF VM, which x86 QEMU ignores next to the pflash drives and
 // qemu-system-aarch64 refuses ("you cannot use both options at once").
 test.describe('OVMF (UEFI)', () => {
-  let ovmfWithoutBios: boolean
-
-  test.beforeEach(async () => {
-    ovmfWithoutBios = await hasOvmfWithoutBios()
-  })
-
-  // TODO: remove these markers once a qemu-server with the fix (#248) is published at
-  // debian.wshosting.no. The e2e runs of PRs and main install the published one, 9.2.15+wsh2, which
-  // passes `-bios ovmf`. The assertions that depend on it come last in each test.
-  const notPublished = 'installed qemu-server passes -bios ovmf for OVMF VMs (fix not published yet)'
-
   /** The two pflash drives: `code` read-only from pve-edk2-firmware, then the vars in `vars`. */
   function expectPflash(cmd: string, code: string, vars: string): void {
     expect(cmd).toContain(
@@ -144,7 +133,6 @@ test.describe('OVMF (UEFI)', () => {
     { code: 'OVMF_CODE_4M.fd', format: 'raw', params: { efidisk0: 'local:1,efitype=4m,format=raw' }, type: 'pc' },
   ]) {
     test(`x86 ${type}: OVMF with an efidisk is two pflash drives and no -bios`, async () => {
-      test.fail(!ovmfWithoutBios, notPublished)
       const vmid = await createVm({ bios: 'ovmf', memory: 512, name: `x86-ovmf-${type}`, ...params })
       expect(await vmConfFile(vmid)).toMatch(new RegExp(`^efidisk0: local:${vmid}/vm-${vmid}-disk-0\\.${format},`, 'm'))
 
@@ -161,7 +149,6 @@ test.describe('OVMF (UEFI)', () => {
   }
 
   test('x86: OVMF without an efidisk uses a temporary vars file and no -bios', async () => {
-    test.fail(!ovmfWithoutBios, notPublished)
     const vmid = await createVm({ bios: 'ovmf', memory: 512, name: 'x86-ovmf-no-efidisk' })
 
     const cmd = await showcmd(vmid)
@@ -176,7 +163,6 @@ test.describe('OVMF (UEFI)', () => {
   })
 
   test('aarch64: OVMF (AAVMF) with an efidisk starts, without -bios', async () => {
-    test.fail(!ovmfWithoutBios, notPublished)
     // OVMF is the only firmware for `virt`. A serial console: aarch64's default display (virtio-gpu)
     // comes with SPICE, whose TLS port and vdagent chardev qemuAccepts can't start without a node.
     const vmid = await createVm({

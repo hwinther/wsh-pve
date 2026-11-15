@@ -61,22 +61,6 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
-/**
- * Whether the installed qemu-server passes `-bios` for the sparc firmware only (wsh-pve #248), not for
- * every `bios: ovmf` VM as 9.2.15+wsh2 does. Reads the condition in the installed PVE/QemuServer.pm; a
- * probe that finds neither the old nor the new one fails the caller instead of guessing.
- */
-export async function hasOvmfWithoutBios(): Promise<boolean> {
-  const file = '/usr/share/perl5/PVE/QemuServer.pm'
-  const count = async (line: string): Promise<number> => Number((await pveExec(['grep', '-cF', line, file])).output)
-  const old = await count(
-    "if ($conf->{bios} && ($conf->{bios} eq 'ovmf' || $conf->{arch} && $conf->{arch} =~ m/^sparc/)) {",
-  )
-  const fixed = await count('if ($conf->{bios} && $conf->{arch} && $conf->{arch} =~ m/^sparc/) {')
-  expect(old + fixed, `${file}: neither the old nor the new -bios condition, or both`).toBe(1)
-  return fixed === 1
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
