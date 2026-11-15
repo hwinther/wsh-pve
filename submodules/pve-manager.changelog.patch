@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 2b87a3e7..a6b5bbe4 100644
+index 2b87a3e7..8df2faa7 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,17 @@
+@@ -1,10 +1,23 @@
++pve-manager (9.2.28+wsh2) trixie; urgency=medium
++
++  * feat: build and offer sparc32 VMs from tested profiles (#239)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 15 Nov 2026 17:57:44 +0000
++
 +pve-manager (9.2.28+wsh1) trixie; urgency=medium
 +
 +  * feat: add first-class floppy disk support (storage, backend and UI)
