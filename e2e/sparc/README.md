@@ -313,28 +313,47 @@ asciinema player is the way to watch them.
 ### Recordings in the docs
 
 The [SPARC lab recordings](https://debian.wshosting.no/guides/sparc-recordings/) page and the SPARC
-guide embed a few curated recordings. Casts are small text files and go into the repository, the
-time-compressed copy only (`serial.fast.cast`, tens to a few hundred KB, from a run's directory or
-the workflow artifact) as `docs/public/recordings/<name>.cast`, embedded in an `.mdx` page with
-`<LabCast src="/recordings/<name>.cast" caption="..." />` (`docs/src/components/LabCast.astro`, which
-uses asciinema-player from npm). Keep them few.
+guide embed a few curated recordings. None of them is in git (a re-recording would replace the whole
+file each time): they are the assets of a GitHub release tagged `media` (a prerelease, never
+"latest", not a software release), and `repo-update.yml`, the job behind every Pages deploy, copies
+them into the site as `/recordings/` (`gh release download media`). The site then serves them itself,
+with content types from their extensions (the release serves octet-stream attachments without CORS,
+which neither `<video>` nor the asciinema player's fetch can use). A deploy without the release or an
+asset logs a warning and goes on.
 
-Videos are not committed. They are assets of a GitHub release tagged `media` (not a software release:
-a prerelease that is never "latest"), and the page embeds the asset URL with
-`<LabVideo src="https://github.com/hwinther/wsh-pve/releases/download/media/<name>.webm" captions="/recordings/<name>.vtt" poster="/recordings/<name>-poster.png" />`;
-its captions (`fb.vtt`) and a poster frame are small and go into `docs/public/recordings/`. To publish
-one (once, to create the release, then per video):
+The pages embed them same-site: `<LabCast src="/recordings/<name>.cast" caption="..." />` and
+`<LabVideo src="/recordings/<name>.webm" captions="/recordings/<name>.vtt"
+poster="/recordings/<name>-poster.png" />` (`docs/src/components/`). Where a file isn't there (a
+fork, a local build, a deploy that couldn't fetch the release) they show a short note linking to the
+release instead of a player. For local work, `npm run fetch-media` in `docs/` downloads the release
+assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't need them.
+
+| Asset | From | Made with |
+| ----- | ---- | --------- |
+| `sol26-install-ss5.cast` | `solaris-install-serial.py` on SS-5 (`pve` matrix: `sol26-install-ss5/1-solaris-install-serial`) | `lab.py cast <run> --max-idle 1 --speed 3 --output ...` |
+| `sol26-boot-ss20.cast` | `machines`: `sol26-disk-openbios-ss20` | `--max-idle 1 --speed 1` |
+| `netbsd-sparc64-pve.cast`, `alpine-aarch64-pve.cast` | `pve`: `netbsd-sparc64/1-netbsd-boot-cd`, `alpine-aarch64/1-alpine-boot-cd` | `--max-idle 1 --speed 1` |
+| `sol26-cg3-ss5.webm`, `.vtt`, `-poster.png` | `display`: `sol26-disk-openbios-cg3-1024x768` | its `fb.webm`, `fb.vtt` and `001-fb.png` |
+
+To replace one by hand (the release exists; to create it once:
+`gh release create media --repo hwinther/wsh-pve --prerelease --latest=false --title "sparc lab media"
+--notes "Recordings the docs embed, made by the sparc lab (e2e/sparc). Not a software release."`):
 
 ```sh
-gh release create media --repo hwinther/wsh-pve --prerelease --latest=false \
-  --title "sparc lab media" --notes "Videos the docs embed, made by the sparc lab (e2e/sparc). Not a software release."
-cp <run>/fb.webm sol26-cg3-ss5.webm
-gh release upload media sol26-cg3-ss5.webm --repo hwinther/wsh-pve --clobber
+python3 lab.py cast <run dir> --max-idle 1 --speed 3 --output sol26-install-ss5.cast
+gh release upload media sol26-install-ss5.cast --repo hwinther/wsh-pve --clobber
 ```
 
-`gh release create` also creates the tag `media` at the default branch's head; no workflow runs on tags
-or releases. Keep the clips short and documentary (the recordings show Sun/Oracle software running):
-no licence keys, no media contents.
+The next Pages deploy (any package build, a docs push, the run after E2E, or running "Update github
+pages" by hand) publishes it. `publish_media.py <runs dir> <out dir>` does the table above for a
+whole matrix run (only cases that passed), and the `sparc lab` workflow runs it when started by hand
+with `publish_media` ticked: a separate job (`contents: write`, only for that) takes the run's
+artifact after every case passed and uploads what it found with `--clobber`. It is off by default and
+never runs on the schedule. A new recording needs a row in `publish_media.py` and a component on the
+page.
+
+Keep the clips short and documentary (the recordings show Sun/Oracle software running): no licence
+keys, no media contents.
 
 ## Idle
 
