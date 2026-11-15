@@ -12,6 +12,21 @@ const UPLOAD_NAME = 'e2e-upload.img'
 let pve: Pve
 
 test.beforeAll(async () => {
+  // TODO: remove this skip once floppy support is published at debian.wshosting.no. Until then the
+  // image built from the published packages (the PR and main e2e runs) has no floppy drives.
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Drive',
+    '-e',
+    'print PVE::QemuServer::Drive::is_valid_drivename("floppy0") ? "floppy=yes\\n" : "floppy=no\\n"',
+  ])
+  expect(probe.output, probe.output).toMatch(/floppy=(yes|no)/)
+  // eslint-disable-next-line playwright/no-skipped-test -- conditional, until the packages are published
+  test.skip(
+    probe.output.includes('floppy=no'),
+    'installed qemu-server has no floppy support (packages not published yet)',
+  )
+
   // The floppy content type on the directory storage, and a blank 1.44 MB image to attach.
   for (const cmd of [
     ['pvesm', 'set', 'local', '--content', 'images,iso,vztmpl,backup,snippets,rootdir,floppy'],

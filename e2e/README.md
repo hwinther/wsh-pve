@@ -8,7 +8,8 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   with the same checks.
 - `tests/floppy.spec.ts`: floppy support across all three packages: the `floppy` storage content
   type and its upload tab, floppy drives on i440fx and q35 (and their refusal on other
-  architectures), and Hardware → Add → Floppy Drive.
+  architectures), and Hardware → Add → Floppy Drive. Skips itself while the installed qemu-server
+  has no floppy support (until those packages are published).
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
