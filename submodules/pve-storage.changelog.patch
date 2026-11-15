@@ -1,0 +1,22 @@
+diff --git a/debian/changelog b/debian/changelog
+index 119374e..5324e14 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,10 +1,17 @@
++libpve-storage-perl (9.1.16+wsh1) trixie; urgency=medium
++
++  * feat: add first-class floppy disk support (storage, backend and UI)
++    (#183)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 15 Nov 2026 01:04:43 +0000
++
+ libpve-storage-perl (9.1.16) trixie; urgency=medium
+ 
+   * lvm: find a shared volume group that another node created on a device this
+     node already had attached. LVM's device hints could hide such a group, so
+     the storage stayed inactive and guests could not start on or migrate to the
+     node.
+ 
+   * lvm: check the device before creating a volume group on a base volume or a
+     local disk:
+     - refuse devices that hold data, like a file system, partitions, or a
