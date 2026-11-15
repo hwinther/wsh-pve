@@ -25,10 +25,6 @@ hubport) and killing it: QEMU validates every machine, device and bus argument a
 command a real start would reject fails without running a guest.
 
 Known bugs are marked `test.fail()`. They run, and turn red once fixed, so the marker gets removed.
-`test.fail(!threeDfx)` (and `!(await has3dfx())`) marks the 3dfx tests while the published
-`pve-qemu-kvm` has no `qemu-system-x86_64-3dfx`: expected to fail against `PACKAGES=repo` until a
-package with it is published, to pass against a `PACKAGES=local` build that has it. The probe
-(`scripts/check-qemu-extras.sh --only 3dfx`) fails the test when it answers neither way.
 
 ## The PVE container
 

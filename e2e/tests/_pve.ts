@@ -61,17 +61,6 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
-/**
- * Whether the installed pve-qemu-kvm has /usr/bin/qemu-system-x86_64-3dfx built with qemu-3dfx. A probe
- * that answers neither way fails the caller instead of skipping.
- */
-export async function has3dfx(): Promise<boolean> {
-  const probe = await checkQemuExtra('3dfx')
-  expect(probe.output, probe.output).toMatch(/^ {2}3dfx +(present|missing) /m)
-  expect([0, 1], probe.output).toContain(probe.code)
-  return probe.code === 0
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {

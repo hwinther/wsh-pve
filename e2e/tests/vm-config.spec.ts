@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { has3dfx, NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import { NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
 
 // VMs with the WSH options, created through the API: the stored config, the QEMU command qemu-server
 // builds from it (`qm showcmd`) and whether QEMU accepts that command. This is the layer the
@@ -75,19 +75,7 @@ test('x86: sb16 + adlib + pcspk combo device', async () => {
 // it on) with the SDL display. Pass-through itself needs the guest's wrapper drivers and the host's X
 // server and GL; these check the command and that the 3dfx binary accepts it.
 test.describe('x86: 3dfx/Mesa pass-through', () => {
-  // The published pve-qemu-kvm has had no qemu-system-x86_64-3dfx since 11.1.1-1+wsh1 (2026-10-01; see
-  // qemu-extras.spec.ts): without it, qemu-server stops at "unable to stat file
-  // '/usr/bin/qemu-system-x86_64-3dfx'". With it, these must pass.
-  // TODO: drop the test.fail(!threeDfx) markers once a pve-qemu-kvm with the 3dfx binary is published
-  // at debian.wshosting.no.
-  let threeDfx: boolean
-
-  test.beforeAll(async () => {
-    threeDfx = await has3dfx()
-  })
-
   test('mesa=1 starts the VM with the 3dfx binary', async () => {
-    test.fail(!threeDfx, 'installed pve-qemu-kvm has no qemu-system-x86_64-3dfx (not published yet)')
     const vmid = await createVm({ memory: 512, name: 'x86-3dfx', vga: 'std,mesa=1' })
     expect(await vmConfFile(vmid)).toContain('vga: std,mesa=1')
 
@@ -100,7 +88,6 @@ test.describe('x86: 3dfx/Mesa pass-through', () => {
   })
 
   test('mesa=1 with a server uses the SDL display', async () => {
-    test.fail(!threeDfx, 'installed pve-qemu-kvm has no qemu-system-x86_64-3dfx (not published yet)')
     const vmid = await createVm({ memory: 512, name: 'x86-3dfx-sdl', vga: 'std,mesa=1,server=:0' })
 
     const cmd = await showcmd(vmid)

@@ -14,6 +14,9 @@ on:
     paths:
       - "submodules/pve-manager.patch"
       - "submodules/pve-qemu.patch"
+      # also built into pve-qemu-kvm: the qemu-3dfx port and the OpenBIOS images
+      - "submodules/pve-qemu-qemu-3dfx.patch"
+      - "openbios/**"
       - "submodules/qemu-server.patch"
       - "submodules/pve-storage.patch"
 
@@ -50,6 +53,8 @@ jobs:
               - 'submodules/pve-manager.patch'
             pve-qemu:
               - 'submodules/pve-qemu.patch'
+              - 'submodules/pve-qemu-qemu-3dfx.patch'
+              - 'openbios/**'
             qemu-server:
               - 'submodules/qemu-server.patch'
             pve-storage:
