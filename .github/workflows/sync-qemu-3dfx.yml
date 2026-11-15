@@ -5,16 +5,21 @@ on:
   schedule:
     - cron: "18 20 * * *"
 
-permissions:
-  packages: write
-  contents: write
-  pages: write
-  id-token: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   sync:
-    uses: hwinther/wsh-pve/.github/workflows/sync-from-upstream.yml@main
+    # A caller has to grant at least what the called jobs ask for: sync-from-upstream.yml calls
+    # build-deb.yml (GHCR push, GitHub release), which calls repo-update.yml (GitHub Pages deploy).
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/sync-from-upstream.yml
     with:
       repository: hwinther/qemu-3dfx
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}

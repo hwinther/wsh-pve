@@ -20,19 +20,27 @@ on:
         required: true
         default: "pve-manager"
         type: string
+    secrets:
+      WORKFLOW_TOKEN:
+        description: "PAT for checkout and the changelog push to main"
+        required: false
+      GPG_KEY:
+        description: "Passed through to repo-update.yml"
+        required: false
+      GPG_PASSWORD:
+        description: "Passed through to repo-update.yml"
+        required: false
 
-permissions:
-  # for ghcr.io (docker registry):
-  packages: write
-  # for creating releases:
-  contents: write
-  # for github pages:
-  pages: write
-  id-token: write
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      # gh release create (GITHUB_TOKEN); the changelog push uses WORKFLOW_TOKEN
+      contents: write
+      # ghcr.io push (docker login with GITHUB_TOKEN)
+      packages: write
 
     steps:
       - name: Checkout
@@ -180,7 +188,13 @@ jobs:
           path: build/
 
   update-docs-after-changes:
-    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/repo-update.yml
     needs: [build]
     if: ${{ github.event_name == 'workflow_dispatch' && needs.build.result == 'success' }}
-    secrets: inherit
+    secrets:
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}

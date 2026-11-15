@@ -6,13 +6,20 @@ on:
   #     branches:
   #       - "feat/add-extra-binaries-to-pve-qemu"
 
-permissions:
-  # for ghcr.io (docker registry):
-  packages: write
+permissions: {}
 
 jobs:
   dev:
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
     uses: ./.github/workflows/build-deb.yml
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
     with:
       package: 'qemu-server'

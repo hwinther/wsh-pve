@@ -42,19 +42,25 @@ on:
       build-deb-failed:
         description: "Whether the build-deb-when-changed job failed"
         value: ${{ jobs.build-deb-when-changed.result == 'failure' }}
+    secrets:
+      WORKFLOW_TOKEN:
+        description: "PAT for checkout and push (fork master branches, submodule bump on main) and the failure PR"
+        required: false
+      GPG_KEY:
+        description: "Passed through to build-deb.yml for its repo-update.yml call"
+        required: false
+      GPG_PASSWORD:
+        description: "Passed through to build-deb.yml for its repo-update.yml call"
+        required: false
 
-permissions:
-  # for ghcr.io (docker registry):
-  packages: write
-  # for creating releases via build-deb.yml:
-  contents: write
-  # for github pages:
-  pages: write
-  id-token: write
+permissions: {}
 
 jobs:
   sync-from-upstream:
     runs-on: ubuntu-latest
+    # Checkout and push use WORKFLOW_TOKEN; GITHUB_TOKEN is not used.
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -86,6 +92,9 @@ jobs:
   update-submodule:
     runs-on: ubuntu-latest
     needs: [sync-from-upstream]
+    # Checkout and push use WORKFLOW_TOKEN; GITHUB_TOKEN is not used.
+    permissions:
+      contents: read
     outputs:
       changed: ${{ steps.update-submodule.outputs.changed }}
       submodule: ${{ steps.update-submodule.outputs.submodule }}
@@ -145,21 +154,36 @@ jobs:
           fi
 
   build-deb-when-changed:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-deb.yml
     needs: [update-submodule]
     if: ${{ needs.update-submodule.outputs.changed == 'true' && inputs.build_deb == true }}
     with:
       package: ${{ needs.update-submodule.outputs.submodule }}
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   create-pr-on-build-failure:
     runs-on: ubuntu-latest
     needs: [update-submodule, build-deb-when-changed]
     if: failure() && needs.build-deb-when-changed.result == 'failure'
+    # The action checks out main, pushes the fix branch and opens the PR with WORKFLOW_TOKEN;
+    # GITHUB_TOKEN only fetches this repo so the local action can be loaded.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
+      - name: Checkout (for the local action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Create PR for manual fix
         uses: ./.github/actions/create-deb-failure-pr
         with:

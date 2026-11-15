@@ -17,19 +17,14 @@ on:
       - "submodules/qemu-server.patch"
       - "submodules/pve-storage.patch"
 
-permissions:
-  # for ghcr.io (docker registry):
-  packages: write
-  # to push changelog after package update:
-  contents: write
-  # for github pages:
-  pages: write
-  id-token: write
+permissions: {}
 
 jobs:
   check:
     name: Check which files were changed
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       pve-manager: ${{ steps.changes.outputs.pve-manager }}
       pve-qemu: ${{ steps.changes.outputs.pve-qemu }}
@@ -44,6 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: changes
@@ -76,46 +72,86 @@ jobs:
           echo "pve-storage_changes=$pve_storage_changes"
 
   build-pve-manager-deb-when-changed:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-deb.yml
     needs: [check]
     if: ${{ needs.check.outputs.pve-manager == 'true' }}
     with:
       package: pve-manager
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   build-pve-qemu-deb-when-changed:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-deb.yml
     needs: [check]
     if: ${{ needs.check.outputs.pve-qemu == 'true' }}
     with:
       package: pve-qemu
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   build-qemu-server-deb-when-changed:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-deb.yml
     needs: [check]
     if: ${{ needs.check.outputs.qemu-server == 'true' }}
     with:
       package: qemu-server
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   build-pve-storage-deb-when-changed:
-    uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-deb.yml
     needs: [check]
     if: ${{ needs.check.outputs.pve-storage == 'true' }}
     with:
       package: pve-storage
-    secrets: inherit
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   # debug-workflow:
-  #   uses: hwinther/wsh-pve/.github/workflows/build-deb.yml@main
+  #   uses: ./.github/workflows/build-deb.yml
   #   needs: [check]
   #   with:
   #     package: pve-manager
   #   secrets: inherit
 
   update-docs-after-changes:
-    uses: hwinther/wsh-pve/.github/workflows/repo-update.yml@main
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/repo-update.yml
     needs:
       [
         build-pve-manager-deb-when-changed,
@@ -123,7 +159,9 @@ jobs:
         build-qemu-server-deb-when-changed,
         build-pve-storage-deb-when-changed,
       ]
-    secrets: inherit
+    secrets:
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
     if: |
       always() && (
         needs.build-pve-manager-deb-when-changed.result == 'success' ||
@@ -149,10 +187,16 @@ jobs:
         (needs.check.outputs.qemu-server == 'true' && needs.build-qemu-server-deb-when-changed.result == 'failure') ||
         (needs.check.outputs.pve-storage == 'true' && needs.build-pve-storage-deb-when-changed.result == 'failure')
       )
+    # The action checks out main, pushes the fix branch and opens the PR with WORKFLOW_TOKEN;
+    # GITHUB_TOKEN only fetches this repo so the local action can be loaded.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
+      - name: Checkout (for the local action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Set failed packages
         id: failed
         run: |

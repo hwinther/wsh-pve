@@ -9,6 +9,13 @@ on:
       - '.github/workflows/repo-update.yml'
       - 'docs/**'
   workflow_call:
+    secrets:
+      GPG_KEY:
+        description: "Signing key for the apt repository"
+        required: false
+      GPG_PASSWORD:
+        description: "Passphrase for GPG_KEY"
+        required: false
 
 permissions:
   contents: read
