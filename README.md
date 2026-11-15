@@ -23,7 +23,7 @@ This is an optional step as the packages are already available in this github re
 Run `make all` to build the debian packages and copy them into the build directory.
 Run `make repo-update` to populate a debian package repository under the repo directory, you will need a gpg key in order to sign the packages.
 
-Run `make 3dfx` to build the qemu-3dfx windows drivers and a patched version of the PVE QEMU package which supports passthrough
+Run `make 3dfx-drivers` to build the qemu-3dfx guest drivers (Windows/DOS), and `make pve-qemu-bundle` for the `pve-qemu-kvm` package with the 3dfx/Mesa pass-through binary (`qemu-system-x86_64-3dfx`, from `make pve-qemu-3dfx`).
 
 ### Optional extras
 
@@ -36,6 +36,8 @@ Run `make 3dfx` to build the qemu-3dfx windows drivers and a patched version of 
 | `sun-proms` | `restore-sparc` (private `submodules/sparc`) | `ss5.bin`, `ss10_v2.25_rom`, `ss20_v2.25_rom` | VMs with a Sun PROM don't start |
 
 A target whose extra drops out prints `WARNING: optional extra <name> missing: <reason>`. `scripts/check-qemu-extras.sh --deb <file>` (or `--root /` on a host) lists what a package has. The `build-deb.yml` run of `pve-qemu` puts that list in its job summary and release notes, opens an issue per missing extra (updated by later builds, closed by the first one that has it again; the Sun PROMs are only expected in this repository, not in forks), and the e2e tests (`e2e/tests/qemu-extras.spec.ts`) fail when a published package lacks one.
+
+The 3dfx binary is QEMU from the same tree as the package (Proxmox's patches, then ours from `pve-qemu.patch`) plus [qemu-3dfx](https://github.com/hwinther/qemu-3dfx) at the `submodules/qemu-3dfx` commit: its `hw/3dfx` and `hw/mesa`, and `submodules/pve-qemu-qemu-3dfx.patch`, our port of its QEMU patch (upstream's targets QEMU 9.2), applied as the quilt patch `wsh/0099-WSH-qemu-3dfx.patch`. When a new pve-qemu breaks that patch, `pve-qemu-3dfx` says so before the long build, and `scripts/refresh-qemu-3dfx-patch.sh` refreshes it: it applies the patch to that tree, merges it with `git apply --3way` when it doesn't apply and leaves the conflicts to resolve, then rewrites it (`--continue`); `--check` only tests it.
 
 ## Development
 
