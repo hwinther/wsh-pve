@@ -36,15 +36,17 @@ def run(m, v):
         m.stop()
         return
     # First boot asks for a root password (none: Return twice). The screen keeps the earlier prompts,
-    # so only the last lines count; dtlogin's messages can follow the login prompt.
+    # so only the last lines count; dtlogin's messages can follow the login prompt. At 1024x768 the
+    # X server starts, and dtlogin's own screen can replace the console before OCR has read the prompt.
     while True:
-        i = m.fb_expect_any([r"console login:", r"password:", r"Press Return to continue"], 1800, tail=8)
-        if i == 0:
+        i = m.fb_expect_any([r"console login:", r"Please enter your user name", r"password:",
+                             r"Press Return to continue"], 1800, tail=8)
+        if i < 2:
             break
-        m.snap(["", "root password", "press return"][i])
+        m.snap(["", "", "root password", "press return"][i])
         m.fb_type("\r")
         time.sleep(5)
-    check(m, "console login", v)
+    check(m, ["console login", "dtlogin"][i], v)
     if int(v["SETTLE"]):
         # dtlogin (End User installs) starts the X server on the cg3 after the prompt
         time.sleep(int(v["SETTLE"]))
