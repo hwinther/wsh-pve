@@ -38,6 +38,14 @@ MATRICES = {
         ("sol26-cd-openbios-ss20-512m", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20", "MEM": "512"}),
         ("sol26-cd-openbios-ss20-smp2", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-20", "SMP": "2"}),
     ],
+    # cg3 sizes (needs a package with the cg3 patches): OpenBIOS banner and the 2.6 disk to its login
+    # prompt with the console on the framebuffer, each screenshot checked for the size; the Sun PROM
+    # stays at 1024x768.
+    "display": [
+        ("cg3-ss5bin-1024x768", "cg3-display.py", None, None, {"BIOS": "ss5.bin"}),
+        *[(f"sol26-disk-openbios-cg3-{res}", "cg3-display.py", SOL26, None, {"RES": res})
+          for res in ("1024x768", "1152x900", "1280x1024", "1600x1200", "1920x1080")],
+    ],
 }
 
 # Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer.

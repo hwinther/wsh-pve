@@ -285,6 +285,39 @@ class Machine:
             n += 1
             time.sleep(interval)
 
+    def fb_expect_any(self, patterns, timeout=300, interval=5, tail=0):
+        """Wait for any of several regexes on the framebuffer (OCR); returns the index that matched.
+
+        The framebuffer keeps what was answered already, so `tail` > 0 looks only at the last `tail`
+        lines of text: the prompt the guest is waiting at."""
+        rxs = [re.compile(p, re.I | re.M) for p in patterns]
+        end = time.time() + timeout
+        while True:
+            self._check_alive()
+            text = self.fb_text(self.screendump("_fb_poll"))
+            if tail:
+                text = "\n".join([line for line in text.splitlines() if line.strip()][-tail:])
+            for i, rx in enumerate(rxs):
+                if rx.search(text):
+                    self.log(f"framebuffer matched {patterns[i]!r}")
+                    return i
+            if time.time() > end:
+                raise Timeout(f"none of {patterns!r} on the framebuffer within {timeout}s; OCR:\n{text}")
+            time.sleep(interval)
+
+    def fb_check(self, png, size=None):
+        """Fail unless the screenshot `png` has `size` (width, height) and isn't one flat colour."""
+        from PIL import Image
+
+        img = Image.open(png)
+        if size and img.size != tuple(size):
+            raise AssertionError(f"{os.path.basename(png)} is {img.size[0]}x{img.size[1]}, "
+                                 f"expected {size[0]}x{size[1]}")
+        lo, hi = img.convert("L").getextrema()
+        if lo == hi:
+            raise AssertionError(f"{os.path.basename(png)} is blank (every pixel {lo})")
+        self.log(f"{os.path.basename(png)}: {img.size[0]}x{img.size[1]}, not blank")
+
     def fb_stable(self, seconds=10, timeout=600, interval=2):
         """Wait until the framebuffer hasn't changed for `seconds`."""
         from PIL import Image, ImageChops

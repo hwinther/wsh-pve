@@ -10,6 +10,7 @@ Variables (lab.py run ... --var KEY=VALUE):
   SMP       CPUs, -smp only when > 1 (SS-10/SS-20: up to 4)  (1)
   CPU       -cpu model, e.g. TI-SuperSparc-II                (none: the machine's default)
   VGA       cg3 | tcx | none                                 (cg3)
+  RES       -g WxH[xDEPTH], the framebuffer size              (none: QEMU's 1024x768)
   CONSOLE   serial | fb: where the PROM puts its console     (serial)
             serial = ttya (OpenBIOS: input/output-device=ttya; the Sun PROMs fall back to ttya
             only without a keyboard, so `serial` with a Sun PROM also drops the framebuffer)
