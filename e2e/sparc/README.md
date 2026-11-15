@@ -47,10 +47,11 @@ and the guest disk.
 | `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops | ~1 min |
+| `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
-e.g. `TI-SuperSparc-II`; none by default), `VGA` (cg3, tcx, none), `CONSOLE`,
+e.g. `TI-SuperSparc-II`; none by default), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
 
@@ -72,6 +73,10 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | ------ | ----- | ---- |
 | `smoke` | Solaris 2.6 disk with OpenBIOS, 2.5.1 disk with `BIOS=ss5.bin`, 2.6 CD to the installer with OpenBIOS; all SS-5 | ~6 min |
 | `machines` | the 2.6 CD to the installer with OpenBIOS on SS-10 and SS-20, 256 and 512 MB, and SS-20 with `SMP=2` | ~6 min |
+| `display` | `cg3-display.py`: `BIOS=ss5.bin` banner at 1024x768, and the 2.6 disk with OpenBIOS at 1024x768, 1152x900, 1280x1024, 1600x1200 and 1920x1080 | ~19 min |
+
+`display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
+every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
 
 The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
 `solaris-install-serial.py` on SS-5), the CD `solaris_2.6_598_sparc.iso`.
@@ -139,5 +144,11 @@ ctl hmp "info registers"         # any monitor command
   `ttya io` through send-key. `halt` ends at `ok` ("Program terminated") instead of powering off.
 - **With a framebuffer, the 2.6 installer is the OpenWindows GUI** (needs the mouse); without one
   (`VGA=none`) it is the text installer on ttya.
+- **cg3 sizes** (with the cg3 patches): OpenBIOS and Solaris 2.6 boot with the console on the
+  framebuffer at 1152x900 to 1920x1080, the console in the lines at the top that the cg3 ROM maps.
+  Solaris 2.6's X server only starts at 1024x768; at the other sizes dtlogin gives up with
+  `Mapping cg3: No such device or address` in `/var/dt/Xerrors`. The published package before the
+  patches: 1152x900 hangs OpenBIOS with a blank screen ("Unhandled Exception 0x00000009" on ttya),
+  other sizes stop QEMU with `Unsupported resolution`.
 - The upstream image needs the framebuffer FCode ROMs (`QEMU,cgthree.bin`, `QEMU,tcx.bin`) next to
   OpenBIOS, or OpenBIOS can't create the cg3 node and Solaris sees no framebuffer.

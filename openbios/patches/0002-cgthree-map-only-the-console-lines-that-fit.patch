@@ -1,0 +1,62 @@
+From: Antoni Sawicki <as@tenoware.com>
+Subject: [PATCH] cgthree: map only the console lines that fit, for screens of
+ any size
+
+OpenBIOS has 768 KB of address space to map a frame buffer in, which
+is the size of 1024 x 768. The FCode ROM of the cg3 mapped that much
+and then drew on the whole screen, so at 1152 x 900 OpenBIOS took a
+data access fault when it cleared the screen, and the machine hung
+with a blank window.
+
+The ROM now maps the lines at the top of the screen that fit, and the
+firmware's text console uses those: 682 lines at 1152 x 900, 409 at
+1920 x 1080. The width, height and linebytes properties still give
+the real size, and SunOS maps all of the frame buffer by itself, so
+OpenWindows and SunView use the whole screen.
+
+Origin: https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59
+---
+diff --git a/drivers/cgthree.fs b/drivers/cgthree.fs
+index aa0c90c..0960cc1 100644
+--- a/drivers/cgthree.fs
++++ b/drivers/cgthree.fs
+@@ -79,7 +79,20 @@ h# 400000 constant cg3-off-dac
+ h# 20 constant /cg3-off-dac
+ 
+ h# 800000 constant cg3-off-fb
+-h# c0000 constant /cg3-off-fb
++
++\
++\ OpenBIOS has 768 KB of address space left to map a frame buffer in, which
++\ is the size of 1024 x 768. The "width" and "height" properties give the
++\ operating system the real size, and it maps all of the frame buffer by
++\ itself. The firmware's own text console uses the lines at the top of the
++\ screen that fit in what OpenBIOS can map.
++\
++
++h# c0000 constant /cg3-console
++
++: console-height ( -- lines )
++  /cg3-console line-bytes / openbios-video-height min
++;
+ 
+ : >cg3-reg-spec ( offset size -- encoded-reg )
+   >r 0 my-address d+ my-space encode-phys r> encode-int encode+
+@@ -132,7 +145,7 @@ headerless
+ ;
+ 
+ : fb-map
+-  cg3-off-fb h# c0000 do-map-in to fb-addr
++  cg3-off-fb line-bytes console-height * do-map-in to fb-addr
+ ;
+ 
+ : map-regs
+@@ -161,7 +174,7 @@ headerless
+ 
+     frame-buffer-adr encode-int " address" property
+ 
+-    openbios-video-width openbios-video-height over char-width / over char-height /
++    openbios-video-width console-height over char-width / over char-height /
+     fb8-install
+   then
+ ;

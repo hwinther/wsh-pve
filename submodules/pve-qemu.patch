@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..c7b6142 100644
+index 7b0cba5..84b4da1 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,10 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,13 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -83,6 +83,9 @@ index 7b0cba5..c7b6142 100644
 +wsh/0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e.patch
 +wsh/0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese.patch
 +wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
++wsh/0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB.patch
++wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch
++wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -1166,6 +1169,188 @@ index 0000000..99e12a2
 +     }
 + 
 +     return g_test_run();
+diff --git a/debian/patches/wsh/0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB.patch b/debian/patches/wsh/0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB.patch
+new file mode 100644
+index 0000000..8e28299
+--- /dev/null
++++ b/debian/patches/wsh/0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB.patch
+@@ -0,0 +1,99 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/display/cg3: take screens of any size up to 8 MB
++
++The cg3 had 1 MB of video RAM, as the real card, and the Sun machines
++let it show 1024 x 768 or 1152 x 900 only. Its frame buffer starts in
++the middle of the 16 MB of its SBus slot, so there is room for 8 MB.
++The guest's driver takes the size from the properties that the card's
++FCode gives it: SunOS 4.1.4 reads width, height and linebytes and maps
++that much.
++
++-g now takes any size from 640 x 480 up to 8 MB of pixels with a width
++that 8 divides, and the video RAM grows with it. SunOS 4.1.4 runs
++OpenWindows and SunView at 1920 x 1080, and OpenWindows at 3200 x
++1800. Above about 6 MB of pixels its kernel resets at boot.
++
++The sizes other than 1024 x 768 need the FCode ROM of the next commit:
++with the old one OpenBIOS takes a fault at power-on, as it did at
++1152 x 900 before.
++
++Origin: https://github.com/tenox7/lemu/commit/527b934695b3e2568755606abec7446a356c961b
++---
++ hw/display/cg3.c |  9 ++++++++-
++ hw/sparc/sun4m.c | 25 ++++++++++++++++++++-----
++ 2 files changed, 28 insertions(+), 6 deletions(-)
++
++diff --git a/hw/display/cg3.c b/hw/display/cg3.c
++index f9dda15..ee11e90 100644
++--- a/hw/display/cg3.c
+++++ b/hw/display/cg3.c
++@@ -161,7 +161,8 @@ static void cg3_invalidate_display(void *opaque)
++ {
++     CG3State *s = opaque;
++ 
++-    memory_region_set_dirty(&s->vram_mem, 0, CG3_VRAM_SIZE);
+++    memory_region_set_dirty(&s->vram_mem, 0,
+++                            memory_region_size(&s->vram_mem));
++ }
++ 
++ static uint64_t cg3_reg_read(void *opaque, hwaddr addr, unsigned size)
++@@ -286,6 +287,12 @@ static void cg3_realizefn(DeviceState *dev, Error **errp)
++     int ret;
++     char *fcode_filename;
++ 
+++    if ((uint64_t)s->width * s->height > s->vram_size) {
+++        error_setg(errp, "cg3: %u x %u does not fit in %u bytes of video RAM",
+++                   s->width, s->height, s->vram_size);
+++        return;
+++    }
+++
++     memory_region_init_rom(&s->rom, obj, "cg3.prom", FCODE_MAX_ROM_SIZE,
++                            &error_fatal);
++     sysbus_init_mmio(sbd, &s->rom);
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 550acdf..e72e754 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -87,6 +87,10 @@
++ #define MAX_PILS 16
++ #define MAX_VSIMMS 4
++ 
+++/* A real cg3 has 1 MB of video RAM; its SBus slot has room for 8 MB */
+++#define CG3_VRAM_SIZE        (1 * MiB)
+++#define CG3_MAX_VRAM_SIZE    (8 * MiB)
+++
++ #define ESCC_CLOCK 4915200
++ 
++ struct sun4m_hwdef {
++@@ -903,15 +907,26 @@ static void sun4m_hw_init(MachineState *machine)
++                 exit(1);
++             }
++ 
++-            if (!(graphic_width == 1024 && graphic_height == 768) &&
++-                !(graphic_width == 1152 && graphic_height == 900)) {
++-                error_report("Unsupported resolution: %d x %d", graphic_width,
++-                             graphic_height);
+++            /*
+++             * A real cg3 has 1 MB of video RAM, for 1152 x 900. The frame
+++             * buffer starts in the middle of the 16 MB of its slot, so
+++             * there is room for 8 MB. The guest takes the size from the
+++             * properties that the card's FCode gives it, and so SunOS 4
+++             * runs screens of other sizes too.
+++             */
+++            if (graphic_width < 640 || graphic_height < 480 ||
+++                graphic_width % 8 ||
+++                graphic_width * graphic_height > CG3_MAX_VRAM_SIZE) {
+++                error_report("Unsupported resolution: %d x %d (640 x 480 or "
+++                             "more, 8 MB of pixels at most, and a width that "
+++                             "8 divides)", graphic_width, graphic_height);
++                 exit(1);
++             }
++ 
++             /* sbus irq 5 */
++-            cg3_init(hwdef->tcx_base, slavio_irq[11], 0x00100000,
+++            cg3_init(hwdef->tcx_base, slavio_irq[11],
+++                     MAX(CG3_VRAM_SIZE,
+++                         ROUND_UP(graphic_width * graphic_height, MiB)),
++                      graphic_width, graphic_height, graphic_depth);
++             vga_interface_created = true;
++         } else {
+diff --git a/debian/patches/wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch b/debian/patches/wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch
+new file mode 100644
+index 0000000..99b35b9
+--- /dev/null
++++ b/debian/patches/wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch
+@@ -0,0 +1,26 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/sparc/sun4m: refuse a cg3 size too big to multiply
++
++The check of the cg3 screen size multiplied width by height as int.
++With -g 65536x65536x8 the product wrapped to 0 and passed the check,
++and QEMU then aborted while it allocated the video RAM. Multiply in 64
++bits, so that such a size gets the "Unsupported resolution" message.
++
++Origin: https://github.com/tenox7/lemu/commit/5836ffc34929e95d655006dfe38a1bbf756dc839
++---
++ hw/sparc/sun4m.c | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index e72e754..7f26612 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -916,7 +916,7 @@ static void sun4m_hw_init(MachineState *machine)
++              */
++             if (graphic_width < 640 || graphic_height < 480 ||
++                 graphic_width % 8 ||
++-                graphic_width * graphic_height > CG3_MAX_VRAM_SIZE) {
+++                (int64_t)graphic_width * graphic_height > CG3_MAX_VRAM_SIZE) {
++                 error_report("Unsupported resolution: %d x %d (640 x 480 or "
++                              "more, 8 MB of pixels at most, and a width that "
++                              "8 divides)", graphic_width, graphic_height);
+diff --git a/debian/patches/wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch b/debian/patches/wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch
+new file mode 100644
+index 0000000..0030741
+--- /dev/null
++++ b/debian/patches/wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch
+@@ -0,0 +1,39 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] qemu-options: say which screen sizes the cg3 takes
++
++The cg3 is no longer tied to 1024 x 768 and 1152 x 900.
++
++Origin: https://github.com/tenox7/lemu/commit/c2c6a828a382bca52e7f49fd6500d659d60c6534
++---
++ qemu-options.hx | 11 ++++++-----
++ 1 file changed, 6 insertions(+), 5 deletions(-)
++
++diff --git a/qemu-options.hx b/qemu-options.hx
++index 7dda9be..2d9fc48 100644
++--- a/qemu-options.hx
+++++ b/qemu-options.hx
++@@ -2591,9 +2591,9 @@ SRST
++ 
++     ``cg3``
++         (sun4m only) Sun cgthree framebuffer. This is a simple 8-bit
++-        framebuffer for sun4m machines available in both 1024x768
++-        (OpenBIOS) and 1152x900 (OBP) resolutions aimed at people
++-        wishing to run older Solaris versions.
+++        framebuffer for sun4m machines, aimed at people wishing to run
+++        SunOS 4 and older Solaris versions. Its resolution is 1024x768
+++        unless ``-g`` gives another one.
++ 
++     ``virtio``
++         Virtio VGA card.
++@@ -2620,8 +2620,9 @@ SRST
++ 
++     For SPARC with the TCX graphics device, the default is 1024x768x8
++     with the option of 1024x768x24. For cgthree, the default is
++-    1024x768x8 with the option of 1152x900x8 for people who wish to use
++-    OBP.
+++    1024x768x8, and any other size from 640x480 up to 8 MB of pixels
+++    works with a width that 8 divides, such as 1152x900x8 or
+++    1920x1080x8.
++ ERST
++ 
++ #ifdef CONFIG_VNC
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
@@ -1185,7 +1370,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index a6b8745..7cff357 100755
+index a6b8745..c535a3f 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -1230,7 +1415,7 @@ index a6b8745..7cff357 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -126,6 +128,29 @@ install: build
+@@ -126,6 +128,34 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
@@ -1242,6 +1427,11 @@ index a6b8745..7cff357 100755
 +# openbios-sparc32 with the fixes in wsh-pve's openbios/, over QEMU's prebuilt image
 +ifneq ("$(wildcard ../../../build/openbios/openbios-sparc32)", "")
 +	cp ../../../build/openbios/openbios-sparc32 $(destdir)/usr/share/kvm/openbios-sparc32
++endif
++
++# The cg3 FCode ROM from the same build (screens other than 1024x768), over QEMU's prebuilt one
++ifneq ("$(wildcard ../../../build/openbios/QEMU,cgthree.bin)", "")
++	cp ../../../build/openbios/QEMU,cgthree.bin $(destdir)/usr/share/kvm/QEMU,cgthree.bin
 +endif
 +
 +# Add extra system-sparc bios images
@@ -1260,7 +1450,7 @@ index a6b8745..7cff357 100755
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	./debian/parse-cpu-flags.pl $(destdir)/usr/bin/qemu-system-x86_64 max-x86_64-cpu > $(flagfile)
  	# NOTE: If the diff fails here after upgrading the QEMU submodule, check which new flags
-@@ -136,6 +161,8 @@ install: build
+@@ -136,6 +166,8 @@ install: build
  	# Supported machine versions are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machine_file_x86_64)
  	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > $(machine_file_aarch64)
@@ -1269,7 +1459,7 @@ index a6b8745..7cff357 100755
  
  	# Supported CPU models are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-models.pl > $(cpu_models_file_x86_64)
-@@ -170,7 +197,7 @@ binary-arch: build install
+@@ -170,7 +202,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
