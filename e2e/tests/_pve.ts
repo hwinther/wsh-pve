@@ -1,4 +1,5 @@
 import { type APIRequestContext, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
 import http from 'node:http'
 
 // Helpers for the PVE node under test: its API (with a root@pam ticket) and commands run inside the
@@ -48,6 +49,27 @@ export async function pveApi(request: APIRequestContext): Promise<Pve> {
       return { message: `${res.statusText()} ${body}`, status: res.status() }
     },
   }
+}
+
+const CHECK_QEMU_EXTRAS = readFileSync(new URL('../../scripts/check-qemu-extras.sh', import.meta.url), 'utf8')
+
+/**
+ * scripts/check-qemu-extras.sh for one optional extra of the installed pve-qemu-kvm (3dfx, openbios,
+ * sun-proms): exit code 0 when it's there, 1 when it isn't.
+ */
+export async function checkQemuExtra(name: string): Promise<{ code: number; output: string }> {
+  return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
+}
+
+/**
+ * Whether the installed pve-qemu-kvm has /usr/bin/qemu-system-x86_64-3dfx built with qemu-3dfx. A probe
+ * that answers neither way fails the caller instead of skipping.
+ */
+export async function has3dfx(): Promise<boolean> {
+  const probe = await checkQemuExtra('3dfx')
+  expect(probe.output, probe.output).toMatch(/^ {2}3dfx +(present|missing) /m)
+  expect([0, 1], probe.output).toContain(probe.code)
+  return probe.code === 0
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */
