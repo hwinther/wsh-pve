@@ -31,7 +31,7 @@ Once the packages have been installed on a PVE host, the proxmox frontend will h
   * Audio does not seem to work, but network is working so long as it is present when solaris is installed
   * The installation process may take a long time, and CPU usage will be stuck at around 100% on the host - this is normal, but you may want to pin the cpu core to a low frequency core or stick to a test system so that the performance is not reduced for other guests.
 
-* TODO: add feature for floppy mounting
+* Floppy disk support: a dedicated `floppy` storage content type (stored in `template/floppy` next to the iso folder) with upload/listing in the UI, up to two floppy drives per VM (A:/B:) with boot-from-floppy and live media swap - see the [floppy reference](https://debian.wshosting.no/reference/floppy/)
 
 * Selecting an architecture and CPU outside of the default x86(-64) set
 
