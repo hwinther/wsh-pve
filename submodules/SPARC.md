@@ -40,8 +40,11 @@ maintains the patches.
 | `0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB` | The cg3 took 1024x768 and 1152x900 only (and 1152x900 crashed OpenBIOS). `-g` now takes 640x480 up to 8 MB of pixels with a width that 8 divides; the video RAM grows with it (1 MB at least) | [LEMU `527b9346`](https://github.com/tenox7/lemu/commit/527b934695b3e2568755606abec7446a356c961b) | not in QEMU |
 | `0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply` | The size check multiplied as `int`: `-g 65536x65536x8` wrapped to 0 and QEMU aborted allocating the video RAM | [LEMU `5836ffc3`](https://github.com/tenox7/lemu/commit/5836ffc34929e95d655006dfe38a1bbf756dc839) | not in QEMU |
 | `0010-qemu-options-say-which-screen-sizes-the-cg3-takes` | `-vga cg3` and `-g` documentation | [LEMU `c2c6a828`](https://github.com/tenox7/lemu/commit/c2c6a828a382bca52e7f49fd6500d659d60c6534) | not in QEMU |
+| `0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-` | The power management (APC) region was 1 byte; the firmware's node says 16. Solaris 2.6's `pmc` driver writes offsets 2-0xc at attach and panicked (`kernel write fault at addr=0x6a000002`). Now 16 bytes: offset 0 halts the CPU as before, the others keep their value; vmstate section only when one is set. Adds qtest `sun4m-apc-test` | ours | not in QEMU |
+| `0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo` | SunOS 4.1.4 spins in its idle loop; the translator recognises the loop and halts the CPU there until the next interrupt | [LEMU `ff3dbc50`](https://github.com/tenox7/lemu/commit/ff3dbc50bcdcbcc346d8742df1e61c1eaf00b3b2) | not in QEMU |
+| `0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau` | `-M <sun4m>,sunos-idle=on\|off` for 0012, on by default, off with `-smp` > 1 | [LEMU `fed03cc7`](https://github.com/tenox7/lemu/commit/fed03cc7f5f7c5d6e5e0144bfc1dad36d4844180) | not in QEMU |
 
-The ESCC and cg3 patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
+The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
 carry it ourselves. Each patch keeps its author and has an `Origin:` line.
 
@@ -50,10 +53,12 @@ Tested: `sun4m-escc-test` fails without 0002-0006 and passes 4/4 with them on 11
 The full series (Proxmox's patches + ours) applies on QEMU 11.1.3; no Proxmox patch touches
 `esp.c` or `escc.c`.
 
-0008-0010 applied to 11.1.3 with line offsets only (LEMU is on QEMU master).
+0008-0010 and 0012-0013 applied to 11.1.3 with line offsets only (LEMU is on QEMU master).
+`sun4m-apc-test` fails without 0011 (the region is 1 byte, register 2 doesn't read back) and passes
+5/5 with it.
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
-taken, and run `sun4m-escc-test` (sparc) and `am53c974-test` (i386).
+taken, and run `sun4m-escc-test` and `sun4m-apc-test` (sparc) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -96,6 +101,53 @@ at 1152x900, 409 at 1920x1080), and Solaris 2.6's X server doesn't start: `/var/
 `Mapping cg3: No such device or address` / `AddScreen failed for /dev/fb`, so dtlogin falls back to
 the console. At 1024x768 dtlogin comes up. LEMU tested SunOS 4.1.4 (OpenWindows up to 3200x1800).
 
+### Idle
+
+QEMU keeps a host core at 100% for a guest that spins in its idle loop. Which sparc32 guests stop
+(sun4m, one CPU):
+
+| Guest | Idles | How |
+| --- | --- | --- |
+| NetBSD 11.1, Linux | yes | their APC driver (`apc0 at sbus0 slot 4 offset 0xa000000`) writes register 0 of the power management node in the idle loop and QEMU halts the CPU until the next interrupt, with or without these patches. Linux not tested here |
+| NetBSD 9.3 | no | its GENERIC kernel has no APC driver (`power-management ... not configured`); neither have the install kernels of 9.3 and 11.1 |
+| Solaris 2.6 | with `pmc` | the `pmc` driver (package `SUNWvygdr.m` on the 2.6 CD, not installed by default) lets the idle loop write APC register 0; needs 0011. Steps below |
+| SunOS 4.1.4 | yes | 0012-0013: QEMU recognises the kernel's idle loop and halts the CPU there (`sunos-idle`, on by default; `-M SS-5,sunos-idle=off` turns it off; off with `-smp` > 1). `-trace sparc_sunos_idle_match` shows the match |
+| Solaris 2.5.1 | no | no idle path found |
+
+On SS-10 and SS-20 the real machines have no APC, but OpenBIOS creates the `power-management` node there
+too (QEMU maps the device at `0xefa000000`, "XXX should not exist"); the Sun PROMs don't. Not tested:
+the lab's installed disks don't boot on those machines.
+
+Solaris 2.6, in the guest, from the 2.6 CD:
+
+```sh
+mount -F hsfs -o ro /dev/dsk/c0t6d0s0 /mnt
+pkgadd -d /mnt/Solaris_2.6/Product SUNWvygdr.m     # y twice
+echo 'pmc "power-management"' >> /etc/driver_aliases
+echo 'forceload: drv/pmc' >> /etc/system
+touch /reconfigure; init 6
+```
+
+Without 0011 that kernel panics at boot (`kernel write fault at addr=0x6a000002`, `panic: trap:
+unexpected MMU trap`).
+
+Tested with the lab's `scenarios/idle.py` (SS-5, OpenBIOS, QEMU's host CPU use over 60 s at the
+shell after login; the `idle` matrix has the cases with 0011-0013 except NetBSD 9.3):
+
+| Guest | Package | Host CPU | Guest clock over 60 s | `dd if=/dev/zero of=/dev/null` |
+| --- | --- | --- | --- | --- |
+| Solaris 2.6 + `pmc` | with 0011-0013 | 2.3% | 60 s | 1.6 s (200000 blocks) |
+| Solaris 2.6 + `pmc` | 11.1.3-2+wsh3 | panics at boot | | |
+| Solaris 2.6 | with 0011-0013 | 101.8% | 60 s | 1.7 s |
+| Solaris 2.6 | 11.1.3-2+wsh3 | 101.5% | 60 s | 1.7 s |
+| SunOS 4.1.4 | with 0011-0013 | 2.3% | 60 s | 9.7 s (20000 blocks) |
+| SunOS 4.1.4, `sunos-idle=off` | with 0011-0013 | 100.3% | 60 s | 10.2 s |
+| SunOS 4.1.4 | 11.1.3-2+wsh3 | 100.3% | 60 s | 9.5 s |
+| NetBSD 11.1 | with 0011-0013 | 2.4% | 60 s | 8.4 s (200000 blocks) |
+| NetBSD 11.1 | 11.1.3-2+wsh3 | 2.4% | 60 s | 8.5 s |
+| NetBSD 9.3 | with 0011-0013 | 100.6% | 60 s | 7.0 s |
+| NetBSD 9.3 | 11.1.3-2+wsh3 | 100.6% | 61 s | 6.6 s |
+
 ## qemu-server
 
 `submodules/qemu-server.patch`, everything gated on `arch` matching `sparc`:
@@ -129,9 +181,10 @@ the console. At 1024x768 dtlogin comes up. LEMU tested SunOS 4.1.4 (OpenWindows 
 
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
-- qtests: `sun4m-escc-test` (0005) and `am53c974-test` with 0007; they build in a QEMU tree
-  with the series applied.
+- qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011) and `am53c974-test` with 0007; they
+  build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
+- Idle: the lab's `idle` matrix (`scenarios/idle.py`).
 
 ## Known gaps
 
@@ -143,8 +196,3 @@ the console. At 1024x768 dtlogin comes up. LEMU tested SunOS 4.1.4 (OpenWindows 
 - **Architecture changes:** changing the architecture of an existing VM should be refused.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).
-
-## Candidates from LEMU, not carried
-
-- **SunOS 4 idle** (`target/sparc/sunos_idle.c`): halts the CPU in SunOS 4.1.4's idle loop
-  (2-4% host CPU instead of 100%). Only for that kernel; Solaris 2.x doesn't benefit.

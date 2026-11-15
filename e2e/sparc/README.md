@@ -48,12 +48,18 @@ and the guest disk.
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
+| `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time and times a CPU-bound command (`BUSY`); the numbers go to `result.json` (`metrics`) | ~3-4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
 e.g. `TI-SuperSparc-II`; none by default), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
+Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
+
+`Machine.cpu_use(seconds, below, above)` measures QEMU's CPU time (utime + stime of all its threads, from
+`/proc/<pid>/stat`) over an interval, in percent of one core. It means something only while the host
+has nothing else to do.
 
 ## Run a matrix
 
@@ -74,18 +80,69 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `smoke` | Solaris 2.6 disk with OpenBIOS, 2.5.1 disk with `BIOS=ss5.bin`, 2.6 CD to the installer with OpenBIOS; all SS-5 | ~6 min |
 | `machines` | the 2.6 CD to the installer with OpenBIOS on SS-10 and SS-20, 256 and 512 MB, and SS-20 with `SMP=2` | ~6 min |
 | `display` | `cg3-display.py`: `BIOS=ss5.bin` banner at 1024x768, and the 2.6 disk with OpenBIOS at 1024x768, 1152x900, 1280x1024, 1600x1200 and 1920x1080 | ~19 min |
+| `idle` | `idle.py` on SS-5 with OpenBIOS: Solaris 2.6 with the `pmc` driver (below 10% of a core) and without it (above 80%), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~14 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
+`idle` needs one with the idle patches (0011-0013): with an older one the `pmc` disk panics at boot
+and `sunos-idle=off` is an unknown machine option.
 
 The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
-`solaris-install-serial.py` on SS-5), the CD `solaris_2.6_598_sparc.iso`.
+`solaris-install-serial.py` on SS-5), `sol26-enduser-pmc-installed.raw` (the 2.6 one with the `pmc`
+driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (see "SunOS 4.1.4"), the CD
+`solaris_2.6_598_sparc.iso`.
 
 `.github/workflows/sparc-lab.yml` runs a matrix (`smoke` unless chosen otherwise) on demand and every
 week, never for pull requests or pushes: it needs the media, on a self-hosted runner labelled
 `sparc-lab`. It builds the lab image without cache (so it has the newest published package), mounts
 the three directories (inputs, defaulting to the paths above), puts the table in the job summary,
 uploads everything but the disks as an artifact and removes its run directory.
+
+## Idle
+
+Which guests stop spinning the host CPU when idle, and the results, are in `submodules/SPARC.md`
+("Idle"). `sol26-enduser-pmc-installed.raw` is `sol26-enduser-installed.raw` with Solaris 2.6's `pmc`
+driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then lists `pmc (Power
+Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
+
+`netbsd111-installed.raw` is NetBSD 11.1 from `NetBSD-11.1-sparc.iso` (`ISO=...`, `VGA=none`, by hand
+through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Return, `I`; sysinst: `a`
+(English), `a` (install), `b` (yes), `a` (sd0), `b` (default partition sizes), `x`, `b`, `c` (Minimal
+installation), `a` (CD-ROM); root password empty, entropy `x` (not now), `x` (finished configuring),
+Return, `x` (exit), then `sync; halt -p`. Its GENERIC kernel attaches `apc0`; NetBSD 9.3's has no APC
+driver and spins.
+
+## SunOS 4.1.4
+
+`sunos414-installed.raw` was installed by hand through `serve` (no scenario: the curses menus of
+`suninstall` redraw lazily, a key's echo arrives with the next key). The machine is the lab's SS-5 with
+OpenBIOS and the CD at target 6 with 512-byte blocks:
+
+1. **The CD image.** `sunos_4.1.4_install.iso` is a raw BIN (2352-byte sectors, 16-byte header each), not an
+   ISO: the Sun label sits at byte 16. Cut it down to the 2048 data bytes of each sector:
+   `python3 -c 'import sys; f=open(sys.argv[1],"rb"); o=open(sys.argv[2],"wb"); [o.write(s[16:2064]) for s in iter(lambda: f.read(2352), b"")]' sunos_4.1.4_install.iso sunos414-cd.iso`.
+   Slice d of the CD is the sun4m boot (c is another architecture, b, e and f don't boot under OpenBIOS).
+2. **The disk.** `sparc-SUN2.9G.raw.template.xz` decompressed, with partition g cut to 1000 cylinders
+   (about 1 GB; its label has a 2.4 GB g, and SunOS 4 file systems stop at 2 GB). Done by rewriting the label
+   (8 x (start cylinder, blocks) big-endian at byte 444, then the XOR checksum of the 255 words before it at
+   byte 510); `format` in the miniroot shell does the same. a (95 MB, /) and b (190 MB, swap) stay.
+3. **Install kernel: `MEM=64`.** The CD's kernel stops QEMU at once with 256 MB (`qemu: fatal: Trap 0x29
+   (Data Access Error) while interrupts disabled`, published package too); with 64 or 32 MB it comes up.
+   The installed kernel boots with 256 MB.
+4. `serve ... --var ISO=sunos414-cd.iso --var DISK=disk.raw --var VGA=none --var BOOT=c --var MEM=64`; at
+   `0 >`: `boot /iommu/sbus/espdma/esp/sd@6,0:d`. Menu: `1` (install SunOS mini-root), `2` (don't format, the
+   label is there). It copies the miniroot to sd0b and offers `1` (reboot); OpenBIOS ignores the boot
+   string, so at `0 >`: `boot /iommu/sbus/espdma/esp/sd@3,0:b -sw`.
+5. At `#`: `TERM=vt100; export TERM; suninstall`, `1` (Quick installation), `y` (preserve the data
+   partitions: it installs into a and g and keeps the label), then the standard installation: Space moves,
+   `x` selects. **Programmer**; `Full_install` stops at the Versatec set (`tar: directory checksum error` in
+   `/etc/install/suninstall.log`, then loops on "Please mount ... volume 1"). `y` to start: a few minutes;
+   `y` to reboot.
+6. First boot (OpenBIOS boots the disk by itself): `2` (manual setup), Return, hostname `sunos414`, time
+   zone Greenwich Mean Time / GMT (`x`), `1` (accept the time), `2` (no network), `y`, empty root password,
+   `n` (no user account). Then `sunos414 login:`; root has csh and no password. `sync; halt` powers off.
+
+The install leaves `/` 5% and `/usr` 7% used.
 
 ## Drive a guest by hand
 
