@@ -1,4 +1,4 @@
-FROM debian:12-slim AS install
+FROM debian:13-slim AS install
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y curl libicu72 sudo wget apt-utils
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh | sudo bash /dev/stdin --channel STS --install-dir /opt/dotnet
