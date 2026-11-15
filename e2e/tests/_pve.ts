@@ -97,8 +97,17 @@ export async function showcmd(vmid: number): Promise<string> {
  * QEMU validates every machine, device and bus argument at startup, so a command a real start would
  * reject fails here too, without running a guest. The QMP/VNC sockets and the tap netdev need a live
  * node, so the sockets are dropped and the tap becomes a hubport.
+ *
+ * `keepDisplay` keeps the command's own `-display` (the SDL display of a VM with a `server`) instead of
+ * `-display none`, with SDL's dummy video driver: QEMU then sets up the SDL display without an X server,
+ * so this checks that the binary has it and takes the options, not that the display works.
  */
-export async function qemuAccepts(vmid: number): Promise<{ code: number; output: string }> {
+export async function qemuAccepts(
+  vmid: number,
+  { keepDisplay = false }: { keepDisplay?: boolean } = {},
+): Promise<{ code: number; output: string }> {
+  const display = keepDisplay ? 'SDL_VIDEODRIVER=dummy' : ''
+  const noDisplay = keepDisplay ? '' : '-display none'
   const script = `
 set -e
 # The patches print notes ("-- Using ...", "... ignoring: ...") before the command; it's the last line.
@@ -125,7 +134,7 @@ done
 eval "set -- $args"
 rm -f /tmp/e2e-${vmid}.pid
 set +e
-timeout 20 "$bin" "$@" -S -display none -monitor none -serial none -daemonize -pidfile /tmp/e2e-${vmid}.pid
+${display} timeout 20 "$bin" "$@" -S ${noDisplay} -monitor none -serial none -daemonize -pidfile /tmp/e2e-${vmid}.pid
 rc=$?
 [ -f /tmp/e2e-${vmid}.pid ] && kill "$(cat /tmp/e2e-${vmid}.pid)"
 exit $rc

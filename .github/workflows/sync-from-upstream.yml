@@ -154,10 +154,12 @@ jobs:
           fi
 
   build-deb-when-changed:
-    # build-deb.yml: GHCR push and GitHub release; its repo-update.yml call deploys GitHub Pages.
+    # build-deb.yml: GHCR push, GitHub release and (pve-qemu) the optional-extras issue; its
+    # repo-update.yml call deploys GitHub Pages.
     permissions:
       contents: write
       packages: write
+      issues: write
       pages: write
       id-token: write
     uses: ./.github/workflows/build-deb.yml

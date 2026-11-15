@@ -72,3 +72,16 @@ test('display: Cirrus', async ({ page }) => {
   const qemu = await qemuAccepts(VMID)
   expect(qemu.code, qemu.output).toBe(0)
 })
+
+test('display: Enable 3DFX/Mesa', async ({ page }) => {
+  await page.getByText(/^Display$/).dblclick()
+  const win = page.locator('.x-window').filter({ has: page.getByText('Graphic card:', { exact: true }) })
+  await win.getByLabel('Graphic card').click()
+  await page.locator('.x-boundlist:visible li', { hasText: 'Standard VGA' }).click()
+  await win.getByLabel('Enable 3DFX/Mesa').check()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+
+  // The command (the 3dfx binary) and whether QEMU takes it: vm-config.spec.ts.
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=1$/m)
+})

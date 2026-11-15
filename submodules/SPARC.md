@@ -24,7 +24,9 @@ maintains the patches.
 - `debian/pve-qemu-kvm.lintian-overrides`: overrides for the OpenBIOS images (sparc binaries in
   `/usr/share/kvm`).
 - `debian/rules` also copies the Sun PROMs from `submodules/sparc` to `/usr/share/kvm`. They are
-  optional and are left out silently when missing (by design: the build never fails on them).
+  optional and left out when missing (by design: the build never fails on them); `restore-sparc`
+  then prints `WARNING: optional extra sun-proms missing: ...` and the build reports it (see
+  "Optional extras" in the README).
 
 ### QEMU fixes (`debian/patches/wsh/`)
 
@@ -79,7 +81,11 @@ QEMU ships `openbios-sparc32` and the cg3 FCode ROM `QEMU,cgthree.bin` prebuilt.
 with the patches in `openbios/patches/` (the OpenBIOS build tokenizes `drivers/cgthree.fs` with
 `toke` into `obj-sparc32/QEMU,cgthree.bin`), the `openbios-sparc32` make target (part of
 `pve-qemu-bundle`) puts them in `build/openbios/`, and `debian/rules` installs each over QEMU's
-image. Like the other extras, the package falls back to QEMU's images when the build fails.
+image. Like the other extras, the package falls back to QEMU's images when the build fails
+(`WARNING: optional extra openbios missing: ...`). `scripts/check-qemu-extras.sh` tells the two
+apart: against the build tree it compares the package's files with `build/openbios/` and QEMU's
+`pc-bios/`; on an installed package it compares the build date in `openbios-sparc32` with the
+package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 
 | Patch | Fixes | Upstream |
 | --- | --- | --- |
