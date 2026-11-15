@@ -1,27 +1,22 @@
 diff --git a/debian/changelog b/debian/changelog
-index 99515f3f..0b1159bc 100644
+index 31bb1c45..216e730c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+qemu-server (9.2.14+wsh2) trixie; urgency=medium
+@@ -1,10 +1,17 @@
++qemu-server (9.2.15+wsh1) trixie; urgency=medium
 +
-+  * Manual fix needed: qemu-server deb build failed (#190)
++  * feat: add first-class floppy disk support (storage, backend and UI)
++    (#183)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 06 Nov 2026 00:58:34 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 15 Nov 2026 01:04:39 +0000
 +
-+qemu-server (9.2.14+wsh1) trixie; urgency=medium
-+
-+  * Manual fix needed: qemu-server deb build failed (#190)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 01 Nov 2026 19:19:07 +0000
-+
- qemu-server (9.2.14) trixie; urgency=medium
+ qemu-server (9.2.15) trixie; urgency=medium
  
-   * hotplug: fix enabling the tablet and keyboard devices on running aarch64
-     VMs. When disabling the tablet, also remove the keyboard to avoid device
-     mismatches that caused subsequent live migrations to fail.
+   * pci: fail the VM start early if a device passed through with VFIO stopped
+     responding, naming the device and noting that recovering it may need a
+     host reboot. QEMU failed to start with an error that did not point to the
+     cause in this case, like 'invalid PCI interrupt pin 255'.
  
-   * clone: release IPAM addresses reserved for a clone if cloning fails, so
-     they do not remain allocated to a nonexistent VM.
- 
-   * tpm: account for storage allocating TPM volumes larger than 4 MiB. Report
+   * pci: add a 'post-pci-prepare' hookscript phase that runs for each prepared
+     passed-through PCI device before QEMU is started, receiving the device
+     through 'PVE_HOOK_*' environment variables. This allows for additional
