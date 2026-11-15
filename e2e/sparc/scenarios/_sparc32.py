@@ -1,11 +1,14 @@
-"""The sparc32 (SS-5) machine the scenarios share, laid out the way qemu-server builds it for a
-`arch: sparc` VM: disk on SCSI target 3, CD-ROM on target 6 with 512-byte physical blocks, lance NIC.
+"""The sparc32 machine (SS-5 unless MACHINE says otherwise) the scenarios share, laid out the way
+qemu-server builds it for a `arch: sparc` VM: disk on SCSI target 3, CD-ROM on target 6 with 512-byte
+physical blocks, lance NIC.
 
 Variables (lab.py run ... --var KEY=VALUE):
   QEMU      qemu-system-sparc binary                        (qemu-system-sparc)
   BIOS      openbios-sparc32 | ss5.bin | ss10_v2.25_rom ...  (openbios-sparc32)
   MACHINE   SS-5 | SS-10 | SS-20 ...                         (SS-5)
   MEM       MiB                                              (256)
+  SMP       CPUs, -smp only when > 1 (SS-10/SS-20: up to 4)  (1)
+  CPU       -cpu model, e.g. TI-SuperSparc-II                (none: the machine's default)
   VGA       cg3 | tcx | none                                 (cg3)
   CONSOLE   serial | fb: where the PROM puts its console     (serial)
             serial = ttya (OpenBIOS: input/output-device=ttya; the Sun PROMs fall back to ttya
@@ -26,7 +29,8 @@ from lab import QemuDied
 
 DEFAULTS = {
     "QEMU": "qemu-system-sparc", "BIOS": "openbios-sparc32", "MACHINE": "SS-5", "MEM": "256",
-    "VGA": "cg3", "CONSOLE": "serial", "CDROM_AS": "cd", "TEMPLATE": "", "DISK": "", "ISO": "", "REFRESH": "",
+    "SMP": "1", "CPU": "", "VGA": "cg3", "CONSOLE": "serial", "CDROM_AS": "cd", "TEMPLATE": "", "DISK": "",
+    "ISO": "", "REFRESH": "",
 }
 
 
@@ -56,6 +60,10 @@ def qemu_args(v, out):
     fw = os.environ.get("LAB_FIRMWARE", "/usr/share/kvm")
     args = [v["QEMU"], "-L", fw, "-nodefaults", "-machine", f"accel=tcg,type={v['MACHINE']}",
             "-m", v["MEM"], "-bios", v["BIOS"], "-boot", v.get("BOOT", "d")]
+    if int(v.get("SMP") or 1) > 1:
+        args += ["-smp", v["SMP"]]
+    if v.get("CPU"):
+        args += ["-cpu", v["CPU"]]
     sun_prom = not v["BIOS"].startswith("openbios")
     if v["VGA"] == "none" or (v["CONSOLE"] == "serial" and sun_prom):
         args += ["-vga", "none"]
@@ -80,7 +88,10 @@ def qemu_args(v, out):
     return args
 
 
-ESP = "/iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000"
+# The ESP SCSI controller by node names only: OpenBIOS resolves a path without unit addresses to the
+# first node of that name, so this one path works on SS-5 (/iommu@0,10000000/sbus@0,10001000/...) and
+# SS-10/SS-20 (/iommu@f,e0000000/sbus@f,e0001000/...). The packaged OpenBIOS's aliases use it too.
+ESP = "/iommu/sbus/espdma/esp"
 
 
 def prom_boot(m, v, target):
@@ -88,8 +99,8 @@ def prom_boot(m, v, target):
 
     OpenBIOS: its `cdrom` alias only finds a CD-ROM device, and stock OpenBIOS since QEMU 9.2 has no
     `disk` alias (the packaged one is fixed, and so was the one in 7.2: they boot the disk by
-    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: input stays on the keyboard while output goes to ttya, so
-    `ttya io` is typed on the keyboard first."""
+    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: input stays
+    on the keyboard while output goes to ttya, so `ttya io` is typed on the keyboard first."""
     if v["BIOS"].startswith("openbios"):
         if target == "cdrom" and v["CDROM_AS"] != "hd" and v.get("BOOT", "d") == "d":
             return  # -boot d: OpenBIOS boots the CD by itself
