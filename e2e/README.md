@@ -13,6 +13,12 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   through the API and the create wizard, the refused combinations, `arch` set on create only, the
   Hardware editors, vzdump/qmrestore and snapshots, and the lab's machine arguments against
   `qm showcmd`.
+- `tests/qemu-extras.spec.ts`: the optional extras of the installed `pve-qemu-kvm` (3dfx binary,
+  OpenBIOS and cg3 ROM from `openbios/`, Sun PROMs), with `scripts/check-qemu-extras.sh`. The package
+  build never fails on them, so this is where a published package without one turns red. The 3dfx
+  VM commands (`mesa=1`, with and without `server`) are in `vm-config.spec.ts`; QEMU is started with
+  `-display none`, or SDL's dummy video driver for the SDL display, so neither the X display nor the
+  pass-through itself is tested.
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a

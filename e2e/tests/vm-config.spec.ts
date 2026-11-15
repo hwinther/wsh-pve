@@ -70,6 +70,42 @@ test('x86: sb16 + adlib + pcspk combo device', async () => {
   expect(qemu.code, qemu.output).toBe(0)
 })
 
+// 3dfx/Mesa pass-through (Display → "Enable 3DFX/Mesa", `mesa=1`): qemu-server starts the VM with
+// /usr/bin/qemu-system-x86_64-3dfx instead of /usr/bin/kvm, and with a `server` (the X display to show
+// it on) with the SDL display. Pass-through itself needs the guest's wrapper drivers and the host's X
+// server and GL; these check the command and that the 3dfx binary accepts it.
+// KNOWN BUG: pve-qemu-kvm has no qemu-system-x86_64-3dfx since 11.1.1-1+wsh1 (2026-10-01; see
+// qemu-extras.spec.ts), so qemu-server stops at "unable to stat file '/usr/bin/qemu-system-x86_64-3dfx'".
+test.describe('x86: 3dfx/Mesa pass-through', () => {
+  test('mesa=1 starts the VM with the 3dfx binary', async () => {
+    test.fail(true, 'pve-qemu-kvm without qemu-system-x86_64-3dfx')
+    const vmid = await createVm({ memory: 512, name: 'x86-3dfx', vga: 'std,mesa=1' })
+    expect(await vmConfFile(vmid)).toContain('vga: std,mesa=1')
+
+    const cmd = await showcmd(vmid)
+    expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-x86_64-3dfx \\$/m)
+    expect(cmd).toContain("-device 'VGA,id=vga,bus=pci.0,addr=0x2'")
+
+    const qemu = await qemuAccepts(vmid)
+    expect(qemu.code, qemu.output).toBe(0)
+  })
+
+  test('mesa=1 with a server uses the SDL display', async () => {
+    test.fail(true, 'pve-qemu-kvm without qemu-system-x86_64-3dfx')
+    const vmid = await createVm({ memory: 512, name: 'x86-3dfx-sdl', vga: 'std,mesa=1,server=:0' })
+
+    const cmd = await showcmd(vmid)
+    expect(cmd).toContain('-- Using sdl display with std driver and host :0')
+    expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-x86_64-3dfx \\$/m)
+    expect(cmd).toContain('-vga std')
+    expect(cmd).toContain('-display sdl')
+
+    // With SDL's dummy video driver: no X server here, so this doesn't show that the display works.
+    const qemu = await qemuAccepts(vmid, { keepDisplay: true })
+    expect(qemu.code, qemu.output).toBe(0)
+  })
+})
+
 // A real sparc32 VM (solaris26-sparc on pve-test3, created 2024-01). Like every sparc VM there, it
 // turns off the tablet and balloon itself: the SS-5 has neither USB nor virtio.
 const SOLARIS26_CONF = [

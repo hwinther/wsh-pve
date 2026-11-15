@@ -14,6 +14,7 @@ on:
     paths:
       - "e2e/**"
       - "submodules/*.patch"
+      - "scripts/check-qemu-extras.sh"
       - ".github/workflows/e2e.yml"
   # Also on main: a PR can only restore caches from its own branch and from main, so without a run
   # on main every new PR starts with cold node_modules and Playwright browser caches.
@@ -23,6 +24,7 @@ on:
     paths:
       - "e2e/**"
       - "submodules/*.patch"
+      - "scripts/check-qemu-extras.sh"
       - ".github/workflows/e2e.yml"
 
 permissions:
