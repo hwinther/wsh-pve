@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 31bb1c45..16ebe57f 100644
+index 31bb1c45..e514090c 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,30 @@
++qemu-server (9.2.15+wsh3) trixie; urgency=medium
++
++  * feat(sparc-lab): drive VMs that Proxmox VE started, and boot sparc64
++    and aarch64 through PVE (#248)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 15 Nov 2026 21:45:34 +0000
++
 +qemu-server (9.2.15+wsh2) trixie; urgency=medium
 +
 +  * feat: build and offer sparc32 VMs from tested profiles (#239)
