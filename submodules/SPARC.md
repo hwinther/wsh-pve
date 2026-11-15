@@ -37,15 +37,20 @@ maintains the patches.
 | `0005-tests-qtest-test-the-Sun-keyboard-and-mouse-on-one-e` | qtest `sun4m-escc-test` for 0002-0004 and 0006 (`meson.build` context adapted to 11.1.3) | [LEMU `c7a18569`](https://github.com/tenox7/lemu/commit/c7a18569f2b54fd146f325b7499b89216c7865d4) (#222) | not in QEMU |
 | `0006-hw-char-escc-lower-the-interrupt-when-the-guest-rese` | The interrupt line stayed raised after the guest reset a channel | [LEMU `c2c2781e`](https://github.com/tenox7/lemu/commit/c2c2781eb91ab837e4b8a9c3ae972c3fdd007f34) (#222) | not in QEMU |
 | `0007-tests-qtest-am53c974-check-that-Select-with-ATN-work` | qtest for 0001 in `am53c974-test.c` (i386 only, not run by the x86_64 build) | ours (#223, open) | |
+| `0008-hw-display-cg3-take-screens-of-any-size-up-to-8-MB` | The cg3 took 1024x768 and 1152x900 only (and 1152x900 crashed OpenBIOS). `-g` now takes 640x480 up to 8 MB of pixels with a width that 8 divides; the video RAM grows with it (1 MB at least) | [LEMU `527b9346`](https://github.com/tenox7/lemu/commit/527b934695b3e2568755606abec7446a356c961b) | not in QEMU |
+| `0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply` | The size check multiplied as `int`: `-g 65536x65536x8` wrapped to 0 and QEMU aborted allocating the video RAM | [LEMU `5836ffc3`](https://github.com/tenox7/lemu/commit/5836ffc34929e95d655006dfe38a1bbf756dc839) | not in QEMU |
+| `0010-qemu-options-say-which-screen-sizes-the-cg3-takes` | `-vga cg3` and `-g` documentation | [LEMU `c2c6a828`](https://github.com/tenox7/lemu/commit/c2c6a828a382bca52e7f49fd6500d659d60c6534) | not in QEMU |
 
-The ESCC patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU fork
-for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
+The ESCC and cg3 patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
+fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
 carry it ourselves. Each patch keeps its author and has an `Origin:` line.
 
 Tested: `sun4m-escc-test` fails without 0002-0006 and passes 4/4 with them on 11.1.3;
 `test_select_after_bus_reset_ok` fails from `6f8ce26bb0` through 11.1.3 and passes with 0001.
 The full series (Proxmox's patches + ours) applies on QEMU 11.1.3; no Proxmox patch touches
 `esp.c` or `escc.c`.
+
+0008-0010 applied to 11.1.3 with line offsets only (LEMU is on QEMU master).
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test` (sparc) and `am53c974-test` (i386).
@@ -59,17 +64,37 @@ comparisons, `e2e/sparc/qemu-7.2.Dockerfile` builds upstream QEMU 7.2.0 into the
 
 ### OpenBIOS (`openbios/`)
 
-QEMU ships `openbios-sparc32` prebuilt. `openbios/Dockerfile` builds it from the same OpenBIOS
-commit (`e5ac46dd24` for QEMU 11.1.3) with the patches in `openbios/patches/`, the
-`openbios-sparc32` make target (part of `pve-qemu-bundle`) puts it in `build/openbios/`, and
-`debian/rules` installs it over QEMU's image. Like the other extras, the package falls back to
-QEMU's image when the build fails.
+QEMU ships `openbios-sparc32` and the cg3 FCode ROM `QEMU,cgthree.bin` prebuilt.
+`openbios/Dockerfile` builds both from the same OpenBIOS commit (`e5ac46dd24` for QEMU 11.1.3)
+with the patches in `openbios/patches/` (the OpenBIOS build tokenizes `drivers/cgthree.fs` with
+`toke` into `obj-sparc32/QEMU,cgthree.bin`), the `openbios-sparc32` make target (part of
+`pve-qemu-bundle`) puts them in `build/openbios/`, and `debian/rules` installs each over QEMU's
+image. Like the other extras, the package falls back to QEMU's images when the build fails.
 
 | Patch | Fixes | Upstream |
 | --- | --- | --- |
 | `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
+| `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
 
-When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patch.
+Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
+to LEMU's.
+
+When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
+
+### cg3 sizes
+
+With 0008-0010 and the ROM, `-vga cg3 -g WxH` takes 640x480 up to 8 MB of pixels (e.g.
+4096x2048), width a multiple of 8, depth 8 only. Anything else stops QEMU with `Unsupported
+resolution: W x H (640 x 480 or more, 8 MB of pixels at most, and a width that 8 divides)`. The
+OpenBIOS console uses the top 0xc0000 bytes of the screen; the guest maps all of it. The Sun PROMs
+stay at the default 1024x768. qemu-server and the UI don't offer a resolution yet.
+
+Tested (lab `display` matrix, SS-5, OpenBIOS, console on the framebuffer): the banner and Solaris
+2.6 to `console login:` at 1024x768, 1152x900, 1280x1024, 1600x1200 and 1920x1080; `ss5.bin`
+shows its banner at 1024x768. Above 1024x768 the Solaris console has the lines the ROM maps (682
+at 1152x900, 409 at 1920x1080), and Solaris 2.6's X server doesn't start: `/var/dt/Xerrors` has
+`Mapping cg3: No such device or address` / `AddScreen failed for /dev/fb`, so dtlogin falls back to
+the console. At 1024x768 dtlogin comes up. LEMU tested SunOS 4.1.4 (OpenWindows up to 3200x1800).
 
 ## qemu-server
 
@@ -106,6 +131,7 @@ When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and chec
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005) and `am53c974-test` with 0007; they build in a QEMU tree
   with the series applied.
+- cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 
 ## Known gaps
 
@@ -120,8 +146,5 @@ When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and chec
 
 ## Candidates from LEMU, not carried
 
-- **cg3 at any size** (`hw/display/cg3.c` and a new `QEMU,cgthree.bin`): stock QEMU's cg3 works
-  at 1024x768 only, and 1152x900 crashes OpenBIOS. LEMU makes 640x480 to 3200x1800 work, which
-  would allow a resolution setting.
 - **SunOS 4 idle** (`target/sparc/sunos_idle.c`): halts the CPU in SunOS 4.1.4's idle loop
   (2-4% host CPU instead of 100%). Only for that kernel; Solaris 2.x doesn't benefit.
