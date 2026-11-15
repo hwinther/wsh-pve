@@ -8,14 +8,11 @@ name: E2E
 
 on:
   workflow_dispatch:
+  # Every pull request, without a paths filter, so the required e2e-required check always reports;
+  # the changes job skips the image build and the suite when the PR touches none of their paths.
   pull_request:
     branches:
       - main
-    paths:
-      - "e2e/**"
-      - "submodules/*.patch"
-      - "scripts/check-qemu-extras.sh"
-      - ".github/workflows/e2e.yml"
   # Also on main: a PR can only restore caches from its own branch and from main, so without a run
   # on main every new PR starts with cold node_modules and Playwright browser caches.
   push:
@@ -35,7 +32,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether this PR touches the image or the suite. Always true on push and dispatch.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.changed.outputs.changed }}
+    steps:
+      - name: Changed files
+        id: changed
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^e2e/
+            ^submodules/[^/]+\.patch$
+            ^scripts/check-qemu-extras\.sh$
+            ^\.github/workflows/e2e\.yml$
+
   build:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,7 +76,8 @@ jobs:
           retention-days: 3
 
   e2e:
-    needs: [build]
+    needs: [changes, build]
+    if: ${{ needs.changes.outputs.changed == 'true' }}
     permissions:
       contents: read
       packages: read
@@ -97,3 +115,23 @@ jobs:
       tags: |
         main-${{ github.sha }}
         main
+
+  # The required check (devops rulesets/e2e-required.json). Runs on every PR: passes when the e2e
+  # jobs passed or were skipped because nothing relevant changed, fails when one failed or was
+  # cancelled.
+  e2e-required:
+    name: e2e-required
+    if: ${{ always() }}
+    needs: [changes, build, e2e]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check the e2e jobs' results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' > /dev/null; then
+            echo "::error::A job on the way to the e2e run failed or was cancelled."
+            exit 1
+          fi
