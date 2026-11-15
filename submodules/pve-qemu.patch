@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..bd50c1c 100644
+index 7b0cba5..b68cf80 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,14 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,16 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -87,6 +87,8 @@ index 7b0cba5..bd50c1c 100644
 +wsh/0009-hw-sparc-sun4m-refuse-a-cg3-size-too-big-to-multiply.patch
 +wsh/0010-qemu-options-say-which-screen-sizes-the-cg3-takes.patch
 +wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
++wsh/0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo.patch
++wsh/0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -1720,6 +1722,431 @@ index 0000000..9f27648
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo.patch b/debian/patches/wsh/0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo.patch
+new file mode 100644
+index 0000000..45360f4
+--- /dev/null
++++ b/debian/patches/wsh/0012-target-sparc-halt-the-CPU-in-the-SunOS-4.1.4-idle-lo.patch
+@@ -0,0 +1,353 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] target/sparc: halt the CPU in the SunOS 4.1.4 idle loop
++
++SunOS 4 never halts the CPU: with nothing to run it spins in
++idlework() at interrupt level 0, so an idle guest keeps a host core
++busy.
++
++The translator finds the end of that loop by its instructions, and
++takes the addresses of Nrunnable, whichqs and qrunflag from them, so a
++kernel linked at other addresses matches too. At the branch back to
++the top of the loop a helper halts the CPU when all three are 0,
++interrupts are enabled and none is pending. The CPU goes on at the top
++of the loop after the next interrupt, so the guest counts its idle
++time as before. The helper first spins for 100 us, as a disk request
++often completes that soon.
++
++The board turns this on with env->sunos_idle. An idle SunOS 4.1.4 on
++the SPARCstation 5 then uses 2% of a host core at the console and 4%
++with OpenWindows, where it used 100%. Its clock keeps time, and disk
++reads, file writes, 2000 forks and compiles take as long as before.
++-trace sparc_sunos_idle_match shows whether a kernel was recognized.
++
++Origin: https://github.com/tenox7/lemu/commit/ff3dbc50bcdcbcc346d8742df1e61c1eaf00b3b2
++---
++ target/sparc/cpu.h        |   4 ++
++ target/sparc/helper.h     |   3 +
++ target/sparc/meson.build  |   1 +
++ target/sparc/sunos_idle.c | 122 ++++++++++++++++++++++++++++++++++++++
++ target/sparc/trace-events |   6 ++
++ target/sparc/translate.c  |  95 +++++++++++++++++++++++++++++
++ 6 files changed, 231 insertions(+)
++ create mode 100644 target/sparc/sunos_idle.c
++
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 5f583ed9de..95852e1973 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -506,6 +506,10 @@ struct CPUArchState {
++     uint64_t mmubpaction;
++     uint64_t mmubpregs[4];
++     uint64_t prom_addr;
+++    /* Halt in the idle loop of SunOS 4.1.4, see sunos_idle.c */
+++    bool sunos_idle;
+++    int64_t sunos_idle_since;   /* when the loop first found no work */
+++    int64_t sunos_idle_last;    /* when the loop last found no work */
++ #endif
++     float_status fp_status;
++ #if defined(TARGET_SPARC64)
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 3a7f7dc129..b59841c8bf 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -4,6 +4,9 @@ DEF_HELPER_2(wrpsr, void, env, tl)
++ DEF_HELPER_1(rdpsr, tl, env)
++ DEF_HELPER_1(rdasr17, tl, env)
++ DEF_HELPER_1(power_down, void, env)
+++#ifndef CONFIG_USER_ONLY
+++DEF_HELPER_5(sunos_idle, void, env, tl, tl, tl, tl)
+++#endif
++ #else
++ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++diff --git a/target/sparc/meson.build b/target/sparc/meson.build
++index 46289c8669..a6f1f35d0d 100644
++--- a/target/sparc/meson.build
+++++ b/target/sparc/meson.build
++@@ -20,6 +20,7 @@ sparc_system_ss.add(files(
++   'mmu_helper.c',
++   'monitor.c',
++ ))
+++sparc_system_ss.add(when: 'TARGET_SPARC', if_true: files('sunos_idle.c'))
++ 
++ target_arch += {'sparc': sparc_ss}
++ target_system_arch += {'sparc': sparc_system_ss}
++diff --git a/target/sparc/sunos_idle.c b/target/sparc/sunos_idle.c
++new file mode 100644
++index 0000000000..400d9e1ba6
++--- /dev/null
+++++ b/target/sparc/sunos_idle.c
++@@ -0,0 +1,122 @@
+++/*
+++ * SunOS 4.1.4 on sun4m: halt the CPU in the idle loop
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++/*
+++ * SunOS 4 never halts the CPU. With nothing to run it spins in idlework(),
+++ * at interrupt level 0, so an idle guest keeps a host core busy. One round
+++ * of that loop is:
+++ *
+++ *   top:   klock_exit(); spl0();
+++ *          cpu_idle = 1; cpu_supv = 0;       what the clock tick counts
+++ *          if (!cpu_enable) goto top;
+++ *          if (spin > 0) { spin--; goto top; }
+++ *          if (Nrunnable || whichqs)         a thread or a process to run
+++ *              if (klock_knock()) { idle(); spin = 1000; }
+++ *          if (!qrunflag) goto top;          <- the translator's hook
+++ *          ...                               run the STREAMS queues
+++ *
+++ * The translator finds the end of the loop by its instructions and takes
+++ * the addresses of the three variables from them (gen_sunos_idle() in
+++ * translate.c). At the branch back to the top it calls helper_sunos_idle(),
+++ * which halts the CPU when all three are 0, interrupts are enabled and
+++ * none is pending. Only an interrupt handler can change that on a machine
+++ * with one CPU, and the board turns this on only for one CPU. The helper
+++ * reads the variables again, as an interrupt may have come since the loop
+++ * loaded them.
+++ *
+++ * The CPU goes on at the top of the loop after the interrupt, so the loop
+++ * sets cpu_idle and cpu_supv again before the next clock tick looks at
+++ * them, and the guest counts its idle time as before.
+++ *
+++ * Waking a host thread takes longer than a gap in the work often lasts, as
+++ * when a disk request completes at once. So the loop spins on for 100 us
+++ * before the first halt, as KVM's halt polling does.
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "qemu/timer.h"
+++#include "hw/core/cpu.h"
+++#include "cpu.h"
+++#include "accel/tcg/cpu-loop.h"
+++#include "accel/tcg/cpu-mmu-index.h"
+++#include "accel/tcg/probe.h"
+++#include "exec/cpu-common.h"
+++#include "exec/helper-proto.h"
+++#include "exec/tlb-flags.h"
+++#include "trace.h"
+++
+++/*
+++ * Spin on for this long after the loop first found no work. A round that
+++ * comes more than SUNOS_IDLE_GAP_NS after the one before means that the
+++ * guest left the loop between them.
+++ */
+++#define SUNOS_IDLE_POLL_NS  (100 * SCALE_US)
+++#define SUNOS_IDLE_GAP_NS   (20 * SCALE_US)
+++
+++static bool sunos_idle_polled(CPUSPARCState *env)
+++{
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    if (now - env->sunos_idle_last > SUNOS_IDLE_GAP_NS) {
+++        env->sunos_idle_since = now;
+++    }
+++    env->sunos_idle_last = now;
+++    return now - env->sunos_idle_since >= SUNOS_IDLE_POLL_NS;
+++}
+++
+++/* Read a kernel variable of 1 or 4 bytes; false if it is not mapped RAM */
+++static bool sunos_idle_read(CPUSPARCState *env, target_ulong addr, int size,
+++                            uint32_t *val)
+++{
+++    void *host;
+++    int flags;
+++
+++    if (addr & (size - 1)) {
+++        return false;
+++    }
+++    flags = probe_access_flags(env, addr, size, MMU_DATA_LOAD,
+++                               cpu_mmu_index(env_cpu(env), false), true,
+++                               &host, 0);
+++    if ((flags & TLB_INVALID_MASK) || !host) {
+++        return false;
+++    }
+++    *val = size == 1 ? ldub_p(host) : ldl_be_p(host);
+++    return true;
+++}
+++
+++/*
+++ * SunOS is at the branch from the end of idlework() back to its top.
+++ * Halt until the next interrupt when the loop has nothing to do, and go
+++ * on at the top then.
+++ */
+++void HELPER(sunos_idle)(CPUSPARCState *env, target_ulong top,
+++                        target_ulong nrunnable, target_ulong whichqs,
+++                        target_ulong qrunflag)
+++{
+++    CPUState *cs = env_cpu(env);
+++    uint32_t val;
+++
+++    /* Interrupts are enabled and none is pending */
+++    if (!env->psret || env->psrpil ||
+++        cpu_test_interrupt(cs, CPU_INTERRUPT_HARD)) {
+++        return;
+++    }
+++    if (!sunos_idle_read(env, nrunnable, 4, &val) || val ||
+++        !sunos_idle_read(env, whichqs, 4, &val) || val ||
+++        !sunos_idle_read(env, qrunflag, 1, &val) || val) {
+++        return;
+++    }
+++    if (!sunos_idle_polled(env)) {
+++        return;
+++    }
+++
+++    trace_sparc_sunos_idle(top);
+++    env->pc = top;
+++    env->npc = top + 4;
+++    cs->halted = 1;
+++    cs->exception_index = EXCP_HLT;
+++    cpu_loop_exit(cs);
+++}
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index de9833283d..7a963db11f 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -14,6 +14,12 @@ mmu_helper_mmu_fault(uint64_t address, uint64_t paddr, int mmu_idx, uint32_t tl,
++ sun4m_cpu_interrupt(unsigned int level) "Set CPU IRQ %d"
++ sun4m_cpu_reset_interrupt(unsigned int level) "Reset CPU IRQ %d"
++ 
+++# sunos_idle.c
+++sparc_sunos_idle(uint32_t pc) "idle loop halt, go on at 0x%08x"
+++
+++# translate.c
+++sparc_sunos_idle_match(uint32_t pc, uint32_t top, uint32_t nrunnable, uint32_t whichqs, uint32_t qrunflag) "SunOS idle loop: branch at 0x%08x to 0x%08x, Nrunnable 0x%08x whichqs 0x%08x qrunflag 0x%08x"
+++
++ # int64_helper.c
++ int_helper_set_softint(uint32_t softint) "new 0x%08x"
++ int_helper_clear_softint(uint32_t softint) "new 0x%08x"
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 3156be6a94..739b47e78a 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -32,6 +32,7 @@
++ #include "fpu/softfloat.h"
++ #include "asi.h"
++ #include "target/sparc/translate.h"
+++#include "trace.h"
++ 
++ #define HELPER_H "helper.h"
++ #include "exec/helper-info.c.inc"
++@@ -182,6 +183,7 @@ typedef struct DisasContext {
++     bool hypervisor;
++ #else
++     bool fsr_qne;
+++    bool sunos_idle;
++ #endif
++ #endif
++ 
++@@ -5698,6 +5700,8 @@ static void sparc_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
++     dc->hypervisor = (dc->base.tb->flags & TB_FLAG_HYPER) != 0;
++ # else
++     dc->fsr_qne = (dc->base.tb->flags & TB_FLAG_FSR_QNE) != 0;
+++    dc->sunos_idle = cpu_env(cs)->sunos_idle && dc->supervisor &&
+++                     !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
++ # endif
++ #endif
++ #ifdef TARGET_SPARC64
++@@ -5738,6 +5742,91 @@ static void sparc_tr_insn_start(DisasContextBase *dcbase, CPUState *cs)
++     tcg_gen_insn_start(dc->pc, npc, 0);
++ }
++ 
+++#if !defined(CONFIG_USER_ONLY) && !defined(TARGET_SPARC64)
+++/*
+++ * SunOS 4.1.4 spins in idlework() when it has nothing to run; see
+++ * sunos_idle.c. These are the last words of that loop, each with its mask:
+++ * the addresses of the kernel's variables and functions are left out, so
+++ * that a kernel linked at other addresses matches too.
+++ */
+++static const uint32_t sunos_idle_loop[][2] = {
+++    { 0x24800004, 0xffffffff },     /*         ble,a check     spin <= 0 */
+++    { 0x2d000000, 0xffc00000 },     /*          sethi %hi(Nrunnable), %l6 */
+++    { 0x10bfffe7, 0xffffffff },     /*         b     top */
+++    { 0xba276001, 0xffffffff },     /*          dec  %i5       spin-- */
+++    { 0xec05a000, 0xffffe000 },     /* check:  ld    [%l6 + lo], %l6 */
+++    { 0x80900016, 0xffffffff },     /*         tst   %l6 */
+++    { 0x12800006, 0xffffffff },     /*         bne   knock */
+++    { 0x2f000000, 0xffc00000 },     /*          sethi %hi(whichqs), %l7 */
+++    { 0xee05e000, 0xffffe000 },     /*         ld    [%l7 + lo], %l7 */
+++    { 0x80900017, 0xffffffff },     /*         tst   %l7 */
+++    { 0x2280000a, 0xffffffff },     /*         be,a  streams */
+++    { 0x31000000, 0xffc00000 },     /*          sethi %hi(qrunflag), %i0 */
+++    { 0x40000000, 0xc0000000 },     /* knock:  call  klock_knock */
+++    { 0x01000000, 0xffffffff },     /*          nop */
+++    { 0x80900008, 0xffffffff },     /*         tst   %o0 */
+++    { 0x22800005, 0xffffffff },     /*         be,a  streams */
+++    { 0x31000000, 0xffc00000 },     /*          sethi %hi(qrunflag), %i0 */
+++    { 0x40000000, 0xc0000000 },     /*         call  idle */
+++    { 0xba1023e8, 0xffffffff },     /*          mov  1000, %i5 spin = 1000 */
+++    { 0x31000000, 0xffc00000 },     /*         sethi %hi(qrunflag), %i0 */
+++    { 0xf04e2000, 0xffffe000 },     /* streams: ldsb [%i0 + lo], %i0 */
+++    { 0x80900018, 0xffffffff },     /*         tst   %i0 */
+++    { 0x02bfffd3, 0xffffffff },     /*         be    top       the helper */
+++    { 0x01000000, 0xffffffff },     /*          nop */
+++};
+++#define SUNOS_IDLE_BRANCH       22
+++
+++/* The address that the sethi at w[hi] and the load at w[lo] make */
+++static target_ulong sunos_idle_addr(const uint32_t *w, int hi, int lo)
+++{
+++    return (extract32(w[hi], 0, 22) << 10) + sextract32(w[lo], 0, 13);
+++}
+++
+++/*
+++ * At the branch from the end of the SunOS idle loop back to its top, let
+++ * helper_sunos_idle() halt the CPU
+++ */
+++static void gen_sunos_idle(DisasContext *dc, CPUSPARCState *env)
+++{
+++    enum { LEN = ARRAY_SIZE(sunos_idle_loop) };
+++    target_ulong start = dc->pc - 4 * SUNOS_IDLE_BRANCH;
+++    target_ulong top, nrunnable, whichqs, qrunflag;
+++    uint32_t w[LEN];
+++    int i;
+++
+++    /* The branch is not in a delay slot */
+++    if (dc->npc != dc->pc + 4) {
+++        return;
+++    }
+++    /* Off RAM, translator_ldl_end() would record these words as code */
+++    if (tb_page_addr0(dc->base.tb) == -1 ||
+++        !translator_is_same_page(&dc->base, start) ||
+++        !translator_is_same_page(&dc->base, start + 4 * (LEN - 1))) {
+++        return;
+++    }
+++    for (i = 0; i < LEN; i++) {
+++        w[i] = translator_ldl_end(env, &dc->base, start + 4 * i, MO_BE);
+++        if ((w[i] & sunos_idle_loop[i][1]) != sunos_idle_loop[i][0]) {
+++            return;
+++        }
+++    }
+++
+++    top = dc->pc + 4 * sextract32(w[SUNOS_IDLE_BRANCH], 0, 22);
+++    nrunnable = sunos_idle_addr(w, 1, 4);
+++    whichqs = sunos_idle_addr(w, 7, 8);
+++    qrunflag = sunos_idle_addr(w, 19, 20);
+++    trace_sparc_sunos_idle_match(dc->pc, top, nrunnable, whichqs, qrunflag);
+++
+++    /* The helper reads the clock: end the TB with the branch */
+++    translator_io_start(&dc->base);
+++    gen_helper_sunos_idle(tcg_env, tcg_constant_tl(top),
+++                          tcg_constant_tl(nrunnable),
+++                          tcg_constant_tl(whichqs),
+++                          tcg_constant_tl(qrunflag));
+++}
+++#endif
+++
++ static void sparc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
++ {
++     DisasContext *dc = container_of(dcbase, DisasContext, base);
++@@ -5746,6 +5835,12 @@ static void sparc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
++     insn = translator_ldl_end(cpu_env(cs), &dc->base, dc->pc, MO_BE);
++     dc->base.pc_next += 4;
++ 
+++#if !defined(CONFIG_USER_ONLY) && !defined(TARGET_SPARC64)
+++    if (insn == sunos_idle_loop[SUNOS_IDLE_BRANCH][0] && dc->sunos_idle) {
+++        gen_sunos_idle(dc, cpu_env(cs));
+++    }
+++#endif
+++
++     if (!decode(dc, insn)) {
++         gen_exception(dc, TT_ILL_INSN);
++     }
+diff --git a/debian/patches/wsh/0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau.patch b/debian/patches/wsh/0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau.patch
+new file mode 100644
+index 0000000..47fef7c
+--- /dev/null
++++ b/debian/patches/wsh/0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau.patch
+@@ -0,0 +1,60 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/sparc/sun4m: add the sunos-idle option, on by default
++
++It halts the CPU while SunOS 4.1.4 is idle, see
++target/sparc/sunos_idle.c. -M SS-5,sunos-idle=off lets the idle loop
++spin as before. It is off with more than one CPU: there a CPU gives
++another one work without an interrupt, which a halted CPU would not
++see.
++
++Origin: https://github.com/tenox7/lemu/commit/fed03cc7f5f7c5d6e5e0144bfc1dad36d4844180
++---
++ hw/sparc/sun4m.c | 21 +++++++++++++++++++++
++ 1 file changed, 21 insertions(+)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 7f26612a33..437cff65da 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -781,6 +781,19 @@ static const TypeInfo ram_info = {
++     .class_init    = ram_class_init,
++ };
++ 
+++/* Halt the CPU in the SunOS 4.1.4 idle loop, see target/sparc/sunos_idle.c */
+++static bool sun4m_sunos_idle = true;
+++
+++static bool sun4m_get_sunos_idle(Object *obj, Error **errp)
+++{
+++    return sun4m_sunos_idle;
+++}
+++
+++static void sun4m_set_sunos_idle(Object *obj, bool value, Error **errp)
+++{
+++    sun4m_sunos_idle = value;
+++}
+++
++ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++                                 uint64_t prom_addr)
++ {
++@@ -836,6 +849,8 @@ static void sun4m_hw_init(MachineState *machine)
++     /* init CPUs */
++     for(i = 0; i < smp_cpus; i++) {
++         cpus[i] = cpu_devinit(machine->cpu_type, i, hwdef->slavio_base);
+++        /* With more CPUs, one gives another work without an interrupt */
+++        SPARC_CPU(cpus[i])->env.sunos_idle = sun4m_sunos_idle && smp_cpus == 1;
++     }
++ 
++     /* Create and map RAM frontend */
++@@ -1124,6 +1139,12 @@ static void sun4m_machine_class_init(ObjectClass *oc, const void *data)
++     mc->default_boot_order = "c";
++     mc->default_display = "tcx";
++     mc->default_ram_id = "sun4m.ram";
+++
+++    object_class_property_add_bool(oc, "sunos-idle", sun4m_get_sunos_idle,
+++                                   sun4m_set_sunos_idle);
+++    object_class_property_set_description(oc, "sunos-idle",
+++        "Halt the CPU while SunOS 4.1.4 is idle, instead of spinning "
+++        "(default: on)");
++ }
++ 
++ static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
