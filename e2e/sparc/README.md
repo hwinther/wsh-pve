@@ -7,8 +7,11 @@ instead of repeated by hand.
 
 - `lab.py` is the harness: one QEMU process with its serial port behind a VT100 emulator (pyte), its QMP
   monitor, OCR of the framebuffer (tesseract), and the step log.
-- `scenarios/` are scripts against it. `_sparc32.py` is the SS-5 machine laid out the way qemu-server
-  builds an `arch: sparc` VM (disk on SCSI target 3, CD-ROM on target 6 with 512-byte blocks, lance).
+- `scenarios/` are scripts against it. `_sparc32.py` is the machine (SS-5 by default) laid out the way
+  qemu-server builds an `arch: sparc` VM (disk on SCSI target 3, CD-ROM on target 6 with 512-byte
+  blocks, lance).
+- `matrix.py` runs a fixed list of cases (scenario + variables) and summarises them; the
+  `sparc lab` workflow runs it on a self-hosted runner.
 - `Dockerfile` builds the lab with `qemu-system-sparc` from the published `pve-qemu-kvm`, the QEMU
   that PVE runs. `qemu-7.2.Dockerfile` adds an upstream QEMU (7.2.0 by default, built on Debian 12)
   on top of it, for comparing against the version sparc guests used to run on.
@@ -43,11 +46,41 @@ and the guest disk.
 | -------- | ------------ | --------------------- |
 | `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
+| `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops | ~1 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
-`BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `VGA` (cg3, tcx, none), `CONSOLE`,
+`BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
+e.g. `TI-SuperSparc-II`; none by default), `VGA` (cg3, tcx, none), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
+
+## Run a matrix
+
+`matrix.py` runs the cases of a named list one after another, each in `<runs>/<case>/`, with a sparse
+copy of the installed disk it boots (the images themselves are never booted, and the copies are
+deleted when a case is done). It prints a Markdown table, writes it to `<runs>/summary.md` too, and
+exits 1 if any case failed. The install CDs and the installed disks are separate directories, both
+mounted read only:
+
+```sh
+docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/sparc/disks:ro \
+  -v /mnt/sparc/runs:/mnt/sparc/runs --entrypoint python3 wsh-sparc-lab matrix.py smoke \
+  --runs /mnt/sparc/runs/m1 --iso /mnt/sparc/iso --disks /srv/sparc/disks
+```
+
+| Matrix | Cases | Time |
+| ------ | ----- | ---- |
+| `smoke` | Solaris 2.6 disk with OpenBIOS, 2.5.1 disk with `BIOS=ss5.bin`, 2.6 CD to the installer with OpenBIOS; all SS-5 | ~6 min |
+| `machines` | the 2.6 CD to the installer with OpenBIOS on SS-10 and SS-20, 256 and 512 MB, and SS-20 with `SMP=2` | ~6 min |
+
+The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
+`solaris-install-serial.py` on SS-5), the CD `solaris_2.6_598_sparc.iso`.
+
+`.github/workflows/sparc-lab.yml` runs a matrix (`smoke` unless chosen otherwise) on demand and every
+week, never for pull requests or pushes: it needs the media, on a self-hosted runner labelled
+`sparc-lab`. It builds the lab image without cache (so it has the newest published package), mounts
+the three directories (inputs, defaulting to the paths above), puts the table in the job summary,
+uploads everything but the disks as an artifact and removes its run directory.
 
 ## Drive a guest by hand
 
@@ -84,6 +117,17 @@ ctl hmp "info registers"         # any monitor command
   valid state has been set by load or init-program". The package carries a fix
   (`openbios/patches/`); the OpenBIOS in 7.2.0 didn't have the bug. `prom_boot()` handles both:
   it boots by device path at the `0 >` prompt, or lets OpenBIOS boot by itself.
+- **One OpenBIOS device path for every machine.** The ESP sits at different unit addresses (SS-5:
+  `/iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000`; SS-10 and SS-20:
+  `/iommu@f,e0000000/sbus@f,e0001000/espdma@f,400000/esp@f,800000`), but OpenBIOS also takes the path
+  without them, `/iommu/sbus/espdma/esp/sd@6,0:d`, as its own aliases do. `prom_boot()` uses that for
+  the case no alias covers: the packaged OpenBIOS's `cdrom` alias finds only a `scsi-cd`, so a CD as
+  a disk (`CDROM_AS=hd`) is booted by path (the 2.6 kernel loads that way on SS-5 and SS-20, then
+  panics with `vfs_mountroot: cannot mount root`: 2.6 wants a `scsi-cd`, the reverse of 2.4/2.5.1).
+- **The SS-5 installed disks don't boot on SS-10/SS-20.** OpenBIOS loads the kernel and root mounts,
+  but Solaris 2.6 then reports `le0: No such device or address` and `mount: /dev/dsk/c0t3d0s6 no
+  such device`, and halts for want of /usr (also with `boot disk -r`). The 2.6 CD boots to the
+  installer on both, with 512 MB and with `SMP=2` (OpenBIOS: `CPUs: 2 x TI,TMS390Z55`).
 - **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
   (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
