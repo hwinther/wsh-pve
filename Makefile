@@ -197,6 +197,7 @@ pve-qemu:
 		-w /src/submodules/pve-qemu \
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-e DEB_BUILD_OPTIONS \
 		$(DOCKER_BUILD_IMAGE) \
 		bash -c 'git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-qemu-kvm_*.deb /src/build/repo/'; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
@@ -357,9 +358,15 @@ update-patches:
 .PHONY: 3dfx prepare-qemu-3dfx pve-qemu-3dfx
 3dfx: clean-qemu-3dfx prepare-qemu-3dfx pve-qemu-3dfx
 prepare-qemu-3dfx:
-	git submodule update --init submodules/qemu-3dfx
+	git submodule update --init submodules/qemu-3dfx || true
 
 REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*/\1\-/")
+# QEMU with qemu-3dfx, for debian/rules of the pve-qemu target to ship as qemu-system-x86_64-3dfx: the
+# same tree as pve-qemu (pve-qemu.patch and its wsh/ series first), plus wsh/0099-WSH-qemu-3dfx.patch
+# (submodules/pve-qemu-qemu-3dfx.patch, checked before the long build by
+# scripts/refresh-qemu-3dfx-patch.sh) and qemu-3dfx's hw/3dfx and hw/mesa, stamped with its revision
+# the way its scripts/sign_commit does (whose other edits are for older QEMUs). Never fails: without
+# the binary, pve-qemu ships without it. pve-qemu starts over from a fresh submodules/pve-qemu.
 pve-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
 	$(MAKE) restore-pve-qemu; \
@@ -368,38 +375,46 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::group::Building pve-qemu with 3dfx support"; \
 	fi; \
-	mkdir -p submodules/pve-qemu/debian/patches/wsh; \
-	git -C submodules/pve-qemu submodule update --init qemu; \
-	cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
-	echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
-	cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
-	patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
-	sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
-	patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; \
+	$(WARN_EXTRA_MISSING); \
 	mkdir -p build/pve-qemu-3dfx; \
 	rm -f build/pve-qemu-3dfx/*; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-		-w /src/submodules/pve-qemu \
-		-e DEBEMAIL="$(GIT_EMAIL)" \
-		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU3DFX_SUBJECT)"; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-		-v $(CURRENT_DIR)/.git:/src/.git \
-		-v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx \
-		-w /src/submodules/pve-qemu \
-		-e DEBEMAIL="$(GIT_EMAIL)" \
-		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		$(DOCKER_BUILD_IMAGE) \
-		bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
+	git -C submodules/pve-qemu submodule update --init qemu; \
+	if [ ! -d submodules/qemu-3dfx/qemu-0/hw/3dfx ] || [ ! -d submodules/qemu-3dfx/qemu-1/hw/mesa ]; then \
+		reason="submodules/qemu-3dfx is not checked out"; \
+	elif ! patch -d submodules/pve-qemu -p1 -i ../pve-qemu.patch; then \
+		reason="submodules/pve-qemu.patch does not apply"; \
+	elif ! scripts/refresh-qemu-3dfx-patch.sh --check; then \
+		reason="submodules/pve-qemu-qemu-3dfx.patch does not apply to this pve-qemu (rejected hunks above; scripts/refresh-qemu-3dfx-patch.sh refreshes it)"; \
+	else \
+		reason="the 3dfx build made no qemu-system-x86_64 (build errors above)"; \
+		cp submodules/pve-qemu-qemu-3dfx.patch submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch; \
+		echo "wsh/0099-WSH-qemu-3dfx.patch" >> submodules/pve-qemu/debian/patches/series; \
+		cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
+		patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
+		sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
+		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+			-w /src/submodules/pve-qemu \
+			-e DEBEMAIL="$(GIT_EMAIL)" \
+			-e DEBFULLNAME="$(GIT_AUTHOR)" \
+			$(DOCKER_BUILD_IMAGE) \
+			dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU3DFX_SUBJECT)"; \
+		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+			-v $(CURRENT_DIR)/.git:/src/.git \
+			-v $(CURRENT_DIR)/build/pve-qemu-3dfx:/build/pve-qemu-3dfx \
+			-w /src/submodules/pve-qemu \
+			-e DEBEMAIL="$(GIT_EMAIL)" \
+			-e DEBFULLNAME="$(GIT_AUTHOR)" \
+			-e DEB_BUILD_OPTIONS \
+			$(DOCKER_BUILD_IMAGE) \
+			bash -c "git config --global --add safe.directory /src/submodules/pve-qemu && make distclean && meson subprojects download --sourcedir qemu && make deb || true && cp pve-qemu-kvm-*/debian/pve-qemu-kvm/usr/bin/qemu-system-x86_64 /build/pve-qemu-3dfx/"; \
+	fi; \
 	if [ "$(GITHUB_ACTIONS)" = "true" ]; then \
 		echo "::endgroup::"; \
 	fi; \
-	$(WARN_EXTRA_MISSING); \
 	if [ ! -s build/pve-qemu-3dfx/qemu-system-x86_64 ]; then \
-		warn_extra_missing 3dfx "the 3dfx build made no qemu-system-x86_64 (patch errors above), pve-qemu ships without qemu-system-x86_64-3dfx"; \
+		warn_extra_missing 3dfx "$$reason, pve-qemu ships without qemu-system-x86_64-3dfx"; \
 	fi
 
 .PHONY: clean-qemu-3dfx

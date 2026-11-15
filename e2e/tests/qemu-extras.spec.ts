@@ -1,24 +1,18 @@
 import { expect, test } from '@playwright/test'
-import { readFileSync } from 'node:fs'
 
-import { pveExec } from './_pve'
+import { checkQemuExtra, has3dfx, pveExec } from './_pve'
 
 // The optional extras of the installed pve-qemu-kvm. The package build never fails on them (Makefile:
 // pve-qemu-3dfx, openbios-sparc32, restore-sparc), so a package without one still publishes; the
 // build reports it (build-deb.yml opens an issue), and these fail when a published package lost one.
 // Each runs scripts/check-qemu-extras.sh in the container, the check the build runs on the .deb.
 
-const CHECK = readFileSync(new URL('../../scripts/check-qemu-extras.sh', import.meta.url), 'utf8')
-
-async function checkExtra(name: string): Promise<{ code: number; output: string }> {
-  return pveExec(['bash', '-c', CHECK, 'check-qemu-extras', '--root', '/', '--only', name])
-}
-
 test('3dfx: qemu-system-x86_64-3dfx, built with qemu-3dfx', async () => {
-  // KNOWN BUG: missing since 11.1.1-1+wsh1 (2026-10-01). The qemu-3dfx patch doesn't apply to QEMU
-  // 11.1 (include/ui/console.h, ui/console.c) and the pve-qemu-3dfx target falls back.
-  test.fail(true, 'pve-qemu-kvm without qemu-system-x86_64-3dfx')
-  const check = await checkExtra('3dfx')
+  // TODO: remove this marker once a pve-qemu-kvm with qemu-system-x86_64-3dfx is published at
+  // debian.wshosting.no. The published ones have had none since 11.1.1-1+wsh1 (2026-10-01: the
+  // qemu-3dfx patch stopped applying to QEMU 11.1), and the e2e runs of PRs and main install those.
+  test.fail(!(await has3dfx()), 'installed pve-qemu-kvm has no qemu-system-x86_64-3dfx (not published yet)')
+  const check = await checkQemuExtra('3dfx')
   expect(check.code, check.output).toBe(0)
 
   // The revision the guest's wrapper drivers have to match (docs: guides/3dfx).
@@ -28,11 +22,11 @@ test('3dfx: qemu-system-x86_64-3dfx, built with qemu-3dfx', async () => {
 })
 
 test('openbios: openbios-sparc32 and QEMU,cgthree.bin built from openbios/', async () => {
-  const check = await checkExtra('openbios')
+  const check = await checkQemuExtra('openbios')
   expect(check.code, check.output).toBe(0)
 })
 
 test('sun-proms: ss5.bin, ss10_v2.25_rom and ss20_v2.25_rom', async () => {
-  const check = await checkExtra('sun-proms')
+  const check = await checkQemuExtra('sun-proms')
   expect(check.code, check.output).toBe(0)
 })
