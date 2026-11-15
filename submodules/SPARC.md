@@ -115,8 +115,9 @@ QEMU keeps a host core at 100% for a guest that spins in its idle loop. Which sp
 | Solaris 2.5.1 | no | no idle path found |
 
 On SS-10 and SS-20 the real machines have no APC, but OpenBIOS creates the `power-management` node there
-too (QEMU maps the device at `0xefa000000`, "XXX should not exist"); the Sun PROMs don't. Not tested:
-the lab's installed disks don't boot on those machines.
+too (QEMU maps the device at `0xefa000000`, "XXX should not exist"); the Sun PROMs don't. NetBSD 11.1
+attaches `apc0` on SS-20 with OpenBIOS and idles there (see "SS-10 and SS-20"); Solaris 2.6 with `pmc`
+not tested there.
 
 Solaris 2.6, in the guest, from the 2.6 CD:
 
@@ -147,6 +148,157 @@ shell after login; the `idle` matrix has the cases with 0011-0013 except NetBSD 
 | NetBSD 11.1 | 11.1.3-2+wsh3 | 2.4% | 60 s | 8.5 s |
 | NetBSD 9.3 | with 0011-0013 | 100.6% | 60 s | 7.0 s |
 | NetBSD 9.3 | 11.1.3-2+wsh3 | 100.6% | 61 s | 6.6 s |
+
+### SS-10 and SS-20
+
+Which machine, firmware, CPU count and RAM run Solaris, and whether anything beats SS-5 + one CPU
++ 256 MB. Measured with the published `pve-qemu-kvm` 11.1.3-2+wsh3 (no idle patches) in the lab, serial
+console, Solaris 2.6 (5/98) unless stated. QEMU has no HyperSPARC CPU model; the extra PROMs are
+from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in the package).
+
+**Firmware.** "Installer" = the 2.6 CD boots to its first question.
+
+| Machine | Firmware | `-cpu` | RAM | Result |
+| --- | --- | --- | --- | --- |
+| SS-5 | OpenBIOS | default | 256 | installer; installed disk to login |
+| SS-5 | `ss5.bin` | default | 256 | SS-5 disk to login |
+| SS-5 | `ss5-170.bin` | default | 256 | installer |
+| SS-10 | OpenBIOS | default | 256, 512 | installer; scripted install (~8.5 min) boots to login |
+| SS-10 | `ss10_v2.25_rom` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
+| SS-10 | `ss10_v2.25_rom` | SuperSparc-40/50/60 | 64-512 | `Probing Memory Bank #4 Data Access Error`, `ok` |
+| SS-20 | `ss10_v2.25_rom` | SuperSparc-50 | 256 | installer |
+| SS-20 | OpenBIOS | default | 256, 512 | installer, also `-smp 2` and `-smp 4`; scripted install boots to login |
+| SS-20 | OpenBIOS | default | 640, 768 | kernel: `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, reboot loop (SS-10: same at 1024) |
+| SS-20 | OpenBIOS | default | 1024 | `out of malloc memory (1008)!`, then `kernel write fault at addr=0x0`, `panic: Data fault` |
+| SS-20 | `ss20_v2.25_rom` | default (SuperSparc-II), -51, -61 | 256 | `Cpu #0 Data Access Error`, `ok`; `banner`: `Data Access Exception`; `boot cdrom`: `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled` |
+| SS-20 | `ss20_v2.25_rom` | SuperSparc-40/50/60 | 256, 512, 1024 | installer; scripted install (-50) boots to login. The PROM probes 8 banks of 64 MB, so 512 MB at most (1024 runs as 512) |
+| SS-20 | `ross225r.bin` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
+| SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
+| SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
+| SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
+| SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
+| LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)` |
+| LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok` (not an LX PROM) |
+| Voyager | `voyager.bin` | default | 256 | `qemu: fatal: Trap 0x02 (Illegal Instruction)` after `Power-ON Reset` |
+
+The Sun SS-20 PROM reaches `ok` and boots with `-cpu TI-SuperSparc-40`, `-50` or `-60` only.
+qemu-server never passes `-cpu` on sparc, so as configured today the SS-10/SS-20 PROMs can't work.
+With `-smp 2` the PROM reports `Cpu #1 Nothing there`, Solaris lists one CPU and QEMU burns one host
+core (the second vCPU is never started); with 1024 MB Solaris reports `Memory size: 512 Megabytes`.
+A disk installed with OpenBIOS on SS-20 boots with the Sun SS-20 PROM and the reverse (both SS-20,
+`-cpu TI-SuperSparc-50` for the PROM); the SS-10 OpenBIOS install boots on SS-20 too. An SS-5 install doesn't boot on SS-10/SS-20 (above).
+
+The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops after `Configuring devices...` /
+`fdintr: nobody sleeping (c0 0 0)`, the CPU in the kernel's `idle` loop (an interrupt that never comes):
+2 of 2 such cases in one `machines` run (OpenBIOS and the Sun PROM), 1 of 6 boots in a row on an idle
+host, 0 of 18 with other guests running. Installed disks didn't show it (33 benchmark boots).
+
+`-cpu` other than the machine's default, booting the installed 2.6 with OpenBIOS: SS-5 boots only
+with its default `Fujitsu-MB86904`; `TI-MicroSparc-I` stops QEMU (`Trap 0x21 (Instruction Access
+Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Data Access Error)` at
+`pc f00412f4`, `TI-SuperSparc-II` hangs OpenBIOS after `Not a bootable ELF image`. SS-20 boots with
+`TI-SuperSparc-II` (default), `-50`, `-51`, `-60`; `-40`, `-61` and `Fujitsu-MB86904` stop QEMU with
+`Trap 0x29` at `pc f00412f4`.
+
+**Other guests on SS-20** (OpenBIOS unless stated):
+
+| Guest | Result |
+| --- | --- |
+| Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
+| Solaris 7 (3/99) CD | language question, SS-5 and SS-20 |
+| Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` |
+| Solaris 9 DVD | language menu, SS-5 and SS-20 |
+| NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
+| NetBSD 11.1 GENERIC.MP (from the ISO) | `-smp 2`: `cpu0: booting secondary processors: cpu1`, `hw.ncpu = 2`; five 16-256 MB writes with `sync` pass; idle ~4% of a core |
+
+**SMP.** Solaris 2.6 on SS-20 with OpenBIOS brings up every CPU (`psrinfo`: 2 or 4 on-line,
+OpenBIOS `CPUs: 4 x TI,TMS390Z55`), but it isn't stable:
+
+| CPUs | RAM | What happened |
+| --- | --- | --- |
+| 2 | 256 | 256 MB `dd` + `sync`: hung in 4 of 4 tries (writes up to 128 MB passed); bench runs (64 MB): 3 of 3 passed |
+| 2 | 512 | hung once during boot (`volume management starting.`); bench runs: 3 of 3 passed |
+| 2 | 256 | `SOAK=300` (2 shells looping the job and a 10 MB `dd`): hung within the first minute; the same with one CPU ran the 300 s |
+| 2 | 256 | `TI-SuperSparc-50` and `-60`: 256 MB write hung too; `-40` stops QEMU at boot |
+| 2 | 256 | `-accel tcg,thread=single`: hung at boot after `Configuring the /devices directory`, same place as below |
+| 4 | 256 | bench: 1 of 3 passed; one hung in `prtconf` right after login, one in the 64 MB write |
+| 4 | 512 | bench runs (64 MB): 3 of 3 passed |
+
+Every hang looks the same: no answer on the console, all vCPUs at 100%, CPU 0 in `xc_sync_cache+0x1a0`
+(waiting for the other CPU to acknowledge a cross-call), the other CPU looping in `splx`/`splr`. Not a
+multi-threaded TCG race (single-threaded TCG hangs the same way), not the CPU variant; NetBSD's MP
+kernel survives the same writes. SMP isn't usable for Solaris 2.6 here.
+
+**Benchmark** (`scenarios/bench.py`, one QEMU on an idle 14-core host, 3 boots each, median and
+range; host seconds): `job` = `nawk 'BEGIN{for(i=0;i<1000000;i++)s=(s+i*i)%9973;print s}'`,
+`parallel` = that many copies at once as CPUs, `write` = 64 MB `dd` to /export/home + `sync`, `read`
+= 64 MB `dd` from the raw slice, `boot` = QEMU start to `console login:`; host CPU in % of one core.
+
+| Configuration | job s | parallel s | write s | read s | boot s | host CPU idle | host CPU parallel |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SS-5 OpenBIOS 256 | 47.1 (47.0-47.7) | 47.4 (46.8-47.6) | 1.9 (1.8-1.9) | 0.6 (0.6-0.7) | 58.6 (57.9-59.0) | 102 | 101 |
+| SS-5 `ss5.bin` 256 | 47.9 (47.7-48.2) | 47.8 (47.4-49.4) | 1.9 (1.8-1.9) | 0.6 (0.6-0.7) | 59.4 (59.3-60.6) | 102 | 101 |
+| SS-10 OpenBIOS 256 | 5.2 (5.2-5.3) | 5.2 (5.1-5.2) | 1.7 (1.7-1.8) | 0.3 | 55.7 (55.6-58.4) | 102 | 101 |
+| SS-20 OpenBIOS 1 CPU 256 | 5.1 (5.0-5.2) | 5.1 (5.0-5.3) | 1.7 (1.7-1.8) | 0.3 | 57.2 (56.2-57.5) | 102 | 101 |
+| SS-20 OpenBIOS 1 CPU 512 | 5.3 (5.3-5.4) | 5.4 (5.2-5.4) | 1.8 (1.7-1.8) | 0.3 | 58.2 (57.9-58.6) | 102 | 101 |
+| SS-20 OpenBIOS 2 CPUs 256 | 8.6 (8.5-9.4) | 6.7 (6.4-6.8) | 2.8 (2.6-2.9) | 0.4 | 57.5 (56.9-57.9) | 198 | 198 |
+| SS-20 OpenBIOS 2 CPUs 512 | 8.3 (8.2-8.6) | 6.2 (6.2-6.3) | 2.7 (2.6-2.7) | 0.4 (0.3-0.4) | 57.6 (56.6-58.0) | 198 | 199 |
+| SS-20 OpenBIOS 4 CPUs 256 | 16.1 (16.0, 16.2) | 11.0 (10.7, 11.3) | 5.2 (1 run) | 0.7 (1 run) | 59.4 (58.3-62.3) | 340 | 360 |
+| SS-20 OpenBIOS 4 CPUs 512 | 14.8 (14.8-15.3) | 10.9 (10.0-11.0) | 4.2 (4.0-4.6) | 0.5 (0.5-0.6) | 59.4 (58.4-72.1) | 342 | 359 |
+| SS-20 `ss20_v2.25_rom` -50 256 | 5.3 (5.2-5.6) | 5.3 | 2.0 (1.9-2.1) | 0.3 | 57.8 (57.7-58.3) | 102 | 101 |
+| SS-20 `ss20_v2.25_rom` -50 512 | 5.3 (5.2-5.4) | 5.2 (5.2-5.4) | 1.7 (1.7-1.8) | 0.3 | 57.9 (57.8-58.3) | 102 | 101 |
+
+- One CPU: SS-10 and SS-20 run the job 9x faster than SS-5; firmware and 256 vs 512 MB make no
+  difference. Disk I/O is the same within 0.3 s; boot time (~57 s) is the same everywhere (mostly
+  fixed waits, not CPU).
+- More CPUs: one job gets slower (1.7x with 2 CPUs, ~3x with 4), several at once finish sooner than
+  one after another on one CPU (2 jobs: 6.5 s vs 10.2 s; 4 jobs: 10.9 s vs 20.4 s), writes take
+  longer, and each idle vCPU burns a host core (Solaris 2.6 has no idle on SS-10/SS-20). And it
+  hangs (above).
+
+**Why SS-5 is slower.** Times in the guest (`/usr/bin/time`, seconds), one CPU, OpenBIOS:
+
+| Job | SS-5 | SS-20 |
+| --- | --- | --- |
+| `ksh` integer loop, 30000 rounds (no FPU) | 5.9 | 0.9 |
+| `nawk` loop above, 300000 rounds | 14.6 | 1.6 |
+| `nawk` `sqrt`/`sin`, 100000 rounds | 4.2 | 0.5 |
+| 100 x `/bin/true` + `expr` (user + sys) | 1.1 + 2.4 | 0.6 + 1.7 |
+| `dd` 1.3 GB `/dev/zero` to `/dev/null` (kernel) | 1.9 | 1.8 |
+| `dd` 64 MB to `/tmp` (tmpfs, kernel) | 1.2 | 1.4 |
+
+User-mode code is 6-9x slower on SS-5, kernel work isn't. During the `nawk` loop the guest takes
+~39000 window overflow and as many underflow traps a second (QEMU `log int`), and QEMU counts ~377000
+TLB flushes a second (`info jit`; on SS-20 ~100). Solaris's generic window-trap handlers, which it
+uses with the microSPARC-II (`_window_overflow`, `_window_underflow`), set and clear the no-fault bit
+in the MMU control register around the user-stack access (`sta %g1, [%g0] 0x04` twice per trap), and
+QEMU flushes its whole software TLB whenever that bit changes (`target/sparc/ldst_helper.c`,
+`ASI_M_MMUREGS` register 0: `if ((oldreg ^ new) & (MMU_NF | mmu_bm)) tlb_flush(cs)`). With a
+SuperSPARC, Solaris uses `vik_window_underflow`/`vik_wo_user`, which probe the stack page with an MMU
+probe (`lda [...] 0x03`) and write no MMU register. Half the guest PC samples on SS-5 are in
+`_window_overflow`. QEMU's CPU models differ only in MMU/FPU version and MXCC (mul/div are on for all),
+and NetBSD runs the same awk loop equally fast on SS-5 and SS-20 (1.85 s / 1.80 s). So the gap follows
+the Solaris kernel's CPU module, i.e. the CPU model; SS-5 boots only with its microSPARC, so the
+machine can't be separated from it. It hits any user program that calls deeper than the register
+windows (shells, interpreters, compilers: nearly all), which makes it a general difference for
+Solaris 2.6 user-space work, not one kind of operation.
+
+**Recommended** (from the data above):
+
+- **SS-20 (or SS-10), OpenBIOS, one CPU, 256-512 MB** for Solaris 2.6: ~9x faster user-space than
+  SS-5, the same disk and boot times. Needs its own install on that machine type (the SS-5 disks don't
+  boot there). 2.5.1, 7, 8 and 9 installers also start there.
+- SS-5 + OpenBIOS (or `ss5.bin`), 256 MB stays for what needs SS-5: existing SS-5 disks, Solaris 2.4
+  (Sun PROM only), SunOS 4.1.4, the `pmc` idle setup.
+- Don't offer more than one CPU for Solaris 2.6: it hangs, and one job runs slower. NetBSD's MP kernel
+  works with 2 CPUs (not benchmarked).
+- RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
+  256 in this benchmark.
+- The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60),
+  which qemu-server would have to pass; they bring no speed benefit over OpenBIOS. The SS-10 PROM
+  doesn't run on the SS-10 machine.
+- Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
+  `ross225r.bin` (which runs as a SuperSPARC SS-20).
 
 ## qemu-server
 
@@ -185,13 +337,19 @@ shell after login; the `idle` matrix has the cases with 0011-0013 except NetBSD 
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
+- Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
+  results under "SS-10 and SS-20".
 
 ## Known gaps
 
 - **CD as a disk:** Solaris 2.4 and 2.5.1 only boot their installer from a CD that answers as a
   disk (`scsi-hd`). qemu-server always makes a sparc CD-ROM a `scsi-cd`.
-- **RAM:** QEMU's SS-5 takes 256 MB at most (`Too much memory for this machine`); qemu-server
-  and the UI don't limit it, and the guide says ~512 MB.
+- **RAM:** QEMU's SS-5 takes 256 MB at most (`Too much memory for this machine`); Solaris 2.6 on
+  SS-10/SS-20 panics above 512 MB. qemu-server and the UI don't limit either.
+- **CPU model:** the Sun SS-10/SS-20 PROMs need `-cpu TI-SuperSparc-40/50/60`, which qemu-server
+  doesn't pass; Solaris 2.6 hangs with more than one CPU, which nothing prevents ("SS-10 and SS-20").
+- **Machine choice:** the UI offers SS-5 only, though SS-10/SS-20 run Solaris 2.6 user space ~9x
+  faster ("SS-10 and SS-20").
 - **lance MAC:** fixed at `08:00:20:b5:09:67` instead of coming from the VM's `net0`.
 - **Architecture changes:** changing the architecture of an existing VM should be refused.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
