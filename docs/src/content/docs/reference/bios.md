@@ -15,8 +15,10 @@ Sparc and sparc64 requires either the version of OpenBIOS that matches the archi
 Generally speaking OpenBIOS is more safe and easier to preconfigure and boot.
 However nothing scratches that nostalgic itch quite like seeing the splash logo and POST from SparcStation 5.
 
-There are a few PROM files included but only SS5, SS10 and SS20 seem to be somewhat stable.
-They each come with hardware layout expectations that must be followed, see the [SPARC guide](/guides/sparc/) for more information.
+The supported PROM files are `ss5.bin` (machine SS-5) and `ss20_v2.25_rom` (machine SS-20, which
+also gets the `TI-SuperSparc-50` CPU it needs); `ss10_v2.25_rom` doesn't run on QEMU's SS-10 and isn't
+offered. The BIOS selector only lists the firmware the chosen machine runs, see the
+[SPARC guide](/guides/sparc/#supported-sparc32-profiles).
 
 ## Further reading
 

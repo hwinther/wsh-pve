@@ -16,24 +16,41 @@ SPARC support is experimental. Only a narrow set of machine, BIOS, disk, and net
 | sparc (32-bit) | `qemu-system-sparc` | SS-5 |
 | sparc64 (64-bit) | `qemu-system-sparc64` | sun4u |
 
-Set this in the VM's [Architecture](/reference/architecture/) panel. Selecting a SPARC architecture filters the machine, BIOS, disk, and network options to the supported subset.
+Choose it when you create the VM (Create VM → General, with Advanced checked → vCPU Architecture);
+it can't be changed later. Selecting a SPARC architecture filters the machine, BIOS, display, disk, and
+network options to the supported subset.
+
+## Supported sparc32 profiles
+
+A sparc32 VM must match one of these combinations; the API refuses anything else (on create, on a
+config change and on start) with a message naming the allowed values, and the wizard offers only these.
+
+| Machine | BIOS | CPU | RAM |
+| ------- | ---- | --- | --- |
+| SS-5 (default) | OpenBIOS (default) or `ss5.bin` | the machine's | up to 256 MB |
+| SS-10 | OpenBIOS | the machine's | up to 512 MB |
+| SS-20 | OpenBIOS | the machine's | up to 512 MB |
+| SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | up to 512 MB |
+
+Always one CPU. Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
+network device, `lance`.
 
 ## Recommended hardware layout
 
-- **Machine** — `SS-5` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). For Solaris 2.6, `SS-20` (or `SS-10`) with OpenBIOS and one CPU runs user programs about 9 times faster than `SS-5` on the same host (disk and boot times are the same); it needs its own install on that machine type.
-- **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. The bundled `SS5`, `SS10`, and `SS20` PROM files are the only PROMs that are somewhat stable, and each expects a matching hardware layout (see [BIOS](/reference/bios/)).
-- **Processor / memory** — one CPU for sparc32. RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 Solaris 2.6 boots with up to 512 MB (with more it panics at boot). QEMU emulates up to 4 CPUs on SS-10/SS-20, but Solaris 2.6 with more than one CPU hangs within minutes. The CPU model is fixed by the machine (see [Processors](/reference/processors/)).
+- **Machine** — `SS-5`, `SS-10` or `SS-20` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). For Solaris 2.6, `SS-20` (or `SS-10`) with OpenBIOS runs user programs about 9 times faster than `SS-5` on the same host (disk and boot times are the same); it needs its own install on that machine type.
+- **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. Of the Sun PROMs, `ss5.bin` runs on SS-5 and `ss20_v2.25_rom` on SS-20 (see [BIOS](/reference/bios/)); the SS-10 PROM doesn't run on QEMU's SS-10 and isn't offered.
+- **Processor / memory** — one CPU for sparc32. RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 at most 512 MB (Solaris 2.6 panics at boot with more). QEMU emulates up to 4 CPUs on SS-10/SS-20, but Solaris 2.6 with more than one CPU hangs within minutes, so the VM gets one. The CPU model follows the machine and BIOS (see [Processors](/reference/processors/)).
 - **Disk** — SCSI bus only.
 - **CD-ROM** — SCSI.
-- **Network** — `lance` (sparc; built into the machine and not hot-pluggable) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
+- **Network** — `lance` (sparc; built into the machine, not hot-pluggable, one per VM, with the MAC address of `net0`) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
 - **Display** — `cg3` (preferred) or `tcx` framebuffer; a serial console is also available (see [Display](/reference/display/) and [Serial port](/reference/serial/)).
 - **Audio** — not currently working on SPARC.
 - **USB / PCI passthrough** — not supported on SPARC.
 
 ## Installing SunOS / Solaris
 
-1. Create a VM and set the [Architecture](/reference/architecture/) to `sparc` (or `sparc64`).
-2. Confirm the machine, BIOS, disk bus, and network card match the layout above.
+1. Create a VM with the [Architecture](/reference/architecture/) `SPARC (32-bit)` (or `SPARC (64-bit)`).
+2. Pick a machine and BIOS from the profiles above; the wizard puts the first disk on SCSI target 3 and the CD-ROM on target 6.
 3. Give it a **Sun-labelled disk** (see below): the installer only lists disks that carry a Sun label.
 4. Attach the installation media as a SCSI CD-ROM.
 5. Make sure a network device is present **before** installing — on SunOS/Solaris the network only works if it was present at install time.
@@ -61,8 +78,8 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 - **Solaris 2.4 and 2.5.1 need the CD to answer as a disk** (`scsi-hd`, read-only). From a CD-ROM
   device their kernel starts and then panics with `vfs_mountroot: cannot mount root`: real Sun CD-ROM
   drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. A VM's CD-ROM drive
-  is always a CD-ROM device (`scsi-cd`) today; presenting it as a disk from the VM configuration is
-  not supported yet.
+  is always a CD-ROM device (`scsi-cd`). To present the CD as a disk, copy the ISO into a raw disk
+  image of the VM and attach it read-only on target 6, e.g. `scsi6: local:100/vm-100-disk-1.raw,ro=1,backup=0`.
 - A CD that answers as a disk also shows up in the installer's disk list (`c0t6d0`): select only
   `c0t3d0`.
 - Boot the CD from a Sun PROM with `boot cdrom`. OpenBIOS boots a CD-ROM device directly (`-boot d`);
@@ -131,9 +148,10 @@ refreshes.
 
 - Audio does not work on SPARC guests.
 - sparc32: one CPU (Solaris 2.6 with more hangs); 256 MB on SS-5, 512 MB on SS-10/SS-20.
-- Only the `SS5`, `SS10`, and `SS20` PROM files are reasonably stable. The `SS10` and `SS20` PROMs only
-  run on the SS-20 machine with the CPU model set to `TI-SuperSparc-50` (or `-40`/`-60`), which the VM
-  configuration doesn't pass today; use OpenBIOS on SS-10/SS-20.
+- Of the Sun PROMs only `ss5.bin` (SS-5) and `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) are
+  supported; the SS-10 PROM doesn't run on QEMU's SS-10.
+- No framebuffer resolution option: cg3 runs at 1024x768.
+- The architecture can't be changed after the VM is created.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
 - sparc64 currently seems to only work with the OpenSPARC `disk.s10hw2` image.
