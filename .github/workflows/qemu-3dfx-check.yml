@@ -1,0 +1,112 @@
+name: qemu-3dfx build check
+
+# For a PR that changes what goes into pve-qemu-kvm's 3dfx binary (the qemu-3dfx pin, our port of
+# its QEMU patch, pve-qemu or pve-qemu.patch, or the scripts that check them): does the port still
+# apply, and does qemu-system-x86_64 with qemu-3dfx build (scripts/check-qemu-3dfx-build.sh, a few
+# minutes instead of the full package build). The promotion PR from promote-qemu-3dfx.yml gets the
+# same check as a hand-made one. This check is the PR's; the package build itself never fails on
+# 3dfx (it publishes without the binary and build-deb.yml opens the optional-extras issue).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "submodules/qemu-3dfx"
+      - "submodules/qemu-3dfx.patch"
+      - "submodules/pve-qemu-qemu-3dfx.patch"
+      - "submodules/pve-qemu"
+      - "submodules/pve-qemu.patch"
+      - "scripts/check-qemu-3dfx-build.sh"
+      - "scripts/refresh-qemu-3dfx-patch.sh"
+      - "scripts/qemu-3dfx-promotion.sh"
+      - "scripts/check-qemu-extras.sh"
+      - ".github/workflows/qemu-3dfx-check.yml"
+      - ".github/workflows/promote-qemu-3dfx.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build-check:
+    name: 3dfx build check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+      packages: read # docker pull of the build image from ghcr.io
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the merge commit and its first parent (main), for the pin before this PR
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Submodules
+        run: |
+          git submodule update --init submodules/pve-qemu submodules/qemu-3dfx
+          git -C submodules/pve-qemu submodule update --init qemu
+
+      # The promotion PR's body for a known range (d00e858..b94d988: five upstream commits, no change to
+      # upstream's QEMU patches), so a broken scripts/qemu-3dfx-promotion.sh shows up here first
+      - name: Promotion body for a known range
+        run: |
+          body=$(scripts/qemu-3dfx-promotion.sh body --from d00e858c54ea920853c64ba1088fbda33f35ada1 \
+            --to b94d988698766872e39d15bea07da92efdf7c112 --check-rc 0 --build-rc skip)
+          rows=$(grep -c '^| \[.[0-9a-f]\{7\}.\](https://github.com/hwinther/qemu-3dfx/commit/' <<<"$body")
+          [ "$rows" = 5 ] || { echo "::error::expected 5 upstream commits in the body, got $rows"; echo "$body"; exit 1; }
+          grep -q "^No change to upstream's QEMU patches.$" <<<"$body"
+          grep -q '^<!-- qemu-3dfx-promotion from=d00e858c54ea920853c64ba1088fbda33f35ada1 to=b94d988698766872e39d15bea07da92efdf7c112 ' <<<"$body"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Port check and 3dfx build
+        id: build
+        run: |
+          set -o pipefail
+          scripts/check-qemu-3dfx-build.sh --jobs "$(nproc)" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+          OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          log="$RUNNER_TEMP/build.log"
+          touch "$log"
+          {
+            echo "## 3dfx build check"
+            echo
+            grep -E '^check-qemu-3dfx-build: (PASS|FAIL)|^refresh-qemu-3dfx-patch: ' "$log" | sed -e 's/^/    /' || echo "    (no result: see the log)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          # When this PR moves the pin: what changed upstream, as the promotion PR shows it
+          [ "$EVENT" = pull_request ] || exit 0
+          old=$(git rev-parse HEAD^1:submodules/qemu-3dfx)
+          new=$(git rev-parse HEAD:submodules/qemu-3dfx)
+          [ "$old" != "$new" ] || exit 0
+          build_rc=1 check_rc=0 args=()
+          [ "$OUTCOME" != success ] || build_rc=0
+          ! grep -q '^check-qemu-3dfx-build: FAIL (apply)' "$log" || check_rc=1
+          git diff --quiet HEAD^1 HEAD -- submodules/pve-qemu-qemu-3dfx.patch || args+=(--port-changed)
+          scripts/qemu-3dfx-promotion.sh body --from "$old" --to "$new" --check-rc "$check_rc" \
+            --build-rc "$build_rc" --build-log "$log" "${args[@]}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qemu-3dfx-build-check
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
+          retention-days: 7

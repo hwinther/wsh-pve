@@ -1,0 +1,96 @@
+name: Promote qemu-3dfx
+
+# The qemu-3dfx pin (submodules/qemu-3dfx) moves only through a pull request: when the fork's master
+# (kept equal to kjliew/qemu-3dfx by sync-qemu-3dfx.yml, which calls this after it) has commits
+# beyond the pin, scripts/qemu-3dfx-promotion.sh force-pushes promote/qemu-3dfx (main + the new
+# gitlink, and the port refreshed when it needed it) and opens or updates one PR with the upstream
+# commits, the port check and a 3dfx-only build. A failed check opens it as a draft with
+# "(3dfx check failed)" in its title. Nothing new upstream: it closes a PR left open. Never pushes
+# to main, never merges.
+#
+# Token: WORKFLOW_TOKEN (the repository's PAT, as in the other sync workflows) checks out, pushes
+# the branch and opens/edits/closes the PR, because a PR or push made with GITHUB_TOKEN starts no
+# workflows and the PR's checks (qemu-3dfx-check.yml, zizmor, poutine, e2e) would not run. It needs
+# contents: write and pull-requests: write on this repository (as a fine-grained PAT; a classic PAT
+# needs `repo`). GITHUB_TOKEN gets contents: read and packages: read, only to pull the build image
+# from ghcr.io.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run the checks and update the PR even when it already shows this upstream commit against this main"
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    secrets:
+      WORKFLOW_TOKEN:
+        description: "PAT that pushes promote/qemu-3dfx and opens, edits and closes the PR"
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: promote-qemu-3dfx
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Open or update the promotion PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      # GITHUB_TOKEN writes nothing; the checkout, push and PR use WORKFLOW_TOKEN
+      contents: read # nothing beyond the default
+      packages: read # docker pull of the build image from ghcr.io
+    steps:
+      # The uploaded artifact is $RUNNER_TEMP/promotion (logs, title, body), not the work tree that holds
+      # the persisted credentials
+      - name: Checkout main # zizmor: ignore[artipacked]
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # main's history, to tell the promotion's own commits on promote/qemu-3dfx from others
+          fetch-depth: 0
+          # The branch push in the script uses these credentials (WORKFLOW_TOKEN), so the PR's
+          # workflows run. Nothing from the PR runs in this job.
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+          persist-credentials: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          FORCE: ${{ inputs.force == true && '--force' || '' }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR@users.noreply.github.com"
+          # shellcheck disable=SC2086 # FORCE is empty or one word
+          scripts/qemu-3dfx-promotion.sh run $FORCE --jobs "$(nproc)" --out "$RUNNER_TEMP/promotion"
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          out="$RUNNER_TEMP/promotion"
+          if [ -s "$out/body.md" ]; then
+            { echo "# $(cat "$out/title")"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No promotion PR was opened or updated (see the Promote step)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qemu-3dfx-promotion
+          path: ${{ runner.temp }}/promotion/
+          if-no-files-found: ignore
+          retention-days: 14

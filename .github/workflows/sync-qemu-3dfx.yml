@@ -1,5 +1,9 @@
 name: Sync qemu-3dfx from upstream
 
+# Keeps the fork's master (hwinther/qemu-3dfx) equal to kjliew/qemu-3dfx, then lets
+# promote-qemu-3dfx.yml open or update the promotion PR. The pin on main (submodules/qemu-3dfx) is
+# not moved here: sync-from-upstream.yml skips its submodule bump for qemu-3dfx.
+
 on:
   workflow_dispatch:
   schedule:
@@ -11,7 +15,7 @@ jobs:
   sync:
     # A caller has to grant at least what the called jobs ask for: sync-from-upstream.yml calls
     # build-deb.yml (GHCR push, GitHub release, the pve-qemu optional-extras issue), which calls
-    # repo-update.yml (GitHub Pages deploy).
+    # repo-update.yml (GitHub Pages deploy). For qemu-3dfx only its fork sync runs.
     permissions:
       contents: write
       packages: write
@@ -25,3 +29,14 @@ jobs:
       WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
       GPG_KEY: ${{ secrets.GPG_KEY }}
       GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
+
+  promote:
+    # Also when the fork sync failed: the promotion then compares with the fork as it is.
+    needs: [sync]
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read # what promote-qemu-3dfx.yml asks for; it writes with WORKFLOW_TOKEN
+      packages: read # docker pull of the build image from ghcr.io
+    uses: ./.github/workflows/promote-qemu-3dfx.yml
+    secrets:
+      WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
