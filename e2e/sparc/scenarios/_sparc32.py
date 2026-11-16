@@ -25,6 +25,10 @@ Variables (lab.py run ... --var KEY=VALUE):
   REFRESH   seconds between display updates, 0 = none          (0.5 with a framebuffer, else 0)
             A connected VNC client does this; without it cg3 never raises its vsync interrupt.
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
+  NET       user: QEMU user networking (slirp; the guest is 10.0.2.15, the host side 10.0.2.2)
+            tap: a tap interface in the lab container (labtap0, 10.0.2.2/24, the same addresses),
+            which needs `docker run --cap-add NET_ADMIN --device /dev/net/tun`
+            none (default): the lance NIC with nothing behind it
 """
 import os
 import shutil
@@ -98,8 +102,26 @@ def qemu_args(v, out):
         args += ["-trace", ev]
     if v.get("TRACE"):
         args += ["-D", os.path.join(out, "trace.log")]
-    args += ["-net", "nic,model=lance", "-net", "user"] if v.get("NET") == "user" else ["-net", "nic,model=lance"]
+    if v.get("NET") == "user":
+        args += ["-net", "nic,model=lance", "-net", "user"]
+    elif v.get("NET") == "tap":
+        tap_up()
+        args += ["-netdev", f"tap,id=net0,ifname={TAP},script=no,downscript=no", "-net", "nic,model=lance,netdev=net0"]
+    else:
+        args += ["-net", "nic,model=lance"]
     return args
+
+
+TAP = "labtap0"
+
+
+def tap_up():
+    """NET=tap: the tap interface QEMU attaches to, with the address user networking gives the host side
+    (10.0.2.2), so the guest is set up the same either way. Kept for the next run if it exists."""
+    if not os.path.exists(f"/sys/class/net/{TAP}"):
+        subprocess.run(["ip", "tuntap", "add", "dev", TAP, "mode", "tap"], check=True)
+    subprocess.run(["ip", "addr", "replace", "10.0.2.2/24", "dev", TAP], check=True)
+    subprocess.run(["ip", "link", "set", TAP, "up"], check=True)
 
 
 # The ESP SCSI controller by node names only: OpenBIOS resolves a path without unit addresses to the

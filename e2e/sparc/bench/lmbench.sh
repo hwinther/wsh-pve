@@ -1,7 +1,6 @@
 # lmbench 3.0-a9 subset, sourced by run.sh ($BIN, $T set). Fixed parameters, lmbench's own option
 # defaults otherwise; ENOUGH (microseconds per timed interval) fixed so every machine times the same.
-# Not here: the network tests (no network set up), and lat_ctx, bw_pipe and lat_fifo, which fail on
-# Solaris 2.6 (their reads end in EINTR: lmbench expects BSD signal semantics; see README).
+# The network tests are in net.sh. Not here: lat_fifo, lat_ctx and bw_pipe (they loop; see README).
 ENOUGH=100000; export ENOUGH
 cp $BIN/hello /tmp/hello; cp $BIN/hello /tmp/hello-s     # lat_proc exec/shell run these
 mkfile 8m $T/file

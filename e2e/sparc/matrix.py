@@ -76,8 +76,9 @@ MATRICES = {
         ("bench-sol26-ss20prom-ss20", "bench.py", SOL26SS20PROM, None, SS20PROM),
     ],
     # bench-disk.py: the bench disk's Dhrystone, Whetstone, Hanoi, nbench and lmbench on every machine
-    # and firmware, one CPU, 256 MB, Solaris 2.6, and 2.5.1 on SS-5. Only meaningful on an otherwise
-    # idle host; ~9-11 min a case (fresh disks: the first boot asks its questions).
+    # and firmware, one CPU, 256 MB, Solaris 2.6, and 2.5.1 on SS-5; the le0 tests over QEMU user
+    # networking (bench-disk.py's NET default). Only meaningful on an otherwise idle host; ~10-12 min
+    # a case (fresh disks: the first boot asks its questions).
     "benchdisk": [
         ("benchdisk-sol26-openbios-ss5", "bench-disk.py", SOL26, None, BENCH),
         ("benchdisk-sol26-ss5bin-ss5", "bench-disk.py", SOL26, None, {**BENCH, "BIOS": "ss5.bin"}),

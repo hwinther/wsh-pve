@@ -58,7 +58,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `solaris-tcx-packages.py` | adds the TCX packages (SUNWtcx.m, SUNWtcxow, SUNWtcxu) to an installed Solaris from its CD and touches `/reconfigure`; `TTYA_LOGIN=1` also gives root a login on ttya while the console is on the framebuffer | ~3-4 min |
 | `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time, times a CPU-bound command (`BUSY`), the echo of `true` and ten `sleep 1`; the numbers go to `result.json` (`metrics`) | ~3-4 min |
 | `bench.py` | boots an installed Solaris disk, checks the CPUs `psrinfo` lists (`CPUS`, default `SMP`), then times boot to login, a `nawk` loop, `PARALLEL` copies of it at once (default `SMP`), a 64 MB write + `sync` and a raw read, with QEMU's host CPU use idle and during the parallel run; `SOAK` adds a load phase. `init 5` at the end | SS-5: ~5 min, SS-20: ~3 min |
-| `bench-disk.py` | boots an installed Solaris disk with the bench disk (`DISK2`, "The bench disk") on target 4, mounts it, runs its `run.sh` (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset, the `nawk` loop) and puts every `BENCH` value into `result.json`, with the host's load average; `init 5` at the end | ~9-11 min (6-7 of them `run.sh`) |
+| `bench-disk.py` | boots an installed Solaris disk with the bench disk (`DISK2`, "The bench disk") on target 4, mounts it, runs its `run.sh` (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset with its network tests over `lo0`, the `nawk` loop, and lmbench over `le0` to the lab container: `NET=user` by default, `tap`, or `none`) and puts every `BENCH` value into `result.json`, with the host's load average; `init 5` at the end | ~10-12 min (7-8 of them `run.sh`) |
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -119,7 +119,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~35 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
 | `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
-| `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB; numbers only, on an otherwise idle host | ~60 min |
+| `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -386,15 +386,16 @@ driver and spins.
 
 Recognised period benchmarks for Solaris guests, built once in a guest and kept on a small disk that
 any installed Solaris 2.5.1-2.6 (7-9 untried) mounts: Dhrystone 2.1, Whetstone (double precision),
-the BYTE UNIX Benchmarks' Towers of Hanoi, nbench/BYTEmark 2.2.3 and a fixed lmbench 3.0-a9 subset,
-plus the earlier `nawk` loop, with a driver that prints one `BENCH <name> <value> <unit>` line per
-result. `bench/README` (also on the disk) lists versions, sources, flags, parameters and licences.
+the BYTE UNIX Benchmarks' Towers of Hanoi, nbench/BYTEmark 2.2.3 and a fixed lmbench 3.0-a9 subset
+with lmbench's network tests (over `lo0`, and over `le0` to a peer outside the guest), plus the
+earlier `nawk` loop, with a driver that prints one `BENCH <name> <value> <unit>` line per result. `bench/README` (also on the disk) lists versions, sources, flags, parameters and licences.
 `bench-disk.py` runs it and the `benchdisk` matrix compares machines and firmware; the results are in `submodules/SPARC.md` ("Benchmarks"). Neither disk image, nor the downloaded
 sources, nor anything from the Solaris CD is in the repository: only the scripts in `bench/`.
 
 | File (lab host) | What |
 | --- | --- |
-| `/mnt/sparc/disks/bench-sol26.raw` | the bench disk: 32 MiB, Sun label, UFS on slice 0 (`bench/README` is its README). The one measured in `submodules/SPARC.md`: sha256 `4fc0babd3639e67ec9ab6f5176a7d645316849759ad1e5b1d6e48335933a2206` (every rebuild differs: `newfs` and file times) |
+| `/mnt/sparc/disks/bench-sol26.raw` | the bench disk: 32 MiB, Sun label, UFS on slice 0 (`bench/README` is its README). The one measured in `submodules/SPARC.md`: sha256 `4fc0babd3639e67ec9ab6f5176a7d645316849759ad1e5b1d6e48335933a2206`, without the network tests (every rebuild differs: `newfs` and file times) |
+| `/mnt/sparc/disks/bench-sol26-net.raw` | the same with lmbench's network tests (`bench/net.sh`), measured in `submodules/SPARC.md` ("Network"): sha256 `a0f7eb6d0c04cccbd1078e02c7876e7fe79c568b235194a653e6a759c22bd93a` |
 | `/mnt/sparc/disks/sol26-ss20-build.raw` | the build disk: `sol26-enduser-ss20-installed.raw` + the 2.6 development packages + gcc 2.95.3 (sha256 `6be744e08cc3c7e34d7ed634d4f717d7f17f1c8a521e32fc23dbada86131eaa2`; boot only copies of it) |
 | `/mnt/sparc/disks/bench-downloads/` | the sources and the gcc package as downloaded and checked by `bench/handover.py` (untrusted third-party files: only for the hand-over CD) |
 
@@ -427,11 +428,11 @@ run several times faster than on SS-5, `submodules/SPARC.md` "Benchmarks"):
 **Hand-over CD and bench disk** (each rebuild; ~3 min). `bench/handover.py` downloads the sources and
 the gcc package (pinned URLs and sha256 in the script, kept in the download directory), gunzips what
 the guest can't, and writes an ISO 9660/Rock Ridge CD with them, `build.sh`, `run.sh`, `lmbench.sh`,
-`nbench.cfg`, the disk's README and a `SOURCES` file. `bench/sunlabel.py` makes a blank disk with a Sun
-label (slice 0 = all but the 2 alternate cylinders), and `bench-build.py` boots a copy of the build disk
-with both, runs `build.sh` (compile with fixed flags, `newfs` slice 0, copy binaries, sources and README,
-check that Dhrystone runs from the disk) and reports the compile times. From the repository root, on the
-lab host:
+`net.sh`, `nbench.cfg`, the disk's README and a `SOURCES` file. `bench/sunlabel.py` makes a blank disk
+with a Sun label (slice 0 = all but the 2 alternate cylinders), and `bench-build.py` boots a copy of
+the build disk with both, runs `build.sh` (compile with fixed flags, `newfs` slice 0, copy binaries,
+sources and README, check that Dhrystone runs from the disk) and reports the compile times. From the
+repository root, on the lab host:
 
 ```sh
 docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
@@ -443,6 +444,32 @@ cp --sparse=always /mnt/sparc/disks/sol26-ss20-build.raw $W/disk.raw
 docker run --rm -v $W:$W wsh-sparc-lab run scenarios/bench-build.py --out $W/run --var MACHINE=SS-20 \
   --var DISK=$W/disk.raw --var ISO=$W/handover.iso --var DISK2=$W/bench.raw
 cp $W/bench.raw /mnt/sparc/disks/bench-sol26.raw; sha256sum /mnt/sparc/disks/bench-sol26.raw
+```
+
+**Network.** `run.sh` runs lmbench's `lat_tcp`, `lat_udp`, `lat_connect`, `bw_tcp` and `lat_rpc` over
+`lo0` with the rest of lmbench, and, when `BENCH_PEER` is set, `lat_tcp`, `lat_udp` and `bw_tcp` over
+`le0` against lmbench's servers on that peer (`nic_*`; `bench/README`, "Network"). `bench-disk.py`
+provides the peer: it gives `le0` 10.0.2.15/24 with `ifconfig` (at run time only; nothing is written
+to the disk), checks that 10.0.2.2 answers `ping`, starts lmbench's Linux servers in the lab container
+(`/opt/lmbench-peer`: the same lmbench 3.0-a9, unmodified, fetched by `handover.py fetch` with its
+pinned sha256 and built by `bench/peer-build.sh` in the image) and runs `run.sh` with
+`BENCH_PEER=10.0.2.2`. The direction from the guest needs `bw_tcp`'s server in the guest: afterwards
+`bench-disk.py` starts it there and runs the client in the container (`nic_bw_out`). `NET` picks the
+path between QEMU and the container:
+
+- `NET=user` (default, the `benchdisk` matrix): QEMU user networking (slirp). 10.0.2.2 is QEMU's own
+  user-mode TCP/IP stack, which relays each connection over a socket of the container; the
+  guest-to-container direction goes through a host forward (`hostfwd_add` on the monitor, removed
+  again afterwards). What a VM with `-netdev user` gets.
+- `NET=tap`: a tap interface in the container (`labtap0`, 10.0.2.2/24, the same addresses), so the
+  container's kernel answers; QEMU's slirp is out of the path. The container needs
+  `--cap-add NET_ADMIN --device /dev/net/tun`. What a VM on a bridge gets, minus the bridge.
+- `NET=none`: no peer, the `nic_*` tests are a `BENCH-SKIP` line.
+
+```sh
+docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -v /mnt/sparc/runs:/mnt/sparc/runs \
+  -v /mnt/sparc/disks:/mnt/sparc/disks:ro wsh-sparc-lab run scenarios/bench-disk.py --out /mnt/sparc/runs/bt \
+  --var DISK=<copy of an installed disk> --var DISK2=/mnt/sparc/disks/bench-sol26-net.raw --var NET=tap --var ONLY=nic
 ```
 
 **Run it**: `bench-disk.py` with `DISK2=` the bench disk, or the matrix (the bench disk's directory
