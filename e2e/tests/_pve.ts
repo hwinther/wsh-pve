@@ -64,33 +64,6 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
-/**
- * Whether the installed qemu-server has the sparc64 profile (`PVE::QemuServer::Machine::
- * assert_sparc64_profile`: IDE disks, `-boot order=`, no bootindex or balloon, the refusals). Before
- * it, sparc64 VMs were built with the lsi SCSI controller and bootindex, which OpenBIOS can't boot.
- */
-export async function hasSparc64Profile(): Promise<boolean> {
-  const probe = await pveExec([
-    'perl',
-    '-MPVE::QemuServer::Machine',
-    '-e',
-    `print PVE::QemuServer::Machine->can('assert_sparc64_profile') ? 'profile=yes' : 'profile=no';`,
-  ])
-  expect(probe.output, probe.output).toMatch(/^profile=(yes|no)$/m)
-  return probe.output.includes('profile=yes')
-}
-
-/** Whether the installed pve-manager mirrors the sparc64 profile (PVE.qemu.Architecture.sparc64Profile). */
-export async function hasSparc64ProfileUi(): Promise<boolean> {
-  const probe = await pveExec([
-    'sh',
-    '-c',
-    'grep -q sparc64Profile /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
-  ])
-  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
-  return probe.output.includes('ui=yes')
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
