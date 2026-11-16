@@ -120,6 +120,7 @@ The sparc64 build applies all of them, in a step that leaves no `openbios-sparc6
 | `0005-sparc64-leave-no-active-package-after-preopen` | `preopen` left `/chosen` as the active package at the prompt and for every client program, so Solaris's Forth words (`unix-tte`) went into `/chosen`'s word list and `' unix-tte is va>tte-data` failed after the kernel's `device-end` | not fixed; see `upstream/openbios-sparc64-client-forth-state.md` |
 | `0006-sparc64-client-dont-define-a-forth-constant` | `11 constant forth` in `client.fs` hid the FORTH vocabulary word; `only forth also definitions` pushed `0x11` (generic code, applied to sparc64 only here) | as 0005 |
 | `0007-sparc64-fcode-consume-instance-in-defining-words` | FCode `b(value)`/`b(variable)`/`b(defer)`/`b(buffer:)` left the `instance` flag set; the next Forth `defer` became an instance word and crashed with no active package (generic code, applied to sparc64 only here) | as 0005 |
+| `0009-sparc64-name-upa-and-ebus-children-like-obp` | The sabre was `pci@1fe,0` and the ebus children `su@0`, `8042@0`, ...; OBP (and Solaris, which builds the same names and looks the console path up among them) has `pci@1f,0` and `su@14,3f8`. Solaris 10 never opened its console driver and its installer ignored all input on ttya. The root prints the UPA port id; the ebus node has its own two-cell space,offset `encode-unit`/`decode-unit` | not fixed; see `upstream/openbios-sparc64-node-names.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1133,7 +1134,7 @@ of powering off (`halt -p` on an installed system couldn't be tried).
 
 **Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, serial console). With QEMU's
 `openbios-sparc64`, none reaches an installer. With the patched build from `openbios/`
-(patches 0003-0007, below), Solaris 10 1/13 boots to the installer's first prompt.
+(patches 0003-0007 and 0009, below), Solaris 10 1/13 boots to the installer and takes input on ttya.
 That firmware isn't in the package yet (see "Packaging"). OpenBIOS finds the sun4u boot block on
 slice `f` of each CD and runs it.
 
@@ -1142,7 +1143,7 @@ directory, the same source as `openbios/Dockerfile` builds):
 
 | CD | Where it stops |
 | --- | --- |
-| 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device. The installer takes no input on ttya (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
+| 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device (fixed in QEMU, below). With 0003-0007 the installer took no input on ttya; 0009 fixes that (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
 | 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules` |
 | 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free` |
 | 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free` |
@@ -1172,18 +1173,94 @@ firmware alike: OpenBSD's installed GENERIC kernel (`Unimplemented service set-s
 `Unhandled Exception 0x0000000000000030`) and NetBSD with 4096 MB (`panic: Can't claim two pages
 of memory.`).
 
-**Solaris 10: no console input.** At `Select a Language`, `0` Return on ttya changes nothing,
-also after 4 minutes. OpenBIOS takes input on the same path, also 200 s after start. With
-QEMU's `-trace serial_read,serial_write,ebus_isa_irq_handler,...`, Solaris's serial driver sets
-up the 16550 with FCR `0x0f`, MCR `0x0b`, 9600 baud and IER `0`, never enables an interrupt,
-and polls LSR, which stays `0x60` (no received data) after the characters are sent. The ISA IRQ 4
-line is never raised. Both that and the IDE warning point at QEMU's sun4u devices and interrupt
-delivery rather than the firmware. paulsheer/qemu (below) carries a cmd646 interrupt fix for the
-IDE warning. Why the received characters don't reach the UART's receive buffer was not found.
-Until that is solved, nothing past the first installer prompt can be tested: the disk, `hme0`
-traffic, an install. Next step: trace QEMU's 16550 receive path (`serial_can_receive`,
-`serial_receive1`) under Solaris. If the characters arrive there, compare with NetBSD's `com`,
-which works on this machine.
+**Solaris 10: console input (solved by patch 0009).** With 0003-0007 the installer printed `Select a
+Language` and then ignored every key. A debug print in QEMU's 16550 receive path showed the cause:
+the characters arrived in the UART (LSR `0x60` → `0x61`, data ready), and nothing ever read them.
+The `su` driver had attached (FCR `0x0f`, MCR `0x0b`, 9600 baud, IER `0`), but Solaris never opened
+it as the console. Solaris builds OBP's names for its device nodes (`pci@1f,0` for the sabre, from
+the UPA port id; `su@14,3f8` for the ebus 16550, from space,offset) and looks the firmware's stdin
+path up among them. OpenBIOS named them `pci@1fe,0` and `su@0`, so nothing matched. Patch 0009
+names them like OBP: the stdin instance path is now `/pci@1f,0/pci@1,1/ebus@1/su@14,3f8`. Solaris
+10 echoes the `0` and goes on to `What type of terminal are you using?`, and from there through the
+installer's curses screens on ttya. Verified with QEMU 11.1.3 as packaged and with the standalone
+build. Also seen: with 0009 in place, 0003 is no longer needed for Solaris 10 to reach the installer
+(firmware with only 0009 + the IDE-tree change below, 1024 and 2048 MB: no `no nucleus hblk8`).
+0003 stays: the accounting it fixes is real, and Solaris 9 needs it.
+0009 defines the ebus `decode-unit`/`encode-unit` pair in Forth over the bridge methods the ebus node already has, so OpenBIOS prints
+`decode-unit isn't unique.` and `encode-unit isn't unique.` at power-on (cosmetic). A cleaner
+variant (a method table of its own for the ebus node, as paulsheer does) was tried and dropped: with
+it NetBSD's CD took `wd0a` as its root device (`root device (default wd0a):`; 3 of 9 matrix cases
+failed). The cause wasn't found.
+
+**Solaris 10 beyond the first prompt** (lab scratch scenario driving the installer by screen title;
+firmware 0003-0007 and 0009 (its method-table variant, above) plus the experimental IDE-tree change below, standalone QEMU 11.1.3 with the
+cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on user networking):
+
+- **IDE interrupt.** QEMU clears the cmd646 interrupt status bits (MRDMODE/CFR/ARTTIM23) when the
+  drive drops INTRQ, which happens when the guest reads the drive's status register. Solaris reads
+  the status and then polls those bits, and warned `WARNING: Interrupt not seen after set_features`
+  once per device. The standalone QEMU patch `ide/cmd646: latch the interrupt status bits until the
+  guest clears them` keeps them latched until the guest writes 1 to clear them, while the PCI
+  interrupt line keeps following INTRQ. With it the warning is gone and the disk attaches as `dad0`.
+  A first version also drove the interrupt line from the latched bits, as paulsheer/qemu does. That
+  left the line asserted for guests that don't clear the bits: Linux disabled the interrupt (`irq 7:
+  nobody cared`) and OpenBSD hung at boot (matrix 7/9). Notes: `upstream/qemu-cmd646-interrupt-latch.md`.
+  The patch is kept as a standalone file in the lab's evidence directory; it isn't in `pve-qemu.patch`
+  yet.
+- **The DVD as install media and the disk.** With OpenBIOS's IDE tree (a node per channel,
+  `ide@3/ide@1/cdrom@0`), the installer refused the DVD: `ERROR: The disc you inserted is not a
+  Solaris OS CD/DVD.` OBP on an Ultra 5/10 puts the drives directly under the controller as
+  `disk@0,0` and `cdrom@2,0` (target = 2 × channel + unit), which is how Solaris names its `dad`/`sd`
+  nodes. With that tree (experimental, not committed: it breaks NetBSD's CD boot, below), the boot
+  path maps to `/devices/pci@1f,0/pci@1,1/ide@3/sd@2,0:f`. The installer accepts the DVD and lists
+  the disk as `c0t0d0` (16382 MB).
+- **Install.** The interactive text installer on ttya runs through system identification (network
+  with DHCP on `hme0`, time zone, root password), software selection (the default group, 4053 MB),
+  disk selection and automatic layout, and installs: `Solaris 10 software installation succeeded`,
+  boot blocks on `c0t0d0s0`, `Creating boot_archive for /a`, `syncing file systems... done`, in
+  about 60 minutes of copying. That is 1 of 3 attempts. One attempt was stopped early by the
+  scenario (1.1 GB in). One panicked about 17 minutes into the copy: `panic[cpu0]/thread=...: bad
+  unknown trap at TL 1`, with `%tt` `045` (interrupt level 5) and `uata:ghd_intr` on the stack.
+  This is an intermittent kernel panic around the IDE interrupt path. paulsheer reports similar
+  crashes ("not stable", within an hour). Not found.
+- **Reboot.** After the install, `rebooting...` ends in `panic - kernel: prom_reboot: reboot call
+  returned!`: OpenBIOS's client-interface `boot` service only prints `BOOT` and returns. A fix (reset
+  the machine) is written but not tested yet.
+- **The installed disk.** OpenBIOS loads the boot block and the boot archive from `disk@0,0:a`, and
+  the kernel starts (`SunOS Release 5.10`). Then `Cannot load drivers for
+  /pci@1f,0/pci@1,1/ide@3/disk@0,0:a`, `Cannot assemble drivers for root`, `vfs_mountroot: cannot
+  mount root`. Solaris finds no driver for a node named `disk`: Solaris maps OBP's IDE nodes to its
+  `dad` driver through their `compatible` property (`ide-disk`, which paulsheer's and
+  proxmox-solaris's trees set). This is the next step; not tried yet.
+- **`hme0`.** It attaches and is configured from the installer's answers. Traffic isn't verified
+  yet; that needs the installed system. QEMU writes the default MAC `52:54:00:12:34:56` into the
+  sun4u IDPROM unless the NIC is the machine's onboard `-nic`. qemu-server and the lab add `sunhme`
+  with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
+  the same thing on the wire. This was read in `hw/sparc64/sun4u.c`, not measured.
+
+**NetBSD with the OBP-style IDE tree.** NetBSD's CD boot stops at `root device (default wd0a):`.
+It boots `cdrom@2,0:f` but takes `wd0` for root. Its installed disk still boots. The `sparc64`
+matrix with the IDE-tree change was 5/9 (NetBSD 11.1 and 9.3 CD and the sysinst install fail). NetBSD
+handles OBP's `cdrom@2,0` on a real Ultra 5 (`autoconf.c` adds 2 for the secondary channel), so the
+remaining difference is in what OpenBIOS returns for the boot device (likely `my-unit` or `reg`).
+Not found yet. That is why the IDE-tree change isn't committed.
+
+**maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
+Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its
+README notes that keystrokes don't reach Solaris on the serial console; patch 0009 here is the
+cause and fix. Its OpenBIOS patch:
+
+- maps the sabre's unit address between `1f` and `1fe` (as 0009 does);
+- flattens the IDE tree as `dad@unit,0`, with the target equal to the unit, so the CD-ROM must be
+  on the primary channel;
+- has no `available`/`ofmem` change, which matches the finding above that the names alone get
+  Solaris 10 past `no nucleus hblk8`.
+
+Its QEMU change is a binary patch of the packaged `qemu-system-sparc64`: it keeps the cmd646 status
+bits latched, and it removes multiword DMA and UDMA from the disk's IDENTIFY data, because "DMA
+completion never arrives" after Solaris switches to MDMA2. It also patches Solaris's `uata` to stay
+on PIO. Here the install copied 4 GB to the disk with the latch patch alone and without an `ATA
+transport failed`, so DMA didn't fail in these runs. Whether Solaris used DMA or PIO wasn't measured.
 
 **Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
 boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
