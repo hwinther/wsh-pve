@@ -157,6 +157,24 @@ MATRICES = {
         ("netbsd111-idle-ss5", "idle.py", NETBSD111, None,
          {"PROMPT": "login:", "CHECK": "dmesg | grep apc", "CHECK_EXPECT": "apc0 at", "CPU_BELOW": "10"}),
     ],
+    # Stop-A (L1-A) on running guests (stop-a.py, two rounds each): QEMU stays up, the guest stops at
+    # the firmware prompt and `go` resumes it; `boot` there resets and boots again. Needs
+    # openbios/patches/0008 (before it OpenBIOS powered the machine off). At 1152x900 Solaris's X
+    # server doesn't start, so the console login prompt stays on the screen; at 1024x768 dtlogin.
+    # NetBSD's GENERIC kernel enters ddb instead of the firmware. The chord in the wrong order is
+    # ignored. No break on ttya here: QEMU's ESCC never ends a break and Solaris's serial console
+    # stops answering after one (submodules/SPARC.md, "Stop-A").
+    "stopa": [
+        ("stopa-sol26-console-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900"}),
+        ("stopa-sol26-dtlogin-openbios-ss5", "stop-a.py", SOL26, None, {"AT": "dtlogin"}),
+        ("stopa-sol26-boot-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900", "RESUME": "boot", "REPEAT": "1"}),
+        ("stopa-sol26-reversed-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900", "KEYS": "a stop", "EXPECT": "none"}),
+        ("stopa-sol26-console-openbios-ss10", "stop-a.py", SOL26SS10, None, {"MACHINE": "SS-10", "RES": "1152x900"}),
+        ("stopa-sol26-console-openbios-ss20", "stop-a.py", SOL26SS20, None, {"MACHINE": "SS-20", "RES": "1152x900"}),
+        ("stopa-sunos414-openbios-ss5", "stop-a.py", SUNOS414, None, {"GUEST": "sunos"}),
+        ("stopa-netbsd111-ddb-openbios-ss5", "stop-a.py", NETBSD111, None, {"GUEST": "netbsd", "EXPECT": "db.", "RESUME": "c"}),
+        ("stopa-firmware-prompt-openbios-ss5", "stop-a.py", None, None, {"GUEST": "none", "EXPECT": "none"}),
+    ],
 }
 
 # sparc64 (sun4u, OpenBIOS, scenarios/_sparc64.py): disk and CD-ROM on the built-in IDE, sunhme, serial
