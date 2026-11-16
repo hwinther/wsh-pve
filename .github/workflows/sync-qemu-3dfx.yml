@@ -37,6 +37,7 @@ jobs:
     permissions:
       contents: read # what promote-qemu-3dfx.yml asks for; it writes with WORKFLOW_TOKEN
       packages: read # docker pull of the build image from ghcr.io
+      pull-requests: read # the open promotion PR
     uses: ./.github/workflows/promote-qemu-3dfx.yml
     secrets:
       WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}

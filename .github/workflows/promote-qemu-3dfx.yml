@@ -2,18 +2,19 @@ name: Promote qemu-3dfx
 
 # The qemu-3dfx pin (submodules/qemu-3dfx) moves only through a pull request: when the fork's master
 # (kept equal to kjliew/qemu-3dfx by sync-qemu-3dfx.yml, which calls this after it) has commits
-# beyond the pin, scripts/qemu-3dfx-promotion.sh force-pushes promote/qemu-3dfx (main + the new
-# gitlink, and the port refreshed when it needed it) and opens or updates one PR with the upstream
-# commits, the port check and a 3dfx-only build. A failed check opens it as a draft with
-# "(3dfx check failed)" in its title. Nothing new upstream: it closes a PR left open. Never pushes
-# to main, never merges.
+# beyond the pin, one branch (promote/qemu-3dfx) and one PR show the upstream commits, the port
+# check and a 3dfx-only build. A failed check opens the PR as a draft with "(3dfx check failed)" in
+# its title. Nothing new upstream: a PR left open is closed. Never pushes to main, never merges.
 #
-# Token: WORKFLOW_TOKEN (the repository's PAT, as in the other sync workflows) checks out, pushes
-# the branch and opens/edits/closes the PR, because a PR or push made with GITHUB_TOKEN starts no
-# workflows and the PR's checks (qemu-3dfx-check.yml, zizmor, poutine, e2e) would not run. It needs
-# contents: write and pull-requests: write on this repository (as a fine-grained PAT; a classic PAT
-# needs `repo`). GITHUB_TOKEN gets contents: read and packages: read, only to pull the build image
-# from ghcr.io.
+# Two jobs, so the one that builds upstream code holds no token that can write here:
+# - check: GITHUB_TOKEN only (read), no credentials kept in the checkout. Decides, runs the port
+#   check and the build, and uploads the decision, title, body, new pin and refreshed port.
+# - publish: only when there is something to write. WORKFLOW_TOKEN (the repository's PAT, as in the
+#   other sync workflows) pushes the branch and opens, edits or closes the PR; a PR or push made with
+#   GITHUB_TOKEN would start none of the PR's workflows. The PAT needs contents: write and
+#   pull-requests: write here (a classic PAT: `repo`), and is in that one step's environment only.
+#   publish runs nothing from the artifact or from qemu-3dfx and builds nothing; it validates the
+#   artifact (scripts/qemu-3dfx-promotion.sh publish).
 
 on:
   workflow_dispatch:
@@ -36,57 +37,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  promote:
-    name: Open or update the promotion PR
+  check:
+    name: Check upstream, the port and the 3dfx build
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      # GITHUB_TOKEN writes nothing; the checkout, push and PR use WORKFLOW_TOKEN
-      contents: read # nothing beyond the default
+      contents: read # checkout
       packages: read # docker pull of the build image from ghcr.io
+      pull-requests: read # the open promotion PR (gh pr list)
+    outputs:
+      decision: ${{ steps.check.outputs.decision }}
     steps:
-      # The uploaded artifact is $RUNNER_TEMP/promotion (logs, title, body), not the work tree that holds
-      # the persisted credentials
-      - name: Checkout main # zizmor: ignore[artipacked]
+      - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           # main's history, to tell the promotion's own commits on promote/qemu-3dfx from others
           fetch-depth: 0
-          # The branch push in the script uses these credentials (WORKFLOW_TOKEN), so the PR's
-          # workflows run. Nothing from the PR runs in this job.
-          token: ${{ secrets.WORKFLOW_TOKEN }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
-      - name: Promote
+      - name: Check
+        id: check
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force == true && '--force' || '' }}
-          ACTOR: ${{ github.actor }}
         run: |
-          git config user.name "$ACTOR"
-          git config user.email "$ACTOR@users.noreply.github.com"
+          out="$RUNNER_TEMP/promotion"
           # shellcheck disable=SC2086 # FORCE is empty or one word
-          scripts/qemu-3dfx-promotion.sh run $FORCE --jobs "$(nproc)" --out "$RUNNER_TEMP/promotion"
+          scripts/qemu-3dfx-promotion.sh check $FORCE --jobs "$(nproc)" --out "$out"
+          decision=$(cat "$out/decision")
+          case "$decision" in
+            nothing|close|skip|hands-off|update) echo "decision=$decision" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::unexpected decision"; exit 1 ;;
+          esac
 
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
           out="$RUNNER_TEMP/promotion"
+          echo "Decision: \`$(cat "$out/decision" 2>/dev/null || echo none)\`" >> "$GITHUB_STEP_SUMMARY"
           if [ -s "$out/body.md" ]; then
-            { echo "# $(cat "$out/title")"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No promotion PR was opened or updated (see the Promote step)." >> "$GITHUB_STEP_SUMMARY"
+            { echo; echo "# $(cat "$out/title")"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload the logs
+      - name: Upload the result
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -94,3 +95,36 @@ jobs:
           path: ${{ runner.temp }}/promotion/
           if-no-files-found: ignore
           retention-days: 14
+
+  publish:
+    name: Push the branch and open, update or close the PR
+    needs: [check]
+    if: ${{ needs.check.outputs.decision == 'update' || needs.check.outputs.decision == 'close' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout; the push and the PR use WORKFLOW_TOKEN
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the result of check
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qemu-3dfx-promotion
+          path: ${{ runner.temp }}/promotion
+
+      # Runs this checkout's script (main) on the artifact as data: no build, nothing from qemu-3dfx
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          PUSH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          git config user.name "$ACTOR"
+          git config user.email "$ACTOR@users.noreply.github.com"
+          scripts/qemu-3dfx-promotion.sh publish --in "$RUNNER_TEMP/promotion"
