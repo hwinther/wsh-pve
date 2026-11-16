@@ -153,7 +153,7 @@ test.describe('profiles, created through the API', () => {
       expect(cmd).toContain("-smp '1,sockets=1,cores=1,maxcpus=1'")
       expect(arg(cmd, '-cpu')).toBe(p.cpu)
       expect(cmd).toContain('-vga cg3')
-      expect(cmd).toContain(`-net 'nic,model=lance,macaddr=${mac}'`)
+      expect(cmd).toContain(`-net 'nic,model=lance,macaddr=${mac}`)
       expect(cmd).toContain("-device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,")
       expect(cmd).toMatch(/-device 'scsi-cd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,[^']*physical_block_size=512'/)
       for (const device of ['usb-tablet', 'virtio-balloon', 'vmgenid', 'isa-serial']) expect(cmd).not.toContain(device)

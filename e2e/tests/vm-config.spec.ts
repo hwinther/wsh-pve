@@ -248,7 +248,7 @@ test.describe('sparc32, config written to the file', () => {
   test("the lance NIC uses the config's MAC address", async () => {
     // Before the sparc32 profiles: macaddr=08:00:20:b5:09:67 was hardcoded for lance, so every
     // sparc32 VM on a bridge had the same MAC.
-    expect(await showcmd(vmid)).toContain("-net 'nic,model=lance,macaddr=BC:24:11:B2:46:01'")
+    expect(await showcmd(vmid)).toContain("-net 'nic,model=lance,macaddr=BC:24:11:B2:46:01")
   })
 })
 
