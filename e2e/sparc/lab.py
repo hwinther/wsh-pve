@@ -80,12 +80,44 @@ SERIAL_KEYS = {"enter": "\r", "esc": "\x1b", "tab": "\t", "space": " ", "backspa
                "ctrl-n": "\x0e", "ctrl-p": "\x10", "ctrl-f": "\x06", "ctrl-b": "\x02"}
 
 
+def new_terminal(cols=80, rows=24):
+    """The VT100 emulator the serial console goes through: (screen, stream).
+
+    8-bit, not UTF-8 (pyte ignores charset switches in UTF-8 mode), and G1 = DEC line drawing as on a
+    VT100 after Solaris's terminfo init: the installer draws its boxes with SO/SI, which would otherwise
+    show as letters ("qqqq")."""
+    import pyte
+
+    screen = pyte.Screen(cols, rows)
+    stream = pyte.ByteStream(screen)
+    stream.select_other_charset("@")
+    stream.feed(b"\x1b)0")
+    return screen, stream
+
+
+def qcodes_for(ch):
+    """The QMP qcodes that type one character on a US keyboard (send-key), e.g. "A" -> shift, a."""
+    if ch.isascii() and ch.isalpha():
+        return ["shift", ch.lower()] if ch.isupper() else [ch]
+    if ch.isascii() and ch.isdigit():
+        return [ch]
+    if ch in SHIFTED:
+        return ["shift", SHIFTED[ch]]
+    if ch in QCODES:
+        return [QCODES[ch]]
+    raise ValueError(f"no key for {ch!r} on a US keyboard")
+
+
+def ocr(png):
+    """The text tesseract reads in a screenshot (one block of text, --psm 6)."""
+    r = subprocess.run(["tesseract", png, "-", "--psm", "6"], capture_output=True, text=True)
+    return r.stdout
+
+
 class Machine:
     """One QEMU process plus its serial console, QMP monitor and a step log with screenshots."""
 
     def __init__(self, out, qemu_args, cols=80, rows=24, ocr=True):
-        import pyte
-
         self.out = out
         os.makedirs(out, exist_ok=True)
         self.serial_path = os.path.join(out, "serial.sock")
@@ -99,15 +131,10 @@ class Machine:
             "-qmp", f"unix:{self.qmp_path},server=on,wait=off",
             "-display", "none",
         ]
-        self.screen = pyte.Screen(cols, rows)
-        self.stream = pyte.ByteStream(self.screen)
-        # 8-bit, not UTF-8 (pyte ignores charset switches in UTF-8 mode), and G1 = DEC line drawing as
-        # on a VT100 after Solaris's terminfo init: the installer draws its boxes with SO/SI, which
-        # would otherwise show as letters ("qqqq").
-        self.stream.select_other_charset("@")
-        self.stream.feed(b"\x1b)0")
+        self.screen, self.stream = new_terminal(cols, rows)
         self.text = ""  # serial output, escape sequences removed, from which expect() consumes
         self.pos = 0
+        self.text_base = 0  # characters dropped from the front of self.text (only mcp_server.py drops)
         self.cond = threading.Condition()
         self.steps = []
         self.metrics = {}  # measurements for result.json (cpu_use() and the scenario's own)
@@ -149,12 +176,16 @@ class Machine:
                 if not data:
                     self.cond.notify_all()
                     return
-                self.raw.write(data)
-                self.raw.flush()
-                self.cast.output(data)
-                self.stream.feed(data)
-                self.text += ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
+                self._feed(data)
                 self.cond.notify_all()
+
+    def _feed(self, data):
+        """One read from the serial socket (self.cond held): serial.raw, the cast, the terminal, the text."""
+        self.raw.write(data)
+        self.raw.flush()
+        self.cast.output(data)
+        self.stream.feed(data)
+        self.text += ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
 
     def _check_alive(self):
         code = self.proc.poll()
@@ -232,6 +263,50 @@ class Machine:
                     return
         raise Timeout(f"serial never went quiet for {seconds}s")
 
+    # Absolute cursors into the serial output, for a client that polls (mcp_server.py) instead of a
+    # scenario that consumes with expect(): a cursor counts characters of self.text since the start,
+    # so it stays valid when the front of the text is dropped. Neither touches expect()'s position.
+
+    def serial_cursor(self):
+        """The cursor at the end of the serial output so far."""
+        with self.cond:
+            return self.text_base + len(self.text)
+
+    def serial_since(self, cursor=None, limit=4000):
+        """At most `limit` characters of serial output from `cursor` (None: the end, so nothing yet).
+        Returns the text, the cursor after it, the end, whether more follows, and how many characters
+        were lost because the cursor points before what is still kept."""
+        with self.cond:
+            end = self.text_base + len(self.text)
+            start = end if cursor is None else min(int(cursor), end)
+            lost = max(0, self.text_base - start)
+            start = max(start, self.text_base)
+            text = self.text[start - self.text_base:start - self.text_base + int(limit)]
+        nxt = start + len(text)
+        return {"text": text, "cursor": nxt, "end": end, "more": nxt < end, "lost": lost}
+
+    def serial_wait(self, pattern, cursor=None, timeout=60, context=1000):
+        """Wait for a regex in the serial output after `cursor` (None: from now on). A timeout isn't an
+        exception: it returns matched False, the cursor at the end and the last `context` characters.
+        A match returns its text, groups, span (as cursors) and up to `context` characters before it."""
+        rx = re.compile(pattern, re.M)
+        end_t = time.time() + float(timeout)
+        with self.cond:
+            start = self.text_base + len(self.text) if cursor is None else int(cursor)
+            while True:
+                lo = max(start, self.text_base) - self.text_base
+                m = rx.search(self.text, lo)
+                if m:
+                    return {"matched": True, "match": m.group(0), "groups": list(m.groups()),
+                            "start": self.text_base + m.start(), "cursor": self.text_base + m.end(),
+                            "before": self.text[max(lo, m.start() - int(context)):m.start()]}
+                self._check_alive()
+                left = end_t - time.time()
+                if left <= 0:
+                    return {"matched": False, "cursor": self.text_base + len(self.text),
+                            "tail": self.text[max(lo, len(self.text) - int(context)):]}
+                self.cond.wait(min(left, 1))
+
     # --- framebuffer ----------------------------------------------------------------------------
 
     def screendump(self, name):
@@ -273,10 +348,7 @@ class Machine:
         self.log(f"display refresh every {interval}s")
 
     def fb_text(self, png):
-        if not self.ocr:
-            return ""
-        r = subprocess.run(["tesseract", png, "-", "--psm", "6"], capture_output=True, text=True)
-        return r.stdout
+        return ocr(png) if self.ocr else ""
 
     def fb_expect(self, pattern, timeout=300, interval=5):
         """Wait for a regex in the OCR text of the framebuffer."""
@@ -347,14 +419,7 @@ class Machine:
     def fb_type(self, text, hold=60, delay=0.08):
         """Type on the guest keyboard (QMP send-key)."""
         for ch in text:
-            if ch.isalpha():
-                keys = ["shift", ch.lower()] if ch.isupper() else [ch]
-            elif ch.isdigit():
-                keys = [ch]
-            elif ch in SHIFTED:
-                keys = ["shift", SHIFTED[ch]]
-            else:
-                keys = [QCODES[ch]]
+            keys = qcodes_for(ch)
             self.qmp.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in keys], **{"hold-time": hold})
             time.sleep(delay)
 
@@ -483,6 +548,22 @@ class Machine:
             raise AssertionError(f"host CPU use {pct:.1f}% over {seconds}s, expected above {above}%")
         return pct
 
+    def status(self, sample=0.5):
+        """Whether QEMU runs, its run state (QMP query-status: running, paused, ...) and its host CPU use
+        over `sample` seconds, in percent of one core."""
+        st = {"running": self.proc.poll() is None, "pid": self.proc.pid}
+        if st["running"]:
+            st["state"] = self.qmp.cmd("query-status").get("status")
+            c0, t0 = self.cpu_seconds(), time.time()
+            time.sleep(float(sample))
+            st["cpu_pct"] = round(100 * (self.cpu_seconds() - c0) / (time.time() - t0), 1)
+        return st
+
+    def reset(self):
+        """A hardware reset (QMP system_reset), like pressing the reset button."""
+        self.qmp.cmd("system_reset")
+        self.log("system_reset")
+
     def hmp(self, command):
         """Run a human monitor command (info registers, info mtree, sendkey stop-a, ...)."""
         return self.qmp.cmd("human-monitor-command", **{"command-line": command})
@@ -537,12 +618,12 @@ def pve_serial(conf):
     return next((n for n in range(4) if conf.get(f"serial{n}") == "socket"), None)
 
 
-def pve_vars(vmid):
+def pve_vars(vmid, conf=None):
     """The scenario variables that the VM's PVE config decides, so they needn't be repeated with --var:
     ARCH, MEM, SERIAL, CONSOLE (serial without a display, else fb) and, for sparc32, what _sparc32.py's
     helpers read (MACHINE, BIOS, VGA, BOOT, CDROM_AS, REFRESH). The VM's hardware itself comes from its
-    config; qemu_args() isn't used."""
-    c = pve_config(vmid)
+    config; qemu_args() isn't used. `conf`: the config if the caller has it already."""
+    c = pve_config(vmid) if conf is None else conf
     vga = c.get("vga", "").split(",")[0]
     serial = pve_serial(c)
     nofb = vga == "none" or vga.startswith("serial")
@@ -664,8 +745,6 @@ class PveMachine(Machine):
     client per serial socket, so `qm terminal` or the web console can't share it."""
 
     def __init__(self, out, vmid, cols=80, rows=24, ocr=True, serial=None, keep=False):
-        import pyte
-
         if not shutil.which("qm"):
             raise SystemExit("--pve: run lab.py on the PVE node, where qm and /var/run/qemu-server are")
         self.out, self.vmid, self.keep = out, str(vmid), keep
@@ -675,11 +754,8 @@ class PveMachine(Machine):
         self.serial_path = None if serial is None else f"{PVE_RUN}/{vmid}.serial{serial}"
         self.qmp_path = f"{PVE_RUN}/{vmid}.qmp"
         # the terminal and the step log, as in Machine
-        self.screen = pyte.Screen(cols, rows)
-        self.stream = pyte.ByteStream(self.screen)
-        self.stream.select_other_charset("@")
-        self.stream.feed(b"\x1b)0")
-        self.text, self.pos = "", 0
+        self.screen, self.stream = new_terminal(cols, rows)
+        self.text, self.pos, self.text_base = "", 0, 0
         self.cond = threading.Condition()
         self.steps, self.metrics = [], {}
         self.ocr = ocr

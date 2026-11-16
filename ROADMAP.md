@@ -50,6 +50,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    - Solaris 7/8/9 `pp is NULL or free`;
    - 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
+2. **MCP server around the lab** (`e2e/sparc/mcp_server.py`, branch `feat/lab-mcp-server`). An
+   assistant sees and drives an allowed VM (PVE by VMID or tag, or a `lab.py serve` QEMU): screenshot,
+   screen text (terminal or OCR), keys and text on the display or serial console, serial reads by
+   cursor, wait for a pattern; reset, stop and the monitor only behind flags. stdio only. Tested
+   with Alpine under `lab.py serve` (CI job) and Solaris 2.6 on a cg3 through PVE in the test node.
+   Still to do: a run from an interactive client (Claude Code over SSH), the mouse (relative Sun
+   mouse), and installing it on the lab node. Details: `e2e/sparc/README.md`, "MCP server".
 
 ## Next, in this order
 
@@ -73,9 +80,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 4. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
    package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
    result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
-5. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
-   any VM on a node through `--pve`. A thin layer over `lab.py`.
-6. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+5. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
