@@ -23,7 +23,7 @@ the operating system where it was.
   (QEMU 11.1.3's `roms/openbios`) included.
 - **Reached by:** every client that calls `op_enter`. Solaris 2.x (`debug_enter()` →
   `prom_enter_mon()`) and SunOS 4.1.4 call it on the keyboard abort sequence (Solaris also on a
-  break on a serial console, which QEMU's ESCC doesn't deliver in a form Solaris recognises); QEMU
+  break on a serial console, which under QEMU hangs Solaris instead: a separate ESCC bug); QEMU
   sends the chord with `sendkey stop-a` (HMP), `send-key` with qcodes `stop` and `a` (QMP), and
   from a VNC client that sends the Stop key. NetBSD's GENERIC kernel enters its own debugger
   instead and isn't affected.

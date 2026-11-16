@@ -74,6 +74,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `bench-disk.py` | boots an installed Solaris disk with the bench disk (`DISK2`, "The bench disk") on target 4, mounts it, runs its `run.sh` (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset with its network tests over `lo0`, the `nawk` loop, and lmbench over `le0` to the lab container: `NET=user` by default, `tap`, or `none`) and puts every `BENCH` value into `result.json`, with the host's load average; `init 5` at the end | ~10-12 min (7-8 of them `run.sh`) |
 | `smp-soak.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks that `psrinfo` lists them on-line, times one and `SMP` copies of Dhrystone and the `nawk` loop (speed-up), then loads every CPU for `SOAK` seconds (Dhrystone, Hanoi, `nawk`, a `tar` of the bench disk through `compress` with its `cksum` checked, a write, a fork loop; `SMP` + 1 shells) while `mpstat 60` records the CPUs; fails on a hang, a CPU off-line, a checksum mismatch or a CPU below `BUSY` % busy | `SOAK` + ~5 min |
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
+| `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
@@ -135,6 +136,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
+| `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -856,6 +858,13 @@ lab.
   `scsi-cd`. A CD that answers as a disk is also listed as an install target (`c0t6d0`).
 - **Solaris 2.4 doesn't boot under OpenBIOS** ("Unhandled Exception 0x00000009", any CD device);
   2.4 and 2.5.1 boot with `ss5.bin`. 2.5.1 installed and booted fine on 11.1.3+wsh1 (the ESP fix).
+- **Stop-A powered the VM off under OpenBIOS** (fixed by `openbios/patches/0008`): its `op_enter`
+  printed `abort, power off` on ttya and wrote the power-off bit, so QEMU ended with status 0. Now
+  the guest stops at `0 >` and `go` resumes it. The firmware's small print over dtlogin is beyond
+  OCR, so `stop-a.py` also checks where the CPU is (`info registers`: OpenBIOS runs at 0xffd00000
+  and up). A break on ttya (`BREAK=1`) hangs Solaris on a serial console: QEMU's ESCC never ends
+  the break and keeps its interrupt raised (`submodules/SPARC.md`, "Stop-A"), so the `stopa`
+  matrix has no break case.
 - **Sun PROM without a framebuffer** prints on ttya but reads the keyboard: `prom_boot()` types
   `ttya io` through send-key. `halt` ends at `ok` ("Program terminated") instead of powering off.
 - **With a framebuffer, the 2.6 installer is the OpenWindows GUI** (needs the mouse); without one

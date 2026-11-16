@@ -35,6 +35,7 @@ come after that, not before.
 | Retro net archive cache: persistent store of Wayback answers, offline replay, warm-up from VintageHive's links, export/import; the test replays a synthetic dataset | in review | branch `feat/retro-net-archive-cache` |
 | Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
 | Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
+| Stop-A on a running sparc32 guest stops at the OpenBIOS prompt and `go` resumes (it powered the VM off) | in review | this branch |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
 
 ## In progress
@@ -135,6 +136,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
 | The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
+| A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
@@ -163,9 +165,10 @@ from it.
 
 ## Upstream reports to send
 
-Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout (OpenBIOS),
+Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout and Stop-A
+powering the machine off (OpenBIOS),
 the 1-byte APC region (QEMU), the TLB flush on every change of the SRMMU no-fault bit (QEMU) and
 the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang).
 QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
-not written up yet: the TTE page-size truncation if it is not merged upstream, and the ESCC mouse
-rate.
+not written up yet: the TTE page-size truncation if it is not merged upstream, the ESCC mouse
+rate, and the ESCC break that never ends.

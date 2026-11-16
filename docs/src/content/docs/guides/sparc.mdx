@@ -194,6 +194,20 @@ send-key) to take input from ttya as well; the Solaris installer then runs entir
   init-program". With that one, give the full path:
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@3,0:a`
 
+### Stop-A and the PROM prompt
+
+Stop-A (L1-A: hold Stop, press A) on the keyboard of a framebuffer console stops a running Solaris
+or SunOS at the firmware prompt, as on a Sun: OpenBIOS prints `Type  'go' to resume` and its `0 >`
+prompt over whatever was on the screen. Type `go` to give the system back where it was, or `boot` to
+reset the VM and boot again. Send the chord from the VM's Monitor (`sendkey stop-a`) or with `qm
+sendkey <vmid> stop-a`. NetBSD's kernel enters its own debugger (`db>`) instead; `c` continues. With
+the console on a serial port there is no Stop-A: Solaris takes a break on the serial line for it,
+which the PVE serial console can't send (and a break sent to QEMU some other way hangs Solaris on
+that port).
+
+With `pve-qemu-kvm` 11.1.3-2+wsh10 and earlier, OpenBIOS powered the VM off at Stop-A, losing
+whatever the guest hadn't written to disk. The Sun PROM (`ss5.bin`) always stopped at `ok`.
+
 ### Graphical install
 
 With a cg3 or tcx framebuffer the Solaris 2.6 installer is the OpenWindows GUI, driven with the mouse.
