@@ -50,6 +50,8 @@ maintains the patches.
 | `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015 | ours | not in QEMU |
 | `0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-` | Solaris on SS-5 ran call-heavy user code 4-10x slower than on SS-20: its microSPARC window-trap handlers set and clear the MMU no-fault bit (NF) twice per trap, and QEMU flushed its whole TLB on every NF change. Now NF flushes only while the TLB holds an entry made for a fault in no-fault mode (the only entries that depend on it); boot mode flushes as before. Trace event `sparc_mmu_ctrl_flush` ("Why SS-5 was slower", "Benchmarks") | ours | not fixed; see `upstream/qemu-srmmu-control-register-flush.md` |
 | `0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m` | qtest `sun4m-mmu-nofault-test` for 0017: an entry made in no-fault mode must not survive NF being cleared (SS-5 and SS-20) | ours | not in QEMU |
+| `0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-` | Solaris 2.x with more than one CPU (SS-10/SS-20) hung within minutes: a write to `%psr` in a delay slot (Solaris's `splx`) didn't end the translation block, so an interrupt it unmasked wasn't taken until something else stopped the CPU; a CPU spinning in such a loop never took the other CPU's cross-call ("SMP") | ours | not fixed (since 8.2.0, `25524734c6`); see `upstream/qemu-sun4m-smp-psr-delay-slot.md` |
+| `0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl` | qtest `sun4m-pil-delay-slot-test` for 0019: a pending soft interrupt must be taken after PIL is lowered by a plain `wr %psr` and by one in the delay slot of `ba`, `bne`, `bne,a` and `jmpl` | ours | not in QEMU |
 
 The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -69,11 +71,15 @@ store after NF is cleared goes through the stale entry instead of trapping. With
 `make check-qtest-sparc` (sparc-softmmu only): 18 OK, 2 skipped, `qmp-test` fails in
 `/sparc/qmp/oob` (no `oob` capability), the same with 0001-0016. The lab matrices `smoke` (3),
 `idle` (10), `machines` (13) and `display` (20) passed with 0017 (a `qemu-system-sparc` built from
-the series, mounted into the lab image).
+the series, mounted into the lab image). `sun4m-pil-delay-slot-test` passes 5/5 with 0019; without
+it its four delay-slot cases fail (the plain one passes). With 0001-0020: `make check-qtest-sparc`
+19 OK, 2 skipped, the same `qmp-test` failure; the lab matrices `smoke` (3/3), `idle` (10/10),
+`machines` (13/13), `display` (20/20) and `benchdisk` (6/6) passed, and the `smp` cases under
+"SMP".
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
-taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test` and
-`sun4m-mmu-nofault-test` (sparc) and `am53c974-test` (i386).
+taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
+`sun4m-mmu-nofault-test` and `sun4m-pil-delay-slot-test` (sparc) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -338,8 +344,7 @@ With more than one CPU, `idle()` runs another loop: it polls `disp_getwork()` (w
 CPUs' queues) and never calls `idle_cpu`, and `cpu_resched()` doesn't poke an idle CPU (`!CPU_IDLING`),
 so a halted CPU wouldn't see work queued for it until its next interrupt, and only one CPU gets the
 clock. A halt there would need QEMU to wake the CPU on writes to the dispatch queues (or Solaris to poke
-idle CPUs); that's why `solaris-idle` is off with `-smp` > 1 (also moot while 2.6 SMP hangs, "SS-10 and
-SS-20").
+idle CPUs); that's why `solaris-idle` is off with `-smp` > 1 (what a halt there would take: "SMP").
 
 Not used: the APC on SS-10/SS-20 (real machines have none, but OpenBIOS creates the `power-management`
 node there, QEMU maps the device at `0xefa000000`, "XXX should not exist"; the Sun PROMs don't): NetBSD
@@ -461,8 +466,9 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 | NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
 | NetBSD 11.1 GENERIC.MP (from the ISO) | `-smp 2`: `cpu0: booting secondary processors: cpu1`, `hw.ncpu = 2`; five 16-256 MB writes with `sync` pass; idle ~4% of a core |
 
-**SMP.** Solaris 2.6 on SS-20 with OpenBIOS brings up every CPU (`psrinfo`: 2 or 4 on-line,
-OpenBIOS `CPUs: 4 x TI,TMS390Z55`), but it isn't stable:
+**SMP** (before 0019; the cause and the fix are under "SMP" below). Solaris 2.6 on SS-20 with
+OpenBIOS brings up every CPU (`psrinfo`: 2 or 4 on-line, OpenBIOS `CPUs: 4 x TI,TMS390Z55`), but it
+wasn't stable:
 
 | CPUs | RAM | What happened |
 | --- | --- | --- |
@@ -474,10 +480,10 @@ OpenBIOS `CPUs: 4 x TI,TMS390Z55`), but it isn't stable:
 | 4 | 256 | bench: 1 of 3 passed; one hung in `prtconf` right after login, one in the 64 MB write |
 | 4 | 512 | bench runs (64 MB): 3 of 3 passed |
 
-Every hang looks the same: no answer on the console, all vCPUs at 100%, CPU 0 in `xc_sync_cache+0x1a0`
-(waiting for the other CPU to acknowledge a cross-call), the other CPU looping in `splx`/`splr`. Not a
-multi-threaded TCG race (single-threaded TCG hangs the same way), not the CPU variant; NetBSD's MP
-kernel survives the same writes. SMP isn't usable for Solaris 2.6 here.
+Every hang looks the same: no answer on the console, all vCPUs at 100%, one CPU in
+`xc_sync_cache+0x1a0` (waiting for the other CPU to acknowledge a cross-call), the other CPU looping
+in `splx`/`splr`. Not a multi-threaded TCG race (single-threaded TCG hangs the same way), not the CPU
+variant; NetBSD's MP kernel survives the same writes. Fixed by 0019 ("SMP").
 
 **Benchmark** (`scenarios/bench.py`, one QEMU on an idle 14-core host, 3 boots each, median and
 range; host seconds): `job` = `nawk 'BEGIN{for(i=0;i<1000000;i++)s=(s+i*i)%9973;print s}'`,
@@ -522,7 +528,7 @@ ended in a clean `init 5`.
 - More CPUs: one job gets slower (1.7x with 2 CPUs, ~3x with 4), several at once finish sooner than
   one after another on one CPU (2 jobs: 6.5 s vs 10.2 s; 4 jobs: 10.9 s vs 20.4 s), writes take
   longer, and each idle vCPU burns a host core (`solaris-idle` is off with more than one CPU). And it
-  hangs (above).
+  hung (above; fixed by 0019, measured again with it under "SMP").
 
 **Why SS-5 was slower** (fixed by 0017; the numbers in this section and the one above are without
 it). Times in the guest (`/usr/bin/time`, seconds), one CPU, OpenBIOS:
@@ -615,8 +621,9 @@ switches (fork, exec, pipe), on both machines.
 - An SS-20 needs its own install on that machine type (the SS-5 disks don't boot there). 2.5.1, 7,
   8 and 9 installers also start there. With 0014-0015 an idle guest uses ~3% of a host core on
   either. `pmc` is no longer needed to idle on SS-5.
-- Don't offer more than one CPU for Solaris 2.6: it hangs, and one job runs slower. NetBSD's MP kernel
-  works with 2 CPUs (not benchmarked).
+- More than one CPU for Solaris only with 0019 (before, it hangs), on SS-10/SS-20 with OpenBIOS, and
+  only for parallel work: one job runs slower and every vCPU takes a host core even when idle ("SMP").
+  NetBSD's MP kernel works with 2 CPUs (not benchmarked).
 - RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
   256 in this benchmark.
 - The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60);
@@ -624,6 +631,145 @@ switches (fork, exec, pipe), on both machines.
   SS-10 PROM doesn't run on the SS-10 machine.
 - Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
   `ross225r.bin` (which runs as a SuperSPARC SS-20).
+
+### SMP
+
+**Why Solaris hung with more than one CPU** (fixed by 0019). A hung Solaris 2.6 (SS-20, OpenBIOS,
+`-smp 2`, a 256 MB `dd` and `sync`), from the monitor and from gdb attached to QEMU:
+
+- CPU 1 at PIL 13, spinning in `xc_sync_cache` on CPU 0's acknowledgement word.
+- CPU 0 in `splr`/`splx`, PIL going between 4, 13 and 15: the loop of a failing `mutex_tryenter` on
+  the cross-call mailbox lock that CPU 1 holds (`xc_grab_mutex`; at a PIL below 13 it leaves the
+  cross-call to the interrupt handler).
+- `info pic`: CPU 0 has soft interrupt 13 pending (`0x20000000`, the cross-call), CPU 1 the system
+  timer (level 10; Solaris had moved the interrupt target to CPU 1, which is at PIL 13).
+- CPU 0's state in QEMU: `pil_in = 0x2000`, `interrupt_index = 0x1d` (level 13), traps enabled,
+  `CPU_INTERRUPT_HARD` requested, not halted. All set for the interrupt whenever PIL is 4, and it is
+  never taken.
+
+QEMU looks at pending interrupts only when a vCPU comes back to its main loop; translated blocks
+chain into each other without that check. A write to `%psr` ends its block so that the main loop
+looks (`DISAS_EXIT`), but in a delay slot that was dropped: the translator turned it into a chained
+jump to the branch target. Solaris lowers PIL in a delay slot in `splx`/`splr` (`bl,a 1f; wr %o3,
+newpil, %psr`) and raises it with a plain `wr %psr`. So CPU 0 looked at its interrupts only at PIL
+15 and never at PIL 4, and nothing else made it look: the timer goes to the other CPU. Setting CPU
+0's `icount_decr` from gdb (what a kick does) let the interrupt in, and both CPUs went on. With one
+CPU the next timer interrupt does the same within 10 ms, which is why nobody noticed. QEMU before
+8.2 emitted the exit in the `wrpsr` code itself and it worked in a delay slot; 8.2 (`25524734c6`)
+broke it, in the release that also turned on multi-threaded TCG for sparc (`ec860e5d03`). The
+details and the code are in `upstream/qemu-sun4m-smp-psr-delay-slot.md`.
+
+**The fix (0019).** The translator keeps the exit for an instruction in a delay slot: after a
+conditional branch it computes the branch at run time into pc/npc instead of chaining both ways;
+after `jmpl`/`rett` the PC is in the CPU state already. The only effect is one more exit to the
+main loop per such write, i.e. an extra look at pending interrupts, so no guest can depend on the
+old behaviour: an interrupt that was unmasked is taken now instead of at the next unrelated exit.
+Every sparc32 guest gets it (Solaris, SunOS, NetBSD, Linux, one CPU or more); sparc64 shares the
+code but raises its interrupts from the `wrpr %pil` helper and is not affected (only its `membar
+#Sync` sets the exit). The qtest `sun4m-pil-delay-slot-test` (0020) raises a soft interrupt at PIL
+15 and lowers PIL with a plain `wr %psr` and with one in the delay slot of `ba`, `bne`, `bne,a` and
+`jmpl`, after a first round that makes the blocks chain; without 0019 the four delay-slot cases fail,
+the plain one passes.
+
+**Results** (`qemu-system-sparc` built from the series with and without 0019, in the lab image;
+`scenarios/smp-soak.py`, Solaris 2.6 installed on SS-20, OpenBIOS, 256 MB, the bench disk; the host
+shared with other agents' guests, 1-minute load 4-11):
+
+| Case | Without 0019 | With 0019 |
+| --- | --- | --- |
+| SS-20, 2 CPUs, `bench.py DISK_MB=256 SOAK=600` (256 MB `dd` + `sync`, then 600 s of 2 shells looping the `nawk` job and a 10 MB write) | hung in the write (upstream v8.2.0 unpatched: the same) | passed (write 11.9 s) |
+| SS-20, 2 CPUs, `smp-soak.py SOAK=1800` | | passed: 155 rounds of 3 loops, no `cksum` mismatch, both CPUs 100% busy (median of the 60 s `mpstat` samples), 130-460 cross-calls a second per CPU (`xcal`), QEMU 201% of a host core |
+| SS-20, 4 CPUs, `SOAK=1800` | | passed: 294 rounds, no mismatch, all four CPUs 99% busy, QEMU 394% |
+| SS-10, 4 CPUs, `SOAK=900` | | passed: 155 rounds, no mismatch, 99% busy, QEMU 394% |
+| SS-20, 2 CPUs, `-accel tcg,thread=single` | hung at boot (table above) | no hang, but crawling: 42 minutes to the login prompt (2 minutes with one thread per vCPU, the default), two Dhrystone copies at once 72.6 s against 22.1 s for one, and 12 minutes into the soak `psrinfo` took longer than the lab's 120 s to answer (the guest still running); 2 boots |
+| SS-20, 4 CPUs, `thread=single` | | Solaris gave up on two CPUs at boot (`WARNING: cpu 2 failed to start`, `cpu 3`) and hadn't got past `Hostname: solaris` after 2 hours (stopped) |
+| The 2.5.1 (`CDROM_AS=hd`), 7 (3/99), 8 (1/01 Installation CD, Sun-labelled disk) and 9 install media to the installer's first question, SS-20, 2 and 4 CPUs | | 8 of 8 passed |
+
+Single-threaded TCG is unusable with more than one CPU, fix or not: the vCPUs take turns in one host
+thread, and a CPU spinning on a cross-call acknowledgement keeps its time slice while the CPU that
+would answer waits for its turn, so every cross-call costs about a slice. QEMU before 8.2 ran sparc
+this way (multi-threaded TCG for sparc came with `ec860e5d03`), which is why upstream v8.1.5 with 2
+CPUs didn't reach the login prompt in 600 s either (with one CPU it took 116 s). qemu-server never
+passes `thread=single`.
+
+**Speed-up** (`smp-soak.py SOAK=0`, with 0019; 3 boots per CPU count, alternating, median; host
+load 3.6-5.0 from other agents' guests). `dhry` = Dhrystone with 20,000,000 runs (fixed work,
+shallow calls), `nawk` = the `nawk` loop (deep calls: window traps); "1 job" = one copy alone, "N
+jobs" = as many copies as CPUs at once, host seconds; "throughput" = N copies on one CPU one after
+another (N x the 1-CPU time) divided by N copies at once on N CPUs:
+
+| CPUs | dhry, 1 job | dhry, N jobs | dhry throughput | nawk, 1 job | nawk, N jobs | nawk throughput | QEMU host CPU, idle |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 13.3 s | | 1.0x | 6.2 s | | 1.0x | 3% (`solaris-idle`) |
+| 2 | 14.4 s | 14.2 s | 1.87x | 10.4 s | 8.0 s | 1.55x | 198% |
+| 4 | 17.7 s | 19.6 s | 2.71x | 17.7 s | 13.0 s | 1.91x | 340% |
+
+- **Parallel work gets faster**: 2 CPUs finish two jobs 1.6-1.9x sooner than one CPU, 4 CPUs four
+  jobs 1.9-2.7x sooner. The host pays one core per vCPU whether the guest is busy or idle (busy:
+  98-100% per vCPU in the soaks; idle: 198% and 340%, no idle halt with more than one CPU).
+- **A single job gets slower** the more CPUs there are: Dhrystone 8% (2 CPUs) and 33% (4), the
+  `nawk` loop 68% and 185%. It is the other CPUs' idle loop: with CPUs 1-3 of a 4-CPU guest taken
+  off-line (`psradm -f 1 2 3`; an off-line CPU spins on its flags instead of polling the other
+  CPUs' run queues in `disp_getwork()`), the `nawk` loop took 8.6-8.8 s instead of 18.4-18.7 s (one
+  CPU: 6.2 s). Why that polling slows the busy vCPU this much under QEMU wasn't traced; a halt in the
+  multiprocessor idle loop (below) would most likely remove it too.
+- Writes get slower too (64 MB `dd` + `sync`: 1.8-2.8 s with one CPU, 3.7 s with 2, 6.2 s with 4;
+  one boot each).
+- So more than one CPU pays only for guests that run several CPU-bound processes at once (builds,
+  batch jobs); for one interactive user one CPU is faster and idles at 3% instead of 100% per vCPU.
+
+**One CPU** loses nothing with 0019: `bench-disk.py` on SS-20 and SS-5 (OpenBIOS) with the binaries
+with and without it, one boot each, host load 1.0-2.0: Dhrystone 923.8 / 923.2 (SS-20) and 956.2 /
+953.7 (SS-5) VAX MIPS, Hanoi 17837 / 18941 and 19995 / 19575 towers/s, the `nawk` loop 5.1 / 5.1 and
+5.1 / 4.7 s, nbench, null syscall, pipe, signal, fork and `sh -c` within the spread of "Benchmarks"
+(one outlier: lmbench's TCP connect over `lo0` on SS-5 with 0019, 13.3 ms against ~1.0-1.2 ms in
+the other three runs, a test whose spread was already 56% above). The `benchdisk` matrix (6/6) with
+0019 is in the range of the "With 0017" table, on a busier host (load ~5).
+
+**Idle.** `solaris-idle` and `sunos-idle` stay off with more than one CPU (`smp_cpus == 1` in
+0013/0015; `-trace sparc_solaris_idle_match` logged nothing with 2 and 4 CPUs), so every vCPU of an
+idle guest keeps a host core busy: 198% of a core with 2 CPUs and 340% with 4 (`bench.py`, 30 s at
+the shell after login), against 3% with one. A halt in the multiprocessor idle loop is
+not small, so it isn't in 0019:
+
+- The loop is different: with more than one CPU `idle()` never calls `idle_cpu`; it polls its own
+  `disp_nrunnable` and calls `disp_getwork()`, which steals runnable threads from other CPUs'
+  queues. A recogniser would match that loop (another pattern per release, 2.5.1-9) and halt at the
+  `disp_getwork` call.
+- Nothing would wake the CPU in time. `setbackdq`/`setfrontdq` put threads on an idle CPU's queue
+  without telling it: `cpu_resched()` pokes (soft interrupt 14) only CPUs that are not idling, and
+  `set_idle_cpu`/`unset_idle_cpu` are empty on sun4m. Only the CPU the system timer targets gets
+  the 100 Hz clock; the others get cross-calls and pokes. A halted CPU would leave work queued to
+  it, and the work it would have stolen, waiting until its next interrupt, i.e. indefinitely while
+  the other CPUs are busy.
+- So it would need a bounded halt: halt at the `disp_getwork` call only while `disp_nrunnable` is
+  0, and wake after a fixed time (a QEMU timer, e.g. 1 ms) as well as on any interrupt, then poll
+  once and halt again. That bounds the extra dispatch latency by the timer and still saves most of
+  the host core (at 1 ms, ~1000 short wake-ups a second per idle vCPU instead of spinning), but it
+  changes the guest's scheduling latency and needs its own soak per release. Follow-up, not done
+  here.
+
+**What the profiles would need** (qemu-server, pve-manager; not changed yet, they pin one CPU), once
+a `pve-qemu-kvm` with 0019 is published (an older package hangs with more than one CPU):
+
+- `$SPARC32_PROFILES` (`PVE::QemuServer::Machine`) and its mirror `sparc32Profiles` (pve-manager's
+  `Architecture.js`): a most-CPUs value per machine and firmware. SS-10 and SS-20 with
+  `openbios-sparc32`: up to 4 (QEMU's limit for both machines). SS-20 with `ss20_v2.25_rom`: 1, the
+  Sun PROM starts only CPU 0 (`Cpu #1 Nothing there`) and every other vCPU would only burn a host
+  core. SS-5: 1 (QEMU allows one).
+- `assert_sparc32_profile`: sockets x cores up to that value instead of `only one CPU is supported`
+  (the message naming the limit per machine and firmware); `-smp` as qemu-server builds it for x86
+  (`N,sockets=..,cores=..,maxcpus=N`, which QEMU's sun4m takes); no `-accel tcg,thread=single`
+  (QEMU's default, one thread per vCPU, is what was measured; single-threaded TCG is far too slow
+  with more than one CPU, above). CPU hotplug stays refused. The cfg2cmd tests get an SS-20 OpenBIOS
+  case with 2 and 4 CPUs and refusals for 5 CPUs, for the Sun PROM with 2 and for SS-5 with 2.
+- pve-manager: sockets and cores enabled for SS-10/SS-20 with OpenBIOS, capped at the profile's
+  value; disabled again when the firmware or machine changes to one with a limit of 1.
+- The guide (`docs/.../guides/sparc.mdx`, "Processor / memory"): more than one CPU on SS-10/SS-20
+  with OpenBIOS for Solaris 2.5.1-9; each vCPU takes a host core at 100% even when the guest is
+  idle (no idle halt with more than one CPU); worth it only for parallel work (several processes);
+  the Sun SS-20 PROM sees one CPU.
+- Default stays one CPU.
 
 ### Benchmarks
 
@@ -1401,6 +1547,8 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
+- CPUs: one everywhere for now. With pve-qemu patch 0019 Solaris runs 2-4 CPUs on SS-10/SS-20 with
+  OpenBIOS; what the profiles would need for that is under "SMP".
 - sparc64 has one profile, `$SPARC64_PROFILE` in `PVE::QemuServer::Machine` (mirrored in
   `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 3072 MB, disks
   and CD-ROMs on the built-in IDE, `-boot order=c|d` instead of `bootindex`, no balloon, at most four
@@ -1520,13 +1668,16 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
-- qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016) and
-  `am53c974-test` with 0007; they
+- qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
+  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020) and `am53c974-test` with 0007;
+  they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 - cg3 and TCX: the TCX/cg3 banner and no-driver cases in `display`, the desktop cases in `display-x`
   (`scenarios/fb-display.py`, disks prepared by `solaris-tcx-packages.py`); results under "cg3 and TCX".
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
+- SMP: the lab's `smp` matrix (`scenarios/smp-soak.py`, the bench disk) and the qtest
+  `sun4m-pil-delay-slot-test` (0020); results under "SMP".
 - Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
   results under "SS-10 and SS-20".
 - sparc64: the lab's `sparc64` matrix (`scenarios/_sparc64.py`, `sparc64-*.py`,
