@@ -1,0 +1,26 @@
+#!/bin/bash
+# Manage VintageHive accounts (instant messaging, mail, the portal) without the admin pages.
+#   retronet-user add <name> <password>   name 3-8 letters/digits, password 3-8 characters
+#   retronet-user del <name>
+#   retronet-user list
+set -euo pipefail
+db=/var/lib/retronet/vintagehive/data/hive.db
+sql() { sqlite3 -cmd '.timeout 5000' "$db" "$@"; }
+q() { printf "'%s'" "${1//\'/\'\'}"; }
+[ -f "$db" ] || { echo "no database yet: start the gateway first" >&2; exit 1; }
+sql "CREATE TABLE IF NOT EXISTS user (username TEXT UNIQUE COLLATE NOCASE, password TEXT);"
+case ${1:-} in
+  add)
+    [ $# -eq 3 ] || { echo "usage: retronet-user add <name> <password>" >&2; exit 2; }
+    [[ $2 =~ ^[A-Za-z0-9]{3,8}$ ]] || { echo "name: 3-8 letters or digits" >&2; exit 2; }
+    [ ${#3} -ge 3 ] && [ ${#3} -le 8 ] && [[ $3 != *$'\n'* ]] || { echo "password: 3-8 characters" >&2; exit 2; }
+    sql "INSERT INTO user (username, password) VALUES ($(q "$2"), $(q "$3"))
+         ON CONFLICT(username) DO UPDATE SET password = excluded.password;"
+    ;;
+  del)
+    [ $# -eq 2 ] || { echo "usage: retronet-user del <name>" >&2; exit 2; }
+    sql "DELETE FROM user WHERE username = $(q "$2");"
+    ;;
+  list) sql "SELECT username FROM user ORDER BY username;" ;;
+  *) sed -n '2,6s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac

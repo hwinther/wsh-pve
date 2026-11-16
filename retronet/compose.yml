@@ -1,0 +1,65 @@
+# The retro net gateway with two networks, for a trial by hand and as the base of the test
+# (compose.test.yml). The retro network is layer 2 only: the Docker host has no address on it.
+#
+#   RETRONET_ADMIN_PASSWORD=... docker compose -f retronet/compose.yml up -d --build
+#   docker compose -f retronet/compose.yml run --rm guest     # a shell on the retro segment
+#
+# The uplink is internal (no internet) unless compose.online.yml is added.
+
+name: retronet
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    image: retronet-gateway:local
+    cap_add: [NET_ADMIN]
+    environment:
+      RETRONET_ADDRESS: 192.168.99.1/24
+      RETRONET_ADMIN_PASSWORD: ${RETRONET_ADMIN_PASSWORD:-}
+      RETRONET_UPSTREAM_DNS: ${RETRONET_UPSTREAM_DNS:-}
+    networks:
+      retro:
+        ipv4_address: 192.168.99.1
+      uplink:
+        ipv4_address: 192.168.98.2
+    volumes:
+      - state:/var/lib/retronet
+
+  # A Linux "guest" for trying things by hand: it takes a DHCP lease from the gateway and has no
+  # proxy configured.
+  guest:
+    profiles: [trial]
+    build:
+      context: test
+    image: retronet-testkit:local
+    cap_add: [NET_ADMIN]
+    networks: [retro]
+    command:
+      - sh
+      - -c
+      - ip -4 addr flush dev eth0 && ip -4 route flush table main &&
+        busybox udhcpc -i eth0 -n -q -s /opt/retronet-test/udhcpc.script && cat /tmp/lease && exec bash
+    stdin_open: true
+    tty: true
+
+networks:
+  retro:
+    driver_opts:
+      # no address for the Docker host on the segment, like the node in RETRONET.md
+      com.docker.network.bridge.inhibit_ipv4: "true"
+    ipam:
+      config:
+        - subnet: 192.168.99.0/24
+          gateway: 192.168.99.254
+          ip_range: 192.168.99.224/27
+  uplink:
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.98.0/24
+          gateway: 192.168.98.1
+
+volumes:
+  state:

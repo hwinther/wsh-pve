@@ -1,0 +1,6 @@
+#!/bin/bash
+# Entry point under tini, the same under Docker and as a Proxmox VE container from an OCI image:
+# prepare (filter first), then run the services.
+set -euo pipefail
+/usr/local/sbin/retronet-init
+exec /usr/local/sbin/retronet-supervise

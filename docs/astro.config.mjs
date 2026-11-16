@@ -26,6 +26,7 @@ export default defineConfig({
             { label: "3DFX / Mesa passthrough", slug: "guides/3dfx" },
             { label: "Guest operating systems", slug: "guides/operating-systems" },
             { label: "Dial-up modem", slug: "guides/dialup" },
+            { label: "Retro net", slug: "guides/retronet" },
           ],
         },
         {

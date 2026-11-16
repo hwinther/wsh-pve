@@ -1,0 +1,28 @@
+diff --git i/Mind.cs w/Mind.cs
+index e2269be..4113f36 100644
+--- i/Mind.cs
++++ w/Mind.cs
+@@ -279,13 +279,18 @@ public static class Mind
+             .Use(ProtoWebProcessor.ProcessHttpRequest)
+             .Use(InternetArchiveProcessor.ProcessHttpRequest);
+ 
+-        var httpsPort = Db.ConfigGet<int>(ConfigNames.PortHttps);
++        // Built only when the service is on: the secure listener loads the bundled native OpenSSL in its
++        // constructor, so a host that switched HTTPS off (or ships without those libraries) would fail here.
++        if (Db.ConfigGet<bool>(ConfigNames.ServiceHttps))
++        {
++            var httpsPort = Db.ConfigGet<int>(ConfigNames.PortHttps);
+ 
+-        httpsProxy = new(ipAddress, httpsPort, true);
++            httpsProxy = new(ipAddress, httpsPort, true);
+ 
+-        httpsProxy
+-            .Use(LocalServerProcessor.ProcessHttpsRequest)
+-            .Use(DialNineProcessor.ProcessHttpsRequest);
++            httpsProxy
++                .Use(LocalServerProcessor.ProcessHttpsRequest)
++                .Use(DialNineProcessor.ProcessHttpsRequest);
++        }
+ 
+         var ftpPort = Db.ConfigGet<int>(ConfigNames.PortFtp);
+ 

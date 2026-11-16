@@ -1,0 +1,12 @@
+# Adds the real internet to the trial: the uplink gets Docker's NAT, and DNS goes to a public
+# resolver (Docker's own 127.0.0.11 cannot pass the gateway's egress filter).
+#
+#   docker compose -f retronet/compose.yml -f retronet/compose.online.yml up -d --build
+services:
+  gateway:
+    environment:
+      RETRONET_UPSTREAM_DNS: ${RETRONET_UPSTREAM_DNS:-9.9.9.9 149.112.112.112}
+      RETRONET_UPLINK_GATEWAY: 192.168.98.1
+networks:
+  uplink:
+    internal: false

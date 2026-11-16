@@ -1,0 +1,75 @@
+name: retro net gateway
+
+# The retro net gateway (retronet/): the hermetic container test on pull requests and on main, and on
+# main the image pushed to ghcr.io/hwinther/wsh-pve/retronet-gateway (Docker, or Proxmox VE's
+# "Pull from OCI registry"). The test needs no internet beyond the image builds: a fake Wayback
+# Machine and DNS stand in for archive.org. Nothing is cached between runs; the build takes a few
+# minutes from scratch and a cache would only add a way to fail.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "retronet/**"
+      - ".github/workflows/retronet.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "retronet/**"
+      - ".github/workflows/retronet.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Gateway test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and run the hermetic test
+        run: retronet/test.sh
+
+  publish:
+    name: Publish the gateway image
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          image=ghcr.io/hwinther/wsh-pve/retronet-gateway
+          docker build -f retronet/gateway/Dockerfile -t "$image:latest" -t "$image:sha-${SHA::12}" retronet
+          docker push "$image:sha-${SHA::12}"
+          docker push "$image:latest"
