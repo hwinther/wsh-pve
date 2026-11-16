@@ -1,0 +1,87 @@
+#!/bin/busybox sh
+# Guest /init: dial the emulated modem on COM1 (ttyS0), bring up PPP, test, power off.
+/bin/busybox --install -s /bin
+export PATH=/sbin:/bin
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
+mkdir -p /dev/pts; mount -t devpts devpts /dev/pts; mount -t tmpfs tmp /tmp
+for m in slhc ppp_generic ppp_async bsd_comp ppp_deflate; do insmod /lib/modules/$m.ko; done
+ip link set lo up
+# parameters from the kernel command line: dial.num= dial.baud= dial.url= dial.host= dial.opts= (opts: commas -> spaces)
+NUM=5555; BAUD=115200; URL=http://deb.debian.org/debian/README; HOST=; OPTS=; CHAPUSER=
+for a in $(cat /proc/cmdline); do case $a in
+  dial.num=*) NUM=${a#*=};; dial.baud=*) BAUD=${a#*=};; dial.url=*) URL=${a#*=};;
+  dial.host=*) HOST=${a#*=};; dial.opts=*) OPTS=$(echo ${a#*=} | tr , ' ');; dial.user=*) CHAPUSER=${a#*=};;
+esac; done
+[ -n "$CHAPUSER" ] && { echo "$CHAPUSER * secret *" > /etc/ppp/pap-secrets; cp /etc/ppp/pap-secrets /etc/ppp/chap-secrets; OPTS="$OPTS user $CHAPUSER"; }
+# idle-baseline mode: just sleep (for measuring QEMU's idle CPU cost)
+for a in $(cat /proc/cmdline); do case $a in dial.sleep=*) sleep ${a#*=}; echo "DIALTEST: DONE"; poweroff -f;; esac; done
+# raw serial throughput mode (no modem, no PPP): host side is a plain socket client
+if grep -q dial.raw=1 /proc/cmdline; then
+  stty -F /dev/ttyS0 $BAUD raw -echo -crtscts clocal
+  dd if=/dev/urandom of=/tmp/up bs=1024 count=256 2>/dev/null
+  S=$(cut -d' ' -f1 /proc/uptime); cat /tmp/up > /dev/ttyS0; E=$(cut -d' ' -f1 /proc/uptime)
+  echo "DIALTEST: RAW-TX 262144 bytes $S $E"
+  S=$(cut -d' ' -f1 /proc/uptime); head -c 262144 /dev/ttyS0 > /tmp/rx; E=$(cut -d' ' -f1 /proc/uptime)
+  echo "DIALTEST: RAW-RX $(wc -c < /tmp/rx) bytes $S $E"
+  cat /proc/tty/driver/serial | sed 's/^/DIALTEST: uart /'
+  echo "DIALTEST: DONE"; poweroff -f
+fi
+cat > /etc/ppp/chat <<C
+ABORT BUSY
+ABORT "NO CARRIER"
+ABORT ERROR
+TIMEOUT 20
+"" ATZ
+OK ATDT$NUM
+CONNECT ""
+C
+# Hang-up script: DTR drop does not reach atduck over a QEMU socket chardev, so escape with +++ (1 s guard) and ATH
+cat > /etc/ppp/hangup <<C
+ABORT ERROR
+TIMEOUT 5
+"" "\\d\\d+++\\d\\d\\c"
+OK ATH0
+OK ""
+C
+DISC=""; grep -q dial.disc=1 /proc/cmdline && DISC="disconnect"
+echo "DIALTEST: dialling $NUM at $BAUD via ttyS0"
+T0=$(cut -d' ' -f1 /proc/uptime)
+pppd /dev/ttyS0 $BAUD connect "chat -v -f /etc/ppp/chat" ${DISC:+disconnect "chat -v -f /etc/ppp/hangup"} updetach debug noauth local nocrtscts \
+     noipdefault defaultroute usepeerdns noipv6 maxfail 1 lcp-echo-interval 0 logfile /tmp/pppd.log $OPTS 2>&1
+RC=$?
+T1=$(cut -d' ' -f1 /proc/uptime)
+echo "DIALTEST: pppd rc=$RC (dial+negotiation ${T0}s -> ${T1}s uptime)"
+cat /tmp/pppd.log | sed 's/^/PPPD: /'
+if [ $RC = 0 ]; then
+  ip addr show ppp0 | sed 's/^/DIALTEST: /'
+  [ -f /etc/ppp/resolv.conf ] && cp /etc/ppp/resolv.conf /etc/resolv.conf && sed 's/^/DIALTEST: dns /' /etc/resolv.conf
+  echo "DIALTEST: fetching $URL"
+  if wget -T 30 -O /tmp/page "$URL"; then echo "DIALTEST: FETCH OK $(wc -c < /tmp/page) bytes"; head -c 300 /tmp/page | sed 's/^/PAGE: /'; else echo "DIALTEST: FETCH FAILED"; fi
+  if [ -n "$HOST" ]; then
+    for i in 1 2 3 4 5; do
+      S=$(cut -d' ' -f1 /proc/uptime); wget -q -O /dev/null http://$HOST:8000/tiny; E=$(cut -d' ' -f1 /proc/uptime)
+      echo "DIALTEST: tiny-GET $i $S $E"
+    done
+    ping -c 5 $HOST 2>&1 | sed 's/^/DIALTEST: ping /'
+    S=$(cut -d' ' -f1 /proc/uptime); wget -q -O /tmp/dl http://$HOST:8000/r256k; E=$(cut -d' ' -f1 /proc/uptime)
+    echo "DIALTEST: DOWNLOAD $(wc -c < /tmp/dl) bytes $S $E"
+    dd if=/dev/urandom of=/tmp/up bs=1024 count=128 2>/dev/null
+    S=$(cut -d' ' -f1 /proc/uptime); nc -w 5 $HOST 9000 < /tmp/up; E=$(cut -d' ' -f1 /proc/uptime)
+    echo "DIALTEST: UPLOAD 131072 bytes $S $E"
+    cat /proc/tty/driver/serial 2>/dev/null | sed 's/^/DIALTEST: uart /'
+    ifconfig ppp0 | sed 's/^/DIALTEST: /'
+  fi
+  echo "DIALTEST: hanging up at $(cut -d" " -f1 /proc/uptime)"; killall pppd; n=0; while pidof pppd >/dev/null && [ $n -lt 40 ]; do sleep 0.5; n=$((n+1)); done; echo "DIALTEST: first pppd gone at $(cut -d" " -f1 /proc/uptime)"; sleep 1
+  if grep -q dial.redial=1 /proc/cmdline; then
+    # second call on the same COM port. Without dial.disc=1 the first call was never hung up
+    # (DTR drop does not cross a QEMU socket chardev), so the modem is still online and ATZ goes to the ISP side.
+    pppd /dev/ttyS0 $BAUD connect "chat -v -f /etc/ppp/chat" ${DISC:+disconnect "chat -v -f /etc/ppp/hangup"} updetach noauth local nocrtscts noipdefault defaultroute noipv6 maxfail 1 logfile /tmp/pppd2.log $OPTS >/dev/null 2>&1
+    R2=$?
+    tail -12 /tmp/pppd.log | sed "s/^/DIALTEST: first-call-log: /"
+    echo "DIALTEST: REDIAL rc=$R2 (disconnect script: ${DISC:-none})"; grep -E "local  IP|Connect script failed" /tmp/pppd2.log | sed 's/^/DIALTEST:   /'
+    [ $R2 = 0 ] && wget -q -T 20 -O /tmp/p2 "$URL" && echo "DIALTEST: REDIAL FETCH OK"
+    killall pppd 2>/dev/null; sleep 4
+  fi
+fi
+echo "DIALTEST: DONE"
+poweroff -f

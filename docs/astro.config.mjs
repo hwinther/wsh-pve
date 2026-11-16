@@ -25,6 +25,7 @@ export default defineConfig({
             { label: "SPARC lab recordings", slug: "guides/sparc-recordings" },
             { label: "3DFX / Mesa passthrough", slug: "guides/3dfx" },
             { label: "Guest operating systems", slug: "guides/operating-systems" },
+            { label: "Dial-up modem", slug: "guides/dialup" },
           ],
         },
         {
