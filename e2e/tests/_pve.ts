@@ -64,26 +64,6 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
-/**
- * Whether the installed qemu-server handles running sparc VMs: the machine type of one (`SS-5+pve0`,
- * `sun4u+pve0`) carries no version, and qemu-server 9.2.15+wsh3 died on it in every check of a
- * running VM (`cannot check version of invalid string '10'`: CD change, clone, move disk, ...). The
- * same release peers sparc32's lance with the `net0` netdev, so its link can be set. A probe that
- * answers neither way fails the caller instead of guessing.
- */
-export async function hasRunningSparcFixes(): Promise<boolean> {
-  const probe = await pveExec([
-    'perl',
-    '-MPVE::QemuServer::Machine',
-    '-e',
-    `my $ok = eval { PVE::QemuServer::Machine::is_machine_version_at_least('SS-5+pve0', 10, 0) };
-     my $err = $@;
-     print $ok ? 'fixed=yes' : $err =~ /cannot check version of invalid string/ ? 'fixed=no' : "fixed=unknown: $err";`,
-  ])
-  expect(probe.output, probe.output).toMatch(/^fixed=(yes|no)$/m)
-  return probe.output.includes('fixed=yes')
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
