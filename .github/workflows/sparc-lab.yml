@@ -28,6 +28,7 @@ on:
           - benchdisk
           - smp
           - stopa
+          - solaris10
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"

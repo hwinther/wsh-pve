@@ -58,10 +58,37 @@ const CHECK_QEMU_EXTRAS = readFileSync(new URL('../../scripts/check-qemu-extras.
 
 /**
  * scripts/check-qemu-extras.sh for one optional extra of the installed pve-qemu-kvm (3dfx, openbios,
- * sun-proms): exit code 0 when it's there, 1 when it isn't.
+ * openbios-sparc64, sun-proms): exit code 0 when it's there, 1 when it isn't.
  */
 export async function checkQemuExtra(name: string): Promise<{ code: number; output: string }> {
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
+}
+
+/**
+ * Whether the installed qemu-system-sparc64 keeps the cmd646's interrupt status bits latched after the
+ * drive drops INTRQ (pve-qemu patch wsh/0021). The package built from that change also installs
+ * openbios-sparc64 from openbios/, so this tells a package that should have that extra from an older
+ * one. Asked of QEMU itself through its qtest protocol, no guest: bus 1 behind the simba at 00:01.1,
+ * the cmd646's BAR0/BAR1 at 0x400/0x408, SET FEATURES on the primary master, a status read (INTRQ
+ * drops), then MRDMODE (bit 0x04 latched, or 0).
+ */
+export async function hasCmd646Latch(): Promise<boolean> {
+  const probe = await pveExec([
+    'bash',
+    '-c',
+    `c=0x1fe01000000 io=0x1fe02000000
+     cfg() { printf 'writeb 0x%x 0x%x\\n' $((c + ($1 << 16) + ($2 << 8) + $3)) "$4"; }
+     {
+       cfg 0 9 0x19 1; cfg 0 9 0x1a 1
+       cfg 1 24 0x10 0x00; cfg 1 24 0x11 0x04; cfg 1 24 0x14 0x08; cfg 1 24 0x15 0x04; cfg 1 24 0x04 1
+       printf 'writeb 0x%x 0x0\\n' $((io + 0x40a))
+       printf 'writeb 0x%x 0x%x\\n' $((io + 0x406)) 0xa0 $((io + 0x401)) 3 $((io + 0x402)) 12 $((io + 0x407)) 0xef
+       printf 'readb 0x%x\\n' $((io + 0x407)) $((c + (1 << 16) + (24 << 8) + 0x71))
+     } | timeout 30 qemu-system-sparc64 -machine sun4u,accel=qtest -qtest stdio -display none -nodefaults \\
+         -L /usr/share/kvm -blockdev driver=null-co,node-name=d0 -device ide-hd,drive=d0,bus=ide.0 2>&1 | tail -n 1`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^OK 0x0*[04]\s*$/m)
+  return /^OK 0x0*4\s*$/m.test(probe.output)
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */

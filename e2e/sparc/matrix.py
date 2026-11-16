@@ -209,6 +209,17 @@ MATRICES["sparc64"] = [
     ("nb111-idle-sparc64", "sparc64-idle.py", NB111_64, None, {"GUEST": "netbsd", "CPU_ABOVE": "80"}),
 ]
 
+# Solaris 10 on sun4u: NEEDS THE SUN DVD on the lab host (/mnt/sparc/iso/sol-10-u11-ga-sparc-dvd.iso,
+# Oracle's Solaris 10 1/13 SPARC DVD; Sun software, never in the repository). Its installer with the
+# package's openbios-sparc64 and QEMU: the IDE disk attaches as dad0 without "Interrupt not seen after
+# set_features" (pve-qemu wsh/0021), the language and terminal questions are answered on ttya
+# (openbios/patches/0009) and the installer's first screen comes up. Needs the package built with
+# openbios-sparc64; with QEMU's image the kernel stops at "no nucleus hblk8 to allocate".
+SOL10_DVD = "sol-10-u11-ga-sparc-dvd.iso"
+MATRICES["solaris10"] = [
+    ("sol10-cd-sparc64", "sparc64-boot-cd.py", None, SOL10_DVD, {"GUEST": "solaris10", "MEM": "1024"}),
+]
+
 # Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer,
 # the frames of the framebuffer video (lab.py removes them once fb.webm is encoded). The recordings
 # (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and stay.
