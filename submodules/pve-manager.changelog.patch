@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 2b87a3e7..8df2faa7 100644
+index 2b87a3e7..9987b31f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,29 @@
++pve-manager (9.2.28+wsh3) trixie; urgency=medium
++
++  * feat(sparc64): one tested profile in qemu-server and the UI (#256)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 16 Nov 2026 03:09:14 +0000
++
 +pve-manager (9.2.28+wsh2) trixie; urgency=medium
 +
 +  * feat: build and offer sparc32 VMs from tested profiles (#239)
