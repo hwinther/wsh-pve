@@ -64,6 +64,34 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
+/**
+ * Whether the installed qemu-server lets sparc32 SS-10/SS-20 with OpenBIOS have more than one CPU (a
+ * `max-cpus` per firmware in `$PVE::QemuServer::Machine::SPARC32_PROFILES`). Before it, every sparc32
+ * profile had exactly one CPU.
+ */
+export async function hasSparc32Smp(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Machine',
+    '-e',
+    `my $fw = $PVE::QemuServer::Machine::SPARC32_PROFILES->{'SS-20'}->{firmware}->{'openbios-sparc32'};
+     print ref($fw) && ($fw->{'max-cpus'} // 1) > 1 ? 'smp=yes' : 'smp=no';`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^smp=(yes|no)$/m)
+  return probe.output.includes('smp=yes')
+}
+
+/** Whether the installed pve-manager mirrors the sparc32 CPU limits (PVE.qemu.Architecture.getSparcMaxCpus). */
+export async function hasSparc32SmpUi(): Promise<boolean> {
+  const probe = await pveExec([
+    'sh',
+    '-c',
+    'grep -q getSparcMaxCpus /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
+  ])
+  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
+  return probe.output.includes('ui=yes')
+}
+
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
