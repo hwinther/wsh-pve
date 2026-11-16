@@ -69,6 +69,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `niagara-boot.py` | `-M niagara` (sun4v) with an OpenSPARC T1 firmware set the user supplies (`FW`, never in the image): OpenBoot's `ok`, with `DISK` the T1 archive's `disk.s10hw2` to a root shell and `init 5`, with `ISO` a Solaris 10 DVD to the text installer (`WALK` walks on through its screens); skipped (exit 0, `status` "skipped: ...") when the firmware isn't there. See `submodules/SPARC.md`, "sparc64: niagara (sun4v)" | `ok`: 1 s; disk: ~2 min; installer: ~4-5 min |
 | `bench.py` | boots an installed Solaris disk, checks the CPUs `psrinfo` lists (`CPUS`, default `SMP`), then times boot to login, a `nawk` loop, `PARALLEL` copies of it at once (default `SMP`), a 64 MB write + `sync` and a raw read, with QEMU's host CPU use idle and during the parallel run; `SOAK` adds a load phase. `init 5` at the end | SS-5: ~5 min, SS-20: ~3 min |
 | `bench-disk.py` | boots an installed Solaris disk with the bench disk (`DISK2`, "The bench disk") on target 4, mounts it, runs its `run.sh` (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset with its network tests over `lo0`, the `nawk` loop, and lmbench over `le0` to the lab container: `NET=user` by default, `tap`, or `none`) and puts every `BENCH` value into `result.json`, with the host's load average; `init 5` at the end | ~10-12 min (7-8 of them `run.sh`) |
+| `smp-soak.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks that `psrinfo` lists them on-line, times one and `SMP` copies of Dhrystone and the `nawk` loop (speed-up), then loads every CPU for `SOAK` seconds (Dhrystone, Hanoi, `nawk`, a `tar` of the bench disk through `compress` with its `cksum` checked, a write, a fork loop; `SMP` + 1 shells) while `mpstat 60` records the CPUs; fails on a hang, a CPU off-line, a checksum mismatch or a CPU below `BUSY` % busy | `SOAK` + ~5 min |
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -130,6 +131,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
 | `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
+| `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -605,9 +607,11 @@ ctl hmp "info registers"         # any monitor command
   (`TI-SuperSparc-II`) they stop at `Cpu #0 Data Access Error`; `boot` then ends QEMU. The SS-10 PROM
   also needs the SS-20 machine (on SS-10: `Probing Memory Bank #4 Data Access Error`). Results for
   every PROM tried are in `submodules/SPARC.md` ("SS-10 and SS-20").
-- **Solaris 2.6 with more than one CPU hangs** (SS-20, OpenBIOS): writing 256 MB, sometimes while
-  booting. CPU 0 waits in `xc_sync_cache` for a cross-call the other CPU never answers. The `machines`
-  matrix therefore boots the installed disks with one CPU only.
+- **Solaris 2.6 with more than one CPU hung** (SS-20, OpenBIOS; fixed by pve-qemu patch 0019):
+  writing 256 MB, sometimes while booting. One CPU waited in `xc_sync_cache` for a cross-call the
+  other never took: QEMU didn't look at pending interrupts after a write to `%psr` in a delay slot,
+  where Solaris's `splx` lowers the interrupt level. The `smp` matrix loads 2 and 4 CPUs; the
+  `machines` matrix boots the installed disks with one CPU.
 - **Solaris 2.6 ran user code 4-10x slower on SS-5 than on SS-20** (fixed by pve-qemu patch
   0017): its microSPARC window-trap handlers toggle the MMU no-fault bit, and QEMU flushed its whole
   TLB on each toggle. With 0017 the `benchdisk` numbers of SS-5 and SS-20 match, except

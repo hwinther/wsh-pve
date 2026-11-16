@@ -6,7 +6,7 @@ name: sparc lab
 # Runs on a self-hosted runner that has the media, which a public repo must not hand to pull requests:
 # manual and weekly runs only, never pull_request or push. The runner needs Docker and three host
 # directories (inputs below; the schedule uses the defaults): the install CDs and the installed
-# disk images, both mounted read only, and a directory for run output; for benchdisk also the bench
+# disk images, both mounted read only, and a directory for run output; for benchdisk and smp also the bench
 # disk (e2e/sparc/README.md, "The bench disk"), whose directory is mounted read only.
 
 on:
@@ -25,6 +25,7 @@ on:
           - display-x
           - sparc64
           - benchdisk
+          - smp
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"

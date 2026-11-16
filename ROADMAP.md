@@ -51,10 +51,16 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **SMP hang on SS-20.** With more than one CPU, Solaris 2.6 hangs with CPU 0 waiting in
-   `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
-   (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
-   emulation bug. Idle in the multiprocessor loop comes after that.
+1. **SMP hang on SS-10/SS-20: fixed, waiting for review.** With more than one CPU, Solaris hung
+   within minutes: one CPU waited in `xc_sync_cache` for a cross-call the other never took. QEMU
+   (8.2 and later) didn't look at pending interrupts after a write to `%psr` in a delay slot,
+   where Solaris's `splx` lowers the interrupt level, so a CPU spinning in a `splx` loop never
+   took the soft interrupt. pve-qemu patches 0019-0020 end the translation block there; Solaris 2.6 then runs 2 and 4 CPUs under load
+   (`submodules/SPARC.md`, "SMP"). Upstream: `upstream/qemu-sun4m-smp-psr-delay-slot.md`. Then:
+   - the profiles (qemu-server, pve-manager) still pin one CPU; what to change is in
+     `submodules/SPARC.md`, "SMP";
+   - idle with more than one CPU: each vCPU spins at 100% of a host core; a bounded halt in the
+     multiprocessor idle loop is the follow-up (`submodules/SPARC.md`, "SMP").
 2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
    Solaris 10 1/13 reaches its installer's first prompt. Next: console input on ttya, the cmd646
    interrupt, then disk, network and an install. QEMU's sun4u devices (CMD646 IDE, hme) are ones
@@ -140,7 +146,8 @@ from it.
 ## Upstream reports to send
 
 Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout (OpenBIOS),
-the 1-byte APC region (QEMU) and the TLB flush on every change of the SRMMU no-fault bit (QEMU).
+the 1-byte APC region (QEMU), the TLB flush on every change of the SRMMU no-fault bit (QEMU) and
+the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang).
 QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
 not written up yet: the TTE page-size truncation if it is not merged upstream, and the ESCC mouse
 rate.
