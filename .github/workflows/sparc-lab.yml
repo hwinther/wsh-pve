@@ -27,6 +27,7 @@ on:
           - sparc64
           - benchdisk
           - smp
+          - stopa
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"

@@ -106,6 +106,8 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
 | `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
 
+| `0008-sparc32-enter-the-prompt-on-op_enter-and-resume-with-go` | Stop-A (the romvec's `op_enter`) on a running Solaris or SunOS powered the machine off ("abort, power off"); it now stops at the prompt and `go` resumes the client, `boot` resets first ("Stop-A") | not fixed; see `upstream/openbios-sparc32-op-enter-powers-off.md` |
+
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
 
@@ -403,6 +405,78 @@ every case):
 
 The ~1% over `pmc` is the 100 us spin before each halt (100 clock ticks a second); with `pmc` the first
 `idle_cpu` call of that spin halts through the APC.
+
+### Stop-A
+
+Stop-A (L1-A) on a running Solaris under OpenBIOS turned the VM off. QMP `send-key` `stop` + `a`
+(what `qm sendkey <vmid> stop-a` and a VNC client's Stop key send; qcode `stop` is Linux `KEY_STOP`,
+Sun keycode 0x01, the L1/Stop key; `f11`/`f12` are the Sun F11/F12) at Solaris 2.6's console login
+and at dtlogin, SS-5, OpenBIOS, cg3, `pve-qemu-kvm` 11.1.3-2+wsh10: OpenBIOS printed `abort, power
+off` on ttya, wrote the power-off bit (`-trace slavio_aux2_mem_writeb`: `Write aux2 0x01`, which is
+`qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN)`), and QEMU exited 3 s after the keys
+with status 0 and nothing on stderr: a guest power-off, not a crash. PVE runs QEMU with
+`-no-shutdown` and qmeventd ends it after a guest shutdown, which is why the VM was gone and
+nothing was logged. On the framebuffer nothing showed (OpenBIOS's `printk` goes to ttya).
+
+**Cause.** Solaris's abort sequence calls `abort_sequence_enter()` → `debug_enter()` (sun4m
+`machdep.c`: `splzs()`, idles the other CPUs) → `prom_enter_mon()` → the romvec's `op_enter`, which
+OpenBIOS calls `pv_abort`. OpenBIOS's `obp_abort()` (`arch/sparc32/romvec.c`) printed the message
+and powered off, while `op_enter` means "the prompt, and back on `go`" (the Sun PROMs do that).
+QEMU and the keyboard path are fine: the chord reaches Solaris as the Sun keyboard sends it.
+
+**Fix** (`openbios/patches/0008`): `obp_abort()` raises PIL to 15, runs a Forth word `(enter)` and
+returns to the client when it ends. `(enter)` saves the input source (the client was started from
+the `boot` that `boot-command` evaluates), takes an input buffer of its own, prints `Type  'go' to
+resume` and runs the outer interpreter. While a client is entered `go` ends that interpreter, and
+`boot` runs `reset-all` first (the client still occupies memory; the Sun PROMs reset too). PIL 15
+because the console is polled and the client's keyboard/serial handlers would take the keys (Solaris
+itself raised to level 12 before the call). OpenBIOS's mappings are in the client's MMU context as
+for every romvec call, so the prompt, the framebuffer console and `reset-all` work there. The
+prompt prints `ok` after `go` before returning; harmless. `sync` (dump through the client's sync
+hook) isn't implemented. Upstream material: `upstream/openbios-sparc32-op-enter-powers-off.md`.
+
+**What it affects** (`scenarios/stop-a.py`, two rounds each unless stated; "prompt" = `Type  'go'
+to resume` and `0 >` on the console, the CPU in the firmware, `go` resumes and the guest answers):
+
+| Guest | Machine, firmware | Console, input | wsh10 (stock OpenBIOS behaviour) | With 0008 |
+| --- | --- | --- | --- | --- |
+| Solaris 2.6 | SS-5, OpenBIOS | cg3, console login, Stop-A | VM off | prompt; a login after `go` works |
+| Solaris 2.6 | SS-5, OpenBIOS | cg3, dtlogin, Stop-A | VM off | prompt drawn over the X screen (as on a Sun); dtlogin takes a user name after `go` |
+| Solaris 2.6 | SS-5, OpenBIOS | cg3, console, Stop-A then `boot` | | resets, boots to login again |
+| Solaris 2.6 | SS-10, OpenBIOS | cg3, console, Stop-A | not run (same firmware path) | prompt |
+| Solaris 2.6 | SS-20, OpenBIOS | cg3, console, Stop-A | VM off | prompt |
+| Solaris 2.6 | SS-20, OpenBIOS, 2 CPUs | cg3, console, Stop-A | not run | prompt (one round) |
+| Solaris 2.6 | SS-5, OpenBIOS | cg3, console, `a` then `stop` | not run | ignored: `a` typed at the login |
+| Solaris 2.6 | SS-5, OpenBIOS | ttya, Stop-A on the keyboard | not run | ignored (the keyboard isn't the console) |
+| Solaris 2.6 | SS-5, OpenBIOS | ttya, break (QMP `chardev-send-break`) | no prompt (the hang wasn't checked; it is QEMU's) | no prompt; the guest hangs (below) |
+| SunOS 4.1.4 | SS-5, OpenBIOS | cg3, Stop-A | VM off | prompt |
+| NetBSD 11.1 | SS-5, OpenBIOS | cg3, Stop-A | its kernel debugger (`db>`), `c` continues | the same |
+| none | SS-5, OpenBIOS | the firmware's own `0 >`, Stop-A | ignored | ignored |
+| Solaris 2.5.1 | SS-5, `ss5.bin` | cg3, console, Stop-A | `ok`, `go` resumes | (firmware not changed) |
+| Solaris 2.6 | SS-5, `ss5.bin` | cg3, dtlogin, Stop-A | `ok`, `go` resumes | (firmware not changed) |
+
+Not run: Solaris 7/8 (no installed disks), the SS-20 Sun PROM, TCX (the firmware path is the same).
+
+Tested with `openbios-sparc32` and `QEMU,cgthree.bin` built by `openbios/Dockerfile` (0001, 0002,
+0008) over the published `pve-qemu-kvm` 11.1.3-2+wsh10 (`LAB_FIRMWARE`): the `stopa` matrix 9/9
+(and the break case, since dropped from it, failed as above), and no regression in `smoke` (3/3),
+`machines` (13/13), `display` (20/20) and `idle` (10/10). No QEMU change; no qtest (the bug isn't
+in a device).
+
+**A break on ttya hangs Solaris** (any firmware; a QEMU ESCC bug, not fixed here). QEMU's
+`serial_receive_break()` sets RR0's break bit on `CHR_EVENT_BREAK` and never clears it, and
+`escc_update_irq()` keeps the external/status interrupt raised for as long as the bit and the
+break interrupt enable are set. Solaris's `zsa_xsint()` (`uts/sun/io/zs_async.c`) resets the
+status and waits for the bit to go back to 0, the end of the break, which is where it would enter
+the abort; that never comes, and the interrupt never goes away. Measured (Solaris 2.6 on ttya,
+SS-5, OpenBIOS with 0008, root shell, QMP `chardev-send-break id=ttya`): QEMU's CPU went from 8.5%
+to 100.9% of a core, the ESCC register reads from 0 to 1.9 million in 5 s, the PC samples moved
+from the idle loop to kernel interrupt code, and the shell no longer answered (no echo for 60 s).
+QEMU stays up. Not reachable through PVE (its serial console is a plain Unix socket, xterm.js and
+`qm terminal` send no break), but a `-serial mon:stdio` Ctrl-A b, a telnet chardev or QMP would.
+A fix would be in QEMU's ESCC: a break with an end (clear the bit after a character time, with the
+NUL character a real break leaves in the receiver), so Solaris sees the transition and enters the
+prompt; a candidate for a `wsh/` patch and an upstream report.
 
 ### SS-10 and SS-20
 
@@ -1707,6 +1781,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - cg3 and TCX: the TCX/cg3 banner and no-driver cases in `display`, the desktop cases in `display-x`
   (`scenarios/fb-display.py`, disks prepared by `solaris-tcx-packages.py`); results under "cg3 and TCX".
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
+- Stop-A: the lab's `stopa` matrix (`scenarios/stop-a.py`); results under "Stop-A".
 - SMP: the lab's `smp` matrix (`scenarios/smp-soak.py`, the bench disk) and the qtest
   `sun4m-pil-delay-slot-test` (0020); results under "SMP".
 - Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
@@ -1746,5 +1821,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - **SS-20 PROM with a framebuffer:** Solaris 2.6 panics at boot with the console on cg3 or TCX
   under `ss20_v2.25_rom` ("cg3 and TCX"); with a serial console it boots.
 - **TCX depth:** qemu-server passes no `-g`, so TCX is 8-bit; 24-bit only works with OpenBIOS.
+- **Break on a serial console:** QEMU's ESCC never ends a break; Solaris on ttya then spins in its
+  serial interrupt and hangs ("Stop-A"). PVE can't send a break; Stop-A on the keyboard works with a
+  framebuffer console.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).

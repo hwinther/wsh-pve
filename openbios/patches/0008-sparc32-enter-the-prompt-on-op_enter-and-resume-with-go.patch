@@ -1,0 +1,111 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: enter the prompt on op_enter and resume the client
+ with go
+
+The romvec's op_enter (pv_abort) is how a running client asks for the
+PROM prompt: Solaris and SunOS call it from the keyboard abort sequence
+(Stop-A, L1-A), Solaris also on a break on its serial console, through
+prom_enter_mon(). On a Sun the machine stops at "ok" and "go" returns to
+the client.
+
+obp_abort() printed "abort, power off" and wrote the power-off bit
+instead, so Stop-A on a running Solaris turned the machine off (QEMU:
+a guest shutdown request; the guest loses everything not on disk).
+
+Run the Forth interpreter instead, on its own input buffer, until "go",
+then return to the client. The client's interrupts stay masked meanwhile
+(PIL 15): the console is polled, and the client's own keyboard and serial
+handlers would take the keys. While the client is entered, "boot" resets
+the machine (reset-all) first, as the Sun PROMs do, since the client
+still occupies memory. Stop-A at the firmware's own prompt, with no
+client, stays ignored.
+---
+diff --git a/arch/sparc32/init.fs b/arch/sparc32/init.fs
+index 5e8805b..325cc1c 100644
+--- a/arch/sparc32/init.fs
++++ b/arch/sparc32/init.fs
+@@ -37,6 +37,45 @@
+ 
+ device-end
+ 
++\ The prompt a running client enters through the romvec (op_enter, see
++\ obp_abort in romvec.c): Stop-A, a break on ttya. "go" returns to the
++\ client; "boot" resets the machine first, since the client is in memory.
++0 value romvec-entered?
++create romvec-enter-ib 100 allot
++
++: (enter) ( -- )
++  save-source
++  romvec-enter-ib ['] ib (to)
++  100 #ib !
++  0 ['] source-id (to)
++  0 >in !
++  0 span !
++  state @ >r 0 state !
++  true to romvec-entered?
++  0 to terminate?
++  cr ." Type  'go' to resume" cr
++  outer-interpreter
++  0 to terminate?
++  false to romvec-entered?
++  r> state !
++  restore-source
++;
++
++: go ( -- )
++  romvec-entered? if 1 to terminate? exit then
++  go
++;
++
++: boot ( "{param-text}<cr>" -- )
++  romvec-entered? if
++    linefeed parse 2drop
++    ." Resetting ..." cr
++    reset-all
++    exit
++  then
++  boot
++;
++
+ : rmap@    ( virt -- rmentry )
+   drop 0
+   ;
+diff --git a/arch/sparc32/romvec.c b/arch/sparc32/romvec.c
+index 7a01035..760fbf9 100644
+--- a/arch/sparc32/romvec.c
++++ b/arch/sparc32/romvec.c
+@@ -16,6 +16,7 @@
+ #include "libopenbios/sys_info.h"
+ #include "boot.h"
+ #include "romvec.h"
++#include "psr.h"
+ 
+ #ifdef CONFIG_DEBUG_OBP
+ #define DPRINTF(fmt, args...)                   \
+@@ -257,12 +258,22 @@ void obp_reboot(char *str)
+     for (;;) {}
+ }
+ 
++/*
++ * op_enter: the client asks for the prompt (Solaris and SunOS on Stop-A, or
++ * Solaris on a break on its serial console). The client stays
++ * in memory: run the Forth interpreter until "go", then return to it, as the
++ * Sun PROMs do. Its interrupts stay masked meanwhile: the console is polled,
++ * and the client's own handlers would take the keys.
++ */
+ void obp_abort(void)
+ {
+-    printk("abort, power off\n");
+-    *power_reg = 1;
+-    printk("power off failed\n");
+-    for (;;) {}
++    int dstacktmp = dstackcnt;
++    unsigned int psr = get_psr();
++
++    put_psr(psr | PSR_PIL);
++    fword("(enter)");
++    put_psr((get_psr() & ~PSR_PIL) | (psr & PSR_PIL));
++    dstackcnt = dstacktmp;
+ }
+ 
+ void obp_halt(void)
