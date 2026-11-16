@@ -13,6 +13,8 @@ export const PASSWORD = process.env.PVE_ROOT_PASSWORD ?? 'e2e-password'
 export interface Pve {
   get: <T>(path: string) => Promise<T>
   post: <T>(path: string, form: Record<string, number | string>) => Promise<T>
+  /** A synchronous PUT (a config update applied to a running VM right away). */
+  put: <T>(path: string, form: Record<string, number | string>) => Promise<T>
   delete: (path: string) => Promise<void>
   /** A POST/PUT expected to fail: its status and the error text (status line and body). */
   refused: (method: 'POST' | 'PUT', path: string, form: Record<string, number | string>) => Promise<Refusal>
@@ -42,6 +44,7 @@ export async function pveApi(request: APIRequestContext): Promise<Pve> {
     },
     get: async (path) => unwrap(await request.get(`/api2/json${path}`, { headers })),
     post: async (path, form) => unwrap(await request.post(`/api2/json${path}`, { form, headers })),
+    put: async (path, form) => unwrap(await request.put(`/api2/json${path}`, { form, headers })),
     refused: async (method, path, form) => {
       const res = await request.fetch(`/api2/json${path}`, { form, headers, method })
       const body = await res.text()
@@ -59,6 +62,26 @@ const CHECK_QEMU_EXTRAS = readFileSync(new URL('../../scripts/check-qemu-extras.
  */
 export async function checkQemuExtra(name: string): Promise<{ code: number; output: string }> {
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
+}
+
+/**
+ * Whether the installed qemu-server handles running sparc VMs: the machine type of one (`SS-5+pve0`,
+ * `sun4u+pve0`) carries no version, and qemu-server 9.2.15+wsh3 died on it in every check of a
+ * running VM (`cannot check version of invalid string '10'`: CD change, clone, move disk, ...). The
+ * same release peers sparc32's lance with the `net0` netdev, so its link can be set. A probe that
+ * answers neither way fails the caller instead of guessing.
+ */
+export async function hasRunningSparcFixes(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Machine',
+    '-e',
+    `my $ok = eval { PVE::QemuServer::Machine::is_machine_version_at_least('SS-5+pve0', 10, 0) };
+     my $err = $@;
+     print $ok ? 'fixed=yes' : $err =~ /cannot check version of invalid string/ ? 'fixed=no' : "fixed=unknown: $err";`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^fixed=(yes|no)$/m)
+  return probe.output.includes('fixed=yes')
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */

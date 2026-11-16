@@ -132,7 +132,7 @@ index c84f10f8..aecf60fa 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 69a2bd64..e634c7dc 100644
+index 69a2bd64..7f5bcf2c 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -170,7 +170,7 @@ my $vga_fmt = {
@@ -548,28 +548,15 @@ index 69a2bd64..e634c7dc 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3682,7 +3819,12 @@ sub config_to_command {
-         $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
- 
-         my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
--        push @$devices, '-netdev', $netdevfull;
-+        if ($arch eq 'sparc') {
-+        	$netdevfull =~ s/net0/lance.0/;
-+        	push @$devices, '-net', $netdevfull;
-+        } else {
-+        	push @$devices, '-netdev', $netdevfull;
-+        }
- 
-         # force +pve1 if machine version 10.0, for host_mtu differentiation
-         $version_guard->(10, 0, 1);
-@@ -3697,7 +3839,17 @@ sub config_to_command {
+@@ -3697,7 +3834,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
 -        push @$devices, '-device', $netdevicefull;
 +        if ($arch eq 'sparc') {
-+        	# lance is builtin and not pluggable on the sparc platform
-+        	push @$devices, '-net', "nic,model=lance,macaddr=$d->{macaddr}";
++        	# lance is builtin and not pluggable on the sparc platform. Peered with the netdev directly,
++        	# so 'set_link net0' reaches it as on other architectures (link_down, bridge, tag changes).
++        	push @$devices, '-net', "nic,model=lance,macaddr=$d->{macaddr},netdev=$netname";
 +        } elsif ($arch eq 'sparc64') {
 +            # On a real Ultra 5 all PCI devices are attached behind the two simba bridges;
 +        	# in-built devices are attached to bus A whilst bus B has 4 free PCI slots for use.
@@ -581,7 +568,34 @@ index 69a2bd64..e634c7dc 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -4576,7 +4728,8 @@ sub vmconfig_hotplug_pending {
+@@ -3924,7 +4072,7 @@ sub vm_deviceplug {
+         return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
+ 
+         my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
+-        my $machine_version = PVE::QemuServer::Machine::extract_version($machine_type);
++        my $machine_version = PVE::QemuServer::Machine::get_machine_version($machine_type, $vmid);
+         my $use_old_bios_files = undef;
+         ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
+ 
+@@ -4503,13 +4651,16 @@ sub vmconfig_hotplug_pending {
+ 
+     my $hotplug_features =
+         parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
++    # sparc: no device is hot-pluggable (sun4m's built-in ESP and lance, sun4u's PCI buses), so such
++    # changes stay pending until the next start; a CD-ROM's medium still changes live
++    $hotplug_features = {} if $arch =~ m/^sparc/;
+ 
+     my $usb_hotplug;
+     my $usb_was_unplugged = 0;
+     my $is_usb_hotplug_supported = sub {
+         return $usb_hotplug if defined($usb_hotplug);
+         my $ostype = $conf->{ostype};
+-        my $version = PVE::QemuServer::Machine::extract_version($machine_type->());
++        my $version = PVE::QemuServer::Machine::get_machine_version($machine_type->(), $vmid);
+         $usb_hotplug =
+             $hotplug_features->{usb}
+             && min_version($version, 7, 1)
+@@ -4576,7 +4727,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -591,7 +605,7 @@ index 69a2bd64..e634c7dc 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -5046,8 +5199,10 @@ sub vmconfig_update_disk {
+@@ -5046,8 +5198,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -604,7 +618,7 @@ index 69a2bd64..e634c7dc 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5147,7 +5302,7 @@ sub vmconfig_update_disk {
+@@ -5147,7 +5301,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -613,7 +627,7 @@ index 69a2bd64..e634c7dc 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5644,6 +5799,9 @@ sub vm_start_nolock {
+@@ -5644,6 +5798,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -623,7 +637,20 @@ index 69a2bd64..e634c7dc 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -8074,7 +8232,12 @@ sub bootorder_from_legacy {
+@@ -5849,7 +6006,11 @@ sub vm_start_nolock {
+         PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
+     }
+ 
+-    if (!defined($conf->{balloon}) || $conf->{balloon}) {
++    # sparc32 has no balloon device
++    if (
++        (!defined($conf->{balloon}) || $conf->{balloon})
++        && PVE::QemuServer::Helpers::get_vm_arch($conf) ne 'sparc'
++    ) {
+         eval {
+             mon_cmd(
+                 $vmid,
+@@ -8074,7 +8235,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -928,7 +955,7 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index fa47d668..0e732c3c 100644
+index fa47d668..18841d36 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,12 @@ use warnings;
@@ -1092,7 +1119,54 @@ index fa47d668..0e732c3c 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -319,18 +440,15 @@ sub get_machine_pve_revisions {
+@@ -305,11 +426,44 @@ sub machine_version_cmp {
+     );
+ }
+ 
++=head3 get_machine_version
++
++    my $version = get_machine_version($machine_type, $vmid);
++
++The version (C<major.minor+pveN>) that C<$machine_type> runs at, for the checks that depend on it.
++QEMU's sparc machines (sun4m's C<SS-5>, C<SS-10>, C<SS-20> and C<sun4u>) have no versioned variants:
++they run at the version of the QEMU binary, which is also what C<config_to_command> uses for them. For
++those this is the version of the QEMU that runs VM C<$vmid> (QMP C<query-version>), or of the
++installed QEMU when no VMID is given. Dies if there is no version, rather than letting C<min_version>
++take the next argument as the version string.
++
++=cut
++
++sub get_machine_version {
++    my ($machine_type, $vmid) = @_;
++
++    my $qemu_version;
++    if (defined($machine_type) && $machine_type =~ m/^(?:SS-\d+|sun4[a-z])(?:\+pve\d+)?$/) {
++        if (defined($vmid)) {
++            my $res = PVE::QemuServer::Monitor::mon_cmd($vmid, 'query-version');
++            $qemu_version = "$res->{qemu}->{major}.$res->{qemu}->{minor}.$res->{qemu}->{micro}";
++        } else {
++            $qemu_version = PVE::QemuServer::Helpers::kvm_user_version();
++        }
++    }
++
++    my $version = extract_version($machine_type, $qemu_version);
++    die "unable to determine the version of machine type '" . ($machine_type // '') . "'\n"
++        if !defined($version);
++
++    return $version;
++}
++
+ sub is_machine_version_at_least {
+     my ($machine_type, $major, $minor, $pve) = @_;
+ 
+-    return PVE::QemuServer::Helpers::min_version(extract_version($machine_type), $major, $minor,
+-        $pve);
++    return PVE::QemuServer::Helpers::min_version(get_machine_version($machine_type), $major,
++        $minor, $pve);
+ }
+ 
+ sub get_machine_pve_revisions {
+@@ -319,18 +473,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1115,7 +1189,7 @@ index fa47d668..0e732c3c 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -503,6 +621,7 @@ sub get_power_state_flags {
+@@ -503,6 +654,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1123,7 +1197,7 @@ index fa47d668..0e732c3c 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -510,6 +629,7 @@ sub get_power_state_flags {
+@@ -510,6 +662,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1182,6 +1256,28 @@ index 0ab43614..ede73231 100644
          # include usb device config if still on x86 before-xhci machines and if USB 3 is not used
          push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
+diff --git a/src/test/Makefile b/src/test/Makefile
+index 9336b524..e42d0c79 100644
+--- a/src/test/Makefile
++++ b/src/test/Makefile
+@@ -1,6 +1,6 @@
+ all: test
+ 
+-test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory
++test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_machine_version
+ 
+ test_snapshot: run_snapshot_tests.pl
+ 	./run_snapshot_tests.pl
+@@ -43,6 +43,9 @@ test_parse_config: run_parse_config_tests.pl QemuServerTest/Utils.pm
+ test_memory: run_memory_tests.pl
+ 	./run_memory_tests.pl
+ 
++test_machine_version: run_machine_version_tests.pl
++	./run_machine_version_tests.pl
++
+ .PHONY: clean
+ clean:
+ 	rm -rf MigrationTest/run
 diff --git a/src/test/QemuServerTest/CommandLineMocks.pm b/src/test/QemuServerTest/CommandLineMocks.pm
 index 99442d7e..0f7ec614 100644
 --- a/src/test/QemuServerTest/CommandLineMocks.pm
@@ -1424,7 +1520,7 @@ index 00000000..3c1172fa
 +vga: tcx
 diff --git a/src/test/cfg2cmd/sparc32-ss10-openbios.conf.cmd b/src/test/cfg2cmd/sparc32-ss10-openbios.conf.cmd
 new file mode 100644
-index 00000000..95b8c538
+index 00000000..c058a4f2
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-ss10-openbios.conf.cmd
 @@ -0,0 +1,24 @@
@@ -1449,8 +1545,8 @@ index 00000000..95b8c538
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
 +  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
-+  -net 'type=tap,id=lance.0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
-+  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:03' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:03,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-10+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss10-sun-prom-error.conf b/src/test/cfg2cmd/sparc32-ss10-sun-prom-error.conf
 new file mode 100644
@@ -1521,7 +1617,7 @@ index 00000000..c215bc42
 +vga: cg3
 diff --git a/src/test/cfg2cmd/sparc32-ss20-sun-prom.conf.cmd b/src/test/cfg2cmd/sparc32-ss20-sun-prom.conf.cmd
 new file mode 100644
-index 00000000..f78affcc
+index 00000000..f0213c53
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-ss20-sun-prom.conf.cmd
 @@ -0,0 +1,25 @@
@@ -1547,8 +1643,8 @@ index 00000000..f78affcc
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
 +  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
-+  -net 'type=tap,id=lance.0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
-+  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:05' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:05,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-20+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-defaults.conf b/src/test/cfg2cmd/sparc32-ss5-defaults.conf
 new file mode 100644
@@ -1568,7 +1664,7 @@ index 00000000..dc46457b
 +vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
 diff --git a/src/test/cfg2cmd/sparc32-ss5-defaults.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-defaults.conf.cmd
 new file mode 100644
-index 00000000..303a7fa6
+index 00000000..96932e92
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-ss5-defaults.conf.cmd
 @@ -0,0 +1,23 @@
@@ -1592,8 +1688,8 @@ index 00000000..303a7fa6
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
 +  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
-+  -net 'type=tap,id=lance.0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
-+  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-memory-error.conf b/src/test/cfg2cmd/sparc32-ss5-memory-error.conf
 new file mode 100644
@@ -1641,7 +1737,7 @@ index 00000000..6711e504
 +vga: cg3
 diff --git a/src/test/cfg2cmd/sparc32-ss5-sun-prom.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-sun-prom.conf.cmd
 new file mode 100644
-index 00000000..ce4761d1
+index 00000000..0adc2b09
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-ss5-sun-prom.conf.cmd
 @@ -0,0 +1,27 @@
@@ -1669,8 +1765,8 @@ index 00000000..ce4761d1
 +  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
 +  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/zero.iso","node-name":"e0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"f0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}' \
 +  -device 'scsi-cd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,id=scsi6,device_id=drive-scsi6,physical_block_size=512' \
-+  -net 'type=tap,id=lance.0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
-+  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:01' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:01,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-two-nics-error.conf b/src/test/cfg2cmd/sparc32-two-nics-error.conf
 new file mode 100644
@@ -1695,3 +1791,463 @@ index 00000000..3303a8ed
 +arch: sparc
 +memory: 256
 +vga: std
+diff --git a/src/test/hotplug/sparc32-cdrom-change.conf b/src/test/hotplug/sparc32-cdrom-change.conf
+new file mode 100644
+index 00000000..5dfe9050
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-change.conf
+@@ -0,0 +1,13 @@
++# TEST: changing the ISO of a sparc32 CD-ROM (SS-5, which has no machine version) swaps the medium
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++scsi6: local:iso/other.iso,media=cdrom
+diff --git a/src/test/hotplug/sparc32-cdrom-change.conf.expected b/src/test/hotplug/sparc32-cdrom-change.conf.expected
+new file mode 100644
+index 00000000..f247bbfb
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-change.conf.expected
+@@ -0,0 +1,9 @@
++qmp blockdev-open-tray {"force":true,"id":"scsi6"}
++qmp blockdev-remove-medium {"id":"scsi6"}
++qmp blockdev-del {"node-name":"drive-scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
++qmp object-add {"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}
++qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/other.iso","node-name":"ed863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"fd863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}
++qmp blockdev-insert-medium {"id":"scsi6","node-name":"drive-scsi6"}
++qmp blockdev-close-tray {"id":"scsi6"}
+diff --git a/src/test/hotplug/sparc32-cdrom-eject.conf b/src/test/hotplug/sparc32-cdrom-eject.conf
+new file mode 100644
+index 00000000..2e56f72c
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-eject.conf
+@@ -0,0 +1,13 @@
++# TEST: removing the ISO of a sparc32 CD-ROM ejects the medium
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++scsi6: none,media=cdrom
+diff --git a/src/test/hotplug/sparc32-cdrom-eject.conf.expected b/src/test/hotplug/sparc32-cdrom-eject.conf.expected
+new file mode 100644
+index 00000000..7c9b58d7
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-eject.conf.expected
+@@ -0,0 +1,4 @@
++qmp blockdev-open-tray {"force":true,"id":"scsi6"}
++qmp blockdev-remove-medium {"id":"scsi6"}
++qmp blockdev-del {"node-name":"drive-scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
+diff --git a/src/test/hotplug/sparc32-cdrom-insert.conf b/src/test/hotplug/sparc32-cdrom-insert.conf
+new file mode 100644
+index 00000000..b1c09ede
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-insert.conf
+@@ -0,0 +1,13 @@
++# TEST: inserting an ISO into an empty sparc32 CD-ROM drive
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: none,media=cdrom
++
++[PENDING]
++scsi6: local:iso/debian-13.iso,media=cdrom
+diff --git a/src/test/hotplug/sparc32-cdrom-insert.conf.expected b/src/test/hotplug/sparc32-cdrom-insert.conf.expected
+new file mode 100644
+index 00000000..5731318e
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cdrom-insert.conf.expected
+@@ -0,0 +1,7 @@
++qmp blockdev-open-tray {"force":true,"id":"scsi6"}
++qmp blockdev-remove-medium {"id":"scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
++qmp object-add {"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}
++qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/debian-13.iso","node-name":"e4c7fc0082335a06883f82ece465bd9","read-only":true},"node-name":"f4c7fc0082335a06883f82ece465bd9","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}
++qmp blockdev-insert-medium {"id":"scsi6","node-name":"drive-scsi6"}
++qmp blockdev-close-tray {"id":"scsi6"}
+diff --git a/src/test/hotplug/sparc32-disk-add.conf b/src/test/hotplug/sparc32-disk-add.conf
+new file mode 100644
+index 00000000..ec7aa9db
+--- /dev/null
++++ b/src/test/hotplug/sparc32-disk-add.conf
+@@ -0,0 +1,13 @@
++# TEST: a new disk on a running sparc32 VM stays pending (the built-in ESP has no hotplug)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++scsi1: local:8006/vm-8006-disk-1.raw,size=1G
+diff --git a/src/test/hotplug/sparc32-disk-add.conf.expected b/src/test/hotplug/sparc32-disk-add.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-disk-remove.conf b/src/test/hotplug/sparc32-disk-remove.conf
+new file mode 100644
+index 00000000..aff12a95
+--- /dev/null
++++ b/src/test/hotplug/sparc32-disk-remove.conf
+@@ -0,0 +1,14 @@
++# TEST: removing a disk from a running sparc32 VM stays pending
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi1: local:8006/vm-8006-disk-1.raw,size=1G
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++delete: scsi1
+diff --git a/src/test/hotplug/sparc32-disk-remove.conf.expected b/src/test/hotplug/sparc32-disk-remove.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-net-change-bridge.conf b/src/test/hotplug/sparc32-net-change-bridge.conf
+new file mode 100644
+index 00000000..80138fa1
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-change-bridge.conf
+@@ -0,0 +1,13 @@
++# TEST: a new bridge and VLAN tag for the built-in lance of a running sparc32 VM re-plug its tap and toggle its link
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr1,tag=100
+diff --git a/src/test/hotplug/sparc32-net-change-bridge.conf.expected b/src/test/hotplug/sparc32-net-change-bridge.conf.expected
+new file mode 100644
+index 00000000..c875aed3
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-change-bridge.conf.expected
+@@ -0,0 +1,6 @@
++net tap_unplug ["tap8006i0"]
++qmp set_link {"name":"net0","up":false}
++sdn del_ips_from_mac ["vmbr0","BC:24:11:B2:46:02","sparc32"]
++sdn add_next_free_cidr ["vmbr1","sparc32","BC:24:11:B2:46:02","8006",null,1]
++net tap_plug ["tap8006i0","vmbr1","100",null,null,null]
++qmp set_link {"name":"net0","up":true}
+diff --git a/src/test/hotplug/sparc32-net-change-mac.conf b/src/test/hotplug/sparc32-net-change-mac.conf
+new file mode 100644
+index 00000000..e56dbdc3
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-change-mac.conf
+@@ -0,0 +1,13 @@
++# TEST: a new MAC for the built-in lance of a running sparc32 VM stays pending (not hot-pluggable)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++net0: lance=BC:24:11:B2:46:99,bridge=vmbr0
+diff --git a/src/test/hotplug/sparc32-net-change-mac.conf.expected b/src/test/hotplug/sparc32-net-change-mac.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-net-change-rate.conf b/src/test/hotplug/sparc32-net-change-rate.conf
+new file mode 100644
+index 00000000..4ff6bd36
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-change-rate.conf
+@@ -0,0 +1,13 @@
++# TEST: a new rate limit for the built-in lance of a running sparc32 VM applies to its tap
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0,rate=10
+diff --git a/src/test/hotplug/sparc32-net-change-rate.conf.expected b/src/test/hotplug/sparc32-net-change-rate.conf.expected
+new file mode 100644
+index 00000000..c4e24dae
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-change-rate.conf.expected
+@@ -0,0 +1 @@
++net tap_rate_limit ["tap8006i0","10"]
+diff --git a/src/test/hotplug/sparc32-net-link-down.conf b/src/test/hotplug/sparc32-net-link-down.conf
+new file mode 100644
+index 00000000..dedcee48
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-link-down.conf
+@@ -0,0 +1,13 @@
++# TEST: disconnecting the built-in lance of a running sparc32 VM (link_down) sets its link
++# QEMU_VERSION: 10.1
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0,link_down=1
+diff --git a/src/test/hotplug/sparc32-net-link-down.conf.expected b/src/test/hotplug/sparc32-net-link-down.conf.expected
+new file mode 100644
+index 00000000..9bb98495
+--- /dev/null
++++ b/src/test/hotplug/sparc32-net-link-down.conf.expected
+@@ -0,0 +1 @@
++qmp set_link {"name":"net0","up":false}
+diff --git a/src/test/hotplug/sparc64-cdrom-change.conf b/src/test/hotplug/sparc64-cdrom-change.conf
+new file mode 100644
+index 00000000..d58a0f13
+--- /dev/null
++++ b/src/test/hotplug/sparc64-cdrom-change.conf
+@@ -0,0 +1,14 @@
++# TEST: changing the ISO of a sparc64 CD-ROM (sun4u, which has no machine version) swaps the medium
++# QEMU_VERSION: 10.1
++arch: sparc64
++boot: order=scsi0
++machine: sun4u
++memory: 512
++name: sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++scsi6: local:iso/other.iso,media=cdrom
+diff --git a/src/test/hotplug/sparc64-cdrom-change.conf.expected b/src/test/hotplug/sparc64-cdrom-change.conf.expected
+new file mode 100644
+index 00000000..f247bbfb
+--- /dev/null
++++ b/src/test/hotplug/sparc64-cdrom-change.conf.expected
+@@ -0,0 +1,9 @@
++qmp blockdev-open-tray {"force":true,"id":"scsi6"}
++qmp blockdev-remove-medium {"id":"scsi6"}
++qmp blockdev-del {"node-name":"drive-scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
++qmp object-del {"id":"throttle-drive-scsi6"}
++qmp object-add {"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}
++qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/other.iso","node-name":"ed863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"fd863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}
++qmp blockdev-insert-medium {"id":"scsi6","node-name":"drive-scsi6"}
++qmp blockdev-close-tray {"id":"scsi6"}
+diff --git a/src/test/hotplug/sparc64-disk-add.conf b/src/test/hotplug/sparc64-disk-add.conf
+new file mode 100644
+index 00000000..107433f0
+--- /dev/null
++++ b/src/test/hotplug/sparc64-disk-add.conf
+@@ -0,0 +1,14 @@
++# TEST: a new disk on a running sparc64 VM stays pending (sun4u's PCI buses have no hotplug)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc64
++boot: order=scsi0
++machine: sun4u
++memory: 512
++name: sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++scsi1: local:8006/vm-8006-disk-1.raw,size=1G
+diff --git a/src/test/hotplug/sparc64-disk-add.conf.expected b/src/test/hotplug/sparc64-disk-add.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc64-net-change-bridge.conf b/src/test/hotplug/sparc64-net-change-bridge.conf
+new file mode 100644
+index 00000000..b25f1306
+--- /dev/null
++++ b/src/test/hotplug/sparc64-net-change-bridge.conf
+@@ -0,0 +1,14 @@
++# TEST: a new bridge for the sunhme NIC of a running sparc64 VM moves its tap
++# QEMU_VERSION: 10.1
++arch: sparc64
++boot: order=scsi0
++machine: sun4u
++memory: 512
++name: sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr1
+diff --git a/src/test/hotplug/sparc64-net-change-bridge.conf.expected b/src/test/hotplug/sparc64-net-change-bridge.conf.expected
+new file mode 100644
+index 00000000..01243a2d
+--- /dev/null
++++ b/src/test/hotplug/sparc64-net-change-bridge.conf.expected
+@@ -0,0 +1,6 @@
++net tap_unplug ["tap8006i0"]
++qmp set_link {"name":"net0","up":false}
++sdn del_ips_from_mac ["vmbr0","BC:24:11:B2:46:03","sparc64"]
++sdn add_next_free_cidr ["vmbr1","sparc64","BC:24:11:B2:46:03","8006",null,1]
++net tap_plug ["tap8006i0","vmbr1",null,null,null,null]
++qmp set_link {"name":"net0","up":true}
+diff --git a/src/test/hotplug/sparc64-net-change-mac.conf b/src/test/hotplug/sparc64-net-change-mac.conf
+new file mode 100644
+index 00000000..83f103d2
+--- /dev/null
++++ b/src/test/hotplug/sparc64-net-change-mac.conf
+@@ -0,0 +1,14 @@
++# TEST: a new MAC for the sunhme NIC of a running sparc64 VM stays pending
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc64
++boot: order=scsi0
++machine: sun4u
++memory: 512
++name: sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++net0: sunhme=BC:24:11:B2:46:99,bridge=vmbr0
+diff --git a/src/test/hotplug/sparc64-net-change-mac.conf.expected b/src/test/hotplug/sparc64-net-change-mac.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/run_machine_version_tests.pl b/src/test/run_machine_version_tests.pl
+new file mode 100644
+index 00000000..049450bd
+--- /dev/null
++++ b/src/test/run_machine_version_tests.pl
+@@ -0,0 +1,96 @@
++#!/usr/bin/perl
++
++# The version a machine type runs at (PVE::QemuServer::Machine::get_machine_version) and the checks
++# built on it. A running VM's machine type comes from QMP 'query-machines': the sparc machines
++# (sun4m's SS-5/SS-10/SS-20, sun4u) have no version in it, they run at the QEMU version.
++
++use strict;
++use warnings;
++
++use lib qw(..);
++
++use Test::MockModule;
++use Test::More;
++
++use PVE::QemuServer::Helpers;
++use PVE::QemuServer::Machine;
++use PVE::QemuServer::Monitor;
++
++my $installed_version = '11.1.3';
++my $helpers_module = Test::MockModule->new('PVE::QemuServer::Helpers');
++$helpers_module->mock(kvm_user_version => sub { return $installed_version; });
++
++# VM 100 still runs an older QEMU than the installed one
++my $monitor_module = Test::MockModule->new('PVE::QemuServer::Monitor');
++$monitor_module->mock(
++    mon_cmd => sub {
++        my ($vmid, $cmd) = @_;
++        die "unexpected monitor command '$cmd'\n" if $cmd ne 'query-version';
++        die "VM $vmid not running\n" if $vmid != 100;
++        return { qemu => { major => 10, minor => 1, micro => 2 } };
++    },
++);
++
++my $version_tests = [
++    # machine type, VMID, expected version (undef: dies)
++    ['pc-i440fx-10.0+pve1', undef, '10.0+pve1'],
++    ['pc-i440fx-10.0+pve1', 100, '10.0+pve1'],
++    ['pc-q35-9.2', undef, '9.2'],
++    ['virt-10.0+pve0', undef, '10.0'],
++    ['SS-5+pve0', undef, '11.1+pve0'],
++    ['SS-5+pve0', 100, '10.1+pve0'],
++    ['SS-5', undef, '11.1+pve0'],
++    ['SS-20+pve0', undef, '11.1+pve0'],
++    ['sun4u+pve0', undef, '11.1+pve0'],
++    ['sun4u+pve0', 100, '10.1+pve0'],
++    ['pc', undef, undef],
++    ['q35', undef, undef],
++    [undef, undef, undef],
++];
++
++for my $test ($version_tests->@*) {
++    my ($machine_type, $vmid, $expected) = $test->@*;
++    my $name = ($machine_type // 'undef') . (defined($vmid) ? " (VM $vmid)" : '');
++
++    my $got = eval { PVE::QemuServer::Machine::get_machine_version($machine_type, $vmid) };
++    if (defined($expected)) {
++        is($got, $expected, "version of $name");
++    } else {
++        like(
++            $@,
++            qr/^unable to determine the version of machine type/,
++            "no version for $name",
++        );
++    }
++}
++
++my $at_least_tests = [
++    # machine type, major, minor, pve, expected
++    ['SS-5+pve0', 10, 0, undef, 1],
++    ['SS-5+pve0', 10, 1, undef, 1],
++    ['SS-5+pve0', 12, 0, undef, 0],
++    ['sun4u+pve0', 10, 0, undef, 1],
++    ['pc-i440fx-9.2+pve1', 10, 0, undef, 0],
++    ['pc-i440fx-10.0+pve1', 10, 0, undef, 1],
++    ['pc-i440fx-10.0+pve1', 10, 0, 2, 0],
++    ['virt-10.0+pve0', 10, 1, undef, 0],
++];
++
++for my $test ($at_least_tests->@*) {
++    my ($machine_type, $major, $minor, $pve, $expected) = $test->@*;
++    my $want = "$major.$minor" . (defined($pve) ? "+pve$pve" : '');
++    is(
++        PVE::QemuServer::Machine::is_machine_version_at_least($machine_type, $major, $minor, $pve)
++            ? 1
++            : 0,
++        $expected,
++        "$machine_type at least $want",
++    );
++}
++
++# an installed QEMU whose version can't be read gives an error, not a shifted min_version call
++$installed_version = 'unknown';
++eval { PVE::QemuServer::Machine::is_machine_version_at_least('SS-5+pve0', 10, 0) };
++is($@, "unable to determine the version of machine type 'SS-5+pve0'\n", 'unknown QEMU version');
++
++done_testing();

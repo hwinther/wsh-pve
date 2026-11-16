@@ -14,6 +14,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   through the API and the create wizard, the refused combinations, `arch` set on create only, the
   Hardware editors, vzdump/qmrestore and snapshots, and the lab's machine arguments against
   `qm showcmd`.
+- `tests/running-vm.spec.ts`: changes to a started VM (QEMU under TCG, no guest OS) for every
+  sparc32 profile, sparc64 and an x86 control: the CD-ROM medium, net0's bridge, VLAN tag, link and
+  rate (checked in QEMU and on the host, with a VLAN-aware `vmbr1` it creates), the changes that stay
+  pending on sparc, and clone, move disk, suspend/resume and reset.
 - `tests/qemu-extras.spec.ts`: the optional extras of the installed `pve-qemu-kvm` (3dfx binary,
   OpenBIOS and cg3 ROM from `openbios/`, Sun PROMs), with `scripts/check-qemu-extras.sh`. The package
   build never fails on them, so this is where a published package without one turns red. The 3dfx

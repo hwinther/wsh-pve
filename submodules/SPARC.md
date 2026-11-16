@@ -441,9 +441,18 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   (`channel=0,scsi-id=<unit>,lun=0`); sparc64 puts the SCSI controller on `pciB`. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
   x86 (the machine version follows the QEMU version), which the backup job finds.
-- **Network:** sparc32 uses the built-in lance (`-net nic,model=lance,macaddr=<net0's MAC>`, not
-  hot-pluggable; sun4m creates one lance and only warns about a second `-net nic`); sparc64 puts
-  `sunhme` on `pciB`.
+- **Network:** sparc32 uses the built-in lance (`-net nic,model=lance,macaddr=<net0's MAC>,netdev=net0`
+  next to the usual `-netdev type=tap,id=net0,...`, not hot-pluggable; sun4m creates one lance and
+  only warns about a second `-net nic`). The lance is peered with the `net0` netdev directly, so
+  `set_link net0` reaches it as on x86 (it used to hang off a hub behind a netdev named `lance.0`,
+  and every `set_link` failed with `Device 'net0' not found`). QEMU names the NIC itself `lance.0`.
+  sparc64 puts `sunhme` on `pciB`.
+- **Machine version:** QEMU's sparc machines have no versioned variants, so a running VM's machine
+  (`SS-5+pve0`, `sun4u+pve0` from `query-machines`) carries none. `get_machine_version` in
+  `PVE::QemuServer::Machine` resolves it to the QEMU version (of the running process when a VMID is
+  given, else of the installed binary), as `config_to_command` does; `is_machine_version_at_least`
+  uses it. Before, every check on a running sparc VM died with `internal error: cannot check version
+  of invalid string '10'`.
 - **Serial:** serial0/serial1 are the machine's ttya/ttyb, `-serial chardev:serialN` (no
   `isa-serial`); on sparc64 too, where an `isa-serial` was a third port beside the ebus ones and
   OpenBIOS's console never reached the socket.
@@ -454,6 +463,25 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   vmgenid; sparc32 also gets no virtio-balloon.
 - **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
   when there is one.
+
+### Operations on a running VM
+
+Tested in the e2e container (`e2e/tests/running-vm.spec.ts`, every sparc32 profile, sun4u and an x86
+control) and with qemu-server's hotplug tests (`src/test/hotplug/sparc*.conf`):
+
+- **Live:** CD-ROM medium change, eject (`none`) and insert; net0's bridge, VLAN tag, `link_down`
+  (Disconnect), rate limit and firewall (the tap is re-plugged on the host, the guest's link goes
+  down and up); disk resize; clone and move disk (blockdev-mirror); snapshot with and without RAM
+  and rollback; backup in snapshot mode; `qm monitor`, `sendkey`, `suspend`/`resume`, `reset`,
+  `shutdown`/`stop`, `status --verbose`.
+- **Pending until the next start:** a new NIC model or MAC (the lance is built in; sun4u's PCI
+  buses have no hotplug), adding or removing a disk, memory. qemu-server treats every hotplug
+  feature as off for sparc (`hotplug` is ignored), so these are stored as pending without an error
+  and applied on the next start.
+- **Refused:** CPU changes on sparc32 (`sparc: only one CPU is supported ...`, the profile check);
+  conversion to a template while running and migration to the same node (as for every VM).
+- Not tested: live migration (see below).
+- sparc32 has no balloon device: the start no longer warns that it can't set its polling interval.
 
 ### Backup and restore
 
@@ -500,6 +528,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
   combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
   backup/restore, and that the lab's machine arguments match `qm showcmd`).
+- Running VMs: `e2e/tests/running-vm.spec.ts` (CD medium, net0 changes, pending changes and other
+  operations on a started VM per profile, sun4u and an x86 control) and qemu-server's
+  `src/test/hotplug/sparc*.conf` and `src/test/run_machine_version_tests.pl`.
 - What PVE starts: the lab's attach mode and `pve_matrix.py` (`e2e/sparc/README.md`, "Attach to a PVE
   VM"; the `pve` choice of the `sparc lab` workflow) create VMs through the API in the e2e container
   and drive the QEMU that PVE started: the Solaris 2.6 install and first boot on the default SS-5
