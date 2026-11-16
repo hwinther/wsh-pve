@@ -522,7 +522,7 @@ index faeb530a..395a09e6 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..37b88596 100644
+index b8412b6f..8b1367ce 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -549,7 +549,7 @@ index b8412b6f..37b88596 100644
      },
  
      defaultProcessorModel: {
-@@ -32,11 +42,92 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -32,11 +42,116 @@ Ext.define('PVE.qemu.Architecture', {
      defaultMachines: {
          x86_64: 'pc',
          aarch64: 'virt',
@@ -573,12 +573,21 @@ index b8412b6f..37b88596 100644
 +
 +    // The sparc32 profiles: the machine, firmware and memory combinations that were tested to run,
 +    // mirrored from $SPARC32_PROFILES in qemu-server (PVE::QemuServer::Machine), which validates
-+    // them. Per machine: the most memory in MiB and the firmware it runs (the first is the default).
-+    // A sparc32 VM always has one CPU; the SS-20 PROM gets its CPU model from qemu-server.
++    // them. Per machine: the most memory in MiB, the firmware it runs (the first is the default) and
++    // the most CPUs (sockets x cores) per firmware, 1 where none is listed: QEMU's SS-5 has one, the
++    // SS-20 PROM starts only the first. The SS-20 PROM gets its CPU model from qemu-server.
 +    sparc32Profiles: {
 +        'SS-5': { maxMemory: 256, firmware: ['openbios-sparc32', 'ss5.bin'] },
-+        'SS-10': { maxMemory: 512, firmware: ['openbios-sparc32'] },
-+        'SS-20': { maxMemory: 512, firmware: ['openbios-sparc32', 'ss20_v2.25_rom'] },
++        'SS-10': {
++            maxMemory: 512,
++            firmware: ['openbios-sparc32'],
++            maxCpus: { 'openbios-sparc32': 4 },
++        },
++        'SS-20': {
++            maxMemory: 512,
++            firmware: ['openbios-sparc32', 'ss20_v2.25_rom'],
++            maxCpus: { 'openbios-sparc32': 4 },
++        },
 +    },
 +
 +    // the profile of a sparc32 machine ('__default__' or empty: SS-5)
@@ -588,6 +597,21 @@ index b8412b6f..37b88596 100644
 +            machine = arch.defaultMachines.sparc;
 +        }
 +        return arch.sparc32Profiles[machine.replace(/\+pve\d+$/, '')];
++    },
++
++    // the most CPUs (sockets x cores) a sparc VM takes, or undefined for the other architectures:
++    // per machine and firmware on sparc32 ('__default__' or empty: SS-5, OpenBIOS), one on sparc64
++    getSparcMaxCpus: function (arch, machine, bios) {
++        let me = PVE.qemu.Architecture;
++        if (arch === 'sparc') {
++            if (!bios || bios === '__default__') {
++                bios = me.defaultFirmware.sparc;
++            }
++            return me.getSparc32Profile(machine)?.maxCpus?.[bios] ?? 1;
++        } else if (arch === 'sparc64') {
++            return 1;
++        }
++        return undefined;
 +    },
 +
 +    // The sparc64 profile: the one layout that was tested to boot, mirrored from $SPARC64_PROFILE in
@@ -642,7 +666,7 @@ index b8412b6f..37b88596 100644
      },
  
      allowedScsiHw: {
-@@ -50,21 +141,49 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -50,21 +165,49 @@ Ext.define('PVE.qemu.Architecture', {
              'pvscsi',
          ],
          aarch64: ['virtio-scsi-pci', 'virtio-scsi-single'],
@@ -693,7 +717,7 @@ index b8412b6f..37b88596 100644
      },
  
      allowedTPMVersions: {
-@@ -79,6 +198,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -79,6 +222,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
@@ -704,7 +728,7 @@ index b8412b6f..37b88596 100644
              default:
                  return Proxmox.Utils.unknownText;
          }
-@@ -109,3 +232,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -109,3 +256,10 @@ Ext.define('PVE.qemu.Architecture', {
          return (architecture ?? hostArch) === hostArch;
      },
  });
@@ -807,14 +831,15 @@ index 22e511a2..c17a227a 100644
              });
              items.push(me.bussel);
 diff --git a/www/manager6/qemu/CreateWizard.js b/www/manager6/qemu/CreateWizard.js
-index 5eb784c4..7b3cc9f9 100644
+index 5eb784c4..43bb720b 100644
 --- a/www/manager6/qemu/CreateWizard.js
 +++ b/www/manager6/qemu/CreateWizard.js
-@@ -9,6 +9,7 @@ Ext.define('PVE.qemu.CreateWizard', {
+@@ -9,6 +9,8 @@ Ext.define('PVE.qemu.CreateWizard', {
              current: {
                  scsihw: '',
                  architecture: '',
 +                machine: '__default__',
++                bios: '__default__',
              },
          },
          formulas: {
@@ -1423,32 +1448,127 @@ index df5ad8aa..b645da27 100644
              // default
              return os.x86_64;
 diff --git a/www/manager6/qemu/ProcessorEdit.js b/www/manager6/qemu/ProcessorEdit.js
-index bc8e4723..f65223d7 100644
+index bc8e4723..23f080d9 100644
 --- a/www/manager6/qemu/ProcessorEdit.js
 +++ b/www/manager6/qemu/ProcessorEdit.js
-@@ -115,6 +115,21 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+@@ -23,11 +23,19 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+ 
+     controller: {
+         xclass: 'Ext.app.ViewController',
+-        init: function () {
++        init: function (view) {
+             let me = this;
+             let viewModel = me.getViewModel();
+ 
+             viewModel.set('userIsRoot', Proxmox.UserName === 'root@pam');
++
++            // sparc: how many CPUs the VM takes follows the machine and firmware chosen on the
++            // System tab
++            if (view.insideWizard) {
++                viewModel.bind('{current.machine}', () => view.applySparcLimit());
++                viewModel.bind('{current.bios}', () => view.applySparcLimit());
++            }
++            viewModel.bind('{totalCoreCount}', () => view.validateSparcCpus());
+         },
+     },
+ 
+@@ -115,6 +123,95 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
          me.arch = arch;
          me.lookup('cputype').setArch(arch);
          me.lookup('cpuFlags').setArch(arch);
++        me.applySparcLimit();
++    },
 +
-+        // sparc has one CPU, of the model its machine and firmware call for (qemu-server picks it
-+        // on sparc32, sun4u's default on sparc64): nothing to choose, and the disabled fields aren't
-+        // submitted
++    // the machine and firmware of a VM being edited (the wizard has them in current.machine and
++    // current.bios): on sparc32 they decide how many CPUs it takes
++    sparcMachine: undefined,
++    sparcBios: undefined,
++
++    setSparcProfile: function (machine, bios) {
++        let me = this;
++        me.sparcMachine = machine;
++        me.sparcBios = bios;
++        me.applySparcLimit();
++    },
++
++    // the most CPUs (sockets x cores) the VM takes, undefined for no limit
++    maxCpus: undefined,
++
++    applySparcLimit: function () {
++        let me = this;
++        let arch = me.arch;
++        let vm = me.getViewModel();
++        let machine = me.insideWizard ? vm.get('current.machine') : me.sparcMachine;
++        let bios = me.insideWizard ? vm.get('current.bios') : me.sparcBios;
++
++        // sparc's CPU model is the one its machine and firmware call for (qemu-server picks it on
++        // sparc32, sun4u's default on sparc64): nothing to choose there. The count goes up to the
++        // profile's most (PVE.qemu.Architecture.sparc32Profiles); with a most of one there is
++        // nothing to choose either. Disabled fields aren't submitted.
 +        let sparc = arch === 'sparc' || arch === 'sparc64';
++        let maxCpus = PVE.qemu.Architecture.getSparcMaxCpus(arch, machine, bios);
++        me.maxCpus = maxCpus;
++        let oneCpu = sparc && maxCpus <= 1;
 +        if (sparc) {
-+            me.getViewModel().set({ socketCount: 1, coreCount: 1 });
 +            let model = arch === 'sparc' ? gettext('from machine and firmware') : 'UltraSPARC IIi';
 +            me.lookup('cputype').setEmptyText(`${Proxmox.Utils.defaultText} (${model})`);
++            let total = (me.lookup('sockets').getValue() || 1) * (me.lookup('cores').getValue() || 1);
++            if (total > maxCpus) {
++                vm.set({ socketCount: 1, coreCount: 1 });
++            }
 +        }
-+        for (const ref of ['sockets', 'cores', 'cputype', 'cpuFlags', 'vcpus']) {
++        for (const ref of ['sockets', 'cores']) {
++            let field = me.lookup(ref);
++            field.defaultMaxValue ??= field.maxValue;
++            field.setMaxValue(sparc ? maxCpus : field.defaultMaxValue);
++            field.setDisabled(oneCpu);
++        }
++        // no CPU hotplug on sparc, so no vcpus below the count
++        for (const ref of ['cputype', 'cpuFlags', 'vcpus']) {
 +            me.lookup(ref)?.setDisabled(sparc);
 +        }
-+        me.lookup('sparc32Hint')?.setHidden(arch !== 'sparc');
++        me.lookup('sparc32Hint')?.setHidden(!(arch === 'sparc' && oneCpu));
++        let smpHint = me.lookup('sparc32SmpHint');
++        if (smpHint) {
++            smpHint.setHidden(!(arch === 'sparc' && !oneCpu));
++            smpHint.setValue(
++                Ext.String.format(
++                    gettext(
++                        'SPARC (32-bit): up to {0} CPUs (sockets x cores) on this machine and firmware; Solaris sees each as a CPU of its own. Each vCPU keeps a host core busy even while the guest is idle, and a single job runs slower than with one CPU: more than one pays only for several jobs at once.',
++                    ),
++                    maxCpus,
++                ),
++            );
++        }
 +        me.lookup('sparc64Hint')?.setHidden(arch !== 'sparc64');
++        me.validateSparcCpus();
++    },
++
++    // true, or the error when sockets x cores is more than the VM takes
++    checkSparcCpus: function () {
++        let me = this;
++        if (!me.maxCpus) {
++            return true;
++        }
++        let total = (me.lookup('sockets').getValue() || 1) * (me.lookup('cores').getValue() || 1);
++        return (
++            total <= me.maxCpus ||
++            Ext.String.format(
++                gettext('At most {0} CPUs (sockets x cores) on this machine and firmware'),
++                me.maxCpus,
++            )
++        );
++    },
++
++    validateSparcCpus: function () {
++        let me = this;
++        for (const ref of ['sockets', 'cores']) {
++            me.lookup(ref)?.validate();
++        }
      },
  
      setKvm: function (kvm) {
-@@ -129,6 +144,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+@@ -129,10 +226,14 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
          {
              xtype: 'proxmoxintegerfield',
              name: 'sockets',
@@ -1456,7 +1576,14 @@ index bc8e4723..f65223d7 100644
              minValue: 1,
              value: '1',
              fieldLabel: gettext('Sockets'),
-@@ -140,6 +156,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+             allowBlank: false,
++            validator: function () {
++                return this.up('pveQemuProcessorPanel')?.checkSparcCpus() ?? true;
++            },
+             bind: {
+                 value: '{socketCount}',
+             },
+@@ -140,11 +241,15 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
          {
              xtype: 'proxmoxintegerfield',
              name: 'cores',
@@ -1464,7 +1591,15 @@ index bc8e4723..f65223d7 100644
              minValue: 1,
              maxValue: 256,
              value: '1',
-@@ -170,6 +187,22 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+             fieldLabel: gettext('Cores'),
+             allowBlank: false,
++            validator: function () {
++                return this.up('pveQemuProcessorPanel')?.checkSparcCpus() ?? true;
++            },
+             bind: {
+                 value: '{coreCount}',
+             },
+@@ -170,6 +275,28 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
      ],
  
      columnB: [
@@ -1474,8 +1609,14 @@ index bc8e4723..f65223d7 100644
 +            userCls: 'pmx-hint',
 +            hidden: true,
 +            value: gettext(
-+                'SPARC (32-bit) VMs have one CPU; its model follows the machine and firmware.',
++                'SPARC (32-bit): one CPU on this machine and firmware (up to 4 on SS-10 and SS-20 with OpenBIOS); its model follows the machine and firmware.',
 +            ),
++        },
++        {
++            xtype: 'displayfield',
++            reference: 'sparc32SmpHint',
++            userCls: 'pmx-hint',
++            hidden: true,
 +        },
 +        {
 +            xtype: 'displayfield',
@@ -1487,7 +1628,7 @@ index bc8e4723..f65223d7 100644
          {
              xtype: 'displayfield',
              userCls: 'pmx-hint',
-@@ -187,6 +220,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
+@@ -187,6 +314,7 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
          {
              xtype: 'proxmoxintegerfield',
              name: 'vcpus',
@@ -1495,8 +1636,17 @@ index bc8e4723..f65223d7 100644
              minValue: 1,
              maxValue: 1,
              value: '',
+@@ -329,6 +457,8 @@ Ext.define('PVE.qemu.ProcessorEdit', {
+                     }
+                 }
+                 me.setValues(data);
++                let machine = PVE.Parser.parsePropertyString(data.machine, 'type').type;
++                ipanel.setSparcProfile(machine, data.bios);
+                 ipanel.setArch(arch);
+                 ipanel.setKvm(data.kvm);
+             },
 diff --git a/www/manager6/qemu/SystemEdit.js b/www/manager6/qemu/SystemEdit.js
-index 8d01c0c4..099e265f 100644
+index 8d01c0c4..96d4c592 100644
 --- a/www/manager6/qemu/SystemEdit.js
 +++ b/www/manager6/qemu/SystemEdit.js
 @@ -14,6 +14,12 @@ Ext.define('PVE.qemu.SystemInputPanel', {
@@ -1512,7 +1662,7 @@ index 8d01c0c4..099e265f 100644
          },
      },
  
-@@ -42,6 +48,13 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -42,10 +48,18 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              }
          },
  
@@ -1526,7 +1676,12 @@ index 8d01c0c4..099e265f 100644
          biosChange: function (field, value) {
              var me = this;
              if (me.getView().insideWizard) {
-@@ -56,6 +69,9 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+                 me.getViewModel().set('efi', value === 'ovmf');
++                me.getViewModel().set('current.bios', value);
+             }
+         },
+ 
+@@ -56,6 +70,9 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              pveQemuBiosSelector: {
                  change: 'biosChange',
              },
@@ -1536,7 +1691,7 @@ index 8d01c0c4..099e265f 100644
              '#': {
                  afterrender: 'setDefaults',
              },
-@@ -80,12 +96,17 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -80,12 +97,17 @@ Ext.define('PVE.qemu.SystemInputPanel', {
  
      column1: [
          {
@@ -1555,7 +1710,7 @@ index 8d01c0c4..099e265f 100644
          },
          {
              xtype: 'pveQemuMachineSelector',
-@@ -108,7 +129,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -108,7 +130,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              value: '__default__',
              fieldLabel: 'BIOS',
              bind: {

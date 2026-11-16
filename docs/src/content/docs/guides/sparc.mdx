@@ -27,14 +27,15 @@ network options to the supported subset.
 A sparc32 VM must match one of these combinations; the API refuses anything else (on create, on a
 config change and on start) with a message naming the allowed values, and the wizard offers only these.
 
-| Machine | BIOS | CPU | RAM |
-| ------- | ---- | --- | --- |
-| SS-5 (default) | OpenBIOS (default) or `ss5.bin` | the machine's | up to 256 MB |
-| SS-10 | OpenBIOS | the machine's | up to 512 MB |
-| SS-20 | OpenBIOS | the machine's | up to 512 MB |
-| SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | up to 512 MB |
+| Machine | BIOS | CPU | CPUs | RAM |
+| ------- | ---- | --- | ---- | --- |
+| SS-5 (default) | OpenBIOS (default) or `ss5.bin` | the machine's | 1 | up to 256 MB |
+| SS-10 | OpenBIOS | the machine's | 1 (default) to 4 | up to 512 MB |
+| SS-20 | OpenBIOS | the machine's | 1 (default) to 4 | up to 512 MB |
+| SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | 1 | up to 512 MB |
 
-Always one CPU. Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
+CPUs are sockets × cores (any split; Solaris sees each as a CPU module of its own, see
+[More than one CPU](#more-than-one-cpu)). Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
 network device, `lance`.
 
 ## The sparc64 profile
@@ -66,7 +67,7 @@ Hardware editors offer only it.
 
 - **Machine** — `SS-5`, `SS-10` or `SS-20` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). With packages up to 11.1.3-2+wsh7, Solaris on `SS-5` runs most user programs 4-10 times slower than on `SS-20` (or `SS-10`); packages with the SS-5 TLB fix (pve-qemu patch 0017) run them equally fast on all three, existing SS-5 installs included. An `SS-20` needs its own install on that machine type.
 - **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. Of the Sun PROMs, `ss5.bin` runs on SS-5 and `ss20_v2.25_rom` on SS-20 (see [BIOS](/reference/bios/)); the SS-10 PROM doesn't run on QEMU's SS-10 and isn't offered.
-- **Processor / memory** — one CPU for sparc32 and sparc64 (QEMU's sun4u has one). RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 at most 512 MB (Solaris 2.6 panics at boot with more). QEMU emulates up to 4 CPUs on SS-10/SS-20, but Solaris 2.6 with more than one CPU hangs within minutes, so the VM gets one. The CPU model follows the machine and BIOS (see [Processors](/reference/processors/)).
+- **Processor / memory** — one CPU by default; up to 4 on SS-10 and SS-20 with OpenBIOS (see [More than one CPU](#more-than-one-cpu)), one on SS-5, on SS-20 with the Sun PROM and on sparc64 (QEMU's sun4u has one). RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 at most 512 MB (Solaris 2.6 panics at boot with more). The CPU model follows the machine and BIOS (see [Processors](/reference/processors/)).
 - **Disk** — sparc: SCSI bus only. sparc64: the built-in IDE (see [the sparc64 profile](#the-sparc64-profile));
   OpenBIOS can't boot from SCSI or virtio.
 - **CD-ROM** — sparc: SCSI. sparc64: IDE (`ide2`).
@@ -75,13 +76,33 @@ Hardware editors offer only it.
 - **Audio** — not currently working on SPARC.
 - **USB / PCI passthrough** — not supported on SPARC.
 
+## More than one CPU
+
+SS-10 and SS-20 with OpenBIOS take up to 4 CPUs (Hardware → Processors, sockets × cores; in the
+wizard on the CPU tab once the machine is picked). Solaris 2.5.1 to 9 run on them as a
+multiprocessor; `psrinfo` lists each one. It needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later: with an
+older package Solaris hangs within minutes with more than one CPU.
+
+Worth it only for parallel work, several CPU-bound processes at once (builds, batch jobs):
+
+- 2 CPUs finish two jobs 1.6-1.9 times sooner than one CPU, 4 CPUs four jobs 1.9-2.7 times sooner.
+- A single job gets slower: 8-68% with 2 CPUs and 33-185% with 4, depending on the program; disk
+  writes too.
+- Each vCPU keeps a host core at 100% for as long as the VM runs, idle or not: the idle halt that
+  brings an idle one-CPU Solaris down to about 3% of a core works only with one CPU.
+
+For one interactive user, one CPU is faster and nearly free when idle. The SS-20 Sun PROM
+(`ss20_v2.25_rom`) starts only the first CPU and SS-5 has one, so both stay at one. A change of the
+CPU count on a running VM is applied at the next start; there is no CPU hotplug (`vcpus` and the
+`cpu` hotplug option are refused).
+
 ## Changes to a running VM
 
 - **Applied right away:** changing, ejecting or inserting the CD-ROM's ISO; the network device's
   bridge, VLAN tag, Disconnect, rate limit and firewall; disk resize; snapshots, backups, clone and
   move disk.
 - **Applied at the next start** (shown as pending): a new network model or MAC address, adding or
-  removing a disk, memory. Nothing is hot-pluggable on SPARC: the lance is built into the machine,
+  removing a disk, memory, the number of CPUs. Nothing is hot-pluggable on SPARC: the lance is built into the machine,
   sun4u's IDE and PCI buses have no hotplug.
 
 ## Installing SunOS / Solaris
@@ -248,7 +269,8 @@ Expect one host core at 100% for as long as the VM runs: NetBSD doesn't idle on 
 ## Known limitations
 
 - Audio does not work on SPARC guests.
-- sparc32: one CPU (Solaris 2.6 with more hangs); 256 MB on SS-5, 512 MB on SS-10/SS-20.
+- sparc32: more than one CPU only on SS-10/SS-20 with OpenBIOS (up to 4), and then no idle halt;
+  256 MB on SS-5, 512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5) and `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) are
   supported; the SS-10 PROM doesn't run on QEMU's SS-10.
 - No framebuffer resolution option: cg3 runs at 1024x768. TCX is always 1024x768, 8-bit (no 24-bit option).

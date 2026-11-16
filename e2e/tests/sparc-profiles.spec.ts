@@ -1,7 +1,19 @@
 import { expect, type Page, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
-import { NODE, PASSWORD, type Pve, pveApi, pveExec, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import {
+  hasSparc32Smp,
+  hasSparc32SmpUi,
+  NODE,
+  PASSWORD,
+  type Pve,
+  pveApi,
+  pveExec,
+  qemuAccepts,
+  showcmd,
+  vmConfFile,
+  writeConfFile,
+} from './_pve'
 
 // The sparc32 profiles (submodules/SPARC.md, "Supported profiles"): the machine, firmware, CPU and
 // RAM combinations qemu-server accepts for `arch: sparc` and builds the command for, the ones it
@@ -19,6 +31,8 @@ interface Profile {
   firmwarePick: string
   /** -bios when created through the wizard (none for the default, OpenBIOS) */
   wizardBios?: string
+  /** the most CPUs (sockets x cores) it takes */
+  maxCpus: number
 }
 
 const SS5_OPENBIOS: Profile = {
@@ -26,6 +40,7 @@ const SS5_OPENBIOS: Profile = {
   firmwareOffered: ['Default (OpenBIOS)', 'SPARCstation 5 PROM'],
   firmwarePick: 'Default (OpenBIOS)',
   machine: 'SS-5',
+  maxCpus: 1,
   memory: 256,
   name: 'ss5-openbios',
 }
@@ -35,6 +50,7 @@ const SS20_PROM: Profile = {
   firmwareOffered: ['Default (OpenBIOS)', 'SPARCstation 20 PROM'],
   firmwarePick: 'SPARCstation 20 PROM',
   machine: 'SS-20',
+  maxCpus: 1,
   memory: 512,
   name: 'ss20-prom',
   wizardBios: 'ss20_v2.25_rom',
@@ -46,6 +62,7 @@ const PROFILES: Profile[] = [
     firmwareOffered: ['Default (OpenBIOS)', 'SPARCstation 5 PROM'],
     firmwarePick: 'SPARCstation 5 PROM',
     machine: 'SS-5',
+    maxCpus: 1,
     memory: 256,
     name: 'ss5-prom',
     wizardBios: 'ss5.bin',
@@ -55,6 +72,7 @@ const PROFILES: Profile[] = [
     firmwareOffered: ['Default (OpenBIOS)'],
     firmwarePick: 'Default (OpenBIOS)',
     machine: 'SS-10',
+    maxCpus: 4,
     memory: 512,
     name: 'ss10-openbios',
   },
@@ -63,6 +81,7 @@ const PROFILES: Profile[] = [
     firmwareOffered: ['Default (OpenBIOS)', 'SPARCstation 20 PROM'],
     firmwarePick: 'Default (OpenBIOS)',
     machine: 'SS-20',
+    maxCpus: 4,
     memory: 512,
     name: 'ss20-openbios',
   },
@@ -78,8 +97,13 @@ const ISO_NAME = 'e2e-sparc.iso'
 const ISO = `local:iso/${ISO_NAME}`
 
 let pve: Pve
+/** the installed qemu-server and pve-manager have the CPU limits per profile ("more than one CPU") */
+let smp: boolean
+let ui: boolean
 
 test.beforeAll(async () => {
+  smp = await hasSparc32Smp()
+  ui = await hasSparc32SmpUi()
   // An empty "install CD" for target 6.
   const { code, output } = await pveExec([
     'sh',
@@ -249,16 +273,6 @@ test.describe('refused combinations', () => {
       params: { machine: 'SS-20', memory: 1024 },
     },
     {
-      message: 'sparc: only one CPU is supported (sockets 1, cores 1), not 2',
-      name: '2 cores',
-      params: { cores: 2, machine: 'SS-20', memory: 512 },
-    },
-    {
-      message: 'sparc: only one CPU is supported (sockets 1, cores 1), not 2',
-      name: '2 sockets',
-      params: { machine: 'SS-20', memory: 512, sockets: 2 },
-    },
-    {
       message: "sparc: machine 'SS-4' is not supported, use one of: SS-10, SS-20, SS-5",
       name: 'a machine without a profile',
       params: { machine: 'SS-4', memory: 256 },
@@ -310,7 +324,6 @@ test.describe('refused combinations', () => {
     expect((await pve.refused('POST', config, { bios: 'ss20_v2.25_rom' })).message).toContain(
       "sparc: firmware (bios) 'ss20_v2.25_rom' is not supported on SS-5",
     )
-    expect((await pve.refused('PUT', config, { cores: 2 })).message).toContain('sparc: only one CPU is supported')
 
     // Machine, firmware and memory together make a valid SS-20 PROM profile.
     await pve.post(config, { bios: 'ss20_v2.25_rom', machine: 'SS-20', memory: 512 })
@@ -467,6 +480,225 @@ test.describe('backup and restore', () => {
   }
 })
 
+// More than one CPU (submodules/SPARC.md, "SMP"): SS-10 and SS-20 with OpenBIOS take up to 4, the
+// SS-20 PROM and SS-5 one. Needs qemu-server and pve-manager with the CPU limits per profile.
+// TODO: drop the test.fail(!smp) and test.fail(!(ui && smp)) markers in this block, and the probes
+// hasSparc32Smp/hasSparc32SmpUi in _pve.ts, once both packages with the limits are published.
+test.describe('more than one CPU', () => {
+  const SS10_OPENBIOS = PROFILES.find((p) => p.name === 'ss10-openbios') as Profile
+  const SS20_OPENBIOS = PROFILES.find((p) => p.name === 'ss20-openbios') as Profile
+
+  const accepted: { name: string; profile: Profile; sockets: number; cores: number }[] = [
+    { cores: 1, name: 'SS-20, OpenBIOS, 2 CPUs (2 sockets)', profile: SS20_OPENBIOS, sockets: 2 },
+    { cores: 2, name: 'SS-20, OpenBIOS, 4 CPUs (2 sockets x 2 cores)', profile: SS20_OPENBIOS, sockets: 2 },
+    { cores: 4, name: 'SS-10, OpenBIOS, 4 CPUs (4 cores)', profile: SS10_OPENBIOS, sockets: 1 },
+  ]
+  for (const c of accepted) {
+    test(`${c.name}: qm showcmd, and QEMU accepts it`, async () => {
+      test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
+      const vmid = await createVm(profileParams(c.profile, { cores: c.cores, sockets: c.sockets }))
+      const n = c.sockets * c.cores
+
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain(`-smp '${n},sockets=${c.sockets},cores=${c.cores},maxcpus=${n}'`)
+      expect(cmd).toContain(`-machine 'accel=tcg,type=${c.profile.machine}+pve0'`)
+      // QEMU's default of one thread per vCPU, no CPU devices to hot-plug, and no idle option:
+      // solaris-idle/sunos-idle are QEMU's defaults and switch themselves off with more than one CPU
+      for (const absent of ['thread=single', '-accel', 'solaris-idle', 'sunos-idle', '-cpu'])
+        expect(cmd).not.toContain(absent)
+      expect(cmd).not.toMatch(/-device '[^']*-cpu,/)
+
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    })
+  }
+
+  const refused: { name: string; params: Record<string, number | string>; message: string }[] = [
+    {
+      message: 'sparc: SS-20 with firmware openbios-sparc32 takes at most 4 CPUs (sockets x cores), not 5',
+      name: '5 CPUs on SS-20',
+      params: { cores: 5, machine: 'SS-20', memory: 512 },
+    },
+    {
+      message: 'sparc: SS-10 with firmware openbios-sparc32 takes at most 4 CPUs (sockets x cores), not 6',
+      name: '6 CPUs (3 sockets x 2 cores) on SS-10',
+      params: { cores: 2, machine: 'SS-10', memory: 512, sockets: 3 },
+    },
+    {
+      message:
+        'sparc: SS-20 with firmware ss20_v2.25_rom takes at most 1 CPU (sockets x cores), not 2 (the Sun PROM starts only the first CPU; openbios-sparc32 takes up to 4)',
+      name: '2 CPUs with the SS-20 PROM',
+      params: { bios: 'ss20_v2.25_rom', machine: 'SS-20', memory: 512, sockets: 2 },
+    },
+    {
+      message: 'sparc: SS-5 with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2',
+      name: '2 CPUs on SS-5',
+      params: { cores: 2, machine: 'SS-5', memory: 256 },
+    },
+    {
+      message: 'sparc: SS-5 with firmware ss5.bin takes at most 1 CPU (sockets x cores), not 2',
+      name: '2 CPUs on SS-5 with its PROM',
+      params: { bios: 'ss5.bin', machine: 'SS-5', memory: 256, sockets: 2 },
+    },
+    {
+      message: "sparc: CPU hotplug is not supported, remove 'cpu' from 'hotplug'",
+      name: 'CPU hotplug',
+      params: { cores: 2, hotplug: 'network,disk,cpu', machine: 'SS-20', memory: 512 },
+    },
+    {
+      message: "sparc: 'vcpus' must be the number of CPUs (sockets x cores, 4), not 2; CPU hotplug is not supported",
+      name: 'fewer vcpus than CPUs',
+      params: { cores: 4, machine: 'SS-20', memory: 512, vcpus: 2 },
+    },
+  ]
+  for (const c of refused) {
+    test(`create refused: ${c.name}`, async () => {
+      test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const r = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
+      expect(r.message).toContain(c.message)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('update: the CPU count follows the machine and firmware', async () => {
+    test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
+    const ss5 = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-ss5-cpus' })
+    expect((await pve.refused('PUT', `/nodes/${NODE}/qemu/${ss5}/config`, { cores: 2 })).message).toContain(
+      'sparc: SS-5 with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2',
+    )
+
+    const vmid = await createVm(profileParams(SS20_OPENBIOS))
+    const config = `/nodes/${NODE}/qemu/${vmid}/config`
+    await pve.put(config, { cores: 2, sockets: 2 })
+    expect(await showcmd(vmid)).toContain("-smp '4,sockets=2,cores=2,maxcpus=4'")
+    expect((await pve.refused('PUT', config, { cores: 5, sockets: 1 })).message).toContain('takes at most 4 CPUs')
+    // the PROM only with one CPU again
+    expect((await pve.refused('PUT', config, { bios: 'ss20_v2.25_rom' })).message).toContain(
+      'sparc: SS-20 with firmware ss20_v2.25_rom takes at most 1 CPU (sockets x cores), not 4',
+    )
+    await pve.put(config, { bios: 'ss20_v2.25_rom', delete: 'cores,sockets' })
+    expect(await showcmd(vmid)).toContain("-smp '1,sockets=1,cores=1,maxcpus=1'")
+  })
+
+  test('a running VM: a CPU count change stays pending until the next start', async () => {
+    test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
+    const vmid = await createVm(profileParams(SS20_OPENBIOS, { scsi6: 'none,media=cdrom' }))
+    const cpus = async () => pve.post<string>(`/nodes/${NODE}/qemu/${vmid}/monitor`, { command: 'info cpus' })
+    await qm(['start', String(vmid)])
+    await pve.put(`/nodes/${NODE}/qemu/${vmid}/config`, { cores: 2 })
+    const pending = await pve.get<{ key: string; pending?: number | string }[]>(`/nodes/${NODE}/qemu/${vmid}/pending`)
+    expect(String(pending.find((e) => e.key === 'cores')?.pending)).toBe('2')
+    expect(await cpus()).not.toMatch(/CPU #1/)
+
+    await qm(['stop', String(vmid)])
+    await qm(['start', String(vmid)])
+    expect(await cpus()).toMatch(/CPU #1/)
+  })
+
+  test.describe('web UI', () => {
+    test.beforeEach(async ({ page }) => {
+      await login(page)
+    })
+
+    test('create wizard: sockets and cores per machine and firmware, capped', async ({ page }) => {
+      test.fail(!(ui && smp), 'pve-manager/qemu-server without the sparc32 CPU limits')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const wizard = await openWizard(page, 'sparc-ui-smp')
+      const sockets = wizard.getByLabel(fieldLabel('Sockets'))
+      const cores = wizard.getByLabel(fieldLabel('Cores'))
+      const nextButton = wizard.getByRole('button', { name: 'Next' })
+      const back = async () => wizard.getByRole('button', { name: 'Back' }).click()
+
+      await pickCombo(page, wizard, 'vCPU Architecture', 'SPARC (32-bit)')
+      await next(wizard)
+      await wizard.getByText('Do not use any media').click()
+      await pickCombo(page, wizard, 'Type', 'Solaris Kernel')
+      await next(wizard)
+
+      // SS-20 with OpenBIOS: up to 4
+      await pickCombo(page, wizard, 'Machine', 'SS-20')
+      await next(wizard) // to Disks
+      await next(wizard) // to CPU
+      await expect(sockets).toBeEnabled()
+      await expect(cores).toBeEnabled()
+      await expect(wizard.getByText(/up to 4 CPUs .*keeps a host core busy/)).toBeVisible()
+      await cores.fill('5')
+      await expect(nextButton).toBeDisabled()
+      await cores.fill('2')
+      await sockets.fill('3')
+      await expect(nextButton).toBeDisabled()
+      await sockets.fill('2')
+      await expect(nextButton).toBeEnabled()
+
+      // the SS-20 PROM: one CPU, the fields reset and disabled
+      await back() // Disks
+      await back() // System
+      await pickCombo(page, wizard, 'BIOS', 'SPARCstation 20 PROM')
+      await next(wizard)
+      await next(wizard)
+      await expect(sockets).toBeDisabled()
+      await expect(cores).toBeDisabled()
+      await expect(sockets).toHaveValue('1')
+      await expect(cores).toHaveValue('1')
+
+      // back to OpenBIOS, 4 cores
+      await back()
+      await back()
+      await pickCombo(page, wizard, 'BIOS', 'Default (OpenBIOS)')
+      await next(wizard)
+      await next(wizard)
+      await expect(cores).toBeEnabled()
+      await cores.fill('4')
+      await next(wizard) // to Memory
+      await next(wizard) // to Network
+      await next(wizard) // to Confirm
+      await wizard.getByRole('button', { name: 'Finish' }).click()
+      await expect.poll(async () => (await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])).code).toBe(0)
+      await expect.poll(async () => (await vmConfFile(vmid)).includes('lock: create'), { timeout: 30_000 }).toBe(false)
+
+      const conf = await vmConfFile(vmid)
+      expect(conf).toMatch(/^cores: 4$/m)
+      expect(conf).not.toMatch(/^(vcpus|bios):/m)
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain("-smp '4,sockets=1,cores=4,maxcpus=4'")
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    })
+
+    test('Hardware: Processors enabled and capped only where the profile takes more than one', async ({ page }) => {
+      test.fail(!(ui && smp), 'pve-manager/qemu-server without the sparc32 CPU limits')
+      const ss20 = await createVm(profileParams(SS20_OPENBIOS))
+      const prom = await createVm(profileParams(SS20_PROM))
+      const editor = page.locator('.x-window').filter({ hasText: 'Edit: Processors' })
+      const openProcessors = async (vmid: number) => {
+        await page.goto(`/#v1:0:=qemu%2F${vmid}:4:=hardware`)
+        await page.reload() // the resource tree learns about VMs created after login only on a reload
+        await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+        await page.getByText(/^Processors$/).dblclick()
+        await expect(editor).toBeVisible()
+      }
+
+      await openProcessors(ss20)
+      await expect(editor.getByLabel(fieldLabel('Sockets'))).toBeEnabled()
+      await expect(editor.getByLabel(fieldLabel('Cores'))).toBeEnabled()
+      await editor.getByLabel(fieldLabel('Cores')).fill('5')
+      await expect(editor.getByRole('button', { name: 'OK' })).toBeDisabled()
+      await editor.getByLabel(fieldLabel('Cores')).fill('2')
+      await editor.getByRole('button', { name: 'OK' }).click()
+      await expect(editor).toBeHidden()
+      await expect.poll(async () => vmConfFile(ss20)).toMatch(/^cores: 2$/m)
+
+      await openProcessors(prom)
+      await expect(editor.getByLabel(fieldLabel('Sockets'))).toBeDisabled()
+      await expect(editor.getByLabel(fieldLabel('Cores'))).toBeDisabled()
+      await expect(editor.getByText(/one CPU on this machine and firmware/)).toBeVisible()
+      await closeWindow(editor)
+    })
+  })
+})
+
 test.describe('the lab runs the same machines', () => {
   // e2e/sparc measures the profiles with its own QEMU command (scenarios/_sparc32.py). If the
   // machine-defining arguments drift apart, the measurements no longer describe what qemu-server runs.
@@ -562,9 +794,11 @@ test.describe('web UI', () => {
       await expect(wizard.getByText('scsi3', { exact: true })).toBeVisible()
       await next(wizard)
 
-      // CPU: one, nothing to choose.
-      await expect(wizard.getByLabel(fieldLabel('Sockets'))).toBeDisabled()
-      await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeDisabled()
+      // CPU: nothing to choose where the profile takes one CPU ("more than one CPU" has the rest).
+      // TODO: `p.maxCpus === 1` alone once pve-manager with the CPU limits is published.
+      const oneCpu = p.maxCpus === 1 || !ui
+      await expect(wizard.getByLabel(fieldLabel('Sockets'))).toBeEnabled({ enabled: !oneCpu })
+      await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeEnabled({ enabled: !oneCpu })
       await next(wizard)
 
       // Memory: preset to and capped at the machine's maximum.
@@ -587,7 +821,9 @@ test.describe('web UI', () => {
       expect(conf).toMatch(/^arch: sparc$/m)
       expect(conf).toMatch(/^scsi3: local:\d+\/vm-\d+-disk-0/m)
       expect(conf).toMatch(MAC)
-      for (const key of ['cpu', 'sockets', 'cores', 'vmgenid']) expect(conf).not.toMatch(new RegExp(`^${key}:`, 'm'))
+      for (const key of ['cpu', 'vmgenid']) expect(conf).not.toMatch(new RegExp(`^${key}:`, 'm'))
+      // one CPU: no sockets/cores, or 1 where the fields are enabled (SS-10/SS-20 with OpenBIOS)
+      expect(conf).not.toMatch(/^(sockets|cores): (?!1$)/m)
 
       const cmd = await showcmd(vmid)
       expect(cmd).toContain(`type=${p.machine}+pve0`)

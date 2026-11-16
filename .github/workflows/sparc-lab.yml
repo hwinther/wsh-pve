@@ -107,16 +107,21 @@ jobs:
       - name: Run the pve matrix
         if: ${{ env.MATRIX == 'pve' }}
         run: |
+          # The bench disk's directory, only when it exists (the sol26-ss20-smp2 case imports it)
+          bench=()
+          if [ -f "$BENCH_DISK" ]; then
+            bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
+          fi
           # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
           docker run -d --name "sparc-lab-${GITHUB_RUN_ID}" --hostname pve --privileged \
             --tmpfs /run --tmpfs /run/lock \
-            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "$IMAGE"
+            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "${bench[@]}" "$IMAGE"
           for _ in $(seq 1 60); do
             docker exec "sparc-lab-${GITHUB_RUN_ID}" test -f /run/pve-e2e-ready && break
             sleep 5
           done
           docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py pve \
-            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR"
+            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK"
 
       - name: Summary
         if: ${{ !cancelled() }}

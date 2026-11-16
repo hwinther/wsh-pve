@@ -3,10 +3,11 @@
 (`lab.py run --pve <vmid>`): what Proxmox VE itself runs, provisioned and booted by the scenarios.
 
     pve_matrix.py pve --runs /work/runs/p1 [--iso /mnt/sparc/iso] [--disks /srv/sparc/disks]
+        [--bench /mnt/sparc/disks/bench-sol26.raw]
 
 Runs on the PVE node: the e2e node with the lab in it (pve.Dockerfile). Each case creates its VM
 (`pvesh create /nodes/<node>/qemu`, the install media linked into the `local` storage, a disk template
-imported with `import-from`), runs its scenarios one after another against it, each in
+or an installed disk imported with `import-from`, the bench disk too where a case uses it), runs its scenarios one after another against it, each in
 <runs>/<case>/<n>-<scenario>/, and destroys the VM. Prints the summary as a Markdown table (also in
 <runs>/summary.md) and exits 1 if any case failed.
 """
@@ -23,8 +24,9 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ISO_DIR = "/var/lib/vz/template/iso"  # the `local` storage's ISO directory
 
-# name -> [(case, VM config (`{iso}`: the CD's volume, `{template}`: the imported disk template),
-#           install CD in --iso, disk template in --disks or None, [(scenario, variables)])]
+# name -> [(case, VM config (`{iso}`: the CD's volume, `{template}`: the imported disk template or
+#           installed disk, `{bench}`: the bench disk, --bench), install CD in --iso or None, disk in
+#           --disks (`.xz`: decompressed first) or None, [(scenario, variables)])]
 SPARC32 = {"arch": "sparc", "memory": 256, "ostype": "solaris", "net0": "lance,bridge=vmbr0",
            "serial0": "socket", "vga": "serial0"}
 MATRICES = {
@@ -47,6 +49,15 @@ MATRICES = {
                             "vga": "serial0", "net0": "sunhme,bridge=vmbr0", "ide0": "local:1,format=raw",
                             "ide2": "{iso},media=cdrom"},
          "other-os/NetBSD-11.1-sparc64.iso", None, [("netbsd-boot-cd.py", {"BOOT": ""})]),
+        # sparc32 with more than one CPU (needs qemu-server with the CPU limits per profile and
+        # pve-qemu-kvm 11.1.3-2+wsh10 or later, patch 0019): SS-20 with OpenBIOS and 2 CPUs, the
+        # installed Solaris 2.6 SS-20 disk on target 3 and the bench disk read only on target 4.
+        # smp-soak.py without the soak: psrinfo must list 2 CPUs on-line, then Dhrystone and the nawk
+        # loop alone and as 2 copies at once.
+        ("sol26-ss20-smp2", {**SPARC32, "machine": "SS-20", "memory": 512, "cores": 2,
+                             "scsi3": "local:0,import-from={template},format=raw",
+                             "scsi4": "local:0,import-from={bench},format=raw,ro=1"},
+         None, "sol26-enduser-ss20-installed.raw", [("smp-soak.py", {"SMP": "2", "SOAK": "0"})]),
         # x86_64 baseline under TCG: the console on VGA (OCR + send-key), a serial port next to it
         ("alpine-x86_64", {"kvm": 0, "memory": 1024, "ostype": "l26", "serial0": "socket", "vga": "std",
                            "ide2": "{iso},media=cdrom"},
@@ -65,25 +76,31 @@ def create_vm(name, config, iso, template, a, work):
     """The VM through the API; returns its VMID."""
     node = socket.gethostname()
     vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
-    os.makedirs(ISO_DIR, exist_ok=True)
-    link = os.path.join(ISO_DIR, os.path.basename(iso))
-    if os.path.lexists(link):
-        os.unlink(link)
-    os.symlink(os.path.join(a.iso, iso), link)
-    raw = None
-    if template:
-        raw = os.path.join(work, "template.raw")
+    if iso:
+        os.makedirs(ISO_DIR, exist_ok=True)
+        link = os.path.join(ISO_DIR, os.path.basename(iso))
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink(os.path.join(a.iso, iso), link)
+    raw, tmp = None, None
+    if template and template.endswith(".xz"):
+        raw = tmp = os.path.join(work, "template.raw")
         shutil.copy(os.path.join(a.disks, template), raw + ".xz")
         subprocess.run(["xz", "-d", "-f", raw + ".xz"], check=True)
+    elif template:  # an installed disk: import-from only reads it
+        raw = os.path.join(a.disks, template)
+    if any("{bench}" in str(val) for val in config.values()) and not os.path.isfile(a.bench):
+        raise subprocess.CalledProcessError(1, ["bench", "disk", a.bench], stderr=f"{a.bench} doesn't exist")
     params = {"vmid": vmid, "name": name.replace("_", "-"), **config}  # a DNS name
+    volume = f"local:iso/{os.path.basename(iso)}" if iso else None
     args = []
     for k, val in params.items():
-        args += [f"--{k}", str(val).format(iso=f"local:iso/{os.path.basename(iso)}", template=raw)]
+        args += [f"--{k}", str(val).format(iso=volume, template=raw, bench=a.bench)]
     try:
         sh("pvesh", "create", f"/nodes/{node}/qemu", *args)
     finally:
-        if raw and os.path.exists(raw):
-            os.unlink(raw)
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
     with open(os.path.join(work, "vm.conf"), "w", encoding="utf-8") as f:
         f.write(sh("qm", "config", vmid) + "\n")
     return vmid
@@ -139,6 +156,8 @@ def main():
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
     p.add_argument("--disks", default="/srv/sparc/disks", help="disk templates (read only)")
     p.add_argument("--iso", default="/mnt/sparc/iso", help="install CDs (read only)")
+    p.add_argument("--bench", default="/mnt/sparc/disks/bench-sol26.raw",
+                   help="the bench disk (e2e/sparc/README.md, \"The bench disk\"; read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per scenario")
     p.add_argument("--only", action="append", help="run only these cases")
     a = p.parse_args()

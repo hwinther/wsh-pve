@@ -232,6 +232,7 @@ and prints a summary like `matrix.py`:
 | `alpine-aarch64` | `arch: aarch64`, virt, OVMF (AAVMF), `vga: serial0`, the Alpine 3.19 CD on virtio-scsi | `alpine-boot-cd.py`: login prompt, root, `uname -m` |
 | `netbsd-sparc64` | `arch: sparc64` as the create wizard makes it (sun4u, OpenBIOS, a blank disk on `ide0`, the NetBSD 11.1 CD on `ide2`, `sunhme`, 512 MB, the API's default boot order), `vga: serial0` | `netbsd-boot-cd.py` with `BOOT=` (OpenBIOS must boot the CD by itself): sysinst, its shell, `uname -m` |
 | `alpine-x86_64` | `kvm: 0`, `vga: std`, `serial0: socket`, the Alpine 3.19 CD on `ide2` | `alpine-boot-cd.py` on the VGA console (OCR, send-key), `uname -m` also through the serial port |
+| `sol26-ss20-smp2` | SS-20, OpenBIOS, `cores: 2`, 512 MB, `vga: serial0`, the installed 2.6 SS-20 disk imported to target 3, the bench disk (`--bench`) imported read only to target 4 | `smp-soak.py` with `SMP=2 SOAK=0`: `psrinfo` lists 2 CPUs on-line, then Dhrystone and the `nawk` loop alone and as 2 copies at once |
 
 One run took 12 min for `sol26-install-ss5` and about a minute for each of the others.
 
@@ -243,7 +244,7 @@ docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:local .
 docker build -f e2e/sparc/pve.Dockerfile -t wsh-pve-lab e2e/sparc
 docker run -d --name pve-lab --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
   -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/sparc/disks:ro \
-  -v /mnt/sparc/runs:/mnt/sparc/runs wsh-pve-lab
+  -v /mnt/sparc/disks:/mnt/sparc/disks:ro -v /mnt/sparc/runs:/mnt/sparc/runs wsh-pve-lab
 docker exec pve-lab python3 pve_matrix.py pve --runs /mnt/sparc/runs/p1
 ```
 
@@ -251,7 +252,9 @@ The `sparc lab` workflow does this for the `pve` choice, and every week after `s
 schedule), building both images from the published packages. The aarch64 and sparc64 cases need the
 qemu-server fixes below: with a published package that lacks them they fail at `qm start`. The
 sparc64 case also needs the sparc64 profile (qemu-server's `-boot order=` instead of `bootindex`):
-without it OpenBIOS stops at its prompt and the case fails there.
+without it OpenBIOS stops at its prompt and the case fails there. `sol26-ss20-smp2` needs qemu-server
+with the CPU limits per profile (before, the API refuses a second CPU) and `pve-qemu-kvm`
+11.1.3-2+wsh10 or later (before, Solaris hangs with 2 CPUs).
 
 What qemu-server's command line had to change (`submodules/qemu-server.patch`):
 

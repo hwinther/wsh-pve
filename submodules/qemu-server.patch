@@ -1011,7 +1011,7 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index fa47d668..7eca5182 100644
+index fa47d668..60545f90 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1046,28 +1046,38 @@ index fa47d668..7eca5182 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +141,239 @@ sub default_machine_for_arch {
+@@ -135,6 +141,268 @@ sub default_machine_for_arch {
      return $machine;
  }
  
 +# The sparc32 (arch: sparc) profiles: the machine, firmware, CPU and RAM combinations that were tested
 +# to run (wsh-pve submodules/SPARC.md, "Supported profiles"). Validation and the QEMU command are both
-+# derived from this table. Per machine: the most RAM in MB and the firmware it runs, each mapped to the
-+# '-cpu' it needs (undef: the machine's default CPU). sparc32 always has one CPU.
++# derived from this table. Per machine: the most RAM in MB and the firmware it runs, each with the
++# '-cpu' it needs (none: the machine's default CPU) and the most CPUs (sockets x cores) it takes.
++# More than one CPU needs pve-qemu-kvm with wsh patch 0019 (11.1.3-2+wsh10): Solaris hangs without it.
 +# pve-manager mirrors this table in PVE.qemu.Architecture.sparc32Profiles (www/manager6/qemu/Architecture.js).
 +our $SPARC32_PROFILES = {
 +    'SS-5' => {
 +        'max-memory' => 256,
-+        firmware => { 'openbios-sparc32' => undef, 'ss5.bin' => undef },
++        # QEMU's SS-5 has one CPU
++        firmware => {
++            'openbios-sparc32' => { 'max-cpus' => 1 },
++            'ss5.bin' => { 'max-cpus' => 1 },
++        },
 +    },
 +    'SS-10' => {
 +        'max-memory' => 512,
-+        firmware => { 'openbios-sparc32' => undef },
++        # QEMU's limit for the machine
++        firmware => { 'openbios-sparc32' => { 'max-cpus' => 4 } },
 +    },
 +    'SS-20' => {
 +        'max-memory' => 512,
-+        # the Sun PROM doesn't start with the machine's default CPU (SuperSPARC-II)
-+        firmware => { 'openbios-sparc32' => undef, 'ss20_v2.25_rom' => 'TI-SuperSparc-50' },
++        firmware => {
++            'openbios-sparc32' => { 'max-cpus' => 4 },
++            # the Sun PROM doesn't start with the machine's default CPU (SuperSPARC-II), and it
++            # starts only CPU 0: another vCPU would only keep a host core busy
++            'ss20_v2.25_rom' => { cpu => 'TI-SuperSparc-50', 'max-cpus' => 1 },
++        },
 +    },
 +};
 +our $SPARC32_DEFAULT_FIRMWARE = 'openbios-sparc32';
@@ -1094,7 +1104,8 @@ index fa47d668..7eca5182 100644
 +    my ($conf) = @_;
 +
 +    my $profile = $SPARC32_PROFILES->{ sparc32_machine_type($conf) } or return;
-+    return $profile->{firmware}->{ $conf->{bios} // $SPARC32_DEFAULT_FIRMWARE };
++    my $firmware = $profile->{firmware}->{ $conf->{bios} // $SPARC32_DEFAULT_FIRMWARE } or return;
++    return $firmware->{cpu};
 +}
 +
 +=head3 assert_sparc32_profile
@@ -1129,8 +1140,26 @@ index fa47d668..7eca5182 100644
 +    die "sparc: $machine takes at most $profile->{'max-memory'} MB of memory, not $memory\n"
 +        if $memory > $profile->{'max-memory'};
 +
++    # Any sockets x cores up to the profile's most: sun4m has no CPU topology, the guest sees every
++    # vCPU as a CPU module of its own.
 +    my $cpus = ($conf->{sockets} // 1) * ($conf->{cores} // 1);
-+    die "sparc: only one CPU is supported (sockets 1, cores 1), not $cpus\n" if $cpus != 1;
++    my $max_cpus = $profile->{firmware}->{$bios}->{'max-cpus'};
++    if ($cpus > $max_cpus) {
++        my $openbios_max = $profile->{firmware}->{$SPARC32_DEFAULT_FIRMWARE}->{'max-cpus'};
++        my $hint = '';
++        $hint = " (the Sun PROM starts only the first CPU; $SPARC32_DEFAULT_FIRMWARE takes up to"
++            . " $openbios_max)"
++            if $bios ne $SPARC32_DEFAULT_FIRMWARE && $openbios_max > $max_cpus;
++        die "sparc: $machine with firmware $bios takes at most $max_cpus "
++            . ($max_cpus == 1 ? 'CPU' : 'CPUs')
++            . " (sockets x cores), not $cpus$hint\n";
++    }
++    # no CPU hotplug: QEMU's sun4m starts every CPU it has at boot
++    die "sparc: 'vcpus' must be the number of CPUs (sockets x cores, $cpus), not $conf->{vcpus};"
++        . " CPU hotplug is not supported\n"
++        if $conf->{vcpus} && $conf->{vcpus} != $cpus;
++    die "sparc: CPU hotplug is not supported, remove 'cpu' from 'hotplug'\n"
++        if $cpus > 1 && grep { $_ eq 'cpu' } PVE::Tools::split_list($conf->{hotplug} // '');
 +
 +    die "sparc: 'cpu' can't be set, the CPU follows the machine and firmware\n"
 +        if defined($conf->{cpu});
@@ -1286,7 +1315,7 @@ index fa47d668..7eca5182 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +408,7 @@ my sub machine_base_type {
+@@ -169,6 +437,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1294,7 +1323,7 @@ index fa47d668..7eca5182 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +545,44 @@ sub machine_version_cmp {
+@@ -305,11 +574,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1341,7 +1370,7 @@ index fa47d668..7eca5182 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +592,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +621,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1364,7 +1393,7 @@ index fa47d668..7eca5182 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -503,6 +773,7 @@ sub get_power_state_flags {
+@@ -503,6 +802,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1372,7 +1401,7 @@ index fa47d668..7eca5182 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -510,6 +781,7 @@ sub get_power_state_flags {
+@@ -510,6 +810,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1723,6 +1752,51 @@ index 00000000..c058a4f2
 +  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
 +  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:03,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-10+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss10-smp4.conf b/src/test/cfg2cmd/sparc32-ss10-smp4.conf
+new file mode 100644
+index 00000000..64987536
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss10-smp4.conf
+@@ -0,0 +1,10 @@
++# TEST: sparc32 SS-10 with OpenBIOS and 4 CPUs (4 cores), the most it takes
++arch: sparc
++cores: 4
++machine: SS-10
++memory: 512
++name: sparc32-ss10-smp4
++net0: lance=BC:24:11:B2:46:07,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++vga: tcx
+diff --git a/src/test/cfg2cmd/sparc32-ss10-smp4.conf.cmd b/src/test/cfg2cmd/sparc32-ss10-smp4.conf.cmd
+new file mode 100644
+index 00000000..ff516c9e
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss10-smp4.conf.cmd
+@@ -0,0 +1,23 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32-ss10-smp4 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '4,sockets=1,cores=4,maxcpus=4' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga tcx \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 512 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:07,netdev=net0' \
++  -machine 'accel=tcg,type=SS-10+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss10-sun-prom-error.conf b/src/test/cfg2cmd/sparc32-ss10-sun-prom-error.conf
 new file mode 100644
 index 00000000..dbf2d162
@@ -1735,6 +1809,19 @@ index 00000000..dbf2d162
 +bios: ss10_v2.25_rom
 +machine: SS-10
 +memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss20-cpu-hotplug-error.conf b/src/test/cfg2cmd/sparc32-ss20-cpu-hotplug-error.conf
+new file mode 100644
+index 00000000..ba8054b7
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-cpu-hotplug-error.conf
+@@ -0,0 +1,7 @@
++# TEST: CPU hotplug stays refused with more than one CPU
++# EXPECT_ERROR: sparc: CPU hotplug is not supported, remove 'cpu' from 'hotplug'
++arch: sparc
++cores: 2
++hotplug: disk,network,cpu
++machine: SS-20
++memory: 512
 diff --git a/src/test/cfg2cmd/sparc32-ss20-memory-error.conf b/src/test/cfg2cmd/sparc32-ss20-memory-error.conf
 new file mode 100644
 index 00000000..353a1f99
@@ -1762,18 +1849,123 @@ index 00000000..034e2c68
 +scsi3: local:8006/vm-8006-disk-0.raw,size=2G
 +serial0: socket
 +vga: serial0
-diff --git a/src/test/cfg2cmd/sparc32-ss20-smp-error.conf b/src/test/cfg2cmd/sparc32-ss20-smp-error.conf
+diff --git a/src/test/cfg2cmd/sparc32-ss20-smp2.conf b/src/test/cfg2cmd/sparc32-ss20-smp2.conf
 new file mode 100644
-index 00000000..f25ad476
+index 00000000..d1155400
 --- /dev/null
-+++ b/src/test/cfg2cmd/sparc32-ss20-smp-error.conf
-@@ -0,0 +1,6 @@
-+# TEST: more than one CPU is refused
-+# EXPECT_ERROR: sparc: only one CPU is supported (sockets 1, cores 1), not 2
++++ b/src/test/cfg2cmd/sparc32-ss20-smp2.conf
+@@ -0,0 +1,11 @@
++# TEST: sparc32 SS-20 with OpenBIOS and 2 CPUs (one per socket; sun4m has no topology)
++arch: sparc
++machine: SS-20
++memory: 512
++name: sparc32-ss20-smp2
++net0: lance=BC:24:11:B2:46:05,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++serial0: socket
++sockets: 2
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc32-ss20-smp2.conf.cmd b/src/test/cfg2cmd/sparc32-ss20-smp2.conf.cmd
+new file mode 100644
+index 00000000..022e842f
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-smp2.conf.cmd
+@@ -0,0 +1,24 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32-ss20-smp2 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '2,sockets=2,cores=1,maxcpus=2' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 512 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:05,netdev=net0' \
++  -machine 'accel=tcg,type=SS-20+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss20-smp4.conf b/src/test/cfg2cmd/sparc32-ss20-smp4.conf
+new file mode 100644
+index 00000000..5fee0f15
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-smp4.conf
+@@ -0,0 +1,10 @@
++# TEST: sparc32 SS-20 with OpenBIOS and 4 CPUs (2 sockets x 2 cores), the most it takes
 +arch: sparc
 +cores: 2
 +machine: SS-20
 +memory: 512
++name: sparc32-ss20-smp4
++net0: lance=BC:24:11:B2:46:06,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++sockets: 2
+diff --git a/src/test/cfg2cmd/sparc32-ss20-smp4.conf.cmd b/src/test/cfg2cmd/sparc32-ss20-smp4.conf.cmd
+new file mode 100644
+index 00000000..b3363111
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-smp4.conf.cmd
+@@ -0,0 +1,23 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32-ss20-smp4 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '4,sockets=2,cores=2,maxcpus=4' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 512 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:06,netdev=net0' \
++  -machine 'accel=tcg,type=SS-20+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss20-smp5-error.conf b/src/test/cfg2cmd/sparc32-ss20-smp5-error.conf
+new file mode 100644
+index 00000000..8169ea6b
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-smp5-error.conf
+@@ -0,0 +1,6 @@
++# TEST: more CPUs than QEMU's SS-20 takes are refused
++# EXPECT_ERROR: sparc: SS-20 with firmware openbios-sparc32 takes at most 4 CPUs (sockets x cores), not 5
++arch: sparc
++cores: 5
++machine: SS-20
++memory: 512
+diff --git a/src/test/cfg2cmd/sparc32-ss20-sun-prom-smp-error.conf b/src/test/cfg2cmd/sparc32-ss20-sun-prom-smp-error.conf
+new file mode 100644
+index 00000000..61e98efe
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-sun-prom-smp-error.conf
+@@ -0,0 +1,7 @@
++# TEST: the SS-20 PROM starts only the first CPU, so a second one is refused
++# EXPECT_ERROR: sparc: SS-20 with firmware ss20_v2.25_rom takes at most 1 CPU (sockets x cores), not 2 (the Sun PROM starts only the first CPU; openbios-sparc32 takes up to 4)
++arch: sparc
++bios: ss20_v2.25_rom
++machine: SS-20
++memory: 512
++sockets: 2
 diff --git a/src/test/cfg2cmd/sparc32-ss20-sun-prom.conf b/src/test/cfg2cmd/sparc32-ss20-sun-prom.conf
 new file mode 100644
 index 00000000..c215bc42
@@ -1821,6 +2013,19 @@ index 00000000..f0213c53
 +  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
 +  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:05,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-20+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss20-vcpus-error.conf b/src/test/cfg2cmd/sparc32-ss20-vcpus-error.conf
+new file mode 100644
+index 00000000..ad6e5be5
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-vcpus-error.conf
+@@ -0,0 +1,7 @@
++# TEST: fewer vcpus than CPUs (CPUs to hot-plug later) are refused
++# EXPECT_ERROR: sparc: 'vcpus' must be the number of CPUs (sockets x cores, 4), not 2; CPU hotplug is not supported
++arch: sparc
++cores: 4
++machine: SS-20
++memory: 512
++vcpus: 2
 diff --git a/src/test/cfg2cmd/sparc32-ss5-defaults.conf b/src/test/cfg2cmd/sparc32-ss5-defaults.conf
 new file mode 100644
 index 00000000..dc46457b
@@ -1876,6 +2081,18 @@ index 00000000..27442665
 +# EXPECT_ERROR: sparc: SS-5 takes at most 256 MB of memory, not 512
 +arch: sparc
 +machine: SS-5
+diff --git a/src/test/cfg2cmd/sparc32-ss5-smp-error.conf b/src/test/cfg2cmd/sparc32-ss5-smp-error.conf
+new file mode 100644
+index 00000000..af54c1f4
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-smp-error.conf
+@@ -0,0 +1,6 @@
++# TEST: QEMU's SS-5 has one CPU
++# EXPECT_ERROR: sparc: SS-5 with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2
++arch: sparc
++cores: 2
++machine: SS-5
++memory: 256
 diff --git a/src/test/cfg2cmd/sparc32-ss5-ss20-prom-error.conf b/src/test/cfg2cmd/sparc32-ss5-ss20-prom-error.conf
 new file mode 100644
 index 00000000..cafdef5b
@@ -2323,6 +2540,29 @@ index 00000000..5731318e
 +qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/debian-13.iso","node-name":"e4c7fc0082335a06883f82ece465bd9","read-only":true},"node-name":"f4c7fc0082335a06883f82ece465bd9","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}
 +qmp blockdev-insert-medium {"id":"scsi6","node-name":"drive-scsi6"}
 +qmp blockdev-close-tray {"id":"scsi6"}
+diff --git a/src/test/hotplug/sparc32-cores-add.conf b/src/test/hotplug/sparc32-cores-add.conf
+new file mode 100644
+index 00000000..e1058576
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cores-add.conf
+@@ -0,0 +1,14 @@
++# TEST: a second CPU on a running sparc32 SS-20 stays pending until the next start (no CPU hotplug)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++boot: order=scsi3
++machine: SS-20
++memory: 512
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++cores: 2
+diff --git a/src/test/hotplug/sparc32-cores-add.conf.expected b/src/test/hotplug/sparc32-cores-add.conf.expected
+new file mode 100644
+index 00000000..e69de29b
 diff --git a/src/test/hotplug/sparc32-disk-add.conf b/src/test/hotplug/sparc32-disk-add.conf
 new file mode 100644
 index 00000000..ec7aa9db

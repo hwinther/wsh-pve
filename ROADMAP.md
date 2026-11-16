@@ -31,6 +31,8 @@ come after that, not before.
 | SS-5 as fast as SS-20 for Solaris (narrower TLB flush on the no-fault bit) | published | #262 |
 | Solaris 10 on `niagara` measured: reaches the installer, no disk or network; parked | merged | #259 |
 | Dial-up modem on a guest's serial port: cause of the PPP hang, recipe, container test | merged | #264 |
+| Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
+| Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
 
 ## In progress
@@ -51,16 +53,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **SMP hang on SS-10/SS-20: fixed, waiting for review.** With more than one CPU, Solaris hung
-   within minutes: one CPU waited in `xc_sync_cache` for a cross-call the other never took. QEMU
-   (8.2 and later) didn't look at pending interrupts after a write to `%psr` in a delay slot,
-   where Solaris's `splx` lowers the interrupt level, so a CPU spinning in a `splx` loop never
-   took the soft interrupt. pve-qemu patches 0019-0020 end the translation block there; Solaris 2.6 then runs 2 and 4 CPUs under load
-   (`submodules/SPARC.md`, "SMP"). Upstream: `upstream/qemu-sun4m-smp-psr-delay-slot.md`. Then:
-   - the profiles (qemu-server, pve-manager) still pin one CPU; what to change is in
-     `submodules/SPARC.md`, "SMP";
-   - idle with more than one CPU: each vCPU spins at 100% of a host core; a bounded halt in the
-     multiprocessor idle loop is the follow-up (`submodules/SPARC.md`, "SMP").
+1. **Idle with more than one CPU.** Each vCPU of a multiprocessor sparc32 guest spins at 100% of a
+   host core even when Solaris is idle; a bounded halt in the multiprocessor idle loop is the
+   follow-up (`submodules/SPARC.md`, "SMP").
 2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
    Solaris 10 1/13 reaches its installer's first prompt. Next: console input on ttya, the cmd646
    interrupt, then disk, network and an install. QEMU's sun4u devices (CMD646 IDE, hme) are ones
@@ -110,6 +105,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
+- **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
+  expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and
+  be stopped and started through the MSI arbiter, while QEMU keeps the other CPUs halted until an
+  OpenBIOS-style start (`Cpu #1 Nothing there`). The map is the documented OBP 2.25 disassembly in
+  MiSTer-devel/SunSparcStation20_MiSTer (`docs/rom-disassembly/ss20-obp-2.25/`), read but not
+  verified on QEMU; it would mean changes to QEMU's sun4m and isn't small (`submodules/SPARC.md`,
+  "SMP").
 
 ## Known and not fixed
 
@@ -119,6 +121,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
+| More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
 | A CD that answers as a disk (Solaris 2.4/2.5.1 installers) has no option | Workaround: copy the ISO to a raw volume on `scsi6` |
