@@ -201,6 +201,9 @@ Decided:
   neither: a container on the same node can have the relay directory bind-mounted. The image works
   either way.
 - Whether the gateway should offer today's web later (WebOne) on a second network or proxy address.
+- Where VintageHive is built from. The image builds a pinned commit of FoxCouncil/VintageHive. A
+  fork exists (hwinther/VintageHive) so the source survives if upstream disappears. Later: a
+  workflow that keeps the fork equal to upstream, then build from the fork. Not started.
 - Addressing for dial-up and fixed-address guests (an address derived from the VM id is the
   simplest), and whether settings per guest key on the address.
 - Names: nothing in a package or the UI is named after AIM, ICQ, MSN or Battle.net. Client software
