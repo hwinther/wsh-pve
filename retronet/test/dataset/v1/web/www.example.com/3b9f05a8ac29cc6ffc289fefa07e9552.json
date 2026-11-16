@@ -1,0 +1,13 @@
+{
+ "content_type": "image/gif",
+ "fetched": "1999-12-31T00:00:00+00:00",
+ "fetched_epoch": 0,
+ "host": "www.example.com",
+ "key": "web|19990117083513im_/http://www.example.com/logo.gif",
+ "kind": "web",
+ "negative": false,
+ "request": "/web/19990117083513im_/http://www.example.com/logo.gif",
+ "size": 43,
+ "status": 200,
+ "upstream": "synthetic"
+}

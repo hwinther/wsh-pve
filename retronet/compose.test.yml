@@ -1,6 +1,7 @@
-# The hermetic test (retronet/test.sh): a fake internet with a stand-in for the Wayback Machine and
-# a DNS server, a "LAN" canary next to the gateway's uplink, and the retro client. Nothing leaves
-# the Docker host. The fake internet is 192.88.99.0/24, the retired 6to4 relay prefix: not routed,
+# The hermetic test (retronet/test.sh): the gateway's archive cache replays a synthetic dataset
+# (test/dataset); a fake internet holds a DNS server and a small upstream stub for the cache's miss
+# path; a "LAN" canary sits next to the gateway's uplink; the retro client runs the checks. Nothing
+# leaves the Docker host. The fake internet is 192.88.99.0/24, the retired 6to4 relay prefix: not routed,
 # and (unlike the documentation ranges) not refused by dnsmasq's rebind protection, which would
 # drop every answer pointing into it.
 services:
@@ -9,12 +10,16 @@ services:
       RETRONET_ADMIN_PASSWORD: retronet-test-admin
       RETRONET_UPSTREAM_DNS: 192.88.99.10
       RETRONET_YEAR: "1999"
+      # offline: replay the store only; test.sh recreates the gateway online for the miss path
+      RETRONET_ARCHIVE_MODE: ${RETRONET_TEST_ARCHIVE_MODE:-offline}
+      RETRONET_ARCHIVE_UPSTREAM: http://web.archive.org
+      RETRONET_ARCHIVE_MIN_INTERVAL: "0.2"
     networks:
       internet:
         ipv4_address: 192.88.99.2
     extra_hosts:
-      # Allowlisted names that point into the LAN, past dnsmasq's rebind protection: only the
-      # egress filter stands between them and the canary.
+      # Archive-looking names that point into the LAN, past dnsmasq's rebind protection: the
+      # archive cache never uses a guest's host name, and the egress filter refuses the LAN.
       - rebind.web.archive.org:192.168.98.10
       - web.archive.org.canary.example.net:192.168.98.10
     depends_on:

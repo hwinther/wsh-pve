@@ -1,0 +1,13 @@
+{
+ "content_type": "text/plain",
+ "fetched": "1999-12-31T00:00:00+00:00",
+ "fetched_epoch": 0,
+ "host": "www.example.com",
+ "key": "cdx|http://www.example.com/logo.gif|1999|1999|original,timestamp,mimetype,length",
+ "kind": "cdx",
+ "negative": false,
+ "request": "/cdx/search/cdx?url=http%3A%2F%2Fwww.example.com%2Flogo.gif&from=1999&to=1999&fl=original%2Ctimestamp%2Cmimetype%2Clength",
+ "size": 60,
+ "status": 200,
+ "upstream": "synthetic"
+}
