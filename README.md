@@ -27,12 +27,13 @@ Run `make 3dfx-drivers` to build the qemu-3dfx guest drivers (Windows/DOS), and 
 
 ### Optional extras
 
-`pve-qemu-kvm` (`make pve-qemu-bundle`) has three parts that never fail its build: when one doesn't build, the package is built and published without it.
+`pve-qemu-kvm` (`make pve-qemu-bundle`) has four parts that never fail its build: when one doesn't build, the package is built and published without it.
 
 | Extra | Make target | In the package | Without it |
 | --- | --- | --- | --- |
 | `3dfx` | `pve-qemu-3dfx` | `/usr/bin/qemu-system-x86_64-3dfx` | VMs with 3DFX/Mesa enabled don't start |
 | `openbios` | `openbios-sparc32` | `openbios-sparc32`, `QEMU,cgthree.bin` from `openbios/` | QEMU's images, without the fixes in `submodules/SPARC.md` |
+| `openbios-sparc64` | `openbios-sparc32` (the same `openbios/Dockerfile`) | `openbios-sparc64` from `openbios/` | QEMU's image: Solaris 10 on sun4u stops at `no nucleus hblk8 to allocate` |
 | `sun-proms` | `restore-sparc` (private `submodules/sparc`) | `ss5.bin`, `ss10_v2.25_rom`, `ss20_v2.25_rom` | VMs with a Sun PROM don't start |
 
 A target whose extra drops out prints `WARNING: optional extra <name> missing: <reason>`. `scripts/check-qemu-extras.sh --deb <file>` (or `--root /` on a host) lists what a package has. The `build-deb.yml` run of `pve-qemu` puts that list in its job summary and release notes, opens an issue per missing extra (updated by later builds, closed by the first one that has it again; the Sun PROMs are only expected in this repository, not in forks), and the e2e tests (`e2e/tests/qemu-extras.spec.ts`) fail when a published package lacks one.

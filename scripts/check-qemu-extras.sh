@@ -2,15 +2,18 @@
 # Which optional extras a pve-qemu-kvm package has. The Makefile never fails the package build on
 # them (pve-qemu-3dfx, openbios-sparc32, restore-sparc), so a build without one still publishes:
 #
-#   3dfx       /usr/bin/qemu-system-x86_64-3dfx, QEMU with qemu-3dfx (its "featuring qemu-3dfx@" banner)
-#   openbios   openbios-sparc32 and QEMU,cgthree.bin built from openbios/, not QEMU's prebuilt images
-#   sun-proms  ss5.bin, ss10_v2.25_rom and ss20_v2.25_rom from the private submodules/sparc
+#   3dfx              /usr/bin/qemu-system-x86_64-3dfx, QEMU with qemu-3dfx (its "featuring qemu-3dfx@" banner)
+#   openbios          openbios-sparc32 and QEMU,cgthree.bin built from openbios/, not QEMU's prebuilt images
+#   openbios-sparc64  openbios-sparc64 built from openbios/ (Solaris 10 on sun4u), not QEMU's prebuilt image
+#   sun-proms         ss5.bin, ss10_v2.25_rom and ss20_v2.25_rom from the private submodules/sparc
 #
 #   scripts/check-qemu-extras.sh --deb build/repo/pve-qemu-kvm_<version>_amd64.deb [options]
 #   scripts/check-qemu-extras.sh --root /          (the installed package)
 #
-#   --built DIR    build/openbios of the same build: openbios counts if the package has these files
-#   --stock DIR    QEMU's pc-bios/ of the same build: openbios counts if the package's files differ
+#   --built DIR    build/openbios of the same build: openbios and openbios-sparc64 count if the package
+#                  has these files
+#   --stock DIR    QEMU's pc-bios/ of the same build: openbios and openbios-sparc64 count if the
+#                  package's files differ
 #   --expect LIST  extras that must be present, comma-separated (default: all); the others are listed
 #   --only LIST    check these extras only
 #   --result FILE  one line per extra: <name> TAB present|missing|absent TAB <detail>
@@ -19,15 +22,21 @@
 #
 # Without --built/--stock (an installed package), openbios counts as ours when the build date in
 # openbios-sparc32 is within two days of the package's qemu-system-sparc (QEMU's image is built
-# months before a release, ours in the same run) and QEMU,cgthree.bin isn't QEMU's.
+# months before a release, ours in the same run) and QEMU,cgthree.bin isn't QEMU's. openbios-sparc64
+# counts as ours when its build date is within two days of the package's qemu-system-sparc64 and it
+# has the Forth word upa-portid>bustype, which only openbios/patches/0009 defines (the OBP-style node
+# names that give Solaris 10 its console): a date alone would also pass an image built here without
+# the patches that matter.
 #
 # Exit status: 0 when every expected extra is present, 1 when one is missing, 2 on a usage error.
 set -euo pipefail
 
-ALL_EXTRAS="3dfx,openbios,sun-proms"
+ALL_EXTRAS="3dfx,openbios,openbios-sparc64,sun-proms"
 # QEMU,cgthree.bin as QEMU ships it (850 bytes; QEMU 11.1)
 STOCK_CG3_SHA256="a99f3a06fdac5cf5d72bd0fd24647d897302c3ff8e918add65168185f8cbdf4d"
 PROMS="ss5.bin ss10_v2.25_rom ss20_v2.25_rom"
+# A Forth word that only openbios/patches/0009-sparc64-name-upa-and-ebus-children-like-obp defines
+SPARC64_MARKER="upa-portid>bustype"
 
 deb="" root="" built="" stock="" expect="$ALL_EXTRAS" only="$ALL_EXTRAS" result="" markdown=0
 
@@ -75,6 +84,23 @@ kvm="$root/usr/share/kvm"
 # shellcheck disable=SC2329 # used by the check_ functions
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 
+# Whether the build date in OpenBIOS image $1 (its banner: "Nov 16 2026 06:37") is within two days of
+# file $2, the QEMU binary of the same package. Appends to notes; sets status=no when it isn't.
+# shellcheck disable=SC2329
+check_built_with() {
+    local image="$1" bin="$2" when ob_time pkg_time
+    when=$(grep -aoE '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-9][0-9] [0-9]{4} [0-9]{2}:[0-9]{2}' "$image" | head -n 1 || true)
+    ob_time=$(date -u -d "$when" +%s 2>/dev/null || echo 0)
+    pkg_time=$(stat -c %Y "$bin" 2>/dev/null || echo 0)
+    if [ "$ob_time" -eq 0 ] || [ "$pkg_time" -eq 0 ]; then
+        status=no notes+=("no build date in ${image##*/} or no ${bin##*/} to compare it with")
+    elif [ $((pkg_time > ob_time ? pkg_time - ob_time : ob_time - pkg_time)) -gt $((2 * 86400)) ]; then
+        status=no notes+=("${image##*/} built on $when, not with the package (QEMU's)")
+    else
+        notes+=("${image##*/} built on $when")
+    fi
+}
+
 # check_<extra>: sets status (yes/no) and detail. Called by name below.
 # shellcheck disable=SC2329
 check_3dfx() {
@@ -114,17 +140,7 @@ check_openbios() {
         done
     fi
     if [ -z "$built" ] && [ -z "$stock" ]; then
-        local built_on ob_time pkg_time
-        built_on=$(grep -aoE '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-9][0-9] [0-9]{4} [0-9]{2}:[0-9]{2}' "$ob" | head -n 1 || true)
-        ob_time=$(date -u -d "$built_on" +%s 2>/dev/null || echo 0)
-        pkg_time=$(stat -c %Y "$root/usr/bin/qemu-system-sparc" 2>/dev/null || echo 0)
-        if [ "$ob_time" -eq 0 ] || [ "$pkg_time" -eq 0 ]; then
-            status=no notes+=("no build date in openbios-sparc32 or no qemu-system-sparc to compare it with")
-        elif [ $((pkg_time > ob_time ? pkg_time - ob_time : ob_time - pkg_time)) -gt $((2 * 86400)) ]; then
-            status=no notes+=("openbios-sparc32 built on $built_on, not with the package (QEMU's)")
-        else
-            notes+=("openbios-sparc32 built on $built_on")
-        fi
+        check_built_with "$ob" "$root/usr/bin/qemu-system-sparc"
         if [ "$(sha "$cg3")" = "$STOCK_CG3_SHA256" ]; then
             status=no notes+=("QEMU,cgthree.bin is QEMU's")
         fi
@@ -133,6 +149,36 @@ check_openbios() {
         notes=("openbios-sparc32 and QEMU,cgthree.bin ($(stat -c %s "$cg3") bytes) from openbios/" "${notes[@]}")
     else
         notes=("QEMU's images" "${notes[@]}")
+    fi
+    detail=$(printf '%s; ' "${notes[@]}")
+    detail="${detail%; }"
+}
+
+# shellcheck disable=SC2329
+check_openbios_sparc64() {
+    local ob="$kvm/openbios-sparc64" notes=()
+    [ -f "$ob" ] || { status=no detail="no /usr/share/kvm/openbios-sparc64"; return; }
+    status=yes
+    if [ -n "$built" ]; then
+        if [ ! -f "$built/openbios-sparc64" ]; then
+            status=no notes+=("openbios-sparc64 not built")
+        elif [ "$(sha "$built/openbios-sparc64")" != "$(sha "$ob")" ]; then
+            status=no notes+=("openbios-sparc64 is not the one built")
+        fi
+    fi
+    if [ -n "$stock" ] && [ -f "$stock/openbios-sparc64" ] && [ "$(sha "$stock/openbios-sparc64")" = "$(sha "$ob")" ]; then
+        status=no notes+=("openbios-sparc64 is QEMU's")
+    fi
+    if [ -z "$built" ] && [ -z "$stock" ]; then
+        check_built_with "$ob" "$root/usr/bin/qemu-system-sparc64"
+        if ! grep -aqF -- "$SPARC64_MARKER" "$ob"; then
+            status=no notes+=("no $SPARC64_MARKER in openbios-sparc64 (not built with openbios/patches/0009)")
+        fi
+    fi
+    if [ "$status" = yes ]; then
+        notes=("openbios-sparc64 from openbios/" "${notes[@]}")
+    else
+        notes=("QEMU's image" "${notes[@]}")
     fi
     detail=$(printf '%s; ' "${notes[@]}")
     detail="${detail%; }"
@@ -181,7 +227,7 @@ else
     echo "pve-qemu-kvm $version"
     for row in "${rows[@]}"; do
         IFS=$'\t' read -r name state detail <<< "$row"
-        printf '  %-10s %-8s %s\n' "$name" "$state" "$detail"
+        printf '  %-16s %-8s %s\n' "$name" "$state" "$detail"
     done
 fi
 exit "$rc"

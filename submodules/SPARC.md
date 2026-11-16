@@ -52,6 +52,8 @@ maintains the patches.
 | `0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m` | qtest `sun4m-mmu-nofault-test` for 0017: an entry made in no-fault mode must not survive NF being cleared (SS-5 and SS-20) | ours | not in QEMU |
 | `0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-` | Solaris 2.x with more than one CPU (SS-10/SS-20) hung within minutes: a write to `%psr` in a delay slot (Solaris's `splx`) didn't end the translation block, so an interrupt it unmasked wasn't taken until something else stopped the CPU; a CPU spinning in such a loop never took the other CPU's cross-call ("SMP") | ours | not fixed (since 8.2.0, `25524734c6`); see `upstream/qemu-sun4m-smp-psr-delay-slot.md` |
 | `0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl` | qtest `sun4m-pil-delay-slot-test` for 0019: a pending soft interrupt must be taken after PIL is lowered by a plain `wr %psr` and by one in the delay slot of `ba`, `bne`, `bne,a` and `jmpl` | ours | not in QEMU |
+| `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to clear them; the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD) ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
+| `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, and the interrupt line (seen through the sabre) follows INTRQ | ours | not in QEMU |
 
 The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -77,9 +79,21 @@ it its four delay-slot cases fail (the plain one passes). With 0001-0020: `make 
 `machines` (13/13), `display` (20/20) and `benchdisk` (6/6) passed, and the `smp` cases under
 "SMP".
 
+0021 applies to 11.1.3 on top of 0001-0020 with fuzz 0. `sun4u-cmd646-test` (run as
+`QTEST_QEMU_BINARY=./qemu-system-sparc64 tests/qtest/sun4u-cmd646-test` in a sparc64-softmmu build)
+passes 2/2 with 0021; without it `status-latched` fails (MRDMODE reads 0 after the status read),
+and with the interrupt line driven from the latched bits (the variant that broke Linux and OpenBSD)
+it fails too (the line stays up after the status read). `boot-serial-test` and `prom-env-test`
+(sparc64) pass with it. Of the binaries in the package only `qemu-system-sparc64` contains the
+cmd646 (sun4u's built-in IDE; QEMU's alpha and hppa machines have one too, and aren't built here):
+`CONFIG_IDE_CMD646` is selected by those machines only, so `qemu-system-x86_64`, `-i386`,
+`-aarch64`, `-arm`, `-sparc` and the 3dfx binary have no `cmd646-ide` device and no x86 machine
+type can use it. Lab results under "Solaris on sun4u".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
-`sun4m-mmu-nofault-test` and `sun4m-pil-delay-slot-test` (sparc) and `am53c974-test` (i386).
+`sun4m-mmu-nofault-test` and `sun4m-pil-delay-slot-test` (sparc), `sun4u-cmd646-test` (sparc64)
+and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -105,15 +119,20 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | --- | --- | --- |
 | `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
 | `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
-
 | `0008-sparc32-enter-the-prompt-on-op_enter-and-resume-with-go` | Stop-A (the romvec's `op_enter`) on a running Solaris or SunOS powered the machine off ("abort, power off"); it now stops at the prompt and `go` resumes the client, `boot` resets first ("Stop-A") | not fixed; see `upstream/openbios-sparc32-op-enter-powers-off.md` |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
 
-`openbios/Dockerfile` also builds `openbios-sparc64` from the same commit, as an optional extra
-(see "Solaris on sun4u"; the package doesn't install it yet, see "Packaging" there). The sparc32 build applies every patch except those named `*-sparc64-*`.
-The sparc64 build applies all of them, in a step that leaves no `openbios-sparc64` when it fails.
+`openbios/Dockerfile` also builds `openbios-sparc64` from the same commit, as an optional extra of
+its own (`openbios-sparc64`; see "Solaris on sun4u"). The sparc32 build applies every patch except
+those named `*-sparc64-*`. The sparc64 build applies all of them, in a step that leaves no
+`openbios-sparc64` when it fails; the `openbios-sparc32` make target then prints `WARNING: optional
+extra openbios-sparc64 missing: ...` and the package keeps QEMU's image. `debian/rules` installs it
+over QEMU's image like the sparc32 one. `scripts/check-qemu-extras.sh` tells ours from QEMU's against
+the build tree by comparing with `build/openbios/` and `pc-bios/`; on an installed package by its
+build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3's image says Jun 29
+2026) and the Forth word `upa-portid>bustype`, which only 0009 defines.
 
 | Patch | Fixes | Upstream |
 | --- | --- | --- |
@@ -1209,8 +1228,35 @@ of powering off (`halt -p` on an installed system couldn't be tried).
 **Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, serial console). With QEMU's
 `openbios-sparc64`, none reaches an installer. With the patched build from `openbios/`
 (patches 0003-0007 and 0009, below), Solaris 10 1/13 boots to the installer and takes input on ttya.
-That firmware isn't in the package yet (see "Packaging"). OpenBIOS finds the sun4u boot block on
-slice `f` of each CD and runs it.
+The package built from the change that installs it (see "Packaging") has that firmware and the
+cmd646 fix (QEMU `wsh/0021`). OpenBIOS finds the sun4u boot block on slice `f` of each CD and runs it.
+
+**What the package gives for Solaris 10** (the package built from that change, nothing added by
+hand; the lab's `solaris10` matrix, `sparc64-boot-cd.py GUEST=solaris10`, 1024 MB, blank disk on
+`ide.0`, the 1/13 DVD on `ide.1`, serial console): the DVD boots to the installer in about 3
+minutes; the IDE disk attaches (`/pci@1f,0/pci@1,1/ide@3/dad@0,0 (dad0)`, then `Corrupt label;
+wrong magic number` for the blank disk) without `Interrupt not seen after set_features`; the
+language (`0`) and terminal type (`3`, VT100) questions are answered on ttya, and the installer's
+first screen comes up (`The Oracle Solaris Installation Program`, F2_Continue). That is as far as
+the test goes, and about as far as a user gets: what follows needs changes that aren't in the
+package (below, "Solaris 10 beyond the first prompt"):
+
+- installing: the installer accepts the DVD as install media only with the OBP-style IDE tree,
+  an unmerged OpenBIOS change that breaks NetBSD's CD boot;
+- rebooting after an install (`prom_reboot: reboot call returned!`) and booting the installed disk
+  (`Cannot load drivers for .../disk@0,0:a`, `vfs_mountroot: cannot mount root`).
+
+Controls with the same case: the published 11.1.3-2+wsh10 (QEMU's `openbios-sparc64`) fails with
+`panic - kernel: no nucleus hblk8 to allocate` before the installer; that package's QEMU with the
+new firmware mounted over its image (no cmd646 latch) reaches the language prompt, and the case
+fails on `Interrupt not seen after set_features` (4 times on the console). With the package, the
+`sparc64` matrix passed 9/9 (NetBSD 11.1 and 9.3 CDs, OpenBSD 8.0 `bsd.rd`, the Debian 12
+installer, NetBSD on VGA, the NetBSD install to the IDE disk, its disk with `sunhme` and with
+virtio, idle), `smoke` 3/3 and `machines` 13/13 (sparc32, which uses no cmd646), and the `pve`
+matrix cases `alpine-x86_64` (CD on `ide2`, i440fx's PIIX IDE), `alpine-aarch64` and
+`netbsd-sparc64` 3/3 through PVE (the e2e node built from the package). The same Solaris 10 checks
+pass through PVE too (`pve_matrix.py solaris10`: the sparc64 profile as the wizard makes it, 1024
+MB, `vga: serial0`; 205 s).
 
 With the patched `openbios-sparc64` (1024 MB; `fw/openbios-sparc64-p5` in the lab's scratch
 directory, the same source as `openbios/Dockerfile` builds):
@@ -1279,8 +1325,7 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   A first version also drove the interrupt line from the latched bits, as paulsheer/qemu does. That
   left the line asserted for guests that don't clear the bits: Linux disabled the interrupt (`irq 7:
   nobody cared`) and OpenBSD hung at boot (matrix 7/9). Notes: `upstream/qemu-cmd646-interrupt-latch.md`.
-  The patch is kept as a standalone file in the lab's evidence directory; it isn't in `pve-qemu.patch`
-  yet.
+  In the package as `wsh/0021`, with the qtest `sun4u-cmd646-test` (`wsh/0022`).
 - **The DVD as install media and the disk.** With OpenBIOS's IDE tree (a node per channel,
   `ide@3/ide@1/cdrom@0`), the installer refused the DVD: `ERROR: The disc you inserted is not a
   Solaris OS CD/DVD.` OBP on an Ultra 5/10 puts the drives directly under the controller as
@@ -1409,12 +1454,16 @@ the many small translations. Solaris sizes the hme-block pool from the gaps in `
 `BOP_ALLOC failed` went away with the same patch. Physical allocation order, translation merging
 and byte-granular claims weren't changed, and no failure seen so far needed them.
 
-**Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, but
-`debian/rules` (`submodules/pve-qemu.patch`) doesn't install it yet, so the package still ships
-QEMU's image. The hook is the same as for sparc32: copy `build/openbios/openbios-sparc64` over
-`$(destdir)/usr/share/kvm/openbios-sparc64` when it exists. `scripts/check-qemu-extras.sh` should
-then compare it like the sparc32 image. Until then the lab tests it with `-bios` or by
-bind-mounting it over `/usr/share/kvm/openbios-sparc64`.
+**Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, and
+`debian/rules` (`submodules/pve-qemu.patch`) copies `build/openbios/openbios-sparc64` over
+`$(destdir)/usr/share/kvm/openbios-sparc64` when it exists, as for sparc32. It is an optional extra
+of its own (`openbios-sparc64`): when the Dockerfile's sparc64 step fails, the package keeps QEMU's
+image, the build prints `WARNING: optional extra openbios-sparc64 missing: ...` and `build-deb.yml`
+opens an issue. `scripts/check-qemu-extras.sh` tells the two images apart ("OpenBIOS" above).
+The package build was checked on the lab host the way CI builds it (`make pve-qemu-bundle` in
+`pve-build:13`, `-j8`): the series applies with fuzz 0, the 3dfx and the main build took 13
+minutes together, and `check-qemu-extras.sh` against the build tree and on the bare `.deb` lists
+3dfx, openbios, openbios-sparc64 and sun-proms present.
 
 **sun4v and niagara.** `-M sun4v` with `openbios-sparc64` (the only firmware in the package) stops QEMU
 at once: `qemu: fatal: Trap 0x0010 while trap level (6) >= MAXTL (6), Error state`, `pc:
@@ -1523,9 +1572,10 @@ valid is accepted.
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
 - Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
-  doesn't start), not Debian 12.0 ports (install fails), not Solaris (with the packaged firmware none
-  boots; with `openbios/`'s patched `openbios-sparc64` Solaris 10 reaches the installer's first
-  prompt but takes no console input, see "Solaris on sun4u"), not sun4v/niagara.
+  doesn't start), not Debian 12.0 ports (install fails), not Solaris for real use (with the
+  package built with `openbios-sparc64` and `wsh/0021`, Solaris 10 1/13 reaches its installer and
+  takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
+  disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
   `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
 - Live migration, backup, snapshots with RAM: not tested for sparc64.

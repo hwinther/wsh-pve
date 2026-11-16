@@ -175,7 +175,7 @@ jobs:
             git pull --rebase --autostash
           done
 
-      # pve-qemu's optional extras (3dfx, openbios, sun-proms) never fail the build, so a package
+      # pve-qemu's optional extras (3dfx, openbios, openbios-sparc64, sun-proms) never fail the build, so a package
       # without one is published like any other. This says which ones it has (job summary and a
       # warning); the report-optional-extras job keeps an issue open for each missing one.
       - name: Check the optional extras
@@ -185,7 +185,7 @@ jobs:
         env:
           # The Sun PROMs come from a private repository (submodules/sparc) that only this
           # repository's WORKFLOW_TOKEN can read: a fork builds without them.
-          EXPECT: ${{ github.repository == 'hwinther/wsh-pve' && '3dfx,openbios,sun-proms' || '3dfx,openbios' }}
+          EXPECT: ${{ github.repository == 'hwinther/wsh-pve' && '3dfx,openbios,openbios-sparc64,sun-proms' || '3dfx,openbios,openbios-sparc64' }}
         run: |
           out="$RUNNER_TEMP/optional-extras"
           mkdir -p "$out"

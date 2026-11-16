@@ -221,17 +221,21 @@ restore-sparc:
 		warn_extra_missing sun-proms "not in submodules/sparc (private repository: no access?):$$missing"; \
 	fi
 
-# openbios-sparc32 and the cg3 FCode ROM (QEMU,cgthree.bin) with our patches (openbios/), each
-# installed over QEMU's image by debian/rules
+# openbios-sparc32, the cg3 FCode ROM (QEMU,cgthree.bin) and openbios-sparc64 with our patches
+# (openbios/), each installed over QEMU's image by debian/rules. openbios-sparc64 is an extra of its
+# own: the Dockerfile builds it in a step that may fail without taking the sparc32 files with it.
 .PHONY: openbios-sparc32
 openbios-sparc32:
-	$(Q)$(ECHO) "INFO: Building openbios-sparc32 and QEMU,cgthree.bin"; \
+	$(Q)$(ECHO) "INFO: Building openbios-sparc32, QEMU,cgthree.bin and openbios-sparc64"; \
 	mkdir -p build/openbios; \
 	rm -f build/openbios/*; \
 	$(WARN_EXTRA_MISSING); \
 	$(DOCKER) build --output type=local,dest=build/openbios -f openbios/Dockerfile openbios || true; \
 	if [ ! -s build/openbios/openbios-sparc32 ] || [ ! -s "build/openbios/QEMU,cgthree.bin" ]; then \
 		warn_extra_missing openbios "openbios-sparc32 failed to build, pve-qemu keeps QEMU's images"; \
+	fi; \
+	if [ ! -s build/openbios/openbios-sparc64 ]; then \
+		warn_extra_missing openbios-sparc64 "openbios-sparc64 failed to build, pve-qemu keeps QEMU's image"; \
 	fi
 
 .PHONY: pve-qemu-bundle
@@ -494,7 +498,7 @@ help:
 	@echo "  prepare-qemu-3dfx:       Initialize 3dfx submodule"
 	@echo "  restore-pve-qemu:        Restore pve-qemu to current head"
 	@echo "  restore-sparc:           Restore SPARC submodule"
-	@echo "  openbios-sparc32:        Build openbios-sparc32 with the patches in openbios/"
+	@echo "  openbios-sparc32:        Build openbios-sparc32 and openbios-sparc64 with the patches in openbios/"
 	@echo "  apply-patches:           Apply patches to submodules"
 	@echo "  unapply-patches:         Remove patches from submodules"
 	@echo "  update-patches:          Update patch files from submodule changes"

@@ -258,7 +258,8 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | NetBSD 11.1 (and 9.3) | CD boots to the installer on the serial console or the VGA screen; NetBSD 11.1 installs (about 8 minutes) and the installed system boots, gets a DHCP address and powers the VM off |
 | OpenBSD 8.0 | the installer boots and installs, but the installed kernel stops in the firmware (`Unhandled Exception 0x30`) |
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
-| Solaris 2.5.1-10 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel; Solaris 10 1/13 gets furthest) |
+| Solaris 10 1/13 | with packages that include the patched `openbios-sparc64` (see below): the DVD boots to the installer, which takes input on the serial console and sees the IDE disk. It doesn't install yet |
+| Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
 for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
@@ -280,6 +281,20 @@ by itself (tested in the sparc lab's `pve` matrix, serial console).
 
 Expect one host core at 100% for as long as the VM runs: NetBSD doesn't idle on sun4u.
 
+### Solaris 10
+
+What you can do with Solaris 10 on sun4u today is look at its installer, not install it. With a
+`pve-qemu-kvm` that ships the patched `openbios-sparc64` and the IDE interrupt fix (the
+repository's `scripts/check-qemu-extras.sh --root /`, run on the host, lists the extra
+`openbios-sparc64` as present), create the VM as for NetBSD with the Solaris 10 1/13 SPARC DVD, 1024 MB and a serial console
+(`serial0: socket`, Display: Serial terminal 0). The DVD boots in about 3 minutes, the IDE disk
+shows up (`dad0`), the installer asks for the language and the terminal type on the serial console
+(answer `0` and `3` for VT100) and opens its first screen. From there it doesn't go further: it
+doesn't accept the DVD as install media, and an installed disk wouldn't boot (both need firmware
+changes that aren't in the package yet; `submodules/SPARC.md`, "Solaris on sun4u"). Tested in the
+sparc lab, with QEMU started directly and through Proxmox (a VM as the wizard makes it, 1024 MB,
+`vga: serial0`).
+
 ## Known limitations
 
 - Audio does not work on SPARC guests.
@@ -297,7 +312,8 @@ Expect one host core at 100% for as long as the VM runs: NetBSD doesn't idle on 
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
 - sparc64: NetBSD installs and runs; the OpenBSD and Debian installers start but their installs
-  don't end in a working system; Solaris doesn't boot on sun4u with OpenBIOS. One layout only (see
+  don't end in a working system; Solaris 10 reaches its installer but can't install (see
+  [Solaris 10](#solaris-10)); older Solaris releases don't boot on sun4u. One layout only (see
   [the sparc64 profile](#the-sparc64-profile)); no network boot.
 
 ## Testing installs automatically

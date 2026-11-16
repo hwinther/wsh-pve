@@ -58,10 +58,26 @@ const CHECK_QEMU_EXTRAS = readFileSync(new URL('../../scripts/check-qemu-extras.
 
 /**
  * scripts/check-qemu-extras.sh for one optional extra of the installed pve-qemu-kvm (3dfx, openbios,
- * sun-proms): exit code 0 when it's there, 1 when it isn't.
+ * openbios-sparc64, sun-proms): exit code 0 when it's there, 1 when it isn't.
  */
 export async function checkQemuExtra(name: string): Promise<{ code: number; output: string }> {
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
+}
+
+/**
+ * Whether the installed pve-qemu-kvm is newer than 11.1.3-2+wsh11, the last package published before
+ * debian/rules installed openbios-sparc64 from openbios/ (with pve-qemu patch wsh/0021). A package
+ * from before that keeps QEMU's own image, and the openbios-sparc64 extra is then missing.
+ */
+export async function hasPackagedOpenbiosSparc64(): Promise<boolean> {
+  const probe = await pveExec([
+    'bash',
+    '-c',
+    `v=$(dpkg-query -W -f='\${Version}' pve-qemu-kvm) || exit 1
+     if dpkg --compare-versions "$v" gt 11.1.3-2+wsh11; then echo "newer=yes $v"; else echo "newer=no $v"; fi`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^newer=(yes|no) \S+/m)
+  return probe.output.includes('newer=yes')
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */

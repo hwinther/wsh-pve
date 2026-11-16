@@ -23,7 +23,7 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   rate (checked in QEMU and on the host, with a VLAN-aware `vmbr1` it creates), the changes that stay
   pending on sparc, and clone, move disk, suspend/resume and reset.
 - `tests/qemu-extras.spec.ts`: the optional extras of the installed `pve-qemu-kvm` (3dfx binary,
-  OpenBIOS and cg3 ROM from `openbios/`, Sun PROMs), with `scripts/check-qemu-extras.sh`. The package
+  sparc32 and sparc64 OpenBIOS and cg3 ROM from `openbios/`, Sun PROMs), with `scripts/check-qemu-extras.sh`. The package
   build never fails on them, so this is where a published package without one turns red. The 3dfx
   VM commands (`mesa=1`, with and without `server`) are in `vm-config.spec.ts`; QEMU is started with
   `-display none`, or SDL's dummy video driver for the SDL display, so neither the X display nor the

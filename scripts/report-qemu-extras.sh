@@ -83,6 +83,10 @@ EOF
 The package has QEMU's prebuilt `openbios-sparc32` and `QEMU,cgthree.bin` instead of the ones from `openbios/`. sparc32 VMs that boot OpenBIOS lose the fixes: with the disk on SCSI target 3 there is no `disk` alias and the default boot fails ("No valid state has been set by load or init-program"), and a cg3 larger than 1024x768 takes a data access fault at power-on (`submodules/SPARC.md`).
 EOF
             ;;
+        openbios-sparc64) cat <<'EOF'
+The package has QEMU's prebuilt `openbios-sparc64` instead of the one from `openbios/`. Solaris 10 on sun4u (`arch: sparc64`) no longer reaches its installer: the kernel stops with `no nucleus hblk8 to allocate`, and without the OBP-style node names it would take no input on the serial console (`submodules/SPARC.md`, "Solaris on sun4u"). NetBSD, OpenBSD and Debian on sun4u boot with either image.
+EOF
+            ;;
         sun-proms) cat <<'EOF'
 `ss5.bin`, `ss10_v2.25_rom` or `ss20_v2.25_rom` is not in `/usr/share/kvm`. The UI and API still offer them as firmware (`bios`), and VMs that use one don't start because QEMU can't load the PROM. VMs with OpenBIOS are not affected.
 EOF
@@ -96,6 +100,7 @@ fix_of() {
     case "$1" in
         3dfx) echo 'Refresh `submodules/pve-qemu-qemu-3dfx.patch` (and `submodules/qemu-3dfx.patch`) for the QEMU in this pve-qemu: `scripts/refresh-qemu-3dfx-patch.sh` merges it and leaves the conflicts to resolve; `make pve-qemu-3dfx` builds the result.' ;;
         openbios) echo '`make openbios-sparc32` builds `openbios/Dockerfile` alone. After a QEMU update, check `OPENBIOS_REF` and `openbios/patches/`.' ;;
+        openbios-sparc64) echo '`make openbios-sparc32` builds `openbios/Dockerfile` alone; its sparc64 step prints `WARNING: openbios-sparc64 not built` when it fails. After a QEMU update, check `OPENBIOS_REF` and the `*-sparc64-*` patches in `openbios/patches/`.' ;;
         sun-proms) echo 'The build needs read access to the private `submodules/sparc` repository (`WORKFLOW_TOKEN`).' ;;
     esac
 }
@@ -108,6 +113,7 @@ excerpt_of() {
     case "$name" in
         3dfx) start='Building pve-qemu with 3dfx support' errors='FAILED|dpkg-source: error|dpkg-buildpackage: error|cannot stat|[Ee]rror:' ;;
         openbios) start='Building openbios-sparc32' errors='ERROR|[Ee]rror:|failed' ;;
+        openbios-sparc64) start='Building openbios-sparc32' errors='WARNING: openbios-sparc64 not built|ERROR|[Ee]rror:|failed' ;;
         sun-proms) start='Restoring sparc submodule' errors='fatal:|[Ee]rror:|Permission denied|not found' ;;
     esac
     if [ -z "$log" ] || [ ! -f "$log" ]; then
