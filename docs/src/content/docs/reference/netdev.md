@@ -11,5 +11,5 @@ This reference page outlines the network devices made available by the WSH PVE p
 
 - ne2k_pci - RTL8029 NE2000 PCI, perhaps the most widely supported NIC on older systems
 - pcnet - AMD PCnet FAST, an alternative to ne2k but the implementation does not seem to be as stable so use it as a last resort
-- sunhme - Sun Happy Meal (sparc64 only), this is probably the only network card that works with 64bit sparc
+- sunhme - Sun Happy Meal (sparc64 only), the Ultra 5's own NIC and the default for sparc64; NetBSD/sparc64 also drives virtio, e1000, rtl8139 and ne2k_pci (pcnet has no NetBSD/sparc64 driver)
 - lance - Lance Am7990 (sparc only), this is the only network card that will work with 32bit sparc - it is hardcoded into the machine implementation

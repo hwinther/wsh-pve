@@ -13,8 +13,9 @@ This page is a work in progress. Driver packs, curated images, and detailed per-
 
 | Operating system | Architecture | Notes |
 | ---------------- | ------------ | ----- |
-| Linux (as old as 2.x) | x86_64, sparc, sparc64 | Generally works with legacy devices |
-| SunOS / Solaris 2.4+ | sparc, sparc64 | See the [SPARC guide](/guides/sparc/) |
+| Linux (as old as 2.x) | x86_64, sparc, sparc64 | Generally works with legacy devices; on sparc64 the Debian 12 ports installer starts but its install fails (see the [SPARC guide](/guides/sparc/#sparc64-sun4u)) |
+| SunOS / Solaris 2.4+ | sparc | See the [SPARC guide](/guides/sparc/); Solaris doesn't boot on sparc64 (sun4u with OpenBIOS) |
+| NetBSD | sparc, sparc64 | NetBSD 11.1 installs and runs on sparc64 (sun4u) |
 | MS-DOS 3+ | x86_64 | Performance improved with a curated set of drivers and patches |
 | Windows 1.x and up | x86_64 | Works with legacy display/network/audio devices |
 | Windows 9x | x86_64 | VBE-enhanced drivers, plus 3DFX/Mesa passthrough for 3D acceleration |
