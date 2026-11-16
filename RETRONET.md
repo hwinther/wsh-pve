@@ -91,10 +91,10 @@ The gateway is one OCI image (`retronet/gateway/Dockerfile`), used three ways: u
 host that has the retro VLAN (macvlan, or host networking in a dedicated VM), pulled by Proxmox VE
 9.1+ as a container from an OCI image (two network devices: the retro bridge and the uplink), and in
 CI. This replaces "service container (LXC)" above: the same image is the LXC container. Debian 13;
-dnsmasq, nftables, tinyproxy and VintageHive run under `tini` and a small supervisor script, no
+dnsmasq, nftables, the archive cache and VintageHive run under `tini` and a small supervisor script, no
 systemd; all state in `/var/lib/retronet`; configuration by `RETRONET_*` variables or one mounted
 `retronet.conf`, so a container recreated from a new image loses nothing else. Services sit in
-`retronet/services/<name>/` (run script, redirects, DNS names, egress allowlist), which leaves room
+`retronet/services/<name>/` (run script, init hook, redirects, DNS names), which leaves room
 for the later ones (a Battle.net-compatible server, an IRC network) without touching the core; the
 year is one key, `year`.
 
@@ -106,18 +106,19 @@ Decisions taken while building (they fill in or change what is above):
   segment ends at the gateway, redirected to a local service or refused (TCP reset; 443 included). No
   packet from the segment is routed. What breaks: everything that is not plain HTTP or one of the
   redirected services (ping beyond the gateway, NTP, POP/SMTP/IRC/FTP to real servers, games, HTTPS).
-- **Archive lookups go straight to web.archive.org** (the third open question). VintageHive's relay
-  (its "worker", on by default and pointing at its author's Cloudflare cache) is off and can be set
-  with `archive_relay`.
+- **Archive lookups go straight to web.archive.org** (the third open question), through the
+  gateway's own archive cache (below). VintageHive's relay to its author's Cloudflare cache is not
+  used; `archive_upstream` can point the cache at a relay that speaks the same protocol.
 - **Egress is enforced outside VintageHive.** VintageHive reaches today's web in several places: a
   built-in list of live sites it passes through (68k.news, FrogFind and others), the portal's news,
   weather and search, radio, the gopher relay, and its archive path, which fetches any URL whose host
   merely *contains* `web.archive.org`. Its own "walled garden" switch refuses to start with the
-  archive on, so it does not help here. Instead: VintageHive's HTTP clients go through tinyproxy (the
-  environment proxy), which only connects to `*.archive.org`; the nftables `output` chain lets only
-  tinyproxy open ports 80 and 443, only dnsmasq send DNS (to the configured servers), and
-  VintageHive reach ProtoWeb's proxy port 7851, and refuses private, loopback, link-local, CGNAT and
-  reserved addresses for everyone. Nothing listens on the uplink.
+  archive on, so it does not help here. Instead the nftables `output` chain, by process owner, lets
+  only the archive cache open ports 80 and 443 (and the cache only asks its one upstream, never a host
+  from a guest's request), only dnsmasq send DNS (to the configured servers), and VintageHive reach
+  ProtoWeb's proxy port 7851 and nothing else; private, loopback, link-local, CGNAT and reserved
+  addresses are refused for everyone. Nothing listens on the uplink. (Stage 1 first had an
+  allowlisting tinyproxy for VintageHive's web requests; the archive cache made it unnecessary.)
 - **Instant messaging stays with VintageHive's OSCAR server.** The test's own client signs on with
   the MD5 method (auth key, hashed password, BOS redirect with a cookie) and passes a message between
   two sessions; Open OSCAR Server was not needed. MSNP and YMSG are on as well, untested.
@@ -148,6 +149,49 @@ Learned:
   Wayback Machine); `www.netscape.com` for 1999 came back in 3 s with its links rewritten.
 - Under Docker, `ip_forward` is read-only in the container, and Docker may put the default route on
   the retro network; the gateway removes that route.
+
+## Archive cache: built
+
+Asked for by the owner: a persistent cache so guests do not go to archive.org for every page, a
+warm-up from what VintageHive features, and the same data as the test's fake. Built as the service
+`retronet/services/archive-cache/` (guide, "Archive cache").
+
+What existed: VintageHive caches in its own `cache.db` (the capture chosen per URL and year, kept
+without expiry up to 50 000 rows, negative answers included; the rewritten page per capture for 365
+days, under a key that changes with its rewriting version; in relay mode only pages, not images), and
+its archive requests are plain HTTP (`http://web.archive.org/cdx/...` and `/web/<ts><flag>/<url>`),
+so a forward proxy could have seen them, but tinyproxy does not cache and Squid would be a large
+addition for one client. WaybackProxy keeps only two in-memory LRU tables (1024 entries, one day):
+the date a redirect led to and Availability API answers; it stores no pages. VintageHive's relay
+setting ("worker") is the natural hook: the relay speaks web.archive.org's own URLs
+(`<base>/cdx/search/cdx?url=&from=&to=&fl=original,timestamp,mimetype,length` and
+`<base>/web/<ts><flag>/<url>`), and in relay mode every archive request, images included, goes there
+with the host name dropped.
+
+Decided:
+
+- **Our own cache as VintageHive's relay**, on the gateway's loopback, Python standard library only.
+  It is the only process that may reach the web; VintageHive needs no archive egress at all, which
+  also closes the old "host contains web.archive.org" path for good.
+- **Store: plain files**, one JSON sidecar and one body per answer under `v1/<cdx|web>/<host>/`,
+  named by a hash of the request; bodies are archive.org's bytes, unchanged. Inspectable with `ls`
+  and `cat`, easy to export as a tarball, and independent of VintageHive's rewriting. WARC was
+  considered: it would need a library (warcio) or a hand-written writer and an index for lookups,
+  and gains nothing for a cache whose only reader is itself.
+- **Modes `online` and `offline`.** A `refresh` mode was left out: deleting an entry, or purging, does
+  the same.
+- **Politeness:** misses one at a time, 5 s apart by default, a descriptive User-Agent, `Retry-After`
+  honoured once, and a backoff of a minute (doubling to an hour) when archive.org refuses
+  connections, which it did here after about 15 requests, both 1 s and 5 s apart, for a few
+  minutes each time. A first real warm-up of the 28 default URLs (three images each at most) got
+  through 13 before the refusals: 5 archived for 1999 (vlib.org, bigeye.com, blooberry.com,
+  gatewaytothenet.com, hotsheet.com; 197 kB with 11 of 13 images), 8 not archived for 1999.
+- **Lookups per year, captures by timestamp.** A later network for another year (or another
+  conversion) gets its own lookups and shares captures; a separate store per year is not needed.
+- **No archived pages in the repository or the image.** The repository carries the tool, the warm-up
+  list (`default-urls.txt`, generated from VintageHive's source by `make-default-urls.py`) and a
+  synthetic dataset of made-up pages, which the test replays with the cache offline. A real warmed
+  store stays on the owner's gateways and moves between them with `export` and `import`.
 
 ## Open
 
