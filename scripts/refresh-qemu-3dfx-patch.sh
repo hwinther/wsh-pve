@@ -14,6 +14,9 @@
 #                                                 conflicts of a failed refresh are resolved there
 #
 #   --work DIR   where the QEMU work tree goes (default: build/qemu-3dfx-refresh/qemu)
+#   --keep       with --check: when the patch applies, leave the work tree with it applied (for
+#                scripts/check-qemu-3dfx-build.sh, which compiles it); remove it with
+#                `git -C submodules/pve-qemu/qemu worktree remove --force DIR`
 #
 # When the patch doesn't apply, refresh merges it with `git apply --3way` (the patch's index lines
 # name blobs of the QEMU repository) and leaves the work tree with conflict markers: resolve them,
@@ -30,7 +33,7 @@ top=$(cd "$(dirname "$0")/.." && pwd)
 pve="$top/submodules/pve-qemu"
 patch_file="$top/submodules/pve-qemu-qemu-3dfx.patch"
 series_name="wsh/0099-WSH-qemu-3dfx.patch"
-mode=refresh work="$top/build/qemu-3dfx-refresh/qemu"
+mode=refresh work="$top/build/qemu-3dfx-refresh/qemu" keep=0
 
 usage() {
     sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0" >&2
@@ -42,6 +45,7 @@ while [ $# -gt 0 ]; do
         --check) mode="check"; shift ;;
         --continue) mode="continue"; shift ;;
         --work) work="${2:?}"; shift 2 ;;
+        --keep) keep=1; shift ;;
         -h|--help) usage ;;
         *) echo "refresh-qemu-3dfx-patch: unknown option '$1'" >&2; usage ;;
     esac
@@ -117,11 +121,16 @@ else
 fi
 
 if [ "$mode" = check ]; then
-    remove_work
     if [ "$applied" = 1 ]; then
-        echo "refresh-qemu-3dfx-patch: ${patch_file#"$top"/} applies"
+        if [ "$keep" = 1 ]; then
+            echo "refresh-qemu-3dfx-patch: ${patch_file#"$top"/} applies (kept in ${work#"$top"/})"
+        else
+            remove_work
+            echo "refresh-qemu-3dfx-patch: ${patch_file#"$top"/} applies"
+        fi
         exit 0
     fi
+    remove_work
     echo "refresh-qemu-3dfx-patch: ${patch_file#"$top"/} does not apply (scripts/refresh-qemu-3dfx-patch.sh refreshes it)" >&2
     exit 1
 fi
