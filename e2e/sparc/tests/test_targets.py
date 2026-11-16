@@ -105,7 +105,48 @@ class Catalogue(unittest.TestCase):
                     self.assertEqual(p.get(key), "socket")  # the lab drives the serial console
 
 
+# The templates' label sectors (the first 512 bytes of sparc-SUN2.9G.raw.template.xz and
+# sparc-Qemu9G.raw.template.xz decompressed, as `xz -dc | head -c 512 | sha256sum` gives them) and
+# every sector in the templates that isn't zero: the label at 0 and its five backup copies.
+TEMPLATES = {
+    "3G": {"label": "c0db810d2270f33fa53a075c37fe75cf13e6f71513b14eca07a8e5856a428d6e", "bytes": 3 << 30,
+           "nonzero": [0, 5688046, 5688048, 5688050, 5688052, 5688054]},
+    "9G": {"label": "a05ef673f547bffb212946f0b1185cd84210b7ecd993bbffea8be4e965425725", "bytes": 8 << 30,
+           "nonzero": [0, 15555781, 15555783, 15555785, 15555787, 15555789]},
+}
+
+
 class Label(unittest.TestCase):
+    def test_labels_are_the_templates(self):
+        for name, tpl in TEMPLATES.items():
+            with self.subTest(disk=name):
+                d = targets.DISKS[name]
+                self.assertEqual(hashlib.sha256(sunlabel.label(**d["geometry"])).hexdigest(), tpl["label"])
+                self.assertEqual([0] + sunlabel.backup_sectors(**d["geometry"]), tpl["nonzero"])
+                self.assertEqual(d["size"] << 30, tpl["bytes"])
+
+    def test_images_are_the_templates(self):
+        # the whole image: the label sector at each of the template's non-zero sectors, zeros elsewhere
+        # (checked around them and by the file system's allocation: the image stays sparse)
+        for name, tpl in TEMPLATES.items():
+            d = targets.DISKS[name]
+            path = os.path.join(tempfile.gettempdir(), f"label-test-{name}-{os.getpid()}.raw")
+            try:
+                sunlabel.write_disk(path, d["size"], d["geometry"])
+                with self.subTest(disk=name), open(path, "rb") as f:
+                    self.assertEqual(os.path.getsize(path), tpl["bytes"])
+                    for s in tpl["nonzero"]:
+                        f.seek(s * 512 - (512 if s else 0))
+                        before = f.read(512) if s else b""
+                        sector = f.read(512)
+                        after = f.read(512)
+                        self.assertEqual(hashlib.sha256(sector).hexdigest(), tpl["label"])
+                        self.assertEqual(before + after, bytes(len(before) + len(after)))
+                    if hasattr(os.stat_result, "st_blocks"):
+                        self.assertLess(os.stat(path).st_blocks * 512, 1 << 20)  # sparse
+            finally:
+                os.unlink(path)
+
     def test_sun29g_is_the_template(self):
         # the first MiB of sparc-SUN2.9G.raw.template.xz decompressed (the label, then zeros)
         d = bytearray(1 << 20)
@@ -128,6 +169,45 @@ class Label(unittest.TestCase):
                 self.assertEqual(f.read(512), d)
         finally:
             os.unlink(path)
+
+
+class DiskSizes(unittest.TestCase):
+    def test_tested_sizes(self):
+        self.assertEqual(targets.TARGETS["sol26-ss5"]["disk"]["sizes"], ["3G", "9G"])
+        self.assertEqual(targets.TARGETS["sol26-ss20"]["disk"]["sizes"], ["3G", "9G"])
+
+    def test_choice(self):
+        t = targets.TARGETS["sol26-ss5"]
+        self.assertEqual(install.disk_choice(t, None)["name"], "3G")
+        nine = install.disk_choice(t, "9G")
+        self.assertEqual((nine["size"], nine["geometry"]["name"]), (8, "QEmu8G"))
+        for bad in ("8G", "4G", "9g"):
+            with self.assertRaises(SystemExit) as e:
+                install.disk_choice(t, bad)
+            self.assertIn("3G, 9G", str(e.exception))
+        with self.assertRaises(SystemExit):  # a target without a Sun label has no sizes
+            install.disk_choice(targets.TARGETS["netbsd111-sparc64"], "9G")
+
+    def test_vm_params_9g(self):
+        t = targets.TARGETS["sol26-ss20"]
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="121", name=None, target="sol26-ss20")
+        p = install.vm_params(t, a, {"solaris_2.6_598_sparc.iso": "local:iso/x.iso"}, None, install.disk_choice(t, "9G"))
+        self.assertEqual(p["scsi3"], "local:8,format=raw")
+
+    def test_data_disk_label(self):
+        for gib in (1, 4, 32):
+            g = sunlabel.data_geometry(gib)
+            d = sunlabel.label(**g)
+            ck = 0
+            for i in range(0, 512, 2):
+                ck ^= int.from_bytes(d[i:i + 2], "big")
+            self.assertEqual(ck, 0)
+            self.assertLessEqual(g["ncyl"] + g["acyl"], 65535)  # 16-bit cylinder counts
+            self.assertEqual((g["ncyl"] + g["acyl"]) * g["heads"] * g["sectors"] * 512, gib << 30)
+            self.assertEqual(g["parts"][0][3], g["ncyl"] * g["heads"] * g["sectors"])  # slice 0: all data cylinders
+        for bad in (0, 33):
+            with self.assertRaises(ValueError):
+                sunlabel.data_geometry(bad)
 
 
 class VmParams(unittest.TestCase):

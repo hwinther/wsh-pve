@@ -9,6 +9,9 @@ user, and shuts down with `init 5`.
   MARKER         the lines of /etc/wsh-lab-target, mode 644                         (none: no file)
   USER           a non-root user to add (home /export/home/USER, /bin/sh)           (none)
   USER_PASSWORD  that user's password, set with passwd as root                      (none: locked)
+  DATA_DISK      a Sun-labelled disk added after the install (c0t4d0): its device    (none)
+                 nodes (drvconfig; disks), newfs of slice 0, mounted on /data and in
+                 /etc/vfstab
 
 The values are typed on the serial console: passwords at prompts that don't echo, the marker with
 `echo`, so it must not contain single quotes.
@@ -16,7 +19,7 @@ The values are typed on the serial console: passwords at prompts that don't echo
 from _sparc32 import DEFAULTS as BASE, login, power_off, prom_boot, qemu_args as sparc32_args
 
 DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1", "ROOT_PASSWORD": "", "MARKER": "",
-            "USER": "", "USER_PASSWORD": ""}
+            "USER": "", "USER_PASSWORD": "", "DATA_DISK": ""}
 MARKER_FILE = "/etc/wsh-lab-target"
 
 
@@ -55,4 +58,20 @@ def run(m, v):
             m.expect(r"\n#\s*$", 60)
         shell(m, f"grep '^{user}:' /etc/passwd; ls -ld /export/home/{user}")
         m.snap(f"user {user}")
+    if v["DATA_DISK"]:
+        data_disk(m, v["DATA_DISK"])
     power_off(m, "init 5")
+
+
+def data_disk(m, disk):
+    """A disk added after the install, already labelled (sunlabel.data_geometry: slice 0 = the disk):
+    the device nodes for the new target, a UFS on slice 0, mounted on /data at every boot."""
+    shell(m, "drvconfig; disks", 300)
+    shell(m, f"prtvtoc /dev/rdsk/{disk}s2")
+    m.send(f"newfs /dev/rdsk/{disk}s0\r")
+    m.expect(r"\(y/n\)\?\s*$", 120)
+    m.send("y\r")
+    m.expect(r"\n#\s*$", 1800)
+    shell(m, f"mkdir -p /data; echo '/dev/dsk/{disk}s0 /dev/rdsk/{disk}s0 /data ufs 2 yes -' >> /etc/vfstab")
+    shell(m, "mount /data; df -k /data", 300)
+    m.snap("data disk on /data")

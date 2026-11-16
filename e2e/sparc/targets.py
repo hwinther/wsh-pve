@@ -21,7 +21,9 @@ TARGETS: per target
              against $SPARC32_PROFILES / $SPARC64_PROFILE in submodules/qemu-server.patch). net0 is the
              model; install adds the bridge.
   disk       bus (the profile's first disk), size in GiB, label: "sun" = a Sun (SMI) label with the
-             geometry in `geometry` (the Solaris installers list only labelled disks), None = blank
+             geometry in `geometry` (the Solaris installers list only labelled disks), None = blank.
+             A Sun-labelled disk made by sun_disk() also has `sizes`: the DISKS (by name) this target
+             was tested with, the first the default (`lab.py install --disk-size` takes only these)
   media      [{name, drive, ...}]: the media in MEDIA, each with the drive it goes into at the start
              (`at: "start"`, default) or, for multi-volume installs, `at: <regex>`: inserted into
              `drive` when the installer's console shows that prompt (install.MediaSwapper)
@@ -95,6 +97,30 @@ SUN29G = {"name": "SUN2.9G", "ncyl": 2734, "acyl": 2, "pcyl": 3500, "heads": 21,
           "parts": [(2, 0, 0, 195426), (3, 1, 94, 390852), (5, 1, 0, 5683986), (0, 0, 0, 0), (0, 0, 0, 0),
                     (0, 0, 0, 0), (4, 0, 282, 5097708), (0, 0, 0, 0)]}  # (tag, flag, start cyl, blocks)
 
+# The lab's ~9 GB template (sparc-Qemu9G.raw.template.xz, an 8 GiB image; the owner set its
+# geometry up with a sector calculator): `sunlabel.label(**QEMU8G)` writes the same label sector.
+# 16202 data + 2 alternate cylinders of 16 heads x 60 sectors = 15556800 sectors (7.42 GiB); pcyl in
+# the label is 16204 (the sparc guide's "custom type" lists 16200/2/16202, two fewer: the template
+# is what was tested). Slices as the template has them; the installer's auto-layout replaces them.
+QEMU8G = {"name": "QEmu8G", "ncyl": 16202, "acyl": 2, "pcyl": 16204, "heads": 16, "sectors": 60, "rpm": 3600,
+          "parts": [(2, 0, 0, 263040), (3, 1, 274, 263040), (5, 1, 0, 15553920), (0, 0, 0, 0), (0, 0, 0, 0),
+                    (0, 0, 0, 0), (4, 0, 548, 15027840), (0, 0, 0, 0)]}
+
+# The disk sizes `lab.py install --disk-size` offers, by the names of the templates they come from:
+# the image size (GiB), the label sunlabel.write_disk() writes (the template's, byte for byte,
+# including the backup labels in the last track) and the template it matches.
+DISKS = {
+    "3G": {"size": 3, "geometry": SUN29G, "template": "sparc-SUN2.9G.raw.template.xz"},
+    "9G": {"size": 8, "geometry": QEMU8G, "template": "sparc-Qemu9G.raw.template.xz"},
+}
+
+
+def sun_disk(*sizes, bus="scsi3"):
+    """A Sun-labelled first disk tested with these DISKS (the first is the default)."""
+    return {"bus": bus, "label": "sun", "size": DISKS[sizes[0]]["size"], "geometry": DISKS[sizes[0]]["geometry"],
+            "sizes": list(sizes)}
+
+
 SPARC32 = {"arch": "sparc", "bios": "openbios-sparc32", "ostype": "solaris", "net0": "lance",
            "serial0": "socket", "vga": "serial0"}  # the text installer runs on ttya (no framebuffer)
 
@@ -115,7 +141,7 @@ TARGETS = {
         "title": "Solaris 2.6 5/98 End User on a SPARCstation 5 (OpenBIOS)",
         "status": "automated",
         "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
-        "disk": {"bus": "scsi3", "size": 3, "label": "sun", "geometry": SUN29G},
+        "disk": sun_disk("3G", "9G"),  # 9G: tested 2026-11-17 (README.md, "Disk sizes")
         "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol26-ss5",
@@ -128,7 +154,7 @@ TARGETS = {
         "title": "Solaris 2.6 5/98 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
         "status": "automated",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
-        "disk": {"bus": "scsi3", "size": 3, "label": "sun", "geometry": SUN29G},
+        "disk": sun_disk("3G", "9G"),
         "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol26-ss20",
@@ -144,7 +170,7 @@ TARGETS = {
                    "on target 6) isn't in `install` yet. The scripted install itself works (lab: ~60 min, "
                    "mostly its Maintenance Update).",
         "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
-        "disk": {"bus": "scsi3", "size": 3, "label": "sun", "geometry": SUN29G},
+        "disk": sun_disk("3G"),
         "media": [{"name": "solaris_2.5.1_1197.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol251-ss5",
@@ -156,7 +182,7 @@ TARGETS = {
         "blocked": "The CD reaches the installer's language question on SS-5 and SS-20; no install was "
                    "run yet, so solaris-install-serial.py's screens are untested for 7.",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
-        "disk": {"bus": "scsi3", "size": 3, "label": "sun", "geometry": SUN29G},
+        "disk": sun_disk("3G"),
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss20",
@@ -165,11 +191,11 @@ TARGETS = {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 8 1/01 on a SPARCstation 20 (OpenBIOS)",
         "status": "catalogue",
-        "blocked": "Web Start installer (a different dialogue from 2.6's), three CDs (the media swap "
-                   "below is the data model, untested), and more than 3 GB of disk (a QEmu8G-type label). "
-                   "Reaches Web Start's first question on SS-5 and SS-20.",
+        "blocked": "Web Start installer (a different dialogue from 2.6's) and three CDs (the media swap "
+                   "below is the data model, untested). It needs more than 3 GB of disk: the 9G disk "
+                   "(QEmu8G label). Reaches Web Start's first question on SS-5 and SS-20.",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
-        "disk": {"bus": "scsi3", "size": 8, "label": "sun", "geometry": None},
+        "disk": sun_disk("9G"),
         "media": [{"name": "sun-solaris-8-0101-installation-sparc.iso", "drive": "scsi6"},
                   {"name": "sun-solaris-8-0101-software-cd1-sparc.iso", "drive": "scsi6",
                    "at": r"Please insert.*Software 1 of 2"},
@@ -185,7 +211,7 @@ TARGETS = {
         "blocked": "Solaris 8 was the last release for sun4m; the 9 DVD still boots to its language menu "
                    "on SS-5 and SS-20, but no install was tried, and its installer is Web Start like 8's.",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
-        "disk": {"bus": "scsi3", "size": 8, "label": "sun", "geometry": None},
+        "disk": sun_disk("9G"),
         "media": [{"name": "SOL_9_SPARC_DVD.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol9-ss20",
@@ -199,7 +225,7 @@ TARGETS = {
                    "menus redraw too lazily for the scripted driver.",
         "method": "scripted",
         "profile": {**SPARC32, "machine": "SS-5", "memory": 64, "ostype": "other"},
-        "disk": {"bus": "scsi3", "size": 3, "label": "sun", "geometry": SUN29G},
+        "disk": sun_disk("3G"),
         "media": [{"name": "sunos_4.1.4_install.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
@@ -266,10 +292,20 @@ def problems():
                 drives.add(med["drive"])
         if t.get("method") not in ("scripted", "unattended"):
             out.append(f"{name}: method {t.get('method')!r}")
-        if t.get("disk", {}).get("label") == "sun" and t["disk"].get("geometry"):
-            g = t["disk"]["geometry"]
-            if (g["ncyl"] + g["acyl"]) * g["heads"] * g["sectors"] * 512 > t["disk"]["size"] << 30:
+        disk = t.get("disk", {})
+        if disk.get("label") == "sun" and disk.get("geometry"):
+            g = disk["geometry"]
+            if (g["ncyl"] + g["acyl"]) * g["heads"] * g["sectors"] * 512 > disk["size"] << 30:
                 out.append(f"{name}: the label is bigger than the disk")
+        if "sizes" in disk:
+            if not disk["sizes"] or any(s not in DISKS for s in disk["sizes"]):
+                out.append(f"{name}: disk sizes {disk['sizes']} aren't all in DISKS")
+            elif (disk["size"], disk["geometry"]) != (DISKS[disk["sizes"][0]]["size"], DISKS[disk["sizes"][0]]["geometry"]):
+                out.append(f"{name}: the disk isn't its default size {disk['sizes'][0]}")
+    for dname, d in DISKS.items():
+        g = d["geometry"]
+        if (g["ncyl"] + g["acyl"]) * g["heads"] * g["sectors"] * 512 > d["size"] << 30:
+            out.append(f"disk {dname}: the label is bigger than the image")
     for fname, med in MEDIA.items():
         if med["content"] not in ("iso", "floppy"):
             out.append(f"{fname}: content {med['content']!r}")

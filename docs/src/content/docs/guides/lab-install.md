@@ -21,7 +21,7 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
-| `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), 3 GB Sun-labelled disk on `scsi3`, lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
@@ -117,7 +117,8 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # ~12 min
 ```
 
 Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--bridge` (`vmbr0`),
-`--name`, `--hostname`, `--ip`, `--root-password`, `--user NAME` (and `--user-password`; a non-root
+`--name`, `--hostname`, `--ip`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
+(a second disk, mounted on `/data`), `--root-password`, `--user NAME` (and `--user-password`; a non-root
 user with its home under `/export/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
@@ -144,6 +145,56 @@ xterm.js first, they would get nothing. Measured in the PVE test container on th
 (TCG, two host cores for the container, one guest at a time, packages of 2026-11-16): `sol26-ss5`
 took 11.8 minutes (install 407 s, first boot 182 s, check 105 s), `sol26-ss20` 12.1 minutes (413 s,
 191 s, 105 s). Without `--check` it is two minutes less.
+
+## Disk size
+
+The first disk comes in the sizes a target was tested with; `wsh-lab targets` lists them, and any
+other `--disk-size` is refused with the tested ones named. Both are the lab's disk templates byte for
+byte (the label and its backup copies), written by the tool, so no template is needed:
+
+| `--disk-size` | Image | Label (as `format` names it) | Template |
+| --- | --- | --- | --- |
+| `3G` (default) | 3 GiB | `SUN2.9G cyl 2734 alt 2 hd 21 sec 99` (2775 MB usable) | `sparc-SUN2.9G.raw.template.xz` |
+| `9G` | 8 GiB | `QEmu8G cyl 16202 alt 2 hd 16 sec 60` (7594 MB usable) | `sparc-Qemu9G.raw.template.xz` |
+
+Solaris 2.6's installer asks the same questions on both; its auto-layout puts `/` first (slice 0
+from cylinder 0, where OpenBIOS boots it), then swap, `/usr`, and gives the rest to `/export/home`.
+On a 9G disk (`sol26-ss5`, measured):
+
+| Slice | Mount | Size | Used after the install |
+| --- | --- | --- | --- |
+| 0 | `/` | 80 MB | 22 MB |
+| 1 | swap | 148 MB | |
+| 6 | `/usr` | 233 MB | 153 MB (57 MB free) |
+| 7 | `/export/home` | 7175 MB | 7103 MB free |
+
+On `sol26-ss20` (512 MB of memory) swap is 295 MB and `/export/home` 6973 MB. `/` and `/usr` are as small as on the 3G disk (auto-layout sizes them for the software, End User
+System Support), so the extra space is all in `/export/home`. Software that installs under `/opt`
+or `/usr` needs a layout of its own (the installer's Customize) or a link into `/export/home`.
+
+### A second disk
+
+`--data-disk GIB` (1-32) adds a second disk on `scsi4` (`c0t4d0` in Solaris) after the install,
+with a Sun label whose slice 0 is the whole disk; the first boot makes its device nodes, puts a UFS
+on it and mounts it on `/data` from `/etc/vfstab`. The same by hand for a VM that exists (powered
+off), as root on the node and then in the guest:
+
+```sh
+python3 /usr/share/wsh-lab/sunlabel.py data 4 /var/tmp/data.raw   # 4 GiB, labelled (no format needed)
+qm set 120 --scsi4 local:0,import-from=/var/tmp/data.raw,format=raw && rm /var/tmp/data.raw
+qm start 120
+# in the guest:
+drvconfig; disks                     # device nodes for the new target
+newfs /dev/rdsk/c0t4d0s0             # answer y
+mkdir /data
+echo '/dev/dsk/c0t4d0s0 /dev/rdsk/c0t4d0s0 /data ufs 2 yes -' >> /etc/vfstab
+mount /data
+```
+
+A blank disk (`qm set 120 --scsi4 local:4`) instead needs a label from `format` in the guest
+(`format c0t4d0`, then `type`, `Other` and the geometry, then `label`), since 2.6 can't work out an
+emulated disk's geometry by itself; the labelled image avoids that. `python3
+/usr/share/wsh-lab/sunlabel.py disk 9G <image>` writes the install targets' 9G disk the same way.
 
 ## What it leaves
 

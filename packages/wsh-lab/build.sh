@@ -30,9 +30,9 @@ done
 cp "$sparc"/scenarios/*.py "$tree/lab/scenarios/"
 cp "$sparc/tests/test_targets.py" "$tree/lab/tests/"
 echo "$WSH_LAB_VERSION" > "$tree/lab/VERSION"
-chmod 755 "$tree/bin/"* "$tree/lab/lab.py" "$tree/lab/mcp_server.py" "$tree/debian/rules"
+chmod 755 "$tree/bin/"* "$tree/lab/lab.py" "$tree/lab/mcp_server.py" "$tree/lab/sunlabel.py" "$tree/debian/rules"
 chmod 644 "$tree/lab/scenarios/"*.py "$tree/lab/tests/"*.py "$tree/lab/"*.txt
-for f in install.py recording.py sunlabel.py targets.py; do chmod 644 "$tree/lab/$f"; done
+for f in install.py recording.py targets.py; do chmod 644 "$tree/lab/$f"; done
 python3 "$sparc/recording.py" fetch-player "$tree/player"
 
 date=$(date -u -R -d "@$WSH_LAB_EPOCH")

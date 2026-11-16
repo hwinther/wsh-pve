@@ -432,6 +432,32 @@ password form draws all its prompts at once, and matching them one by one typed 
 of the form (it ended up echoed, root without a password). With an empty password that never
 mattered. The password appears in none of the evidence files of the passing runs.
 
+### Disk sizes
+
+`targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
+Sun-labelled target lists the ones it was tested with (`sun_disk("3G", "9G")`: `sizes`, the first
+the default); `install.disk_choice()` refuses any other. `sunlabel.write_disk()` writes the label
+and its five backup copies (odd sectors 1-9 of the last track), so its images are the templates:
+`cmp` against `sparc-SUN2.9G.raw.template.xz` and `sparc-Qemu9G.raw.template.xz` decompressed
+found no difference, and `tests/test_targets.py` pins each template's label sector (sha256) and its
+non-zero sectors. The 9G geometry is the owner's template's (QEmu8G: 16202 data + 2 alternate
+cylinders, 16 heads, 60 sectors, pcyl 16204 in the label; the sparc guide's "custom type" line
+says 16200/2/16202), not a new one. `--data-disk` uses `sunlabel.data_geometry()` (16 heads x 128
+sectors, 1 MiB per cylinder, slice 0 and 2 the whole disk) and needs no `format` in the guest;
+`sunlabel.py disk|data` writes either kind from the command line.
+
+Tested in the PVE test container on the lab host (published packages, the package built from
+this branch, one guest at a time), 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss5 --disk-size 9G --check` | passed; the installer lists `c0t3d0 (7594 MB) boot disk`, auto-layout `/` 83 MB, swap 148 MB, `/usr` 242 MB, `/export/home` 7120 MB; `df -k`: `/` 80335 KB (22292 used), `/usr` 232831 (152500), `/export/home` 7174949 (9); `prtvtoc`: 16204 cylinders, 16202 accessible, slices 0 (0-171839), 1, 2, 6, 7 (971520-15553919) | 12.2 min (429 s, 184 s, 106 s) |
+| `install sol26-ss20 --disk-size 9G --data-disk 2 --check` | passed; auto-layout as on SS-5 but swap 295 MB (512 MB of memory) and `/export/home` 6973 MB; `df -k` `/export/home` 7026317 KB; the data disk: `prtvtoc` 2048 cylinders (2046 accessible) of 16 x 128, slice 0 4190208 sectors, `newfs` 2046 MB in 64 cylinder groups, `/data` 2030575 KB mounted from `/etc/vfstab` at the check boot | 12.3 min (408 s, 205 s, 107 s) |
+| `install sol26-ss5 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
+
+Not done: a 9G install of the catalogue targets (2.5.1, 7, 8, 9); the in-guest `format` route for a
+blank second disk.
+
 ### The wsh-lab package
 
 `packages/wsh-lab/` packages the lab as the optional Debian package `wsh-lab` in the apt repository
