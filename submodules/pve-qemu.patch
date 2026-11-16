@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..660045a 100644
+index 7b0cba5..ca89a2d 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,19 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,21 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -92,6 +92,8 @@ index 7b0cba5..660045a 100644
 +wsh/0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop.patch
 +wsh/0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def.patch
 +wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
++wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch
++wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -2812,6 +2814,335 @@ index 0000000..3c8dbea
 ++                            test_running);
 ++        qtest_add_data_func("sun4m-solaris-idle/pil15", pil15, test_running);
 ++        qtest_add_data_func("sun4m-solaris-idle/smp2", smp2, test_running);
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch b/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch
+new file mode 100644
+index 0000000..cd3ce12
+--- /dev/null
++++ b/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch
+@@ -0,0 +1,140 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: flush the TLB on a no-fault bit change only when needed
++
++On the SPARCstation 5 (microSPARC-II), Solaris 2.x runs programs that
++call deeper than the register windows 4 to 10 times slower than on the
++SPARCstation 20, while compiled code with shallow calls runs equally
++fast. Solaris's window overflow and underflow handlers for this CPU
++save or restore the user window with the no-fault bit (NF) set in the
++MMU control register, then clear it and read the fault status
++register, so that a missing stack page doesn't trap inside the
++handler. That is two writes of the control register per trap, and
++QEMU flushes the whole TLB whenever NF changes: about 280,000 flushes
++a second while Solaris runs an awk loop, against 700 on the
++SPARCstation 20, whose SuperSPARC handlers probe the page instead.
++
++NF decides whether a failed translation traps; it changes no
++translation that succeeds. The only TLB entries that depend on it are
++the ones sparc_cpu_tlb_fill makes for a failed translation in no-fault
++mode (or with traps disabled), with overridden permissions or
++redirected to an unassigned address. Note in env->mmu_nf_entries when
++it makes one, and on a change of NF flush only while that is set. The
++boot mode bit flushes as before (it changes instruction fetches with
++the MMU off); MMU_E selects another MMU index and hasn't flushed since
++MMU_PHYS_IDX, and the cache, parity, PSO and other bits aren't read
++anywhere. CPU reset and loadvm flush the TLB themselves, so a stale
++flag costs at most one extra flush. A new trace event,
++sparc_mmu_ctrl_flush, shows the flushes that remain: in a 15 minute
++benchmark run on the SPARCstation 5 they were 7955 clears of NF after a
++fault in no-fault mode and one at boot.
++
++Solaris 2.6, medians of 3 runs of the same benchmarks with and without
++this patch: on the SPARCstation 5 the awk loop takes 5.1 s instead of
++47.1 s (SPARCstation 20: 5.4 s), the BYTE Towers of Hanoi run 18900
++towers/s instead of 4830 (SPARCstation 20: 19500), and lmbench's
++open/close takes 11 us instead of 53 (8-10). Solaris also saves user
++windows with NF set when a trap arrives, on every CPU, so the
++SPARCstation 20 gains as well: signal catch 39 -> 13 us, protection
++fault 13 -> 3 us, mmap of 8 MB 2.4 -> 1.1 ms. Dhrystone, Whetstone and
++nbench don't change.
++---
++ target/sparc/cpu.h         |  6 ++++++
++ target/sparc/ldst_helper.c | 24 +++++++++++++++++++-----
++ target/sparc/mmu_helper.c  |  3 ++-
++ target/sparc/trace-events  |  3 +++
++ 4 files changed, 30 insertions(+), 6 deletions(-)
++
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index b43a7336dd..9f53f1b682 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -506,6 +506,12 @@ struct CPUArchState {
++     uint64_t mmubpaction;
++     uint64_t mmubpregs[4];
++     uint64_t prom_addr;
+++    /*
+++     * The TLB holds an entry that sparc_cpu_tlb_fill made for a failed
+++     * translation (no-fault mode or traps disabled), with its permissions
+++     * overridden. A change of MMU_NF flushes the TLB only while this is set.
+++     */
+++    bool mmu_nf_entries;
++     /* Halt in the idle loop of SunOS 4.1.4, see sunos_idle.c */
++     bool sunos_idle;
++     int64_t sunos_idle_since;   /* when the loop first found no work */
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 4ec8799d1f..87b85eed3a 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -32,6 +32,7 @@
++ #include "user/page-protection.h"
++ #endif
++ #include "asi.h"
+++#include "trace.h"
++ 
++ //#define DEBUG_MMU
++ //#define DEBUG_MXCC
++@@ -996,18 +997,31 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++     case ASI_LEON_MMUREGS: /* LEON3 write MMU regs */
++         {
++             int reg = (addr >> 8) & 0x1f;
++-            uint32_t oldreg;
+++            uint32_t oldreg, changed;
++ 
++             oldreg = env->mmuregs[reg];
++             switch (reg) {
++             case 0: /* Control Register */
++                 env->mmuregs[reg] = (env->mmuregs[reg] & 0xff000000) |
++                     (val & 0x00ffffff);
++-                /* Mappings generated during no-fault mode
++-                   are invalid in normal mode.  */
++-                if ((oldreg ^ env->mmuregs[reg])
++-                    & (MMU_NF | env->def.mmu_bm)) {
+++                changed = oldreg ^ env->mmuregs[reg];
+++                /*
+++                 * Of the bits here only boot mode changes a translation
+++                 * (instruction fetches with the MMU off). MMU_E selects
+++                 * another mmu_idx; caches, PSO and parity aren't modelled.
+++                 * MMU_NF only decides whether a failed translation traps:
+++                 * the one kind of entry that depends on it is the one that
+++                 * sparc_cpu_tlb_fill makes for such a failure with
+++                 * overridden permissions, which is invalid in normal mode.
+++                 * Flush on a change of NF only when there is one: Solaris
+++                 * sets and clears NF around each user window spill and fill
+++                 * on the microSPARC, and nearly always nothing faults.
+++                 */
+++                if ((changed & env->def.mmu_bm) ||
+++                    ((changed & MMU_NF) && env->mmu_nf_entries)) {
+++                    trace_sparc_mmu_ctrl_flush(oldreg, env->mmuregs[reg]);
++                     tlb_flush(cs);
+++                    env->mmu_nf_entries = false;
++                 }
++                 break;
++             case 1: /* Context Table Pointer Register */
++diff --git a/target/sparc/mmu_helper.c b/target/sparc/mmu_helper.c
++index 07ba25dfce..455b36c9ef 100644
++--- a/target/sparc/mmu_helper.c
+++++ b/target/sparc/mmu_helper.c
++@@ -251,7 +251,8 @@ bool sparc_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
++         /* No fault mode: if a mapping is available, just override
++            permissions. If no mapping is available, redirect accesses to
++            neverland. Fake/overridden mappings will be flushed when
++-           switching to normal mode. */
+++           switching to normal mode (helper_st_asi, ASI_M_MMUREGS). */
+++        env->mmu_nf_entries = true;
++         full.prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
++         tlb_set_page_full(cs, mmu_idx, vaddr, &full);
++         return true;
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index 4b9103295f..12df5142e1 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -10,6 +10,9 @@ mmu_helper_get_phys_addr_code(uint32_t tl, int mmu_idx, uint64_t prim_context, u
++ mmu_helper_get_phys_addr_data(uint32_t tl, int mmu_idx, uint64_t prim_context, uint64_t sec_context, uint64_t address) "tl=%d mmu_idx=%d primary context=0x%"PRIx64" secondary context=0x%"PRIx64" address=0x%"PRIx64
++ mmu_helper_mmu_fault(uint64_t address, uint64_t paddr, int mmu_idx, uint32_t tl, uint64_t prim_context, uint64_t sec_context) "Translate at 0x%"PRIx64" -> 0x%"PRIx64", mmu_idx=%d tl=%d primary context=0x%"PRIx64" secondary context=0x%"PRIx64
++ 
+++# ldst_helper.c
+++sparc_mmu_ctrl_flush(uint32_t old, uint32_t val) "MMU control register 0x%08x -> 0x%08x: TLB flush"
+++
++ # int32_helper.c
++ sun4m_cpu_interrupt(unsigned int level) "Set CPU IRQ %d"
++ sun4m_cpu_reset_interrupt(unsigned int level) "Reset CPU IRQ %d"
+diff --git a/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch b/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
+new file mode 100644
+index 0000000..1967248
+--- /dev/null
++++ b/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
+@@ -0,0 +1,177 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test no-fault mode and the TLB on sun4m
++
++A tiny boot PROM turns the SRMMU on with three 16 MB mappings: itself,
++RAM read-write, and RAM that user mode may only read. It sets and
++clears the no-fault bit once with no fault in between, then, with the
++bit set, stores to the read-only RAM with a user-mode ASI, which must
++not trap, clears the bit and stores again, which must take a data
++access exception. Run on SS-5 (microSPARC-II) and SS-20 (SuperSPARC).
++
++It passes with and without the previous patch, and fails when NF is
++simply left out of the flush condition: the second store then goes
++through the entry made in no-fault mode.
++---
++ tests/qtest/meson.build              |   2 +-
++ tests/qtest/sun4m-mmu-nofault-test.c | 139 +++++++++++++++++++++++++++
++ 2 files changed, 140 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-mmu-nofault-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 265d19b658..04bc7dfa9b 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -201,7 +201,7 @@ qtests_sh4eb = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-
++ 
++ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-escc-test', 'sun4m-apc-test',
++-                'sun4m-solaris-idle-test'] + \
+++                'sun4m-solaris-idle-test', 'sun4m-mmu-nofault-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-mmu-nofault-test.c b/tests/qtest/sun4m-mmu-nofault-test.c
++new file mode 100644
++index 0000000000..7802da670c
++--- /dev/null
+++++ b/tests/qtest/sun4m-mmu-nofault-test.c
++@@ -0,0 +1,139 @@
+++/*
+++ * QTest: no-fault mode of the sun4m SRMMU and the TLB
+++ *
+++ * A boot PROM turns the MMU on with three 16 MB mappings: the PROM itself
+++ * at virtual 0, RAM read-write at 0x01000000 and RAM that user mode may
+++ * only read at 0x02000000. With the no-fault bit (NF) set in the MMU
+++ * control register it writes to the read-only RAM in user mode (ASI 0x0a),
+++ * which must not trap; QEMU puts an entry with overridden permissions in
+++ * its TLB for that. After NF is cleared the same write must trap (data
+++ * access exception), so that entry must not outlive no-fault mode. Before
+++ * that the PROM sets and clears NF once with no fault in between, which
+++ * QEMU need not flush the TLB for.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: the stage the PROM reached and the trap marker */
+++#define RAM_STAGE       0x1004ULL
+++#define RAM_TRAP        0x1020ULL
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define TT_DATA_ACCESS  9
+++
+++static char *write_prom(uint64_t prom_base)
+++{
+++    /* L1 page table entry: the PROM at virtual 0, ACC 2 (RX), 16 MB */
+++    uint32_t pte = (uint32_t)(prom_base >> 4) | 0x0a;
+++    const uint32_t code[] = {
+++        0x11000008,             /* sethi %hi(0x2000), %o0    context table */
+++        0x92102301,             /* mov   0x301, %o1          PTD: L1 at 0x3000 */
+++        0xd2220000,             /* st    %o1, [%o0] */
+++        0x1100000c,             /* sethi %hi(0x3000), %o0    L1 table */
+++        0x13000000 | (pte >> 10),       /* sethi %hi(pte), %o1 */
+++        0x92126000 | (pte & 0x3ff),     /* or    %o1, %lo(pte), %o1 */
+++        0xd2220000,             /* st    %o1, [%o0]          0x00000000: PROM */
+++        0x9210200e,             /* mov   0xe, %o1            RAM, ACC 3 (RWX) */
+++        0xd2222004,             /* st    %o1, [%o0 + 4]      0x01000000 */
+++        0x92102016,             /* mov   0x16, %o1           RAM, ACC 5 (user R) */
+++        0xd2222008,             /* st    %o1, [%o0 + 8]      0x02000000 */
+++        0x90102100,             /* mov   0x100, %o0 */
+++        0x92102200,             /* mov   0x200, %o1 */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context table pointer */
+++        0x90102200,             /* mov   0x200, %o0 */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81902000,             /* wr    %g0, 0, %wim */
+++        0x81882fa0,             /* wr    %g0, 0xfa0, %psr    S, ET, PIL 15 */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x9412a001,             /* or    %o2, 1, %o2         MMU on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4 */
+++        0x9612a002,             /* or    %o2, 2, %o3         the same with NF */
+++        0x07004004,             /* sethi %hi(0x01001000), %g3 */
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 1: MMU on */
+++        0x0b008000,             /* sethi %hi(0x02000000), %g5 */
+++        0x8a116100,             /* or    %g5, 0x100, %g5     user read-only word */
+++        0x84016100,             /* add   %g5, 0x100, %g2     another one */
+++        0x8c102055,             /* mov   0x55, %g6 */
+++        0xd6a00080,             /* sta   %o3, [%g0] 4        NF on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4        NF off, no fault */
+++        0xce808140,             /* lda   [%g2] 0x0a, %g7     user read: allowed */
+++        0xd6a00080,             /* sta   %o3, [%g0] 4        NF on */
+++        0xcca14140,             /* sta   %g6, [%g5] 0x0a     user write: no trap */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4        NF off */
+++        0x88102002,             /* mov   2, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 2 */
+++        0xcca14140,             /* sta   %g6, [%g5] 0x0a     user write: traps */
+++        0x88102003,             /* mov   3, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 3: it didn't */
+++        0x10800000,             /* b     . */
+++        0x01000000,             /* nop */
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(0x01000000);
+++    /* Trap i: store i at RAM_TRAP through its virtual address, and stop */
+++    for (i = 1; i < CODE / 4; i++) {
+++        be[4 * i] = cpu_to_be32(0x03004004);         /* sethi %hi(0x01001000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-mmu-nofault-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t prom_base;
+++} TestCase;
+++
+++static void test_nofault(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t->prom_base);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s -accel tcg -m 64 -bios %s",
+++                                  t->machine, prom);
+++
+++    while (qtest_readl(qts, RAM_TRAP) == 0 && qtest_readl(qts, RAM_STAGE) < 3) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    g_assert_cmpuint(qtest_readl(qts, RAM_STAGE), ==, 2);
+++    g_assert_cmpuint(qtest_readl(qts, RAM_TRAP), ==, TT_DATA_ACCESS);
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase ss5 = { "SS-5", 0x70000000ULL };
+++    static const TestCase ss20 = { "SS-20", 0xff0000000ULL };
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_data_func("sun4m-mmu-nofault/ss5", &ss5, test_nofault);
+++        qtest_add_data_func("sun4m-mmu-nofault/ss20", &ss20, test_nofault);
 ++    }
 ++
 ++    return g_test_run();
