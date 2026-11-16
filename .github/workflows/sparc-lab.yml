@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       matrix:
-        description: "Case list from e2e/sparc/matrix.py"
+        description: "Case list from e2e/sparc/matrix.py (pve, install: e2e/sparc/pve_matrix.py)"
         type: choice
         options:
           - smoke
@@ -22,6 +22,7 @@ on:
           - idle
           - bench
           - pve
+          - install
           - display-x
           - sparc64
           - benchdisk
@@ -74,14 +75,14 @@ jobs:
           persist-credentials: false
 
       - name: Build the lab image
-        if: ${{ env.MATRIX != 'pve' }}
+        if: ${{ env.MATRIX != 'pve' && env.MATRIX != 'install' }}
         run: |
           # --no-cache: the point is the newest published pve-qemu-kvm, not a cached apt layer
           docker build --pull --no-cache -f e2e/sparc/Dockerfile -t "$IMAGE" .
           docker run --rm --entrypoint dpkg-query "$IMAGE" -W pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Run the ${{ env.MATRIX }} matrix
-        if: ${{ env.MATRIX != 'pve' }}
+        if: ${{ env.MATRIX != 'pve' && env.MATRIX != 'install' }}
         run: |
           # The bench disk's directory, only when it exists (docker would create a missing one);
           # without it the benchdisk cases fail with "bench disk ... doesn't exist"
@@ -94,18 +95,19 @@ jobs:
             --entrypoint python3 "$IMAGE" matrix.py "$MATRIX" --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" \
             --bench "$BENCH_DISK"
 
-      # pve: VMs created through the API of a PVE node in a container (the e2e image with the lab in
-      # it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py)
+      # pve, install: VMs created through the API of a PVE node in a container (the e2e image with the
+      # lab in it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py);
+      # install runs `lab.py install --check` for every automated install target (targets.py)
       - name: Build the PVE node with the lab
-        if: ${{ env.MATRIX == 'pve' }}
+        if: ${{ env.MATRIX == 'pve' || env.MATRIX == 'install' }}
         run: |
           # --no-cache: the newest published qemu-server and pve-qemu-kvm
           docker build --pull --no-cache -f e2e/pve/Dockerfile -t "$IMAGE-pve" .
           docker build -f e2e/sparc/pve.Dockerfile --build-arg PVE_IMAGE="$IMAGE-pve" -t "$IMAGE" e2e/sparc
           docker run --rm --entrypoint dpkg-query "$IMAGE" -W qemu-server pve-qemu-kvm | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Run the pve matrix
-        if: ${{ env.MATRIX == 'pve' }}
+      - name: Run the ${{ env.MATRIX }} matrix on the PVE node
+        if: ${{ env.MATRIX == 'pve' || env.MATRIX == 'install' }}
         run: |
           # The bench disk's directory, only when it exists (the sol26-ss20-smp2 case imports it)
           bench=()
@@ -120,7 +122,7 @@ jobs:
             docker exec "sparc-lab-${GITHUB_RUN_ID}" test -f /run/pve-e2e-ready && break
             sleep 5
           done
-          docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py pve \
+          docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
             --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK"
 
       - name: Summary

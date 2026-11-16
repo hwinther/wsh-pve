@@ -18,7 +18,7 @@ import recording
 
 # case directory (relative to the runs dir) -> asset; casts: (name, max idle s, speed)
 CASTS = [
-    ("sol26-install-ss5/1-solaris-install-serial", "sol26-install-ss5.cast", 1, 3),  # pve
+    ("sol26-install-ss5/1-install-sol26-ss5/install", "sol26-install-ss5.cast", 1, 3),  # pve: lab.py install
     ("netbsd-sparc64/1-netbsd-boot-cd", "netbsd-sparc64-pve.cast", 1, 1),  # pve
     ("alpine-aarch64/1-alpine-boot-cd", "alpine-aarch64-pve.cast", 1, 1),  # pve
     ("sol26-disk-openbios-ss20", "sol26-boot-ss20.cast", 1, 1),  # machines
