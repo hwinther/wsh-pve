@@ -115,6 +115,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `display-x` | `fb-display.py X=1 INPUT=1 IDLE=60`: the 2.6 disks (TCX packages added by `PREPARE`) into the CDE desktop on TCX 8, TCX 24 and cg3 with SS-5 (OpenBIOS, `ss5.bin`: not TCX 24), SS-10 and SS-20 (OpenBIOS) | ~100 min |
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~35 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
+| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -404,6 +405,31 @@ OpenBIOS and the CD at target 6 with 512-byte blocks:
    `n` (no user account). Then `sunos414 login:`; root has csh and no password. `sync; halt` powers off.
 
 The install leaves `/` 5% and `/usr` 7% used.
+
+## sparc64
+
+`scenarios/_sparc64.py` is the sparc64 machine: `sun4u` with `openbios-sparc64`, one CPU, 512 MB,
+serial console, and the disk, CD-ROM and NIC on a choice of buses (`DISK_BUS`, `CD_BUS`: `ide`,
+`lsi`, `virtio-scsi`, `virtio-blk`; `NIC`: any PCI model, on `pciB`). The default is the layout that
+works: disk on the built-in IDE's primary master, CD-ROM on its secondary master, `sunhme`.
+`LAYOUT=pve` is what qemu-server builds for a sparc64 VM from the create wizard today (LSI 53C895A,
+`bootindex`, `-vga std`, virtio-balloon); `BOOTINDEX=1` adds only the `bootindex` values. Results are in
+`submodules/SPARC.md` ("sparc64").
+
+| Scenario | What it does | Time |
+| -------- | ------------ | ---- |
+| `sparc64-boot-cd.py` | boots a CD (`GUEST=netbsd`, `openbsd`, `debian`, `solaris`, or `EXPECT`) to the installer's first prompt; `CONSOLE=fb` waits for it on the VGA screen (OCR) and `TYPE` types on the keyboard | ~1 min |
+| `netbsd-install-sparc64.py` | NetBSD/sparc64 install with sysinst on the serial console (`SETS=b`: without X11), root without a password, ends powered off | ~8 min |
+| `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
+| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
+
+The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
+defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`
+(OpenBSD 8.0 from `install80.iso`: `I`, `vt100`, hostname, `hme0` autoconf, no IPv6, root password
+`lab`, no sshd, no user, `UTC`, `wd0`, auto layout, sets from `cd0`, `-x*`, `yes` to the missing
+`SHA256.sig`, `h`; its installed kernel doesn't boot, see `submodules/SPARC.md`). They are kept in
+`/mnt/sparc/disks` on the lab host, so the `sparc64` matrix runs with `--disks /mnt/sparc/disks`
+(workflow input `disks_dir`). The CDs are in `other-os/` under `--iso`.
 
 ## Drive a guest by hand
 

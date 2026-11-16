@@ -22,7 +22,7 @@ qm terminal <vmid>
 ## Architecture notes
 
 - **aarch64** only supports a serial console — there is no graphical display, so set Display to a serial terminal.
-- **sparc / sparc64** have working framebuffers (tcx/cg3), but a serial console is still useful for headless installs and for watching OpenBIOS/PROM output during boot.
+- **sparc / sparc64** have working framebuffers (sparc: cg3/tcx, sparc64: standard VGA), but a serial console is still useful for headless installs and for watching OpenBIOS/PROM output during boot.
 - **x86_64** guests normally use a graphics adapter, but a serial port is still handy for kernel debugging, headless servers and capturing boot logs.
 
 ## Further reading

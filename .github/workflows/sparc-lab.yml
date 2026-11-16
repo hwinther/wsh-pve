@@ -22,6 +22,7 @@ on:
           - bench
           - pve
           - display-x
+          - sparc64
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"

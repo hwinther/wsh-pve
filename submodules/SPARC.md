@@ -548,6 +548,263 @@ Solaris 2.6 user-space work, not one kind of operation.
 - Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
   `ross225r.bin` (which runs as a SuperSPARC SS-20).
 
+## sparc64 (sun4u)
+
+What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
+lab (`e2e/sparc`, `scenarios/_sparc64.py`, `sparc64` matrix): `-M sun4u`, OpenBIOS
+(`openbios-sparc64`, the only firmware in the package for it), one CPU, TCG, 512 MB unless stated,
+serial console unless stated.
+
+**What boots.** "CD" = the install CD to the installer's first prompt; times are from QEMU start.
+
+| Guest | CD, serial console | CD, VGA console | Install | Installed disk |
+| --- | --- | --- | --- | --- |
+| NetBSD 11.1 | yes, sysinst in 46 s | yes: sysinst on the screen in 54 s (no terminal question there); `b` Return on the PS/2 keyboard switches it to German | yes: sysinst "without X11", ~7.5 min | yes: `login:` in 48-58 s; `halt -p` ends QEMU (exit 0) |
+| NetBSD 9.3 | yes | not tried | not tried | |
+| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included) | no: the GENERIC kernel loads, then OpenBIOS stops (below) |
+| Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
+
+OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
+
+```
+[ using 1654104 bytes of bsd ELF symbol table ]
+Unimplemented service set-symbol-lookup ([2] -- [0])
+Unhandled Exception 0x0000000000000030
+PC = 0x00000000013e04a8 NPC = 0x00000000013e04ac
+Stopping execution
+```
+
+The same with 256 MB, 1 GB, `-cpu TI-UltraSparc-II` and `Sun-UltraSparc-IIIi`. `bsd.rd` (4 MB) from the
+same disk (`-prom-env auto-boot?=false`, `boot disk:a bsd.rd`) boots to the installer, so the disk,
+label and boot block are fine; it is the GENERIC kernel under OpenBIOS. Not followed further.
+
+The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
+the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
+base system from the CD, which fails both times it was tried, on different packages:
+
+```
+dpkg-deb[11703]: segfault at fffff801036dea74 ip fffff801017a8c44 (rpc fffff80100b1df84) sp fffff8010361c041 error 1 in libc.so.6[fffff80101700000+18e000]
+dpkg-deb: error: <decompress> subprocess was killed by signal (Segmentation fault)
+dpkg: error processing archive /var/cache/apt/archives/perl-base_5.36.0-5_sparc64.deb (--install):
+```
+
+(the second time `libc6_2.36-4_sparc64.deb`, 15 min into the base system). Unpacking that same
+`perl-base` package three times by hand in the installer's shell worked, so it is an intermittent
+crash of user-space code under emulation (in glibc), not a missing instruction. About 25 min of a
+run until the failure; not pursued further (a newer Debian ports snapshot wasn't tried).
+
+**Hardware layout.** OpenBIOS "boots" = loads the guest from it with `-boot c`/`-boot d` (its `disk`
+and `cdrom` aliases). Guest = the driver attaches and the device works (disk: read and write 10 MB
+raw; NIC: DHCP from QEMU's user network and an HTTP fetch).
+
+| Device | OpenBIOS | NetBSD 11.1 | OpenBSD 8.0 (`bsd.rd`) |
+| --- | --- | --- | --- |
+| IDE, built-in CMD646 (`ide-hd`/`ide-cd` on `ide.0`/`ide.1`) | boots disk and CD-ROM | `wd0`, `cd0` | `wd0`, `cd0` |
+| LSI 53C895A (`lsi53c895a` + `scsi-hd`/`scsi-cd`) | `Cannot manage 'SCSI bus controller' PCI device type 'scsi'`; no boot | `esiop0` attaches, every probe ends in `command timeout`, `scsi bus reset`; no disk (`/dev/rsd0c: Device not configured`) | `siop0` attaches, `timeout on SCSI command`, `scsi bus reset` over and over; no installer prompt within 15 min |
+| virtio-scsi-pci | `Cannot manage 'SCSI bus controller'`; no boot | `sd0` found, then `vioscsi_scsipi_request: error 12 loading DMA map`, `sd0: drive offline`; I/O hangs | `"Qumranet Virtio 1.x SCSI" ... not configured` |
+| virtio-blk-pci | has a driver (`/pci@1fe,0/pci@1/scsi@0/disk`), but `disk`/`cdrom` don't point there: `Trying disk:a... No valid state has been set by load or init-program`. By path (`boot /pci@1fe,0/pci@1/scsi@0/disk:a`) it loads NetBSD's boot block and kernel, which then can't match its root: `FATAL: boot device not found, check your firmware settings!` | `ld0`, works | `"Qumranet Virtio 1.x Storage" ... not configured` |
+| `sunhme` | | `hme0`, works | `hme0`, works (the installer's DHCP) |
+| `virtio-net-pci` | | `vioif0`, works | `"Qumranet Virtio 1.x Network" ... not configured` |
+| `e1000` | | `wm0`, works | `em0` attaches (traffic not tested) |
+| `rtl8139` | | `re0`, works | `re0` attaches (traffic not tested) |
+| `ne2k_pci` | | `ne0`, works | `ne0` attaches (traffic not tested) |
+| `pcnet` | | no driver: `AMD PCnet-PCI Ethernet ... not configured` | `pcn0` attaches with address `ff:ff:ff:ff:ff:ff`: unusable |
+
+- **Debian 12 installer** (Linux 6.1): IDE as `sda`/`sr0`; `virtio-net-pci` as the only NIC gets its
+  DHCP lease; the LSI under `sym53c8xx` fails like on the BSDs (`ABORT operation timed-out`, `BUS RESET`,
+  `Device offlined - not ready after error recovery`, for every target, ~20 min of probing); the
+  installer has no `virtio_blk`/`virtio_scsi` module, so those weren't tested on Linux.
+- The LSI fails in all three guests the same way (commands never complete), so it looks like the
+  device model on this machine, not a guest driver; not followed further.
+- `pciB` takes at most four devices: a fifth stops QEMU with `PCI: no slot/function available for
+  e1000, all in use or reserved` (qemu-server puts the NIC and every controller there).
+- **bootindex breaks booting.** With `bootindex` on the devices QEMU hands OpenBIOS a boot list it
+  follows instead of its aliases, but the paths don't exist in OpenBIOS's tree: `Trying
+  /pci@1fe,0/pci@1,1/ide@3/disk:f...`, `.../ide@3/cdrom...`, `/pci@1fe,0/pci@1/ethernet@0...`, then
+  `No valid state has been set by load or init-program` (OpenBIOS's own path is
+  `/pci@1fe,0/pci@1,1/ide@3/ide@1/cdrom@0`). Same IDE layout without `bootindex`: boots. With
+  `strict=on` it also appends `HALT`.
+- **Display.** `-vga std`: OpenBIOS draws its console with its built-in VGA driver (the package has no
+  `QEMU,VGA.bin`, none is needed); NetBSD's installer comes up on the screen and the keyboard (i8042
+  PS/2, keys sent with QMP `send-key`; VNC not tried) drives it. With a VGA attached OpenBIOS puts its console there; for a
+  serial console with a VGA, `-prom-env input-device=ttya -prom-env output-device=ttya`. Without a
+  VGA (`-vga none`) the console is ttya, the built-in 16550 on the ebus.
+- **CPUs.** sun4u, sun4v and niagara take one CPU: `-smp 2` stops QEMU with `Invalid SMP CPUs 2. The
+  max CPUs supported by machine 'sun4u' is 1`.
+- **RAM** (NetBSD 11.1): 256, 2048 and 3072 MB boot (`hw.physmem64` = all of it); 4096 MB: `panic:
+  Can't claim two pages of memory.` right after the loader, then `Unhandled Exception
+  0x0000000000000030`; 8192 MB: OpenBIOS itself stops (`out of malloc memory (28)!`, `Unhandled
+  Exception 0x0000000000000030`). QEMU accepts up to what the host can allocate. The Debian installer
+  ran with 1024 MB.
+- **`-cpu`**: default `TI-UltraSparc-IIi` (what OpenBIOS reports, `SUNW,UltraSPARC-IIi`). Nothing
+  needs another model.
+
+**Idle and speed** (`scenarios/sparc64-idle.py` against `idle.py` on the NetBSD 11.1 sparc32 disk
+`netbsd111-installed.raw` on SS-20, alternating, 3 boots each, one CPU, OpenBIOS; QEMU's host CPU over
+60 s at the shell; job = `awk 'BEGIN{for(i=0;i<1000000;i++)s=(s+i*i)%9973;print s}'`, host seconds;
+the host had a load of 5-7 from other guests on its 14 cores):
+
+| Guest | Machine | Host CPU idle | Guest clock over 60 s | job s |
+| --- | --- | --- | --- | --- |
+| NetBSD 11.1 sparc64 | sun4u, 512 MB | 101.1, 100.9, 101.3% | 60 s (drift 0.0-0.1 s) | 41.8, 33.2, 36.7 |
+| NetBSD 11.1 sparc32 | SS-20, 256 MB | 3.2, 2.8, 2.8% | 60 s | 9.7, 9.3, 6.7 |
+
+- NetBSD/sparc64 doesn't idle on sun4u: QEMU keeps a host core at 100% for as long as the VM runs.
+  The kernel spins in its idle loop: nothing on QEMU's sun4u lets the guest stop the CPU (no APC
+  like sun4m's; the `power` node isn't used, NetBSD: `power at ebus0 addr 7240-7243 ipl 1 not
+  configured`). Stopping that would take QEMU idle-loop detection like `sunos-idle`/`solaris-idle` on
+  sun4m (out of scope here). The sparc32 kernel idles through the sun4m APC.
+- The same user-space job runs about 4x slower on sparc64 than on sparc32 SS-20 (median 36.7 s vs
+  9.3 s), so sparc64 is not a faster way to run NetBSD. Not analysed further.
+- Ten `sleep 1` take 10.3-10.4 s; the guest clock keeps time.
+- Boot to `login:` 46-68 s; `halt -p` to QEMU's exit 8.7-9.1 s.
+
+**Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
+`halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,
+power-off to QEMU's exit 8.3-8.7 s. `LOAD=300` (`sparc64-idle.py`: the awk job and a
+64 MB file written, read back and removed, in a loop for 5 minutes, 9 rounds): the guest answered
+afterwards and powered off. Every power-off ended QEMU with exit code 0 (more than 15 runs, including
+the boot tests with DHCP and HTTP fetches over `sunhme`, `virtio-net-pci`, `e1000`, `rtl8139` and
+`ne2k_pci`). No hang with NetBSD on the recommended layout (only I/O to the offline virtio-scsi disk
+hung, above). OpenBSD's installer `halt` stops at OpenBIOS's `0 >` instead
+of powering off (`halt -p` on an installed system couldn't be tried).
+
+**Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, 512 MB; `scenarios/sparc64-boot-cd.py
+GUEST=solaris`). None reaches an installer. OpenBIOS finds the sun4u boot block on slice `f` of each
+CD and runs it:
+
+| CD | Where it stops |
+| --- | --- |
+| 2.5.1 (11/97) | in the boot block: `Evaluating FCode...`, `open isn't unique.`, `?go:`, `byte-load: exception caught!`, back at `0 >` |
+| 2.6 (5/98) | the same |
+| 7 (3/99) | `open isn't unique.`, the kernel loads (spinner), then `panic[cpu0]/thread=10404040: bottom of stack not aligned`, `rebooting...`, `BOOTpanic - kernel: prom_reboot: reboot call returned!`, `EXIT`, `0 >` |
+| 8 (1/01) Installation CD | the kernel starts: `panic[cpu0]/thread=10408000: BOP_ALLOC failed`, in `segkmem_alloc` ← `kmem_init` ← `mod_read_system_file` ← `kobj_open_file` ← `startup_memlist`; `skipping system dump - no dump device configured`, `rebooting...`, then as 7 |
+| 8 (1/01) Software CD 1 | OpenBIOS: `Can't read ELF header`, `Can't read a.out header`, `Can't read FCode header from ihandle ...`, `No valid state has been set by load or init-program` |
+| 9 DVD | `panic[cpu0]/thread=140a000: BOP_ALLOC failed`, the same call chain as 8 |
+| 10 1/13 (u11) DVD | `Ignoring failed claim for va 1000000 memsz af6d6!` (and for `1402000`, `1800000`), then `SunOS Release 5.10 Version Generic_147147-26 64-bit`; the kernel's Forth debugger setup fails in OpenBIOS (`could not find debugger-vocabulary-hook>threads:interpret: exception -13 caught`, then the text of `data64.fth`/`kdbg.fth` echoed), and it stops with `panic - kernel: no nucleus hblk8 to allocate`, `EXIT`, `0 >`. The same with 512, 1024 and 2048 MB |
+| 2.6 with the CD on the LSI | OpenBIOS: `Trying cdrom:f...`, `Trying cdrom...`, `No valid state has been set by load or init-program` |
+
+2.5.1/2.6's boot block (FCode) throws inside OpenBIOS before it loads anything; 7 loads its kernel and
+panics at once; 8 and 9 get into the kernel and fail its first boot-time memory allocation
+(`BOP_ALLOC`, which the boot program serves through the firmware). All of it happens in the
+firmware/boot-program interplay before any device driver runs, so no disk or NIC choice changes it.
+Solaris 9 fails identically with 256, 512, 1024 and 2048 MB: `boot_alloc(0x30000018000, 0x2000,
+0x1000)` (8 KB of kernel heap at that virtual address, 4 KB aligned), called from `segkmem_alloc` while
+`kmem_init` reads `/etc/system`; the heap allocations before it (`0x30000000000`-`0x30000016000`)
+succeeded. Solaris 8 fails the same way at `0x30000016000`.
+
+What OpenBIOS reports at `0 >` after the panics (`" /virtual-memory" find-device .properties`, the same
+for `/memory`; 1024 MB):
+
+- Solaris 9: 66 translations, the kernel heap as single 8 KB pages, the last one being
+  `0x30000018000` itself (mapped to physical `0x3fd20000`). So the firmware did map the page the
+  boot program then reported as failed; the claim's result is what the boot program rejected (not
+  traced further). Both free lists (`available` of `/memory` and `/virtual-memory`) contain fragments
+  that aren't page aligned: `0x0011ae64` of length 4, a range starting at `0x0013a490`. OpenBIOS's
+  `ofmem` keeps byte-granular free lists and claims of odd sizes (the boot program and kernel
+  segments use them, e.g. `memsz af6d6`) leave such holes.
+- Solaris 10: 180 translations, 102 of them single 8 KB pages of the kernel heap at
+  `0x300_0000_2000`-`0x300_0016_8000`, the physical pages handed out top down (`0x31814000`,
+  `0x31812000`, `0x31810000`, ...), so neighbouring virtual pages never form one larger translation.
+  Solaris takes the firmware's translations over into its own page tables at boot from a fixed pool of
+  "nucleus" hme blocks; `no nucleus hblk8 to allocate` is that pool running dry, consistent with the
+  long list of 8 KB translations (a real OBP hands over far fewer, larger ones).
+
+Diagnosis: the Solaris 8/9/10 failures are in OpenBIOS's sun4u memory management (`ofmem`: claim
+granularity and alignment, physical allocation order, no merging of translations), not in devices.
+A first OpenBIOS change would round claims to whole pages and allocate physical memory so that
+consecutive claims are contiguous (fewer, larger translations); that is a contained change in
+`ofmem`, but it is unverified whether it is enough: behind it are the 2.5.1/2.6 FCode boot-block
+exceptions, 7's stack-alignment panic and Solaris 10's missing Forth words, each of which may expose
+the next gap. Estimate: days of OpenBIOS work to see whether Solaris 10 gets past the HAT setup, with
+an open end after that; not a one-line fix. Not attempted here (`openbios/` builds and patches only
+`openbios-sparc32` today).
+
+**sun4v and niagara.** `-M sun4v` with `openbios-sparc64` (the only firmware in the package) stops QEMU
+at once: `qemu: fatal: Trap 0x0010 while trap level (6) >= MAXTL (6), Error state`, `pc:
+0000000000000200` (the sun4u OpenBIOS can't run on a sun4v CPU, which starts in hyperprivileged mode),
+with or without a NetBSD, OpenBSD or Debian CD; no sun4v guest kernel is reached, whatever the CD
+carries. `-M niagara`: `rom: file nvram1 : error Failed to open file "nvram1"`, `Unable to load a
+firmware for -M niagara`. Niagara needs Sun's OpenSPARC T1 firmware set (`nvram1`, the hypervisor,
+OpenBoot and reset images) and, for QEMU's documented Solaris 10 path, the `disk.s10hw2` image from
+the same package; neither is in the package or used here. Both are out of reach with what the package
+ships.
+
+**Sun OBP on sun4u: status.** Tried with the Ultra 5/10 flash update patch 106121-18 (OBP 3.31.0,
+POST 3.1.0; proprietary, not in the repository or the package). Its `flash-update-Ultra510-*` files
+are SPARC standalone ELF updaters; `.data` holds four 512 KB images, each behind a 0x20-byte header:
+two identical OBP images and two identical POST images (each starts with an `OBMD` header naming
+`OBP`/`POST`, reset code at offset 0x20). QEMU maps `-bios` at `0x1fff0000000` (4 MB window) and
+starts the CPU at offset 0x20. No console output with any arrangement:
+
+- OBP alone (and OBP + POST): the reset code programs the APB/Simba bus numbers and the ebus BAR
+  (`0xf1000000`) in PCI config space, reads a soft-reset marker at ebus offset 0x10, then probes the
+  SuperIO (PC97317) configuration port at ebus `0x30002e` (`0x1fff130002e`). Nothing answers there
+  (QEMU's ebus puts its ISA devices elsewhere and has no SuperIO configuration registers), and it
+  falls into a dead loop at PROM offset 0x258, about 100 instructions after reset. Same with `-cpu
+  TI-UltraSparc-II`/`-IIe`, 256/512 MB, `-nographic` or VGA.
+- POST alone (and POST + OBP): `qemu: fatal: Trap 0x0010 while trap level (5) >= MAXTL (5), Error
+  state` at offset 0x2c, `wr %g0, 0, %asr18` (the UltraSPARC dispatch control register, which QEMU's
+  sparc64 CPU doesn't implement; illegal instruction in RED state).
+
+Closing the gap would take a model of the real Ultra 5 I/O map in QEMU (SuperIO with its
+configuration registers at the real ebus offsets, the NVRAM/IDPROM, flash and RIO devices where OBP
+expects them, `%dcr`), not a small fix; each step would show the next missing piece. So there is no
+Sun PROM route to Solaris on sun4u here (unlike `ss5.bin` for Solaris 2.4 on sparc32). The images
+were extracted only in the lab's scratch directory and deleted afterwards.
+
+**What qemu-server builds today** (`qm showcmd`, from qemu-server's `cfg2cmd` tests with this
+package's patch) for a VM from the create wizard (`arch: sparc64`, `scsi0` disk, `scsi2` CD-ROM,
+`net0: sunhme`, no `scsihw`, `vga` and `bios` unset):
+
+```
+-smp '1,sockets=1,cores=1,maxcpus=1' -nodefaults
+-boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg'
+-vga std -m 512
+-device 'virtio-balloon-pci,id=balloon0,free-page-reporting=on'
+-device 'lsi,id=scsihw0,bus=pciB'
+-device 'scsi-hd,bus=scsihw0.0,scsi-id=0,drive=drive-scsi0,id=scsi0,...,bootindex=100,...'
+-device 'scsi-cd,bus=scsihw0.0,scsi-id=2,drive=drive-scsi2,id=scsi2,...,bootindex=101,physical_block_size=512'
+-device 'sunhme,mac=...,netdev=net0,id=net0,bootindex=102,bus=pciB'
+-machine 'accel=tcg,type=sun4u+pve0'
+```
+
+QEMU starts it, but it boots nothing: OpenBIOS has no LSI driver and follows the `bootindex` list
+(`LAYOUT=pve` in the lab, NetBSD 11.1 CD: `No valid state has been set by load or init-program` at
+once). A disk on `ide0` and the CD-ROM on `ide2` already come out right (`ide-hd,bus=ide.0,unit=0`,
+`ide-cd,bus=ide.1,unit=0`, the sun4u bus names) but still with `bootindex`; the API and the wizard
+offer only SCSI for sparc64.
+
+**What qemu-server must change** for sparc64 (current → working):
+
+| | Now | Working |
+| --- | --- | --- |
+| Disk bus | `lsi` on `pciB` + `scsi-hd` (wizard: SCSI only) | built-in IDE: `ide0` → `ide-hd,bus=ide.0,unit=0` (`ide1`: `ide.0` unit 1); allow `ide` for sparc64 in the API and the wizard, default the first disk to `ide0` |
+| CD-ROM | `scsi-cd` on the LSI, `scsi2` | `ide2` → `ide-cd,bus=ide.1,unit=0` (OpenBIOS's `cdrom` alias); `physical_block_size=512` is harmless |
+| Boot order | `bootindex=` on every device, `-boot menu=on,strict=on,...` | no `bootindex` on sparc64; the first device of `boot: order=` as the boot letter: `-boot order=c` (disk) or `order=d` (CD-ROM), e.g. `-boot 'order=d,menu=on,strict=on,reboot-timeout=1000,splash=...'` (QEMU accepts that, a missing splash file only warns; the boots here used plain `-boot c`/`-boot d`) |
+| Display none | `vga: none` → `-vga none -nographic`, no `smm=off` since qemu-server 9.2.15+wsh3 (before that QEMU refused: `Property 'sun4u-machine.smm' not found`) | works as is |
+| Serial console (`vga: serial0`) | `-nographic`, `-chardev ...serial0`, `-device isa-serial,chardev=serial0` | works as is: with `-nodefaults` sun4u creates no serial port of its own, so the `isa-serial` is the ebus's first 16550 at `0x3f8` (OpenBIOS's ttya, NetBSD `com0`); OpenBIOS and the NetBSD CD to sysinst on it, tested |
+| NIC | `sunhme` on `pciB` | works; `virtio`, `e1000`, `rtl8139`, `ne2k_pci` work too (NetBSD); `pcnet` has no NetBSD driver |
+| virtio-blk / virtio-scsi | `virtio-blk-pci` with no bus | virtio-blk works as a data disk for NetBSD but OpenBIOS can't boot it; virtio-scsi doesn't work. Don't offer them as the boot disk |
+| PCI slots | NIC and every SCSI/virtio controller on `pciB` | `pciB` holds four devices; a fifth stops QEMU (`no slot/function available`): limit NICs + controllers there to four |
+| CPUs | `-smp 1,...` from sockets × cores | refuse more than one (QEMU does: `Invalid SMP CPUs`) |
+| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS) |
+| virtio-balloon | `virtio-balloon-pci` on the default bus | harmless (`Cannot manage 'undefined' PCI device type`); drop or keep |
+| Firmware | no `-bios` unless `bios` is set | fine: QEMU's default is `openbios-sparc64` |
+
+**Recommended profile** for sparc64 in Proxmox (one profile; the sparc32 table's counterpart):
+
+| Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs | Disk | CD-ROM | NIC | Display |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
+
+- Boot from the first entry of `boot: order=` as `-boot order=c|d`, no `bootindex`.
+- Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
+  doesn't start), not Debian 12.0 ports (install fails), not Solaris (doesn't boot), not sun4v/niagara.
+- Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
+  `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
+- Live migration, backup, snapshots with RAM: not tested for sparc64.
+
 ## Supported profiles
 
 The contract for sparc32 (`arch: sparc`, always TCG, one CPU), from the measurements under "SS-10
@@ -567,8 +824,9 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
-- sparc64 (`sun4u`, `openbios-sparc64`) has no profiles: what worked before still does, nothing more
-  is checked.
+- sparc64 (`sun4u`, `openbios-sparc64`) has no profiles yet: nothing is checked, and the layout
+  qemu-server builds doesn't boot. The measured profile and the changes it needs are under "sparc64
+  (sun4u)".
 
 ## qemu-server
 
@@ -684,6 +942,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
 - Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
   results under "SS-10 and SS-20".
+- sparc64: the lab's `sparc64` matrix (`scenarios/_sparc64.py`, `sparc64-*.py`,
+  `netbsd-install-sparc64.py`); results under "sparc64 (sun4u)".
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
   combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
   backup/restore, and that the lab's machine arguments match `qm showcmd`).

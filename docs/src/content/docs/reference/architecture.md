@@ -37,7 +37,7 @@ Note: *Only specific configurations are known to work, see the [SPARC guide](/gu
 
 Sparc64 is the 64-bit version of the SPARC architecture. It is used in high-performance computing and enterprise servers. When setting a VM to use sparc64, the `qemu-system-sparc64` binary will be used.
 
-Note: *Supports serial console, seems to only work with the OpenSPARC disk.s10hw2 image*
+Note: *sun4u with OpenBIOS runs NetBSD (installed and booted, serial or VGA console); the disk and CD-ROM must be on the built-in IDE. Solaris doesn't boot there. See the [SPARC guide](/guides/sparc/#sparc64-sun4u).*
 
 ## Further reading
 
