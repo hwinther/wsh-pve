@@ -641,6 +641,62 @@ faster, memory is effectively unlimited, and the emulated SS-5's handicap is an 
 deep call chains, not the real machines' relation (a 110 MHz microSPARC-II roughly matched a 50 MHz
 SuperSPARC).
 
+**Network.** lmbench 3.0-a9's network tests from the bench disk with them
+(`bench-sol26-net.raw`, sha256 `a0f7eb6d...bd93a`; `e2e/sparc/README.md`, "Network"; the five programs
+linked dynamically, the rest as above): over `lo0` inside the guest, and over the on-board lance
+(`le0`) to lmbench's servers in the lab container, the same lmbench built for Linux. `le0` is given
+10.0.2.15/24 at run time. Two paths between QEMU and the container: QEMU user networking (slirp,
+`NET=user`, what the `benchdisk` matrix uses and what a VM with `-netdev user` gets), where the peer
+at 10.0.2.2 is QEMU's own user-mode TCP/IP stack relaying to a container socket; and a tap interface
+in the container (`NET=tap`, what a bridged VM gets, minus the bridge), where the container's kernel
+answers. The `benchdisk` matrix 3 times (6/6, 6/6 and 5/6 passed: in the third run lat_sig's
+protection-fault test printed nothing on 2.5.1, the old non-network test with the large spread
+above; its network numbers are in the table; the other results of these runs are within the spread
+of the table above), and `ONLY=nic NET=tap` 3 times on SS-5 and SS-20
+(OpenBIOS) between the matrix runs, all passed. Same QEMU and host as above; the host's 1-minute load
+during the matrix runs, the bench QEMU included: median 2.5, 2.6 and 2.2 (max 2.9, 3.5 and 4.1),
+other agents' QEMU guests beside every run. Median and spread of the 3 runs; one-byte round trips
+in us, bandwidth in MB/s with lmbench's 64 KB messages; "in" = container to guest, "out" = guest to
+container.
+
+| Benchmark | Unit | SS-5 OpenBIOS | SS-5 `ss5.bin` | SS-10 OpenBIOS | SS-20 OpenBIOS | SS-20 `ss20_v2.25_rom` | 2.5.1, SS-5 `ss5.bin` | SS-5 slower |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| TCP round trip, `lo0` | us | 282 (5%) | 293 (12%) | 229 (49%) | 236 (3%) | 222 (2%) | 258 (1%) | 1.2x |
+| UDP round trip, `lo0` | us | 277 (5%) | 291 (1%) | 234 (9%) | 240 (11%) | 246 (3%) | 439 (8%) | 1.2x |
+| TCP connect, `lo0` | us | 1351 (9%) | 1281 (4%) | 1168 (56%) | 1307 (21%) | 1271 (27%) | 3198 (18%) | 1.0x |
+| TCP bandwidth, `lo0` | MB/s | 201 (13%) | 205 (3%) | 294 (39%) | 286 (24%) | 271 (47%) | 161 (15%) | 1.4x |
+| Sun RPC round trip, TCP / UDP, `lo0` | us | 938 / 601 | 953 / 654 | 371 / 338 | 380 / 338 | 387 / 342 | 925 / 544 | 2.5x / 1.8x |
+| TCP round trip, `le0`, slirp | us | 260 (6%) | 265 (5%) | 209 (1%) | 196 (7%) | 217 (12%) | 416 (61%) | 1.3x |
+| UDP round trip, `le0`, slirp | us | 247 (4%) | 276 (4%) | 213 (10%) | 202 (5%) | 220 (11%) | 368 (5%) | 1.2x |
+| TCP bandwidth in / out, `le0`, slirp | MB/s | 15.1 / 14.8 | 15.1 / 15.2 | 15.7 / 15.1 | 15.1 / 15.8 | 15.0 / 15.1 | 15.4 / 15.0 | 1.0x / 1.1x |
+| TCP round trip, `le0`, tap | us | 276 (14%) | | | 195 (6%) | | | 1.4x |
+| UDP round trip, `le0`, tap | us | 264 (7%) | | | 195 (13%) | | | 1.4x |
+| TCP bandwidth in / out, `le0`, tap | MB/s | 27.8 / 15.1 | | | 29.0 / 14.1 | | | 1.0x / 0.9x |
+
+Bandwidth spreads: slirp in 6-31%, out 7-28%; tap in 11-17%, out 3-14%. RPC spreads 1-27%.
+
+- **What a user of the VM feels over its NIC**: about 15 MB/s each way and a 0.2 ms round trip
+  (SS-20; SS-5 0.26 ms) with user networking. A real lance is 10 Mbit/s Ethernet, ~1.1 MB/s of TCP
+  payload at best; QEMU's lance doesn't model the wire, so the emulated one is ~13x faster than the
+  real thing and bounded only by emulation.
+- **What bounds it.** The guest-to-container direction stays at ~14-16 MB/s with tap as with slirp,
+  on every profile: that limit is on the guest's side (Solaris's TCP send path and the lance
+  emulation under TCG; QEMU used 92-100% of a host core during the runs). The container-to-guest
+  direction doubles with tap (15 to 28-29 MB/s), so with slirp that direction is bounded by QEMU's
+  user-mode stack. Round trips are the same with tap and slirp within the spread: the time is spent
+  in the guest, not in slirp.
+- **SS-5 vs SS-20**: the same kind of gap as in the system-call tests above. Round trips over `lo0`
+  and `le0` 1.2-1.4x, `lo0` bandwidth 1.4x, and Sun RPC, which goes through more library layers (TLI,
+  XDR), 1.8-2.5x; the NIC bandwidth is the same on both (its limits are elsewhere). Firmware and SS-10
+  vs SS-20 are within the spread again.
+- **Solaris 2.5.1** (SS-5, against 2.6 with `ss5.bin`): UDP round trips 1.3x (`le0`) to 1.5x (`lo0`)
+  slower, TCP connect 2.5x slower, `lo0` bandwidth 0.8x; the `lo0` TCP round trip and the NIC
+  bandwidth are the same. Its `le0` TCP round trip varied a lot (251-506 us).
+- **Not included**: `lat_fifo` loops on Linux too (an lmbench bug: the writer it forks keeps
+  benchmp's flag-only SIGTERM handler, so nothing ends it). `lat_ctx` and `bw_pipe`, left out of the
+  first round for looping, ran normally when tried by hand on SS-20 for this round; not yet run on
+  every profile.
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
