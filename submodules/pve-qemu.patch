@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..02e424e 100644
+index 7b0cba5..63f2c6b 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,23 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,25 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -96,6 +96,8 @@ index 7b0cba5..02e424e 100644
 +wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
 +wsh/0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-.patch
 +wsh/0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl.patch
++wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
++wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -3449,6 +3451,363 @@ index 0000000..89e6cc1
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
+new file mode 100644
+index 0000000..50f760f
+--- /dev/null
++++ b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
+@@ -0,0 +1,95 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] ide/cmd646: latch the interrupt status bits until the
++ guest clears them
++
++cmd646_set_irq() set the channel's interrupt status bit in MRDMODE
++(mirrored in CFR and ARTTIM23) when a drive raised INTRQ and cleared it
++again when INTRQ dropped. A drive drops INTRQ when its status register is
++read, so a guest that reads the drive status first and then looks at
++these bits never sees them set. On the chip they are latched and cleared
++by writing 1; QEMU already has the w1c masks for them.
++
++Solaris 10's ata driver on sun4u does exactly that after SET FEATURES
++and warns for every IDE device:
++
++  WARNING: Interrupt not seen after set_features
++
++Keep the status bits set when INTRQ drops; the guest's write-1-to-clear
++(config space, or the BMDMA register that mirrors MRDMODE) clears them.
++The PCI interrupt line keeps following the drives' INTRQ, now kept in a
++field of its own: driving it from the latched bits instead left it
++asserted for guests that don't clear them, and Linux disabled the
++interrupt ("irq 7: nobody cared") and OpenBSD hung at boot.
++
++Tested on sun4u, the only machine in this package with a cmd646 (alpha
++and hppa have one too, and aren't built here): Solaris 10 1/13 attaches
++the disk as dad0 without the warning; NetBSD 11.1 and 9.3, OpenBSD 8.0
++and the Debian 12 installer boot as before (sparc lab, sparc64 matrix).
++The next patch adds a qtest.
++
++The new field isn't in the migration stream (vmstate_ide_pci is shared
++by every PCI IDE controller): a guest migrated with INTRQ up sees the
++line low until the drive raises it again. sparc64 migration isn't
++offered by qemu-server.
++
++paulsheer/qemu 51d72e16 ("sun4u: fix cmd646 IRQ latch and LSI 53C895
++identity for Solaris 10") latches the bits too, and drives the interrupt
++line from them; this is a separate implementation that keeps the line on
++INTRQ.
++---
++ hw/ide/cmd646.c      | 17 ++++++++++++-----
++ include/hw/ide/pci.h |  1 +
++ 2 files changed, 13 insertions(+), 5 deletions(-)
++
++diff --git a/hw/ide/cmd646.c b/hw/ide/cmd646.c
++index d44a90a162..b184c0ce63 100644
++--- a/hw/ide/cmd646.c
+++++ b/hw/ide/cmd646.c
++@@ -182,12 +182,12 @@ static void bmdma_setup_bar(PCIIDEState *d)
++ 
++ static void cmd646_update_irq(PCIDevice *pd)
++ {
+++    PCIIDEState *d = PCI_IDE(pd);
++     int pci_level;
++ 
++-    pci_level = ((pd->config[MRDMODE] & MRDMODE_INTR_CH0) &&
++-                 !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
++-        ((pd->config[MRDMODE] & MRDMODE_INTR_CH1) &&
++-         !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
+++    /* The interrupt line follows the drives' INTRQ, not the latched status */
+++    pci_level = ((d->intrq & 1) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
+++        ((d->intrq & 2) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
++     pci_set_irq(pd, pci_level);
++ }
++ 
++@@ -199,10 +199,17 @@ static void cmd646_set_irq(void *opaque, int channel, int level)
++     int irq_mask;
++ 
++     irq_mask = MRDMODE_INTR_CH0 << channel;
+++    /*
+++     * The interrupt status bits (MRDMODE, mirrored in CFR/ARTTIM23) latch
+++     * the drive's INTRQ and stay set until the guest writes 1 to clear
+++     * them; INTRQ dropping (the guest reading the drive's status register)
+++     * doesn't clear them. The PCI interrupt line follows INTRQ itself.
+++     */
++     if (level) {
+++        d->intrq |= 1 << channel;
++         pd->config[MRDMODE] |= irq_mask;
++     } else {
++-        pd->config[MRDMODE] &= ~irq_mask;
+++        d->intrq &= ~(1 << channel);
++     }
++     cmd646_update_dma_interrupts(pd);
++     cmd646_update_irq(pd);
++diff --git a/include/hw/ide/pci.h b/include/hw/ide/pci.h
++index ef03764caa..65ca115755 100644
++--- a/include/hw/ide/pci.h
+++++ b/include/hw/ide/pci.h
++@@ -51,6 +51,7 @@ struct PCIIDEState {
++     BMDMAState bmdma[2];
++     qemu_irq isa_irq[2];
++     uint32_t secondary; /* used only for cmd646 */
+++    uint8_t intrq; /* used only for cmd646: the drives' INTRQ, bit n = channel n */
++     MemoryRegion bmdma_bar;
++     MemoryRegion cmd_bar[2];
++     MemoryRegion data_bar[2];
+diff --git a/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
+new file mode 100644
+index 0000000..2ca308b
+--- /dev/null
++++ b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
+@@ -0,0 +1,250 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the cmd646 interrupt status latch on
++ sun4u
++
++Nothing runs on the CPU, so the test sets up what OpenBIOS would (bus 1
++behind the simba bridge at 00:01.1, the cmd646's I/O BARs) and routes
++the sabre's IDE interrupt request to itself. A SET FEATURES on the
++primary master raises INTRQ; reading the status register drops it. The
++interrupt status bits in MRDMODE and CFR must stay set until the test
++writes 1 to clear them, and the PCI interrupt line must follow INTRQ
++whatever the bits are: the line is seen through the sabre, which raises
++its request again when the guest clears it while the line is still up.
++
++Without the previous patch status-latched fails (MRDMODE reads 0 after
++the status read). With the line driven from the latched bits instead of
++INTRQ (the variant that broke Linux and OpenBSD) it fails too (the line
++stays up after the status read). With the patch both cases pass.
++---
++ tests/qtest/meson.build         |   2 +-
++ tests/qtest/sun4u-cmd646-test.c | 208 ++++++++++++++++++++++++++++++++
++ 2 files changed, 209 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-cmd646-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index ff0981ddfc..9bc0107c5e 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -208,7 +208,7 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++-  ['prom-env-test', 'boot-serial-test']
+++  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-cmd646-test.c b/tests/qtest/sun4u-cmd646-test.c
++new file mode 100644
++index 0000000000..c112a210d9
++--- /dev/null
+++++ b/tests/qtest/sun4u-cmd646-test.c
++@@ -0,0 +1,208 @@
+++/*
+++ * QTest: the cmd646 interrupt status bits on sun4u
+++ *
+++ * The cmd646's interrupt status bits (MRDMODE, mirrored in CFR and
+++ * ARTTIM23) latch a drive's INTRQ and stay set until the guest writes 1 to
+++ * clear them. Solaris's ata driver reads the drive's status register,
+++ * which drops INTRQ, and then looks at these bits; it warned "Interrupt
+++ * not seen after set_features" when they had followed INTRQ down.
+++ *
+++ * The PCI interrupt line must still follow INTRQ: guests that never clear
+++ * the bits (Linux, OpenBSD) would otherwise see it stuck high. It is
+++ * watched through the sabre, which turns the line into a request for the
+++ * CPU and re-raises that request when the guest clears it while the line
+++ * is still up.
+++ *
+++ * Nothing runs on the CPU, so the test sets up what OpenBIOS would: bus 1
+++ * behind the simba bridge at 00:01.1 and the cmd646's I/O BARs.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qobject/qdict.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
+++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
+++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
+++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004) /* OBIO interrupt map, ino 0x20 */
+++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804) /* OBIO interrupt clear, ino 0x20 */
+++#define IMR_ENABLED     0x80000000
+++#define IVEC_HDD        0x20
+++
+++#define DEVFN_SIMBA_A   0x09                /* 00:01.1 */
+++#define DEVFN_CMD646    0x18                /* 01:03.0 */
+++#define IO_CMD0         0x400               /* BAR0: channel 0 command block */
+++#define IO_CTL0         0x408               /* BAR1: channel 0 control block */
+++
+++#define CFR             0x50
+++#define CFR_INTR_CH0    0x04
+++#define MRDMODE         0x71
+++#define MRDMODE_INTR_CH0 0x04
+++
+++#define ATA_FEATURE     1
+++#define ATA_NSECTOR     2
+++#define ATA_DEVICE      6
+++#define ATA_STATUS      7                   /* read: status, write: command */
+++#define ATA_DEVCTL      2                   /* in the control block */
+++#define CMD_SET_FEATURES 0xef
+++#define STATUS_BSY      0x80
+++#define STATUS_ERR      0x01
+++
+++static uint64_t cfg_addr(int bus, int devfn, int reg)
+++{
+++    return PCI_CONFIG + (bus << 16) + (devfn << 8) + reg;
+++}
+++
+++/* Byte accesses only: both spaces are little-endian on a big-endian CPU */
+++static uint8_t cfg_read(QTestState *qts, int bus, int devfn, int reg)
+++{
+++    return qtest_readb(qts, cfg_addr(bus, devfn, reg));
+++}
+++
+++static void cfg_write(QTestState *qts, int bus, int devfn, int reg,
+++                      uint32_t val, int len)
+++{
+++    int i;
+++
+++    for (i = 0; i < len; i++) {
+++        qtest_writeb(qts, cfg_addr(bus, devfn, reg + i), val >> (8 * i));
+++    }
+++}
+++
+++static const char *find_sabre(QTestState *qts)
+++{
+++    static char path[64];
+++    int i;
+++
+++    for (i = 0; i < 64; i++) {
+++        QDict *rsp;
+++        bool found;
+++
+++        snprintf(path, sizeof(path), "/machine/unattached/device[%d]", i);
+++        rsp = qtest_qmp(qts, "{ 'execute': 'qom-get', 'arguments': "
+++                        "{ 'path': %s, 'property': 'type' } }", path);
+++        found = qdict_haskey(rsp, "return") &&
+++                !strcmp(qdict_get_str(rsp, "return"), "sabre");
+++        qobject_unref(rsp);
+++        if (found) {
+++            return path;
+++        }
+++    }
+++    g_assert_not_reached();
+++}
+++
+++static QTestState *setup(void)
+++{
+++    QTestState *qts;
+++
+++    qts = qtest_init("-machine sun4u -nodefaults "
+++                     "-blockdev driver=null-co,read-zeroes=on,node-name=d0 "
+++                     "-device ide-hd,drive=d0,bus=ide.0,unit=0");
+++
+++    /* The sabre's request for the IDE interrupt reaches the test, not the CPU */
+++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
+++    qtest_writel(qts, OBIO_IMR_HDD, IMR_ENABLED);
+++
+++    /* Bus 1 behind 00:01.1, which already forwards I/O 0-0xfff */
+++    cfg_write(qts, 0, DEVFN_SIMBA_A, PCI_SECONDARY_BUS, 1, 1);
+++    cfg_write(qts, 0, DEVFN_SIMBA_A, PCI_SUBORDINATE_BUS, 1, 1);
+++    g_assert_cmphex(cfg_read(qts, 1, DEVFN_CMD646, PCI_VENDOR_ID), ==, 0x95);
+++    g_assert_cmphex(cfg_read(qts, 1, DEVFN_CMD646, PCI_DEVICE_ID), ==, 0x46);
+++
+++    cfg_write(qts, 1, DEVFN_CMD646, PCI_BASE_ADDRESS_0, IO_CMD0, 4);
+++    cfg_write(qts, 1, DEVFN_CMD646, PCI_BASE_ADDRESS_1, IO_CTL0, 4);
+++    cfg_write(qts, 1, DEVFN_CMD646, PCI_COMMAND, PCI_COMMAND_IO, 2);
+++
+++    /* Drive interrupts on (nIEN clear), no interrupt so far */
+++    qtest_writeb(qts, PCI_IO + IO_CTL0 + ATA_DEVCTL, 0);
+++    g_assert_false(qtest_get_irq(qts, IVEC_HDD));
+++    return qts;
+++}
+++
+++/* SET FEATURES (transfer mode PIO 4): completes at once, raising INTRQ */
+++static void set_features(QTestState *qts)
+++{
+++    qtest_writeb(qts, PCI_IO + IO_CMD0 + ATA_DEVICE, 0xa0);
+++    qtest_writeb(qts, PCI_IO + IO_CMD0 + ATA_FEATURE, 0x03);
+++    qtest_writeb(qts, PCI_IO + IO_CMD0 + ATA_NSECTOR, 0x0c);
+++    qtest_writeb(qts, PCI_IO + IO_CMD0 + ATA_STATUS, CMD_SET_FEATURES);
+++}
+++
+++static uint8_t mrdmode(QTestState *qts)
+++{
+++    return cfg_read(qts, 1, DEVFN_CMD646, MRDMODE) & MRDMODE_INTR_CH0;
+++}
+++
+++static uint8_t cfr(QTestState *qts)
+++{
+++    return cfg_read(qts, 1, DEVFN_CMD646, CFR) & CFR_INTR_CH0;
+++}
+++
+++/* The guest acknowledges the sabre's request; it comes back while the line is up */
+++static bool line_after_clear(QTestState *qts)
+++{
+++    qtest_writel(qts, OBIO_CLR_HDD, 0);
+++    return qtest_get_irq(qts, IVEC_HDD);
+++}
+++
+++static void test_status_latched(void)
+++{
+++    QTestState *qts = setup();
+++    uint8_t status;
+++
+++    set_features(qts);
+++    g_assert_true(qtest_get_irq(qts, IVEC_HDD));
+++    g_assert_cmphex(mrdmode(qts), ==, MRDMODE_INTR_CH0);
+++    g_assert_cmphex(cfr(qts), ==, CFR_INTR_CH0);
+++    g_assert_true(line_after_clear(qts));
+++
+++    /* Reading the status drops INTRQ: the line goes down, the bits stay */
+++    status = qtest_readb(qts, PCI_IO + IO_CMD0 + ATA_STATUS);
+++    g_assert_cmphex(status & (STATUS_BSY | STATUS_ERR), ==, 0);
+++    g_assert_false(line_after_clear(qts));
+++    g_assert_cmphex(mrdmode(qts), ==, MRDMODE_INTR_CH0);
+++    g_assert_cmphex(cfr(qts), ==, CFR_INTR_CH0);
+++
+++    /* Writing 1 clears them, in MRDMODE and in its CFR mirror */
+++    cfg_write(qts, 1, DEVFN_CMD646, MRDMODE, MRDMODE_INTR_CH0, 1);
+++    g_assert_cmphex(mrdmode(qts), ==, 0);
+++    g_assert_cmphex(cfr(qts), ==, 0);
+++    g_assert_false(line_after_clear(qts));
+++
+++    qtest_quit(qts);
+++}
+++
+++static void test_clear_keeps_line(void)
+++{
+++    QTestState *qts = setup();
+++
+++    /* Clearing the bits while INTRQ is up leaves the line up */
+++    set_features(qts);
+++    cfg_write(qts, 1, DEVFN_CMD646, MRDMODE, MRDMODE_INTR_CH0, 1);
+++    g_assert_cmphex(mrdmode(qts), ==, 0);
+++    g_assert_true(line_after_clear(qts));
+++
+++    /* until the guest reads the status */
+++    qtest_readb(qts, PCI_IO + IO_CMD0 + ATA_STATUS);
+++    g_assert_false(line_after_clear(qts));
+++
+++    /* The next command latches the bits again */
+++    set_features(qts);
+++    g_assert_cmphex(mrdmode(qts), ==, MRDMODE_INTR_CH0);
+++    g_assert_true(line_after_clear(qts));
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-cmd646/status-latched", test_status_latched);
+++    qtest_add_func("sun4u-cmd646/clear-keeps-line", test_clear_keeps_line);
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
@@ -3468,7 +3827,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index a6b8745..c535a3f 100755
+index a6b8745..3014654 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -3513,7 +3872,7 @@ index a6b8745..c535a3f 100755
  	    --disable-smartcard \
  	    --disable-strip \
  	    --disable-xen \
-@@ -126,6 +128,34 @@ install: build
+@@ -126,6 +128,40 @@ install: build
  	rm -f $(destdir)/usr/lib/kvm/qemu-bridge-helper
  	rm -f $(destdir)/usr/lib/kvm/virtfs-proxy-helper
  
@@ -3532,6 +3891,12 @@ index a6b8745..c535a3f 100755
 +	cp ../../../build/openbios/QEMU,cgthree.bin $(destdir)/usr/share/kvm/QEMU,cgthree.bin
 +endif
 +
++# openbios-sparc64 from the same build (Solaris 10 on sun4u), over QEMU's prebuilt image; the
++# Dockerfile builds it as an optional extra, so it may be absent and QEMU's image stays
++ifneq ("$(wildcard ../../../build/openbios/openbios-sparc64)", "")
++	cp ../../../build/openbios/openbios-sparc64 $(destdir)/usr/share/kvm/openbios-sparc64
++endif
++
 +# Add extra system-sparc bios images
 +ifneq ("$(wildcard ../../sparc/ss5.bin)", "")
 +	cp ../../sparc/ss5.bin $(destdir)/usr/share/kvm/
@@ -3548,7 +3913,7 @@ index a6b8745..c535a3f 100755
  	# CPU flags are static for QEMU version, allows avoiding more costly checks
  	./debian/parse-cpu-flags.pl $(destdir)/usr/bin/qemu-system-x86_64 max-x86_64-cpu > $(flagfile)
  	# NOTE: If the diff fails here after upgrading the QEMU submodule, check which new flags
-@@ -136,6 +166,8 @@ install: build
+@@ -136,6 +172,8 @@ install: build
  	# Supported machine versions are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -machine help | ./debian/parse-machines.pl > $(machine_file_x86_64)
  	$(destdir)/usr/bin/qemu-system-aarch64 -machine help | ./debian/parse-machines.pl > $(machine_file_aarch64)
@@ -3557,7 +3922,7 @@ index a6b8745..c535a3f 100755
  
  	# Supported CPU models are static for a given QEMU binary.
  	$(destdir)/usr/bin/qemu-system-x86_64 -cpu help | ./debian/parse-cpu-models.pl > $(cpu_models_file_x86_64)
-@@ -170,7 +202,7 @@ binary-arch: build install
+@@ -170,7 +208,7 @@ binary-arch: build install
  #	dh_installinfo
  	dh_installman
  	dh_link
