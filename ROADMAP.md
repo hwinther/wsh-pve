@@ -31,6 +31,7 @@ come after that, not before.
 | SS-5 as fast as SS-20 for Solaris (narrower TLB flush on the no-fault bit) | published | #262 |
 | Solaris 10 on `niagara` measured: reaches the installer, no disk or network; parked | merged | #259 |
 | Dial-up modem on a guest's serial port: cause of the PPP hang, recipe, container test | merged | #264 |
+| Retro net, stages 0 and 1: one gateway image (DHCP, DNS, redirects, egress filter, VintageHive for the 1999 web and instant messaging), hermetic test in CI, guide | in review | branch `feat/retro-net-gateway` |
 | Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
 | Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
@@ -99,7 +100,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
      services (instant messaging first; later a Battle.net-compatible server and a period IRC
      network). Stages, candidates and what was decided are in `RETRONET.md`. The dial-up part
-     exists (`docs/src/content/docs/guides/dialup.md`, `e2e/dialup`). No GUI for now.
+     exists (`docs/src/content/docs/guides/dialup.md`, `e2e/dialup`), and so does the gateway for
+     NIC guests (stages 0 and 1: `retronet/`, `docs/src/content/docs/guides/retronet.md`), tested in
+     containers only. Next: run it on a node (as a container from the OCI image, and under Docker
+     with macvlan) with a real retro guest, then stage 2, dial-up into the same network. No GUI for
+     now.
 
 ## Later
 
