@@ -24,28 +24,20 @@ come after that, not before.
 | OVMF tests; aarch64 OVMF VMs start again | published | #248, #249 |
 | Recordings: terminal casts and framebuffer videos per run; gallery in the docs, media in the `media` release | published | #250 |
 | sparc64 measured: guests, disk/NIC/console layout, Solaris under OpenBIOS, Sun OBP, idle and speed | merged | #255 |
+| Operations on a running sparc VM (CD change, NIC changes, pending changes, clone, move disk) | published | #252, #253 |
+| TCX against cg3: why TCX failed before, cg3 stays the default | merged | #254 |
+| sparc64 profile in qemu-server and the UI (IDE disks, boot letter, refusals); NetBSD boots through PVE unattended | published | #256, #257 |
+| Bench disk (Dhrystone, Whetstone, nbench, lmbench, Hanoi) with network measures; `benchdisk` matrix | running | #258, #261, #263 |
+| SS-5 as fast as SS-20 for Solaris (narrower TLB flush on the no-fault bit) | published | #262 |
+| Solaris 10 on `niagara` measured: reaches the installer, no disk or network; parked | merged | #259 |
+| Dial-up modem on a guest's serial port: cause of the PPP hang, recipe, container test | merged | #264 |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
 
 ## In progress
 
 Work that exists but is not merged. If this list is stale, check the open pull requests.
 
-1. **Operations on a running sparc VM.** Changing the CD ISO fails with `cannot check version of
-   invalid string '10'` (a machine type without a version, e.g. `SS-5+pve0`), and changing the VLAN
-   of the existing NIC fails with `Device 'net0' not found` (the on-board lance has another name in
-   QEMU). Fix the cause, audit every operation on a running VM, add tests. Workaround until then:
-   stop the VM, change, start.
-2. **Bench disk.** Dhrystone, Whetstone, nbench and lmbench built with gcc in a Solaris 2.6 guest,
-   on a small disk attached as a second disk; a `benchdisk` matrix across the sparc32 profiles.
-   This is the yardstick for items 1 and 2 under "Next".
-3. **sparc64 profile** in qemu-server and the UI, from the measurement (#255): disks and CD-ROM on
-   the built-in IDE, `-boot order=c|d` instead of `bootindex`, the CD first in a new VM's boot order,
-   no balloon device, one CPU, at most 3 GB and four NICs, refusals with clear messages. A VM made by
-   the wizard boots the NetBSD 11.1 CD to sysinst through PVE without typing at the OpenBIOS prompt
-   (the lab's `pve` matrix). Then answer issue #200.
-4. **TCX against cg3.** Whether TCX works per profile, firmware and guest, in 8 and 24 bit, whether
-   it is faster under X, and why it failed in the past. cg3 is the default today.
-5. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
+1. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
    extra. Five patches fix the virtual `available` list, the I-cache properties and the Forth
    state at client start. With them Solaris 10 1/13 boots its DVD to the installer's `Select a
    Language` prompt (it panicked before), and NetBSD, OpenBSD `bsd.rd` and the Debian installer
@@ -59,24 +51,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **SS-5 slowness: fixed, waiting for review.** Solaris user code was 4-10x slower on SS-5 than
-   on SS-20: with the microSPARC CPU, Solaris's window trap handlers set and clear the MMU no-fault
-   bit twice per trap, and QEMU flushed its whole software TLB on each change. pve-qemu patches
-   0017-0018 (branch `fix/ss5-tlb-flush`) flush only while the TLB holds an entry made for a fault
-   in no-fault mode; on the bench disk SS-5 now runs Hanoi, the `nawk` loop and lmbench's open/close
-   as fast as SS-20, and both machines gain in signal delivery, protection faults and `mmap`
-   (`submodules/SPARC.md`, "Why SS-5 was slower"). Existing SS-5 installs get the speed without
-   being moved, once a package with the patches is published. Upstream: bug-report material in
-   `upstream/qemu-srmmu-control-register-flush.md`.
-2. **SMP hang on SS-20.** With more than one CPU, Solaris 2.6 hangs with CPU 0 waiting in
+1. **SMP hang on SS-20.** With more than one CPU, Solaris 2.6 hangs with CPU 0 waiting in
    `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
    (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
    emulation bug. Idle in the multiprocessor loop comes after that.
-3. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
+2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
    Solaris 10 1/13 reaches its installer's first prompt. Next: console input on ttya, the cmd646
    interrupt, then disk, network and an install. QEMU's sun4u devices (CMD646 IDE, hme) are ones
    Solaris drives, so a kernel that boots has a disk and a network.
-4. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
+3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
    from source (`sun4v-qemu-kit`, 30 s in a container; BSD+ and GPL-2, so a CI build looks
@@ -86,12 +69,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    upstream. Disk and network exist only in the unix0.cc author's unpublished QEMU stack (PCIe
    for sun4v). Revisit when that is published or upstream; `scenarios/niagara-boot.py` checks it
    with user-supplied firmware.
-5. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
+4. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
    package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
    result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
-6. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
+5. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
    any VM on a node through `--pve`. A thin layer over `lab.py`.
-7. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+6. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
@@ -102,6 +85,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      die with the desktop; keep VNC beside it. 3dfx needs SDL and may stay the exception. The
      existing `vga: …,server=` path drops VNC, uses `-vga` instead of a device, and sets no
      `XAUTHORITY`. Prototype on the test node's GPU first.
+   - Retro net: one isolated network with a service container as its gateway, reached by NIC or
+     by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
+     services (instant messaging first; later a Battle.net-compatible server and a period IRC
+     network). Stages, candidates and what was decided are in `RETRONET.md`. The dial-up part
+     exists (`docs/src/content/docs/guides/dialup.md`, `e2e/dialup`). No GUI for now.
 
 ## Later
 
