@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 31bb1c45..7cee46c0 100644
+index 31bb1c45..70a84196 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,37 @@
+@@ -1,10 +1,43 @@
++qemu-server (9.2.15+wsh5) trixie; urgency=medium
++
++  * feat(sparc64): one tested profile in qemu-server and the UI (#256)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 16 Nov 2026 03:09:15 +0000
++
 +qemu-server (9.2.15+wsh4) trixie; urgency=medium
 +
 +  * fix(qemu-server): changes to running sparc VMs (CD medium, NIC,
