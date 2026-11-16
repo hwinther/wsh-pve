@@ -1,0 +1,43 @@
+name: sparc lab MCP server
+
+# The lab's MCP server (e2e/sparc/mcp_server.py) against a real guest: an Alpine x86_64 CD under
+# `lab.py serve`, driven over stdio by the MCP SDK's client (e2e/sparc/tests/test_mcp_server.py).
+# No Sun software and no media from the lab host: the test downloads its pinned Alpine ISO and checks
+# its sha256. Builds the lab image (the published pve-qemu-kvm) and the MCP layer on top of it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "e2e/sparc/**"
+      - ".github/workflows/sparc-lab-mcp.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the lab image and the MCP layer
+        run: |
+          docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+          docker build -f e2e/sparc/mcp.Dockerfile -t wsh-lab-mcp e2e/sparc
+
+      - name: Drive an Alpine guest through the MCP server
+        run: |
+          docker run --rm --entrypoint /opt/wsh-lab-mcp/bin/python wsh-lab-mcp -m unittest -v tests/test_mcp_server.py
