@@ -132,6 +132,38 @@ MATRICES = {
     ],
 }
 
+# sparc64 (sun4u, OpenBIOS, scenarios/_sparc64.py): disk and CD-ROM on the built-in IDE, sunhme, serial
+# console unless stated (submodules/SPARC.md, "sparc64"). The installed disk is in /mnt/sparc/disks on
+# the lab host: run with --disks /mnt/sparc/disks. The network cases need outside access (NET=user).
+NB111_64 = "netbsd111-sparc64-installed.raw"  # netbsd-install-sparc64.py with the defaults
+NB111_CD64, NB93_CD64 = "other-os/NetBSD-11.1-sparc64.iso", "other-os/NetBSD-9.3-sparc64.iso"
+OB80_CD64, DEB12_CD64 = "other-os/openbsd8.0/install80.iso", "other-os/debian-12.0.0-sparc64-NETINST-1.iso"
+NB_NET64 = {"NET": "user",
+            "COMMANDS": "dhcpcd -w -1 2>&1 | tail -1; ifconfig -a | grep 'inet ' ;; ftp -4 -o /tmp/r "
+                        "http://cdn.netbsd.org/pub/NetBSD/README >/dev/null 2>&1; test -s /tmp/r && echo FETCHED",
+            "CHECK": r"inet 10\.0\.2\.15 ;; FETCHED"}
+MATRICES["sparc64"] = [
+    ("nb111-cd-sparc64", "sparc64-boot-cd.py", None, NB111_CD64, {"GUEST": "netbsd"}),
+    ("nb93-cd-sparc64", "sparc64-boot-cd.py", None, NB93_CD64, {"GUEST": "netbsd"}),
+    ("ob80-cd-sparc64", "sparc64-boot-cd.py", None, OB80_CD64, {"GUEST": "openbsd"}),
+    ("deb12-cd-sparc64", "sparc64-boot-cd.py", None, DEB12_CD64, {"GUEST": "debian"}),
+    # -vga std with OpenBIOS's VGA driver; the keyboard is the i8042 PS/2 one (QMP send-key): on the
+    # framebuffer sysinst asks no terminal type, so pick German in its first menu and look for it
+    ("nb111-cd-vga-sparc64", "sparc64-boot-cd.py", None, NB111_CD64,
+     {"GUEST": "netbsd", "VGA": "std", "CONSOLE": "fb", "EXPECT": "Installation auf Deutsch", "TYPE": "b\r",
+      "TYPE_EXPECT": "Festplatte|installieren"}),
+    ("nb111-install-sparc64", "netbsd-install-sparc64.py", None, NB111_CD64, {}),
+    ("nb111-disk-sparc64", "sparc64-boot-disk.py", NB111_64, None, {"GUEST": "netbsd", "BOOTS": "2", **NB_NET64}),
+    # virtio-net-pci as the NIC and a virtio-blk disk (the CD as a read-only disk): NetBSD drives both;
+    # OpenBIOS doesn't boot from virtio-blk, so the system disk stays on IDE
+    ("nb111-virtio-sparc64", "sparc64-boot-disk.py", NB111_64, NB111_CD64,
+     {"GUEST": "netbsd", "NIC": "virtio-net-pci", "CD_BUS": "virtio-blk", **NB_NET64,
+      "COMMANDS": NB_NET64["COMMANDS"] + " ;; dd if=/dev/rld0c of=/dev/null bs=64k count=160 2>&1 | tail -1",
+      "CHECK": NB_NET64["CHECK"] + " ;; bytes transferred"}),
+    # NetBSD/sparc64 spins in its idle loop on sun4u (nothing lets it stop the CPU): above 80% of a core
+    ("nb111-idle-sparc64", "sparc64-idle.py", NB111_64, None, {"GUEST": "netbsd", "CPU_ABOVE": "80"}),
+]
+
 # Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer,
 # the frames of the framebuffer video (lab.py removes them once fb.webm is encoded). The recordings
 # (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and stay.
