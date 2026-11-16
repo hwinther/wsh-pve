@@ -17,7 +17,9 @@ stops in the kernel:
   `kmem_init` ← `kobj_open_file` ← `startup_memlist`
 - Solaris 8 1/01 Installation CD: `BOP_ALLOC failed`, the same call chain
 
-The result is the same with 256 MB to 2 GB of RAM. QEMU issues
+The result is the same with 256 MB to 2 GB of RAM. (With the node-name fix of
+`openbios-sparc64-node-names.md` also applied, Solaris 10 still panics at 1024 MB but not at
+2048 MB; why the amount of RAM matters then was not traced.) QEMU issues
 [#216](https://gitlab.com/qemu-project/qemu/-/issues/216) (Tribblix, `no nucleus hblk8 to
 allocate`) and [#293](https://gitlab.com/qemu-project/qemu/-/issues/293) (Solaris 8, `BOP_ALLOC
 failed`) report the same panics; neither records a cause.
