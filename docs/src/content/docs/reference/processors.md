@@ -16,13 +16,15 @@ The Processors panel controls the number of vCPUs and the emulated CPU model. Wh
 
 For sparc32 the CPU follows the [profile](/guides/sparc/#supported-sparc32-profiles): no `-cpu`
 argument (the machine's own CPU), except `-cpu TI-SuperSparc-50` for SS-20 with the Sun PROM. The CPU
-type, sockets and cores can't be set (one CPU). sparc64 gets no `-cpu` argument.
+type can't be set. Sockets and cores can be set on SS-10 and SS-20 with OpenBIOS, up to 4 CPUs in
+total ([More than one CPU](/guides/sparc/#more-than-one-cpu)); every other sparc32 profile has one.
+sparc64 has one CPU and gets no `-cpu` argument.
 
 ## SPARC limitations
 
 SPARC emulation is sensitive to the guest operating system:
 
-- sparc32 has a **single CPU** and at most **256 MB of RAM** on SS-5, **512 MB** on SS-10/SS-20.
+- sparc32 has **one CPU**, up to 4 on SS-10/SS-20 with OpenBIOS (each one a busy host core), and at most **256 MB of RAM** on SS-5, **512 MB** on SS-10/SS-20.
 - Installation can be slow and host CPU usage may sit near 100% for the emulated core — this is expected. Pinning the VM to a low-frequency core, or keeping these guests on a test host, avoids reducing performance for other guests.
 
 ## Further reading

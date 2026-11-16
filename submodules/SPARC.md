@@ -749,27 +749,53 @@ not small, so it isn't in 0019:
   changes the guest's scheduling latency and needs its own soak per release. Follow-up, not done
   here.
 
-**What the profiles would need** (qemu-server, pve-manager; not changed yet, they pin one CPU), once
-a `pve-qemu-kvm` with 0019 is published (an older package hangs with more than one CPU):
+**The profiles** (qemu-server, pve-manager; needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later, the
+first package with 0019):
 
-- `$SPARC32_PROFILES` (`PVE::QemuServer::Machine`) and its mirror `sparc32Profiles` (pve-manager's
-  `Architecture.js`): a most-CPUs value per machine and firmware. SS-10 and SS-20 with
-  `openbios-sparc32`: up to 4 (QEMU's limit for both machines). SS-20 with `ss20_v2.25_rom`: 1, the
-  Sun PROM starts only CPU 0 (`Cpu #1 Nothing there`) and every other vCPU would only burn a host
-  core. SS-5: 1 (QEMU allows one).
-- `assert_sparc32_profile`: sockets x cores up to that value instead of `only one CPU is supported`
-  (the message naming the limit per machine and firmware); `-smp` as qemu-server builds it for x86
-  (`N,sockets=..,cores=..,maxcpus=N`, which QEMU's sun4m takes); no `-accel tcg,thread=single`
-  (QEMU's default, one thread per vCPU, is what was measured; single-threaded TCG is far too slow
-  with more than one CPU, above). CPU hotplug stays refused. The cfg2cmd tests get an SS-20 OpenBIOS
-  case with 2 and 4 CPUs and refusals for 5 CPUs, for the Sun PROM with 2 and for SS-5 with 2.
-- pve-manager: sockets and cores enabled for SS-10/SS-20 with OpenBIOS, capped at the profile's
-  value; disabled again when the firmware or machine changes to one with a limit of 1.
-- The guide (`docs/.../guides/sparc.mdx`, "Processor / memory"): more than one CPU on SS-10/SS-20
-  with OpenBIOS for Solaris 2.5.1-9; each vCPU takes a host core at 100% even when the guest is
-  idle (no idle halt with more than one CPU); worth it only for parallel work (several processes);
-  the Sun SS-20 PROM sees one CPU.
-- Default stays one CPU.
+- `$SPARC32_PROFILES` (`PVE::QemuServer::Machine`) has a most-CPUs value per machine and firmware,
+  mirrored in pve-manager's `sparc32Profiles` (`Architecture.js`). SS-10 and SS-20 with
+  `openbios-sparc32`: 4 (`mc->max_cpus = 4` in QEMU's `hw/sparc/sun4m.c` for both). SS-20 with
+  `ss20_v2.25_rom`: 1 (below). SS-5: 1 (QEMU's default `max_cpus` of 1). The default stays one CPU.
+- `assert_sparc32_profile` accepts any sockets x cores up to that value: sun4m has no CPU topology,
+  QEMU creates that many CPUs and the guest sees each as a CPU module. More is refused with a
+  message naming the machine, firmware and limit (`sparc: SS-20 with firmware ss20_v2.25_rom takes
+  at most 1 CPU (sockets x cores), not 2 (the Sun PROM starts only the first CPU; openbios-sparc32
+  takes up to 4)`). `-smp` is built as for x86 (`N,sockets=S,cores=C,maxcpus=N`), which QEMU's sun4m
+  takes; never `-accel tcg,thread=single`. No CPU hotplug: `vcpus` other than sockets x cores is
+  refused, and so is `cpu` in `hotplug` with more than one CPU (with one, the command is the same
+  either way, so existing configs stay valid); a CPU count changed on a running VM stays pending.
+- qemu-server never passes `solaris-idle` or `sunos-idle`: they are on by QEMU's default and 0013/0015
+  turn them off by themselves with more than one CPU, so the command line names no idle option
+  that would do nothing.
+- pve-manager: sockets and cores enabled on the CPU tab and in Hardware → Processors only for SS-10
+  and SS-20 with OpenBIOS, capped at 4 in total (both fields refuse a product above it); reset to
+  one and disabled when the machine or firmware changes to one with a limit of 1. A hint says that
+  Solaris sees each vCPU as a CPU of its own, that each takes a host core even while the guest is
+  idle, and that one job runs slower than with one CPU. `vcpus` stays disabled.
+- The minimum `pve-qemu-kvm` is documented, not enforced. qemu-server's `debian/control` keeps
+  Proxmox's `pve-qemu-kvm (>= 11.0.3-3)`: this repository has never raised it for a feature that
+  needs a newer QEMU (the sparc profiles, cg3, idle and floppy all didn't), and a version relation
+  can't say "has wsh patch 0019" anyway (a later Proxmox `pve-qemu-kvm` such as 11.1.3-3 would
+  satisfy `>= 11.1.3-2+wsh10` without it). One CPU stays the default, so nobody gets more without
+  choosing it; a runtime probe of the QEMU binary was left out as the wrong tool in qemu-server.
+
+**Why the Sun PROM profile stays at one CPU.** The SS-20 PROM (OBP 2.25) doesn't learn the CPU
+count from QEMU: only OpenBIOS reads it from fw_cfg (`FW_CFG_MAX_CPUS`). According to the documented
+disassembly of OBP 2.25 in MiSTer-devel/SunSparcStation20_MiSTer (`docs/rom-disassembly/ss20-obp-2.25/`,
+GPL-2.0-or-later; that FPGA SS-20 runs Solaris 8 and NetBSD on two CPUs under the Sun PROM), the PROM
+expects every CPU module to run from reset, read its own MBus module ID from the MSI's MID register
+(physical `0xf_e000_2000`, IDs 8-11), report through per-CPU mailboxes in the NVRAM, and be stopped
+and started through the MSI arbiter-enable register (`0xf_e000_1008`). QEMU keeps the secondary CPUs
+halted until they are started the way OpenBIOS does it, so the PROM's probe of the other modules
+times out (`Cpu #1 Nothing there`, "SS-10 and SS-20"). This was read there, not verified on QEMU.
+Making it work would mean changing QEMU's sun4m: under a Sun PROM start all CPUs from reset, add the
+MID register and the arbiter's stop/start semantics. A possible later item, not a small one; no code
+from that repository is in this one.
+
+**512 MB on SS-10/SS-20, an unverified lead.** The same README says their OpenBIOS build splits the
+memory into several `/memory` entries because older ones list all memory in one entry and Solaris 8
+panics early. Solaris 2.6 panicking at boot with more than 512 MB under OpenBIOS ("SS-10 and SS-20")
+may be the same thing; not tried.
 
 ### Benchmarks
 
@@ -1530,15 +1556,15 @@ qemu-server.
 
 ## Supported profiles
 
-The contract for sparc32 (`arch: sparc`, always TCG, one CPU), from the measurements under "SS-10
-and SS-20". qemu-server holds it as `$SPARC32_PROFILES` in `PVE::QemuServer::Machine` and validates
+The contract for sparc32 (`arch: sparc`, always TCG), from the measurements under "SS-10 and
+SS-20" and "SMP". qemu-server holds it as `$SPARC32_PROFILES` in `PVE::QemuServer::Machine` and validates
 and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture.sparc32Profiles`.
 
 | Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs |
 | --- | --- | --- | --- | --- |
 | SS-5 (default) | `openbios-sparc32` (default), `ss5.bin` | none (machine default) | 256 MB | 1 |
-| SS-10 | `openbios-sparc32` | none | 512 MB | 1 |
-| SS-20 | `openbios-sparc32` | none | 512 MB | 1 |
+| SS-10 | `openbios-sparc32` | none | 512 MB | 1-4 |
+| SS-20 | `openbios-sparc32` | none | 512 MB | 1-4 |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
 
 - Display: `cg3` (default), `tcx`, `none`, `serial0`/`serial1` (ttya/ttyb). No resolution option
@@ -1547,8 +1573,9 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
-- CPUs: one everywhere for now. With pve-qemu patch 0019 Solaris runs 2-4 CPUs on SS-10/SS-20 with
-  OpenBIOS; what the profiles would need for that is under "SMP".
+- CPUs: sockets x cores, one by default. 2-4 only on SS-10/SS-20 with OpenBIOS and only with
+  `pve-qemu-kvm` 11.1.3-2+wsh10 or later (patch 0019; Solaris hangs without it); details, cost and
+  why the Sun PROM stays at one under "SMP".
 - sparc64 has one profile, `$SPARC64_PROFILE` in `PVE::QemuServer::Machine` (mirrored in
   `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 3072 MB, disks
   and CD-ROMs on the built-in IDE, `-boot order=c|d` instead of `bootindex`, no balloon, at most four
@@ -1567,7 +1594,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
   `SS-\d{1,2}` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
-  sockets × cores = 1, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
+  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
   vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
@@ -1624,7 +1651,10 @@ control) and with qemu-server's hotplug tests (`src/test/hotplug/sparc*.conf`):
   buses have no hotplug), adding or removing a disk, memory. qemu-server treats every hotplug
   feature as off for sparc (`hotplug` is ignored), so these are stored as pending without an error
   and applied on the next start.
-- **Refused:** CPU changes on sparc32 (`sparc: only one CPU is supported ...`, the profile check);
+- **Pending until the next start** as well: the CPU count (sockets, cores) where the profile allows
+  more than one; no CPU hotplug.
+- **Refused:** a CPU count above the profile's (`sparc: SS-5 with firmware openbios-sparc32 takes at
+  most 1 CPU ...`, the profile check);
   conversion to a template while running and migration to the same node (as for every VM).
 - Not tested: live migration (see below).
 - sparc32 has no balloon device: the start no longer warns that it can't set its polling interval.
@@ -1653,7 +1683,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   firmware display names that both the selectors and the renderers use.
 - sparc32 in the wizard and the Hardware editors: machine SS-5 (default), SS-10 or SS-20 (no
   versions), only the firmware the machine runs, memory preset to and capped at the machine's
-  maximum, sockets, cores and CPU type disabled (nothing is submitted), displays cg3 (default), tcx,
+  maximum, CPU type disabled, sockets and cores disabled (nothing is submitted) except on SS-10 and
+  SS-20 with OpenBIOS, where they go up to 4 CPUs in total with a hint on the cost, displays cg3 (default), tcx,
   serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
   target 6.
 - sparc64 in the wizard and the Hardware editors, from `sparc64Profile`: disks and CD-ROMs on IDE
@@ -1686,8 +1717,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   matrix (`scenarios/bench-disk.py` with the bench disk); results under "Benchmarks", the baseline
   for QEMU changes.
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
-  combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
-  backup/restore, and that the lab's machine arguments match `qm showcmd`).
+  combinations, 2 and 4 CPUs among them) and `src/test/hotplug/sparc32-cores-add.conf`, and
+  `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals, more than one CPU,
+  backup/restore, and that the lab's machine arguments match `qm showcmd`). A real boot with 2 CPUs
+  through PVE: the lab's `pve` matrix, case `solaris26-ss20-smp2`.
 - sparc64 profile: qemu-server's `src/test/cfg2cmd/sparc64-*.conf` (the wizard layout, serial
   console, an ejected CD, each refusal) and `e2e/tests/sparc64-profile.spec.ts` (API, `-boot`, QEMU
   accepts it, refusals, an old-wizard VM, the wizard and the Hardware editors).
