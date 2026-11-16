@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 31bb1c45..70a84196 100644
+index 31bb1c45..99c26336 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,43 @@
+@@ -1,10 +1,49 @@
++qemu-server (9.2.15+wsh6) trixie; urgency=medium
++
++  * feat(sparc32): up to 4 CPUs on SS-10 and SS-20 with OpenBIOS (#267)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 16 Nov 2026 17:40:44 +0000
++
 +qemu-server (9.2.15+wsh5) trixie; urgency=medium
 +
 +  * feat(sparc64): one tested profile in qemu-server and the UI (#256)
