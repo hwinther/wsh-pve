@@ -753,9 +753,9 @@ expects them, `%dcr`), not a small fix; each step would show the next missing pi
 Sun PROM route to Solaris on sun4u here (unlike `ss5.bin` for Solaris 2.4 on sparc32). The images
 were extracted only in the lab's scratch directory and deleted afterwards.
 
-**What qemu-server builds today** (`qm showcmd`, from qemu-server's `cfg2cmd` tests with this
-package's patch) for a VM from the create wizard (`arch: sparc64`, `scsi0` disk, `scsi2` CD-ROM,
-`net0: sunhme`, no `scsihw`, `vga` and `bios` unset):
+**What qemu-server built before the profile** (`qm showcmd`, qemu-server 9.2.15+wsh4) for a VM
+from the create wizard (`arch: sparc64`, `scsi0` disk, `scsi2` CD-ROM, `net0: sunhme`, no `scsihw`,
+`vga` and `bios` unset):
 
 ```
 -smp '1,sockets=1,cores=1,maxcpus=1' -nodefaults
@@ -769,28 +769,54 @@ package's patch) for a VM from the create wizard (`arch: sparc64`, `scsi0` disk,
 -machine 'accel=tcg,type=sun4u+pve0'
 ```
 
-QEMU starts it, but it boots nothing: OpenBIOS has no LSI driver and follows the `bootindex` list
+QEMU started it, but it booted nothing: OpenBIOS has no LSI driver and followed the `bootindex` list
 (`LAYOUT=pve` in the lab, NetBSD 11.1 CD: `No valid state has been set by load or init-program` at
-once). A disk on `ide0` and the CD-ROM on `ide2` already come out right (`ide-hd,bus=ide.0,unit=0`,
-`ide-cd,bus=ide.1,unit=0`, the sun4u bus names) but still with `bootindex`; the API and the wizard
-offer only SCSI for sparc64.
+once).
 
-**What qemu-server must change** for sparc64 (current → working):
+**What qemu-server builds now** (the sparc64 profile, `src/test/cfg2cmd/sparc64-wizard-default.conf`):
+the wizard's VM (`ide0` disk, `ide2` CD-ROM with the ISO, `net0: sunhme`, 512 MB) gets `boot:
+order=ide2;ide0;net0` from the API and
 
-| | Now | Working |
+```
+-smp '1,sockets=1,cores=1,maxcpus=1' -nodefaults
+-boot 'order=d,menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg'
+-vga std -m 512
+-device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,write-cache=on'
+-device 'ide-cd,bus=ide.1,unit=0,drive=drive-ide2,id=ide2,physical_block_size=512'
+-device 'sunhme,mac=...,netdev=net0,id=net0,bus=pciB'
+-machine 'accel=tcg,type=sun4u+pve0'
+```
+
+Through PVE (the lab's `pve` matrix, case `netbsd-sparc64`: that VM with a blank 1 GB disk, the
+NetBSD 11.1 CD and `vga: serial0`), OpenBIOS prints `Trying cdrom:f...`, boots the CD by itself and
+NetBSD reaches sysinst and its shell in 57 s; nothing is typed at the OpenBIOS prompt.
+
+Done for sparc64 (was → now), in `submodules/qemu-server.patch` and mirrored in
+`submodules/pve-manager.patch`:
+
+| | Was | Now |
 | --- | --- | --- |
-| Disk bus | `lsi` on `pciB` + `scsi-hd` (wizard: SCSI only) | built-in IDE: `ide0` → `ide-hd,bus=ide.0,unit=0` (`ide1`: `ide.0` unit 1); allow `ide` for sparc64 in the API and the wizard, default the first disk to `ide0` |
-| CD-ROM | `scsi-cd` on the LSI, `scsi2` | `ide2` → `ide-cd,bus=ide.1,unit=0` (OpenBIOS's `cdrom` alias); `physical_block_size=512` is harmless |
-| Boot order | `bootindex=` on every device, `-boot menu=on,strict=on,...` | no `bootindex` on sparc64; the first device of `boot: order=` as the boot letter: `-boot order=c` (disk) or `order=d` (CD-ROM), e.g. `-boot 'order=d,menu=on,strict=on,reboot-timeout=1000,splash=...'` (QEMU accepts that, a missing splash file only warns; the boots here used plain `-boot c`/`-boot d`) |
-| Display none | `vga: none` → `-vga none -nographic`, no `smm=off` since qemu-server 9.2.15+wsh3 (before that QEMU refused: `Property 'sun4u-machine.smm' not found`) | works as is |
-| Serial console (`vga: serial0`) | `-nographic`, `-chardev ...serial0`, `-device isa-serial,chardev=serial0` | works as is: with `-nodefaults` sun4u creates no serial port of its own, so the `isa-serial` is the ebus's first 16550 at `0x3f8` (OpenBIOS's ttya, NetBSD `com0`); OpenBIOS and the NetBSD CD to sysinst on it, tested |
-| NIC | `sunhme` on `pciB` | works; `virtio`, `e1000`, `rtl8139`, `ne2k_pci` work too (NetBSD); `pcnet` has no NetBSD driver |
-| virtio-blk / virtio-scsi | `virtio-blk-pci` with no bus | virtio-blk works as a data disk for NetBSD but OpenBIOS can't boot it; virtio-scsi doesn't work. Don't offer them as the boot disk |
-| PCI slots | NIC and every SCSI/virtio controller on `pciB` | `pciB` holds four devices; a fifth stops QEMU (`no slot/function available`): limit NICs + controllers there to four |
-| CPUs | `-smp 1,...` from sockets × cores | refuse more than one (QEMU does: `Invalid SMP CPUs`) |
-| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS) |
-| virtio-balloon | `virtio-balloon-pci` on the default bus | harmless (`Cannot manage 'undefined' PCI device type`); drop or keep |
-| Firmware | no `-bios` unless `bios` is set | fine: QEMU's default is `openbios-sparc64` |
+| Disk bus | `lsi` on `pciB` + `scsi-hd` (wizard: SCSI only) | the built-in IDE, `ide0`-`ide3` (`ide0` → `ide-hd,bus=ide.0,unit=0`, `ide1`: `ide.0` unit 1); the wizard's first disk is `ide0`, the Hardware editors offer only IDE |
+| CD-ROM | `scsi-cd` on the LSI, `scsi2` | `ide2` → `ide-cd,bus=ide.1,unit=0` (OpenBIOS's `cdrom` alias), `physical_block_size=512` |
+| SCSI, virtio-blk, SATA | offered | refused (`sparc64: scsi0 can't be used, disks and CD-ROMs go on the built-in IDE (ide0 to ide3)`); virtio-blk works as a NetBSD data disk but OpenBIOS can't boot it, so it is left out rather than special-cased |
+| Boot order | `bootindex=` on every device, `-boot menu=on,strict=on,...` | no `bootindex` on sparc64; `-boot 'order=d,menu=on,strict=on,...'` (or `order=c`) from the first drive of `boot: order=` that holds something: a CD-ROM with a medium `d`, a disk `c`; empty CD-ROMs, cloud-init drives and NICs are skipped; none: no `order=` (QEMU's default, the disk). A new sparc64 VM gets its CD-ROM first in the default boot order (OpenBIOS boots one device and doesn't fall back to the next), so it boots the install CD, and the disk once the CD is ejected. Network boot isn't offered (not tested) |
+| Display none | `vga: none` → `-vga none -nographic` | as was |
+| Serial console (`vga: serial0`) | `-nographic`, `-chardev ...serial0`, `-serial chardev:serial0` (since qemu-server 9.2.15+wsh3; before, an `isa-serial` that OpenBIOS never used) | as was: the ebus's first 16550 (OpenBIOS's ttya, NetBSD `com0`); OpenBIOS and the NetBSD CD to sysinst on it, tested through PVE |
+| Displays | any | `std` (default), `serial0`, `none`; others refused |
+| NIC | `sunhme` on `pciB`, any model | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; `pcnet` refused (no NetBSD driver) |
+| PCI slots | NIC and every SCSI/virtio controller on `pciB`; a fifth device stopped QEMU (`no slot/function available`) | only NICs go there (the controllers are refused): at most four, refused with `sparc64: at most 4 network devices fit on PCI bus B, not 5 (...)` |
+| CPUs | `-smp 1,...` from sockets × cores; QEMU refused more | sockets × cores > 1 refused; the `cpu` option refused (it was never passed) |
+| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS); the wizard presets 512 MB |
+| Machine | `sun4[a-z]` | `sun4u` only (`sun4v` refused; `niagara` never matched the machine format) |
+| Firmware | no `-bios` unless `bios` is set | `bios` unset or `openbios-sparc64` |
+| virtio-balloon | `virtio-balloon-pci` without a bus: it took one of pciB's four slots (with four NICs QEMU refused the fourth, `PCI: no slot/function available for rtl8139`), and OpenBIOS can't manage it (`Cannot manage 'undefined' PCI device type`) | none, and no balloon polling at start: four NICs fit |
+| Hotplug, arch | off for sparc; arch on create only | as was |
+
+The checks (`assert_sparc64_profile` in `PVE::QemuServer::Machine`, from `$SPARC64_PROFILE`) run where
+the sparc32 ones do: on create, on every config update against the config as it will be, and in
+`config_to_command` (start, `qm showcmd`, vzdump). An existing config outside the profile (a VM from
+the old wizard) stays readable and is refused when it is started or changed; a change that makes it
+valid is accepted.
 
 **Recommended profile** for sparc64 in Proxmox (one profile; the sparc32 table's counterpart):
 
@@ -798,7 +824,8 @@ offer only SCSI for sparc64.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
 
-- Boot from the first entry of `boot: order=` as `-boot order=c|d`, no `bootindex`.
+- Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
+  `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
 - Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
   doesn't start), not Debian 12.0 ports (install fails), not Solaris (doesn't boot), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
@@ -824,9 +851,11 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
-- sparc64 (`sun4u`, `openbios-sparc64`) has no profiles yet: nothing is checked, and the layout
-  qemu-server builds doesn't boot. The measured profile and the changes it needs are under "sparc64
-  (sun4u)".
+- sparc64 has one profile, `$SPARC64_PROFILE` in `PVE::QemuServer::Machine` (mirrored in
+  `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 3072 MB, disks
+  and CD-ROMs on the built-in IDE, `-boot order=c|d` instead of `bootindex`, no balloon, at most four
+  NICs (`sunhme`, `virtio`, `e1000`, `rtl8139`, `ne2k_pci`), displays `std`, `serial0`, `none`. Details
+  under "sparc64 (sun4u)".
 
 ## qemu-server
 
@@ -843,7 +872,8 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   sockets × cores = 1, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
-  vzdump). Reading a config (`GET .../config`, the VM list, `qm config`) never checks it: a config
+  vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
+  `cpu`, the display, serial0/serial1, no guest agent, IDE only, the NIC models and at most four NICs). Reading a config (`GET .../config`, the VM list, `qm config`) never checks it: a config
   outside the profiles stays readable and is refused only when it is started or changed, with a
   message naming the allowed values; a change that makes it valid is accepted.
 - **Firmware:** `bios` accepts `openbios-sparc32`, `openbios-sparc64`, `ss5.bin`,
@@ -853,7 +883,10 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Display:** `vga` accepts `tcx` and `cg3`, passed as `-vga <type>`; sparc32 defaults to `cg3`
   (QEMU's sun4m has no `std`).
 - **Disks:** sparc32 drives are `scsi-hd`/`scsi-cd` on the built-in ESP
-  (`channel=0,scsi-id=<unit>,lun=0`); sparc64 puts the SCSI controller on `pciB`. CD-ROMs get
+  (`channel=0,scsi-id=<unit>,lun=0`); sparc64 drives are `ide-hd`/`ide-cd` on the built-in IDE
+  (`bus=ide.<n>,unit=<n>`).
+- **Boot:** sparc64 devices get no `bootindex`; the boot device is `-boot order=c|d` from the boot
+  order (`sparc64_boot_device`), and the default boot order of a new sparc64 VM has the CD-ROM first. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
   x86 (the machine version follows the QEMU version), which the backup job finds.
 - **Network:** sparc32 uses the built-in lance (`-net nic,model=lance,macaddr=<net0's MAC>,netdev=net0`
@@ -875,7 +908,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **`-bios`** only on sparc: it was also passed for `bios: ovmf`, which an aarch64 VM refuses next to
   its pflash.
 - **Left out on sparc:** `-smbios`, PCI passthrough (ignored with a message), USB and the tablet,
-  vmgenid; sparc32 also gets no virtio-balloon.
+  vmgenid, virtio-balloon.
 - **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
   when there is one.
 
@@ -925,6 +958,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   maximum, sockets, cores and CPU type disabled (nothing is submitted), displays cg3 (default), tcx,
   serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
   target 6.
+- sparc64 in the wizard and the Hardware editors, from `sparc64Profile`: disks and CD-ROMs on IDE
+  only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 3072, sockets, cores
+  and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
+  the default), Add → Network Device disabled at four NICs.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).
 - Selectors: firmware (OpenBIOS, SPARCstation 5/20 PROM), display (TCX, CG3), network (Lance, Sun
   Happy Meal).
@@ -947,13 +984,17 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
   combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
   backup/restore, and that the lab's machine arguments match `qm showcmd`).
+- sparc64 profile: qemu-server's `src/test/cfg2cmd/sparc64-*.conf` (the wizard layout, serial
+  console, an ejected CD, each refusal) and `e2e/tests/sparc64-profile.spec.ts` (API, `-boot`, QEMU
+  accepts it, refusals, an old-wizard VM, the wizard and the Hardware editors).
 - Running VMs: `e2e/tests/running-vm.spec.ts` (CD medium, net0 changes, pending changes and other
   operations on a started VM per profile, sun4u and an x86 control) and qemu-server's
   `src/test/hotplug/sparc*.conf` and `src/test/run_machine_version_tests.pl`.
 - What PVE starts: the lab's attach mode and `pve_matrix.py` (`e2e/sparc/README.md`, "Attach to a PVE
   VM"; the `pve` choice of the `sparc lab` workflow) create VMs through the API in the e2e container
   and drive the QEMU that PVE started: the Solaris 2.6 install and first boot on the default SS-5
-  profile, NetBSD 11.1 sparc64 to its shell, Alpine aarch64 and x86_64 to a login.
+  profile, NetBSD 11.1 sparc64 to its shell (laid out as the wizard creates it, OpenBIOS booting the
+  CD by itself), Alpine aarch64 and x86_64 to a login.
 
 ## Known gaps
 
