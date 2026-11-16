@@ -24,7 +24,8 @@ Metrics: every BENCH value under its name (units in bench.txt, run.sh's output; 
 here), boot_s (QEMU start to the login prompt), run_s (host seconds of run.sh), run_cpu_pct (QEMU's
 host CPU use meanwhile, % of one core), cpus, mem_mb, load1_start/load1_end (host load average). Fails
 on a BENCH-ERROR line, on no BENCH lines, or when DISK2 doesn't exist; BENCH-SKIP lines (left out on
-that release, or no NIC peer) only show in bench.txt.
+that release, or no NIC peer) only show in bench.txt. One exception: lm_prot_fault without a value is
+not an error (lmbench prints nothing when its result rounds to 0).
 """
 import os
 import re
@@ -72,7 +73,12 @@ def nic_bw_out(m, v):
         m.hmp(f"hostfwd_add tcp:{target}:{BW_PORT}-{GUEST}:{BW_PORT}")
     try:
         run_timed(m, "/bench/bin/bw_tcp -s")
-        out = peer(v, "bw_tcp", target)
+        # the guest's server may not be listening yet on a busy host: the client is refused, try again
+        for _ in range(4):
+            out = peer(v, "bw_tcp", target)
+            if "refused" not in out:
+                break
+            time.sleep(5)
         run_timed(m, "/bench/bin/bw_tcp -S localhost", 120)
     finally:
         if v["NET"] == "user":
@@ -140,6 +146,12 @@ def run(m, v):
     m.metrics["load1_end"] = load1()
     m.log(f"metrics: {m.metrics}")
     errors = re.findall(r"^BENCH-ERROR .*", body, re.M)
+    # lat_sig prot prints nothing when (fault + catch) - catch rounds to 0 us, which a fast signal
+    # path makes common: a missing value, not a failed run
+    unmeasured = [e for e in errors if re.fullmatch(r"BENCH-ERROR lm_prot_fault\s*", e)]
+    if unmeasured:
+        m.log("lm_prot_fault: no value (the difference of two timings rounded to 0)")
+        errors = [e for e in errors if e not in unmeasured]
     if errors or not results or "BENCH-END" not in body:
         raise AssertionError("run.sh: " + ("; ".join(errors) if errors else f"no results:\n{body[-2000:]}"))
     run_timed(m, "cd /; umount /bench")
