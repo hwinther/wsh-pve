@@ -44,15 +44,19 @@ come after that, not before.
 Work that exists but is not merged. If this list is stale, check the open pull requests.
 
 1. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
-   extra. Five patches fix the virtual `available` list, the I-cache properties and the Forth
-   state at client start. With them Solaris 10 1/13 boots its DVD to the installer's `Select a
-   Language` prompt (it panicked before), and NetBSD, OpenBSD `bsd.rd` and the Debian installer
-   boot as before. Still to do:
-   - install it in the package (`debian/rules` hook in `pve-qemu.patch`);
-   - console input to Solaris on ttya (characters never reach the UART's receive buffer; QEMU side);
-   - the cmd646 `Interrupt not seen` warning (paulsheer/qemu has a fix);
-   - Solaris 7/8/9 `pp is NULL or free`;
-   - 2.5.1/2.6 boot-block exceptions.
+   extra. Patches 0003-0007 fix the virtual `available` list, the I-cache properties and the Forth
+   state at client start. 0009 names the sabre and the ebus devices like OBP, which gives Solaris
+   its serial console. With them Solaris 10 1/13 boots its DVD to the installer and takes input on
+   ttya. NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as before. With a standalone QEMU
+   patch for the cmd646 interrupt status latch and an experimental OBP-style IDE tree, the
+   interactive installer completes an install to the IDE disk (1 of 3 attempts; one intermittent
+   `bad unknown trap at TL 1` panic). Still to do:
+   - install it in the package (`debian/rules` hook in `pve-qemu.patch`), and add the cmd646 QEMU
+     patch there;
+   - the IDE tree as OBP has it (`ide@3/disk@0,0`, `cdrom@2,0`) without breaking NetBSD's CD boot;
+     `compatible` on the drive nodes so the installed disk mounts root;
+   - the client-interface `boot` service (reboot), the intermittent install panic, `hme0` traffic;
+   - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 2. **MCP server around the lab** (`e2e/sparc/mcp_server.py`, branch `feat/lab-mcp-server`). An
    assistant sees and drives an allowed VM (PVE by VMID or tag, or a `lab.py serve` QEMU): screenshot,
@@ -75,8 +79,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    host core even when Solaris is idle; a bounded halt in the multiprocessor idle loop is the
    follow-up (`submodules/SPARC.md`, "SMP").
 2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
-   Solaris 10 1/13 reaches its installer's first prompt. Next: console input on ttya, the cmd646
-   interrupt, then disk, network and an install. QEMU's sun4u devices (CMD646 IDE, hme) are ones
+   Solaris 10 1/13 reaches its installer and takes input on ttya. Next: the IDE tree and the cmd646
+   interrupt in the package, then a reproducible install and a booting disk. QEMU's sun4u devices (CMD646 IDE, hme) are ones
    Solaris drives, so a kernel that boots has a disk and a network.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
