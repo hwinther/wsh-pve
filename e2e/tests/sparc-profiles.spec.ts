@@ -2,8 +2,6 @@ import { expect, type Page, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
 import {
-  hasSparc32Smp,
-  hasSparc32SmpUi,
   NODE,
   PASSWORD,
   type Pve,
@@ -97,13 +95,8 @@ const ISO_NAME = 'e2e-sparc.iso'
 const ISO = `local:iso/${ISO_NAME}`
 
 let pve: Pve
-/** the installed qemu-server and pve-manager have the CPU limits per profile ("more than one CPU") */
-let smp: boolean
-let ui: boolean
 
 test.beforeAll(async () => {
-  smp = await hasSparc32Smp()
-  ui = await hasSparc32SmpUi()
   // An empty "install CD" for target 6.
   const { code, output } = await pveExec([
     'sh',
@@ -482,8 +475,6 @@ test.describe('backup and restore', () => {
 
 // More than one CPU (submodules/SPARC.md, "SMP"): SS-10 and SS-20 with OpenBIOS take up to 4, the
 // SS-20 PROM and SS-5 one. Needs qemu-server and pve-manager with the CPU limits per profile.
-// TODO: drop the test.fail(!smp) and test.fail(!(ui && smp)) markers in this block, and the probes
-// hasSparc32Smp/hasSparc32SmpUi in _pve.ts, once both packages with the limits are published.
 test.describe('more than one CPU', () => {
   const SS10_OPENBIOS = PROFILES.find((p) => p.name === 'ss10-openbios') as Profile
   const SS20_OPENBIOS = PROFILES.find((p) => p.name === 'ss20-openbios') as Profile
@@ -495,7 +486,6 @@ test.describe('more than one CPU', () => {
   ]
   for (const c of accepted) {
     test(`${c.name}: qm showcmd, and QEMU accepts it`, async () => {
-      test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
       const vmid = await createVm(profileParams(c.profile, { cores: c.cores, sockets: c.sockets }))
       const n = c.sockets * c.cores
 
@@ -553,7 +543,6 @@ test.describe('more than one CPU', () => {
   ]
   for (const c of refused) {
     test(`create refused: ${c.name}`, async () => {
-      test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
       const vmid = Number(await pve.get<string>('/cluster/nextid'))
       const r = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
       expect(r.message).toContain(c.message)
@@ -563,7 +552,6 @@ test.describe('more than one CPU', () => {
   }
 
   test('update: the CPU count follows the machine and firmware', async () => {
-    test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
     const ss5 = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-ss5-cpus' })
     expect((await pve.refused('PUT', `/nodes/${NODE}/qemu/${ss5}/config`, { cores: 2 })).message).toContain(
       'sparc: SS-5 with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2',
@@ -583,7 +571,6 @@ test.describe('more than one CPU', () => {
   })
 
   test('a running VM: a CPU count change stays pending until the next start', async () => {
-    test.fail(!smp, 'qemu-server without the sparc32 CPU limits')
     const vmid = await createVm(profileParams(SS20_OPENBIOS, { scsi6: 'none,media=cdrom' }))
     const cpus = async () => pve.post<string>(`/nodes/${NODE}/qemu/${vmid}/monitor`, { command: 'info cpus' })
     await qm(['start', String(vmid)])
@@ -603,7 +590,6 @@ test.describe('more than one CPU', () => {
     })
 
     test('create wizard: sockets and cores per machine and firmware, capped', async ({ page }) => {
-      test.fail(!(ui && smp), 'pve-manager/qemu-server without the sparc32 CPU limits')
       const vmid = Number(await pve.get<string>('/cluster/nextid'))
       const wizard = await openWizard(page, 'sparc-ui-smp')
       const sockets = wizard.getByLabel(fieldLabel('Sockets'))
@@ -668,7 +654,6 @@ test.describe('more than one CPU', () => {
     })
 
     test('Hardware: Processors enabled and capped only where the profile takes more than one', async ({ page }) => {
-      test.fail(!(ui && smp), 'pve-manager/qemu-server without the sparc32 CPU limits')
       const ss20 = await createVm(profileParams(SS20_OPENBIOS))
       const prom = await createVm(profileParams(SS20_PROM))
       const editor = page.locator('.x-window').filter({ hasText: 'Edit: Processors' })
@@ -795,8 +780,7 @@ test.describe('web UI', () => {
       await next(wizard)
 
       // CPU: nothing to choose where the profile takes one CPU ("more than one CPU" has the rest).
-      // TODO: `p.maxCpus === 1` alone once pve-manager with the CPU limits is published.
-      const oneCpu = p.maxCpus === 1 || !ui
+      const oneCpu = p.maxCpus === 1
       await expect(wizard.getByLabel(fieldLabel('Sockets'))).toBeEnabled({ enabled: !oneCpu })
       await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeEnabled({ enabled: !oneCpu })
       await next(wizard)
