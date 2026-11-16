@@ -13,7 +13,8 @@ boot's questions count towards the boot time. Only meaningful with nothing else 
   JOB       a CPU-bound command (only tools of the End User install)          (a nawk loop)
   PARALLEL  copies of JOB run at once for the throughput time                (SMP)
   DISK_MB   MB written to a file in /export/home (then sync) and read from its raw slice (64; with
-            more than one CPU, Solaris 2.6 hangs writing 256 MB, see submodules/SPARC.md)
+            more than one CPU, Solaris 2.6 hung writing 256 MB before pve-qemu patch 0019, see
+            submodules/SPARC.md)
   BOOT_TIMEOUT seconds from QEMU start to the login prompt                   (600)
   CPUS      fail unless psrinfo lists this many CPUs on-line                 (SMP)
   SOAK      seconds of PARALLEL copies of JOB and dd in a loop afterwards; the guest must still

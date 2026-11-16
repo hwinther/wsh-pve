@@ -48,8 +48,8 @@ MATRICES = {
     ],
     # SS-10/SS-20: the install CDs, and the disks installed on these machines (an SS-5 disk doesn't
     # boot there: Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and halts). 512 MB is the
-    # most Solaris 2.6 boots with. The CD reaches the installer with 2 and 4 CPUs, but an installed
-    # 2.6 with more than one CPU hangs (submodules/SPARC.md, "SS-10 and SS-20"), so no SMP disk case.
+    # most Solaris 2.6 boots with. The CD reaches the installer with 2 and 4 CPUs; the installed 2.6
+    # with more than one CPU is in the smp matrix (it needs pve-qemu patch 0019).
     # The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops in its idle loop after "Configuring
     # devices..." (about 1 boot in 6, OpenBIOS and Sun PROM alike).
     "machines": [
@@ -86,6 +86,19 @@ MATRICES = {
         ("benchdisk-sol26-openbios-ss20", "bench-disk.py", SOL26SS20, None, {**BENCH, "MACHINE": "SS-20"}),
         ("benchdisk-sol26-ss20prom-ss20", "bench-disk.py", SOL26SS20PROM, None, {**BENCH, **SS20PROM}),
         ("benchdisk-sol251-ss5bin-ss5", "bench-disk.py", SOL251, None, {**BENCH, "BIOS": "ss5.bin"}),
+    ],
+    # smp-soak.py: Solaris 2.6 with 2 and 4 CPUs (OpenBIOS, the only firmware that starts the other
+    # CPUs) under load for SOAK seconds, every CPU on-line and busy, plus the speed-up of a parallel
+    # job. Needs a package with pve-qemu patch 0019: before it, 2.6 hung within minutes with more
+    # than one CPU (submodules/SPARC.md, "SMP"). Not single-threaded TCG: there every cross-call
+    # waits for the other vCPU's time slice and the boot alone takes most of an hour.
+    "smp": [
+        ("smp-sol26-openbios-ss20-2cpu", "smp-soak.py", SOL26SS20, None,
+         {**BENCH, "MACHINE": "SS-20", "SMP": "2", "SOAK": "600"}),
+        ("smp-sol26-openbios-ss20-4cpu", "smp-soak.py", SOL26SS20, None,
+         {**BENCH, "MACHINE": "SS-20", "SMP": "4", "SOAK": "600"}),
+        ("smp-sol26-openbios-ss10-2cpu", "smp-soak.py", SOL26SS10, None,
+         {**BENCH, "MACHINE": "SS-10", "SMP": "2", "SOAK": "600"}),
     ],
     # cg3 sizes (needs a package with the cg3 patches): OpenBIOS banner and the 2.6 disk to its login
     # prompt with the console on the framebuffer, each screenshot checked for the size; the Sun PROM
