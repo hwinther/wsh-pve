@@ -1,0 +1,132 @@
+# Roadmap
+
+Where the work stands and what comes next, in order. Written 2026-11-16. The details behind each
+item are in `submodules/SPARC.md` (what was measured and why), `e2e/README.md` and
+`e2e/sparc/README.md` (how it is tested), and the pull requests named here.
+
+The aim: guests of other architectures and retro x86 guests that run stably under Proxmox VE, in a
+small set of tested configurations, with tests that catch regressions. More platforms in the UI
+come after that, not before.
+
+## Done
+
+| Area | State | PRs |
+| --- | --- | --- |
+| Floppy drives (storage type, qemu-server, UI) | published | #183, #231 |
+| sparc lab in CI: guests booted and installed on a self-hosted runner, weekly and on demand | running | #230 |
+| cg3 at any size (from LEMU), FCode ROM built in `openbios/` | published | #232, #236 |
+| Idle: SunOS 4.1.4 (from LEMU), Solaris 2.6 via `pmc` (16-byte APC), Solaris 2.5.1–9 on any sun4m machine | published | #233, #241 |
+| SS-10/SS-20, SMP and RAM measured; benchmark scenario | merged | #235 |
+| sparc32 profiles in qemu-server and the UI; backup and restore; arch set on create only | published | #239, #240 |
+| Optional extras of pve-qemu-kvm: check, issue on a missing one, tests | running | #242 |
+| 3dfx binary back (missing from 11.1.1-1+wsh1 to 11.1.3-2+wsh6), port to QEMU 11.1, refresh script | published | #245, #247 |
+| Lab drives VMs that PVE started (`--pve`); sparc64 and aarch64 boot through PVE; `pve` matrix | running | #248, #249 |
+| OVMF tests; aarch64 OVMF VMs start again | published | #248, #249 |
+| Recordings: terminal casts and framebuffer videos per run; gallery in the docs, media in the `media` release | published | #250 |
+| Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
+
+## In progress
+
+Work that exists but is not merged. If this list is stale, check the open pull requests.
+
+1. **Operations on a running sparc VM.** Changing the CD ISO fails with `cannot check version of
+   invalid string '10'` (a machine type without a version, e.g. `SS-5+pve0`), and changing the VLAN
+   of the existing NIC fails with `Device 'net0' not found` (the on-board lance has another name in
+   QEMU). Fix the cause, audit every operation on a running VM, add tests. Workaround until then:
+   stop the VM, change, start.
+2. **Bench disk.** Dhrystone, Whetstone, nbench and lmbench built with gcc in a Solaris 2.6 guest,
+   on a small disk attached as a second disk; a `benchdisk` matrix across the sparc32 profiles.
+   This is the yardstick for items 1 and 2 under "Next".
+3. **sparc64: what can be supported.** NetBSD 11.1 and OpenBSD 8.0 are installed on `sun4u`;
+   Debian 12, the disk/NIC/console layout, Solaris CDs under OpenBIOS, idle and speed are being
+   measured. Also a first attempt to run the Sun Ultra 5/10 OBP (patch 106121-18) on `sun4u`.
+4. **TCX against cg3.** Whether TCX works per profile, firmware and guest, in 8 and 24 bit, whether
+   it is faster under X, and why it failed in the past. cg3 is the default today.
+
+## Next, in this order
+
+1. **SS-5 slowness.** Solaris user code is about 9x slower on SS-5 than on SS-20: with the
+   microSPARC CPU, Solaris's window trap handlers write the MMU control register twice per trap,
+   and QEMU flushes its whole software TLB on each write (`target/sparc/ldst_helper.c`). Make the
+   flush no wider than it must be. If that works, existing SS-5 installs get the speed without
+   being moved.
+2. **SMP hang on SS-20.** With more than one CPU, Solaris 2.6 hangs with CPU 0 waiting in
+   `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
+   (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
+   emulation bug. Idle in the multiprocessor loop comes after that.
+3. **sparc64 profile** in qemu-server and the UI, from the measurement: disk on IDE (OpenBIOS cannot
+   boot from the `lsi` controller the wizard proposes), boot order that OpenBIOS follows, no
+   balloon device. Then answer issue #200.
+4. **Solaris 10/11 on `niagara`.** Reproduce the work described at unix0.cc: Solaris 10 u11's text
+   installer starts on `-M niagara` with rebuilt OpenSPARC T1 firmware and a small TTE page-size
+   fix. Check the firmware licences, carry the patch if it holds, find out how far a writable disk
+   is. No disk and no network today, so this is a demonstration until that changes.
+5. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
+   package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
+   result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
+6. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
+   any VM on a node through `--pve`. A thin layer over `lab.py`.
+7. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+   memory among them). Then, like sparc: measure, profiles, tests.
+   - Audio: which devices work in which guests, and where the sound goes on a headless node
+     (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
+   - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
+     older Linux.
+   - Streaming: QEMU on a virtual desktop in a container with Sunshine or Wolf, for 2D/3D video
+     and audio in one connection (Moonlight). Prefer `-display dbus` over SDL/GTK so the VM does not
+     die with the desktop; keep VNC beside it. 3dfx needs SDL and may stay the exception. The
+     existing `vga: …,server=` path drops VNC, uses `-vga` instead of a device, and sets no
+     `XAUTHORITY`. Prototype on the test node's GPU first.
+
+## Later
+
+- **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
+  upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
+  needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
+  QEMU today.
+- **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
+  stored disk when it passes, so every disk the lab boots can be rebuilt. Today only Solaris 2.6 on
+  SS-5 is reinstalled (the `pve` matrix); the SunOS 4.1.4 install is manual.
+- **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
+  takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
+  three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
+- **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
+
+## Known and not fixed
+
+| What | Notes |
+| --- | --- |
+| The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
+| The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB |
+| `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
+| X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
+| A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
+| Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
+| A CD that answers as a disk (Solaris 2.4/2.5.1 installers) has no option | Workaround: copy the ISO to a raw volume on `scsi6` |
+| Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
+| `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
+| `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
+| The issue path of the optional-extras report | Has only run with nothing missing |
+
+## The lab host
+
+The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does not:
+
+| Path | Content |
+| --- | --- |
+| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine |
+| `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
+| `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk |
+| `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
+| `/mnt/sparc/prom` | Sun firmware updates, for experiments only |
+| `/mnt/sparc/runs` | run output and evidence directories |
+
+None of the Sun software, firmware or source goes into this repository or into anything published
+from it.
+
+## Upstream reports to send
+
+Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout (OpenBIOS)
+and the 1-byte APC region (QEMU). QEMU declines AI-generated code contributions, so these are bug
+reports, not patches. Candidates not written up yet: the TTE page-size truncation if it is not
+merged upstream, the TLB flush on the microSPARC no-fault bit, and the ESCC mouse rate.

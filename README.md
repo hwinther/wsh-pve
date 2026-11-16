@@ -44,6 +44,10 @@ The 3dfx binary is QEMU from the same tree as the package (Proxmox's patches, th
 Run `make dev-links` to symlink the PVE pm and js files that are currently altered, in order to be able to reload and observe changes quickly.
 Note: There are still manual steps in this process due to the pvemanagerlib.js file being cached in the browser, and changes to the PVE API will often require a `systemctl restart pvedaemon pveproxy`
 
+## Roadmap
+
+[ROADMAP.md](ROADMAP.md): what is done, what is in progress and what comes next.
+
 ## Usage
 
 Once the packages have been installed on a PVE host, the proxmox frontend will have additional options, some of which are listed here:
