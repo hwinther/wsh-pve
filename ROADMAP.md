@@ -68,11 +68,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
    (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
    emulation bug. Idle in the multiprocessor loop comes after that.
-3. **Solaris on sun4u: OpenBIOS memory management.** Moved ahead of niagara by its measurement
-   (`submodules/SPARC.md`, "sparc64: niagara (sun4v)", "Estimate"): make OpenBIOS's `ofmem` claim
-   whole pages and hand out contiguous physical memory, and see whether Solaris 10 gets past
-   `no nucleus hblk8 to allocate` (and 8/9 past `BOP_ALLOC failed`). QEMU's sun4u devices (CMD646
-   IDE, hme) are ones Solaris drives, so a kernel that boots has a disk and a network.
+3. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
+   Solaris 10 1/13 reaches its installer's first prompt. Next: console input on ttya, the cmd646
+   interrupt, then disk, network and an install. QEMU's sun4u devices (CMD646 IDE, hme) are ones
+   Solaris drives, so a kernel that boots has a disk and a network.
 4. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
