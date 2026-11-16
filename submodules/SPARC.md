@@ -1303,17 +1303,18 @@ path up among them. OpenBIOS named them `pci@1fe,0` and `su@0`, so nothing match
 names them like OBP: the stdin instance path is now `/pci@1f,0/pci@1,1/ebus@1/su@14,3f8`. Solaris
 10 echoes the `0` and goes on to `What type of terminal are you using?`, and from there through the
 installer's curses screens on ttya. Verified with QEMU 11.1.3 as packaged and with the standalone
-build. Also seen: with 0009 in place, 0003 is no longer needed for Solaris 10 to reach the installer
-(firmware with only 0009 + the IDE-tree change below, 1024 and 2048 MB: no `no nucleus hblk8`).
-0003 stays: the accounting it fixes is real, and Solaris 9 needs it.
-0009 defines the ebus `decode-unit`/`encode-unit` pair in Forth over the bridge methods the ebus node already has, so OpenBIOS prints
-`decode-unit isn't unique.` and `encode-unit isn't unique.` at power-on (cosmetic). A cleaner
-variant (a method table of its own for the ebus node, as paulsheer does) was tried and dropped: with
-it NetBSD's CD took `wd0a` as its root device (`root device (default wd0a):`; 3 of 9 matrix cases
-failed). The cause wasn't found.
+build.
+Rechecked with firmware built from the committed patches minus one (each build records its source
+commit): without 0009, Solaris 10 reaches `Select a Language` and ignores input again; without 0003,
+it panics with `no nucleus hblk8 to allocate` at 1024 MB but reaches the installer (and takes input)
+at 2048 MB. So 0003 is needed at 1 GB and not at 2 GB.
+0009 defines the ebus `decode-unit`/`encode-unit` pair in Forth over the bridge methods the ebus
+node already has, so OpenBIOS prints `decode-unit isn't unique.` and `encode-unit isn't unique.` at
+power-on (cosmetic). A variant with a method table of its own for the ebus node (as paulsheer does)
+avoids the messages but hasn't been tested on its own.
 
 **Solaris 10 beyond the first prompt** (lab scratch scenario driving the installer by screen title;
-firmware 0003-0007 and 0009 (its method-table variant, above) plus the experimental IDE-tree change below, standalone QEMU 11.1.3 with the
+firmware 0003-0007 and 0009 (the method-table variant) plus the experimental IDE-tree change below, standalone QEMU 11.1.3 with the
 cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on user networking):
 
 - **IDE interrupt.** QEMU clears the cmd646 interrupt status bits (MRDMODE/CFR/ARTTIM23) when the
@@ -1372,8 +1373,8 @@ cause and fix. Its OpenBIOS patch:
 - maps the sabre's unit address between `1f` and `1fe` (as 0009 does);
 - flattens the IDE tree as `dad@unit,0`, with the target equal to the unit, so the CD-ROM must be
   on the primary channel;
-- has no `available`/`ofmem` change, which matches the finding above that the names alone get
-  Solaris 10 past `no nucleus hblk8`.
+- has no `available`/`ofmem` change. That works at its default of 2048 MB; at 1024 MB Solaris 10
+  panics with `no nucleus hblk8 to allocate` without 0003 (rechecked).
 
 Its QEMU change is a binary patch of the packaged `qemu-system-sparc64`: it keeps the cmd646 status
 bits latched, and it removes multiword DMA and UDMA from the disk's IDENTIFY data, because "DMA

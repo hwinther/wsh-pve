@@ -50,8 +50,8 @@ from there through its curses screens.
 - `drivers/pci.c` `ebus_config_cb()`: the ebus node gets an `encode-unit`/`decode-unit` pair for
   two hex cells, `space,offset`.
   OpenBIOS prints `decode-unit isn't unique.` / `encode-unit isn't unique.` at power-on because
-  the pair is defined over the bridge methods (cosmetic; a separate method table broke NetBSD's CD
-  root detection, cause not found).
+  the pair is defined over the bridge methods (cosmetic; a separate method table for the ebus node
+  would avoid that, not tested on its own).
 
 paulsheer/openbios commit `5d7938c2` ("sun4u: publish a Solaris 10-compatible device tree") makes
 the same two naming changes in its own way (C decode/encode functions and a separate method
