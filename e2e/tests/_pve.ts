@@ -65,30 +65,19 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
 }
 
 /**
- * Whether the installed qemu-system-sparc64 keeps the cmd646's interrupt status bits latched after the
- * drive drops INTRQ (pve-qemu patch wsh/0021). The package built from that change also installs
- * openbios-sparc64 from openbios/, so this tells a package that should have that extra from an older
- * one. Asked of QEMU itself through its qtest protocol, no guest: bus 1 behind the simba at 00:01.1,
- * the cmd646's BAR0/BAR1 at 0x400/0x408, SET FEATURES on the primary master, a status read (INTRQ
- * drops), then MRDMODE (bit 0x04 latched, or 0).
+ * Whether the installed pve-qemu-kvm is newer than 11.1.3-2+wsh11, the last package published before
+ * debian/rules installed openbios-sparc64 from openbios/ (with pve-qemu patch wsh/0021). A package
+ * from before that keeps QEMU's own image, and the openbios-sparc64 extra is then missing.
  */
-export async function hasCmd646Latch(): Promise<boolean> {
+export async function hasPackagedOpenbiosSparc64(): Promise<boolean> {
   const probe = await pveExec([
     'bash',
     '-c',
-    `c=0x1fe01000000 io=0x1fe02000000
-     cfg() { printf 'writeb 0x%x 0x%x\\n' $((c + ($1 << 16) + ($2 << 8) + $3)) "$4"; }
-     {
-       cfg 0 9 0x19 1; cfg 0 9 0x1a 1
-       cfg 1 24 0x10 0x00; cfg 1 24 0x11 0x04; cfg 1 24 0x14 0x08; cfg 1 24 0x15 0x04; cfg 1 24 0x04 1
-       printf 'writeb 0x%x 0x0\\n' $((io + 0x40a))
-       printf 'writeb 0x%x 0x%x\\n' $((io + 0x406)) 0xa0 $((io + 0x401)) 3 $((io + 0x402)) 12 $((io + 0x407)) 0xef
-       printf 'readb 0x%x\\n' $((io + 0x407)) $((c + (1 << 16) + (24 << 8) + 0x71))
-     } | timeout 30 qemu-system-sparc64 -machine sun4u,accel=qtest -qtest stdio -display none -nodefaults \\
-         -L /usr/share/kvm -blockdev driver=null-co,node-name=d0 -device ide-hd,drive=d0,bus=ide.0 2>&1 | tail -n 1`,
+    `v=$(dpkg-query -W -f='\${Version}' pve-qemu-kvm) || exit 1
+     if dpkg --compare-versions "$v" gt 11.1.3-2+wsh11; then echo "newer=yes $v"; else echo "newer=no $v"; fi`,
   ])
-  expect(probe.output, probe.output).toMatch(/^OK 0x0*[04]\s*$/m)
-  return /^OK 0x0*4\s*$/m.test(probe.output)
+  expect(probe.output, probe.output).toMatch(/^newer=(yes|no) \S+/m)
+  return probe.output.includes('newer=yes')
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */
