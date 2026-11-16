@@ -1,5 +1,5 @@
 # The retro net gateway: one image with DHCP/DNS (dnsmasq), the redirects and the egress filter
-# (nftables), an allowlisting egress proxy (tinyproxy) and VintageHive, run by a small supervisor
+# (nftables), the archive cache (Python) and VintageHive, run by a small supervisor
 # under tini. The same image runs under Docker and as a Proxmox VE container created from an OCI image.
 #
 #   docker build -f retronet/gateway/Dockerfile -t retronet-gateway retronet
@@ -32,15 +32,16 @@ LABEL org.opencontainers.image.source="https://github.com/hwinther/wsh-pve" \
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini dnsmasq-base nftables tinyproxy sqlite3 iproute2 procps ca-certificates libicu76 \
+      tini dnsmasq-base nftables python3 sqlite3 iproute2 procps ca-certificates libicu76 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --home-dir /var/lib/retronet/vintagehive --shell /usr/sbin/nologin vintagehive \
- && getent passwd dnsmasq tinyproxy >/dev/null
+ && useradd --system --home-dir /var/lib/retronet/archive-cache --shell /usr/sbin/nologin archivecache \
+ && getent passwd dnsmasq >/dev/null
 
 COPY --from=vintagehive /out /opt/vintagehive
 COPY gateway/rootfs/ /
 COPY services/ /etc/retronet/services.d/
-RUN chmod 0755 /usr/local/sbin/retronet-* /etc/retronet/services.d/*/run /etc/retronet/services.d/*/init 2>/dev/null; \
+RUN chmod 0755 /usr/local/sbin/retronet-* /usr/local/bin/retronet-* /etc/retronet/services.d/*/run /etc/retronet/services.d/*/init 2>/dev/null; \
     chmod 0755 /opt/vintagehive/VintageHive \
  # VintageHive opens libs/geonames.db in WAL mode, which needs a writable directory
  && chown -R vintagehive:vintagehive /opt/vintagehive/libs \
@@ -48,7 +49,8 @@ RUN chmod 0755 /usr/local/sbin/retronet-* /etc/retronet/services.d/*/run /etc/re
  && ln -s /var/lib/retronet/vintagehive /opt/vintagehive/vfs \
  && rm -f /etc/retronet/services.d/README.md
 
-# All state lives here (leases, VintageHive's databases and hosted files, the generated admin password).
+# All state lives here (leases, the archive cache, VintageHive's databases and hosted files, the
+# generated admin password).
 VOLUME /var/lib/retronet
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 CMD ["/usr/local/sbin/retronet-health"]

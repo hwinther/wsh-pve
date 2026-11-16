@@ -30,8 +30,6 @@ fi
 [ ${#pw} -ge 8 ] || { log "the admin password must have at least 8 characters"; exit 1; }
 [ "$pw" != vintagehive ] || { log "refusing VintageHive's default admin password"; exit 1; }
 
-worker=0
-[ -n "${RETRONET_CFG_ARCHIVE_RELAY:-}" ] && worker=1
 protoweb=0
 [ "${RETRONET_CFG_PROTOWEB:-yes}" = yes ] && protoweb=1
 
@@ -42,8 +40,9 @@ enforce=(
   adminpassword "$(q "$pw")"
   serviceinternetarchive 1
   serviceinternetarchiveyear "$RETRONET_CFG_YEAR"
-  serviceinternetarchiveworker $worker
-  serviceinternetarchiveworkerurl "$(q "${RETRONET_CFG_ARCHIVE_RELAY:-}")"
+  # every archive request goes to the gateway's archive cache (VintageHive's "worker" protocol)
+  serviceinternetarchiveworker 1
+  serviceinternetarchiveworkerurl "'http://127.0.0.1:8890'"
   serviceprotoweb $protoweb
   servicehttp 1
   porthttp 1990 portftp 1971 porttelnet 1969 portfinger 1079 portusenet 1986
@@ -103,4 +102,4 @@ EOF
 } | sqlite3 "$db"
 
 chown -R vintagehive:vintagehive "$home"
-log "seeded $db (year $RETRONET_CFG_YEAR, archive $([ $worker = 1 ] && echo "via $RETRONET_CFG_ARCHIVE_RELAY" || echo direct), ProtoWeb $([ $protoweb = 1 ] && echo on || echo off))"
+log "seeded $db (year $RETRONET_CFG_YEAR, archive through the archive cache, ProtoWeb $([ $protoweb = 1 ] && echo on || echo off))"

@@ -2,8 +2,8 @@ name: retro net gateway
 
 # The retro net gateway (retronet/): the hermetic container test on pull requests and on main, and on
 # main the image pushed to ghcr.io/hwinther/wsh-pve/retronet-gateway (Docker, or Proxmox VE's
-# "Pull from OCI registry"). The test needs no internet beyond the image builds: a fake Wayback
-# Machine and DNS stand in for archive.org. Nothing is cached between runs; the build takes a few
+# "Pull from OCI registry"). The test needs no internet beyond the image builds: the gateway's
+# archive cache replays a synthetic dataset, and a small stub stands in for archive.org. Nothing is cached between runs; the build takes a few
 # minutes from scratch and a cache would only add a way to fail.
 
 on:

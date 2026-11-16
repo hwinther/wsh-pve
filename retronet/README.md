@@ -8,9 +8,9 @@ reach neither the node nor the LAN. The design is in `../RETRONET.md`; the user 
 
 | Path | What |
 | --- | --- |
-| `gateway/Dockerfile` | The image: Debian 13, dnsmasq, nftables, tinyproxy, VintageHive (pinned commit, one patch in `gateway/patches/`), tini |
-| `gateway/rootfs/` | `retronet-init` (configuration, filter, generated configs), `retronet-supervise`, `retronet-health`, `retronet-user`, the default `retronet.conf` |
-| `services/` | One directory per service: run script, redirects, DNS names, egress allowlist (see `services/README.md`) |
+| `gateway/Dockerfile` | The image: Debian 13, dnsmasq, nftables, Python for the archive cache, VintageHive (pinned commit, one patch in `gateway/patches/`), tini |
+| `gateway/rootfs/` | `retronet-init` (configuration, filter, generated configs), `retronet-supervise`, `retronet-health`, `retronet-user`, `retronet-archive`, `retronet-warm`, the default `retronet.conf` |
+| `services/` | One directory per service: run script, init hook, redirects, DNS names (see `services/README.md`); `services/archive-cache/` is the archive cache, its default warm-up list and the script that makes it |
 | `compose.yml` | The gateway between a retro network and an uplink, for a trial by hand |
 | `compose.online.yml` | Adds the real internet to the trial |
 | `compose.test.yml`, `test/`, `test.sh` | The hermetic test |
@@ -21,11 +21,13 @@ reach neither the node nor the LAN. The design is in `../RETRONET.md`; the user 
 retronet/test.sh          # exit code 0 when every check passes; KEEP=1 keeps the stack running
 ```
 
-No internet is needed after the images are built: a fake Wayback Machine (`test/fakenet.py`) and DNS
-server stand in for archive.org on a fake internet (192.88.99.0/24), a canary (`test/canary.py`)
-stands for the LAN, and a client on the retro network takes a DHCP lease and runs
+No internet is needed after the images are built. The gateway's archive cache replays a synthetic
+dataset (`test/dataset`, made-up pages) in offline mode; a DNS server and a small upstream stub
+(`test/fakenet.py`) sit on a fake internet (192.88.99.0/24) for the cache's miss path; a canary
+(`test/canary.py`) stands for the LAN; a client on the retro network takes a DHCP lease and runs
 `test/client-tests.sh` (web, transparent and through the proxy; instant messaging with
-`test/oscar_client.py`; isolation). The workflow `.github/workflows/retronet.yml` runs it on pull
+`test/oscar_client.py`; isolation) and `test/cache-tests.sh`. Then the gateway is recreated with the
+cache online: misses, the store, `retronet-warm`, export and import. The workflow `.github/workflows/retronet.yml` runs it on pull
 requests that touch `retronet/`.
 
 With a remote Docker host, everything stays inside the compose networks; nothing is published.

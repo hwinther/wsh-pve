@@ -1,0 +1,8 @@
+#!/bin/sh
+# The archive cache: VintageHive's archive endpoint, and the only process that may reach the archive.
+. /run/retronet/archive-cache.env || exit 1
+exec setpriv --reuid=archivecache --regid=archivecache --init-groups --inh-caps=-all \
+  env -i PATH=/usr/bin:/bin HOME=/var/lib/retronet/archive-cache \
+  python3 -u /etc/retronet/services.d/archive-cache/archive_cache.py --root /var/lib/retronet/archive-cache serve \
+    --mode "$ARCHIVE_MODE" --upstream "$ARCHIVE_UPSTREAM" \
+    --min-interval "$ARCHIVE_MIN_INTERVAL" --max-mb "$ARCHIVE_MAX_MB"

@@ -24,7 +24,7 @@ retro browser or messaging client. The sections that describe those are marked u
 | --- | --- |
 | Asks for an address (DHCP) | Hands one out from `.100`–`.199` of its subnet, with itself as router and DNS server. Fixed leases in `/var/lib/retronet/dhcp-hosts` (dnsmasq `dhcp-host` syntax). |
 | Looks up a name | Answers `hive.com` and the sign-on servers of period messaging clients with its own address; forwards everything else to the configured upstream DNS. A DNS server set by hand in the guest is answered by the gateway too. |
-| Opens `http://` to any address | Redirects it to the archive proxy, which uses the `Host:` header to fetch the 1999 copy of the page. |
+| Opens `http://` to any address | Redirects it to the archive proxy, which uses the `Host:` header to fetch the 1999 copy of the page through the gateway's archive cache. |
 | Sets a proxy by hand | The same proxy at `gateway:1990` or `gateway:80`. |
 | Connects to port 21, 23, 79, 119, 5190, 1863 or 5050 anywhere | Redirects it to the gateway's FTP server, telnet BBS, finger, news server or instant-messaging servers (OSCAR, MSNP, YMSG). |
 | Anything else beyond the gateway, HTTPS included | Refuses it at once (TCP reset, ICMP unreachable). No packet from the segment is ever routed. |
@@ -46,8 +46,7 @@ commit. The portal is at `http://hive.com/`.
   VintageHive's HTTPS proxy ("DialNine") is off.
 - **Today's web:** not reachable. Requests go to the Wayback Machine for the configured year, or to
   ProtoWeb. VintageHive's features that use today's internet (news and weather on the portal, search,
-  radio, its list of retro-friendly live sites such as 68k.news) answer with an error or a
-  "Filtered" page.
+  radio, its list of retro-friendly live sites such as 68k.news) answer with an error page.
 
 ### Instant messaging
 
@@ -72,6 +71,67 @@ VintageHive's default password is refused. Settings that matter for isolation an
 written again on every start (see "Configuration"), so a change to them in the admin pages lasts
 until the next restart.
 
+## Archive cache
+
+Every Wayback Machine lookup VintageHive makes goes to the gateway's archive cache, a small service
+on the gateway's loopback (`retronet/services/archive-cache/`). It answers from a store on the state
+volume, `/var/lib/retronet/archive-cache`, and only on a miss asks web.archive.org, then keeps the
+answer. A page that was visited once, or warmed beforehand, never goes to archive.org again.
+
+VintageHive caches as well (in `vfs/data/cache.db`: the chosen capture per URL and year, and the
+rewritten pages for a year), but it cannot replay without archive.org, its entries are tied to its
+own rewriting, and images are not kept when it uses an archive endpoint like this one. The archive
+cache keeps what archive.org sent, unchanged, so it survives VintageHive upgrades and can be moved
+between gateways.
+
+| Mode (`archive_mode`) | Behaviour |
+| --- | --- |
+| `online` (default) | Answers from the store; a miss is fetched from `archive_upstream`, stored and served. Misses are fetched one at a time, at most one every `archive_min_interval` seconds (5), with a descriptive User-Agent. A 429 or 503 with `Retry-After` is waited out (up to 15 s) and retried once. When archive.org refuses connections (here it did after about 15 requests, whether 1 or 5 s apart, and let go within a few minutes), the cache stops asking for a minute, doubling up to an hour, and answers "unreachable" meanwhile; `retronet-warm` waits that out. |
+| `offline` | Replays the store only. Anything not stored is "not archived" for the guest; nothing leaves the gateway. |
+
+"Not archived" answers are stored too. Online they are asked again after 30 days. Above
+`archive_max_mb` (4096) the least recently used entries are removed.
+
+The store is plain files you can look into:
+
+```text
+/var/lib/retronet/archive-cache/v1/cdx/<host>/<hash>.json   the lookup (URL, year) and when it was made
+/var/lib/retronet/archive-cache/v1/cdx/<host>/<hash>.body   archive.org's answer
+/var/lib/retronet/archive-cache/v1/web/<host>/<hash>.json   the capture asked for, its type and status
+/var/lib/retronet/archive-cache/v1/web/<host>/<hash>.body   the capture exactly as archive.org sent it
+```
+
+Lookups are kept per year (the year is part of the lookup), and a capture by its timestamp, so a
+later network with another year shares the captures and has its own lookups.
+
+### Warming up and moving a store
+
+```sh
+docker exec <gateway> retronet-warm --requisites                  # the sites VintageHive features
+docker exec <gateway> retronet-warm --requisites http://www.netscape.com/ http://www.geocities.com/
+docker exec <gateway> retronet-warm -f /path/in/container/urls.txt
+docker exec <gateway> retronet-archive stats --server             # entries, size, hits, misses
+docker exec <gateway> retronet-archive export - > archive.tgz     # the whole store
+docker exec -i <gateway> retronet-archive import - < archive.tgz  # into another gateway
+docker exec <gateway> retronet-archive purge --yes
+```
+
+`retronet-warm` asks for each URL what a guest's browser would cause: the lookup for the configured
+year, the capture VintageHive would pick (the largest of the year), and with `--requisites` the
+page's images and frames (up to `--max-requisites`, 20). It prints one line per URL (archived, not
+archived, or error) and a summary, which is the coverage report. Without URLs it warms
+`/etc/retronet/services.d/archive-cache/default-urls.txt`: the portal's link list and the sites in
+VintageHive's live-site list, made from VintageHive's source by `make-default-urls.py`. At the
+default pace a page with three images takes about 25 s, and archive.org's refusals add pauses; let
+a long list run overnight.
+
+:::caution[What is redistributed]
+A warmed store is a collection of third-party web pages as archived by the Internet Archive. It
+stays on your gateway's volume. Export and import are for moving it between your own gateways. The
+image and the repository carry no archived pages: only the tool, the list of URLs, and a small
+synthetic dataset with made-up pages that the tests replay (`retronet/test/dataset`).
+:::
+
 ## Requirements of every form
 
 - **Layer 2 next to the guests.** DHCP and the redirects only work when the gateway sits on the
@@ -80,8 +140,8 @@ until the next restart.
 - **Two interfaces:** one on the retro segment with the gateway's address, one uplink. The interface
   that has `RETRONET_ADDRESS` is the retro side; every other interface is uplink.
 - **`NET_ADMIN`** for nftables and dnsmasq's DHCP. The later dial-up stage will also need `/dev/ppp`.
-- **State** in one directory, `/var/lib/retronet` (leases, VintageHive's databases and hosted files,
-  the generated admin password). Make it a volume or a mount point.
+- **State** in one directory, `/var/lib/retronet` (leases, the archive cache, VintageHive's databases
+  and hosted files, the generated admin password). Make it a volume or a mount point.
 - **Configuration** by environment variables or one mounted file, `/etc/retronet/retronet.conf`.
 - **amd64 only.**
 
@@ -98,7 +158,10 @@ Keys in `/etc/retronet/retronet.conf` (mount your own copy) or as environment va
 | `uplink_gateway` | | The uplink's default gateway, if the runtime did not set one. A default route through the retro side is always removed. |
 | `retro_interface` | | Adds `address` to this interface if no interface has it yet (a container with `ip=manual`) |
 | `dhcp_range`, `dhcp_lease`, `domain` | `.100`–`.199`, `12h`, `retro.lan` | DHCP pool, lease time, local domain |
-| `archive_relay` | empty: straight to web.archive.org | Base URL of a VintageHive archive worker to use instead |
+| `archive_mode` | `online` | `online` (store, fetch misses) or `offline` (replay the store only) |
+| `archive_upstream` | `https://web.archive.org` | Where misses are fetched; a VintageHive archive worker speaks the same protocol |
+| `archive_min_interval` | `5` | Seconds between two upstream requests |
+| `archive_max_mb` | `4096` | Store size; least recently used entries go first above it (0: no limit) |
 | `protoweb` | `yes` | ProtoWeb ahead of the Wayback Machine |
 | `admin_password`, `admin_password_file` | generated | VintageHive's admin password (at least 8 characters) |
 
@@ -225,9 +288,9 @@ These steps have not been run on a node.
   (a redirected service, or a refusal). The nftables `forward` chain drops anything that would be
   forwarded in any case.
 - The gateway's own traffic is filtered by owner: only dnsmasq may send DNS, and only to the
-  configured upstream servers; only tinyproxy may open ports 80 and 443, and it only connects to
-  names on the allowlist (`*.archive.org`, plus the archive relay if set); VintageHive may reach
-  ProtoWeb's proxy (port 7851). Private, loopback, link-local, CGNAT, multicast and reserved
+  configured upstream servers; only the archive cache may open ports 80 and 443, and it only ever
+  connects to its one configured upstream (it never uses a host name from a guest's request);
+  VintageHive may reach ProtoWeb's proxy (port 7851) and nothing else outside. Private, loopback, link-local, CGNAT, multicast and reserved
   addresses are refused for everyone, so a name that resolves into the LAN (DNS rebinding, a crafted
   host name) leads nowhere. dnsmasq also drops upstream answers that point into private space. IPv6
   is not forwarded upstream at all.
@@ -249,10 +312,10 @@ The image redistributes, in binary form:
   `geonames.db` it ships (GeoNames data, CC BY 4.0). Removed from the image: VintageHive's bundled
   ffmpeg, Ghostscript and Windows DLLs, and its bundled OpenSSL 1.0.2a.
 - The .NET runtime (MIT), published self-contained with VintageHive.
-- Debian 13 packages: dnsmasq (GPL-2.0/GPL-3.0), nftables (GPL-2.0), tinyproxy (GPL-2.0+), sqlite3
+- Debian 13 packages: dnsmasq (GPL-2.0/GPL-3.0), nftables (GPL-2.0), Python 3 (PSF-2.0), sqlite3
   (public domain), tini (MIT), iproute2 (GPL-2.0), with Debian's copyright files in
   `/usr/share/doc`.
 - The gateway's own scripts (GPL-3.0, like the rest of this repository).
 
-Pages fetched from the Wayback Machine and ProtoWeb are not part of the image; they are fetched for
-the guest and cached in the state directory.
+Pages fetched from the Wayback Machine and ProtoWeb are not part of the image or the repository;
+they are fetched for the guest and cached in the state directory (see "Archive cache").
