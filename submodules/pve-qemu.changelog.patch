@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 97fc676..53be457 100644
+index 97fc676..0212982 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,86 @@
+@@ -1,10 +1,93 @@
++pve-qemu-kvm (11.1.3-2+wsh12) trixie; urgency=medium
++
++  * feat(pve-qemu): ship the patched openbios-sparc64 and the cmd646 fix
++    for Solaris 10 (#280)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 16 Nov 2026 23:30:34 +0000
++
 +pve-qemu-kvm (11.1.3-2+wsh11) trixie; urgency=medium
 +
 +  * fix(pve-qemu): Solaris with more than one CPU on SS-10 and SS-20
