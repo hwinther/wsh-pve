@@ -30,6 +30,15 @@ docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .                         
 docker build -f e2e/sparc/qemu-7.2.Dockerfile -t wsh-sparc-lab:7.2.0 e2e/sparc        # + upstream QEMU 7.2.0
 ```
 
+The scenarios run the first `qemu-system-sparc` in `PATH`, and `/usr/local/bin` comes before the
+package's `/usr/bin`. To try a QEMU built from a patched tree (e.g. `ninja qemu-system-sparc` in
+the pve-qemu tree with the `debian/patches` series applied, built on Debian 13 so the image's
+libraries fit), mount the binary there:
+`docker run ... -v $PWD/build/qemu-system-sparc:/usr/local/bin/qemu-system-sparc:ro wsh-sparc-lab ...`.
+The firmware still comes from the package (`LAB_FIRMWARE`). `qemu.cmd` doesn't show which binary
+ran; the version line in `qemu-system-sparc --version` does (a local build has no
+`pve-qemu-kvm_...` suffix).
+
 ## Run a scenario
 
 The install media and disk templates are not in the image; mount a directory with them (here
@@ -599,9 +608,11 @@ ctl hmp "info registers"         # any monitor command
 - **Solaris 2.6 with more than one CPU hangs** (SS-20, OpenBIOS): writing 256 MB, sometimes while
   booting. CPU 0 waits in `xc_sync_cache` for a cross-call the other CPU never answers. The `machines`
   matrix therefore boots the installed disks with one CPU only.
-- **Solaris 2.6 runs user code 6-9x slower on SS-5 than on SS-20**: its microSPARC window-trap
-  handlers toggle the MMU no-fault bit, and QEMU flushes its whole TLB on each toggle. Kernel work and
-  disk I/O are as fast; NetBSD runs the same `awk` loop equally fast on both (`submodules/SPARC.md`).
+- **Solaris 2.6 ran user code 4-10x slower on SS-5 than on SS-20** (fixed by pve-qemu patch
+  0017): its microSPARC window-trap handlers toggle the MMU no-fault bit, and QEMU flushed its whole
+  TLB on each toggle. With 0017 the `benchdisk` numbers of SS-5 and SS-20 match, except
+  fork/exec at 1.2-1.3x (`submodules/SPARC.md`, "Why SS-5 was slower", "Benchmarks"); with an older
+  package the gap is still there.
 - **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
   (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel

@@ -59,11 +59,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **SS-5 slowness.** Solaris user code is about 9x slower on SS-5 than on SS-20: with the
-   microSPARC CPU, Solaris's window trap handlers write the MMU control register twice per trap,
-   and QEMU flushes its whole software TLB on each write (`target/sparc/ldst_helper.c`). Make the
-   flush no wider than it must be. If that works, existing SS-5 installs get the speed without
-   being moved.
+1. **SS-5 slowness: fixed, waiting for review.** Solaris user code was 4-10x slower on SS-5 than
+   on SS-20: with the microSPARC CPU, Solaris's window trap handlers set and clear the MMU no-fault
+   bit twice per trap, and QEMU flushed its whole software TLB on each change. pve-qemu patches
+   0017-0018 (branch `fix/ss5-tlb-flush`) flush only while the TLB holds an entry made for a fault
+   in no-fault mode; on the bench disk SS-5 now runs Hanoi, the `nawk` loop and lmbench's open/close
+   as fast as SS-20, and both machines gain in signal delivery, protection faults and `mmap`
+   (`submodules/SPARC.md`, "Why SS-5 was slower"). Existing SS-5 installs get the speed without
+   being moved, once a package with the patches is published. Upstream: bug-report material in
+   `upstream/qemu-srmmu-control-register-flush.md`.
 2. **SMP hang on SS-20.** With more than one CPU, Solaris 2.6 hangs with CPU 0 waiting in
    `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
    (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
@@ -147,7 +151,8 @@ from it.
 
 ## Upstream reports to send
 
-Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout (OpenBIOS)
-and the 1-byte APC region (QEMU). QEMU declines AI-generated code contributions, so these are bug
-reports, not patches. Candidates not written up yet: the TTE page-size truncation if it is not
-merged upstream, the TLB flush on the microSPARC no-fault bit, and the ESCC mouse rate.
+Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout (OpenBIOS),
+the 1-byte APC region (QEMU) and the TLB flush on every change of the SRMMU no-fault bit (QEMU).
+QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
+not written up yet: the TTE page-size truncation if it is not merged upstream, and the ESCC mouse
+rate.

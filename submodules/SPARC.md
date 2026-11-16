@@ -48,6 +48,8 @@ maintains the patches.
 | `0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop` | Solaris 2.5.1-9 spin in `idle()` on every CPU module but the microSPARC-II with `pmc` (SS-10/SS-20 always); the translator recognises the call of `idle_cpu` in that loop and halts the CPU there until the next interrupt when `disp_nrunnable` is 0 | ours | not in QEMU |
 | `0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def` | `-M <sun4m>,solaris-idle=on\|off` for 0014, on by default, off with `-smp` > 1 | ours | not in QEMU |
 | `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015 | ours | not in QEMU |
+| `0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-` | Solaris on SS-5 ran call-heavy user code 4-10x slower than on SS-20: its microSPARC window-trap handlers set and clear the MMU no-fault bit (NF) twice per trap, and QEMU flushed its whole TLB on every NF change. Now NF flushes only while the TLB holds an entry made for a fault in no-fault mode (the only entries that depend on it); boot mode flushes as before. Trace event `sparc_mmu_ctrl_flush` ("Why SS-5 was slower", "Benchmarks") | ours | not fixed; see `upstream/qemu-srmmu-control-register-flush.md` |
+| `0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m` | qtest `sun4m-mmu-nofault-test` for 0017: an entry made in no-fault mode must not survive NF being cleared (SS-5 and SS-20) | ours | not in QEMU |
 
 The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -61,11 +63,17 @@ The full series (Proxmox's patches + ours) applies on QEMU 11.1.3; no Proxmox pa
 0008-0010 and 0012-0013 applied to 11.1.3 with line offsets only (LEMU is on QEMU master).
 `sun4m-apc-test` fails without 0011 (the region is 1 byte, register 2 doesn't read back) and passes
 5/5 with it. `sun4m-solaris-idle-test` passes 5/5 with 0014-0016 (its `idle` case is the `off` case
-inverted: without the halt the loop keeps counting).
+inverted: without the halt the loop keeps counting). `sun4m-mmu-nofault-test` passes 2/2 on 11.1.3
+with and without 0017, and fails with NF simply dropped from the flush condition (no flag): the
+store after NF is cleared goes through the stale entry instead of trapping. With 0001-0018,
+`make check-qtest-sparc` (sparc-softmmu only): 18 OK, 2 skipped, `qmp-test` fails in
+`/sparc/qmp/oob` (no `oob` capability), the same with 0001-0016. The lab matrices `smoke` (3),
+`idle` (10), `machines` (13) and `display` (20) passed with 0017 (a `qemu-system-sparc` built from
+the series, mounted into the lab image).
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
-taken, and run `sun4m-escc-test`, `sun4m-apc-test` and `sun4m-solaris-idle-test` (sparc) and
-`am53c974-test` (i386).
+taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test` and
+`sun4m-mmu-nofault-test` (sparc) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -516,7 +524,8 @@ ended in a clean `init 5`.
   longer, and each idle vCPU burns a host core (`solaris-idle` is off with more than one CPU). And it
   hangs (above).
 
-**Why SS-5 is slower.** Times in the guest (`/usr/bin/time`, seconds), one CPU, OpenBIOS:
+**Why SS-5 was slower** (fixed by 0017; the numbers in this section and the one above are without
+it). Times in the guest (`/usr/bin/time`, seconds), one CPU, OpenBIOS:
 
 | Job | SS-5 | SS-20 |
 | --- | --- | --- |
@@ -544,13 +553,68 @@ windows (shells, interpreters, compilers: nearly all), which makes it a general 
 Solaris 2.6 user-space work, not one kind of operation; compiled loops with shallow call chains
 (Dhrystone, Whetstone, nbench) don't reach it ("Benchmarks").
 
-**Recommended** (from the data above):
+**The fix (0017).** NF decides whether a failed translation traps; it changes no translation that
+succeeds. In QEMU 11.1.3 the only TLB entries that depend on it are the ones `sparc_cpu_tlb_fill()`
+(`mmu_helper.c`) makes for a failed translation while NF is set or traps are disabled: RWX on a page
+the check refused, or redirected to an unassigned address. `get_physical_address()` reads NF only
+once the access check has failed, and every such path ends in that branch or a trap. 0017 sets
+`env->mmu_nf_entries` there, and the control register write flushes on a change of NF only while
+it is set (then clears it). Each bit of the control register, for the CPU models QEMU has
+(microSPARC I/II/IIep, MB86904/MB86907, SuperSPARC 40-61/II, LEON; no HyperSPARC model):
 
-- **SS-20 (or SS-10), OpenBIOS, one CPU, 256-512 MB** for Solaris 2.6: ~9x faster user-space than
-  SS-5, the same disk and boot times, and with 0014-0015 an idle guest uses ~3% of a host core. Needs its own install on that machine type (the SS-5 disks don't
-  boot there). 2.5.1, 7, 8 and 9 installers also start there.
-- SS-5 + OpenBIOS (or `ss5.bin`), 256 MB stays for what needs SS-5: existing SS-5 disks, Solaris 2.4
-  (Sun PROM only), SunOS 4.1.4. `pmc` is no longer needed to idle there.
+| Bit | Read by QEMU | Flush |
+| --- | --- | --- |
+| E (0) | `cpu_mmu_index()`: MMU off = `MMU_PHYS_IDX`, a TLB of its own; `gen_st_asi()` ends the TB after the write | never (none since QEMU's `MMU_PHYS_IDX`, 2016) |
+| NF (1) | the no-fault branch of `sparc_cpu_tlb_fill()`, and `sparc_raise_mmu_fault()` at the time of an access | was: every change; now: a change while an entry from that branch exists |
+| boot mode (`mmu_bm`: 0x4000 microSPARC, 0x2000 SuperSPARC, none on LEON) | instruction fetches with the MMU off (`get_physical_address()`) | every change, as before |
+| cache enables, store buffer, parity, PSO, snoop, AC, MBus mode, refresh | nothing in `target/sparc` | never, as before |
+| implementation/version (31-24) | read only | |
+
+A stale `mmu_nf_entries` only costs one extra flush; CPU reset and `loadvm` flush the TLB anyway,
+and the flag isn't migrated (the TLB isn't either). The entries made with traps disabled (`psret ==
+0`, NF clear) are flushed at the next NF change as before; nothing else drops them early, as before
+(with traps disabled a real CPU would go into error mode on a fault). The context register (reg 2)
+keeps its flush: QEMU's TLB isn't tagged with the context, so a context switch has to flush.
+`-trace sparc_mmu_ctrl_flush` lists the control register flushes that remain. The qtest
+`sun4m-mmu-nofault-test` (0018) checks that an entry made in no-fault mode doesn't survive NF being
+cleared; it fails with NF simply dropped from the flush condition.
+
+Solaris writes NF in three places (read from the 2.6 kernel): the generic window overflow and
+underflow handlers (used with the microSPARC-II module), the trap entry code when a user window
+must be saved for a trap, interrupt or system call (every CPU module), and the illegal-instruction
+handler (fetching the user's instruction). The second is most likely why SS-20 gains too (signal
+delivery, protection faults, `mmap`, fork; inferred, not traced per path). Other guests on SS-5
+with 0017 and `-trace sparc_mmu_ctrl_flush` (the `idle.py` steps: boot, login, `dd`, idle): SunOS
+4.1.4 uses NF too (372 flushes after a fault in no-fault mode, its `dd` of 20000 blocks 8.0 s where
+the idle table above has 9.7 s; one run); NetBSD 11.1 never sets it (only the boot-time flush).
+
+Flushes with and without 0017 (`info jit`, "TLB full flushes" + "TLB partial flushes"; a flush that
+finds not all MMU indexes dirty counts as partial), per host second, one boot per binary and
+machine, bench disk parts run one after another (scratch scenario, not in the lab):
+
+| Phase | SS-5 without | SS-5 with | SS-20 without | SS-20 with |
+| --- | --- | --- | --- | --- |
+| idle at the shell (10 s) | not measured | 3 | 3 | 2 |
+| `nawk` loop | 282,000 (64 s) | 490 (7 s) | 700 (8 s) | 330 (8 s) |
+| Hanoi (20 s) | 302,000 | 160 | 240 | 115 |
+| lmbench subset | 16,200 (147 s) | 4,500 (148 s) | 7,000 (150 s) | 3,600 (150 s) |
+
+The SS-5 run without 0017 had host load ~4 from other guests, so its times are longer than in
+"Benchmarks". In the whole run with 0017 (boot, the three parts, `init 5`; ~15 min) the trace showed
+7,955 control register flushes, every one NF cleared after a fault in no-fault mode (`0x04050303 ->
+0x04050301`), and one at boot (boot mode off, MMU on). What remains in lmbench is mostly context
+switches (fork, exec, pipe), on both machines.
+
+**Recommended** (from the data above and "Benchmarks"):
+
+- With 0017, **SS-5, SS-10 and SS-20 run Solaris equally fast** (one CPU, OpenBIOS or the Sun
+  PROMs). Pick the machine by what the guest needs: SS-5 for existing SS-5 disks, Solaris 2.4 (Sun
+  PROM only) and SunOS 4.1.4; SS-20 (or SS-10) for 512 MB. fork/exec are still ~1.2-1.3x slower on
+  SS-5 (not investigated further). Without 0017 (packages up to 11.1.3-2+wsh7), SS-20 runs
+  call-heavy user code 4-10x faster than SS-5.
+- An SS-20 needs its own install on that machine type (the SS-5 disks don't boot there). 2.5.1, 7,
+  8 and 9 installers also start there. With 0014-0015 an idle guest uses ~3% of a host core on
+  either. `pmc` is no longer needed to idle on SS-5.
 - Don't offer more than one CPU for Solaris 2.6: it hangs, and one job runs slower. NetBSD's MP kernel
   works with 2 CPUs (not benchmarked).
 - RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
@@ -609,12 +673,12 @@ case's `bench.txt` and `result.json`. Boot to login (fresh disks, first-boot que
 - **Where the SS-5 gap is, and where not.** Dhrystone, Whetstone and nbench run as fast on SS-5 as on
   SS-20 (ratio 1.0-1.1, within the spread): compiled code whose call chains fit the 8 register
   windows rarely takes a window trap, so it never reaches the microSPARC trap handlers' MMU-control
-  writes and QEMU's TLB flushes ("Why SS-5 is slower"). Code that calls deeper does: Hanoi (calls ten
+  writes and QEMU's TLB flushes ("Why SS-5 was slower"). Code that calls deeper does: Hanoi (calls ten
   deep) 4.2x, the `nawk` loop 9.5x, and in the kernel open/close 5.4x, file reread 1.7x, signal
   delivery 1.6x, pipe, fork, `sh -c` and mmap ~1.4x. The plain system-call entry (null, read, write:
   1.0-1.2x, within the spread), page faults and bcopy are about the same. These are the numbers the SS-5 TLB-flush fix should move
   (Hanoi, `nawk`, open/close, file reread first) while Dhrystone, Whetstone and nbench stay as they
-  are.
+  are. They did: "With 0017" below.
 - **Firmware and machine don't matter**: `ss5.bin` vs OpenBIOS on SS-5, the Sun SS-20 PROM vs
   OpenBIOS, SS-10 vs SS-20 are within the spread everywhere. Solaris 2.5.1 on SS-5 behaves like 2.6
   on SS-5 (same CPU-bound numbers and gap; its read/write are a little faster).
@@ -623,6 +687,71 @@ case's `bench.txt` and `result.json`. Boot to login (fresh disks, first-boot que
   regression check should look at the medians of several runs, or at the large ratios. Memory
   read/write/latency at 4-8 MB are the host's caches (QEMU models no cache or memory timing), not a
   property of the guest machine.
+
+**With 0017** (the SS-5 TLB fix, "Why SS-5 was slower"). Two `qemu-system-sparc` binaries built
+from the same tree (11.1.3 with the series up to 0016, and the same plus 0017), the same configure
+flags, run in the lab image with the binary mounted over the package's ("Build" in
+`e2e/sparc/README.md`); the `benchdisk` cases, 3 runs each, alternating "without" (SS-5 OpenBIOS,
+SS-20 OpenBIOS, 2.5.1) and "with" (all six cases), 2026-11-16. Each run waited for a 1-minute load
+below 2.5 first; another agent's QEMU guests ran on the host throughout (load at the case starts
+1.3-2.7, at the ends up to 3.0). Median (spread); "with 0017" columns for every case, "without"
+for three:
+
+| Benchmark | Unit | SS-5 OpenBIOS without | SS-5 OpenBIOS with | SS-5 `ss5.bin` with | SS-10 with | SS-20 OpenBIOS without | SS-20 OpenBIOS with | SS-20 PROM with | 2.5.1 SS-5 without | 2.5.1 SS-5 with | SS-5 / SS-20 with |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Dhrystone 2.1 | VAX MIPS | 947 (2%) | 918 (1%) | 945 (2%) | 954 (11%) | 971 (1%) | 959 (6%) | 932 (5%) | 963 (3%) | 931 (5%) | 1.0x |
+| Whetstone | MWIPS | 444 (2%) | 428 (2%) | 432 (1%) | 430 (8%) | 432 (2%) | 432 (2%) | 433 (4%) | 439 (1%) | 436 (1%) | 1.0x |
+| Hanoi, 10 disks | towers/s | 4834 (3%) | 18927 (6%) | 18078 (11%) | 18345 (5%) | 19512 (10%) | 18137 (6%) | 17767 (13%) | 4833 (1%) | 18036 (1%) | 1.0x |
+| `nawk` loop | s | 47.1 (1%) | 5.1 (10%) | 5.0 (8%) | 5.0 (0%) | 5.4 (7%) | 5.1 (14%) | 5.2 (15%) | 47.3 (5%) | 5.1 (14%) | 1.0x |
+| nbench integer / FP / memory | K6/233 = 1 | 4.24 / 1.78 / 4.29 | 4.10 / 1.74 / 4.25 | 4.07 / 1.73 / 4.17 | 4.15 / 1.76 / 4.24 | 4.24 / 1.76 / 4.27 | 4.22 / 1.75 / 4.30 | 4.04 / 1.72 / 4.22 | 4.20 / 1.75 / 4.32 | 4.15 / 1.74 / 4.30 | 1.0x |
+| lmbench null syscall | us | 0.40 (7%) | 0.41 (11%) | 0.38 (2%) | 0.44 (14%) | 0.39 (10%) | 0.40 (3%) | 0.39 (18%) | 0.41 (7%) | 0.41 (15%) | 1.0x |
+| read / write | us | 1.81 / 1.51 | 1.87 / 1.57 | 1.80 / 1.63 | 1.92 / 1.36 | 1.31 / 1.08 | 1.80 / 1.59 | 1.78 / 1.63 | 1.27 / 1.02 | 1.21 / 1.00 | 1.0x |
+| stat | us | 4.4 (2%) | 4.3 (16%) | 4.4 (9%) | 4.2 (2%) | 4.2 (4%) | 4.5 (4%) | 4.3 (3%) | 5.5 (26%) | 5.2 (6%) | 1.0x |
+| open/close | us | 52.6 (11%) | 11.0 (18%) | 10.2 (24%) | 10.3 (37%) | 8.2 (28%) | 10.0 (2%) | 10.0 (19%) | 45.2 (12%) | 7.2 (8%) | 1.1x |
+| signal install / catch | us | 1.14 / 60.4 | 1.08 / 13.5 | 1.09 / 13.3 | 1.16 / 13.8 | 1.08 / 39.0 | 1.13 / 13.4 | 1.07 / 13.8 | 1.01 / 60.4 | 1.00 / 14.6 | 1.0x |
+| protection fault | us | 12.8 (8%) | 3.1 (46%) | 3.4 (49%) | 4.7 (34%) | 13.0 (12%) | 3.1 (37%) | 2.8 (55%) | 12.5 (27%) | 1.9, 1.1 (2 runs) | 1.0x |
+| pipe latency | us | 125 (21%) | 86 (4%) | 82 (13%) | 90 (36%) | 83 (5%) | 89 (3%) | 85 (17%) | 95 (6%) | 77 (8%) | 1.0x |
+| fork+exit | us | 1824 (7%) | 1595 (5%) | 1584 (5%) | 1192 (87%) | 1427 (6%) | 1223 (7%) | 1264 (22%) | 2032 (9%) | 1700 (11%) | 1.3x |
+| fork+execve | us | 2906 (13%) | 2601 (5%) | 2572 (7%) | 2125 (61%) | 2258 (21%) | 2164 (13%) | 2067 (5%) | 3006 (4%) | 2497 (4%) | 1.2x |
+| fork+/bin/sh -c | us | 18867 (5%) | 14574 (8%) | 13470 (7%) | 12034 (67%) | 15218 (9%) | 12275 (3%) | 12944 (5%) | 21356 (13%) | 16514 (7%) | 1.2x |
+| page fault | us | 217 (11%) | 206 (6%) | 207 (6%) | 199 (24%) | 208 (7%) | 200 (6%) | 196 (4%) | 220 (3%) | 216 (9%) | 1.0x |
+| mmap 8 MB | us | 3365 (13%) | 1300 (32%) | 1109 (13%) | 1136 (55%) | 2428 (4%) | 1148 (15%) | 1093 (16%) | 3350 (2%) | 1216 (19%) | 1.1x |
+| file reread 8 MB | MB/s | 569 (7%) | 921 (30%) | 924 (20%) | 966 (32%) | 960 (9%) | 947 (10%) | 1079 (14%) | 979 (5%) | 895 (26%) | 1.0x |
+| bcopy 4 MB | MB/s | 1062 (5%) | 1001 (10%) | 1052 (5%) | 1123 (28%) | 1088 (8%) | 1068 (14%) | 1092 (11%) | 1126 (8%) | 1132 (1%) | 1.1x |
+| file create / delete (0k) | files/s | 1074 / 2089 | 1004 / 2051 | 1049 / 2039 | 1096 / 2115 | 1133 / 2117 | 1098 / 2012 | 1014 / 2007 | skipped | skipped | 1.1x / 1.0x |
+
+Memory read/write/latency left out (host caches, see "Noise"). 26 of 27 cases passed; the one
+failure was 2.5.1 with 0017 in run 2: `BENCH-ERROR lm_prot_fault` with no output. lmbench reports
+the protection fault as the time of a fault plus signal catch minus the time of a signal catch
+(`lat_sig.c`), and its `micro()` prints nothing when that comes to 0 (`lib_timing.c`: `if (micro ==
+0.0) return;`); with 0017 the remainder is 1-5 us with a spread of 35-80%, so a run can hit 0. The
+other two 2.5.1 runs gave 1.9 and 1.1 us. It happens without 0017 too: 15 rounds of `lat_sig catch`
+and `lat_sig prot` on 2.5.1 (SS-5, `ss5.bin`) gave no protection-fault line in 2 rounds without
+0017 (the others 1.4-26 us, catch 56-69 us) and in 4 rounds with it (1.3-5.7 us, catch 13.6-23
+us); every round ended normally.
+
+- **The SS-5 gap is closed.** Hanoi 4.0x → 1.0x, the `nawk` loop 8.7x → 1.0x (47.1 s → 5.1 s),
+  open/close 6.4x → 1.1x (SS-5 / SS-20 OpenBIOS in these runs), file reread, pipe and signal delivery the same as SS-20. 2.5.1 on SS-5
+  gains the same. Dhrystone, Whetstone, nbench, null/read/write, page faults and bcopy didn't move
+  (within the spread; Dhrystone with 0017 is 2-3% lower on SS-5 in the medians, within the spread of
+  the other cases).
+- **SS-20 gains too**, where Solaris's common trap entry saves a user window with NF set: signal
+  catch 39.0 → 13.4 us, protection fault 13.0 → 3.1 us, mmap 2428 → 1148 us, fork 1427 → 1223 us,
+  `sh -c` 15218 → 12275 us.
+- **What remains**: fork, exec and `sh -c` are 1.2-1.3x slower on SS-5 than on SS-20, with and
+  without 0017 in the same proportion, as in the table above; not investigated (the flush rate in
+  lmbench is 4,500/s on SS-5 and 3,600/s on SS-20 with 0017, mostly context switches).
+- **Soak** (with 0017, a scratch scenario, not in the lab): rounds of three concurrent jobs (a `tar`
+  of the bench disk through `compress`/`uncompress`, 300,000 `nawk` lines through `sort -n`, a
+  300-step `expr` fork loop), each with `cksum`s, then `fsck -n` of `/export/home` (unmounted) and
+  of `/`. With 64 MB of RAM, so that the guest pages and window spills hit missing stack pages (the
+  no-fault path that still flushes): Solaris 2.6 on SS-5 (OpenBIOS) 30 rounds in 25 min, 75,951
+  flushes after a fault in no-fault mode, every round the same checksums as SS-20 (5 rounds, 256 MB),
+  both `fsck -n` clean. Solaris 2.5.1 on SS-5 (`ss5.bin`) the same: 30 rounds, 165,864 such
+  flushes, the same checksums, `/export/home` clean; `fsck -n` of the mounted `/` reports three
+  unreferenced directories (inodes 15618, 23595, 23664) and the superblock state, exactly as on a
+  fresh boot of that disk without 0017 and without the soak, so that is the installed disk, not
+  the soak.
 
 **Against the real machines.** Published figures (the Sun ones are from sales material and not
 labelled as Dhrystone 1.1 or 2.1, Sun's compilers; approximate as a comparison):
