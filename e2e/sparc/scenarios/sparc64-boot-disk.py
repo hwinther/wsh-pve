@@ -11,7 +11,7 @@ The guest changes the disk (logs, first-boot setup): give it a copy.
   COMMANDS  shell commands run one after another, separated by ' ;; '   (GUEST's system state)
   CHECK     regexes their outputs must match, separated by ' ;; ' in the same order (empty: none)
   BOOTS     how many times to start QEMU, log in and power off (each boot after the first is a new
-            QEMU process on the same disk, as PVE starts a VM)   (1)
+            QEMU process on the same disk, as PVE starts a VM; its console goes to serial-bootN.raw)  (1)
   TIMEOUT   seconds from QEMU start to the login prompt          (900)
 
 Metrics (result.json): boot_s (QEMU start to the login prompt, per boot), poweroff_s (power-off
@@ -33,25 +33,32 @@ def qemu_args(v, out):
     return sparc64_args(v, out)
 
 
+def boot_once(m, v, n):
+    login(m, v, int(v["TIMEOUT"]))
+    m.metrics.setdefault("boot_s", []).append(round(time.time() - m.t0, 1))
+    commands = [c.strip() for c in v["COMMANDS"].split(";;") if c.strip()]
+    checks = [c.strip() for c in v["CHECK"].split(";;")] if v["CHECK"] else []
+    for i, command in enumerate(commands):
+        out, _ = shell(m, command)
+        if i < len(checks) and checks[i] and not re.search(checks[i], out):
+            m.snap(f"check failed: {command}")
+            raise AssertionError(f"no {checks[i]!r} in the output of {command!r}:\n{out}")
+    m.snap(f"boot {n}: system state")
+    m.metrics.setdefault("poweroff_s", []).append(round(power_off(m, v), 1))
+
+
 def run(m, v):
-    boots = int(v["BOOTS"])
     qemu = m.args[:-8]  # without the serial, QMP and display arguments Machine adds
-    for n in range(1, boots + 1):
-        login(m, v, int(v["TIMEOUT"]))
-        m.metrics.setdefault("boot_s", []).append(round(time.time() - m.t0, 1))
-        commands = [c.strip() for c in v["COMMANDS"].split(";;") if c.strip()]
-        checks = [c.strip() for c in v["CHECK"].split(";;")] if v["CHECK"] else []
-        for i, command in enumerate(commands):
-            out, _ = shell(m, command)
-            if i < len(checks) and checks[i] and not re.search(checks[i], out):
-                m.snap(f"check failed: {command}")
-                raise AssertionError(f"no {checks[i]!r} in the output of {command!r}:\n{out}")
-        m.snap(f"boot {n}: system state")
-        m.metrics.setdefault("poweroff_s", []).append(round(power_off(m, v), 1))
-        if n < boots:
-            m.raw.close()
-            os.replace(os.path.join(m.out, "serial.raw"), os.path.join(m.out, f"serial-boot{n}.raw"))
-            steps, metrics = m.steps, m.metrics
-            m.__dict__.update(lab.Machine(m.out, qemu, ocr=m.ocr).__dict__)
-            m.steps, m.metrics = steps, metrics
-            m.log(f"boot {n + 1}")
+    boot_once(m, v, 1)
+    for n in range(2, int(v["BOOTS"]) + 1):
+        # a new QEMU process on the same disk; the steps and metrics stay in m, which lab.py reports
+        m.raw.close()
+        os.replace(os.path.join(m.out, "serial.raw"), os.path.join(m.out, f"serial-boot{n - 1}.raw"))
+        nm = lab.Machine(m.out, qemu, ocr=m.ocr)
+        nm.steps, nm.metrics = m.steps, m.metrics
+        nm.log(f"boot {n}")
+        try:
+            boot_once(nm, v, n)
+        finally:
+            if nm.proc.poll() is None:
+                nm.stop()
