@@ -782,7 +782,7 @@ offer only SCSI for sparc64.
 | Disk bus | `lsi` on `pciB` + `scsi-hd` (wizard: SCSI only) | built-in IDE: `ide0` → `ide-hd,bus=ide.0,unit=0` (`ide1`: `ide.0` unit 1); allow `ide` for sparc64 in the API and the wizard, default the first disk to `ide0` |
 | CD-ROM | `scsi-cd` on the LSI, `scsi2` | `ide2` → `ide-cd,bus=ide.1,unit=0` (OpenBIOS's `cdrom` alias); `physical_block_size=512` is harmless |
 | Boot order | `bootindex=` on every device, `-boot menu=on,strict=on,...` | no `bootindex` on sparc64; the first device of `boot: order=` as the boot letter: `-boot order=c` (disk) or `order=d` (CD-ROM), e.g. `-boot 'order=d,menu=on,strict=on,reboot-timeout=1000,splash=...'` (QEMU accepts that, a missing splash file only warns; the boots here used plain `-boot c`/`-boot d`) |
-| Display none | `vga: none` → `-vga none -nographic` and `-machine accel=tcg,smm=off,type=sun4u+pve0`: QEMU refuses, `Property 'sun4u-machine.smm' not found` | no `smm=off` for `sun4*` (`should_disable_smm` exempts only `virt` and `SS-*`) |
+| Display none | `vga: none` → `-vga none -nographic`, no `smm=off` since qemu-server 9.2.15+wsh3 (before that QEMU refused: `Property 'sun4u-machine.smm' not found`) | works as is |
 | Serial console (`vga: serial0`) | `-nographic`, `-chardev ...serial0`, `-device isa-serial,chardev=serial0` | works as is: with `-nodefaults` sun4u creates no serial port of its own, so the `isa-serial` is the ebus's first 16550 at `0x3f8` (OpenBIOS's ttya, NetBSD `com0`); OpenBIOS and the NetBSD CD to sysinst on it, tested |
 | NIC | `sunhme` on `pciB` | works; `virtio`, `e1000`, `rtl8139`, `ne2k_pci` work too (NetBSD); `pcnet` has no NetBSD driver |
 | virtio-blk / virtio-scsi | `virtio-blk-pci` with no bus | virtio-blk works as a data disk for NetBSD but OpenBIOS can't boot it; virtio-scsi doesn't work. Don't offer them as the boot disk |
@@ -796,7 +796,7 @@ offer only SCSI for sparc64.
 
 | Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs | Disk | CD-ROM | NIC | Display |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard) or `serial0`; not `none` until the `smm=off` fix |
+| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
 
 - Boot from the first entry of `boot: order=` as `-boot order=c|d`, no `bootindex`.
 - Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
