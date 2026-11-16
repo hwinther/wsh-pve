@@ -20,6 +20,9 @@ instead of repeated by hand.
 - Attach mode (`lab.py run --pve <vmid>`) drives a VM that Proxmox VE started instead of its own
   QEMU; `pve_matrix.py` creates VMs through the PVE API and runs scenarios against them, inside the
   e2e PVE node with the lab added (`pve.Dockerfile`). See "Attach to a PVE VM".
+- `mcp_server.py` lets an AI assistant see and drive a running VM (a PVE VM or a `lab.py serve`
+  QEMU) through MCP: screen, keys, serial console, waiting for a pattern. Optional, with its own
+  dependencies (`mcp-requirements.txt`, `mcp.Dockerfile`). See "MCP server".
 
 ## Build
 
@@ -576,6 +579,232 @@ ctl snap "after the language"    # record a step (terminal + framebuffer screens
 ctl screendump now               # the framebuffer as /srv/sparc/runs/x/now.png
 ctl hmp "info registers"         # any monitor command
 ```
+
+## MCP server
+
+`mcp_server.py` (`wsh-lab-mcp`) is a [Model Context Protocol](https://modelcontextprotocol.io/)
+server that lets an AI assistant (Claude Code, or any MCP client) look at and type on a running VM
+the way the scenarios do: the screen as an image or as text, keys and text on the guest's keyboard
+or the serial console, the serial output, and waiting for a pattern. It is a thin layer over
+`lab.py` (the same `Machine` methods, `PveQmp`, key tables and OCR) for two kinds of VM:
+
+- **PVE VMs** by VMID, on the node that runs them (or in the e2e PVE container): the sockets in
+  `/var/run/qemu-server/`, as attach mode uses them, without starting, stopping or recording anything.
+- **Lab VMs**: a QEMU that `lab.py serve --out DIR` runs; the server sends a fixed set of `Machine`
+  calls to `DIR/ctl.sock`.
+
+It speaks MCP over stdin/stdout only (no listening port) and is built on the official Python SDK
+(`mcp` 2.3.0, `MCPServer`). It is an optional extra: nothing in the Debian packages or the lab's
+matrices uses it, and its dependencies live in their own venv.
+
+### Safety model
+
+The server runs where the VM's sockets are, which on a PVE node means as root. It is meant to give
+an assistant one VM's console, not the node:
+
+- **VMs are opt-in.** Only the VMs named when it starts can be touched: `--vm VMID` (repeatable),
+  `--tag TAG` (every VM *on this node* whose PVE tags include TAG, looked up with `pvesh get
+  /cluster/resources` at most every 10 s, so removing the tag revokes access) and `--lab NAME=DIR`.
+  Without any of them it refuses to start. Every tool takes a `vm` and refuses anything else with
+  `VM '105' isn't one this server may touch (allowed: 9001; VMs tagged mcp)`; `list_vms` shows only
+  the allowed VMs. `--vm` is the strict form; `--tag` delegates the decision to whoever may edit a
+  VM's tags in PVE (`VM.Config.Options`).
+- **A fixed set of operations.** The QMP commands it sends are `screendump` (into the server's own
+  `0700` temporary directory), `send-key`, `query-status` and, only with `--allow-reset`,
+  `system_reset`. There is no QMP or monitor passthrough unless `--allow-hmp` adds the `hmp` tool,
+  which is annotated destructive: the human monitor can do anything QEMU can, including writing host
+  files and running commands (`migrate exec:...`), so `--allow-hmp` on a node is root for the
+  assistant. `stop_vm` (`qm stop`) needs `--allow-stop`; nothing starts a VM. Lab VMs get the same
+  operations through `ctl.sock` (the lab's `serve` would take any `Machine` method; the server sends
+  only its list).
+- **No files.** It never opens disk images, offers no file transfer, and reads nothing under
+  `/etc/pve` but `qm config <vmid>` of an allowed VM (and whether `/etc/pve/qemu-server/<vmid>.conf`
+  exists). With `--tag`, `pvesh get /cluster/resources` also lists the other VMs' names and tags to
+  the server (not to the assistant).
+- **Guest output is data.** Serial text and OCR text are returned as tool results with control
+  characters removed, never interpolated into anything that runs; the server's instructions tell the
+  assistant not to follow instructions found in them. Regular expressions come from the assistant
+  and only run in Python's `re`.
+- **Annotations.** `list_vms`, `vm_status`, `screenshot`, `screen_text`, `serial_read` and `wait_for`
+  are read-only; `send_keys` and `type_text` are destructive (typing into a root shell can do
+  anything in the guest); `serial_release` is neither; `reset_vm`, `stop_vm` and `hmp` are
+  destructive. Clients treat annotations as hints: what protects the node is the allow-list and
+  the missing tools, not the annotations.
+
+Known holes:
+
+- The keyboard is full control of the guest, and through it of whatever the guest can reach on the
+  network. Give the assistant a VM you would give a person at its console.
+- The server and its dependencies (`mcp`, `pydantic`, ...) run as root on the node; a bug in them is
+  root on the node. Give the SSH key that starts it a forced command (below), so it can't open a
+  shell.
+- It bypasses PVE's permission system and task log: PVE sees `qm config` and QMP connections from
+  root, not a PVE user. Use `--vm` lists per assistant/user instead of relying on PVE roles.
+- `ctl.sock` of a `lab.py serve` run takes any `Machine` method from anyone who can open it; the
+  server limits itself, the socket doesn't (as before: it is in the run directory).
+
+### Serial console and QMP: sharing with PVE
+
+- **Serial:** QEMU serves one client per serial socket; a second one is accepted but gets nothing.
+  The server connects to `<vmid>.serialN` on the first call that needs it (`serial_read`, `wait_for`
+  on `serial`/`terminal`, `screen_text` of the terminal, typing to `serial`), refuses with a clear
+  message when another client already has it (`qm terminal`, the web console's xterm.js), and then
+  holds it, so no output is lost between calls: guest output arrives while the assistant is thinking.
+  `serial_release` gives it back, and it is released by itself after `--serial-idle` seconds (900)
+  without a serial call, and when the server exits. The server exits as soon as its client's end of
+  stdin closes, even in the middle of a long `wait_for`, so a lost client doesn't keep the console
+  (tested with a client that went away during a wait; a dropped SSH connection closes the same pipe
+  through sshd, not tested). Before that check, a client killed during a 600 s wait left the server
+  holding the console until the wait ended. While the server holds it, `qm terminal`
+  gets nothing. Output from before the server connected is not available (as in attach mode).
+- **QMP:** PVE starts QEMU with one QMP socket for tools (`<vmid>.qmp`; qmeventd has its own
+  connection, where QEMU is the client). QEMU serves one client at a time there, so the server uses
+  `lab.PveQmp`: one connection per command, waiting its turn while `qm`/pvestatd have the socket, as
+  PVE's own tools do. `qm status --verbose` kept its QMP fields while the server ran (below).
+- **cg3 refresh:** for a sparc32 VM with a framebuffer the server takes a screendump every
+  `--refresh` seconds (1) once a tool has touched the VM, as the lab's `REFRESH` does: without
+  display updates the cg3 delivers no vertical-retrace interrupt and Solaris never loads its colour
+  map ("Things the lab found out"). `--refresh 0` turns it off.
+
+### Install and run
+
+**On a PVE node**, without new system packages: a venv made by [uv](https://docs.astral.sh/uv/) (one
+static binary; `python3 -m venv` would need `python3-venv`), the pinned and hash-checked
+dependencies, and the lab's three files. As root:
+
+```sh
+uv venv /opt/wsh-lab-mcp --python /usr/bin/python3
+uv pip install --python /opt/wsh-lab-mcp/bin/python --require-hashes -r e2e/sparc/mcp-requirements.txt
+install -d /opt/wsh-lab-mcp/lab && install -m 644 e2e/sparc/lab.py e2e/sparc/recording.py e2e/sparc/mcp_server.py /opt/wsh-lab-mcp/lab/
+/opt/wsh-lab-mcp/bin/python /opt/wsh-lab-mcp/lab/mcp_server.py --vm 9001 --check   # what it would allow
+```
+
+`pyte` and Pillow come from the requirements; `screen_text`/`wait_for` on a framebuffer need
+`tesseract-ocr` on the node (without it they say so; screenshots and the serial tools work).
+`uv run e2e/sparc/mcp_server.py ...` also works (the script carries its dependencies inline), but
+without hash checking. Removing it is `rm -r /opt/wsh-lab-mcp`.
+
+**In a container:** `mcp.Dockerfile` adds the venv (`/opt/wsh-lab-mcp`) and `wsh-lab-mcp` to either
+lab image. The server has to run in the container that has the sockets, so for PVE VMs that is the
+PVE node with the lab (`pve.Dockerfile`), not a separate container with `/var/run/qemu-server`
+mounted (that would hand it every VM's sockets):
+
+```sh
+docker build -f e2e/sparc/mcp.Dockerfile -t wsh-lab-mcp e2e/sparc                                  # on wsh-sparc-lab
+docker build -f e2e/sparc/mcp.Dockerfile --build-arg BASE=wsh-pve-lab -t wsh-pve-lab-mcp e2e/sparc  # on wsh-pve-lab
+docker exec -i pve-lab wsh-lab-mcp --tag mcp                       # a PVE VM in the test node
+docker exec -i lab wsh-lab-mcp --lab sol=/srv/sparc/runs/x         # next to `lab.py serve --out /srv/sparc/runs/x`
+```
+
+**From a client** (not tested here: no interactive client was run). Claude Code, with the server on
+a node over SSH:
+
+```sh
+claude mcp add wsh-lab -- ssh -T root@pve-node /opt/wsh-lab-mcp/bin/python /opt/wsh-lab-mcp/lab/mcp_server.py --vm 9001
+```
+
+or in a project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "wsh-lab": {
+      "command": "ssh",
+      "args": ["-T", "root@pve-node", "/opt/wsh-lab-mcp/bin/python", "/opt/wsh-lab-mcp/lab/mcp_server.py", "--vm", "9001"]
+    }
+  }
+}
+```
+
+Better, a key that can do nothing else: in the node's `/root/.ssh/authorized_keys`,
+`restrict,command="/opt/wsh-lab-mcp/bin/python /opt/wsh-lab-mcp/lab/mcp_server.py --vm 9001" ssh-ed25519 AAAA...`;
+the client then runs `ssh -T -i <that key> root@pve-node` and the allow-list is fixed on the node. A
+long `wait_for` can outlast a client's tool timeout (Claude Code: `MCP_TOOL_TIMEOUT`); keep
+`timeout_s` below it and call again.
+
+### Tools
+
+| Tool | What it does | Example |
+| ---- | ------------ | ------- |
+| `list_vms` | the allowed VMs: running, arch, machine, display (`framebuffer`/`serial`), `vga`, serial port and who holds it | `{}` |
+| `vm_status` | QMP run state (`running`, `paused`, ...), host CPU use of the QEMU process over 0.5 s (% of one core), pid, serial state | `{"vm": "9001"}` |
+| `screenshot` | the display as a PNG (QMP `screendump`), scaled to `max_width` (1024; 0 = native), with `screen_id`; `if_changed_since` returns no image when the screen hasn't changed | `{"vm": "9001", "max_width": 800, "if_changed_since": "3fa1c0..."}` |
+| `screen_text` | the screen as text: `terminal` (the serial console's 80x24 VT100 screen, exact) or `display` (OCR of the framebuffer); `screen_id`/`if_changed_since` as above | `{"vm": "9001", "source": "display"}` |
+| `serial_read` | serial output from a cursor (default: where the last read or match ended), at most `max_chars` (4000, up to 20000); returns the next cursor, `more`, `lost` | `{"vm": "200", "cursor": 1834}` |
+| `wait_for` | a regex on the serial output (from a cursor), the terminal screen, or the display's OCR text (every `interval_s`), up to `timeout_s` (600 max); `last_lines` looks only at the bottom of a screen, where the prompt the guest waits at is (a console keeps the old ones); a timeout returns `matched: false` and what was seen | `{"vm": "9001", "source": "display", "pattern": "console login:", "last_lines": 6, "timeout_s": 600}` |
+| `send_keys` | keys and chords in order, on the display keyboard (QMP qcodes) or the serial console: `ret`, `esc`, `f2`, `ctrl-c`, `ctrl-alt-delete`, `Stop-A`, `L1-A` (= Stop-A), `shift-tab` | `{"vm": "9001", "keys": ["Stop-A"], "to": "display"}` |
+| `type_text` | text, one character at a time (`delay_ms`: 80 on the display, 50 on serial; old guests drop faster input); returns the serial cursor from before, for `wait_for` | `{"vm": "200", "text": "uname -a\n", "to": "serial"}` |
+| `serial_release` | give the serial socket back to `qm terminal`/the web console | `{"vm": "200"}` |
+| `reset_vm` | QMP `system_reset` (`--allow-reset`) | `{"vm": "9001"}` |
+| `stop_vm` | `qm stop` / QEMU quits (`--allow-stop`) | `{"vm": "9001"}` |
+| `hmp` | any human monitor command (`--allow-hmp`) | `{"vm": "9001", "command": "info registers"}` |
+
+The usual loop is `type_text` → `wait_for` with the cursor it returned (so a prompt from before the
+command doesn't match) → `serial_read` or `screen_text` for the rest. `to` defaults to the display
+when the VM has one. Stop-A has no serial form: a Sun PROM on ttya takes a BREAK, which a socket
+chardev can't send.
+
+**How good the screen text is:** the serial terminal is exact (it is the emulator the scenarios
+match against). A framebuffer is OCR (tesseract `--psm 6`, small screens scaled 2x first): good on
+text consoles in a fixed font (OpenBIOS and the Solaris console on cg3/tcx, VGA text mode), with
+the usual confusions (OpenBIOS's `0 >` read as `o>`, `System` as `Sustem`, quotes); poor on GUIs (CDE, the
+OpenWindows installer), where the screenshot is the better tool. Match OCR with loose patterns.
+
+**Left out:** the mouse (the lab has no pointer support, and the Sun mouse is relative: positions
+would be guesses; the keyboard drives the PROM, the consoles and the text installer); starting VMs
+and changing media (that is PVE's job, with its permissions); snapshots; file transfer; an HTTP
+transport (a listening port on a node needs authentication; SSH already provides it).
+
+### A PVE VM: Solaris 2.6 on a cg3
+
+Run in the e2e PVE node with the lab and the MCP layer (`mcp.Dockerfile` on `wsh-pve-lab`), from the
+SDK's client over stdio (`wsh-lab-mcp --tag mcp --allow-reset`, as `docker exec -i` would start it).
+The VM: `arch: sparc`, SS-5, OpenBIOS, 256 MB, `vga: cg3` (console on the framebuffer, 1024x768),
+`serial0: socket`, a copy of `sol26-enduser-installed.raw` imported as `scsi3`, tag `mcp`, and
+`args: -prom-env auto-boot?=false` so OpenBIOS waits at its prompt; started with `qm start`. A
+second, untagged VM was there too.
+
+- `list_vms` showed only the tagged VM (`sparc`, `SS-5`, `framebuffer`, `cg3`, `serial0` free);
+  `screenshot` of the untagged one was refused.
+- At the prompt, `wait_for` on the display found `Welcome to Open` and `screen_text` read the banner
+  (`Welcome to OpenBIOS v1.1 built on ...`, `Type 'help' for detailed information`); the `0 >`
+  prompt itself came out as `o> m`, so a pattern for it didn't match. `screenshot`: 1024x768 PNG;
+  again with `if_changed_since`: `unchanged`, no image.
+- `type_text "boot disk\n"` to the display (send-key on the Sun keyboard), then `wait_for`
+  (`console login:|Root password:|Press Return`, `last_lines: 6`, OCR every 10 s): the first boot
+  of the copy stopped at the root password screen (Return twice); the next boot reached `sol26
+  console login:` 62 s after `boot disk`. `screen_text` read the boot messages with OCR slips
+  (`Sustem` for `System`, `50126` for `sol26`); the screenshot is exact. On the very first boot
+  the X server (dtlogin) came up after the prompt, and OCR then read `Welcome to sol26`, `Please
+  enter your user name`.
+- Sharing: while the server ran (QMP per command, a refresh screendump every second), `qm status
+  --verbose` still had `qmpstatus: running` and `running-qemu: 11.1.3`, and `qm sendkey 9001 shift`
+  returned 0. With a test client connected to `9001.serial0` first, `serial_read` refused (`in use
+  by another client`); after it closed, the server took the socket, and `serial_release` gave it back.
+- `vm_status`: 99.9% of a core at the OpenBIOS prompt (it spins), 6-66% at the Solaris prompt.
+- `send_keys ["Stop-A"]` at the Solaris console prompt ended QEMU within 3 s (qmeventd: `read:
+  Connection reset by peer`, then its cleanup; no guest power-off event), twice: at the console
+  prompt and at the dtlogin screen. Not investigated;
+  PVE doesn't keep QEMU's stderr, so run it under `lab.py` (`qemu.stderr`) to see why.
+
+### Test
+
+`tests/test_mcp_server.py` boots an Alpine x86_64 CD (no Sun software) under `lab.py serve`, starts the
+server over stdio with the SDK's client and checks: the tool list (no `reset_vm`/`stop_vm`/`hmp`
+unless enabled), `list_vms`, `vm_status`, the login prompt on the serial console, a login and a
+command's output found by cursor, a `wait_for` timeout, `serial_read` paging, the terminal screen
+and `if_changed_since`, typing on the VGA console (its output written to `/dev/ttyS0` comes back on
+the serial port), `send_keys`, screenshots (a PNG of the size reported, scaled to `max_width`), the
+OCR text, and refusals for VMs that aren't allowed. Without `MCP_TEST_ISO` it downloads the pinned
+`alpine-virt-3.24.4-x86_64.iso` (70 MB, sha256 checked). It also checks that the server exits
+at once when its client goes away during a long `wait_for`. 60-75 s under TCG with two cores:
+
+```sh
+docker run --rm --entrypoint /opt/wsh-lab-mcp/bin/python wsh-lab-mcp -m unittest -v tests/test_mcp_server.py
+```
+
+The `MCP server` job in `.github/workflows/sparc-lab-mcp.yml` runs it on pull requests that touch the
+lab.
 
 ## Things the lab found out
 
