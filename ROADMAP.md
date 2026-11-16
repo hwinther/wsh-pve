@@ -45,6 +45,17 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    (the lab's `pve` matrix). Then answer issue #200.
 4. **TCX against cg3.** Whether TCX works per profile, firmware and guest, in 8 and 24 bit, whether
    it is faster under X, and why it failed in the past. cg3 is the default today.
+5. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
+   extra. Five patches fix the virtual `available` list, the I-cache properties and the Forth
+   state at client start. With them Solaris 10 1/13 boots its DVD to the installer's `Select a
+   Language` prompt (it panicked before), and NetBSD, OpenBSD `bsd.rd` and the Debian installer
+   boot as before. Still to do:
+   - install it in the package (`debian/rules` hook in `pve-qemu.patch`);
+   - console input to Solaris on ttya (characters never reach the UART's receive buffer; QEMU side);
+   - the cmd646 `Interrupt not seen` warning (paulsheer/qemu has a fix);
+   - Solaris 7/8/9 `pp is NULL or free`;
+   - 2.5.1/2.6 boot-block exceptions.
+   Details: `submodules/SPARC.md`, "Solaris on sun4u".
 
 ## Next, in this order
 
