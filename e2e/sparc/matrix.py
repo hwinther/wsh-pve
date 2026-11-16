@@ -33,6 +33,11 @@ SOL26SS20PROM = "sol26-enduser-ss20prom-installed.raw"
 SS20PROM = {"MACHINE": "SS-20", "BIOS": "ss20_v2.25_rom", "CPU": "TI-SuperSparc-50"}
 CD26, CD251 = "solaris_2.6_598_sparc.iso", "solaris_2.5.1_1197.iso"
 SOLARIS_IDLE = {"TRACE": "sparc_solaris_idle_match", "CPU_BELOW": "10"}
+# The sparc32 profiles (submodules/SPARC.md, "Supported profiles") and the 2.6 disk installed on each
+DISPLAY_PROFILES = [("openbios-ss5", {}), ("ss5bin-ss5", {"BIOS": "ss5.bin"}),
+                    ("openbios-ss10", {"MACHINE": "SS-10"}), ("openbios-ss20", {"MACHINE": "SS-20"}),
+                    ("ss20prom-ss20", SS20PROM)]
+DISPLAY_DISKS = [SOL26, SOL26, SOL26SS10, SOL26SS20, SOL26SS20PROM]
 MATRICES = {
     "smoke": [
         ("sol26-disk-openbios-ss5", "solaris-boot-disk.py", SOL26, None, {}),
@@ -75,6 +80,28 @@ MATRICES = {
         ("cg3-ss5bin-1024x768", "cg3-display.py", None, None, {"BIOS": "ss5.bin"}),
         *[(f"sol26-disk-openbios-cg3-{res}", "cg3-display.py", SOL26, None, {"RES": res})
           for res in ("1024x768", "1152x900", "1280x1024", "1600x1200", "1920x1080")],
+        # TCX (fb-display.py, submodules/SPARC.md "cg3 and TCX"): the banner at depth 8 and 24 with every
+        # profile's firmware, the cg3 banner on SS-10/SS-20, and a 2.6 installed without a TCX (no
+        # SUNWtcx): console through the PROM, no X
+        *[(f"tcx{d}-{name}", "fb-display.py", None, None, {"VGA": "tcx", "RES": f"1024x768x{d}", **extra})
+          for d in (8, 24) for name, extra in DISPLAY_PROFILES],
+        *[(f"cg3-{name}", "fb-display.py", None, None, {"VGA": "cg3", **extra})
+          for name, extra in DISPLAY_PROFILES if not name.endswith("ss5")],
+        ("sol26-disk-openbios-tcx-nodriver-ss5", "fb-display.py", SOL26, CD26,
+         {"VGA": "tcx", "PREPARE": "1", "PKGS": "", "EXPECT": "console", "DRIVER_EXPECT": "Can.t find driver",
+          "XERR_EXPECT": "unknown type|Error loading module"}),
+    ],
+    # The 2.6 disks into the CDE desktop on TCX (depth 8 and 24) and cg3: PREPARE adds the TCX packages
+    # and a ttya login first, then dtlogin, root's CDE session, the depth, the keyboard, idle CPU.
+    # ~9 min a case. Left out: TCX 24 under ss5.bin (QEMU stops: TCX's ROM describes an 8-bit TCX
+    # under a Sun PROM) and the SS-20 PROM (Solaris panics with any framebuffer console).
+    "display-x": [
+        (f"sol26-x-{vga}{d if vga == 'tcx' else ''}-{name}", "fb-display.py", disk, CD26,
+         {"VGA": vga, **({"RES": f"1024x768x{d}"} if vga == "tcx" else {}), "PREPARE": "1", "X": "1",
+          "DEPTH": str(d), "INPUT": "1", "IDLE": "60", **extra})
+        for vga, d in (("tcx", 8), ("tcx", 24), ("cg3", 8))
+        for (name, extra), disk in zip(DISPLAY_PROFILES, DISPLAY_DISKS)
+        if name != "ss20prom-ss20" and not (d == 24 and name == "ss5bin-ss5")
     ],
     # Host CPU use of an idle guest (needs a package with the idle patches, submodules/SPARC.md):
     # Solaris 2.5.1 and 2.6 are halted in their idle loop by the solaris-idle machine option (on by

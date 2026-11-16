@@ -45,7 +45,7 @@ network device, `lance`.
 - **Disk** — SCSI bus only.
 - **CD-ROM** — SCSI.
 - **Network** — `lance` (sparc; built into the machine, not hot-pluggable, one per VM, with the MAC address of `net0`) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
-- **Display** — `cg3` (preferred) or `tcx` framebuffer; a serial console is also available (see [Display](/reference/display/) and [Serial port](/reference/serial/)).
+- **Display** — `cg3` (preferred) or `tcx` framebuffer; a serial console is also available (see [Display](/reference/display/) and [Serial port](/reference/serial/)). Solaris only runs X on TCX when it was installed with the TCX attached or has the TCX packages added, and a change of framebuffer needs a reconfigure boot; see [cg3 or TCX](#cg3-or-tcx).
 - **Audio** — not currently working on SPARC.
 - **USB / PCI passthrough** — not supported on SPARC.
 
@@ -159,6 +159,29 @@ cg3 guest that started with its console closed shows the PROM's grey palette (an
 for the first moment after you open the console; the colours are right as soon as the display
 refreshes.
 
+### cg3 or TCX
+
+Both run the Solaris 2.6 desktop (CDE) on SS-5 (OpenBIOS or `ss5.bin`), SS-10 and SS-20 with
+OpenBIOS. Keep **cg3** unless you want 24-bit colour:
+
+- **cg3** (the default): 8-bit colour, works on any installed Solaris, and draws text 4 to 8 times
+  faster than TCX under QEMU (TCX's drawing engine is emulated register by register, which costs more
+  than plain memory writes).
+- **TCX**: 1024x768 only, 8-bit; QEMU can also run it with 24-bit colour, but the VM settings don't
+  offer that yet. Solaris needs its TCX packages, which the installer only adds when it sees a TCX:
+  a system installed with cg3 or on the serial console boots on TCX with `NOTICE: Can't find driver
+  for console framebuffer` and no desktop (`/var/dt/Xerrors`: `Graphics Adapter device /dev/fb is of
+  unknown type`). Add them from the install CD and reconfigure:
+
+  ```sh
+  pkgadd -d /cdrom/cdrom0/s0/Solaris_2.6/Product SUNWtcx.m SUNWtcxow SUNWtcxu
+  touch /reconfigure
+  ```
+
+- **Switching** between cg3 and TCX on an installed Solaris: run `touch /reconfigure` before the change,
+  or boot once with `boot -r`. Without that `/dev/fb` still points at the old framebuffer and the
+  desktop doesn't start (`/dev/fb: No such device or address`).
+
 ### Known QEMU fixes carried in the package
 
 - **ESP SCSI after a bus reset** (QEMU 10.1 to at least 11.1): the ESP rejected Select with ATN after
@@ -171,7 +194,12 @@ refreshes.
 - sparc32: one CPU (Solaris 2.6 with more hangs); 256 MB on SS-5, 512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5) and `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) are
   supported; the SS-10 PROM doesn't run on QEMU's SS-10.
-- No framebuffer resolution option: cg3 runs at 1024x768.
+- No framebuffer resolution option: cg3 runs at 1024x768. TCX is always 1024x768, 8-bit (no 24-bit option).
+- SS-20 with `ss20_v2.25_rom`: Solaris 2.6 panics at boot (`BAD TRAP ... kernel read fault at
+  addr=0x0`) with the console on a framebuffer (cg3 or TCX). Use a serial console with that
+  firmware, or OpenBIOS.
+- Moving the mouse pointer in the Solaris desktop didn't work in the lab's tests (keyboard input
+  does); not yet checked from a VNC console.
 - The architecture can't be changed after the VM is created.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.

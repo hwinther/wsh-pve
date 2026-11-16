@@ -112,6 +112,163 @@ at 1152x900, 409 at 1920x1080), and Solaris 2.6's X server doesn't start: `/var/
 `Mapping cg3: No such device or address` / `AddScreen failed for /dev/fb`, so dtlogin falls back to
 the console. At 1024x768 dtlogin comes up. LEMU tested SunOS 4.1.4 (OpenWindows up to 3200x1800).
 
+### cg3 and TCX
+
+The two framebuffers QEMU's sun4m has (`hw/display/cg3.c`, `hw/display/tcx.c`, QEMU 11.1.3):
+
+| | cg3 | TCX |
+| --- | --- | --- |
+| Pixels | 8-bit plane, colour map | 8-bit plane; with depth 24 also a 24-bit plane and a control plane that picks 8-bit or 24-bit per pixel (9 MB of host RAM) |
+| `-g` | 640x480 up to 8 MB of pixels with 0008-0010, depth 8 (`x24`: `Unsupported depth: 24`) | 1024x768 only, depth 8 (default) or 24; other sizes `Unsupported resolution: W x H`, depth 16/32 `Unsupported depth` |
+| Drawing | the CPU writes the plane (plain stores into guest RAM) | also a stippler and a blitter: one register write draws or copies up to 32 pixels (MMIO, each write a call into QEMU); "raw" variants that write the control plane too |
+| Cursor | drawn by the X server into the plane | 32x32 two-colour hardware cursor (THC registers), drawn by QEMU into its display output |
+| Interrupt | vertical retrace, raised only when the display is refreshed (README, "Things the lab found out") | none: the IRQ is wired but never raised |
+| Firmware ROM | `QEMU,cgthree.bin` (ours) | `QEMU,tcx.bin` (OpenBIOS `drivers/tcx.fs`, QEMU's): the 8-bit or 24-bit `reg` layout and `tcx-8-bit`; the firmware console is 8-bit in both; the Sun PROMs get its 1024x768 defaults |
+| Solaris | `cgthree` driver and `ddxSUNWcg3.so.1`, always installed | `tcx` (SUNWtcx) and `ddxSUNWtcx.so.1` (SUNWtcxow), installed only when the installer saw a TCX (below) |
+
+QEMU's sun4m defaults to TCX; qemu-server passes `-vga cg3` unless `vga: tcx`, and never `-g`, so a
+`vga: tcx` VM is TCX at 1024x768x8.
+
+**Why TCX "doesn't work".** Two failure modes in Solaris, one in QEMU's TCX ROM:
+
+1. *No TCX driver.* The installer adds the TCX cluster (SUNWCtcx: SUNWtcx = `/platform/sun4m/kernel/drv/tcx`,
+   SUNWtcxow = `/usr/openwin/server/modules/ddxSUNWtcx.so.1` and `OWconfig`, SUNWtcxu = the XGL pipeline)
+   only when it finds a TCX at install time: the 2.6 and 2.5.1 CDs' `.clustertoc` have
+   `SUNW_CSRMBRIFF=(smcc.dctoc tcx)SUNWCtcx`. A system installed on the serial console or with the cg3
+   (every lab disk, and anyone who installed with qemu-server's default) has none of it; cg3 support is
+   always installed. Booted with TCX it says `NOTICE: Can't find driver for console framebuffer` (the
+   console still works, through the PROM), and dtlogin gives up (`/var/dt/Xerrors`: `/dev/fb: No such
+   file or directory`, `Graphics Adapter device /dev/fb is of unknown type`, `Fatal server error:
+   InitOutput: Error loading module for /dev/fb`; the console: `The X-server can not be started on
+   display :0...`). Fix: from the install CD, `pkgadd -d /cdrom/cdrom0/s0/Solaris_2.6/Product SUNWtcx.m
+   SUNWtcxow SUNWtcxu` (SUNWtcx is per platform: `.m`; 2.5.1: `/cdrom/cdrom0/s0/Solaris_2.5.1`), then a
+   reconfigure boot (the lab's `scenarios/solaris-tcx-packages.py`), or install with the TCX attached.
+2. *Switching without a reconfigure boot.* Solaris 2.6 creates the `/devices` nodes and the `/dev/fb`
+   link only on a reconfigure boot (`boot -r`, `touch /reconfigure`). After a switch from TCX to cg3 (or
+   back) `/dev/fb` still points at the old device: `/dev/fb: No such device or address`, `Graphics
+   Adapter device /dev/fb is of unknown type`, no X. `touch /reconfigure` before the change (or `boot -r`
+   once after it) fixes it; fresh lab disks don't show it because an install leaves `/reconfigure` for
+   the first boot.
+3. *TCX 24-bit under a Sun PROM stops QEMU.* `QEMU,tcx.bin` learns the depth from OpenBIOS words
+   (`depth-bits`, `openbios-video-width`); under a Sun PROM it falls back to 8 bits and describes an 8-bit
+   TCX (`tcx-8-bit`, the THC at offset 0x300000), while QEMU's 24-bit TCX has its THC at 0x301000 and
+   nothing at 0x300000 (for 8 bits QEMU maps a dummy at 0x301000, "NetBSD writes here", not the
+   reverse). `ss5.bin` + `-g 1024x768x24`: the banner is fine, then 7-12 s after `boot disk`
+   `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled` (pc f00412f4), 2 of 2 boots;
+   most likely the tcx driver's first THC access (not traced). Not reachable through qemu-server (no
+   `-g`). A fix would be in QEMU (map the THC, or a dummy, at 0x300000 for depth 24 too) or in `tcx.fs`.
+
+1 and 2 don't depend on the machine or the depth. With the packages and a reconfigure boot, TCX ran
+every Solaris case below that cg3 ran.
+
+Not TCX, but found on the way: **SS-20 with `ss20_v2.25_rom` doesn't boot Solaris 2.6 with any
+framebuffer** (cg3 or TCX, also the unmodified installed disk). After its failed network boot (the
+PROM's NVRAM is invalid at every power-on, so `diag-switch?` is true), `boot disk` typed on the Sun
+keyboard resets the PROM and the command is lost (`Rebooting with command:` and the network again);
+with `setenv diag-switch? false` first it boots the disk after that reset and the kernel panics:
+`BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `MMU sfsr=126: Invalid Address`. The same disk
+boots with the console on ttya (`boot disk` there doesn't reset). Not investigated further; the lab's
+`machines`/`bench` cases use that PROM without a framebuffer. `ss5.bin` boots from the same state.
+
+**Results** (console on the framebuffer, `scenarios/fb-display.py` unless stated; Solaris cases on a
+fresh copy of a disk prepared with `solaris-tcx-packages.py`, whose next boot is a reconfigure boot;
+"X" = dtlogin, root logged in, the CDE desktop, the depth `xdpyinfo` reports, a command typed into a
+dtterm on the Sun keyboard):
+
+| Machine | Firmware | Guest | Display | Banner | Console | X | Depth |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SS-5 | OpenBIOS | 2.6 | TCX 8 | yes | yes | yes | 8 |
+| SS-5 | OpenBIOS | 2.6 | TCX 24 | yes | yes | yes | 24 |
+| SS-5 | OpenBIOS | 2.6 | cg3 | yes | yes | yes | 8 |
+| SS-5 | OpenBIOS | 2.6, no SUNWtcx | TCX 8 | yes | yes (PROM) | no (failure mode 1) | |
+| SS-5 | `ss5.bin` | 2.6 | TCX 8 | yes | yes | yes | 8 |
+| SS-5 | `ss5.bin` | 2.6 | TCX 24 | yes | QEMU stops (failure mode 3) | | |
+| SS-5 | `ss5.bin` | 2.6 | cg3 | yes | yes | yes | 8 |
+| SS-5 | `ss5.bin` | 2.5.1 | TCX 8 | yes | yes | OpenWindows' `Xsun` started from a shell (End User 2.5.1 has no CDE/dtlogin) | 8 |
+| SS-10 | OpenBIOS | 2.6 | TCX 8 | yes | yes | yes | 8 |
+| SS-10 | OpenBIOS | 2.6 | TCX 24 | yes | yes | yes | 24 |
+| SS-10 | OpenBIOS | 2.6 | cg3 | yes | yes | yes | 8 |
+| SS-20 | OpenBIOS | 2.6 | TCX 8 | yes | yes | yes | 8 |
+| SS-20 | OpenBIOS | 2.6 | TCX 24 | yes | yes | yes | 24 |
+| SS-20 | OpenBIOS | 2.6 | cg3 | yes | yes | yes | 8 |
+| SS-20 | OpenBIOS | 2.6, no SUNWtcx | TCX 8 | yes | yes (PROM) | no (failure mode 1) | |
+| SS-20 | OpenBIOS | 2.6 | cg3 after TCX, no `-r` | | yes | no (failure mode 2); after `touch /reconfigure`: yes | |
+| SS-20 | `ss20_v2.25_rom` | 2.6 | TCX 8, TCX 24, cg3 | yes | kernel panic (above) | | |
+| SS-5 | OpenBIOS | SunOS 4.1.4 | TCX 8 | yes | yes (`tcx0: revision 0, screen 1024x768`, its own driver) | not tried | |
+| SS-5 | OpenBIOS | SunOS 4.1.4 | cg3 | yes | yes (`cgthree0`) | not tried | |
+| SS-5 | OpenBIOS | NetBSD 11.1 | TCX 8 | yes | yes (`tcx0 ... (8-bit only TCX)`, `wsdisplay0 at tcx0`) | not installed | |
+| SS-5 | OpenBIOS | NetBSD 11.1 | TCX 24 | yes | yes (`tcx0 ... (S24)`) | not installed | |
+| SS-5 | OpenBIOS | NetBSD 11.1 | cg3 | yes | yes | not installed | |
+
+The SunOS and NetBSD rows are one boot each, logged in on the framebuffer by OCR and send-key (no
+lab scenario: `fb-display.py` expects Solaris's prompts).
+
+**Speed.** QEMU's host time for the lab's drawing workload (`fb-display.py BENCH=3`, root's CDE session,
+from the ttya shell with `DISPLAY=:0`; median of 3, range; one guest of ours, host load 1-5 from other
+jobs on 14 cores): `text` = `xterm +j` (no jump scroll) `cat`s 1500 lines, `scroll` = the same with jump
+scroll, `fill` = 20 `xsetroot -solid`, `windows` = 10 `xterm -e true`. QEMU's CPU in % of a core during
+each. MMIO = QEMU's `memory_region_ops_write` events in one more round, per TCX region (the plain planes
+are RAM and don't show):
+
+| Machine | Display | text s | scroll s | fill s | windows s | MMIO writes per round |
+| --- | --- | --- | --- | --- | --- | --- |
+| SS-20 | TCX 8 | 6.2 (6.0-6.6), 103% | 0.5 (0.5-0.6), 130% | 1.0 (0.9-1.0), 119% | 1.4 (1.4-1.5), 109% | `tcx.blit` 27.8 M, `tcx.stip` 4.8 M |
+| SS-20 | TCX 24 | 7.9 (7.0-8.6), 102% | 0.7 (0.5-0.7), 123% | 0.9 (0.9-1.0), 121% | 1.3 (1.2-1.4), 109% | `tcx.rblit` 27.8 M, `tcx.stip` 4.9 M |
+| SS-20 | cg3 | 1.0 (1.0-1.1), 109% | 0.2 (0.2-0.3), 149% | 0.9, 111% | 1.2 (1.1-1.2), 109% | none |
+| SS-5 | TCX 8 | 7.1 (6.8-7.4), 103% | 0.7, 124% | 1.3 (1.2-1.5), 115% | 1.9 (1.9-2.1), 108% | `tcx.blit` 27.8 M, `tcx.stip` 4.9 M |
+| SS-5 | TCX 24 | 8.1 (7.9-8.1), 102% | 0.9 (0.8-0.9), 124% | 1.3 (1.2-1.3), 120% | 1.8 (1.7-1.8), 106% | `tcx.rblit` 27.8 M, `tcx.stip` 5.0 M |
+| SS-5 | cg3 | 1.7 (1.6-1.9), 107% | 0.3, 148% | 1.2 (1.2-1.3), 111% | 1.9 (1.6-2.0), 107% | none |
+
+TCX's acceleration is used (about 14 million blitter and 2.4 million stippler operations per round,
+each two 4-byte writes, from the X server's TCX module; the raw blitter at depth 24),
+and it makes text drawing slower, not faster: 4x (SS-5) to 8x (SS-20, depth 24) the cg3's time. Each
+operation is an MMIO write that leaves the translated code for a call into `tcx.c`, while the cg3's
+pixels are ordinary stores into guest RAM. Fills and window creation cost the same on both. QEMU's
+CPU stayed at 102-149% of a core in every test (above 100%: its display refresh and I/O threads). dtlogin
+came up 76-97 s after QEMU started and the desktop (user name to a still CDE screen) took 10-18 s, on
+either.
+
+**Colours.** At depth 24 the X server's root window is 24 planes; the desktop, window frames and icons
+look as at depth 8, but the Help Viewer draws its illustrations dithered black and white (in colour at
+depth 8). At depth 8 TCX and cg3 look the same, the firmware console too (OpenBIOS: black on light
+yellow on both; `ss5.bin` on TCX: black on white). TCX has no vertical-retrace interrupt, so the cg3's
+colour-map delay with no display refresh (README) can't happen there (from the code; not measured).
+
+**Input.** The Sun keyboard works in X on both (a command typed into a dtterm ran). Pointer movement
+from QEMU's monitor (`mouse_move`) reaches the guest (the ESCC trace shows each 5-byte packet read by
+the kernel), but the X pointer doesn't move, on cg3 and TCX, OpenBIOS and `ss5.bin` alike, and reading
+`/dev/mouse` with dtlogin stopped gets nothing; so it's not a framebuffer matter, and it is open (not
+tried with a VNC client). The TCX hardware cursor is drawn where X put it (the screen centre); with no
+movement the X server never wrote the cursor position register.
+
+**Idle.** QEMU's host CPU with the CDE desktop idle for 60 s (`solaris-idle`, the lab's 0.5 s display
+refresh): TCX 8 4.4-8.8%, TCX 24 4.5-6.4%, cg3 4.2-9.5% of a core (4 measurements each, SS-5 and
+SS-20), with no consistent difference between them; a running X server doesn't keep the guest busy.
+
+**Soak.** SS-20, OpenBIOS: 600 s of back-to-back benchmark rounds on the desktop, then `xdpyinfo` and a
+screenshot: TCX 8 (39 rounds), TCX 24 (36 rounds) and cg3 (52 rounds: its text test is faster)
+passed, with no hang, crash or drawing errors in the screenshots. Every X case above ended with the guest still answering on ttya.
+
+**Recommended** (from the data above):
+
+- **cg3 stays the default for every profile.** It works on any installed system without extra
+  packages, takes larger sizes under OpenBIOS, and draws text 4-8x faster than TCX here; there is
+  no case where TCX was faster, and fills, window creation, login time, idle CPU and stability were
+  the same.
+- **TCX is the choice for 24-bit colour**, and only with OpenBIOS: SS-5, SS-10 and SS-20 ran the
+  desktop at depth 24. With `ss5.bin` TCX works at depth 8 only (24 stops QEMU, failure mode 3).
+  Either way Solaris needs SUNWCtcx (install with the TCX attached, or add the packages) and a
+  reconfigure boot after the switch. TCX at depth 8 has nothing over cg3.
+- **SS-20 with `ss20_v2.25_rom`**: neither framebuffer gets Solaris 2.6 booted (the kernel panic
+  above); give that profile a serial console until that is understood.
+- What qemu-server/pve-manager would need: nothing for the default. To offer 24-bit: a depth choice
+  for `vga: tcx` (e.g. `vga: tcx,depth=24` → `-g 1024x768x24`; TCX takes no other size), allowed with
+  `openbios-sparc32` only (or QEMU/`tcx.fs` fixed for the Sun PROMs). In the guide and the UI's help:
+  changing `vga` on an installed Solaris needs `touch /reconfigure` before (or `boot -r` once after),
+  and a system installed with cg3 or on the serial console needs SUNWtcx/SUNWtcxow from the CD before
+  TCX works in X. For `ss20_v2.25_rom`, a note (or a serial-console default) about the framebuffer
+  panic. No QEMU, qemu-server or pve-manager patch was changed for this.
+
 ### Idle
 
 QEMU keeps a host core at 100% for a guest that spins in its idle loop. Which sparc32 guests stop
@@ -522,6 +679,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   `am53c974-test` with 0007; they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
+- cg3 and TCX: the TCX/cg3 banner and no-driver cases in `display`, the desktop cases in `display-x`
+  (`scenarios/fb-display.py`, disks prepared by `solaris-tcx-packages.py`); results under "cg3 and TCX".
 - Idle: the lab's `idle` matrix (`scenarios/idle.py`).
 - Machines, firmware and speed: the lab's `machines` and `bench` matrices (`scenarios/bench.py`);
   results under "SS-10 and SS-20".
@@ -546,5 +705,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
   Solaris' X server need).
 - **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").
+- **SS-20 PROM with a framebuffer:** Solaris 2.6 panics at boot with the console on cg3 or TCX
+  under `ss20_v2.25_rom` ("cg3 and TCX"); with a serial console it boots.
+- **TCX depth:** qemu-server passes no `-g`, so TCX is 8-bit; 24-bit only works with OpenBIOS.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).
