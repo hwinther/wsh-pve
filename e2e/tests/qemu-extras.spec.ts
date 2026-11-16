@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { checkQemuExtra, hasPackagedOpenbiosSparc64, pveExec } from './_pve'
+import { checkQemuExtra, pveExec } from './_pve'
 
 // The optional extras of the installed pve-qemu-kvm. The package build never fails on them (Makefile:
 // pve-qemu-3dfx, openbios-sparc32, restore-sparc), so a package without one still publishes; the
@@ -22,12 +22,7 @@ test('openbios: openbios-sparc32 and QEMU,cgthree.bin built from openbios/', asy
   expect(check.code, check.output).toBe(0)
 })
 
-// TODO: drop the test.fail(!packaged) marker and the hasPackagedOpenbiosSparc64 probe in _pve.ts
-// once the package built from this change (pve-qemu wsh/0021, openbios-sparc64 installed by
-// debian/rules) is published.
 test('openbios-sparc64: built from openbios/', async () => {
-  const packaged = await hasPackagedOpenbiosSparc64()
-  test.fail(!packaged, 'pve-qemu-kvm from before openbios-sparc64 was packaged')
   const check = await checkQemuExtra('openbios-sparc64')
   expect(check.code, check.output).toBe(0)
 })
