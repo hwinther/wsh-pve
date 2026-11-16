@@ -1,0 +1,90 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: name UPA and ebus children like OBP (pci@1f,0,
+ su@14,3f8)
+
+The sabre was named after its first reg cell, "pci@1fe,0", and the ebus
+children got the PCI unit address format of the bridge methods: "su@0",
+"8042@0", "eeprom@0". OBP on an Ultra 5/10 names them "pci@1f,0" (the
+UPA port id, reg cell 0 = 1c0 + 2 * port id) and "su@14,3f8" (ebus
+space,offset).
+
+Solaris builds those OBP names for its device nodes and looks the
+firmware's stdin/stdout paths up among them. With the old names Solaris
+10 found no match for "/pci@1fe,0/pci@1,1/ebus@1/su@0", never opened the
+su driver as the console, and the installer took no input on ttya: the
+characters arrived in the 16550 (LSR data ready), and nothing read them.
+
+Encode the root's unit addresses as port ids (decode accepts both forms)
+and give the ebus node a two-cell space,offset encode-unit/decode-unit.
+With this the stdin instance path is
+/pci@1f,0/pci@1,1/ebus@1/su@14,3f8, and Solaris 10's installer reads
+ttya.
+
+paulsheer/openbios 5d7938c2 makes the same two naming changes in its
+own way; this is a separate implementation.
+
+maxinjohn/proxmox-solaris (solaris.sh, 2026-11-14) maps the sabre's unit
+address between 1f and 1fe the same way for Solaris.
+---
+ arch/sparc64/tree.fs | 23 ++++++++++++++++++-----
+ drivers/pci.c        |  7 +++++++
+ 2 files changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/arch/sparc64/tree.fs b/arch/sparc64/tree.fs
+index f390f6c..fc653ac 100644
+--- a/arch/sparc64/tree.fs
++++ b/arch/sparc64/tree.fs
+@@ -4,17 +4,30 @@ include config.fs
+ \ UPA encode/decode unit
+ \ -------------------------------------------------------------------------
+ 
+-: decode-unit-upa ( str len -- id lun )
+-  2 parse-nhex
+-;
+-
+-: encode-unit-upa ( id lun -- str len)
++\ Two cells as "first,second" in hex
++: encode-unit-2hex ( first second -- str len )
+   swap
+   pocket tohexstr
+   " ," pocket tmpstrcat >r
+   rot pocket tohexstr r> tmpstrcat drop
+ ;
+ 
++\ A UPA child's reg starts with 1c0 + 2 * port-id (sabre: 1fe = port 1f).
++\ OBP names it by the port id, "pci@1f,0", and so does Solaris when it
++\ builds the same name; accept both forms.
++: upa-portid>bustype ( n -- bustype )
++  dup 20 < if 1 lshift 1c0 or then
++;
++
++: decode-unit-upa ( str len -- id lun )
++  2 parse-nhex upa-portid>bustype
++;
++
++: encode-unit-upa ( id lun -- str len)
++  1 rshift 1f and
++  encode-unit-2hex
++;
++
+ \ ---------
+ \ DMA words
+ \ ---------
+diff --git a/drivers/pci.c b/drivers/pci.c
+index f30e427..bdf8e22 100644
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -1114,6 +1114,13 @@ int ebus_config_cb(const pci_config_t *config)
+ 
+     set_property(dev, "ranges", (char *)props, ncells * sizeof(props[0]));
+ 
++    /* Children of the ebus are addressed by their two reg cells,
++       space,offset: "su@14,3f8" as on OBP, not by the PCI unit address
++       format inherited from the bridge methods. Solaris builds that name
++       for the node and matches the console's path against it. */
++    feval(": decode-unit ( str len -- phys.lo phys.hi ) 2 parse-nhex ;");
++    feval(": encode-unit ( phys.lo phys.hi -- str len ) encode-unit-2hex ;");
++
+     /*  Build eeprom node */
+     fword("new-device");
+     PUSH(0x14);
