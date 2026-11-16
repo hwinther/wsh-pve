@@ -119,8 +119,8 @@ TARGETS = {
         "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol26-ss5",
-        "minutes": None,
-        "tested": None,
+        "minutes": 12,  # install 7, first boot 3, --check 2
+        "tested": {"date": "2026-11-16", "packages": PACKAGES_2026_11_16, "with": "--check"},
     },
     # An SS-5 install doesn't boot on SS-10/SS-20 (SPARC.md, "SS-10 and SS-20"): its own install.
     "sol26-ss20": {
@@ -132,8 +132,8 @@ TARGETS = {
         "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol26-ss20",
-        "minutes": None,
-        "tested": None,
+        "minutes": 12,  # install 7, first boot 3, --check 2
+        "tested": {"date": "2026-11-16", "packages": PACKAGES_2026_11_16, "with": "--check --user lab --template"},
     },
     "sol251-ss5": {
         **SOLARIS_SCRIPTED,

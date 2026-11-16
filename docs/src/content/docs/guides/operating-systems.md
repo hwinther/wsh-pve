@@ -28,7 +28,7 @@ Older Linux releases (down to the 2.x kernel series) run on the legacy devices a
 
 ## SunOS / Solaris
 
-Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC guide](/guides/sparc/) for the recommended machine, BIOS, disk, and network layout.
+Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC guide](/guides/sparc/) for the recommended machine, BIOS, disk, and network layout. For an installed Solaris 2.6 VM with known login details from one command on a node, see [Lab install targets](/guides/lab-install/).
 
 ## MS-DOS
 
