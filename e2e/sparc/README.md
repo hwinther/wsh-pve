@@ -58,13 +58,16 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `solaris-tcx-packages.py` | adds the TCX packages (SUNWtcx.m, SUNWtcxow, SUNWtcxu) to an installed Solaris from its CD and touches `/reconfigure`; `TTYA_LOGIN=1` also gives root a login on ttya while the console is on the framebuffer | ~3-4 min |
 | `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time, times a CPU-bound command (`BUSY`), the echo of `true` and ten `sleep 1`; the numbers go to `result.json` (`metrics`) | ~3-4 min |
 | `bench.py` | boots an installed Solaris disk, checks the CPUs `psrinfo` lists (`CPUS`, default `SMP`), then times boot to login, a `nawk` loop, `PARALLEL` copies of it at once (default `SMP`), a 64 MB write + `sync` and a raw read, with QEMU's host CPU use idle and during the parallel run; `SOAK` adds a load phase. `init 5` at the end | SS-5: ~5 min, SS-20: ~3 min |
+| `bench-disk.py` | boots an installed Solaris disk with the bench disk (`DISK2`, "The bench disk") on target 4, mounts it, runs its `run.sh` (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset, the `nawk` loop) and puts every `BENCH` value into `result.json`, with the host's load average; `init 5` at the end | ~9-11 min (6-7 of them `run.sh`) |
+| `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
 e.g. `TI-SuperSparc-50`, which the Sun SS-20 PROM needs; none by default), `TCG_THREAD` (`-accel
 tcg,thread=single|multi`), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
-`TEMPLATE`/`DISK`, `REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
+`TEMPLATE`/`DISK`, `DISK2` (a second disk on target `DISK2_ID`, 4; read only unless `DISK2_RO=0`),
+`REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
 Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
 
 ### The lab and the qemu-server profiles
@@ -116,6 +119,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%) | ~35 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
 | `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
+| `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB; numbers only, on an otherwise idle host | ~60 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -133,8 +137,9 @@ driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (se
 `.github/workflows/sparc-lab.yml` runs a matrix (`smoke` unless chosen otherwise) on demand and every
 week, never for pull requests or pushes: it needs the media, on a self-hosted runner labelled
 `sparc-lab`. It builds the lab image without cache (so it has the newest published package), mounts
-the three directories (inputs, defaulting to the paths above), puts the table in the job summary,
-uploads everything but the disks as an artifact and removes its run directory. The artifact has every
+the three directories (inputs, defaulting to the paths above) and the bench disk's directory when the
+bench disk exists (`bench_disk`), puts the table in the job summary, uploads everything but the disks
+as an artifact and removes its run directory. The artifact has every
 case's recordings (see "Recordings"): open a case's `index.html` from the downloaded artifact to play
 them.
 
@@ -376,6 +381,84 @@ through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Re
 installation), `a` (CD-ROM); root password empty, entropy `x` (not now), `x` (finished configuring),
 Return, `x` (exit), then `sync; halt -p`. Its GENERIC kernel attaches `apc0`; NetBSD 9.3's has no APC
 driver and spins.
+
+## The bench disk
+
+Recognised period benchmarks for Solaris guests, built once in a guest and kept on a small disk that
+any installed Solaris 2.5.1-2.6 (7-9 untried) mounts: Dhrystone 2.1, Whetstone (double precision),
+the BYTE UNIX Benchmarks' Towers of Hanoi, nbench/BYTEmark 2.2.3 and a fixed lmbench 3.0-a9 subset,
+plus the earlier `nawk` loop, with a driver that prints one `BENCH <name> <value> <unit>` line per
+result. `bench/README` (also on the disk) lists versions, sources, flags, parameters and licences.
+`bench-disk.py` runs it and the `benchdisk` matrix compares machines and firmware; the results are in `submodules/SPARC.md` ("Benchmarks"). Neither disk image, nor the downloaded
+sources, nor anything from the Solaris CD is in the repository: only the scripts in `bench/`.
+
+| File (lab host) | What |
+| --- | --- |
+| `/mnt/sparc/disks/bench-sol26.raw` | the bench disk: 32 MiB, Sun label, UFS on slice 0 (`bench/README` is its README). The one measured in `submodules/SPARC.md`: sha256 `4fc0babd3639e67ec9ab6f5176a7d645316849759ad1e5b1d6e48335933a2206` (every rebuild differs: `newfs` and file times) |
+| `/mnt/sparc/disks/sol26-ss20-build.raw` | the build disk: `sol26-enduser-ss20-installed.raw` + the 2.6 development packages + gcc 2.95.3 (sha256 `6be744e08cc3c7e34d7ed634d4f717d7f17f1c8a521e32fc23dbada86131eaa2`; boot only copies of it) |
+| `/mnt/sparc/disks/bench-downloads/` | the sources and the gcc package as downloaded and checked by `bench/handover.py` (untrusted third-party files: only for the hand-over CD) |
+
+`DISK2` attaches a second disk on SCSI target `DISK2_ID` (4), read only unless `DISK2_RO=0`. Target 4,
+not 0-2: OpenBIOS takes the first disk it probes for its `disk` alias, so with a disk on target 1 it
+tries to boot that one (`Not a bootable ELF image`) instead of target 3; with target 4 OpenBIOS and the
+Sun PROMs boot target 3 as before. The installs saw no disk on target 4, so `bench-disk.py` and
+`build.sh` run `drvconfig; disks` (`/devices` and `/dev` entries for it) before using
+`/dev/dsk/c0t4d0s0`; no reconfiguration boot is needed (tried on target 1 and 4, 2.6 and 2.5.1).
+
+**Build disk** (once; ~15 min by hand through `serve`; SS-20, where deep-calling programs such as gcc
+run several times faster than on SS-5, `submodules/SPARC.md` "Benchmarks"):
+
+1. Copy `sol26-enduser-ss20-installed.raw` to `/mnt/sparc/disks/sol26-ss20-build.raw` and `serve` it
+   with `MACHINE=SS-20 ISO=solaris_2.6_598_sparc.iso`; answer the first-boot questions, log in as root.
+2. From the 2.6 CD (vold mounts it on `/cdrom/cdrom0/s0`), with an admin file of `action=nocheck`,
+   `instance=overwrite` and the other checks off: `pkgadd -n -a /tmp/admin -d
+   /cdrom/cdrom0/s0/Solaris_2.6/Product SUNWhea SUNWarc SUNWsprot SUNWbtool SUNWlibm`. The End User
+   install has none of these; what each brings: headers (SUNWhea), `libc.a` and the other archive
+   libraries plus `values-Xa.o` (SUNWarc), `as` and `make` (SUNWsprot), `ar`/`ranlib` for lmbench's
+   library (SUNWbtool), `libm.a` (SUNWlibm). `ld` (SUNWtoo) is installed already. Solaris 2.6 ships no
+   `crt1.o`; gcc brings its own.
+3. Swap the CD for the hand-over CD (below; `eject cdrom`, `ctl hmp "change drive-scsi6 <iso> raw
+   read-only"`, `/etc/init.d/volmgt stop`, `mount -F hsfs -o ro /dev/dsk/c0t6d0s0 /mnt`) and install
+   gcc on the big slice: `/` is too small for pkgadd's spool and `/usr` too small for gcc, so
+   `mkdir /export/home/local; ln -s /export/home/local /usr/local; TMPDIR=/export/home/tmp pkgadd -n
+   -a /tmp/admin -d /mnt/gcc/gcc-2.95.3-sol26-sparc-local all` (Sunfreeware's SMCgcc, gcc 2.95.3,
+   using Sun's `as`/`ld`). Remove `/export/home/tmp`, `sync; init 5`.
+
+**Hand-over CD and bench disk** (each rebuild; ~3 min). `bench/handover.py` downloads the sources and
+the gcc package (pinned URLs and sha256 in the script, kept in the download directory), gunzips what
+the guest can't, and writes an ISO 9660/Rock Ridge CD with them, `build.sh`, `run.sh`, `lmbench.sh`,
+`nbench.cfg`, the disk's README and a `SOURCES` file. `bench/sunlabel.py` makes a blank disk with a Sun
+label (slice 0 = all but the 2 alternate cylinders), and `bench-build.py` boots a copy of the build disk
+with both, runs `build.sh` (compile with fixed flags, `newfs` slice 0, copy binaries, sources and README,
+check that Dhrystone runs from the disk) and reports the compile times. From the repository root, on the
+lab host:
+
+```sh
+docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+W=/mnt/sparc/runs/bench-build; mkdir -p $W
+D=/mnt/sparc/disks/bench-downloads   # handover.py checks the files there, fetches missing ones
+docker run --rm -v $W:$W -v $D:$D --entrypoint python3 wsh-sparc-lab -I bench/handover.py $D $W/handover.iso
+python3 e2e/sparc/bench/sunlabel.py $W/bench.raw 32
+cp --sparse=always /mnt/sparc/disks/sol26-ss20-build.raw $W/disk.raw
+docker run --rm -v $W:$W wsh-sparc-lab run scenarios/bench-build.py --out $W/run --var MACHINE=SS-20 \
+  --var DISK=$W/disk.raw --var ISO=$W/handover.iso --var DISK2=$W/bench.raw
+cp $W/bench.raw /mnt/sparc/disks/bench-sol26.raw; sha256sum /mnt/sparc/disks/bench-sol26.raw
+```
+
+**Run it**: `bench-disk.py` with `DISK2=` the bench disk, or the matrix (the bench disk's directory
+mounted read only, `--bench` defaults to `/mnt/sparc/disks/bench-sol26.raw`; a missing bench disk fails
+every case):
+
+```sh
+docker run --rm -v /srv/sparc/disks:/srv/sparc/disks:ro -v /mnt/sparc/disks:/mnt/sparc/disks:ro \
+  -v /mnt/sparc/runs:/mnt/sparc/runs --entrypoint python3 wsh-sparc-lab matrix.py benchdisk \
+  --runs /mnt/sparc/runs/b1 --bench /mnt/sparc/disks/bench-sol26.raw
+```
+
+The summary adds a table with one row per benchmark and one column per case. Each case's directory
+has `bench.txt` (run.sh's output with the units, `uname -a`, `psrinfo -v`) and `result.json`
+(`metrics`: every value, plus `boot_s`, `run_s`, `run_cpu_pct` and the host's 1-minute load average at
+the start and end, `load1_start`/`load1_end`).
 
 ## SunOS 4.1.4
 

@@ -1,0 +1,117 @@
+Bench disk: recognised period benchmarks for Solaris sparc guests
+==================================================================
+
+Mount slice 0 read only and run the driver as root:
+
+    drvconfig; disks                       # if the target wasn't there at install time
+    mkdir -p /bench; mount -F ufs -o ro /dev/dsk/c0t4d0s0 /bench
+    sh /bench/run.sh                       # or: sh /bench/run.sh dhry   (names starting with dhry)
+
+run.sh prints `uname -a`, `psrinfo -v` and the memory size, then one line per result between
+BENCH-BEGIN and BENCH-END:
+
+    BENCH <name> <value> <unit>
+    BENCH-ERROR <name> <reason>            (a benchmark that failed)
+    BENCH-SKIP <names>: <reason>           (left out on this release)
+
+It writes only to $BENCH_TMP (default /var/tmp/bench) and removes it again. Takes ~6 minutes
+(emulated SS-5 or SS-20 under QEMU 11.1).
+
+Contents
+--------
+
+    run.sh, lmbench.sh   the driver (lmbench.sh is the lmbench part)
+    bin/                 the binaries, statically linked (SunOS 5.6 libc.a/libm.a; src/compat251.c
+                         adds the fstat64 Solaris 2.5.1 lacks, see "Releases")
+    nbench/              NNET.DAT (nbench's neural-net data) and NBENCH.CFG (the fixed configuration;
+                         upper case: nbench upper-cases its arguments, file name included)
+    src/                 the sources exactly as downloaded (SOURCES: URLs and sha256), compat251.c
+    BUILDINFO            compiler, flags, compile times, build date
+    SOURCES              where each file came from, with its sha256
+
+Benchmarks and the fixed parameters
+-----------------------------------
+
+All built with gcc 2.95.3 (Sunfreeware package SMCgcc for Solaris 2.6, Sun as/ld of Solaris 2.6),
+-O2 -mcpu=v8, -static: plain SPARC V8 code (hardware multiply/divide, which microSPARC-II and
+SuperSPARC both have), no CPU-specific scheduling, so the same binaries run on SS-5 and SS-10/SS-20.
+
+Dhrystone 2.1 (Reinhold P. Weicker, C version by Rick Richardson; netlib benchmark/dhry-c)
+    dhry_1.c + dhry_2.c compiled separately (no cross-file inlining), -DHZ=100, timed with times()
+    (dhry.h's default). Source change: the K&R declaration `extern int times ();` removed from
+    dhry_1.c (it clashes with <sys/times.h>), nothing else. run.sh raises the run count until a run
+    takes 2 s of user time, scales it to BENCH_TARGET (20) seconds and runs it once more.
+    dhry_dps   Dhrystones per second
+    dhry_mips  dhry_dps / 1757 (VAX 11/780 = 1757 Dhrystones/s = 1 "VAX MIPS")
+    dhry_runs  the run count used
+
+Whetstone (netlib benchmark/whetstone.c, "C Converted Whetstone Double Precision Benchmark" 1.2,
+Painter Engineering 1998), unmodified, -lm. Its own timing uses time() (one-second resolution), so
+run.sh scales the loop count to ~20 s and takes the user time from /usr/bin/time:
+    whet_mwips  loops / (10 x user seconds)  (whetstone.c: KIPS = 100 x loops / seconds)
+    whet_loops  the loop count used
+
+Towers of Hanoi from the BYTE UNIX Benchmarks (hanoi.c, "Release 3", 1991; from UnixBench 5.1.3,
+which includes timeit.c), unmodified: the recursive mov() with 10 disks, i.e. calls ten deep, more
+than the SPARC register windows hold, so it exercises the window overflow/underflow traps that
+Dhrystone, Whetstone and nbench hardly reach. Runs BENCH_TARGET seconds (alarm, wall time):
+    hanoi_lps   complete 10-disk towers per second (UnixBench's "lps")
+
+nawk loop (not a recognised benchmark): the Solaris nawk job of the lab's earlier bench.py,
+`for (i = 0; i < 1000000; i++) s = (s + i * i) % 9973`, kept because it is the job that shows
+Solaris's microSPARC window-trap slowdown (submodules/SPARC.md):
+    nawk_s  user seconds
+
+nbench / BYTEmark 2.2.3 (BYTE Magazine's BYTEmark, Unix port by Uwe F. Mayer), unmodified, built
+with its Makefile (CFLAGS -s -static -Wall -O2 -mcpu=v8, -DLINUX for the new indices).
+Reduced configuration: nbench/NBENCH.CFG sets MINSECONDS=2 (default 5), the minimum time of each
+timed run; everything else is nbench's default (all ten tests, confidence-driven repetitions). A
+full default run takes ~4.5 minutes on the emulated SS-20, the reduced one ~2.
+    nb_<test>       iterations per second of each test (numeric_sort ... lu_decomposition)
+    nb_mem, nb_int, nb_fp            the MEMORY, INTEGER and FLOATING-POINT indices (AMD K6/233 = 1)
+    nb_byte_int, nb_byte_fp          the original BYTEmark indices (Pentium 90 = 1)
+    nb_uncertain    tests nbench flags "NOT 95 % statistically certain" (runs varied too much)
+    nbench's whole output follows, each line starting with "# ".
+
+lmbench 3.0-a9 (Larry McVoy, Carl Staelin), unmodified, built with its own scripts/build (which adds
+the -DHAVE_... feature flags; CFLAGS -O2 -mcpu=v8 -static), each program linked once more with
+compat251.o. A fixed subset with fixed parameters, lmbench's defaults otherwise, and ENOUGH=100000
+(microseconds per timed interval) so every machine times the same way; the file tests use an 8 MB
+file in $BENCH_TMP (made with mkfile):
+    lm_null lm_read lm_write lm_stat lm_open     lat_syscall null|read|write|stat|open (us)
+    lm_sig_install lm_sig_catch lm_prot_fault    lat_sig install|catch|prot (us)
+    lm_pipe                                      lat_pipe (us)
+    lm_fork lm_exec lm_sh                        lat_proc fork|exec|shell (us)
+    lm_pagefault                                 lat_pagefault (us per page)
+    lm_mmap_8m                                   lat_mmap 8m (us)
+    lm_file_rd_8m                                bw_file_rd 8m io_only (MB/s)
+    lm_mem_rd_4m lm_mem_wr_4m lm_bcopy_4m        bw_mem 4m rd|wr|bcopy (MB/s)
+    lm_mem_lat_8m                                lat_mem_rd 8 128: load latency at 8 MB (ns)
+    lm_fs_create_0k lm_fs_delete_0k              lat_fs <dir>, its 0k line (files/s)
+    Not included: the network benchmarks (nothing set up), and lat_ctx, bw_pipe and lat_fifo: on
+    Solaris 2.6 their pipe reads/writes return EINTR (lmbench expects BSD signal semantics) and
+    they loop on "read/write on pipe: Interrupted system call".
+
+Releases
+--------
+
+Built on Solaris 2.6 and run there and on Solaris 2.5.1 (SS-5). Linked statically against 2.6's
+libc.a, a program dies on 2.5.1 with SIGSYS at its first buffered output: 2.6's stdio sizes the
+buffer with fstat64 (system call 217, new in 2.6). src/compat251.c, linked into every program
+(lmbench's link lines repeated with it), answers fstat64 from fstat. Solaris 7, 8 and 9 keep the 2.6
+system calls, so the binaries should run there too; not tried (no installed disks). On 2.5.1
+lmbench's lat_fs times nothing (-1 for every file size, with or without compat251.o; not looked
+into further), so run.sh skips it there with a BENCH-SKIP line.
+
+Licences
+--------
+
+Dhrystone: no licence statement; distributed freely by its author (netlib), generally treated as
+public domain. Whetstone (whetstone.c): (c) 1998 Painter Engineering, Inc., "Permission is granted
+to use, duplicate, and publish this text and program as long as it includes this entire comment
+block and limited rights reference". hanoi.c/timeit.c: BYTE UNIX Benchmarks, as distributed in
+UnixBench (byte-unixbench), whose licence is GPL version 2. nbench: BYTE's source is "freely
+distributable" (bdoc.txt), the Unix port's README carries a BSD-style disclaimer. lmbench: GPL version 2 with two additional
+restrictions (COPYING-2): results of modified benchmarks may not be published, and results may not
+be distributed for a fee; its rationale asks that published results be complete. The sources on this
+disk are the unmodified archives, which also covers the GPL's source requirement for bin/.

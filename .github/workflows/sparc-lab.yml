@@ -6,7 +6,8 @@ name: sparc lab
 # Runs on a self-hosted runner that has the media, which a public repo must not hand to pull requests:
 # manual and weekly runs only, never pull_request or push. The runner needs Docker and three host
 # directories (inputs below; the schedule uses the defaults): the install CDs and the installed
-# disk images, both mounted read only, and a directory for run output.
+# disk images, both mounted read only, and a directory for run output; for benchdisk also the bench
+# disk (e2e/sparc/README.md, "The bench disk"), whose directory is mounted read only.
 
 on:
   workflow_dispatch:
@@ -23,6 +24,7 @@ on:
           - pve
           - display-x
           - sparc64
+          - benchdisk
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"
@@ -37,6 +39,9 @@ on:
         description: "When every case passed, replace the docs' recordings in the media release with this run's (e2e/sparc/publish_media.py)"
         type: boolean
         default: false
+      bench_disk:
+        description: "The bench disk on the runner host (benchdisk; its directory is mounted read only)"
+        default: /mnt/sparc/disks/bench-sol26.raw
   schedule:
     - cron: "17 3 * * 0"
     - cron: "47 4 * * 0" # the pve matrix
@@ -59,6 +64,7 @@ jobs:
       ISO_DIR: ${{ inputs.iso_dir || '/mnt/sparc/iso' }}
       DISKS_DIR: ${{ inputs.disks_dir || '/srv/sparc/disks' }}
       RUN_DIR: ${{ inputs.runs_dir || '/mnt/sparc/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
+      BENCH_DISK: ${{ inputs.bench_disk || '/mnt/sparc/disks/bench-sol26.raw' }}
       IMAGE: wsh-sparc-lab:gh-${{ github.run_id }}
     steps:
       - name: Checkout
@@ -76,9 +82,16 @@ jobs:
       - name: Run the ${{ env.MATRIX }} matrix
         if: ${{ env.MATRIX != 'pve' }}
         run: |
+          # The bench disk's directory, only when it exists (docker would create a missing one);
+          # without it the benchdisk cases fail with "bench disk ... doesn't exist"
+          bench=()
+          if [ -f "$BENCH_DISK" ]; then
+            bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
+          fi
           docker run --rm --name "sparc-lab-${GITHUB_RUN_ID}" \
-            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" \
-            --entrypoint python3 "$IMAGE" matrix.py "$MATRIX" --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR"
+            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "${bench[@]}" \
+            --entrypoint python3 "$IMAGE" matrix.py "$MATRIX" --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" \
+            --bench "$BENCH_DISK"
 
       # pve: VMs created through the API of a PVE node in a container (the e2e image with the lab in
       # it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py)

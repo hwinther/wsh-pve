@@ -19,6 +19,9 @@ Variables (lab.py run ... --var KEY=VALUE):
   CDROM_AS  cd | hd: Solaris 2.4/2.5 only boot the installer from a CD that answers as a disk
   DISK      the guest disk; created from TEMPLATE when it doesn't exist  (<out>/disk.raw)
   TEMPLATE  a Sun-labelled disk template (.raw or .raw.xz)    (none: a blank 3 GiB disk)
+  DISK2     a second disk (the bench disk), must exist        (none)
+  DISK2_ID  its SCSI target; 0-2 would come before the boot disk in OpenBIOS's probe  (4)
+  DISK2_RO  1 = read only, 0 = writable                       (1)
   REFRESH   seconds between display updates, 0 = none          (0.5 with a framebuffer, else 0)
             A connected VNC client does this; without it cg3 never raises its vsync interrupt.
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
@@ -79,6 +82,13 @@ def qemu_args(v, out):
         args += ["-prom-env", "input-device=ttya", "-prom-env", "output-device=ttya"]
     args += ["-drive", f"file={disk},if=none,id=drive-scsi3,format=raw,cache=unsafe",
              "-device", "scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3"]
+    if v.get("DISK2"):
+        if not os.path.exists(v["DISK2"]):
+            raise SystemExit(f"DISK2={v['DISK2']} doesn't exist")
+        ro = ",readonly=on" if v.get("DISK2_RO", "1") == "1" else ""
+        t = v.get("DISK2_ID") or "4"
+        args += ["-drive", f"file={v['DISK2']},if=none,id=drive-scsi{t},format=raw,cache=unsafe{ro}",
+                 "-device", f"scsi-hd,channel=0,scsi-id={t},lun=0,drive=drive-scsi{t},id=scsi{t}"]
     if v["ISO"]:
         cd = "scsi-hd" if v["CDROM_AS"] == "hd" else "scsi-cd"
         media = "" if cd == "scsi-hd" else ",media=cdrom"

@@ -529,7 +529,8 @@ and NetBSD runs the same awk loop equally fast on SS-5 and SS-20 (1.85 s / 1.80 
 the Solaris kernel's CPU module, i.e. the CPU model; SS-5 boots only with its microSPARC, so the
 machine can't be separated from it. It hits any user program that calls deeper than the register
 windows (shells, interpreters, compilers: nearly all), which makes it a general difference for
-Solaris 2.6 user-space work, not one kind of operation.
+Solaris 2.6 user-space work, not one kind of operation; compiled loops with shallow call chains
+(Dhrystone, Whetstone, nbench) don't reach it ("Benchmarks").
 
 **Recommended** (from the data above):
 
@@ -547,6 +548,98 @@ Solaris 2.6 user-space work, not one kind of operation.
   SS-10 PROM doesn't run on the SS-10 machine.
 - Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
   `ross225r.bin` (which runs as a SuperSPARC SS-20).
+
+### Benchmarks
+
+Recognised period benchmarks from the lab's bench disk (`e2e/sparc/README.md`, "The bench disk";
+versions, sources, flags and parameters in `e2e/sparc/bench/README`): Dhrystone 2.1, Whetstone
+(double precision), the BYTE UNIX Benchmarks' Towers of Hanoi (recursive, 10 disks), nbench/BYTEmark
+2.2.3 (`MINSECONDS=2`), a fixed lmbench 3.0-a9 subset and the `nawk` loop from above. The same
+binaries everywhere: gcc 2.95.3, `-O2 -mcpu=v8`, static. The `benchdisk` matrix, pve-qemu-kvm
+11.1.3-2+wsh7, Solaris 2.6 (5/98) unless stated, one CPU, 256 MB, one bench QEMU at a time on the
+14-vCPU lab host (a VM on an i9-9900K), 3 runs of 50 minutes, all 18 cases passed. The host's
+1-minute load during the runs, the bench QEMU's own ~1 included: median 1.7, 1.4 and 1.0 (max 3.6,
+2.5 and 3.0); other QEMU guests ran beside runs 1 and 2, the start of a package build beside run 3, no
+CI lab run. Median and spread ((max - min) / median) of the 3 runs; "SS-5 slower" = SS-5 OpenBIOS
+against SS-20 OpenBIOS (time ratio, or rate ratio inverted); us = microseconds.
+
+| Benchmark | Unit | SS-5 OpenBIOS | SS-5 `ss5.bin` | SS-10 OpenBIOS | SS-20 OpenBIOS | SS-20 `ss20_v2.25_rom` | 2.5.1, SS-5 `ss5.bin` | SS-5 slower |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Dhrystone 2.1 | VAX MIPS | 950 (15%) | 938 (6%) | 929 (3%) | 939 (4%) | 942 (6%) | 963 (6%) | 1.0x |
+| Whetstone | MWIPS | 432 (8%) | 423 (5%) | 433 (3%) | 432 (4%) | 435 (1%) | 432 (5%) | 1.0x |
+| Hanoi, 10 disks | towers/s | 4588 (8%) | 4777 (5%) | 18746 (3%) | 19466 (2%) | 19117 (2%) | 4949 (5%) | 4.2x |
+| `nawk` loop | s | 48.7 (5%) | 50.3 (6%) | 5.2 (8%) | 5.1 (2%) | 5.1 (2%) | 47.6 (2%) | 9.5x |
+| nbench integer index | K6/233 = 1 | 3.97 (7%) | 4.17 (3%) | 4.20 (4%) | 4.23 (3%) | 4.22 (6%) | 4.22 (2%) | 1.1x |
+| nbench FP index | K6/233 = 1 | 1.74 (2%) | 1.77 (5%) | 1.78 (1%) | 1.80 (1%) | 1.78 (4%) | 1.78 (3%) | 1.0x |
+| nbench memory index | K6/233 = 1 | 4.06 (4%) | 4.18 (7%) | 4.31 (1%) | 4.30 (3%) | 4.26 (3%) | 4.26 (2%) | 1.1x |
+| lmbench null syscall | us | 0.44 (17%) | 0.40 (35%) | 0.40 (5%) | 0.38 (6%) | 0.39 (7%) | 0.40 (3%) | 1.2x |
+| read / write | us | 1.83 / 1.64 | 1.84 / 1.67 | 1.91 / 1.66 | 1.78 / 1.62 | 1.79 / 1.59 | 1.29 / 1.01 | 1.0x |
+| stat | us | 4.6 (39%) | 4.5 (35%) | 4.3 (9%) | 4.3 (5%) | 4.3 (4%) | 5.3 (7%) | 1.1x |
+| open/close | us | 54.5 (7%) | 52.9 (55%) | 11.2 (30%) | 10.1 (5%) | 9.4 (11%) | 44.7 (11%) | 5.4x |
+| signal install / catch | us | 1.15 / 62.9 | 1.23 / 63.0 | 1.22 / 41.5 | 1.04 / 40.2 | 1.07 / 38.9 | 1.03 / 58.7 | 1.1x / 1.6x |
+| protection fault | us | 12.6 (17%) | 9.0 (107%) | 16.1 (8%) | 14.6 (64%) | 14.4 (18%) | 15.5 (43%) | 0.9x |
+| pipe latency | us | 115 (8%) | 117 (13%) | 84 (10%) | 85 (5%) | 83 (2%) | 100 (10%) | 1.4x |
+| fork+exit | us | 2018 (8%) | 2069 (24%) | 1476 (18%) | 1473 (10%) | 1466 (2%) | 1985 (1%) | 1.4x |
+| fork+execve | us | 2984 (11%) | 3057 (19%) | 2507 (22%) | 2496 (18%) | 2546 (11%) | 3085 (11%) | 1.2x |
+| fork+/bin/sh -c | us | 20322 (12%) | 21198 (29%) | 15307 (10%) | 14152 (20%) | 15467 (9%) | 21628 (8%) | 1.4x |
+| page fault | us | 218 (1%) | 220 (12%) | 209 (9%) | 206 (1%) | 210 (6%) | 226 (4%) | 1.1x |
+| mmap 8 MB | us | 3355 (4%) | 3315 (19%) | 2613 (3%) | 2352 (10%) | 2585 (23%) | 3177 (5%) | 1.4x |
+| file reread 8 MB | MB/s | 556 (7%) | 556 (5%) | 945 (6%) | 968 (7%) | 998 (7%) | 1004 (4%) | 1.7x |
+| memory read / write 4 MB | MB/s | 12622 / 16910 | 12203 / 16079 | 13705 / 16036 | 8640 / 16122 | 14468 / 15787 | 15028 / 16014 | 0.7x / 1.0x |
+| bcopy 4 MB | MB/s | 1121 (10%) | 1130 (11%) | 1050 (5%) | 1096 (11%) | 1038 (9%) | 1122 (3%) | 1.0x |
+| memory latency 8 MB | ns | 19.6 (35%) | 16.6 (22%) | 13.7 (36%) | 12.1 (46%) | 16.8 (15%) | 12.0 (40%) | 1.6x |
+| file create / delete (0k) | files/s | 906 / 1872 | 975 / 1904 | 1081 / 2159 | 1066 / 2105 | 1071 / 2103 | skipped | 1.2x / 1.1x |
+
+The individual nbench tests, lmbench's raw output and the `uname`/`psrinfo` of each case are in each
+case's `bench.txt` and `result.json`. Boot to login (fresh disks, first-boot questions included) took
+110-115 s everywhere (2.5.1: 71 s), `run.sh` 330-430 s.
+
+- **Where the SS-5 gap is, and where not.** Dhrystone, Whetstone and nbench run as fast on SS-5 as on
+  SS-20 (ratio 1.0-1.1, within the spread): compiled code whose call chains fit the 8 register
+  windows rarely takes a window trap, so it never reaches the microSPARC trap handlers' MMU-control
+  writes and QEMU's TLB flushes ("Why SS-5 is slower"). Code that calls deeper does: Hanoi (calls ten
+  deep) 4.2x, the `nawk` loop 9.5x, and in the kernel open/close 5.4x, file reread 1.7x, signal
+  delivery 1.6x, pipe, fork, `sh -c` and mmap ~1.4x. The plain system-call entry (null, read, write:
+  1.0-1.2x, within the spread), page faults and bcopy are about the same. These are the numbers the SS-5 TLB-flush fix should move
+  (Hanoi, `nawk`, open/close, file reread first) while Dhrystone, Whetstone and nbench stay as they
+  are.
+- **Firmware and machine don't matter**: `ss5.bin` vs OpenBIOS on SS-5, the Sun SS-20 PROM vs
+  OpenBIOS, SS-10 vs SS-20 are within the spread everywhere. Solaris 2.5.1 on SS-5 behaves like 2.6
+  on SS-5 (same CPU-bound numbers and gap; its read/write are a little faster).
+- **Noise**: the CPU-bound numbers spread 2-8% (Dhrystone up to 15% in one case); single lmbench
+  latencies have outliers of 30-100% (protection fault, open/close with `ss5.bin`, read/write): a
+  regression check should look at the medians of several runs, or at the large ratios. Memory
+  read/write/latency at 4-8 MB are the host's caches (QEMU models no cache or memory timing), not a
+  property of the guest machine.
+
+**Against the real machines.** Published figures (the Sun ones are from sales material and not
+labelled as Dhrystone 1.1 or 2.1, Sun's compilers; approximate as a comparison):
+
+| Measure | Real machine | Emulated (above) |
+| --- | --- | --- |
+| Dhrystone "MIPS" | SS-5/70 100.3, SS-5/85 112.5, SS-20/50 142.3, SS-20/61 167.4 [1] | ~940 VAX MIPS (Dhrystone 2.1) on all: ~6.6x an SS-20/50, ~8x an SS-5/85 |
+| SPECint92 | SS-5/110 (microSPARC-II 110 MHz) 78.6 [2], SS-20/50 69.2-72.0 [1, 3] | not measured: the real SS-5/110 and SS-20/50 were within ~15% of each other in integer code, where the emulated SS-5 is equal in compiled loops but 4-10x slower in call-heavy code |
+| null system call | 9 us (write to /dev/null) [4] | 1.6 us (write) |
+| fork+exit / +execve / +sh -c | 14 / 69 / 281 ms [4] | 1.5 / 2.5 / 14 ms (SS-20), 2.0 / 3.0 / 20 ms (SS-5), static binaries |
+| pipe latency | 278 us [4] | 85 us (SS-20), 115 us (SS-5) |
+| file create / delete (0k, UFS) | 25,000 / 11,111 us each [4] | ~0.9 / ~0.5 ms each |
+| memory read / write, latency | 38 / 31 MB/s (8 MB), 1236 ns [4] | ~13,000 / ~16,000 MB/s, ~15 ns (host caches) |
+
+[1] Sun Microsystems price list figures, July 1994, in the sun-managers summary "Need MIPS ratings"
+(1995, https://sunmanagers.org/1995/0166.html), including SPECint92 for SS-20/50 72.0.
+[2] SPEC CINT92 result, SPARCstation 5 Model 110, Apogee C 3.051
+(https://netlib.org/performance/html/spec.sun511_1.cint92.6_95.notes.html).
+[3] SPEC CINT92 summary table (https://netlib.org/performance/html/spec.cint92.6_94.col0.html).
+[4] McVoy and Staelin, "lmbench: Portable tools for performance analysis", USENIX 1996, Sun
+SC1000 (SuperSPARC 50 MHz, the SS-20/50's CPU, SunOS 5.5 beta, multiprocessor kernel, dynamic
+binaries), tables 2, 6, 7, 9, 11 and 16
+(https://www.usenix.org/legacy/publications/library/proceedings/sd96/full_papers/mcvoy.pdf).
+
+So the emulated machines run CPU-bound code ~7x faster than an SS-20/50 and kernel paths 3x (pipe
+latency) to ~25x (exec, file creation; the paper's binaries were dynamic, its UFS synchronous)
+faster, memory is effectively unlimited, and the emulated SS-5's handicap is an emulation artefact of
+deep call chains, not the real machines' relation (a 110 MHz microSPARC-II roughly matched a 50 MHz
+SuperSPARC).
 
 ## sparc64 (sun4u)
 
@@ -981,6 +1074,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   results under "SS-10 and SS-20".
 - sparc64: the lab's `sparc64` matrix (`scenarios/_sparc64.py`, `sparc64-*.py`,
   `netbsd-install-sparc64.py`); results under "sparc64 (sun4u)".
+- Recognised benchmarks (Dhrystone, Whetstone, Hanoi, nbench, lmbench subset): the lab's `benchdisk`
+  matrix (`scenarios/bench-disk.py` with the bench disk); results under "Benchmarks", the baseline
+  for QEMU changes.
 - Profiles: qemu-server's `src/test/cfg2cmd/sparc32-*.conf` (the command per profile and the refused
   combinations) and `e2e/tests/sparc-profiles.spec.ts` (API and wizard per profile, refusals,
   backup/restore, and that the lab's machine arguments match `qm showcmd`).
