@@ -1,0 +1,29 @@
+# /etc/systemd/system/atduck@.service  -  one emulated modem per VM: systemctl start atduck@102
+# Expects /opt/atduck (restricted dial plan installed), user "dialup" (groups: dip), and the VM's
+# serial0 socket made group-accessible by the hookscript (QEMU creates it root:root 0755).
+[Unit]
+Description=ATduck Hayes modem emulator on VM %i serial0
+After=pve-guests.service
+
+[Service]
+Type=simple
+User=dialup
+Group=dialup
+SupplementaryGroups=dip
+WorkingDirectory=/opt/atduck
+# Unprivileged: numbers 5555/5556 (slirp) and 5561 (pppd call dialup-isp) work. 5557-5560 need User=root.
+# per-VM addressing for the isp-pppd numbers (5557-5560, root only); see /usr/local/sbin/isp-pppd
+EnvironmentFile=-/etc/dialup/%i.env
+ExecStart=/usr/bin/perl /opt/atduck/atduck unix:/var/run/qemu-server/%i.serial0
+# atduck exits when QEMU closes the socket (VM stop); come back when the VM does
+Restart=always
+RestartSec=5
+# kill slirp/pppd children too (they survive a plain kill of atduck)
+KillMode=control-group
+NoNewPrivileges=no
+# (pppd is setuid root; NoNewPrivileges=yes would break the 5561 "pppd call" number)
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+#
+# ATduck dialing plan - restricted (no shell, no arbitrary telnet, no dial-out)
+# 5555/5556/5561 work with atduck running as an unprivileged user (5561 needs group dip);
+# 5557-5560 pass privileged options on the pppd command line and need atduck to run as root.
+#
+# 5555: PPP via (patched) slirp, user-mode, no login
+<5555> type=Shell usepty
+exec ./slirp-nandhp-patch ppp initiate-options "tty $M_TTYPATH"
+
+# 5556: SLIP via slirp
+<5556> type=Shell usepty
+exec ./slirp-nandhp-patch "tty $M_TTYPATH"
+
+# 5557: real pppd ISP, PAP login (user/password from /etc/ppp/pap-secrets)
+<5557> type=Shell usepty
+exec /usr/local/sbin/isp-pppd "$M_TTYPATH" pap
+
+# 5558: real pppd ISP, no authentication
+<5558> type=Shell usepty
+exec /usr/local/sbin/isp-pppd "$M_TTYPATH" none
+
+# 5559: real pppd ISP, MS-CHAPv2 (+ chap-secrets)
+<5559> type=Shell usepty
+exec /usr/local/sbin/isp-pppd "$M_TTYPATH" mschap2
+
+# 5560: real pppd ISP, MS-CHAPv2 + required 128-bit MPPE ("Require data encryption" in Windows)
+<5560> type=Shell usepty
+exec /usr/local/sbin/isp-pppd "$M_TTYPATH" mppe
+
+# BBS-style targets: only fixed, whitelisted telnet hosts (edit to taste)
+<5552> type=Shell
+exec telnet -8 -E nethack.alt.org
+<5553> type=Shell
+exec telnet -8 -E 127.0.0.1 2323
+
+# 5561: real pppd ISP started by an UNPRIVILEGED atduck user (group dip, setuid pppd);
+#       all privileged options live in root-owned /etc/ppp/peers/dialup-isp
+<5561> type=Shell usepty
+exec /usr/sbin/pppd "$M_TTYPATH" call dialup-isp

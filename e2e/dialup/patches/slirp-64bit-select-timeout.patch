@@ -1,0 +1,29 @@
+Description: Fix select() EINVAL exit on 64-bit hosts in non-FULL_BOLT build
+ main_loop() uses timeout.tv_usec == -1 as a "block forever" sentinel.
+ When nothing is queued (always the case right after start-up, and
+ whenever the link is idle) tmp_time is -1 and is stored with a (u_int)
+ cast. On LP64 targets tv_usec is a 64-bit long, so it becomes 4294967295
+ instead of -1, the sentinel check fails, select() returns EINVAL and
+ slirp calls slirp_exit(1) right after sending its first LCP ConfReq.
+ Over atduck this shows up as NO CARRIER followed by the modem echoing
+ the client's PPP frames back (pppd: "Serial line is looped back").
+--- a/src/main.c
++++ b/src/main.c
+@@ -881,7 +881,7 @@
+ 
+ 			/* Choose the smallest of the 2 */
+ 			if (tmp_time < timeout.tv_usec)
+-			   timeout.tv_usec = (u_int)tmp_time;
++			   timeout.tv_usec = tmp_time;
+ 		}
+ 	}
+ 
+@@ -933,7 +933,7 @@
+ 	 * Take the minimum of the above calculated timeouts
+ 	 */
+ 	if ((timeout.tv_usec < 0) || (tmp_time >= 0 && tmp_time < timeout.tv_usec))
+-		timeout.tv_usec = (u_int)tmp_time;
++		timeout.tv_usec = tmp_time;
+ #endif
+ 	DEBUG_MISC((dfd, " timeout.tv_usec = %u",
+ 		    (u_int)timeout.tv_usec));

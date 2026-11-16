@@ -1,0 +1,20 @@
+#!/bin/sh
+# isp-pppd <tty> [none|pap|chap|mschap2|mppe]
+# "ISP side" for atduck: a real pppd answering on the pty atduck allocated.
+# Per-VM addressing via environment inherited from atduck (set in the systemd unit):
+#   DIALUP_LOCAL (server end, default 10.0.3.1)  DIALUP_REMOTE (address handed to the guest, default 10.0.3.2)
+#   DIALUP_DNS   (DNS server handed out, default: first nameserver in /etc/resolv.conf)
+TTY=$1; AUTH=${2:-pap}
+DNS=${DIALUP_DNS:-$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf)}
+case $AUTH in
+  none)    A="noauth" ;;
+  pap)     A="auth require-pap" ;;
+  chap)    A="auth require-chap" ;;
+  mschap2) A="auth require-mschap-v2" ;;
+  mppe)    A="auth require-mschap-v2 require-mppe-128" ;;
+  *) echo "unknown auth mode $AUTH" >&2; exit 1 ;;
+esac
+exec /usr/sbin/pppd "$TTY" 115200 nodetach local nocrtscts $A refuse-eap name dialup-isp \
+  "${DIALUP_LOCAL:-10.0.3.1}:${DIALUP_REMOTE:-10.0.3.2}" ms-dns "$DNS" netmask 255.255.255.255 \
+  nodefaultroute noipv6 lcp-echo-interval 30 lcp-echo-failure 4 idle 3600 \
+  debug logfile "${DIALUP_LOG:-/var/log/dialup-pppd.log}"

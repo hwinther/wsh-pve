@@ -1,0 +1,20 @@
+# /etc/ppp/peers/dialup-isp - "ISP" side for atduck, started as `pppd <pty> call dialup-isp`
+# by an unprivileged atduck user in group dip. Options here are privileged (root-owned file).
+115200
+nodetach
+local
+nocrtscts
+auth
+require-pap
+refuse-eap
+name dialup-isp
+10.0.3.1:10.0.3.2
+netmask 255.255.255.255
+# DNS server handed to the guest: set to your resolver
+ms-dns 192.0.2.53
+nodefaultroute
+noipv6
+lcp-echo-interval 30
+lcp-echo-failure 4
+idle 3600
+logfile /var/log/dialup-pppd.log
