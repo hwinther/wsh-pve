@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 97fc676..645a462 100644
+index 97fc676..b42f7f1 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,65 @@
+@@ -1,10 +1,72 @@
++pve-qemu-kvm (11.1.3-2+wsh9) trixie; urgency=medium
++
++  * fix(pve-qemu): Solaris on SS-5 as fast as on SS-20 (narrower TLB
++    flush) (#262)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Mon, 16 Nov 2026 10:12:33 +0000
++
 +pve-qemu-kvm (11.1.3-2+wsh8) trixie; urgency=medium
 +
 +  * feat(pve-qemu): let Solaris 2.5.1-9 idle the host CPU on any sun4m
