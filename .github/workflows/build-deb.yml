@@ -36,6 +36,14 @@ permissions: {}
 jobs:
   build:
     runs-on: ubuntu-latest
+    # One build per package at a time. Two merges close together used to build the same package at
+    # once: both read the same changelog, chose the same +wshN version and published different
+    # content under it. A queued build starts when the one before it has pushed its changelog
+    # commit, checks out the branch's tip (below) and so gets the next number. Of several queued
+    # builds GitHub keeps the newest, which is the one that builds everything.
+    concurrency:
+      group: build-deb-${{ inputs.package }}
+      cancel-in-progress: false
     permissions:
       # gh release create (GITHUB_TOKEN); the changelog push uses WORKFLOW_TOKEN
       contents: write
@@ -48,6 +56,9 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           fetch-depth: 0
+          # The tip of the branch when the job starts, not the commit that triggered the run: a
+          # build that waited in the queue must see the changelog commit of the build before it.
+          ref: ${{ github.ref }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
