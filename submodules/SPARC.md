@@ -95,6 +95,18 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
 
+`openbios/Dockerfile` also builds `openbios-sparc64` from the same commit, as an optional extra
+(see "Solaris on sun4u"; the package doesn't install it yet, see "Packaging" there). The sparc32 build applies every patch except those named `*-sparc64-*`.
+The sparc64 build applies all of them, in a step that leaves no `openbios-sparc64` when it fails.
+
+| Patch | Fixes | Upstream |
+| --- | --- | --- |
+| `0003-sparc64-list-the-whole-virtual-address-space-as-available` | `/virtual-memory`'s `available` ended at `0xff000000`, so claims above it were invisible in it. 64-bit Solaris maps its kernel heap at `0x30000000000` and sizes its pool of nucleus hme blocks from the gaps in that list: Solaris 10 panicked with `no nucleus hblk8 to allocate`, Solaris 8/9 with `BOP_ALLOC failed`. The list now covers the whole 64-bit space like OBP's, with the firmware's range (`0xff000000`-4 GB) and the UltraSPARC I/II VA hole claimed | not fixed; see `upstream/openbios-sparc64-virtual-available.md` |
+| `0004-sparc64-give-the-cpu-node-the-icache-size` | The CPU node's `icache-size`/`icache-line-size` carried the E-cache values (1 MB, 64 bytes on the IIi); Solaris 9 panicked with `VAC too big!` | not fixed; see `upstream/openbios-sparc64-icache-properties.md` |
+| `0005-sparc64-leave-no-active-package-after-preopen` | `preopen` left `/chosen` as the active package at the prompt and for every client program, so Solaris's Forth words (`unix-tte`) went into `/chosen`'s word list and `' unix-tte is va>tte-data` failed after the kernel's `device-end` | not fixed; see `upstream/openbios-sparc64-client-forth-state.md` |
+| `0006-sparc64-client-dont-define-a-forth-constant` | `11 constant forth` in `client.fs` hid the FORTH vocabulary word; `only forth also definitions` pushed `0x11` (generic code, applied to sparc64 only here) | as 0005 |
+| `0007-sparc64-fcode-consume-instance-in-defining-words` | FCode `b(value)`/`b(variable)`/`b(defer)`/`b(buffer:)` left the `instance` flag set; the next Forth `defer` became an instance word and crashed with no active package (generic code, applied to sparc64 only here) | as 0005 |
+
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
 ### cg3 sizes
@@ -818,9 +830,89 @@ the boot tests with DHCP and HTTP fetches over `sunhme`, `virtio-net-pci`, `e100
 hung, above). OpenBSD's installer `halt` stops at OpenBIOS's `0 >` instead
 of powering off (`halt -p` on an installed system couldn't be tried).
 
-**Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, 512 MB; `scenarios/sparc64-boot-cd.py
-GUEST=solaris`). None reaches an installer. OpenBIOS finds the sun4u boot block on slice `f` of each
-CD and runs it:
+**Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, serial console). With QEMU's
+`openbios-sparc64`, none reaches an installer. With the patched build from `openbios/`
+(patches 0003-0007, below), Solaris 10 1/13 boots to the installer's first prompt.
+That firmware isn't in the package yet (see "Packaging"). OpenBIOS finds the sun4u boot block on
+slice `f` of each CD and runs it.
+
+With the patched `openbios-sparc64` (1024 MB; `fw/openbios-sparc64-p5` in the lab's scratch
+directory, the same source as `openbios/Dockerfile` builds):
+
+| CD | Where it stops |
+| --- | --- |
+| 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device. The installer takes no input on ttya (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
+| 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules` |
+| 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free` |
+| 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free` |
+| 2.6 (5/98), 2.5.1 (11/97) | unchanged: `open isn't unique.`, `byte-load: exception caught!` in the boot block |
+
+How each patch moved them (each verified by booting with and without it):
+
+- 0003 (`/virtual-memory` `available` covers the whole address space): Solaris 10 gets past `no
+  nucleus hblk8 to allocate` to the installer prompt. Solaris 9 gets past `BOP_ALLOC failed` to `VAC
+  too big!`.
+- 0004 (I-cache size in the CPU node): Solaris 9 gets past `VAC too big!` to `boot_alloc: pp is
+  NULL or free`. Solaris 8 lands on the same panic with both patches.
+- 0005-0007 (no active package at the prompt, no `forth` constant, FCode `instance` consumed):
+  Solaris 10's `' unix-tte is va>tte-data` succeeds, so the firmware translates kernel addresses
+  with the kernel's own handler, as on OBP. Before that it was `unix-tte:interpret: exception -13
+  caught` (the installer came up anyway). 0005 without 0007 crashes Solaris 10 in OpenBIOS
+  (`Unhandled Exception 0x00000000ffeb6520` in `@`, also with 0006), so they belong together.
+- Solaris 7's change from `bottom of stack not aligned` to `kmem_getpages: pp is NULL or free`
+  came with the full set; which patch moved it wasn't bisected.
+
+**Regression** with the patched firmware bind-mounted over the package's
+`/usr/share/kvm/openbios-sparc64` in the lab image: the `sparc64` matrix passes 9/9, as with
+0003+0004 alone. That covers NetBSD 11.1 CD on serial and VGA, the sysinst install, the
+installed disk with DHCP/HTTP over `sunhme` and `virtio-net-pci`, and idle; also NetBSD 9.3 CD,
+OpenBSD 8.0 `bsd.rd` and the Debian 12 installer. Unchanged, with the stock and the patched
+firmware alike: OpenBSD's installed GENERIC kernel (`Unimplemented service set-symbol-lookup`,
+`Unhandled Exception 0x0000000000000030`) and NetBSD with 4096 MB (`panic: Can't claim two pages
+of memory.`).
+
+**Solaris 10: no console input.** At `Select a Language`, `0` Return on ttya changes nothing,
+also after 4 minutes. OpenBIOS takes input on the same path, also 200 s after start. With
+QEMU's `-trace serial_read,serial_write,ebus_isa_irq_handler,...`, Solaris's serial driver sets
+up the 16550 with FCR `0x0f`, MCR `0x0b`, 9600 baud and IER `0`, never enables an interrupt,
+and polls LSR, which stays `0x60` (no received data) after the characters are sent. The ISA IRQ 4
+line is never raised. Both that and the IDE warning point at QEMU's sun4u devices and interrupt
+delivery rather than the firmware. paulsheer/qemu (below) carries a cmd646 interrupt fix for the
+IDE warning. Why the received characters don't reach the UART's receive buffer was not found.
+Until that is solved, nothing past the first installer prompt can be tested: the disk, `hme0`
+traffic, an install. Next step: trace QEMU's 16550 receive path (`serial_can_receive`,
+`serial_receive1`) under Solaris. If the characters arrive there, compare with NetBSD's `com`,
+which works on this machine.
+
+**Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
+boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
+in that snapshot. The page behind Solaris 9's failing allocation is physical `0x3d092000`, near
+the top of 1 GB (`translate` at `0 >` after the panic). OpenBIOS hands out physical memory top
+down. The kernel doesn't know this page: either it was outside the snapshot, or it was freed and
+reused after the snapshot. Not found which. The Solaris 2.6 source (reference) shows the
+mechanism: `boot_getpages` and `page_numtopp`, with page structures built from the boot
+program's `physavail`. Likely places to look: OpenBIOS's byte-granular `ofmem` lists (fragments
+like `0x0011ae64` length 4 in `available`), and whether anything releases physical memory during
+boot.
+
+**paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
+OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not
+stable", crashing within an hour. The OpenBIOS commit changes the device tree: IDE disks as
+`dad@0,0`/`sd@`, sabre children named by `upa-portid`, PCI bridge `ranges`, e1000/LSI entries,
+no `fdthree`, and client-interface return guards. The QEMU commit fixes the cmd646 interrupt
+latch and makes the LSI answer as a 53C895. Nothing in it touches `ofmem`, `unix-tte` or the
+console. We read the diff but didn't build or run it. With this QEMU, our patches alone get to
+the same installer prompt, so the two are complementary. Its IDE `dad`/`sd` naming and the
+cmd646 fix are the obvious next candidates for the disk once input works.
+
+Older prior work: Mark Cave-Ayland's 2010-2016 OpenBIOS commits for Milax/OpenSolaris and Solaris 9
+(kmdb support `d7c28ea`, `va>tte-data` `44af623`, the `available` limit `45b60c8`/`6e3d3fd`, which
+this work partly reverts). The 2020 qemu-devel thread "Emulating Solaris 10 on SPARC64 sun4u"
+(Jasper Lowell) got to `Configuring devices` and the cmd646 `Interrupt not seen` warning.
+Artyom Tarasenko's Solaris 10 work was on `niagara` with Sun's firmware. QEMU issues #216 and #293
+report `no nucleus hblk8` and `BOP_ALLOC failed` with no diagnosis.
+
+With QEMU's `openbios-sparc64` (512 MB; `scenarios/sparc64-boot-cd.py GUEST=solaris`):
 
 | CD | Where it stops |
 | --- | --- |
@@ -859,15 +951,18 @@ for `/memory`; 1024 MB):
   "nucleus" hme blocks; `no nucleus hblk8 to allocate` is that pool running dry, consistent with the
   long list of 8 KB translations (a real OBP hands over far fewer, larger ones).
 
-Diagnosis: the Solaris 8/9/10 failures are in OpenBIOS's sun4u memory management (`ofmem`: claim
-granularity and alignment, physical allocation order, no merging of translations), not in devices.
-A first OpenBIOS change would round claims to whole pages and allocate physical memory so that
-consecutive claims are contiguous (fewer, larger translations); that is a contained change in
-`ofmem`, but it is unverified whether it is enough: behind it are the 2.5.1/2.6 FCode boot-block
-exceptions, 7's stack-alignment panic and Solaris 10's missing Forth words, each of which may expose
-the next gap. Estimate: days of OpenBIOS work to see whether Solaris 10 gets past the HAT setup, with
-an open end after that; not a one-line fix. Not attempted here (`openbios/` builds and patches only
-`openbios-sparc32` today).
+The diagnosis made from these numbers was only half right. `no nucleus hblk8` was not caused by
+the many small translations. Solaris sizes the hme-block pool from the gaps in `/virtual-memory`'s
+`available`, and OpenBIOS left the 64-bit heap out of that list (patch 0003). Solaris 8/9's
+`BOP_ALLOC failed` went away with the same patch. Physical allocation order, translation merging
+and byte-granular claims weren't changed, and no failure seen so far needed them.
+
+**Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, but
+`debian/rules` (`submodules/pve-qemu.patch`) doesn't install it yet, so the package still ships
+QEMU's image. The hook is the same as for sparc32: copy `build/openbios/openbios-sparc64` over
+`$(destdir)/usr/share/kvm/openbios-sparc64` when it exists. `scripts/check-qemu-extras.sh` should
+then compare it like the sparc32 image. Until then the lab tests it with `-bios` or by
+bind-mounting it over `/usr/share/kvm/openbios-sparc64`.
 
 **sun4v and niagara.** `-M sun4v` with `openbios-sparc64` (the only firmware in the package) stops QEMU
 at once: `qemu: fatal: Trap 0x0010 while trap level (6) >= MAXTL (6), Error state`, `pc:
@@ -976,7 +1071,9 @@ valid is accepted.
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
 - Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
-  doesn't start), not Debian 12.0 ports (install fails), not Solaris (doesn't boot), not sun4v/niagara.
+  doesn't start), not Debian 12.0 ports (install fails), not Solaris (with the packaged firmware none
+  boots; with `openbios/`'s patched `openbios-sparc64` Solaris 10 reaches the installer's first
+  prompt but takes no console input, see "Solaris on sun4u"), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
   `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
 - Live migration, backup, snapshots with RAM: not tested for sparc64.

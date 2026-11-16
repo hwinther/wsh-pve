@@ -1,0 +1,57 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] fcode: consume "instance" in b(value), b(variable), b(defer)
+ and b(buffer:)
+
+"instance" sets a flag that the next defining word consumes through
+instance?. The Forth defining words do, the FCode ones don't, so after an
+FCode program has used "instance" the flag stays set until some later
+Forth defining word picks it up. The Solaris 10 boot block is such a
+program: the kernel's "defer p@" in data64.fth then became an instance
+defer, and instance, read the instance size through active-package,
+which is 0 there:
+
+  Unhandled Exception 0x00000000ffeb6520
+  PC = 0x00000000ffd0f220 NPC = 0x00000000ffd0f224    (in "@")
+
+Clear the flag in the four FCode defining words. They still create
+static data, as before.
+---
+ forth/device/fcode.fs | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/forth/device/fcode.fs b/forth/device/fcode.fs
+index 9083ed0..42569f2 100644
+--- a/forth/device/fcode.fs
++++ b/forth/device/fcode.fs
+@@ -269,6 +269,7 @@ defer fcode-c@             \ get byte
+ \   Defines type of new FCode function as buffer:.
+ 
+ : b(buffer:)
++  instance? drop      \ consume "instance" (FCode instance data isn't supported)
+   4 , allot
+   reveal
+   ;
+@@ -296,6 +297,7 @@ defer fcode-c@             \ get byte
+ \   Defines type of new FCode function as defer word.
+ 
+ : b(defer)
++  instance? drop      \ consume "instance" (FCode instance data isn't supported)
+   5 ,
+   ['] (undefined-defer) ,
+   ['] (semis) ,
+@@ -321,6 +323,7 @@ defer fcode-c@             \ get byte
+ \   Defines type of new FCode function as value.
+   
+ : b(value)
++  instance? drop      \ consume "instance" (FCode instance data isn't supported)
+   3 , , reveal
+   ;
+ 
+@@ -329,6 +332,7 @@ defer fcode-c@             \ get byte
+ \   Defines type of new FCode function as variable.
+ 
+ : b(variable)
++  instance? drop      \ consume "instance" (FCode instance data isn't supported)
+   4 , 0 ,
+   reveal
+   ;

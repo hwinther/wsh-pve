@@ -1,0 +1,97 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: list the whole virtual address space in
+ /virtual-memory available
+
+Since 6e3d3fd ("libopenbios: limit upper virtual memory range to
+ofmem_arch_get_virt_top()") the "available" property of /virtual-memory
+ends at 0xff000000. Claims above that address are not shown in it, and
+64-bit Solaris maps its kernel heap there: Solaris 10 (1/13) claims about
+180 pages at 0x30000000000 and up through the boot program before the
+kernel takes over the firmware's translations.
+
+Solaris sizes the pool of "nucleus" hme blocks that it takes those
+translations over into from the holes between the entries of that list
+(size_virtalloc() in startup_modules()). The heap pages were not holes in
+the list, the pool was too small, and Solaris 10 stopped with
+
+  panic - kernel: no nucleus hblk8 to allocate
+
+with 256 MB to 2 GB of RAM.
+
+List the whole 64-bit space like OBP does instead, and claim the two
+ranges that are never available: the firmware's own range from
+OFMEM_VIRT_TOP to 4 GB, and the UltraSPARC I/II VA hole from
+0x0000080000000000 to 0xfffff80000000000. OBP leaves the hole out of the
+list too, and Solaris subtracts it when it finds it there. Claims with an
+alignment still search below OFMEM_VIRT_TOP only.
+
+6e3d3fd limited the list because Solaris 9 stopped with "VAC too big!"
+with the whole space in it. That panic comes later in Solaris's startup
+than the one the limit leads to (BOP_ALLOC failed in startup_memlist()),
+and its cause is the CPU node's icache-size (fixed separately), not this
+list: with this change and that fix Solaris 9 gets past both.
+
+With this Solaris 10 1/13 boots from its DVD to the installer's language
+prompt on a serial console.
+---
+ arch/sparc64/ofmem_sparc64.c         |  7 +++++++
+ include/arch/sparc64/ofmem_sparc64.h |  4 ++++
+ libopenbios/ofmem_common.c           | 11 ++++++++++-
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc64/ofmem_sparc64.c b/arch/sparc64/ofmem_sparc64.c
+index 88b73b6..5abc78b 100644
+--- a/arch/sparc64/ofmem_sparc64.c
++++ b/arch/sparc64/ofmem_sparc64.c
+@@ -353,6 +353,13 @@ void ofmem_init( void )
+ 	memset(&s_ofmem_data, 0, sizeof(s_ofmem_data));
+ 	s_ofmem_data.ofmem.ramsize = qemu_mem_size;
+ 
++	/* Keep the firmware's own range above OFMEM_VIRT_TOP and the
++	   UltraSPARC I/II VA hole out of the available list, as OBP does:
++	   the list covers the whole 64-bit space, and Solaris sizes its pool
++	   of nucleus hme blocks from the holes in it */
++	ofmem_claim_virt(OFMEM_VIRT_TOP, 0x100000000ULL - OFMEM_VIRT_TOP, 0);
++	ofmem_claim_virt(VA_HOLE_START, VA_HOLE_END - VA_HOLE_START, 0);
++
+ 	/* inherit translations set up by entry.S */
+ 	ofmem_walk_boot_map(remap_page_range);
+ 
+diff --git a/include/arch/sparc64/ofmem_sparc64.h b/include/arch/sparc64/ofmem_sparc64.h
+index 19f2747..4bdfc6a 100644
+--- a/include/arch/sparc64/ofmem_sparc64.h
++++ b/include/arch/sparc64/ofmem_sparc64.h
+@@ -18,6 +18,10 @@
+ 
+ #define OFMEM_VIRT_TOP 0xff000000
+ 
++/* UltraSPARC I/II implement 44 virtual address bits: the hole between */
++#define VA_HOLE_START  0x0000080000000000ULL
++#define VA_HOLE_END    0xfffff80000000000ULL
++
+ #define PAGE_SIZE_4M   (4 * 1024 * 1024)
+ #define PAGE_SIZE_512K (512 * 1024)
+ #define PAGE_SIZE_64K  (64 * 1024)
+diff --git a/libopenbios/ofmem_common.c b/libopenbios/ofmem_common.c
+index fc19d27..e86eefd 100644
+--- a/libopenbios/ofmem_common.c
++++ b/libopenbios/ofmem_common.c
+@@ -349,8 +349,17 @@ static void ofmem_update_translations( void )
+ 
+ 	ofmem_update_memory_available(s_phandle_memory, ofmem->phys_range, 
+ 			&phys_range_prop, &phys_range_prop_size, &phys_range_prop_used, get_ram_size() - 1);
+-	ofmem_update_memory_available(s_phandle_mmu, ofmem->virt_range, 
++#ifdef CONFIG_SPARC64
++	/* The whole 64-bit address space, as OBP lists it: the firmware's own
++	   range and the VA hole are claimed in ofmem_init(), and claims above
++	   ofmem_arch_get_virt_top() (Solaris maps its 64-bit kernel heap there)
++	   must show up as holes in the list */
++	ofmem_update_memory_available(s_phandle_mmu, ofmem->virt_range,
++			&virt_range_prop, &virt_range_prop_size, &virt_range_prop_used, (ucell)-1);
++#else
++	ofmem_update_memory_available(s_phandle_mmu, ofmem->virt_range,
+ 			&virt_range_prop, &virt_range_prop_size, &virt_range_prop_used, ofmem_arch_get_virt_top() - 1);
++#endif
+ 	ofmem_update_mmu_translations();
+ }
+ 

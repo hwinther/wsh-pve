@@ -1,0 +1,38 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: leave no active package after preopening /memory
+
+preopen ends with "/chosen" as the active package, and nothing selects
+another one afterwards, so the ok prompt and every client program start
+with /chosen active: get-current is the /chosen node's method list and
+the search order holds it in front of forth.
+
+Solaris 10 defines its Forth words through the client interface
+"interpret" (kmem64-tte, the hme hash constants, unix-tte) and later
+calls "' unix-tte is va>tte-data". In between it creates its os-io
+node with find-device ... device-end, which leaves the search order at
+forth alone, so unix-tte, defined in /chosen, was not found:
+
+  unix-tte:interpret: exception -13 caught
+  interpret ' unix-tte is va>tte-data failed with error ffffffffffffffed
+
+and the firmware kept translating kernel addresses with the early
+kmem64-tte handler.
+
+End preopen with device-end, as OBP leaves no package active at the ok
+prompt.
+---
+ arch/sparc64/init.fs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/sparc64/init.fs b/arch/sparc64/init.fs
+index eb6c9da..2ffcf5a 100644
+--- a/arch/sparc64/init.fs
++++ b/arch/sparc64/init.fs
+@@ -30,6 +30,7 @@ active-package!
+   else
+     2drop
+   then
++  device-end
+ ;
+ 
+ :noname
