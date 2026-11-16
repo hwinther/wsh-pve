@@ -154,18 +154,33 @@ def prom_boot(m, v, target):
     m.send(f"boot {target}\r")
 
 
-def login(m, prompt=r"console login:", timeout=1800):
-    """Wait for the login prompt, answering Solaris's first-boot questions (root password: none) on
-    the way, and log in as root."""
-    while True:
-        i = m.expect_any([r"Root password:", r"Re-enter your root password", r"Press Return to continue",
-                          prompt], timeout)
-        if i == 3:
-            break
-        m.snap(["root password", "re-enter root password", "press return"][i])
-        m.send("\r")
+def login(m, prompt=r"console login:", timeout=1800, password=""):
+    """Wait for the login prompt, answering Solaris's first-boot questions on the way (the root
+    password they ask for: `password`, none by default), and log in as root with `password`."""
+    form = r"create a root password"
+    i = m.expect_any([form, r"Press Return to continue", prompt], timeout)
+    while i != 2:
+        if i == 1:
+            m.snap("press return")
+            m.send("\r")
+            i = m.expect_any([form, r"Press Return to continue", prompt], timeout)
+            continue
+        # sysidroot draws its whole form at once ("Root password:", "Press Return to continue.",
+        # "Re-enter your root password."), so the prompts in the output say nothing about where the
+        # cursor is: wait for the form to settle and type the password twice, then look only for
+        # what comes after the form (a mismatch draws it again). The field doesn't echo.
+        m.snap("root password")
+        for _ in range(2):
+            m.quiet(2, 120)
+            m.send(password + "\r")
+        i = m.expect_any([form, r"System identification is completed", prompt], timeout)
+        if i == 1:
+            i = m.expect_any([form, r"(?!)", prompt], timeout)
     m.snap("login prompt")
     m.send("root\r")
+    if password:
+        m.expect(r"Password:\s*$", 60)
+        m.send(password + "\r")
     m.expect(r"#\s*$", 120)
 
 

@@ -5,6 +5,8 @@
     pve_matrix.py pve --runs /work/runs/p1 [--iso /mnt/sparc/iso] [--disks /srv/sparc/disks]
         [--bench /mnt/sparc/disks/bench-sol26.raw]
 
+    pve_matrix.py install --runs /work/runs/i1     # every automated install target (targets.py)
+
 Runs on the PVE node: the e2e node with the lab in it (pve.Dockerfile). Each case creates its VM
 (`pvesh create /nodes/<node>/qemu`, the install media linked into the `local` storage, a disk template
 or an installed disk imported with `import-from`, the bench disk too where a case uses it), runs its scenarios one after another against it, each in
@@ -21,8 +23,13 @@ import subprocess
 import sys
 import time
 
+import targets
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ISO_DIR = "/var/lib/vz/template/iso"  # the `local` storage's ISO directory
+# {"install": <target>} as a case's VM config: `lab.py install <target> --check` creates and installs
+# the VM (the target's media linked into the `local` storage under their expected names) instead of
+# create_vm(); the case's scenarios then run against the installed VM.
 
 # name -> [(case, VM config (`{iso}`: the CD's volume, `{template}`: the imported disk template or
 #           installed disk, `{bench}`: the bench disk, --bench), install CD in --iso or None, disk in
@@ -31,12 +38,11 @@ SPARC32 = {"arch": "sparc", "memory": 256, "ostype": "solaris", "net0": "lance,b
            "serial0": "socket", "vga": "serial0"}
 MATRICES = {
     "pve": [
-        # The supported sparc32 profile (SS-5, OpenBIOS) with the text installer on ttya: a blank
-        # Sun-labelled disk on target 3 (the installer lists only labelled disks), the CD on target 6.
-        ("sol26-install-ss5", {**SPARC32, "scsi3": "local:0,import-from={template},format=raw",
-                               "scsi6": "{iso},media=cdrom"},
-         "solaris_2.6_598_sparc.iso", "sparc-SUN2.9G.raw.template.xz",
-         [("solaris-install-serial.py", {}), ("solaris-boot-disk.py", {})]),
+        # The install target sol26-ss5 (targets.py), as a user runs it: `lab.py install sol26-ss5
+        # --check` creates the VM (SS-5, OpenBIOS, ttya, a Sun-labelled disk, the 2.6 CD), installs,
+        # sets the root password and the marker, ejects the CD, then boots and checks the login and
+        # /etc/wsh-lab-target.
+        ("sol26-install-ss5", {"install": "sol26-ss5"}, None, None, []),
         # aarch64: virt, AAVMF (bios ovmf + efidisk0), everything on the PL011 (vga serial0)
         ("alpine-aarch64", {"arch": "aarch64", "machine": "virt", "bios": "ovmf", "efidisk0": "local:0,format=raw",
                             "memory": 1024, "cores": 2, "ostype": "l26", "serial0": "socket", "vga": "serial0",
@@ -63,6 +69,9 @@ MATRICES = {
                            "ide2": "{iso},media=cdrom"},
          "other-os/alpine/alpine-standard-3.19.0-x86_64.iso", None, [("alpine-boot-cd.py", {})]),
     ],
+    # Every automated install target (targets.py), each with --check: the "scheduled reinstalls" of
+    # ROADMAP.md, without replacing stored disks yet.
+    "install": [(f"install-{t}", {"install": t}, None, None, []) for t in targets.automated()],
 }
 
 LEFTOVERS = ("_fb_poll.png", "_refresh.ppm", "*.sock", "_frames")  # the recordings stay
@@ -111,30 +120,63 @@ def destroy_vm(vmid):
     subprocess.run(["qm", "destroy", vmid, "--purge", "--destroy-unreferenced-disks", "1"], capture_output=True)
 
 
+def link_media(target, a):
+    """The target's media into the `local` storage under their expected names, as links to --iso."""
+    for med in targets.TARGETS[target]["media"]:
+        m = targets.MEDIA[med["name"]]
+        d = ISO_DIR if m["content"] == "iso" else os.path.join(os.path.dirname(ISO_DIR), "floppy")
+        os.makedirs(d, exist_ok=True)
+        link = os.path.join(d, med["name"])
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink(os.path.join(a.iso, m["lab"]), link)
+
+
+def run_step(name, label, out, a, cmd, timeout=None):
+    """One lab.py run (a scenario or an install) with its output in <out>/lab.log; its result.json."""
+    print(f"=== {name}: {' '.join(cmd)}", flush=True)
+    timeout = timeout or a.timeout
+    try:
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "lab.log"), "w", encoding="utf-8") as log:
+            subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+        res = json.load(open(os.path.join(out, "result.json"), encoding="utf-8"))
+    except subprocess.TimeoutExpired:
+        res = {"code": 1, "status": f"timed out after {timeout}s"}
+    except (OSError, ValueError) as e:
+        res = {"code": 3, "status": f"no result.json ({e})"}
+    res["scenario"] = label
+    print(f"=== {name}: {label}: {res['status'].splitlines()[0]} ({res.get('elapsed', '?')}s)", flush=True)
+    return res
+
+
 def run_case(name, config, iso, template, steps, a):
     work = os.path.join(a.runs, name)
     os.makedirs(work, exist_ok=True)
     t0, vmid, results = time.time(), None, []
     try:
-        vmid = create_vm(name, config, iso, template, a, work)
+        first = 1
+        if "install" in config:
+            target = config["install"]
+            link_media(target, a)
+            vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
+            out = os.path.join(work, f"1-install-{target}")
+            res = run_step(name, f"install {target}", out, a,
+                           [sys.executable, os.path.join(HERE, "lab.py"), "install", target, "--vmid", vmid,
+                            "--out", out, "--check"], timeout=a.timeout * 2)
+            results.append(res)
+            first = 2
+            if res["code"]:
+                steps = []
+        else:
+            vmid = create_vm(name, config, iso, template, a, work)
         print(f"=== {name}: VM {vmid}", flush=True)
-        for n, (scenario, variables) in enumerate(steps, 1):
+        for n, (scenario, variables) in enumerate(steps, first):
             out = os.path.join(work, f"{n}-{scenario[:-3]}")
             cmd = [sys.executable, os.path.join(HERE, "lab.py"), "run", os.path.join(HERE, "scenarios", scenario),
                    "--pve", vmid, "--out", out, *[x for k, val in variables.items() for x in ("--var", f"{k}={val}")]]
-            print(f"=== {name}: {' '.join(cmd)}", flush=True)
-            try:
-                os.makedirs(out, exist_ok=True)
-                with open(os.path.join(out, "lab.log"), "w", encoding="utf-8") as log:
-                    subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=a.timeout)
-                res = json.load(open(os.path.join(out, "result.json"), encoding="utf-8"))
-            except subprocess.TimeoutExpired:
-                res = {"code": 1, "status": f"timed out after {a.timeout}s"}
-            except (OSError, ValueError) as e:
-                res = {"code": 3, "status": f"no result.json ({e})"}
-            res["scenario"] = scenario
+            res = run_step(name, scenario, out, a, cmd)
             results.append(res)
-            print(f"=== {name}: {scenario}: {res['status'].splitlines()[0]} ({res.get('elapsed', '?')}s)", flush=True)
             if res["code"]:
                 break
     except subprocess.CalledProcessError as e:

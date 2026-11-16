@@ -23,6 +23,10 @@ instead of repeated by hand.
 - `mcp_server.py` lets an AI assistant see and drive a running VM (a PVE VM or a `lab.py serve`
   QEMU) through MCP: screen, keys, serial console, waiting for a pattern. Optional, with its own
   dependencies (`mcp-requirements.txt`, `mcp.Dockerfile`). See "MCP server".
+- `lab.py install <target>` (`install.py`, the catalogue in `targets.py`) installs a named target
+  into a new PVE VM on a node: tested profile, media checked by name and sha256, the install driven
+  by the scenarios in attach mode, a known root password and a marker file at the end. See "Install
+  targets".
 
 ## Build
 
@@ -217,7 +221,8 @@ python3 lab.py run scenarios/solaris-install-serial.py --pve 100 --out /root/run
 python3 lab.py run scenarios/solaris-boot-disk.py --pve 100 --out /root/runs/boot
 ```
 
-(`qm disk import 100 <template.raw> local --format raw` and then `qm set 100 --scsi3 <volume>` does
+`lab.py install sol26-ss5 --vmid 100` does all of this and more in one command (see "Install
+targets"). (`qm disk import 100 <template.raw> local --format raw` and then `qm set 100 --scsi3 <volume>` does
 the same as `import-from` for an existing VM.) The install ends with `halt`, which powers the VM off;
 the disk then boots first with the CD still attached. Measured in the e2e container (TCG, one guest at a time):
 install 550-575 s, first boot to `console login:`, `uname`/`df`/`ifconfig` and `init 5` 163 s. The lab
@@ -231,7 +236,7 @@ and prints a summary like `matrix.py`:
 
 | Case | VM | Scenarios |
 | ---- | -- | --------- |
-| `sol26-install-ss5` | SS-5, OpenBIOS, `vga: serial0`, the SUN2.9G template on target 3, the 2.6 CD on target 6 | `solaris-install-serial.py`, then `solaris-boot-disk.py` |
+| `sol26-install-ss5` | the install target `sol26-ss5`, created by `lab.py install` (SS-5, OpenBIOS, `vga: serial0`, a Sun-labelled disk on target 3, the 2.6 CD on target 6) | `lab.py install sol26-ss5 --check`: install, first boot (root password, marker), CD ejected, then a boot that logs in with the documented password and checks `/etc/wsh-lab-target` |
 | `alpine-aarch64` | `arch: aarch64`, virt, OVMF (AAVMF), `vga: serial0`, the Alpine 3.19 CD on virtio-scsi | `alpine-boot-cd.py`: login prompt, root, `uname -m` |
 | `netbsd-sparc64` | `arch: sparc64` as the create wizard makes it (sun4u, OpenBIOS, a blank disk on `ide0`, the NetBSD 11.1 CD on `ide2`, `sunhme`, 512 MB, the API's default boot order), `vga: serial0` | `netbsd-boot-cd.py` with `BOOT=` (OpenBIOS must boot the CD by itself): sysinst, its shell, `uname -m` |
 | `alpine-x86_64` | `kvm: 0`, `vga: std`, `serial0: socket`, the Alpine 3.19 CD on `ide2` | `alpine-boot-cd.py` on the VGA console (OCR, send-key), `uname -m` also through the serial port |
@@ -278,6 +283,150 @@ What qemu-server's command line had to change (`submodules/qemu-server.patch`):
   `boot cdrom:f` at the prompt. Now sparc64 disks and CD-ROMs go on the built-in IDE (cmd646), the
   boot device is `-boot order=d|c` from the boot order, a new VM has its CD first, and there is no
   `virtio-balloon-pci`; the case boots without typing (`submodules/SPARC.md`, "sparc64 (sun4u)").
+
+## Install targets
+
+`lab.py install <target> --vmid N` installs a named target into a new PVE VM, on the node, as root,
+and ends with an installed VM that is powered off and has documented login details. The user guide
+is `docs/src/content/docs/guides/lab-install.md` (what a target is, media, how to run it on a node,
+what it leaves, the security note); this section is how it is built and tested.
+
+- **`targets.py`** is the catalogue, data only: per target the PVE profile (options for `pvesh
+  create`), the disk (bus, size, a Sun label's geometry), the media by expected file name, the
+  install method and its scenarios, the login, host name, network, duration and what was tested;
+  `MEDIA` has each tested medium's size and sha256 (from the lab host's media; no medium is in the
+  repository). The expected names are the names the media already have on the lab host and in the
+  docs, so there is no mapping table. Targets marked `catalogue` are listed with what blocks them.
+- **`install.py`** is the command (`install`, `targets`, `media` are subcommands of `lab.py`). It
+  checks the media on the storage (`pvesh get .../storage/<s>/content`, `pvesm path`, size and
+  sha256; `--allow-untested-media` accepts another checksum, a missing medium is always refused),
+  refuses a VMID that exists anywhere in the cluster (`/cluster/resources`), creates the VM with
+  `pvesh create` (the disk imported with `import-from` from an image that `sunlabel.py` labels:
+  the same first sector as `sparc-SUN2.9G.raw.template.xz`, so no template is needed), then runs
+  the method's phases through `lab.run_scenario(..., pve=vmid)` (what `lab.py run --pve` does),
+  each with its own evidence directory under `--out`: `install/`, `firstboot/` and, with `--check`,
+  `check/`. Between them it ejects the media (`qm set --scsi6 none,media=cdrom`: the drive stays)
+  and sets `boot: order=<disk>`. At the end it writes the login, console, host name, network,
+  marker and media checksums into the VM's description, converts to a template with `--template`,
+  and writes `result.json` (phases, times, media) and `install.log`.
+- **Stalls and failures:** each phase has a timeout (the target's; `--timeout` for the install
+  phase). When it passes, the VM is stopped, the scenario ends with "QEMU died", and the phase is
+  reported as `stalled`. Any failure leaves the evidence; the VM is destroyed, or with
+  `--keep-on-failure` stopped and kept with `FAILED ...` and the evidence path in its description.
+  Exit code 0 or 1. Idempotent where that is safe: `targets` and `media` only read, and a second
+  `install` on the same VMID refuses instead of repairing or replacing it (destroy the VM first).
+- **Secrets:** `lab.run_scenario` masks every variable named `*PASSWORD`, `*_KEY` or `*SECRET` in
+  `result.json`; passwords are typed only at prompts that don't echo, so they are in no cast or
+  screenshot. The VM's description has the passwords on purpose. The rule for later targets with
+  licence keys: a local file that is never committed, a `*_KEY` variable, typed where the installer
+  doesn't echo it.
+
+### Install methods
+
+A target's `method` picks a class in `install.METHODS` with three steps, `install`, `firstboot`
+and `check`, each a scenario run against the VM:
+
+1. **Scripted (implemented):** the installer is answered on the console by a scenario, as a person
+   would (`expect()` on the serial console, OCR of the framebuffer). Solaris 2.6 uses
+   `solaris-install-serial.py`, unchanged (the variables `HOSTNAME` and `IP` come from the target and
+   `--hostname`/`--ip`), then `solaris-firstboot.py` (the first-boot questions answered with the root
+   password, `/etc/wsh-lab-target`, the optional user, `init 5`), and `solaris-boot-disk.py` with
+   `ROOT_PASSWORD`, `COMMANDS` and `CHECK` for `--check`.
+2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
+   reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
+   (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
+   `floppy` content type and `floppyN` are x86 only), a boot server is out of scope, and the other
+   media-only way, a remastered install CD with the profile on it, would mean writing modified Sun
+   media on the node. The scripted install, by contrast, has passed every weekly `pve` run in 9-10
+   minutes, so it stays. The data model leaves room for it: a method whose `install` step builds a
+   small answer image (an ISO or floppy made on the node from the target's answers, never from vendor
+   files) and attaches it as a second medium before the installer starts; it fits installers that
+   look for an answer file on removable media (Windows' `autounattend.xml` on a floppy or CD, Debian
+   preseed on a second CD).
+3. **Media swapping (primitive implemented, not exercised by a target yet):** a medium in `media`
+   with `at: <regex>` is inserted into its `drive` when the installer prints that prompt:
+   `install.MediaSwapper` follows the serial output by cursor (`Machine.serial_wait`, so the
+   scenario's own `expect()` position doesn't move) and calls `PveMachine.change_medium(drive,
+   volume)`, i.e. `qm set <vmid> --scsi6 <volume>,media=cdrom` (or `--floppy0 <volume>`), which PVE
+   applies live. `sol8-ss20` lists its three CDs that way; `tests/test_targets.py` checks the order
+   and that each prompt is acted on once.
+
+### DOS and other floppy installs (design)
+
+What a DOS target needs and where it fits:
+
+- **Media:** a boot floppy and a sequence of install floppies, each in `MEDIA` with `content:
+  "floppy"`, an expected name on a storage with the `floppy` content type (`local:floppy/<name>`),
+  size and sha256. The target lists them as `{"name": ..., "drive": "floppy0"}` (the boot floppy, at
+  the start) and `{"name": ..., "drive": "floppy0", "at": "Insert disk 2|Please insert"}`; the boot
+  order is `floppy0` first, then the disk; at the end `floppy0` is emptied (`floppy0: none`).
+  `install.vm_params` and `pve_set_medium` already treat `floppyN` drives without `media=cdrom`, and
+  `pve_matrix.link_media` links floppies into `template/floppy/`.
+- **The console is the VGA text screen**, not a serial port: FDISK's and FORMAT's prompts, SETUP's
+  screens. Keys go through QMP `send-key` (`Machine.fb_type`, US layout). Reading the screen is the
+  missing piece. The lab reads framebuffers by `screendump` + tesseract OCR (`Machine.fb_text`), which
+  is good for text consoles but not exact (`0 >` read as `o>`, quotes, box characters). In VGA text
+  mode the screen is the text buffer at physical 0xB8000 (character, attribute byte pairs, 80x25),
+  which QMP `pmemsave` (or HMP `xp`) reads exactly. Feasibility, checked in the PVE test container
+  with an x86_64 VM (`kvm: 0`, `vga: std`, the Alpine 3.19 CD): at SeaBIOS's and ISOLINUX's
+  `boot:` screen, `pmemsave` of the 4000 bytes at 0xB8000 took 1-2 ms and gave the screen exactly;
+  `screendump` + tesseract took 150-320 ms and read `rel-1.1?.0` for `rel-1.17.0`, `DUD/CD` for
+  `DVD/CD` and `prebuilt .qemu.org`. During PVE's boot splash (a graphics mode) the buffer was empty
+  while OCR read the logo, so a reader must check the mode (or fall back when the buffer is blank).
+  On the same running VM `pve_set_medium` changed the CD live (QMP `query-block` showed the new
+  file) and emptied it (`none,media=cdrom`): the swap primitive works on x86 too. A `vga_text()`
+  method on `PveMachine` (pmemsave into the run directory, decode code page 437) and a `screen=vga`
+  source for `expect()` and `MediaSwapper` would make DOS installs as exact as the serial ones; when
+  the guest is in a graphics mode (a Windows 3.x SETUP, a VESA screen) the buffer is stale and OCR is
+  the fallback.
+- **Still missing:** that VGA text source; an x86 retro profile table to check DOS targets against
+  (machine, BIOS, display, disk controller; ROADMAP "x86 retro"); a scenario per DOS version (FDISK,
+  reboot, FORMAT /S, SETUP's screens, the disk swaps); the e2e node's storage without the `floppy`
+  content type (`e2e/pve/pve-e2e-setup.sh` would add it); and freely redistributable test media
+  (FreeDOS) so the floppy path can be tested in CI without proprietary images.
+
+### Run it
+
+On a node (see the guide for installing the lab under `/opt/wsh-lab`, or use the e2e PVE container
+with the lab, `pve.Dockerfile`):
+
+```sh
+python3 lab.py targets
+python3 lab.py media                                   # every target's media on storage local
+python3 lab.py install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep-on-failure ...
+```
+
+The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check` (so the weekly test
+and the user command are the same code), and `pve_matrix.py install` runs every automated target
+the same way (the `install` choice of the `sparc lab` workflow): the machinery for the "scheduled
+reinstalls" in `ROADMAP.md`. `pve_matrix.py` links each target's media from `--iso` into the test
+node's `local` storage under the expected names. `tests/test_targets.py` (standard library only,
+`python3 -m unittest -v tests/test_targets.py` in `e2e/sparc`) checks every target's profile against
+`$SPARC32_PROFILES`/`$SPARC64_PROFILE` in `submodules/qemu-server.patch` (skipped without the
+repository around it), unique names, the Sun label against the template's first MiB, the VM
+options, the media swapper and the masking.
+
+Tested in the PVE test container on the lab host (`pve.Dockerfile`, two host cores, one guest at a
+time) with the published packages (pve-qemu-kvm 11.1.3-2+wsh10, qemu-server 9.2.15+wsh6,
+pve-manager 9.2.28+wsh4), on 2026-11-16:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss5 --vmid 120 --check` from an empty VMID | passed: login `root`/`wshlab`, the marker, the description, `scsi6: none,media=cdrom`, `boot: order=scsi3` | 11.8 min (install 407 s, first boot 182 s, check 105 s) |
+| the same again on VMID 120 | refused (`VM 120 exists already`), exit 1, nothing touched | 0 s |
+| `install sol26-ss20 --vmid 121 --check --user lab --template` | passed: `lab` added with its password, converted to a template | 12.1 min (413 s, 191 s, 105 s) |
+| the CD missing from `local:iso` | refused before creating anything, exit 1 | 2 s |
+| a zero-filled file of the right size under the CD's name | refused (`checksum differs`), exit 1 | 3 s |
+| that file with `--allow-untested-media --timeout 240 --keep-on-failure` | the boot never reaches the installer; stopped at 240 s, `stalled`, exit 1, evidence kept, VM kept stopped with `FAILED ...` in its description | 4.2 min |
+| the same with `--timeout 60`, without `--keep-on-failure` | `stalled`, exit 1, evidence kept, VM and disk destroyed | 1.2 min |
+| `pve_matrix.py pve --only sol26-install-ss5 --only netbsd-sparc64 --only alpine-x86_64` | 3/3 passed; `publish_media.py` finds the install's cast at its new path | 697 s, 58 s, 70 s |
+| `matrix.py smoke` (lab image built from the branch: the new `login()` with an empty password) | 3/3 passed | 162 s, 113 s, 66 s |
+| the `/opt/wsh-lab` venv from the guide (uv 0.13.8, `lab-requirements.txt`) | pyte and Pillow 13.0.0 from the venv, `targets`, `media`, the terminal renderer; a whole install from the venv was not run | |
+
+The first run failed at the first boot and found a bug in the old `login()`: sysidroot's root
+password form draws all its prompts at once, and matching them one by one typed the password ahead
+of the form (it ended up echoed, root without a password). With an empty password that never
+mattered. The password appears in none of the evidence files of the passing runs.
 
 ## Recordings
 

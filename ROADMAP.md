@@ -36,6 +36,7 @@ come after that, not before.
 | Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
 | Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
+| Install targets: `lab.py install <target>` on a node makes an installed VM with known login details from tested media (Solaris 2.6 on SS-5 and SS-20); the `pve` matrix runs it | in review | branch `feat/lab-install-targets` |
 
 ## In progress
 
@@ -88,6 +89,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    with user-supplied firmware.
 4. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
+   - DOS installs from floppies as install targets: a boot floppy and a sequence of install
+     floppies (`floppy` content type), swapped by `install.MediaSwapper` when SETUP asks, FDISK and
+     FORMAT answered on the VGA text screen. The data model is in place; missing are an exact VGA
+     text reader (the text buffer at 0xB8000 through QMP `pmemsave` instead of OCR), an x86 retro
+     profile table, the scenarios, and FreeDOS media for CI (`e2e/sparc/README.md`, "DOS and other
+     floppy installs").
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
@@ -114,8 +121,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
   QEMU today.
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
-  stored disk when it passes, so every disk the lab boots can be rebuilt. Today only Solaris 2.6 on
-  SS-5 is reinstalled (the `pve` matrix); the SunOS 4.1.4 install is manual.
+  stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
+  install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
+  installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
+  Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
+  more targets (Solaris 2.5.1 needs the CD as a disk; 7, 8 and 9, SunOS 4.1.4 and NetBSD are in the
+  catalogue with what blocks each). Today the weekly `pve` matrix reinstalls Solaris 2.6 on SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.

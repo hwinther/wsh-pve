@@ -10,6 +10,8 @@ Run a scenario:   lab.py run scenarios/solaris26-serial-install.py --out /work/r
 Interactive:      lab.py serve --out /work/s1 -- <qemu args>     (then `lab.py ctl ...` from another shell)
 A PVE VM:         lab.py run <scenario> --pve <vmid> --out ...   (on the PVE node; see PveMachine)
 Recordings:       lab.py cast <run dir> [--max-idle 1] [--speed 2] [--check]   (-> serial.fast.cast)
+Install a target: lab.py install sol26-ss5 --vmid 120 [--out DIR]   (on the PVE node; see install.py)
+                  lab.py targets | lab.py media [<target>]
 """
 import argparse
 import html
@@ -583,7 +585,10 @@ def render_terminal(text, path, cols=80, rows=24):
     """Draw the terminal screen as an image, so serial steps sit next to framebuffer screenshots."""
     from PIL import Image, ImageDraw, ImageFont
 
-    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14)
+    except OSError:  # a node without fonts-dejavu-core: Pillow's own font (10.1+ scales it)
+        font = ImageFont.load_default(14)
     cw, ch = 9, 18
     img = Image.new("RGB", (cols * cw + 16, rows * ch + 16), "#101010")
     d = ImageDraw.Draw(img)
@@ -608,6 +613,12 @@ def qm(*args, check=True):
 def pve_config(vmid):
     """The VM's current config (`qm config`) as a dict."""
     return dict(line.split(": ", 1) for line in qm("config", vmid).splitlines() if ": " in line)
+
+
+def pve_set_medium(vmid, drive, volume):
+    """Put `volume` ("none": nothing) into the CD-ROM or floppy drive `drive` of a VM, running (PVE
+    changes the medium live) or not."""
+    qm("set", vmid, f"--{drive}", volume if drive.startswith("floppy") else f"{volume},media=cdrom")
 
 
 def pve_serial(conf):
@@ -821,6 +832,14 @@ class PveMachine(Machine):
             raise RuntimeError(f"VM {self.vmid} has no serial console: give it `serial0: socket`")
         super().key(*names)
 
+    def change_medium(self, drive, volume):
+        """Put another medium into a CD-ROM or floppy drive of the running VM through PVE (`qm set`,
+        which changes it live), e.g. ("scsi6", "local:iso/cd2.iso") or ("floppy0",
+        "local:floppy/disk2.img"); "none" empties the drive. The VM config follows, so PVE and the
+        guest agree on what is inserted."""
+        pve_set_medium(self.vmid, drive, volume)
+        self.log(f"{drive}: {volume}")
+
     def trace(self, events):
         """Turn on QEMU trace events (comma separated) in the running VM, logged to <out>/trace.log."""
         self.hmp(f"logfile {os.path.join(self.out, 'trace.log')}")
@@ -858,10 +877,32 @@ def parse_vars(items):
 
 
 def cmd_run(a):
-    sc = load_scenario(a.scenario)
-    v = {**getattr(sc, "DEFAULTS", {}), **(pve_vars(a.pve) if a.pve else {}), **parse_vars(a.var)}
-    os.makedirs(a.out, exist_ok=True)
-    m = attach(a, v) if a.pve else Machine(a.out, sc.qemu_args(v, a.out), ocr=not a.no_ocr)
+    return run_scenario(a.scenario, a.out, parse_vars(a.var), pve=a.pve, no_ocr=a.no_ocr,
+                        keep_running=a.keep_running)["code"]
+
+
+# Variables whose values never go into result.json: passwords and (later) licence keys. Typed values
+# don't reach the recordings either as long as the guest doesn't echo them (password prompts don't).
+SECRET_VARS = re.compile(r"(PASSWORD|_KEY|SECRET)$")
+
+
+def masked(v):
+    """The variables with the values of SECRET_VARS replaced, for result.json."""
+    return {k: ("***" if SECRET_VARS.search(k) and val else val) for k, val in v.items()}
+
+
+def run_scenario(scenario, out, variables=None, pve=None, no_ocr=False, keep_running=False, on_machine=None):
+    """Run one scenario against a QEMU of its own or (`pve`: a VMID) a PVE VM, with the evidence in
+    `out`; returns what it writes to result.json (code 0 passed, 1 timed out, 2 QEMU died, 3 error).
+    `on_machine(m)` is called with the Machine before the scenario starts (lab.py install uses it to
+    stop a stalled install from outside)."""
+    sc = load_scenario(scenario)
+    v = {**getattr(sc, "DEFAULTS", {}), **(pve_vars(pve) if pve else {}), **(variables or {})}
+    os.makedirs(out, exist_ok=True)
+    a = argparse.Namespace(out=out, pve=pve, no_ocr=no_ocr, keep_running=keep_running)
+    m = attach(a, v) if pve else Machine(out, sc.qemu_args(v, out), ocr=not no_ocr)
+    if on_machine:
+        on_machine(m)
     m.refresh(float(v.get("REFRESH") or 0))
     record_fb(m, a, v)
     status, code = "passed", 0
@@ -880,7 +921,7 @@ def cmd_run(a):
             pass
     m.log(f"result: {status}")
     m.write_report(status)
-    if not a.keep_running or a.pve:  # attached: stop() leaves the VM running with --keep-running
+    if not keep_running or pve:  # attached: stop() leaves the VM running with --keep-running
         m.stop()
     else:
         m.log("keeping QEMU running (Ctrl-C to stop)")
@@ -891,10 +932,11 @@ def cmd_run(a):
     elapsed = round(m.elapsed(), 1)
     rec = m.finish_recordings(v)
     m.write_report(status)
-    with open(os.path.join(a.out, "result.json"), "w", encoding="utf-8") as f:
-        json.dump({"status": status, "code": code, "elapsed": elapsed, "vars": v,
-                   "metrics": m.metrics, "recordings": rec}, f, indent=2)
-    return code
+    result = {"status": status, "code": code, "elapsed": elapsed, "vars": masked(v),
+              "metrics": m.metrics, "recordings": rec}
+    with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+    return result
 
 
 def has_framebuffer(args):
@@ -1035,10 +1077,14 @@ def main():
     k.add_argument("--output", help="where to write the copy (serial.fast.cast next to the cast)")
     k.add_argument("--check", action="store_true",
                    help="replay the cast and compare the screen at each step with the lab's NNN-ttya.txt")
+    import install  # install targets (install.py, targets.py): `install`, `targets`, `media`
+
+    install.add_commands(sub)
     a = p.parse_args()
     if getattr(a, "qemu_args", None) and a.qemu_args[0] == "--":
         a.qemu_args = a.qemu_args[1:]
-    return {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast}[a.cmd](a)
+    cmds = {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast, **install.COMMANDS}
+    return cmds[a.cmd](a)
 
 
 if __name__ == "__main__":
