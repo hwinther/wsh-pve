@@ -49,6 +49,15 @@ network device, `lance`.
 - **Audio** — not currently working on SPARC.
 - **USB / PCI passthrough** — not supported on SPARC.
 
+## Changes to a running VM
+
+- **Applied right away:** changing, ejecting or inserting the CD-ROM's ISO; the network device's
+  bridge, VLAN tag, Disconnect, rate limit and firewall; disk resize; snapshots, backups, clone and
+  move disk.
+- **Applied at the next start** (shown as pending): a new network model or MAC address, adding or
+  removing a disk, memory. Nothing is hot-pluggable on SPARC: the lance is built into the machine
+  and sun4u's PCI buses have no hotplug.
+
 ## Installing SunOS / Solaris
 
 1. Create a VM with the [Architecture](/reference/architecture/) `SPARC (32-bit)` (or `SPARC (64-bit)`).
