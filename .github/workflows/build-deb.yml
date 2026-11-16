@@ -149,7 +149,20 @@ jobs:
           popd
           git add submodules/${{ inputs.package }}.changelog.patch
           git commit -m "Update changelog for ${{ inputs.package }} ($WSH_VERSION)"
-          git push origin
+          # When one change touches two packages, their jobs push a changelog commit to main at
+          # about the same time and the later push is rejected. The commits touch different files,
+          # so put this one on top of the new main and try again.
+          for attempt in 1 2 3 4 5; do
+            if git push origin; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::The changelog push was rejected 5 times"
+              exit 1
+            fi
+            sleep $((attempt * 5))
+            git pull --rebase --autostash
+          done
 
       # pve-qemu's optional extras (3dfx, openbios, sun-proms) never fail the build, so a package
       # without one is published like any other. This says which ones it has (job summary and a
