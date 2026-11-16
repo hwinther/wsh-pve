@@ -55,6 +55,10 @@ apt policy pve-manager qemu-server pve-qemu-kvm libpve-storage-perl
 
 The installed version should be the `+wsh` one, with `debian.wshosting.no` at priority 1001.
 
+## After installing: floppy images
+
+Floppy images are a storage content type of their own, and no storage has it by default. Before the first floppy drive, enable **Floppy image** on a storage under **Datacenter → Storage** (edit the storage, add it to **Content**). Until then the storage list in **Add → Floppy Drive** is empty. Details and the command line are in the [floppy reference](/reference/floppy/).
+
 ## Signing key rotation
 
 The repository signing key was replaced on 2026-11-01 (the previous key expired). If `apt update`
