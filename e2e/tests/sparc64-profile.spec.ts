@@ -1,8 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 
 import {
-  hasSparc64Profile,
-  hasSparc64ProfileUi,
   NODE,
   PASSWORD,
   type Pve,
@@ -20,12 +18,6 @@ import {
 // models NetBSD drives, displays std/serial0/none. What qemu-server accepts and builds for it, what
 // it refuses, and the wizard and Hardware editors that offer only it.
 
-// TODO: drop the test.fail(!profile) and test.fail(!ui) markers once qemu-server and pve-manager with
-// the sparc64 profile are published at debian.wshosting.no. Until then the PR e2e installs packages
-// that build sparc64 VMs with SCSI and bootindex and refuse nothing.
-let profile: boolean
-let ui: boolean
-
 const ISO_NAME = 'e2e-sparc64.iso'
 const ISO = `local:iso/${ISO_NAME}`
 
@@ -38,8 +30,6 @@ test.beforeAll(async () => {
     `mkdir -p /var/lib/vz/template/iso && truncate -s 1M /var/lib/vz/template/iso/${ISO_NAME}`,
   ])
   expect(code, output).toBe(0)
-  profile = await hasSparc64Profile()
-  ui = await hasSparc64ProfileUi()
 })
 
 test.beforeEach(async ({ request }) => {
@@ -85,7 +75,6 @@ function bootArg(cmd: string): string | undefined {
 
 test.describe('sparc64, created through the API', () => {
   test('the wizard layout: IDE disk and CD-ROM, the CD boots first, no bootindex or balloon', async () => {
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = await createVm(WIZARD_LAYOUT)
 
     // the install CD first: OpenBIOS boots one device and doesn't fall back to the next
@@ -109,7 +98,6 @@ test.describe('sparc64, created through the API', () => {
   })
 
   test('the CD ejected (or the disk first in the boot order): the disk boots', async () => {
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = await createVm(WIZARD_LAYOUT)
     const config = `/nodes/${NODE}/qemu/${vmid}/config`
 
@@ -125,7 +113,6 @@ test.describe('sparc64, created through the API', () => {
   })
 
   test('a serial console on ttya (vga serial0)', async () => {
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = await createVm({ ...WIZARD_LAYOUT, serial0: 'socket', vga: 'serial0' })
 
     const cmd = await showcmd(vmid)
@@ -142,7 +129,6 @@ test.describe('sparc64, created through the API', () => {
   test('four NICs of the allowed models fill PCI bus B, and QEMU takes them', async () => {
     // Before the profile the virtio-balloon (no bus given) took one of pciB's four slots too, and
     // QEMU refused the fourth NIC: "PCI: no slot/function available for rtl8139".
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = await createVm({
       ...WIZARD_LAYOUT,
       net1: 'virtio,bridge=vmbr0',
@@ -240,7 +226,6 @@ test.describe('refused combinations', () => {
 
   for (const c of cases) {
     test(`create: ${c.name}`, async () => {
-      test.fail(!profile, 'qemu-server without the sparc64 profile')
       const vmid = Number(await pve.get<string>('/cluster/nextid'))
       const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, {
         arch: 'sparc64',
@@ -255,7 +240,6 @@ test.describe('refused combinations', () => {
   }
 
   test('update: the result must still match the profile', async () => {
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = await createVm(WIZARD_LAYOUT)
     const config = `/nodes/${NODE}/qemu/${vmid}/config`
 
@@ -274,7 +258,6 @@ test.describe('refused combinations', () => {
   })
 
   test('an existing VM from the old wizard (SCSI) stays readable, but neither starts nor changes until fixed', async () => {
-    test.fail(!profile, 'qemu-server without the sparc64 profile')
     const vmid = 964
     await writeConfFile(vmid, [
       'arch: sparc64',
@@ -314,7 +297,6 @@ test.describe('web UI', () => {
   })
 
   test('create wizard: IDE disk and CD-ROM, sunhme, one CPU, 512 MB', async ({ page }) => {
-    test.fail(!(ui && profile), 'pve-manager/qemu-server without the sparc64 profile')
     const vmid = Number(await pve.get<string>('/cluster/nextid'))
     const wizard = await openWizard(page, 'sparc64-ui')
 
@@ -388,7 +370,6 @@ test.describe('web UI', () => {
   })
 
   test("Hardware: the editors offer only the profile's choices", async ({ page }) => {
-    test.fail(!ui, 'pve-manager without the sparc64 profile')
     const vmid = await createVm({
       ...WIZARD_LAYOUT,
       net1: 'sunhme,bridge=vmbr0',
