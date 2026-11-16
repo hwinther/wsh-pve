@@ -1,0 +1,29 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] client: don't define a "forth" constant
+
+client.fs names the file types of load-state with constants, and the one
+for Forth source, "11 constant forth", hides the FORTH vocabulary word
+defined in vocabulary.fs. "only forth also definitions" then pushes 0x11
+instead of selecting the forth word list. Solaris's kernel debugger
+words (data64.fth/kdbg.fth, sent through "interpret") start with that
+line and continue with a stray cell on the stack.
+
+Nothing refers to the constant; drop it.
+---
+ forth/debugging/client.fs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
+index 5ee6003..c49dd7f 100644
+--- a/forth/debugging/client.fs
++++ b/forth/debugging/client.fs
+@@ -49,7 +49,8 @@ variable file-size
+ 4  constant pe
+ 5  constant aout
+ 10 constant fcode
+-11 constant forth
++\ 11 is a Forth source file: no constant for it, the name would hide
++\ the FORTH vocabulary word ("only forth also definitions")
+ 12 constant bootcode
+ 13 constant prep
+ 

@@ -1,0 +1,37 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: give the CPU node the I-cache's line size and size
+
+4cbc339 ("Create extra CPU properties required by OpenSolaris kernel")
+set icache-line-size and icache-size from the E-cache fields of the CPU
+definition, so an UltraSPARC IIi reported a 1 MB instruction cache with
+64-byte lines instead of 16 KB with 32-byte lines.
+
+64-bit Solaris 9 checks the cache geometry in startup_modules() and
+stopped with
+
+  panic[cpu0]/thread=140a000: VAC too big!
+
+once it got that far. Use the I-cache fields.
+---
+ arch/sparc64/openbios.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index aa774c4..55bb3bb 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -374,12 +374,12 @@ static void cpu_generic_init(const struct cpudef *cpu, uint32_t clock_frequency)
+     push_str("icache-associativity");
+     fword("property");
+ 
+-    PUSH(cpu->ecache_line_size);
++    PUSH(cpu->icache_line_size);
+     fword("encode-int");
+     push_str("icache-line-size");
+     fword("property");
+ 
+-    PUSH(cpu->ecache_size);
++    PUSH(cpu->icache_size);
+     fword("encode-int");
+     push_str("icache-size");
+     fword("property");
