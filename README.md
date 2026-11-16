@@ -39,6 +39,8 @@ A target whose extra drops out prints `WARNING: optional extra <name> missing: <
 
 The 3dfx binary is QEMU from the same tree as the package (Proxmox's patches, then ours from `pve-qemu.patch`) plus [qemu-3dfx](https://github.com/hwinther/qemu-3dfx) at the `submodules/qemu-3dfx` commit: its `hw/3dfx` and `hw/mesa`, and `submodules/pve-qemu-qemu-3dfx.patch`, our port of its QEMU patch (upstream's targets QEMU 9.2), applied as the quilt patch `wsh/0099-WSH-qemu-3dfx.patch`. When a new pve-qemu breaks that patch, `pve-qemu-3dfx` says so before the long build, and `scripts/refresh-qemu-3dfx-patch.sh` refreshes it: it applies the patch to that tree, merges it with `git apply --3way` when it doesn't apply and leaves the conflicts to resolve, then rewrites it (`--continue`); `--check` only tests it.
 
+The `submodules/qemu-3dfx` pin moves only through a pull request: the daily sync keeps the fork up to date, and `promote-qemu-3dfx.yml` opens or updates one PR (`promote/qemu-3dfx`) with the upstream commits, `refresh-qemu-3dfx-patch.sh --check` and `scripts/check-qemu-3dfx-build.sh`, which builds only `qemu-system-x86_64` with qemu-3dfx from the package's tree (a few minutes). PRs that change the pin, the port or pve-qemu run the same build (`qemu-3dfx-check.yml`). Details in the [3dfx guide](docs/src/content/docs/guides/3dfx.md).
+
 ## Development
 
 Run `make dev-links` to symlink the PVE pm and js files that are currently altered, in order to be able to reload and observe changes quickly.

@@ -92,6 +92,9 @@ jobs:
   update-submodule:
     runs-on: ubuntu-latest
     needs: [sync-from-upstream]
+    # The qemu-3dfx pin is never moved here: it moves only through the promotion PR that
+    # promote-qemu-3dfx.yml opens (with the port check and a 3dfx build). Its fork is still synced above.
+    if: ${{ inputs.repository != 'hwinther/qemu-3dfx' }}
     # Checkout and push use WORKFLOW_TOKEN; GITHUB_TOKEN is not used.
     permissions:
       contents: read
@@ -124,12 +127,7 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
             echo -e "\n\nSubmodule diff:"
             git diff --submodule=diff
-
-            if [ "${{ inputs.repository }}" == "hwinther/qemu-3dfx" ]; then
-              echo "qemu-3dfx is a special case, updating the reference to the submodule but skipping build"
-            else
-              exit 0
-            fi
+            exit 0
           fi
 
           git status
@@ -145,12 +143,7 @@ jobs:
             git commit -m "Update submodule $submodule"
             git pull --rebase origin main # final rebase before pushing in case another pipeline changed it recently
             git push origin main
-            if [ "${{ inputs.repository }}" == "hwinther/qemu-3dfx" ]; then
-              echo "skipping build for qemu-3dfx (setting changed=false)"
-              echo "changed=false" >> $GITHUB_OUTPUT
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-            fi
+            echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
   build-deb-when-changed:

@@ -57,6 +57,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    with Alpine under `lab.py serve` (CI job) and Solaris 2.6 on a cg3 through PVE in the test node.
    Still to do: a run from an interactive client (Claude Code over SSH), the mouse (relative Sun
    mouse), and installing it on the lab node. Details: `e2e/sparc/README.md`, "MCP server".
+3. **Promotion PR for qemu-3dfx** (branch `ci/qemu-3dfx-promotion`). The daily sync no longer
+   moves the pin on main. `promote-qemu-3dfx.yml` (after the fork sync, or by hand) opens or
+   updates one PR, `promote/qemu-3dfx`, with the upstream commits, the port check and a 3dfx-only
+   build (`scripts/check-qemu-3dfx-build.sh`, about 3 minutes on 4 CPUs instead of the 20-minute
+   package build); `qemu-3dfx-check.yml` runs the same build on every PR that touches the pin, the
+   port or pve-qemu. Merging rebuilds `pve-qemu-kvm`. Not yet run on GitHub: after merge, dispatch
+   `promote-qemu-3dfx.yml` once. How the pin moves: the 3dfx guide.
 
 ## Next, in this order
 
@@ -77,10 +84,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    upstream. Disk and network exist only in the unix0.cc author's unpublished QEMU stack (PCIe
    for sun4v). Revisit when that is published or upstream; `scenarios/niagara-boot.py` checks it
    with user-supplied firmware.
-4. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
-   package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
-   result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
-5. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+4. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
