@@ -3,6 +3,7 @@
 sums and write the hand-over CD the Solaris guest reads them from (ISO 9660 + Rock Ridge, hsfs).
 
     python3 -I handover.py <download dir> <out.iso>
+    python3 -I handover.py fetch <download dir> <file name>...   (only fetch and check those files)
 
 Downloads go to <download dir> (kept: a second run only checks them). Everything fetched is untrusted
 third-party content: it is only checked, gunzipped (Solaris 2.6 has no gzip) and put on the CD, never
@@ -12,7 +13,8 @@ run here. The CD holds:
     /src/   the sources as downloaded, and the .tar files gunzipped from them
     /bench/ build.sh (run in the guest), run.sh and README from this directory, SOURCES (URLs, sha256)
 
-Needs genisoimage (in the lab image).
+Needs genisoimage (in the lab image). `fetch` is how the lab image's Dockerfile gets lmbench for the
+Linux side of the network tests (bench/peer-build.sh), so the pins stay in one place.
 """
 import gzip
 import hashlib
@@ -73,6 +75,15 @@ def gunzip(src, dst):
 
 
 def main():
+    if sys.argv[1] == "fetch":
+        dl, names = sys.argv[2], sys.argv[3:]
+        os.makedirs(dl, exist_ok=True)
+        pins = {name: (url, want) for _sub, name, url, want in FILES}
+        for name in names:
+            if name not in pins:
+                raise SystemExit(f"{name}: not one of the pinned files")
+            print(f"{fetch(dl, name, *pins[name])}: sha256 {pins[name][1]}")
+        return
     dl, iso = sys.argv[1], sys.argv[2]
     os.makedirs(dl, exist_ok=True)
     with tempfile.TemporaryDirectory() as root:
@@ -92,7 +103,7 @@ def main():
             lines.append(f"{name}\n  {url}\n  sha256 {want}\n")
         b = os.path.join(root, "bench")
         os.makedirs(b)
-        for f in ("build.sh", "run.sh", "lmbench.sh", "nbench.cfg", "compat251.c", "README"):
+        for f in ("build.sh", "run.sh", "lmbench.sh", "net.sh", "nbench.cfg", "compat251.c", "README"):
             shutil.copy(os.path.join(HERE, f), b)
         with open(os.path.join(b, "SOURCES"), "w", encoding="ascii") as f:
             f.write("Downloaded files (sha256 of the file as fetched)\n\n" + "\n".join(lines))

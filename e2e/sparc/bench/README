@@ -6,6 +6,7 @@ Mount slice 0 read only and run the driver as root:
     drvconfig; disks                       # if the target wasn't there at install time
     mkdir -p /bench; mount -F ufs -o ro /dev/dsk/c0t4d0s0 /bench
     sh /bench/run.sh                       # or: sh /bench/run.sh dhry   (names starting with dhry)
+    BENCH_PEER=10.0.2.2 sh /bench/run.sh   # also the le0 tests, against lmbench's servers there
 
 run.sh prints `uname -a`, `psrinfo -v` and the memory size, then one line per result between
 BENCH-BEGIN and BENCH-END:
@@ -14,15 +15,17 @@ BENCH-BEGIN and BENCH-END:
     BENCH-ERROR <name> <reason>            (a benchmark that failed)
     BENCH-SKIP <names>: <reason>           (left out on this release)
 
-It writes only to $BENCH_TMP (default /var/tmp/bench) and removes it again. Takes ~6 minutes
+It writes only to $BENCH_TMP (default /var/tmp/bench) and removes it again. Takes ~7-8 minutes
 (emulated SS-5 or SS-20 under QEMU 11.1).
 
 Contents
 --------
 
-    run.sh, lmbench.sh   the driver (lmbench.sh is the lmbench part)
+    run.sh, lmbench.sh,  the driver (lmbench.sh is the lmbench part, net.sh lmbench's network tests)
+    net.sh
     bin/                 the binaries, statically linked (SunOS 5.6 libc.a/libm.a; src/compat251.c
-                         adds the fstat64 Solaris 2.5.1 lacks, see "Releases")
+                         adds the fstat64 Solaris 2.5.1 lacks, see "Releases"), except lmbench's five
+                         network programs, which are linked dynamically (see "Network")
     nbench/              NNET.DAT (nbench's neural-net data) and NBENCH.CFG (the fixed configuration;
                          upper case: nbench upper-cases its arguments, file name included)
     src/                 the sources exactly as downloaded (SOURCES: URLs and sha256), compat251.c
@@ -88,9 +91,37 @@ file in $BENCH_TMP (made with mkfile):
     lm_mem_rd_4m lm_mem_wr_4m lm_bcopy_4m        bw_mem 4m rd|wr|bcopy (MB/s)
     lm_mem_lat_8m                                lat_mem_rd 8 128: load latency at 8 MB (ns)
     lm_fs_create_0k lm_fs_delete_0k              lat_fs <dir>, its 0k line (files/s)
-    Not included: the network benchmarks (nothing set up), and lat_ctx, bw_pipe and lat_fifo: on
-    Solaris 2.6 their pipe reads/writes return EINTR (lmbench expects BSD signal semantics) and
-    they loop on "read/write on pipe: Interrupted system call".
+    Not included: lat_fifo, lat_ctx and bw_pipe. lat_fifo never finishes cleanly, on Linux as
+    well: the writer process it forks in its initialize step inherits benchmp's SIGTERM handler,
+    which only sets a flag, so its cleanup's kill(SIGTERM) doesn't end the writer; benchmp kills
+    the waiting benchmark process after 5 s and the orphaned writer loops on "(w) read/write on
+    pipe" (on Solaris 2.6, whose signal() doesn't restart system calls, the first error is EINTR).
+    lat_ctx and bw_pipe looped the same way when the disk was first made; when tried again for the
+    network tests (built the same way, SS-20, ENOUGH=100000, by hand) they finished normally, so
+    they may be fine; they would need runs on every profile before going in.
+
+Network (lmbench 3.0-a9, the same unmodified sources; net.sh)
+    lmbench's client/server tests. Each server forks into the background (-s) and is stopped with
+    -S <host>; every client is killed after NET_TIMEOUT (120) seconds (a BENCH-ERROR), so a test
+    that loops can't hang the run. lmbench's defaults: 1-byte messages for the latencies, 64 KB
+    messages and a 7.5 s warm-up for bw_tcp; lmbench's fixed ports (31234 lat_tcp, 31236 bw_tcp,
+    31237 lat_connect, 31238 lat_udp), no portmapper, except lat_rpc, which registers with rpcbind
+    (started at boot by /etc/init.d/rpc). Linked dynamically (scripts/build without -static):
+    statically its link tests find no socket library (Solaris 2.6's libnsl.a needs dlopen), and
+    Sun never supported static networking programs. They run on Solaris 2.5.1 too (with its own
+    libc.so). Over lo0, run with the rest of lmbench:
+    lm_tcp lm_udp            lat_tcp / lat_udp localhost: round trip of one byte (us)
+    lm_connect               lat_connect localhost: TCP connect and close (us)
+    lm_tcp_bw                bw_tcp localhost (MB/s)
+    lm_rpc_tcp lm_rpc_udp    lat_rpc -p tcp|udp localhost: a Sun RPC call round trip (us)
+    Over le0 to a peer outside the guest (run.sh's "nic" part; BENCH_PEER=<peer address>, otherwise
+    a BENCH-SKIP line). The peer runs lmbench's servers (lat_tcp -s; lat_udp -s; bw_tcp -s, the same
+    lmbench built for it; the sparc lab's image has a Linux build). le0 has to be up already: run.sh
+    configures nothing (the sparc lab's bench-disk.py sets it up at run time).
+    nic_tcp nic_udp          lat_tcp / lat_udp to the peer: round trip of one byte (us)
+    nic_bw_in                bw_tcp to the peer: the peer sends, the guest receives (MB/s)
+    nic_bw_out               not run.sh's: the guest sends (bw_tcp -s in the guest, the client on
+                             the peer side; the sparc lab's bench-disk.py measures and adds it)
 
 Releases
 --------

@@ -6,6 +6,8 @@
 # runs on any Solaris 2.5.1-9 sparc guest with the disk mounted (read only is fine), e.g. on /bench:
 #   sh /bench/run.sh [only]     # only: run just the benchmarks whose name starts with it
 # Files are written to $BENCH_TMP (default /var/tmp/bench, a UFS directory) and removed afterwards.
+# The network tests run over lo0, and over le0 when BENCH_PEER names a host running lmbench's servers
+# (bench-disk.py sets it up; README "Network"); without it the le0 tests are a BENCH-SKIP line.
 B=`dirname $0`
 BIN=$B/bin
 T=${BENCH_TMP:-/var/tmp/bench}
@@ -121,6 +123,12 @@ fi
 # lmbench 3.0-a9: a fixed subset (see README); microseconds, MB/s, operations/s.
 if want lm && [ -x $BIN/lat_syscall ]; then
   . $B/lmbench.sh
+fi
+
+# lmbench's network tests (net.sh): over lo0 with the rest of lmbench, over le0 to $BENCH_PEER as nic_*
+if [ -x $BIN/lat_tcp ]; then
+  if want lm; then NETPART=lo; . $B/net.sh; fi
+  if want nic; then NETPART=nic; . $B/net.sh; fi
 fi
 
 rm -rf $T

@@ -13,6 +13,10 @@ PATH=/usr/local/bin:/usr/ccs/bin:/usr/xpg4/bin:/usr/bin:/usr/sbin; export PATH
 W=/export/home/bench-build
 M=/benchdisk
 LMB="lat_syscall lat_sig lat_pipe lat_proc hello lat_pagefault lat_mmap bw_file_rd bw_mem lat_mem_rd lat_fs"
+# The network tests, linked dynamically: statically, scripts/build's link tests for -lnsl and -lsocket
+# fail (Solaris's libnsl.a needs dlopen, which a static program doesn't have), so they get no socket
+# library at all; Sun didn't support static networking programs anyway (name services, netconfig).
+LMN="lat_tcp lat_udp lat_connect bw_tcp lat_rpc"
 
 fail() { echo "BUILD-FAILED $*"; exit 1; }
 # timed <name> <shell command>: run it (output to $W/<name>.log), print COMPILE <name> <seconds>
@@ -48,6 +52,11 @@ grep -E "^gcc .* -o $O/[a-z_]+ [a-z_]+\.c( |$)" $W/lmbench.log > $W/lmbench.link
 [ `wc -l < $W/lmbench.links` -eq `echo $LMB | wc -w` ] || fail "lmbench: link lines in lmbench.log"
 while read cmd; do eval "$cmd $C" || fail "lmbench: $cmd $C"; done < $W/lmbench.links
 for b in $LMB; do cp $O/$b $W/bin || fail "lmbench $b"; done
+# The network tests: the same sources and flags without -static, in a directory of their own
+N=../bin/sparc-sun-solaris2.6-dynamic
+T=; for b in $LMN; do T="$T $N/$b"; done
+timed lmbench-net "env CC=gcc CFLAGS='$CFLAGS' OS=sparc-sun-solaris2.6-dynamic MAKE=make ../scripts/build $T"
+for b in $LMN; do cp $N/$b $W/bin || fail "lmbench $b"; done
 
 # The disk: drvconfig + disks make the /dev links for a target the install didn't see
 drvconfig; disks
@@ -58,12 +67,13 @@ mkdir $M/bin $M/nbench $M/src
 cp $W/bin/* $M/bin
 cp $CD/src/dhry-c $CD/src/whetstone.c $CD/src/hanoi.c $CD/src/timeit.c $CD/src/nbench-byte-2.2.3.tar.gz $CD/src/lmbench-3.0-a9.tgz $M/src
 cp $W/nbench-byte-2.2.3/NNET.DAT $M/nbench && cp $CD/bench/nbench.cfg $M/nbench/NBENCH.CFG
-cp $CD/bench/run.sh $CD/bench/lmbench.sh $CD/bench/README $CD/bench/SOURCES $M && cp $CD/bench/compat251.c $M/src
+cp $CD/bench/run.sh $CD/bench/lmbench.sh $CD/bench/net.sh $CD/bench/README $CD/bench/SOURCES $M && cp $CD/bench/compat251.c $M/src
 {
   echo "Built `date` on `uname -a`"
   echo; echo "CFLAGS (Dhrystone, Whetstone; nbench adds -s -Wall, all link -static): $CFLAGS"
   echo "Dhrystone: -DHZ=100 (times(), TIMES is dhry.h's default)"
   echo "lmbench: `grep 'gcc .*-c lib_timing.c' $W/lmbench.log | head -1`"
+  echo "lmbench network tests (dynamic): `grep 'gcc .*-o .*/lat_tcp lat_tcp.c' $W/lmbench-net.log | head -1`"
   echo; gcc -v 2>&1
   echo; echo "Compile times (guest wall seconds, on the build machine):"; cat $W/compile.times
   echo; cd $M/bin && ls -l
