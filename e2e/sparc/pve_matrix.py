@@ -40,10 +40,13 @@ MATRICES = {
                             "memory": 1024, "cores": 2, "ostype": "l26", "serial0": "socket", "vga": "serial0",
                             "scsihw": "virtio-scsi-pci", "scsi2": "{iso},media=cdrom"},
          "other-os/alpine/alpine-standard-3.19.0-aarch64.iso", None, [("alpine-boot-cd.py", {})]),
-        # sparc64: sun4u, OpenBIOS; the CD on the built-in IDE (OpenBIOS can't drive the lsi SCSI)
+        # sparc64: the profile as the create wizard makes it (a blank disk on ide0, the CD on ide2,
+        # sunhme, 512 MB, no boot order: the API puts the CD first), the console on ttya. OpenBIOS
+        # must boot the CD by itself (`-boot order=d`): BOOT= types nothing at its prompt.
         ("netbsd-sparc64", {"arch": "sparc64", "memory": 512, "ostype": "other", "serial0": "socket",
-                            "vga": "serial0", "ide2": "{iso},media=cdrom"},
-         "other-os/NetBSD-11.1-sparc64.iso", None, [("netbsd-boot-cd.py", {})]),
+                            "vga": "serial0", "net0": "sunhme,bridge=vmbr0", "ide0": "local:1,format=raw",
+                            "ide2": "{iso},media=cdrom"},
+         "other-os/NetBSD-11.1-sparc64.iso", None, [("netbsd-boot-cd.py", {"BOOT": ""})]),
         # x86_64 baseline under TCG: the console on VGA (OCR + send-key), a serial port next to it
         ("alpine-x86_64", {"kvm": 0, "memory": 1024, "ostype": "l26", "serial0": "socket", "vga": "std",
                            "ide2": "{iso},media=cdrom"},
