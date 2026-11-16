@@ -35,8 +35,9 @@ writes never reach the file, so nothing on the host is changed.
             shell, the installer screen)                                (0: not measured)
   TIMEOUT   seconds for a boot to reach its prompt                      (1800)
   WALK      ISO: this many more installer screens with the defaults (F2 on each, the first choice
-            marked where none is, HOSTNAME (niagara) and ROOTPW (lab) where asked), stopping at the first screen about
-            disks; walk_end in result.json names the last screen       (0)
+            marked where none is, HOSTNAME (niagara) and ROOTPW (lab) where asked), stopping at a
+            screen about disks or when the installer exits to its shell (then `format` and the
+            device lists are recorded); walk_end in result.json says where (0)
   EXTRA     more QEMU arguments, shell-quoted
   TRACE     QEMU trace events, comma separated, logged to <out>/trace.log
 """
@@ -54,6 +55,7 @@ DEFAULTS = {"QEMU": "qemu-system-sparc64", "FW": "/srv/sparc/prom/niagara", "MEM
             "psrinfo -v ;; df -k ;; ls /dev/dsk /dev/rdsk ;; ifconfig -a", "POWEROFF": "init 5", "IDLE": "0",
             "TIMEOUT": "1800", "WALK": "0", "ROOTPW": "lab", "HOSTNAME": "niagara", "EXTRA": "", "TRACE": ""}
 OK = r"(\{\d+\} )?ok $"
+MARKED = re.compile(r"\[X\] \w")  # a marked list entry, not the help text's "mark it [X]."
 
 
 def skip(out, v, why):
@@ -175,9 +177,10 @@ def screen_title(text):
 
 
 def walk(m, v):
-    """Up to WALK more installer screens with the defaults: mark the first choice where nothing is
-    marked yet, ROOTPW at a password prompt, then F2 (Esc-2); stops at a screen about disks or when a
-    screen doesn't change."""
+    """Up to WALK more installer screens with the defaults: mark the first entry where nothing is
+    marked yet, HOSTNAME and ROOTPW where asked, then F2 (Esc-2). Stops at a screen about disks, when
+    the installer exits to its shell (then records what the shell sees of disks), or when a screen
+    doesn't change."""
     for i in range(int(v["WALK"])):
         text = m.screen_text()
         title = screen_title(text)
@@ -185,24 +188,34 @@ def walk(m, v):
             m.metrics["walk_end"] = title
             m.snap(f"installer: {title} (disks)")
             return
+        shell_at = re.search(r"Exiting to shell", m.text[m.pos:])
+        if shell_at:
+            why = m.text[max(m.pos, m.pos + shell_at.start() - 300):m.pos + shell_at.start()].strip().splitlines()
+            m.metrics["walk_end"] = f"installer exited to its shell: {why[-1] if why else ''}"
+            m.log(m.metrics["walk_end"])
+            m.key("ctrl-c")
+            m.send("\r")
+            m.quiet(2, 60)
+            m.pos = len(m.text)
+            for c in ("format < /dev/null", "ls /dev/dsk /dev/rdsk", "df -k /", "ifconfig -a"):
+                shell(m, c)
+                m.snap(c)
+            return
         if title == "Host Name":
             m.send(v["HOSTNAME"])
-        elif re.search(r"Root Password|password:", text, re.I) and re.search(r"[Pp]assword: *$", text, re.M):
+        elif re.search(r"[Pp]assword: *$", text, re.M):
             m.send(v["ROOTPW"] + "\r")
             m.quiet(2, 60)
             m.send(v["ROOTPW"] + "\r")
-        elif "[ ]" in text and "[X]" not in text:
-            for keys in ((), ("ctrl-n",), ("ctrl-p",)):  # the highlight isn't always on the first entry
-                m.key(*keys)
-                m.send("\r")
-                m.quiet(2, 60)
-                if "[X]" in m.screen_text():
-                    break
+        elif "[ ]" in text and not MARKED.search(text):
+            m.send("\r")  # the highlight starts on the first entry
+            m.quiet(2, 60)
         m.key("f2")
         try:
             m.quiet(4, 900)
         except Exception:
             pass
+        time.sleep(3)  # keys sent while the next screen is still being set up are lost
         after = m.screen_text()
         m.snap(f"installer: {screen_title(after)}")
         if after == text:
