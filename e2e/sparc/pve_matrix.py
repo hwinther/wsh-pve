@@ -69,6 +69,16 @@ MATRICES = {
                            "ide2": "{iso},media=cdrom"},
          "other-os/alpine/alpine-standard-3.19.0-x86_64.iso", None, [("alpine-boot-cd.py", {})]),
     ],
+    # Solaris 10 on sun4u through PVE (not in the weekly run): the sparc64 profile as the wizard makes
+    # it, 1024 MB, the console on ttya. NEEDS THE SUN DVD (sol-10-u11-ga-sparc-dvd.iso in --iso; not
+    # in the repository) and a pve-qemu-kvm with the patched openbios-sparc64 and wsh/0021, the same
+    # checks as matrix.py's solaris10 case.
+    "solaris10": [
+        ("sol10-sparc64", {"arch": "sparc64", "memory": 1024, "ostype": "solaris", "serial0": "socket",
+                           "vga": "serial0", "net0": "sunhme,bridge=vmbr0", "ide0": "local:8,format=raw",
+                           "ide2": "{iso},media=cdrom"},
+         "sol-10-u11-ga-sparc-dvd.iso", None, [("sparc64-boot-cd.py", {"GUEST": "solaris10"})]),
+    ],
     # Every automated install target (targets.py), each with --check: the "scheduled reinstalls" of
     # ROADMAP.md, without replacing stored disks yet.
     "install": [(f"install-{t}", {"install": t}, None, None, []) for t in targets.automated()],

@@ -50,9 +50,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    ttya. NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as before. With a standalone QEMU
    patch for the cmd646 interrupt status latch and an experimental OBP-style IDE tree, the
    interactive installer completes an install to the IDE disk (1 of 3 attempts; one intermittent
-   `bad unknown trap at TL 1` panic). Still to do:
-   - install it in the package (`debian/rules` hook in `pve-qemu.patch`), and add the cmd646 QEMU
-     patch there;
+   `bad unknown trap at TL 1` panic).
+   The package built from branch `feat/package-openbios-sparc64` (in review) installs this
+   `openbios-sparc64` (a new optional extra, checked and reported like the others) and carries the
+   cmd646 interrupt latch as `wsh/0021` with a qtest: from the package alone, Solaris 10 1/13
+   reaches its installer, takes input on ttya and attaches its IDE disk without the
+   `set_features` warning (lab matrix `solaris10`, needs the Sun DVD). Still to do:
    - the IDE tree as OBP has it (`ide@3/disk@0,0`, `cdrom@2,0`) without breaking NetBSD's CD boot;
      `compatible` on the drive nodes so the installed disk mounts root;
    - the client-interface `boot` service (reboot), the intermittent install panic, `hme0` traffic;
@@ -79,8 +82,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    host core even when Solaris is idle; a bounded halt in the multiprocessor idle loop is the
    follow-up (`submodules/SPARC.md`, "SMP").
 2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
-   Solaris 10 1/13 reaches its installer and takes input on ttya. Next: the IDE tree and the cmd646
-   interrupt in the package, then a reproducible install and a booting disk. QEMU's sun4u devices (CMD646 IDE, hme) are ones
+   Solaris 10 1/13 reaches its installer and takes input on ttya; the cmd646 interrupt fix is in
+   the package built from `feat/package-openbios-sparc64`. Next: the IDE tree, then a reproducible install and a booting disk. QEMU's sun4u devices (CMD646 IDE, hme) are ones
    Solaris drives, so a kernel that boots has a disk and a network.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
