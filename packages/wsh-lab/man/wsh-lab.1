@@ -1,0 +1,76 @@
+.TH WSH-LAB 1 "" "wsh-lab" "User Commands"
+.SH NAME
+wsh-lab \- install and drive sparc guests in Proxmox VE VMs, unattended
+.SH SYNOPSIS
+.B wsh-lab targets
+.RB [ \-\-json ]
+.br
+.B wsh-lab media
+.RI [ target ]
+.RB [ \-\-storage
+.IR STORAGE " | " \fB\-\-dir\fR " " DIR ]
+.RB [ \-\-no\-checksum ]
+.br
+.B wsh-lab install
+.I target
+.B \-\-vmid
+.I N
+.RI [ options ]
+.br
+.B wsh-lab run
+.I scenario
+.B \-\-out
+.I DIR
+.RB [ \-\-pve
+.IR VMID ]
+.RB [ \-\-var
+.IR KEY=VALUE " ...]"
+.br
+.B wsh-lab
+.RB { serve | ctl | cast }
+.RI ...
+.br
+.B wsh-lab \-\-version
+.SH DESCRIPTION
+.B wsh-lab
+is the sparc lab of the wsh-pve project (lab.py). It watches a guest's serial console and
+framebuffer, types on either the way a person would, and records every step with screenshots.
+.PP
+.B wsh-lab install
+creates a VM on the Proxmox VE node it runs on (as root) with a tested profile, checks that the
+install media are the tested ones (file name, size and sha256 on the media storage), installs the
+target unattended, sets a known root password, writes the marker file
+.I /etc/wsh\-lab\-target
+in the guest and leaves the VM powered off with its login details in the VM's notes. It never
+overwrites an existing VMID. Options include
+.BR \-\-storage ", " \-\-media\-storage ", " \-\-bridge ", " \-\-ip ,
+.BR \-\-hostname ", " \-\-root\-password ", " \-\-user ", " \-\-check ", " \-\-template ", "
+.BR \-\-keep\-on\-failure " and " \-\-out ;
+.B wsh-lab install \-\-help
+lists them all.
+.PP
+.B wsh-lab targets
+lists the catalogue (which targets are automated, their profiles and what was tested);
+.B wsh-lab media
+checks which targets' media a storage or directory has.
+.PP
+No install media are included or downloaded: Sun and Oracle software is never part of the project.
+.SH FILES
+.TP
+.I /usr/share/wsh-lab/
+the lab (lab.py, install.py, targets.py, ...) and its scenarios
+.TP
+.I /var/lib/wsh-lab/installs/
+the evidence of each install (logs, screenshots, recordings); not removed by
+.B apt purge
+.SH SECURITY
+The installed targets' root password is
+.B wshlab
+unless
+.B \-\-root\-password
+is given. It is public (in this manual, the documentation and the VM's notes): change it before a
+VM is reachable from anywhere untrusted.
+.SH SEE ALSO
+.BR wsh-lab-mcp (1),
+.BR qm (1),
+https://debian.wshosting.no/guides/lab-install/

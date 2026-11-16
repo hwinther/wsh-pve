@@ -390,13 +390,14 @@ What a DOS target needs and where it fits:
 
 ### Run it
 
-On a node (see the guide for installing the lab under `/opt/wsh-lab`, or use the e2e PVE container
-with the lab, `pve.Dockerfile`):
+On a node, from the `wsh-lab` package (`apt install wsh-lab`, see "The wsh-lab package" below;
+`wsh-lab` is `lab.py`), from a clone (`python3 lab.py ...`; the guide also has a venv under
+`/opt/wsh-lab`), or in the e2e PVE container with the lab (`pve.Dockerfile`):
 
 ```sh
-python3 lab.py targets
-python3 lab.py media                                   # every target's media on storage local
-python3 lab.py install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep-on-failure ...
+wsh-lab targets
+wsh-lab media                                   # every target's media on storage local
+wsh-lab install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep-on-failure ...
 ```
 
 The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check` (so the weekly test
@@ -430,6 +431,51 @@ The first run failed at the first boot and found a bug in the old `login()`: sys
 password form draws all its prompts at once, and matching them one by one typed the password ahead
 of the form (it ended up echoed, root without a password). With an empty password that never
 mattered. The password appears in none of the evidence files of the passing runs.
+
+### The wsh-lab package
+
+`packages/wsh-lab/` packages the lab as the optional Debian package `wsh-lab` in the apt repository
+(`apt install wsh-lab`; the guide's "Install the lab on a node" is the user side):
+
+- **Contents:** `lab.py`, `recording.py`, `install.py`, `targets.py`, `sunlabel.py`, `mcp_server.py`,
+  `scenarios/*.py`, `tests/test_targets.py`, both requirements files and the asciinema player for the
+  run pages, in `/usr/share/wsh-lab/`; `/usr/bin/wsh-lab` (`lab.py`, `--version` reads
+  `/usr/share/wsh-lab/VERSION`) and `/usr/bin/wsh-lab-mcp` (the MCP server, run from the venv that
+  `wsh-lab-mcp --setup` makes; see "MCP server"); two man pages. `Architecture: all`; `Depends`
+  only on Debian's `python3-pyte`, `python3-pil` and `fonts-dejavu-core`; `Suggests`
+  `tesseract-ocr`, `vpx-tools`, `python3-venv` and `qemu-server`. No package depends on it, and it
+  depends on none of the patched packages. dh_python3 byte-compiles the private directory in
+  postinst and removes the bytecode in prerm; the only maintainer script of its own is the postrm
+  that removes `/var/lib/wsh-lab/mcp-venv` on purge (the install evidence there stays).
+- **Version:** `packages/wsh-lab/version.sh`: `0.<N>+g<sha7>`, `N` the number of commits up to HEAD
+  that touch the package's inputs (the files above and `packages/wsh-lab/`), `sha7` the newest of
+  them. On main every change of an input raises `N`, and a commit that changes none of them gives
+  the same version; the changelog is generated with that commit's date (`SOURCE_DATE_EPOCH`), so
+  the same commit in the same build image builds the same `.deb`. No changelog commit is pushed.
+- **Build:** `make wsh-lab` (in `packages/wsh-lab/build.Dockerfile`, Debian 13 pinned by digest,
+  plain `dh`; `build.sh` assembles the tree, generates the changelog, runs `dpkg-buildpackage` and
+  then lintian with `--fail-on error,warning`) into `build/wsh-lab/`. The two lintian overrides
+  (the requirements files read as documentation) are in `debian/wsh-lab.lintian-overrides`.
+- **Test:** `packages/wsh-lab/test.sh` in a clean `debian:trixie`: `apt install` of the `.deb`
+  with its dependencies, `wsh-lab --version`/`--help`, `targets`, `media --dir` (missing, wrong
+  size), `install` refused off a PVE node, the catalogue's tests against the installed copy,
+  `wsh-lab-mcp` without a venv (explains, writes nothing to stdout), with `WSH_LAB_TEST_MCP=1`
+  `--setup` (without `python3-venv`: refused with the hint; with it: the venv from PyPI) and
+  `--check`, then `apt purge` and `autoremove`, after which the file system must be what it was
+  before the install.
+- **CI** (`.github/workflows/wsh-lab.yml`): on pull requests that touch the inputs, build, lintian
+  and the test; nothing is published. On main, the same, then a release `wsh-lab-<version>` with the
+  `.deb` (skipped when that release exists: one upload per version), then the Pages deploy
+  (`repo-update.yml`), which downloads the `.deb` of the newest `wsh-lab-*` release into
+  `repo/incoming` before `make repo-update`, so reprepro includes it with the four patched packages'
+  debs. Without a release yet the repository is built as before.
+
+Tested on 2026-11-16: two builds of the same commit gave byte-identical `.deb`s; lintian clean;
+`test.sh` with `WSH_LAB_TEST_MCP=1` passed (10 catalogue tests, 1 skipped without the qemu-server
+patch; the venv from PyPI; nothing left after the purge). In the PVE test container on the lab
+host with the published packages and the package built from this branch installed by apt (no
+checkout in the container), `wsh-lab install sol26-ss5 --vmid 9201 --check` passed in 11.9 min
+(install 416 s, first boot 179 s, check 103 s).
 
 ## Recordings
 
@@ -746,7 +792,7 @@ or the serial console, the serial output, and waiting for a pattern. It is a thi
   calls to `DIR/ctl.sock`.
 
 It speaks MCP over stdin/stdout only (no listening port) and is built on the official Python SDK
-(`mcp` 2.3.0, `MCPServer`). It is an optional extra: nothing in the Debian packages or the lab's
+(`mcp` 2.3.0, `MCPServer`). It is an optional extra: nothing in the patched Debian packages or the lab's
 matrices uses it, and its dependencies live in their own venv.
 
 ### Safety model
@@ -820,7 +866,26 @@ Known holes:
 
 ### Install and run
 
-**On a PVE node**, without new system packages: a venv made by [uv](https://docs.astral.sh/uv/) (one
+**On a PVE node, from the package:** `apt install wsh-lab` (the wsh-pve repository) puts the
+server in `/usr/share/wsh-lab/` and `wsh-lab-mcp` in `/usr/bin`. Its Python SDK (`mcp`, with
+pydantic, starlette, ...) isn't packaged in Debian 13, and the package doesn't carry a copy of it:
+`wsh-lab-mcp --setup` (as root, once; needs `python3-venv` and access to PyPI) makes a venv in
+`/var/lib/wsh-lab/mcp-venv` from `/usr/share/wsh-lab/mcp-requirements.txt` (the pinned file below,
+`pip --require-hashes --only-binary=:all:`), and `wsh-lab-mcp` then runs the server from it. It
+says so on stderr (never on stdout, the MCP stream) when the venv is missing, or was made for
+another wsh-lab version or Python, and stops. `apt purge wsh-lab` (or `wsh-lab-mcp --remove-venv`)
+removes the venv.
+
+```sh
+apt install wsh-lab python3-venv
+wsh-lab-mcp --setup
+wsh-lab-mcp --vm 9001 --check   # what it would allow
+```
+
+In the client commands below, use `wsh-lab-mcp --vm 9001` in place of
+`/opt/wsh-lab-mcp/bin/python /opt/wsh-lab-mcp/lab/mcp_server.py --vm 9001`.
+
+**On a PVE node without the package**, and without new system packages: a venv made by [uv](https://docs.astral.sh/uv/) (one
 static binary; `python3 -m venv` would need `python3-venv`), the pinned and hash-checked
 dependencies, and the lab's three files. As root:
 

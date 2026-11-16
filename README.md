@@ -23,6 +23,8 @@ This is an optional step as the packages are already available in this github re
 Run `make all` to build the debian packages and copy them into the build directory.
 Run `make repo-update` to populate a debian package repository under the repo directory, you will need a gpg key in order to sign the packages.
 
+Run `make wsh-lab` for the optional `wsh-lab` package (the sparc lab, `e2e/sparc`, as `apt install wsh-lab` and a `wsh-lab` command on a PVE node; see [Lab install targets](https://debian.wshosting.no/guides/lab-install/)). It is `Architecture: all`, depends on none of the patched packages, and the `wsh-lab package` workflow builds, tests and publishes it with them.
+
 Run `make 3dfx-drivers` to build the qemu-3dfx guest drivers (Windows/DOS), and `make pve-qemu-bundle` for the `pve-qemu-kvm` package with the 3dfx/Mesa pass-through binary (`qemu-system-x86_64-3dfx`, from `make pve-qemu-3dfx`).
 
 ### Optional extras

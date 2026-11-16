@@ -1,0 +1,4 @@
+# The pinned, hash-checked pip requirements of the lab and of wsh-lab-mcp --setup: input files that
+# the wrapper reads, not documentation.
+wsh-lab: package-contains-documentation-outside-usr-share-doc [usr/share/wsh-lab/lab-requirements.txt]
+wsh-lab: package-contains-documentation-outside-usr-share-doc [usr/share/wsh-lab/mcp-requirements.txt]

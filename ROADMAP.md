@@ -37,6 +37,7 @@ come after that, not before.
 | Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
 | Stop-A on a running sparc32 guest stops at the OpenBIOS prompt and `go` resumes (it powered the VM off) | in review | this branch |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
+| `wsh-lab`: the lab as an optional package in the apt repository (`apt install wsh-lab`, `wsh-lab` and `wsh-lab-mcp` commands), built and tested per PR, released per version and added to the repository by the Pages deploy | in review | branch `feat/wsh-lab-package` |
 | Install targets: `lab.py install <target>` on a node makes an installed VM with known login details from tested media (Solaris 2.6 on SS-5 and SS-20); the `pve` matrix runs it | in review | branch `feat/lab-install-targets` |
 
 ## In progress
@@ -67,7 +68,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    cursor, wait for a pattern; reset, stop and the monitor only behind flags. stdio only. Tested
    with Alpine under `lab.py serve` (CI job) and Solaris 2.6 on a cg3 through PVE in the test node.
    Still to do: a run from an interactive client (Claude Code over SSH), the mouse (relative Sun
-   mouse), and installing it on the lab node. Details: `e2e/sparc/README.md`, "MCP server".
+   mouse), and installing it on the lab node (`apt install wsh-lab`, then `wsh-lab-mcp --setup`). Details: `e2e/sparc/README.md`, "MCP server".
 3. **Promotion PR for qemu-3dfx** (branch `ci/qemu-3dfx-promotion`). The daily sync no longer
    moves the pin on main. `promote-qemu-3dfx.yml` (after the fork sync, or by hand) opens or
    updates one PR, `promote/qemu-3dfx`, with the upstream commits, the port check and a 3dfx-only

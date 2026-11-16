@@ -1,0 +1,143 @@
+name: wsh-lab package
+
+# The optional wsh-lab package (packages/wsh-lab): the sparc lab (e2e/sparc) as `apt install wsh-lab`.
+# Architecture: all, built from the repository's files at a commit, so it needs no changelog commit:
+# its version comes from git (packages/wsh-lab/version.sh, 0.<N>+g<sha7>), and a commit that leaves
+# its inputs alone builds the same version.
+#
+# Pull requests: build, lintian, the install/purge test in a clean Debian 13. Nothing is published.
+# main (or by hand on main): the same, then a GitHub release wsh-lab-<version> with the .deb, unless
+# one exists already (the same version is never uploaded twice), and the Pages deploy
+# (repo-update.yml), which adds the newest wsh-lab release's .deb to the apt repository next to the
+# debs of the four patched packages.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/wsh-lab/**"
+      - "e2e/sparc/*.py"
+      - "e2e/sparc/*-requirements.txt"
+      - "e2e/sparc/scenarios/**"
+      - "e2e/sparc/tests/test_targets.py"
+      - ".github/workflows/wsh-lab.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/wsh-lab/**"
+      - "e2e/sparc/*.py"
+      - "e2e/sparc/*-requirements.txt"
+      - "e2e/sparc/scenarios/**"
+      - "e2e/sparc/tests/test_targets.py"
+      - ".github/workflows/wsh-lab.yml"
+
+permissions: {}
+
+# A newer push to a pull request replaces its running build; on main nothing is cancelled (a
+# release job that is cut short would leave the version half-published).
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # version.sh counts commits
+
+      - name: Version
+        id: version
+        run: |
+          set -euo pipefail
+          eval "$(packages/wsh-lab/version.sh)"
+          echo "version=$WSH_LAB_VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build (and lintian)
+        run: make wsh-lab DOCKER=docker
+
+      - name: Install, use and purge it in a clean Debian 13
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker run --rm -e WSH_LAB_TEST_MCP=1 \
+            -v "$PWD/build/wsh-lab:/deb:ro" -v "$PWD/packages/wsh-lab/test.sh:/test.sh:ro" \
+            debian:trixie sh /test.sh "/deb/wsh-lab_${VERSION}_all.deb"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsh-lab-deb
+          path: build/wsh-lab/wsh-lab_*_all.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Release
+    needs: [build]
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One publisher at a time: two pushes close together must not both create the same release.
+    concurrency:
+      group: wsh-lab-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write # gh release create (GITHUB_TOKEN)
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wsh-lab-deb
+          path: ${{ runner.temp }}/deb
+
+      - name: Create the release (once per version)
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The tag as build-deb.yml forms it (the first + as -), and as generate-docs-packages.js expects
+          tag="wsh-lab-${VERSION/+/-}"
+          deb="$RUNNER_TEMP/deb/wsh-lab_${VERSION}_all.deb"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::notice::$tag exists already: wsh-lab $VERSION is published, nothing to do"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "The optional wsh-lab package (the sparc lab as \`apt install wsh-lab\`), version $VERSION," \
+            "built from $COMMIT. It reaches the apt repository with the next Pages deploy." "" \
+            "sha256: \`$(sha256sum "$deb" | cut -d ' ' -f 1)\`" > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" --target "$COMMIT" --title "wsh-lab v$VERSION" --latest=false \
+            --notes-file "$RUNNER_TEMP/notes.md" "$deb"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+  update-pages:
+    name: Apt repository and Pages
+    needs: [publish]
+    if: ${{ needs.publish.outputs.published == 'true' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/repo-update.yml
+    secrets:
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}

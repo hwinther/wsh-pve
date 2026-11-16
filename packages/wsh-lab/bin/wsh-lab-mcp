@@ -1,0 +1,83 @@
+#!/bin/sh
+# wsh-lab-mcp: the sparc lab's MCP server (mcp_server.py), as installed by the wsh-lab package.
+#
+# Its Python SDK (mcp, with pydantic, starlette, ...) is not packaged in Debian 13, so the server runs
+# from a venv that `wsh-lab-mcp --setup` makes once, as root, with the pinned and hash-checked
+# requirements shipped in the package (pip --require-hashes, wheels only; needs python3-venv and
+# access to PyPI). `apt purge wsh-lab` removes the venv; `wsh-lab-mcp --remove-venv` does it sooner.
+#
+# stdout is the MCP stream once the server runs, so everything this wrapper says goes to stderr.
+set -eu
+LAB=/usr/share/wsh-lab
+VENV=/var/lib/wsh-lab/mcp-venv
+REQ=$LAB/mcp-requirements.txt
+STAMP=$VENV/wsh-lab-requirements
+
+say() {
+	echo "wsh-lab-mcp: $*" >&2
+}
+
+# What the venv was made from: the requirements and the Python minor version (a venv's site-packages
+# belong to one Python version; a Debian upgrade to a new python3 needs a new venv).
+stamp() {
+	printf '%s python%s\n' "$(sha256sum < "$REQ" | cut -d ' ' -f 1)" \
+		"$(/usr/bin/python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+}
+
+usage() {
+	cat >&2 <<EOF
+usage: wsh-lab-mcp --setup          create $VENV (as root, once; network access to PyPI)
+       wsh-lab-mcp --remove-venv    remove it again
+       wsh-lab-mcp [server options] run the MCP server on stdin/stdout, e.g.
+                                    wsh-lab-mcp --vm 9001 --check   (the server's own --help once set up)
+EOF
+}
+
+setup() {
+	if [ "$(id -u)" != 0 ]; then
+		say "--setup writes $VENV: run it as root"
+		exit 1
+	fi
+	if ! /usr/bin/python3 -c 'import ensurepip, venv' 2> /dev/null; then
+		say "python3 -m venv needs the python3-venv package: apt install python3-venv"
+		exit 1
+	fi
+	rm -rf "$VENV"
+	mkdir -p "$(dirname "$VENV")"
+	say "creating $VENV from $REQ"
+	if ! { /usr/bin/python3 -m venv "$VENV" \
+		&& "$VENV/bin/python" -m pip install --no-cache-dir --disable-pip-version-check --no-input \
+			--require-hashes --only-binary=:all: -r "$REQ" >&2; }; then
+		rm -rf "$VENV"
+		say "the venv could not be created (see above); nothing is left behind"
+		exit 1
+	fi
+	stamp > "$STAMP"
+	say "ready: wsh-lab-mcp --vm <vmid> --check shows what the server would allow"
+}
+
+case "${1:-}" in
+	--setup)
+		setup
+		exit 0
+		;;
+	--remove-venv)
+		rm -rf "$VENV"
+		exit 0
+		;;
+esac
+
+if [ ! -x "$VENV/bin/python" ]; then
+	say "the MCP SDK is not installed yet (Debian does not package it)."
+	say "Once, as root (needs python3-venv and network access to PyPI): wsh-lab-mcp --setup"
+	usage
+	case "${1:-}" in -h|--help) exit 0 ;; esac
+	exit 1
+fi
+if [ "$(stamp)" != "$(cat "$STAMP" 2> /dev/null || true)" ]; then
+	say "$VENV was made for another wsh-lab version or Python: run wsh-lab-mcp --setup again"
+	exit 1
+fi
+LAB_ASCIINEMA_PLAYER="${LAB_ASCIINEMA_PLAYER:-$LAB/asciinema-player}"
+export LAB_ASCIINEMA_PLAYER
+exec "$VENV/bin/python" "$LAB/mcp_server.py" "$@"

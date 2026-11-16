@@ -56,22 +56,47 @@ the DOS targets planned later) will go on a storage with the **Floppy image** co
 Check what a node has:
 
 ```sh
-python3 lab.py media                 # every target's media on storage local, with sha256
-python3 lab.py media sol26-ss5 --storage nas-iso
-python3 lab.py media --dir /path/to/isos --no-checksum
+wsh-lab media                 # every target's media on storage local, with sha256
+wsh-lab media sol26-ss5 --storage nas-iso
+wsh-lab media --dir /path/to/isos --no-checksum
 ```
 
 ## Install the lab on a node
 
-The lab is a few Python files; it runs as root on the node, where `qm`, `pvesh` and the VMs' sockets
-are. Either with Debian's packages:
+The lab runs as root on the node, where `qm`, `pvesh` and the VMs' sockets are. On a node that has
+the [wsh-pve repository](/guides/setup/):
+
+```sh
+apt install wsh-lab
+wsh-lab --version
+```
+
+`wsh-lab` is an optional package (`Architecture: all`): nothing else depends on it, it depends on
+none of the patched packages (it works with whatever `qemu-server` is installed, which is where the
+sparc profiles come from), and it pulls in only Debian's `python3-pyte`, `python3-pil` and
+`fonts-dejavu-core`. It puts the lab in `/usr/share/wsh-lab/` and two commands in `/usr/bin`:
+`wsh-lab` (`lab.py`: `install`, `targets`, `media`, `run`, `serve`, ...) and `wsh-lab-mcp` (the
+lab's [MCP server](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#mcp-server)). Suggested,
+not installed by default: `tesseract-ocr` (only for targets driven on a framebuffer; none yet),
+`vpx-tools` (the framebuffer video in the evidence) and `python3-venv` (for `wsh-lab-mcp --setup`).
+`apt purge wsh-lab` removes everything it installed, including the MCP server's venv; the evidence
+of your installs in `/var/lib/wsh-lab/installs/` stays.
+
+The package's version is `0.<N>+g<commit>`: `N` counts the commits that changed the lab, so a
+newer lab always has a higher version, and the commit is the newest of them. It is built by the
+`wsh-lab package` workflow from the repository at that commit and published with the other
+packages.
+
+**Without the package**, from a clone of the repository: either Debian's packages and the files
+as they are,
 
 ```sh
 apt install python3-pyte python3-pil fonts-dejavu-core
+alias wsh-lab='python3 /path/to/wsh-pve/e2e/sparc/lab.py'
 ```
 
-or, without new system packages, in a venv made by [uv](https://docs.astral.sh/uv/) with the pinned,
-hash-checked dependencies (the same way the lab's MCP server is installed):
+or, without new system packages, a venv made by [uv](https://docs.astral.sh/uv/) with the pinned,
+hash-checked dependencies:
 
 ```sh
 uv venv /opt/wsh-lab --python /usr/bin/python3
@@ -82,8 +107,7 @@ install -m 644 e2e/sparc/scenarios/*.py /opt/wsh-lab/lab/scenarios/
 alias wsh-lab='/opt/wsh-lab/bin/python /opt/wsh-lab/lab/lab.py'
 ```
 
-`vpx-tools` adds the framebuffer video to the evidence of targets with a framebuffer (none yet);
-`tesseract-ocr` is only needed for targets driven on a framebuffer. Removing it is `rm -r /opt/wsh-lab`.
+Removing that is `rm -r /opt/wsh-lab`.
 
 ## Run it
 
@@ -163,3 +187,7 @@ container with the published packages, and the `install` matrix runs every autom
 hand from the `sparc lab` workflow). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
+The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
+in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
+catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must
+leave nothing behind (`packages/wsh-lab/test.sh`).

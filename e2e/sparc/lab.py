@@ -12,6 +12,9 @@ A PVE VM:         lab.py run <scenario> --pve <vmid> --out ...   (on the PVE nod
 Recordings:       lab.py cast <run dir> [--max-idle 1] [--speed 2] [--check]   (-> serial.fast.cast)
 Install a target: lab.py install sol26-ss5 --vmid 120 [--out DIR]   (on the PVE node; see install.py)
                   lab.py targets | lab.py media [<target>]
+
+The wsh-lab package installs it as `wsh-lab` (wsh-lab install ..., wsh-lab targets, ...), with the
+scenarios in /usr/share/wsh-lab/scenarios.
 """
 import argparse
 import html
@@ -1050,7 +1053,9 @@ def cmd_ctl(a):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # LAB_PROG: the name the wsh-lab package's wrapper runs it as (/usr/bin/wsh-lab), for the help
+    p = argparse.ArgumentParser(prog=os.environ.get("LAB_PROG") or None, description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("scenario")

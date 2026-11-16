@@ -1,0 +1,16 @@
+#!/bin/sh
+# purge: the venv that `wsh-lab-mcp --setup` made (the MCP SDK and its dependencies), and
+# /var/lib/wsh-lab itself if nothing else is in it. The evidence of `wsh-lab install` runs
+# (/var/lib/wsh-lab/installs/) is the user's and stays.
+set -e
+
+if [ "$1" = "purge" ]; then
+	rm -rf /var/lib/wsh-lab/mcp-venv
+	if [ -d /var/lib/wsh-lab ]; then
+		rmdir --ignore-fail-on-non-empty /var/lib/wsh-lab
+	fi
+fi
+
+#DEBHELPER#
+
+exit 0
