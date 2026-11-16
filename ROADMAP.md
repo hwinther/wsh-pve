@@ -57,16 +57,27 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
    (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
    emulation bug. Idle in the multiprocessor loop comes after that.
-3. **Solaris 10/11 on `niagara`.** Reproduce the work described at unix0.cc: Solaris 10 u11's text
-   installer starts on `-M niagara` with rebuilt OpenSPARC T1 firmware and a small TTE page-size
-   fix. Check the firmware licences, carry the patch if it holds, find out how far a writable disk
-   is. No disk and no network today, so this is a demonstration until that changes.
-4. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
+3. **Solaris on sun4u: OpenBIOS memory management.** Moved ahead of niagara by its measurement
+   (`submodules/SPARC.md`, "sparc64: niagara (sun4v)", "Estimate"): make OpenBIOS's `ofmem` claim
+   whole pages and hand out contiguous physical memory, and see whether Solaris 10 gets past
+   `no nucleus hblk8 to allocate` (and 8/9 past `BOP_ALLOC failed`). QEMU's sun4u devices (CMD646
+   IDE, hme) are ones Solaris drives, so a kernel that boots has a disk and a network.
+4. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
+   published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
+   This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
+   from source (`sun4v-qemu-kit`, 30 s in a container; BSD+ and GPL-2, so a CI build looks
+   permitted; shipping Sun's prebuilt binaries is not advisable). After system identification the
+   installer exits to a shell: Solaris sees neither the DVD nor any disk as a device. No network,
+   one CPU, no idle, no power-off; the TTE page-size patch is needed only above 1 GB and isn't
+   upstream. Disk and network exist only in the unix0.cc author's unpublished QEMU stack (PCIe
+   for sun4v). Revisit when that is published or upstream; `scenarios/niagara-boot.py` checks it
+   with user-supplied firmware.
+5. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
    package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
    result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
-5. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
+6. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
    any VM on a node through `--pve`. A thin layer over `lab.py`.
-6. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+7. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
