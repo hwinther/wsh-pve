@@ -820,8 +820,8 @@ with or without a NetBSD, OpenBSD or Debian CD; no sun4v guest kernel is reached
 carries. `-M niagara`: `rom: file nvram1 : error Failed to open file "nvram1"`, `Unable to load a
 firmware for -M niagara`. Niagara needs Sun's OpenSPARC T1 firmware set (`nvram1`, the hypervisor,
 OpenBoot and reset images) and, for QEMU's documented Solaris 10 path, the `disk.s10hw2` image from
-the same package; neither is in the package or used here. Both are out of reach with what the package
-ships.
+the same package; neither is in the package. With that firmware supplied by hand, see "sparc64:
+niagara (sun4v)" below.
 
 **Sun OBP on sun4u: status.** Tried with the Ultra 5/10 flash update patch 106121-18 (OBP 3.31.0,
 POST 3.1.0; proprietary, not in the repository or the package). Its `flash-update-Ultra510-*` files
@@ -924,6 +924,181 @@ valid is accepted.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
   `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
+
+## sparc64: niagara (sun4v)
+
+Whether Solaris 10 1/13 (u11) comes up on `-M niagara` (QEMU's sun4v machine: one UltraSPARC T1
+strand), reproducing the work published at unix0.cc in 2026, and how far that is from a usable
+VM. Measured 2026-11-16 with `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7
+unless stated, in the lab image, with the firmware supplied by hand (`scenarios/niagara-boot.py`,
+which skips when the firmware isn't there). Sun's firmware, the T1 archive, the Solaris images and
+the self-built firmware stay outside the repository and the package.
+
+**Sources.** The unix0.cc articles (2026-07 to 2026-10: "the first touch", "Machine Description"
+parts 1 and 2, "Solaris u10/u11 is successfully booted on 1GB config (tlb MD fix)", "256MB page
+enabling" parts 1 and 2, "rebuilding sun4v hypervisor with PCIe") and the author's repositories
+on GitHub under `unix0cc`: `md` (machine-description sources and built MD pairs), `mdbuild` (Sun's
+`mdgen`/`mdlint` ported to GNU make), `md-artefacts` (boot logs per MD and guest),
+`qemu-experimental-patches` (QEMU patches) and `sun4v-qemu-kit` (builds the whole firmware set from
+source). Commits used: `md` c1b7b905, `sun4v-qemu-kit` e94cd4b8, `qemu-experimental-patches`
+303e22db.
+
+**What QEMU's machine is** (`hw/sparc64/niagara.c`, 11.1.3): it loads six files from `-L`
+(`reset.bin` at `0xfff0000000`, `q.bin` the hypervisor at +0x10000, `openboot.bin` at +0x80000,
+the hypervisor's machine description `1up-hv.bin` at `0x1f12080000`, the guest's machine
+description `1up-md.bin` at `0x1f12000000`, `nvram1` at `0x1f11000000`); without any of them it
+stops with `Unable to load a firmware for -M niagara`. Devices: a 16550 at `0x1f10000000` (the
+console), `sun4v_rtc`, an unimplemented-device stub over the I/O bridge range, and the "virtual
+disk": the first `if=pflash` drive is copied whole into a RAM region at `0x1f40000000` at start
+(`rom_add_file_fixed`), on top of `-m`. That disk is writable by the guest, but only in RAM: nothing
+reaches the file, every boot starts from the file again, and the image costs its size in host RAM
+(the 2.2 GB DVD: 2.2 GB). An image of 2 GiB or more used to fail with `could not load ram disk`;
+fixed upstream by `76dbe26fd6` (2026-07, by the unix0.cc author), which is in 11.1.0 and so in our
+11.1.3 (the kit's README names 11.0.3 and 10.0.12 as the first fixed stable releases).
+`max_cpus = 1`. No PCI, no NIC, no LDC channels, no sun4v virtual disk (`vdc`/`vds`) or network
+(`vnet`) service anywhere in QEMU.
+
+### Firmware: where from, and the licences
+
+| What | Where | Licence (as stated in the files) |
+| --- | --- | --- |
+| OpenSPARC T1 archive `OpenSPARCT1_Arch.1.5.tar.bz2` (199 MB, sha256 `833b086196e2...`) | still downloadable from Oracle: `https://download.oracle.com/technetwork/systems/opensparc/OpenSPARCT1_Arch.1.5.tar.bz2` (HTTP 200 on 2026-11-16, no click-through); `S10image/` holds `reset.bin q.bin openboot.bin nvram1 1up-md.bin 1up-hv.bin` (2006) and `disk.s10hw2` (512 MB, Solaris 10 3/05 HW2) | the archive's `README` lists `GPLv2_License_OpenSPARCT1.txt`, `THIRDPARTYLICENSEREADME.txt`, `BINARY_SLA.txt` and `BSD+_License.txt`, but `BINARY_SLA.txt` isn't in the archive. Nothing names the licence of the `S10image/` binaries. The hypervisor and OpenBoot sources in the same archive carry Sun's BSD+ header ("Redistribution and use of this software in source and binary forms, with or without modification, are permitted provided that ... Redistribution in binary form must reproduce the above copyright notice ..."); the machine-description configurations (`legion/src/config/niagara/`) are GPL-2 |
+| Sun's four firmware blobs (`reset.bin q.bin openboot.bin nvram1`) | also committed to GitHub: `unix0cc/md` `fw_blobs/` (byte-identical to `S10image/`, checked), and a set in `artyom-tarasenko/qemu-sun4v-md` (branch `1GiB-experimental`, not compared) | as above: copies, no added grant |
+| OpenSPARC T2 archive `OpenSPARCT2_Arch.1.2.tar.bz2` (374 MB) | Oracle, same path, HTTP 200 | `BSD+_License.txt` (the text above) for the hypervisor and OpenBoot source |
+| `sun4v-qemu-kit` (GitHub `unix0cc/sun4v-qemu-kit`) | builds all six files from the T2 archive's hypervisor and OpenBoot source (vendored unchanged in `src/`, patches applied to a copy), on Linux with the Debian/Ubuntu sparc64 cross toolchain and qemu-user, or on Solaris | `LICENSE`: "This repository is not one license": Sun's hypervisor and OpenBoot code BSD+; the machine descriptions (`md/`, derived from Sun's T1 configurations) GPL-2.0-only, so `1up-md.bin`/`1up-hv.bin` are GPL-2 object code; the kit's own files BSD-2-Clause. OpenBoot's build starts from one prebuilt Sun binary, `src/obp/obp/os/sun/sparc/forth.dic` ("We redistribute them under Sun's BSD+ grant ... That is our reading, not a statement in the files"); an experimental bootstrap from cforth (MIT) avoids it |
+
+Assessment for the repository owner (not a legal opinion):
+
+- (a) **Sun's prebuilt `S10image/` binaries in a Debian package: not advisable.** They are almost
+  certainly built from the BSD+ sources, which would allow binary redistribution with the notice,
+  but the archive itself doesn't say so: the `README` points to a `BINARY_SLA.txt` that isn't there,
+  and that missing file is the one that would govern binaries. Others mirror them on GitHub, which
+  proves nothing. `disk.s10hw2` is a Solaris installation and is out of the question.
+- (b) **Building from source in CI looks permitted.** The hypervisor and OpenBoot are BSD+
+  (binary redistribution allowed with the copyright notice and disclaimer reproduced in the
+  package's documentation, no endorsement), the MDs GPL-2 (ship or point to the exact `md/`
+  source; the kit commit is that source), the kit's own build files BSD-2-Clause. The residual
+  doubts: the one prebuilt `forth.dic` (and six more dictionaries the build regenerates) carry no
+  header, and the kit's authors say their BSD+ reading of them is their own; some T2-archive MD
+  examples the kit followed say only "Use is subject to license terms". The kit is a one-author
+  project that says AI was used throughout. Verified here: `./configure --with-md-mem=1024 && make
+  -j6 all` at e94cd4b8 in a Debian 13 container (gcc 14.2, binutils 2.44, qemu-user 10.0.13; image
+  1.24 GB) builds the set in 30 s, and that set boots both Solaris guests below.
+
+### Does it start (stock firmware set)
+
+Sun's `S10image/` set from the T1 archive, as shipped:
+
+| Run | Result |
+| --- | --- |
+| no disk, `-m 256` | `OpenBoot 4.20.0, 256 MB memory available` on a "Sun Fire T2000, No Keyboard", `ok` 0.6 s after start |
+| `disk.s10hw2`, `-m 256`, `boot disk` | Solaris 10 3/05 HW2 (`Generic_118822-23`, the `hsimd` driver for the Legion disk): `console login:` after 29 s; root without a password; `uname`: `SunOS unknown 5.10 Generic_118822-23 sun4v sparc sun4v`; `prtconf`: 256 MB; `psrinfo`: one virtual processor "at 5 MHz"; root `/dev/dsk/c0t0d0s0` (491 MB, UFS, writable in RAM); `ifconfig -a`: `lo0` only |
+| Solaris 10 1/13 DVD, `-m 256`, `boot /virtual-devices/disk@0:f` | the boot archive and `unix` load from the DVD (OpenBoot reads it as an HSFS ramdisk); the kernel panics in `lgrp_init` ← `mlsetup`, `ERROR: Last Trap: Level 14 Interrupt`, back at `ok`. Sun's 2006 MD has an `mblock` node that no arc reaches (unix0.cc part 1: `lgrp_traverse: No memory blocks found`) |
+
+### The Solaris 10 1/13 installer
+
+What the published work changes:
+
+- **Machine description** (not the hypervisor or OpenBoot). The guest MD needs a `memory` node
+  linked to the `mblock`, a `cpus` node, `mmu-page-size-list` and `mmu-#va-bits` on the CPU, a
+  `cache` node and a per-CPU `tlb` node (without it: `failed to get MMU CTX domain index` in
+  `sfmmu_cpu_init`), and the memory size raised from 256 MB to 1024 MB in both MDs (`1up.pdesc`
+  `mblock.size`, `1up.hdesc` `GUEST(...)`). Built with `mdgen`; `unix0cc/md` has the sources, the
+  patches and the built pairs (`bin/tlb_fix/1024`).
+- **QEMU**: none for 1024 MB. The `int64_t` vdisk size fix (`76dbe26fd6`) is upstream. The TTE
+  page-size patch ("target/sparc: implement TTE page-size for 32M/256M pages", v2, posted to
+  qemu-devel 2026-09-18, not in master on 2026-11-16) matters only above 1024 MB, where Solaris
+  maps the kernel with 256 MB pages (below).
+- RAM: `-m` must equal the MD's size.
+
+Measured (`niagara-boot.py ISO=sol-10-u11-ga-sparc-dvd.iso`, at `ok`: `boot
+/virtual-devices/disk@0:f`; the installer on the serial console, terminal type DEC VT100):
+
+| Firmware | `-m` | QEMU | Result |
+| --- | --- | --- | --- |
+| Sun's set + `unix0cc/md` `bin/tlb_fix/1024` MD pair | 1024 | package | `SunOS Release 5.10 Version Generic_147147-26 64-bit` at 19 s, `Configuring devices.`, `Serial console, reverting to text install`, "Select a Language" at 212 s, the terminal type, "The Oracle Solaris Installation Program", F2, "Identify This System" at 262 s |
+| `sun4v-qemu-kit` built here (legion, 1024 MB) | 1024 | package | the same, kernel at 17 s, "Select a Language" at 172 s, "Identify This System" at 211 s; no network screens (no interface), "Host Name", "Confirm Information", "Time Zone", "Country or Region", "Date and Time", "Confirm Information", "Root Password", "Enabling remote services" (`WALK=40`), then at 301 s `System identification complete.`, `/sbin/install-begin: test: argument expected`, `Exiting to shell...` and a root shell; there `format`: `No disks found!`, `/dev/dsk` empty, `/` is `/ramdisk-root:a` (217 MB, 99% full), `ifconfig -a`: `lo0` only |
+| Sun's set + `md` `_test/pagesize_256m/2048` | 2048 | package | hangs: `Loading: /platform/sun4v/kernel/sparcv9/unix`, `WARNING: max-cpus property missing ...`, then nothing for 900 s (no kernel banner), one host core busy |
+| the same | 2048 | v11.1.3 + the TTE patch, built here | kernel banner at 16 s, "Select a Language" at 313 s, "Identify This System" at 389 s |
+
+On the way the kernel prints `WARNING: max-cpus property missing from MD platform node`, `NOTICE:
+Disabling watchdog as watchdog services are not available`, `Using RPC Bootparams for network
+configuration information.` and `svc:/system/filesystem/local:default: WARNING: /usr/sbin/zfs mount
+-a failed`; all harmless here. The serial logs are in the lab's evidence directory, not here.
+
+### What is missing for real use
+
+- **A writable disk, and the install media.** The installer never gets to the disk question: after
+  system identification `install-begin` looks for the DVD as a block device under `/dev/dsk` (to
+  mount the packages), finds none and exits to a shell. So a usable install needs both a disk and
+  the DVD visible to Solaris as a device (or an install server on a network). There is no disk an
+  installer could use either: the Legion disk is a RAM copy of a file (above), and only a guest
+  with Sun's `hsimd` driver sees it as a disk (`disk.s10hw2` does; the Solaris 10/11 media don't). The DVD reaches the installer only because OpenBoot loads its boot
+  archive as a ramdisk root. QEMU has no sun4v virtual I/O at all: the sun4v way (LDC channels in
+  the hypervisor plus a virtual disk server, `vds`/`vdc`, and `vsw`/`vnet` for the network, as in
+  LDoms) would need LDC endpoints in the MDs, a service on the other end of each channel (in a real
+  system a control domain; here QEMU), and the hypervisor's LDC code; none of it exists. The author
+  chose PCIe instead (`sun4v-qemu-kit` `TARGET=pci`: a rebuilt hypervisor with Fire I/O, a PCIe root
+  nexus in the MD, OpenBoot's `/pci@0` with an e1000 and a CMD646 IDE). The firmware side is
+  published; the QEMU side (a "vpci" host bridge, CMD646 and mptsas for this machine, sun4v mondo
+  queues, strand halt) is not: it sits in the author's unpublished `test/` stack. The kit's
+  `build_matrix` reports Solaris 10 u11 installed on the CMD646 disk booting to `console login:`
+  with `e1000g` up and 200 MB written and read, on that unpublished QEMU. Not reproducible here.
+- **Network**: none (no device; `ifconfig -a` shows `lo0`). Same answer as the disk.
+- **More than one CPU**: `max_cpus = 1` in QEMU; the T1 archive's 32-strand MDs (`1g32p-*`) can't be
+  used. Cross-calls would also need sun4v mondo queues in QEMU (the author's 0004, unpublished).
+- **RAM**: `-m` must equal the MD (otherwise `qemu: fatal: Trap 0x0032 ... MAXTL (6)` before any
+  output, per the kit's README). Up to 1024 MB works on the package's QEMU; above that Solaris
+  10 1/13 uses 256 MB pages and needs the TTE patch (above). The image on `if=pflash` adds its full
+  size in host RAM.
+- **Power-off and reset** (both firmware sets): Solaris's `init 5` on `disk.s10hw2` ends at
+  `Program terminated` / `ok` with Sun's set (34 s), and with the kit's set QEMU aborts (`qemu:
+  fatal: Trap 0x0034 while trap level (6) >= MAXTL (6)`, exit code -6, 39 s). At `ok`,
+  `reset-all` and `power-off` do nothing visible with Sun's set (the prompt comes back, QEMU keeps
+  running); with the kit's set `reset-all` aborts QEMU (`Trap 0x0032 ... MAXTL (6)`). QMP
+  `system_powerdown` makes OpenBoot print `ERROR: /virtual-devices@100/console@1: Last Trap:
+  Watchdog Reset`, and QMP `system_reset` brings no banner back within 60 s (both with Sun's set;
+  not tried with the kit's). So the machine can only
+  be stopped by killing QEMU, which PVE can do (`qm stop`), but a guest shutdown never ends the VM.
+- **Idle**: none. QEMU's host CPU over 60 s: 103% of a core at the `ok` prompt, 100% at the Solaris
+  10 HW2 shell, 101% at the installer screen; 100% with the kit's firmware too. Neither Sun's
+  hypervisor nor QEMU stops an idle strand. The author publishes two QEMU patches for it
+  (`qemu-experimental-patches` `devel/0023` strand halt, `devel/0024` wake-up), meant for a
+  self-built hypervisor and not proposed upstream; they depend on patches from his unpublished
+  `test/` stack (0010, the `%asr26` write decode, and 0004, mondo queues), so they can't be applied
+  on their own.
+- **Speed**: the guest reports 5 MHz (the MD's clock value). Boot to the installer takes 3-4
+  minutes at 1024 MB (6.5 at 2048 MB): the kernel banner comes at 16-19 s, the rest is the
+  miniroot starting its services. The HW2 disk logs in after 29-37 s.
+
+### Estimate, and which way to go
+
+"Solaris 10 installed to disk on niagara", from here:
+
+1. A disk and a NIC. Either reproduce the PCIe route in QEMU (a sun4v PCIe host bridge as the
+   rebuilt hypervisor's Fire code expects it, MSI/interrupt delivery through the hypervisor's
+   interrupt queues, mondo queues, CMD646 on that bus) or build sun4v LDC plus a `vds` disk server
+   and `vsw` network service in QEMU. Either is new device-model work, by our estimate thousands of
+   lines and weeks rather than days (not measured: nothing of it was attempted here), and the firmware side would have to be built from `sun4v-qemu-kit`
+   (`TARGET=pci`) because Sun's prebuilt hypervisor has Fire I/O compiled out. The cheaper
+   alternative is to wait for, or ask, the author to publish the QEMU stack they already run.
+2. A strand halt (idle), power-off/reset through the hypervisor, and probably the TTE patch
+   (for more than 1 GB). Smaller: days, partly published.
+3. qemu-server: a firmware path for six user-supplied or self-built files, `-M niagara`, `if=pflash`,
+   `-m` tied to the firmware's MD, no hotplug. Small once 1 and 2 exist.
+
+Against that, sun4u ("Solaris on sun4u" above): QEMU's sun4u is an Ultra 5-like machine whose
+devices are the Ultra 5/10's own, which Solaris 8-10 drive (CMD646 IDE, hme), and everything is open source and already in
+the package (OpenBIOS is GPL). What fails is OpenBIOS's memory management (`ofmem`), a contained
+piece of firmware, with an open end behind it.
+
+Recommendation: **pursue sun4u (`ofmem`) first, keep niagara as a demonstration.** Reasons: on
+niagara the hard part is a disk and a NIC that only exist as someone else's unpublished QEMU work,
+and every step needs non-Debian firmware built from a third-party kit with mixed licences; on sun4u
+the disk and network models are done and the firmware is ours to patch. Revisit niagara if the
+unix0.cc QEMU stack (vpci, CMD646 for sun4v, strand halt) is published or reaches upstream: then the
+firmware can be built in CI from `sun4v-qemu-kit` and the remaining work is mostly packaging and
+qemu-server.
 
 ## Supported profiles
 
