@@ -213,7 +213,7 @@ and prints a summary like `matrix.py`:
 | ---- | -- | --------- |
 | `sol26-install-ss5` | SS-5, OpenBIOS, `vga: serial0`, the SUN2.9G template on target 3, the 2.6 CD on target 6 | `solaris-install-serial.py`, then `solaris-boot-disk.py` |
 | `alpine-aarch64` | `arch: aarch64`, virt, OVMF (AAVMF), `vga: serial0`, the Alpine 3.19 CD on virtio-scsi | `alpine-boot-cd.py`: login prompt, root, `uname -m` |
-| `netbsd-sparc64` | `arch: sparc64`, sun4u, OpenBIOS, `vga: serial0`, the NetBSD 11.1 CD on `ide2` | `netbsd-boot-cd.py`: sysinst, its shell, `uname -m` |
+| `netbsd-sparc64` | `arch: sparc64` as the create wizard makes it (sun4u, OpenBIOS, a blank disk on `ide0`, the NetBSD 11.1 CD on `ide2`, `sunhme`, 512 MB, the API's default boot order), `vga: serial0` | `netbsd-boot-cd.py` with `BOOT=` (OpenBIOS must boot the CD by itself): sysinst, its shell, `uname -m` |
 | `alpine-x86_64` | `kvm: 0`, `vga: std`, `serial0: socket`, the Alpine 3.19 CD on `ide2` | `alpine-boot-cd.py` on the VGA console (OCR, send-key), `uname -m` also through the serial port |
 
 One run took 12 min for `sol26-install-ss5` and about a minute for each of the others.
@@ -232,7 +232,9 @@ docker exec pve-lab python3 pve_matrix.py pve --runs /mnt/sparc/runs/p1
 
 The `sparc lab` workflow does this for the `pve` choice, and every week after `smoke` (its own
 schedule), building both images from the published packages. The aarch64 and sparc64 cases need the
-qemu-server fixes below: with a published package that lacks them they fail at `qm start`.
+qemu-server fixes below: with a published package that lacks them they fail at `qm start`. The
+sparc64 case also needs the sparc64 profile (qemu-server's `-boot order=` instead of `bootindex`):
+without it OpenBIOS stops at its prompt and the case fails there.
 
 What qemu-server's command line had to change (`submodules/qemu-server.patch`):
 
@@ -247,11 +249,12 @@ What qemu-server's command line had to change (`submodules/qemu-server.patch`):
   ebus already has, so OpenBIOS's ttya had no chardev and the socket stayed silent. Now `-serial
   chardev:serialN` as on sparc32.
 
-Still open on sparc64 (worked around in the case's VM config, not changed): OpenBIOS can't drive the
-default SCSI controller (`lsi`, "Cannot manage 'SCSI bus controller' PCI device"), so the CD goes on
-`ide2` (the built-in cmd646); OpenBIOS doesn't boot the device path of the boot order
-(`/pci@1fe,0/pci@1,1/ide@3/cdrom:f`, "No valid state has been set") while `boot cdrom:f` at the
-prompt works; qemu-server still adds a `virtio-balloon-pci` that OpenBIOS can't manage (harmless).
+- **sparc64 profile:** OpenBIOS can't drive the SCSI controller the wizard used to propose (`lsi`,
+  "Cannot manage 'SCSI bus controller' PCI device") and doesn't boot the `bootindex` paths QEMU hands
+  it (`/pci@1fe,0/pci@1,1/ide@3/cdrom:f`, "No valid state has been set"), so the case used to type
+  `boot cdrom:f` at the prompt. Now sparc64 disks and CD-ROMs go on the built-in IDE (cmd646), the
+  boot device is `-boot order=d|c` from the boot order, a new VM has its CD first, and there is no
+  `virtio-balloon-pci`; the case boots without typing (`submodules/SPARC.md`, "sparc64 (sun4u)").
 
 ## Recordings
 

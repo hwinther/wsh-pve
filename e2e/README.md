@@ -14,6 +14,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   through the API and the create wizard, the refused combinations, `arch` set on create only, the
   Hardware editors, vzdump/qmrestore and snapshots, and the lab's machine arguments against
   `qm showcmd`.
+- `tests/sparc64-profile.spec.ts`: the sparc64 profile (`submodules/SPARC.md`, "sparc64 (sun4u)"):
+  the wizard's layout through the API (IDE disk and CD-ROM, `-boot order=d|c`, no `bootindex` or
+  balloon), a serial console, four NICs, every refusal, a VM from the old wizard, and the wizard and
+  Hardware editors.
 - `tests/running-vm.spec.ts`: changes to a started VM (QEMU under TCG, no guest OS) for every
   sparc32 profile, sparc64 and an x86 control: the CD-ROM medium, net0's bridge, VLAN tag, link and
   rate (checked in QEMU and on the host, with a VLAN-aware `vmbr1` it creates), the changes that stay

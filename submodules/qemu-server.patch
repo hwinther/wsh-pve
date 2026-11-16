@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index 7830d09b..ef34068a 100644
+index 7830d09b..e9034910 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -157,6 +157,8 @@ my $check_drive_param = sub {
@@ -74,17 +74,19 @@ index 7830d09b..ef34068a 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1411,6 +1447,9 @@ __PACKAGE__->register_method({
+@@ -1411,6 +1447,11 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
 +        PVE::QemuServer::Machine::assert_sparc32_profile($param)
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc';
++        PVE::QemuServer::Machine::assert_sparc64_profile($param)
++            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc64';
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          eval { PVE::QemuConfig->create_and_lock_config($vmid, $force) };
-@@ -1563,6 +1602,7 @@ __PACKAGE__->register_method({
+@@ -1563,6 +1604,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -92,7 +94,7 @@ index 7830d09b..ef34068a 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2292,6 +2332,12 @@ my $update_vm_api = sub {
+@@ -2292,6 +2334,14 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -101,6 +103,8 @@ index 7830d09b..ef34068a 100644
 +        my $new_conf = config_after_update($conf, $param, \@delete);
 +        PVE::QemuServer::Machine::assert_sparc32_profile($new_conf)
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc';
++        PVE::QemuServer::Machine::assert_sparc64_profile($new_conf)
++            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc64';
 +
          return $conf;
      };
@@ -132,7 +136,7 @@ index c84f10f8..aecf60fa 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 69a2bd64..7f5bcf2c 100644
+index 69a2bd64..d30bf44f 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -170,7 +170,7 @@ my $vga_fmt = {
@@ -354,17 +358,18 @@ index 69a2bd64..7f5bcf2c 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3131,7 +3203,8 @@ sub config_to_command {
+@@ -3131,7 +3203,9 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
 -    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch);
 +    PVE::QemuServer::Machine::assert_sparc32_profile($conf) if $arch eq 'sparc';
++    PVE::QemuServer::Machine::assert_sparc64_profile($conf) if $arch eq 'sparc64';
 +    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3242,7 +3315,9 @@ sub config_to_command {
+@@ -3242,7 +3316,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -375,7 +380,7 @@ index 69a2bd64..7f5bcf2c 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3262,6 +3337,10 @@ sub config_to_command {
+@@ -3262,6 +3338,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -386,7 +391,7 @@ index 69a2bd64..7f5bcf2c 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3276,17 +3355,20 @@ sub config_to_command {
+@@ -3276,17 +3356,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -409,7 +414,7 @@ index 69a2bd64..7f5bcf2c 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3297,6 +3379,7 @@ sub config_to_command {
+@@ -3297,6 +3380,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -417,7 +422,7 @@ index 69a2bd64..7f5bcf2c 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3305,7 +3388,6 @@ sub config_to_command {
+@@ -3305,7 +3389,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -425,7 +430,7 @@ index 69a2bd64..7f5bcf2c 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3318,6 +3400,22 @@ sub config_to_command {
+@@ -3318,6 +3401,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -448,7 +453,21 @@ index 69a2bd64..7f5bcf2c 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3391,9 +3489,28 @@ sub config_to_command {
+@@ -3384,16 +3483,41 @@ sub config_to_command {
+     }
+     push @$cmd, '-nodefaults';
+ 
+-    push @$cmd, '-boot',
++    my $boot_opts =
+         "menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg";
++    # sparc64: OpenBIOS boots the device QEMU's boot letter names, it can't follow bootindex
++    if ($arch eq 'sparc64') {
++        my $letter = PVE::QemuServer::Machine::sparc64_boot_device($conf, $bootorder);
++        $boot_opts = "order=$letter,$boot_opts" if $letter;
++    }
++    push @$cmd, '-boot', $boot_opts;
+ 
+     push $machineFlags->@*, 'acpi=off' if defined($conf->{acpi}) && $conf->{acpi} == 0;
  
      push @$cmd, '-no-reboot' if defined($conf->{reboot}) && $conf->{reboot} == 0;
  
@@ -478,7 +497,7 @@ index 69a2bd64..7f5bcf2c 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3412,6 +3529,11 @@ sub config_to_command {
+@@ -3412,6 +3536,11 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -490,7 +509,7 @@ index 69a2bd64..7f5bcf2c 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3427,6 +3549,7 @@ sub config_to_command {
+@@ -3427,6 +3556,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -498,18 +517,19 @@ index 69a2bd64..7f5bcf2c 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3530,8 +3653,8 @@ sub config_to_command {
+@@ -3530,8 +3660,9 @@ sub config_to_command {
          }
      }
  
 -    # enable balloon by default, unless explicitly disabled
 -    if (!defined($conf->{balloon}) || $conf->{balloon}) {
-+    # enable balloon by default, unless explicitly disabled; sparc32 has no virtio
-+    if ((!defined($conf->{balloon}) || $conf->{balloon}) && $arch ne 'sparc') {
++    # enable balloon by default, unless explicitly disabled; sparc32 has no virtio, and OpenBIOS
++    # can't manage a virtio-balloon on sun4u (no guest driver was tested either)
++    if ((!defined($conf->{balloon}) || $conf->{balloon}) && $arch !~ m/^sparc/) {
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3548,6 +3671,7 @@ sub config_to_command {
+@@ -3548,6 +3679,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -517,7 +537,17 @@ index 69a2bd64..7f5bcf2c 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3609,9 +3733,11 @@ sub config_to_command {
+@@ -3567,7 +3699,8 @@ sub config_to_command {
+ 
+             $use_virtio = 1 if $ds =~ m/^virtio/;
+ 
+-            $drive->{bootindex} = $bootorder->{$ds} if $bootorder->{$ds};
++            # sparc64: no bootindex, OpenBIOS gets the boot device from '-boot order=' (above)
++            $drive->{bootindex} = $bootorder->{$ds} if $bootorder->{$ds} && $arch ne 'sparc64';
+ 
+             if ($drive->{interface} eq 'virtio') {
+                 push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
+@@ -3609,9 +3742,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -530,7 +560,7 @@ index 69a2bd64..7f5bcf2c 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3623,6 +3749,17 @@ sub config_to_command {
+@@ -3623,6 +3758,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -548,7 +578,16 @@ index 69a2bd64..7f5bcf2c 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3697,7 +3834,18 @@ sub config_to_command {
+@@ -3679,7 +3825,7 @@ sub config_to_command {
+ 
+         $use_virtio = 1 if $d->{model} eq 'virtio';
+ 
+-        $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname};
++        $d->{bootindex} = $bootorder->{$netname} if $bootorder->{$netname} && $arch ne 'sparc64';
+ 
+         my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
+         push @$devices, '-netdev', $netdevfull;
+@@ -3697,7 +3843,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -568,7 +607,7 @@ index 69a2bd64..7f5bcf2c 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3924,7 +4072,7 @@ sub vm_deviceplug {
+@@ -3924,7 +4081,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -577,7 +616,7 @@ index 69a2bd64..7f5bcf2c 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4503,13 +4651,16 @@ sub vmconfig_hotplug_pending {
+@@ -4503,13 +4660,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -595,7 +634,7 @@ index 69a2bd64..7f5bcf2c 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4576,7 +4727,8 @@ sub vmconfig_hotplug_pending {
+@@ -4576,7 +4736,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -605,7 +644,7 @@ index 69a2bd64..7f5bcf2c 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -5046,8 +5198,10 @@ sub vmconfig_update_disk {
+@@ -5046,8 +5207,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -618,7 +657,7 @@ index 69a2bd64..7f5bcf2c 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5147,7 +5301,7 @@ sub vmconfig_update_disk {
+@@ -5147,7 +5310,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -627,7 +666,7 @@ index 69a2bd64..7f5bcf2c 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5644,6 +5798,9 @@ sub vm_start_nolock {
+@@ -5644,6 +5807,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -637,20 +676,20 @@ index 69a2bd64..7f5bcf2c 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5849,7 +6006,11 @@ sub vm_start_nolock {
+@@ -5849,7 +6015,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
 -    if (!defined($conf->{balloon}) || $conf->{balloon}) {
-+    # sparc32 has no balloon device
++    # sparc has no balloon device
 +    if (
 +        (!defined($conf->{balloon}) || $conf->{balloon})
-+        && PVE::QemuServer::Helpers::get_vm_arch($conf) ne 'sparc'
++        && PVE::QemuServer::Helpers::get_vm_arch($conf) !~ m/^sparc/
 +    ) {
          eval {
              mon_cmd(
                  $vmid,
-@@ -8074,7 +8235,12 @@ sub bootorder_from_legacy {
+@@ -8074,7 +8244,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -664,6 +703,23 @@ index 69a2bd64..7f5bcf2c 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
+@@ -8112,9 +8287,14 @@ sub get_default_bootdevices {
+     my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
+     push @ret, $first if $first;
+ 
+-    # cdrom
++    # cdrom; first on sparc64, where OpenBIOS boots one device and doesn't fall back to the next: a
++    # new VM boots its install CD, and once the CD is ejected (or without a CD-ROM) the disk
+     $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 1);
+-    push @ret, $first if $first;
++    if ($first && PVE::QemuServer::Helpers::get_vm_arch($conf) eq 'sparc64') {
++        unshift @ret, $first;
++    } elsif ($first) {
++        push @ret, $first;
++    }
+ 
+     # network
+     for (my $i = 0; $i < $MAX_NETS; $i++) {
 diff --git a/src/PVE/QemuServer/Blockdev.pm b/src/PVE/QemuServer/Blockdev.pm
 index c2989a37..dcdf83f9 100644
 --- a/src/PVE/QemuServer/Blockdev.pm
@@ -955,14 +1011,15 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index fa47d668..18841d36 100644
+index fa47d668..7eca5182 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
-@@ -5,9 +5,12 @@ use warnings;
+@@ -5,9 +5,13 @@ use warnings;
  
  use PVE::Tools;
  
 +use PVE::QemuServer::Agent;
++use PVE::QemuServer::Drive;
  use PVE::QemuServer::Helpers;
 +use PVE::QemuServer::Memory;
  use PVE::QemuServer::MetaInfo;
@@ -971,7 +1028,7 @@ index fa47d668..18841d36 100644
  use PVE::JSONSchema qw(get_standard_option parse_property_string print_property_string);
  
  # The PVE machine versions allow rolling out (incompatibel) changes to the hardware layout and/or
-@@ -60,7 +63,7 @@ my $machine_fmt = {
+@@ -60,7 +64,7 @@ my $machine_fmt = {
          description => "Specifies the QEMU machine type.",
          type => 'string',
          pattern =>
@@ -980,7 +1037,7 @@ index fa47d668..18841d36 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -126,6 +129,8 @@ sub print_machine {
+@@ -126,6 +130,8 @@ sub print_machine {
  my $default_machines = {
      x86_64 => 'pc',
      aarch64 => 'virt',
@@ -989,7 +1046,7 @@ index fa47d668..18841d36 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +140,121 @@ sub default_machine_for_arch {
+@@ -135,6 +141,239 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1108,10 +1165,128 @@ index fa47d668..18841d36 100644
 +    return;
 +}
 +
++# The sparc64 (arch: sparc64) profile: the one layout that was tested to boot (wsh-pve
++# submodules/SPARC.md, "sparc64 (sun4u)"). sun4u with OpenBIOS and the machine's default CPU, one CPU,
++# disks and CD-ROMs on the built-in IDE (OpenBIOS can't boot from SCSI or virtio), NICs on PCI bus B.
++# pve-manager mirrors it in PVE.qemu.Architecture.sparc64Profile (www/manager6/qemu/Architecture.js).
++our $SPARC64_PROFILE = {
++    machine => 'sun4u',
++    firmware => 'openbios-sparc64',
++    # 4096 MB panics NetBSD, 8192 MB stops OpenBIOS
++    'max-memory' => 3072,
++    vga => [qw(std serial0 none)],
++    nic => [qw(sunhme virtio e1000 rtl8139 ne2k_pci)],
++    # pciB has four slots; qemu-server puts every NIC there
++    'max-nics' => 4,
++};
++
++=head3 assert_sparc64_profile
++
++    assert_sparc64_profile($conf);
++
++Dies with a message naming the allowed values if the sparc64 VM config C<$conf> doesn't match
++C<$SPARC64_PROFILE>. Callers check C<arch> first.
++
++=cut
++
++sub assert_sparc64_profile {
++    my ($conf) = @_;
++
++    my $p = $SPARC64_PROFILE;
++
++    my $machine_conf = eval { parse_machine($conf->{machine}) } // {};
++    my $machine = $machine_conf->{type} // $p->{machine};
++    $machine =~ s/\+pve\d+$//; # a snapshot's runningmachine
++    die "sparc64: machine '$machine' is not supported, use $p->{machine}\n"
++        if $machine ne $p->{machine};
++
++    my $bios = $conf->{bios} // $p->{firmware};
++    die "sparc64: firmware (bios) '$bios' is not supported, use $p->{firmware}\n"
++        if $bios ne $p->{firmware};
++
++    my $memory = PVE::QemuServer::Memory::get_current_memory($conf->{memory});
++    die "sparc64: $machine takes at most $p->{'max-memory'} MB of memory, not $memory\n"
++        if $memory > $p->{'max-memory'};
++
++    my $cpus = ($conf->{sockets} // 1) * ($conf->{cores} // 1);
++    die "sparc64: only one CPU is supported (sockets 1, cores 1), not $cpus\n" if $cpus != 1;
++
++    die "sparc64: 'cpu' can't be set, the machine's default CPU is used\n"
++        if defined($conf->{cpu});
++
++    # the type is the default key; 'memory=16' alone keeps the default type
++    if (defined($conf->{vga}) && $conf->{vga} =~ m/^(?:type=)?([^,=]+)(?:,|$)/) {
++        my $vga = $1;
++        die "sparc64: display (vga) '$vga' is not supported, use one of: "
++            . join(', ', $p->{vga}->@*) . "\n"
++            if !grep { $_ eq $vga } $p->{vga}->@*;
++    }
++
++    for my $opt (qw(serial2 serial3)) {
++        die "sparc64: $opt is not supported, the machine has two serial ports (serial0, serial1)\n"
++            if defined($conf->{$opt});
++    }
++
++    die "sparc64: the QEMU guest agent is not supported\n"
++        if PVE::QemuServer::Agent::parse_guest_agent($conf->{agent})->{enabled};
++
++    my @drives = grep { m/^(?:scsi|virtio|sata|efidisk|tpmstate|floppy)\d+$/ && defined($conf->{$_}) }
++        sort keys $conf->%*;
++    die "sparc64: " . join(', ', @drives) . " can't be used, disks and CD-ROMs go on the"
++        . " built-in IDE (ide0 to ide3)\n"
++        if @drives;
++
++    my @nets = map { "net$_" } sort { $a <=> $b }
++        map { m/^net(\d+)$/ && defined($conf->{$_}) ? ($1) : () } keys $conf->%*;
++    die "sparc64: at most $p->{'max-nics'} network devices fit on PCI bus B, not "
++        . scalar(@nets) . " (" . join(', ', @nets) . ")\n"
++        if scalar(@nets) > $p->{'max-nics'};
++    for my $opt (@nets) {
++        my $net = PVE::QemuServer::Network::parse_net($conf->{$opt}, 1)
++            or die "sparc64: unable to parse $opt\n";
++        die "sparc64: network device model '$net->{model}' is not supported, use one of: "
++            . join(', ', $p->{nic}->@*) . "\n"
++            if !grep { $_ eq $net->{model} } $p->{nic}->@*;
++    }
++
++    return;
++}
++
++=head3 sparc64_boot_device
++
++    my $letter = sparc64_boot_device($conf, $bootorder);
++
++The device OpenBIOS boots, as the letter for QEMU's C<-boot order=>: the first drive of the boot
++order C<$bootorder> (device name to boot index, from C<device_bootorder>) that holds something, C<d>
++for a CD-ROM with a medium and C<c> for a disk. CD-ROMs without a medium, cloud-init drives and NICs
++are skipped (network boot isn't supported). Undef if there is none (QEMU's default, the disk).
++
++OpenBIOS can't follow C<bootindex> on sun4u (the paths QEMU hands it don't exist in its device tree),
++so a sparc64 VM gets the boot device this way instead.
++
++=cut
++
++sub sparc64_boot_device {
++    my ($conf, $bootorder) = @_;
++
++    for my $dev (sort { $bootorder->{$a} <=> $bootorder->{$b} } keys $bootorder->%*) {
++        next if $dev !~ m/^ide\d+$/ || !defined($conf->{$dev});
++        my $drive = PVE::QemuServer::Drive::parse_drive($dev, $conf->{$dev}) or next;
++        next if PVE::QemuServer::Drive::drive_is_cloudinit($drive);
++        if (PVE::QemuServer::Drive::drive_is_cdrom($drive)) {
++            next if $drive->{file} eq 'none';
++            return 'd';
++        }
++        return 'c';
++    }
++
++    return;
++}
++
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +289,7 @@ my sub machine_base_type {
+@@ -169,6 +408,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1119,7 +1294,7 @@ index fa47d668..18841d36 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +426,44 @@ sub machine_version_cmp {
+@@ -305,11 +545,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1166,7 +1341,7 @@ index fa47d668..18841d36 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +473,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +592,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1189,7 +1364,7 @@ index fa47d668..18841d36 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -503,6 +654,7 @@ sub get_power_state_flags {
+@@ -503,6 +773,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1197,7 +1372,7 @@ index fa47d668..18841d36 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -510,6 +662,7 @@ sub get_power_state_flags {
+@@ -510,6 +781,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1791,6 +1966,268 @@ index 00000000..3303a8ed
 +arch: sparc
 +memory: 256
 +vga: std
+diff --git a/src/test/cfg2cmd/sparc64-bios-error.conf b/src/test/cfg2cmd/sparc64-bios-error.conf
+new file mode 100644
+index 00000000..de6efa84
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-bios-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses a sparc32 firmware
++# EXPECT_ERROR: sparc64: firmware (bios) 'openbios-sparc32' is not supported, use openbios-sparc64
++arch: sparc64
++bios: openbios-sparc32
++memory: 512
+diff --git a/src/test/cfg2cmd/sparc64-cd-ejected.conf b/src/test/cfg2cmd/sparc64-cd-ejected.conf
+new file mode 100644
+index 00000000..de791ae0
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-cd-ejected.conf
+@@ -0,0 +1,10 @@
++# TEST: sparc64 whose CD-ROM is first in the boot order but empty boots the disk (-boot order=c)
++arch: sparc64
++boot: order=ide2;ide0;net0
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++ide2: none,media=cdrom
++memory: 512
++name: netbsd-sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++vga: none
+diff --git a/src/test/cfg2cmd/sparc64-cd-ejected.conf.cmd b/src/test/cfg2cmd/sparc64-cd-ejected.conf.cmd
+new file mode 100644
+index 00000000..026204e8
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-cd-ejected.conf.cmd
+@@ -0,0 +1,24 @@
++/usr/bin/qemu-system-sparc64 \
++  -id 8006 \
++  -name netbsd-sparc64 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'order=c,menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga none \
++  -nographic \
++  -m 512 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,write-cache=on' \
++  -device 'ide-cd,bus=ide.1,unit=0,id=ide2,physical_block_size=512' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'sunhme,mac=BC:24:11:B2:46:03,netdev=net0,id=net0,bus=pciB' \
++  -machine 'accel=tcg,type=sun4u+pve0'
+diff --git a/src/test/cfg2cmd/sparc64-cpu-error.conf b/src/test/cfg2cmd/sparc64-cpu-error.conf
+new file mode 100644
+index 00000000..bcea65c0
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-cpu-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses the generic cpu option (never passed on sparc64)
++# EXPECT_ERROR: sparc64: 'cpu' can't be set, the machine's default CPU is used
++arch: sparc64
++cpu: kvm64
++memory: 512
+diff --git a/src/test/cfg2cmd/sparc64-five-nics-error.conf b/src/test/cfg2cmd/sparc64-five-nics-error.conf
+new file mode 100644
+index 00000000..c5e1aa79
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-five-nics-error.conf
+@@ -0,0 +1,9 @@
++# TEST: sparc64 refuses a fifth NIC (PCI bus B has four slots)
++# EXPECT_ERROR: sparc64: at most 4 network devices fit on PCI bus B, not 5 (net0, net1, net2, net3, net10)
++arch: sparc64
++memory: 512
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++net1: virtio=BC:24:11:B2:46:04,bridge=vmbr0
++net10: e1000=BC:24:11:B2:46:07,bridge=vmbr0
++net2: rtl8139=BC:24:11:B2:46:05,bridge=vmbr0
++net3: ne2k_pci=BC:24:11:B2:46:06,bridge=vmbr0
+diff --git a/src/test/cfg2cmd/sparc64-machine-error.conf b/src/test/cfg2cmd/sparc64-machine-error.conf
+new file mode 100644
+index 00000000..e086ee48
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-machine-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses sun4v (the sun4u OpenBIOS can't run on it)
++# EXPECT_ERROR: sparc64: machine 'sun4v' is not supported, use sun4u
++arch: sparc64
++machine: sun4v
++memory: 512
+diff --git a/src/test/cfg2cmd/sparc64-memory-error.conf b/src/test/cfg2cmd/sparc64-memory-error.conf
+new file mode 100644
+index 00000000..c6bf5981
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-memory-error.conf
+@@ -0,0 +1,4 @@
++# TEST: sparc64 refuses more than 3072 MB (4096 MB panics NetBSD)
++# EXPECT_ERROR: sparc64: sun4u takes at most 3072 MB of memory, not 4096
++arch: sparc64
++memory: 4096
+diff --git a/src/test/cfg2cmd/sparc64-nic-model-error.conf b/src/test/cfg2cmd/sparc64-nic-model-error.conf
+new file mode 100644
+index 00000000..93a24f66
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-nic-model-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses pcnet (no NetBSD driver, OpenBSD reads a broadcast MAC)
++# EXPECT_ERROR: sparc64: network device model 'pcnet' is not supported, use one of: sunhme, virtio, e1000, rtl8139, ne2k_pci
++arch: sparc64
++memory: 512
++net0: pcnet=BC:24:11:B2:46:03,bridge=vmbr0
+diff --git a/src/test/cfg2cmd/sparc64-scsi-disk-error.conf b/src/test/cfg2cmd/sparc64-scsi-disk-error.conf
+new file mode 100644
+index 00000000..814de1f1
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-scsi-disk-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses a SCSI disk (OpenBIOS can't boot the lsi controller)
++# EXPECT_ERROR: sparc64: scsi0 can't be used, disks and CD-ROMs go on the built-in IDE (ide0 to ide3)
++arch: sparc64
++memory: 512
++scsi0: local:8006/vm-8006-disk-0.raw,size=2G
+diff --git a/src/test/cfg2cmd/sparc64-serial.conf b/src/test/cfg2cmd/sparc64-serial.conf
+new file mode 100644
+index 00000000..8b77186b
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-serial.conf
+@@ -0,0 +1,12 @@
++# TEST: sparc64 with the console on ttya (vga serial0) and the disk first in the boot order (-boot order=c)
++arch: sparc64
++boot: order=ide0;ide2;net0
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++ide2: local:iso/zero.iso,media=cdrom,size=112M
++machine: sun4u
++memory: 1024
++name: netbsd-sparc64
++net0: virtio=BC:24:11:B2:46:03,bridge=vmbr0
++ostype: other
++serial0: socket
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc64-serial.conf.cmd b/src/test/cfg2cmd/sparc64-serial.conf.cmd
+new file mode 100644
+index 00000000..4d66c1ec
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-serial.conf.cmd
+@@ -0,0 +1,27 @@
++/usr/bin/qemu-system-sparc64 \
++  -id 8006 \
++  -name netbsd-sparc64 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'order=c,menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 1024 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-ide2","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,write-cache=on' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/zero.iso","node-name":"ea23206bcbfb9deb01a129bf652d2e4","read-only":true},"node-name":"fa23206bcbfb9deb01a129bf652d2e4","read-only":true},"node-name":"drive-ide2","read-only":true,"throttle-group":"throttle-drive-ide2"}' \
++  -device 'ide-cd,bus=ide.1,unit=0,drive=drive-ide2,id=ide2,physical_block_size=512' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'virtio-net-pci,mac=BC:24:11:B2:46:03,netdev=net0,id=net0,rx_queue_size=1024,tx_queue_size=256,host_mtu=1500,host_tunnel=off,bus=pciB' \
++  -machine 'accel=tcg,type=sun4u+pve0'
+diff --git a/src/test/cfg2cmd/sparc64-smp-error.conf b/src/test/cfg2cmd/sparc64-smp-error.conf
+new file mode 100644
+index 00000000..9acde3c6
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-smp-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses a second CPU (sun4u takes one)
++# EXPECT_ERROR: sparc64: only one CPU is supported (sockets 1, cores 1), not 2
++arch: sparc64
++cores: 2
++memory: 512
+diff --git a/src/test/cfg2cmd/sparc64-vga-error.conf b/src/test/cfg2cmd/sparc64-vga-error.conf
+new file mode 100644
+index 00000000..fdc7177f
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-vga-error.conf
+@@ -0,0 +1,5 @@
++# TEST: sparc64 refuses a display other than std, serial0 or none
++# EXPECT_ERROR: sparc64: display (vga) 'cirrus' is not supported, use one of: std, serial0, none
++arch: sparc64
++memory: 512
++vga: cirrus
+diff --git a/src/test/cfg2cmd/sparc64-virtio-disk-error.conf b/src/test/cfg2cmd/sparc64-virtio-disk-error.conf
+new file mode 100644
+index 00000000..7f6a388a
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-virtio-disk-error.conf
+@@ -0,0 +1,6 @@
++# TEST: sparc64 refuses a virtio-blk disk (OpenBIOS can't boot it)
++# EXPECT_ERROR: sparc64: virtio0 can't be used, disks and CD-ROMs go on the built-in IDE (ide0 to ide3)
++arch: sparc64
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++memory: 512
++virtio0: local:8006/vm-8006-disk-1.raw,size=1G
+diff --git a/src/test/cfg2cmd/sparc64-wizard-default.conf b/src/test/cfg2cmd/sparc64-wizard-default.conf
+new file mode 100644
+index 00000000..0aa87f76
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-wizard-default.conf
+@@ -0,0 +1,13 @@
++# TEST: sparc64 from the create wizard: disk on ide0, the install CD on ide2 and first in the boot order (-boot order=d), sunhme, VGA, no bootindex, balloon, tablet or vmgenid
++arch: sparc64
++boot: order=ide2;ide0;net0
++cores: 1
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++ide2: local:iso/zero.iso,media=cdrom,size=112M
++memory: 512
++name: netbsd-sparc64
++net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
++numa: 0
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++sockets: 1
+diff --git a/src/test/cfg2cmd/sparc64-wizard-default.conf.cmd b/src/test/cfg2cmd/sparc64-wizard-default.conf.cmd
+new file mode 100644
+index 00000000..fc38c6b4
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-wizard-default.conf.cmd
+@@ -0,0 +1,26 @@
++/usr/bin/qemu-system-sparc64 \
++  -id 8006 \
++  -name netbsd-sparc64 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'order=d,menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga std \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 512 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-ide2","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,write-cache=on' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/zero.iso","node-name":"ea23206bcbfb9deb01a129bf652d2e4","read-only":true},"node-name":"fa23206bcbfb9deb01a129bf652d2e4","read-only":true},"node-name":"drive-ide2","read-only":true,"throttle-group":"throttle-drive-ide2"}' \
++  -device 'ide-cd,bus=ide.1,unit=0,drive=drive-ide2,id=ide2,physical_block_size=512' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'sunhme,mac=BC:24:11:B2:46:03,netdev=net0,id=net0,bus=pciB' \
++  -machine 'accel=tcg,type=sun4u+pve0'
 diff --git a/src/test/hotplug/sparc32-cdrom-change.conf b/src/test/hotplug/sparc32-cdrom-change.conf
 new file mode 100644
 index 00000000..5dfe9050
@@ -2038,79 +2475,79 @@ index 00000000..9bb98495
 +qmp set_link {"name":"net0","up":false}
 diff --git a/src/test/hotplug/sparc64-cdrom-change.conf b/src/test/hotplug/sparc64-cdrom-change.conf
 new file mode 100644
-index 00000000..d58a0f13
+index 00000000..fe05b3cf
 --- /dev/null
 +++ b/src/test/hotplug/sparc64-cdrom-change.conf
 @@ -0,0 +1,14 @@
 +# TEST: changing the ISO of a sparc64 CD-ROM (sun4u, which has no machine version) swaps the medium
 +# QEMU_VERSION: 10.1
 +arch: sparc64
-+boot: order=scsi0
++boot: order=ide0
 +machine: sun4u
 +memory: 512
 +name: sparc64
 +net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
 +ostype: other
-+scsi0: local:8006/vm-8006-disk-0.raw,size=2G
-+scsi6: local:iso/debian-13.iso,media=cdrom
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++ide2: local:iso/debian-13.iso,media=cdrom
 +
 +[PENDING]
-+scsi6: local:iso/other.iso,media=cdrom
++ide2: local:iso/other.iso,media=cdrom
 diff --git a/src/test/hotplug/sparc64-cdrom-change.conf.expected b/src/test/hotplug/sparc64-cdrom-change.conf.expected
 new file mode 100644
-index 00000000..f247bbfb
+index 00000000..ba67d794
 --- /dev/null
 +++ b/src/test/hotplug/sparc64-cdrom-change.conf.expected
 @@ -0,0 +1,9 @@
-+qmp blockdev-open-tray {"force":true,"id":"scsi6"}
-+qmp blockdev-remove-medium {"id":"scsi6"}
-+qmp blockdev-del {"node-name":"drive-scsi6"}
-+qmp object-del {"id":"throttle-drive-scsi6"}
-+qmp object-del {"id":"throttle-drive-scsi6"}
-+qmp object-add {"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}
-+qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/other.iso","node-name":"ed863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"fd863e77e1c0c6d05de718bf4e84db8","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}
-+qmp blockdev-insert-medium {"id":"scsi6","node-name":"drive-scsi6"}
-+qmp blockdev-close-tray {"id":"scsi6"}
++qmp blockdev-open-tray {"force":true,"id":"ide2"}
++qmp blockdev-remove-medium {"id":"ide2"}
++qmp blockdev-del {"node-name":"drive-ide2"}
++qmp object-del {"id":"throttle-drive-ide2"}
++qmp object-del {"id":"throttle-drive-ide2"}
++qmp object-add {"id":"throttle-drive-ide2","limits":{},"qom-type":"throttle-group"}
++qmp blockdev-add {"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/other.iso","node-name":"ec77902bdf8825d9600bb89ae31f14e","read-only":true},"node-name":"fc77902bdf8825d9600bb89ae31f14e","read-only":true},"node-name":"drive-ide2","read-only":true,"throttle-group":"throttle-drive-ide2"}
++qmp blockdev-insert-medium {"id":"ide2","node-name":"drive-ide2"}
++qmp blockdev-close-tray {"id":"ide2"}
 diff --git a/src/test/hotplug/sparc64-disk-add.conf b/src/test/hotplug/sparc64-disk-add.conf
 new file mode 100644
-index 00000000..107433f0
+index 00000000..b7ca2583
 --- /dev/null
 +++ b/src/test/hotplug/sparc64-disk-add.conf
 @@ -0,0 +1,14 @@
-+# TEST: a new disk on a running sparc64 VM stays pending (sun4u's PCI buses have no hotplug)
++# TEST: a new disk on a running sparc64 VM stays pending (the built-in IDE has no hotplug)
 +# QEMU_VERSION: 10.1
 +# STAYS_PENDING: 1
 +arch: sparc64
-+boot: order=scsi0
++boot: order=ide0
 +machine: sun4u
 +memory: 512
 +name: sparc64
 +net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
 +ostype: other
-+scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
 +
 +[PENDING]
-+scsi1: local:8006/vm-8006-disk-1.raw,size=1G
++ide1: local:8006/vm-8006-disk-1.raw,size=1G
 diff --git a/src/test/hotplug/sparc64-disk-add.conf.expected b/src/test/hotplug/sparc64-disk-add.conf.expected
 new file mode 100644
 index 00000000..e69de29b
 diff --git a/src/test/hotplug/sparc64-net-change-bridge.conf b/src/test/hotplug/sparc64-net-change-bridge.conf
 new file mode 100644
-index 00000000..b25f1306
+index 00000000..ff6b0a01
 --- /dev/null
 +++ b/src/test/hotplug/sparc64-net-change-bridge.conf
 @@ -0,0 +1,14 @@
 +# TEST: a new bridge for the sunhme NIC of a running sparc64 VM moves its tap
 +# QEMU_VERSION: 10.1
 +arch: sparc64
-+boot: order=scsi0
++boot: order=ide0
 +machine: sun4u
 +memory: 512
 +name: sparc64
 +net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
 +ostype: other
-+scsi0: local:8006/vm-8006-disk-0.raw,size=2G
-+scsi6: local:iso/debian-13.iso,media=cdrom
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++ide2: local:iso/debian-13.iso,media=cdrom
 +
 +[PENDING]
 +net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr1
@@ -2128,7 +2565,7 @@ index 00000000..01243a2d
 +qmp set_link {"name":"net0","up":true}
 diff --git a/src/test/hotplug/sparc64-net-change-mac.conf b/src/test/hotplug/sparc64-net-change-mac.conf
 new file mode 100644
-index 00000000..83f103d2
+index 00000000..1a53fe8e
 --- /dev/null
 +++ b/src/test/hotplug/sparc64-net-change-mac.conf
 @@ -0,0 +1,14 @@
@@ -2136,13 +2573,13 @@ index 00000000..83f103d2
 +# QEMU_VERSION: 10.1
 +# STAYS_PENDING: 1
 +arch: sparc64
-+boot: order=scsi0
++boot: order=ide0
 +machine: sun4u
 +memory: 512
 +name: sparc64
 +net0: sunhme=BC:24:11:B2:46:03,bridge=vmbr0
 +ostype: other
-+scsi0: local:8006/vm-8006-disk-0.raw,size=2G
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
 +
 +[PENDING]
 +net0: sunhme=BC:24:11:B2:46:99,bridge=vmbr0

@@ -23,6 +23,7 @@ come after that, not before.
 | Lab drives VMs that PVE started (`--pve`); sparc64 and aarch64 boot through PVE; `pve` matrix | running | #248, #249 |
 | OVMF tests; aarch64 OVMF VMs start again | published | #248, #249 |
 | Recordings: terminal casts and framebuffer videos per run; gallery in the docs, media in the `media` release | published | #250 |
+| sparc64 measured: guests, disk/NIC/console layout, Solaris under OpenBIOS, Sun OBP, idle and speed | merged | #255 |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
 
 ## In progress
@@ -37,9 +38,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 2. **Bench disk.** Dhrystone, Whetstone, nbench and lmbench built with gcc in a Solaris 2.6 guest,
    on a small disk attached as a second disk; a `benchdisk` matrix across the sparc32 profiles.
    This is the yardstick for items 1 and 2 under "Next".
-3. **sparc64: what can be supported.** NetBSD 11.1 and OpenBSD 8.0 are installed on `sun4u`;
-   Debian 12, the disk/NIC/console layout, Solaris CDs under OpenBIOS, idle and speed are being
-   measured. Also a first attempt to run the Sun Ultra 5/10 OBP (patch 106121-18) on `sun4u`.
+3. **sparc64 profile** in qemu-server and the UI, from the measurement (#255): disks and CD-ROM on
+   the built-in IDE, `-boot order=c|d` instead of `bootindex`, the CD first in a new VM's boot order,
+   no balloon device, one CPU, at most 3 GB and four NICs, refusals with clear messages. A VM made by
+   the wizard boots the NetBSD 11.1 CD to sysinst through PVE without typing at the OpenBIOS prompt
+   (the lab's `pve` matrix). Then answer issue #200.
 4. **TCX against cg3.** Whether TCX works per profile, firmware and guest, in 8 and 24 bit, whether
    it is faster under X, and why it failed in the past. cg3 is the default today.
 
@@ -54,19 +57,16 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    `xc_sync_cache` for a cross-call reply, also with single-threaded TCG. An FPGA SS-20
    (MiSTer-devel/SunSparcStation20_MiSTer) runs Solaris 8 on two CPUs, so this is likely an
    emulation bug. Idle in the multiprocessor loop comes after that.
-3. **sparc64 profile** in qemu-server and the UI, from the measurement: disk on IDE (OpenBIOS cannot
-   boot from the `lsi` controller the wizard proposes), boot order that OpenBIOS follows, no
-   balloon device. Then answer issue #200.
-4. **Solaris 10/11 on `niagara`.** Reproduce the work described at unix0.cc: Solaris 10 u11's text
+3. **Solaris 10/11 on `niagara`.** Reproduce the work described at unix0.cc: Solaris 10 u11's text
    installer starts on `-M niagara` with rebuilt OpenSPARC T1 firmware and a small TTE page-size
    fix. Check the firmware licences, carry the patch if it holds, find out how far a writable disk
    is. No disk and no network today, so this is a demonstration until that changes.
-5. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
+4. **Promotion PR for qemu-3dfx.** The submodule is bumped to upstream daily and built into the
    package unreviewed. Pin it, and let the sync open a PR that shows the upstream changes and the
    result of `scripts/refresh-qemu-3dfx-patch.sh --check` and a 3dfx-only build.
-6. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
+5. **MCP server around the lab.** Screen as text or image, keys, serial, wait for a pattern, against
    any VM on a node through `--pve`. A thin layer over `lab.py`.
-7. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+6. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.

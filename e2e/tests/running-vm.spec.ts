@@ -17,6 +17,8 @@ interface Vm {
   cd: string
   /** the first disk */
   disk: string
+  /** a second disk, added while running */
+  newDisk: string
   /** the NIC model in net0 */
   nic: string
   /** a memory size that is a valid change, but not hot-pluggable */
@@ -28,6 +30,7 @@ const sparc32 = (name: string, machine: string, bios: string, memory: number): V
   cd: 'scsi6',
   disk: 'scsi3',
   memory: 128,
+  newDisk: 'scsi1',
   name,
   nic: 'lance',
   params: { arch: 'sparc', bios, machine, memory, ostype: 'solaris', scsi3: 'local:0.0625,format=qcow2' },
@@ -35,13 +38,15 @@ const sparc32 = (name: string, machine: string, bios: string, memory: number): V
 })
 
 const SS5 = sparc32('sparc32 SS-5 OpenBIOS', 'SS-5', 'openbios-sparc32', 256)
+// the sparc64 profile's layout: disk and CD-ROM on the built-in IDE
 const SUN4U: Vm = {
-  cd: 'scsi6',
-  disk: 'scsi0',
+  cd: 'ide2',
+  disk: 'ide0',
   memory: 256,
   name: 'sparc64 sun4u',
+  newDisk: 'ide1',
   nic: 'sunhme',
-  params: { arch: 'sparc64', machine: 'sun4u', memory: 512, ostype: 'other', scsi0: 'local:0.0625,format=qcow2' },
+  params: { arch: 'sparc64', ide0: 'local:0.0625,format=qcow2', machine: 'sun4u', memory: 512, ostype: 'other' },
   sparc: true,
 }
 const VMS: Vm[] = [
@@ -56,6 +61,7 @@ const VMS: Vm[] = [
     disk: 'scsi0',
     memory: 256,
     name: 'x86 control',
+    newDisk: 'scsi1',
     nic: 'virtio',
     params: { kvm: 0, memory: 512, ostype: 'l26', scsi0: 'local:0.0625,format=qcow2' },
     sparc: false,
@@ -243,9 +249,9 @@ test.describe('changes that wait for the next start on sparc', () => {
 
       // the NIC can't be replaced while running (sun4m's lance is built in, sun4u's PCI has no hotplug)
       await update(vmid, { net0: `${vm.nic}=BC:24:11:00:00:99,bridge=vmbr0` })
-      await update(vmid, { scsi1: 'local:0.0625,format=qcow2' })
+      await update(vmid, { [vm.newDisk]: 'local:0.0625,format=qcow2' })
       await update(vmid, { memory: vm.memory })
-      expect((await pending(vmid)).toSorted()).toEqual(['memory', 'net0', 'scsi1'])
+      expect((await pending(vmid)).toSorted()).toEqual(['memory', 'net0', vm.newDisk].toSorted())
       expect(await qm(['status', String(vmid)])).toContain('status: running')
 
       // applied on the next start
@@ -255,7 +261,7 @@ test.describe('changes that wait for the next start on sparc', () => {
       const conf = await config(vmid)
       expect(conf.net0).toBe(`${vm.nic}=BC:24:11:00:00:99,bridge=vmbr0`)
       expect(conf.memory).toBe(String(vm.memory))
-      expect(await monitor(vmid, 'info block')).toMatch(/^drive-scsi1: /m)
+      expect(await monitor(vmid, 'info block')).toMatch(new RegExp(`^drive-${vm.newDisk}: `, 'm'))
     })
   }
 })

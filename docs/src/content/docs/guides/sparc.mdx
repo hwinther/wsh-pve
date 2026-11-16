@@ -37,13 +37,38 @@ config change and on start) with a message naming the allowed values, and the wi
 Always one CPU. Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
 network device, `lance`.
 
+## The sparc64 profile
+
+A sparc64 VM has one layout, the one that was tested to boot; the API refuses anything else (on
+create, on a config change and on start) with a message naming what's allowed, and the wizard and the
+Hardware editors offer only it.
+
+| Machine | BIOS | CPU | RAM | Disks and CD-ROMs | Network | Display |
+| ------- | ---- | --- | --- | ----------------- | ------- | ------- |
+| `sun4u` | OpenBIOS (default) | one, the machine's UltraSPARC IIi | up to 3072 MB (512 MB in the wizard) | the built-in IDE: `ide0` to `ide3` (wizard: disk `ide0`, CD-ROM `ide2`) | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; at most four | `std` (VGA, default), `serial0`, none |
+
+- **Boot device:** OpenBIOS boots one device and doesn't try the next, and it can't follow the boot
+  paths x86 VMs get. qemu-server therefore passes the first drive of the boot order that holds
+  something as the boot device: a CD-ROM with a medium boots the CD, a disk the disk. Empty CD-ROM
+  drives and network devices are skipped; network boot isn't supported. A new VM gets its CD-ROM
+  first in the boot order, so it boots the install CD, and once the CD is ejected (or the boot order
+  puts the disk first) it boots the disk.
+- **Refused:** SCSI (the LSI controller and virtio-scsi), virtio-blk and SATA disks, more than one
+  CPU, a CPU type, more than 3072 MB, `sun4v` and `niagara`, more than four network devices (they
+  share PCI bus B's four slots), `pcnet`, other displays, serial2/serial3, the guest agent.
+  virtio-blk works as a second disk in NetBSD, but OpenBIOS can't boot it, so it isn't offered.
+- **No balloon device** (OpenBIOS can't manage one; nothing reads it).
+- **Existing VMs** from before the profile (SCSI disk and CD-ROM) stay readable but don't start and
+  can't be changed until they match it: detach the SCSI disk and attach the volume as `ide0`, move the
+  CD-ROM to `ide2`, remove a `cpu` setting. Such VMs didn't boot before either.
+
 ## Recommended hardware layout
 
 - **Machine** — `SS-5`, `SS-10` or `SS-20` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). For Solaris 2.6, `SS-20` (or `SS-10`) with OpenBIOS runs user programs about 9 times faster than `SS-5` on the same host (disk and boot times are the same); it needs its own install on that machine type.
 - **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. Of the Sun PROMs, `ss5.bin` runs on SS-5 and `ss20_v2.25_rom` on SS-20 (see [BIOS](/reference/bios/)); the SS-10 PROM doesn't run on QEMU's SS-10 and isn't offered.
 - **Processor / memory** — one CPU for sparc32 and sparc64 (QEMU's sun4u has one). RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 at most 512 MB (Solaris 2.6 panics at boot with more). QEMU emulates up to 4 CPUs on SS-10/SS-20, but Solaris 2.6 with more than one CPU hangs within minutes, so the VM gets one. The CPU model follows the machine and BIOS (see [Processors](/reference/processors/)).
-- **Disk** — sparc: SCSI bus only. sparc64: the built-in IDE (see [sparc64](#sparc64-sun4u)); OpenBIOS
-  can't boot the SCSI controller the wizard offers.
+- **Disk** — sparc: SCSI bus only. sparc64: the built-in IDE (see [the sparc64 profile](#the-sparc64-profile));
+  OpenBIOS can't boot from SCSI or virtio.
 - **CD-ROM** — sparc: SCSI. sparc64: IDE (`ide2`).
 - **Network** — `lance` (sparc; built into the machine, not hot-pluggable, one per VM, with the MAC address of `net0`) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
 - **Display** — sparc: `cg3` (preferred) or `tcx` framebuffer; sparc64: standard VGA (`std`) with a PS/2 keyboard. A serial console is also available (see [Display](/reference/display/) and [Serial port](/reference/serial/)). Solaris only runs X on TCX when it was installed with the TCX attached or has the TCX packages added, and a change of framebuffer needs a reconfigure boot; see [cg3 or TCX](#cg3-or-tcx).
@@ -56,8 +81,8 @@ network device, `lance`.
   bridge, VLAN tag, Disconnect, rate limit and firewall; disk resize; snapshots, backups, clone and
   move disk.
 - **Applied at the next start** (shown as pending): a new network model or MAC address, adding or
-  removing a disk, memory. Nothing is hot-pluggable on SPARC: the lance is built into the machine
-  and sun4u's PCI buses have no hotplug.
+  removing a disk, memory. Nothing is hot-pluggable on SPARC: the lance is built into the machine,
+  sun4u's IDE and PCI buses have no hotplug.
 
 ## Installing SunOS / Solaris
 
@@ -200,14 +225,25 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 2.5.1-10 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel; Solaris 10 1/13 gets furthest) |
 
-What works: the machine's built-in **IDE** for the disk and the CD-ROM (OpenBIOS boots only from
-there), **`sunhme`** (NetBSD also drives `virtio`, `e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a
-serial console, one CPU, up to 3 GB of RAM. The LSI SCSI controller and virtio-scsi don't work (no
-firmware driver, and the guests' drivers time out or fail); virtio-blk works as a second disk for
-NetBSD but can't be booted from. A sparc64 VM as the wizard creates it today (SCSI disk and CD-ROM,
-plus the boot order qemu-server passes to the firmware) doesn't boot; qemu-server needs the changes
-listed in `submodules/SPARC.md` first. These results come from the QEMU command line; a sparc64 VM
-hasn't been booted through Proxmox itself in these tests.
+What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
+for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
+`e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a serial console, one CPU, up to 3 GB of RAM. The
+LSI SCSI controller and virtio-scsi don't work (no firmware driver, and the guests' drivers time out
+or fail). A VM created by the wizard with the NetBSD 11.1 CD boots it to the installer through Proxmox
+by itself (tested in the sparc lab's `pve` matrix, serial console).
+
+### Installing NetBSD
+
+1. Create VM, General: Advanced, vCPU Architecture **SPARC (64-bit)**. OS: the NetBSD sparc64 ISO,
+   type Other. Keep the defaults on the other tabs (disk on `ide0`, 512 MB, `sunhme`); for a serial
+   console instead of the VGA screen, add a serial port (`serial0: socket`) and set Display to Serial
+   terminal 0 afterwards.
+2. Start it: OpenBIOS boots the CD, NetBSD asks for the terminal type (`vt100` on the serial console),
+   and sysinst starts. Install to `wd0`.
+3. At the end, power off (`halt -p`), then eject the CD (Hardware → CD/DVD Drive → Do not use any
+   media) or put `ide0` first in the boot order. The next start boots the installed disk.
+
+Expect one host core at 100% for as long as the VM runs: NetBSD doesn't idle on sun4u.
 
 ## Known limitations
 
@@ -225,8 +261,8 @@ hasn't been booted through Proxmox itself in these tests.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
 - sparc64: NetBSD installs and runs; the OpenBSD and Debian installers start but their installs
-  don't end in a working system; Solaris doesn't boot on sun4u with OpenBIOS. The wizard's SCSI
-  layout doesn't boot (see [sparc64](#sparc64-sun4u)).
+  don't end in a working system; Solaris doesn't boot on sun4u with OpenBIOS. One layout only (see
+  [the sparc64 profile](#the-sparc64-profile)); no network boot.
 
 ## Testing installs automatically
 
