@@ -1,10 +1,8 @@
 #!/bin/sh
-# VintageHive as its own user. Its HTTP clients use the egress proxy; the filter blocks anything else.
+# VintageHive as its own user. It reaches the archive through the archive cache on loopback; the
+# egress filter lets it reach nothing else on the internet but ProtoWeb's proxy.
 cd /opt/vintagehive || exit 1
 exec setpriv --reuid=vintagehive --regid=vintagehive --init-groups --inh-caps=-all \
   env -i PATH=/usr/bin:/bin HOME=/var/lib/retronet/vintagehive \
-    http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    HTTP_PROXY=http://127.0.0.1:8888 HTTPS_PROXY=http://127.0.0.1:8888 \
-    no_proxy=localhost,127.0.0.1 NO_PROXY=localhost,127.0.0.1 \
     DOTNET_RUNNING_IN_CONTAINER=true DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     ./VintageHive

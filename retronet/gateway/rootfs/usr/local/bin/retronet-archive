@@ -1,0 +1,7 @@
+#!/bin/sh
+# The archive cache's command line (stats, warm, export, import, purge, put-capture), run as the
+# cache's own user so the store keeps one owner. See: retronet-archive --help
+year=$(sed -n 's/^RETRONET_YEAR=//p' /run/retronet/env 2>/dev/null)
+exec setpriv --reuid=archivecache --regid=archivecache --init-groups --inh-caps=-all \
+  env -i PATH=/usr/bin:/bin HOME=/var/lib/retronet/archive-cache RETRONET_YEAR="${year:-1999}" \
+  python3 /etc/retronet/services.d/archive-cache/archive_cache.py "$@"

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Warm the archive cache: retronet-warm [--requisites] [--max-requisites N] [-f urls.txt] [url ...]
+# Without URLs or -f it warms the sites VintageHive features
+# (/etc/retronet/services.d/archive-cache/default-urls.txt).
+exec /usr/local/bin/retronet-archive warm --default-list /etc/retronet/services.d/archive-cache/default-urls.txt "$@"

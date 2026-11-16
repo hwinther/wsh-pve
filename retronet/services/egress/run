@@ -1,4 +1,0 @@
-#!/bin/sh
-# The allowlisting proxy every web request of the gateway's services goes through. The egress filter
-# lets only this process reach ports 80 and 443 on the internet.
-exec tinyproxy -d -c /run/retronet/tinyproxy.conf
