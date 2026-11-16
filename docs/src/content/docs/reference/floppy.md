@@ -12,6 +12,14 @@ Floppy images use the `floppy` content type and live in `template/floppy/` next 
 1. Go to **Datacenter → Storage**, edit a storage and enable the **Floppy image** content type. The `template/floppy` directory is created automatically when the storage is activated.
 2. A **Floppy Images** tab appears on the storage, with upload and download-from-URL support. Accepted extensions are `.img`, `.ima` and `.vfd`.
 
+No storage has the content type until you enable it, `local` included. Until then the storage list in **Add → Floppy Drive** is empty, also when image files already lie in `template/floppy/`.
+
+From the command line, give the storage's whole content list (it replaces the current one; `pvesm status` and `/etc/pve/storage.cfg` show what it has now):
+
+```sh
+pvesm set local --content iso,vztmpl,backup,floppy
+```
+
 Note: `.img` files are accepted by both the ISO Images and the Floppy Images upload dialogs — the tab you upload through decides whether the file becomes an `iso/` or a `floppy/` volume, so make sure to use the Floppy Images tab for floppy images.
 
 ## Adding a floppy drive
