@@ -64,22 +64,6 @@ export async function checkQemuExtra(name: string): Promise<{ code: number; outp
   return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
-/**
- * Whether the installed pve-qemu-kvm is newer than 11.1.3-2+wsh11, the last package published before
- * debian/rules installed openbios-sparc64 from openbios/ (with pve-qemu patch wsh/0021). A package
- * from before that keeps QEMU's own image, and the openbios-sparc64 extra is then missing.
- */
-export async function hasPackagedOpenbiosSparc64(): Promise<boolean> {
-  const probe = await pveExec([
-    'bash',
-    '-c',
-    `v=$(dpkg-query -W -f='\${Version}' pve-qemu-kvm) || exit 1
-     if dpkg --compare-versions "$v" gt 11.1.3-2+wsh11; then echo "newer=yes $v"; else echo "newer=no $v"; fi`,
-  ])
-  expect(probe.output, probe.output).toMatch(/^newer=(yes|no) \S+/m)
-  return probe.output.includes('newer=yes')
-}
-
 /** Runs a command in the PVE container and returns its combined output and exit code. */
 export async function pveExec(cmd: string[]): Promise<{ code: number; output: string }> {
   const created = (await docker('POST', `/containers/${CONTAINER}/exec`, {
