@@ -1,0 +1,49 @@
+#!/bin/bash
+# A small supervisor: starts the run script of every service in /etc/retronet/services.d, restarts
+# one that exits (after a pause), and on SIGTERM or SIGINT stops them all and exits. tini is PID 1
+# and reaps orphans; this script only waits for its own children.
+set -u
+
+SERVICES=/etc/retronet/services.d
+declare -A dirs=()
+stopping=0
+
+log() { echo "retronet-supervise: $*" >&2; }
+
+start() {
+  "$1/run" &
+  dirs[$!]=$1
+  log "started ${1##*/} (pid $!)"
+}
+
+stop_all() {
+  stopping=1
+  log "stopping"
+  local pid
+  for pid in "${!dirs[@]}"; do kill -TERM "$pid" 2>/dev/null; done
+}
+trap stop_all TERM INT
+
+for dir in "$SERVICES"/*; do
+  [ -x "$dir/run" ] && start "$dir"
+done
+[ ${#dirs[@]} -gt 0 ] || { log "no services"; exit 1; }
+
+while [ ${#dirs[@]} -gt 0 ]; do
+  pid=""
+  wait -n -p pid
+  rc=$?
+  [ -n "$pid" ] || continue # interrupted by a signal
+  dir=${dirs[$pid]:-}
+  unset "dirs[$pid]"
+  [ -n "$dir" ] || continue
+  if [ $stopping = 1 ]; then
+    log "${dir##*/} stopped ($rc)"
+    continue
+  fi
+  log "${dir##*/} exited ($rc); restarting in 3 s"
+  sleep 3 &
+  wait $! 2>/dev/null
+  [ $stopping = 1 ] || start "$dir"
+done
+log "all services stopped"

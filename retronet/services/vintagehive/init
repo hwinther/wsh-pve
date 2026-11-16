@@ -1,0 +1,106 @@
+#!/bin/bash
+# Seeds VintageHive's configuration (the `config` table of vfs/data/hive.db) before it starts.
+# The policy keys are written on every start, so a change made in the admin pages lasts only until
+# the next restart; the other keys are written once and are then the owner's to change.
+set -euo pipefail
+
+home=$RETRONET_STATE/vintagehive
+db=$home/data/hive.db
+mkdir -p "$home/data"
+new_db=0
+[ -f "$db" ] || new_db=1
+
+log() { echo "vintagehive-init: $*" >&2; }
+q() { printf "'%s'" "${1//\'/\'\'}"; }
+
+# --- the admin password: never VintageHive's default -----------------------------------------------
+pw=${RETRONET_CFG_ADMIN_PASSWORD:-}
+if [ -z "$pw" ] && [ -n "${RETRONET_CFG_ADMIN_PASSWORD_FILE:-}" ]; then
+  [ -r "$RETRONET_CFG_ADMIN_PASSWORD_FILE" ] || { log "cannot read $RETRONET_CFG_ADMIN_PASSWORD_FILE"; exit 1; }
+  pw=$(head -n1 "$RETRONET_CFG_ADMIN_PASSWORD_FILE" | tr -d '\r\n')
+fi
+if [ -z "$pw" ]; then
+  stored=$RETRONET_STATE/admin-password
+  if [ ! -s "$stored" ]; then
+    (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' | head -c 20 > "$stored")
+    log "generated an admin password in $stored"
+  fi
+  pw=$(cat "$stored")
+fi
+[ ${#pw} -ge 8 ] || { log "the admin password must have at least 8 characters"; exit 1; }
+[ "$pw" != vintagehive ] || { log "refusing VintageHive's default admin password"; exit 1; }
+
+worker=0
+[ -n "${RETRONET_CFG_ARCHIVE_RELAY:-}" ] && worker=1
+protoweb=0
+[ "${RETRONET_CFG_PROTOWEB:-yes}" = yes ] && protoweb=1
+
+# key, value: integers are stored as integers (VintageHive reads them with GetInt32/GetBoolean)
+enforce=(
+  ipaddress "$(q "$RETRONET_GW")"
+  adminusername "'admin'"
+  adminpassword "$(q "$pw")"
+  serviceinternetarchive 1
+  serviceinternetarchiveyear "$RETRONET_CFG_YEAR"
+  serviceinternetarchiveworker $worker
+  serviceinternetarchiveworkerurl "$(q "${RETRONET_CFG_ARCHIVE_RELAY:-}")"
+  serviceprotoweb $protoweb
+  servicehttp 1
+  porthttp 1990 portftp 1971 porttelnet 1969 portfinger 1079 portusenet 1986
+  portoscar 5190 portmsn 1863 portyahoo 5050
+  ftppassiveaddress "$(q "$RETRONET_GW")" ftppassiveportmin 21000 ftppassiveportmax 21009
+  # Off in this stage: forwarding features (SOCKS, the HTTPS "DialNine" proxy), services that reach
+  # the live internet (gopher relay, radio over MMS/PNA), VintageHive's own DNS (dnsmasq answers),
+  # the debug services (mail, IRC, printing), NetMeeting, and the file-transfer relay.
+  servicesocks 0 servicehttps 0 servicedialnine 0 servicegopher 0 servicemms 0 servicepna 0
+  servicedns 0 servicesmtp 0 servicepop3 0 serviceimap 0 serviceirc 0 serviceprinter 0
+  serviceils 0 serviceras 0 serviceh323 0 servicet120 0 relaytransfers 0 servicewalledgarden 0
+)
+seed=(
+  serviceintranet 1 serviceftp 1 servicetelnet 1 serviceoscar 1 servicemsn 1 serviceyahoo 1
+  serviceusenet 1 servicefinger 1
+)
+
+{
+  echo "PRAGMA busy_timeout = 5000;"
+  echo "BEGIN;"
+  echo "CREATE TABLE IF NOT EXISTS config (key TEXT UNIQUE, value BLOB);"
+  echo "CREATE TABLE IF NOT EXISTS config_local (address text, key TEXT, value BLOB);"
+  echo "CREATE TABLE IF NOT EXISTS links (name TEXT UNIQUE, link TEXT);"
+  set -- "${enforce[@]}"
+  while [ $# -gt 0 ]; do
+    echo "INSERT INTO config (key, value) VALUES ('$1', $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;"
+    shift 2
+  done
+  set -- "${seed[@]}"
+  while [ $# -gt 0 ]; do
+    echo "INSERT INTO config (key, value) VALUES ('$1', $2) ON CONFLICT(key) DO NOTHING;"
+    shift 2
+  done
+  # one year for the whole network: drop per-address overrides made in the admin pages
+  echo "DELETE FROM config_local WHERE key IN ('serviceinternetarchiveyear', 'serviceprotoweb');"
+  if [ $new_db = 1 ]; then
+    # VintageHive fills its portal's link list only when it creates the database itself; these are its defaults.
+    cat <<'EOF'
+INSERT OR IGNORE INTO links (name, link) VALUES
+  ('Cool Links', 'http://www.web-search.com/cool.html'),
+  ('GatewayToTheNet.com', 'http://www.gatewaytothenet.com/'),
+  ('Top10Links', 'http://www.toptenlinks.com/'),
+  ('House Of Links', 'http://www.ozemail.com.au/~krisp/button.html'),
+  ('The BIG EYE', 'http://www.bigeye.com/'),
+  ('STARTING PAGE', 'http://www.startingpage.com/'),
+  ('Hotsheet.com', 'http://www.hotsheet.com/'),
+  ('Nerd World Media', 'http://www.nerdworld.com/'),
+  ('Suite101.com', 'http://www.suite101.com'),
+  ('RefDesk.com', 'http://www.refdesk.com/'),
+  ('WWW Virtual Library', 'http://vlib.org/'),
+  ('Yahoo!', 'http://www.yahoo.com'),
+  ('Yahoo! Canada', 'http://www.yahoo.ca'),
+  ('DogPile Open Directory', 'http://opendir.dogpile.com/');
+EOF
+  fi
+  echo "COMMIT;"
+} | sqlite3 "$db"
+
+chown -R vintagehive:vintagehive "$home"
+log "seeded $db (year $RETRONET_CFG_YEAR, archive $([ $worker = 1 ] && echo "via $RETRONET_CFG_ARCHIVE_RELAY" || echo direct), ProtoWeb $([ $protoweb = 1 ] && echo on || echo off))"

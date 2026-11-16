@@ -1,0 +1,3 @@
+#!/bin/sh
+# DHCP and DNS for the retro segment (configuration written by retronet-init).
+exec dnsmasq --keep-in-foreground --log-facility=- --conf-file=/run/retronet/dnsmasq.conf

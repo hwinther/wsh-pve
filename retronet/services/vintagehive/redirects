@@ -1,0 +1,11 @@
+# <protocol> <guest port, any address> <port on the gateway>; "-" only opens the gateway's port.
+tcp 80   1990   # web: every plain-HTTP connection goes to the archive proxy
+tcp -    1990   # the same proxy, set by hand in a browser (gateway:1990 or gateway:80)
+tcp 21   1971   # FTP
+tcp -    21000-21009  # FTP passive data
+tcp 23   1969   # telnet BBS
+tcp 79   1079   # finger
+tcp 119  1986   # news (NNTP)
+tcp 5190 5190   # instant messaging, OSCAR
+tcp 1863 1863   # instant messaging, MSNP
+tcp 5050 5050   # instant messaging, YMSG

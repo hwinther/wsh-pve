@@ -1,0 +1,15 @@
+#!/bin/bash
+# Healthy when the filter is loaded and every service answers.
+set -u
+nft list table inet retronet >/dev/null 2>&1 || { echo "nftables table missing"; exit 1; }
+for p in dnsmasq tinyproxy VintageHive; do
+  pgrep -x "$p" >/dev/null || { echo "$p not running"; exit 1; }
+done
+gw=$(sed -n 's/^RETRONET_GW=//p' /run/retronet/env 2>/dev/null)
+exec 3<>/dev/tcp/127.0.0.1/8888 || { echo "tinyproxy not answering"; exit 1; }
+exec 3>&-
+if [ -n "$gw" ]; then
+  exec 3<>"/dev/tcp/$gw/1990" || { echo "HTTP proxy not answering on $gw:1990"; exit 1; }
+  exec 3>&-
+fi
+echo ok

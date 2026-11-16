@@ -1,0 +1,3 @@
+# Host names VintageHive may fetch through the egress proxy (extended regular expressions).
+# The Wayback Machine and its data servers:
+^(.+\.)?archive\.org$

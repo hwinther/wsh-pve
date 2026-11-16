@@ -1,0 +1,292 @@
+#!/bin/bash
+# Prepares the gateway before any service starts: reads the configuration, finds the retro and uplink
+# interfaces, loads the nftables rules (redirects and egress filter) and writes the configuration of
+# dnsmasq and tinyproxy, then runs each service's init hook. Any failure stops the container: no
+# service may run without the filter.
+set -euo pipefail
+
+CONF=${RETRONET_CONFIG:-/etc/retronet/retronet.conf}
+STATE=/var/lib/retronet
+RUN=/run/retronet
+SERVICES=/etc/retronet/services.d
+
+log() { echo "retronet-init: $*" >&2; }
+die() { log "error: $*"; exit 1; }
+
+# --- configuration: built-in defaults < config file < environment ---------------------------------
+declare -A cfg=(
+  [year]=1999 [dhcp_lease]=12h [domain]=retro.lan [archive_relay]="" [protoweb]=yes
+  [address]="" [retro_interface]="" [uplink_gateway]="" [upstream_dns]="" [dhcp_range]=""
+  [admin_password]="" [admin_password_file]=""
+)
+if [ -f "$CONF" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    [[ $line =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] || {
+      [[ $line =~ ^[[:space:]]*$ ]] || die "$CONF: cannot parse: $line"
+      continue
+    }
+    cfg[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]:-}
+  done < "$CONF"
+fi
+for key in "${!cfg[@]}"; do
+  env="RETRONET_${key^^}"
+  [ -n "${!env+x}" ] && cfg[$key]=${!env}
+done
+conf() { printf '%s' "${cfg[$1]:-}"; }
+
+# --- validation -----------------------------------------------------------------------------------
+year=$(conf year)
+[[ $year =~ ^[0-9]{4}$ ]] && [ "$year" -ge 1997 ] && [ "$year" -le 2021 ] || die "year must be 1997-2021, not '$year'"
+address=$(conf address)
+[[ $address =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3})/([0-9]{1,2})$ ]] || die "address must be an IPv4 address with prefix (RETRONET_ADDRESS), not '$address'"
+gw=${BASH_REMATCH[1]}
+prefix=${BASH_REMATCH[3]}
+[ "$prefix" -ge 8 ] && [ "$prefix" -le 30 ] || die "prefix /$prefix is not supported"
+case $(conf protoweb) in yes|no) ;; *) die "protoweb must be yes or no" ;; esac
+relay=$(conf archive_relay)
+relay_host=""
+if [ -n "$relay" ]; then
+  [[ $relay =~ ^https?://([A-Za-z0-9.-]+)(:[0-9]+)?/?$ ]] || die "archive_relay must be a plain http(s)://host URL"
+  relay_host=${BASH_REMATCH[1]}
+fi
+
+# --- interfaces -----------------------------------------------------------------------------------
+retro_if=$(ip -o -4 addr show | awk -v a="$gw" '{split($4, p, "/"); if (p[1] == a) print $2}' | head -n1)
+if [ -z "$retro_if" ]; then
+  want=$(conf retro_interface)
+  [ -n "$want" ] || die "no interface has $gw; set retro_interface to add it to one"
+  ip link show "$want" >/dev/null 2>&1 || die "retro_interface $want does not exist"
+  ip addr add "$address" dev "$want"
+  ip link set "$want" up
+  retro_if=$want
+fi
+# the subnet in CIDR form, from the kernel's own route
+retro_net=$(ip -o -4 route show dev "$retro_if" proto kernel scope link | awk '{print $1}' | head -n1)
+[ -n "$retro_net" ] || retro_net="$address"
+uplink_ifs=$(ip -o link show | awk -F': ' '{sub(/@.*/, "", $2); print $2}' | grep -vx -e lo -e "$retro_if" | tr '\n' ' ')
+log "retro side: $retro_if ($address, subnet $retro_net); uplink: ${uplink_ifs:-none}"
+
+# Never route through the retro side.
+if ip -4 route show default | grep -q " dev $retro_if\b"; then
+  ip -4 route del default dev "$retro_if" || true
+  log "removed the default route through $retro_if"
+fi
+if [ -n "$(conf uplink_gateway)" ]; then
+  ip -4 route replace default via "$(conf uplink_gateway)"
+fi
+log "default route: $(ip -4 route show default | head -n1 || true)"
+
+# --- upstream DNS ---------------------------------------------------------------------------------
+upstream=$(conf upstream_dns)
+if [ -z "$upstream" ] && [ -f /etc/resolv.conf ]; then
+  upstream=$(awk '$1 == "nameserver" && $2 !~ /^127\./ && $2 ~ /^[0-9.]+$/ {print $2}' /etc/resolv.conf | tr '\n' ' ')
+fi
+for s in $upstream; do
+  [[ $s =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "upstream_dns: '$s' is not an IPv4 address"
+done
+[ -n "$upstream" ] || log "warning: no upstream DNS; only the gateway's own names will resolve"
+
+# --- per-service pieces ---------------------------------------------------------------------------
+# redirects: "<tcp|udp> <guest port|-> <local port or range>" per line. A guest connection to that
+# port on ANY address is redirected to the local port; "-" only opens the local port.
+dnat_rules="" accept_tcp="" accept_udp=""
+for f in "$SERVICES"/*/redirects; do
+  [ -f "$f" ] || continue
+  while read -r proto guest local rest; do
+    case $proto in ''|'#'*) continue ;; tcp|udp) ;; *) die "$f: bad protocol '$proto'" ;; esac
+    [[ $local =~ ^[0-9]+(-[0-9]+)?$ ]] || die "$f: bad local port '$local'"
+    if [ "$guest" != - ]; then
+      [[ $guest =~ ^[0-9]+$ ]] || die "$f: bad guest port '$guest'"
+      [[ $local =~ - ]] && die "$f: a redirect needs a single local port"
+      dnat_rules+="    $proto dport $guest dnat ip to $gw:$local"$'\n'
+    fi
+    if [ "$proto" = tcp ]; then accept_tcp+="$local, "; else accept_udp+="$local, "; fi
+  done < "$f"
+done
+accept_tcp=${accept_tcp%, }
+accept_udp=${accept_udp%, }
+
+uid_vh=$(id -u vintagehive) uid_tp=$(id -u tinyproxy) uid_dns=$(id -u dnsmasq)
+
+# --- nftables -------------------------------------------------------------------------------------
+mkdir -p "$RUN"
+{
+cat <<EOF
+# Generated by retronet-init. The gateway never routes a packet from the retro segment: guest
+# connections are redirected to local services or refused, and only the gateway's own services
+# reach out, through the filter in "output".
+table inet retronet {
+  set blocked4 {
+    type ipv4_addr; flags interval
+    # this network, RFC 1918, CGNAT, loopback, link-local, IETF protocol assignments, benchmarking,
+    # multicast and reserved
+    elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+                 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 }
+  }
+  set upstream_dns {
+    type ipv4_addr
+EOF
+[ -n "$upstream" ] && echo "    elements = { $(echo $upstream | sed 's/ /, /g') }"
+cat <<EOF
+  }
+
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "$retro_if" jump from_retro
+  }
+  chain from_retro {
+    # the gateway's other addresses (the uplink side) are not services for guests: no redirect, dropped in input
+    ip daddr != $gw fib daddr type local return
+    # any DNS server a guest has configured is answered by the gateway
+    meta l4proto { tcp, udp } th dport 53 dnat ip to $gw:53
+${dnat_rules}    # everything else addressed beyond the gateway (443 included) ends at the gateway and is refused
+    # there; ICMP is not redirected and dies in "forward"
+    fib daddr type unicast meta l4proto { tcp, udp } dnat ip to $gw
+  }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+    iifname "$retro_if" jump retro_in
+    # the uplink side offers nothing
+  }
+  chain retro_in {
+    udp dport 67 accept
+    # broadcasts and anything else not for the gateway itself (unicast beyond it was redirected above)
+    ip daddr != $gw counter drop
+    meta l4proto { tcp, udp } th dport 53 accept
+EOF
+[ -n "$accept_tcp" ] && echo "    tcp dport { $accept_tcp } accept"
+[ -n "$accept_udp" ] && echo "    udp dport { $accept_udp } accept"
+cat <<EOF
+    icmp type echo-request limit rate 10/second accept
+    meta l4proto tcp counter reject with tcp reset
+    counter reject with icmpx port-unreachable
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    iifname "$retro_if" counter reject with icmpx admin-prohibited
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+    ct state established,related accept
+    # the gateway's helpers on loopback (dnsmasq, tinyproxy); no service may reach the gateway's
+    # other addresses through loopback
+    oifname "lo" ip daddr 127.0.0.0/8 accept
+    oifname "lo" meta skuid { $uid_vh, $uid_tp, $uid_dns } counter reject
+    oifname "lo" accept
+    # to guests: replies, DHCP, FTP data
+    oifname "$retro_if" ip daddr $retro_net accept
+    oifname "$retro_if" ip daddr 255.255.255.255 accept
+    oifname "$retro_if" counter reject
+    # everything below leaves through the uplink
+    meta nfproto ipv6 counter reject
+    meta skuid $uid_dns ip daddr @upstream_dns meta l4proto { tcp, udp } th dport 53 accept
+    ip daddr @blocked4 counter reject with icmpx admin-prohibited
+    # the allowlisting egress proxy is the only way to the web
+    meta skuid $uid_tp tcp dport { 80, 443 } accept
+EOF
+[ "$(conf protoweb)" = yes ] && echo "    # ProtoWeb's own proxy (wayback.protoweb.org:7851)
+    meta skuid $uid_vh tcp dport 7851 accept"
+cat <<EOF
+    counter reject
+  }
+}
+EOF
+} > "$RUN/nftables.nft"
+
+nft list table inet retronet >/dev/null 2>&1 && nft delete table inet retronet
+nft -f "$RUN/nftables.nft" || die "nftables rules did not load (does the container have NET_ADMIN?)"
+# No routing on the segment even if the filter were gone. Not writable in every runtime.
+{ echo 0 > /proc/sys/net/ipv4/ip_forward; } 2>/dev/null || log "note: ip_forward is read-only here (Docker); the forward chain drops instead"
+
+# --- dnsmasq --------------------------------------------------------------------------------------
+dhcp_range=$(conf dhcp_range)
+if [ -z "$dhcp_range" ]; then
+  [ "$prefix" -le 24 ] || die "set dhcp_range for a /$prefix subnet"
+  base=$(echo "$gw" | cut -d. -f1-3)
+  dhcp_range="$base.100,$base.199"
+fi
+domain=$(conf domain)
+mkdir -p "$STATE"
+touch "$STATE/dhcp-hosts" "$STATE/dnsmasq.leases"
+chown dnsmasq "$STATE/dnsmasq.leases"
+{
+  echo "# Generated by retronet-init."
+  echo "user=dnsmasq"
+  echo "interface=$retro_if"
+  echo "interface=lo"
+  echo "bind-interfaces"
+  echo "no-resolv"
+  echo "no-hosts"
+  echo "domain-needed"
+  echo "bogus-priv"
+  echo "stop-dns-rebind"
+  echo "rebind-localhost-ok"
+  echo "cache-size=1000"
+  for s in $upstream; do echo "server=$s"; done
+  echo "domain=$domain"
+  echo "local=/$domain/"
+  echo "host-record=gateway.$domain,gateway,$gw"
+  echo "dhcp-authoritative"
+  echo "dhcp-range=$dhcp_range,$(conf dhcp_lease)"
+  echo "dhcp-option=option:router,$gw"
+  echo "dhcp-option=option:dns-server,$gw"
+  echo "dhcp-hostsfile=$STATE/dhcp-hosts"
+  echo "dhcp-leasefile=$STATE/dnsmasq.leases"
+  echo "log-dhcp"
+  # names the period clients expect, answered with the gateway's address
+  cat "$SERVICES"/*/dns-names 2>/dev/null | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep -v '^$' | sort -u \
+    | while read -r name; do echo "address=/$name/$gw"; done
+} > "$RUN/dnsmasq.conf"
+dnsmasq --test --conf-file="$RUN/dnsmasq.conf" >/dev/null 2>&1 || die "dnsmasq rejects $RUN/dnsmasq.conf"
+
+# The gateway's own lookups go through dnsmasq as well (and so through its upstream only).
+if [ -w /etc/resolv.conf ] || [ ! -e /etc/resolv.conf ]; then
+  printf 'nameserver 127.0.0.1\noptions edns0\n' > /etc/resolv.conf 2>/dev/null || log "note: cannot rewrite /etc/resolv.conf"
+fi
+
+# --- tinyproxy: the only way to the web, for names on the allowlist --------------------------------
+{
+  echo "# Generated by retronet-init."
+  cat "$SERVICES"/*/egress-allow 2>/dev/null | sed -e 's/#.*//' -e 's/[[:space:]]//g' | grep -v '^$' | sort -u
+  if [ -n "$relay_host" ]; then
+    printf '^%s$\n' "$(echo "$relay_host" | sed 's/\./\\./g')"
+  fi
+} > "$RUN/egress-allow"
+cat > "$RUN/tinyproxy.conf" <<EOF
+# Generated by retronet-init.
+User tinyproxy
+Group tinyproxy
+Port 8888
+Listen 127.0.0.1
+Timeout 60
+MaxClients 64
+Allow 127.0.0.1
+LogLevel Notice
+DisableViaHeader Yes
+XTinyproxy No
+Filter "$RUN/egress-allow"
+FilterType ere
+FilterURLs Off
+FilterCaseSensitive Off
+FilterDefaultDeny Yes
+ConnectPort 443
+EOF
+
+# --- services' own init hooks ---------------------------------------------------------------------
+export RETRONET_GW=$gw RETRONET_RETRO_IF=$retro_if RETRONET_STATE=$STATE RETRONET_RUN=$RUN
+export RETRONET_CFG_YEAR=$year RETRONET_CFG_ARCHIVE_RELAY=$relay RETRONET_CFG_PROTOWEB=$(conf protoweb)
+export RETRONET_CFG_ADMIN_PASSWORD=$(conf admin_password) RETRONET_CFG_ADMIN_PASSWORD_FILE=$(conf admin_password_file)
+for hook in "$SERVICES"/*/init; do
+  [ -x "$hook" ] || continue
+  log "running $hook"
+  "$hook" || die "$hook failed"
+done
+printf 'RETRONET_GW=%s\nRETRONET_RETRO_IF=%s\n' "$gw" "$retro_if" > "$RUN/env"
+log "ready: year $year, gateway $gw on $retro_if"

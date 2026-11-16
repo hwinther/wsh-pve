@@ -1,0 +1,65 @@
+# The hermetic test (retronet/test.sh): a fake internet with a stand-in for the Wayback Machine and
+# a DNS server, a "LAN" canary next to the gateway's uplink, and the retro client. Nothing leaves
+# the Docker host. The fake internet is 192.88.99.0/24, the retired 6to4 relay prefix: not routed,
+# and (unlike the documentation ranges) not refused by dnsmasq's rebind protection, which would
+# drop every answer pointing into it.
+services:
+  gateway:
+    environment:
+      RETRONET_ADMIN_PASSWORD: retronet-test-admin
+      RETRONET_UPSTREAM_DNS: 192.88.99.10
+      RETRONET_YEAR: "1999"
+    networks:
+      internet:
+        ipv4_address: 192.88.99.2
+    extra_hosts:
+      # Allowlisted names that point into the LAN, past dnsmasq's rebind protection: only the
+      # egress filter stands between them and the canary.
+      - rebind.web.archive.org:192.168.98.10
+      - web.archive.org.canary.example.net:192.168.98.10
+    depends_on:
+      fakenet:
+        condition: service_started
+
+  fakenet:
+    build:
+      context: test
+    image: retronet-testkit:local
+    command: sh -c 'dnsmasq --conf-file=/opt/retronet-test/fakenet-dns.conf --keep-in-foreground & exec python3 -u fakenet.py'
+    networks:
+      internet:
+        ipv4_address: 192.88.99.10
+
+  canary:
+    image: retronet-testkit:local
+    command: python3 -u canary.py
+    networks:
+      uplink:
+        ipv4_address: 192.168.98.10
+    depends_on:
+      fakenet:
+        condition: service_started
+
+  client:
+    profiles: [test]
+    image: retronet-testkit:local
+    cap_add: [NET_ADMIN]
+    networks: [retro]
+    environment:
+      GW: 192.168.99.1
+      GW_UPLINK: 192.168.98.2
+      CANARY: 192.168.98.10
+      HOSTGW: 192.168.98.1
+      FAKE: 192.88.99.10
+      EXAMPLE_IP: 192.88.99.20
+    command: /opt/retronet-test/client-tests.sh
+
+networks:
+  internet:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
+    ipam:
+      config:
+        - subnet: 192.88.99.0/24
+          gateway: 192.88.99.254
