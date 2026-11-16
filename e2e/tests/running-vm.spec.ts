@@ -1,16 +1,14 @@
 import { expect, test } from '@playwright/test'
 
-import { hasRunningSparcFixes, NODE, type Pve, pveApi, pveExec } from './_pve'
+import { NODE, type Pve, pveApi, pveExec } from './_pve'
 
 // Changes to a RUNNING VM (submodules/SPARC.md, "Operations on a running VM"): the QEMU that PVE
 // started, under TCG and without a guest OS. Each sparc32 profile, sparc64 (sun4u) and an x86 VM as
 // the control. What works live is checked in QEMU (`info block`, `info network`) and on the host
 // (the tap's bridge, VLAN and qdisc); what can't be hot-plugged on sparc must become a pending change.
 
-// TODO: drop the test.fail(!fixed) markers once qemu-server with these fixes is published at
-// debian.wshosting.no. The published 9.2.15+wsh3 fails every machine version check of a running
-// sparc VM ("cannot check version of invalid string '10'") and can't set the lance's link.
-let fixed: boolean
+// Before qemu-server 9.2.15+wsh4 every machine version check of a running sparc VM failed
+// ("cannot check version of invalid string '10'") and the lance's link could not be set.
 
 interface Vm {
   name: string
@@ -81,7 +79,6 @@ test.beforeAll(async () => {
      ip link set ${BRIDGE2} up`,
   ])
   expect(code, output).toBe(0)
-  fixed = await hasRunningSparcFixes()
 })
 
 test.beforeEach(async ({ request }) => {
@@ -179,7 +176,6 @@ async function mac(vmid: number): Promise<string> {
 test.describe('CD-ROM medium of a running VM', () => {
   for (const vm of VMS) {
     test(`${vm.name}: change, eject and insert`, async () => {
-      test.fail(vm.sparc && !fixed, 'qemu-server without the running-sparc fixes')
       const vmid = await startVm(vm)
 
       const steps = [
@@ -207,7 +203,6 @@ test.describe('CD-ROM medium of a running VM', () => {
 test.describe('net0 of a running VM', () => {
   for (const vm of VMS) {
     test(`${vm.name}: bridge, VLAN tag, link_down and rate apply live`, async () => {
-      test.fail(vm.nic === 'lance' && !fixed, 'qemu-server without the running-sparc fixes')
       const vmid = await startVm(vm)
       const tap = `tap${vmid}i0`
       const net = `${vm.nic}=${await mac(vmid)}`
@@ -244,7 +239,6 @@ test.describe('net0 of a running VM', () => {
 test.describe('changes that wait for the next start on sparc', () => {
   for (const vm of VMS.filter((v) => v.sparc)) {
     test(`${vm.name}: a new MAC, a new disk and memory become pending`, async () => {
-      test.fail(!fixed, 'qemu-server without the running-sparc fixes')
       const vmid = await startVm(vm)
 
       // the NIC can't be replaced while running (sun4m's lance is built in, sun4u's PCI has no hotplug)
@@ -269,7 +263,6 @@ test.describe('changes that wait for the next start on sparc', () => {
 test.describe('other operations on a running sparc VM', () => {
   for (const vm of [SS5, SUN4U]) {
     test(`${vm.name}: clone, move disk, suspend/resume, reset and status`, async () => {
-      test.fail(!fixed, 'qemu-server without the running-sparc fixes')
       const vmid = await startVm(vm)
       const { disk } = vm
 
@@ -293,7 +286,6 @@ test.describe('other operations on a running sparc VM', () => {
 
   test('sparc32 starts with net0 disconnected (link_down=1)', async () => {
     // the start sets the link of net0, which failed with "Device 'net0' not found"
-    test.fail(!fixed, 'qemu-server without the running-sparc fixes')
     const vmid = Number(await pve.get<string>('/cluster/nextid'))
     await waitTask(
       await pve.post<string>(`/nodes/${NODE}/qemu`, {
