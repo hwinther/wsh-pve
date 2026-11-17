@@ -18,12 +18,14 @@ Depends: fonts-dejavu-core,
          ${python3:Depends},
 Suggests: python3-venv,
           qemu-server,
+          mtools,
           tesseract-ocr,
           vpx-tools,
 Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
  The lab of the wsh-pve project drives a guest's serial console and framebuffer
  the way a person would and records every step. Its main command installs a
- named target (Solaris 2.6 on a SPARCstation 5 or 20, so far) into a new VM on
+ named target (Solaris 2.6 on a SPARCstation 5 or 20, MS-DOS 6.22 or FreeDOS
+ 1.4 from floppies) into a new VM on
  a Proxmox VE node, from install media the user provides, and leaves a powered
  off VM with known, publicly documented login details.
  .

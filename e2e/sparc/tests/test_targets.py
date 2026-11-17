@@ -261,7 +261,9 @@ class Network(unittest.TestCase):
 
     def test_every_automated_target_says_what_it_supports(self):
         for name in targets.automated():
-            self.assertTrue(set(targets.TARGETS[name]["net_modes"]) <= {"static", "dhcp"}, name)
+            modes = targets.TARGETS[name]["net_modes"]
+            # "none": the guest configures no network (the DOS targets, tests/test_dos.py)
+            self.assertTrue(set(modes) <= {"static", "dhcp"} or modes == ["none"], name)
 
     def test_netmasks_by_classful_network(self):
         # Solaris 2.6 looks /etc/netmasks up by the class A/B/C network number

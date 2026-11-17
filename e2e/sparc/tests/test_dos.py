@@ -78,15 +78,29 @@ class Targets(unittest.TestCase):
 
     def test_description_has_no_password(self):
         a = types.SimpleNamespace(target="msdos622", vmid="130", user=None, ip=None, out="/x", root_password=None,
-                                  user_password=None, hostname=None)
+                                  user_password=None, hostname=None, data_disk=None, bridge="vmbr0", vlan=None,
+                                  netmask=None, gateway=None, dns=None, domain=None, disk_size=None)
         job = install.Job.__new__(install.Job)
         job.a, job.target, job.root_password, job.hostname = a, targets.TARGETS["msdos622"], "wshlab", "-"
         job.started = __import__("datetime").datetime(2026, 11, 17)
         job.media = []
+        job.net = install.network_choice(job.target, a)
+        job.disk = install.disk_choice(job.target, None)
         d = job.description()
         self.assertIn("Login: none", d)
         self.assertNotIn("wshlab", d)
         self.assertIn("Marker: C:\\WSHLAB.TXT", d)
+        self.assertIn("Network: none configured in the guest (the NIC is on bridge vmbr0)", d)
+
+    def test_network_none(self):
+        base = dict(target="msdos622", bridge="vmbr0", vlan=None, ip=None, netmask=None, gateway=None, dns=None,
+                    domain=None)
+        t = targets.TARGETS["msdos622"]
+        self.assertEqual(install.network_choice(t, types.SimpleNamespace(**{**base, "vlan": 20}))["mode"], "none")
+        for opt, val in (("ip", "dhcp"), ("ip", "10.0.0.5"), ("dns", "1.1.1.1")):
+            with self.assertRaises(SystemExit) as e:
+                install.network_choice(t, types.SimpleNamespace(**{**base, opt: val}))
+            self.assertIn("configures no network", str(e.exception))
 
 
 def text_screen(text):
