@@ -29,6 +29,7 @@ on:
           - smp
           - stopa
           - solaris10
+          - solaris10-install
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"
@@ -93,10 +94,15 @@ jobs:
           if [ -f "$BENCH_DISK" ]; then
             bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
           fi
+          # The Solaris 10 install takes ~80 min, more than matrix.py's 3600 s per case
+          timeout=()
+          if [ "$MATRIX" = solaris10-install ]; then
+            timeout=(--timeout 9000)
+          fi
           docker run --rm --name "sparc-lab-${GITHUB_RUN_ID}" \
             -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "${bench[@]}" \
             --entrypoint python3 "$IMAGE" matrix.py "$MATRIX" --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" \
-            --bench "$BENCH_DISK"
+            --bench "$BENCH_DISK" "${timeout[@]}"
 
       # pve, install: VMs created through the API of a PVE node in a container (the e2e image with the
       # lab in it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py);
