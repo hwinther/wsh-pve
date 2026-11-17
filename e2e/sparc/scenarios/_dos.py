@@ -64,21 +64,35 @@ def at_prompt(m, timeout=120):
 def run(m, command, timeout=120):
     """Type a command at the prompt, wait for the next prompt, return the lines it printed (what is
     still on the screen: up to 23 lines; longer output belongs in a file)."""
+    # Type the command, wait until it is on the screen, and only then press Enter: the screen before
+    # Enter is never the screen after it, also when a command prints exactly what the previous one did
+    # (the same TYPE twice on a full, scrolled screen ends on the same screen and cursor).
+    type_text(m, command)
+    tail = command[-20:]
+    end = time.time() + 15
+    def typed(s):  # a long command wraps: the line above the cursor's is full and continues on it
+        return s.text_mode and (s.line(s.cursor[1] - 1) + s.cursor_line()).endswith(tail)
+
     before = m.vga_screen()
-    type_text(m, command + "\n")
+    while not typed(before) and time.time() < end:
+        time.sleep(0.2)
+        before = m.vga_screen()
+    type_text(m, "\n")
     end = time.time() + timeout
     while True:
         time.sleep(0.5)
         s = m.vga_screen()
         if s.text_mode and re.search(PROMPT, s.cursor_line(), re.M) and (
                 s.text != before.text or s.cursor != before.cursor):
+            row = s.cursor[1]
             # the command's own line: the last line that ends with what was typed
-            lines = [x.rstrip() for x in s.lines[:s.cursor[1]]]
+            lines = [x.rstrip() for x in s.lines[:row]]
             idx = max((i for i, x in enumerate(lines) if x.endswith(command)), default=-1)
             return "\n".join(lines[idx + 1:])
         m._check_alive()
         if time.time() > end:
-            raise lab.Timeout(f"{command!r}: no prompt within {timeout}s; screen:\n{s.text if s.text_mode else '-'}")
+            raise lab.Timeout(f"{command!r}: no prompt within {timeout}s (cursor {s.cursor}, {s.cols}x{s.rows}, "
+                              f"mode {s.mode}); screen:\n{s.text if s.text_mode else '-'}")
 
 
 def write_file(m, path, lines):
