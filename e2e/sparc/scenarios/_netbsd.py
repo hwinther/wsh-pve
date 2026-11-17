@@ -143,8 +143,8 @@ HALT_WAIT = 300  # s; a halt that powers off takes 10-20 s
 def power_off(m, v=None):
     """`sync; halt -p` and wait for the VM to end (OpenBIOS powers sun4u and sun4m off).
 
-    One first boot of netbsd111-sparc64 in four stopped after halt's SIGTERM (`syslogd: Exiting on
-    signal 15`) and never reached `syncing disks`. If the VM is still up after HALT_WAIT, a break
+    One first boot of netbsd111-sparc64 in five stopped after halt's SIGTERM (`syslogd: Exiting on
+    signal 15`) and never reached `syncing disks` (README.md, "NetBSD install targets"). If the VM is still up after HALT_WAIT, a break
     on the console enters NetBSD's kernel debugger, which records `ps` and the stack traces, and
     `reboot 0x808` (RB_HALT | RB_POWERDOWN: sync the disks, power off) ends it; metrics: halt_hung."""
     m.send("sync; halt -p\r")

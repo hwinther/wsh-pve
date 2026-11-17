@@ -356,6 +356,8 @@ TARGETS = {
         "nic": "hme0",
         "hostname": "netbsd111-sparc64",
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "minutes": 11,  # 10.1-11.2 min: install 6-7, first boot 2.5, --check 1.7
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
     "sol10-sun4u": {
         "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",
@@ -401,6 +403,8 @@ TARGETS = {
         "boot": "scsi3",
         "nic": "le0",
         "hostname": "netbsd111-sparc",
+        "minutes": 7,  # 6.6-6.8 min: install 3.5, first boot 2, --check 1
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
     "netbsd111-sparc-ss20": {
         **NETBSD_SCRIPTED,
@@ -414,6 +418,8 @@ TARGETS = {
         "boot": "scsi3",
         "nic": "le0",
         "hostname": "netbsd111-ss20",
+        "minutes": 7,  # 6.7-7.3 min: install 3.5, first boot 2, --check 1
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
 }
 
