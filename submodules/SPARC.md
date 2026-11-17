@@ -142,9 +142,9 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0006-sparc64-client-dont-define-a-forth-constant` | `11 constant forth` in `client.fs` hid the FORTH vocabulary word; `only forth also definitions` pushed `0x11` (generic code, applied to sparc64 only here) | as 0005 |
 | `0007-sparc64-fcode-consume-instance-in-defining-words` | FCode `b(value)`/`b(variable)`/`b(defer)`/`b(buffer:)` left the `instance` flag set; the next Forth `defer` became an instance word and crashed with no active package (generic code, applied to sparc64 only here) | as 0005 |
 | `0009-sparc64-name-upa-and-ebus-children-like-obp` | The sabre was `pci@1fe,0` and the ebus children `su@0`, `8042@0`, ...; OBP (and Solaris, which builds the same names and looks the console path up among them) has `pci@1f,0` and `su@14,3f8`. Solaris 10 never opened its console driver and its installer ignored all input on ttya. The root prints the UPA port id; the ebus node has its own two-cell space,offset `encode-unit`/`decode-unit` | not fixed; see `upstream/openbios-sparc64-node-names.md` |
-| `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not reported yet |
-| `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | not reported yet |
-| `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Untested, so named `.wip`: the Dockerfile only applies `*.patch` | — |
+| `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not fixed; see `upstream/openbios-sparc64-ide-tree.md` |
+| `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | as 0010 |
+| `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Resets at the `ok` prompt, but Solaris's `reboot` then hangs the VM, so it stays `.wip` (the Dockerfile only applies `*.patch`) | — |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1359,7 +1359,36 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   yet; that needs the installed system. QEMU writes the default MAC `52:54:00:12:34:56` into the
   sun4u IDPROM unless the NIC is the machine's onboard `-nic`. qemu-server and the lab add `sunhme`
   with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
-  the same thing on the wire. This was read in `hw/sparc64/sun4u.c`, not measured.
+  the same thing on the wire. Measured since (below).
+
+**Status on the published pve-qemu-kvm 11.1.3-2+wsh13 (2026-11-17).** QEMU and `openbios-sparc64`
+from the package as installed in the lab image (no own builds), Solaris 10 1/13 DVD, 1024 MB, a
+16 GB disk on `ide.0`, the DVD on `ide.1`, `sunhme` on user networking, serial console:
+
+- **Install:** 2 of 2 completed (`scenarios/solaris10-install-sparc64.py`), each about 80 minutes:
+  ~14 min to the end of the questions, ~61 min of package copying, then `Solaris 10 software
+  installation succeeded`, the boot archive and `syncing file systems... done`. No panic in these two.
+  Earlier, with the standalone QEMU patch and pre-release firmware, 2 of 3 attempts completed and one
+  panicked with `bad unknown trap at TL 1` (tt 0x45, `uata:ghd_intr`; the third was stopped by the
+  scenario, not counted). Counting all complete attempts: 4 of 5 installs completed.
+- **The installer's reboot:** ends with `panic - kernel: prom_reboot: reboot call returned!` (2 of 2).
+  The client-interface `boot` service only prints `BOOT` and returns.
+- **Installed disk:** first boot to `console login:` after 836 s (keyboard-layout question answered
+  with F2). After that, 376 s to `console login:` in the `solaris10` matrix. `format` lists `c0t0d0`,
+  `hme0` has 10.0.2.15 from DHCP, `ping 10.0.2.2` is `alive`, and `init 5` ends QEMU with exit code 0.
+  The `solaris10` matrix (installer start and installed disk) passes 2/2.
+- **0012 (reboot, still `.wip`):** firmware built from 0001-0011 + 0012 (`.src.txt` records the
+  tree). On the installed disk, `reboot` prints `syncing file systems... done` and `rebooting...`,
+  then nothing for 900 s: the VM hangs (1 of 1). `reset-all` at the `ok` prompt does reset the
+  machine (the banner comes back, 1 of 1). Resetting from inside the client interface call is what
+  fails; not traced further. So 0012 stays `.wip`.
+- **System MAC:** with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris's `hme0` shows `ether
+  52:54:0:12:34:56`. QEMU's sun4u writes the MAC of the onboard NIC into the IDPROM. The onboard NIC
+  is the first `-nic`/`-net nic` of the default model, created at PCI 01.1 on bus A. A NIC added with
+  `-device` (as qemu-server and the lab do) isn't seen at that point, so the IDPROM gets QEMU's
+  default `52:54:00:12:34:56`. With `-net nic,model=sunhme,macaddr=...` the NIC sits at a different
+  PCI path, and the installed system (whose `hme0` is the `-device` NIC on bus B) didn't configure
+  it. The IDPROM MAC there wasn't read, so that variant is untested.
 
 **Status with 0010-0011 (2026-11-17).** Firmware built from the committed patches 0001-0011 (build
 records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`:

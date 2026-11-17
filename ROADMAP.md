@@ -46,22 +46,21 @@ come after that, not before.
 
 Work that exists but is not merged. If this list is stale, check the open pull requests.
 
-1. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
-   extra. Patches 0003-0007 fix the virtual `available` list, the I-cache properties and the Forth
-   state at client start. 0009 names the sabre and the ebus devices like OBP, which gives Solaris
-   its serial console. With them Solaris 10 1/13 boots its DVD to the installer and takes input on
-   ttya. NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as before. With a standalone QEMU
-   patch for the cmd646 interrupt status latch and an experimental OBP-style IDE tree, the
-   interactive installer completes an install to the IDE disk (1 of 3 attempts; one intermittent
-   `bad unknown trap at TL 1` panic).
-   The package built from branch `feat/package-openbios-sparc64` (in review) installs this
-   `openbios-sparc64` (a new optional extra, checked and reported like the others) and carries the
-   cmd646 interrupt latch as `wsh/0021` with a qtest: from the package alone, Solaris 10 1/13
-   reaches its installer, takes input on ttya and attaches its IDE disk without the
-   `set_features` warning (lab matrix `solaris10`, needs the Sun DVD). Still to do:
-   - the IDE tree as OBP has it (`ide@3/disk@0,0`, `cdrom@2,0`) without breaking NetBSD's CD boot;
-     `compatible` on the drive nodes so the installed disk mounts root;
-   - the client-interface `boot` service (reboot), the intermittent install panic, `hme0` traffic;
+1. **Solaris on sun4u (OpenBIOS).** pve-qemu-kvm 11.1.3-2+wsh13 ships the patched
+   `openbios-sparc64` (patches 0003-0011: the virtual `available` list, the I-cache properties, the
+   Forth state at client start, OBP's node names for the console, OBP's IDE tree) and the cmd646
+   interrupt latch (`wsh/0021`). On that package Solaris 10 1/13 installs from its DVD to the IDE
+   disk with the text installer on ttya (2 of 2 installs, ~80 min each,
+   `scenarios/solaris10-install-sparc64.py`), and the installed disk boots to `console login:`, gets
+   a DHCP lease on `hme0` and powers off (`solaris10` matrix 2/2, needs the Sun DVD and the
+   installed disk on the lab host). NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as
+   before. Still to do:
+   - reboot: the installer's reboot and `reboot`/`init 6` return from the firmware; 0012
+     (`.wip`) resets at the `ok` prompt but hangs when Solaris calls it;
+   - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
+     MAC into the IDPROM);
+   - `install` through PVE (catalogue entry `sol10-sun4u`); the intermittent `bad unknown trap at
+     TL 1` panic seen once before the package (none in 2 installs on it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 2. **MCP server around the lab** (`e2e/sparc/mcp_server.py`, branch `feat/lab-mcp-server`). An
@@ -84,10 +83,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 1. **Idle with more than one CPU.** Each vCPU of a multiprocessor sparc32 guest spins at 100% of a
    host core even when Solaris is idle; a bounded halt in the multiprocessor idle loop is the
    follow-up (`submodules/SPARC.md`, "SMP").
-2. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
-   Solaris 10 1/13 reaches its installer and takes input on ttya; the cmd646 interrupt fix is in
-   the package built from `feat/package-openbios-sparc64`. Next: the IDE tree, then a reproducible install and a booting disk. QEMU's sun4u devices (CMD646 IDE, hme) are ones
-   Solaris drives, so a kernel that boots has a disk and a network.
+2. **Solaris on sun4u: the next walls.** Solaris 10 1/13 installs and boots on the published
+   package (see "In progress"). Next: a reboot that works from Solaris (0012 hangs), a per-VM system
+   MAC, then `install` through PVE.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
