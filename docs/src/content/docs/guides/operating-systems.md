@@ -34,7 +34,7 @@ Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC 
 
 <!-- TODO: link/publish the curated driver and patch collection referenced in the README -->
 
-MS-DOS 3 and later run on x86_64. Performance and compatibility improve significantly with a curated collection of drivers and patches.
+MS-DOS 3 and later run on x86_64. Performance and compatibility improve significantly with a curated collection of drivers and patches. The [DOS guide](/guides/dos/) has the recommended VM, installing MS-DOS 6.22 from floppies by hand or with the lab, and what DOS gets of the first megabyte.
 
 ## Windows
 

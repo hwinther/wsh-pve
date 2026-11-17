@@ -60,7 +60,8 @@ class Catalogue(unittest.TestCase):
         rx = re.compile(r"[a-z][a-z0-9-]{1,30}[a-z0-9]")  # PVE VM names and host names
         for name, t in targets.TARGETS.items():
             self.assertRegex(name, rx)
-            self.assertRegex(t["hostname"], rx)
+            if t["login"].get("password") is not False:  # DOS targets have no host name
+                self.assertRegex(t["hostname"], rx)
         self.assertEqual(len({n.lower() for n in targets.MEDIA}), len(targets.MEDIA), "file names unique")
         self.assertEqual(len({m["lab"] for m in targets.MEDIA.values()}), len(targets.MEDIA))
         for name, med in targets.MEDIA.items():
@@ -78,6 +79,8 @@ class Catalogue(unittest.TestCase):
         self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["cpu"], "TI-SuperSparc-50")
         for name, t in targets.TARGETS.items():
             p, disk = t["profile"], t["disk"]
+            if p.get("arch", "x86_64") not in ("sparc", "sparc64"):
+                continue  # x86 (DOS): tests/test_dos.py
             with self.subTest(target=name):
                 cpus = int(p.get("sockets", 1)) * int(p.get("cores", 1))
                 self.assertNotIn("cpu", p)
@@ -258,7 +261,9 @@ class Network(unittest.TestCase):
 
     def test_every_automated_target_says_what_it_supports(self):
         for name in targets.automated():
-            self.assertTrue(set(targets.TARGETS[name]["net_modes"]) <= {"static", "dhcp"}, name)
+            modes = targets.TARGETS[name]["net_modes"]
+            # "none": the guest configures no network (the DOS targets, tests/test_dos.py)
+            self.assertTrue(set(modes) <= {"static", "dhcp"} or modes == ["none"], name)
 
     def test_netmasks_by_classful_network(self):
         # Solaris 2.6 looks /etc/netmasks up by the class A/B/C network number

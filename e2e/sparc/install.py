@@ -74,6 +74,23 @@ def sha256(path):
     return h.hexdigest()
 
 
+class NoFloppyContent(InstallFailed):
+    pass
+
+
+def all_storage_content():
+    """{storage: set of content types} from /etc/pve/storage.cfg (via the API)."""
+    return {s["storage"]: set(s.get("content", "").split(",")) for s in pvesh_get("/storage") or []}
+
+
+def storage_content(storage):
+    """The content types of one storage, or None when the node can't say."""
+    try:
+        return all_storage_content().get(storage)
+    except InstallFailed:
+        return None
+
+
 def find_medium(name, storage=None, directory=None):
     """(volume ID or None, local path or None) of the medium `name`: on a PVE storage (its content of
     the medium's type) or, with `directory`, as `<dir>/<name>` or `<dir>/<lab path>`."""
@@ -83,6 +100,15 @@ def find_medium(name, storage=None, directory=None):
             if os.path.isfile(os.path.join(directory, rel)):
                 return None, os.path.join(directory, rel)
         return None, None
+    if med["content"] == "floppy":
+        types = storage_content(storage)
+        if types is not None and "floppy" not in types:
+            others = [s for s, t in all_storage_content().items() if "floppy" in t]
+            raise NoFloppyContent(
+                f"storage {storage} doesn't have the 'floppy' content type (it has {','.join(sorted(types))}): "
+                f"enable it with `pvesm set {storage} --content {','.join(sorted(types | {'floppy'}))}`"
+                + (f", or use --media-storage/--storage {' or '.join(others)}" if others else
+                   "; no storage on this node has it"))
     try:
         content = pvesh_get(f"/nodes/{node()}/storage/{storage}/content", content=med["content"])
     except InstallFailed as e:
@@ -99,9 +125,13 @@ def check_media(names, storage=None, directory=None, checksum=True):
     rows = []
     for name in names:
         med = targets.MEDIA[name]
-        volid, path = find_medium(name, storage, directory)
+        note = None
+        try:
+            volid, path = find_medium(name, storage, directory)
+        except NoFloppyContent as e:
+            volid, path, note = None, None, str(e)
         row = {"name": name, "volid": volid, "path": path, "content": med["content"], "size": None,
-               "sha256": None, "state": "missing", "ok": False}
+               "sha256": None, "state": "no floppy storage" if note else "missing", "ok": False, "note": note}
         if path:
             row["size"] = os.path.getsize(path)
             if row["size"] != med["size"]:
@@ -151,6 +181,14 @@ def network_choice(t, a):
     scenarios, the marker and the VM's notes. Refuses (SystemExit) what the target doesn't support
     rather than making a VM without a network."""
     modes = t.get("net_modes") or []
+    if modes == ["none"]:  # the guest configures no network (DOS): only the NIC's bridge and VLAN apply
+        given = [o for o in ("ip", "netmask", "gateway", "dns", "domain") if getattr(a, o, None)]
+        if given:
+            raise SystemExit(f"--{given[0]}: {a.target} configures no network in the guest")
+        if a.vlan is not None and not 1 <= a.vlan <= 4094:
+            raise SystemExit("--vlan takes a VLAN tag, 1-4094")
+        return {"mode": "none", "vlan": a.vlan, "bridge": a.bridge, "ip": None, "netmask": None, "gateway": None,
+                "dns": [], "domain": None}
     mode = "dhcp" if (a.ip or "").lower() == "dhcp" else "static"
     if mode not in modes:
         raise SystemExit(f"--ip {a.ip or DEFAULT_IP}: {a.target} supports {', '.join(modes) or 'no network settings'}"
@@ -194,6 +232,9 @@ def network_choice(t, a):
 
 def network_text(net, nic="le0"):
     """One line for the VM's notes and the summary."""
+    where = f"bridge {net['bridge']}" + (f", VLAN {net['vlan']}" if net["vlan"] else "")
+    if net["mode"] == "none":
+        return f"none configured in the guest (the NIC is on {where})"
     if net["mode"] == "dhcp":
         s = f"{nic} by DHCP"
         extra = ["router, name servers and host name from the DHCP server (host name unknown if it sends none)"]
@@ -207,6 +248,12 @@ def network_text(net, nic="le0"):
         extra.append(f"domain {net['domain']}")
     where = f"bridge {net['bridge']}" + (f", VLAN {net['vlan']}" if net["vlan"] else "")
     return f"{s}; {'; '.join(extra)} ({where})"
+
+
+def drive_volume(drive, vol):
+    """A medium's drive value for the VM config: CDs as media=cdrom, floppies read only (they are
+    shared reference media; a written image no longer matches its sha256)."""
+    return f"{vol},ro=1" if drive.startswith("floppy") else f"{vol},media=cdrom"
 
 
 def vm_params(t, a, volids, disk_image, disk=None):
@@ -223,7 +270,7 @@ def vm_params(t, a, volids, disk_image, disk=None):
     for med in t["media"]:
         if med.get("at", "start") == "start":
             vol = volids[med["name"]]
-            p[med["drive"]] = vol if med["drive"].startswith("floppy") else f"{vol},media=cdrom"
+            p[med["drive"]] = drive_volume(med["drive"], vol)
     p.update(vmid=a.vmid, name=a.name or a.target, tags="wsh-lab",
              description=f"wsh-lab install of {a.target} in progress (lab.py install)")
     return p
@@ -277,15 +324,42 @@ class MediaSwapper:
     """Changes media while an installer runs: for each (regex, drive, volume) in order, wait for the
     regex in the console output and then put the volume into the drive (lab.PveMachine.change_medium,
     i.e. `qm set`, live). Reads the serial output by cursor (Machine.serial_wait), so it doesn't move
-    the scenario's own expect() position. A framebuffer console (DOS) would need a screen-text source
-    instead; see README.md, "Install targets"."""
+    the scenario's own expect() position. A VM without a serial console (DOS) is followed on its VGA
+    text screen instead (_run_vga); see README.md, "DOS install targets"."""
 
-    def __init__(self, m, swaps):
+    def __init__(self, m, swaps, screen=None):
         self.m, self.swaps, self.done = m, list(swaps), []
         self.stop = threading.Event()
-        self.cursor = m.serial_cursor()  # only what the console prints from now on
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        # "vga": the prompts are on the VGA text screen (DOS), read by lab.Machine.vga_screen(); the
+        # default follows the serial console, or the screen when the VM has none
+        self.screen = screen or ("vga" if hasattr(m, "vga_screen") and not getattr(m, "ser", None) else "serial")
+        self.cursor = m.serial_cursor() if self.screen == "serial" else 0  # only what comes from now on
+        self.thread = threading.Thread(target=self._run_vga if self.screen == "vga" else self._run, daemon=True)
         self.thread.start()
+
+    def _run_vga(self, interval=0.5):
+        """The screen-text variant: a prompt is acted on when its regex matches the whole screen; the
+        next regex is only looked for once the previous one no longer matches (the installer has moved
+        on), so a prompt still on the screen is never acted on twice."""
+        previous = None
+        for pattern, drive, volume in self.swaps:
+            rx = re.compile(pattern, re.M)
+            while not self.stop.is_set():
+                try:
+                    s = self.m.vga_screen()
+                except Exception:  # the VM went away: the scenario reports it
+                    return
+                text = s.text if s.text_mode else ""
+                if previous and previous.search(text):
+                    pass  # the last prompt is still up
+                elif rx.search(text):
+                    self.m.change_medium(drive, volume)
+                    self.done.append((pattern, drive, volume))
+                    previous = rx
+                    break
+                else:
+                    previous = None
+                self.stop.wait(interval)
 
     def _run(self):
         cursor = self.cursor
@@ -312,15 +386,20 @@ class Scripted:
         # The installer always gets a static address (Solaris 2.6's has no DHCP choice); the first boot
         # turns it into DHCP, adds the netmask, the router and DNS (solaris-firstboot.py, NET_*)
         v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.net["ip"] or DEFAULT_IP}
-        swaps = [(med["at"], med["drive"], job.volids[med["name"]]) for med in t["media"]
-                 if med.get("at", "start") != "start"]
+        later = [(med["at"], med["drive"], drive_volume(med["drive"], job.volids[med["name"]]).removesuffix(",media=cdrom"))
+                 for med in t["media"] if med.get("at", "start") != "start"]
+        swaps = [s for s in later if s[0] != "scenario"]
+        # "at": "scenario": the scenario inserts them in this order itself (prompts that don't say
+        # which disk they want, e.g. FreeDOS's "Insert diskette containing file ...")
+        v["SWAPS"] = " ".join(f"{drive}={vol}" for at, drive, vol in later if at == "scenario")
         job.phase("install", t["install"]["scenario"], v, job.a.timeout or t["install"]["timeout"], swaps)
 
     def firstboot(self, job):
         t = job.target
         v = {**t["firstboot"].get("vars", {}), "ROOT_PASSWORD": job.root_password, "MARKER": job.marker(),
              "USER": job.a.user or "", "USER_PASSWORD": job.user_password if job.a.user else "",
-             "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", **net_vars(job)}
+             "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", **net_vars(job),
+             "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
         job.phase("firstboot", t["firstboot"]["scenario"], v, t["firstboot"]["timeout"])
 
     def check(self, job):
@@ -329,7 +408,7 @@ class Scripted:
         v = {**t["check"].get("vars", {}), "ROOT_PASSWORD": job.root_password,
              "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target; df -k; prtvtoc /dev/rdsk/c0t3d0s2;"
                          " ifconfig -a; netstat -rn",
-             "CHECK": rf"(?m)^target={re.escape(job.a.target)}$"}
+             "CHECK": rf"(?m)^target={re.escape(job.a.target)}$", "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
         if job.a.user:
             v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd"
         if job.a.data_disk:
@@ -440,19 +519,20 @@ class Job:
             f"{'Install started' if failed else 'Installed'} {self.started:%Y-%m-%d %H:%M} UTC by lab.py install"
             " (wsh-pve e2e/sparc)",
             "",
-            f"Login: {login['user']} / {self.root_password}",
+            login_line(login, self.root_password),
         ]
         if a.user:
             lines.append(f"User: {a.user} / {self.user_password}")
+        if login.get("password") is not False:
+            lines.append("These passwords are public lab defaults (targets.py): change them before this VM is"
+                         " reachable from anywhere untrusted.")
         lines += [
-            "These passwords are public lab defaults (targets.py): change them before this VM is reachable"
-            " from anywhere untrusted.",
             f"Console: {login['console'].replace('<vmid>', str(a.vmid))}",
             f"Hostname: {self.hostname}",
             f"Network: {network_text(self.net)}",
             f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on /data"
                                          if a.data_disk else ""),
-            "Marker: /etc/wsh-lab-target",
+            f"Marker: {t.get('marker', '/etc/wsh-lab-target')}",
             "Media: " + ", ".join(f"{m['name']} (sha256 {(m['sha256'] or 'unchecked')[:16]}...)" for m in self.media),
         ]
         return "\n".join(lines)
@@ -500,6 +580,8 @@ def cmd_install(a):
         for row in job.media:
             job.log(f"medium {row['name']}: {row['state']}" + (f" ({row['volid']})" if row["volid"] else ""))
         bad = [r for r in job.media if not r["ok"]]
+        if any(r["note"] for r in bad):
+            raise InstallFailed(next(r["note"] for r in bad if r["note"]))
         if any(r["state"] == "missing" for r in bad):
             raise InstallFailed("missing media: " + ", ".join(f"{a.media_storage}:{r['content']}/{r['name']}"
                                                              for r in bad if r["state"] == "missing"))
@@ -542,15 +624,24 @@ def cmd_install(a):
     return result["code"]
 
 
+def login_line(login, password):
+    """The login line of the VM's notes; a DOS target has no login at all."""
+    if login.get("password") is False:
+        return "Login: none (no user and no password: the guest boots to its prompt)"
+    return f"Login: {login['user']} / {password}"
+
+
 def summary(job, result):
     a, t = job.a, job.target
     lines = ["", f"== lab.py install {a.target} -> VM {a.vmid}: {result['status']} in {result['elapsed'] / 60:.1f} min"]
     lines += [f"   {p['phase']:9} {p['elapsed']:7.0f}s  {p['status'][:100]}" for p in result["phases"]]
     if result["code"] == 0:
-        lines += [f"   login:    {t['login']['user']} / {job.root_password}"
-                  + (f", {a.user} / {job.user_password}" if a.user else "") + "  (public lab defaults)",
+        lines += [("   login:    " + login_line(t["login"], job.root_password)[7:]
+                   if t["login"].get("password") is False else
+                   f"   login:    {t['login']['user']} / {job.root_password}"
+                   + (f", {a.user} / {job.user_password}" if a.user else "") + "  (public lab defaults)"),
                   f"   console:  {t['login']['console'].replace('<vmid>', a.vmid)}",
-                  f"   hostname: {job.hostname}; marker /etc/wsh-lab-target",
+                  f"   hostname: {job.hostname}; marker {t.get('marker', '/etc/wsh-lab-target')}",
                   f"   network:  {network_text(job.net)}",
                   f"   start:    qm start {a.vmid}" + ("  (a template: clone it first)" if a.template else "")]
     lines.append(f"   evidence: {a.out}")
@@ -596,6 +687,9 @@ def cmd_media(a):
             bad += t["status"] == "automated" and not r["ok"]
             where_found = r["volid"] or r["path"] or f"not in {where}"
             print(f"  {r['state']:17} {med['name']:46} {exp['size']:>11}  {exp['sha256']}  {where_found}")
+    notes = sorted({r["note"] for r in seen.values() if r.get("note")})
+    for n in notes:
+        print(f"\n{n}")
     return 1 if bad else 0
 
 
@@ -628,6 +722,7 @@ def add_commands(sub):
     i.add_argument("--keep-on-failure", action="store_true", help="keep (stopped) instead of destroying a failed VM")
     i.add_argument("--allow-untested-media", action="store_true", help="accept media with another checksum")
     i.add_argument("--timeout", type=int, help="seconds the install phase may take (the target's)")
+    i.add_argument("--keyboard", help="DOS targets: the keyboard layout KEYB loads, e.g. no (us: none)")
     i.add_argument("--out", help="evidence directory (/var/lib/wsh-lab/installs/<target>-<vmid>-<time>)")
     t = sub.add_parser("targets", help="list the install targets")
     t.add_argument("--json", action="store_true")

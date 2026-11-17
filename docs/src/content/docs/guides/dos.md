@@ -1,0 +1,170 @@
+---
+title: DOS under Proxmox VE
+description: MS-DOS 6.22 and FreeDOS in a Proxmox VE VM with the WSH packages, from floppies by hand or with the lab, and what DOS gets of the first megabyte under SeaBIOS
+---
+
+MS-DOS 6.22 installs from its three Setup floppies into an ordinary x86 VM. The WSH packages add
+what makes that comfortable: floppy images as a storage content type, two floppy drives per VM, the
+floppy drive in the boot order and live disk swaps (see [Floppy drives](/reference/floppy/)). This
+page is the recommended VM, the install by hand and with the lab, and what was measured about the
+memory between 640K and 1 MB.
+
+## The VM
+
+| Option | Value | Why |
+| --- | --- | --- |
+| Machine | `pc` (i440fx) | `isapc` would have no PCI and no option ROMs, but qemu-server doesn't accept it (`machine: isapc` fails the format check). |
+| CPU | `pentium` (`486` works too) | Period plausible for DOS 6.22 and enough for HIMEM.SYS and EMM386.EXE (they need a 386). |
+| KVM | off (`kvm: 0`) for the lab, on is fine | TCG gives the same timing every run; DOS doesn't need the speed. DOS busy-waits either way: idle the guest with a DOS idle driver if host CPU matters. |
+| Memory | 32 MB, `balloon: 0` | HIMEM.SYS of DOS 6.22 handles up to 64 MB; DOS has no balloon driver. |
+| USB tablet | off (`tablet: 0`) | DOS has no USB mouse driver. qemu-server adds the UHCI controller anyway; it has no option ROM. |
+| Display | `vga: std` | `cirrus` and `vmware` measured the same for upper memory (each VGA BIOS takes C0000-C9FFF). |
+| Disk | IDE, 1 GiB, raw | One FAT16 partition; SeaBIOS translates the geometry for disks above 504 MB. |
+| Floppy | `floppy0` with Disk 1, `ro=1` | Read only: the images are shared reference media, and a written image no longer matches its checksum. |
+| Boot order | `order=floppy0;ide0` | The floppy first while installing; SETUP's restart boots Disk 1 again. |
+| NIC | `ne2k_pci` (unused by the install) | A DOS packet driver exists (RTL8029). Its iPXE option ROM costs 4K of upper memory (below). `ne2k_isa` would cost none but doesn't start, see "Known issues". |
+
+The storage that holds the floppies needs the **Floppy image** content type (it is off on every
+storage until enabled; [Floppy drives](/reference/floppy/)):
+
+```sh
+pvesm set local --content iso,vztmpl,backup,floppy     # the whole list: it replaces the current one
+qm create 130 --name msdos622 --ostype other --machine pc --cpu pentium --kvm 0 --memory 32 --balloon 0 \
+  --tablet 0 --vga std --net0 ne2k_pci,bridge=vmbr0 --ide0 local:1,format=raw \
+  --floppy0 local:floppy/msdos622-disk1.img,ro=1 --boot 'order=floppy0;ide0'
+```
+
+## Installing by hand
+
+Start the VM and open its console. SETUP offers to configure the unallocated disk space (it
+partitions, then asks to restart with Disk 1 still in A:), formats C:, confirms date, country and
+keyboard, takes `C:\DOS`, and asks for Setup Disk #2 and #3. Swap a disk on the running VM in its
+**Hardware** panel or with `qm set 130 --floppy0 local:floppy/msdos622-disk2.img,ro=1`, then press
+ENTER. When SETUP asks for the floppy to be removed, `qm set 130 --floppy0 none`, ENTER, and the VM
+boots from C:. Then `qm set 130 --boot order=ide0`. Under TCG the whole install takes under a minute.
+
+## Installing with the lab
+
+[Lab install targets](/guides/lab-install/) has the target `msdos622`: it checks the three floppies
+by sha256, creates the VM above through the API, drives SETUP on the VGA text screen (read exactly
+from the text buffer, not by OCR), swaps the disks when SETUP asks, writes a known `CONFIG.SYS` and
+`AUTOEXEC.BAT` (HIMEM, `DOS=HIGH`, no SMARTDRV) and the marker `C:\WSHLAB.TXT`, and with `--check`
+boots once more and checks `VER`, the marker and `MEM`:
+
+```sh
+wsh-lab install msdos622 --vmid 130 --check                  # ~4 min
+wsh-lab install msdos622 --vmid 131 --check --keyboard no    # adds KEYB NO to AUTOEXEC.BAT
+```
+
+DOS has no login: the VM's notes say so instead of a password. `freedos14` is the same for FreeDOS 1.4
+from its Floppy Edition (seven disks), which is also what the CI test installs.
+
+## The first megabyte
+
+What DOS 6.22 sees between 640K and 1 MB in this VM, measured with `MEM /D`, `EMM386` and UMASCAN
+(a 1993 PC Magazine tool that maps 640K-1M in 2K cells), with SeaBIOS 1.17.0 as shipped in
+pve-qemu-kvm 11.1, TCG, 32 MB. SeaBIOS's debug log gave the ROM addresses and the free gap.
+
+**Layout of a stock VM** (std VGA, ne2k_pci):
+
+| Range | What | Writable |
+| --- | --- | --- |
+| C0000-C9FFF | VGA BIOS (40K) | no |
+| CA000-CAFFF | the NIC's iPXE ROM (4K after it shrinks itself) | no |
+| CB000-CD7FF | `kvmvapic.bin` (10K, QEMU's APIC helper ROM, always loaded) | yes |
+| CD800-E8FFF | free, zero-filled, read only: SeaBIOS's "Space available for UMB" (110K) | no |
+| E9000-EFFFF | SeaBIOS's own runtime data (UMASCAN sees E8000-EFFFF as RAM) | **yes** |
+| F0000-FFFFF | SeaBIOS | no |
+
+**CONFIG.SYS on the stock VM** (no driver loaded high, so "upper memory" is what DOS could use):
+
+| CONFIG.SYS | Conventional free | Upper memory (UMB) | Largest UMB | DOS usable |
+| --- | --- | --- | --- | --- |
+| none | 575K | 0 | 0 | yes |
+| `HIMEM.SYS`, `DOS=HIGH` | 620K | 0 | 0 | yes |
+| + `EMM386.EXE NOEMS`, `DOS=HIGH,UMB` | 617K | 98K | 98K, one block from CF4A | yes |
+| + `EMM386.EXE NOEMS HIGHSCAN` | 617K | 98K | 98K | yes |
+| + `EMM386.EXE NOEMS I=CE00-E8FF` (the gap) | 617K | 102K | 102K | yes |
+| + `EMM386.EXE RAM` | 617K | 34K | 34K; 64K EMS page frame at D800 | yes |
+| + `EMM386.EXE RAM I=CE00-E8FF` | 617K | 102K | 102K; no page frame reported | yes |
+| + `EMM386.EXE NOEMS I=CE00-EFFF` | - | - | - | **no**: boots, then the keyboard is dead |
+
+**VM variants** (EMM386 NOEMS, `DOS=HIGH,UMB`; HIMEM only gives 620K conventional in every variant):
+
+| VM | Option ROMs (SeaBIOS) | Free gap | UMB, default scan | UMB, `I=` the gap | Needs `args:` |
+| --- | --- | --- | --- | --- | --- |
+| stock (std VGA, ne2k_pci) | VGA C0000, NIC CA000, vapic CB000 | 110K | 98K | 102K | no |
+| `vga: cirrus` / `vga: vmware` | the same | 110K | 98K | 102K | no |
+| no NIC | VGA, vapic | 114K | 102K | 106K | no |
+| `-global ne2k_pci.romfile=` | VGA, vapic | 114K | 102K | 106K | yes |
+| no NIC, `-global apic-common.vapic=off` | VGA only | 124K | 114K | **118K** | yes |
+| dummy ROM 4K | + CD800 | 106K | 94K | 98K | yes |
+| dummy ROM 32K | + CD800 | 78K | 66K | 70K | yes |
+| dummy ROM 100K (valid) | + CD800 | 10K | 98K (EMM386 maps over it) | 102K | yes |
+| the owner's file (text, not a ROM) | none added | 110K | 98K | 102K | yes |
+
+Every UMB was one contiguous block. Conventional memory is 617K with EMM386 loaded and nothing
+moved high; loading drivers high (`DEVICEHIGH`, `LOADHIGH`) is what the UMB is for.
+
+**Recommended:**
+
+- Maximum conventional memory with nothing to load high: `HIMEM.SYS` and `DOS=HIGH` (620K).
+- Maximum contiguous UMB with plain PVE options: no NIC (or a NIC only when needed), and
+
+  ```text
+  DEVICE=C:\DOS\HIMEM.SYS
+  DEVICE=C:\DOS\EMM386.EXE NOEMS I=CD00-E8FF
+  DOS=HIGH,UMB
+  ```
+
+  for 106K in one block (102K without the `I=`). With a NIC the range starts at CE00 (102K).
+- More needs `args:` (root only): `-global apic-common.vapic=off` frees the 10K of QEMU's vapic ROM,
+  for 118K with `I=CA00-E8FF`. Under KVM the device is `kvm-apic`; that variant was measured under
+  TCG only.
+- The range to include is the free gap SeaBIOS reports: start one 4K page after the last ROM, end
+  at E8FF. Never past E8FF: from E9000 on is SeaBIOS's data.
+
+## The dummy option ROM
+
+An old qemu-devel thread ("memory problem with qemu/seabios", 2012) suggested a 100K dummy option
+ROM (`-option-rom dummy.rom`) for a program that misbehaved because SeaBIOS 1.7 left the upper memory
+area writable. SeaBIOS changed in 2013 (1.7.4): unused upper memory is read only now, and only its
+own data at the top of the E segment stays writable.
+
+- **The original command writes no option ROM under Python 3.**
+  `python3 -c 'import sys; sys.stdout.write("\x55\xaa\xc8\xcb\x6e" + "\x00"*(100*1024 - 5))'`
+  writes text: Python 3 encodes `"\xaa"` as UTF-8, so the file is 102403 bytes starting
+  `55 C2 AA C3 88 C3 8B 6E` and has no `55 AA` signature. SeaBIOS ignores it, so the VM is exactly a
+  stock one (measured: the same gap and the same UMB as without it).
+- **Written as bytes it is valid** (`C8` = 200 blocks of 512 bytes, `CB` = RETF as the init entry,
+  `6E` makes the checksum zero):
+
+  ```sh
+  python3 -c 'import sys; sys.stdout.buffer.write(b"\x55\xaa\xc8\xcb\x6e" + b"\x00"*(100*1024 - 5))' > dummy.rom
+  ```
+
+  `e2e/sparc/dos_tools.py rom --kb 32 --out dummy32k.rom` writes one of any size with the checksum.
+- **A valid dummy ROM never helps.** SeaBIOS puts it right after the other ROMs, inside the free
+  gap, and write-protects it like them. Up to 64K (size byte below 0x80) EMM386 recognises it as a
+  ROM and the UMB shrinks by exactly its size: 4K gave 94K instead of 98K, 32K gave 66K. At 100K
+  (size byte 0xC8) neither takes it for a ROM (UMASCAN's source sign-extends the size byte; EMM386
+  behaves the same, by measurement) and EMM386 maps its own RAM over it: the UMB is the stock 98K, as if the ROM weren't there. It makes
+  no other area read only or more contiguous, and it doesn't protect SeaBIOS's writable data, which
+  is above the gap.
+
+## A possible feature
+
+The only gains beyond plain options come from dropping ROMs: the NIC's (4K) and QEMU's vapic ROM
+(10K). A per-VM choice such as "legacy BIOS memory layout" in qemu-server could add
+`-global <nic>.romfile=` and `vapic=off` without an `args:` line, and the UI could show the free gap
+SeaBIOS will leave. Not built; a fixed `ne2k_isa` (no ROM at all) would make the NIC part moot.
+
+## Known issues
+
+- **`ne2k_isa` doesn't start.** qemu-server offers the model but puts the ISA card on the PCI bus:
+  `Device 'ne2k_isa' can't go on PCI bus`. Until that is fixed, use `ne2k_pci` (4K of option ROM) or
+  no NIC.
+- **No per-NIC ROM option in PVE.** Removing the NIC's option ROM needs
+  `args: -global ne2k_pci.romfile=` (root only); it gives the same 4K as removing the NIC.
+- **EMM386 must not include the top of the E segment.** `I=` up to EFFF lets DOS boot, then the
+  keyboard is dead: SeaBIOS's data at E9000-EFFFF was handed out as UMB. Stay within the gap.

@@ -6,7 +6,7 @@ repository): never reuse a real secret here or with --root-password, and don't e
 untrusted network without changing the password.
 
 MEDIA: the tested media by expected file name, the name they must have on the node's storage
-(`<storage>:iso/<name>`, later `<storage>:floppy/<name>`). The names are the ones the media have on
+(`<storage>:iso/<name>` or `<storage>:floppy/<name>`). The names are the ones the media have on
 the lab host and in the docs (`lab` is the path under the lab host's media directory, for the `pve`
 matrix, which links them into the test node's storage). size and sha256 are of the medium that was
 tested; `lab.py install` refuses a medium with another checksum unless --allow-untested-media. No medium
@@ -26,19 +26,21 @@ TARGETS: per target
              was tested with, the first the default (`lab.py install --disk-size` takes only these)
   media      [{name, drive, ...}]: the media in MEDIA, each with the drive it goes into at the start
              (`at: "start"`, default) or, for multi-volume installs, `at: <regex>`: inserted into
-             `drive` when the installer's console shows that prompt (install.MediaSwapper)
+             `drive` when the installer's console shows that prompt (install.MediaSwapper), or `at: "scenario"`:
+             handed to the install scenario in order (SWAPS) for prompts that name no disk
   method     "scripted": the installer is answered on the console by `install` (a scenario, with
              `vars`), then `firstboot` (a scenario) sets the root password, writes the marker file
              /etc/wsh-lab-target and optionally adds a user, and powers off. "unattended" (the
-             installer's own answer file on a second medium) and floppy-sequence installs are
-             designed (README.md, "Install targets") but not implemented.
+             installer's own answer file on a second medium) is
+             designed (README.md, "Install targets") but not implemented. DOS targets: targets_dos.py.
   boot       the boot order after the install (the media are ejected first)
   login      user and console of the finished VM; the password is DEFAULT_ROOT_PASSWORD unless
              --root-password says otherwise
   hostname   set by the installer
   network    how the guest's network is set up (the VM's notes say what one install got)
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
-             --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others
+             --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
+             ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
 """
@@ -317,3 +319,10 @@ def problems():
         if len(med["sha256"]) != 64 or not med["size"]:
             out.append(f"{fname}: size and sha256 of the tested medium")
     return out
+
+
+# The x86 retro targets (DOS from floppies) live in targets_dos.py.
+import targets_dos  # noqa: E402
+
+MEDIA.update(targets_dos.MEDIA)
+TARGETS.update(targets_dos.TARGETS)

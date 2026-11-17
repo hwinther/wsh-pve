@@ -261,6 +261,7 @@ class AlpineGuest(unittest.TestCase):
             if shutil.which("tesseract"):
                 txt = (await call("screen_text", vm="alpine", source="display")).structured_content
                 self.assertRegex(txt["text"], r"(?i)login|alpine|localhost")
+                self.assertIn(txt["method"], ("vga-text", "ocr"))  # the text buffer while in a text mode
 
             # refused: a VM that isn't on the allow-list, PVE VMID or name
             for vm in ("100", "other"):

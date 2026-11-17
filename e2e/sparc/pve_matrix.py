@@ -130,16 +130,29 @@ def destroy_vm(vmid):
     subprocess.run(["qm", "destroy", vmid, "--purge", "--destroy-unreferenced-disks", "1"], capture_output=True)
 
 
+def enable_floppy_content(storage="local"):
+    """Add the `floppy` content type to the test node's storage (the e2e node's `local` lacks it, as
+    every new storage does): floppy volumes are invisible to the API without it."""
+    content = next((s.get("content", "") for s in json.loads(sh("pvesh", "get", "/storage", "--output-format", "json"))
+                    if s["storage"] == storage), "")
+    types = set(filter(None, content.split(",")))
+    if "floppy" not in types:
+        sh("pvesm", "set", storage, "--content", ",".join(sorted(types | {"floppy"})))
+
+
 def link_media(target, a):
-    """The target's media into the `local` storage under their expected names, as links to --iso."""
+    """The target's media into the `local` storage under their expected names, as links to --iso (CDs)
+    or --floppy (floppy images)."""
     for med in targets.TARGETS[target]["media"]:
         m = targets.MEDIA[med["name"]]
+        if m["content"] == "floppy":
+            enable_floppy_content()
         d = ISO_DIR if m["content"] == "iso" else os.path.join(os.path.dirname(ISO_DIR), "floppy")
         os.makedirs(d, exist_ok=True)
         link = os.path.join(d, med["name"])
         if os.path.lexists(link):
             os.unlink(link)
-        os.symlink(os.path.join(a.iso, m["lab"]), link)
+        os.symlink(os.path.join(a.iso if m["content"] == "iso" else a.floppy, m["lab"]), link)
 
 
 def run_step(name, label, out, a, cmd, timeout=None):
@@ -208,6 +221,7 @@ def main():
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
     p.add_argument("--disks", default="/srv/sparc/disks", help="disk templates (read only)")
     p.add_argument("--iso", default="/mnt/sparc/iso", help="install CDs (read only)")
+    p.add_argument("--floppy", default="/mnt/sparc/floppy", help="install floppies (read only)")
     p.add_argument("--bench", default="/mnt/sparc/disks/bench-sol26.raw",
                    help="the bench disk (e2e/sparc/README.md, \"The bench disk\"; read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per scenario")

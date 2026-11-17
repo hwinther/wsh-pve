@@ -335,7 +335,7 @@ class PveTarget:
 # --- QEMUs the lab runs (`lab.py serve`) ------------------------------------------------------------
 
 # The Machine methods the tools call, the same for both kinds of VM (lab.py serve would take any).
-OPS = {"screendump", "fb_type", "fb_key", "send", "key", "screen_text", "serial_since", "serial_wait",
+OPS = {"screendump", "vga_text", "fb_type", "fb_key", "send", "key", "screen_text", "serial_since", "serial_wait",
            "serial_cursor", "status", "reset", "hmp", "stop"}
 
 
@@ -591,21 +591,29 @@ def build(srv):
 
     def screen_text(vm: Vm, source: ScreenSource = "auto", if_changed_since: SinceId = None) -> dict[str, Any]:
         """The screen as text. On the serial terminal it is exact (but only shows what arrived while this
-        server held the console); on a framebuffer it is OCR: good for text consoles (VGA text mode,
-        OpenBIOS/Solaris console on cg3/tcx), poor for GUIs. Returns screen_id for if_changed_since."""
+        server held the console); on an x86 VM in a VGA text mode (DOS, a BIOS, a Linux text console) it
+        is the VGA text buffer, exact; on any other framebuffer it is OCR: good for text consoles
+        (OpenBIOS/Solaris on cg3/tcx), poor for GUIs. `method` says which. Returns screen_id for
+        if_changed_since."""
         t = srv.target(vm)
         src = source if source != "auto" else ("display" if t.has_display() else "terminal")
         if src == "terminal":
             t.attach_serial()
             text = t.call("screen_text")
             sid = hashlib.sha256(text.encode()).hexdigest()[:16]
-        else:
-            png = t.screendump()
-            sid = png_info(png)[1]
-            text = None if if_changed_since == sid else ocr_image(png)
+        method = "terminal"
+        if src == "display":
+            text = vga_text(t)
+            if text is not None:
+                method, sid = "vga-text", hashlib.sha256(text.encode()).hexdigest()[:16]
+            else:
+                png = t.screendump()
+                sid = png_info(png)[1]
+                method, text = "ocr", None if if_changed_since == sid else ocr_image(png)
         if if_changed_since and if_changed_since == sid:
-            return {"vm": t.id, "source": src, "screen_id": sid, "unchanged": True}
-        return {"vm": t.id, "source": src, "screen_id": sid, "unchanged": False, "text": clean(text)}
+            return {"vm": t.id, "source": src, "method": method, "screen_id": sid, "unchanged": True}
+        return {"vm": t.id, "source": src, "method": method, "screen_id": sid, "unchanged": False,
+                "text": clean(text)}
 
     def serial_read(vm: Vm, cursor: Cursor = None,
                     max_chars: Annotated[int, Field(ge=1, le=20000)] = 4000) -> dict[str, Any]:
@@ -743,6 +751,18 @@ def build(srv):
         add(hmp, danger, "QEMU monitor command")
 
     return mcp
+
+
+def vga_text(t):
+    """The VGA text screen of an x86 VM (lab.Machine.vga_text, the text buffer through QMP), or None in
+    a graphics mode, on other architectures or when it can't be read: then OCR it is."""
+    if t.info().get("arch") not in ("x86_64", "i386", "kvm"):
+        return None
+    try:
+        text = t.call("vga_text", False)
+    except Exception:
+        return None
+    return text or None
 
 
 def cursor_now(t):

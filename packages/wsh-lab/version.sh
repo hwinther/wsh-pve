@@ -19,6 +19,10 @@ e2e/sparc/lab.py
 e2e/sparc/recording.py
 e2e/sparc/install.py
 e2e/sparc/targets.py
+e2e/sparc/targets_dos.py
+e2e/sparc/vgatext.py
+e2e/sparc/dos_tools.py
+e2e/sparc/dos_mem.py
 e2e/sparc/sunlabel.py
 e2e/sparc/mcp_server.py
 e2e/sparc/scenarios

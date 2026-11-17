@@ -69,6 +69,7 @@ jobs:
       DISKS_DIR: ${{ inputs.disks_dir || '/srv/sparc/disks' }}
       RUN_DIR: ${{ inputs.runs_dir || '/mnt/sparc/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
       BENCH_DISK: ${{ inputs.bench_disk || '/mnt/sparc/disks/bench-sol26.raw' }}
+      FLOPPY_DIR: /mnt/sparc/floppy
       IMAGE: wsh-sparc-lab:gh-${{ github.run_id }}
     steps:
       - name: Checkout
@@ -116,6 +117,10 @@ jobs:
           if [ -f "$BENCH_DISK" ]; then
             bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
           fi
+          # The install floppies (the DOS targets), only when the directory exists
+          if [ -d "$FLOPPY_DIR" ]; then
+            bench+=(-v "$FLOPPY_DIR:$FLOPPY_DIR:ro")
+          fi
           # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
           docker run -d --name "sparc-lab-${GITHUB_RUN_ID}" --hostname pve --privileged \
             --tmpfs /run --tmpfs /run/lock \
@@ -125,7 +130,7 @@ jobs:
             sleep 5
           done
           docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
-            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK"
+            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK" --floppy "$FLOPPY_DIR"
 
       - name: Summary
         if: ${{ !cancelled() }}

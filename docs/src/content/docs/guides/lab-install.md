@@ -23,6 +23,13 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
+| `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
+
+The DOS targets are driven on the VGA text screen (read exactly from the text buffer), swap the
+floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS: HIMEM, `DOS=HIGH`,
+no SMARTDRV) and the marker `C:\WSHLAB.TXT`; `--keyboard no` adds `KEYB NO`. The [DOS
+guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Both end with the host name of the target (`sol26-ss5`, `sol26-ss20`), `le0` at 10.0.2.15/24
@@ -49,9 +56,23 @@ never part of this project.
 
 The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1, 7, 8,
 9, SunOS 4.1.4, NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
-Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage. Floppy images (for
-the DOS targets planned later) will go on a storage with the **Floppy image** content type, under
-`template/floppy/`.
+Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
+
+The DOS targets' floppy images go on a storage with the **Floppy image** content type (no storage
+has it until it is enabled: `pvesm set local --content iso,vztmpl,backup,floppy`, the whole list),
+through its **Floppy Images** tab or into `template/floppy/`. `lab.py media` says when the storage
+lacks the content type. The install attaches them read only. Microsoft's floppies are never part of
+this project; FreeDOS is freely redistributable (`FD14-FloppyEdition.zip`, the `144m/` images).
+
+| File name | Size (bytes) | sha256 |
+| --- | --- | --- |
+| `msdos622-disk1.img` | 1474560 | `b88030401122d234ea6aafba3cfed7de2b7b1782700a67be5498edca6f9fec5d` |
+| `msdos622-disk2.img` | 1474560 | `e1d48a415495a17d65316d5328a91d7df0910fb1e42b0b07e7dbf8a4b4df305a` |
+| `msdos622-disk3.img` | 1474560 | `52a3b4e7f5973c38f2517dbb20426bf5c8bd62f202e84a85d3d7283401d5e63c` |
+| `msdos622-supp.img` (Supplemental Disk, not used by the install) | 1474560 | `774ea0611b5602133f7719339294eb6936d1256bb534733ecdd9c9de47e57090` |
+
+The FreeDOS images (`freedos14-boot.img` = `x86BOOT.img`, `freedos14-diskN.img` = `x86DSK0N.img`)
+and their checksums are in `e2e/sparc/targets_dos.py`.
 
 Check what a node has:
 
@@ -102,7 +123,7 @@ hash-checked dependencies:
 uv venv /opt/wsh-lab --python /usr/bin/python3
 uv pip install --python /opt/wsh-lab/bin/python --require-hashes -r e2e/sparc/lab-requirements.txt
 install -d /opt/wsh-lab/lab/scenarios
-install -m 644 e2e/sparc/{lab,recording,install,targets,sunlabel}.py /opt/wsh-lab/lab/
+install -m 644 e2e/sparc/{lab,recording,install,targets,targets_dos,vgatext,sunlabel}.py /opt/wsh-lab/lab/
 install -m 644 e2e/sparc/scenarios/*.py /opt/wsh-lab/lab/scenarios/
 alias wsh-lab='/opt/wsh-lab/bin/python /opt/wsh-lab/lab/lab.py'
 ```

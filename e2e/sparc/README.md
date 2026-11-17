@@ -346,47 +346,84 @@ and `check`, each a scenario run against the VM:
    files) and attaches it as a second medium before the installer starts; it fits installers that
    look for an answer file on removable media (Windows' `autounattend.xml` on a floppy or CD, Debian
    preseed on a second CD).
-3. **Media swapping (primitive implemented, not exercised by a target yet):** a medium in `media`
-   with `at: <regex>` is inserted into its `drive` when the installer prints that prompt:
-   `install.MediaSwapper` follows the serial output by cursor (`Machine.serial_wait`, so the
-   scenario's own `expect()` position doesn't move) and calls `PveMachine.change_medium(drive,
-   volume)`, i.e. `qm set <vmid> --scsi6 <volume>,media=cdrom` (or `--floppy0 <volume>`), which PVE
-   applies live. `sol8-ss20` lists its three CDs that way; `tests/test_targets.py` checks the order
-   and that each prompt is acted on once.
+3. **Media swapping (used by `msdos622`):** a medium in `media` with `at: <regex>` is inserted into
+   its `drive` when the installer shows that prompt: `install.MediaSwapper` follows the serial output
+   by cursor (`Machine.serial_wait`, so the scenario's own `expect()` position doesn't move) or, for a
+   VM without a serial console, the VGA text screen (a prompt is acted on once; the next regex is
+   looked for only after the previous one has left the screen), and calls
+   `PveMachine.change_medium(drive, volume)`, i.e. `qm set <vmid> --scsi6 <volume>,media=cdrom` (or
+   `--floppy0 <volume>,ro=1`), which PVE applies live. With `at: "scenario"` the media are handed to
+   the scenario in order as `SWAPS` instead, for prompts that don't say which disk they want
+   (FreeDOS: "Insert diskette containing file A:\FREEDOS.024"). `sol8-ss20` lists its three CDs with
+   regexes; `tests/test_targets.py` and `tests/test_dos.py` check the order and that each prompt is
+   acted on once.
 
-### DOS and other floppy installs (design)
+### DOS install targets
 
-What a DOS target needs and where it fits:
+`msdos622` (MS-DOS 6.22 from the three Setup floppies) and `freedos14` (FreeDOS 1.4, Floppy Edition)
+are in `targets_dos.py`, merged into `targets.py`. The user guide is
+`docs/src/content/docs/guides/dos.md` (the VM, the install by hand and with the lab, the memory
+findings).
 
-- **Media:** a boot floppy and a sequence of install floppies, each in `MEDIA` with `content:
-  "floppy"`, an expected name on a storage with the `floppy` content type (`local:floppy/<name>`),
-  size and sha256. The target lists them as `{"name": ..., "drive": "floppy0"}` (the boot floppy, at
-  the start) and `{"name": ..., "drive": "floppy0", "at": "Insert disk 2|Please insert"}`; the boot
-  order is `floppy0` first, then the disk; at the end `floppy0` is emptied (`floppy0: none`).
-  `install.vm_params` and `pve_set_medium` already treat `floppyN` drives without `media=cdrom`, and
-  `pve_matrix.link_media` links floppies into `template/floppy/`.
-- **The console is the VGA text screen**, not a serial port: FDISK's and FORMAT's prompts, SETUP's
-  screens. Keys go through QMP `send-key` (`Machine.fb_type`, US layout). Reading the screen is the
-  missing piece. The lab reads framebuffers by `screendump` + tesseract OCR (`Machine.fb_text`), which
-  is good for text consoles but not exact (`0 >` read as `o>`, quotes, box characters). In VGA text
-  mode the screen is the text buffer at physical 0xB8000 (character, attribute byte pairs, 80x25),
-  which QMP `pmemsave` (or HMP `xp`) reads exactly. Feasibility, checked in the PVE test container
-  with an x86_64 VM (`kvm: 0`, `vga: std`, the Alpine 3.19 CD): at SeaBIOS's and ISOLINUX's
-  `boot:` screen, `pmemsave` of the 4000 bytes at 0xB8000 took 1-2 ms and gave the screen exactly;
-  `screendump` + tesseract took 150-320 ms and read `rel-1.1?.0` for `rel-1.17.0`, `DUD/CD` for
-  `DVD/CD` and `prebuilt .qemu.org`. During PVE's boot splash (a graphics mode) the buffer was empty
-  while OCR read the logo, so a reader must check the mode (or fall back when the buffer is blank).
-  On the same running VM `pve_set_medium` changed the CD live (QMP `query-block` showed the new
-  file) and emptied it (`none,media=cdrom`): the swap primitive works on x86 too. A `vga_text()`
-  method on `PveMachine` (pmemsave into the run directory, decode code page 437) and a `screen=vga`
-  source for `expect()` and `MediaSwapper` would make DOS installs as exact as the serial ones; when
-  the guest is in a graphics mode (a Windows 3.x SETUP, a VESA screen) the buffer is stale and OCR is
-  the fallback.
-- **Still missing:** that VGA text source; an x86 retro profile table to check DOS targets against
-  (machine, BIOS, display, disk controller; ROADMAP "x86 retro"); a scenario per DOS version (FDISK,
-  reboot, FORMAT /S, SETUP's screens, the disk swaps); the e2e node's storage without the `floppy`
-  content type (`e2e/pve/pve-e2e-setup.sh` would add it); and freely redistributable test media
-  (FreeDOS) so the floppy path can be tested in CI without proprietary images.
+- **Profile** (`targets_dos.X86_DOS`): `machine: pc` (`isapc` isn't accepted by qemu-server),
+  `cpu: pentium`, `kvm: 0`, 32 MB, `balloon: 0`, `tablet: 0`, `vga: std`, `ne2k_pci` (unused;
+  `ne2k_isa` doesn't start, qemu-server puts it on the PCI bus), a 1 GiB IDE disk, `boot:
+  order=floppy0;ide0`, no serial port. Floppies are attached `ro=1`. `tests/test_dos.py` checks it.
+- **Media:** floppy images (`content: floppy`) on a storage with the `floppy` content type, under
+  plain names (`msdos622-disk1.img` ... `-disk3.img`, `msdos622-supp.img`, `freedos14-boot.img`,
+  `freedos14-disk1.img` ... `-disk6.img`). `install` and `lab.py media` say so when the storage lacks
+  the content type (with the `pvesm set` command); `pve_matrix.py` links them from `--floppy`
+  (`/mnt/sparc/floppy`) and adds the content type to the test node's `local`.
+- **The screen** is the VGA text buffer (`vgatext.py`): the BIOS data area at 0x400 (mode, columns,
+  rows, page, cursor) and the buffer at 0xB8000 (0xB0000 in mode 7), each read with QMP `pmemsave`
+  into a private temporary file in a few ms; 40/80 columns, 25/43/50 rows, CP437 with the VGA glyphs,
+  attributes (`Screen.highlighted()` for a menu bar). A graphics mode (the data area's mode, or a
+  window that reads all 0x00/0xFF) is reported as not text and `vga_text()` falls back to OCR.
+  `Machine.vga_expect(regex, tail=n)` waits on it, `vga_snap()` records it as a step
+  (`NNN-vga.txt` and its rendering). The MCP server's `screen_text` uses it for x86 VMs in a text
+  mode (`method: vga-text`, else `ocr`). Limits: a program that sets VGA registers itself leaves the
+  data area stale (taken as text only when the buffer looks like text); the cursor is the BIOS's
+  (`int 10h`), not the CRTC's; nothing reads 132-column VESA text modes yet.
+- **Keys** go through QMP `send-key` (US layout), 50 ms held and 60 ms apart (the BIOS buffer holds
+  15 keys). Files are typed as `ECHO line>>file`, one command per line, and read back: `COPY CON`
+  flushes the keyboard buffer when it starts reading, and lines typed while it opened the file were
+  lost. With `--keyboard no` the check switches to the US layout with Ctrl-Alt-F1 before typing.
+- **Phases:** `dos622-install.py` (SETUP: configure the unallocated space, restart, format,
+  settings, `C:\DOS`, disks 2 and 3 through the swapper, remove the floppy, first boot to `C:\>`),
+  `dos-firstboot.py` (known `CONFIG.SYS`/`AUTOEXEC.BAT` without SMARTDRV, the marker `C:\WSHLAB.TXT`),
+  `dos-boot-disk.py` (`VER`, the marker, `MEM`). `freedos-install.py` answers FDI (partition and
+  reboot, format, six disk swaps, eject before the last reboot). All scenarios also run under the
+  lab's own QEMU (`_dos.qemu_args`: `FLOPPY`, `DISK`, `DISK2`, `OPTION_ROMS`, ...).
+- **CI** (`.github/workflows/sparc-lab-dos.yml`, GitHub-hosted): the unit tests, then
+  `tests/test_freedos.py` in the lab image: FreeDOS downloaded by sha256, installed from its seven
+  floppies, booted from the disk, marker checked. No Microsoft media.
+
+Tested in the PVE test container on the lab host (TCG, published packages pve-qemu-kvm
+11.1.3-2+wsh11, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install msdos622 --vmid 302 --check` | passed: both swaps by the VGA swapper, marker, `VER`, `MEM` 614K free with KEYB NO / 621K without | 4.1 min (install 42 s, first boot 165 s, check 18 s) |
+| `install freedos14 --vmid 303 --check` | passed: six swaps by the scenario, eject before the reboot, marker, `VER` | 10.3 min (install 366 s, first boot 177 s, check 35 s) |
+| `tests/test_freedos.py` in the lab image (`e2e/sparc/Dockerfile`) | passed: six swaps, marker, `VER` | 392 s |
+| unit tests (`test_vgatext.py`, `test_dos.py`, `test_targets.py`), after the rebase onto the wsh-lab package and network choices | 65 passed | 6 s |
+| `pve_matrix.py install --only install-msdos622 --only install-freedos14` (rebased, PVE image from the branch) | 2/2 passed | 282 s, 678 s |
+| `pve_matrix.py pve` and `matrix.py smoke` on the rebased branch | 5/5 and 3/3 passed | |
+| the MCP server (`tests/test_mcp_server.py`, and `screen_text` on a FreeDOS guest under `lab.py serve`) | 6 tests passed; `method: vga-text`, 6 ms per call | |
+
+### The first-megabyte matrix
+
+`dos_mem.py --vmid <installed msdos622> --runs DIR` measures what DOS gets of 640K-1M per VM variant
+(VGA model, NIC and its option ROM, dummy option ROMs of 4K/32K/100K, the owner's original dummy
+file, `apic-common.vapic=off`) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
+`I=` the free gap, `I=` into SeaBIOS's data). It adds the tools disk as D: (`dos_tools.py`: a FAT16
+image built with mtools from the owner's utility CD, never committed; a disk rather than a floppy
+or the CD because a CD needs MSCDEX, which would take the memory being measured), writes the ROMs to
+`/var/lib/vz/template/dos/`, sets the variant (`qm set`, `args:` with SeaBIOS's debug console on
+port 0x402), runs `scenarios/dos-mem.py` (per config: write `CONFIG.SYS`, Ctrl-Alt-Del, UMASCAN from
+the VGA screen, `MEM /D` and `EMM386` into `D:\OUT`; a config that hangs DOS is recorded and undone
+with F5) and reads the files back with mtools. It prints the table into `summary.md`; the results
+are in the DOS guide.
 
 ### Run it
 
