@@ -35,6 +35,7 @@ come after that, not before.
 | Retro net archive cache: persistent store of Wayback answers, offline replay, warm-up from VintageHive's links, export/import; the test replays a synthetic dataset | merged | #274 |
 | Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
 | Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | published | #267, #270 |
+| Idle with more than one CPU: Solaris 2.5.1–9 on SS-10/SS-20 halt idle vCPUs in the multiprocessor idle loop (`solaris-smp-idle`, pve-qemu `wsh/0023`-`0025`), ~4-5% of a host core idle with 2 or 4 CPUs instead of 100% per vCPU | in review | #295 |
 | Stop-A on a running sparc32 guest stops at the OpenBIOS prompt and `go` resumes (it powered the VM off) | published | #276 |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
 | Install targets: a tested 9G disk (`--disk-size 9G`, the owner's Qemu9G template byte for byte) on SS-5 and SS-20, and `--data-disk` (a labelled second disk on `/data`) | merged | #283 |
@@ -76,11 +77,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **Idle with more than one CPU.** Each vCPU of a multiprocessor sparc32 guest spins at 100% of a
-   host core even when Solaris is idle; a bounded halt in the multiprocessor idle loop is the
-   follow-up (`submodules/SPARC.md`, "SMP"). sparc64 guests don't idle either: NetBSD on sun4u
-   keeps a host core at 100% (nothing on QEMU's sun4u lets the guest stop the CPU; `SPARC.md`,
-   "sparc64"); Solaris on sun4u not measured.
+1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
+   the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
 2. **Solaris on sun4u**: see "In progress". Next: a reboot that works from Solaris (0012 hangs), a
    per-VM system MAC, then `install` through PVE.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
@@ -93,7 +91,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    upstream. Disk and network exist only in the unix0.cc author's unpublished QEMU stack (PCIe
    for sun4v). Revisit when that is published or upstream; `scenarios/niagara-boot.py` checks it
    with user-supplied firmware.
-4. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
+3. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
    - **Started with DOS.** `lab.py install msdos622` installs MS-DOS 6.22 from its three floppies
      into a PVE VM (~4 min under TCG), driven on the VGA text screen through an exact reader of the

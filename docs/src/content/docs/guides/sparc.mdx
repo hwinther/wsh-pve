@@ -83,15 +83,18 @@ wizard on the CPU tab once the machine is picked). Solaris 2.5.1 to 9 run on the
 multiprocessor; `psrinfo` lists each one. It needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later: with an
 older package Solaris hangs within minutes with more than one CPU.
 
-Worth it only for parallel work, several CPU-bound processes at once (builds, batch jobs):
+It pays for parallel work, several CPU-bound processes at once (builds, batch jobs). With a
+`pve-qemu-kvm` that has the multiprocessor idle halt (pve-qemu patch `wsh/0023`, packages after
+11.1.3-2+wsh13; `solaris-smp-idle`, on by default):
 
-- 2 CPUs finish two jobs 1.6-1.9 times sooner than one CPU, 4 CPUs four jobs 1.9-2.7 times sooner.
-- A single job gets slower: 8-68% with 2 CPUs and 33-185% with 4, depending on the program; disk
-  writes too.
-- Each vCPU keeps a host core at 100% for as long as the VM runs, idle or not: the idle halt that
-  brings an idle one-CPU Solaris down to about 3% of a core works only with one CPU.
+- An idle VM uses about 4-5% of a host core with 2 or 4 CPUs, about as much as with one CPU.
+- A single job runs as fast as with one CPU; 2 CPUs finish two jobs 1.6-2.0 times sooner than one
+  CPU, 4 CPUs four jobs 1.9-3.9 times sooner, depending on the program.
+- Pipes, process start-up and short jobs take as long as before with 2 CPUs and less time with 4.
 
-For one interactive user, one CPU is faster and nearly free when idle. The SS-20 Sun PROM
+With an older package each vCPU keeps a host core at 100% for as long as the VM runs, idle or not,
+and a single job runs slower (8-68% with 2 CPUs and 33-185% with 4, depending on the program; disk
+writes too), because the idle CPUs poll. Then one CPU is faster for one interactive user. The SS-20 Sun PROM
 (`ss20_v2.25_rom`) starts only the first CPU and SS-5 has one, so both stay at one. A change of the
 CPU count on a running VM is applied at the next start; there is no CPU hotplug (`vcpus` and the
 `cpu` hotplug option are refused).
@@ -311,8 +314,9 @@ MAC is set to: two of them on one network clash. Details: `submodules/SPARC.md`,
 ## Known limitations
 
 - Audio does not work on SPARC guests.
-- sparc32: more than one CPU only on SS-10/SS-20 with OpenBIOS (up to 4), and then no idle halt;
-  256 MB on SS-5, 512 MB on SS-10/SS-20.
+- sparc32: more than one CPU only on SS-10/SS-20 with OpenBIOS (up to 4), and the idle halt with
+  more than one CPU only for Solaris 2.5.1-9 (NetBSD's MP kernel idles by itself); 256 MB on SS-5,
+  512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5) and `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) are
   supported; the SS-10 PROM doesn't run on QEMU's SS-10.
 - No framebuffer resolution option: cg3 runs at 1024x768. TCX is always 1024x768, 8-bit (no 24-bit option).

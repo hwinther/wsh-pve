@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..63f2c6b 100644
+index 7b0cba5..e92b751 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,25 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,28 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -98,6 +98,9 @@ index 7b0cba5..63f2c6b 100644
 +wsh/0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl.patch
 +wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
 +wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
++wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
++wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
++wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -3805,6 +3808,1017 @@ index 0000000..2ca308b
 ++
 ++    qtest_add_func("sun4u-cmd646/status-latched", test_status_latched);
 ++    qtest_add_func("sun4u-cmd646/clear-keeps-line", test_clear_keeps_line);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
+new file mode 100644
+index 0000000..5c0c030
+--- /dev/null
++++ b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
+@@ -0,0 +1,701 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt idle CPUs in the Solaris multiprocessor idle loop
++
++With more than one CPU, the idle thread of Solaris 2.5.1 to 9 runs
++another loop than the one solaris_idle handles: it never calls idle_cpu,
++it polls the CPU's own dispatch queue and calls disp_getwork() to take a
++thread from the kernel preemption queue or from another CPU. Every idle
++vCPU keeps a host core busy, and as each round raises and lowers the
++interrupt level (helper_wrpsr takes the BQL), the polling CPUs also slow
++down the busy ones. And nothing tells an idle CPU that it has work:
++setbackdq() puts a thread on its queue and counts it in disp_nrunnable,
++cpu_resched() pokes only a CPU that runs a thread, and only one CPU takes
++the clock. So a plain halt until the next interrupt could leave work
++waiting indefinitely.
++
++The translator recognises the call of disp_getwork in that loop by the
++words from the load of disp_nrunnable to the call (one layout for the
++kernels of 2.6, 7, 8 and 9, another for 2.5.1). At the call a helper
++halts the CPU when disp_nrunnable is 0, interrupts are enabled at level
++0 and none is pending, after the loop has found nothing for 100 us. The
++halt ends:
++
++- when another CPU queues work for it: Solaris queues threads at a
++  raised interrupt level and lowers it with a write to %psr afterwards,
++  so helper_wrpsr() wakes every CPU halted in the loop whose
++  disp_nrunnable is no longer 0, and one of them when the writing CPU
++  has more than one thread queued (what disp_getwork() would take);
++- at the next interrupt, as with one CPU;
++- 10 ms after it began, from a timer: work that reaches the CPU in any
++  other way (a thread on the kernel preemption queue, a race) waits at
++  most that long. disp_getwork() runs once then, and the CPU halts again
++  if it found nothing.
++
++The halted CPUs and their disp_nrunnable are in a mask that the writer
++reads after a full barrier, as the halting CPU reads disp_nrunnable
++again after setting its bit, and the kick is a flag that
++sparc_cpu_has_work() sees, set with the BQL held. A migrated CPU that was
++halted there is woken on the destination (a subsection, sent only then).
++The Solaris idle helpers now read disp_nrunnable through a host pointer
++looked up once by a page table walk: probe_access_flags() would assert
++when another CPU had flushed the TLB entry since the loop's load.
++
++The board turns this on with env->solaris_idle_mp.
++-trace sparc_solaris_idle_mp_match shows whether a kernel was recognised,
++sparc_solaris_idle_mp and sparc_solaris_idle_mp_wake each halt and why it
++ended.
++
++An idle Solaris 2.6 on an SS-20 then uses 4-5% of a host core with 2
++or 4 CPUs, about as much as with one, instead of 198% and 341%. A single
++CPU-bound job is no longer slowed down by the polling CPUs (an awk loop
++alone 5.3-5.6 s with 2 and 4 CPUs instead of 8.6 and 16 s; 5.3-6.3 s
++with one CPU), and pipe round trips, fork, pipelines and parallel jobs
++take as long as before with 2 CPUs and less time with 4. The CPU that
++ran a thread polls again for 100 us before it halts (a round more than
++20 us after the one before restarts the poll): with a 100 us gap
++instead, lat_pipe with 2 CPUs took 15% longer.
++---
++ target/sparc/cpu.c          |   7 +
++ target/sparc/cpu.h          |  14 ++
++ target/sparc/helper.h       |   1 +
++ target/sparc/machine.c      |  34 +++++
++ target/sparc/solaris_idle.c | 270 ++++++++++++++++++++++++++++++++++--
++ target/sparc/trace-events   |   3 +
++ target/sparc/translate.c    | 142 ++++++++++++++++++-
++ target/sparc/win_helper.c   |   5 +
++ 8 files changed, 460 insertions(+), 16 deletions(-)
++
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 13ebb122a3..102ac45e91 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -75,6 +75,7 @@ static void sparc_cpu_reset_hold(Object *obj, ResetType type)
++ #else
++     env->mmuregs[0] &= ~(MMU_E | MMU_NF);
++     env->mmuregs[0] |= env->def.mmu_bm;
+++    sparc_solaris_idle_mp_reset(env);
++ #endif
++     env->pc = 0;
++     env->npc = env->pc + 4;
++@@ -785,6 +786,12 @@ static void sparc_restore_state_to_opc(CPUState *cs,
++ #ifndef CONFIG_USER_ONLY
++ static bool sparc_cpu_has_work(CPUState *cs)
++ {
+++#ifndef TARGET_SPARC64
+++    /* Work queued for a CPU halted in the Solaris idle loop */
+++    if (qatomic_read(&cpu_env(cs)->solaris_idle_kick)) {
+++        return true;
+++    }
+++#endif
++     return cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) &&
++            cpu_interrupts_enabled(cpu_env(cs));
++ }
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 9f53f1b682..8d4ff2da8d 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -520,6 +520,14 @@ struct CPUArchState {
++     bool solaris_idle;
++     int64_t solaris_idle_since; /* when the loop first found no work */
++     int64_t solaris_idle_last;  /* when the loop last found no work */
+++    /* Halt in the multiprocessor idle loop of Solaris 2.x, likewise */
+++    bool solaris_idle_mp;
+++    bool solaris_idle_mp_halted;  /* halted there */
+++    uint8_t solaris_idle_mp_timeout; /* how the timer ended the last halt */
+++    bool solaris_idle_kick;       /* end the halt: there may be work */
+++    uint32_t *solaris_idle_nr;    /* host address of disp_nrunnable */
+++    target_ulong solaris_idle_va; /* its address in the kernel */
+++    QEMUTimer *solaris_idle_timer;
++ #endif
++     float_status fp_status;
++ #if defined(TARGET_SPARC64)
++@@ -635,6 +643,12 @@ target_ulong cpu_get_psr(CPUSPARCState *env1);
++ void cpu_put_psr(CPUSPARCState *env1, target_ulong val);
++ void cpu_put_psr_icc(CPUSPARCState *env1, target_ulong val);
++ void cpu_put_psr_raw(CPUSPARCState *env1, target_ulong val);
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++/* solaris_idle.c */
+++void sparc_solaris_idle_mp_leave(CPUSPARCState *env);
+++void sparc_solaris_idle_mp_poke(CPUSPARCState *env);
+++void sparc_solaris_idle_mp_reset(CPUSPARCState *env);
+++#endif
++ #ifdef TARGET_SPARC64
++ void cpu_change_pstate(CPUSPARCState *env1, uint32_t new_pstate);
++ void cpu_gl_switch_gregs(CPUSPARCState *env, uint32_t new_gl);
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index a61df50a88..7427af4959 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -7,6 +7,7 @@ DEF_HELPER_1(power_down, void, env)
++ #ifndef CONFIG_USER_ONLY
++ DEF_HELPER_5(sunos_idle, void, env, tl, tl, tl, tl)
++ DEF_HELPER_3(solaris_idle, void, env, tl, tl)
+++DEF_HELPER_3(solaris_idle_mp, void, env, tl, tl)
++ #endif
++ #else
++ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++diff --git a/target/sparc/machine.c b/target/sparc/machine.c
++index 0d5d79b5e7..8b6d9db562 100644
++--- a/target/sparc/machine.c
+++++ b/target/sparc/machine.c
++@@ -200,6 +200,39 @@ static const VMStateDescription vmstate_fq = {
++         VMSTATE_END_OF_LIST()
++     },
++ };
+++
+++/*
+++ * A CPU halted in the multiprocessor idle loop of Solaris waits for a kick
+++ * or a timer that the destination doesn't have: wake it there, it looks
+++ * for work and halts again.
+++ */
+++static bool solaris_idle_mp_needed(void *opaque)
+++{
+++    SPARCCPU *cpu = opaque;
+++    return cpu->env.solaris_idle_mp_halted;
+++}
+++
+++static int solaris_idle_mp_post_load(void *opaque, int version_id)
+++{
+++    SPARCCPU *cpu = opaque;
+++
+++    if (cpu->env.solaris_idle_mp_halted) {
+++        cpu->env.solaris_idle_kick = true;
+++    }
+++    return 0;
+++}
+++
+++static const VMStateDescription vmstate_solaris_idle_mp = {
+++    .name = "cpu/solaris_idle_mp",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = solaris_idle_mp_needed,
+++    .post_load = solaris_idle_mp_post_load,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_BOOL(env.solaris_idle_mp_halted, SPARCCPU),
+++        VMSTATE_END_OF_LIST()
+++    },
+++};
++ #endif
++ 
++ static int cpu_pre_save(void *opaque)
++@@ -331,6 +364,7 @@ const VMStateDescription vmstate_sparc_cpu = {
++ #ifndef TARGET_SPARC64
++     .subsections = (const VMStateDescription * const []) {
++         &vmstate_fq,
+++        &vmstate_solaris_idle_mp,
++         NULL
++     },
++ #endif
++diff --git a/target/sparc/solaris_idle.c b/target/sparc/solaris_idle.c
++index 747d6c2944..8f0cf87361 100644
++--- a/target/sparc/solaris_idle.c
+++++ b/target/sparc/solaris_idle.c
++@@ -47,11 +47,10 @@
++ #include "hw/core/cpu.h"
++ #include "cpu.h"
++ #include "accel/tcg/cpu-loop.h"
++-#include "accel/tcg/cpu-mmu-index.h"
++-#include "accel/tcg/probe.h"
++ #include "exec/cpu-common.h"
++ #include "exec/helper-proto.h"
++-#include "exec/tlb-flags.h"
+++#include "qemu/rcu.h"
+++#include "system/memory.h"
++ #include "trace.h"
++ 
++ /*
++@@ -73,23 +72,50 @@ static bool solaris_idle_polled(CPUSPARCState *env)
++     return now - env->solaris_idle_since >= SOLARIS_IDLE_POLL_NS;
++ }
++ 
++-/* Read a 4-byte kernel variable; false if it is not mapped RAM */
++-static bool solaris_idle_read(CPUSPARCState *env, target_ulong addr,
++-                              uint32_t *val)
+++/*
+++ * The host address of disp_nrunnable at addr in the kernel, or NULL if it
+++ * is not in RAM. The kernel maps its CPU structures for good, so this is
+++ * looked up once (by a page table walk: another CPU may have flushed the
+++ * TLB entry since the loop's load).
+++ */
+++static uint32_t *solaris_idle_host(CPUSPARCState *env, target_ulong addr)
++ {
++-    void *host;
++-    int flags;
+++    CPUState *cs = env_cpu(env);
+++    MemoryRegion *mr;
+++    hwaddr pa, xlat, len = 4;
++ 
+++    if (env->solaris_idle_nr && env->solaris_idle_va == addr) {
+++        return env->solaris_idle_nr;
+++    }
++     if (addr & 3) {
++-        return false;
+++        return NULL;
++     }
++-    flags = probe_access_flags(env, addr, 4, MMU_DATA_LOAD,
++-                               cpu_mmu_index(env_cpu(env), false), true,
++-                               &host, 0);
++-    if ((flags & TLB_INVALID_MASK) || !host) {
+++    pa = sparc_cpu_get_phys_addr_debug(cs, addr);
+++    if (pa == -1) {
+++        return NULL;
+++    }
+++    RCU_READ_LOCK_GUARD();
+++    mr = address_space_translate(cs->as, pa, &xlat, &len, false,
+++                                 MEMTXATTRS_UNSPECIFIED);
+++    if (!memory_region_is_ram(mr) || memory_region_is_ram_device(mr) ||
+++        len < 4) {
+++        return NULL;
+++    }
+++    env->solaris_idle_va = addr;
+++    env->solaris_idle_nr = qemu_map_ram_ptr(mr->ram_block, xlat);
+++    return env->solaris_idle_nr;
+++}
+++
+++/* Read a 4-byte kernel variable; false if it is not in RAM */
+++static bool solaris_idle_read(CPUSPARCState *env, target_ulong addr,
+++                              uint32_t *val)
+++{
+++    uint32_t *host = solaris_idle_host(env, addr);
+++
+++    if (!host) {
++         return false;
++     }
++-    *val = ldl_be_p(host);
+++    *val = be32_to_cpu(qatomic_read(host));
++     return true;
++ }
++ 
++@@ -122,3 +148,219 @@ void HELPER(solaris_idle)(CPUSPARCState *env, target_ulong pc,
++     cs->exception_index = EXCP_HLT;
++     cpu_loop_exit(cs);
++ }
+++
+++/*
+++ * With more than one CPU, the idle thread runs this loop instead:
+++ *
+++ *   for (;;) {
+++ *       while (CPU->cpu_flags & CPU_QUIESCED)
+++ *           ;
+++ *       if (CPU->cpu_disp.disp_nrunnable != 0) {
+++ *           swtch();
+++ *       } else {
+++ *           if (CPU->cpu_flags & CPU_OFFLINE)
+++ *               continue;
+++ *           if ((t = disp_getwork(CPU)) == NULL)   <- the translator's hook
+++ *               continue;
+++ *           swtch_to(t);
+++ *       }
+++ *   }
+++ *
+++ * It never calls idle_cpu. disp_getwork() takes a thread from the
+++ * partition's kernel preemption queue or from another CPU that has more
+++ * than one queued. No interrupt tells an idle CPU that it has work:
+++ * setbackdq() and setfrontdq() put a thread on its queue and count it in
+++ * disp_nrunnable, but cpu_resched() pokes only a CPU that runs a thread,
+++ * and only one CPU takes the clock.
+++ *
+++ * So the halt at the call of disp_getwork is bounded and comes with two
+++ * wake-ups of its own:
+++ *
+++ * - The CPU that queues the thread wakes the halted one. Solaris queues
+++ *   threads at a raised interrupt level and lowers it with a write to
+++ *   %psr afterwards; helper_wrpsr() calls solaris_idle_mp_poke(), which
+++ *   wakes every CPU halted here whose disp_nrunnable is no longer 0, and
+++ *   one of them when the writing CPU has more than one thread queued (the
+++ *   work that disp_getwork() would take).
+++ * - A timer wakes the CPU SOLARIS_IDLE_MP_NS after it halted, so work that
+++ *   reaches it in any other way (a thread on the kernel preemption queue,
+++ *   a race) waits at most that long. The CPU polls once then and halts
+++ *   again.
+++ *
+++ * Interrupts (cross-calls, pokes, the clock) wake it as with one CPU.
+++ * Either way the CPU goes on at the call of disp_getwork.
+++ */
+++#define SOLARIS_IDLE_MP_NS    (10 * SCALE_MS)
+++
+++/* env->solaris_idle_mp_timeout */
+++enum {
+++    SOLARIS_IDLE_MP_NONE,
+++    SOLARIS_IDLE_MP_WOKEN,      /* the timer ended the halt */
+++    SOLARIS_IDLE_MP_LOOKED,     /* and disp_getwork has run once since */
+++};
+++
+++/* The CPUs halted in the multiprocessor idle loop, by cpu_index */
+++static uint32_t solaris_idle_mp_halted;
+++
+++static bool solaris_idle_mp_polled(CPUSPARCState *env)
+++{
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    switch (env->solaris_idle_mp_timeout) {
+++    case SOLARIS_IDLE_MP_WOKEN:
+++        /* The timer ended the halt: let disp_getwork look once */
+++        env->solaris_idle_mp_timeout = SOLARIS_IDLE_MP_LOOKED;
+++        env->solaris_idle_last = now;
+++        return false;
+++    case SOLARIS_IDLE_MP_LOOKED:
+++        /* It found nothing: halt again without polling */
+++        env->solaris_idle_mp_timeout = SOLARIS_IDLE_MP_NONE;
+++        if (now - env->solaris_idle_last <= SOLARIS_IDLE_GAP_NS) {
+++            env->solaris_idle_last = now;
+++            return true;
+++        }
+++        break;
+++    }
+++    if (now - env->solaris_idle_last > SOLARIS_IDLE_GAP_NS) {
+++        env->solaris_idle_since = now;
+++    }
+++    env->solaris_idle_last = now;
+++    return now - env->solaris_idle_since >= SOLARIS_IDLE_POLL_NS;
+++}
+++
+++/* Called with the BQL held, so that the vCPU can't miss the kick */
+++static void solaris_idle_mp_kick(CPUState *cs, const char *why)
+++{
+++    CPUSPARCState *env = cpu_env(cs);
+++
+++    if (!qatomic_read(&env->solaris_idle_kick)) {
+++        trace_sparc_solaris_idle_mp_wake(cs->cpu_index, why);
+++        qatomic_set(&env->solaris_idle_kick, true);
+++        qemu_cpu_kick(cs);
+++    }
+++}
+++
+++static void solaris_idle_mp_timer(void *opaque)
+++{
+++    CPUState *cs = opaque;
+++    CPUSPARCState *env = cpu_env(cs);
+++
+++    if (qatomic_read(&env->solaris_idle_mp_halted)) {
+++        env->solaris_idle_mp_timeout = SOLARIS_IDLE_MP_WOKEN;
+++        solaris_idle_mp_kick(cs,
+++            be32_to_cpu(qatomic_read(env->solaris_idle_nr)) ?
+++            "timer, work queued" : "timer");
+++    }
+++}
+++
+++/* The CPU runs again: it is no longer halted in the idle loop */
+++void sparc_solaris_idle_mp_leave(CPUSPARCState *env)
+++{
+++    CPUState *cs = env_cpu(env);
+++
+++    if (!qatomic_read(&env->solaris_idle_mp_halted)) {
+++        return;
+++    }
+++    qatomic_set(&env->solaris_idle_mp_halted, false);
+++    qatomic_and(&solaris_idle_mp_halted, ~(1u << cs->cpu_index));
+++    if (env->solaris_idle_timer) {
+++        timer_del(env->solaris_idle_timer);
+++    }
+++    qatomic_set(&env->solaris_idle_kick, false);
+++}
+++
+++/*
+++ * The CPU of env writes %psr, with the BQL held. Wake the CPUs halted in
+++ * the idle loop that have work.
+++ */
+++void sparc_solaris_idle_mp_poke(CPUSPARCState *env)
+++{
+++    CPUState *self = env_cpu(env);
+++    uint32_t halted;
+++    bool steal;
+++    CPUState *cs;
+++
+++    sparc_solaris_idle_mp_leave(env);
+++    /* Pairs with the barrier in helper_solaris_idle_mp() */
+++    smp_mb();
+++    halted = qatomic_read(&solaris_idle_mp_halted);
+++    if (!halted) {
+++        return;
+++    }
+++    /* More than one thread queued here: one for an idle CPU to take */
+++    steal = env->solaris_idle_nr &&
+++            be32_to_cpu(qatomic_read(env->solaris_idle_nr)) > 1;
+++    CPU_FOREACH(cs) {
+++        CPUSPARCState *e = cpu_env(cs);
+++
+++        if (cs == self || !(halted & (1u << cs->cpu_index))) {
+++            continue;
+++        }
+++        if (be32_to_cpu(qatomic_read(e->solaris_idle_nr))) {
+++            solaris_idle_mp_kick(cs, "queued");
+++        } else if (steal) {
+++            solaris_idle_mp_kick(cs, "steal");
+++            steal = false;
+++        }
+++    }
+++}
+++
+++void sparc_solaris_idle_mp_reset(CPUSPARCState *env)
+++{
+++    sparc_solaris_idle_mp_leave(env);
+++    env->solaris_idle_mp_timeout = SOLARIS_IDLE_MP_NONE;
+++    env->solaris_idle_nr = NULL;
+++    env->solaris_idle_va = 0;
+++}
+++
+++/*
+++ * Solaris is at the call of disp_getwork in the multiprocessor idle loop.
+++ * Halt until there is work, the next interrupt or the timer, and go on at
+++ * the call then.
+++ */
+++void HELPER(solaris_idle_mp)(CPUSPARCState *env, target_ulong pc,
+++                             target_ulong nrunnable)
+++{
+++    CPUState *cs = env_cpu(env);
+++    uint32_t *nr;
+++
+++    sparc_solaris_idle_mp_leave(env);
+++    if (cs->cpu_index >= 32) {
+++        return;
+++    }
+++    /* Interrupts are enabled and none is pending */
+++    if (!env->psret || env->psrpil ||
+++        cpu_test_interrupt(cs, CPU_INTERRUPT_HARD)) {
+++        return;
+++    }
+++    nr = solaris_idle_host(env, nrunnable);
+++    if (!nr || be32_to_cpu(qatomic_read(nr))) {
+++        return;
+++    }
+++    if (!solaris_idle_mp_polled(env)) {
+++        return;
+++    }
+++
+++    if (!env->solaris_idle_timer) {
+++        env->solaris_idle_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+++                                               solaris_idle_mp_timer, cs);
+++    }
+++    qatomic_set(&env->solaris_idle_kick, false);
+++    qatomic_set(&env->solaris_idle_mp_halted, true);
+++    /* Full barrier: a CPU that queues work from now on sees this one */
+++    qatomic_or(&solaris_idle_mp_halted, 1u << cs->cpu_index);
+++    smp_mb();
+++    if (be32_to_cpu(qatomic_read(nr))) {
+++        sparc_solaris_idle_mp_leave(env);
+++        return;
+++    }
+++    timer_mod(env->solaris_idle_timer,
+++              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SOLARIS_IDLE_MP_NS);
+++
+++    trace_sparc_solaris_idle_mp(cs->cpu_index, pc);
+++    env->pc = pc;
+++    env->npc = pc + 4;
+++    cs->halted = 1;
+++    cs->exception_index = EXCP_HLT;
+++    cpu_loop_exit(cs);
+++}
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index 12df5142e1..f26fe1a843 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -22,8 +22,11 @@ sparc_sunos_idle(uint32_t pc) "idle loop halt, go on at 0x%08x"
++ 
++ # solaris_idle.c
++ sparc_solaris_idle(uint32_t pc) "idle loop halt, go on at 0x%08x"
+++sparc_solaris_idle_mp(int cpu, uint32_t pc) "cpu %d: multiprocessor idle loop halt, go on at 0x%08x"
+++sparc_solaris_idle_mp_wake(int cpu, const char *why) "cpu %d: wake from the idle loop halt (%s)"
++ 
++ # translate.c
+++sparc_solaris_idle_mp_match(const char *kernel, uint32_t pc, int reg, int off) "Solaris multiprocessor idle loop (%s): disp_getwork call at 0x%08x, disp_nrunnable at register %d offset %d"
++ sparc_solaris_idle_match(const char *kernel, uint32_t pc, int reg, int off) "Solaris idle loop (%s): idle_cpu call at 0x%08x, disp_nrunnable at register %d offset %d"
++ sparc_sunos_idle_match(uint32_t pc, uint32_t top, uint32_t nrunnable, uint32_t whichqs, uint32_t qrunflag) "SunOS idle loop: branch at 0x%08x to 0x%08x, Nrunnable 0x%08x whichqs 0x%08x qrunflag 0x%08x"
++ 
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index d8ccd8335d..913c012917 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -185,6 +185,7 @@ typedef struct DisasContext {
++     bool fsr_qne;
++     bool sunos_idle;
++     bool solaris_idle;
+++    bool solaris_idle_mp;
++ #endif
++ #endif
++ 
++@@ -5718,6 +5719,8 @@ static void sparc_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
++                      !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
++     dc->solaris_idle = cpu_env(cs)->solaris_idle && dc->supervisor &&
++                        !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
+++    dc->solaris_idle_mp = cpu_env(cs)->solaris_idle_mp && dc->supervisor &&
+++                          !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
++ # endif
++ #endif
++ #ifdef TARGET_SPARC64
++@@ -5859,8 +5862,11 @@ static void gen_sunos_idle(DisasContext *dc, CPUSPARCState *env)
++ #define SOL_CMP0        { 0x80a02000, 0xfff83fff }  /* cmp %rs1, 0 */
++ #define SOL_TST         { 0x80900000, 0xffffffe0 }  /* tst %rs2 */
++ #define SOL_SETHI       { 0x01000000, 0xc1c00000 }  /* sethi %hi(idle_cpu), %rd */
++-#define SOL_CALL_DISP   { 0x40000000, 0xc0000000 }  /* call swtch */
++-#define SOL_NOP         { 0x01000000, 0xffffffff }
+++#define SOLARIS_CALL_DISP       0x40000000  /* call disp30 */
+++#define SOLARIS_CALL_DISP_MASK  0xc0000000
+++#define SOL_CALL_DISP   { SOLARIS_CALL_DISP, SOLARIS_CALL_DISP_MASK }  /* call swtch */
+++#define SOL_NOP_INSN    0x01000000
+++#define SOL_NOP         { SOL_NOP_INSN, 0xffffffff }
++ #define SOL_BA          { 0x10800000, 0xffc00000 }  /* b top */
++ #define SOL_CALL_REG    { SOLARIS_CALL, SOLARIS_CALL_MASK }
++ 
++@@ -5979,6 +5985,134 @@ static void gen_solaris_idle(DisasContext *dc, CPUSPARCState *env,
++         return;
++     }
++ }
+++
+++/*
+++ * With more than one CPU, Solaris 2.5.1 to 9 call disp_getwork from the
+++ * multiprocessor idle loop when the CPU has no thread queued; see
+++ * solaris_idle.c. These are the words of that loop from the load of
+++ * disp_nrunnable to the call of disp_getwork, as the compiler of each
+++ * release laid them out.
+++ */
+++#define SOL_LDUH_IMM    { 0xc0102000, 0xc1f82000 }  /* lduh [%rs1 + simm13], %rd */
+++#define SOL_LDUH_REG    { 0xc0100000, 0xc1f83fff }  /* lduh [%rs1], %rd */
+++#define SOL_BTST_OFFLINE { 0x80882020, 0xfff83fff } /* btst CPU_OFFLINE, %rs1 */
+++
+++enum { SOL_MP_LEN = 14 };
+++
+++typedef struct SolarisIdleMPLoop {
+++    const char *kernel;
+++    /*
+++     * w[0] loads disp_nrunnable, w[1] tests it, w[3] (and w[12] if it is
+++     * not a nop) loads cpu_flags, w[10] tests CPU_OFFLINE in it and w[13]
+++     * calls disp_getwork.
+++     */
+++    uint32_t w[SOL_MP_LEN][2];
+++} SolarisIdleMPLoop;
+++
+++static const SolarisIdleMPLoop solaris_idle_mp_loops[] = {
+++    { "2.6/7/8/9", {
+++        SOL_LD_IMM,                 /* top:  ld    [%cpu + nrunnable], %x */
+++        SOL_CMP0,                   /*       cmp   %x, 0 */
+++        { 0x22800008, 0xffffffff }, /*       be,a  idle */
+++        SOL_LDUH_IMM,               /*        lduh [%cpu + flags], %f */
+++        SOL_CALL_DISP,              /*       call  unset_idle_cpu */
+++        SOL_ANY,                    /*        ... */
+++        SOL_CALL_DISP,              /*       call  swtch */
+++        SOL_NOP,                    /*        nop */
+++        SOL_BA,                     /*       b     ... */
+++        SOL_ANY,                    /*        ... */
+++        SOL_BTST_OFFLINE,           /* idle: btst  CPU_OFFLINE, %f */
+++        { 0x32800000, 0xffc00000 }, /*       bne,a quiesced */
+++        SOL_LDUH_IMM,               /*        lduh [%cpu + flags], %f */
+++        SOL_CALL_DISP,              /*       call  disp_getwork */
+++    } },
+++    { "2.5.1", {
+++        SOL_LD_REG,                 /* top:  ld    [%nrunnable], %x */
+++        SOL_TST,                    /*       tst   %x */
+++        { 0x22800008, 0xffffffff }, /*       be,a  idle */
+++        SOL_LDUH_REG,               /*        lduh [%flags], %f */
+++        SOL_CALL_DISP,              /*       call  unset_idle_cpu */
+++        SOL_ANY,                    /*        ... */
+++        SOL_CALL_DISP,              /*       call  swtch */
+++        SOL_NOP,                    /*        nop */
+++        SOL_BA,                     /*       b     ... */
+++        SOL_ANY,                    /*        ... */
+++        SOL_BTST_OFFLINE,           /* idle: btst  CPU_OFFLINE, %f */
+++        { 0x12800000, 0xffc00000 }, /*       bne   quiesced */
+++        SOL_NOP,                    /*        nop */
+++        SOL_CALL_DISP,              /*       call  disp_getwork */
+++    } },
+++};
+++
+++/*
+++ * At a call, if it is the call of disp_getwork in the multiprocessor idle
+++ * loop of Solaris, let helper_solaris_idle_mp() halt the CPU
+++ */
+++static void gen_solaris_idle_mp(DisasContext *dc, CPUSPARCState *env,
+++                                uint32_t insn)
+++{
+++    target_ulong start = dc->pc - 4 * (SOL_MP_LEN - 1);
+++    uint32_t w[SOL_MP_LEN];
+++    int k, i;
+++
+++    /* The call is not in a delay slot */
+++    if (dc->npc != dc->pc + 4) {
+++        return;
+++    }
+++    /* Off RAM, translator_ldl_end() would record these words as code */
+++    if (tb_page_addr0(dc->base.tb) == -1 ||
+++        !translator_is_same_page(&dc->base, start)) {
+++        return;
+++    }
+++    for (i = 0; i < SOL_MP_LEN - 1; i++) {
+++        w[i] = translator_ldl_end(env, &dc->base, start + 4 * i, MO_BE);
+++    }
+++    w[SOL_MP_LEN - 1] = insn;
+++
+++    for (k = 0; k < ARRAY_SIZE(solaris_idle_mp_loops); k++) {
+++        const SolarisIdleMPLoop *l = &solaris_idle_mp_loops[k];
+++        int base, x, f;
+++        int32_t off;
+++        TCGv addr;
+++
+++        for (i = 0; i < SOL_MP_LEN; i++) {
+++            if ((w[i] & l->w[i][1]) != l->w[i][0]) {
+++                break;
+++            }
+++        }
+++        if (i < SOL_MP_LEN) {
+++            continue;
+++        }
+++
+++        /*
+++         * ld [%base + off], %x; tst %x. The calls in the loop keep only the
+++         * local and in registers, so %base must be one of them.
+++         */
+++        base = extract32(w[0], 14, 5);
+++        off = extract32(w[0], 13, 1) ? sextract32(w[0], 0, 13) : 0;
+++        x = extract32(w[0], 25, 5);
+++        if (base < 16 || x == base ||
+++            x != (extract32(w[1], 13, 1) ? extract32(w[1], 14, 5)
+++                                         : extract32(w[1], 0, 5))) {
+++            continue;
+++        }
+++        /* lduh [...], %f; btst CPU_OFFLINE, %f; [lduh [...], %f] */
+++        f = extract32(w[3], 25, 5);
+++        if (f == base || extract32(w[10], 14, 5) != f ||
+++            (w[12] != SOL_NOP_INSN && extract32(w[12], 25, 5) != f)) {
+++            continue;
+++        }
+++
+++        trace_sparc_solaris_idle_mp_match(l->kernel, dc->pc, base, off);
+++
+++        /* The helper reads the clock */
+++        translator_io_start(&dc->base);
+++        addr = tcg_temp_new();
+++        tcg_gen_addi_tl(addr, gen_load_gpr(dc, base), off);
+++        gen_helper_solaris_idle_mp(tcg_env, tcg_constant_tl(dc->pc), addr);
+++        return;
+++    }
+++}
++ #endif
++ 
++ static void sparc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
++@@ -5996,6 +6130,10 @@ static void sparc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
++     if ((insn & SOLARIS_CALL_MASK) == SOLARIS_CALL && dc->solaris_idle) {
++         gen_solaris_idle(dc, cpu_env(cs), insn);
++     }
+++    if ((insn & SOLARIS_CALL_DISP_MASK) == SOLARIS_CALL_DISP &&
+++        dc->solaris_idle_mp) {
+++        gen_solaris_idle_mp(dc, cpu_env(cs), insn);
+++    }
++ #endif
++ 
++     if (!decode(dc, insn)) {
++diff --git a/target/sparc/win_helper.c b/target/sparc/win_helper.c
++index 9ad9d01e8b..4d3c795882 100644
++--- a/target/sparc/win_helper.c
+++++ b/target/sparc/win_helper.c
++@@ -170,6 +170,11 @@ void helper_wrpsr(CPUSPARCState *env, target_ulong new_psr)
++         /* cpu_put_psr may trigger interrupts, hence BQL */
++         bql_lock();
++         cpu_put_psr(env, new_psr);
+++#ifndef CONFIG_USER_ONLY
+++        if (env->solaris_idle_mp) {
+++            sparc_solaris_idle_mp_poke(env);
+++        }
+++#endif
++         bql_unlock();
++     }
++ }
+diff --git a/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch b/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
+new file mode 100644
+index 0000000..4c68ba7
+--- /dev/null
++++ b/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
+@@ -0,0 +1,62 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: add the solaris-smp-idle option, on by default
++
++It halts idle CPUs of Solaris 2.5.1 to 9 with more than one CPU, see
++target/sparc/solaris_idle.c. -M SS-20,solaris-smp-idle=off lets them
++spin as before. With one CPU it does nothing (solaris-idle covers that
++loop).
++---
++ hw/sparc/sun4m.c | 26 ++++++++++++++++++++++++++
++ 1 file changed, 26 insertions(+)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 785ee3d8be..833b41a998 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -807,6 +807,22 @@ static void sun4m_set_solaris_idle(Object *obj, bool value, Error **errp)
++     sun4m_solaris_idle = value;
++ }
++ 
+++/*
+++ * Halt the CPUs in the multiprocessor idle loop of Solaris 2.x, see
+++ * target/sparc/solaris_idle.c
+++ */
+++static bool sun4m_solaris_smp_idle = true;
+++
+++static bool sun4m_get_solaris_smp_idle(Object *obj, Error **errp)
+++{
+++    return sun4m_solaris_smp_idle;
+++}
+++
+++static void sun4m_set_solaris_smp_idle(Object *obj, bool value, Error **errp)
+++{
+++    sun4m_solaris_smp_idle = value;
+++}
+++
++ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++                                 uint64_t prom_addr)
++ {
++@@ -866,6 +882,9 @@ static void sun4m_hw_init(MachineState *machine)
++         SPARC_CPU(cpus[i])->env.sunos_idle = sun4m_sunos_idle && smp_cpus == 1;
++         SPARC_CPU(cpus[i])->env.solaris_idle = sun4m_solaris_idle &&
++                                                smp_cpus == 1;
+++        /* That loop wakes a CPU when another queues work for it */
+++        SPARC_CPU(cpus[i])->env.solaris_idle_mp = sun4m_solaris_smp_idle &&
+++                                                  smp_cpus > 1;
++     }
++ 
++     /* Create and map RAM frontend */
++@@ -1166,6 +1185,13 @@ static void sun4m_machine_class_init(ObjectClass *oc, const void *data)
++     object_class_property_set_description(oc, "solaris-idle",
++         "Halt the CPU while Solaris 2.5.1 to 9 is idle, instead of spinning "
++         "(default: on)");
+++
+++    object_class_property_add_bool(oc, "solaris-smp-idle",
+++                                   sun4m_get_solaris_smp_idle,
+++                                   sun4m_set_solaris_smp_idle);
+++    object_class_property_set_description(oc, "solaris-smp-idle",
+++        "Halt idle CPUs of Solaris 2.5.1 to 9 with more than one CPU, "
+++        "instead of spinning (default: on)");
++ }
++ 
++ static void ss5_class_init(ObjectClass *oc, const void *data)
+diff --git a/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
+new file mode 100644
+index 0000000..a1a0918
+--- /dev/null
++++ b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
+@@ -0,0 +1,230 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the Solaris multiprocessor idle halt on sun4m
++
++A tiny boot PROM runs a loop laid out as the multiprocessor idle loop of
++Solaris 2.6 on the first CPU of an SS-20 with two, and counts its rounds
++in RAM. With nothing runnable and interrupts enabled at level 0 the CPU
++halts and only the bounded halt's timer wakes it, so the count goes on
++slowly (above 0, below 300 in 300 ms); once the test makes a thread
++runnable, the loop runs at full speed again. It must run at full speed
++with solaris-smp-idle=off, at interrupt level 15 and with one CPU. Any
++trap stops the test with the trap type in RAM.
++---
++ tests/qtest/meson.build                   |   3 +-
++ tests/qtest/sun4m-solaris-smp-idle-test.c | 193 ++++++++++++++++++++++
++ 2 files changed, 195 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-solaris-smp-idle-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9bc0107c5e..9bd606b70d 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -202,7 +202,8 @@ qtests_sh4eb = (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-
++ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-escc-test', 'sun4m-apc-test',
++                 'sun4m-solaris-idle-test', 'sun4m-mmu-nofault-test',
++-                'sun4m-pil-delay-slot-test'] + \
+++                'sun4m-pil-delay-slot-test',
+++                'sun4m-solaris-smp-idle-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-solaris-smp-idle-test.c b/tests/qtest/sun4m-solaris-smp-idle-test.c
++new file mode 100644
++index 0000000000..66b1ad7d1d
++--- /dev/null
+++++ b/tests/qtest/sun4m-solaris-smp-idle-test.c
++@@ -0,0 +1,193 @@
+++/*
+++ * QTest: halting idle CPUs in the multiprocessor idle loop of Solaris on
+++ * sun4m
+++ *
+++ * A boot PROM runs a loop laid out as the multiprocessor idle loop of
+++ * Solaris 2.6 on the first CPU of an SS-20 with two: it calls "swtch" when
+++ * the word at CPU + 0x58 (disp_nrunnable) is not 0, else "disp_getwork",
+++ * which finds nothing, and counts its rounds in RAM. With interrupts
+++ * enabled at level 0 and none pending, QEMU halts the CPU at the call of
+++ * disp_getwork, and as no device interrupts, only the bounded halt's timer
+++ * (10 ms) wakes it: the loop goes on at about 100 rounds a second instead
+++ * of millions. When the test makes a thread runnable, the timer ends the
+++ * halt and the loop runs at full speed. It must run at full speed with
+++ * solaris-smp-idle=off, at interrupt level 15 and with one CPU.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: the CPU structure, its round count at 0 and the trap marker */
+++#define RAM_CPU         0x1000ULL
+++#define RAM_COUNT       (RAM_CPU + 0)
+++#define RAM_TRAP        (RAM_CPU + 0x20)
+++#define RAM_NRUNNABLE   (RAM_CPU + 0x58)
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++
+++/* A loop that spins does far more rounds than this in 300 ms */
+++#define HALTED_MAX      300
+++
+++/*
+++ * The PROM: a trap table whose entries store their trap type at RAM_TRAP
+++ * and stop, and at 0x400 the loop. It runs from reset: MMU off, so
+++ * instructions come from the PROM and data from RAM.
+++ */
+++static char *write_prom(uint32_t nrunnable, uint32_t psr)
+++{
+++    const uint32_t code[] = {
+++        0x31000004,             /*        sethi %hi(0x1000), %i0 */
+++        0x82102000 | nrunnable, /*        mov   nrunnable, %g1 */
+++        0xc2262058,             /*        st    %g1, [%i0 + 0x58] */
+++        0x81882000 | psr,       /*        wr    %g0, psr, %psr */
+++        0x01000000,             /*        nop */
+++        0x01000000,             /*        nop */
+++        0x01000000,             /*        nop */
+++        0x90102000,             /*        clr   %o0             cpu_flags */
+++        0x808a2004,             /* quies: btst  4, %o0 */
+++        0x32bfffff,             /*        bne,a quies */
+++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
+++        0xd0062058,             /*        ld    [%i0 + 0x58], %o0 */
+++        0x80a22000,             /*        cmp   %o0, 0 */
+++        0x22800008,             /*        be,a  idle */
+++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
+++        0x40000013,             /*        call  ret             unset_idle_cpu */
+++        0x01000000,             /*         nop */
+++        0x40000011,             /*        call  ret             swtch */
+++        0x01000000,             /*         nop */
+++        0x1080000a,             /*        b     count */
+++        0x01000000,             /*         nop */
+++        0x808a2020,             /* idle:  btst  0x20, %o0 */
+++        0x32bffff2,             /*        bne,a quies */
+++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
+++        0x4000000c,             /*        call  ret0            disp_getwork */
+++        0x90100018,             /*         mov  %i0, %o0 */
+++        0x80900008,             /*        tst   %o0 */
+++        0x10800002,             /*        b     count */
+++        0x01000000,             /*         nop */
+++        0xca062000,             /* count: ld    [%i0], %g5 */
+++        0x8a016001,             /*        inc   %g5 */
+++        0xca262000,             /*        st    %g5, [%i0] */
+++        0x10bfffe8,             /*        b     quies */
+++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
+++        0x81c3e008,             /* ret:   retl */
+++        0x01000000,             /*         nop */
+++        0x81c3e008,             /* ret0:  retl */
+++        0x90102000,             /*         clr  %o0 */
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(0x01000000);
+++    for (i = 1; i < CODE / 4; i++) {
+++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-solaris-smp-idle-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++typedef struct Run {
+++    QTestState *qts;
+++    char *prom;
+++} Run;
+++
+++static void start(Run *r, const char *machine, uint32_t nrunnable,
+++                  uint32_t psr)
+++{
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++
+++    r->prom = write_prom(nrunnable, psr);
+++    r->qts = qtest_initf("-machine %s -accel tcg -bios %s", machine, r->prom);
+++    while (qtest_readl(r->qts, RAM_COUNT) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    g_usleep(300 * 1000);
+++}
+++
+++/* The loop's rounds over the next 300 ms */
+++static uint32_t rounds(Run *r)
+++{
+++    uint32_t before = qtest_readl(r->qts, RAM_COUNT);
+++
+++    g_assert_cmphex(qtest_readl(r->qts, RAM_TRAP), ==, 0);
+++
+++    g_usleep(300 * 1000);
+++    return qtest_readl(r->qts, RAM_COUNT) - before;
+++}
+++
+++static void finish(Run *r)
+++{
+++    g_assert_cmphex(qtest_readl(r->qts, RAM_TRAP), ==, 0);
+++    qtest_quit(r->qts);
+++    unlink(r->prom);
+++    g_free(r->prom);
+++}
+++
+++#define PSR_S_ET        0xa0
+++
+++/*
+++ * Nothing runnable, interrupts enabled at level 0: the CPU halts and the
+++ * timer wakes it now and then. Then a thread becomes runnable: the timer
+++ * ends the halt and the loop runs.
+++ */
+++static void test_idle(void)
+++{
+++    Run r;
+++    uint32_t n;
+++
+++    start(&r, "SS-20 -smp 2", 0, PSR_S_ET);
+++    n = rounds(&r);
+++    g_assert_cmpuint(n, >, 0);
+++    g_assert_cmpuint(n, <, HALTED_MAX);
+++    qtest_writel(r.qts, RAM_NRUNNABLE, 1);
+++    g_assert_cmpuint(rounds(&r), >, 10 * HALTED_MAX);
+++    finish(&r);
+++}
+++
+++static void test_running(const void *data)
+++{
+++    const char *const *t = data;
+++    Run r;
+++
+++    start(&r, t[0], 0, strtoul(t[1], NULL, 0));
+++    g_assert_cmpuint(rounds(&r), >, 10 * HALTED_MAX);
+++    finish(&r);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const char *const off[] = {
+++        "SS-20,solaris-smp-idle=off -smp 2", "0xa0"
+++    };
+++    static const char *const pil15[] = { "SS-20 -smp 2", "0xfa0" };
+++    static const char *const smp1[] = { "SS-20", "0xa0" };
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("sun4m-solaris-smp-idle/idle", test_idle);
+++        qtest_add_data_func("sun4m-solaris-smp-idle/off", off, test_running);
+++        qtest_add_data_func("sun4m-solaris-smp-idle/pil15", pil15,
+++                            test_running);
+++        qtest_add_data_func("sun4m-solaris-smp-idle/smp1", smp1,
+++                            test_running);
+++    }
 ++
 ++    return g_test_run();
 ++}
