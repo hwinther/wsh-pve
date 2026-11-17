@@ -464,12 +464,13 @@ class Scripted:
         v = {**t["firstboot"].get("vars", {}), "ROOT_PASSWORD": job.root_password, "MARKER": job.marker(),
              "USER": job.a.user or "", "USER_PASSWORD": job.user_password if job.a.user else "",
              "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", **net_vars(job),
-             "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
+             "KEYBOARD": getattr(job.a, "keyboard", None) or "us", "NIC_NAME": job.nic}
         job.phase("firstboot", t["firstboot"]["scenario"], v, t["firstboot"]["timeout"])
 
     def check(self, job):
         t = job.target
         # The disk's layout as the guest sees it goes into the evidence (check/serial.raw)
+        # (the target's check "commands", else Solaris's)
         v = {**t["check"].get("vars", {}), "ROOT_PASSWORD": job.root_password,
              "COMMANDS": t["check"].get("commands") or "uname -a; hostname; cat /etc/wsh-lab-target; df -k;"
                          f" prtvtoc /dev/rdsk/{t.get('device', 'c0t3d0')}s2; ifconfig -a; netstat -rn",
@@ -817,7 +818,7 @@ def add_commands(sub):
     i.add_argument("--dns", metavar="A[,B,C]", help="name servers: the guest resolves host names with DNS (none)")
     i.add_argument("--domain", help="the DNS domain (and search domain) of the guest, with --dns or DHCP")
     i.add_argument("--root-password", help=f"root's password ({targets.DEFAULT_ROOT_PASSWORD}: a public default)")
-    i.add_argument("--user", help="also add this user (home under /export/home)")
+    i.add_argument("--user", help="also add this user (home under /export/home; NetBSD: /home)")
     i.add_argument("--user-password", help="the user's password (the root password)")
     i.add_argument("--disk-size", metavar="SIZE",
                    help="the first disk: one of the sizes the target was tested with (`targets` lists them; "
