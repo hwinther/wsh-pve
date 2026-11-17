@@ -50,6 +50,7 @@ DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab V
 # The packages of the last test run (the PVE test node with the published packages).
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
                        "pve-manager": "9.2.28+wsh4"}
+PACKAGES_2026_11_17 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh13"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -186,17 +187,31 @@ TARGETS = {
         "boot": "scsi3",
         "hostname": "sol251-ss5",
     },
+    # Solaris 7 asks 2.6's questions plus Subnets (default yes) and Select 64 Bit (default no):
+    # solaris-install-serial.py unchanged
+    "sol7-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 7 3/99 End User on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "sol7-ss5",
+        "minutes": 11,  # install 6, first boot 3, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
+    },
     "sol7-ss20": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 7 3/99 on a SPARCstation 20 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "The CD reaches the installer's language question on SS-5 and SS-20; no install was "
-                   "run yet, so solaris-install-serial.py's screens are untested for 7.",
+        "title": "Solaris 7 3/99 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
         "disk": sun_disk("3G"),
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss20",
+        "minutes": 10,  # install 6, first boot 3, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
     "sol8-ss20": {
         **SOLARIS_SCRIPTED,

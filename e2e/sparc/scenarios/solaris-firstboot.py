@@ -96,6 +96,10 @@ def network(m, v):
     else:
         nets = [classful(v["NET_IP"])] + ([v["NET_NETWORK"]] if v["NET_NETWORK"] != classful(v["NET_IP"]) else [])
         for net in nets:
+            # Solaris 7's installer has a Subnets screen (default yes, 255.255.255.0) and writes the
+            # classful entry itself: replace it rather than add a second (the first one wins)
+            shell(m, f"sed '/^{net.replace('.', '[.]')}[ \t]/d' /etc/inet/netmasks > /tmp/netmasks"
+                     " && cat /tmp/netmasks > /etc/inet/netmasks && rm /tmp/netmasks")
             shell(m, f"echo '{net}\\t{v['NET_NETMASK']}' >> /etc/inet/netmasks")
         if v["NET_GATEWAY"]:
             shell(m, f"echo {v['NET_GATEWAY']} > /etc/defaultrouter")
