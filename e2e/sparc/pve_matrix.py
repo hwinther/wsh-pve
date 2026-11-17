@@ -184,9 +184,12 @@ def run_case(name, config, iso, template, steps, a):
             link_media(target, a)
             vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
             out = os.path.join(work, f"1-install-{target}")
+            # the whole install: at least its phases' own timeouts (Solaris 8's install phase is 2 h)
+            t = targets.TARGETS[target]
+            phases = sum(t[p]["timeout"] for p in ("install", "firstboot", "check") if p in t)
             res = run_step(name, f"install {target}", out, a,
                            [sys.executable, os.path.join(HERE, "lab.py"), "install", target, "--vmid", vmid,
-                            "--out", out, "--check"], timeout=a.timeout * 2)
+                            "--out", out, "--check"], timeout=max(a.timeout * 2, phases + 600))
             results.append(res)
             first = 2
             if res["code"]:

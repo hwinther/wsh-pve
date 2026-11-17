@@ -349,5 +349,88 @@ class Masking(unittest.TestCase):
                              "MARKER": "target=x", "EMPTY_PASSWORD": ""})
 
 
+class WebStart(unittest.TestCase):
+    """solaris-webstart-serial.py's prompt table against screens of the Solaris 8 and 9 runs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-webstart-serial.py"))
+
+    def reply(self, inst, screen):
+        v = {**self.sc.DEFAULTS, "HOSTNAME": "h1", "IP": "10.0.2.15", "ROOT_PASSWORD": "pw"}
+        text = self.sc.tail(screen)
+        for rx, reply, _ in self.sc.prompts(inst, v):
+            if re.search(rx, text):
+                inst.track(screen)
+                return reply(screen) if callable(reply) else reply
+        return None
+
+    def test_prompts(self):
+        inst = self.sc.Installer(None, {"SWAPS": ""})
+        for screen, want in [
+            ("   Is this machine networked (y/n) [n]?", "y"),
+            ("   Enter host name []:", "h1"),
+            ("   Enter the subnet netmask [255.255.255.0]:", "255.255.255.0"),
+            ("   Enter the root password again []:", "pw"),
+            ("   Please enter the number corresponding to your router discovery method [1]:", "1"),
+            ("Solaris Web Start will assist you in installing software for Solaris.\n"
+             '   <Press ENTER to continue> {"!" exits}', ""),
+            ("   Reboot automatically after software installation [y]?", "n"),
+            ("Available regions:\n0     POSIX\n   If you wish to change the locale to be used, enter the number next\n"
+             "   to the desired region to choose the locale to be used after the system\n"
+             "   has been installed or enter n to use the default.  [n]", "0"),
+            ("Available locales for POSIX:\n 2.   English (POSIX C) ( C )\n"
+             "   Please enter the number next to the desired locale to be used after the\n"
+             "   system has been installed, or enter n to choose a new region.  [n]", "2"),
+            ("   Select the number corresponding to a file system operation, 'Return to\n"
+             "   beginning' to change selections, or 'Done' to proceed with the install [4]:", ""),
+            ("    <--[90%]--[ENTER To Continue]--[n To Finish]-->", "n"),
+            ("   <Press Return to reboot the system>", ""),
+            ('<Press Return to reboot the system> {"!" exits}\n    []', ""),
+            ("   the next step unless you select \"Pause\". Enter 'p' to pause. Enter 'c' to\n   continue. [c]", "c"),
+        ]:
+            self.assertEqual(self.reply(inst, screen), want, screen)
+        self.assertIsNone(self.reply(inst, "   Something new [q]:"))
+
+    def test_cds_are_deselected(self):
+        """Documentation and Supplement off (a partly selected CD goes [-] -> [X] -> [ ]), Software 2
+        of 2 left to the software group."""
+        inst = self.sc.Installer(None, {"SWAPS": ""})
+        prompt = "\n   Enter the number corresponding to a CD to view its information.\n   Enter n when finished [n]"
+        cds = ("Select the CDs and products you would like to install.\n"
+               " [{0}]  0  Solaris 8 Documentation English    204.4 MB\n"
+               " [ ]  1  Solaris 8 Software 2 of 2    0.0 MB\n"
+               " [{1}]  2  Computer Systems Supplement CD    233.9 MB" + prompt)
+        products = ("Products marked with an [X] will be installed.\n [{0}]  2     Computer Systems Supplement CD"
+                    "    233.9 MB\n [ ]  2.0   Alternate Pathing 2.3.1    2.6 MB" + prompt)
+        self.assertEqual(self.reply(inst, cds.format("X", "-")), "0")
+        self.assertEqual(self.reply(inst, cds.format(" ", "-")), "2")
+        self.assertEqual(self.reply(inst, products.format("-")), "2")
+        self.assertEqual(self.reply(inst, "   Toggle Computer Systems Supplement CD [n]?"), "y")
+        self.assertEqual(self.reply(inst, products.format("X")), "2")
+        self.assertEqual(self.reply(inst, products.format(" ")), "n")
+        self.assertEqual(self.reply(inst, cds.format(" ", " ")), "n")
+
+    def test_cds_go_in_in_order(self):
+        changes = []
+        m = types.SimpleNamespace(change_medium=lambda d, vol: changes.append((d, vol)))
+        inst = self.sc.Installer(m, {"SWAPS": "scsi6=local:iso/cd1.iso scsi6=local:iso/cd2.iso"})
+        self.sc.time.sleep, sleep = (lambda s: None), self.sc.time.sleep
+        try:
+            self.assertEqual(self.reply(inst, "Please insert the Solaris 8 Software 1 of 2 CD.\n"
+                                              "To select a different media, enter B to go Back.\n    []"), "")
+            self.assertEqual(self.reply(inst, "Please insert the CD for Solaris 8 Software 2 of 2 (SPARC Platform "
+                                              "Edition).\nAfter you insert the CD, please press Enter.\n    []"), "")
+            with self.assertRaises(RuntimeError):
+                self.reply(inst, "Please insert the Solaris 8 Software 1 of 2 CD.\n    []")
+        finally:
+            self.sc.time.sleep = sleep
+        self.assertEqual(changes, [("scsi6", "local:iso/cd1.iso"), ("scsi6", "local:iso/cd2.iso")])
+
+    def test_prom_env_only_during_the_install(self):
+        for name in ("sol8-ss20", "sol9-ss20"):
+            self.assertEqual(targets.TARGETS[name]["install"]["prom_env"], {"auto-boot?": "false"})
+
+
 if __name__ == "__main__":
     unittest.main()
