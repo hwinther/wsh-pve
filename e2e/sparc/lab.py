@@ -432,6 +432,94 @@ class Machine:
         """Press one key or a chord, e.g. fb_key("stop", "a") for Stop-A."""
         self.qmp.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in qcodes], **{"hold-time": 100})
 
+    # --- the VGA text screen (x86 guests; vgatext.py) ------------------------------------------------
+
+    def pmem(self, address, size):
+        """`size` bytes of guest physical memory from `address` (QMP pmemsave into a private temporary
+        file next to the evidence, read and removed)."""
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="_pmem", dir=self.out)
+        os.close(fd)
+        try:
+            self.qmp.cmd("pmemsave", val=int(address), size=int(size), filename=path)
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
+
+    def vga_screen(self):
+        """The VGA text screen (vgatext.Screen: lines, attributes, cursor, mode); text_mode is False in a
+        graphics mode, where only a screendump shows the screen."""
+        import vgatext
+
+        return vgatext.read(self.pmem)
+
+    def vga_text(self, ocr_fallback=True):
+        """The screen as text: exact from the VGA text buffer, or OCR of a screendump when the guest is
+        in a graphics mode (and `ocr_fallback`)."""
+        s = self.vga_screen()
+        if s.text_mode:
+            return s.text
+        return self.fb_text(self.screendump("_fb_poll")) if ocr_fallback else ""
+
+    def vga_expect(self, pattern, timeout=300, interval=0.5, tail=0):
+        """Wait for a regex on the VGA text screen (with tail > 0: in the last `tail` non-empty lines up
+        to the cursor, the prompt the guest waits at). Returns the vgatext.Screen it matched on."""
+        import vgatext
+
+        def read():
+            self._check_alive()
+            return self.vga_screen()
+
+        try:
+            _, s = vgatext.wait(read, pattern, timeout, interval, tail)
+        except TimeoutError as e:
+            raise Timeout(str(e))
+        self.log(f"screen matched {pattern!r}")
+        return s
+
+    def vga_expect_any(self, patterns, timeout=300, interval=0.5, tail=0):
+        """Like vga_expect() for several regexes; returns (index of the one that matched, the screen)."""
+        alt = "|".join(f"(?P<p{i}>{p})" for i, p in enumerate(patterns))
+        s = self.vga_expect(alt, timeout, interval, tail)
+        text = s.tail(tail) if tail else s.text
+        m = re.search(alt, text, re.M)
+        return next(i for i in range(len(patterns)) if m.group(f"p{i}") is not None), s
+
+    def vga_snap(self, title):
+        """A step whose screen is the VGA text screen: NNN-vga.txt and its rendering, beside the
+        framebuffer screenshot."""
+        s = self.vga_screen()
+        step = self.snap(title, fb=True, term=False)
+        if s.text_mode:
+            base = os.path.join(self.out, f"{step['n']:03d}-vga")
+            with open(base + ".txt", "w", encoding="utf-8") as f:
+                f.write(s.text + "\n")
+            step["vga"] = s.text
+            step["ttya_png"] = render_terminal(s.text, base + ".png", cols=s.cols, rows=s.rows)
+            self.write_report()
+        return step
+
+    def medium(self, drive):
+        """The file in a removable drive (QMP query-block), or None when it is empty. `drive`: the
+        PVE/QEMU drive name (floppy0, ide2, ...)."""
+        for b in self.qmp.cmd("query-block"):
+            qdev = b.get("qdev", "")
+            if b.get("device") in (drive, f"drive-{drive}") or qdev.endswith(f"/{drive}") or qdev == drive:
+                ins = b.get("inserted")
+                return ins.get("file") if ins else None
+        raise RuntimeError(f"no drive {drive} in query-block")
+
+    def change_medium(self, drive, volume):
+        """Put a file into a removable drive of the lab's own QEMU (`-drive if=floppy` is floppy0), or
+        "none" to empty it. PveMachine does it through PVE instead."""
+        if volume == "none":
+            self.qmp.cmd("eject", device=drive, force=True)
+        else:
+            self.qmp.cmd("blockdev-change-medium", device=drive, filename=volume)
+        self.log(f"{drive}: {volume}")
+
     # --- the step log ---------------------------------------------------------------------------
 
     def snap(self, title, fb=True, term=True):
