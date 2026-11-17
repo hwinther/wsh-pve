@@ -26,8 +26,8 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Both end with the host name of the target (`sol26-ss5`, `sol26-ss20`), `le0` at 10.0.2.15/24
-(static, set by the installer; `--ip` changes it; no name service, no default route), the time zone
-MET, and a marker file `/etc/wsh-lab-target` with the target, the install time and the media's
+(static; no name service, no default route) unless the network options say otherwise (see
+"Network": static or DHCP, VLAN, netmask, router, DNS), the time zone MET, and a marker file `/etc/wsh-lab-target` with the target, the install time and the media's
 checksums.
 
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
@@ -117,7 +117,8 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # ~12 min
 ```
 
 Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--bridge` (`vmbr0`),
-`--name`, `--hostname`, `--ip`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
+`--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
+`--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
 (a second disk, mounted on `/data`), `--root-password`, `--user NAME` (and `--user-password`; a non-root
 user with its home under `/export/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
@@ -196,6 +197,38 @@ A blank disk (`qm set 120 --scsi4 local:4`) instead needs a label from `format` 
 emulated disk's geometry by itself; the labelled image avoids that. `python3
 /usr/share/wsh-lab/sunlabel.py disk 9G <image>` writes the install targets' 9G disk the same way.
 
+## Network
+
+The VM's NIC goes on `--bridge` (`vmbr0`), with `--vlan TAG` as the `tag=` of `net0`. In the
+guest, a target supports the modes its catalogue entry lists as tested (`wsh-lab targets --json`,
+`net_modes`); anything else is refused before a VM is made:
+
+- **Static** (default): `--ip` (`10.0.2.15`), `--netmask` (`255.255.255.0`), `--gateway` (none: no
+  default route), `--dns` (up to three name servers; none: `/etc/hosts` only) and `--domain`.
+- **DHCP**: `--ip dhcp`. Address, netmask, default router, name servers, domain and host name come
+  from the DHCP server. `--dns`/`--domain` are used only if the server sends no name servers.
+
+How Solaris 2.6 does it (both machines): its installer asks only for a static address and whether
+the system is on a subnet, and its name service choices are NIS+, NIS, Other and None, so the
+installer gets the address and the first boot writes the rest into the files 2.6's start-up
+scripts read: `/etc/netmasks` (the netmask, filed under the class A/B/C network number, which is
+what 2.6 looks up), `/etc/defaultrouter`, `/etc/resolv.conf` with `hosts: files dns` in
+`/etc/nsswitch.conf`; for DHCP, `/etc/dhcp.le0`. The DHCP client (`/sbin/dhcpagent`, 1997) is part
+of the core software, so the End User install has it; with `/etc/dhcp.le0` the start-up scripts
+run `ifconfig le0 auto-dhcp primary`, take the default router from the lease, and write
+`/etc/resolv.conf`, the `hosts:` line and the address in `/etc/hosts` from it.
+
+Two things to know about Solaris 2.6 under DHCP:
+
+- **The host name is the one the DHCP server answers with** (option 12). 2.6's client sends its
+  current name (the target's host name) in its request; a server that echoes it, as dnsmasq does,
+  keeps it, and a server with its own name for the VM's MAC address (in its notes and `qm config`;
+  dnsmasq `dhcp-host=bc:24:11:12:34:56,myname`) renames the system. A server that sends no name
+  leaves it as `unknown` (2.6's start-up script sets that: tooltalk and sendmail need a name).
+- Before this change the installer's address had no netmask entry, so `le0` came up as
+  `10.0.2.15 netmask ff000000` (class A), not /24 as the notes said; every install now writes
+  `/etc/netmasks`.
+
 ## What it leaves
 
 - The VM, powered off (or a template), booting from its disk, the CD drive empty, with the notes:
@@ -221,8 +254,9 @@ within the time limit) the exit code is 1, the evidence stays, and the VM is des
 `--keep-on-failure` kept, stopped, with `FAILED ...` and the evidence path in its notes.
 
 Start it with `qm start 120` and log in on the serial console (`qm terminal 120`) as `root` with the
-password from the notes. The network setting is the installer's static address: change
-`/etc/hostname.le0` and `/etc/hosts` (and add `/etc/defaultrouter`) for your network.
+password from the notes. The notes say how the network was set up ("Network" above); to change it
+later, edit the same files (`/etc/hostname.le0` and `/etc/hosts` for the address, `/etc/netmasks`,
+`/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot.
 
 ## Licence keys
 

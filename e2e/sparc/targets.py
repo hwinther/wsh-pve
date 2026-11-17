@@ -36,7 +36,9 @@ TARGETS: per target
   login      user and console of the finished VM; the password is DEFAULT_ROOT_PASSWORD unless
              --root-password says otherwise
   hostname   set by the installer
-  network    what the installer configured
+  network    how the guest's network is set up (the VM's notes say what one install got)
+  net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
+             --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
 """
@@ -132,7 +134,10 @@ SOLARIS_SCRIPTED = {
     "firstboot": {"scenario": "solaris-firstboot.py", "vars": {}, "timeout": 1800},
     "check": {"scenario": "solaris-boot-disk.py", "vars": {}, "timeout": 1200},
     "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
-    "network": "le0 10.0.2.15/24, static (the installer's Networked: yes; no name service, no default route)",
+    # The installer sets the static address (it has no DHCP choice); the first boot writes /etc/netmasks,
+    # /etc/defaultrouter, /etc/resolv.conf and nsswitch.conf, or /etc/dhcp.le0 (solaris-firstboot.py)
+    "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+    "net_modes": ["static", "dhcp"],
 }
 
 TARGETS = {
@@ -279,7 +284,7 @@ def problems():
         if t.get("status") == "catalogue" and not t.get("blocked"):
             out.append(f"{name}: a catalogue entry says what blocks it")
         if t.get("status") == "automated":
-            for key in ("install", "firstboot", "check", "network"):
+            for key in ("install", "firstboot", "check", "network", "net_modes"):
                 if key not in t:
                     out.append(f"{name}: automated without {key}")
         drives = set()

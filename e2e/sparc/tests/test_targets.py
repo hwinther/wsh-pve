@@ -210,6 +210,68 @@ class DiskSizes(unittest.TestCase):
                 sunlabel.data_geometry(bad)
 
 
+def net_args(**kw):
+    a = dict(target="sol26-ss5", bridge="vmbr0", vlan=None, ip=None, netmask=None, gateway=None, dns=None, domain=None)
+    a.update(kw)
+    return types.SimpleNamespace(**a)
+
+
+class Network(unittest.TestCase):
+    t = targets.TARGETS["sol26-ss5"]
+
+    def test_default(self):
+        n = install.network_choice(self.t, net_args())
+        self.assertEqual((n["mode"], n["ip"], n["netmask"], n["gateway"], n["dns"]),
+                         ("static", "10.0.2.15", "255.255.255.0", None, []))
+        self.assertEqual(install.network_text(n),
+                         "le0 10.0.2.15/24 (netmask 255.255.255.0), static; no default route; no name service"
+                         " (bridge vmbr0)")
+
+    def test_static_full(self):
+        n = install.network_choice(self.t, net_args(ip="192.168.40.7", netmask="255.255.252.0", gateway="192.168.41.1",
+                                                    dns="192.168.40.2, 1.1.1.1", domain="Lab.Example", vlan=40))
+        self.assertEqual((n["network"], n["prefix"], n["gateway"], n["dns"], n["domain"], n["vlan"]),
+                         ("192.168.40.0", 22, "192.168.41.1", ["192.168.40.2", "1.1.1.1"], "lab.example", 40))
+        self.assertIn("VLAN 40", install.network_text(n))
+
+    def test_dhcp(self):
+        n = install.network_choice(self.t, net_args(ip="DHCP"))
+        self.assertEqual((n["mode"], n["ip"]), ("dhcp", None))
+        self.assertTrue(install.network_text(n).startswith("le0 by DHCP"))
+
+    def test_refusals(self):
+        for kw, msg in ((dict(ip="10.0.0.300"), "--ip"), (dict(netmask="255.0.255.0"), "--ip/--netmask"),
+                        (dict(gateway="10.0.3.1"), "isn't another address"), (dict(gateway="10.0.2.15"), "isn't another"),
+                        (dict(ip="10.0.2.0"), "network's or broadcast"), (dict(dns="a.b.c.d"), "--dns"),
+                        (dict(dns="1.1.1.1,1.0.0.1,8.8.8.8,9.9.9.9"), "at most 3"), (dict(domain="lab.test"), "needs --dns"),
+                        (dict(dns="1.1.1.1", domain="bad_domain"), "not a domain"), (dict(vlan=4095), "1-4094"),
+                        (dict(ip="dhcp", gateway="10.0.2.2"), "come from the DHCP server")):
+            with self.subTest(**kw), self.assertRaises(SystemExit) as e:
+                install.network_choice(self.t, net_args(**kw))
+            self.assertIn(msg, str(e.exception))
+
+    def test_unsupported_mode_is_refused(self):
+        t = {**self.t, "net_modes": ["static"]}
+        with self.assertRaises(SystemExit) as e:
+            install.network_choice(t, net_args(ip="dhcp"))
+        self.assertIn("supports static", str(e.exception))
+
+    def test_every_automated_target_says_what_it_supports(self):
+        for name in targets.automated():
+            self.assertTrue(set(targets.TARGETS[name]["net_modes"]) <= {"static", "dhcp"}, name)
+
+    def test_netmasks_by_classful_network(self):
+        # Solaris 2.6 looks /etc/netmasks up by the class A/B/C network number
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-firstboot.py"))
+        self.assertEqual([sc.classful(x) for x in ("10.0.2.15", "172.16.5.4", "192.168.40.7")],
+                         ["10.0.0.0", "172.16.0.0", "192.168.40.0"])
+
+    def test_vlan_in_net0(self):
+        a = types.SimpleNamespace(bridge="vmbr1", vlan=20, storage="local", vmid="1", name=None, target="sol26-ss5")
+        p = install.vm_params(self.t, a, {"solaris_2.6_598_sparc.iso": "local:iso/x.iso"}, None)
+        self.assertEqual(p["net0"], "lance,bridge=vmbr1,tag=20")
+
+
 class VmParams(unittest.TestCase):
     def test_sol26_ss5(self):
         a = types.SimpleNamespace(bridge="vmbr1", storage="tank", vmid="120", name=None, target="sol26-ss5")

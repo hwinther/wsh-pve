@@ -458,6 +458,47 @@ this branch, one guest at a time), 2026-11-17:
 Not done: a 9G install of the catalogue targets (2.5.1, 7, 8, 9); the in-guest `format` route for a
 blank second disk.
 
+### Network
+
+`install.network_choice()` turns `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`,
+`--domain` and `--vlan` into one checked setting: a mode the target lists in `net_modes` (what was
+tested), addresses that parse, a router inside the subnet, at most three name servers, a VLAN tag of
+1-4094; anything else exits before a VM is made. `--vlan` becomes `tag=` on `net0` at creation.
+The installer always gets a static address (Solaris 2.6's has no DHCP screen and no DNS choice:
+NIS+, NIS, Other, None); `solaris-firstboot.py`'s `network()` then writes what 2.6's start-up
+scripts read (`rootusr`, `inetinit`, `inetsvc`, read on the installed system):
+`/etc/netmasks` under the classful network number (2.6's lookup key) and the subnet's,
+`/etc/defaultrouter`, `/etc/resolv.conf` and `hosts: files dns`, or for DHCP `/etc/dhcp.le0` (the
+scripts then run `ifconfig le0 auto-dhcp primary`, set the host name from `dhcpinfo Hostname`, or
+`unknown`, take the router from the lease, and write `resolv.conf`, the `hosts:` line and the
+`/etc/hosts` entry). The marker gets a `network=` line and the VM's notes a `Network:` line with
+the same text; the check phase records `ifconfig -a` and `netstat -rn`.
+
+Before this change the installer's address had no `/etc/netmasks` entry and came up with the class
+A mask (`inet 10.0.2.15 netmask ff000000`, read on an installed 9G VM), although the notes said /24.
+
+The test network (in the PVE test container): `vmbr1`, VLAN-aware, with 10.77.0.1/24 untagged and
+`vmbr1.20` 10.77.20.1/24 on VLAN 20, dnsmasq on both (DHCP .100-.150, router and DNS itself, domain
+`lab.test`, `gw.lab.test`, `far.lab.test` = 10.78.0.1, an address of the container that the guest
+reaches only through its default router). After each install (`--check`), a further boot ran
+`hostname; ifconfig -a; netstat -rn; cat /etc/resolv.conf; ping gw.lab.test; ping far.lab.test;
+nslookup far.lab.test` and required `far.lab.test is alive`. 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss5 --bridge vmbr1 --ip dhcp --check` | passed; lease 10.77.0.111/24 from dnsmasq, default route 10.77.0.1 from the lease, `resolv.conf` (`domain lab.test`, `nameserver 10.77.0.1`) and `hosts: files dns # Added by DHCP` written by 2.6's own `inetsvc`; the client sent `sol26-ss5` as its name, dnsmasq echoed it (option 12), `hostname` = `sol26-ss5`; the further boot: `gw.lab.test is alive`, `far.lab.test is alive`, `nslookup` answered by 10.77.0.1 | 12.6 min |
+| `install sol26-ss20 --bridge vmbr1 --vlan 20 --ip dhcp --check`, dnsmasq `dhcp-host=<MAC>,s20dhcp` | passed; `net0: lance=...,bridge=vmbr1,tag=20`; the lease came from the VLAN 20 side (`DHCPACK(vmbr1.20) 10.77.20.137`), so the tag reaches the wire; `hostname` = `s20dhcp` (the server's name wins); router 10.77.20.1, DNS as above, both pings | 12.7 min |
+| `install sol26-ss5 --bridge vmbr1 --vlan 20 --ip 10.77.20.50 --gateway 10.77.20.1 --dns 10.77.20.1 --domain lab.test --check` | passed; `le0 10.77.20.50 netmask ffffff00`, `default 10.77.20.1`, `/etc/netmasks` `10.0.0.0 255.255.255.0` and `10.77.20.0 255.255.255.0`, `hosts: files dns`; both pings, `nslookup` | 12.7 min |
+| `install sol26-ss20 --bridge vmbr1 --ip 10.77.0.60 --netmask 255.255.255.0 --gateway 10.77.0.1 --dns 10.77.0.1 --domain lab.test --check` | passed; `le0 10.77.0.60 netmask ffffff00`, `default 10.77.0.1`, both pings | 12.3 min |
+| `install sol26-ss5 --bridge vmbr1 --ip dhcp --check` with dnsmasq `--dhcp-ignore-names` (a server that sends no name) | was still running at hand-off; the expected `unknown` comes from reading 2.6's `rootusr`, not yet observed | |
+| `--ip 10.0.2.15 --gateway 10.0.3.1`; `--ip dhcp --netmask 255.255.255.0` | refused before a VM is made: `--gateway 10.0.3.1 isn't another address in 10.0.2.0/24`; `--netmask and --gateway come from the DHCP server with --ip dhcp` | 0 s |
+
+**MAC addresses.** On sparc32 the lance uses the MAC of `net0`: Solaris's `ifconfig le0` showed
+`ether bc:24:11:ca:76:c9` for `net0: lance=BC:24:11:CA:76:C9` (and the same for every run above),
+dnsmasq saw each DHCP VM's own `net0` MAC in its requests and gave each its own lease. That fits QEMU's
+sun4m putting the NIC's address in the IDPROM; the sparc64 problem (the IDPROM's default MAC on
+every VM) doesn't show on SS-5 or SS-20.
+
 ### The wsh-lab package
 
 `packages/wsh-lab/` packages the lab as the optional Debian package `wsh-lab` in the apt repository
