@@ -71,8 +71,8 @@ def run(m, v):
         shell(m, f"chmod 644 {MARKER_FILE}; cat {MARKER_FILE}")
         m.snap("marker file")
     if v["USER"]:
-        shell(m, f"grep '^{v['USER']}:' /etc/passwd; ls -ld /home/{v['HOSTNAME']}/{v['USER']}")
-        m.snap(f"user {v['USER']}")
+        shell(m, f"grep '^{v['USER']}:' /etc/passwd | cut -d: -f1,3-; ls -ld /home/{v['HOSTNAME']}/{v['USER']}")
+        m.snap(f"user {v['USER']}")  # the password hash (field 2 of /etc/passwd) left out
     if v["NET_IP"] and v["NET_NETMASK"]:
         network(m, v)
     power_off(m, "halt")

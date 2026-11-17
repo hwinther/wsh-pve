@@ -514,5 +514,100 @@ class WebStart(unittest.TestCase):
             self.assertEqual(targets.TARGETS[name]["install"]["prom_env"], {"auto-boot?": "false"})
 
 
+class SunOS4(unittest.TestCase):
+    """sunos414-ss5: the converted CD, the install-phase memory, the refused network options and the
+    sys-config screens of the first boot."""
+    t = targets.TARGETS["sunos414-ss5"]
+
+    def test_target(self):
+        self.assertEqual(self.t["install"]["memory"], 64)
+        self.assertEqual(self.t["profile"]["memory"], 256)
+        self.assertEqual(self.t["install"]["prom_env"], {"auto-boot?": "false"})
+        g = self.t["disk"]["geometry"]
+        self.assertEqual(g["parts"][6], (4, 0, 282, 2079000))  # g: 1000 cylinders of 21 x 99
+        self.assertLess(g["parts"][6][3] * 512, 2 << 30)
+        self.assertEqual(g["parts"][:6], targets.SUN29G["parts"][:6])
+        cd = targets.MEDIA["sunos414-cd.iso"]
+        src = targets.MEDIA[cd["from"]["name"]]
+        self.assertEqual(cd["size"], src["size"] // 2352 * 2048)
+
+    def test_convert(self):
+        bin_ = b"".join(bytes([0] + [255] * 10 + [0]) + bytes(4) + bytes([i]) * 2048 + bytes(288) for i in range(3))
+        cd = b"".join(bytes([i]) * 2048 for i in range(3))
+        media = {"raw.iso": {"content": "iso", "size": len(bin_), "sha256": hashlib.sha256(bin_).hexdigest(),
+                             "lab": "raw.iso"},
+                 "cd.iso": {"content": "iso", "size": len(cd), "sha256": hashlib.sha256(cd).hexdigest(),
+                            "lab": "cd.iso", "from": {"name": "raw.iso", "convert": "bin2352"}}}
+        saved = dict(targets.MEDIA)
+        targets.MEDIA.update(media)
+        d = tempfile.mkdtemp()
+        try:
+            src = os.path.join(d, "raw.iso")
+            with open(src, "wb") as f:
+                f.write(bin_)
+            self.assertEqual(install.convert_medium("cd.iso", src, os.path.join(d, "cd.iso")), media["cd.iso"]["sha256"])
+            with open(os.path.join(d, "cd.iso"), "rb") as f:
+                self.assertEqual(f.read(), cd)
+            with self.assertRaises(install.InstallFailed):  # never overwrites
+                install.convert_medium("cd.iso", src, os.path.join(d, "cd.iso"))
+            media["cd.iso"]["sha256"] = "0" * 64  # a result that isn't the tested medium is removed
+            with self.assertRaises(install.InstallFailed):
+                install.convert_medium("cd.iso", src, os.path.join(d, "other.iso"))
+            self.assertEqual(sorted(os.listdir(d)), ["cd.iso", "raw.iso"])
+            with open(src, "r+b") as f:  # another source of the same size
+                f.write(b"x")
+            with self.assertRaises(install.InstallFailed):
+                install.convert_medium("cd.iso", src, os.path.join(d, "third.iso"))
+        finally:
+            targets.MEDIA.clear()
+            targets.MEDIA.update(saved)
+            for n in os.listdir(d):
+                os.unlink(os.path.join(d, n))
+            os.rmdir(d)
+
+    def test_network(self):
+        n = install.network_choice(self.t, net_args(target="sunos414-ss5", ip="10.0.2.20", gateway="10.0.2.2"))
+        self.assertEqual((n["ip"], n["gateway"]), ("10.0.2.20", "10.0.2.2"))
+        for kw, msg in ((dict(dns="10.0.2.3"), "--dns: not with"), (dict(ip="dhcp"), "supports static")):
+            with self.subTest(**kw), self.assertRaises(SystemExit) as e:
+                install.network_choice(self.t, net_args(target="sunos414-ss5", **kw))
+            self.assertIn(msg, str(e.exception))
+
+    def test_sysconfig_screens(self):
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "sunos-firstboot.py"))
+        import _sunos4
+        v = {**sc.DEFAULTS, "HOSTNAME": "sun4", "ROOT_PASSWORD": "pw", "NET_IP": "10.0.2.20", "USER": "lab",
+             "USER_PASSWORD": "upw"}
+        rules = _sunos4.sysconfig_rules(v)
+
+        def reply(screen):
+            i = _sunos4.which(rules, screen)
+            answer = rules[i][1]
+            return answer(screen) if callable(answer) else answer
+
+        regions = (" SysConfB1                    SYSTEM CONFIGURATION\n                                   TIME ZONE\n"
+                   + "\n".join(f"                        *   {r}" for r in (
+                       "United States", "Canada", "Mexico", "South America", "Europe", "Asia",
+                       "Australia and New Zealand", "Greenwich Mean Time")))
+        for screen, want in [
+            ("Enter choice (1, 2, or 3) and press the RETURN key.", "2\r"),
+            (" SysConfA1                    SYSTEM CONFIGURATION\n        Hostname =>", "sun4\r"),
+            (regions, " " * 7 + "x"),
+            (" SysConfC8              SYSTEM CONFIGURATION\n                        GREENWICH MEAN TIME", "x"),
+            (" SysConfE1                    SYSTEM CONFIGURATION\n                                     NETWORK", "1\r"),
+            (" SysConfE2   NETWORK ADDRESS\n     Network Address (e.g. 192.9.200.1) =>", "10.0.2.20\r"),
+            (" SysConfH1   SUPERUSER PASSWORD\n     Password =>", "pw\r"),
+            (" SysConfH1   SUPERUSER PASSWORD\n  Retype new password:", "pw\r"),
+            (" SysConfI1   USER ACCOUNT\n  Do you want to set up a user account(y/n)?", "y\r"),
+            (" SysConfI3   USER ACCOUNT - USER NAME\n     User name => luser", "\b" * 12 + "lab\r"),
+            (" SysConfI5   USER PASSWORD\n  Retype new password:", "upw\r"),
+        ]:
+            self.assertEqual(reply(screen), want, screen)
+        self.assertIsNone(_sunos4.which(rules, "something else"))
+        no_user = _sunos4.sysconfig_rules({**v, "USER": "", "NET_IP": ""})
+        self.assertEqual(no_user[_sunos4.which(no_user, " SysConfI1 ")][1], "n\r")
+        self.assertEqual(no_user[_sunos4.which(no_user, " SysConfE1 ")][1], "2\r")
+
+
 if __name__ == "__main__":
     unittest.main()

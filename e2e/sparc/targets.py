@@ -60,6 +60,7 @@ CONVERSIONS = {"bin2352": (2352, 16, 2048)}  # raw CD sectors (Mode 1): sync + h
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
                        "pve-manager": "9.2.28+wsh4"}
 PACKAGES_2026_11_17 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh13"}
+PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh15"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -308,6 +309,8 @@ TARGETS = {
         # libc), and it has no DHCP client
         "net_refuse": {"dns": "SunOS 4.1.4 resolves host names through /etc/hosts or NIS, not DNS",
                        "domain": "SunOS 4.1.4 resolves host names through /etc/hosts or NIS, not DNS"},
+        "minutes": 6,  # install 2.2, first boot 2.5, --check 1
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
     "netbsd111-sparc64": {
         "title": "NetBSD 11.1 sparc64 without X11 (sun4u, OpenBIOS)",

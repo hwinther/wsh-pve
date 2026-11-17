@@ -475,7 +475,8 @@ class Scripted:
                          f" prtvtoc /dev/rdsk/{t.get('device', 'c0t3d0')}s2; ifconfig -a; netstat -rn",
              "CHECK": rf"(?m)^target={re.escape(job.a.target)}$", "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
         if job.a.user:
-            v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd"
+            # without the password field: SunOS 4 keeps the hash in /etc/passwd itself
+            v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd | cut -d: -f1,3-"
         if job.a.data_disk:
             v["COMMANDS"] += f"; prtvtoc /dev/rdsk/{DATA_DISK_DEVICE}s2; df -k /data"
         job.phase("check", t["check"]["scenario"], v, t["check"]["timeout"])
