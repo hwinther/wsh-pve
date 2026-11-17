@@ -216,8 +216,20 @@ MATRICES["sparc64"] = [
 # (openbios/patches/0009) and the installer's first screen comes up. Needs the package built with
 # openbios-sparc64; with QEMU's image the kernel stops at "no nucleus hblk8 to allocate".
 SOL10_DVD = "sol-10-u11-ga-sparc-dvd.iso"
+# The installed disk is solaris10-install-sparc64.py's (Sun software too: only on the lab host, in
+# --disks), booted to the login prompt; the network check is the DHCP lease on hme0 and a ping of the
+# user network's gateway.
+SOL10_64 = "sol10-sun4u-installed.raw"
+SOL10_NET = {"NET": "user", "TIMEOUT": "1500",
+             "COMMANDS": "uname -a ;; echo | format ;; ifconfig hme0 ;; ping 10.0.2.2",
+             "CHECK": r"SunOS \S+ 5\.10 ;; c0t0d0 ;; inet 10\.0\.2\.15 ;; is alive"}
 MATRICES["solaris10"] = [
     ("sol10-cd-sparc64", "sparc64-boot-cd.py", None, SOL10_DVD, {"GUEST": "solaris10", "MEM": "1024"}),
+    ("sol10-disk-sparc64", "sparc64-boot-disk.py", SOL10_64, None, {"GUEST": "solaris10", "MEM": "1024", **SOL10_NET}),
+]
+# The install itself (~80 min): not part of any scheduled run; needs --timeout 9000 (default 3600)
+MATRICES["solaris10-install"] = [
+    ("sol10-install-sparc64", "solaris10-install-sparc64.py", None, SOL10_DVD, {}),
 ]
 
 # Left behind by a run but not evidence: the guest disk, QEMU's sockets, the display refresh buffer,

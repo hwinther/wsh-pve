@@ -56,15 +56,23 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    9.2.17 and pve-container 6.1.22, then the build image is rebuilt and #289 merged. Until then main
    cannot build those three packages; the published ones are unaffected. #291 (`ne2k_isa` on the
    ISA bus) is stacked on it.
-2. **Solaris 10 on sun4u: install and boot from disk.** An install to the IDE disk completed once in
-   three attempts in the lab with the firmware that is now published, and an installed disk boots to
-   its login with network; the install is being repeated on the published package. Still to do: how
-   often it completes (one intermittent `bad unknown trap at TL 1` panic), reboot through the
-   client-interface `boot` service (`prom_reboot: reboot call returned!`; OpenBIOS patch 0012 is
-   kept as `.wip`), booting the installed disk as a lab case,
-   `hme0` traffic, and the IDPROM MAC (every sparc64 VM gets `52:54:00:12:34:56`). Solaris 7/8/9
-   `pp is NULL or free` and 2.5.1/2.6 boot-block exceptions remain. Details: `submodules/SPARC.md`,
-   "Solaris on sun4u".
+2. **Solaris 10 on sun4u (OpenBIOS).** pve-qemu-kvm 11.1.3-2+wsh13 ships the patched
+   `openbios-sparc64` (patches 0003-0011: the virtual `available` list, the I-cache properties, the
+   Forth state at client start, OBP's node names for the console, OBP's IDE tree) and the cmd646
+   interrupt latch (`wsh/0021`). On that package Solaris 10 1/13 installs from its DVD to the IDE
+   disk with the text installer on ttya (2 of 2 installs, ~80 min each,
+   `scenarios/solaris10-install-sparc64.py`), and the installed disk boots to `console login:`, gets
+   a DHCP lease on `hme0` and powers off (`solaris10` matrix 2/2, needs the Sun DVD and the
+   installed disk on the lab host). NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as
+   before. Still to do:
+   - reboot: the installer's reboot and `reboot`/`init 6` return from the firmware; 0012
+     (`.wip`) resets at the `ok` prompt but hangs when Solaris calls it;
+   - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
+     MAC into the IDPROM);
+   - `install` through PVE (catalogue entry `sol10-sun4u`); the intermittent `bad unknown trap at
+     TL 1` panic seen once before the package (none in 2 installs on it);
+   - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
+   Details: `submodules/SPARC.md`, "Solaris on sun4u".
 
 ## Next, in this order
 
@@ -73,7 +81,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    follow-up (`submodules/SPARC.md`, "SMP"). sparc64 guests don't idle either: NetBSD on sun4u
    keeps a host core at 100% (nothing on QEMU's sun4u lets the guest stop the CPU; `SPARC.md`,
    "sparc64"); Solaris on sun4u not measured.
-2. **Solaris on sun4u**: see "In progress".
+2. **Solaris on sun4u**: see "In progress". Next: a reboot that works from Solaris (0012 hangs), a
+   per-VM system MAC, then `install` through PVE.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built

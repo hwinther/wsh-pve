@@ -8,7 +8,9 @@ prom_reboot: reboot call returned!" (after an install, on reboot(1M) and
 init 6). Reset the machine instead; the bootspec isn't kept, the firmware
 boots its boot-device.
 
-UNTESTED: not booted yet with this change.
+NOT WORKING YET: "reset-all" at the ok prompt resets the machine, but
+Solaris 10's "reboot" ends at "rebooting..." and the VM hangs (no
+firmware banner within 900 s); kept as .wip.
 ---
  forth/system/ciface.fs | 4 +++-
  1 file changed, 3 insertions(+), 1 deletion(-)
