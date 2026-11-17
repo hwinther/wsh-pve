@@ -32,7 +32,8 @@ TARGETS: per target
              handed to the install scenario in order (SWAPS) for prompts that name no disk
   method     "scripted": the installer is answered on the console by `install` (a scenario, with
              `vars`), then `firstboot` (a scenario) sets the root password, writes the marker file
-             /etc/wsh-lab-target and optionally adds a user, and powers off. "unattended" (the
+             /etc/wsh-lab-target and optionally adds a user, and powers off; `check` (a scenario,
+             with --check) logs in and runs its "commands" (default: Solaris's). "unattended" (the
              installer's own answer file on a second medium) is
              designed (README.md, "Install targets") but not implemented. DOS targets: targets_dos.py.
              install may have `memory` (MB for the install phase only; the profile's afterwards) and
@@ -43,6 +44,8 @@ TARGETS: per target
              --root-password says otherwise
   hostname   set by the installer
   network    how the guest's network is set up (the VM's notes say what one install got)
+  nic        the guest's interface name in the notes and the marker (le0 unless given)
+  dhcp_note  what the guest takes from a DHCP server, for the notes (Solaris 2.6's unless given)
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
@@ -108,11 +111,15 @@ MEDIA = {
     "NetBSD-11.1-sparc64.iso": {
         "title": "NetBSD 11.1 sparc64 install CD (cdn.netbsd.org)", "content": "iso", "size": 694026240,
         "sha256": "a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e",
-        "lab": "other-os/NetBSD-11.1-sparc64.iso"},
+        "lab": "other-os/NetBSD-11.1-sparc64.iso",
+        # freely redistributable: tests/test_netbsd.py downloads it in CI (its SHA512 matches the
+        # release's images/SHA512)
+        "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc64.iso"},
     "NetBSD-11.1-sparc.iso": {
         "title": "NetBSD 11.1 sparc install CD (cdn.netbsd.org)", "content": "iso", "size": 367329280,
         "sha256": "4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636",
-        "lab": "other-os/NetBSD-11.1-sparc.iso"},
+        "lab": "other-os/NetBSD-11.1-sparc.iso",
+        "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc.iso"},
 }
 
 # The geometry of the lab's SUN2.9G disk template (sparc-SUN2.9G.raw.template.xz, the sparc guide's
@@ -167,6 +174,27 @@ SOLARIS_SCRIPTED = {
     "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
     "net_modes": ["static", "dhcp"],
 }
+
+NETBSD_SCRIPTED = {
+    "method": "scripted",
+    # the install scenario per target (netbsd-install-sparc64.py, netbsd-install-sparc.py); the first
+    # boot sets root's password, the marker, /etc/myname and the network, then `halt -p`
+    "firstboot": {"scenario": "netbsd-firstboot.py", "vars": {}, "timeout": 1200},
+    "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+    "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+    "net_modes": ["static", "dhcp"],
+    # dhcpcd sends no host name by default and keeps /etc/myname
+    "dhcp_note": "router and name servers from the DHCP server; the host name stays as installed (/etc/myname)",
+}
+
+
+def netbsd_check(disk):
+    """The check boot of a NetBSD target: netbsd-boot-disk.py with NetBSD's commands (`disk`: the
+    first disk's name in the guest)."""
+    return {"scenario": "netbsd-boot-disk.py", "vars": {}, "timeout": 1200,
+            "commands": f"uname -a; hostname; cat /etc/wsh-lab-target; df -k; disklabel {disk} | sed -n '/partitions:/,$p';"
+                        " ifconfig -a; netstat -rn -f inet; cat /etc/resolv.conf 2>/dev/null"}
+
 
 TARGETS = {
     "sol26-ss5": {
@@ -312,21 +340,24 @@ TARGETS = {
         "minutes": 6,  # install 2.2, first boot 2.5, --check 1
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
+    # sysinst on the serial console leaves root without a password; netbsd-firstboot.py sets it, the
+    # marker, the host name and the network (README.md, "NetBSD install targets")
     "netbsd111-sparc64": {
+        **NETBSD_SCRIPTED,
         "title": "NetBSD 11.1 sparc64 without X11 (sun4u, OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "netbsd-install-sparc64.py installs it under the lab's own QEMU; not yet run through "
-                   "`install` (needs a sparc64 first-boot scenario and the root password in sysinst).",
-        "method": "scripted",
+        "status": "automated",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
                     "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
         "disk": {"bus": "ide0", "size": 8, "label": None},
         "media": [{"name": "NetBSD-11.1-sparc64.iso", "drive": "ide2"}],
-        "install": {"scenario": "netbsd-install-sparc64.py", "vars": {"BOOT": ""}, "timeout": 2400},
+        "install": {"scenario": "netbsd-install-sparc64.py", "vars": {"SETS": "b"}, "timeout": 2400},
+        "check": netbsd_check("wd0"),
         "boot": "ide0",
-        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "nic": "hme0",
         "hostname": "netbsd111-sparc64",
-        "network": "none configured (sysinst defaults)",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "minutes": 11,  # 10.1-11.2 min: install 6-7, first boot 2.5, --check 1.7
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
     "sol10-sun4u": {
         "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",
@@ -358,17 +389,37 @@ TARGETS = {
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
                    "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
     },
+    # The CD's microroot loads the install tools from the CD, then the same sysinst answers
+    # (netbsd-install-sparc.py); a blank disk: no Sun label needed (sysinst writes a disklabel)
     "netbsd111-sparc": {
+        **NETBSD_SCRIPTED,
         "title": "NetBSD 11.1 sparc Minimal on a SPARCstation 5 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "Installed by hand only (README.md, \"Idle\": microroot, then sysinst); no scenario yet.",
-        "method": "scripted",
+        "status": "automated",
         "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "other"},
         "disk": {"bus": "scsi3", "size": 3, "label": None},
         "media": [{"name": "NetBSD-11.1-sparc.iso", "drive": "scsi6"}],
+        "install": {"scenario": "netbsd-install-sparc.py", "vars": {"SETS": "c"}, "timeout": 2400},
+        "check": netbsd_check("sd0"),
         "boot": "scsi3",
-        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "nic": "le0",
         "hostname": "netbsd111-sparc",
+        "minutes": 7,  # 6.6-6.8 min: install 3.5, first boot 2, --check 1
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
+    },
+    "netbsd111-sparc-ss20": {
+        **NETBSD_SCRIPTED,
+        "title": "NetBSD 11.1 sparc Minimal on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "other"},
+        "disk": {"bus": "scsi3", "size": 3, "label": None},
+        "media": [{"name": "NetBSD-11.1-sparc.iso", "drive": "scsi6"}],
+        "install": {"scenario": "netbsd-install-sparc.py", "vars": {"SETS": "c"}, "timeout": 2400},
+        "check": netbsd_check("sd0"),
+        "boot": "scsi3",
+        "nic": "le0",
+        "hostname": "netbsd111-ss20",
+        "minutes": 7,  # 6.7-7.3 min: install 3.5, first boot 2, --check 1
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
 }
 
@@ -403,6 +454,9 @@ def problems():
                 drives.add(med["drive"])
         if t.get("method") not in ("scripted", "unattended"):
             out.append(f"{name}: method {t.get('method')!r}")
+        # the marker is typed with echo '...' (solaris-firstboot.py, netbsd-firstboot.py)
+        if any("'" in str(t.get(k, "")) for k in ("title", "hostname", "dhcp_note")):
+            out.append(f"{name}: a single quote in what the marker file gets")
         disk = t.get("disk", {})
         if disk.get("label") == "sun" and disk.get("geometry"):
             g = disk["geometry"]

@@ -32,6 +32,9 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
+| `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
+| `netbsd111-sparc` | NetBSD 11.1, Minimal | SS-5, OpenBIOS, 256 MB, serial console, 3 GiB blank disk on `scsi3`, lance | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
+| `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 
 The DOS targets are driven on the VGA text screen (read exactly from the text buffer), swap the
 floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS: HIMEM, `DOS=HIGH`,
@@ -82,16 +85,29 @@ password and the optional user. It differs from the Solaris targets in a few way
 - Root's shell is `csh`; the console is the serial port (`qm terminal`).
 - The disk has one size, so there is no `--disk-size`, and no `--data-disk`.
 
+The NetBSD targets are installed by sysinst on the serial console (the sparc CD first runs a
+small "microroot" that loads the installer from the CD), on a blank disk (sysinst writes its own
+label). The first boot sets root's password, writes the marker `/etc/wsh-lab-target` and
+`/etc/myname`, and sets up the network in NetBSD's own files: `/etc/ifconfig.hme0` (sparc64) or
+`/etc/ifconfig.le0` (sparc) and `defaultroute=` in `/etc/rc.conf` for a static address,
+`dhcpcd=YES` for DHCP (the host name stays the target's), `/etc/resolv.conf` for `--dns`. sshd is
+off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: every
+sparc64 VM has the same system MAC address (52:54:00:12:34:56, whatever `net0` says), so put only
+one of them on a network segment; and NetBSD/sparc64 keeps a host core at 100% for as long as it
+runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
+sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
+evidence and powers off from there.
+
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
 Solaris 2.5.1 (its installer boots only from a CD that answers as a disk, which a PVE CD-ROM drive
-can't be), NetBSD 11.1 sparc64 and sparc (scenario or first-boot step missing).
+can't be).
 
 ## Media
 
 The media must be on the node's storage (`local` by default, content type ISO image) under these
 names, and they must be the tested media: `lab.py install` checks the size and the sha256 and refuses
-anything else unless `--allow-untested-media`. Nothing is downloaded; Sun and Oracle software is
-never part of this project.
+anything else unless `--allow-untested-media`. Nothing is downloaded by the install; Sun and Oracle
+software is never part of this project.
 
 | File name | Size (bytes) | sha256 |
 | --- | --- | --- |
@@ -103,9 +119,13 @@ never part of this project.
 | `SOL_9_SPARC_DVD.iso` | 3368878080 | `feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911` |
 | `sol-10-u11-ga-sparc-dvd.iso` | 2314731520 | `b1df86b976282145fd317d9def4efc27d7d64589f5542184a3e781c0787cf02b` |
 | `sunos414-cd.iso` (made from the BIN below) | 329297920 | `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8` |
+| `NetBSD-11.1-sparc64.iso` | 694026240 | `a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e` |
+| `NetBSD-11.1-sparc.iso` | 367329280 | `4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636` |
 
-The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1,
-NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
+The NetBSD CDs are freely redistributable: download them from
+`https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
+SHA512 checksums). The catalogue also lists the media of the targets that aren't automated yet
+(Solaris 2.5.1), with their checksums. Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 
 **The SunOS 4.1.4 CD** circulates as a raw CD image (a "BIN": 2352-byte sectors, each with a 16-byte
@@ -206,8 +226,8 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # ~12 min
 Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--bridge` (`vmbr0`),
 `--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
 `--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
-(a second disk, mounted on `/data`), `--root-password`, `--user NAME` (and `--user-password`; a non-root
-user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`), `--check` (boot once more, log in with the documented
+(a second disk, mounted on `/data`; Solaris only), `--root-password`, `--user NAME` (and `--user-password`; a non-root
+user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD: `/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
 `--out` (the evidence directory; default `/var/lib/wsh-lab/installs/<target>-<vmid>-<time>`).
@@ -367,6 +387,10 @@ hand from the `sparc lab` workflow; with `sol10-sun4u` it takes about two and a 
 the Solaris 10 DVD in the lab's media directory). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
+On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD/sparc64
+CD from cdn.netbsd.org (checked against its sha256) and runs the `netbsd111-sparc64` target's
+install, first boot and check with the lab's own QEMU on a GitHub-hosted runner, without PVE (about
+10 minutes on the lab host).
 The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
 in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
 catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must

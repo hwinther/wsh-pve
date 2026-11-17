@@ -342,6 +342,9 @@ and `check`, each a scenario run against the VM:
    Solaris 8 uses `solaris-webstart-serial.py` for the install (Web Start, see "Solaris 7, 8 and 9"
    below) and the same first boot and check. SunOS 4.1.4 has its own three
    (`sunos-install-serial.py`, `sunos-firstboot.py`, `sunos-boot-disk.py`; "SunOS 4.1.4" below).
+   The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
+   `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below); a target's
+   `check` can bring its own `commands`.
 2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
@@ -594,6 +597,96 @@ SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their
 `["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
 `--vlan`, `--user` and `--data-disk` with them.
 
+### NetBSD install targets
+
+`netbsd111-sparc64` (sun4u, the sparc64 profile: an 8 GiB blank disk on `ide0`, the CD on `ide2`,
+`sunhme`, 512 MB), `netbsd111-sparc` (SS-5, 256 MB) and `netbsd111-sparc-ss20` (SS-20, 512 MB, one
+CPU; both with a 3 GiB blank disk on `scsi3`, the CD on `scsi6`, lance) install NetBSD 11.1 from the
+official CDs (`NetBSD-11.1-sparc64.iso`, `NetBSD-11.1-sparc.iso`; their SHA512 matches the release's
+`images/SHA512`). No Sun label is needed: sysinst writes its own disklabel on the blank disk.
+
+1. **Install.** sysinst on the serial console (vt100), the same answers on both architectures
+   (`_netbsd.sysinst()`): English, install to hard disk, the first disk, the default partition
+   sizes, the sets (`SETS`: `b` = without X11 on sparc64, `c` = Minimal on sparc), from the CD-ROM,
+   root without a password, entropy "not now", the configuration menu's defaults, Exit. On sparc64
+   the CD's kernel asks only the terminal type (OpenBIOS boots the CD by itself; the API's boot
+   order has the CD first) and Exit leaves a shell, where the scenario types `sync; halt -p`. On
+   sparc OpenBIOS stops at `0 >` (the blank disk on target 3 comes first) and the scenario boots the
+   CD by path; the CD's kernel runs a microroot that loads the installation tools from the CD
+   (`1` = cdrom, `/dev/cd0a`, the path of `instfs.tgz`, the terminal type, `I`), and after Exit it
+   halts and powers the VM off by itself (`Back in microroot; halting machine...`).
+2. **First boot** (`netbsd-firstboot.py`): root logs in without a password, `passwd root` sets the
+   password at its prompts (NetBSD's passwd asks once more after an all-lower-case password, then
+   takes it), the marker, `/etc/myname`, the network, the optional user (`useradd -m`, home under
+   `/home`, group `wheel`), `sync; halt -p`.
+3. **Check** (`netbsd-boot-disk.py`, the target's `check` `commands`): logs in with the password,
+   records `uname -a`, `hostname`, the marker, `df -k`, the disklabel, `ifconfig -a`, `netstat -rn
+   -f inet` and `/etc/resolv.conf`, requires `target=<name>`, `halt -p`.
+
+Network, in NetBSD's own files: static = `/etc/ifconfig.<nic>` (`inet <ip> netmask <mask>`),
+`defaultroute=<gw>` in `/etc/rc.conf`, the address and host name in `/etc/hosts`; DHCP =
+`dhcpcd=YES` in `/etc/rc.conf` (dhcpcd takes the address, router and name servers and writes
+`/etc/resolv.conf` through resolvconf; it sends no host name and keeps `/etc/myname`, so the notes
+say so, `dhcp_note`); `--dns`/`--domain` = `/etc/resolv.conf`. The NIC is `hme0` on sparc64 and
+`le0` on sparc (`nic` in the target, for the notes and the marker). The installed systems listen on
+no port (`netstat -an` has no `LISTEN` on sparc64 or on SS-20; `/etc/inetd.conf` has every service
+commented out) and sshd is off (sysinst's default).
+
+On sparc64 every VM gets the system MAC `52:54:00:12:34:56` (the IDPROM's default, `hme0:
+Ethernet address 52:54:00:12:34:56` whatever `net0` says; see "Network" above and
+`submodules/SPARC.md`), so only one of them per bridge segment gets a usable address; on sparc the
+lance uses `net0`'s MAC. NetBSD/sparc64 doesn't idle on sun4u (a host core at 100% while it runs).
+
+**A halt that never powers off.** In the first sparc64 run, the first boot's `halt -p` stopped after
+halt's SIGTERM (`syslogd[500]: Exiting on signal 15`, then nothing: no `syncing disks`) and the VM
+was still running ten minutes later. It didn't come back: four more sparc64 first boots, their
+four check boots, a further DHCP boot and nine boot/login/halt rounds on an installed sparc64 VM
+through PVE all powered off about 9 s after `halt -p`. `_netbsd.power_off()` now waits 300 s; if the VM is still up it sends a break on the
+console (QMP `chardev-send-break`), which enters NetBSD's kernel debugger, records `ps`, `bt`,
+`show uvmexp` and the stacks of `halt` and `makemandb` (`bt/a`), and powers off with `reboot 0x808`
+(RB_HALT | RB_POWERDOWN: the disks are synced); the run passes with `halt_hung: 1` in its metrics
+and the debugger output in its evidence. The break, the debugger and `reboot 0x808` were tried on
+an installed sparc64 VM (a scratch scenario that skips `halt -p`): QEMU exited 0, and `bt/a` showed
+`makemandb` (the man page index NetBSD builds in the background at boot) in `biowait`. Not seen on sparc.
+
+Tested in the PVE test container on the lab host (the e2e PVE image with pve-qemu-kvm
+11.1.3-2+wsh15, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4; up to three guests at a time; the
+lab host is a VM on an i9-9900K), 2026-11-17, each with `--check`:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install netbsd111-sparc64` (first version) | install passed; first boot: `halt -p` hung (above), stopped at the 600 s power-off limit, failed | install 383 s |
+| `install netbsd111-sparc64` | passed; `NetBSD netbsd111-sparc64 11.1 ... sparc64`, the marker, `hme0 10.0.2.15/24` | 10.8 min (install 391 s, first boot 144 s, check 100 s) |
+| `install netbsd111-sparc64` | passed | 11.2 min (404 s, 145 s, 105 s) |
+| `install netbsd111-sparc64 --bridge vmbr1 --ip dhcp` | passed; dnsmasq leased 10.77.0.111 to `52:54:00:12:34:56` (the IDPROM MAC, not `net0`'s), `default 10.77.0.1` and `resolv.conf` from the lease, `hostname` = `netbsd111-sparc64`; a further boot: both pings by name, no `LISTEN` socket | 10.1 min (364 s, 135 s, 94 s) |
+| `install netbsd111-sparc` (first version) | sysinst passed; the scenario expected a shell after Exit, but the microroot powers off by itself: failed, fixed (`finish_install()`) | 3.6 min |
+| `install netbsd111-sparc` | passed; `/dev/sd0a` 3064094 KB (210624 used), swap `sd0b` 32 MB, `le0 10.0.2.15/24` with `net0`'s MAC | 6.6 min (201 s, 116 s, 62 s) |
+| `install netbsd111-sparc` | passed | 6.8 min (212 s, 118 s, 63 s) |
+| `install netbsd111-sparc --bridge vmbr1 --ip dhcp` | passed; lease 10.77.0.142 from dnsmasq, `default 10.77.0.1` and `resolv.conf` (`domain lab.test`, `nameserver 10.77.0.1`) from the lease, `hostname` = `netbsd111-sparc`; a further boot: `ping gw.lab.test` and `ping far.lab.test` (through the router) 2/2 | 6.8 min (221 s, 111 s, 63 s) |
+| `install netbsd111-sparc-ss20` | passed | 6.7 min (205 s, 122 s, 62 s) |
+| `install netbsd111-sparc-ss20 --bridge vmbr1 --ip 10.77.0.60 --gateway 10.77.0.1 --dns 10.77.0.1 --domain lab.test` | passed; `default 10.77.0.1`, `resolv.conf` as given; a further boot: both pings by name, no `LISTEN` socket | 7.3 min (216 s, 136 s, 67 s) |
+| nine boot, login, `halt -p` rounds on the installed `netbsd111-sparc64` VM (`netbsd-boot-disk.py --pve`) | 9/9 passed | 85-100 s each |
+| `tests/test_netbsd.py` with the lab's own QEMU (in the PVE container, `NETBSD_ISO` = the lab host's copy) | passed | 623 s (install 415 s, first boot 109 s, check 97 s) |
+| `install netbsd111-sparc --user lab --user-password ... --template` | passed; `lab:*:1000:100::/home/lab:/bin/sh` (in `wheel`), `passwd lab` exit 0, converted to a template; the passwords are in no evidence file but the VM's notes (a login as `lab` wasn't tried) | 6.8 min (199 s, 133 s, 60 s) |
+| `pve_matrix.py install --only install-netbsd111-sparc64 --only install-netbsd111-sparc --only install-netbsd111-sparc-ss20` (the final code, one guest at a time) | 3/3 passed | sparc64 9.9 min (347 s, 140 s, 94 s); SS-5 6.5 min (197 s, 118 s, 62 s); SS-20 6.3 min (190 s, 117 s, 58 s) |
+| `pve_matrix.py pve` and `matrix.py smoke` (regressions, the final code; smoke in the PVE container, whose pve-qemu-kvm is the lab image's) | 5/5 and 3/3 passed | `sol26-install-ss5` 741 s, the others 48-215 s; smoke 156 s, 110 s, 67 s |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now also needs the two NetBSD CDs (`other-os/` under `--iso`) and takes about 23 min longer.
+Not tried: `--vlan` (`bridge vlan add` on the test container's bridge failed with `Invalid
+argument` this time; NetBSD doesn't see the tag), a login as the `--user` user, sparc64 with more
+memory, SS-10, and the sets other than these two.
+
+**In CI.** The NetBSD CDs are freely redistributable, so `sparc lab NetBSD`
+(`.github/workflows/sparc-lab-netbsd.yml`, on pull requests that change `e2e/sparc` and by hand)
+runs `tests/test_netbsd.py` in the lab image on a GitHub-hosted runner: it downloads
+`NetBSD-11.1-sparc64.iso` from `cdn.netbsd.org` (the URL in `targets.MEDIA`), checks its size and
+sha256, and runs the target's three scenarios with the lab's own QEMU (TCG, sun4u): install, first
+boot (password, marker, host name, a static address and router), check (logs in with the password,
+requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
+is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
+45). Not run on GitHub yet.
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
@@ -826,7 +919,8 @@ through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Re
 (English), `a` (install), `b` (yes), `a` (sd0), `b` (default partition sizes), `x`, `b`, `c` (Minimal
 installation), `a` (CD-ROM); root password empty, entropy `x` (not now), `x` (finished configuring),
 Return, `x` (exit), then `sync; halt -p`. Its GENERIC kernel attaches `apc0`; NetBSD 9.3's has no APC
-driver and spins.
+driver and spins. `netbsd-install-sparc.py` now gives the same answers by script (the
+`netbsd111-sparc` install target); the disk itself wasn't remade.
 
 ## The bench disk
 
@@ -1039,6 +1133,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | -------- | ------------ | ---- |
 | `sparc64-boot-cd.py` | boots a CD (`GUEST=netbsd`, `openbsd`, `debian`, `solaris`, or `EXPECT`) to the installer's first prompt; `CONSOLE=fb` waits for it on the VGA screen (OCR) and `TYPE` types on the keyboard | ~1 min |
 | `netbsd-install-sparc64.py` | NetBSD/sparc64 install with sysinst on the serial console (`SETS=b`: without X11), root without a password, ends powered off | ~8 min |
+| `netbsd-install-sparc.py` | the same for NetBSD/sparc on sun4m (SS-5, `MACHINE=SS-20`): the CD's microroot, then the same sysinst answers (`SETS=c`: Minimal); the microroot powers off after Exit | ~3.5 min |
+| `netbsd-firstboot.py`, `netbsd-boot-disk.py` | either architecture (`ARCH`; from the VM with `--pve`): the install targets' first boot (root password, marker, host name, network, user) and check boot ("NetBSD install targets") | ~2 min each |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
 

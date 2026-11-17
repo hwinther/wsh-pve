@@ -141,8 +141,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
   Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
-  more targets (Solaris 2.5.1 needs the CD as a disk; NetBSD is in the catalogue with what blocks
-  it; Solaris 2.6-10 and SunOS 4.1.4 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on SS-5.
+  more targets (Solaris 2.5.1 needs the CD as a disk; Solaris 2.6-10, SunOS 4.1.4 and NetBSD 11.1
+  on sun4u, SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
+  SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
