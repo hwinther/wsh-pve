@@ -239,6 +239,15 @@ class Matrix(unittest.TestCase):
         self.assertEqual((sb["umb_gap"], sb["gap_kb"]), ("cd800-e9000", 110))
         self.assertEqual(sb["genroms"], ["kvmvapic.bin"])
 
+    def test_seabios_two_boots(self):
+        boot = ("Scan for VGA option rom\nRunning option rom at c000:0003\nSeaBIOS (version x)\n"
+                "Scan for option roms\nRunning option rom at {nic}:0003\n"
+                "Space available for UMB: {gap}, f4e20-f51d0\n")
+        sb = dos_mem.parse_seabios(boot.format(nic="ca00", gap="cd800-e9000")
+                                   + boot.format(nic="cb00", gap="ce800-e9000"))
+        self.assertEqual(sb["roms"], ["C0000", "CB000"])  # the banner after the VGA ROM doesn't cut it off
+        self.assertEqual(sb["umb_gap"], "ce800-e9000")
+
     def test_gap_to_emm386_range(self):
         self.assertEqual(dos_mem.gap_range("cd800-e9000"), ("CE00", "E8FF"))
         self.assertEqual(dos_mem.config_lines("emm-noems-gap", "cd800-e9000")[1],

@@ -81,7 +81,9 @@ def config_lines(name, gap=""):
 def parse_seabios(log):
     """Option ROMs and the free gap from SeaBIOS's debug log (the last boot in it: the log grows with
     every reset)."""
-    log = log.split("SeaBIOS (version")[-1]
+    # a boot starts its ROM scan with this line (the version banner comes only after the VGA ROM ran)
+    parts = log.split("Scan for VGA option rom")
+    log = parts[-1] if len(parts) > 1 else log.split("SeaBIOS (version")[-1]
     roms = [int(x, 16) << 4 for x in re.findall(r"Running option rom at ([0-9a-f]{4}):0003", log)]
     m = re.search(r"Space available for UMB: ([0-9a-f]+)-([0-9a-f]+)", log)
     return {"roms": [f"{r:05X}" for r in roms],
