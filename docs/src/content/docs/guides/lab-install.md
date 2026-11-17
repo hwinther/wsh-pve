@@ -199,7 +199,7 @@ xterm.js first, they would get nothing. Measured in the PVE test container on th
 (TCG, two host cores for the container, one guest at a time, packages of 2026-11-16): `sol26-ss5`
 took 11.8 minutes (install 407 s, first boot 182 s, check 105 s), `sol26-ss20` 12.1 minutes (413 s,
 191 s, 105 s). Without `--check` it is two minutes less. `sol10-sun4u` (packages of 2026-11-17,
-`pve-qemu-kvm` 11.1.3-2+wsh13): 108.5, 109.6 and 110.7 minutes in three runs that passed (install about 81 minutes, first boot about 19, check about 9; the first boot imports Solaris's service descriptions, and `init 5` takes about 3 minutes).
+`pve-qemu-kvm` 11.1.3-2+wsh13): 108.5, 109.6 and 110.7 minutes in three runs that passed (install about 81 minutes, first boot about 19, check about 9; the first boot imports Solaris's service descriptions, and `init 5` takes 3 to 6 minutes).
 
 ## Disk size
 

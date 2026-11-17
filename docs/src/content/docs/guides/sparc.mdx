@@ -295,7 +295,7 @@ sol10-sun4u --vmid N --check` (the [lab install targets](/guides/lab-install/)) 
 below on a VM it creates with the sparc64 profile (a blank 16 GB disk on `ide0`, the DVD on `ide2`,
 `sunhme`, `vga: serial0`, 1024 MB), with a static address, and checks the result: 3 of 3 runs passed (one more failed in the first boot on a bug that is fixed now, one stopped with a panic while the DVD booted, which the tool now retries once) in the
 PVE test container with the published packages, about 110 minutes each (install about 81 minutes,
-first boot about 19, check 8).
+first boot about 19, check 8-9).
 
 1. Create the VM as for NetBSD with the Solaris 10 1/13 SPARC DVD, 1024 MB, a disk of 16 GB (the
    default software group needs about 5.3 GB) and a serial console (`serial0: socket`, Display:
@@ -311,7 +311,7 @@ first boot about 19, check 8).
    first in the boot order, and start it again.
 4. The first boot takes about 14 minutes (it imports its service descriptions), asks for the
    keyboard layout (F2 keeps US-English) and comes to `console login:`. `hme0` gets its address by
-   DHCP or has the static one. `init 5` powers the VM off (it takes about 3 minutes). Don't use `reboot` or `init 6`: they go through the same
+   DHCP or has the static one. `init 5` powers the VM off (it takes 3 to 6 minutes). Don't use `reboot` or `init 6`: they go through the same
    firmware call as the installer's reboot. Stop and start the VM instead.
 
 Every Solaris 10 guest gets the same system MAC address, 52:54:00:12:34:56, whatever the NIC's

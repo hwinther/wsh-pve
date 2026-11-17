@@ -73,7 +73,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
      MAC into the IDPROM);
    - `sol10-sun4u` with `--ip dhcp` (not tested through the tool); the intermittent `bad unknown
-     trap at TL 1` panic seen once before the package (none in 5 installs on it);
+     trap at TL 1` panic seen once before the package (none in 6 installs on it); a different one,
+     `BAD TRAP: type=4e` in the firmware while the DVD boots, once in 6 DVD boots through PVE
+     (`install` retries it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 
