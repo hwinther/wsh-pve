@@ -958,6 +958,7 @@ both are one copy):
 | `pve` case `sol26-ss20-smp2` (2 CPUs through PVE, the binary bind-mounted over the node's `qemu-system-sparc`) | passed: `psrinfo` 2 on-line, Dhrystone 12.8 s alone and 12.7 s as 2 copies, the `nawk` loop 5.3 s and 6.5 s |
 | Stop-A with 2 CPUs (`stop-a.py SMP=2`, SS-20, not in a matrix) | the firmware prompt and `go` work, but the scenario looks only at CPU 0's PC: Solaris enters the PROM on the CPU that took the keyboard interrupt and `prom_idlecpu()` (OpenBIOS) leaves the other running. Round 1 passed with CPU 0 in the PROM and CPU 1 halted at `disp_getwork`; round 2 failed with CPU 1 in the PROM and CPU 0 in a kernel wait loop. Without 0023 the same: 1 of 2 runs failed round 1 (CPU 1 in the PROM, CPU 0 in the idle loop), the other passed. A scenario limit with more than one CPU, not a hang |
 | `sun4m-solaris-smp-idle-test`, `sun4m-solaris-idle-test` | 4/4, 5/5 |
+| Lab matrices | `smoke` 3/3, `machines` 13/13, `idle` 13/13 (with the 3 new multiprocessor cases; one CPU unchanged: Solaris, SunOS, NetBSD below 10%), `stopa` 9/9, `smp` 3/3 (`SOAK=600` with 2 and 4 CPUs on SS-20 and 2 on SS-10) |
 
 **The profiles** (qemu-server, pve-manager; needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later, the
 first package with 0019):
