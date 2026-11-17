@@ -390,13 +390,14 @@ What a DOS target needs and where it fits:
 
 ### Run it
 
-On a node (see the guide for installing the lab under `/opt/wsh-lab`, or use the e2e PVE container
-with the lab, `pve.Dockerfile`):
+On a node, from the `wsh-lab` package (`apt install wsh-lab`, see "The wsh-lab package" below;
+`wsh-lab` is `lab.py`), from a clone (`python3 lab.py ...`; the guide also has a venv under
+`/opt/wsh-lab`), or in the e2e PVE container with the lab (`pve.Dockerfile`):
 
 ```sh
-python3 lab.py targets
-python3 lab.py media                                   # every target's media on storage local
-python3 lab.py install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep-on-failure ...
+wsh-lab targets
+wsh-lab media                                   # every target's media on storage local
+wsh-lab install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep-on-failure ...
 ```
 
 The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check` (so the weekly test
@@ -430,6 +431,118 @@ The first run failed at the first boot and found a bug in the old `login()`: sys
 password form draws all its prompts at once, and matching them one by one typed the password ahead
 of the form (it ended up echoed, root without a password). With an empty password that never
 mattered. The password appears in none of the evidence files of the passing runs.
+
+### Disk sizes
+
+`targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
+Sun-labelled target lists the ones it was tested with (`sun_disk("3G", "9G")`: `sizes`, the first
+the default); `install.disk_choice()` refuses any other. `sunlabel.write_disk()` writes the label
+and its five backup copies (odd sectors 1-9 of the last track), so its images are the templates:
+`cmp` against `sparc-SUN2.9G.raw.template.xz` and `sparc-Qemu9G.raw.template.xz` decompressed
+found no difference, and `tests/test_targets.py` pins each template's label sector (sha256) and its
+non-zero sectors. The 9G geometry is the owner's template's (QEmu8G: 16202 data + 2 alternate
+cylinders, 16 heads, 60 sectors, pcyl 16204 in the label; the sparc guide's "custom type" line
+says 16200/2/16202), not a new one. `--data-disk` uses `sunlabel.data_geometry()` (16 heads x 128
+sectors, 1 MiB per cylinder, slice 0 and 2 the whole disk) and needs no `format` in the guest;
+`sunlabel.py disk|data` writes either kind from the command line.
+
+Tested in the PVE test container on the lab host (published packages, the package built from
+this branch, one guest at a time), 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss5 --disk-size 9G --check` | passed; the installer lists `c0t3d0 (7594 MB) boot disk`, auto-layout `/` 83 MB, swap 148 MB, `/usr` 242 MB, `/export/home` 7120 MB; `df -k`: `/` 80335 KB (22292 used), `/usr` 232831 (152500), `/export/home` 7174949 (9); `prtvtoc`: 16204 cylinders, 16202 accessible, slices 0 (0-171839), 1, 2, 6, 7 (971520-15553919) | 12.2 min (429 s, 184 s, 106 s) |
+| `install sol26-ss20 --disk-size 9G --data-disk 2 --check` | passed; auto-layout as on SS-5 but swap 295 MB (512 MB of memory) and `/export/home` 6973 MB; `df -k` `/export/home` 7026317 KB; the data disk: `prtvtoc` 2048 cylinders (2046 accessible) of 16 x 128, slice 0 4190208 sectors, `newfs` 2046 MB in 64 cylinder groups, `/data` 2030575 KB mounted from `/etc/vfstab` at the check boot | 12.3 min (408 s, 205 s, 107 s) |
+| `install sol26-ss5 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
+
+Not done: a 9G install of the catalogue targets (2.5.1, 7, 8, 9); the in-guest `format` route for a
+blank second disk.
+
+### Network
+
+`install.network_choice()` turns `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`,
+`--domain` and `--vlan` into one checked setting: a mode the target lists in `net_modes` (what was
+tested), addresses that parse, a router inside the subnet, at most three name servers, a VLAN tag of
+1-4094; anything else exits before a VM is made. `--vlan` becomes `tag=` on `net0` at creation.
+The installer always gets a static address (Solaris 2.6's has no DHCP screen and no DNS choice:
+NIS+, NIS, Other, None); `solaris-firstboot.py`'s `network()` then writes what 2.6's start-up
+scripts read (`rootusr`, `inetinit`, `inetsvc`, read on the installed system):
+`/etc/netmasks` under the classful network number (2.6's lookup key) and the subnet's,
+`/etc/defaultrouter`, `/etc/resolv.conf` and `hosts: files dns`, or for DHCP `/etc/dhcp.le0` (the
+scripts then run `ifconfig le0 auto-dhcp primary`, set the host name from `dhcpinfo Hostname`, or
+`unknown`, take the router from the lease, and write `resolv.conf`, the `hosts:` line and the
+`/etc/hosts` entry). The marker gets a `network=` line and the VM's notes a `Network:` line with
+the same text; the check phase records `ifconfig -a` and `netstat -rn`.
+
+Before this change the installer's address had no `/etc/netmasks` entry and came up with the class
+A mask (`inet 10.0.2.15 netmask ff000000`, read on an installed 9G VM), although the notes said /24.
+
+The test network (in the PVE test container): `vmbr1`, VLAN-aware, with 10.77.0.1/24 untagged and
+`vmbr1.20` 10.77.20.1/24 on VLAN 20, dnsmasq on both (DHCP .100-.150, router and DNS itself, domain
+`lab.test`, `gw.lab.test`, `far.lab.test` = 10.78.0.1, an address of the container that the guest
+reaches only through its default router). After each install (`--check`), a further boot ran
+`hostname; ifconfig -a; netstat -rn; cat /etc/resolv.conf; ping gw.lab.test; ping far.lab.test;
+nslookup far.lab.test` and required `far.lab.test is alive`. 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss5 --bridge vmbr1 --ip dhcp --check` | passed; lease 10.77.0.111/24 from dnsmasq, default route 10.77.0.1 from the lease, `resolv.conf` (`domain lab.test`, `nameserver 10.77.0.1`) and `hosts: files dns # Added by DHCP` written by 2.6's own `inetsvc`; the client sent `sol26-ss5` as its name, dnsmasq echoed it (option 12), `hostname` = `sol26-ss5`; the further boot: `gw.lab.test is alive`, `far.lab.test is alive`, `nslookup` answered by 10.77.0.1 | 12.6 min |
+| `install sol26-ss20 --bridge vmbr1 --vlan 20 --ip dhcp --check`, dnsmasq `dhcp-host=<MAC>,s20dhcp` | passed; `net0: lance=...,bridge=vmbr1,tag=20`; the lease came from the VLAN 20 side (`DHCPACK(vmbr1.20) 10.77.20.137`), so the tag reaches the wire; `hostname` = `s20dhcp` (the server's name wins); router 10.77.20.1, DNS as above, both pings | 12.7 min |
+| `install sol26-ss5 --bridge vmbr1 --vlan 20 --ip 10.77.20.50 --gateway 10.77.20.1 --dns 10.77.20.1 --domain lab.test --check` | passed; `le0 10.77.20.50 netmask ffffff00`, `default 10.77.20.1`, `/etc/netmasks` `10.0.0.0 255.255.255.0` and `10.77.20.0 255.255.255.0`, `hosts: files dns`; both pings, `nslookup` | 12.7 min |
+| `install sol26-ss20 --bridge vmbr1 --ip 10.77.0.60 --netmask 255.255.255.0 --gateway 10.77.0.1 --dns 10.77.0.1 --domain lab.test --check` | passed; `le0 10.77.0.60 netmask ffffff00`, `default 10.77.0.1`, both pings | 12.3 min |
+| `install sol26-ss5 --bridge vmbr1 --ip dhcp --check` with dnsmasq `--dhcp-ignore-names` (a server that sends no name) | passed; lease 10.77.0.150, the boot prints `Hostname: unknown`, `hostname` and `uname -n` say `unknown`, and `/etc/hosts` gets `10.77.0.150 unknown # Added by DHCP`; the ping by name through the router works | 13.1 min |
+| `--ip 10.0.2.15 --gateway 10.0.3.1`; `--ip dhcp --netmask 255.255.255.0` | refused before a VM is made: `--gateway 10.0.3.1 isn't another address in 10.0.2.0/24`; `--netmask and --gateway come from the DHCP server with --ip dhcp` | 0 s |
+
+**MAC addresses.** On sparc32 the lance uses the MAC of `net0`: Solaris's `ifconfig le0` showed
+`ether bc:24:11:ca:76:c9` for `net0: lance=BC:24:11:CA:76:C9` (and the same for every run above),
+dnsmasq saw each DHCP VM's own `net0` MAC in its requests and gave each its own lease. That fits QEMU's
+sun4m putting the NIC's address in the IDPROM; the sparc64 problem (the IDPROM's default MAC on
+every VM) doesn't show on SS-5 or SS-20.
+
+### The wsh-lab package
+
+`packages/wsh-lab/` packages the lab as the optional Debian package `wsh-lab` in the apt repository
+(`apt install wsh-lab`; the guide's "Install the lab on a node" is the user side):
+
+- **Contents:** `lab.py`, `recording.py`, `install.py`, `targets.py`, `sunlabel.py`, `mcp_server.py`,
+  `scenarios/*.py`, `tests/test_targets.py`, both requirements files and the asciinema player for the
+  run pages, in `/usr/share/wsh-lab/`; `/usr/bin/wsh-lab` (`lab.py`, `--version` reads
+  `/usr/share/wsh-lab/VERSION`) and `/usr/bin/wsh-lab-mcp` (the MCP server, run from the venv that
+  `wsh-lab-mcp --setup` makes; see "MCP server"); two man pages. `Architecture: all`; `Depends`
+  only on Debian's `python3-pyte`, `python3-pil` and `fonts-dejavu-core`; `Suggests`
+  `tesseract-ocr`, `vpx-tools`, `python3-venv` and `qemu-server`. No package depends on it, and it
+  depends on none of the patched packages. dh_python3 byte-compiles the private directory in
+  postinst and removes the bytecode in prerm; the only maintainer script of its own is the postrm
+  that removes `/var/lib/wsh-lab/mcp-venv` on purge (the install evidence there stays).
+- **Version:** `packages/wsh-lab/version.sh`: `0.<N>+g<sha7>`, `N` the number of commits up to HEAD
+  that touch the package's inputs (the files above and `packages/wsh-lab/`), `sha7` the newest of
+  them. On main every change of an input raises `N`, and a commit that changes none of them gives
+  the same version; the changelog is generated with that commit's date (`SOURCE_DATE_EPOCH`), so
+  the same commit in the same build image builds the same `.deb`. No changelog commit is pushed.
+- **Build:** `make wsh-lab` (in `packages/wsh-lab/build.Dockerfile`, Debian 13 pinned by digest,
+  plain `dh`; `build.sh` assembles the tree, generates the changelog, runs `dpkg-buildpackage` and
+  then lintian with `--fail-on error,warning`) into `build/wsh-lab/`. The two lintian overrides
+  (the requirements files read as documentation) are in `debian/wsh-lab.lintian-overrides`.
+- **Test:** `packages/wsh-lab/test.sh` in a clean `debian:trixie`: `apt install` of the `.deb`
+  with its dependencies, `wsh-lab --version`/`--help`, `targets`, `media --dir` (missing, wrong
+  size), `install` refused off a PVE node, the catalogue's tests against the installed copy,
+  `wsh-lab-mcp` without a venv (explains, writes nothing to stdout), with `WSH_LAB_TEST_MCP=1`
+  `--setup` (without `python3-venv`: refused with the hint; with it: the venv from PyPI) and
+  `--check`, then `apt purge` and `autoremove`, after which the file system must be what it was
+  before the install.
+- **CI** (`.github/workflows/wsh-lab.yml`): on pull requests that touch the inputs, build, lintian
+  and the test; nothing is published. On main, the same, then a release `wsh-lab-<version>` with the
+  `.deb` (skipped when that release exists: one upload per version), then the Pages deploy
+  (`repo-update.yml`), which downloads the `.deb` of the newest `wsh-lab-*` release into
+  `repo/incoming` before `make repo-update`, so reprepro includes it with the four patched packages'
+  debs. Without a release yet the repository is built as before.
+
+Tested on 2026-11-16: two builds of the same commit gave byte-identical `.deb`s; lintian clean;
+`test.sh` with `WSH_LAB_TEST_MCP=1` passed (10 catalogue tests, 1 skipped without the qemu-server
+patch; the venv from PyPI; nothing left after the purge). In the PVE test container on the lab
+host with the published packages and the package built from this branch installed by apt (no
+checkout in the container), `wsh-lab install sol26-ss5 --vmid 9201 --check` passed in 11.9 min
+(install 416 s, first boot 179 s, check 103 s).
 
 ## Recordings
 
@@ -746,7 +859,7 @@ or the serial console, the serial output, and waiting for a pattern. It is a thi
   calls to `DIR/ctl.sock`.
 
 It speaks MCP over stdin/stdout only (no listening port) and is built on the official Python SDK
-(`mcp` 2.3.0, `MCPServer`). It is an optional extra: nothing in the Debian packages or the lab's
+(`mcp` 2.3.0, `MCPServer`). It is an optional extra: nothing in the patched Debian packages or the lab's
 matrices uses it, and its dependencies live in their own venv.
 
 ### Safety model
@@ -820,7 +933,26 @@ Known holes:
 
 ### Install and run
 
-**On a PVE node**, without new system packages: a venv made by [uv](https://docs.astral.sh/uv/) (one
+**On a PVE node, from the package:** `apt install wsh-lab` (the wsh-pve repository) puts the
+server in `/usr/share/wsh-lab/` and `wsh-lab-mcp` in `/usr/bin`. Its Python SDK (`mcp`, with
+pydantic, starlette, ...) isn't packaged in Debian 13, and the package doesn't carry a copy of it:
+`wsh-lab-mcp --setup` (as root, once; needs `python3-venv` and access to PyPI) makes a venv in
+`/var/lib/wsh-lab/mcp-venv` from `/usr/share/wsh-lab/mcp-requirements.txt` (the pinned file below,
+`pip --require-hashes --only-binary=:all:`), and `wsh-lab-mcp` then runs the server from it. It
+says so on stderr (never on stdout, the MCP stream) when the venv is missing, or was made for
+another wsh-lab version or Python, and stops. `apt purge wsh-lab` (or `wsh-lab-mcp --remove-venv`)
+removes the venv.
+
+```sh
+apt install wsh-lab python3-venv
+wsh-lab-mcp --setup
+wsh-lab-mcp --vm 9001 --check   # what it would allow
+```
+
+In the client commands below, use `wsh-lab-mcp --vm 9001` in place of
+`/opt/wsh-lab-mcp/bin/python /opt/wsh-lab-mcp/lab/mcp_server.py --vm 9001`.
+
+**On a PVE node without the package**, and without new system packages: a venv made by [uv](https://docs.astral.sh/uv/) (one
 static binary; `python3 -m venv` would need `python3-venv`), the pinned and hash-checked
 dependencies, and the lab's three files. As root:
 

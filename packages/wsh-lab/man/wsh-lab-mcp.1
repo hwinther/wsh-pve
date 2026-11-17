@@ -1,0 +1,50 @@
+.TH WSH-LAB-MCP 1 "" "wsh-lab" "User Commands"
+.SH NAME
+wsh-lab-mcp \- MCP server that lets an AI assistant see and drive an allowed VM
+.SH SYNOPSIS
+.B wsh-lab-mcp \-\-setup
+.br
+.B wsh-lab-mcp \-\-remove\-venv
+.br
+.B wsh-lab-mcp
+.RB [ \-\-vm
+.IR VMID " ...]"
+.RB [ \-\-tag
+.IR TAG " ...]"
+.RB [ \-\-lab
+.IR NAME=DIR " ...]"
+.RB [ \-\-allow\-reset ]
+.RB [ \-\-allow\-stop ]
+.RB [ \-\-allow\-hmp ]
+.RB [ \-\-check ]
+.SH DESCRIPTION
+.B wsh-lab-mcp
+runs the sparc lab's Model Context Protocol server (mcp_server.py) on stdin and stdout. An MCP
+client gets the screen of the VMs named on the command line as an image or as text, can type on
+their keyboard or serial console, read the serial output and wait for a pattern. Only the VMs given
+with
+.BR \-\-vm ,
+.B \-\-tag
+or
+.B \-\-lab
+can be touched; resetting, stopping and the QEMU monitor are off unless enabled.
+.B \-\-allow\-hmp
+gives the client root on the node.
+.PP
+The server needs the
+.B mcp
+Python SDK, which Debian does not package.
+.B wsh-lab-mcp \-\-setup
+(as root, once) creates a venv in
+.I /var/lib/wsh-lab/mcp-venv
+with the pinned, hash-checked requirements in
+.I /usr/share/wsh-lab/mcp-requirements.txt
+(pip \-\-require\-hashes, wheels only). It needs the
+.B python3-venv
+package and network access to PyPI. Run it again after an upgrade of wsh-lab or of python3 when the
+wrapper asks for it.
+.B apt purge wsh-lab
+removes the venv.
+.SH SEE ALSO
+.BR wsh-lab (1),
+https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#mcp-server

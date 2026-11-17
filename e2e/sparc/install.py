@@ -2,6 +2,7 @@
 
     lab.py install sol26-ss5 --vmid 120 [--storage local] [--media-storage local] [--bridge vmbr0]
         [--name NAME] [--root-password PW] [--user NAME [--user-password PW]] [--hostname H] [--ip A]
+        [--disk-size 3G|9G] [--data-disk GIB]
         [--check] [--template] [--keep-on-failure] [--allow-untested-media] [--timeout S] [--out DIR]
     lab.py targets [--json]
     lab.py media [<target>] [--storage local | --dir DIR] [--no-checksum]
@@ -20,6 +21,7 @@ steps with screenshots, recordings) is in --out. On a failure the VM is destroye
 """
 import datetime
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -122,11 +124,98 @@ def vm_exists(vmid):
     return any(str(r.get("vmid")) == str(vmid) for r in pvesh_get("/cluster/resources", type="vm") or [])
 
 
-def vm_params(t, a, volids, disk_image):
-    """The options for `pvesh create /nodes/<node>/qemu`."""
+def disk_choice(t, name):
+    """The target's first disk at --disk-size `name` (None: its default): t["disk"] with the size and
+    label of targets.DISKS[name] and "name". Only the sizes the target was tested with (its "sizes")."""
+    disk = dict(t["disk"])
+    sizes = disk.get("sizes") or []
+    if name is None:
+        return {**disk, "name": sizes[0] if sizes else f"{disk['size']}G"}
+    if name not in sizes:
+        tested = f"tested with {', '.join(sizes)}" if sizes else "tested with its one disk only"
+        raise SystemExit(f"--disk-size {name}: {t.get('title', 'this target')} is {tested}")
+    return {**disk, "size": targets.DISKS[name]["size"], "geometry": targets.DISKS[name]["geometry"], "name": name}
+
+
+DATA_DISK_BUS = "scsi4"  # SCSI target 4: after the boot disk (3) in OpenBIOS's probe, before the CD (6)
+DATA_DISK_DEVICE = "c0t4d0"  # what Solaris calls it
+
+
+DEFAULT_IP, DEFAULT_NETMASK = "10.0.2.15", "255.255.255.0"
+DOMAIN = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", re.I)
+
+
+def network_choice(t, a):
+    """The guest's network from --ip (an address or `dhcp`), --netmask, --gateway, --dns, --domain and
+    --vlan, checked against what the target was tested with (t["net_modes"]): a dict for the
+    scenarios, the marker and the VM's notes. Refuses (SystemExit) what the target doesn't support
+    rather than making a VM without a network."""
+    modes = t.get("net_modes") or []
+    mode = "dhcp" if (a.ip or "").lower() == "dhcp" else "static"
+    if mode not in modes:
+        raise SystemExit(f"--ip {a.ip or DEFAULT_IP}: {a.target} supports {', '.join(modes) or 'no network settings'}"
+                         " (what was tested)")
+    if a.vlan is not None and not 1 <= a.vlan <= 4094:
+        raise SystemExit("--vlan takes a VLAN tag, 1-4094")
+    net = {"mode": mode, "vlan": a.vlan, "bridge": a.bridge, "ip": None, "netmask": None, "gateway": None,
+           "dns": [], "domain": (a.domain or "").lower() or None}
+    try:
+        net["dns"] = [str(ipaddress.IPv4Address(x.strip())) for x in (a.dns or "").split(",") if x.strip()]
+    except ValueError as e:
+        raise SystemExit(f"--dns: {e}")
+    if len(net["dns"]) > 3:
+        raise SystemExit("--dns: at most 3 name servers")
+    if net["domain"] and not DOMAIN.fullmatch(net["domain"]):
+        raise SystemExit(f"--domain {a.domain}: not a domain name")
+    if net["domain"] and not net["dns"] and mode == "static":
+        raise SystemExit("--domain needs --dns (the name servers to ask)")
+    if mode == "dhcp":
+        if a.netmask or a.gateway:
+            raise SystemExit("--netmask and --gateway come from the DHCP server with --ip dhcp")
+        return net
+    try:
+        iface = ipaddress.IPv4Interface(f"{a.ip or DEFAULT_IP}/{a.netmask or DEFAULT_NETMASK}")
+    except ValueError as e:
+        raise SystemExit(f"--ip/--netmask: {e}")
+    if iface.ip in (iface.network.network_address, iface.network.broadcast_address) and iface.network.prefixlen < 31:
+        raise SystemExit(f"--ip {iface.ip} is the network's or broadcast address of {iface.network}")
+    net.update(ip=str(iface.ip), netmask=str(iface.netmask), network=str(iface.network.network_address),
+               prefix=iface.network.prefixlen)
+    if a.gateway:
+        try:
+            gw = ipaddress.IPv4Address(a.gateway)
+        except ValueError as e:
+            raise SystemExit(f"--gateway: {e}")
+        if gw not in iface.network or gw == iface.ip:
+            raise SystemExit(f"--gateway {gw} isn't another address in {iface.network}")
+        net["gateway"] = str(gw)
+    return net
+
+
+def network_text(net, nic="le0"):
+    """One line for the VM's notes and the summary."""
+    if net["mode"] == "dhcp":
+        s = f"{nic} by DHCP"
+        extra = ["router, name servers and host name from the DHCP server (host name unknown if it sends none)"]
+        if net["dns"]:
+            extra.append(f"DNS {', '.join(net['dns'])} unless the server sends name servers")
+    else:
+        s = f"{nic} {net['ip']}/{net['prefix']} (netmask {net['netmask']}), static"
+        extra = [f"default router {net['gateway']}" if net["gateway"] else "no default route",
+                 f"DNS {', '.join(net['dns'])}" if net["dns"] else "no name service"]
+    if net.get("domain"):
+        extra.append(f"domain {net['domain']}")
+    where = f"bridge {net['bridge']}" + (f", VLAN {net['vlan']}" if net["vlan"] else "")
+    return f"{s}; {'; '.join(extra)} ({where})"
+
+
+def vm_params(t, a, volids, disk_image, disk=None):
+    """The options for `pvesh create /nodes/<node>/qemu`; `disk`: disk_choice() (the default disk)."""
     p = dict(t["profile"])
     p["net0"] = f"{p['net0']},bridge={a.bridge}"
-    disk = t["disk"]
+    if getattr(a, "vlan", None):
+        p["net0"] += f",tag={a.vlan}"
+    disk = disk or t["disk"]
     if disk_image:
         p[disk["bus"]] = f"{a.storage}:0,import-from={disk_image},format=raw"
     else:
@@ -140,20 +229,37 @@ def vm_params(t, a, volids, disk_image):
     return p
 
 
-def create_vm(t, a, volids, work):
+def create_vm(t, a, volids, work, disk=None):
+    disk = disk or t["disk"]
     disk_image = None
-    if t["disk"].get("label") == "sun":
-        disk_image = sunlabel.write_disk(os.path.join(work, "disk-label.raw"), t["disk"]["size"],
-                                         t["disk"]["geometry"])
+    if disk.get("label") == "sun":
+        disk_image = sunlabel.write_disk(os.path.join(work, "disk-label.raw"), disk["size"], disk["geometry"])
     try:
-        params = vm_params(t, a, volids, disk_image)
+        params = vm_params(t, a, volids, disk_image, disk)
         run("pvesh", "create", f"/nodes/{node()}/qemu", *[x for k, val in params.items() for x in (f"--{k}", val)])
     finally:
         if disk_image and os.path.exists(disk_image):
             os.unlink(disk_image)
-    conf = run("qm", "config", a.vmid)
+    save_config(a.vmid, work)
+
+
+def save_config(vmid, work):
+    conf = run("qm", "config", vmid)
     with open(os.path.join(work, "vm.conf"), "w", encoding="utf-8") as f:
         f.write(conf + "\n")
+
+
+def add_data_disk(a, work):
+    """--data-disk: a second disk on DATA_DISK_BUS with a Sun label (sunlabel.data_geometry), added
+    after the install so the installer's disk selection never sees it; the first boot makes its
+    device nodes, newfs's slice 0 and mounts it on /data (solaris-firstboot.py, DATA_DISK)."""
+    image = sunlabel.write_disk(os.path.join(work, "data-disk-label.raw"), a.data_disk,
+                                sunlabel.data_geometry(a.data_disk))
+    try:
+        run("qm", "set", a.vmid, f"--{DATA_DISK_BUS}", f"{a.storage}:0,import-from={image},format=raw")
+    finally:
+        os.unlink(image)
+    save_config(a.vmid, work)
 
 
 def vm_running(vmid):
@@ -203,7 +309,9 @@ class Scripted:
 
     def install(self, job):
         t = job.target
-        v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.a.ip or "10.0.2.15"}
+        # The installer always gets a static address (Solaris 2.6's has no DHCP choice); the first boot
+        # turns it into DHCP, adds the netmask, the router and DNS (solaris-firstboot.py, NET_*)
+        v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.net["ip"] or DEFAULT_IP}
         swaps = [(med["at"], med["drive"], job.volids[med["name"]]) for med in t["media"]
                  if med.get("at", "start") != "start"]
         job.phase("install", t["install"]["scenario"], v, job.a.timeout or t["install"]["timeout"], swaps)
@@ -211,17 +319,30 @@ class Scripted:
     def firstboot(self, job):
         t = job.target
         v = {**t["firstboot"].get("vars", {}), "ROOT_PASSWORD": job.root_password, "MARKER": job.marker(),
-             "USER": job.a.user or "", "USER_PASSWORD": job.user_password if job.a.user else ""}
+             "USER": job.a.user or "", "USER_PASSWORD": job.user_password if job.a.user else "",
+             "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", **net_vars(job)}
         job.phase("firstboot", t["firstboot"]["scenario"], v, t["firstboot"]["timeout"])
 
     def check(self, job):
         t = job.target
+        # The disk's layout as the guest sees it goes into the evidence (check/serial.raw)
         v = {**t["check"].get("vars", {}), "ROOT_PASSWORD": job.root_password,
-             "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target",
+             "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target; df -k; prtvtoc /dev/rdsk/c0t3d0s2;"
+                         " ifconfig -a; netstat -rn",
              "CHECK": rf"(?m)^target={re.escape(job.a.target)}$"}
         if job.a.user:
             v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd"
+        if job.a.data_disk:
+            v["COMMANDS"] += f"; prtvtoc /dev/rdsk/{DATA_DISK_DEVICE}s2; df -k /data"
         job.phase("check", t["check"]["scenario"], v, t["check"]["timeout"])
+
+
+def net_vars(job):
+    """The network for the first-boot scenario (solaris-firstboot.py)."""
+    n = job.net
+    return {"NET_MODE": n["mode"], "NET_IP": n["ip"] or "", "NET_NETMASK": n["netmask"] or "",
+            "NET_NETWORK": n.get("network") or "", "NET_GATEWAY": n["gateway"] or "",
+            "NET_DNS": " ".join(n["dns"]), "NET_DOMAIN": n["domain"] or "", "HOSTNAME": job.hostname}
 
 
 METHODS = {"scripted": Scripted}
@@ -236,6 +357,8 @@ class Job:
         self.root_password = a.root_password or targets.DEFAULT_ROOT_PASSWORD
         self.user_password = a.user_password or self.root_password
         self.hostname = a.hostname or self.target["hostname"]
+        self.disk = disk_choice(self.target, a.disk_size)
+        self.net = network_choice(self.target, a)
         self.started = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.t0 = time.time()
         self.phases = []
@@ -254,9 +377,18 @@ class Job:
                  "by=wsh-pve e2e/sparc lab.py install", f"hostname={self.hostname}",
                  f"catalogue_tested={(t.get('tested') or {}).get('date', 'not yet')}"]
         lines += [f"medium={m['name']} sha256={m['sha256'] or 'unchecked'}" for m in self.media]
+        lines.append(f"network={network_text(self.net)}")
+        lines.append(f"disk={self.disk_text()}")
+        if self.a.data_disk:
+            lines.append(f"data_disk={DATA_DISK_DEVICE} {self.a.data_disk}G on /data")
         if self.a.user:
             lines.append(f"user={self.a.user}")
         return "\n".join(lines)
+
+    def disk_text(self):
+        d = self.disk
+        label = f", {d['geometry']['name']} label" if d.get("geometry") else ""
+        return f"{d['name']} ({d['bus']}, {d['size']} GiB image{label})"
 
     def phase(self, name, scenario, v, timeout, swaps=()):
         """Run one scenario against the VM (lab.run_scenario in attach mode); a stall (no end within
@@ -317,7 +449,9 @@ class Job:
             " from anywhere untrusted.",
             f"Console: {login['console'].replace('<vmid>', str(a.vmid))}",
             f"Hostname: {self.hostname}",
-            f"Network: {t['network'].replace('10.0.2.15', a.ip or '10.0.2.15')}",
+            f"Network: {network_text(self.net)}",
+            f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on /data"
+                                         if a.data_disk else ""),
             "Marker: /etc/wsh-lab-target",
             "Media: " + ", ".join(f"{m['name']} (sha256 {(m['sha256'] or 'unchecked')[:16]}...)" for m in self.media),
         ]
@@ -337,6 +471,13 @@ def cmd_install(a):
     t = targets.TARGETS[a.target]
     if t["status"] != "automated":
         sys.exit(f"{a.target} is in the catalogue only, not automated: {t['blocked']}")
+    disk_choice(t, a.disk_size)  # refuses a size the target wasn't tested with
+    network_choice(t, a)  # refuses a network setting the target doesn't support
+    if a.data_disk is not None:
+        if t.get("firstboot", {}).get("scenario") != "solaris-firstboot.py":
+            sys.exit(f"--data-disk: only for the Solaris targets (their first boot sets it up), not {a.target}")
+        if not 1 <= a.data_disk <= 32:
+            sys.exit("--data-disk takes 1-32 (GiB)")
     if not shutil.which("qm"):
         sys.exit("lab.py install runs on the PVE node (as root), where qm and pvesh are")
     for opt, rx in (("--root-password", PASSWORD), ("--user-password", PASSWORD), ("--user", USERNAME)):
@@ -366,11 +507,14 @@ def cmd_install(a):
             raise InstallFailed("not the tested media (" + "; ".join(f"{r['name']}: {r['state']}" for r in bad)
                                 + "); --allow-untested-media to use them anyway")
         job.volids = {r["name"]: r["volid"] for r in job.media}
-        create_vm(t, a, job.volids, a.out)
+        create_vm(t, a, job.volids, a.out, job.disk)
         created = True
         job.log(f"created VM {a.vmid} ({a.name or a.target}) on {node()}")
         method.install(job)
         job.finish()
+        if a.data_disk:
+            add_data_disk(a, a.out)
+            job.log(f"data disk: {a.data_disk} GiB on {DATA_DISK_BUS} ({DATA_DISK_DEVICE}), Sun-labelled")
         method.firstboot(job)
         if a.check:
             method.check(job)
@@ -407,6 +551,7 @@ def summary(job, result):
                   + (f", {a.user} / {job.user_password}" if a.user else "") + "  (public lab defaults)",
                   f"   console:  {t['login']['console'].replace('<vmid>', a.vmid)}",
                   f"   hostname: {job.hostname}; marker /etc/wsh-lab-target",
+                  f"   network:  {network_text(job.net)}",
                   f"   start:    qm start {a.vmid}" + ("  (a template: clone it first)" if a.template else "")]
     lines.append(f"   evidence: {a.out}")
     return "\n".join(lines)
@@ -422,7 +567,10 @@ def cmd_targets(a):
         mach = f"{p.get('machine')} {p.get('memory')}M"
         media = ", ".join(m["name"] for m in t["media"])
         print(f"{name:20} {t['status']:10} {mach:16} {media[:44]:44} {t['title']}")
-        if t["status"] != "automated":
+        if t["status"] == "automated":
+            sizes = t["disk"].get("sizes") or [f"{t['disk']['size']}G"]
+            print(f"{'':20} --disk-size {' | '.join(sizes)} (tested; default {sizes[0]})")
+        else:
             print(f"{'':20} blocked: {t['blocked']}")
     print(f"\nlogin of an installed target: root / {targets.DEFAULT_ROOT_PASSWORD} unless --root-password"
           " (public lab default)")
@@ -460,10 +608,21 @@ def add_commands(sub):
     i.add_argument("--bridge", default="vmbr0", help="bridge for the VM's NIC (vmbr0)")
     i.add_argument("--name", help="VM name (the target's name)")
     i.add_argument("--hostname", help="the guest's host name (the target's)")
-    i.add_argument("--ip", help="the guest's address where the installer sets a static one (10.0.2.15)")
+    i.add_argument("--vlan", type=int, metavar="TAG", help="VLAN tag of the VM's NIC (net0 tag=; none)")
+    i.add_argument("--ip", metavar="ADDRESS|dhcp",
+                   help=f"the guest's static address ({DEFAULT_IP}), or dhcp where the target supports it")
+    i.add_argument("--netmask", help=f"with a static address: its netmask ({DEFAULT_NETMASK})")
+    i.add_argument("--gateway", help="with a static address: the default router (none)")
+    i.add_argument("--dns", metavar="A[,B,C]", help="name servers: the guest resolves host names with DNS (none)")
+    i.add_argument("--domain", help="the DNS domain (and search domain) of the guest, with --dns or DHCP")
     i.add_argument("--root-password", help=f"root's password ({targets.DEFAULT_ROOT_PASSWORD}: a public default)")
     i.add_argument("--user", help="also add this user (home under /export/home)")
     i.add_argument("--user-password", help="the user's password (the root password)")
+    i.add_argument("--disk-size", metavar="SIZE",
+                   help="the first disk: one of the sizes the target was tested with (`targets` lists them; "
+                        "Solaris 2.6: 3G, the default, or 9G)")
+    i.add_argument("--data-disk", type=int, metavar="GIB",
+                   help="also a second, Sun-labelled disk of 1-32 GiB on scsi4, newfs'd and mounted on /data")
     i.add_argument("--check", action="store_true", help="boot once more, log in and check the marker")
     i.add_argument("--template", action="store_true", help="convert the VM to a template at the end")
     i.add_argument("--keep-on-failure", action="store_true", help="keep (stopped) instead of destroying a failed VM")

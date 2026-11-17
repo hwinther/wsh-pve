@@ -1,0 +1,38 @@
+Source: wsh-lab
+Section: admin
+Priority: optional
+Maintainer: WsHosting ENK <debian@wsh.no>
+Build-Depends: debhelper-compat (= 13), dh-sequence-python3, python3:any
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/hwinther/wsh-pve
+Vcs-Browser: https://github.com/hwinther/wsh-pve/tree/main/packages/wsh-lab
+Vcs-Git: https://github.com/hwinther/wsh-pve.git
+
+Package: wsh-lab
+Architecture: all
+Depends: fonts-dejavu-core,
+         python3-pil,
+         python3-pyte,
+         ${misc:Depends},
+         ${python3:Depends},
+Suggests: python3-venv,
+          qemu-server,
+          tesseract-ocr,
+          vpx-tools,
+Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
+ The lab of the wsh-pve project drives a guest's serial console and framebuffer
+ the way a person would and records every step. Its main command installs a
+ named target (Solaris 2.6 on a SPARCstation 5 or 20, so far) into a new VM on
+ a Proxmox VE node, from install media the user provides, and leaves a powered
+ off VM with known, publicly documented login details.
+ .
+ Commands: wsh-lab (install, targets, media, run, serve, ...) and wsh-lab-mcp,
+ an MCP server that lets an AI assistant see and type on an allowed VM. The MCP
+ server's Python SDK is not packaged in Debian: wsh-lab-mcp --setup installs it
+ into a venv under /var/lib/wsh-lab from the pinned, hash-checked requirements
+ in this package.
+ .
+ The package works with whatever qemu-server is installed and depends on none
+ of the wsh-pve packages. tesseract-ocr is needed for targets driven on a
+ framebuffer, vpx-tools for the framebuffer videos of a run.

@@ -1,0 +1,18 @@
+#!/bin/sh
+# wsh-lab: the sparc lab of wsh-pve (lab.py), as installed by the wsh-lab package.
+#   wsh-lab targets | media | install <target> --vmid N | run | serve | ctl | cast   (wsh-lab --help)
+set -e
+LAB=/usr/share/wsh-lab
+
+case "${1:-}" in
+	--version|-V)
+		cat "$LAB/VERSION"
+		exit 0
+		;;
+esac
+
+# The run pages embed the asciinema player shipped in the package, unless the caller has another.
+LAB_ASCIINEMA_PLAYER="${LAB_ASCIINEMA_PLAYER:-$LAB/asciinema-player}"
+LAB_PROG=wsh-lab
+export LAB_ASCIINEMA_PLAYER LAB_PROG
+exec /usr/bin/python3 "$LAB/lab.py" "$@"

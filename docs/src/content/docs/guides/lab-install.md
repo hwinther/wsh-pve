@@ -21,13 +21,13 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
-| `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), 3 GB Sun-labelled disk on `scsi3`, lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Both end with the host name of the target (`sol26-ss5`, `sol26-ss20`), `le0` at 10.0.2.15/24
-(static, set by the installer; `--ip` changes it; no name service, no default route), the time zone
-MET, and a marker file `/etc/wsh-lab-target` with the target, the install time and the media's
+(static; no name service, no default route) unless the network options say otherwise (see
+"Network": static or DHCP, VLAN, netmask, router, DNS), the time zone MET, and a marker file `/etc/wsh-lab-target` with the target, the install time and the media's
 checksums.
 
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
@@ -56,22 +56,47 @@ the DOS targets planned later) will go on a storage with the **Floppy image** co
 Check what a node has:
 
 ```sh
-python3 lab.py media                 # every target's media on storage local, with sha256
-python3 lab.py media sol26-ss5 --storage nas-iso
-python3 lab.py media --dir /path/to/isos --no-checksum
+wsh-lab media                 # every target's media on storage local, with sha256
+wsh-lab media sol26-ss5 --storage nas-iso
+wsh-lab media --dir /path/to/isos --no-checksum
 ```
 
 ## Install the lab on a node
 
-The lab is a few Python files; it runs as root on the node, where `qm`, `pvesh` and the VMs' sockets
-are. Either with Debian's packages:
+The lab runs as root on the node, where `qm`, `pvesh` and the VMs' sockets are. On a node that has
+the [wsh-pve repository](/guides/setup/):
+
+```sh
+apt install wsh-lab
+wsh-lab --version
+```
+
+`wsh-lab` is an optional package (`Architecture: all`): nothing else depends on it, it depends on
+none of the patched packages (it works with whatever `qemu-server` is installed, which is where the
+sparc profiles come from), and it pulls in only Debian's `python3-pyte`, `python3-pil` and
+`fonts-dejavu-core`. It puts the lab in `/usr/share/wsh-lab/` and two commands in `/usr/bin`:
+`wsh-lab` (`lab.py`: `install`, `targets`, `media`, `run`, `serve`, ...) and `wsh-lab-mcp` (the
+lab's [MCP server](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#mcp-server)). Suggested,
+not installed by default: `tesseract-ocr` (only for targets driven on a framebuffer; none yet),
+`vpx-tools` (the framebuffer video in the evidence) and `python3-venv` (for `wsh-lab-mcp --setup`).
+`apt purge wsh-lab` removes everything it installed, including the MCP server's venv; the evidence
+of your installs in `/var/lib/wsh-lab/installs/` stays.
+
+The package's version is `0.<N>+g<commit>`: `N` counts the commits that changed the lab, so a
+newer lab always has a higher version, and the commit is the newest of them. It is built by the
+`wsh-lab package` workflow from the repository at that commit and published with the other
+packages.
+
+**Without the package**, from a clone of the repository: either Debian's packages and the files
+as they are,
 
 ```sh
 apt install python3-pyte python3-pil fonts-dejavu-core
+alias wsh-lab='python3 /path/to/wsh-pve/e2e/sparc/lab.py'
 ```
 
-or, without new system packages, in a venv made by [uv](https://docs.astral.sh/uv/) with the pinned,
-hash-checked dependencies (the same way the lab's MCP server is installed):
+or, without new system packages, a venv made by [uv](https://docs.astral.sh/uv/) with the pinned,
+hash-checked dependencies:
 
 ```sh
 uv venv /opt/wsh-lab --python /usr/bin/python3
@@ -82,8 +107,7 @@ install -m 644 e2e/sparc/scenarios/*.py /opt/wsh-lab/lab/scenarios/
 alias wsh-lab='/opt/wsh-lab/bin/python /opt/wsh-lab/lab/lab.py'
 ```
 
-`vpx-tools` adds the framebuffer video to the evidence of targets with a framebuffer (none yet);
-`tesseract-ocr` is only needed for targets driven on a framebuffer. Removing it is `rm -r /opt/wsh-lab`.
+Removing that is `rm -r /opt/wsh-lab`.
 
 ## Run it
 
@@ -93,7 +117,9 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # ~12 min
 ```
 
 Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--bridge` (`vmbr0`),
-`--name`, `--hostname`, `--ip`, `--root-password`, `--user NAME` (and `--user-password`; a non-root
+`--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
+`--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
+(a second disk, mounted on `/data`), `--root-password`, `--user NAME` (and `--user-password`; a non-root
 user with its home under `/export/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
@@ -121,6 +147,88 @@ xterm.js first, they would get nothing. Measured in the PVE test container on th
 took 11.8 minutes (install 407 s, first boot 182 s, check 105 s), `sol26-ss20` 12.1 minutes (413 s,
 191 s, 105 s). Without `--check` it is two minutes less.
 
+## Disk size
+
+The first disk comes in the sizes a target was tested with; `wsh-lab targets` lists them, and any
+other `--disk-size` is refused with the tested ones named. Both are the lab's disk templates byte for
+byte (the label and its backup copies), written by the tool, so no template is needed:
+
+| `--disk-size` | Image | Label (as `format` names it) | Template |
+| --- | --- | --- | --- |
+| `3G` (default) | 3 GiB | `SUN2.9G cyl 2734 alt 2 hd 21 sec 99` (2775 MB usable) | `sparc-SUN2.9G.raw.template.xz` |
+| `9G` | 8 GiB | `QEmu8G cyl 16202 alt 2 hd 16 sec 60` (7594 MB usable) | `sparc-Qemu9G.raw.template.xz` |
+
+Solaris 2.6's installer asks the same questions on both; its auto-layout puts `/` first (slice 0
+from cylinder 0, where OpenBIOS boots it), then swap, `/usr`, and gives the rest to `/export/home`.
+On a 9G disk (`sol26-ss5`, measured):
+
+| Slice | Mount | Size | Used after the install |
+| --- | --- | --- | --- |
+| 0 | `/` | 80 MB | 22 MB |
+| 1 | swap | 148 MB | |
+| 6 | `/usr` | 233 MB | 153 MB (57 MB free) |
+| 7 | `/export/home` | 7175 MB | 7103 MB free |
+
+On `sol26-ss20` (512 MB of memory) swap is 295 MB and `/export/home` 6973 MB. `/` and `/usr` are as small as on the 3G disk (auto-layout sizes them for the software, End User
+System Support), so the extra space is all in `/export/home`. Software that installs under `/opt`
+or `/usr` needs a layout of its own (the installer's Customize) or a link into `/export/home`.
+
+### A second disk
+
+`--data-disk GIB` (1-32) adds a second disk on `scsi4` (`c0t4d0` in Solaris) after the install,
+with a Sun label whose slice 0 is the whole disk; the first boot makes its device nodes, puts a UFS
+on it and mounts it on `/data` from `/etc/vfstab`. The same by hand for a VM that exists (powered
+off), as root on the node and then in the guest:
+
+```sh
+python3 /usr/share/wsh-lab/sunlabel.py data 4 /var/tmp/data.raw   # 4 GiB, labelled (no format needed)
+qm set 120 --scsi4 local:0,import-from=/var/tmp/data.raw,format=raw && rm /var/tmp/data.raw
+qm start 120
+# in the guest:
+drvconfig; disks                     # device nodes for the new target
+newfs /dev/rdsk/c0t4d0s0             # answer y
+mkdir /data
+echo '/dev/dsk/c0t4d0s0 /dev/rdsk/c0t4d0s0 /data ufs 2 yes -' >> /etc/vfstab
+mount /data
+```
+
+A blank disk (`qm set 120 --scsi4 local:4`) instead needs a label from `format` in the guest
+(`format c0t4d0`, then `type`, `Other` and the geometry, then `label`), since 2.6 can't work out an
+emulated disk's geometry by itself; the labelled image avoids that. `python3
+/usr/share/wsh-lab/sunlabel.py disk 9G <image>` writes the install targets' 9G disk the same way.
+
+## Network
+
+The VM's NIC goes on `--bridge` (`vmbr0`), with `--vlan TAG` as the `tag=` of `net0`. In the
+guest, a target supports the modes its catalogue entry lists as tested (`wsh-lab targets --json`,
+`net_modes`); anything else is refused before a VM is made:
+
+- **Static** (default): `--ip` (`10.0.2.15`), `--netmask` (`255.255.255.0`), `--gateway` (none: no
+  default route), `--dns` (up to three name servers; none: `/etc/hosts` only) and `--domain`.
+- **DHCP**: `--ip dhcp`. Address, netmask, default router, name servers, domain and host name come
+  from the DHCP server. `--dns`/`--domain` are used only if the server sends no name servers.
+
+How Solaris 2.6 does it (both machines): its installer asks only for a static address and whether
+the system is on a subnet, and its name service choices are NIS+, NIS, Other and None, so the
+installer gets the address and the first boot writes the rest into the files 2.6's start-up
+scripts read: `/etc/netmasks` (the netmask, filed under the class A/B/C network number, which is
+what 2.6 looks up), `/etc/defaultrouter`, `/etc/resolv.conf` with `hosts: files dns` in
+`/etc/nsswitch.conf`; for DHCP, `/etc/dhcp.le0`. The DHCP client (`/sbin/dhcpagent`, 1997) is part
+of the core software, so the End User install has it; with `/etc/dhcp.le0` the start-up scripts
+run `ifconfig le0 auto-dhcp primary`, take the default router from the lease, and write
+`/etc/resolv.conf`, the `hosts:` line and the address in `/etc/hosts` from it.
+
+Two things to know about Solaris 2.6 under DHCP:
+
+- **The host name is the one the DHCP server answers with** (option 12). 2.6's client sends its
+  current name (the target's host name) in its request; a server that echoes it, as dnsmasq does,
+  keeps it, and a server with its own name for the VM's MAC address (in its notes and `qm config`;
+  dnsmasq `dhcp-host=bc:24:11:12:34:56,myname`) renames the system. A server that sends no name
+  leaves it as `unknown` (2.6's start-up script sets that: tooltalk and sendmail need a name).
+- Before this change the installer's address had no netmask entry, so `le0` came up as
+  `10.0.2.15 netmask ff000000` (class A), not /24 as the notes said; every install now writes
+  `/etc/netmasks`.
+
 ## What it leaves
 
 - The VM, powered off (or a template), booting from its disk, the CD drive empty, with the notes:
@@ -146,8 +254,9 @@ within the time limit) the exit code is 1, the evidence stays, and the VM is des
 `--keep-on-failure` kept, stopped, with `FAILED ...` and the evidence path in its notes.
 
 Start it with `qm start 120` and log in on the serial console (`qm terminal 120`) as `root` with the
-password from the notes. The network setting is the installer's static address: change
-`/etc/hostname.le0` and `/etc/hosts` (and add `/etc/defaultrouter`) for your network.
+password from the notes. The notes say how the network was set up ("Network" above); to change it
+later, edit the same files (`/etc/hostname.le0` and `/etc/hosts` for the address, `/etc/netmasks`,
+`/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot.
 
 ## Licence keys
 
@@ -163,3 +272,7 @@ container with the published packages, and the `install` matrix runs every autom
 hand from the `sparc lab` workflow). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
+The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
+in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
+catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must
+leave nothing behind (`packages/wsh-lab/test.sh`).

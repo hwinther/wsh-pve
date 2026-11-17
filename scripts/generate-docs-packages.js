@@ -41,6 +41,13 @@ const PACKAGE_DEFS = [
     releaseName: "pve-storage",
     patch: "pve-storage.changelog.patch",
   },
+  // Optional, built by wsh-lab.yml from e2e/sparc: no changelog patch (its version comes from git),
+  // but its release tags have the same form, wsh-lab-<version>.
+  {
+    name: "wsh-lab",
+    releaseName: "wsh-lab",
+    patch: null,
+  },
 ];
 
 function parsePackagesFile(filePath) {
@@ -105,17 +112,16 @@ function main() {
 
   const packages = PACKAGE_DEFS.map(({ name, releaseName, patch }) => {
     const repo = repoVersions[name];
-    const patchVersion = latestWshVersionFromPatch(
-      path.join(root, "submodules", patch),
-      name,
-    );
+    const patchVersion = patch
+      ? latestWshVersionFromPatch(path.join(root, "submodules", patch), name)
+      : null;
     const version = repo?.version ?? patchVersion ?? "unknown";
 
     return {
       name,
       version,
       architecture:
-        repo?.architecture ?? (name === "pve-manager" || name === "libpve-storage-perl" ? "all" : "amd64"),
+        repo?.architecture ?? (["pve-manager", "libpve-storage-perl", "wsh-lab"].includes(name) ? "all" : "amd64"),
       suite: "stable",
       ...releaseInfo(releaseName, version),
     };

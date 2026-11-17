@@ -448,6 +448,19 @@ clean-qemu-3dfx:
 	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a; \
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
+# The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
+# checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
+# version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
+.PHONY: wsh-lab
+wsh-lab:
+	$(Q)eval "$$(packages/wsh-lab/version.sh | sed 's/^/export /')"; \
+	$(ECHO) "INFO: building wsh-lab $$WSH_LAB_VERSION"; \
+	$(DOCKER) build -f packages/wsh-lab/build.Dockerfile -t wsh-lab-build packages/wsh-lab && \
+	mkdir -p build/wsh-lab && \
+	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-lab:/out" \
+		-e WSH_LAB_VERSION -e WSH_LAB_COMMIT -e WSH_LAB_EPOCH \
+		wsh-lab-build /src/packages/wsh-lab/build.sh /out
+
 .PHONY: repo-update
 repo-update:
 	$(Q)if [ $$(id -u) -eq 0 ]; then \
@@ -503,6 +516,7 @@ help:
 	@echo "  unapply-patches:         Remove patches from submodules"
 	@echo "  update-patches:          Update patch files from submodule changes"
 	@echo "  repo-update:             Update local Debian repository with new packages"
+	@echo "  wsh-lab:                 Build the optional wsh-lab package (the sparc lab) into build/wsh-lab"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERBOSE:                 Set to 1 or 2 to enable verbose output"
