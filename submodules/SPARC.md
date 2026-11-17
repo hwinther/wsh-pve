@@ -142,6 +142,9 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0006-sparc64-client-dont-define-a-forth-constant` | `11 constant forth` in `client.fs` hid the FORTH vocabulary word; `only forth also definitions` pushed `0x11` (generic code, applied to sparc64 only here) | as 0005 |
 | `0007-sparc64-fcode-consume-instance-in-defining-words` | FCode `b(value)`/`b(variable)`/`b(defer)`/`b(buffer:)` left the `instance` flag set; the next Forth `defer` became an instance word and crashed with no active package (generic code, applied to sparc64 only here) | as 0005 |
 | `0009-sparc64-name-upa-and-ebus-children-like-obp` | The sabre was `pci@1fe,0` and the ebus children `su@0`, `8042@0`, ...; OBP (and Solaris, which builds the same names and looks the console path up among them) has `pci@1f,0` and `su@14,3f8`. Solaris 10 never opened its console driver and its installer ignored all input on ttya. The root prints the UPA port id; the ebus node has its own two-cell space,offset `encode-unit`/`decode-unit` | not fixed; see `upstream/openbios-sparc64-node-names.md` |
+| `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not reported yet |
+| `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | not reported yet |
+| `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Untested, so named `.wip`: the Dockerfile only applies `*.patch` | — |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1314,7 +1317,7 @@ power-on (cosmetic). A variant with a method table of its own for the ebus node 
 avoids the messages but hasn't been tested on its own.
 
 **Solaris 10 beyond the first prompt** (lab scratch scenario driving the installer by screen title;
-firmware 0003-0007 and 0009 (the method-table variant) plus the experimental IDE-tree change below, standalone QEMU 11.1.3 with the
+firmware 0003-0007 and 0009 (the method-table variant) plus the IDE-tree change (an early form of 0011, without `compatible`), standalone QEMU 11.1.3 with the
 cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on user networking):
 
 - **IDE interrupt.** QEMU clears the cmd646 interrupt status bits (MRDMODE/CFR/ARTTIM23) when the
@@ -1331,7 +1334,7 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   `ide@3/ide@1/cdrom@0`), the installer refused the DVD: `ERROR: The disc you inserted is not a
   Solaris OS CD/DVD.` OBP on an Ultra 5/10 puts the drives directly under the controller as
   `disk@0,0` and `cdrom@2,0` (target = 2 × channel + unit), which is how Solaris names its `dad`/`sd`
-  nodes. With that tree (experimental, not committed: it breaks NetBSD's CD boot, below), the boot
+  nodes. With that tree (patch 0011; NetBSD needs 0010 with it, below), the boot
   path maps to `/devices/pci@1f,0/pci@1,1/ide@3/sd@2,0:f`. The installer accepts the DVD and lists
   the disk as `c0t0d0` (16382 MB).
 - **Install.** The interactive text installer on ttya runs through system identification (network
@@ -1358,12 +1361,30 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
   the same thing on the wire. This was read in `hw/sparc64/sun4u.c`, not measured.
 
-**NetBSD with the OBP-style IDE tree.** NetBSD's CD boot stops at `root device (default wd0a):`.
-It boots `cdrom@2,0:f` but takes `wd0` for root. Its installed disk still boots. The `sparc64`
-matrix with the IDE-tree change was 5/9 (NetBSD 11.1 and 9.3 CD and the sysinst install fail). NetBSD
-handles OBP's `cdrom@2,0` on a real Ultra 5 (`autoconf.c` adds 2 for the secondary channel), so the
-remaining difference is in what OpenBIOS returns for the boot device (likely `my-unit` or `reg`).
-Not found yet. That is why the IDE-tree change isn't committed.
+**Status with 0010-0011 (2026-11-17).** Firmware built from the committed patches 0001-0011 (build
+records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`:
+
+- NetBSD 11.1 CD: roots on `cd0` (it took `wd0` with the flat tree before 0010). `sparc64` matrix
+  9/9 on the packaged QEMU 11.1.3-2+wsh7.
+- Installer: accepts the DVD and lists `c0t0d0`. The complete install (`Solaris 10 software
+  installation succeeded`, boot archive created) was measured with 0011's predecessor (same tree,
+  no `compatible`) and the standalone QEMU with the cmd646 patch, not repeated with 0011.
+- Installed disk (that install's disk, firmware 0001-0011, QEMU with the cmd646 patch): boots to
+  the first-boot keyboard question and to `console login:` in 412 s. Root logs in on ttya. `format`
+  lists `c0t0d0` at `/pci@1f,0/pci@1,1/ide@3/dad@0,0`. `hme0` gets 10.0.2.15 by DHCP and
+  `ping 10.0.2.2` answers `alive`. `init 5` powers QEMU off (exit 0).
+- The sun4u system MAC: with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris uses `ether
+  52:54:0:12:34:56`. QEMU writes its default MAC into the IDPROM when the NIC isn't `-nic`, so two
+  guests on one network would clash. Not fixed.
+- Not measured with this set: the install on the packaged QEMU (without the cmd646 patch); the
+  reboot (0012, `.wip`); Solaris 7/8/9.
+
+**NetBSD with the OBP-style IDE tree.** Without 0010, NetBSD's CD boot stopped at `root device
+(default wd0a):`: it booted `cdrom@2,0:f` but took `wd0` for root (the `sparc64` matrix was 5/9).
+NetBSD's ofwboot reads the boot device's target with `my-unit` on the instance `open-dev` returns,
+which is the interposed disk-label package, and OpenBIOS answered 0 0 there; with the channel
+nodes NetBSD made up for that with an OpenBIOS-specific offset. 0010 makes the interposed package
+answer with the device's unit (`0 2` for `cdrom@2,0`), and NetBSD roots on `cd0` again.
 
 **maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
 Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its

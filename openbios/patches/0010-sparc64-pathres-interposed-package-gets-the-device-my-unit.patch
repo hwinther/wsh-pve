@@ -1,0 +1,31 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] pathres: give an interposed package the my-unit of the device
+ it sits on
+
+handle-interposers links the interposed instance with an empty unit
+address, so link-one falls back to the interposer's own "reg", which the
+disk-label package doesn't have: my-unit of the instance that open-dev
+returns for "cdrom" was 0 0. NetBSD's ofwboot reads the boot device's
+target and lun with "my-unit" on that instance; with the IDE drives
+addressed target,lun under the controller (cdrom@2,0, next patch) it got
+target 0 and the kernel took wd0 instead of cd0 as its root device.
+
+Copy the parent instance's my-unit into the interposed instance. With
+this "cdrom" open-dev ... my-unit gives 0 2 and NetBSD 11.1 roots on cd0.
+---
+ forth/device/pathres.fs | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/forth/device/pathres.fs b/forth/device/pathres.fs
+index a185b95..a2bf61c 100644
+--- a/forth/device/pathres.fs
++++ b/forth/device/pathres.fs
+@@ -290,6 +290,8 @@ constant sinfo.size
+     interpose-args 2@ r@ >si.arguments 2!
+     r@ link-one
+     true my-self >in.interposed !
++    \ an interposed package answers my-unit for the device it sits on
++    my-self >in.my-parent @ >in.my-unit my-self >in.my-unit 4 cells move
+     interpose-args 2@ free-mem
+     r@ invoke-open
+ 
