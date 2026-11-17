@@ -100,12 +100,19 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    with user-supplied firmware.
 4. **x86 retro.** Starts from the owner's notes and known problems (DOS and the first megabyte of
    memory among them). Then, like sparc: measure, profiles, tests.
-   - DOS installs from floppies as install targets: a boot floppy and a sequence of install
-     floppies (`floppy` content type), swapped by `install.MediaSwapper` when SETUP asks, FDISK and
-     FORMAT answered on the VGA text screen. The data model is in place; missing are an exact VGA
-     text reader (the text buffer at 0xB8000 through QMP `pmemsave` instead of OCR), an x86 retro
-     profile table, the scenarios, and FreeDOS media for CI (`e2e/sparc/README.md`, "DOS and other
-     floppy installs").
+   - **Started with DOS.** `lab.py install msdos622` installs MS-DOS 6.22 from its three floppies
+     into a PVE VM (~4 min under TCG), driven on the VGA text screen through an exact reader of the
+     text buffer (`vgatext.py`), with the disk swaps done by `install.MediaSwapper`; `freedos14`
+     does FreeDOS 1.4 the same way, and CI installs FreeDOS from its floppies on a GitHub-hosted
+     runner. The first megabyte is measured (`dos_mem.py`, the [DOS guide](docs/src/content/docs/guides/dos.md)):
+     SeaBIOS 1.17 leaves 110K of read-only gap after the VGA, NIC and vapic ROMs, EMM386 makes
+     98-102K of it one UMB, no NIC and no vapic ROM give 118K, a dummy option ROM never helps, and
+     an `I=` range into SeaBIOS's data at E9000 hangs DOS.
+   - Next for DOS: fix `ne2k_isa` in qemu-server (it is put on the PCI bus and the VM doesn't
+     start; an ISA NIC needs no option ROM); maybe a per-VM "legacy BIOS memory layout" (NIC ROM and
+     vapic ROM off without `args:`); a DOS idle driver in the image so a DOS VM stops burning a host
+     core; Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
+     screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and

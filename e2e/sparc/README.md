@@ -404,8 +404,9 @@ Tested in the PVE test container on the lab host (TCG, published packages pve-qe
 | Run | Result | Time |
 | --- | --- | --- |
 | `install msdos622 --vmid 302 --check` | passed: both swaps by the VGA swapper, marker, `VER`, `MEM` 614K free with KEYB NO / 621K without | 4.1 min (install 42 s, first boot 165 s, check 18 s) |
+| `install freedos14 --vmid 303 --check` | passed: six swaps by the scenario, eject before the reboot, marker, `VER` | 10.3 min (install 366 s, first boot 177 s, check 35 s) |
 | `tests/test_freedos.py` in the lab image (`e2e/sparc/Dockerfile`) | passed: six swaps, marker, `VER` | 392 s |
-| unit tests (`test_vgatext.py`, `test_dos.py`, `test_targets.py`) | 51 passed | 6 s |
+| unit tests (`test_vgatext.py`, `test_dos.py`, `test_targets.py`) | 50 passed | 6 s |
 
 ### The first-megabyte matrix
 
