@@ -47,13 +47,19 @@ def run(m, v):
     medium = m.medium(drive)
     disks, steps, last, asked = 0, 0, None, None
     end = time.time() + 4 * t
+    rx = re.compile("|".join(f"(?:{q})" for q, _ in QUESTIONS), re.M)
+    seen = time.time()
     while time.time() < end:
-        s = m.vga_expect("|".join(f"(?:{q})" for q, _ in QUESTIONS), timeout=t, tail=2)
-        tail = s.tail(2)
+        s = m.vga_screen()
+        tail = s.tail(2) if s.text_mode else ""
         here = (tail, s.cursor)
-        if here == last:  # the same prompt still waiting: our answer hasn't been taken yet
+        if not rx.search(tail) or here == last:  # working, or our answer hasn't been taken yet
+            m._check_alive()
+            if time.time() - seen > t:
+                raise lab.Timeout(f"no question from FDI within {t}s; screen:\n{tail}")
             time.sleep(1)
             continue
+        seen = time.time()
         last = here
         steps += 1
         if re.search(r"^[A-Z]:\\[^>]*>$", s.cursor_line()):

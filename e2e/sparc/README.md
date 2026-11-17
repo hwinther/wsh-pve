@@ -406,7 +406,10 @@ Tested in the PVE test container on the lab host (TCG, published packages pve-qe
 | `install msdos622 --vmid 302 --check` | passed: both swaps by the VGA swapper, marker, `VER`, `MEM` 614K free with KEYB NO / 621K without | 4.1 min (install 42 s, first boot 165 s, check 18 s) |
 | `install freedos14 --vmid 303 --check` | passed: six swaps by the scenario, eject before the reboot, marker, `VER` | 10.3 min (install 366 s, first boot 177 s, check 35 s) |
 | `tests/test_freedos.py` in the lab image (`e2e/sparc/Dockerfile`) | passed: six swaps, marker, `VER` | 392 s |
-| unit tests (`test_vgatext.py`, `test_dos.py`, `test_targets.py`) | 50 passed | 6 s |
+| unit tests (`test_vgatext.py`, `test_dos.py`, `test_targets.py`), after the rebase onto the wsh-lab package and network choices | 65 passed | 6 s |
+| `pve_matrix.py install --only install-msdos622 --only install-freedos14` (rebased, PVE image from the branch) | 2/2 passed | 282 s, 678 s |
+| `pve_matrix.py pve` and `matrix.py smoke` on the rebased branch | 5/5 and 3/3 passed | |
+| the MCP server (`tests/test_mcp_server.py`, and `screen_text` on a FreeDOS guest under `lab.py serve`) | 6 tests passed; `method: vga-text`, 6 ms per call | |
 
 ### The first-megabyte matrix
 

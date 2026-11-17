@@ -75,7 +75,7 @@ TARGETS = {
         "hostname": "-",
         "network": "none: an ne2k_pci NIC (RTL8029) without a DOS driver loaded",
         "net_modes": ["none"],  # no network settings in the guest; --bridge and --vlan for the NIC
-        "minutes": 4,  # install 42 s, first boot 165 s, --check 18 s
+        "minutes": 5,  # 4.1-4.7 min: install ~42 s, first boot ~165 s (longer marker since #283), --check ~18 s
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
     "freedos14": {
@@ -97,7 +97,7 @@ TARGETS = {
         "hostname": "-",
         "network": "none: an ne2k_pci NIC (RTL8029) without a DOS driver loaded",
         "net_modes": ["none"],  # no network settings in the guest; --bridge and --vlan for the NIC
-        "minutes": 10,  # install 366 s, first boot 177 s, --check 35 s
+        "minutes": 11,  # 10.3-11.3 min: install ~366 s, first boot ~180-300 s, --check ~35 s
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
 }
