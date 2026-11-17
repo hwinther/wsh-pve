@@ -24,7 +24,7 @@ QUESTIONS = [
     (r"Do you want to proceed \[Y,N\]\?$", "y"),
     (r"Do you want to reboot now \[Y,N\]\?$", "y"),
     (r"Do you want to format your drive \[Y,N\]\?$", "y"),
-    (r"Insert diskette .* in (drive )?A:", None),       # then "Press a key / any key to continue."
+    # "Insert diskette ... in A:" comes a moment before "Press a key to continue.": wait for the latter
     (r"Press (a|any) key to continue\.?$", None),
     (r"^[A-Z]:\\[^>]*>$", "done"),
 ]

@@ -324,8 +324,8 @@ class MediaSwapper:
     """Changes media while an installer runs: for each (regex, drive, volume) in order, wait for the
     regex in the console output and then put the volume into the drive (lab.PveMachine.change_medium,
     i.e. `qm set`, live). Reads the serial output by cursor (Machine.serial_wait), so it doesn't move
-    the scenario's own expect() position. A framebuffer console (DOS) would need a screen-text source
-    instead; see README.md, "Install targets"."""
+    the scenario's own expect() position. A VM without a serial console (DOS) is followed on its VGA
+    text screen instead (_run_vga); see README.md, "DOS install targets"."""
 
     def __init__(self, m, swaps, screen=None):
         self.m, self.swaps, self.done = m, list(swaps), []
