@@ -1368,9 +1368,9 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
 - **Install:** 2 of 2 completed (`scenarios/solaris10-install-sparc64.py`), each about 80 minutes:
   ~14 min to the end of the questions, ~61 min of package copying, then `Solaris 10 software
   installation succeeded`, the boot archive and `syncing file systems... done`. No panic in these two.
-  Earlier, with the standalone QEMU patch and pre-release firmware, 2 of 3 attempts completed and one
-  panicked with `bad unknown trap at TL 1` (tt 0x45, `uata:ghd_intr`; the third was stopped by the
-  scenario, not counted). Counting all complete attempts: 4 of 5 installs completed.
+  Before the package (standalone QEMU patch, pre-release firmware) 1 of 3 attempts completed: one
+  was stopped early, one panicked with `bad unknown trap at TL 1` (above). Counting only attempts
+  that ran to an end: 3 of 4 completed, the panic not seen on the package (0 of 2).
 - **The installer's reboot:** ends with `panic - kernel: prom_reboot: reboot call returned!` (2 of 2).
   The client-interface `boot` service only prints `BOOT` and returns.
 - **Installed disk:** first boot to `console login:` after 836 s (keyboard-layout question answered
