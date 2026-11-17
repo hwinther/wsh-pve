@@ -29,6 +29,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
+| `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 
@@ -63,10 +64,27 @@ firmware); the tool then runs the install once more, since nothing is on the dis
 Every sun4u guest has the MAC address 52:54:00:12:34:56 whatever `net0` says, so two of them on one
 network clash (the [sparc guide](/guides/sparc/#solaris-10)).
 
+**SunOS 4.1.4** (`sunos414-ss5`) copies the CD's miniroot to the swap slice, reboots into it and
+runs `suninstall`'s Quick install (Programmer: everything but the full set; `/` 95 MB, swap 190 MB,
+`/usr` 1 GB, the rest of the disk unused, since SunOS 4 file systems stop at 2 GB). The first boot
+answers sys-config: the host name (`sunos414`), time zone GMT, the static address, no NIS, the root
+password and the optional user. It differs from the Solaris targets in a few ways:
+
+- The CD's install kernel stops QEMU with 256 MB (`qemu: fatal: Trap 0x29 (Data Access Error)` in the
+  node's journal, and the VM is off), so the VM has 64 MB during the install and the target's 256 MB
+  afterwards. Like Solaris 8 and 9 it has `args: -prom-env auto-boot?=false` during the install
+  only: OpenBIOS drops the boot string of the miniroot's reboot, so the install boots it by path.
+- Network: a static address only (SunOS 4.1.4 has no DHCP client), with `--netmask` and
+  `--gateway`. `--dns` and `--domain` are refused: its C library resolves host names through
+  `/etc/hosts` or NIS, not DNS. The address goes into `/etc/hostname.le0` and `/etc/hosts`
+  (sys-config), the netmask into `/etc/netmasks`, the router into `/etc/defaultrouter`.
+- `--user NAME` is made by sys-config: uid 1001, group `staff`, `csh`, home `/home/<host>/NAME`.
+- Root's shell is `csh`; the console is the serial port (`qm terminal`).
+- The disk has one size, so there is no `--disk-size`, and no `--data-disk`.
+
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
 Solaris 2.5.1 (its installer boots only from a CD that answers as a disk, which a PVE CD-ROM drive
-can't be), SunOS 4.1.4 (installed by hand only), NetBSD 11.1 sparc64 and sparc (scenario or
-first-boot step missing).
+can't be), NetBSD 11.1 sparc64 and sparc (scenario or first-boot step missing).
 
 ## Media
 
@@ -84,10 +102,27 @@ never part of this project.
 | `sun-solaris-8-0101-software-cd2-sparc.iso` | 214757376 | `1b6fafd007673f924dc40103b3d2c565342b287d6ff8ad53ac07e1b4b73b44d4` |
 | `SOL_9_SPARC_DVD.iso` | 3368878080 | `feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911` |
 | `sol-10-u11-ga-sparc-dvd.iso` | 2314731520 | `b1df86b976282145fd317d9def4efc27d7d64589f5542184a3e781c0787cf02b` |
+| `sunos414-cd.iso` (made from the BIN below) | 329297920 | `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8` |
 
-The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1, SunOS
-4.1.4, NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
+The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1,
+NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
+
+**The SunOS 4.1.4 CD** circulates as a raw CD image (a "BIN": 2352-byte sectors, each with a 16-byte
+sync and header before its 2048 bytes of data), here named `sunos_4.1.4_install.iso` (378178080
+bytes, sha256 `6088d836cf582128cdd69661c4b62399fbd6f4db9b817188b2d1509cebbb5f48`). QEMU reads it
+as data from byte 0, so it has to be cut to its 2048-byte data first. The tool does that and checks
+both files:
+
+```sh
+wsh-lab media sunos414-ss5 --convert /path/to/sunos_4.1.4_install.iso   # into local:iso/sunos414-cd.iso
+wsh-lab media sunos414-ss5 --convert /path/to/sunos_4.1.4_install.iso --storage nas-iso
+```
+
+It refuses a source of another size or checksum and writes `sunos414-cd.iso` only when the result
+has the checksum in the table above. The same by hand, from the BIN, is
+`python3 -c 'import sys; f=open(sys.argv[1],"rb"); o=open(sys.argv[2],"wb"); [o.write(s[16:2064]) for s in iter(lambda: f.read(2352), b"")]' sunos_4.1.4_install.iso sunos414-cd.iso`,
+then `sha256sum sunos414-cd.iso`.
 
 The DOS targets' floppy images go on a storage with the **Floppy image** content type (no storage
 has it until it is enabled: `pvesm set local --content iso,vztmpl,backup,floppy`, the whole list),
@@ -172,7 +207,7 @@ Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--b
 `--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
 `--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
 (a second disk, mounted on `/data`), `--root-password`, `--user NAME` (and `--user-password`; a non-root
-user with its home under `/export/home`), `--check` (boot once more, log in with the documented
+user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
 `--out` (the evidence directory; default `/var/lib/wsh-lab/installs/<target>-<vmid>-<time>`).

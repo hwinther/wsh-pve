@@ -340,7 +340,8 @@ and `check`, each a scenario run against the VM:
    password, `/etc/wsh-lab-target`, the optional user, `init 5`), and `solaris-boot-disk.py` with
    `ROOT_PASSWORD`, `COMMANDS` and `CHECK` for `--check`. Solaris 7 uses the same three unchanged;
    Solaris 8 uses `solaris-webstart-serial.py` for the install (Web Start, see "Solaris 7, 8 and 9"
-   below) and the same first boot and check.
+   below) and the same first boot and check. SunOS 4.1.4 has its own three
+   (`sunos-install-serial.py`, `sunos-firstboot.py`, `sunos-boot-disk.py`; "SunOS 4.1.4" below).
 2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
@@ -491,7 +492,9 @@ The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check
 and the user command are the same code), and `pve_matrix.py install` runs every automated target
 the same way (the `install` choice of the `sparc lab` workflow): the machinery for the "scheduled
 reinstalls" in `ROADMAP.md`. `pve_matrix.py` links each target's media from `--iso` into the test
-node's `local` storage under the expected names. `tests/test_targets.py` (standard library only,
+node's `local` storage under the expected names; a converted medium (the SunOS CD) that `--iso`
+doesn't have is made there from its source with `lab.py media --convert` (about 6 minutes more for
+`sunos414-ss5` in the `install` choice, which needs `sunos_4.1.4_install.iso` in `--iso`). `tests/test_targets.py` (standard library only,
 `python3 -m unittest -v tests/test_targets.py` in `e2e/sparc`) checks every target's profile against
 `$SPARC32_PROFILES`/`$SPARC64_PROFILE` in `submodules/qemu-server.patch` (skipped without the
 repository around it), unique names, the Sun label against the template's first MiB, the VM
@@ -932,8 +935,65 @@ the start and end, `load1_start`/`load1_end`).
 
 ## SunOS 4.1.4
 
-`sunos414-installed.raw` was installed by hand through `serve` (no scenario: the curses menus of
-`suninstall` redraw lazily, a key's echo arrives with the next key). The machine is the lab's SS-5 with
+`lab.py install sunos414-ss5` installs it through PVE (the install target; the user side is in
+`docs/src/content/docs/guides/lab-install.md`). It follows the hand install below, with three
+scenarios on the serial console:
+
+- **The medium** is the BIN cut to 2048-byte sectors, `sunos414-cd.iso` (329297920 bytes, sha256
+  `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8`), made by the user with
+  `lab.py media sunos414-ss5 --convert sunos_4.1.4_install.iso` (`install.convert_medium`: the
+  source's size and sha256 first, the 2048 data bytes at offset 16 of each 2352-byte sector, the
+  result's sha256, else nothing is left behind). `targets.MEDIA` has it with `"from": {"name":
+  "sunos_4.1.4_install.iso", "convert": "bin2352"}`; `lab.py media` prints the command for a
+  missing one, and `pve_matrix.py` converts it into the test node's `local` storage when `--iso` has
+  only the BIN. The `scsi6` CD-ROM is qemu-server's `scsi-cd` with `physical_block_size=512`, as in
+  the lab: nothing else to change.
+- **The disk** is SUN2.9G with slice g cut to 1000 cylinders (`targets.SUN29G_SUNOS4`, written by
+  `sunlabel.write_disk`), so Quick install's "preserve the data partitions" newfs's a (/) and g
+  (/usr) as the label has them.
+- **The install phase** (`sunos-install-serial.py`) runs with 64 MB and `args: -prom-env
+  auto-boot?=false`, both for that phase only (`install: {"memory": 64, "prom_env": ...}`;
+  `Job.finish()` sets the profile's 256 MB and deletes `args`). At `0 >` it boots the CD's slice d,
+  answers `1` (mini-root) and `2` (no format), takes `1` (reboot), boots
+  `.../sd@3,0:b -sw` at `0 >`, runs `suninstall` with `TERM=vt100`: `1` (Quick), `y` (preserve),
+  Programmer from the menu (Space moves, `x` selects), `y` to start, `y` to reboot, and powers off
+  at `0 >` (`power-off`). suninstall's own part took under 2 minutes, the whole phase 126-146 s.
+- **The first boot** (`sunos-firstboot.py`) boots the disk by itself and answers sys-config by its
+  screen codes (`SysConfA1` host name ... `SysConfI5` user password; `_sunos4.sysconfig`): `2`
+  (manual setup), the host name, Greenwich Mean Time / GMT, accept the time, networked with the
+  static address, no NIS, the root password twice, and the user (`--user`: full name `wsh-lab
+  user`, uid 1001, group staff, csh, home `/home/<host>/<user>`) or none. Then it logs in, starts
+  `/bin/sh` (root's csh would expand `!`), writes the marker and `/etc/netmasks` (the netmask
+  under the classful network number: without it `le0` comes up with `netmask ff000000`) and, with
+  `--gateway`, `/etc/defaultrouter` (4.1.4's `rc.boot` and `rc.local` read both), and `halt`s
+  (OpenBIOS powers off).
+- **The check** (`sunos-boot-disk.py`) logs in and runs the target's `check: {"commands": ...}`
+  (`uname -a`, the marker, `df`, `dkinfo sd0`, `ifconfig -a`, `netstat -rn`).
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh15, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), one guest at a time, 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `media sunos414-ss5 --convert sunos_4.1.4_install.iso` into `local`, then `media sunos414-ss5` | written, sha256 as above; `ok`; without the medium `media` printed `missing` and the `--convert` command | |
+| `install sunos414-ss5 --check` | passed; `SunOS sunos414 4.1.4 2 sun4m`; `df`: `/dev/sd0a` 91744 KB (3838 used), `/dev/sd0g` 976987 (65530 used); `le0 10.0.2.15 netmask ffffff00`; the finished VM: `memory: 256`, no `args`, `scsi6: none,media=cdrom`, `boot: order=scsi3` | 5.8 min (install 126 s, first boot 151 s, check 55 s) |
+| `install sunos414-ss5 --check --user lab --ip 10.0.2.20 --gateway 10.0.2.2 --hostname sun4 --template` | passed; `default 10.0.2.2 UG` in `netstat -rn`, `lab:1001:10:wsh-lab user:/home/sun4/lab:/bin/csh`, a template | 6.5 min (133 s, 182 s, 53 s) |
+| `pve_matrix.py install --only install-sunos414-ss5`, `--iso` with the BIN only (the converted CD removed first) | 1/1 passed; the CD converted into `local` by `lab.py media --convert` | 6.1 min (139 s, 151 s, 54 s) |
+| `install sunos414-ss5 --check --user lab --root-password ... --user-password ...` (not the defaults) | passed; then a boot by hand: `lab` logs in with its password (`uid=1001(lab) gid=10(staff)`, home `/home/sunos414/lab`); neither password is in the evidence directory, and `/etc/passwd` is shown without its hash field | 6.6 min (146 s, 172 s, 57 s) |
+| `--ip dhcp`, `--dns 10.0.2.3`, `--data-disk 2`, `--disk-size 9G` | refused before a VM is made | 0 s |
+| the CD booted with 256 MB (a VM made by hand like the target's) | `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled, Error state` in the journal right after the kernel loaded, VM off | 9 s |
+
+Not tried: Typical_user, Full_install and Mini_install through the scenario, a second disk, `--vlan`,
+a router that answers (the routes were checked, not traffic through them), the lab's own QEMU
+instead of PVE for the three scenarios.
+
+The lazy redraw that kept the hand install off the scripted driver is the console holding back the
+last character of a burst until the next key (a menu's cursor move, a field's echo): the scenarios
+match the text before it, sys-config's screen codes and, on the menu, the entry list, and never wait
+for that character. DNS (`--dns`, `--domain`) is refused (`net_refuse`: 4.1.4's libc resolves
+through `/etc/hosts` or NIS), and so is `--ip dhcp` (no DHCP client).
+
+`sunos414-installed.raw` was installed by hand through `serve`. The machine is the lab's SS-5 with
 OpenBIOS and the CD at target 6 with 512-byte blocks:
 
 1. **The CD image.** `sunos_4.1.4_install.iso` is a raw BIN (2352-byte sectors, 16-byte header each), not an
