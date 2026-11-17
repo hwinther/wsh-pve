@@ -421,8 +421,8 @@ class Scripted:
         t = job.target
         # The disk's layout as the guest sees it goes into the evidence (check/serial.raw)
         v = {**t["check"].get("vars", {}), "ROOT_PASSWORD": job.root_password,
-             "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target; df -k; prtvtoc /dev/rdsk/c0t3d0s2;"
-                         " ifconfig -a; netstat -rn",
+             "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target; df -k;"
+                         f" prtvtoc /dev/rdsk/{t.get('device', 'c0t3d0')}s2; ifconfig -a; netstat -rn",
              "CHECK": rf"(?m)^target={re.escape(job.a.target)}$", "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
         if job.a.user:
             v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd"
@@ -436,7 +436,8 @@ def net_vars(job):
     n = job.net
     return {"NET_MODE": n["mode"], "NET_IP": n["ip"] or "", "NET_NETMASK": n["netmask"] or "",
             "NET_NETWORK": n.get("network") or "", "NET_GATEWAY": n["gateway"] or "",
-            "NET_DNS": " ".join(n["dns"]), "NET_DOMAIN": n["domain"] or "", "HOSTNAME": job.hostname}
+            "NET_DNS": " ".join(n["dns"]), "NET_DOMAIN": n["domain"] or "", "HOSTNAME": job.hostname,
+            "NET_IF": job.nic}
 
 
 METHODS = {"scripted": Scripted}
@@ -453,6 +454,7 @@ class Job:
         self.hostname = a.hostname or self.target["hostname"]
         self.disk = disk_choice(self.target, a.disk_size)
         self.net = network_choice(self.target, a)
+        self.nic = self.target.get("nic", "le0")  # what the guest calls its NIC
         self.started = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.t0 = time.time()
         self.phases = []
@@ -471,7 +473,7 @@ class Job:
                  "by=wsh-pve e2e/sparc lab.py install", f"hostname={self.hostname}",
                  f"catalogue_tested={(t.get('tested') or {}).get('date', 'not yet')}"]
         lines += [f"medium={m['name']} sha256={m['sha256'] or 'unchecked'}" for m in self.media]
-        lines.append(f"network={network_text(self.net)}")
+        lines.append(f"network={network_text(self.net, self.nic)}")
         lines.append(f"disk={self.disk_text()}")
         if self.a.data_disk:
             lines.append(f"data_disk={DATA_DISK_DEVICE} {self.a.data_disk}G on /data")
@@ -544,7 +546,7 @@ class Job:
         lines += [
             f"Console: {login['console'].replace('<vmid>', str(a.vmid))}",
             f"Hostname: {self.hostname}",
-            f"Network: {network_text(self.net)}",
+            f"Network: {network_text(self.net, self.nic)}",
             f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on /data"
                                          if a.data_disk else ""),
             f"Marker: {t.get('marker', '/etc/wsh-lab-target')}",
@@ -660,7 +662,7 @@ def summary(job, result):
                    + (f", {a.user} / {job.user_password}" if a.user else "") + "  (public lab defaults)"),
                   f"   console:  {t['login']['console'].replace('<vmid>', a.vmid)}",
                   f"   hostname: {job.hostname}; marker {t.get('marker', '/etc/wsh-lab-target')}",
-                  f"   network:  {network_text(job.net)}",
+                  f"   network:  {network_text(job.net, job.nic)}",
                   f"   start:    qm start {a.vmid}" + ("  (a template: clone it first)" if a.template else "")]
     lines.append(f"   evidence: {a.out}")
     return "\n".join(lines)

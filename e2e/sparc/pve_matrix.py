@@ -173,6 +173,14 @@ def run_step(name, label, out, a, cmd, timeout=None):
     return res
 
 
+def install_timeout(target, a):
+    """Seconds `lab.py install <target> --check` may take: twice --timeout, or the target's phases
+    (install, first boot, check) and 10 minutes when they add up to more (Solaris 10: ~2 h)."""
+    t = targets.TARGETS[target]
+    phases = sum(t[p]["timeout"] for p in ("install", "firstboot", "check") if p in t)
+    return max(a.timeout * 2, phases + 600)
+
+
 def run_case(name, config, iso, template, steps, a):
     work = os.path.join(a.runs, name)
     os.makedirs(work, exist_ok=True)
@@ -184,12 +192,9 @@ def run_case(name, config, iso, template, steps, a):
             link_media(target, a)
             vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
             out = os.path.join(work, f"1-install-{target}")
-            # the whole install: at least its phases' own timeouts (Solaris 8's install phase is 2 h)
-            t = targets.TARGETS[target]
-            phases = sum(t[p]["timeout"] for p in ("install", "firstboot", "check") if p in t)
             res = run_step(name, f"install {target}", out, a,
                            [sys.executable, os.path.join(HERE, "lab.py"), "install", target, "--vmid", vmid,
-                            "--out", out, "--check"], timeout=max(a.timeout * 2, phases + 600))
+                            "--out", out, "--check"], timeout=install_timeout(target, a))
             results.append(res)
             first = 2
             if res["code"]:

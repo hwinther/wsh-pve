@@ -297,6 +297,56 @@ class VmParams(unittest.TestCase):
         self.assertEqual(p["scsi3"], "local:8,format=raw")
 
 
+class FakeScreen:
+    """What the Solaris 10 installer's screen handlers use of a Machine: the screen, keys and text."""
+
+    def __init__(self, screen):
+        self.screen, self.typed = screen, []
+
+    def screen_text(self):
+        return self.screen
+
+    def key(self, *names):
+        self.typed += names
+
+    def send(self, text):
+        self.typed.append(text)
+
+
+class Solaris10(unittest.TestCase):
+    t = targets.TARGETS["sol10-sun4u"]
+    sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris10-install-sparc64.py"))
+
+    def test_vm_params(self):
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="130", name=None, target="sol10-sun4u")
+        p = install.vm_params(self.t, a, {"sol-10-u11-ga-sparc-dvd.iso": "local:iso/sol10.iso"}, None)
+        self.assertEqual((p["ide0"], p["ide2"]), ("local:16,format=raw", "local:iso/sol10.iso,media=cdrom"))
+        self.assertEqual((p["arch"], p["memory"], p["net0"]), ("sparc64", 1024, "sunhme,bridge=vmbr0"))
+
+    def test_network_text_names_hme0(self):
+        n = install.network_choice(self.t, net_args(target="sol10-sun4u"))
+        self.assertTrue(install.network_text(n, self.t["nic"]).startswith("hme0 10.0.2.15/24"))
+        with self.assertRaises(SystemExit):
+            install.network_choice(self.t, net_args(target="sol10-sun4u", ip="dhcp"))
+
+    def test_select_moves_from_the_marked_choice(self):
+        m = FakeScreen("  Default Route for hme0\n      [X] Detect one\n      [ ] Specify one\n      [ ] None\n")
+        self.sc.select(m, "None")
+        self.assertEqual(m.typed, ["ctrl-n", "ctrl-n", "\r"])
+        m = FakeScreen("      [ ] Yes\n      [X] No\n")
+        self.sc.select(m, "No")
+        self.assertEqual(m.typed, [])
+
+    def test_netmask_kept_or_replaced(self):
+        screen = "                    Netmask for hme0 255.255.255.0\n"
+        m = FakeScreen(screen)
+        self.sc.netmask(m, {"NETMASK": "255.255.255.0"})
+        self.assertEqual(m.typed, [])
+        m = FakeScreen(screen)
+        self.sc.netmask(m, {"NETMASK": "255.255.252.0"})
+        self.assertEqual(m.typed, ["backspace"] * 13 + ["255.255.252.0"])
+
+
 class FakeConsole:
     """What MediaSwapper uses of a Machine: the serial output by cursor and change_medium()."""
 
