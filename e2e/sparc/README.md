@@ -982,6 +982,9 @@ Tested in the PVE test container on the lab host with the published packages (pv
 | `install sunos414-ss5 --check --user lab --root-password ... --user-password ...` (not the defaults) | passed; then a boot by hand: `lab` logs in with its password (`uid=1001(lab) gid=10(staff)`, home `/home/sunos414/lab`); neither password is in the evidence directory, and `/etc/passwd` is shown without its hash field | 6.6 min (146 s, 172 s, 57 s) |
 | `--ip dhcp`, `--dns 10.0.2.3`, `--data-disk 2`, `--disk-size 9G` | refused before a VM is made | 0 s |
 | the CD booted with 256 MB (a VM made by hand like the target's) | `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled, Error state` in the journal right after the kernel loaded, VM off | 9 s |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 73 passed | |
+| `pve_matrix.py pve` (regression, same code) | 5/5 passed | `sol26-install-ss5` 825 s (the host was shared with other runs), the others 67-240 s |
+| `matrix.py smoke` (the lab image with the branch's `e2e/sparc`, pve-qemu-kvm 11.1.3-2+wsh13 in that image) | 3/3 passed | 159 s, 111 s, 65 s |
 
 Not tried: Typical_user, Full_install and Mini_install through the scenario, a second disk, `--vlan`,
 a router that answers (the routes were checked, not traffic through them), the lab's own QEMU
