@@ -1,0 +1,20 @@
+--- src/PVE/Storage/Plugin.pm
++++ src/PVE/Storage/Plugin.pm
+@@ -2370,7 +2380,7 @@ sub volume_export_formats {
+             return ();
+         }
+         return ('tar+size') if $format eq 'subvol';
+-        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import)$/;
++        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import|floppy)$/;
+     }
+     return ();
+ }
+@@ -2483,7 +2493,7 @@ sub volume_import_formats {
+             return ();
+         }
+         return ('tar+size') if $format eq 'subvol';
+-        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import)$/;
++        return ('raw+size') if $vtype =~ /^(images|iso|snippets|vztmpl|import|floppy)$/;
+     }
+     return ();
+ }

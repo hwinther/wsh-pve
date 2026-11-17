@@ -1,0 +1,20 @@
+--- src/PVE/Storage.pm
++++ src/PVE/Storage.pm
+@@ -822,7 +837,7 @@ sub qemu_blockdev_options {
+ 
+     my ($vtype) = $plugin->parse_volname($volname);
+     die "cannot use volume of type '$vtype' as a QEMU blockdevice\n"
+-        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'import';
++        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'import' && $vtype ne 'floppy';
+ 
+     my $blockdev =
+         $plugin->qemu_blockdev_options($scfg, $storeid, $volname, $machine_version, $options);
+@@ -2313,7 +2332,7 @@ sub complete_storage_enabled {
+ sub complete_content_type {
+     my ($cmdname, $pname, $cvalue) = @_;
+ 
+-    return [qw(rootdir images vztmpl iso backup snippets import)];
++    return [qw(rootdir images vztmpl iso backup snippets import floppy)];
+ }
+ 
+ sub complete_volume {
