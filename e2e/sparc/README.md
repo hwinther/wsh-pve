@@ -338,7 +338,9 @@ and `check`, each a scenario run against the VM:
    `solaris-install-serial.py`, unchanged (the variables `HOSTNAME` and `IP` come from the target and
    `--hostname`/`--ip`), then `solaris-firstboot.py` (the first-boot questions answered with the root
    password, `/etc/wsh-lab-target`, the optional user, `init 5`), and `solaris-boot-disk.py` with
-   `ROOT_PASSWORD`, `COMMANDS` and `CHECK` for `--check`.
+   `ROOT_PASSWORD`, `COMMANDS` and `CHECK` for `--check`. Solaris 7 uses the same three unchanged;
+   Solaris 8 uses `solaris-webstart-serial.py` for the install (Web Start, see "Solaris 7, 8 and 9"
+   below) and the same first boot and check.
 2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
@@ -358,8 +360,9 @@ and `check`, each a scenario run against the VM:
    `PveMachine.change_medium(drive, volume)`, i.e. `qm set <vmid> --scsi6 <volume>,media=cdrom` (or
    `--floppy0 <volume>,ro=1`), which PVE applies live. With `at: "scenario"` the media are handed to
    the scenario in order as `SWAPS` instead, for prompts that don't say which disk they want
-   (FreeDOS: "Insert diskette containing file A:\FREEDOS.024"). `sol8-ss20` lists its three CDs with
-   regexes; `tests/test_targets.py` and `tests/test_dos.py` check the order and that each prompt is
+   (FreeDOS: "Insert diskette containing file A:\FREEDOS.024"; `sol8-ss20`: Software 1 of 2 and 2 of
+   2, whose prompts are worded differently, and the scenario must wait for the medium before it
+   answers); `tests/test_targets.py` and `tests/test_dos.py` check the order and that each prompt is
    acted on once.
 
 ### DOS install targets
@@ -473,6 +476,76 @@ password form draws all its prompts at once, and matching them one by one typed 
 of the form (it ended up echoed, root without a password). With an empty password that never
 mattered. The password appears in none of the evidence files of the passing runs.
 
+### Solaris 7, 8 and 9
+
+**Solaris 7** (3/99, `sol7-ss5`, `sol7-ss20`) asks 2.6's questions plus two whose defaults fit:
+Subnets (yes, 255.255.255.0) and Select 64 Bit (no). `solaris-install-serial.py` answers it
+unchanged; the installer writes `/etc/netmasks` itself, so `solaris-firstboot.py` now replaces the
+classful entry instead of adding a second one (the first one wins).
+
+**Solaris 8** (1/01, `sol8-ss20`) is installed by Web Start, which runs in command line mode on a
+serial console without a framebuffer. `solaris-webstart-serial.py` answers it by prompt (the last
+lines of the screen against a table; an unknown prompt fails the run). The flow, as recorded:
+
+1. The Installation CD's mini-root formats the boot disk (it lists only a Sun-labelled disk; a
+   blank one ends in `No Hard disks found on the system.`), puts a 512 MB swap slice at cylinder 0,
+   copies a mini-root to it and reboots with `reboot -l -q -- <that slice>` (`/sbin/cd0_install`).
+   OpenBIOS's reboot drops the boot string: with `auto-boot?` true it boots `disk`, whose boot block
+   opens slice a (`ufsboot: cannot determine filesystem type of root device`) and powers off. The
+   target therefore has `install: {"prom_env": {"auto-boot?": "false"}}`: `install.set_prom_env()`
+   sets `args: -prom-env auto-boot?=false` before the install phase (refused if the VM has `args`
+   already) and `Job.finish()` deletes `args` again. OpenBIOS then stops at `0 >` after every reset,
+   and the scenario boots `.../sd@3,0:b`. A `setenv auto-boot? false` typed at the prompt doesn't
+   survive the reset.
+2. Web Start's system identification (it sets the root password itself, so the target has
+   `"root_password": True` and the first boot gets no root password form), then media (CD),
+   `Please insert the Solaris 8 Software 1 of 2 CD.`, the install type. **Default Install** also
+   selects the Documentation and the Computer Systems Supplement CDs (not in the target), so the
+   scenario takes **Custom Install**: English and the C locale, the Documentation and Supplement
+   CDs deselected (a partly selected CD toggles `[-]` -> `[X]` -> `[ ]`), no extra products, 32-bit,
+   the Entire Group with its default packages, auto-layout on c0t3d0 (`/` 1106 MB, swap 512 MB,
+   `/export/home` 5976 MB).
+3. After the first CD's packages: `Please specify the media from which you will install Solaris 8
+   Software 2 of 2`, `Please insert the CD for Solaris 8 Software 2 of 2 (SPARC Platform Edition).`
+   The two Software CDs are media with `at: "scenario"`: the scenario puts the next one in (`qm set
+   --scsi6`, live) when a prompt asks, waits 5 s and answers; it fails if a CD in `SWAPS` was never
+   asked for. Then `<Press Return to reboot the system>`; the reboot stops at `0 >`, where the
+   scenario types `power-off`.
+
+The End User Group would need only Software 1 of 2 (its 274 packages are all on that CD, from the
+CD's `.clustertoc`); Entire uses both, so the target exercises the swap. Booting Software 1 of 2
+directly would give the classic `suninstall` instead of Web Start; not tried.
+
+**Solaris 9** (the DVD, `sol9-ss20`): Sun dropped sun4m after Solaris 8, but the DVD's installer
+and the installed 32-bit kernel (`SunOS Release 5.9 Version Generic 32-bit`) run on the emulated
+SS-20 with OpenBIOS. The DVD asks for the language, a paged locale list (0 = English C) and the
+terminal type, then runs the same Web Start from the DVD (no mini-root copy) with a few more
+questions: the default route (1 = find one; "could not be detected", Accept), Kerberos (no), no
+automatic reboot or eject, data preservation (no), and summaries that pause 30-90 s (`c`). The
+target installs the End User Group. Its prompts carry a key hint (`<Press ENTER to continue>
+{"!" exits}`) that the scenario strips.
+
+Solaris 8 and 9 are SS-20 only: Web Start is Java, and SS-5's CPU runs the lab's benchmark job
+about 9 times slower than SS-20's ("SS-10 and SS-20" in `submodules/SPARC.md`); no SS-5 run was tried.
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17, each with `--check`
+(the check boot logs in with `root`/`wshlab` and finds the marker):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-ss20` | passed; `SunOS sol7-ss20 5.7 Generic_106541-02 sun4m sparc SUNW,SPARCstation-20`; `/` 86546 KB, `/usr` 288827, `/export/home` 2094553; `le0 10.0.2.15 netmask ffffff00` | 10.3 min (install 334 s, first boot 182 s, check 86 s) |
+| `install sol7-ss5` (alongside the first Solaris 8 attempts) | passed; one `10.0.0.0` entry in `/etc/netmasks` | 10.7 min (341 s, 197 s, 89 s) |
+| `install sol8-ss20` (alongside the Solaris 9 attempts) | passed; `SunOS sol8-ss20 5.8 Generic_108528-05 sun4m`; both Software CDs installed (`Installation details: Solaris 8 Software 2 Installed`); `df -k` `/` 1097262 KB (638893 used), `/export/home` 6021365; the finished VM has no `args` and `scsi6: none,media=cdrom` | 29.6 min (1443 s, 215 s, 94 s) |
+| `install sol9-ss20` | passed; `SunOS sol9-ss20 5.9 Generic sun4m sparc SUNW,SPARCstation-20`; `df -k` `/` 803854 KB (439790 used), `/export/home` 6294629 | 26.7 min (1192 s, 289 s, 96 s) |
+| `pve_matrix.py install --only install-sol7-ss5 --only install-sol7-ss20 --only install-sol8-ss20 --only install-sol9-ss20` (one guest at a time, after the code above was final) | 4/4 passed | sol7-ss5 11.0 min (358 s, 198 s, 87 s); sol7-ss20 10.7 min (336 s, 198 s, 91 s); sol8-ss20 28.9 min (1399 s, 216 s, 95 s); sol9-ss20 26.8 min (1207 s, 284 s, 94 s) |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now needs the Solaris 7, 8 and 9 media too and takes about 80 min longer. Not tried: an
+SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their `net_modes` is
+`["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
+`--vlan`, `--user` and `--data-disk` with them.
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
@@ -496,7 +569,8 @@ this branch, one guest at a time), 2026-11-17:
 | `install sol26-ss20 --disk-size 9G --data-disk 2 --check` | passed; auto-layout as on SS-5 but swap 295 MB (512 MB of memory) and `/export/home` 6973 MB; `df -k` `/export/home` 7026317 KB; the data disk: `prtvtoc` 2048 cylinders (2046 accessible) of 16 x 128, slice 0 4190208 sectors, `newfs` 2046 MB in 64 cylinder groups, `/data` 2030575 KB mounted from `/etc/vfstab` at the check boot | 12.3 min (408 s, 205 s, 107 s) |
 | `install sol26-ss5 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
 
-Not done: a 9G install of the catalogue targets (2.5.1, 7, 8, 9); the in-guest `format` route for a
+Not done: a 9G install of Solaris 2.5.1 and 7 (Solaris 8 and 9 are tested with the 9G disk only,
+a 3G one not tried); the in-guest `format` route for a
 blank second disk.
 
 ### Network
