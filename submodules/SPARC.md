@@ -98,7 +98,8 @@ the binary built without them its `idle` case fails (15,098,675 rounds in 300 ms
 than 300). An early version of 0023 that went on at the call after a timer wake halted again
 before `disp_getwork` ran, so the timer never let the CPU look for work: the test's `idle` case
 caught it (0 rounds). `sun4m-solaris-idle-test` passes 5/5 with 0023 (the read of
-`disp_nrunnable` changed under it). Lab results under "SMP".
+`disp_nrunnable` changed under it). With 0001-0025, `make check-qtest-sparc`: 20 OK, 2 skipped, the
+same `qmp-test` failure. Lab results under "SMP".
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
@@ -891,6 +892,11 @@ QEMU monitor with 2 CPUs; the same kernels as in the one-CPU table under "Idle")
 `sparc_solaris_idle_mp_wake` what ended it (`queued`, `steal`, `timer`, `timer, work queued`).
 NetBSD's MP kernel and SunOS don't match and run as before.
 
+At the installer's first question on SS-20 (OpenBIOS, `solaris-boot-cd.py IDLE=30`, 30 s, run beside
+other lab guests), each release's kernel matched at the address above and QEMU used, with 2 / 4
+CPUs: 2.5.1 (`CDROM_AS=hd`) 3.1% / 4.3%, 7 2.8% / 3.8%, 8 (Installation CD) 5.0% / 5.3%, 9 5.3% /
+9.2%. Installed 2.5.1, 7, 8 and 9 with more than one CPU weren't tested (no such disks).
+
 **Results** (`scenarios/smp-idle.py`, Solaris 2.6 installed on SS-20, OpenBIOS, 256 MB, the bench
 disk; `qemu-system-sparc` built from the series without 0023-0025 ("before") and with them, mounted
 into the lab image; 2 runs each for 2 and 4 CPUs, 1 for one CPU, where "with" is 0014 with the new
@@ -927,12 +933,31 @@ both are one copy):
   counted 2,000-2,600 halts a second during `lat_pipe`; with the 20 us rule 230-260, and `lat_pipe`
   takes 98-101 us (before: 94-98 us).
 - **Parallel work** is as fast as before with 2 CPUs and a little faster with 4.
+- **Wake-up stress** (`smp-idle.py STRESS=600`: N + 1 shell loops of a short `nawk` job, `sleep 1`,
+  a pipeline, 10 `expr` and a pipe into `nawk`, `psrinfo` every 60 s; before and with run side by
+  side, beside the regression matrices, host load 5.5-7.8): no hang, every CPU on-line, `psrinfo`
+  answered in 0.1 s each time. 2 CPUs: 1079 rounds before, 1020 with (-5.5%), QEMU 197% against 99%
+  of a core over the stress; 4 CPUs: 1294 and 1297 rounds, 350% against 235%. On a busy host a
+  halted vCPU thread takes longer to be scheduled when it is woken, which is the likely cost in the
+  2-CPU case; it wasn't measured on an idle host.
 - **Guest clock**: one 2-CPU run with 0023 above read the guest 2 s ahead after 62 s (`date`, whole
   seconds); every other run, before and with, and five runs of earlier versions read 0. A check of
-  the clock tick itself didn't reproduce it: `lbolt`
-  (through `adb -k`) and `date` every 124 s, 3 times per run, idle at the shell, against the host's
+  the clock tick itself didn't reproduce it: `lbolt` (through
+  `adb -k`) and `date` every 124 s, 3 times per run, idle at the shell, against the host's
   time, before with 2 CPUs and with 0023 with 2 and 4: `lbolt` within 0.03 s (3 ticks) in all nine
   intervals, `date` within its one-second steps (-0.5 to +0.6 s).
+
+**Checks with 0023-0025** (the same binary, run beside each other and other agents' guests):
+
+| Check | Result |
+| --- | --- |
+| 2.6 SS-20 disk booted to login, `psrinfo` (`solaris-boot-disk.py`), 5 boots each with 1, 2 and 4 CPUs | 15/15 passed |
+| 2.5.1, 7, 8, 9 install media to the installer, 2 and 4 CPUs | 8/8 passed, each kernel matched (above) |
+| NetBSD 11.1 `GENERIC.MP` (the kernel from the 11.1 ISO on a copy of the installed disk), SS-20, 2 CPUs, `idle.py` | `hw.ncpu = 2`; QEMU 3.5% of a core idle, 3.4% without 0023 (its own APC idle; the recogniser doesn't match) |
+| Migration of an idle 2-CPU 2.6 to a file and back (`migrate exec:`, then a new QEMU with `-incoming`) | completed; the destination answered on ttya and idled at 4.1% (5.1% before the migration), both CPUs halting again there |
+| `pve` case `sol26-ss20-smp2` (2 CPUs through PVE, the binary bind-mounted over the node's `qemu-system-sparc`) | passed: `psrinfo` 2 on-line, Dhrystone 12.8 s alone and 12.7 s as 2 copies, the `nawk` loop 5.3 s and 6.5 s |
+| Stop-A with 2 CPUs (`stop-a.py SMP=2`, SS-20, not in a matrix) | the firmware prompt and `go` work, but the scenario looks only at CPU 0's PC: Solaris enters the PROM on the CPU that took the keyboard interrupt and `prom_idlecpu()` (OpenBIOS) leaves the other running. Round 1 passed with CPU 0 in the PROM and CPU 1 halted at `disp_getwork`; round 2 failed with CPU 1 in the PROM and CPU 0 in a kernel wait loop. Without 0023 the same: 1 of 2 runs failed round 1 (CPU 1 in the PROM, CPU 0 in the idle loop), the other passed. A scenario limit with more than one CPU, not a hang |
+| `sun4m-solaris-smp-idle-test`, `sun4m-solaris-idle-test` | 4/4, 5/5 |
 
 **The profiles** (qemu-server, pve-manager; needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later, the
 first package with 0019):
