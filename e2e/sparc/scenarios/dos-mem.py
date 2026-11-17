@@ -42,7 +42,7 @@ def recover(m, gap, timeout):
     m.vga_expect(r"Starting MS-DOS", timeout=60, interval=0.1)
     _dos.key(m, "f5")
     _dos.at_prompt(m, timeout)
-    _dos.write_file(m, "C:\CONFIG.SYS", dos_mem.config_lines("himem", gap))
+    _dos.write_file(m, "C:\\CONFIG.SYS", dos_mem.config_lines("himem", gap))
 
 
 def measure(m, v, n, name, r, timeout):
@@ -51,7 +51,7 @@ def measure(m, v, n, name, r, timeout):
     r["boot_screen"] = m.vga_screen().text
     m.vga_snap(f"K{n} {name}: booted")
     _dos.run(m, "CLS", timeout=30)  # a machine that boots and then hangs fails here
-    _dos.type_text(m, "D:\UMASCAN\n")
+    _dos.type_text(m, "D:\\UMASCAN\n")
     # the frame and "Press Esc" come first, the map once every 2K cell is tested: F000 is ROM
     s = m.vga_expect(r"F000 R", timeout=120)
     r["umascan"] = dos_mem.parse_umascan(s.text)
@@ -59,13 +59,18 @@ def measure(m, v, n, name, r, timeout):
     m.vga_snap(f"K{n} {name}: UMASCAN")
     _dos.key(m, "esc")
     _dos.at_prompt(m, 30)
-    _dos.run(m, f"MEM /D >D:\OUT\K{n}.TXT", timeout=60)
-    _dos.run(m, f"EMM386 >D:\OUT\K{n}E.TXT", timeout=60)
+    _dos.run(m, f"MEM /D >D:\\OUT\\K{n}.TXT", timeout=60)
+    _dos.run(m, f"EMM386 >D:\\OUT\\K{n}E.TXT", timeout=60)
     _dos.run(m, "CLS")
     r["mem_screen"] = _dos.run(m, "MEM")
     m.vga_snap(f"K{n} {name}: MEM")
     if v["MSD"] == "1" and n == 1:
-        _dos.run(m, "MSD /P D:\OUT\MSD.TXT", timeout=180)
+        try:
+            _dos.run(m, "MSD /P D:\\OUT\\MSD.TXT", timeout=300)
+        except Exception as e:  # MSD is evidence only
+            r["msd"] = str(e).splitlines()[0]
+            m.vga_snap(f"K{n} {name}: MSD didn't finish")
+            raise
 
 
 def save(m, gap, results):
@@ -81,14 +86,14 @@ def run(m, v):
     gap = v["GAP"]
     if not gap and v["SBLOG"] and os.path.exists(v["SBLOG"]):
         gap = dos_mem.parse_seabios(open(v["SBLOG"], encoding="latin-1").read()).get("umb_gap", "")
-    _dos.run(m, "DEL D:\OUT\*.TXT")
+    _dos.run(m, "DEL D:\\OUT\\*.TXT")
     results = []
     for n, name in enumerate(v["CONFIGS"].split(","), 1):
         lines = dos_mem.config_lines(name, gap)
         r = {"n": n, "config": name, "lines": lines}
         results.append(r)
         _dos.run(m, "CLS")
-        _dos.write_file(m, "C:\CONFIG.SYS", lines)
+        _dos.write_file(m, "C:\\CONFIG.SYS", lines)
         try:
             measure(m, v, n, name, r, timeout)
         except lab.QemuDied:
@@ -99,4 +104,4 @@ def run(m, v):
             m.vga_snap(f"K{n} {name}: hangs")
             recover(m, gap, timeout)
         save(m, gap, results)
-    _dos.write_file(m, "C:\CONFIG.SYS", dos_mem.config_lines("himem", gap))
+    _dos.write_file(m, "C:\\CONFIG.SYS", dos_mem.config_lines("himem", gap))

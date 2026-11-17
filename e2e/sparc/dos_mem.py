@@ -157,8 +157,8 @@ def parse_umascan(screen):
 
 def summarise(r, files):
     """One row of the table from a dos-mem.py result and the files it wrote."""
-    mem = parse_mem(files.get(f"K{r['n']}.TXT", "")) if not r.get("hang") else {}
-    emm = parse_emm386(files.get(f"K{r['n']}E.TXT", "")) if not r.get("hang") else {}
+    mem = parse_mem(files.get(f"K{r['n']}.TXT", ""))
+    emm = parse_emm386(files.get(f"K{r['n']}E.TXT", ""))
     blocks = mem.get("umb_free_blocks", [])
     return {"config": r["config"], "hang": r.get("hang"), "conv_free": mem.get("conv_free"),
             "largest_exe": mem.get("largest_exe"), "largest_umb": mem.get("largest_umb"),
@@ -265,7 +265,11 @@ def main():
                             "--var", f"CONFIGS={configs}", "--var", f"SBLOG={sblog}",
                             "--var", f"MSD={'1' if variant == 'stock' else '0'}"],
                            stdout=log, stderr=subprocess.STDOUT, timeout=3600)
-        res = json.load(open(os.path.join(work, "result.json"), encoding="utf-8"))
+        try:
+            res = json.load(open(os.path.join(work, "result.json"), encoding="utf-8"))
+        except (OSError, ValueError) as e:  # the scenario didn't start (qm start failed, ...): lab.log says why
+            tail = open(os.path.join(work, "lab.log"), encoding="utf-8", errors="replace").read().strip()[-300:]
+            res = {"code": 3, "status": f"no result.json ({e}): {tail}", "elapsed": 0}
         sb = parse_seabios(open(sblog, encoding="latin-1").read()) if os.path.exists(sblog) else {}
         files = read_out(a.vmid)
         for name, text in files.items():
@@ -276,6 +280,11 @@ def main():
         for r in mem:
             rows.append({"variant": variant, "seabios": seabios, **summarise(r, files)})
         if res["code"]:
+            # leave no hanging CONFIG.SYS behind for the next variant
+            sh("qm", "set", a.vmid, "--delete", "args", check=False)
+            subprocess.run([sys.executable, os.path.join(HERE, "lab.py"), "run",
+                            os.path.join(HERE, "scenarios", "dos-clean-config.py"), "--pve", a.vmid,
+                            "--out", os.path.join(work, "clean-config")], capture_output=True, timeout=600)
             rows.append({"variant": variant, "config": "-", "seabios": seabios, "hang": res["status"].splitlines()[0]})
         print(f"=== {variant}: {res['status'].splitlines()[0]} ({res['elapsed']}s)", flush=True)
     # back to the profile
