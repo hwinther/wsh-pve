@@ -309,6 +309,16 @@ def add_data_disk(a, work):
     save_config(a.vmid, work)
 
 
+def set_prom_env(vmid, env):
+    """OpenBIOS variables for the install phase only (targets.py, install "prom_env"), as QEMU's
+    -prom-env in the VM's `args` (root only; qemu-server has no option for them). Solaris 8's Web
+    Start needs auto-boot? false: it reboots with a boot string that OpenBIOS drops. Job.finish()
+    removes them again, so the installed VM's config has no `args`."""
+    if re.search(r"(?m)^args:", run("qm", "config", vmid)):
+        raise InstallFailed(f"VM {vmid} has `args` already; prom_env would replace them")
+    run("qm", "set", vmid, "--args", " ".join(f"-prom-env {k}={val}" for k, val in env.items()))
+
+
 def vm_running(vmid):
     return "status: running" in run("qm", "status", vmid, check=False)
 
@@ -385,7 +395,12 @@ class Scripted:
         t = job.target
         # The installer always gets a static address (Solaris 2.6's has no DHCP choice); the first boot
         # turns it into DHCP, adds the netmask, the router and DNS (solaris-firstboot.py, NET_*)
-        v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.net["ip"] or DEFAULT_IP}
+        v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.net["ip"] or DEFAULT_IP,
+             "NETMASK": job.net["netmask"] or DEFAULT_NETMASK}
+        if t["install"].get("root_password"):  # the installer sets it (Web Start), not the first boot
+            v["ROOT_PASSWORD"] = job.root_password
+        if t["install"].get("prom_env"):
+            set_prom_env(job.a.vmid, t["install"]["prom_env"])
         later = [(med["at"], med["drive"], drive_volume(med["drive"], job.volids[med["name"]]).removesuffix(",media=cdrom"))
                  for med in t["media"] if med.get("at", "start") != "start"]
         swaps = [s for s in later if s[0] != "scenario"]
@@ -539,9 +554,12 @@ class Job:
 
     def finish(self):
         """Eject the media and boot from the disk from now on."""
-        for med in self.target["media"]:
-            lab.pve_set_medium(self.a.vmid, med["drive"], "none")
+        for drive in dict.fromkeys(med["drive"] for med in self.target["media"]):
+            lab.pve_set_medium(self.a.vmid, drive, "none")
         run("qm", "set", self.a.vmid, "--boot", f"order={self.target['boot']}")
+        if self.target.get("install", {}).get("prom_env"):
+            run("qm", "set", self.a.vmid, "--delete", "args")
+            self.log("install-time prom_env removed (args)")
         self.log(f"media ejected, boot order {self.target['boot']}")
 
 

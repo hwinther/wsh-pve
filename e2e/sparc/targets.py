@@ -50,6 +50,7 @@ DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab V
 # The packages of the last test run (the PVE test node with the published packages).
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
                        "pve-manager": "9.2.28+wsh4"}
+PACKAGES_2026_11_17 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh13"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -186,46 +187,76 @@ TARGETS = {
         "boot": "scsi3",
         "hostname": "sol251-ss5",
     },
+    # Solaris 7 asks 2.6's questions plus Subnets (default yes) and Select 64 Bit (default no):
+    # solaris-install-serial.py unchanged
+    "sol7-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 7 3/99 End User on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "sol7-ss5",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 11,  # install 6, first boot 3, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
+    },
     "sol7-ss20": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 7 3/99 on a SPARCstation 20 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "The CD reaches the installer's language question on SS-5 and SS-20; no install was "
-                   "run yet, so solaris-install-serial.py's screens are untested for 7.",
+        "title": "Solaris 7 3/99 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
         "disk": sun_disk("3G"),
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 10,  # install 6, first boot 3, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
+    # Web Start in command line mode (solaris-webstart-serial.py): the Installation CD copies a
+    # mini-root to a swap slice and reboots into it; the two Software CDs go in when it asks
+    # ("at": "scenario", in this order). Entire Group (1.6 GB with swap): the 9G disk.
     "sol8-ss20": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 8 1/01 on a SPARCstation 20 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "Web Start installer (a different dialogue from 2.6's) and three CDs (the media swap "
-                   "below is the data model, untested). It needs more than 3 GB of disk: the 9G disk "
-                   "(QEmu8G label). Reaches Web Start's first question on SS-5 and SS-20.",
+        "title": "Solaris 8 1/01 Entire Group on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "2"},
+                    "timeout": 7200,
+                    # Web Start asks for the root password itself (the first boot doesn't)
+                    "root_password": True,
+                    # its reboot into the mini-root names the slice in a boot string that OpenBIOS
+                    # drops: stop at the prompt instead and boot it by path (install.set_prom_env)
+                    "prom_env": {"auto-boot?": "false"}},
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
         "disk": sun_disk("9G"),
         "media": [{"name": "sun-solaris-8-0101-installation-sparc.iso", "drive": "scsi6"},
-                  {"name": "sun-solaris-8-0101-software-cd1-sparc.iso", "drive": "scsi6",
-                   "at": r"Please insert.*Software 1 of 2"},
-                  {"name": "sun-solaris-8-0101-software-cd2-sparc.iso", "drive": "scsi6",
-                   "at": r"Please insert.*Software 2 of 2"}],
+                  {"name": "sun-solaris-8-0101-software-cd1-sparc.iso", "drive": "scsi6", "at": "scenario"},
+                  {"name": "sun-solaris-8-0101-software-cd2-sparc.iso", "drive": "scsi6", "at": "scenario"}],
         "boot": "scsi3",
         "hostname": "sol8-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 30,  # install 24, first boot 3.5, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
+    # Solaris 9 dropped sun4m from its supported platforms, but the DVD's install and the installed
+    # 32-bit kernel run on an SS-20 under OpenBIOS. Web Start from the DVD (no mini-root copy),
+    # the End User Group.
     "sol9-ss20": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 9 on a SPARCstation 20 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "Solaris 8 was the last release for sun4m; the 9 DVD still boots to its language menu "
-                   "on SS-5 and SS-20, but no install was tried, and its installer is Web Start like 8's.",
+        "title": "Solaris 9 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "4"},
+                    "timeout": 7200, "root_password": True, "prom_env": {"auto-boot?": "false"}},
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
         "disk": sun_disk("9G"),
         "media": [{"name": "SOL_9_SPARC_DVD.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol9-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 27,  # install 20, first boot 5, --check 1.5
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
     "sunos414-ss5": {
         "title": "SunOS 4.1.4 Programmer install on a SPARCstation 5 (OpenBIOS)",

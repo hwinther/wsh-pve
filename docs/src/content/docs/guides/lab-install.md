@@ -23,6 +23,10 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
+| `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
+| `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 
@@ -32,16 +36,24 @@ no SMARTDRV) and the marker `C:\WSHLAB.TXT`; `--keyboard no` adds `KEYB NO`. The
 guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
-target. Both end with the host name of the target (`sol26-ss5`, `sol26-ss20`), `le0` at 10.0.2.15/24
+target. Solaris 8 and 9 are SS-20 only: Web Start is a Java program, and the SS-5's CPU runs the
+lab's Solaris jobs about 9 times slower than the SS-20's. Solaris 9 is not supported on sun4m by
+Sun (8 was the last release for it), but its installer and installed 32-bit kernel run on the
+emulated SS-20; treat it as a curiosity. During the Solaris 8 and 9 installs the VM has
+`args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
+the install stops at the firmware prompt and boots the right slice itself); the install removes it
+again, the finished VM has no `args`.
+
+All Solaris targets end with the host name of the target (`sol26-ss5`, `sol8-ss20`, ...), `le0` at 10.0.2.15/24
 (static; no name service, no default route) unless the network options say otherwise (see
 "Network": static or DHCP, VLAN, netmask, router, DNS), the time zone MET, and a marker file `/etc/wsh-lab-target` with the target, the install time and the media's
-checksums.
+checksums. The Solaris 7, 8 and 9 targets take a static address only for now (`--ip dhcp` was
+tested with 2.6, not with them, so `lab.py install` refuses it).
 
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
 Solaris 2.5.1 (its installer boots only from a CD that answers as a disk, which a PVE CD-ROM drive
-can't be), Solaris 7 and 9 (reach their installers, no install run), Solaris 8 (Web Start and three
-CDs), SunOS 4.1.4 (installed by hand only), NetBSD 11.1 sparc64 and sparc (scenario or first-boot
-step missing).
+can't be), SunOS 4.1.4 (installed by hand only), NetBSD 11.1 sparc64 and sparc (scenario or
+first-boot step missing).
 
 ## Media
 
@@ -53,9 +65,14 @@ never part of this project.
 | File name | Size (bytes) | sha256 |
 | --- | --- | --- |
 | `solaris_2.6_598_sparc.iso` | 565862400 | `17351669cb91a89562ed6bb23345879c4d18bd019a85085ad53f777e7b7a6b14` |
+| `Sol7.399InstallationSparc.iso` | 588800000 | `3fe59c14307b924d40033f0f3a362c4384b4738a5a365a2f319d96883610c35d` |
+| `sun-solaris-8-0101-installation-sparc.iso` | 584232960 | `d01915baa0503ad21fd9b99e0684e1231200ca3295e84f60a1bf310a956d51d4` |
+| `sun-solaris-8-0101-software-cd1-sparc.iso` | 578023424 | `d50e437d82c96a906833fca182f813035d766b1645491eb06b221826ef9f39c8` |
+| `sun-solaris-8-0101-software-cd2-sparc.iso` | 214757376 | `1b6fafd007673f924dc40103b3d2c565342b287d6ff8ad53ac07e1b4b73b44d4` |
+| `SOL_9_SPARC_DVD.iso` | 3368878080 | `feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911` |
 
-The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1, 7, 8,
-9, SunOS 4.1.4, NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
+The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1, SunOS
+4.1.4, NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 
 The DOS targets' floppy images go on a storage with the **Floppy image** content type (no storage

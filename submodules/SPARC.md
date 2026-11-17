@@ -569,9 +569,9 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 | Guest | Result |
 | --- | --- |
 | Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
-| Solaris 7 (3/99) CD | language question, SS-5 and SS-20 |
-| Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` |
-| Solaris 9 DVD | language menu, SS-5 and SS-20 |
+| Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both (`lab.py install sol7-ss5`/`sol7-ss20`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
+| Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`) |
+| Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 Web Start installs End User and the installed 32-bit kernel boots to login, although Sun dropped sun4m after 8 (`sol9-ss20`) |
 | NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
 | NetBSD 11.1 GENERIC.MP (from the ISO) | `-smp 2`: `cpu0: booting secondary processors: cpu1`, `hw.ncpu = 2`; five 16-256 MB writes with `sync` pass; idle ~4% of a core |
 
@@ -2119,3 +2119,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   framebuffer console.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).
+- **sparc32 reboot with a boot string:** OpenBIOS ignores the arguments of a client's reboot
+  (`reboot -- disk:b`) and boots `boot-device` again; Solaris 8's Web Start relies on it to start
+  its mini-root from the swap slice. `setenv` at the `0 >` prompt doesn't survive the reset; the
+  install target sets `-prom-env auto-boot?=false` (`args`) for the install only and boots the
+  slice by path. A fix in OpenBIOS (keep the boot string across the reset) is not written.
