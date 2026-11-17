@@ -46,6 +46,7 @@ come after that, not before.
 | qemu-3dfx pin moves only through a promotion PR with a 3dfx-only build check | merged | #272 |
 | Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
+| Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 
 ## In progress
 
@@ -140,8 +141,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
   Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
-  more targets (Solaris 2.5.1 needs the CD as a disk; 7, 8 and 9, SunOS 4.1.4 and NetBSD are in the
-  catalogue with what blocks each). Today the weekly `pve` matrix reinstalls Solaris 2.6 on SS-5.
+  more targets (Solaris 2.5.1 needs the CD as a disk; NetBSD is in the catalogue with what blocks
+  it; Solaris 2.6-10 and SunOS 4.1.4 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
@@ -165,7 +166,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | What | Notes |
 | --- | --- |
 | The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
-| The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB |
+| The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB. The install target `sunos414-ss5` runs its install phase with 64 MB and sets 256 MB afterwards |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |

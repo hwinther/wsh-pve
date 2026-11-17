@@ -2126,4 +2126,17 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   (`reboot -- disk:b`) and boots `boot-device` again; Solaris 8's Web Start relies on it to start
   its mini-root from the swap slice. `setenv` at the `0 >` prompt doesn't survive the reset; the
   install target sets `-prom-env auto-boot?=false` (`args`) for the install only and boots the
-  slice by path. A fix in OpenBIOS (keep the boot string across the reset) is not written.
+  slice by path. A fix in OpenBIOS (keep the boot string across the reset) is not written. SunOS
+  4.1.4's CD does the same after copying its miniroot to `sd0b` (option 1, reboot); its install
+  target works around it the same way (`boot .../sd@3,0:b -sw` at `0 >`).
+- **SunOS 4.1.4's install kernel and 256 MB:** the CD's kernel (`munix`, booted from slice d) stops
+  QEMU right after it is loaded with 256 MB: `qemu: fatal: Trap 0x29 (Data Access Error) while
+  interrupts disabled, Error state` in the node's journal, the VM is off (pve-qemu-kvm
+  11.1.3-2+wsh15, SS-5, OpenBIOS, through PVE; the same with the lab's own QEMU). 64 MB works, and
+  the installed kernel runs with 256 MB. qemu-server has nothing per boot, so the install target
+  sets `memory: 64` for its install phase and the profile's 256 afterwards (`qm set`); not
+  investigated in QEMU.
+- **SunOS 4.1.4 on ttya holds back output:** the last character of a burst of console output often
+  arrives only when the next key is typed (a curses cursor move, a field's echo). Seen under `suninstall` and sys-config, not with Solaris; the lab's
+  SunOS scenarios match the text before it. Cause not investigated (the guest's `zs` driver or
+  QEMU's ESCC transmit interrupt).
