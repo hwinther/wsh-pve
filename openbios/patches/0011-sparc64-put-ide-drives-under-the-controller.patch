@@ -1,0 +1,164 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: put IDE drives under the controller as
+ disk@T,L/cdrom@T,L
+
+OpenBIOS gave each IDE channel its own node and numbered the drives
+inside it: /pci@1f,0/pci@1,1/ide@3/ide@1/cdrom@0. OBP on an Ultra 5/10
+puts the drives directly under the controller, addressed target,lun with
+target = 2 * channel + unit: ide@3/disk@0,0, ide@3/cdrom@2,0.
+
+Solaris builds the same target,lun unit addresses for its dad/sd nodes
+and maps the firmware's boot path by them, and binds dad/sd to OBP's
+drive nodes by their "compatible" (ide-disk, ide-cdrom). With the
+channel nodes the Solaris 10 installer refused its own DVD ("ERROR: The
+disc you inserted is not a Solaris OS CD/DVD."); with the flat tree but
+no "compatible" the installed disk stopped with "Cannot load drivers
+for /pci@1f,0/pci@1,1/ide@3/disk@0,0:a" / "vfs_mountroot: cannot mount
+root".
+
+On sparc64 only: the controller gets #address-cells 2 and target,lun
+decode-unit/encode-unit methods bound to its node, the channel nodes go,
+the drive nodes keep the names disk/cdrom with two-cell reg and get
+"compatible". Needs the previous patch for NetBSD's CD boot.
+
+paulsheer/openbios 5d7938c2 and maxinjohn/proxmox-solaris also flatten
+this tree (as dad/sd, resp. dad@unit,0); this is a separate
+implementation that keeps OBP's names.
+---
+ drivers/ide.c | 66 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 66 insertions(+)
+
+diff --git a/drivers/ide.c b/drivers/ide.c
+index 4cc572c..ebdc990 100644
+--- a/drivers/ide.c
++++ b/drivers/ide.c
+@@ -33,7 +33,12 @@ do { printk("IDE - %s: " fmt, __func__ , ##args); } while (0)
+ 
+ /* DECLARE data structures for the nodes.  */
+ DECLARE_UNNAMED_NODE( ob_ide, 0, sizeof(struct ide_drive*) );
++#ifdef CONFIG_SPARC64
++DECLARE_UNNAMED_NODE( ob_ide_tl, 0, 0 );
++#endif
++#if !defined(CONFIG_SPARC64) || defined(CONFIG_DRIVER_MACIO)
+ DECLARE_UNNAMED_NODE( ob_ide_ctrl, 0, sizeof(int));
++#endif
+ 
+ /*
+  * define to 2 for the standard 2 channels only
+@@ -1281,6 +1286,7 @@ NODE_METHODS(ob_ide) = {
+ 	{ "dma-sync",		ob_ide_dma_sync		},
+ };
+ 
++#if !defined(CONFIG_SPARC64) || defined(CONFIG_DRIVER_MACIO)
+ static void
+ ob_ide_ctrl_decodeunit(int *idx)
+ {
+@@ -1308,6 +1314,31 @@ NODE_METHODS(ob_ide_ctrl) = {
+ 	{ "dma-map-out",	ob_ide_dma_map_out	},
+ 	{ "dma-sync",		ob_ide_dma_sync		},
+ };
++#endif
++
++#ifdef CONFIG_SPARC64
++/* The controller's children are addressed target,lun (two cells), as on
++   OBP: "disk@0,0", "cdrom@2,0" */
++
++/* ( str len -- lun target ) */
++static void
++ob_ide_tl_decode_unit(int *idx)
++{
++	feval("2 parse-nhex");
++}
++
++/* ( lun target -- str len ) */
++static void
++ob_ide_tl_encode_unit(int *idx)
++{
++	fword("encode-unit-2hex");
++}
++
++NODE_METHODS(ob_ide_tl) = {
++	{ "decode-unit",	ob_ide_tl_decode_unit	},
++	{ "encode-unit",	ob_ide_tl_encode_unit	},
++};
++#endif
+ 
+ static void set_cd_alias(const char *path)
+ {
+@@ -1363,6 +1394,16 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 	io_ports[1] = io_port1;
+ 	ctl_ports[1] = ctl_port1;
+ 
++#ifdef CONFIG_SPARC64
++	/* OBP on sun4u puts the drives directly under the controller,
++	   addressed target,lun with target = 2 * channel + unit:
++	   ide@3/disk@0,0, ide@3/cdrom@2,0. Solaris builds the same unit
++	   addresses for its dad/sd nodes and maps the boot path by them. */
++	set_int_property(get_cur_dev(), "#address-cells", 2);
++	set_int_property(get_cur_dev(), "#size-cells", 0);
++	BIND_NODE_METHODS(get_cur_dev(), ob_ide_tl);
++#endif
++
+ 	for (i = 0; i < IDE_NUM_CHANNELS; i++, current_channel++) {
+ 
+ 		chan = malloc(sizeof(struct ide_channel));
+@@ -1404,6 +1445,7 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 
+ 		ob_ide_identify_drives(chan);
+ 
++#ifndef CONFIG_SPARC64
+ 		fword("new-device");
+ 		dnode = get_cur_dev();
+ 
+@@ -1435,6 +1477,7 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 		IDE_DPRINTF(DEV_NAME": [io ports 0x%x-0x%x,0x%x]\n",
+ 		            current_channel, chan->io_regs[0],
+ 		            chan->io_regs[0] + 7, chan->io_regs[8]);
++#endif
+ 
+ 		for (j = 0; j < 2; j++) {
+ 			struct ide_drive *drive = &chan->drives[j];
+@@ -1464,12 +1507,33 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 
+ 			fword("new-device");
+ 			dnode = get_cur_dev();
++#ifdef CONFIG_SPARC64
++			props[0] = __cpu_to_be32(i * 2 + j);
++			props[1] = 0;
++			set_property(dnode, "reg", (char *)&props, 2*sizeof(props[0]));
++#else
+ 			set_int_property(dnode, "reg", j);
++#endif
+ 			push_str(media);
+ 			fword("device-name");
+ 
+ 			push_str("block");
+ 			fword("device-type");
++#ifdef CONFIG_SPARC64
++			/* Solaris binds its dad/sd drivers to OBP's IDE drive
++			   nodes by these "compatible" values */
++			if (drive->media == ide_media_disk) {
++				push_str("ide-disk");
++				fword("encode-string");
++				push_str("compatible");
++				fword("property");
++			} else if (drive->media == ide_media_cdrom) {
++				push_str("ide-cdrom");
++				fword("encode-string");
++				push_str("compatible");
++				fword("property");
++			}
++#endif
+ 
+ 			PUSH(pointer2cell(drive));
+ 			feval("value drive");
+@@ -1489,7 +1553,9 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 				set_hd_alias(nodebuff);
+ 		}
+ 
++#ifndef CONFIG_SPARC64
+ 		fword("finish-device");
++#endif
+ 	}
+ 
+ 	return 0;
