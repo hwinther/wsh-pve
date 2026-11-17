@@ -60,7 +60,8 @@ class Catalogue(unittest.TestCase):
         rx = re.compile(r"[a-z][a-z0-9-]{1,30}[a-z0-9]")  # PVE VM names and host names
         for name, t in targets.TARGETS.items():
             self.assertRegex(name, rx)
-            self.assertRegex(t["hostname"], rx)
+            if t["login"].get("password") is not False:  # DOS targets have no host name
+                self.assertRegex(t["hostname"], rx)
         self.assertEqual(len({n.lower() for n in targets.MEDIA}), len(targets.MEDIA), "file names unique")
         self.assertEqual(len({m["lab"] for m in targets.MEDIA.values()}), len(targets.MEDIA))
         for name, med in targets.MEDIA.items():
@@ -78,6 +79,8 @@ class Catalogue(unittest.TestCase):
         self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["cpu"], "TI-SuperSparc-50")
         for name, t in targets.TARGETS.items():
             p, disk = t["profile"], t["disk"]
+            if p.get("arch", "x86_64") not in ("sparc", "sparc64"):
+                continue  # x86 (DOS): tests/test_dos.py
             with self.subTest(target=name):
                 cpus = int(p.get("sockets", 1)) * int(p.get("cores", 1))
                 self.assertNotIn("cpu", p)

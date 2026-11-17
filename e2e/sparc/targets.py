@@ -317,3 +317,10 @@ def problems():
         if len(med["sha256"]) != 64 or not med["size"]:
             out.append(f"{fname}: size and sha256 of the tested medium")
     return out
+
+
+# The x86 retro targets (DOS from floppies) live in targets_dos.py.
+import targets_dos  # noqa: E402
+
+MEDIA.update(targets_dos.MEDIA)
+TARGETS.update(targets_dos.TARGETS)
