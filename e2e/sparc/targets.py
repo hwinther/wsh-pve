@@ -198,6 +198,7 @@ TARGETS = {
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss5",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 11,  # install 6, first boot 3, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
@@ -210,6 +211,7 @@ TARGETS = {
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 10,  # install 6, first boot 3, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
@@ -234,6 +236,7 @@ TARGETS = {
                   {"name": "sun-solaris-8-0101-software-cd2-sparc.iso", "drive": "scsi6", "at": "scenario"}],
         "boot": "scsi3",
         "hostname": "sol8-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 30,  # install 24, first boot 3.5, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
@@ -251,6 +254,7 @@ TARGETS = {
         "media": [{"name": "SOL_9_SPARC_DVD.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol9-ss20",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 27,  # install 20, first boot 5, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },

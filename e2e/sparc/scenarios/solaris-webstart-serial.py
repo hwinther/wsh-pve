@@ -47,7 +47,7 @@ PROMPT_END = r"(?:[:?\]>)]|\[[^\]]*\])(?:" + HINT + r")?\s*$"
 # "Please insert the Solaris 8 Software 1 of 2 CD." (before the install), "Please insert the CD for
 # Solaris 8 Software 2 of 2 (SPARC Platform Edition)." (after the first CD's packages)
 INSERT = r"Please insert the (?:CD for )?Solaris \d+ Software (\d) of 2"
-CD_ROW =r"^\s*\[([X\- ])\]\s+(\d+)\s+(\S.*?)\s{2,}"
+CD_ROW = r"^\s*\[([X\- ])\]\s+(\d+)\s+(\S.*?)\s{2,}"
 
 
 def qemu_args(v, out):
