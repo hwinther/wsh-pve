@@ -54,6 +54,9 @@ maintains the patches.
 | `0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl` | qtest `sun4m-pil-delay-slot-test` for 0019: a pending soft interrupt must be taken after PIL is lowered by a plain `wr %psr` and by one in the delay slot of `ba`, `bne`, `bne,a` and `jmpl` | ours | not in QEMU |
 | `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to clear them; the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD) ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
 | `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, and the interrupt line (seen through the sabre) follows INTRQ | ours | not in QEMU |
+| `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
+| `0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by` | `-M <sun4m>,solaris-smp-idle=on\|off` for 0023, on by default, does nothing with one CPU | ours | not in QEMU |
+| `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024 | ours | not in QEMU |
 
 The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -90,10 +93,17 @@ cmd646 (sun4u's built-in IDE; QEMU's alpha and hppa machines have one too, and a
 `-aarch64`, `-arm`, `-sparc` and the 3dfx binary have no `cmd646-ide` device and no x86 machine
 type can use it. Lab results under "Solaris on sun4u".
 
+0023-0025 apply on top of 0001-0022. `sun4m-solaris-smp-idle-test` passes 4/4 with them; with
+the binary built without them its `idle` case fails (15,098,675 rounds in 300 ms instead of fewer
+than 300). An early version of 0023 that went on at the call after a timer wake halted again
+before `disp_getwork` ran, so the timer never let the CPU look for work: the test's `idle` case
+caught it (0 rounds). `sun4m-solaris-idle-test` passes 5/5 with 0023 (the read of
+`disp_nrunnable` changed under it). Lab results under "SMP".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
-`sun4m-mmu-nofault-test` and `sun4m-pil-delay-slot-test` (sparc), `sun4u-cmd646-test` (sparc64)
-and `am53c974-test` (i386).
+`sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test` and `sun4m-solaris-smp-idle-test` (sparc),
+`sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -323,13 +333,14 @@ passed, with no hang, crash or drawing errors in the screenshots. Every X case a
 ### Idle
 
 QEMU keeps a host core at 100% for a guest that spins in its idle loop. Which sparc32 guests stop
-(sun4m, one CPU):
+(sun4m, one CPU unless stated):
 
 | Guest | Idles | How |
 | --- | --- | --- |
 | NetBSD 11.1, Linux | yes | their APC driver (`apc0 at sbus0 slot 4 offset 0xa000000`) writes register 0 of the power management node in the idle loop and QEMU halts the CPU until the next interrupt, with or without these patches. Linux not tested here |
 | NetBSD 9.3 | no | its GENERIC kernel has no APC driver (`power-management ... not configured`); neither have the install kernels of 9.3 and 11.1 |
 | Solaris 2.5.1-9 | yes | 0014-0015: QEMU recognises the call of `idle_cpu` in the kernel's idle loop and halts the CPU there (`solaris-idle`, on by default; `-M SS-20,solaris-idle=off` turns it off; off with `-smp` > 1). Any CPU module, SS-5 and SS-10/SS-20. `-trace sparc_solaris_idle_match` shows the match |
+| Solaris 2.5.1-9, 2-4 CPUs | yes | 0023-0024: QEMU recognises the call of `disp_getwork` in the multiprocessor idle loop and halts the CPU there until another CPU queues work for it, an interrupt or 10 ms (`solaris-smp-idle`, on by default; `-M SS-20,solaris-smp-idle=off` turns it off). SS-10/SS-20 with OpenBIOS. `-trace sparc_solaris_idle_mp_match` shows the match ("SMP") |
 | Solaris 2.6 + `pmc` | yes | also without 0014: the `pmc` driver (package `SUNWvygdr.m` on the 2.6 CD, not installed by default) lets the idle loop write APC register 0, SS-5 only; needs 0011. Steps below |
 | SunOS 4.1.4 | yes | 0012-0013: QEMU recognises the kernel's idle loop and halts the CPU there (`sunos-idle`, on by default; `-M SS-5,sunos-idle=off` turns it off; off with `-smp` > 1). `-trace sparc_sunos_idle_match` shows the match |
 
@@ -368,8 +379,8 @@ tested.
 With more than one CPU, `idle()` runs another loop: it polls `disp_getwork()` (work stealing from other
 CPUs' queues) and never calls `idle_cpu`, and `cpu_resched()` doesn't poke an idle CPU (`!CPU_IDLING`),
 so a halted CPU wouldn't see work queued for it until its next interrupt, and only one CPU gets the
-clock. A halt there would need QEMU to wake the CPU on writes to the dispatch queues (or Solaris to poke
-idle CPUs); that's why `solaris-idle` is off with `-smp` > 1 (what a halt there would take: "SMP").
+clock. That's why `solaris-idle` is off with `-smp` > 1; 0023-0024 (`solaris-smp-idle`) halt that loop
+with wake-ups of their own ("SMP", "Idle with more than one CPU").
 
 Not used: the APC on SS-10/SS-20 (real machines have none, but OpenBIOS creates the `power-management`
 node there, QEMU maps the device at `0xefa000000`, "XXX should not exist"; the Sun PROMs don't): NetBSD
@@ -789,8 +800,9 @@ this way (multi-threaded TCG for sparc came with `ec860e5d03`), which is why ups
 CPUs didn't reach the login prompt in 600 s either (with one CPU it took 116 s). qemu-server never
 passes `thread=single`.
 
-**Speed-up** (`smp-soak.py SOAK=0`, with 0019; 3 boots per CPU count, alternating, median; host
-load 3.6-5.0 from other agents' guests). `dhry` = Dhrystone with 20,000,000 runs (fixed work,
+**Speed-up** (`smp-soak.py SOAK=0`, with 0019 and without 0023, so the idle CPUs spin; 3 boots per
+CPU count, alternating, median; host load 3.6-5.0 from other agents' guests; with 0023 see "Idle with
+more than one CPU"). `dhry` = Dhrystone with 20,000,000 runs (fixed work,
 shallow calls), `nawk` = the `nawk` loop (deep calls: window traps); "1 job" = one copy alone, "N
 jobs" = as many copies as CPUs at once, host seconds; "throughput" = N copies on one CPU one after
 another (N x the 1-CPU time) divided by N copies at once on N CPUs:
@@ -808,8 +820,8 @@ another (N x the 1-CPU time) divided by N copies at once on N CPUs:
   `nawk` loop 68% and 185%. It is the other CPUs' idle loop: with CPUs 1-3 of a 4-CPU guest taken
   off-line (`psradm -f 1 2 3`; an off-line CPU spins on its flags instead of polling the other
   CPUs' run queues in `disp_getwork()`), the `nawk` loop took 8.6-8.8 s instead of 18.4-18.7 s (one
-  CPU: 6.2 s). Why that polling slows the busy vCPU this much under QEMU wasn't traced; a halt in the
-  multiprocessor idle loop (below) would most likely remove it too.
+  CPU: 6.2 s). Why that polling slows the busy vCPU this much under QEMU wasn't traced; the halt in
+  the multiprocessor idle loop (0023, "Idle with more than one CPU" below) removes it.
 - Writes get slower too (64 MB `dd` + `sync`: 1.8-2.8 s with one CPU, 3.7 s with 2, 6.2 s with 4;
   one boot each).
 - So more than one CPU pays only for guests that run several CPU-bound processes at once (builds,
@@ -823,28 +835,104 @@ with and without it, one boot each, host load 1.0-2.0: Dhrystone 923.8 / 923.2 (
 the other three runs, a test whose spread was already 56% above). The `benchdisk` matrix (6/6) with
 0019 is in the range of the "With 0017" table, on a busier host (load ~5).
 
-**Idle.** `solaris-idle` and `sunos-idle` stay off with more than one CPU (`smp_cpus == 1` in
-0013/0015; `-trace sparc_solaris_idle_match` logged nothing with 2 and 4 CPUs), so every vCPU of an
-idle guest keeps a host core busy: 198% of a core with 2 CPUs and 340% with 4 (`bench.py`, 30 s at
-the shell after login), against 3% with one. A halt in the multiprocessor idle loop is
-not small, so it isn't in 0019:
+**Idle with more than one CPU (0023-0025, `solaris-smp-idle`).** `solaris-idle` and `sunos-idle`
+stay off with more than one CPU (`smp_cpus == 1` in 0013/0015); before 0023 every vCPU of an idle
+guest kept a host core busy: 198% of a core with 2 CPUs and 341% with 4, against 4% with one.
 
-- The loop is different: with more than one CPU `idle()` never calls `idle_cpu`; it polls its own
-  `disp_nrunnable` and calls `disp_getwork()`, which steals runnable threads from other CPUs'
-  queues. A recogniser would match that loop (another pattern per release, 2.5.1-9) and halt at the
-  `disp_getwork` call.
-- Nothing would wake the CPU in time. `setbackdq`/`setfrontdq` put threads on an idle CPU's queue
-  without telling it: `cpu_resched()` pokes (soft interrupt 14) only CPUs that are not idling, and
-  `set_idle_cpu`/`unset_idle_cpu` are empty on sun4m. Only the CPU the system timer targets gets
-  the 100 Hz clock; the others get cross-calls and pokes. A halted CPU would leave work queued to
-  it, and the work it would have stolen, waiting until its next interrupt, i.e. indefinitely while
-  the other CPUs are busy.
-- So it would need a bounded halt: halt at the `disp_getwork` call only while `disp_nrunnable` is
-  0, and wake after a fixed time (a QEMU timer, e.g. 1 ms) as well as on any interrupt, then poll
-  once and halt again. That bounds the extra dispatch latency by the timer and still saves most of
-  the host core (at 1 ms, ~1000 short wake-ups a second per idle vCPU instead of spinning), but it
-  changes the guest's scheduling latency and needs its own soak per release. Follow-up, not done
-  here.
+The multiprocessor loop of `idle()` (`uts/common/disp/disp.c`) never calls `idle_cpu`. Each round it
+spins while `CPU_QUIESCED` is set, `swtch()`es when its own `disp_nrunnable` is not 0, skips the rest
+when `CPU_OFFLINE` is set, and otherwise calls `disp_getwork()`, which takes a thread from the
+partition's kernel preemption queue (real-time threads, `setkpdq()`) or from another CPU with more
+than one thread queued. Nothing tells an idle CPU that it has work: `setbackdq()`/`setfrontdq()` put a
+thread on its queue and count it in `disp_nrunnable`, `cpu_resched()` pokes (soft interrupt) only a CPU
+that runs a thread (`!CPU_IDLING`), `set_idle_cpu`/`unset_idle_cpu` do nothing on sun4m, and only one
+CPU takes the 100 Hz clock. So a halt until the next interrupt, as with one CPU, could leave work
+waiting indefinitely. 0023 halts there with wake-ups of its own:
+
+- **At the call of `disp_getwork`.** The translator recognises it by the 14 words from the load of
+  `disp_nrunnable` to the call (registers, offsets and call targets masked, register use checked:
+  the base of the load in a local or in register, `cpu_flags` loaded and tested for `CPU_OFFLINE` in
+  the same register). The helper halts when `disp_nrunnable` is 0, PSR.ET is set, PIL is 0 and no
+  interrupt is pending, after the loop has found nothing for 100 us (the poll of the one-CPU halt; a
+  round that comes more than 20 us after the one before starts it again, so a CPU that ran a thread
+  in between polls again before it halts).
+- **Woken by the CPU that queues work.** Solaris queues a thread at a raised PIL and lowers PIL with a
+  `wr %psr` afterwards (`disp_lock_exit`, `splx`); `helper_wrpsr` (which takes the BQL anyway) checks
+  the halted CPUs and kicks each whose `disp_nrunnable` is no longer 0, and one of them when the
+  writing CPU has more than one thread queued (what `disp_getwork` would take from it). The halting
+  CPU sets its bit in the mask of halted CPUs and reads `disp_nrunnable` again after a full barrier;
+  the writer reads the mask after a full barrier, so one of the two sees the other. The kick is a
+  flag that `sparc_cpu_has_work()` returns, set with the BQL held so the vCPU thread can't miss it.
+- **Woken by interrupts**, as with one CPU (cross-calls, pokes, the clock on its CPU).
+- **Woken by a 10 ms timer**, for work that reaches the CPU any other way (a real-time thread on the
+  kernel preemption queue, a race). `disp_getwork` runs once then and the CPU halts again if it found
+  nothing, so a missed wake-up costs at most 10 ms, and an idle vCPU wakes ~100 times a second.
+- Either way the CPU goes on at the call of `disp_getwork`. A CPU halted there at migration (or
+  `savevm`) is woken on the destination (vmstate subsection `cpu/solaris_idle_mp`, sent only then):
+  the destination has neither its timer nor the writer's mask.
+- The Solaris idle helpers (one CPU too) now read `disp_nrunnable` through a host pointer looked up
+  once by a page table walk. The first version used `probe_access_flags()` like 0014, and QEMU
+  aborted at boot (`sparc_cpu_tlb_fill: Assertion '!probe' failed`) when another CPU had flushed the
+  TLB entry since the loop's load. With one CPU nothing flushes in between, which is why 0014 never
+  hit it.
+
+Disassembled from the install media and the installed 2.6 SS-20 disk (sun4m `unix`, `x/i` in the
+QEMU monitor with 2 CPUs; the same kernels as in the one-CPU table under "Idle"):
+
+| Release | Load of `disp_nrunnable` | Call of `disp_getwork` | Layout |
+| --- | --- | --- | --- |
+| 2.5.1 | `ld [%l7], %l3` (`%l7` = CPU + 0x48) | `0xf0075d14` | `2.5.1` (`tst`, `lduh [%reg]`, `bne` + `nop`) |
+| 2.6 | `ld [%i0 + 0x58], %o0` | `0xf006faa8` | `2.6/7/8/9` |
+| 7 | `ld [%i0 + 0x54], %o0` | `0xf006e144` | `2.6/7/8/9` |
+| 8 | `ld [%i3 + 0x54], %g2` | `0xf006d8e4` | `2.6/7/8/9` |
+| 9 | `ld [%l1 + 0x60], %g2` | `0xf006cbb4` | `2.6/7/8/9` |
+
+`-trace sparc_solaris_idle_mp_match` shows the match, `sparc_solaris_idle_mp` each halt and
+`sparc_solaris_idle_mp_wake` what ended it (`queued`, `steal`, `timer`, `timer, work queued`).
+NetBSD's MP kernel and SunOS don't match and run as before.
+
+**Results** (`scenarios/smp-idle.py`, Solaris 2.6 installed on SS-20, OpenBIOS, 256 MB, the bench
+disk; `qemu-system-sparc` built from the series without 0023-0025 ("before") and with them, mounted
+into the lab image; 2 runs each for 2 and 4 CPUs, 1 for one CPU, where "with" is 0014 with the new
+read; host load 1.5-4.7 from other agents' guests). Idle = 60 s at the shell 30 s after login;
+"timed tests" = everything from `lat_pipe` to the CPU-bound jobs; `burst` = 3 x (max(N, 2) short
+`nawk` jobs at once); `dhry`/`nawk` as under "Speed-up" (one copy, then N copies at once; with one CPU
+both are one copy):
+
+| | 1 CPU before | 1 CPU with | 2 CPUs before | 2 CPUs with | 4 CPUs before | 4 CPUs with |
+| --- | --- | --- | --- | --- | --- | --- |
+| QEMU host CPU, idle | 4.0% | 3.5-3.7% | 198% | 4.1-4.3% | 341% | 5.0-5.3% |
+| guest clock over 62 s | 0 s | 0 s | 0 s | 0 s, +2 s | 0 s | 0 s |
+| echo of `true` / ten `sleep 1` | 50 ms / 10.1 s | 50 ms / 10.0-10.1 s | 50 ms / 10.1 s | 50 ms / 10.1 s | 50 ms / 10.1-10.2 s | 50 ms / 10.1 s |
+| `lat_pipe` | 87 us | 89-95 us | 94-98 us | 98-101 us | 151-153 us | 90-102 us |
+| `lat_proc fork` | 1321 us | 1281-1465 us | 1815-1871 us | 1734-1816 us | 2811-2892 us | 2679-3053 us |
+| 200 `expr` in a loop | 2.13 s | 2.16-2.17 s | 2.65-2.67 s | 2.62-2.81 s | 4.18-4.27 s | 3.33-3.51 s |
+| `dd \| cat \| cat`, 10 MB | 0.69 s | 0.54-0.58 s | 0.30-0.31 s | 0.27-0.33 s | 0.35-0.37 s | 0.27-0.29 s |
+| `burst` | 1.79 s | 1.74-2.02 s | 1.12-1.22 s | 1.13-1.15 s | 2.08-2.23 s | 2.11-2.12 s |
+| `dhry`, 1 / N jobs | 12.2 / 12.0 s | 11.9-12.5 / 11.9-12.1 s | 12.0-12.9 / 11.9-12.3 s | 12.5-12.6 / 12.5-12.8 s | 13.3-14.2 / 13.4-14.0 s | 12.0-12.4 / 12.7-13.1 s |
+| `nawk`, 1 / N jobs | 6.3 / 5.6 s | 5.3-5.4 / 5.2-5.4 s | 8.6-8.7 / 6.5-6.8 s | 5.3-5.4 / 6.6-6.7 s | 15.5-16.5 / 11.0-11.4 s | 5.4-5.6 / 10.6-11.0 s |
+| QEMU host CPU, timed tests | 52% | 51-52% | 198% | 74% | 352-353% | 113-115% |
+
+- **Idle**: an idle guest with 2 or 4 CPUs costs about what one with one CPU costs, 4-5% of a core
+  instead of one core per vCPU.
+- **A single job is no longer slowed down** by the other CPUs: the `nawk` loop alone takes 5.3-5.6 s
+  with 2 and 4 CPUs (one CPU: 5.3-6.3 s) instead of 8.6 s and 16 s; Dhrystone, which slowed down
+  less, is at its one-CPU time too. Why the polling slowed the busy vCPU wasn't traced. Each round of
+  the polling loop writes `%psr` twice in `disp_getwork` (`splhigh`/`splx`), and `helper_wrpsr` takes
+  the BQL every time, which is the likeliest cause.
+- **Wake-ups**: pipe round trips, `fork`, short processes, pipelines and bursts take as long as before
+  with 2 CPUs and less time with 4 (where 3 polling CPUs slowed them down). In a first version a CPU
+  that ran a thread for less than 100 us between two idle rounds didn't poll again before halting
+  (the poll restarted only after a 100 us gap): `lat_pipe` with 2 CPUs took 111-120 us, and `-trace`
+  counted 2,000-2,600 halts a second during `lat_pipe`; with the 20 us rule 230-260, and `lat_pipe`
+  takes 98-101 us (before: 94-98 us).
+- **Parallel work** is as fast as before with 2 CPUs and a little faster with 4.
+- **Guest clock**: one 2-CPU run with 0023 above read the guest 2 s ahead after 62 s (`date`, whole
+  seconds); every other run, before and with, and five runs of earlier versions read 0. A check of
+  the clock tick itself didn't reproduce it: `lbolt`
+  (through `adb -k`) and `date` every 124 s, 3 times per run, idle at the shell, against the host's
+  time, before with 2 CPUs and with 0023 with 2 and 4: `lbolt` within 0.03 s (3 ticks) in all nine
+  intervals, `date` within its one-second steps (-0.5 to +0.6 s).
 
 **The profiles** (qemu-server, pve-manager; needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later, the
 first package with 0019):
@@ -863,12 +951,13 @@ first package with 0019):
   either way, so existing configs stay valid); a CPU count changed on a running VM stays pending.
 - qemu-server never passes `solaris-idle` or `sunos-idle`: they are on by QEMU's default and 0013/0015
   turn them off by themselves with more than one CPU, so the command line names no idle option
-  that would do nothing.
+  that would do nothing. The same goes for `solaris-smp-idle` (0024), which does nothing with one CPU.
 - pve-manager: sockets and cores enabled on the CPU tab and in Hardware → Processors only for SS-10
   and SS-20 with OpenBIOS, capped at 4 in total (both fields refuse a product above it); reset to
   one and disabled when the machine or firmware changes to one with a limit of 1. A hint says that
   Solaris sees each vCPU as a CPU of its own, that each takes a host core even while the guest is
-  idle, and that one job runs slower than with one CPU. `vcpus` stays disabled.
+  idle, and that one job runs slower than with one CPU (true before pve-qemu 0023; the hint is to be
+  updated once the qemu-server/pve-manager rework in #289 is in). `vcpus` stays disabled.
 - The minimum `pve-qemu-kvm` is documented, not enforced. qemu-server's `debian/control` keeps
   Proxmox's `pve-qemu-kvm (>= 11.0.3-3)`: this repository has never raised it for a feature that
   needs a newer QEMU (the sparc profiles, cg3, idle and floppy all didn't), and a version relation
