@@ -539,6 +539,8 @@ Tested in the PVE test container on the lab host with the published packages (pv
 | `install sol8-ss20` (alongside the Solaris 9 attempts) | passed; `SunOS sol8-ss20 5.8 Generic_108528-05 sun4m`; both Software CDs installed (`Installation details: Solaris 8 Software 2 Installed`); `df -k` `/` 1097262 KB (638893 used), `/export/home` 6021365; the finished VM has no `args` and `scsi6: none,media=cdrom` | 29.6 min (1443 s, 215 s, 94 s) |
 | `install sol9-ss20` | passed; `SunOS sol9-ss20 5.9 Generic sun4m sparc SUNW,SPARCstation-20`; `df -k` `/` 803854 KB (439790 used), `/export/home` 6294629 | 26.7 min (1192 s, 289 s, 96 s) |
 | `pve_matrix.py install --only install-sol7-ss5 --only install-sol7-ss20 --only install-sol8-ss20 --only install-sol9-ss20` (one guest at a time, after the code above was final) | 4/4 passed | sol7-ss5 11.0 min (358 s, 198 s, 87 s); sol7-ss20 10.7 min (336 s, 198 s, 91 s); sol8-ss20 28.9 min (1399 s, 216 s, 95 s); sol9-ss20 26.8 min (1207 s, 284 s, 94 s) |
+| `pve_matrix.py pve` (regression, same code) | 5/5 passed | `sol26-install-ss5` 764 s, the others 59-233 s |
+| `matrix.py smoke` (lab image with the branch's `e2e/sparc`) | 3/3 passed | 159 s, 110 s, 68 s |
 
 `pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
 workflow now needs the Solaris 7, 8 and 9 media too and takes about 80 min longer. Not tried: an
