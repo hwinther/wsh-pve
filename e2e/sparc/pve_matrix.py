@@ -142,7 +142,8 @@ def enable_floppy_content(storage="local"):
 
 def link_media(target, a):
     """The target's media into the `local` storage under their expected names, as links to --iso (CDs)
-    or --floppy (floppy images)."""
+    or --floppy (floppy images). A converted medium (MEDIA "from", e.g. the SunOS CD) that isn't in
+    --iso is made there from its source with `lab.py media --convert`, as a user would, and kept."""
     for med in targets.TARGETS[target]["media"]:
         m = targets.MEDIA[med["name"]]
         if m["content"] == "floppy":
@@ -150,9 +151,18 @@ def link_media(target, a):
         d = ISO_DIR if m["content"] == "iso" else os.path.join(os.path.dirname(ISO_DIR), "floppy")
         os.makedirs(d, exist_ok=True)
         link = os.path.join(d, med["name"])
+        src = os.path.join(a.iso if m["content"] == "iso" else a.floppy, m["lab"])
+        if "from" in m and not os.path.isfile(src):
+            if os.path.isfile(link) and not os.path.islink(link):
+                continue  # converted by an earlier case
+            if os.path.lexists(link):
+                os.unlink(link)
+            sh(sys.executable, os.path.join(HERE, "lab.py"), "media", target, "--convert",
+               os.path.join(a.iso, targets.MEDIA[m["from"]["name"]]["lab"]), "--dir", d)
+            continue
         if os.path.lexists(link):
             os.unlink(link)
-        os.symlink(os.path.join(a.iso if m["content"] == "iso" else a.floppy, m["lab"]), link)
+        os.symlink(src, link)
 
 
 def run_step(name, label, out, a, cmd, timeout=None):

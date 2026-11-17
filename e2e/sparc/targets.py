@@ -10,7 +10,9 @@ MEDIA: the tested media by expected file name, the name they must have on the no
 the lab host and in the docs (`lab` is the path under the lab host's media directory, for the `pve`
 matrix, which links them into the test node's storage). size and sha256 are of the medium that was
 tested; `lab.py install` refuses a medium with another checksum unless --allow-untested-media. No medium
-is in the repository or downloaded by the tests.
+is in the repository or downloaded by the tests. A medium with `from` is made by the user from another
+medium in MEDIA (`convert`: "bin2352" = the 2048 data bytes of each 2352-byte raw CD sector) with
+`lab.py media <target> --convert <source>`, which checks the source's and the result's sha256.
 
 TARGETS: per target
   title      what it is
@@ -33,6 +35,9 @@ TARGETS: per target
              /etc/wsh-lab-target and optionally adds a user, and powers off. "unattended" (the
              installer's own answer file on a second medium) is
              designed (README.md, "Install targets") but not implemented. DOS targets: targets_dos.py.
+             install may have `memory` (MB for the install phase only; the profile's afterwards) and
+             `prom_env` (OpenBIOS variables for the install phase only); check may have `commands`
+             (what the check boot runs and records; default: Solaris's)
   boot       the boot order after the install (the media are ejected first)
   login      user and console of the finished VM; the password is DEFAULT_ROOT_PASSWORD unless
              --root-password says otherwise
@@ -41,11 +46,15 @@ TARGETS: per target
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
+  net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
 """
 
 DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab VMs
+
+# MEDIA "from" conversions (install.convert_medium): name -> (input sector size, offset, output size)
+CONVERSIONS = {"bin2352": (2352, 16, 2048)}  # raw CD sectors (Mode 1): sync + header, 2048 data, EDC/ECC
 
 # The packages of the last test run (the PVE test node with the published packages).
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
@@ -89,6 +98,12 @@ MEDIA = {
         "title": "SunOS 4.1.4 (Solaris 1.1.2) install CD, raw BIN (2352-byte sectors)", "content": "iso",
         "size": 378178080, "sha256": "6088d836cf582128cdd69661c4b62399fbd6f4db9b817188b2d1509cebbb5f48",
         "lab": "sunos_4.1.4_install.iso"},
+    # The same CD as a plain image: the 2048 data bytes of each 2352-byte Mode 1 sector of the BIN above
+    # (`lab.py media sunos414-ss5 --convert <the BIN>` writes it; install.convert_medium).
+    "sunos414-cd.iso": {
+        "title": "SunOS 4.1.4 install CD, 2048-byte sectors (from sunos_4.1.4_install.iso)", "content": "iso",
+        "size": 329297920, "sha256": "7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8",
+        "lab": "sunos414-cd.iso", "from": {"name": "sunos_4.1.4_install.iso", "convert": "bin2352"}},
     "NetBSD-11.1-sparc64.iso": {
         "title": "NetBSD 11.1 sparc64 install CD (cdn.netbsd.org)", "content": "iso", "size": 694026240,
         "sha256": "a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e",
@@ -122,6 +137,11 @@ DISKS = {
     "3G": {"size": 3, "geometry": SUN29G, "template": "sparc-SUN2.9G.raw.template.xz"},
     "9G": {"size": 8, "geometry": QEMU8G, "template": "sparc-Qemu9G.raw.template.xz"},
 }
+
+# SUN2.9G with slice g cut to 1000 cylinders (1015 MiB): SunOS 4 file systems stop at 2 GB, and
+# suninstall's Quick install with "preserve the data partitions" newfs's a and g as the label has them
+# (a: / 95 MB, b: swap 190 MB, g: /usr). The rest of the disk is left unused.
+SUN29G_SUNOS4 = {**SUN29G, "parts": SUN29G["parts"][:6] + [(4, 0, 282, 1000 * 21 * 99)] + SUN29G["parts"][7:]}
 
 
 def sun_disk(*sizes, bus="scsi3"):
@@ -258,20 +278,36 @@ TARGETS = {
         "minutes": 27,  # install 20, first boot 5, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
+    # The CD's miniroot copied to swap (slice b), suninstall's Quick install from it, then the first
+    # boot's sys-config (host name, time zone GMT, address, root password, the optional user). The CD
+    # is the BIN converted to 2048-byte sectors (MEDIA "from"). README.md, "SunOS 4.1.4".
     "sunos414-ss5": {
         "title": "SunOS 4.1.4 Programmer install on a SPARCstation 5 (OpenBIOS)",
-        "status": "catalogue",
-        "blocked": "Installed by hand only (README.md, \"SunOS 4.1.4\"): the medium is a raw BIN that must "
-                   "be cut to 2048-byte sectors, the install kernel needs 64 MB, the label's slice g must be "
-                   "cut below 2 GB, the boot paths are typed at the OpenBIOS prompt, and suninstall's curses "
-                   "menus redraw too lazily for the scripted driver.",
+        "status": "automated",
         "method": "scripted",
-        "profile": {**SPARC32, "machine": "SS-5", "memory": 64, "ostype": "other"},
-        "disk": sun_disk("3G"),
-        "media": [{"name": "sunos_4.1.4_install.iso", "drive": "scsi6"}],
+        "install": {"scenario": "sunos-install-serial.py", "vars": {"SOFTWARE": "Programmer"}, "timeout": 1800,
+                    # the CD's install kernel stops QEMU with 256 MB ("Trap 0x29"): 64 MB for the
+                    # install phase only, the profile's memory afterwards (Job.finish)
+                    "memory": 64,
+                    # OpenBIOS drops the miniroot's boot string: stop at `0 >` and boot by path
+                    "prom_env": {"auto-boot?": "false"}},
+        "firstboot": {"scenario": "sunos-firstboot.py", "vars": {}, "timeout": 1200},
+        "check": {"scenario": "sunos-boot-disk.py", "vars": {}, "timeout": 900,
+                  "commands": "uname -a; hostname; cat /etc/wsh-lab-target; df; dkinfo sd0; ifconfig -a; netstat -rn"},
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "other"},
+        "disk": {"bus": "scsi3", "label": "sun", "size": 3, "geometry": SUN29G_SUNOS4},
+        "media": [{"name": "sunos414-cd.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
         "hostname": "sunos414",
+        # sys-config takes the address (class netmask); the first boot adds /etc/netmasks and
+        # /etc/defaultrouter, which 4.1.4's rc.boot and rc.local read
+        "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway)",
+        "net_modes": ["static"],
+        # 4.1.4's libc resolves host names through /etc/hosts or NIS only (DNS needs NIS or a rebuilt
+        # libc), and it has no DHCP client
+        "net_refuse": {"dns": "SunOS 4.1.4 resolves host names through /etc/hosts or NIS, not DNS",
+                       "domain": "SunOS 4.1.4 resolves host names through /etc/hosts or NIS, not DNS"},
     },
     "netbsd111-sparc64": {
         "title": "NetBSD 11.1 sparc64 without X11 (sun4u, OpenBIOS)",
@@ -383,6 +419,12 @@ def problems():
             out.append(f"{fname}: content {med['content']!r}")
         if len(med["sha256"]) != 64 or not med["size"]:
             out.append(f"{fname}: size and sha256 of the tested medium")
+        if "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in CONVERSIONS):
+            out.append(f"{fname}: made from {med['from']}: a medium in MEDIA and a known conversion")
+    for name, t in TARGETS.items():
+        for opt in t.get("net_refuse", {}):
+            if opt not in ("dns", "domain", "gateway", "netmask"):
+                out.append(f"{name}: net_refuse {opt!r}")
     return out
 
 

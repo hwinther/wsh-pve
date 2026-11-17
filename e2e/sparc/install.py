@@ -6,6 +6,7 @@
         [--check] [--template] [--keep-on-failure] [--allow-untested-media] [--timeout S] [--out DIR]
     lab.py targets [--json]
     lab.py media [<target>] [--storage local | --dir DIR] [--no-checksum]
+    lab.py media <target> --convert SOURCE [--storage local | --dir DIR]
 
 `install` (1) checks that the target's media are on the storage under their expected names with the
 tested size and sha256, (2) refuses a VMID that exists anywhere in the cluster, (3) creates the VM
@@ -146,6 +147,38 @@ def check_media(names, storage=None, directory=None, checksum=True):
     return rows
 
 
+def convert_medium(name, source, dest, checksum=True):
+    """Write the medium `name` (a MEDIA entry with "from") to the file `dest` from `source`, the medium
+    it is made from: refuses a source of another size, or with `checksum` another sha256, and removes a
+    result whose sha256 isn't the tested one. Returns the result's sha256."""
+    med = targets.MEDIA[name]
+    if "from" not in med:
+        raise InstallFailed(f"{name} is used as it is, not converted")
+    src = targets.MEDIA[med["from"]["name"]]
+    size_in, offset, size_out = targets.CONVERSIONS[med["from"]["convert"]]
+    if os.path.getsize(source) != src["size"]:
+        raise InstallFailed(f"{source}: {os.path.getsize(source)} bytes, not {src['size']} ({med['from']['name']})")
+    if checksum and sha256(source) != src["sha256"]:
+        raise InstallFailed(f"{source}: not the tested {med['from']['name']} (sha256 {src['sha256']})")
+    if os.path.exists(dest):
+        raise InstallFailed(f"{dest} exists already")
+    h = hashlib.sha256()
+    tmp = dest + ".part"
+    try:
+        with open(source, "rb") as f, open(tmp, "wb") as o:
+            for sector in iter(lambda: f.read(size_in), b""):
+                data = sector[offset:offset + size_out]
+                o.write(data)
+                h.update(data)
+        if h.hexdigest() != med["sha256"]:
+            raise InstallFailed(f"the result's sha256 is {h.hexdigest()}, not the tested {med['sha256']}")
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return h.hexdigest()
+
+
 # --- the VM ---------------------------------------------------------------------------------------
 
 def vm_exists(vmid):
@@ -193,6 +226,9 @@ def network_choice(t, a):
     if mode not in modes:
         raise SystemExit(f"--ip {a.ip or DEFAULT_IP}: {a.target} supports {', '.join(modes) or 'no network settings'}"
                          " (what was tested)")
+    for opt, why in (t.get("net_refuse") or {}).items():
+        if getattr(a, opt, None):
+            raise SystemExit(f"--{opt}: not with {a.target} ({why})")
     if a.vlan is not None and not 1 <= a.vlan <= 4094:
         raise SystemExit("--vlan takes a VLAN tag, 1-4094")
     net = {"mode": mode, "vlan": a.vlan, "bridge": a.bridge, "ip": None, "netmask": None, "gateway": None,
@@ -401,7 +437,10 @@ class Scripted:
             v["ROOT_PASSWORD"] = job.root_password
         if t["install"].get("prom_env"):
             set_prom_env(job.a.vmid, t["install"]["prom_env"])
-        later = [(med["at"], med["drive"], drive_volume(med["drive"], job.volids[med["name"]]).removesuffix(",media=cdrom"))
+        if t["install"].get("memory"):  # the install phase only (Job.finish sets the profile's again)
+            run("qm", "set", job.a.vmid, "--memory", t["install"]["memory"])
+            job.log(f"memory {t['install']['memory']} MB for the install phase")
+        later =[(med["at"], med["drive"], drive_volume(med["drive"], job.volids[med["name"]]).removesuffix(",media=cdrom"))
                  for med in t["media"] if med.get("at", "start") != "start"]
         swaps = [s for s in later if s[0] != "scenario"]
         # "at": "scenario": the scenario inserts them in this order itself (prompts that don't say
@@ -432,7 +471,7 @@ class Scripted:
         t = job.target
         # The disk's layout as the guest sees it goes into the evidence (check/serial.raw)
         v = {**t["check"].get("vars", {}), "ROOT_PASSWORD": job.root_password,
-             "COMMANDS": "uname -a; hostname; cat /etc/wsh-lab-target; df -k;"
+             "COMMANDS": t["check"].get("commands") or "uname -a; hostname; cat /etc/wsh-lab-target; df -k;"
                          f" prtvtoc /dev/rdsk/{t.get('device', 'c0t3d0')}s2; ifconfig -a; netstat -rn",
              "CHECK": rf"(?m)^target={re.escape(job.a.target)}$", "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
         if job.a.user:
@@ -577,6 +616,9 @@ class Job:
         if self.target.get("install", {}).get("prom_env"):
             run("qm", "set", self.a.vmid, "--delete", "args")
             self.log("install-time prom_env removed (args)")
+        if self.target.get("install", {}).get("memory"):
+            run("qm", "set", self.a.vmid, "--memory", self.target["profile"]["memory"])
+            self.log(f"memory {self.target['profile']['memory']} MB (the profile's) from now on")
         self.log(f"media ejected, boot order {self.target['boot']}")
 
 
@@ -709,6 +751,8 @@ def cmd_media(a):
         sys.exit(f"unknown target {a.target!r}")
     if not a.dir and not shutil.which("pvesh"):
         sys.exit("lab.py media looks at a PVE storage (run it on the node) or a directory (--dir)")
+    if a.convert:
+        return media_convert(a)
     where = a.dir or f"storage {a.storage}"
     seen, bad = {}, 0
     for name in names:
@@ -722,10 +766,37 @@ def cmd_media(a):
             bad += t["status"] == "automated" and not r["ok"]
             where_found = r["volid"] or r["path"] or f"not in {where}"
             print(f"  {r['state']:17} {med['name']:46} {exp['size']:>11}  {exp['sha256']}  {where_found}")
+            if "from" in exp and r["state"] == "missing":
+                print(f"  {'':17} made from {exp['from']['name']}: lab.py media {name} --convert <that file>")
     notes = sorted({r["note"] for r in seen.values() if r.get("note")})
     for n in notes:
         print(f"\n{n}")
     return 1 if bad else 0
+
+
+def media_convert(a):
+    """lab.py media <target> --convert SOURCE: the target's medium made from SOURCE (MEDIA "from"),
+    written under its expected name into --dir or the storage's ISO directory."""
+    if not a.target:
+        sys.exit("--convert needs the target whose medium it makes")
+    names = [m["name"] for m in targets.TARGETS[a.target]["media"] if "from" in targets.MEDIA[m["name"]]]
+    if not names:
+        sys.exit(f"{a.target}'s media are used as they are; nothing to convert")
+    for name in names:
+        med = targets.MEDIA[name]
+        if a.dir:
+            dest = os.path.join(a.dir, name)
+        else:
+            if med["content"] not in (storage_content(a.storage) or set()):
+                sys.exit(f"storage {a.storage} has no {med['content']} content")
+            dest = run("pvesm", "path", f"{a.storage}:{med['content']}/{name}")
+        print(f"{name}: from {a.convert} ({med['from']['name']}, {med['from']['convert']}) to {dest}")
+        try:
+            digest = convert_medium(name, a.convert, dest)
+        except (InstallFailed, OSError) as e:
+            sys.exit(f"{name}: {e}")
+        print(f"{name}: written, sha256 {digest} (the tested medium)")
+    return 0
 
 
 def add_commands(sub):
@@ -766,6 +837,9 @@ def add_commands(sub):
     m.add_argument("--storage", default="local")
     m.add_argument("--dir", help="look in this directory instead of a PVE storage")
     m.add_argument("--no-checksum", action="store_true", help="compare sizes only")
+    m.add_argument("--convert", metavar="SOURCE",
+                   help="make the target's converted medium (e.g. the SunOS CD from its raw BIN) from SOURCE, "
+                        "into --dir or the storage")
 
 
 COMMANDS = {"install": cmd_install, "targets": cmd_targets, "media": cmd_media}
