@@ -32,7 +32,8 @@ TARGETS: per target
              handed to the install scenario in order (SWAPS) for prompts that name no disk
   method     "scripted": the installer is answered on the console by `install` (a scenario, with
              `vars`), then `firstboot` (a scenario) sets the root password, writes the marker file
-             /etc/wsh-lab-target and optionally adds a user, and powers off. "unattended" (the
+             /etc/wsh-lab-target and optionally adds a user, and powers off; `check` (a scenario,
+             with --check) logs in and runs its "commands" (default: Solaris's). "unattended" (the
              installer's own answer file on a second medium) is
              designed (README.md, "Install targets") but not implemented. DOS targets: targets_dos.py.
              install may have `memory` (MB for the install phase only; the profile's afterwards) and
@@ -43,6 +44,8 @@ TARGETS: per target
              --root-password says otherwise
   hostname   set by the installer
   network    how the guest's network is set up (the VM's notes say what one install got)
+  nic        the guest's interface name in the notes and the marker (le0 unless given)
+  dhcp_note  what the guest takes from a DHCP server, for the notes (Solaris 2.6's unless given)
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
@@ -180,6 +183,8 @@ NETBSD_SCRIPTED = {
     "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
     "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
     "net_modes": ["static", "dhcp"],
+    # dhcpcd sends no host name by default and keeps /etc/myname
+    "dhcp_note": "router and name servers from the DHCP server; the host name stays as installed (/etc/myname)",
 }
 
 
@@ -443,6 +448,9 @@ def problems():
                 drives.add(med["drive"])
         if t.get("method") not in ("scripted", "unattended"):
             out.append(f"{name}: method {t.get('method')!r}")
+        # the marker is typed with echo '...' (solaris-firstboot.py, netbsd-firstboot.py)
+        if any("'" in str(t.get(k, "")) for k in ("title", "hostname", "dhcp_note")):
+            out.append(f"{name}: a single quote in what the marker file gets")
         disk = t.get("disk", {})
         if disk.get("label") == "sun" and disk.get("geometry"):
             g = disk["geometry"]

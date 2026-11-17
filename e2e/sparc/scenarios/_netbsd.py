@@ -9,6 +9,8 @@ sysinst() answers sysinst on the serial console (vt100) from its first menu to "
 (then a shell on sparc64; sparc's microroot halts and powers off by itself, finish_install()); root
 is left without a password (netbsd-firstboot.py sets it).
 """
+import re
+import subprocess
 import time
 
 import _sparc32
@@ -85,7 +87,7 @@ def sysinst(m, v):
 def finish_install(m, v, at_shell):
     """After sysinst(): power off from the shell, or wait for the microroot's own power-off."""
     if at_shell:
-        power_off(m)
+        power_off(m, v)
         return
     m.snap("microroot halts")
     wait_off(m)
@@ -135,10 +137,40 @@ def passwd(m, user, password):
     shell(m, "true")
 
 
-def power_off(m):
-    """`sync; halt -p` and wait for the VM to end (OpenBIOS powers sun4u and sun4m off)."""
+HALT_WAIT = 300  # s; a halt that powers off takes 10-20 s
+
+
+def power_off(m, v=None):
+    """`sync; halt -p` and wait for the VM to end (OpenBIOS powers sun4u and sun4m off).
+
+    One first boot of netbsd111-sparc64 in four stopped after halt's SIGTERM (`syslogd: Exiting on
+    signal 15`) and never reached `syncing disks`. If the VM is still up after HALT_WAIT, a break
+    on the console enters NetBSD's kernel debugger, which records `ps` and the stack traces, and
+    `reboot 0x808` (RB_HALT | RB_POWERDOWN: sync the disks, power off) ends it; metrics: halt_hung."""
     m.send("sync; halt -p\r")
-    wait_off(m)
+    try:
+        wait_off(m, HALT_WAIT)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    m.snap("halt -p hangs")
+    m.log(f"still running {HALT_WAIT}s after halt -p: a break on the console for the kernel debugger")
+    m.metrics["halt_hung"] = 1
+    v = v or {}
+    m.qmp.cmd("chardev-send-break", id=f"serial{v.get('SERIAL') or 0}" if v.get("PVE_VMID") else "ttya")
+    m.expect(r"db(\{\d+\})?> ?$", 60)
+    for command in ("set $lines = 0", "ps", "bt", "show uvmexp"):
+        m.send(command + "\r")
+        m.quiet(3, 60)
+    # the stacks of halt and of anything still running (ps: PID LID S CPU FLAGS LWP-address NAME)
+    lwps = re.findall(r"(?m)^\d+\s+>?\s*\d+\s+(?:7|3)\s+\d+\s+[0-9a-f]+\s+([0-9a-f]+)\s+(?:halt|reboot|makemandb)\b",
+                      m.text[-30000:])
+    for lwp in dict.fromkeys(lwps):
+        m.send(f"bt/a 0x{lwp}\r")
+        m.quiet(3, 60)
+    m.snap("kernel debugger")
+    m.send("reboot 0x808\r")
+    wait_off(m, 300)
 
 
 def wait_off(m, timeout=600):

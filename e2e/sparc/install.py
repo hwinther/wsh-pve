@@ -266,14 +266,15 @@ def network_choice(t, a):
     return net
 
 
-def network_text(net, nic="le0"):
-    """One line for the VM's notes and the summary."""
+def network_text(net, nic="le0", dhcp_note=None):
+    """One line for the VM's notes and the summary; `dhcp_note`: what the guest takes from the DHCP
+    server (the target's "dhcp_note"; Solaris's by default)."""
     where = f"bridge {net['bridge']}" + (f", VLAN {net['vlan']}" if net["vlan"] else "")
     if net["mode"] == "none":
         return f"none configured in the guest (the NIC is on {where})"
     if net["mode"] == "dhcp":
         s = f"{nic} by DHCP"
-        extra = ["router, name servers and host name from the DHCP server (host name unknown if it sends none)"]
+        extra = [dhcp_note or "router, name servers and host name from the DHCP server (host name unknown if it sends none)"]
         if net["dns"]:
             extra.append(f"DNS {', '.join(net['dns'])} unless the server sends name servers")
     else:
@@ -516,6 +517,9 @@ class Job:
         """What the guest calls its NIC (the target's `nic`, le0 for Solaris 2.x on sun4m)."""
         return self.target.get("nic", "le0")
 
+    def net_text(self):
+        return network_text(self.net, self.nic, self.target.get("dhcp_note"))
+
     def log(self, msg):
         line = f"[{time.time() - self.t0:7.1f}s] {msg}"
         print(line, flush=True)
@@ -529,7 +533,7 @@ class Job:
                  "by=wsh-pve e2e/sparc lab.py install", f"hostname={self.hostname}",
                  f"catalogue_tested={(t.get('tested') or {}).get('date', 'not yet')}"]
         lines += [f"medium={m['name']} sha256={m['sha256'] or 'unchecked'}" for m in self.media]
-        lines.append(f"network={network_text(self.net, self.nic)}")
+        lines.append(f"network={self.net_text()}")
         lines.append(f"disk={self.disk_text()}")
         if self.a.data_disk:
             lines.append(f"data_disk={DATA_DISK_DEVICE} {self.a.data_disk}G on /data")
@@ -602,7 +606,7 @@ class Job:
         lines += [
             f"Console: {login['console'].replace('<vmid>', str(a.vmid))}",
             f"Hostname: {self.hostname}",
-            f"Network: {network_text(self.net, self.nic)}",
+            f"Network: {self.net_text()}",
             f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on /data"
                                          if a.data_disk else ""),
             f"Marker: {t.get('marker', '/etc/wsh-lab-target')}",
@@ -721,7 +725,7 @@ def summary(job, result):
                    + (f", {a.user} / {job.user_password}" if a.user else "") + "  (public lab defaults)"),
                   f"   console:  {t['login']['console'].replace('<vmid>', a.vmid)}",
                   f"   hostname: {job.hostname}; marker {t.get('marker', '/etc/wsh-lab-target')}",
-                  f"   network:  {network_text(job.net, job.nic)}",
+                  f"   network:  {job.net_text()}",
                   f"   start:    qm start {a.vmid}" + ("  (a template: clone it first)" if a.template else "")]
     lines.append(f"   evidence: {a.out}")
     return "\n".join(lines)

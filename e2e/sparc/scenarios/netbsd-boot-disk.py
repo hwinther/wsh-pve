@@ -32,4 +32,4 @@ def run(m, v):
     m.snap("system state")
     if v["CHECK"] and not re.search(v["CHECK"], out):
         raise AssertionError(f"no {v['CHECK']!r} in the output of {v['COMMANDS']!r}")
-    _netbsd.power_off(m)
+    _netbsd.power_off(m, v)

@@ -67,7 +67,7 @@ def run(m, v):
             _netbsd.passwd(m, user, v["USER_PASSWORD"])
         shell(m, f"grep '^{user}:' /etc/passwd; ls -ld /home/{user}")
         m.snap(f"user {user}")
-    _netbsd.power_off(m)
+    _netbsd.power_off(m, v)
 
 
 def network(m, v):
