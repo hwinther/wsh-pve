@@ -36,6 +36,7 @@ DEFAULTS = {**BASE, "MEM": "1024", "NET": "user", "DISK_GB": "16", "HOSTNAME": "
             "IP": "10.0.2.15", "NETMASK": "255.255.255.0", "ROOT_PASSWORD": "", "ROOTPW": "lab12345",
             "TIMEOUT": "1200", "INSTALL_TIMEOUT": "10800", "MAX_SCREENS": "80"}
 
+EARLY_PANIC = "before the installer"  # in the status of a panic before anything is written to the disk
 TITLE = r"^\S? ?(\S.+?) (?:─{4}|q{4})"  # a screen's title line: "─ Time Zone ────"
 
 
@@ -158,7 +159,13 @@ def run(m, v):
     t0 = time.time()
     m.expect(r"SunOS Release 5\.10", int(v["TIMEOUT"]))
     m.snap("kernel banner")
-    m.expect(r"Please make a choice \(0 - 10\)", int(v["TIMEOUT"]))
+    if m.expect_any([r"Please make a choice \(0 - 10\)", r"panic\[cpu"], int(v["TIMEOUT"])) == 1:
+        # seen once in 4 DVD boots through PVE: BAD TRAP type 0x4e in the firmware's code during
+        # prom_finddevice from vfs_mountroot. Nothing is written to the disk yet (EARLY_PANIC: what
+        # `lab.py install` retries on)
+        m.quiet(5, 300)
+        m.snap("panic")
+        raise AssertionError(f"{EARLY_PANIC}: kernel panic while booting the DVD")
     m.snap("language")
     m.send("0\r")
     m.expect(r"What type of terminal are you using", 600)

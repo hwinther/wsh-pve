@@ -337,6 +337,38 @@ class Solaris10(unittest.TestCase):
         self.sc.select(m, "No")
         self.assertEqual(m.typed, [])
 
+    def test_install_retries_an_early_panic_once(self):
+        class Job:
+            target, volids, net = self.t, {}, {"ip": "10.0.2.15", "netmask": "255.255.255.0"}
+            hostname, root_password, a = "sol10-sun4u", "wshlab", types.SimpleNamespace(timeout=None, vmid="1")
+
+            def __init__(self, failures):
+                self.failures, self.phases, self.logs = list(failures), [], []
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                self.phases.append((name, v["ROOT_PASSWORD"]))
+                if self.failures:
+                    raise install.InstallFailed(f"{name}: error: AssertionError: {self.failures.pop(0)}")
+
+            def log(self, msg):
+                self.logs.append(msg)
+
+        orig, install.vm_running = install.vm_running, lambda vmid: False
+        try:
+            job = Job(["before the installer: kernel panic while booting the DVD"])
+            install.Scripted().install(job)
+            self.assertEqual(job.phases, [("install", "wshlab"), ("install-retry1", "wshlab")])
+            job = Job(["before the installer: panic"] * 2)
+            with self.assertRaises(install.InstallFailed):
+                install.Scripted().install(job)
+            self.assertEqual(len(job.phases), 2)
+            job = Job(["kernel panic during the install"])  # the disk may be half written: no retry
+            with self.assertRaises(install.InstallFailed):
+                install.Scripted().install(job)
+            self.assertEqual(len(job.phases), 1)
+        finally:
+            install.vm_running = orig
+
     def test_netmask_kept_or_replaced(self):
         screen = "                    Netmask for hme0 255.255.255.0\n"
         m = FakeScreen(screen)

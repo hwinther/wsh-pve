@@ -407,7 +407,18 @@ class Scripted:
         # "at": "scenario": the scenario inserts them in this order itself (prompts that don't say
         # which disk they want, e.g. FreeDOS's "Insert diskette containing file ...")
         v["SWAPS"] = " ".join(f"{drive}={vol}" for at, drive, vol in later if at == "scenario")
-        job.phase("install", t["install"]["scenario"], v, job.a.timeout or t["install"]["timeout"], swaps)
+        # "retry_on": a failure that left the disk untouched (Solaris 10: a panic while the DVD boots)
+        # gets one more try, its evidence in install-retry1/
+        retry_on = t["install"].get("retry_on")
+        for attempt in range(2 if retry_on else 1):
+            try:
+                job.phase("install" if not attempt else f"install-retry{attempt}", t["install"]["scenario"], v,
+                          job.a.timeout or t["install"]["timeout"], swaps)
+                return
+            except InstallFailed as e:
+                if attempt or not retry_on or not re.search(retry_on, str(e)) or vm_running(job.a.vmid):
+                    raise
+                job.log(f"install: {e}; trying once more")
 
     def firstboot(self, job):
         t = job.target

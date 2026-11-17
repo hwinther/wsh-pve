@@ -62,11 +62,7 @@ def run(m, v):
         user = v["USER"]
         shell(m, f"mkdir -p /export/home; useradd -d /export/home/{user} -m -s /bin/sh {user}")
         if v["USER_PASSWORD"]:
-            m.send(f"passwd {user}\r")
-            for _ in range(2):  # "New Password:", "Re-enter new Password:"
-                m.expect(r"[Pp]assword:\s*$", 60)
-                m.send(v["USER_PASSWORD"] + "\r")
-            m.expect(r"#\s*$", 60)
+            user_password(m, user, v["USER_PASSWORD"])
         out, _ = shell(m, f"grep '^{user}:' /etc/passwd; ls -ld /export/home/{user}")
         if f"{user}:" not in out:
             raise AssertionError(f"useradd {user} didn't add the user:\n{out}")
@@ -74,6 +70,25 @@ def run(m, v):
     if v["NET_MODE"]:
         network(m, v)
     m.metrics["poweroff_s"] = round(power_off(m, g), 1)
+
+
+def user_password(m, user, password):
+    """Set the user's password with passwd as root. Solaris 10's passwd applies the construction
+    rules of /etc/default/passwd to root too (MINNONALPHA=1 by default: `wshlab` is refused with
+    "must contain at least 1 numeric or special character"), while the installer takes any root
+    password; so the rule is relaxed for this one call and the file put back as it was."""
+    shell(m, "cp -p /etc/default/passwd /tmp/passwd.default && grep -v '^#*MINNONALPHA=' /tmp/passwd.default"
+             " > /etc/default/passwd && echo MINNONALPHA=0 >> /etc/default/passwd")
+    try:
+        m.send(f"passwd {user}\r")
+        for _ in range(2):  # "New Password:", "Re-enter new Password:"
+            m.expect(r"[Pp]assword:\s*$", 60)
+            m.send(password + "\r")
+        if m.expect_any([r"#\s*$", r"Please try again|[Pp]assword:\s*$"], 60) == 1:
+            m.key("ctrl-c")
+            raise AssertionError(f"passwd {user} refused the password")
+    finally:
+        shell(m, "cp -p /tmp/passwd.default /etc/default/passwd && rm /tmp/passwd.default")
 
 
 def network(m, v):
