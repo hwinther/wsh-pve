@@ -1,6 +1,6 @@
 # Roadmap
 
-Where the work stands and what comes next, in order. Written 2026-11-16. The details behind each
+Where the work stands and what comes next, in order. Written 2026-11-16, refreshed 2026-11-17. The details behind each
 item are in `submodules/SPARC.md` (what was measured and why), `e2e/README.md` and
 `e2e/sparc/README.md` (how it is tested), and the pull requests named here.
 
@@ -32,61 +32,47 @@ come after that, not before.
 | Solaris 10 on `niagara` measured: reaches the installer, no disk or network; parked | merged | #259 |
 | Dial-up modem on a guest's serial port: cause of the PPP hang, recipe, container test | merged | #264 |
 | Retro net, stages 0 and 1: one gateway image (DHCP, DNS, redirects, egress filter, VintageHive for the 1999 web and instant messaging), hermetic test in CI, guide | merged | #273 |
-| Retro net archive cache: persistent store of Wayback answers, offline replay, warm-up from VintageHive's links, export/import; the test replays a synthetic dataset | in review | branch `feat/retro-net-archive-cache` |
+| Retro net archive cache: persistent store of Wayback answers, offline replay, warm-up from VintageHive's links, export/import; the test replays a synthetic dataset | merged | #274 |
 | Solaris with more than one CPU on SS-10/SS-20 (interrupt after `wr %psr` in a delay slot), pve-qemu-kvm 11.1.3-2+wsh10 | published | #266 |
-| Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | in review | this PR |
-| Idle with more than one CPU: Solaris 2.5.1–9 on SS-10/SS-20 halt idle vCPUs in the multiprocessor idle loop (`solaris-smp-idle`, pve-qemu `wsh/0023`-`0025`), ~4-5% of a host core idle with 2 or 4 CPUs instead of 100% per vCPU | in review | branch `feat/sparc32-smp-idle` |
-| Stop-A on a running sparc32 guest stops at the OpenBIOS prompt and `go` resumes (it powered the VM off) | in review | this branch |
+| Up to 4 CPUs in the SS-10/SS-20 OpenBIOS profiles (qemu-server, UI); boot with 2 CPUs through PVE in the `pve` matrix | published | #267, #270 |
+| Idle with more than one CPU: Solaris 2.5.1–9 on SS-10/SS-20 halt idle vCPUs in the multiprocessor idle loop (`solaris-smp-idle`, pve-qemu `wsh/0023`-`0025`), ~4-5% of a host core idle with 2 or 4 CPUs instead of 100% per vCPU | in review | #295 |
+| Stop-A on a running sparc32 guest stops at the OpenBIOS prompt and `go` resumes (it powered the VM off) | published | #276 |
 | Workflow hardening (job-level permissions, explicit secrets), upstream notes for ESP, OpenBIOS and APC | merged | #237, #238 |
-| Install targets: a tested 9G disk (`--disk-size 9G`, the owner's Qemu9G template byte for byte) on SS-5 and SS-20, and `--data-disk` (a labelled second disk on `/data`) | in review | branch `feat/wsh-lab-package` |
-| Install targets: network choices (`--vlan`, `--ip dhcp`, `--netmask`, `--gateway`, `--dns`, `--domain`) for Solaris 2.6 on SS-5 and SS-20, tested against DHCP and DNS on a test bridge | in review | branch `feat/wsh-lab-package` |
-| `wsh-lab`: the lab as an optional package in the apt repository (`apt install wsh-lab`, `wsh-lab` and `wsh-lab-mcp` commands), built and tested per PR, released per version and added to the repository by the Pages deploy | in review | branch `feat/wsh-lab-package` |
-| Install targets: `lab.py install <target>` on a node makes an installed VM with known login details from tested media (Solaris 2.6 on SS-5 and SS-20); the `pve` matrix runs it | in review | branch `feat/lab-install-targets` |
+| Install targets: a tested 9G disk (`--disk-size 9G`, the owner's Qemu9G template byte for byte) on SS-5 and SS-20, and `--data-disk` (a labelled second disk on `/data`) | merged | #283 |
+| Install targets: network choices (`--vlan`, `--ip dhcp`, `--netmask`, `--gateway`, `--dns`, `--domain`) for Solaris 2.6 on SS-5 and SS-20, tested against DHCP and DNS on a test bridge | merged | #283 |
+| `wsh-lab`: the lab as an optional package in the apt repository (`apt install wsh-lab`, `wsh-lab` and `wsh-lab-mcp` commands), built and tested per PR, released per version and added to the repository by the Pages deploy | published | #283 |
+| Install targets: `lab.py install <target>` on a node makes an installed VM with known login details from tested media (Solaris 2.6 on SS-5 and SS-20); the `pve` matrix runs it | merged | #275 |
+| MCP server around the lab: an assistant sees and drives an allowed VM (screenshot, screen text, keys, serial, wait for a pattern; reset, stop and the monitor behind flags), shipped in `wsh-lab` | merged | #268, #283 |
+| qemu-3dfx pin moves only through a promotion PR with a 3dfx-only build check | merged | #272 |
+| Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
+| DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
 
 ## In progress
 
 Work that exists but is not merged. If this list is stale, check the open pull requests.
 
-1. **Solaris on sun4u (OpenBIOS).** `openbios/` builds a patched `openbios-sparc64` as an optional
-   extra. Patches 0003-0007 fix the virtual `available` list, the I-cache properties and the Forth
-   state at client start. 0009 names the sabre and the ebus devices like OBP, which gives Solaris
-   its serial console. With them Solaris 10 1/13 boots its DVD to the installer and takes input on
-   ttya. NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as before. With a standalone QEMU
-   patch for the cmd646 interrupt status latch and an experimental OBP-style IDE tree, the
-   interactive installer completes an install to the IDE disk (1 of 3 attempts; one intermittent
-   `bad unknown trap at TL 1` panic).
-   The package built from branch `feat/package-openbios-sparc64` (in review) installs this
-   `openbios-sparc64` (a new optional extra, checked and reported like the others) and carries the
-   cmd646 interrupt latch as `wsh/0021` with a qtest: from the package alone, Solaris 10 1/13
-   reaches its installer, takes input on ttya and attaches its IDE disk without the
-   `set_features` warning (lab matrix `solaris10`, needs the Sun DVD). Still to do:
-   - the IDE tree as OBP has it (`ide@3/disk@0,0`, `cdrom@2,0`) without breaking NetBSD's CD boot;
-     `compatible` on the drive nodes so the installed disk mounts root;
-   - the client-interface `boot` service (reboot), the intermittent install panic, `hme0` traffic;
-   - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
-   Details: `submodules/SPARC.md`, "Solaris on sun4u".
-2. **MCP server around the lab** (`e2e/sparc/mcp_server.py`, branch `feat/lab-mcp-server`). An
-   assistant sees and drives an allowed VM (PVE by VMID or tag, or a `lab.py serve` QEMU): screenshot,
-   screen text (terminal or OCR), keys and text on the display or serial console, serial reads by
-   cursor, wait for a pattern; reset, stop and the monitor only behind flags. stdio only. Tested
-   with Alpine under `lab.py serve` (CI job) and Solaris 2.6 on a cg3 through PVE in the test node.
-   Still to do: a run from an interactive client (Claude Code over SSH), the mouse (relative Sun
-   mouse), and installing it on the lab node (`apt install wsh-lab`, then `wsh-lab-mcp --setup`). Details: `e2e/sparc/README.md`, "MCP server".
-3. **Promotion PR for qemu-3dfx** (branch `ci/qemu-3dfx-promotion`). The daily sync no longer
-   moves the pin on main. `promote-qemu-3dfx.yml` (after the fork sync, or by hand) opens or
-   updates one PR, `promote/qemu-3dfx`, with the upstream commits, the port check and a 3dfx-only
-   build (`scripts/check-qemu-3dfx-build.sh`, about 3 minutes on 4 CPUs instead of the 20-minute
-   package build); `qemu-3dfx-check.yml` runs the same build on every PR that touches the pin, the
-   port or pve-qemu. Merging rebuilds `pve-qemu-kvm`. Not yet run on GitHub: after merge, dispatch
-   `promote-qemu-3dfx.yml` once. How the pin moves: the 3dfx guide.
+1. **Patches after the upstream sync** (#289, draft). The nightly sync moved pve-storage,
+   qemu-server and pve-manager to upstream code that splits the volume types; the three patch files
+   are refreshed there. It waits for Proxmox to publish libpve-storage-perl 9.1.17, qemu-server
+   9.2.17 and pve-container 6.1.22, then the build image is rebuilt and #289 merged. Until then main
+   cannot build those three packages; the published ones are unaffected. #291 (`ne2k_isa` on the
+   ISA bus) is stacked on it.
+2. **Solaris 10 on sun4u: install and boot from disk.** An install to the IDE disk completed once in
+   three attempts in the lab with the firmware that is now published, and an installed disk boots to
+   its login with network; the install is being repeated on the published package. Still to do: how
+   often it completes (one intermittent `bad unknown trap at TL 1` panic), reboot through the
+   client-interface `boot` service (`prom_reboot: reboot call returned!`; OpenBIOS patch 0012 is
+   kept as `.wip`), booting the installed disk as a lab case,
+   `hme0` traffic, and the IDPROM MAC (every sparc64 VM gets `52:54:00:12:34:56`). Solaris 7/8/9
+   `pp is NULL or free` and 2.5.1/2.6 boot-block exceptions remain. Details: `submodules/SPARC.md`,
+   "Solaris on sun4u".
 
 ## Next, in this order
 
-1. **Solaris on sun4u: the next walls.** The first OpenBIOS patches are in (see "In progress"):
-   Solaris 10 1/13 reaches its installer and takes input on ttya; the cmd646 interrupt fix is in
-   the package built from `feat/package-openbios-sparc64`. Next: the IDE tree, then a reproducible install and a booting disk. QEMU's sun4u devices (CMD646 IDE, hme) are ones
-   Solaris drives, so a kernel that boots has a disk and a network.
-2. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
+1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
+   the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
+2. **Solaris on sun4u**: see "In progress".
+3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
    from source (`sun4v-qemu-kit`, 30 s in a container; BSD+ and GPL-2, so a CI build looks
@@ -106,8 +92,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      SeaBIOS 1.17 leaves 110K of read-only gap after the VGA, NIC and vapic ROMs, EMM386 makes
      98-102K of it one UMB, no NIC and no vapic ROM give 118K, a dummy option ROM never helps, and
      an `I=` range into SeaBIOS's data at E9000 hangs DOS.
-   - Next for DOS: fix `ne2k_isa` in qemu-server (it is put on the PCI bus and the VM doesn't
-     start; an ISA NIC needs no option ROM); maybe a per-VM "legacy BIOS memory layout" (NIC ROM and
+   - Next for DOS: `ne2k_isa` on the ISA bus is #291 (an ISA NIC needs no option ROM; for most
+     guests `rtl8139` stays the better choice); maybe a per-VM "legacy BIOS memory layout" (NIC ROM and
      vapic ROM off without `args:`); a DOS idle driver in the image so a DOS VM stops burning a host
      core; Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
      screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
@@ -146,6 +132,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
+- **SPARC audio and cg14**, after the platform is stable. Researched, not started: sun4u first
+  (OpenBSD/sparc64 has `eap` for QEMU's ES1370; NetBSD/OpenBSD USB audio; Solaris 10 has only USB
+  audio), then CS4231 with APC DMA on sun4m (QEMU's `cs4231.c` is a register stub; the MiSTer SS-20
+  core plays sound with the SS-5's CS4231 in an SBus slot under Solaris 8 and NetBSD), then cg14
+  without SX (an old MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI
+  and SX last. Docs today say audio doesn't work on SPARC: true for sparc32, untested on sparc64.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
 - **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
   expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and
@@ -171,6 +163,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
+| `build-deb.yml` builds the 3dfx extra in a job that also holds the PAT | Should be split so the third-party build never sees the token |
+| The MCP server test's `serial_read` check failed once (19 != 20 characters) | Passed on the next commit; a timing flake |
 | The issue path of the optional-extras report | Has only run with nothing missing |
 
 ## The lab host
@@ -181,7 +175,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 | --- | --- |
 | `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine |
 | `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
-| `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk |
+| `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
 | `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
 | `/mnt/sparc/prom` | Sun firmware updates, for experiments only |
 | `/mnt/sparc/runs` | run output and evidence directories |
