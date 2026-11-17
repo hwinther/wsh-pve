@@ -160,7 +160,7 @@ def run(m, v):
     m.expect(r"SunOS Release 5\.10", int(v["TIMEOUT"]))
     m.snap("kernel banner")
     if m.expect_any([r"Please make a choice \(0 - 10\)", r"panic\[cpu"], int(v["TIMEOUT"])) == 1:
-        # seen once in 4 DVD boots through PVE: BAD TRAP type 0x4e in the firmware's code during
+        # seen once in 6 DVD boots through PVE: BAD TRAP type 0x4e in the firmware's code during
         # prom_finddevice from vfs_mountroot. Nothing is written to the disk yet (EARLY_PANIC: what
         # `lab.py install` retries on)
         m.quiet(5, 300)

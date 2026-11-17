@@ -465,11 +465,15 @@ class Job:
         self.hostname = a.hostname or self.target["hostname"]
         self.disk = disk_choice(self.target, a.disk_size)
         self.net = network_choice(self.target, a)
-        self.nic = self.target.get("nic", "le0")  # what the guest calls its NIC
         self.started = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.t0 = time.time()
         self.phases = []
         self.volids, self.media = {}, []
+
+    @property
+    def nic(self):
+        """What the guest calls its NIC (the target's `nic`, le0 for Solaris 2.x on sun4m)."""
+        return self.target.get("nic", "le0")
 
     def log(self, msg):
         line = f"[{time.time() - self.t0:7.1f}s] {msg}"

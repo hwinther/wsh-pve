@@ -291,20 +291,33 @@ TARGETS = {
     },
     "sol10-sun4u": {
         "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",
-        "status": "catalogue",
-        "blocked": "solaris10-install-sparc64.py installs it under the lab's own QEMU (~80 min, SPARC.md "
-                   "\"Solaris on sun4u\"); not yet run through `install` on a PVE node (needs a check "
-                   "scenario through --pve, and the disk sizes here are plain images, not Sun-labelled).",
+        "status": "automated",
         "method": "scripted",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 1024,
                     "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        # a blank image: the installer labels it (a plain image, not one of DISKS)
         "disk": {"bus": "ide0", "size": 16, "label": None},
+        "device": "c0t0d0",  # the IDE disk as Solaris names it (the check's prtvtoc)
         "media": [{"name": "sol-10-u11-ga-sparc-dvd.iso", "drive": "ide2"}],
-        "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": ""}, "timeout": 10800},
+        # The text installer on ttya with a static address (DHCP=no), root's password asked by the
+        # installer (root_password); its reboot at the end doesn't come back (OpenBIOS has no
+        # client-interface reboot), so the scenario stops the VM and `install` boots the disk.
+        "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": "", "DHCP": "no"},
+                    "root_password": True, "retry_on": "before the installer", "timeout": 10800},
+        "firstboot": {"scenario": "solaris10-firstboot.py", "vars": {}, "timeout": 3600},
+        "check": {"scenario": "solaris10-boot-disk.py", "vars": {}, "timeout": 1800},
         "boot": "ide0",
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
         "hostname": "sol10-sun4u",
-        "network": "hme0 by DHCP (the installer's DHCP choice)",
+        "nic": "hme0",
+        # The installer sets the host name, address and netmask; the first boot writes /etc/defaultrouter
+        # and DNS (solaris10-firstboot.py). Every sun4u guest has the MAC 52:54:00:12:34:56 (OpenBIOS's
+        # IDPROM), not the one in net0.
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
+        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
+                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
     },
     "netbsd111-sparc": {
         "title": "NetBSD 11.1 sparc Minimal on a SPARCstation 5 (OpenBIOS)",
