@@ -143,7 +143,7 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 | `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
 | `solaris10` | (`pve_matrix.py solaris10` runs the same checks on a VM created through PVE) `sparc64-boot-cd.py GUEST=solaris10`: the Solaris 10 1/13 DVD on `sun4u` to the installer's first screen, the language and terminal questions answered on ttya, the IDE disk attached (`dad0`) without `Interrupt not seen after set_features`. **Needs the Sun DVD** `sol-10-u11-ga-sparc-dvd.iso` in `--iso` (Oracle's media, not in the repository) and a package with the patched `openbios-sparc64` and pve-qemu `wsh/0021`; with older packages it fails. `sol10-disk-sparc64` boots the installed disk `sol10-sun4u-installed.raw` (made by `solaris10-install-sparc64.py`, Sun software, lab host only) to `console login:` and checks `format`, the DHCP lease on `hme0` and a ping; the disk lives in `/mnt/sparc/disks`, so run this matrix with `disks_dir=/mnt/sparc/disks` | ~4 min + ~7 min |
-| `solaris10-install` | `solaris10-install-sparc64.py`: the whole Solaris 10 1/13 text install from the DVD to the IDE disk on `sun4u`, answered on ttya. Manual only, needs `--timeout 9000` (the workflow choice passes it) | ~80 min |
+| `solaris10-install` | `solaris10-install-sparc64.py`: the whole Solaris 10 1/13 text install from the DVD to the IDE disk on `sun4u`, answered on ttya. Manual only, needs `--timeout 9000` (the workflow choice passes it). Through PVE: the install target `sol10-sun4u` ("The Solaris 10 install target") | ~80 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
 every size but 1024x768 fails at QEMU's `Unsupported resolution` (1152x900: OpenBIOS faults).
@@ -431,6 +431,49 @@ port 0x402), runs `scenarios/dos-mem.py` (per config: write `CONFIG.SYS`, Ctrl-A
 the VGA screen, `MEM /D` and `EMM386` into `D:\OUT`; a config that hangs DOS is recorded and undone
 with F5) and reads the files back with mtools. It prints the table into `summary.md`; the results
 are in the DOS guide.
+
+### The Solaris 10 install target
+
+`sol10-sun4u` installs Solaris 10 1/13 from its DVD on the sparc64 profile (sun4u, OpenBIOS, a blank
+16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`, `vga: serial0`, 1024 MB). Needs `pve-qemu-kvm`
+11.1.3-2+wsh13 or later (the patched `openbios-sparc64`, `wsh/0021`) and qemu-server with the
+sparc64 profile (`-boot order=d|c`).
+
+- **install:** `solaris10-install-sparc64.py`, the same scenario as the lab's own install, with
+  `DHCP=no`: host name, address and netmask typed into the installer's screens (no default route);
+  the handlers match the screen title, and the network's confirmation screen must show the three
+  values. The installer asks for the root password itself, so the target says `root_password: True`
+  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. When the installer's reboot
+  returns (`prom_reboot: reboot call returned!`), the scenario stops the VM (`qm stop`, after
+  "syncing file systems... done"); `install` then ejects the DVD and sets `boot: order=ide0`, as
+  for the other targets. A panic before the language prompt (seen once in six DVD boots through PVE:
+  `BAD TRAP: type=4e` with the PC in the firmware, from `prom_finddevice` in `vfs_mountroot`) fails
+  the scenario at once with "before the installer"; the target's `retry_on` matches that, and
+  `install` runs the install phase once more (evidence in `install-retry1/`): nothing is on the
+  disk yet.
+- **firstboot:** `solaris10-firstboot.py`: F2 at the keyboard layout question, root login with the
+  installer's password, the marker, the optional user (`useradd`, `passwd`: Solaris 10 applies
+  `MINNONALPHA=1` from `/etc/default/passwd` to root too and refuses `wshlab`, so the rule is
+  relaxed for that one call and the file put back), `/etc/defaultrouter`
+  and DNS, `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
+- **check:** `solaris10-boot-disk.py` with the usual `COMMANDS` (`prtvtoc` of `c0t0d0s2`, the
+  target's `device`) and `CHECK`.
+- `pve_matrix.py install` gives an install case the sum of the target's phase timeouts plus 10
+  minutes when that is more than twice `--timeout` (Solaris 10: 4.75 h instead of 2 h).
+
+Tested in the PVE test container on the lab host (14 host cores shared with another agent's runs,
+TCG, published packages pve-qemu-kvm 11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pve-manager
+9.2.28+wsh4), 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol10-sun4u --vmid 101 --check` | passed: the install's network screens with 10.0.2.15/24, root/`wshlab`, the marker, `ide2: none,media=cdrom`, `boot: order=ide0` (`-boot order=c`); `df -k`: `/` 6.9 GB on `c0t0d0s0` (4.5 GB used), `/export/home` 8.6 GB on `s7`, swap on `s1`; the VM's disk 4.6 GB on the storage (sparse) | 108.5 min (install 4849 s, first boot 1164 s, check 481 s) |
+| `install sol10-sun4u --vmid 102 --check --bridge vmbr1 --ip 10.77.0.50 --gateway 10.77.0.1 --dns 10.77.0.1 --domain lab.test --user lab` | failed in the first boot: `passwd lab` refused `wshlab` (`MINNONALPHA`, fixed); the fixed first boot run again on the kept VM passed, and a further boot showed `default 10.77.0.1`, `10.77.0.1 is alive`, `resolv.conf`, `lab` with a password (`logins -x`: `PS`) | install 4829 s |
+| `pve_matrix.py install --only install-sol10-sun4u` (two sparc64 installs at once on the host) | failed: kernel panic while booting the DVD (`BAD TRAP: type=4e`, PC in the firmware, from `prom_finddevice` in `vfs_mountroot`), 20 min lost to the language prompt's timeout; the scenario now stops at the panic and `install` retries once (`retry_on`) | 21 min |
+| the same again | passed | 109.6 min (4883 s, 1135 s, 541 s) |
+| `install sol10-sun4u --vmid 103 --check` with the vmbr1 options and `--user lab` as above | passed: `passwd: password successfully changed for lab`, `default 10.77.0.1` in the check | 110.7 min (4907 s, 1167 s, 548 s) |
+| unit tests (`test_targets.py` with the Solaris 10 handlers and the retry, `test_dos.py`, `test_vgatext.py`, `test_freedos.py`) | 71 passed, 1 skipped | 17 s |
+| `pve_matrix.py pve` and `matrix.py smoke` on the branch | 5/5 and 3/3 passed | |
 
 ### Run it
 

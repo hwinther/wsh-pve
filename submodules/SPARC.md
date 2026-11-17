@@ -1374,7 +1374,10 @@ virtio, idle), `smoke` 3/3 and `machines` 13/13 (sparc32, which uses no cmd646),
 matrix cases `alpine-x86_64` (CD on `ide2`, i440fx's PIIX IDE), `alpine-aarch64` and
 `netbsd-sparc64` 3/3 through PVE (the e2e node built from the package). The same Solaris 10 checks
 pass through PVE too (`pve_matrix.py solaris10`: the sparc64 profile as the wizard makes it, 1024
-MB, `vga: serial0`; 205 s).
+MB, `vga: serial0`; 205 s). The whole install also runs through PVE: `lab.py install sol10-sun4u
+--check` (`e2e/sparc/README.md`, "The Solaris 10 install target") on a VM made with the sparc64
+profile as it is (blank disk on `ide0`, DVD on `ide2`, `-boot order=d` for the install and
+`order=ide0` -> `-boot order=c` after it); nothing in the profile had to change.
 
 With the patched `openbios-sparc64` (1024 MB; `fw/openbios-sparc64-p5` in the lab's scratch
 directory, the same source as `openbios/Dockerfile` builds):
