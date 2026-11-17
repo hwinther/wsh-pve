@@ -455,7 +455,7 @@ sparc64 profile (`-boot order=d|c`).
   installer's password, the marker, the optional user (`useradd`, `passwd`: Solaris 10 applies
   `MINNONALPHA=1` from `/etc/default/passwd` to root too and refuses `wshlab`, so the rule is
   relaxed for that one call and the file put back), `/etc/defaultrouter`
-  and DNS, `init 5` (about 3 minutes: `svc:/network/inetd-upgrade` times out on the way down).
+  and DNS, `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
 - **check:** `solaris10-boot-disk.py` with the usual `COMMANDS` (`prtvtoc` of `c0t0d0s2`, the
   target's `device`) and `CHECK`.
 - `pve_matrix.py install` gives an install case the sum of the target's phase timeouts plus 10
