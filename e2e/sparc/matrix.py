@@ -34,6 +34,7 @@ SOL26SS20PROM = "sol26-enduser-ss20prom-installed.raw"
 SS20PROM = {"MACHINE": "SS-20", "BIOS": "ss20_v2.25_rom", "CPU": "TI-SuperSparc-50"}
 CD26, CD251 = "solaris_2.6_598_sparc.iso", "solaris_2.5.1_1197.iso"
 SOLARIS_IDLE = {"TRACE": "sparc_solaris_idle_match", "CPU_BELOW": "10"}
+SOLARIS_SMP_IDLE = {"TRACE": "sparc_solaris_idle_mp_match", "CPU_BELOW": "20"}
 # The sparc32 profiles (submodules/SPARC.md, "Supported profiles") and the 2.6 disk installed on each
 DISPLAY_PROFILES = [("openbios-ss5", {}), ("ss5bin-ss5", {"BIOS": "ss5.bin"}),
                     ("openbios-ss10", {"MACHINE": "SS-10"}), ("openbios-ss20", {"MACHINE": "SS-20"}),
@@ -145,6 +146,13 @@ MATRICES = {
         ("sol26-idle-ss20", "idle.py", SOL26SS20, None,
          {**SOLARIS_IDLE, "MACHINE": "SS-20", "TRACE_EXPECT": r"Solaris idle loop \(2\.6"}),
         ("sol26-noidle-spins-ss20", "idle.py", SOL26SS20, None, {"MACHINE": "SS-20,solaris-idle=off", "CPU_ABOVE": "80"}),
+        # More than one CPU: the multiprocessor idle loop, halted by solaris-smp-idle (on by default)
+        ("sol26-idle-ss20-2cpu", "idle.py", SOL26SS20, None,
+         {**SOLARIS_SMP_IDLE, "MACHINE": "SS-20", "SMP": "2", "TRACE_EXPECT": r"multiprocessor idle loop \(2\.6"}),
+        ("sol26-idle-ss20-4cpu", "idle.py", SOL26SS20, None,
+         {**SOLARIS_SMP_IDLE, "MACHINE": "SS-20", "SMP": "4", "TRACE_EXPECT": r"multiprocessor idle loop \(2\.6"}),
+        ("sol26-noidle-spins-ss20-2cpu", "idle.py", SOL26SS20, None,
+         {"MACHINE": "SS-20,solaris-smp-idle=off", "SMP": "2", "CPU_ABOVE": "150"}),
         ("sol251-idle-ss5", "idle.py", SOL251, None,
          {**SOLARIS_IDLE, "BIOS": "ss5.bin", "TRACE_EXPECT": r"Solaris idle loop \(2\.5\.1"}),
         # SunOS 4.1.4: halted in its idle loop by the sunos-idle machine option (on by default). Its dd
