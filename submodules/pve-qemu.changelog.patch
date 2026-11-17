@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 97fc676..754a044 100644
+index 97fc676..ad339cc 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,107 @@
+@@ -1,10 +1,114 @@
++pve-qemu-kvm (11.1.3-2+wsh15) trixie; urgency=medium
++
++  * feat(pve-qemu): idle CPUs of multiprocessor Solaris halt on SS-
++    10/SS-20 (#295)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 17 Nov 2026 16:14:48 +0000
++
 +pve-qemu-kvm (11.1.3-2+wsh14) trixie; urgency=medium
 +
 +  * feat(pve-qemu): ship the patched openbios-sparc64 and the cmd646 fix
