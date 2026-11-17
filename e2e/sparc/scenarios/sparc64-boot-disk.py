@@ -6,8 +6,10 @@ match its CHECK regex, if given), then power off and check that QEMU ended, BOOT
 
 The guest changes the disk (logs, first-boot setup): give it a copy.
 
-  GUEST     netbsd | openbsd | debian: login prompt, account and power-off command (_sparc64.GUESTS)
-  PROMPT, USER, PASSWORD, POWEROFF  override GUEST's
+  GUEST     netbsd | openbsd | debian | solaris10: login prompt, account and power-off command
+            (_sparc64.GUESTS)
+  PROMPT, USER, PASSWORD, POWEROFF, FIRSTBOOT  override GUEST's (FIRSTBOOT: a first-boot screen
+            before the login prompt, answered with F2)
   COMMANDS  shell commands run one after another, separated by ' ;; '   (GUEST's system state)
   CHECK     regexes their outputs must match, separated by ' ;; ' in the same order (empty: none)
   BOOTS     how many times to start QEMU, log in and power off (each boot after the first is a new
@@ -24,7 +26,7 @@ import time
 import lab
 from _sparc64 import DEFAULTS as BASE, guest_defaults, login, power_off, qemu_args as sparc64_args, shell
 
-DEFAULTS = {**BASE, "BOOT": "c", "GUEST": "", "PROMPT": "", "USER": "", "PASSWORD": "", "COMMANDS": "",
+DEFAULTS = {**BASE, "BOOT": "c", "GUEST": "", "PROMPT": "", "USER": "", "PASSWORD": "", "FIRSTBOOT": "", "COMMANDS": "",
             "CHECK": "", "POWEROFF": "", "BOOTS": "1", "TIMEOUT": "900"}
 
 

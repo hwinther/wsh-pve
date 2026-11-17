@@ -145,6 +145,10 @@ GUESTS = {
                 "COMMANDS": "uname -a ;; sysctl hw.ncpu hw.physmem ;; df -h /"},
     "debian": {"PROMPT": r"login: ?$", "USER": "root", "PASSWORD": "lab", "POWEROFF": "poweroff",
                "COMMANDS": "uname -a ;; nproc; free -m ;; lsblk ;; ip -br addr"},
+    # solaris10-install-sparc64.py's disk; its first boot asks for the keyboard layout
+    "solaris10": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "lab12345", "POWEROFF": "init 5",
+                  "FIRSTBOOT": r"Configure Keyboard Layout",
+                  "COMMANDS": "uname -a ;; prtconf | head -2 ;; df -h /"},
 }
 
 
@@ -166,8 +170,17 @@ def shell(m, command, timeout=600):
 
 
 def login(m, v, timeout=900):
-    """Wait for the login prompt (v["PROMPT"]) and log in as v["USER"]."""
-    m.expect(v["PROMPT"], timeout)
+    """Wait for the login prompt (v["PROMPT"]) and log in as v["USER"]. A first-boot screen on the way
+    (v["FIRSTBOOT"], a regex; Solaris 10's keyboard layout question) is accepted with F2."""
+    while True:
+        if not v.get("FIRSTBOOT") or m.expect_any([v["PROMPT"], v["FIRSTBOOT"]], timeout) == 0:
+            break
+        m.quiet(3, 120)
+        time.sleep(3)  # keys typed while the screen is still drawn are lost
+        m.snap("first-boot question")
+        m.key("f2")
+    if not v.get("FIRSTBOOT"):
+        m.expect(v["PROMPT"], timeout)
     m.snap("login prompt")
     m.send(f"{v['USER']}\r")
     if v["PASSWORD"]:

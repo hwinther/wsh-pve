@@ -80,6 +80,10 @@ MEDIA = {
         "title": "Solaris 9 SPARC, DVD", "content": "iso", "size": 3368878080,
         "sha256": "feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911",
         "lab": "SOL_9_SPARC_DVD.iso"},
+    "sol-10-u11-ga-sparc-dvd.iso": {
+        "title": "Solaris 10 1/13 (u11) SPARC, DVD", "content": "iso", "size": 2314731520,
+        "sha256": "b1df86b976282145fd317d9def4efc27d7d64589f5542184a3e781c0787cf02b",
+        "lab": "sol-10-u11-ga-sparc-dvd.iso"},
     "sunos_4.1.4_install.iso": {
         "title": "SunOS 4.1.4 (Solaris 1.1.2) install CD, raw BIN (2352-byte sectors)", "content": "iso",
         "size": 378178080, "sha256": "6088d836cf582128cdd69661c4b62399fbd6f4db9b817188b2d1509cebbb5f48",
@@ -253,6 +257,23 @@ TARGETS = {
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
         "hostname": "netbsd111-sparc64",
         "network": "none configured (sysinst defaults)",
+    },
+    "sol10-sun4u": {
+        "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",
+        "status": "catalogue",
+        "blocked": "solaris10-install-sparc64.py installs it under the lab's own QEMU (~80 min, SPARC.md "
+                   "\"Solaris on sun4u\"); not yet run through `install` on a PVE node (needs a check "
+                   "scenario through --pve, and the disk sizes here are plain images, not Sun-labelled).",
+        "method": "scripted",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 1024,
+                    "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 16, "label": None},
+        "media": [{"name": "sol-10-u11-ga-sparc-dvd.iso", "drive": "ide2"}],
+        "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": ""}, "timeout": 10800},
+        "boot": "ide0",
+        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "hostname": "sol10-sun4u",
+        "network": "hme0 by DHCP (the installer's DHCP choice)",
     },
     "netbsd111-sparc": {
         "title": "NetBSD 11.1 sparc Minimal on a SPARCstation 5 (OpenBIOS)",
