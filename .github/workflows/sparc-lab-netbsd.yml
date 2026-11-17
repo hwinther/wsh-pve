@@ -1,0 +1,59 @@
+name: sparc lab NetBSD
+
+# NetBSD 11.1/sparc64 installed from its official CD under the published pve-qemu-kvm (TCG, sun4u),
+# with the scenarios of the `netbsd111-sparc64` install target: sysinst on the serial console, the
+# first boot (root password, marker, host name, static address) and a check boot that logs in with
+# the password (e2e/sparc/tests/test_netbsd.py). The CD is downloaded from cdn.netbsd.org by the
+# test and checked against its pinned size and sha256 (targets.py); nothing from the lab host is used.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "e2e/sparc/**"
+      - ".github/workflows/sparc-lab-netbsd.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  netbsd:
+    name: NetBSD/sparc64 install
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests (install catalogue)
+        working-directory: e2e/sparc
+        run: python3 -m unittest -v tests/test_targets.py
+
+      - name: Build the lab image
+        run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+
+      - name: Install NetBSD/sparc64 from its CD in the lab
+        run: |
+          mkdir -p "$RUNNER_TEMP/netbsd"
+          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -e NETBSD_OUT=/out \
+            --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
+
+      - name: Keep the evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: netbsd-evidence
+          path: |
+            ${{ runner.temp }}/netbsd
+            !${{ runner.temp }}/netbsd/**/*.raw
+            !${{ runner.temp }}/netbsd/**/*.sock
+          retention-days: 7
