@@ -64,14 +64,16 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    disk with the text installer on ttya (2 of 2 installs, ~80 min each,
    `scenarios/solaris10-install-sparc64.py`), and the installed disk boots to `console login:`, gets
    a DHCP lease on `hme0` and powers off (`solaris10` matrix 2/2, needs the Sun DVD and the
-   installed disk on the lab host). NetBSD, OpenBSD `bsd.rd` and the Debian installer boot as
-   before. Still to do:
+   installed disk on the lab host). Through PVE, `lab.py install sol10-sun4u --check` installs it on
+   the sparc64 profile with a static address, the root password, the marker and an optional user
+   (3 of 3 complete runs passed, one with `--user` and the network options, ~110 min each; in `pve_matrix.py install`). NetBSD, OpenBSD `bsd.rd` and the
+   Debian installer boot as before. Still to do:
    - reboot: the installer's reboot and `reboot`/`init 6` return from the firmware; 0012
      (`.wip`) resets at the `ok` prompt but hangs when Solaris calls it;
    - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
      MAC into the IDPROM);
-   - `install` through PVE (catalogue entry `sol10-sun4u`); the intermittent `bad unknown trap at
-     TL 1` panic seen once before the package (none in 2 installs on it);
+   - `sol10-sun4u` with `--ip dhcp` (not tested through the tool); the intermittent `bad unknown
+     trap at TL 1` panic seen once before the package (none in 5 installs on it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 
@@ -79,8 +81,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
    the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
-2. **Solaris on sun4u**: see "In progress". Next: a reboot that works from Solaris (0012 hangs), a
-   per-VM system MAC, then `install` through PVE.
+2. **Solaris on sun4u**: see "In progress". Solaris 10 installs through `lab.py install`; next: a
+   reboot that works from Solaris (0012 hangs), then a per-VM system MAC.
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built

@@ -14,7 +14,8 @@ The targets' root password (`wshlab` unless you pass `--root-password`) is writt
 documentation, in the repository and in each VM's notes. These are throwaway lab VMs: don't reuse a
 real password, and change the password before a VM is reachable from anywhere untrusted. The tool
 enables no network service beyond what the guest's installer enables by default (Solaris 2.6 runs
-telnet and the r-services from inetd; root logins are allowed on the console only).
+telnet and the r-services from inetd; Solaris 10 keeps its installer's default "remote services
+enabled", which includes telnet; root logins are allowed on the console only).
 :::
 
 ## Targets
@@ -27,6 +28,7 @@ telnet and the r-services from inetd; root logins are allowed on the console onl
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
+| `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 
@@ -50,6 +52,17 @@ All Solaris targets end with the host name of the target (`sol26-ss5`, `sol8-ss2
 checksums. The Solaris 7, 8 and 9 targets take a static address only for now (`--ip dhcp` was
 tested with 2.6, not with them, so `lab.py install` refuses it).
 
+`sol10-sun4u` runs Solaris 10's text installer on the serial console with a static address on
+`hme0` (host name `sol10-sun4u`, no DHCP: `--ip dhcp` is refused), the time zone the installer
+lists first (Africa/Algiers), auto-layout (`/` 6.6 GB, swap 1 GB, the rest `/export/home`) and the
+root password from `--root-password`. Its reboot at the end doesn't come back (`prom_reboot: reboot
+call returned!`: OpenBIOS has no reboot for Solaris yet), so the tool stops the VM there, ejects the
+DVD and boots the disk. Don't use `reboot` or `init 6` in the guest either; stop and start the VM.
+Once in six DVD boots the kernel panicked before the installer's first question (a trap in the
+firmware); the tool then runs the install once more, since nothing is on the disk yet.
+Every sun4u guest has the MAC address 52:54:00:12:34:56 whatever `net0` says, so two of them on one
+network clash (the [sparc guide](/guides/sparc/#solaris-10)).
+
 In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
 Solaris 2.5.1 (its installer boots only from a CD that answers as a disk, which a PVE CD-ROM drive
 can't be), SunOS 4.1.4 (installed by hand only), NetBSD 11.1 sparc64 and sparc (scenario or
@@ -70,6 +83,7 @@ never part of this project.
 | `sun-solaris-8-0101-software-cd1-sparc.iso` | 578023424 | `d50e437d82c96a906833fca182f813035d766b1645491eb06b221826ef9f39c8` |
 | `sun-solaris-8-0101-software-cd2-sparc.iso` | 214757376 | `1b6fafd007673f924dc40103b3d2c565342b287d6ff8ad53ac07e1b4b73b44d4` |
 | `SOL_9_SPARC_DVD.iso` | 3368878080 | `feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911` |
+| `sol-10-u11-ga-sparc-dvd.iso` | 2314731520 | `b1df86b976282145fd317d9def4efc27d7d64589f5542184a3e781c0787cf02b` |
 
 The catalogue also lists the media of the targets that aren't automated yet (Solaris 2.5.1, SunOS
 4.1.4, NetBSD 11.1), with their checksums. Upload a medium through the storage's **ISO
@@ -168,10 +182,11 @@ What it does:
 1. Checks the media (name, size, sha256) and refuses a VMID that exists anywhere in the cluster:
    it never overwrites a VM.
 2. Creates the VM through the API with the target's profile, a disk with a Sun label (the Solaris
-   installers list only labelled disks; the label is written by the tool, no template needed) and
-   the CD in its drive, tagged `wsh-lab`.
+   2.6 installer lists only labelled disks; the label is written by the tool, no template needed;
+   Solaris 10 labels a blank disk itself) and the CD in its drive, tagged `wsh-lab`.
 3. Starts it and answers the installer on the serial console (the lab's scenario for that release).
-   The install ends with `halt`, which powers the VM off.
+   The install ends with `halt`, which powers the VM off (Solaris 10: the tool stops the VM when the
+   installer's reboot doesn't come back).
 4. Ejects the CD (the drive stays, empty) and sets the boot order to the disk.
 5. Boots the installed system once: answers the first-boot questions with the root password, writes
    `/etc/wsh-lab-target`, adds the optional user, shuts down with `init 5`.
@@ -183,7 +198,8 @@ While it runs the tool owns the VM's serial console: close `qm terminal` and the
 xterm.js first, they would get nothing. Measured in the PVE test container on the lab host
 (TCG, two host cores for the container, one guest at a time, packages of 2026-11-16): `sol26-ss5`
 took 11.8 minutes (install 407 s, first boot 182 s, check 105 s), `sol26-ss20` 12.1 minutes (413 s,
-191 s, 105 s). Without `--check` it is two minutes less.
+191 s, 105 s). Without `--check` it is two minutes less. `sol10-sun4u` (packages of 2026-11-17,
+`pve-qemu-kvm` 11.1.3-2+wsh13): 108.5, 109.6 and 110.7 minutes in three runs that passed (install about 81 minutes, first boot about 19, check about 9; the first boot imports Solaris's service descriptions, and `init 5` takes about 3 minutes).
 
 ## Disk size
 
@@ -246,6 +262,11 @@ guest, a target supports the modes its catalogue entry lists as tested (`wsh-lab
 - **DHCP**: `--ip dhcp`. Address, netmask, default router, name servers, domain and host name come
   from the DHCP server. `--dns`/`--domain` are used only if the server sends no name servers.
 
+Solaris 10 (`sol10-sun4u`) supports the static mode only: its installer gets the host name, the
+address and the netmask (and no default route); the first boot writes `/etc/defaultrouter` and,
+with `--dns`, `/etc/resolv.conf` and `hosts: files dns`. DHCP isn't offered yet because it wasn't
+tested through the tool (the lab's own runs used it).
+
 How Solaris 2.6 does it (both machines): its installer asks only for a static address and whether
 the system is on a subnet, and its name service choices are NIS+, NIS, Other and None, so the
 installer gets the address and the first boot writes the rest into the files 2.6's start-up
@@ -293,7 +314,7 @@ within the time limit) the exit code is 1, the evidence stays, and the VM is des
 
 Start it with `qm start 120` and log in on the serial console (`qm terminal 120`) as `root` with the
 password from the notes. The notes say how the network was set up ("Network" above); to change it
-later, edit the same files (`/etc/hostname.le0` and `/etc/hosts` for the address, `/etc/netmasks`,
+later, edit the same files (`/etc/hostname.le0`, `hostname.hme0` on Solaris 10, and `/etc/hosts` for the address, `/etc/netmasks`,
 `/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot.
 
 ## Licence keys
@@ -307,7 +328,8 @@ they stay out of the logs and recordings.
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
 container with the published packages, and the `install` matrix runs every automated target (by
-hand from the `sparc lab` workflow). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
+hand from the `sparc lab` workflow; with `sol10-sun4u` it takes about two and a half hours and needs
+the Solaris 10 DVD in the lab's media directory). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
 The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then

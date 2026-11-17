@@ -261,7 +261,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | NetBSD 11.1 (and 9.3) | CD boots to the installer on the serial console or the VGA screen; NetBSD 11.1 installs (about 8 minutes) and the installed system boots, gets a DHCP address and powers the VM off |
 | OpenBSD 8.0 | the installer boots and installs, but the installed kernel stops in the firmware (`Unhandled Exception 0x30`) |
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
-| Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes) and the installed system boots, gets a DHCP address and powers off; no reboot (see below) |
+| Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
@@ -290,7 +290,12 @@ Solaris 10 1/13 installs to the IDE disk and the installed system boots, with `p
 11.1.3-2+wsh13 or later (it ships the patched `openbios-sparc64` and the IDE interrupt fix). Measured
 in the sparc lab with QEMU started directly, in the same layout as the sparc64 profile (disk on the
 primary and DVD on the secondary IDE channel, `sunhme`, serial console, 1024 MB): 2 of 2 installs
-completed, about 80 minutes each. Through Proxmox only the installer's start was tested so far.
+completed, about 80 minutes each. Through Proxmox the whole install is automated: `wsh-lab install
+sol10-sun4u --vmid N --check` (the [lab install targets](/guides/lab-install/)) does the steps
+below on a VM it creates with the sparc64 profile (a blank 16 GB disk on `ide0`, the DVD on `ide2`,
+`sunhme`, `vga: serial0`, 1024 MB), with a static address, and checks the result: 3 of 3 runs passed (one more failed in the first boot on a bug that is fixed now, one stopped with a panic while the DVD booted, which the tool now retries once) in the
+PVE test container with the published packages, about 110 minutes each (install about 81 minutes,
+first boot about 19, check 8).
 
 1. Create the VM as for NetBSD with the Solaris 10 1/13 SPARC DVD, 1024 MB, a disk of 16 GB (the
    default software group needs about 5.3 GB) and a serial console (`serial0: socket`, Display:
@@ -298,14 +303,15 @@ completed, about 80 minutes each. Through Proxmox only the installer's start was
 2. Start it and open the serial console. The DVD boots in about 3 minutes and asks for the language
    and the terminal type (`0`, then `3` for DEC VT100). The installer's screens use Esc then a digit
    for the function keys (Esc 2 is F2, Continue), Ctrl-N/Ctrl-P to move, Return to mark `[X]`. Use
-   DHCP for `hme0`, mark a time zone, set the root password, choose CD/DVD as the media, select the
-   disk `c0t0d0`. The package copy takes about an hour.
+   DHCP for `hme0`, or a static address (host name, IP address, subnet, netmask, default route),
+   mark a time zone, set the root password, choose CD/DVD as the media, select the disk `c0t0d0`.
+   The package copy takes about an hour.
 3. At the end the installer tries to reboot and stops with `prom_reboot: reboot call returned!`
    (the firmware has no working reboot for Solaris yet). Stop the VM, eject the DVD or put `ide0`
    first in the boot order, and start it again.
 4. The first boot takes about 14 minutes (it imports its service descriptions), asks for the
    keyboard layout (F2 keeps US-English) and comes to `console login:`. `hme0` gets its address by
-   DHCP. `init 5` powers the VM off. Don't use `reboot` or `init 6`: they go through the same
+   DHCP or has the static one. `init 5` powers the VM off (it takes about 3 minutes). Don't use `reboot` or `init 6`: they go through the same
    firmware call as the installer's reboot. Stop and start the VM instead.
 
 Every Solaris 10 guest gets the same system MAC address, 52:54:00:12:34:56, whatever the NIC's
