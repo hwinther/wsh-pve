@@ -95,9 +95,12 @@ jobs:
     # The qemu-3dfx pin is never moved here: it moves only through the promotion PR that
     # promote-qemu-3dfx.yml opens (with the port check and a 3dfx build). Its fork is still synced above.
     if: ${{ inputs.repository != 'hwinther/qemu-3dfx' }}
-    # Checkout and push use WORKFLOW_TOKEN; GITHUB_TOKEN is not used.
+    # Checkout and push use WORKFLOW_TOKEN. GITHUB_TOKEN pulls the build image for the check and
+    # opens, comments on or closes the "upstream sync held back" issue.
     permissions:
       contents: read
+      packages: read
+      issues: write
     outputs:
       changed: ${{ steps.update-submodule.outputs.changed }}
       submodule: ${{ steps.update-submodule.outputs.submodule }}
@@ -108,8 +111,18 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Update submodule
         id: update-submodule
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSIGNEE: ${{ inputs.pr_assignee }}
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
@@ -136,8 +149,34 @@ jobs:
             echo Working directory clean
             echo "changed=false" >> $GITHUB_OUTPUT
             exit 0
-          else 
-            # Uncommitted changes
+          else
+            # Uncommitted changes. Move main only if our patch still applies and the build
+            # dependencies are met; otherwise keep main buildable and say why in one issue per
+            # submodule (commented on once per upstream commit, closed when a later bump passes).
+            title="Upstream sync held back: $submodule"
+            issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" \
+              --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+            upstream_sha=$(git -C submodules/$submodule rev-parse --short HEAD)
+            if ! REPORT="$RUNNER_TEMP/bump.md" scripts/check-upstream-bump.sh "$submodule"; then
+              echo "::warning::$submodule upstream $upstream_sha held back, main not changed"
+              cat "$RUNNER_TEMP/bump.md" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n%s\n' "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/bump.md"
+              if [ -z "$issue" ]; then
+                gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --assignee "$ASSIGNEE" \
+                  --body-file "$RUNNER_TEMP/bump.md" || gh issue create --repo "$GITHUB_REPOSITORY" \
+                  --title "$title" --body-file "$RUNNER_TEMP/bump.md"
+              elif ! gh issue view "$issue" --repo "$GITHUB_REPOSITORY" --json body,comments \
+                  --jq '.body, .comments[].body' | grep -qF "upstream \`$upstream_sha\`"; then
+                gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/bump.md"
+              fi
+              echo "changed=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            if [ -n "$issue" ]; then
+              gh issue close "$issue" --repo "$GITHUB_REPOSITORY" \
+                --comment "Upstream \`$upstream_sha\` passed the check and goes to main ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            fi
+
             echo Add and commit changes
             git add submodules/$submodule
             git commit -m "Update submodule $submodule"
