@@ -287,10 +287,14 @@ def network_text(net, nic="le0", dhcp_note=None):
     return f"{s}; {'; '.join(extra)} ({where})"
 
 
-def drive_volume(drive, vol):
+def drive_volume(drive, vol, as_disk=False):
     """A medium's drive value for the VM config: CDs as media=cdrom, floppies read only (they are
-    shared reference media; a written image no longer matches its sha256)."""
-    return f"{vol},ro=1" if drive.startswith("floppy") else f"{vol},media=cdrom"
+    shared reference media; a written image no longer matches its sha256). `as_disk` (the medium's
+    "as_disk" in targets.py): the CD answers as a read-only disk (qemu-server's sparc32-only
+    cd_as_disk=1; Solaris 2.4/2.5.1 boot their installer only from such a CD)."""
+    if drive.startswith("floppy"):
+        return f"{vol},ro=1"
+    return f"{vol},media=cdrom" + (",cd_as_disk=1" if as_disk else "")
 
 
 def vm_params(t, a, volids, disk_image, disk=None):
@@ -307,7 +311,7 @@ def vm_params(t, a, volids, disk_image, disk=None):
     for med in t["media"]:
         if med.get("at", "start") == "start":
             vol = volids[med["name"]]
-            p[med["drive"]] = drive_volume(med["drive"], vol)
+            p[med["drive"]] = drive_volume(med["drive"], vol, med.get("as_disk", False))
     p.update(vmid=a.vmid, name=a.name or a.target, tags="wsh-lab",
              description=f"wsh-lab install of {a.target} in progress (lab.py install)")
     return p

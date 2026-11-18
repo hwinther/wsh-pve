@@ -66,7 +66,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 
 | Scenario | What it does | Time (11.1, one core) |
 | -------- | ------------ | --------------------- |
-| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update |
+| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update; 2.4 (the same, through PVE): ~5 min |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
@@ -207,8 +207,11 @@ Scenarios run in both modes: `pve_vars()` reads the VM's config (`qm config`) an
 scenarios read as variables, between the scenario's `DEFAULTS` and `--var`: `ARCH`, `MEM`, `SERIAL`,
 `CONSOLE` (`serial` without a display, else `fb`) and, for `arch: sparc`, `MACHINE`, `BIOS`, `VGA`
 (`none` for `vga: serialN`), `BOOT=c` (qemu-server sets no boot device, so OpenBIOS tries the disk first and
-`prom_boot()` boots the CD at the `0 >` prompt), `CDROM_AS` (`hd` for a target 6 without
-`media=cdrom`) and `REFRESH`. `solaris-install-serial.py` and `solaris-boot-disk.py` ran unchanged
+`prom_boot()` boots the CD at the `0 >` prompt), `CDROM_AS` (`hd` for a target 6 CD-ROM with
+`cd_as_disk=1` and a medium, or a target 6 disk without `media=cdrom`) and `REFRESH`. With a Sun
+PROM, `prom_boot()` types `ttya io` on the keyboard only when the banner says `Keyboard Present`:
+qemu-server starts a VM without a framebuffer with `-nographic`, which leaves the keyboard out, and
+the PROM (`No Keyboard`) reads ttya by itself. `solaris-install-serial.py` and `solaris-boot-disk.py` ran unchanged
 against a PVE VM; `solaris-boot-cd.py`, `idle.py` and `bench.py` read only these variables but weren't
 run in attach mode; `cg3-display.py` needs `--var GUEST=1` or `GUEST=` (its `qemu_args()` sets it).
 `alpine-boot-cd.py` and `netbsd-boot-cd.py` are attach mode only.
@@ -596,6 +599,62 @@ workflow now needs the Solaris 7, 8 and 9 media too and takes about 80 min longe
 SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their `net_modes` is
 `["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
 `--vlan`, `--user` and `--data-disk` with them.
+
+### Solaris 2.4 and 2.5.1
+
+`sol24-ss5` (2.4 Hardware 3/95) and `sol251-ss5` (2.5.1 11/97) boot their installer only from a CD
+that answers as a disk, and 2.4 only under a Sun PROM: SS-5 with `bios: ss5.bin`, and the CD's
+medium has `as_disk: True`, which `install.drive_volume()` turns into qemu-server's `cd_as_disk=1`
+(`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`, a read-only `scsi-hd` on target 6;
+`submodules/SPARC.md`, "Supported profiles"). `targets.problems()` allows `as_disk` only on a sparc32
+SCSI drive at the start (a medium swap would wait for the next start). `pve_vars()` sets
+`CDROM_AS=hd` for such a drive, so `solaris-install-serial.py` answers the installer as in the
+lab's own QEMU; the installer also lists the CD as `c0t6d0`, and `disks()` marks only `c0t3d0`.
+Two things were new through PVE:
+
+- **No keyboard under the Sun PROM.** qemu-server starts a VM with `vga: serial0` with
+  `-nographic`, which leaves out the Sun keyboard: the PROM says `SPARCstation 5, No Keyboard` and
+  reads ttya. `prom_boot()` typed `ttya io` on the keyboard and waited 30 s for `ok` in vain (the
+  first run); it now types it only after `Keyboard Present` (the lab's own QEMU, `-vga none`).
+  Under PVE the PROM tries the network first (`Boot device: .../le@5,8c00000`, `Can't open boot
+  device`) and stops at `ok`, where `prom_boot()` types `boot cdrom` (the PROM's `cdrom` alias is
+  `sd@6,0:d`, which works for the `scsi-hd` too) and later `boot disk`.
+- **2.4's date screen:** it shows 2026 as `Year (4 digits) : 1912`, and confirming that ends in
+  `Unable to convert given date` and the time zone screen again, in a loop. `date()` types the
+  4-digit year (`YEAR`, default the host's) over the highlighted field when it shows a year before
+  1970; 2.4 then takes 2026. 2.5.1 and later take the year they show.
+
+2.5.1's install ends with its Maintenance Update (`install_mu`: "It will take from 15 to 45 minutes
+to determine the file system space requirements"), so the root shell comes up to an hour after the
+postinstall phase starts: the target sets `FINISH_TIMEOUT=6000` (the scenario's wait for the shell,
+1800 s by default; the first run through PVE hit that). The first boot and the check are those of
+2.6 (`solaris-firstboot.py`, `solaris-boot-disk.py`, a static address only: there is no DHCP client
+before 2.6). 2.4 has no `hostname` command (the check's `hostname` prints `not found`; the marker
+has the name), and its auto-layout makes small slices on the 3G disk: `/` 25 MB, swap 129 MB,
+`/usr` 108 MB (85% used), `/export/home` 2.4 GB.
+
+Tested in the PVE test container on the lab host, 2026-11-18: the published packages (pve-qemu-kvm
+11.1.3-2+wsh16, pve-manager 9.2.30+wsh1) with qemu-server built from this branch (9.2.18 plus
+`cd_as_disk`), each with `--check`. Another agent's container ran on the host at the same time, and
+some runs overlapped (noted):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol251-ss5` (first) | failed: `ttya io` on a keyboard the VM doesn't have (above) | 1 min |
+| `install sol251-ss5` | failed in the Maintenance Update: no root shell within the scenario's 1800 s (above) | 34 min |
+| `install sol24-ss5` (first) | stopped by hand in the date loop (above) | 6 min |
+| `install sol24-ss5` (alongside the 2.5.1 run) | passed; `SunOS sol24-ss5 5.4 generic sun4m sparc`; the marker; `le0 10.0.2.15 netmask ffffff00`; the slices above | 9.3 min (install 315 s, first boot 141 s, check 85 s) |
+| `install sol251-ss5` (`FINISH_TIMEOUT=6000`; the sol26 run overlapped its first 15 min) | passed; `SunOS sol251-ss5 5.5.1 Generic_103640-12 sun4m sparc SUNW,SPARCstation-5`; the marker; `/` 123024 KB, `/usr` 110550 (87% used), `/export/home` 2313661; `le0 10.0.2.15 netmask ffffff00`; the finished VM has `scsi6: none,media=cdrom` | 43.9 min (install 2336 s, of which ~18 min without console output in the Maintenance Update; first boot 182 s, check 98 s) |
+| `install sol26-ss5` (regression of the scenario changes, alongside 2.5.1) | passed | 14.4 min (install 518 s, first boot 218 s, check 111 s) |
+| `matrix.py smoke` (lab image with the branch's `e2e/sparc`: the 2.5.1 disk under `ss5.bin` takes the `Keyboard Present` path) | 3/3 passed | 161 s, 111 s, 66 s |
+| `solaris-boot-cd.py` 2.5.1 CD, `CDROM_AS=hd`, SS-20 with the SS-20 PROM (lab image) | passed (installer's first question) | 57 s |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now also needs the 2.4 and 2.5.1 CDs and takes about 55 min longer; with a published
+qemu-server that lacks `cd_as_disk` both cases fail at VM creation (`cd_as_disk: property is not
+defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the network options other
+than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
+(one passing run each so far).
 
 ### NetBSD install targets
 
@@ -1455,8 +1514,9 @@ lab.
 - **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
   (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
-  panics with `vfs_mountroot: cannot mount root`. qemu-server always makes a sparc CD-ROM a
-  `scsi-cd`. A CD that answers as a disk is also listed as an install target (`c0t6d0`).
+  panics with `vfs_mountroot: cannot mount root`. Through PVE that is the CD-ROM drive's
+  `cd_as_disk=1` (qemu-server, sparc32 only; the install targets' `as_disk`). A CD that answers as
+  a disk is also listed as an install target (`c0t6d0`).
 - **Solaris 2.4 doesn't boot under OpenBIOS** ("Unhandled Exception 0x00000009", any CD device);
   2.4 and 2.5.1 boot with `ss5.bin`. 2.5.1 installed and booted fine on 11.1.3+wsh1 (the ESP fix).
 - **Stop-A powered the VM off under OpenBIOS** (fixed by `openbios/patches/0008`): its `op_enter`

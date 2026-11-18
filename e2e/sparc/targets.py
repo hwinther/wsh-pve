@@ -29,7 +29,9 @@ TARGETS: per target
   media      [{name, drive, ...}]: the media in MEDIA, each with the drive it goes into at the start
              (`at: "start"`, default) or, for multi-volume installs, `at: <regex>`: inserted into
              `drive` when the installer's console shows that prompt (install.MediaSwapper), or `at: "scenario"`:
-             handed to the install scenario in order (SWAPS) for prompts that name no disk
+             handed to the install scenario in order (SWAPS) for prompts that name no disk.
+             `as_disk: True`: the CD answers as a read-only disk (qemu-server's sparc32-only
+             cd_as_disk=1, for the Solaris 2.4/2.5.1 installers); at the start only
   method     "scripted": the installer is answered on the console by `install` (a scenario, with
              `vars`), then `firstboot` (a scenario) sets the root password, writes the marker file
              /etc/wsh-lab-target and optionally adds a user, and powers off; `check` (a scenario,
@@ -64,12 +66,19 @@ PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+
                        "pve-manager": "9.2.28+wsh4"}
 PACKAGES_2026_11_17 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh13"}
 PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+wsh15"}
+# qemu-server with cd_as_disk (9.2.18 built from the branch that added it; no published package yet)
+PACKAGES_2026_11_18_CD_AS_DISK = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18 + cd_as_disk",
+                                  "pve-manager": "9.2.30+wsh1"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
         "title": "Solaris 2.6 5/98 SPARC, Software CD", "content": "iso", "size": 565862400,
         "sha256": "17351669cb91a89562ed6bb23345879c4d18bd019a85085ad53f777e7b7a6b14",
         "lab": "solaris_2.6_598_sparc.iso"},
+    "solaris_2.4_sparc.iso": {
+        "title": "Solaris 2.4 Hardware 3/95 SPARC, Software CD", "content": "iso", "size": 455819264,
+        "sha256": "c23fe150a9963e5dacbfc988fa700c5f2c7506d36ad0b40910e77444709d1fa4",
+        "lab": "solaris_2.4_sparc.iso"},
     "solaris_2.5.1_1197.iso": {
         "title": "Solaris 2.5.1 11/97 SPARC, Software CD", "content": "iso", "size": 452157440,
         "sha256": "18da51043271d0aa69d6fc098b84156673ef4f0728dace4a9e679f79d70d2422",
@@ -222,19 +231,39 @@ TARGETS = {
         "minutes": 12,  # install 7, first boot 3, --check 2
         "tested": {"date": "2026-11-16", "packages": PACKAGES_2026_11_16, "with": "--check --user lab --template"},
     },
+    # Its installer boots only from a CD that answers as a disk (scsi-hd): the CD-ROM gets qemu-server's
+    # sparc32-only cd_as_disk=1 ("as_disk"). 2.5.1 boots under the Sun PROM (ss5.bin); its install
+    # copies the packages, then the Maintenance Update.
     "sol251-ss5": {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 2.5.1 11/97 End User on a SPARCstation 5 (ss5.bin)",
-        "status": "catalogue",
-        "blocked": "Its installer boots only from a CD that answers as a disk (scsi-hd); a PVE CD-ROM "
-                   "drive is always a scsi-cd. The lab's workaround (the ISO imported read only as a disk "
-                   "on target 6) isn't in `install` yet. The scripted install itself works (lab: ~60 min, "
-                   "mostly its Maintenance Update).",
+        "status": "automated",
+        # the Maintenance Update keeps the installer busy for most of an hour
+        "install": {**SOLARIS_SCRIPTED["install"], "vars": {"FINISH_TIMEOUT": "6000"}, "timeout": 7200},
         "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
         "disk": sun_disk("3G"),
-        "media": [{"name": "solaris_2.5.1_1197.iso", "drive": "scsi6"}],
+        "media": [{"name": "solaris_2.5.1_1197.iso", "drive": "scsi6", "as_disk": True}],
         "boot": "scsi3",
         "hostname": "sol251-ss5",
+        "net_modes": ["static"],  # 2.5.1 has no DHCP client (dhcpagent came with 2.6)
+        "minutes": 44,  # install 39 (most of it the Maintenance Update), first boot 3, --check 1.6
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
+    },
+    # Solaris 2.4 boots only under the Sun PROM ("Unhandled Exception 0x00000009" under OpenBIOS) and,
+    # like 2.5.1, only from a CD that answers as a disk
+    "sol24-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.4 HW 3/95 End User on a SPARCstation 5 (ss5.bin)",
+        "status": "automated",
+        "install": {**SOLARIS_SCRIPTED["install"], "timeout": 7200},
+        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris_2.4_sparc.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol24-ss5",
+        "net_modes": ["static"],  # no DHCP client before 2.6
+        "minutes": 10,  # install 5, first boot 2.4, --check 1.4
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
     },
     # Solaris 7 asks 2.6's questions plus Subnets (default yes) and Select 64 Bit (default no):
     # solaris-install-serial.py unchanged
@@ -448,6 +477,11 @@ def problems():
         for med in t.get("media", []):
             if med["name"] not in MEDIA:
                 out.append(f"{name}: medium {med['name']} isn't in MEDIA")
+            # qemu-server's cd_as_disk: sparc32 SCSI CD-ROMs only, and no live medium change (a scsi-hd
+            # has no removable medium, so a swap would wait for the next start)
+            if med.get("as_disk") and (t.get("profile", {}).get("arch") != "sparc" or not med["drive"].startswith("scsi")
+                                       or med.get("at", "start") != "start"):
+                out.append(f"{name}: as_disk is for a sparc32 SCSI CD-ROM at the start only ({med['name']})")
             if med.get("at", "start") == "start":
                 if med["drive"] in drives:
                     out.append(f"{name}: two media in {med['drive']} at the start")

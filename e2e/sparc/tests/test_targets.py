@@ -288,6 +288,28 @@ class VmParams(unittest.TestCase):
         self.assertEqual((p["arch"], p["machine"], p["bios"], p["memory"]), ("sparc", "SS-5", "openbios-sparc32", 256))
         self.assertEqual((p["name"], p["vmid"], p["tags"]), ("sol26-ss5", "120", "wsh-lab"))
 
+    def test_cd_as_disk(self):
+        # Solaris 2.4/2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk), under ss5.bin
+        for name, iso in (("sol251-ss5", "solaris_2.5.1_1197.iso"), ("sol24-ss5", "solaris_2.4_sparc.iso")):
+            a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
+            p = install.vm_params(targets.TARGETS[name], a, {iso: f"local:iso/{iso}"}, None)
+            self.assertEqual(p["scsi6"], f"local:iso/{iso},media=cdrom,cd_as_disk=1")
+            self.assertEqual(p["bios"], "ss5.bin")
+        self.assertEqual(install.drive_volume("scsi6", "local:iso/x.iso"), "local:iso/x.iso,media=cdrom")
+        # as_disk only where qemu-server takes it: a sparc32 SCSI CD-ROM, inserted at the start
+        saved = targets.TARGETS["sol26-ss5"]
+        try:
+            for med in ({"drive": "ide2", "as_disk": True}, {"drive": "scsi6", "as_disk": True, "at": "scenario"}):
+                targets.TARGETS["sol26-ss5"] = {**saved, "media": [{"name": "solaris_2.6_598_sparc.iso", **med}]}
+                self.assertTrue(any("as_disk" in p for p in targets.problems()), med)
+        finally:
+            targets.TARGETS["sol26-ss5"] = saved
+        # what pve_vars() tells the scenarios (CDROM_AS), from the drive as `qm config` prints it
+        for drive, want in (("local:iso/x.iso,cd_as_disk=1,media=cdrom,size=1M", "hd"),
+                            ("none,cd_as_disk=1,media=cdrom", "cd"), ("local:iso/x.iso,media=cdrom", "cd"),
+                            ("local:1/vm-1-disk-1.raw,ro=1,backup=0", "hd")):
+            self.assertEqual(lab.pve_cdrom_as(drive), want, drive)
+
     def test_later_media_are_not_attached_at_the_start(self):
         t = targets.TARGETS["sol8-ss20"]
         vols = {m["name"]: f"local:iso/{m['name']}" for m in t["media"]}

@@ -1,5 +1,5 @@
 """Solaris 2.x initial install over the serial console, from boot CD to an installed disk that is
-powered off. Tested with 2.6 (5/98) and 2.5.1 (11/97).
+powered off. Tested with 2.6 (5/98), 2.5.1 (11/97) and 2.4 (HW 3/95).
 
     lab.py run scenarios/solaris-install-serial.py --out /srv/sparc/runs/s26 \
         --var ISO=/srv/sparc/solaris_2.6_598_sparc.iso \
@@ -27,7 +27,8 @@ from _sparc32 import DEFAULTS as BASE, power_off, prom_boot, qemu_args as sparc3
 
 DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15",
             "REGION_UP": "3", "ZONE_DOWN": "5",  # from United States up to Europe, then Middle Europe (MET)
-            "SOFTWARE_UP": "0"}  # 0 = End User System Support, 3 = Entire Distribution
+            "SOFTWARE_UP": "0",  # 0 = End User System Support, 3 = Entire Distribution
+            "FINISH_TIMEOUT": "1800"}  # s from the postinstall phase to the root shell
 
 
 def qemu_args(v, out):
@@ -59,6 +60,15 @@ def disks(m, v):
     m.expect(r"\[X\] c0t3d0", 60, screen=True)
 
 
+def date(m, v):
+    # Solaris 2.4 shows a year after 1999 as 19xx ("Year (4 digits) : 1912" in 2026) and then refuses
+    # it ("Unable to convert given date"), back to the time zone. The Year field has the focus with
+    # its value highlighted: typing replaces it. 2.5.1 and later take the year they show.
+    year = re.search(r"Year\s+\(4 digits\)\s*:\s*(\d+)", m.screen_text())
+    if year and int(year[1]) < 1970:
+        m.send(v.get("YEAR") or time.strftime("%Y"))
+
+
 def no_auto_reboot(m, v):
     # With the CD first in the boot order an automatic reboot only starts the installer again.
     mark(m, "down", 1)
@@ -74,6 +84,7 @@ SCREENS = [
     (r"Time zones", lambda m, v: mark(m, "down", v["ZONE_DOWN"])),
     (r"Select Software|^\S Software [q─]", software),
     (r"Select Disks|^\S Disks [q─]", disks),
+    (r"^\S Date and Time [q─]", date),
     (r"Reboot After Installation|Begin Installing Solaris", no_auto_reboot),
     # Everything else: the defaults are what we want (Networked yes, subnet no, date, system type
     # standalone, no client services, English only, don't preserve data, auto-layout, no remote
@@ -126,7 +137,8 @@ def run(m, v):
     m.snap("installing")
     # Package copy, then (2.6) patches and the JumpStart finish scripts, then a root shell.
     m.expect(r"Executing JumpStart postinstall phase|Customizing system files", 7200)
-    m.expect(r"\n#\s*$", 1800)
+    # 2.5.1's Maintenance Update ("Building package data base") runs past 30 minutes
+    m.expect(r"\n#\s*$", int(v["FINISH_TIMEOUT"]))
     m.quiet(5, 600)
     m.snap("installation finished")
     power_off(m, "halt")
