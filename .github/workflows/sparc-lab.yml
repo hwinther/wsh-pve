@@ -91,7 +91,8 @@ jobs:
           # The bench disk's directory, only when it exists (docker would create a missing one);
           # without it the benchdisk cases fail with "bench disk ... doesn't exist"
           bench=()
-          if [ -f "$BENCH_DISK" ]; then
+          # (not when it is DISKS_DIR itself, already mounted: docker refuses a duplicate mount point)
+          if [ -f "$BENCH_DISK" ] && [ "$(dirname "$BENCH_DISK")" != "$DISKS_DIR" ]; then
             bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
           fi
           # The Solaris 10 install takes ~80 min, more than matrix.py's 3600 s per case
@@ -120,7 +121,8 @@ jobs:
         run: |
           # The bench disk's directory, only when it exists (the sol26-ss20-smp2 case imports it)
           bench=()
-          if [ -f "$BENCH_DISK" ]; then
+          # (not when it is DISKS_DIR itself, already mounted: docker refuses a duplicate mount point)
+          if [ -f "$BENCH_DISK" ] && [ "$(dirname "$BENCH_DISK")" != "$DISKS_DIR" ]; then
             bench=(-v "$(dirname "$BENCH_DISK"):$(dirname "$BENCH_DISK"):ro")
           fi
           # The install floppies (the DOS targets), only when the directory exists
