@@ -1,7 +1,7 @@
 #!/bin/bash
 # Prints the commit of submodules/<name> that Proxmox has published as a package: the newest
 # commit on the submodule's upstream branch whose debian/changelog starts with the version that
-# Proxmox's apt repository has (the newest of the suites below). The nightly sync moves the
+# Proxmox's apt repository has (the newest of the suites below; by default pve-no-subscription only). The nightly sync moves the
 # submodule to that commit instead of the branch tip, so main builds on released code, never on
 # commits whose dependencies aren't published yet.
 #
@@ -10,7 +10,9 @@
 # Usage: scripts/upstream-released-commit.sh <submodule>
 # Env:   UPSTREAM_REF     the branch to search (default: origin/master, fetched first)
 #        PROXMOX_DISTS    apt dists URL (default: http://download.proxmox.com/debian/pve/dists/trixie)
-#        PROXMOX_SUITES   suites to read (default: "pvetest pve-no-subscription")
+#        PROXMOX_SUITES   suites to read (default: "pve-no-subscription"). Not pvetest by default:
+#                         a pvetest release can depend on packages only pvetest has, and then
+#                         our build of it doesn't install next to no-subscription.
 # Output: the commit on stdout; what it found on stderr.
 # Exit:  0 found; 1 not found (no published version, or no commit with exactly that version);
 #        2 usage error
@@ -25,7 +27,7 @@ case "$name" in
     *) pkg="$name" ;;
 esac
 dists=${PROXMOX_DISTS:-http://download.proxmox.com/debian/pve/dists/trixie}
-suites=${PROXMOX_SUITES:-"pvetest pve-no-subscription"}
+suites=${PROXMOX_SUITES:-"pve-no-subscription"}
 ref=${UPSTREAM_REF:-origin/master}
 
 newer() { dpkg --compare-versions "$1" gt "$2"; }
