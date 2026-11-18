@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index 326e9d98..73d86b26 100644
+index 326e9d98..8a9aa82c 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -159,6 +159,8 @@ my $check_drive_param = sub {
@@ -78,7 +78,7 @@ index 326e9d98..73d86b26 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1419,6 +1458,12 @@ __PACKAGE__->register_method({
+@@ -1419,6 +1458,13 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -87,11 +87,12 @@ index 326e9d98..73d86b26 100644
 +        PVE::QemuServer::Machine::assert_sparc64_profile($param)
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($param) if !$archive;
++        PVE::QemuServer::Machine::assert_audio_device($param) if !$archive;
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          eval { PVE::QemuConfig->create_and_lock_config($vmid, $force) };
-@@ -1568,6 +1613,7 @@ __PACKAGE__->register_method({
+@@ -1568,6 +1614,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -99,7 +100,7 @@ index 326e9d98..73d86b26 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2301,6 +2347,15 @@ my $update_vm_api = sub {
+@@ -2301,6 +2348,16 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -111,6 +112,7 @@ index 326e9d98..73d86b26 100644
 +        PVE::QemuServer::Machine::assert_sparc64_profile($new_conf)
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($new_conf);
++        PVE::QemuServer::Machine::assert_audio_device($new_conf);
 +
          return $conf;
      };
@@ -142,7 +144,7 @@ index d89a62e6..abaa858d 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 638afd80..c466c362 100644
+index 638afd80..04fcbbfe 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -175,13 +177,15 @@ index 638afd80..c466c362 100644
  };
  
  my $ivshmem_fmt = {
-@@ -212,16 +226,30 @@ my $ivshmem_fmt = {
+@@ -212,16 +226,31 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
          type => 'string',
 -        enum => [qw(ich9-intel-hda intel-hda AC97)],
-+        enum => [qw(ich9-intel-hda intel-hda AC97 sb16 adlib pcspk sb16-adlib-pcspk)],
-         description => "Configure an audio device.",
+-        description => "Configure an audio device.",
++        enum => [qw(ich9-intel-hda intel-hda AC97 sb16 adlib pcspk sb16-adlib-pcspk cs4231)],
++        description => "Configure an audio device. 'cs4231' is the SPARCstation 5's built-in"
++            . " CS4231 (arch sparc, machine SS-5 only).",
      },
      driver => {
          type => 'string',
@@ -208,7 +212,7 @@ index 638afd80..c466c362 100644
  };
  
  my $spice_enhancements_fmt = {
-@@ -673,7 +701,7 @@ EODESCR
+@@ -673,7 +702,7 @@ EODESCR
      bios => {
          optional => 1,
          type => 'string',
@@ -217,7 +221,7 @@ index 638afd80..c466c362 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -1089,6 +1117,8 @@ sub verify_media_type {
+@@ -1089,6 +1118,8 @@ sub verify_media_type {
          $etype = 'images';
      } elsif ($media eq 'cdrom') {
          $etype = 'iso';
@@ -226,7 +230,7 @@ index 638afd80..c466c362 100644
      } else {
          die "internal error";
      }
-@@ -1101,6 +1131,9 @@ sub verify_media_type {
+@@ -1101,6 +1132,9 @@ sub verify_media_type {
  sub cleanup_drive_path {
      my ($opt, $storecfg, $drive) = @_;
  
@@ -236,7 +240,7 @@ index 638afd80..c466c362 100644
      # try to convert filesystem paths to volume IDs
  
      if (
-@@ -1112,7 +1145,7 @@ sub cleanup_drive_path {
+@@ -1112,7 +1146,7 @@ sub cleanup_drive_path {
          my ($vtype, $volid) = PVE::Storage::path_to_volume_id($storecfg, $drive->{file});
          raise_param_exc({ $opt => "unable to associate path '$drive->{file}' to any storage" })
              if !$vtype;
@@ -245,7 +249,7 @@ index 638afd80..c466c362 100644
          verify_media_type($opt, $vtype, $drive->{media});
          $drive->{file} = $volid;
      }
-@@ -1120,7 +1153,9 @@ sub cleanup_drive_path {
+@@ -1120,7 +1154,9 @@ sub cleanup_drive_path {
      my $file_type = classify_drive_file($drive->{file});
  
      $drive->{media} = 'cdrom'
@@ -256,7 +260,7 @@ index 638afd80..c466c362 100644
  }
  
  sub parse_hotplug_features {
-@@ -1209,6 +1244,8 @@ sub print_drive_commandline_full {
+@@ -1209,6 +1245,8 @@ sub print_drive_commandline_full {
      my $opts = '';
      my @qemu_drive_options = qw(media cache rerror werror discard);
      foreach my $o (@qemu_drive_options) {
@@ -265,7 +269,7 @@ index 638afd80..c466c362 100644
          $opts .= ",$o=$drive->{$o}" if defined($drive->{$o});
      }
  
-@@ -1263,6 +1300,11 @@ sub print_drive_commandline_full {
+@@ -1263,6 +1301,11 @@ sub print_drive_commandline_full {
      die "$drive_id: explicit media parameter is required for iso images\n"
          if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
  
@@ -277,7 +281,7 @@ index 638afd80..c466c362 100644
      if (!drive_is_cdrom($drive)) {
          my $detectzeroes = PVE::QemuServer::Drive::detect_zeroes_cmdline_option($drive);
  
-@@ -1318,7 +1360,8 @@ sub print_netdevice_full {
+@@ -1318,7 +1361,8 @@ sub print_netdevice_full {
          $device = 'virtio-net-pci';
      }
  
@@ -287,7 +291,7 @@ index 638afd80..c466c362 100644
      my $tmpstr = "$device,mac=$net->{macaddr},netdev=$netid$pciaddr,id=$netid";
      if ($net->{queues} && $net->{queues} > 1 && $net->{model} eq 'virtio') {
          # Consider we have N queues, the number of vectors needed is 2 * N + 2, i.e., one per in
-@@ -2794,6 +2837,7 @@ sub conf_has_audio {
+@@ -2794,6 +2838,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -295,7 +299,7 @@ index 638afd80..c466c362 100644
      };
  }
  
-@@ -2810,6 +2854,20 @@ sub audio_devs {
+@@ -2810,6 +2855,23 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -313,10 +317,13 @@ index 638afd80..c466c362 100644
 +            push @$devs, '-device', "sb16$audiodev";
 +            push @$devs, '-device', "adlib$audiodev";
 +        }
++    } elsif ($audio->{dev} eq 'cs4231') {
++        # built into the SPARCstation 5 (sun4m): no -device, the machine takes the backend
++        push @$devs, '-machine', "audiodev=$audio->{backend_id}";
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2818,7 +2876,20 @@ sub audio_devs {
+@@ -2818,7 +2880,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -338,7 +345,7 @@ index 638afd80..c466c362 100644
  
      return $devs;
  }
-@@ -2978,7 +3049,7 @@ sub vga_conf_has_spice {
+@@ -2978,7 +3053,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -347,7 +354,7 @@ index 638afd80..c466c362 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2987,7 +3058,7 @@ sub query_supported_cpu_flags {
+@@ -2987,7 +3062,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -356,7 +363,7 @@ index 638afd80..c466c362 100644
      my $qemu_binary_version = kvm_user_version($qemu_cmd);
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
-@@ -3072,7 +3143,7 @@ sub query_supported_cpu_flags {
+@@ -3072,7 +3147,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -365,7 +372,7 @@ index 638afd80..c466c362 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3091,6 +3162,8 @@ my sub get_vga_properties {
+@@ -3091,6 +3166,8 @@ my sub get_vga_properties {
      if (!$vga->{type}) {
          if ($arch eq 'aarch64') {
              $vga->{type} = 'virtio';
@@ -374,7 +381,7 @@ index 638afd80..c466c362 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3144,7 +3217,10 @@ sub config_to_command {
+@@ -3144,7 +3221,11 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -382,11 +389,12 @@ index 638afd80..c466c362 100644
 +    PVE::QemuServer::Machine::assert_sparc32_profile($conf) if $arch eq 'sparc';
 +    PVE::QemuServer::Machine::assert_sparc64_profile($conf) if $arch eq 'sparc64';
 +    PVE::QemuServer::Machine::assert_cd_as_disk($conf);
++    PVE::QemuServer::Machine::assert_audio_device($conf);
 +    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3255,7 +3331,9 @@ sub config_to_command {
+@@ -3255,7 +3336,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -397,7 +405,7 @@ index 638afd80..c466c362 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3275,6 +3353,10 @@ sub config_to_command {
+@@ -3275,6 +3358,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -408,7 +416,7 @@ index 638afd80..c466c362 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3289,17 +3371,20 @@ sub config_to_command {
+@@ -3289,17 +3376,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -431,7 +439,7 @@ index 638afd80..c466c362 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3310,6 +3395,7 @@ sub config_to_command {
+@@ -3310,6 +3400,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -439,7 +447,7 @@ index 638afd80..c466c362 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3318,7 +3404,6 @@ sub config_to_command {
+@@ -3318,7 +3409,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -447,7 +455,7 @@ index 638afd80..c466c362 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3331,6 +3416,22 @@ sub config_to_command {
+@@ -3331,6 +3421,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -470,7 +478,16 @@ index 638afd80..c466c362 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3397,16 +3498,41 @@ sub config_to_command {
+@@ -3361,7 +3467,7 @@ sub config_to_command {
+     }
+ 
+     if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
+-        my $audiopciaddr = print_pci_addr("audio0", $arch);
++        my $audiopciaddr = $audio->{dev} eq 'cs4231' ? '' : print_pci_addr("audio0", $arch);
+         my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version);
+         push @$devices, @$audio_devs;
+     }
+@@ -3397,16 +3503,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -514,7 +531,7 @@ index 638afd80..c466c362 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3425,6 +3551,11 @@ sub config_to_command {
+@@ -3425,6 +3556,11 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -526,7 +543,7 @@ index 638afd80..c466c362 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3440,6 +3571,7 @@ sub config_to_command {
+@@ -3440,6 +3576,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -534,7 +551,7 @@ index 638afd80..c466c362 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3543,8 +3675,9 @@ sub config_to_command {
+@@ -3543,8 +3680,9 @@ sub config_to_command {
          }
      }
  
@@ -546,7 +563,7 @@ index 638afd80..c466c362 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3561,6 +3694,7 @@ sub config_to_command {
+@@ -3561,6 +3699,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -554,7 +571,7 @@ index 638afd80..c466c362 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3580,7 +3714,8 @@ sub config_to_command {
+@@ -3580,7 +3719,8 @@ sub config_to_command {
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -564,7 +581,7 @@ index 638afd80..c466c362 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3622,9 +3757,11 @@ sub config_to_command {
+@@ -3622,9 +3762,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -577,7 +594,7 @@ index 638afd80..c466c362 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3636,6 +3773,17 @@ sub config_to_command {
+@@ -3636,6 +3778,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -595,7 +612,7 @@ index 638afd80..c466c362 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3692,7 +3840,7 @@ sub config_to_command {
+@@ -3692,7 +3845,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -604,7 +621,7 @@ index 638afd80..c466c362 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3710,7 +3858,18 @@ sub config_to_command {
+@@ -3710,7 +3863,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -624,7 +641,7 @@ index 638afd80..c466c362 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3969,7 +4128,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4133,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -633,7 +650,7 @@ index 638afd80..c466c362 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4553,13 +4712,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4717,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -651,7 +668,7 @@ index 638afd80..c466c362 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4626,7 +4788,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4793,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -661,7 +678,7 @@ index 638afd80..c466c362 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4978,6 +5141,9 @@ sub vmconfig_update_net {
+@@ -4978,6 +5146,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -671,7 +688,7 @@ index 638afd80..c466c362 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5059,6 +5225,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5230,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -680,7 +697,7 @@ index 638afd80..c466c362 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5106,8 +5274,10 @@ sub vmconfig_update_disk {
+@@ -5106,8 +5279,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -693,7 +710,7 @@ index 638afd80..c466c362 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5191,6 +5361,11 @@ sub vmconfig_update_disk {
+@@ -5191,6 +5366,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -705,7 +722,7 @@ index 638afd80..c466c362 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5207,7 +5382,7 @@ sub vmconfig_update_disk {
+@@ -5207,7 +5387,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -714,7 +731,7 @@ index 638afd80..c466c362 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5710,6 +5885,9 @@ sub vm_start_nolock {
+@@ -5710,6 +5890,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -724,7 +741,7 @@ index 638afd80..c466c362 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5915,7 +6093,11 @@ sub vm_start_nolock {
+@@ -5915,7 +6098,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -737,7 +754,7 @@ index 638afd80..c466c362 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8156,7 +8338,12 @@ sub bootorder_from_legacy {
+@@ -8156,7 +8343,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -751,7 +768,7 @@ index 638afd80..c466c362 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8194,9 +8381,14 @@ sub get_default_bootdevices {
+@@ -8194,9 +8386,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1127,7 +1144,7 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..fb7047bf 100644
+index 960af5a9..657cd17d 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1162,7 +1179,7 @@ index 960af5a9..fb7047bf 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +141,299 @@ sub default_machine_for_arch {
+@@ -135,6 +141,341 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1171,10 +1188,14 @@ index 960af5a9..fb7047bf 100644
 +# derived from this table. Per machine: the most RAM in MB and the firmware it runs, each with the
 +# '-cpu' it needs (none: the machine's default CPU) and the most CPUs (sockets x cores) it takes.
 +# More than one CPU needs pve-qemu-kvm with wsh patch 0019 (11.1.3-2+wsh10): Solaris hangs without it.
++# 'audio': the built-in sound chip audio0 takes (SPARC.md, "Audio"). The SS-5's CS4231 plays with wsh
++# patches 0028-0033 and openbios patch 0016 (pve-qemu-kvm newer than 11.1.3-2+wsh16); SS-10 and
++# SS-20 have a DBRI, which QEMU doesn't emulate.
 +# pve-manager mirrors this table in PVE.qemu.Architecture.sparc32Profiles (www/manager6/qemu/Architecture.js).
 +our $SPARC32_PROFILES = {
 +    'SS-5' => {
 +        'max-memory' => 256,
++        audio => 'cs4231',
 +        # QEMU's SS-5 has one CPU
 +        firmware => {
 +            'openbios-sparc32' => { 'max-cpus' => 1 },
@@ -1296,6 +1317,19 @@ index 960af5a9..fb7047bf 100644
 +    die "sparc: the QEMU guest agent is not supported\n"
 +        if PVE::QemuServer::Agent::parse_guest_agent($conf->{agent})->{enabled};
 +
++    if (my $audio = PVE::QemuServer::conf_has_audio($conf)) {
++        my $chip = $profile->{audio}
++            or die "sparc: audio0 is not supported on $machine, its sound chip (DBRI) isn't"
++            . " emulated; only SS-5 has sound (device cs4231)\n";
++        die "sparc: audio device '$audio->{dev}' is not supported on $machine, use $chip"
++            . " (built in)\n"
++            if $audio->{dev} ne $chip;
++        # SPICE carries sound only to a SPICE display, which sparc32 doesn't have
++        die "sparc: audio driver '$audio->{backend}' is not supported, sparc32 has no SPICE"
++            . " display; use one of: alsa, none, pa, pipewire\n"
++            if $audio->{backend} eq 'spice';
++    }
++
 +    my @nets = grep { m/^net\d+$/ && defined($conf->{$_}) } sort keys $conf->%*;
 +    die "sparc: only one network device is supported (the built-in lance), not "
 +        . join(', ', @nets) . "\n"
@@ -1306,6 +1340,28 @@ index 960af5a9..fb7047bf 100644
 +        die "sparc: network device model '$net->{model}' is not supported, use lance\n"
 +            if $net->{model} ne 'lance';
 +    }
++
++    return;
++}
++
++=head3 assert_audio_device
++
++    assert_audio_device($conf);
++
++Dies if C<audio0> of C<$conf> asks for the SPARCstation 5's built-in CS4231 (C<device=cs4231>) on
++another architecture. Any architecture: the sparc32 rules (SS-5 only, no SPICE) are in
++C<assert_sparc32_profile>.
++
++=cut
++
++sub assert_audio_device {
++    my ($conf) = @_;
++
++    my $audio = PVE::QemuServer::conf_has_audio($conf) or return;
++    my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
++    die "audio0: device 'cs4231' is the SPARCstation 5's built-in sound chip, only on arch"
++        . " sparc (machine SS-5), not on $arch\n"
++        if $audio->{dev} eq 'cs4231' && $arch ne 'sparc';
 +
 +    return;
 +}
@@ -1406,6 +1462,9 @@ index 960af5a9..fb7047bf 100644
 +    die "sparc64: the QEMU guest agent is not supported\n"
 +        if PVE::QemuServer::Agent::parse_guest_agent($conf->{agent})->{enabled};
 +
++    die "sparc64: audio0 is not supported, no sound device was tested on sun4u\n"
++        if defined($conf->{audio0});
++
 +    my @drives = grep { m/^(?:scsi|virtio|sata|efidisk|tpmstate|floppy)\d+$/ && defined($conf->{$_}) }
 +        sort keys $conf->%*;
 +    die "sparc64: " . join(', ', @drives) . " can't be used, disks and CD-ROMs go on the"
@@ -1462,7 +1521,7 @@ index 960af5a9..fb7047bf 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +468,7 @@ my sub machine_base_type {
+@@ -169,6 +510,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1470,7 +1529,7 @@ index 960af5a9..fb7047bf 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +605,44 @@ sub machine_version_cmp {
+@@ -305,11 +647,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1517,7 +1576,7 @@ index 960af5a9..fb7047bf 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +652,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +694,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1540,7 +1599,7 @@ index 960af5a9..fb7047bf 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +838,7 @@ sub get_power_state_flags {
+@@ -508,6 +880,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1548,7 +1607,7 @@ index 960af5a9..fb7047bf 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +846,7 @@ sub get_power_state_flags {
+@@ -515,6 +888,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1654,6 +1713,17 @@ index 00000000..5bb9c06f
 +ostype: l26
 +scsihw: virtio-scsi-pci
 +scsi2: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
+diff --git a/src/test/cfg2cmd/audio-cs4231-x86-error.conf b/src/test/cfg2cmd/audio-cs4231-x86-error.conf
+new file mode 100644
+index 00000000..d07d100b
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-cs4231-x86-error.conf
+@@ -0,0 +1,5 @@
++# TEST: the SPARCstation 5's CS4231 is refused on x86
++# EXPECT_ERROR: audio0: device 'cs4231' is the SPARCstation 5's built-in sound chip, only on arch sparc (machine SS-5), not on x86_64
++audio0: device=cs4231,driver=none
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
 diff --git a/src/test/cfg2cmd/floppy.conf b/src/test/cfg2cmd/floppy.conf
 new file mode 100644
 index 00000000..d606dfbf
@@ -2099,6 +2169,18 @@ index 00000000..dbf2d162
 +bios: ss10_v2.25_rom
 +machine: SS-10
 +memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss20-audio-error.conf b/src/test/cfg2cmd/sparc32-ss20-audio-error.conf
+new file mode 100644
+index 00000000..e7956084
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-audio-error.conf
+@@ -0,0 +1,6 @@
++# TEST: audio is refused on the SS-20 (its DBRI isn't emulated)
++# EXPECT_ERROR: sparc: audio0 is not supported on SS-20, its sound chip (DBRI) isn't emulated; only SS-5 has sound (device cs4231)
++arch: sparc
++audio0: device=cs4231,driver=none
++machine: SS-20
++memory: 512
 diff --git a/src/test/cfg2cmd/sparc32-ss20-cpu-hotplug-error.conf b/src/test/cfg2cmd/sparc32-ss20-cpu-hotplug-error.conf
 new file mode 100644
 index 00000000..ba8054b7
@@ -2346,6 +2428,114 @@ index 00000000..ad6e5be5
 +machine: SS-20
 +memory: 512
 +vcpus: 2
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf b/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf
+new file mode 100644
+index 00000000..b85276fe
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf
+@@ -0,0 +1,7 @@
++# TEST: sparc32 SS-5 with sound to the host's ALSA
++arch: sparc
++audio0: device=cs4231,driver=alsa
++memory: 256
++name: sparc32
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf.cmd
+new file mode 100644
+index 00000000..44870d80
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-alsa.conf.cmd
+@@ -0,0 +1,20 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 256 \
++  -machine 'audiodev=alsa-backend0' \
++  -audiodev 'alsa,id=alsa-backend0' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'accel=tcg,type=SS-5+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-device-error.conf b/src/test/cfg2cmd/sparc32-ss5-audio-device-error.conf
+new file mode 100644
+index 00000000..6df4ac12
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-device-error.conf
+@@ -0,0 +1,5 @@
++# TEST: an x86 sound card is refused on the SS-5, which has its CS4231 built in
++# EXPECT_ERROR: sparc: audio device 'ich9-intel-hda' is not supported on SS-5, use cs4231 (built in)
++arch: sparc
++audio0: device=ich9-intel-hda,driver=none
++memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-spice-error.conf b/src/test/cfg2cmd/sparc32-ss5-audio-spice-error.conf
+new file mode 100644
+index 00000000..c597a880
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-spice-error.conf
+@@ -0,0 +1,5 @@
++# TEST: SPICE, the default audio driver, is refused on sparc32 (no SPICE display)
++# EXPECT_ERROR: sparc: audio driver 'spice' is not supported, sparc32 has no SPICE display; use one of: alsa, none, pa, pipewire
++arch: sparc
++audio0: device=cs4231
++memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio.conf b/src/test/cfg2cmd/sparc32-ss5-audio.conf
+new file mode 100644
+index 00000000..aec7128c
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio.conf
+@@ -0,0 +1,10 @@
++# TEST: sparc32 SS-5 with sound: the built-in CS4231 (no -device) gets the backend through -machine audiodev
++arch: sparc
++audio0: device=cs4231,driver=none
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-audio.conf.cmd
+new file mode 100644
+index 00000000..e1c269a0
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio.conf.cmd
+@@ -0,0 +1,25 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -machine 'audiodev=none-backend0' \
++  -audiodev 'none,id=none-backend0' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02,netdev=net0' \
++  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf b/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf
 new file mode 100644
 index 00000000..b97eaa67
@@ -2556,6 +2746,18 @@ index 00000000..3303a8ed
 +arch: sparc
 +memory: 256
 +vga: std
+diff --git a/src/test/cfg2cmd/sparc64-audio-error.conf b/src/test/cfg2cmd/sparc64-audio-error.conf
+new file mode 100644
+index 00000000..290ba68a
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-audio-error.conf
+@@ -0,0 +1,6 @@
++# TEST: audio is refused on sparc64 (no sound device was tested on sun4u)
++# EXPECT_ERROR: sparc64: audio0 is not supported, no sound device was tested on sun4u
++arch: sparc64
++audio0: device=AC97,driver=none
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++memory: 512
 diff --git a/src/test/cfg2cmd/sparc64-bios-error.conf b/src/test/cfg2cmd/sparc64-bios-error.conf
 new file mode 100644
 index 00000000..de6efa84

@@ -1,0 +1,34 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: give the SS-5's CS4231 "intr" 9, the processor level
+ of its SBus level
+
+The SUNW,CS4231 node had "interrupts" 5 and "intr" 5. "interrupts" is the
+SBus level and "intr" the processor level, and on sun4m SBus level 5 is
+processor level 9: the two said different things. Solaris takes
+"interrupts" and waits at level 9, SunOS 4 takes "intr" and waits at
+level 5, so no interrupt line served both. The SS-5's own PROM (2.15)
+gives the chip "intr" 0x39: an SBus interrupt at processor level 9.
+
+Make "intr" 9, so both systems wait where the chip interrupts (QEMU wsh
+patch 0030 wires it to SBus level 5, as the real machine).
+---
+ drivers/sbus.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/sbus.c b/drivers/sbus.c
+index d59963e..475cb15 100644
+--- a/drivers/sbus.c
++++ b/drivers/sbus.c
+@@ -213,7 +213,11 @@ ob_cs4231_init(unsigned int slot)
+     push_str("reg");
+     fword("property");
+ 
+-    PUSH(5);
++    /*
++     * SBus level 5 ("interrupts" below) is processor level 9 on sun4m, as
++     * the SS-5's own PROM has it: "intr" is the processor level.
++     */
++    PUSH(9);
+     fword("encode-int");
+     PUSH(0);
+     fword("encode-int");
