@@ -1,5 +1,10 @@
 # QEMU: sparc32 raises an illegal instruction for `ld`/`st %fsr` with rd other than 0
 
+> **Not for QEMU: LEMU origin (Antoni Sawicki, LEMU
+> [`0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2)).**
+> LEMU's README asks that LEMU patches and LEMU bug reports not be sent to QEMU. Kept as a record
+> only; see the Rule in [README.md](README.md).
+
 Material for a bug report to upstream QEMU. The bug was found and fixed by Antoni Sawicki in
 [LEMU](https://github.com/tenox7/lemu) (commit
 [`0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2),
