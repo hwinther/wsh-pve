@@ -158,6 +158,15 @@ jobs:
               echo "No published release found for $submodule; leaving it at $current"
             elif git -C submodules/$submodule merge-base --is-ancestor "$released" "$current"; then
               echo "$submodule is already at or past the published release ($released)"
+              # A PR that refreshed the patch moved main past what this job held back. Nothing is
+              # left to bump, so close the "held back" issue here; the close below only runs on a bump.
+              title="Upstream sync held back: $submodule"
+              issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" \
+                --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+              if [ -n "$issue" ]; then
+                gh issue close "$issue" --repo "$GITHUB_REPOSITORY" \
+                  --comment "main is at or past the published release (\`$(git -C submodules/$submodule rev-parse --short "$released")\`), so nothing is held back any more ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+              fi
             else
               git -C submodules/$submodule checkout -q "$released"
             fi
