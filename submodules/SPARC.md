@@ -65,6 +65,8 @@ maintains the patches.
 | `0031-hw-audio-cs4231-no-sound-without-an-audiodev` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio driver, and with none available didn't start (`no default audio driver available`). Without an audiodev the codec now opens no voice and keeps its registers only, as before (the PC speaker does the same) | ours | — |
 | `0032-hw-audio-cs4231-play-out-the-last-samples-when-playb` | The APC takes its samples up to 50 ms ahead of the codec's clock; turning the voice off when the pipe ran empty or the driver stopped the DMA dropped what the mixer still held, so every sound lost its last 50 ms. The voice stays on for 200 ms after playback stops | ours | — |
 | `0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA` | qtest `sun4m-cs4231-test` for 0028-0032: two u-law buffers behind IOMMU mappings, PEN, PI/PD/PM/PMI at SBus level 5 (processor level 9) in real time, every sample decoded in a `wav` audiodev; DMA off and the reset bit | ours | not in QEMU |
+| `0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-` | sun4u wrote QEMU's default MAC `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`; a NIC added with `-device` (as qemu-server adds `sunhme`) didn't exist yet. OpenBIOS gives the guest that address as the system MAC and NetBSD and Solaris use it for `hme0` (NetBSD's `wm` too), so every guest had the same MAC and host id whatever `net0` said. Without an onboard NIC the IDPROM is now written again when the machine is complete: from the first `sunhme`, else the first NIC of any model ("The sun4u system MAC") | ours (in review) | not fixed; see `upstream/qemu-sun4u-idprom-mac.md` |
+| `0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u` | qtest `sun4u-idprom-test` for 0034: reads the IDPROM from the NVRAM; default address without a NIC, a `-device sunhme`'s address, the first `sunhme` after a `virtio-net-pci`, the first NIC without a `sunhme`, the onboard `-net nic` ahead of a `-device sunhme` | ours (in review) | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -122,11 +124,17 @@ fails in `/sparc64/qmp/oob` the same way.
 `qtest-sparc` and `qtest-sparc64` suites: 37 OK, 4 skipped, and the two `qmp-test` `oob` failures
 as before; every sun4m qtest above passes, and an SS-5 without an audiodev starts.
 
+0034-0035 apply on top of 0001-0027 (written before 0028-0030; they touch `hw/sparc64/sun4u.c` and the
+`qtests_sparc64` list only). `sun4u-idprom-test` passes 5/5 with 0034 (`qemu-system-sparc64` built
+from 0001-0027 + 0034-0035); against the packaged 11.1.3-2+wsh16 binary its `device` case fails
+with `52:54:00:12:34:56` in the IDPROM. `sun4u-cmd646-test` still passes 2/2. Lab results under
+"The sun4u system MAC".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
 `sun4m-fsr-rd-test` and `sun4m-cs4231-test` (sparc),
-`sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
+`sun4u-cmd646-test` and `sun4u-idprom-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -1590,7 +1598,8 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   yet; that needs the installed system. QEMU writes the default MAC `52:54:00:12:34:56` into the
   sun4u IDPROM unless the NIC is the machine's onboard `-nic`. qemu-server and the lab add `sunhme`
   with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
-  the same thing on the wire. Measured since (below).
+  the same thing on the wire. Measured since (below); fixed by pve-qemu `wsh/0034` ("The sun4u system
+  MAC").
 
 **Status on the published pve-qemu-kvm 11.1.3-2+wsh13 (2026-11-17).** QEMU and `openbios-sparc64`
 from the package as installed in the lab image (no own builds), Solaris 10 1/13 DVD, 1024 MB, a
@@ -1619,7 +1628,8 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
   `-device` (as qemu-server and the lab do) isn't seen at that point, so the IDPROM gets QEMU's
   default `52:54:00:12:34:56`. With `-net nic,model=sunhme,macaddr=...` the NIC sits at a different
   PCI path, and the installed system (whose `hme0` is the `-device` NIC on bus B) didn't configure
-  it. The IDPROM MAC there wasn't read, so that variant is untested.
+  it. The IDPROM MAC there wasn't read, so that variant is untested. Fixed in QEMU since: "The sun4u
+  system MAC".
 
 **Status with 0010-0011 (2026-11-17).** Firmware built from the committed patches 0001-0011 (build
 records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`:
@@ -1635,7 +1645,7 @@ records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`,
   `ping 10.0.2.2` answers `alive`. `init 5` powers QEMU off (exit 0).
 - The sun4u system MAC: with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris uses `ether
   52:54:0:12:34:56`. QEMU writes its default MAC into the IDPROM when the NIC isn't `-nic`, so two
-  guests on one network would clash. Not fixed.
+  guests on one network would clash. Fixed since by pve-qemu `wsh/0034` ("The sun4u system MAC").
 - Not measured with this set: the install on the packaged QEMU (without the cmd646 patch); the
   reboot (0012, `.wip`); Solaris 7/8/9.
 
@@ -1790,6 +1800,44 @@ bits latched, and it removes multiword DMA and UDMA from the disk's IDENTIFY dat
 completion never arrives" after Solaris switches to MDMA2. It also patches Solaris's `uata` to stay
 on PIO. Here the install copied 4 GB to the disk with the latch patch alone and without an `ATA
 transport failed`, so DMA didn't fail in these runs. Whether Solaris used DMA or PIO wasn't measured.
+
+**The sun4u system MAC (pve-qemu `wsh/0034`-`0035`, in review, 2026-11-18).** OpenBIOS gives the
+guest the IDPROM's MAC address as the system's, and its `sunhme` node has no `local-mac-address`.
+NetBSD's `hme` and `wm` and Solaris's `hme` (OBP's default `local-mac-address?=false`) program that
+address into the NIC. QEMU's sun4u filled the IDPROM from the onboard `-nic` only; qemu-server and
+the lab add the NIC with `-device`, which doesn't exist yet when the NVRAM is written, so the IDPROM
+had `52:54:00:12:34:56` for every VM. With 0034, sun4u writes the IDPROM again once the machine is
+complete: from the first `sunhme`, else from the first NIC of any model; with an onboard `-nic`, or
+no NIC, nothing changes. The host id is made from the same bytes (`hostid` `80123456` before,
+`80000001` with `mac=bc:24:11:00:00:01`). The alternative without a QEMU change, qemu-server passing
+`-net nic,model=sunhme,macaddr=...`, puts the NIC at 01:01.1 on bus A instead of bus B: installed
+Solaris systems see a new `hme` instance and leave it unconfigured, and the NIC loses its `id`.
+
+Measured in the lab (`scenarios/_sparc64.py` with `MAC=bc:24:11:00:00:01`, the NIC with
+`-device <model>,mac=...,bus=pciB` as qemu-server builds it, the installed disks, `-snapshot`):
+
+| Guest, NIC | 11.1.3-2+wsh16 (package) | with 0034 |
+| --- | --- | --- |
+| NetBSD 11.1, `sunhme` | `hme0` `52:54:00:12:34:56` | `hme0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `e1000` | `wm0` `52:54:00:12:34:56` | `wm0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `virtio-net-pci` | `vioif0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| NetBSD 11.1, `rtl8139` | `re0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| Solaris 10 1/13, `sunhme` | `hme0` `ether 52:54:0:12:34:56`, hostid `80123456` | `hme0` `ether bc:24:11:0:0:1`, hostid `80000001`, DHCP lease, `ping 10.0.2.2` alive |
+
+A packet capture on the netdev (`-object filter-dump`) shows the guest's frames (DHCP, ARP, ICMP)
+leaving from `bc:24:11:00:00:01` with 0034 and from `52:54:00:12:34:56` without it, so a DHCP
+reservation or firewall rule keyed on `net0`'s MAC now matches. The DHCP server here is QEMU's
+user networking, which doesn't key on the MAC; a reservation on a real DHCP server wasn't tested.
+With 0034 and the default MAC (`52:54:00:12:34:56`) Solaris boots as before (1 of 1).
+
+Solaris 10 boots to `console login:` with 0034 and `mac=bc:24:11:00:00:01` in 3 of 5 runs; the
+other 2 panicked during the boot. The package without 0034 booted 3 of 3 with the same disk and
+arguments. The panics are `BAD TRAP: type=4e` with the PC in the
+firmware (`0xffd0e74c` in `picld` during an `ioctl`, and `0xffd12744` in thread 0 before user
+processes run), the trap listed under "In progress" in `ROADMAP.md` (seen once in 6 DVD boots
+through PVE before this change). Its cause wasn't traced. 2 of 5 against 0 of 3 doesn't settle
+whether the different IDPROM makes it more likely; more runs on both binaries are needed before
+the package is published.
 
 **Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
 boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
@@ -2245,7 +2293,9 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   only warns about a second `-net nic`). The lance is peered with the `net0` netdev directly, so
   `set_link net0` reaches it as on x86 (it used to hang off a hub behind a netdev named `lance.0`,
   and every `set_link` failed with `Device 'net0' not found`). QEMU names the NIC itself `lance.0`.
-  sparc64 puts `sunhme` on `pciB`.
+  sparc64 puts `sunhme` on `pciB` with `-device ...,mac=<net0's MAC>`; the guest's system MAC (the
+  IDPROM's, which NetBSD and Solaris use for `hme0`) is the first `sunhme`'s with pve-qemu
+  `wsh/0034`, so qemu-server needs no sun4u-specific NIC argument ("The sun4u system MAC").
 - **Machine version:** QEMU's sparc machines have no versioned variants, so a running VM's machine
   (`SS-5+pve0`, `sun4u+pve0` from `query-machines`) carries none. `get_machine_version` in
   `PVE::QemuServer::Machine` resolves it to the QEMU version (of the running process when a VMID is
@@ -2339,7 +2389,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
   `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
-  `sun4m-cs4231-test` (0033) and `am53c974-test` with 0007;
+  `sun4m-cs4231-test` (0033),
+  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
