@@ -48,7 +48,7 @@ come after that, not before.
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
-| sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note written | in review | |
+| sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note kept as a record only (LEMU origin, not for QEMU) | in review | |
 | Install targets: Red Hat Linux 6.2 on SS-5 and SS-20 (`redhat62-ss5`, `redhat62-ss20`, OpenBIOS): kickstart from an answer CD the tool makes on the node (the `unattended` method, `answer_media.py`), SILO's screens answered on the serial console, `/boot` first on the disk for SILO | in review | |
 | Sound on the SS-5: the CS4231 plays through its APC DMA (LEMU `2938ff88`, `42d32575` by Antoni Sawicki, pve-qemu `wsh/0028`-`0029`), at SBus level 5 as the real machine (`wsh/0030`, openbios 0018), no start failure without an audiodev (`wsh/0031`), no lost tail (`wsh/0032`), qtest (`wsh/0033`); qemu-server `audio0: device=cs4231` (drivers `none`, `alsa`, `pa`, `pipewire`; SPICE, SS-10/SS-20 and sparc64 refused), the UI offers only that on sparc. SunOS 4.1.4, Solaris 2.5.1 and 2.6 play in the lab under OpenBIOS and `ss5.bin`. Limits: no DBRI on SS-10/SS-20 (not emulated), nothing in the web console (no SPICE on sparc32), no capture | in review | |
 | Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
@@ -224,12 +224,19 @@ from it.
 
 ## Upstream reports to send
 
-Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout and Stop-A
-powering the machine off (OpenBIOS),
-the 1-byte APC region (QEMU), the TLB flush on every change of the SRMMU no-fault bit (QEMU) and
-the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang) and
-sparc32 `ld`/`st %fsr` refused with rd other than 0 (QEMU, found and fixed by Antoni Sawicki in LEMU)
-and sun4u's IDPROM ignoring a NIC added with `-device` (QEMU).
-QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
-not written up yet: the TTE page-size truncation if it is not merged upstream, the ESCC mouse
-rate, and the ESCC break that never ends.
+`upstream/README.md` lists every carried patch with a QEMU (or OpenBIOS) column; its "Rule" section
+applies LEMU's request that LEMU patches and LEMU bug reports not go to QEMU. Nothing of LEMU
+origin or built on LEMU code is sent from here: the ESCC, cg3, SunOS and Solaris idle, `ld`/`st %fsr`
+and CS4231 audio patches stay ours to carry (the `%fsr` write-up is kept as a record only).
+
+Write-ups the owner may send (as bug reports, or patches written by hand; QEMU and OpenBIOS decline
+AI-generated code): the ESP bus reset, the 1-byte APC region, the TLB flush on every change of the
+SRMMU no-fault bit, the interrupt not taken after a write to `%psr` in a delay slot (the Solaris SMP
+hang), the cmd646 interrupt latch, sun4u's IDPROM ignoring a NIC added with `-device`, the sparc64
+`%softint` race and the ESP CDB counted with the message out bytes (QEMU); the ESP selection
+timeout, Stop-A powering the machine off, and the sparc64 fixes 0003-0011 and 0013-0017 (OpenBIOS).
+Not written up yet: the TTE page-size truncation, if it is not merged upstream.
+
+On hold until reproduced on plain QEMU without LEMU patches: the ESCC mouse rate and the ESCC break
+that never ends (seen with LEMU's ESCC patches), and the audio mixer's 6 dB on a mono output and the
+`wav` backend's empty header sizes (seen with LEMU's CS4231).
