@@ -180,7 +180,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   several ESP fixes are carried here since) and OpenBSD 5.8 as working with `-nographic`. Order: first what the lab
   host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
-  versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer), then, once the
+  versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
   NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
   OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
   only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
