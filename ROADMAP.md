@@ -181,11 +181,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer), then, once the
-  owner has the media, NeXTSTEP 3.3 for SPARC (now on the lab host too: the SPARC/PA-RISC User CD,
-  Sun-labelled, a SPARC and hppa kernel), OpenBSD 5.9 (the last release with sparc32; the mirror has
-  no `install59.iso` for sparc, only the small bootable `cd59.iso` plus the sets, so the sets come
-  over HTTP or from a second CD made on the node; 5.8's `install58.iso` is the fallback, which the
-  QEMU wiki lists as working), SunOS 4.1.3/4.1.3_U1B, Solaris 2.1-2.3 and 2.5. Each one booted and
+  NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
+  OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
+  only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
+  node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
+  all on the lab host now; then, once the owner has the media, SunOS 4.1.3/4.1.3_U1B, Solaris 2.1-2.3 and 2.5. Each one booted and
   installed by hand first; an install target only for what works.
 - **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
   the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
@@ -253,7 +253,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine, Red Hat Linux 6.2 |
+| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), Debian, Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
 | `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
 | `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
 | `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
