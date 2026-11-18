@@ -1,7 +1,7 @@
 """Boot an installed Solaris disk, log in and time a fixed set of jobs, so machine configurations
 (machine, firmware, CPUs, RAM) can be compared. Ends with `init 5`, so the disk can be booted again.
 
-    lab.py run scenarios/bench.py --out /srv/sparc/runs/b1 --var DISK=/srv/sparc/runs/b1/disk.raw \
+    lab.py run scenarios/bench.py --out /mnt/runs/b1 --var DISK=/mnt/runs/b1/disk.raw \
         --var MACHINE=SS-20 --var SMP=2
 
 The disk is changed: give it a copy that has been booted once (solaris-boot-disk.py), or the first

@@ -1,14 +1,14 @@
 """Solaris 2.x initial install over the serial console, from boot CD to an installed disk that is
 powered off. Tested with 2.6 (5/98), 2.5.1 (11/97) and 2.4 (HW 3/95).
 
-    lab.py run scenarios/solaris-install-serial.py --out /srv/sparc/runs/s26 \
-        --var ISO=/srv/sparc/solaris_2.6_598_sparc.iso \
-        --var TEMPLATE=/srv/sparc/disks/sparc-SUN2.9G.raw.template.xz
+    lab.py run scenarios/solaris-install-serial.py --out /mnt/runs/s26 \
+        --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso \
+        --var TEMPLATE=/mnt/os/disks/sparc-SUN2.9G.raw.template.xz
 
     # 2.5.1 (and 2.4) boot only from a CD that answers as a disk, and 2.4 only from a Sun PROM:
-    lab.py run scenarios/solaris-install-serial.py --out /srv/sparc/runs/s251 \
-        --var ISO=/srv/sparc/solaris_2.5.1_1197.iso --var CDROM_AS=hd --var BIOS=ss5.bin \
-        --var TEMPLATE=/srv/sparc/disks/sparc-SUN2.9G.raw.template.xz
+    lab.py run scenarios/solaris-install-serial.py --out /mnt/runs/s251 \
+        --var ISO=/mnt/os/iso/solaris_2.5.1_1197.iso --var CDROM_AS=hd --var BIOS=ss5.bin \
+        --var TEMPLATE=/mnt/os/disks/sparc-SUN2.9G.raw.template.xz
 
 With no framebuffer (VGA=none, the default here) the installer runs in text mode on ttya; with one it
 starts the OpenWindows installer there instead. The disk must carry a Sun label: the installer lists

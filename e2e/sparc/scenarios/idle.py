@@ -1,7 +1,7 @@
 """Boot an installed disk, log in as root and measure what the idle guest costs the host: QEMU's CPU
 use over SECONDS, whether the guest clock kept time meanwhile, and how long a CPU-bound command takes.
 
-    lab.py run scenarios/idle.py --out /srv/sparc/runs/idle --var DISK=/srv/sparc/runs/idle/disk.raw \
+    lab.py run scenarios/idle.py --out /mnt/runs/idle --var DISK=/mnt/runs/idle/disk.raw \
         --var CPU_BELOW=10
 
 The disk is changed (first boot, logs): give it a copy. Only meaningful on an otherwise idle host.

@@ -4,8 +4,8 @@ framebuffer and, with X=1, dtlogin, a root login and the CDE desktop, its depth 
 keyboard, QEMU's host CPU use with X idle, a drawing benchmark and a soak. Every screenshot is
 checked for RES's size and for not being blank. The Sun PROMs get `boot disk` typed at `ok`.
 
-    lab.py run scenarios/fb-display.py --out /srv/sparc/runs/tcx --var VGA=tcx --var RES=1024x768x24 \
-        --var DISK=/srv/sparc/runs/tcx/disk.raw [--var X=1 --var BENCH=3]
+    lab.py run scenarios/fb-display.py --out /mnt/runs/tcx --var VGA=tcx --var RES=1024x768x24 \
+        --var DISK=/mnt/runs/tcx/disk.raw [--var X=1 --var BENCH=3]
 
 cg3-display.py is the cg3 size check; this one compares the two framebuffers like for like.
 

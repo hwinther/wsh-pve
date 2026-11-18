@@ -4,13 +4,13 @@ archive) to a root shell; with ISO, a Solaris 10 DVD to the text installer (subm
 "sparc64: niagara (sun4v)").
 
     # the firmware alone: the ok prompt
-    lab.py run scenarios/niagara-boot.py --out /srv/sparc/runs/nia-ok --var FW=/srv/sparc/prom/niagara
+    lab.py run scenarios/niagara-boot.py --out /mnt/runs/nia-ok --var FW=/mnt/os/sun-reference/prom/niagara
     # disk.s10hw2 (Solaris 10 3/05 HW2) to a root shell, then `init 5`
-    lab.py run scenarios/niagara-boot.py --out /srv/sparc/runs/nia-hw2 --var FW=... --var MEM=256 \
-        --var DISK=/srv/sparc/prom/T1/S10image/disk.s10hw2
+    lab.py run scenarios/niagara-boot.py --out /mnt/runs/nia-hw2 --var FW=... --var MEM=256 \
+        --var DISK=/mnt/os/sun-reference/prom/T1/S10image/disk.s10hw2
     # Solaris 10 1/13 to the installer (needs an MD with 1024 MB and its tlb node, see SPARC.md)
-    lab.py run scenarios/niagara-boot.py --out /srv/sparc/runs/nia-s10 --var FW=... --var MEM=1024 \
-        --var ISO=/srv/sparc/iso/sol-10-u11-ga-sparc-dvd.iso
+    lab.py run scenarios/niagara-boot.py --out /mnt/runs/nia-s10 --var FW=... --var MEM=1024 \
+        --var ISO=/mnt/os/iso/sol-10-u11-ga-sparc-dvd.iso
 
 Nothing of the firmware is in the image or the repository. When the files aren't there the scenario
 is skipped: exit code 0, result.json `status` "skipped: ...", QEMU never starts.
@@ -21,7 +21,7 @@ writes never reach the file, so nothing on the host is changed.
   QEMU      qemu-system-sparc64 binary                                   (qemu-system-sparc64)
   FW        directories with the six files QEMU loads (reset.bin q.bin openboot.bin 1up-hv.bin
             1up-md.bin nvram1), ':'-separated; each becomes an -L, the first that has a file wins
-            (QEMU also looks in the current directory first)            (/srv/sparc/prom/niagara)
+            (QEMU also looks in the current directory first)            (/mnt/os/sun-reference/prom/niagara)
   MEM       MiB; must equal the memory the MD (1up-md.bin/1up-hv.bin) declares  (256)
   DISK      a Legion disk image (hsimd driver in the guest): `boot disk`, root login without a
             password, COMMANDS, then POWEROFF                           (none)
@@ -50,7 +50,7 @@ import time
 from _sparc64 import shell
 
 FILES = ("reset.bin", "q.bin", "openboot.bin", "1up-hv.bin", "1up-md.bin", "nvram1")
-DEFAULTS = {"QEMU": "qemu-system-sparc64", "FW": "/srv/sparc/prom/niagara", "MEM": "256", "DISK": "",
+DEFAULTS = {"QEMU": "qemu-system-sparc64", "FW": "/mnt/os/sun-reference/prom/niagara", "MEM": "256", "DISK": "",
             "ISO": "", "BOOT": "", "COMMANDS": "uname -a ;; cat /etc/release ;; prtconf | head -20 ;; "
             "psrinfo -v ;; df -k ;; ls /dev/dsk /dev/rdsk ;; ifconfig -a", "POWEROFF": "init 5", "IDLE": "0",
             "TIMEOUT": "1800", "WALK": "0", "ROOTPW": "lab", "HOSTNAME": "niagara", "EXTRA": "", "TRACE": ""}

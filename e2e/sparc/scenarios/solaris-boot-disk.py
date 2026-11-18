@@ -2,8 +2,8 @@
 shut down. Answers the first-boot questions (root password: ROOT_PASSWORD, none by default) when they
 come up.
 
-    lab.py run scenarios/solaris-boot-disk.py --out /srv/sparc/runs/boot \
-        --var DISK=/srv/sparc/runs/boot/disk.raw
+    lab.py run scenarios/solaris-boot-disk.py --out /mnt/runs/boot \
+        --var DISK=/mnt/runs/boot/disk.raw
 
   ROOT_PASSWORD  root's password, for the login and the first-boot questions  (none)
   COMMANDS       run at the root prompt and recorded                         (uname, prtconf, df, ifconfig)

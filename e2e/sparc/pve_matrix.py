@@ -2,8 +2,8 @@
 """Create VMs through the PVE API, let PVE start them and drive them with the lab in attach mode
 (`lab.py run --pve <vmid>`): what Proxmox VE itself runs, provisioned and booted by the scenarios.
 
-    pve_matrix.py pve --runs /work/runs/p1 [--iso /mnt/sparc/iso] [--disks /srv/sparc/disks]
-        [--bench /mnt/sparc/disks/bench-sol26.raw]
+    pve_matrix.py pve --runs /work/runs/p1 [--iso /mnt/os/iso] [--disks /mnt/os/disks]
+        [--bench /mnt/os/disks/bench-sol26.raw]
 
     pve_matrix.py install --runs /work/runs/i1     # every automated install target (targets.py)
 
@@ -239,10 +239,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("matrix", choices=sorted(MATRICES))
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
-    p.add_argument("--disks", default="/srv/sparc/disks", help="disk templates (read only)")
-    p.add_argument("--iso", default="/mnt/sparc/iso", help="install CDs (read only)")
-    p.add_argument("--floppy", default="/mnt/sparc/floppy", help="install floppies (read only)")
-    p.add_argument("--bench", default="/mnt/sparc/disks/bench-sol26.raw",
+    p.add_argument("--disks", default="/mnt/os/disks", help="disk templates (read only)")
+    p.add_argument("--iso", default="/mnt/os/iso", help="install CDs (read only)")
+    p.add_argument("--floppy", default="/mnt/os/floppy", help="install floppies (read only)")
+    p.add_argument("--bench", default="/mnt/os/disks/bench-sol26.raw",
                    help="the bench disk (e2e/sparc/README.md, \"The bench disk\"; read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per scenario")
     p.add_argument("--only", action="append", help="run only these cases")

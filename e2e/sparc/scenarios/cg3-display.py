@@ -2,8 +2,8 @@
 installed Solaris booted to its login prompt. Every framebuffer screenshot is checked for the
 requested size and for not being blank.
 
-    lab.py run scenarios/cg3-display.py --out /srv/sparc/runs/fb --var RES=1152x900 \
-        [--var DISK=/srv/sparc/runs/fb/disk.raw]
+    lab.py run scenarios/cg3-display.py --out /mnt/runs/fb --var RES=1152x900 \
+        [--var DISK=/mnt/runs/fb/disk.raw]
 
 CONSOLE=fb (the default here) puts the PROM and Solaris consoles on the framebuffer and the
 scenario reads them by OCR. Without DISK it stops after the banner; with it, it takes one more

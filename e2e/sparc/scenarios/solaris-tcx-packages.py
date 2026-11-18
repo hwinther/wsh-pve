@@ -2,8 +2,8 @@
 `VGA=tcx`: boots the disk on ttya, logs in, `pkgadd`s PKGS from the CD (vold's /cdrom/cdrom0, else mounted by hand), touches /reconfigure (the next
 boot then creates /dev/fbs/tcx0 and /dev/fb) and shuts down.
 
-    lab.py run scenarios/solaris-tcx-packages.py --out /srv/sparc/runs/tcxpkg \
-        --var DISK=/srv/sparc/runs/tcxpkg/disk.raw --var ISO=/srv/sparc/solaris_2.6_598_sparc.iso
+    lab.py run scenarios/solaris-tcx-packages.py --out /mnt/runs/tcxpkg \
+        --var DISK=/mnt/runs/tcxpkg/disk.raw --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso
 
 The installer adds the TCX cluster (SUNWCtcx: SUNWtcx = kernel/drv/tcx, SUNWtcxow = the X server's
 ddxSUNWtcx.so.1, SUNWtcxu = the XGL pipeline) only when it finds a TCX at install time (`.clustertoc`:
