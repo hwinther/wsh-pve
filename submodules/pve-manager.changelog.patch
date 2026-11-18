@@ -1,34 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index c2b51e7d..549843e3 100644
+index 6657dde6..fc24f127 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,29 @@
-+pve-manager (9.2.30+wsh3) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.31+wsh1) trixie; urgency=medium
 +
 +  * feat(sparc32): sound on the SPARCstation 5's CS4231 (LEMU) (#317)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 18:16:39 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 22:48:31 +0000
 +
-+pve-manager (9.2.30+wsh2) trixie; urgency=medium
-+
-+  * feat(sparc64): sun4u VMs take up to 8192 MB of memory (#312)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 09:39:22 +0000
-+
-+pve-manager (9.2.30+wsh1) trixie; urgency=medium
-+
-+  * fix(patches): pve-storage 9.1.18, qemu-server 9.2.18 and pve-manager
-+    9.2.30 (#308)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 07:20:43 +0000
-+
- pve-manager (9.2.30) trixie; urgency=medium
+ pve-manager (9.2.31) trixie; urgency=medium
  
-   * ui: storage: in the content selector, only offer specific volume types of
-     guests in advanced mode. In non-advanced mode, the selection becomes as
-     before the introduction of specific volume types.
+   * ui: user edit: show the 'Key IDs' field only for legacy values, and only
+     as read-only text. Second factors are configured in the TFA window.
  
-   * ui: resource tree: use pre-calculated 'diskuse' property instead of
-     calculating it every time to improve performance.
+   * report: show the multipath status with the other block devices, instead
+     of in an extra section at the end of the report.
  
-   * ui: resource tree: only fire 'refresh' event when something changed to
+   * ui: token edit: keep the stored expiration date when editing other
+     settings of a token, like the comment. The date field resubmitted it
