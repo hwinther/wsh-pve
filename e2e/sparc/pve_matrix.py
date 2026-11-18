@@ -80,8 +80,10 @@ MATRICES = {
          "sol-10-u11-ga-sparc-dvd.iso", None, [("sparc64-boot-cd.py", {"GUEST": "solaris10"})]),
     ],
     # Every automated install target (targets.py), each with --check: the "scheduled reinstalls" of
-    # ROADMAP.md, without replacing stored disks yet.
-    "install": [(f"install-{t}", {"install": t}, None, None, []) for t in targets.automated()],
+    # ROADMAP.md, without replacing stored disks yet. A target with `matrix_skip` needs more than
+    # the published packages give (it says what) and stays out until they do.
+    "install": [(f"install-{t}", {"install": t}, None, None, []) for t in targets.automated()
+                if not targets.TARGETS[t].get("matrix_skip")],
 }
 
 LEFTOVERS = ("_fb_poll.png", "_refresh.ppm", "*.sock", "_frames")  # the recordings stay

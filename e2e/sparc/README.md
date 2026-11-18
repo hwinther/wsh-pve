@@ -746,6 +746,78 @@ requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; h
 is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
 45). Not run on GitHub yet.
 
+### The Tribblix install target
+
+`tribblix-m34-sun4u` installs Tribblix m34 for SPARC (illumos) from its live CD
+(`tribblix-sparc-0m34.iso`, from iso.tribblix.org; the download page's SHA-1 matches) on the
+sparc64 profile: sun4u, OpenBIOS, 2048 MB, a blank 8 GiB disk on `ide0`, the CD on `ide2`,
+`sunhme`, `vga: serial0`. It needs `openbios-sparc64` with patches 0016 and 0017 (no published
+package has them yet; see `submodules/SPARC.md`, "Tribblix on sun4u"): with the firmware of
+11.1.3-2+wsh16 the live CD stops or hangs on most boots, and a ZFS root doesn't boot.
+
+1. **Install** (`tribblix-install-sparc64.py`): the live CD boots by itself (`-boot order=d`),
+   imports its SMF manifests, asks for the keyboard layout (Return) and comes to `console login:`;
+   the scenario logs in as root with the live CD's password (`tribblix`), turns off bash's bracketed
+   paste mode (its `ESC [?2004l` in front of each command's output hid `shell()`'s marker), finds the
+   IDE disk (`c1t0d0`, the one at `ide@3/dad@0,0`), takes the network down and runs
+   `/root/live_install.sh -G -n <host name> c1t0d0` (Tribblix's default: a ZFS root pool on the whole
+   disk; FMA marks the disk DEGRADED during the copy, see SPARC.md). It powers off with `init 5`.
+   `ROOT_FS=ufs` labels the disk instead (`format-a-disk.sh`, then `fmthard`: slice 0 for `/`,
+   `SWAP_MB` = 1 GB of swap on slice 1) and runs `echo y | /root/ufs_install.sh -n <host name>
+   c1t0d0s0` (its newfs asks); that ran through PVE up to its last steps but hasn't been booted.
+2. **First boot** (`tribblix-firstboot.py`): root logs in with `tribblix` (the installer copies the
+   live CD's `/etc`), `passwd root` sets the target's password (with `MINNONALPHA` relaxed for that
+   call, as on Solaris 10), `passwd -l jack` locks the live CD's user, the marker, the network with
+   `ipadm` (`-T static` with the address and `route -p add default`, or `-T dhcp`), DNS
+   (`/etc/resolv.conf`, `nsswitch.dns`), the optional user, `zpool clear rpool` (the DEGRADED mark),
+   `init 5`. NWAM (`network/physical:nwam`) is switched off for `network/physical:default` first; its
+   stop method times out under TCG and leaves it in maintenance, so the scenario polls and clears it
+   instead of `svcadm disable -s`. The first boot imports the SMF
+   manifests again (99 of them), which takes most of its time.
+3. **Check** (`tribblix-boot-disk.py`, the target's `commands`): logs in with the password, records
+   `uname -a`, `hostname`, the marker, `df -k /`, `prtvtoc` of the disk, `ipadm show-addr`, the routes
+   and `resolv.conf`, requires `target=<name>`, `init 5`.
+
+**Offline on purpose.** The live CD's package catalogue is older than the packages on the CD
+(the install asks for `TRIBcurl.8.12.1.1.zap`, `/pkgs` on the CD has `TRIBcurl.8.19.0.0.zap`), so the base overlay's install
+looks for some packages on pkgs.tribblix.org instead of the CD. With a network it fetched them (and
+some downloads failed with `has wrong size`); without one those packages are skipped (`pkgadd:
+ERROR: no packages were found`) and the rest of the system comes from the live CD's own root, which
+`live_install.sh` copies first. The scenario takes the network down before the install so the
+result doesn't depend on the internet.
+
+**Slow, and a clock that can stop.** Under TCG with other guests on the host: about 45-55 minutes
+from power-on to the live CD's login prompt (most of it the SMF import), 48-64 minutes for
+`live_install.sh`, 60 minutes for the installed system's first boot (it imports
+the SMF manifests again), 15-17 minutes to the login prompt on later boots, and `init 5` takes 4-13
+minutes because service methods time out on the way down (`_tribblix.power_off()` waits 30). Many
+service methods time out on the way up as well (`svc:/network/location`, `rbac`, `routing/route`,
+`update-man-index`; `svc.startd` kills them); the system comes up anyway. In about one of three long
+runs the guest's clock stopped for good (submodules/SPARC.md, "Tribblix on sun4u": a race
+in QEMU, no fix carried); the phase then stalls until its timeout and fails.
+
+Tested in the lab and in the PVE test container on the lab host (TCG, pve-qemu-kvm 11.1.3-2+wsh16
+with `openbios-sparc64` built from this branch's patches, qemu-server 9.2.18+wsh1, pve-manager
+9.2.30+wsh1; the container's packages from Proxmox's no-subscription and test repositories, which
+the published packages needed that day), 2026-11-18:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| live CD, lab, firmware without 0016 (wsh15, wsh16, 0001-0011, 0001-0015), 7 boots | 4 corrupted registers (window spill loop, `bad stack overflow at TL 2`), 2 dead clocks, 1 to the keyboard question | |
+| live CD, lab, with 0016: by hand, `live_install.sh -G` offline | passed: `install-exit=0`, 33 packages installed, 18 skipped (offline), `rpool` DEGRADED (FMA, no data errors) | login ~45 min, install 64 min |
+| the same with a network | the clock stopped during the overlay install | |
+| installed ZFS disk, firmware without 0017 | `Unhandled Exception 0x30` in the boot block | |
+| installed ZFS disk, with 0017: first boot by hand | `tribblix-m34 console login:` after the SMF import | ~60 min |
+| `tribblix-firstboot.py` on that disk (static, `--user`) | passed: root's password, `jack` locked, marker, `hme0/v4 static 10.0.2.15/24`, default route, DNS, user `lab` | 38 min (login 17, power-off 9) |
+| `tribblix-boot-disk.py` on that disk | the commands passed (`target=tribblix-m34-sun4u`, `hme0/v4` static after the reboot, `jack LK`, `lab`); the default route was missing after the reboot (since then also in `/etc/defaultrouter`); `init 5` took longer than the 900 s the scenario waited then (now 1800) | login 16 min |
+| `tribblix-install-sparc64.py ROOT_FS=zfs`, lab | passed: disk `c1t0d0` found, offline, `live_install.sh` exit 0, 18 packages skipped, `rpool` DEGRADED, `init 5` | 106 min (live CD login 55, install 48, power-off 3) |
+| `lab.py install tribblix-m34-sun4u --vmid 9401`/`9402` (ZFS, first versions) | the live CD booted through PVE, login after 48 min; the scenario's marker never matched behind bash's bracketed paste escapes (fixed); stopped | |
+| `--vmid 9403` (UFS) | label written, `ufs_install.sh` waited at newfs's `(y/n)?` (fixed: `echo y \|`); stopped | |
+| `--vmid 9404` (UFS) | the clock stopped during the live CD's SMF import (11/95); stopped | |
+| `--vmid 9405 --check` (UFS) | see below | |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 78 passed | 6 s |
+| `matrix.py sparc64` and `solaris10` with the 0013-0017 firmware | 9/9 and 2/2 passed | |
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
