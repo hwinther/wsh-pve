@@ -1,8 +1,8 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index b9634d20..e52102e6 100644
+index 326e9d98..f911f9bf 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
-@@ -157,6 +157,8 @@ my $check_drive_param = sub {
+@@ -159,6 +159,8 @@ my $check_drive_param = sub {
              my $vtype = (PVE::Storage::parse_volname($storecfg, $volid))[0];
              raise_param_exc({ $opt => "explicit 'media=cdrom' is required for iso images" })
                  if $vtype eq 'iso' && !(defined($drive->{media}) && $drive->{media} eq 'cdrom');
@@ -11,19 +11,21 @@ index b9634d20..e52102e6 100644
          }
  
          $extra_checks->($drive) if $extra_checks;
-@@ -199,8 +201,9 @@ my $check_storage_access = sub {
+@@ -201,9 +203,11 @@ my $check_storage_access = sub {
                  PVE::Storage::check_volume_access($rpcenv, $authuser, $storecfg, $vmid, $volid);
                  if ($storeid) {
                      my ($vtype) = PVE::Storage::parse_volname($storecfg, $volid);
 -                    raise_param_exc({ $ds => "content type needs to be 'images' or 'iso'" })
--                        if $vtype ne 'images' && $vtype ne 'iso';
 +                    raise_param_exc(
 +                        { $ds => "content type needs to be 'images', 'iso' or 'floppy'" })
-+                        if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'floppy';
+                         if !PVE::Storage::Common::vtype_matches($vtype, 'images')
+-                        && $vtype ne 'iso';
++                        && $vtype ne 'iso'
++                        && $vtype ne 'floppy';
                  }
              }
  
-@@ -439,6 +442,38 @@ my $import_from_volid = sub {
+@@ -447,6 +451,38 @@ my $import_from_volid = sub {
      return $cloned->@{qw(file size)};
  };
  
@@ -62,19 +64,21 @@ index b9634d20..e52102e6 100644
  my sub prohibit_tpm_version_change {
      my ($old, $new) = @_;
  
-@@ -707,8 +742,9 @@ my sub create_disks : prototype($$$$$$$$$$$) {
+@@ -715,8 +751,11 @@ my sub create_disks : prototype($$$$$$$$$$$) {
              if ($storeid) {
                  my ($vtype, $volume_format) = (checked_parse_volname($storecfg, $volid))[0, 6];
  
 -                die "cannot use volume $volid - content type needs to be 'images' or 'iso'"
--                    if $vtype ne 'images' && $vtype ne 'iso';
+-                    if !PVE::Storage::Common::vtype_matches($vtype, 'images') && $vtype ne 'iso';
 +                die "cannot use volume $volid - content type needs to be 'images', 'iso'"
 +                    . " or 'floppy'"
-+                    if $vtype ne 'images' && $vtype ne 'iso' && $vtype ne 'floppy';
++                    if !PVE::Storage::Common::vtype_matches($vtype, 'images')
++                    && $vtype ne 'iso'
++                    && $vtype ne 'floppy';
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1411,6 +1447,11 @@ __PACKAGE__->register_method({
+@@ -1419,6 +1458,11 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -86,7 +90,7 @@ index b9634d20..e52102e6 100644
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          eval { PVE::QemuConfig->create_and_lock_config($vmid, $force) };
-@@ -1560,6 +1601,7 @@ __PACKAGE__->register_method({
+@@ -1568,6 +1612,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -94,7 +98,7 @@ index b9634d20..e52102e6 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2293,6 +2335,14 @@ my $update_vm_api = sub {
+@@ -2301,6 +2346,14 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -110,10 +114,10 @@ index b9634d20..e52102e6 100644
      };
  
 diff --git a/src/PVE/QemuConfig.pm b/src/PVE/QemuConfig.pm
-index aa0f1d5b..95aabc7f 100644
+index d89a62e6..abaa858d 100644
 --- a/src/PVE/QemuConfig.pm
 +++ b/src/PVE/QemuConfig.pm
-@@ -245,7 +245,11 @@ sub __snapshot_save_vmstate {
+@@ -258,7 +258,11 @@ sub __snapshot_save_vmstate {
      # get current QEMU -cpu argument to ensure consistency of custom CPU models
      my $pid = PVE::QemuServer::Helpers::vm_running_locally($vmid)
          or die "cannot obtain PID for VM $vmid!\n";
@@ -126,7 +130,7 @@ index aa0f1d5b..95aabc7f 100644
  
      my $nets_host_mtu = PVE::QemuServer::Network::get_nets_host_mtu($vmid, $conf);
  
-@@ -260,7 +264,7 @@ sub __snapshot_save_vmstate {
+@@ -273,7 +277,7 @@ sub __snapshot_save_vmstate {
  
      $conf->{vmstate} = $statefile;
      $conf->{runningmachine} = $runningmachine;
@@ -136,10 +140,10 @@ index aa0f1d5b..95aabc7f 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 824f8973..7f67fd6d 100644
+index 638afd80..e853aaf5 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
-@@ -171,7 +171,7 @@ my $vga_fmt = {
+@@ -172,7 +172,7 @@ my $vga_fmt = {
          optional => 1,
          default_key => 1,
          enum => [
@@ -148,7 +152,7 @@ index 824f8973..7f67fd6d 100644
          ],
      },
      memory => {
-@@ -190,6 +190,20 @@ my $vga_fmt = {
+@@ -191,6 +191,20 @@ my $vga_fmt = {
          enum => ['vnc'],
          optional => 1,
      },
@@ -169,7 +173,7 @@ index 824f8973..7f67fd6d 100644
  };
  
  my $ivshmem_fmt = {
-@@ -211,16 +225,30 @@ my $ivshmem_fmt = {
+@@ -212,16 +226,30 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
          type => 'string',
@@ -202,7 +206,7 @@ index 824f8973..7f67fd6d 100644
  };
  
  my $spice_enhancements_fmt = {
-@@ -672,7 +700,7 @@ EODESCR
+@@ -673,7 +701,7 @@ EODESCR
      bios => {
          optional => 1,
          type => 'string',
@@ -211,7 +215,7 @@ index 824f8973..7f67fd6d 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -1088,6 +1116,8 @@ sub verify_media_type {
+@@ -1089,6 +1117,8 @@ sub verify_media_type {
          $etype = 'images';
      } elsif ($media eq 'cdrom') {
          $etype = 'iso';
@@ -220,7 +224,7 @@ index 824f8973..7f67fd6d 100644
      } else {
          die "internal error";
      }
-@@ -1100,6 +1130,9 @@ sub verify_media_type {
+@@ -1101,6 +1131,9 @@ sub verify_media_type {
  sub cleanup_drive_path {
      my ($opt, $storecfg, $drive) = @_;
  
@@ -230,7 +234,7 @@ index 824f8973..7f67fd6d 100644
      # try to convert filesystem paths to volume IDs
  
      if (
-@@ -1111,7 +1144,7 @@ sub cleanup_drive_path {
+@@ -1112,7 +1145,7 @@ sub cleanup_drive_path {
          my ($vtype, $volid) = PVE::Storage::path_to_volume_id($storecfg, $drive->{file});
          raise_param_exc({ $opt => "unable to associate path '$drive->{file}' to any storage" })
              if !$vtype;
@@ -239,7 +243,7 @@ index 824f8973..7f67fd6d 100644
          verify_media_type($opt, $vtype, $drive->{media});
          $drive->{file} = $volid;
      }
-@@ -1119,7 +1152,9 @@ sub cleanup_drive_path {
+@@ -1120,7 +1153,9 @@ sub cleanup_drive_path {
      my $file_type = classify_drive_file($drive->{file});
  
      $drive->{media} = 'cdrom'
@@ -250,7 +254,7 @@ index 824f8973..7f67fd6d 100644
  }
  
  sub parse_hotplug_features {
-@@ -1208,6 +1243,8 @@ sub print_drive_commandline_full {
+@@ -1209,6 +1244,8 @@ sub print_drive_commandline_full {
      my $opts = '';
      my @qemu_drive_options = qw(media cache rerror werror discard);
      foreach my $o (@qemu_drive_options) {
@@ -259,7 +263,7 @@ index 824f8973..7f67fd6d 100644
          $opts .= ",$o=$drive->{$o}" if defined($drive->{$o});
      }
  
-@@ -1262,6 +1299,11 @@ sub print_drive_commandline_full {
+@@ -1263,6 +1300,11 @@ sub print_drive_commandline_full {
      die "$drive_id: explicit media parameter is required for iso images\n"
          if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
  
@@ -271,7 +275,7 @@ index 824f8973..7f67fd6d 100644
      if (!drive_is_cdrom($drive)) {
          my $detectzeroes = PVE::QemuServer::Drive::detect_zeroes_cmdline_option($drive);
  
-@@ -1317,7 +1359,8 @@ sub print_netdevice_full {
+@@ -1318,7 +1360,8 @@ sub print_netdevice_full {
          $device = 'virtio-net-pci';
      }
  
@@ -281,7 +285,7 @@ index 824f8973..7f67fd6d 100644
      my $tmpstr = "$device,mac=$net->{macaddr},netdev=$netid$pciaddr,id=$netid";
      if ($net->{queues} && $net->{queues} > 1 && $net->{model} eq 'virtio') {
          # Consider we have N queues, the number of vectors needed is 2 * N + 2, i.e., one per in
-@@ -2793,6 +2836,7 @@ sub conf_has_audio {
+@@ -2794,6 +2837,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -289,7 +293,7 @@ index 824f8973..7f67fd6d 100644
      };
  }
  
-@@ -2809,6 +2853,20 @@ sub audio_devs {
+@@ -2810,6 +2854,20 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -310,7 +314,7 @@ index 824f8973..7f67fd6d 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2817,7 +2875,20 @@ sub audio_devs {
+@@ -2818,7 +2876,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -332,7 +336,7 @@ index 824f8973..7f67fd6d 100644
  
      return $devs;
  }
-@@ -2977,7 +3048,7 @@ sub vga_conf_has_spice {
+@@ -2978,7 +3049,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -341,7 +345,7 @@ index 824f8973..7f67fd6d 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2986,7 +3057,7 @@ sub query_supported_cpu_flags {
+@@ -2987,7 +3058,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -350,7 +354,7 @@ index 824f8973..7f67fd6d 100644
      my $qemu_binary_version = kvm_user_version($qemu_cmd);
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
-@@ -3071,7 +3142,7 @@ sub query_supported_cpu_flags {
+@@ -3072,7 +3143,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -359,7 +363,7 @@ index 824f8973..7f67fd6d 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3090,6 +3161,8 @@ my sub get_vga_properties {
+@@ -3091,6 +3162,8 @@ my sub get_vga_properties {
      if (!$vga->{type}) {
          if ($arch eq 'aarch64') {
              $vga->{type} = 'virtio';
@@ -368,7 +372,7 @@ index 824f8973..7f67fd6d 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3143,7 +3216,9 @@ sub config_to_command {
+@@ -3144,7 +3217,9 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -379,7 +383,7 @@ index 824f8973..7f67fd6d 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3254,7 +3329,9 @@ sub config_to_command {
+@@ -3255,7 +3330,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -390,7 +394,7 @@ index 824f8973..7f67fd6d 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3274,6 +3351,10 @@ sub config_to_command {
+@@ -3275,6 +3352,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -401,7 +405,7 @@ index 824f8973..7f67fd6d 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3288,17 +3369,20 @@ sub config_to_command {
+@@ -3289,17 +3370,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -424,7 +428,7 @@ index 824f8973..7f67fd6d 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3309,6 +3393,7 @@ sub config_to_command {
+@@ -3310,6 +3394,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -432,7 +436,7 @@ index 824f8973..7f67fd6d 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3317,7 +3402,6 @@ sub config_to_command {
+@@ -3318,7 +3403,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -440,7 +444,7 @@ index 824f8973..7f67fd6d 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3330,6 +3414,22 @@ sub config_to_command {
+@@ -3331,6 +3415,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -463,7 +467,7 @@ index 824f8973..7f67fd6d 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3396,16 +3496,41 @@ sub config_to_command {
+@@ -3397,16 +3497,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -507,7 +511,7 @@ index 824f8973..7f67fd6d 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3424,6 +3549,11 @@ sub config_to_command {
+@@ -3425,6 +3550,11 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -519,7 +523,7 @@ index 824f8973..7f67fd6d 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3439,6 +3569,7 @@ sub config_to_command {
+@@ -3440,6 +3570,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -527,7 +531,7 @@ index 824f8973..7f67fd6d 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3542,8 +3673,9 @@ sub config_to_command {
+@@ -3543,8 +3674,9 @@ sub config_to_command {
          }
      }
  
@@ -539,7 +543,7 @@ index 824f8973..7f67fd6d 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3560,6 +3692,7 @@ sub config_to_command {
+@@ -3561,6 +3693,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -547,7 +551,7 @@ index 824f8973..7f67fd6d 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3579,7 +3712,8 @@ sub config_to_command {
+@@ -3580,7 +3713,8 @@ sub config_to_command {
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -557,7 +561,7 @@ index 824f8973..7f67fd6d 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3621,9 +3755,11 @@ sub config_to_command {
+@@ -3622,9 +3756,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -570,7 +574,7 @@ index 824f8973..7f67fd6d 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3635,6 +3771,17 @@ sub config_to_command {
+@@ -3636,6 +3772,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -588,7 +592,7 @@ index 824f8973..7f67fd6d 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3691,7 +3838,7 @@ sub config_to_command {
+@@ -3692,7 +3839,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -597,7 +601,7 @@ index 824f8973..7f67fd6d 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3709,7 +3856,18 @@ sub config_to_command {
+@@ -3710,7 +3857,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -617,7 +621,7 @@ index 824f8973..7f67fd6d 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3968,7 +4126,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4127,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -626,7 +630,7 @@ index 824f8973..7f67fd6d 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4552,13 +4710,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4711,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -644,7 +648,7 @@ index 824f8973..7f67fd6d 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4625,7 +4786,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4787,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -654,7 +658,7 @@ index 824f8973..7f67fd6d 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4977,6 +5139,9 @@ sub vmconfig_update_net {
+@@ -4978,6 +5140,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -664,7 +668,7 @@ index 824f8973..7f67fd6d 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5058,6 +5223,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5224,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -673,7 +677,7 @@ index 824f8973..7f67fd6d 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5105,8 +5272,10 @@ sub vmconfig_update_disk {
+@@ -5106,8 +5273,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -686,7 +690,7 @@ index 824f8973..7f67fd6d 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5206,7 +5375,7 @@ sub vmconfig_update_disk {
+@@ -5207,7 +5376,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -695,7 +699,7 @@ index 824f8973..7f67fd6d 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5709,6 +5878,9 @@ sub vm_start_nolock {
+@@ -5710,6 +5879,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -705,7 +709,7 @@ index 824f8973..7f67fd6d 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5914,7 +6086,11 @@ sub vm_start_nolock {
+@@ -5915,7 +6087,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -718,7 +722,7 @@ index 824f8973..7f67fd6d 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8155,7 +8331,12 @@ sub bootorder_from_legacy {
+@@ -8156,7 +8332,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -732,7 +736,7 @@ index 824f8973..7f67fd6d 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8193,9 +8374,14 @@ sub get_default_bootdevices {
+@@ -8194,9 +8375,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1490,7 +1494,7 @@ index 0ab43614..ede73231 100644
          push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
 diff --git a/src/test/Makefile b/src/test/Makefile
-index 3916179e..5c41441a 100644
+index 407567ef..40dd14ae 100644
 --- a/src/test/Makefile
 +++ b/src/test/Makefile
 @@ -1,6 +1,6 @@
@@ -1501,7 +1505,7 @@ index 3916179e..5c41441a 100644
  
  test_snapshot: run_snapshot_tests.pl
  	./run_snapshot_tests.pl
-@@ -50,6 +50,9 @@ test_raw_config_write: run_raw_config_write_tests.pl
+@@ -51,6 +51,9 @@ test_raw_config_write: run_raw_config_write_tests.pl
  test_api: run_api_tests.pl
  	./run_api_tests.pl
  
