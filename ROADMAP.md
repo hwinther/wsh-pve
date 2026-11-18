@@ -49,6 +49,7 @@ come after that, not before.
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note written | in review | |
+| Sound on the SS-5: the CS4231 plays through its APC DMA (LEMU `2938ff88`, `42d32575` by Antoni Sawicki, pve-qemu `wsh/0028`-`0029`), at SBus level 5 as the real machine (`wsh/0030`, openbios 0018), no start failure without an audiodev (`wsh/0031`), no lost tail (`wsh/0032`), qtest (`wsh/0033`); qemu-server `audio0: device=cs4231` (drivers `none`, `alsa`, `pa`, `pipewire`; SPICE, SS-10/SS-20 and sparc64 refused), the UI offers only that on sparc. SunOS 4.1.4, Solaris 2.5.1 and 2.6 play in the lab under OpenBIOS and `ss5.bin`. Limits: no DBRI on SS-10/SS-20 (not emulated), nothing in the web console (no SPICE on sparc32), no capture | in review | |
 | Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 
@@ -151,12 +152,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
-- **SPARC audio and cg14**, after the platform is stable. Researched, not started: sun4u first
-  (OpenBSD/sparc64 has `eap` for QEMU's ES1370; NetBSD/OpenBSD USB audio; Solaris 10 has only USB
-  audio), then CS4231 with APC DMA on sun4m (QEMU's `cs4231.c` is a register stub; the MiSTer SS-20
-  core plays sound with the SS-5's CS4231 in an SBus slot under Solaris 8 and NetBSD), then cg14
-  without SX (an old MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI
-  and SX last. Docs today say audio doesn't work on SPARC: true for sparc32, untested on sparc64.
+- **More SPARC audio and cg14**, after the platform is stable. The SS-5's CS4231 plays (Done).
+  Researched, not started: sun4u (OpenBSD/sparc64 has `eap` for QEMU's ES1370; NetBSD/OpenBSD USB
+  audio; Solaris 10 has only USB audio), the CS4231 in an SBus slot of the SS-10/SS-20 as the MiSTer
+  SS-20 core does (an FCode PROM and an OpenBIOS node), CS4231 capture, cg14 without SX (an old
+  MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI and SX last.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
 - **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
   expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and

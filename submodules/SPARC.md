@@ -59,8 +59,14 @@ maintains the patches.
 | `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024 | ours | not in QEMU |
 | `0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd` | sparc32 raised an illegal instruction trap for `ld [..], %fsr` and `st %fsr, [..]` with rd other than 0; V7 and V8 chips ignore rd there. The `_sigtramp` of an old static SunOS 4 libc saves and restores the FSR with rd 4 (`c92ba0e0`, `c90ba0e0`), so such programs died with SIGILL at their first signal after using the FPU (LEMU's case: Island Productivity's 1992 licence daemon `islandLIC`). sparc32 takes any rd again, as before QEMU 8.2; sparc64 doesn't change | [LEMU `0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2) by Antoni Sawicki | not fixed (since 8.2.0, `3d3c06737b`); see `upstream/qemu-sparc32-ldfsr-rd.md` |
 | `0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m` | qtest `sun4m-fsr-rd-test` for 0026: `ld %fsr` and `st %fsr` with rd 0, 4 (the exact words above) and 31 run without a trap and the FSR reads back | ours | not in QEMU |
+| `0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin` | The SS-5's CS4231 was a register stub: its APC DMA kept what was written and never interrupted, so every program that waited for the end of a sound on `/dev/audio` hung (SunOS 4.1.4). The APC now plays its playback buffers, read through the IOMMU, into the machine's audiodev at the codec's rate (u-law, A-law, 8-bit, 16-bit LE and BE; ADPCM plays silence), with PI, PD, PM and PMI and the DAC volume. Capture is not done: the capture pipe reads as empty ("Audio") | [LEMU `2938ff88`](https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c) by Antoni Sawicki | not in QEMU |
+| `0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i` | The machine side of 0028: `-machine audiodev=` on sun4m, the codec's IOMMU link, and its interrupt on bit 9 (processor level 5, OpenBIOS's `intr` 5; 0030 moves it) | [LEMU `42d32575`](https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6) by Antoni Sawicki | not in QEMU |
+| `0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level` | The real SS-5 has the codec at SBus level 5, processor level 9 (`ss5.bin` 2.15 gives the node `intr 0x39`). On bit 9, Solaris, which takes OpenBIOS's `interrupts 5`, never got its interrupt: audioplay stopped after the first second with `processor level 3 SBus interrupt not serviced`. Now SBus level 5 (bit 11), through an OR gate with the cg3 or TCX, which use that level too. Needs openbios patch 0018 for SunOS 4 | ours | not in QEMU (upstream wires the stub to bit 5, processor level 11) |
+| `0031-hw-audio-cs4231-no-sound-without-an-audiodev` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio driver, and with none available didn't start (`no default audio driver available`). Without an audiodev the codec now opens no voice and keeps its registers only, as before (the PC speaker does the same) | ours | — |
+| `0032-hw-audio-cs4231-play-out-the-last-samples-when-playb` | The APC takes its samples up to 50 ms ahead of the codec's clock; turning the voice off when the pipe ran empty or the driver stopped the DMA dropped what the mixer still held, so every sound lost its last 50 ms. The voice stays on for 200 ms after playback stops | ours | — |
+| `0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA` | qtest `sun4m-cs4231-test` for 0028-0032: two u-law buffers behind IOMMU mappings, PEN, PI/PD/PM/PMI at SBus level 5 (processor level 9) in real time, every sample decoded in a `wav` audiodev; DMA off and the reset bit | ours | not in QEMU |
 
-The ESCC, cg3, SunOS idle and `%fsr` (0026) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
+The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
 carry it ourselves. Each patch keeps its author and has an `Origin:` line.
 
@@ -110,10 +116,16 @@ case fails with trap type 2 (illegal instruction) and `rd0` passes. With 0001-00
 `make check-qtest-sparc64`: 15 OK (`sun4u-cmd646-test` 2/2 among them), 2 skipped, and `qmp-test`
 fails in `/sparc64/qmp/oob` the same way.
 
+0028 and 0029 are LEMU's commits unchanged: they apply to 11.1.3 on top of 0001-0027 without fuzz.
+0030-0033 are ours, from the lab ("Audio"). `sun4m-cs4231-test` passes 2/2 with 0028-0033; without
+0032 its playback case fails (1200 of the 1600 samples reach the wav file). With 0001-0033 the
+`qtest-sparc` and `qtest-sparc64` suites: 37 OK, 4 skipped, and the two `qmp-test` `oob` failures
+as before; every sun4m qtest above passes, and an SS-5 without an audiodev starts.
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
-`sun4m-fsr-rd-test` (sparc),
+`sun4m-fsr-rd-test` and `sun4m-cs4231-test` (sparc),
 `sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
@@ -141,6 +153,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
 | `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
 | `0008-sparc32-enter-the-prompt-on-op_enter-and-resume-with-go` | Stop-A (the romvec's `op_enter`) on a running Solaris or SunOS powered the machine off ("abort, power off"); it now stops at the prompt and `go` resumes the client, `boot` resets first ("Stop-A") | not fixed; see `upstream/openbios-sparc32-op-enter-powers-off.md` |
+| `0018-sparc32-give-the-cs4231-intr-9-the-level-of-its-sbus-level` | The SS-5's `SUNW,CS4231` node had `interrupts` 5 (SBus level 5, processor level 9) and `intr` 5 (processor level 5): Solaris waits where the first says, SunOS 4 where the second says, so no wiring served both. `intr` is now 9, as the Sun PROM's `0x39`, for QEMU patch 0030 ("Audio") | not in OpenBIOS (QEMU had no working codec) |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -525,6 +538,63 @@ QEMU stays up. Not reachable through PVE (its serial console is a plain Unix soc
 A fix would be in QEMU's ESCC: a break with an end (clear the bit after a character time, with the
 NUL character a real break leaves in the receiver), so Solaris sees the transition and enters the
 prompt; a candidate for a `wsh/` patch and an upstream report.
+
+### Audio
+
+The SS-5's CS4231 plays sound with pve-qemu 0028-0033 and openbios 0016: the APC DMA engine reads
+the guest's buffers through the IOMMU and plays them into the audiodev given with
+`-machine audiodev=<id>` (qemu-server: `audio0: device=cs4231,driver=...`). The codec is built into
+the machine, so there is no `-device`. Without an audiodev (no `audio0`) the chip is the old
+register stub: no sound and no interrupts, and a program that waits for the end of a sound hangs,
+as before (SunOS 4.1.4, LEMU's report). `driver=none` gives a working chip that nobody hears.
+
+Measured in the lab (2026-11-18) with a `qemu-system-sparc` built from 0001-0033 and the patched
+`openbios-sparc32`, `-audiodev wav` (44.1 kHz stereo; the lab variable `AUDIO=wav` does the same).
+The sound is a 3-second 400 Hz square wave of u-law bytes made in the guest with `nawk`: none of
+the installed disks has Sun's demo sounds (SunOS's Programmer install has no `/usr/demo/SOUND`,
+the Solaris End User installs no `SUNWauda`). It went as raw bytes to `/dev/audio` on SunOS, and
+with a 24-byte `.au` header through `audioplay -v 100` on Solaris:
+
+| Guest | Firmware | Command time | In the wav file |
+| --- | --- | --- | --- |
+| SunOS 4.1.4 (`SUNW,CS42310 ... pri 9`) | OpenBIOS | 3.03 s | 3.000 s, 400.0 Hz, every half period 55-56 samples; peak -35.3 dBFS (SunOS's default play gain) |
+| Solaris 2.6 | OpenBIOS | 3.16 s | 3.000 s, 400.0 Hz, half periods 55-56 samples, peak -12.3 dBFS (the samples' own level, 7932) |
+| Solaris 2.6 | `ss5.bin` | 3.39 s | the same |
+| Solaris 2.5.1 | OpenBIOS | 3.21 s | the same |
+| Solaris 2.5.1 | `ss5.bin` | 3.22 s | the same |
+
+No sample was lost or repeated, there were no gaps, and the command ends when the sound does. All
+runs had `-vga none` (the lab's serial console): sound with the cg3 or TCX interrupting on the same
+SBus level through the OR gate was not played. With a cg3 attached, Solaris 2.6 (OpenBIOS) booted
+with its console on the cg3, up to its first-boot questions. What was wrong on the way, and is
+fixed:
+
+- With LEMU's interrupt (bit 9, processor level 5, which matches OpenBIOS's old `intr` 5) SunOS
+  4.1.4 played, but Solaris 2.6 stopped after 1.02 s with `WARNING: processor level 3 SBus interrupt
+  not serviced` on the console: Solaris attaches the driver by `interrupts` (SBus level 5). The Sun
+  PROM's node says `intr 0x39`, an SBus interrupt at processor level 9, which is SBus level 5 on
+  sun4m. 0030 raises SBus level 5 and openbios 0018 makes `intr` 9; then all of the above play.
+- Each sound lost its last 50 ms when the driver stopped the DMA as soon as the pipe ran empty
+  (0032).
+- An SS-5 without an audiodev didn't start (0031).
+
+Not done or not tested: capture (the capture pipe reads as empty, so a recording program gets no
+data); ADPCM (plays silence); Solaris 7 and later and NetBSD (not run); Sun's demo `.au` files and
+LEMU's `/usr/demo/SOUND/play` (not on our disks; LEMU measured `spacemusic.au` at 6.00 s, peak
+-5.2 dBFS); the host backends (`alsa`, `pa`, `pipewire`) on a real node: qemu-server emits them,
+the lab used only `wav` (the qtests `wav` and `none`).
+
+QEMU's mixer doubles a mono voice played into a mono output (it adds left and right), so a wav
+audiodev with `out.channels=1` is 6 dB too loud; the qtest uses stereo. The `wav` backend leaves the
+header's sizes at 0 when the guest powers the machine off; the samples follow the 44-byte header.
+
+Where the sound goes on PVE: SPICE carries sound only to a SPICE display, which sparc32 doesn't
+have, so qemu-server refuses `driver=spice` on sparc. The web console (noVNC) has no sound.
+`alsa`, `pa` and `pipewire` play on the node's own sound device or sound server (with `pa`, the
+existing `server=` option points at a PulseAudio server, as on x86); `none` is silent.
+
+SS-10 and SS-20 have a DBRI with a CS4215 instead, which QEMU doesn't emulate: qemu-server refuses
+`audio0` there. sun4u: no sound device was tested, and `audio0` is refused.
 
 ### SS-10 and SS-20
 
@@ -2024,7 +2094,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
   `SS-\d{1,2}` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
-  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
+  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC and `audio0` (SS-5 only, `device=cs4231`, no SPICE).
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
   vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
@@ -2081,6 +2151,16 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   vmgenid, virtio-balloon.
 - **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
   when there is one.
+- **Sound:** `audio0: device=cs4231,driver=none|alsa|pa|pipewire` on SS-5 emits
+  `-audiodev <driver>,id=<driver>-backend0` and `-machine audiodev=<driver>-backend0` (the CS4231 is
+  built in: no `-device`). `cs4231` is a new value of `audio0`'s `device`; no driver was added.
+  Refused: `driver=spice`, the default (no SPICE display on sparc32), another device on SS-5,
+  `audio0` on SS-10/SS-20 (DBRI, not emulated) and on sparc64 (`assert_sparc32_profile`,
+  `assert_sparc64_profile`), and `cs4231` on any other architecture (`assert_audio_device`); all at
+  create, update and start. Needs a pve-qemu-kvm with 0028-0033: older ones have no `audiodev` on
+  sun4m and don't start the VM. Tests: `cfg2cmd/sparc32-ss5-audio*.conf`,
+  `sparc32-ss20-audio-error.conf`, `sparc64-audio-error.conf`, `audio-cs4231-x86-error.conf`; e2e
+  `sparc-profiles.spec.ts` ("sound on the SS-5"). Details under "Audio".
 
 ### Operations on a running VM
 
@@ -2122,6 +2202,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 `submodules/pve-manager.patch`:
 
+- `qemu/AudioEdit.js`: on a sparc VM the Audio Device editor offers only `cs4231` and no SPICE
+  driver (`none` preselected).
 - `qemu/Architecture.js`: SPARC (32-bit) and SPARC (64-bit) in the create wizard's vCPU
   Architecture (an advanced option); per architecture the OS types (Linux, Solaris, Other),
   machines, firmware, displays, SCSI controller and buses; the mirrored sparc32 profiles; the
@@ -2145,8 +2227,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
-  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027)
-  and `am53c974-test` with 0007;
+  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
+  `sun4m-cs4231-test` (0033) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
@@ -2182,6 +2264,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 ## Known gaps
 
+- **Sound:** SS-5 only, playback only, and not in the web console ("Audio").
 - **CD as a disk in the web UI:** `cd_as_disk=1` (see "Supported profiles") has no field in the CD/DVD
   editor; the editor keeps it when the medium is changed or ejected.
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
