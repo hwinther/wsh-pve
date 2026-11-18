@@ -491,6 +491,115 @@ test.describe('a CD that answers as a disk (cd_as_disk)', () => {
   })
 })
 
+// Sound (`audio0: device=cs4231`): the SPARCstation 5's built-in CS4231 gets the backend through
+// `-machine audiodev=` (submodules/SPARC.md, "Audio"); SS-10/SS-20 (DBRI), sun4u and SPICE are
+// refused. CI runs against the published packages: what the option does needs a qemu-server that
+// has it, and QEMU starting it a pve-qemu-kvm whose sun4m has the audiodev property (each probed
+// once, skipped otherwise); the refusals hold with either qemu-server where the older one refuses
+// too (the unknown device), and are skipped where it accepted the config.
+test.describe('sound on the SS-5 (audio0: device=cs4231)', () => {
+  let hasAudio = false
+  let qemuHasAudiodev = false
+  const UNKNOWN = "audio0.device: value 'cs4231' does not have a value in the enumeration"
+
+  test.beforeAll(async () => {
+    const { code } = await pveExec(['grep', '-q', 'cs4231', '/usr/share/perl5/PVE/QemuServer.pm'])
+    hasAudio = code === 0
+    const machine = await pveExec(['sh', '-c', 'qemu-system-sparc -machine SS-5,help 2>&1 | grep -q audiodev'])
+    qemuHasAudiodev = machine.code === 0
+  })
+
+  for (const driver of ['none', 'alsa']) {
+    test(`SS-5, driver ${driver}: -audiodev and -machine audiodev, no -device`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has cs4231
+      test.skip(!hasAudio, 'the installed qemu-server has no cs4231 yet')
+      const vmid = await createVm({
+        arch: 'sparc',
+        audio0: `device=cs4231,driver=${driver}`,
+        machine: 'SS-5',
+        memory: 256,
+        name: `sparc-audio-${driver}`,
+      })
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain(`-machine 'audiodev=${driver}-backend0'`)
+      expect(cmd).toContain(`-audiodev '${driver},id=${driver}-backend0'`)
+      expect(cmd).not.toMatch(/-device '[^']*(hda|AC97|sb16|cs4231)/)
+    })
+  }
+
+  // driver none only: the e2e container has no sound card
+  test('SS-5, driver none: QEMU starts it', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published packages have cs4231
+    test.skip(!hasAudio || !qemuHasAudiodev, 'the installed qemu-server or pve-qemu-kvm has no CS4231 sound yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      audio0: 'device=cs4231,driver=none',
+      machine: 'SS-5',
+      memory: 256,
+      name: 'sparc-audio-start',
+    })
+    const qemu = await qemuAccepts(vmid)
+    expect(qemu.code, qemu.output).toBe(0)
+  })
+
+  const refusals: { name: string; params: Record<string, number | string>; message: string; old?: string }[] = [
+    {
+      message:
+        "sparc: audio driver 'spice' is not supported, sparc32 has no SPICE display; use one of: alsa, none, pa, pipewire",
+      name: 'SPICE, the default driver',
+      old: UNKNOWN,
+      params: { arch: 'sparc', audio0: 'device=cs4231', memory: 256 },
+    },
+    {
+      message:
+        "sparc: audio0 is not supported on SS-20, its sound chip (DBRI) isn't emulated; only SS-5 has sound (device cs4231)",
+      name: 'SS-20',
+      old: UNKNOWN,
+      params: { arch: 'sparc', audio0: 'device=cs4231,driver=none', machine: 'SS-20', memory: 512 },
+    },
+    {
+      message:
+        "audio0: device 'cs4231' is the SPARCstation 5's built-in sound chip, only on arch sparc (machine SS-5), not on x86_64",
+      name: 'the CS4231 on x86_64',
+      old: UNKNOWN,
+      params: { audio0: 'device=cs4231,driver=none', memory: 512 },
+    },
+    {
+      message: "sparc: audio device 'ich9-intel-hda' is not supported on SS-5, use cs4231 (built in)",
+      name: 'an x86 sound card on SS-5',
+      params: { arch: 'sparc', audio0: 'device=ich9-intel-hda,driver=none', memory: 256 },
+    },
+    {
+      message: 'sparc64: audio0 is not supported, no sound device was tested on sun4u',
+      name: 'sparc64',
+      params: { arch: 'sparc64', audio0: 'device=AC97,driver=none', memory: 512 },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- the published qemu-server accepts this config
+      test.skip(!hasAudio && !c.old, 'the installed qemu-server has no audio rules for sparc yet')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid, ...c.params })
+      expect(refused.message).toContain(hasAudio ? c.message : c.old)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('update refused: SPICE on an existing SS-5', async () => {
+    const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-audio-update' })
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu/${vmid}/config`, { audio0: 'device=cs4231' })
+    expect(refused.message).toContain(
+      hasAudio
+        ? "sparc: audio driver 'spice' is not supported, sparc32 has no SPICE display; use one of: alsa, none, pa, pipewire"
+        : UNKNOWN,
+    )
+    expect(await vmConfFile(vmid)).not.toContain('audio0:')
+  })
+})
+
 test.describe('backup and restore', () => {
   /** Fills the first 4 MB of the VM's scsi3 disk with random data, returns the image's sha256. */
   async function fillDisk(vmid: number): Promise<string> {

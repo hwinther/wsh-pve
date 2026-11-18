@@ -740,7 +740,7 @@ index b8412b6f..0c3362de 100644
 +    );
 +}
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index ba588edc..01ba47ea 100644
+index ba588edc..f5d76f14 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
 @@ -16,6 +16,12 @@ Ext.define('PVE.qemu.AudioInputPanel', {
@@ -805,6 +805,25 @@ index ba588edc..01ba47ea 100644
          },
      ],
  });
+@@ -63,6 +102,18 @@ Ext.define('PVE.qemu.AudioEdit', {
+             success: function (response) {
+                 me.vmconfig = response.result.data;
+ 
++                // sparc32: only the SPARCstation 5's built-in CS4231, and no SPICE (no SPICE
++                // display); qemu-server refuses audio on SS-10/SS-20 (DBRI, not emulated)
++                if (me.vmconfig.arch === 'sparc') {
++                    let form = me.down('pveAudioInputPanel');
++                    let device = form.down('field[name=device]');
++                    device.setComboItems([['cs4231', 'CS4231 (SS-5, built in)']]);
++                    device.setValue('cs4231');
++                    let driver = form.down('field[name=driver]');
++                    driver.setComboItems(driver.comboItems.filter(([key]) => key !== 'spice'));
++                    driver.setValue('none');
++                }
++
+                 var audio0 = me.vmconfig.audio0;
+                 if (audio0) {
+                     me.setValues(PVE.Parser.parsePropertyString(audio0));
 diff --git a/www/manager6/qemu/BootOrderEdit.js b/www/manager6/qemu/BootOrderEdit.js
 index 6239aeca..0f12a83e 100644
 --- a/www/manager6/qemu/BootOrderEdit.js
