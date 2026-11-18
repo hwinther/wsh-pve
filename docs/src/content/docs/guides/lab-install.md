@@ -26,8 +26,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol24-ss5` | Solaris 2.4 HW 3/95, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol251-ss5` | Solaris 2.5.1 11/97, End User | as `sol24-ss5` | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
-| `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
-| `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
+| `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
@@ -288,9 +288,15 @@ On a 9G disk (`sol26-ss5`, measured):
 | 6 | `/usr` | 233 MB | 153 MB (57 MB free) |
 | 7 | `/export/home` | 7175 MB | 7103 MB free |
 
-On `sol26-ss20` (512 MB of memory) swap is 295 MB and `/export/home` 6973 MB. `/` and `/usr` are as small as on the 3G disk (auto-layout sizes them for the software, End User
+On `sol26-ss20` (512 MB of memory) swap is 295 MB and `/export/home` 6973 MB. Solaris 7
+(`sol7-ss5`, `sol7-ss20`, measured) lays out the 9G disk the same way: `/` 86 MB (24 MB used),
+`/usr` 288 MB (187 MB used, 72 MB free), swap 148 MB on SS-5 and 295 MB on SS-20, `/export/home`
+7112 MB on SS-5 and 6963 MB on SS-20; the install takes about a minute longer than on the 3G disk.
+3G stays the default for Solaris 2.6 and 7 (End User fits it); Solaris 8 and 9 have only the 9G
+disk. `/` and `/usr` are as small as on the 3G disk (auto-layout sizes them for the software, End User
 System Support), so the extra space is all in `/export/home`. Software that installs under `/opt`
-or `/usr` needs a layout of its own (the installer's Customize) or a link into `/export/home`.
+or `/usr` needs a layout of its own (the installer's Customize) or a link into `/export/home`
+(for example `/usr/local` as a link to `/export/home/local`), or a `--data-disk` mounted there.
 
 ### A second disk
 
