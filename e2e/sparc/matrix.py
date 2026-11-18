@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run a fixed list of lab cases (scenario + variables) one after another and summarise them.
 
-    matrix.py smoke --runs /mnt/sparc/runs/m1 [--disks /srv/sparc/disks] [--iso /mnt/sparc/iso]
-    matrix.py benchdisk --runs /mnt/sparc/runs/b1 [--bench /mnt/sparc/disks/bench-sol26.raw]
+    matrix.py smoke --runs /mnt/runs/m1 [--disks /mnt/os/disks] [--iso /mnt/os/iso]
+    matrix.py benchdisk --runs /mnt/runs/b1 [--bench /mnt/os/disks/bench-sol26.raw]
 
 Each case runs `lab.py run` in <runs>/<case>/. A case that boots an installed disk gets a sparse copy
 of it there (the image in --disks is never booted), deleted again when the case is done, so <runs>
@@ -186,8 +186,8 @@ MATRICES = {
 }
 
 # sparc64 (sun4u, OpenBIOS, scenarios/_sparc64.py): disk and CD-ROM on the built-in IDE, sunhme, serial
-# console unless stated (submodules/SPARC.md, "sparc64"). The installed disk is in /mnt/sparc/disks on
-# the lab host: run with --disks /mnt/sparc/disks. The network cases need outside access (NET=user).
+# console unless stated (submodules/SPARC.md, "sparc64"). The installed disk is in /mnt/os/disks on
+# the lab host: run with --disks /mnt/os/disks. The network cases need outside access (NET=user).
 NB111_64 = "netbsd111-sparc64-installed.raw"  # netbsd-install-sparc64.py with the defaults
 NB111_CD64, NB93_CD64 = "other-os/NetBSD-11.1-sparc64.iso", "other-os/NetBSD-9.3-sparc64.iso"
 OB80_CD64, DEB12_CD64 = "other-os/openbsd8.0/install80.iso", "other-os/debian-12.0.0-sparc64-NETINST-1.iso"
@@ -217,7 +217,7 @@ MATRICES["sparc64"] = [
     ("nb111-idle-sparc64", "sparc64-idle.py", NB111_64, None, {"GUEST": "netbsd", "CPU_ABOVE": "80"}),
 ]
 
-# Solaris 10 on sun4u: NEEDS THE SUN DVD on the lab host (/mnt/sparc/iso/sol-10-u11-ga-sparc-dvd.iso,
+# Solaris 10 on sun4u: NEEDS THE SUN DVD on the lab host (/mnt/os/iso/sol-10-u11-ga-sparc-dvd.iso,
 # Oracle's Solaris 10 1/13 SPARC DVD; Sun software, never in the repository). Its installer with the
 # package's openbios-sparc64 and QEMU: the IDE disk attaches as dad0 without "Interrupt not seen after
 # set_features" (pve-qemu wsh/0021), the language and terminal questions are answered on ttya
@@ -290,9 +290,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("matrix", choices=sorted(MATRICES))
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
-    p.add_argument("--disks", default="/srv/sparc/disks", help="installed disk images (read only)")
-    p.add_argument("--iso", default="/mnt/sparc/iso", help="install CDs (read only)")
-    p.add_argument("--bench", default="/mnt/sparc/disks/bench-sol26.raw", help="the bench disk (read only)")
+    p.add_argument("--disks", default="/mnt/os/disks", help="installed disk images (read only)")
+    p.add_argument("--iso", default="/mnt/os/iso", help="install CDs (read only)")
+    p.add_argument("--bench", default="/mnt/os/disks/bench-sol26.raw", help="the bench disk (read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per case")
     a = p.parse_args()
 

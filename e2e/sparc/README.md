@@ -48,14 +48,15 @@ ran; the version line in `qemu-system-sparc --version` does (a local build has n
 
 ## Run a scenario
 
-The install media and disk templates are not in the image; mount a directory with them (here
-`/srv/sparc`, holding the Solaris ISOs and `disks/`, the Sun-labelled disk templates).
+The install media and disk templates are not in the image; mount the directories with them (on the
+lab host `/mnt/os`, with the ISOs in `iso/` and the Sun-labelled disk templates in `disks/`, and
+`/mnt/runs` for the output).
 
 ```sh
-docker run --rm -v /srv/sparc:/srv/sparc wsh-sparc-lab run scenarios/solaris-install-serial.py \
-  --out /srv/sparc/runs/s26 \
-  --var ISO=/srv/sparc/solaris_2.6_598_sparc.iso \
-  --var TEMPLATE=/srv/sparc/disks/sparc-SUN2.9G.raw.template.xz
+docker run --rm -v /mnt/os:/mnt/os -v /mnt/runs:/mnt/runs wsh-sparc-lab run scenarios/solaris-install-serial.py \
+  --out /mnt/runs/s26 \
+  --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso \
+  --var TEMPLATE=/mnt/os/disks/sparc-SUN2.9G.raw.template.xz
 ```
 
 Exit code 0 = passed, 1 = a step timed out, 2 = QEMU died (a crash: `qemu.stderr` has the message), 3 =
@@ -129,9 +130,9 @@ exits 1 if any case failed. The install CDs and the installed disks are separate
 mounted read only:
 
 ```sh
-docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/sparc/disks:ro \
-  -v /mnt/sparc/runs:/mnt/sparc/runs --entrypoint python3 wsh-sparc-lab matrix.py smoke \
-  --runs /mnt/sparc/runs/m1 --iso /mnt/sparc/iso --disks /srv/sparc/disks
+docker run --rm -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro \
+  -v /mnt/runs:/mnt/runs --entrypoint python3 wsh-sparc-lab matrix.py smoke \
+  --runs /mnt/runs/m1 --iso /mnt/os/iso --disks /mnt/os/disks
 ```
 
 | Matrix | Cases | Time |
@@ -142,11 +143,11 @@ docker run --rm -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/spa
 | `display-x` | `fb-display.py X=1 INPUT=1 IDLE=60`: the 2.6 disks (TCX packages added by `PREPARE`) into the CDE desktop on TCX 8, TCX 24 and cg3 with SS-5 (OpenBIOS, `ss5.bin`: not TCX 24), SS-10 and SS-20 (OpenBIOS) | ~100 min |
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%), Solaris 2.6 on SS-20 with 2 and 4 CPUs and `solaris-smp-idle` (below 20%, `sparc_solaris_idle_mp_match` traced) and with 2 CPUs and `solaris-smp-idle=off` (above 150%) | ~45 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
-| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/sparc/disks` | ~25 min |
+| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/os/disks` | ~25 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 | `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
-| `solaris10` | (`pve_matrix.py solaris10` runs the same checks on a VM created through PVE) `sparc64-boot-cd.py GUEST=solaris10`: the Solaris 10 1/13 DVD on `sun4u` to the installer's first screen, the language and terminal questions answered on ttya, the IDE disk attached (`dad0`) without `Interrupt not seen after set_features`. **Needs the Sun DVD** `sol-10-u11-ga-sparc-dvd.iso` in `--iso` (Oracle's media, not in the repository) and a package with the patched `openbios-sparc64` and pve-qemu `wsh/0021`; with older packages it fails. `sol10-disk-sparc64` boots the installed disk `sol10-sun4u-installed.raw` (made by `solaris10-install-sparc64.py`, Sun software, lab host only) to `console login:` and checks `format`, the DHCP lease on `hme0` and a ping; the disk lives in `/mnt/sparc/disks`, so run this matrix with `disks_dir=/mnt/sparc/disks` | ~4 min + ~7 min |
+| `solaris10` | (`pve_matrix.py solaris10` runs the same checks on a VM created through PVE) `sparc64-boot-cd.py GUEST=solaris10`: the Solaris 10 1/13 DVD on `sun4u` to the installer's first screen, the language and terminal questions answered on ttya, the IDE disk attached (`dad0`) without `Interrupt not seen after set_features`. **Needs the Sun DVD** `sol-10-u11-ga-sparc-dvd.iso` in `--iso` (Oracle's media, not in the repository) and a package with the patched `openbios-sparc64` and pve-qemu `wsh/0021`; with older packages it fails. `sol10-disk-sparc64` boots the installed disk `sol10-sun4u-installed.raw` (made by `solaris10-install-sparc64.py`, Sun software, lab host only) to `console login:` and checks `format`, the DHCP lease on `hme0` and a ping; the disk lives in `/mnt/os/disks`, so run this matrix with `disks_dir=/mnt/os/disks` | ~4 min + ~7 min |
 | `solaris10-install` | `solaris10-install-sparc64.py`: the whole Solaris 10 1/13 text install from the DVD to the IDE disk on `sun4u`, answered on ttya. Manual only, needs `--timeout 9000` (the workflow choice passes it). Through PVE: the install target `sol10-sun4u` ("The Solaris 10 install target") | ~80 min |
 
 `display` needs a `pve-qemu-kvm` with the cg3 patches (`submodules/SPARC.md`); with an older one
@@ -265,9 +266,9 @@ mounted read only:
 docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:local .
 docker build -f e2e/sparc/pve.Dockerfile -t wsh-pve-lab e2e/sparc
 docker run -d --name pve-lab --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
-  -v /mnt/sparc/iso:/mnt/sparc/iso:ro -v /srv/sparc/disks:/srv/sparc/disks:ro \
-  -v /mnt/sparc/disks:/mnt/sparc/disks:ro -v /mnt/sparc/runs:/mnt/sparc/runs wsh-pve-lab
-docker exec pve-lab python3 pve_matrix.py pve --runs /mnt/sparc/runs/p1
+  -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro \
+  -v /mnt/os/disks:/mnt/os/disks:ro -v /mnt/runs:/mnt/runs wsh-pve-lab
+docker exec pve-lab python3 pve_matrix.py pve --runs /mnt/runs/p1
 ```
 
 The `sparc lab` workflow does this for the `pve` choice, and every week after `smoke` (its own
@@ -397,7 +398,7 @@ findings).
   plain names (`msdos622-disk1.img` ... `-disk3.img`, `msdos622-supp.img`, `freedos14-boot.img`,
   `freedos14-disk1.img` ... `-disk6.img`). `install` and `lab.py media` say so when the storage lacks
   the content type (with the `pvesm set` command); `pve_matrix.py` links them from `--floppy`
-  (`/mnt/sparc/floppy`) and adds the content type to the test node's `local`.
+  (`/mnt/os/floppy`) and adds the content type to the test node's `local`.
 - **The screen** is the VGA text buffer (`vgatext.py`): the BIOS data area at 0x400 (mode, columns,
   rows, page, cursor) and the buffer at 0xB8000 (0xB0000 in mode 7), each read with QMP `pmemsave`
   into a private temporary file in a few ms; 40/80 columns, 25/43/50 rows, CP437 with the VGA glyphs,
@@ -1290,7 +1291,7 @@ the cast through the same terminal emulator and compares the screen at each step
 step's `NNN-ttya.txt`:
 
 ```sh
-docker run --rm -v /mnt/sparc/runs:/mnt/sparc/runs wsh-sparc-lab cast /mnt/sparc/runs/m1/sol26-disk-openbios-ss5 --check
+docker run --rm -v /mnt/runs:/mnt/runs wsh-sparc-lab cast /mnt/runs/m1/sol26-disk-openbios-ss5 --check
 ```
 
 No GIF or SVG rendering: that needs a terminal renderer (agg, svg-term) that isn't in the image; the
@@ -1369,10 +1370,10 @@ sources, nor anything from the Solaris CD is in the repository: only the scripts
 
 | File (lab host) | What |
 | --- | --- |
-| `/mnt/sparc/disks/bench-sol26.raw` | the bench disk: 32 MiB, Sun label, UFS on slice 0 (`bench/README` is its README). The one measured in `submodules/SPARC.md`: sha256 `4fc0babd3639e67ec9ab6f5176a7d645316849759ad1e5b1d6e48335933a2206`, without the network tests (every rebuild differs: `newfs` and file times) |
-| `/mnt/sparc/disks/bench-sol26-net.raw` | the same with lmbench's network tests (`bench/net.sh`), measured in `submodules/SPARC.md` ("Network"): sha256 `a0f7eb6d0c04cccbd1078e02c7876e7fe79c568b235194a653e6a759c22bd93a` |
-| `/mnt/sparc/disks/sol26-ss20-build.raw` | the build disk: `sol26-enduser-ss20-installed.raw` + the 2.6 development packages + gcc 2.95.3 (sha256 `6be744e08cc3c7e34d7ed634d4f717d7f17f1c8a521e32fc23dbada86131eaa2`; boot only copies of it) |
-| `/mnt/sparc/disks/bench-downloads/` | the sources and the gcc package as downloaded and checked by `bench/handover.py` (untrusted third-party files: only for the hand-over CD) |
+| `/mnt/os/disks/bench-sol26.raw` | the bench disk: 32 MiB, Sun label, UFS on slice 0 (`bench/README` is its README). The one measured in `submodules/SPARC.md`: sha256 `4fc0babd3639e67ec9ab6f5176a7d645316849759ad1e5b1d6e48335933a2206`, without the network tests (every rebuild differs: `newfs` and file times) |
+| `/mnt/os/disks/bench-sol26-net.raw` | the same with lmbench's network tests (`bench/net.sh`), measured in `submodules/SPARC.md` ("Network"): sha256 `a0f7eb6d0c04cccbd1078e02c7876e7fe79c568b235194a653e6a759c22bd93a` |
+| `/mnt/os/disks/sol26-ss20-build.raw` | the build disk: `sol26-enduser-ss20-installed.raw` + the 2.6 development packages + gcc 2.95.3 (sha256 `6be744e08cc3c7e34d7ed634d4f717d7f17f1c8a521e32fc23dbada86131eaa2`; boot only copies of it) |
+| `/mnt/os/disks/bench-downloads/` | the sources and the gcc package as downloaded and checked by `bench/handover.py` (untrusted third-party files: only for the hand-over CD) |
 
 `DISK2` attaches a second disk on SCSI target `DISK2_ID` (4), read only unless `DISK2_RO=0`. Target 4,
 not 0-2: OpenBIOS takes the first disk it probes for its `disk` alias, so with a disk on target 1 it
@@ -1384,7 +1385,7 @@ Sun PROMs boot target 3 as before. The installs saw no disk on target 4, so `ben
 **Build disk** (once; ~15 min by hand through `serve`; SS-20, where deep-calling programs such as gcc
 run several times faster than on SS-5, `submodules/SPARC.md` "Benchmarks"):
 
-1. Copy `sol26-enduser-ss20-installed.raw` to `/mnt/sparc/disks/sol26-ss20-build.raw` and `serve` it
+1. Copy `sol26-enduser-ss20-installed.raw` to `/mnt/os/disks/sol26-ss20-build.raw` and `serve` it
    with `MACHINE=SS-20 ISO=solaris_2.6_598_sparc.iso`; answer the first-boot questions, log in as root.
 2. From the 2.6 CD (vold mounts it on `/cdrom/cdrom0/s0`), with an admin file of `action=nocheck`,
    `instance=overwrite` and the other checks off: `pkgadd -n -a /tmp/admin -d
@@ -1411,14 +1412,14 @@ repository root, on the lab host:
 
 ```sh
 docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
-W=/mnt/sparc/runs/bench-build; mkdir -p $W
-D=/mnt/sparc/disks/bench-downloads   # handover.py checks the files there, fetches missing ones
+W=/mnt/runs/bench-build; mkdir -p $W
+D=/mnt/os/disks/bench-downloads   # handover.py checks the files there, fetches missing ones
 docker run --rm -v $W:$W -v $D:$D --entrypoint python3 wsh-sparc-lab -I bench/handover.py $D $W/handover.iso
 python3 e2e/sparc/bench/sunlabel.py $W/bench.raw 32
-cp --sparse=always /mnt/sparc/disks/sol26-ss20-build.raw $W/disk.raw
+cp --sparse=always /mnt/os/disks/sol26-ss20-build.raw $W/disk.raw
 docker run --rm -v $W:$W wsh-sparc-lab run scenarios/bench-build.py --out $W/run --var MACHINE=SS-20 \
   --var DISK=$W/disk.raw --var ISO=$W/handover.iso --var DISK2=$W/bench.raw
-cp $W/bench.raw /mnt/sparc/disks/bench-sol26.raw; sha256sum /mnt/sparc/disks/bench-sol26.raw
+cp $W/bench.raw /mnt/os/disks/bench-sol26.raw; sha256sum /mnt/os/disks/bench-sol26.raw
 ```
 
 **Network.** `run.sh` runs lmbench's `lat_tcp`, `lat_udp`, `lat_connect`, `bw_tcp` and `lat_rpc` over
@@ -1442,19 +1443,19 @@ path between QEMU and the container:
 - `NET=none`: no peer, the `nic_*` tests are a `BENCH-SKIP` line.
 
 ```sh
-docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -v /mnt/sparc/runs:/mnt/sparc/runs \
-  -v /mnt/sparc/disks:/mnt/sparc/disks:ro wsh-sparc-lab run scenarios/bench-disk.py --out /mnt/sparc/runs/bt \
-  --var DISK=<copy of an installed disk> --var DISK2=/mnt/sparc/disks/bench-sol26-net.raw --var NET=tap --var ONLY=nic
+docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -v /mnt/runs:/mnt/runs \
+  -v /mnt/os/disks:/mnt/os/disks:ro wsh-sparc-lab run scenarios/bench-disk.py --out /mnt/runs/bt \
+  --var DISK=<copy of an installed disk> --var DISK2=/mnt/os/disks/bench-sol26-net.raw --var NET=tap --var ONLY=nic
 ```
 
 **Run it**: `bench-disk.py` with `DISK2=` the bench disk, or the matrix (the bench disk's directory
-mounted read only, `--bench` defaults to `/mnt/sparc/disks/bench-sol26.raw`; a missing bench disk fails
+mounted read only, `--bench` defaults to `/mnt/os/disks/bench-sol26.raw`; a missing bench disk fails
 every case):
 
 ```sh
-docker run --rm -v /srv/sparc/disks:/srv/sparc/disks:ro -v /mnt/sparc/disks:/mnt/sparc/disks:ro \
-  -v /mnt/sparc/runs:/mnt/sparc/runs --entrypoint python3 wsh-sparc-lab matrix.py benchdisk \
-  --runs /mnt/sparc/runs/b1 --bench /mnt/sparc/disks/bench-sol26.raw
+docker run --rm -v /mnt/os/disks:/mnt/os/disks:ro -v /mnt/os/disks:/mnt/os/disks:ro \
+  -v /mnt/runs:/mnt/runs --entrypoint python3 wsh-sparc-lab matrix.py benchdisk \
+  --runs /mnt/runs/b1 --bench /mnt/os/disks/bench-sol26.raw
 ```
 
 The summary adds a table with one row per benchmark and one column per case. Each case's directory
@@ -1578,7 +1579,7 @@ defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-
 (OpenBSD 8.0 from `install80.iso`: `I`, `vt100`, hostname, `hme0` autoconf, no IPv6, root password
 `lab`, no sshd, no user, `UTC`, `wd0`, auto layout, sets from `cd0`, `-x*`, `yes` to the missing
 `SHA256.sig`, `h`; its installed kernel doesn't boot, see `submodules/SPARC.md`). They are kept in
-`/mnt/sparc/disks` on the lab host, so the `sparc64` matrix runs with `--disks /mnt/sparc/disks`
+`/mnt/os/disks` on the lab host, so the `sparc64` matrix runs with `--disks /mnt/os/disks`
 (workflow input `disks_dir`). The CDs are in `other-os/` under `--iso`.
 
 ## Drive a guest by hand
@@ -1587,15 +1588,15 @@ defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-
 new scenarios are written: step through the installer by hand, then copy the steps.
 
 ```sh
-docker run -d --name lab -v /srv/sparc:/srv/sparc wsh-sparc-lab serve --out /srv/sparc/runs/x \
-  --scenario scenarios/_sparc32.py --var ISO=/srv/sparc/solaris_2.6_598_sparc.iso --var VGA=none
-ctl() { docker exec lab python3 lab.py ctl --out /srv/sparc/runs/x "$@"; }
+docker run -d --name lab -v /mnt/os:/mnt/os -v /mnt/runs:/mnt/runs wsh-sparc-lab serve --out /mnt/runs/x \
+  --scenario scenarios/_sparc32.py --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso --var VGA=none
+ctl() { docker exec lab python3 lab.py ctl --out /mnt/runs/x "$@"; }
 ctl expect "Select a Language" 900
 ctl screen_text                  # the serial console as text
 ctl send '"0\r"'                 # JSON strings for control characters
 ctl key f2                       # Esc-2; also enter, esc, ctrl-n, ctrl-p, ...
 ctl snap "after the language"    # record a step (terminal + framebuffer screenshot)
-ctl screendump now               # the framebuffer as /srv/sparc/runs/x/now.png
+ctl screendump now               # the framebuffer as /mnt/runs/x/now.png
 ctl hmp "info registers"         # any monitor command
 ```
 
@@ -1731,7 +1732,7 @@ mounted (that would hand it every VM's sockets):
 docker build -f e2e/sparc/mcp.Dockerfile -t wsh-lab-mcp e2e/sparc                                  # on wsh-sparc-lab
 docker build -f e2e/sparc/mcp.Dockerfile --build-arg BASE=wsh-pve-lab -t wsh-pve-lab-mcp e2e/sparc  # on wsh-pve-lab
 docker exec -i pve-lab wsh-lab-mcp --tag mcp                       # a PVE VM in the test node
-docker exec -i lab wsh-lab-mcp --lab sol=/srv/sparc/runs/x         # next to `lab.py serve --out /srv/sparc/runs/x`
+docker exec -i lab wsh-lab-mcp --lab sol=/mnt/runs/x         # next to `lab.py serve --out /mnt/runs/x`
 ```
 
 **From a client** (not tested here: no interactive client was run). Claude Code, with the server on

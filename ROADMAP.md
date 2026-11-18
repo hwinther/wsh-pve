@@ -205,7 +205,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
-  Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
+  Still to do: run it on a schedule, export the passing disks to `/mnt/os/disks`, and automate
   more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, and Red Hat
   Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
@@ -259,12 +259,15 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
-| `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
-| `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
-| `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
-| `/mnt/sparc/prom` | Sun firmware updates, for experiments only |
-| `/mnt/sparc/runs` | run output and evidence directories |
+| `/mnt/os/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
+| `/mnt/os/floppy` | floppy images (MS-DOS 6.22, FreeDOS 1.4) |
+| `/mnt/os/disks` | installed disks the matrices boot (sun4m and sun4u), the bench disk and its build disk, and the Sun-labelled disk templates |
+| `/mnt/os/sun-reference/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
+| `/mnt/os/sun-reference/prom` | Sun firmware updates, for experiments only |
+| `/mnt/runs` | run output and evidence (a disk of its own, so a run that fills it stops only runs); `archive/` has the early runs |
+
+`/mnt/os` and `/mnt/runs` replaced `/mnt/sparc` and `/srv/sparc` on 2026-11-19; symlinks under the old
+paths point to the new ones for now.
 
 None of the Sun software, firmware or source goes into this repository or into anything published
 from it.

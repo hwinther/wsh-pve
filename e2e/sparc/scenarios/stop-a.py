@@ -1,7 +1,7 @@
 """Stop-A (L1-A, the Sun keyboard's abort) or a break on ttya sent to a running sparc32 guest: QEMU must
 stay up, the guest must land where a Sun would put it (the PROM prompt) and `go` must give it back.
 
-    lab.py run scenarios/stop-a.py --out /srv/sparc/runs/stopa --var DISK=/srv/sparc/runs/stopa/disk.raw
+    lab.py run scenarios/stop-a.py --out /mnt/runs/stopa --var DISK=/mnt/runs/stopa/disk.raw
 
 The chord goes in through QMP `send-key`, as PVE (`qm sendkey <vmid> stop-a`) and its noVNC console
 send it: qcode `stop` is the Sun keyboard's Stop (L1). A break goes in through QMP

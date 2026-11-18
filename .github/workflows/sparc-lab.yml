@@ -33,20 +33,20 @@ on:
         default: smoke
       iso_dir:
         description: "Install CDs on the runner host (mounted read only)"
-        default: /mnt/sparc/iso
+        default: /mnt/os/iso
       disks_dir:
         description: "Installed disk images on the runner host (mounted read only, copied per case)"
-        default: /srv/sparc/disks
+        default: /mnt/os/disks
       runs_dir:
         description: "Run output on the runner host (a per-run subdirectory, removed afterwards)"
-        default: /mnt/sparc/runs
+        default: /mnt/runs
       publish_media:
         description: "When every case passed, replace the docs' recordings in the media release with this run's (e2e/sparc/publish_media.py)"
         type: boolean
         default: false
       bench_disk:
         description: "The bench disk on the runner host (benchdisk; its directory is mounted read only)"
-        default: /mnt/sparc/disks/bench-sol26.raw
+        default: /mnt/os/disks/bench-sol26.raw
   schedule:
     - cron: "17 3 * * 0"
     - cron: "47 4 * * 0" # the pve matrix
@@ -66,11 +66,11 @@ jobs:
       contents: read
     env:
       MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || 'smoke' }}
-      ISO_DIR: ${{ inputs.iso_dir || '/mnt/sparc/iso' }}
-      DISKS_DIR: ${{ inputs.disks_dir || '/srv/sparc/disks' }}
-      RUN_DIR: ${{ inputs.runs_dir || '/mnt/sparc/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
-      BENCH_DISK: ${{ inputs.bench_disk || '/mnt/sparc/disks/bench-sol26.raw' }}
-      FLOPPY_DIR: /mnt/sparc/floppy
+      ISO_DIR: ${{ inputs.iso_dir || '/mnt/os/iso' }}
+      DISKS_DIR: ${{ inputs.disks_dir || '/mnt/os/disks' }}
+      RUN_DIR: ${{ inputs.runs_dir || '/mnt/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
+      BENCH_DISK: ${{ inputs.bench_disk || '/mnt/os/disks/bench-sol26.raw' }}
+      FLOPPY_DIR: /mnt/os/floppy
       IMAGE: wsh-sparc-lab:gh-${{ github.run_id }}
     steps:
       - name: Checkout
