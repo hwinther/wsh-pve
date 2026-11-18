@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..330a6c6 100644
+index 7b0cba5..ba39100 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,36 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,42 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -109,6 +109,12 @@ index 7b0cba5..330a6c6 100644
 +wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
 +wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
 +wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
++wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
++wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
++wsh/0036-target-sparc-write-softint-under-the-BQL.patch
++wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
++wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
++wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -2645,10 +2651,10 @@ index 0000000..2f00a93
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
 new file mode 100644
-index 0000000..3c8dbea
+index 0000000..14236fd
 --- /dev/null
 +++ b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,205 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris idle halt on sun4m
 +
@@ -2659,10 +2665,14 @@ index 0000000..3c8dbea
 +solaris-idle=off, with a runnable thread, at interrupt level 15 and on
 +an SS-20 with two CPUs. Any trap stops the test with the trap type in
 +RAM.
++
++The PROM word at the RAM address of disp_nrunnable says 1: with the MMU
++off in boot mode an instruction fetch from there would read it, so the
++idle case also checks that the helper reads RAM, as the loop does.
 +---
 + tests/qtest/meson.build               |   3 +-
-+ tests/qtest/sun4m-solaris-idle-test.c | 148 ++++++++++++++++++++++++++
-+ 2 files changed, 150 insertions(+), 1 deletion(-)
++ tests/qtest/sun4m-solaris-idle-test.c | 165 ++++++++++++++++++++++++++
++ 2 files changed, 167 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4m-solaris-idle-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -2681,10 +2691,10 @@ index 0000000..3c8dbea
 + qtests_sparc64 = \
 +diff --git a/tests/qtest/sun4m-solaris-idle-test.c b/tests/qtest/sun4m-solaris-idle-test.c
 +new file mode 100644
-+index 0000000000..59faaa721b
++index 0000000000..12b5a053cb
 +--- /dev/null
 ++++ b/tests/qtest/sun4m-solaris-idle-test.c
-+@@ -0,0 +1,148 @@
++@@ -0,0 +1,165 @@
 ++/*
 ++ * QTest: halting the CPU in the Solaris idle loop on sun4m
 ++ *
@@ -2708,7 +2718,8 @@ index 0000000..3c8dbea
 ++#define RAM_CPU         0x1000ULL
 ++#define RAM_COUNT       (RAM_CPU + 0)
 ++#define RAM_TRAP        (RAM_CPU + 0x20)
-++#define PROM_WORDS      0x200
+++#define PROM_WORDS      0x420           /* up to past PROM_DECOY */
+++#define PROM_DECOY      ((RAM_CPU + 0x58) / 4)
 ++#define CODE            0x100           /* word index of the code */
 ++
 ++/*
@@ -2755,14 +2766,20 @@ index 0000000..3c8dbea
 ++    be[0] = cpu_to_be32(0x10800000 | CODE);
 ++    be[1] = cpu_to_be32(0x01000000);
 ++    for (i = 1; i < CODE / 4; i++) {
-++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
-++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
-++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
-++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++        be[4 * i] = cpu_to_be32(0x03000004);     /* sethi %hi(0x1000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i);    /* mov i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020); /* st %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000); /* b . */
 ++    }
 ++    for (i = 0; i < ARRAY_SIZE(code); i++) {
 ++        be[CODE + i] = cpu_to_be32(code[i]);
 ++    }
+++    /*
+++     * The PROM word at the RAM address of disp_nrunnable says 1. With the
+++     * MMU off in boot mode an instruction fetch from there reads it, a data
+++     * load reads RAM: the idle helper must read RAM, like the loop.
+++     */
+++    be[PROM_DECOY] = cpu_to_be32(1);
 ++    fd = g_file_open_tmp("sun4m-solaris-idle-prom-XXXXXX", &path, NULL);
 ++    g_assert_cmpint(fd, >=, 0);
 ++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
@@ -2793,7 +2810,14 @@ index 0000000..3c8dbea
 ++}
 ++
 ++#define PSR_S_ET        0xa0
-++#define PSR_PIL15       0xf00
+++#define PSR_S_ET_PIL15  0xfa0
+++
+++typedef struct IdleCase {
+++    const char *name;
+++    const char *machine;
+++    uint32_t nrunnable;
+++    uint32_t psr;
+++} IdleCase;
 ++
 ++/* Nothing runnable, interrupts enabled at level 0: the CPU stops */
 ++static void test_idle(void)
@@ -2806,29 +2830,32 @@ index 0000000..3c8dbea
 ++
 ++static void test_running(const void *data)
 ++{
-++    const char *const *t = data;
+++    const IdleCase *t = data;
 ++    uint32_t before, after;
 ++
-++    run(t[0], atoi(t[1]), strtoul(t[2], NULL, 0), &before, &after);
+++    run(t->machine, t->nrunnable, t->psr, &before, &after);
 ++    g_assert_cmpuint(after, >, before);
 ++}
 ++
 ++int main(int argc, char **argv)
 ++{
-++    static const char *const off[] = { "SS-5,solaris-idle=off", "0", "0xa0" };
-++    static const char *const runnable[] = { "SS-5", "1", "0xa0" };
-++    static const char *const pil15[] = { "SS-5", "0", "0xfa0" };
-++    static const char *const smp2[] = { "SS-20 -smp 2", "0", "0xa0" };
+++    static const IdleCase running[] = {
+++        { "off", "SS-5,solaris-idle=off", 0, PSR_S_ET },
+++        { "runnable", "SS-5", 1, PSR_S_ET },
+++        { "pil15", "SS-5", 0, PSR_S_ET_PIL15 },
+++        { "smp2", "SS-20 -smp 2", 0, PSR_S_ET },
+++    };
+++    int i;
 ++
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    if (qtest_has_accel("tcg")) {
 ++        qtest_add_func("sun4m-solaris-idle/idle", test_idle);
-++        qtest_add_data_func("sun4m-solaris-idle/off", off, test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/runnable", runnable,
-++                            test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/pil15", pil15, test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/smp2", smp2, test_running);
+++        for (i = 0; i < ARRAY_SIZE(running); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-solaris-idle/%s", running[i].name);
+++            qtest_add_data_func(name, &running[i], test_running);
+++        }
 ++    }
 ++
 ++    return g_test_run();
@@ -3464,10 +3491,10 @@ index 0000000..89e6cc1
 ++}
 diff --git a/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
 new file mode 100644
-index 0000000..50f760f
+index 0000000..8e6ca96
 --- /dev/null
 +++ b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,108 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] ide/cmd646: latch the interrupt status bits until the
 + guest clears them
@@ -3484,12 +3511,15 @@ index 0000000..50f760f
 +
 +  WARNING: Interrupt not seen after set_features
 +
-+Keep the status bits set when INTRQ drops; the guest's write-1-to-clear
-+(config space, or the BMDMA register that mirrors MRDMODE) clears them.
-+The PCI interrupt line keeps following the drives' INTRQ, now kept in a
-+field of its own: driving it from the latched bits instead left it
-+asserted for guests that don't clear them, and Linux disabled the
-+interrupt ("irq 7: nobody cared") and OpenBSD hung at boot.
++Keep the status bits set when INTRQ drops, until the guest writes 1 to
++them in config space (the BMDMA register that mirrors MRDMODE doesn't
++clear them: bmdma_write() masks them out). The PCI interrupt line keeps
++following the drives' INTRQ, now kept in a field of its own: driving it
++from the latched bits instead left it asserted for guests that don't
++clear them, and Linux disabled the interrupt ("irq 7: nobody cared") and
++OpenBSD hung at boot. A device reset clears that field (the drives come
++out of reset with INTRQ low); otherwise the next config write after a
++reset raised the line again.
 +
 +Tested on sun4u, the only machine in this package with a cmd646 (alpha
 +and hppa have one too, and aren't built here): Solaris 10 1/13 attaches
@@ -3507,15 +3537,15 @@ index 0000000..50f760f
 +line from them; this is a separate implementation that keeps the line on
 +INTRQ.
 +---
-+ hw/ide/cmd646.c      | 17 ++++++++++++-----
++ hw/ide/cmd646.c      | 20 +++++++++++++++-----
 + include/hw/ide/pci.h |  1 +
-+ 2 files changed, 13 insertions(+), 5 deletions(-)
++ 2 files changed, 16 insertions(+), 5 deletions(-)
 +
 +diff --git a/hw/ide/cmd646.c b/hw/ide/cmd646.c
-+index d44a90a162..b184c0ce63 100644
++index d44a90a162..0e3b11208a 100644
 +--- a/hw/ide/cmd646.c
 ++++ b/hw/ide/cmd646.c
-+@@ -182,12 +182,12 @@ static void bmdma_setup_bar(PCIIDEState *d)
++@@ -182,12 +182,13 @@ static void bmdma_setup_bar(PCIIDEState *d)
 + 
 + static void cmd646_update_irq(PCIDevice *pd)
 + {
@@ -3527,12 +3557,13 @@ index 0000000..50f760f
 +-        ((pd->config[MRDMODE] & MRDMODE_INTR_CH1) &&
 +-         !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
 ++    /* The interrupt line follows the drives' INTRQ, not the latched status */
-++    pci_level = ((d->intrq & 1) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
+++    pci_level =
+++        ((d->intrq & 1) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
 ++        ((d->intrq & 2) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
 +     pci_set_irq(pd, pci_level);
 + }
 + 
-+@@ -199,10 +199,17 @@ static void cmd646_set_irq(void *opaque, int channel, int level)
++@@ -199,10 +200,17 @@ static void cmd646_set_irq(void *opaque, int channel, int level)
 +     int irq_mask;
 + 
 +     irq_mask = MRDMODE_INTR_CH0 << channel;
@@ -3551,24 +3582,33 @@ index 0000000..50f760f
 +     }
 +     cmd646_update_dma_interrupts(pd);
 +     cmd646_update_irq(pd);
++@@ -216,6 +224,8 @@ static void cmd646_reset(DeviceState *dev)
++     for (i = 0; i < 2; i++) {
++         ide_bus_reset(&d->bus[i]);
++     }
+++    /* The drives come out of reset with INTRQ low */
+++    d->intrq = 0;
++ }
++ 
++ static uint32_t cmd646_pci_config_read(PCIDevice *d,
 +diff --git a/include/hw/ide/pci.h b/include/hw/ide/pci.h
-+index ef03764caa..65ca115755 100644
++index ef03764caa..6ecbc84130 100644
 +--- a/include/hw/ide/pci.h
 ++++ b/include/hw/ide/pci.h
 +@@ -51,6 +51,7 @@ struct PCIIDEState {
 +     BMDMAState bmdma[2];
 +     qemu_irq isa_irq[2];
 +     uint32_t secondary; /* used only for cmd646 */
-++    uint8_t intrq; /* used only for cmd646: the drives' INTRQ, bit n = channel n */
+++    uint8_t intrq; /* used only for cmd646: INTRQ of channel n in bit n */
 +     MemoryRegion bmdma_bar;
 +     MemoryRegion cmd_bar[2];
 +     MemoryRegion data_bar[2];
 diff --git a/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
 new file mode 100644
-index 0000000..2ca308b
+index 0000000..778856a
 --- /dev/null
 +++ b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,286 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the cmd646 interrupt status latch on
 + sun4u
@@ -3582,14 +3622,19 @@ index 0000000..2ca308b
 +whatever the bits are: the line is seen through the sabre, which raises
 +its request again when the guest clears it while the line is still up.
 +
++reset-drops-intrq resets the machine with INTRQ up: the drives come out
++of the reset with INTRQ low, so the line must stay down when the
++firmware sets the controller up again.
++
 +Without the previous patch status-latched fails (MRDMODE reads 0 after
 +the status read). With the line driven from the latched bits instead of
 +INTRQ (the variant that broke Linux and OpenBSD) it fails too (the line
-+stays up after the status read). With the patch both cases pass.
++stays up after the status read). Without the clear of INTRQ in
++cmd646_reset() reset-drops-intrq fails. With the patch all three pass.
 +---
 + tests/qtest/meson.build         |   2 +-
-+ tests/qtest/sun4u-cmd646-test.c | 208 ++++++++++++++++++++++++++++++++
-+ 2 files changed, 209 insertions(+), 1 deletion(-)
++ tests/qtest/sun4u-cmd646-test.c | 239 ++++++++++++++++++++++++++++++++
++ 2 files changed, 240 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4u-cmd646-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -3607,10 +3652,10 @@ index 0000000..2ca308b
 +   ['npcm7xx_adc-test',
 +diff --git a/tests/qtest/sun4u-cmd646-test.c b/tests/qtest/sun4u-cmd646-test.c
 +new file mode 100644
-+index 0000000000..c112a210d9
++index 0000000000..1a982268ba
 +--- /dev/null
 ++++ b/tests/qtest/sun4u-cmd646-test.c
-+@@ -0,0 +1,208 @@
++@@ -0,0 +1,239 @@
 ++/*
 ++ * QTest: the cmd646 interrupt status bits on sun4u
 ++ *
@@ -3640,8 +3685,9 @@ index 0000000..2ca308b
 ++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
 ++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
 ++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
-++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004) /* OBIO interrupt map, ino 0x20 */
-++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804) /* OBIO interrupt clear, ino 0x20 */
+++/* OBIO interrupt map and clear registers of ino 0x20, the IDE controller */
+++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004)
+++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804)
 ++#define IMR_ENABLED     0x80000000
 ++#define IVEC_HDD        0x20
 ++
@@ -3707,16 +3753,9 @@ index 0000000..2ca308b
 ++    g_assert_not_reached();
 ++}
 ++
-++static QTestState *setup(void)
+++/* What OpenBIOS would set up, after power-on or a reset */
+++static void configure(QTestState *qts)
 ++{
-++    QTestState *qts;
-++
-++    qts = qtest_init("-machine sun4u -nodefaults "
-++                     "-blockdev driver=null-co,read-zeroes=on,node-name=d0 "
-++                     "-device ide-hd,drive=d0,bus=ide.0,unit=0");
-++
-++    /* The sabre's request for the IDE interrupt reaches the test, not the CPU */
-++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
 ++    qtest_writel(qts, OBIO_IMR_HDD, IMR_ENABLED);
 ++
 ++    /* Bus 1 behind 00:01.1, which already forwards I/O 0-0xfff */
@@ -3732,6 +3771,19 @@ index 0000000..2ca308b
 ++    /* Drive interrupts on (nIEN clear), no interrupt so far */
 ++    qtest_writeb(qts, PCI_IO + IO_CTL0 + ATA_DEVCTL, 0);
 ++    g_assert_false(qtest_get_irq(qts, IVEC_HDD));
+++}
+++
+++static QTestState *setup(void)
+++{
+++    QTestState *qts;
+++
+++    qts = qtest_init("-machine sun4u -nodefaults "
+++                     "-blockdev driver=null-co,read-zeroes=on,node-name=d0 "
+++                     "-device ide-hd,drive=d0,bus=ide.0,unit=0");
+++
+++    /* The sabre's IDE interrupt request goes to the test, not the CPU */
+++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
+++    configure(qts);
 ++    return qts;
 ++}
 ++
@@ -3754,7 +3806,10 @@ index 0000000..2ca308b
 ++    return cfg_read(qts, 1, DEVFN_CMD646, CFR) & CFR_INTR_CH0;
 ++}
 ++
-++/* The guest acknowledges the sabre's request; it comes back while the line is up */
+++/*
+++ * The guest acknowledges the sabre's request; it comes back while the line
+++ * is up
+++ */
 ++static bool line_after_clear(QTestState *qts)
 ++{
 ++    qtest_writel(qts, OBIO_CLR_HDD, 0);
@@ -3810,21 +3865,42 @@ index 0000000..2ca308b
 ++    qtest_quit(qts);
 ++}
 ++
+++/*
+++ * A reset with INTRQ up: the drives come out of it with INTRQ low, so the
+++ * line must stay down when the firmware sets the controller up again.
+++ */
+++static void test_reset_drops_intrq(void)
+++{
+++    QTestState *qts = setup();
+++
+++    set_features(qts);
+++    g_assert_true(qtest_get_irq(qts, IVEC_HDD));
+++    /* Masking the interrupt in the sabre withdraws its request */
+++    qtest_writel(qts, OBIO_IMR_HDD, 0);
+++    g_assert_false(qtest_get_irq(qts, IVEC_HDD));
+++
+++    qtest_system_reset(qts);
+++    configure(qts);
+++
+++    qtest_quit(qts);
+++}
+++
 ++int main(int argc, char **argv)
 ++{
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    qtest_add_func("sun4u-cmd646/status-latched", test_status_latched);
 ++    qtest_add_func("sun4u-cmd646/clear-keeps-line", test_clear_keeps_line);
+++    qtest_add_func("sun4u-cmd646/reset-drops-intrq", test_reset_drops_intrq);
 ++
 ++    return g_test_run();
 ++}
 diff --git a/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
 new file mode 100644
-index 0000000..5c0c030
+index 0000000..b8c9204
 --- /dev/null
 +++ b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,715 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: halt idle CPUs in the Solaris multiprocessor idle loop
 +
@@ -3866,6 +3942,8 @@ index 0000000..5c0c030
 +The Solaris idle helpers now read disp_nrunnable through a host pointer
 +looked up once by a page table walk: probe_access_flags() would assert
 +when another CPU had flushed the TLB entry since the loop's load.
++With the MMU off the address is physical: the debug lookup tries an
++instruction fetch first, which boot mode would take from the PROM.
 +
 +The board turns this on with env->solaris_idle_mp.
 +-trace sparc_solaris_idle_mp_match shows whether a kernel was recognised,
@@ -3886,11 +3964,11 @@ index 0000000..5c0c030
 + target/sparc/cpu.h          |  14 ++
 + target/sparc/helper.h       |   1 +
 + target/sparc/machine.c      |  34 +++++
-+ target/sparc/solaris_idle.c | 270 ++++++++++++++++++++++++++++++++++--
++ target/sparc/solaris_idle.c | 282 ++++++++++++++++++++++++++++++++++--
 + target/sparc/trace-events   |   3 +
-+ target/sparc/translate.c    | 142 ++++++++++++++++++-
++ target/sparc/translate.c    | 142 +++++++++++++++++-
 + target/sparc/win_helper.c   |   5 +
-+ 8 files changed, 460 insertions(+), 16 deletions(-)
++ 8 files changed, 472 insertions(+), 16 deletions(-)
 +
 +diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
 +index 13ebb122a3..102ac45e91 100644
@@ -4014,7 +4092,7 @@ index 0000000..5c0c030
 +     },
 + #endif
 +diff --git a/target/sparc/solaris_idle.c b/target/sparc/solaris_idle.c
-+index 747d6c2944..8f0cf87361 100644
++index 747d6c2944..fc9cb97f99 100644
 +--- a/target/sparc/solaris_idle.c
 ++++ b/target/sparc/solaris_idle.c
 +@@ -47,11 +47,10 @@
@@ -4031,7 +4109,7 @@ index 0000000..5c0c030
 + #include "trace.h"
 + 
 + /*
-+@@ -73,23 +72,50 @@ static bool solaris_idle_polled(CPUSPARCState *env)
++@@ -73,23 +72,58 @@ static bool solaris_idle_polled(CPUSPARCState *env)
 +     return now - env->solaris_idle_since >= SOLARIS_IDLE_POLL_NS;
 + }
 + 
@@ -4063,9 +4141,17 @@ index 0000000..5c0c030
 +-                               cpu_mmu_index(env_cpu(env), false), true,
 +-                               &host, 0);
 +-    if ((flags & TLB_INVALID_MASK) || !host) {
-++    pa = sparc_cpu_get_phys_addr_debug(cs, addr);
-++    if (pa == -1) {
-++        return NULL;
+++    if (env->mmuregs[0] & MMU_E) {
+++        pa = sparc_cpu_get_phys_addr_debug(cs, addr);
+++        if (pa == -1) {
+++            return NULL;
+++        }
+++    } else {
+++        /*
+++         * MMU off: data addresses are physical. (The debug lookup tries an
+++         * instruction fetch first, which boot mode takes from the PROM.)
+++         */
+++        pa = addr;
 ++    }
 ++    RCU_READ_LOCK_GUARD();
 ++    mr = address_space_translate(cs->as, pa, &xlat, &len, false,
@@ -4093,7 +4179,7 @@ index 0000000..5c0c030
 +     return true;
 + }
 + 
-+@@ -122,3 +148,219 @@ void HELPER(solaris_idle)(CPUSPARCState *env, target_ulong pc,
++@@ -122,3 +156,223 @@ void HELPER(solaris_idle)(CPUSPARCState *env, target_ulong pc,
 +     cs->exception_index = EXCP_HLT;
 +     cpu_loop_exit(cs);
 + }
@@ -4296,8 +4382,12 @@ index 0000000..5c0c030
 ++    }
 ++    qatomic_set(&env->solaris_idle_kick, false);
 ++    qatomic_set(&env->solaris_idle_mp_halted, true);
-++    /* Full barrier: a CPU that queues work from now on sees this one */
 ++    qatomic_or(&solaris_idle_mp_halted, 1u << cs->cpu_index);
+++    /*
+++     * Full barrier, pairs with the one in sparc_solaris_idle_mp_poke(): a
+++     * CPU that queues work from now on sees this one in the mask, or this
+++     * one sees its disp_nrunnable below.
+++     */
 ++    smp_mb();
 ++    if (be32_to_cpu(qatomic_read(nr))) {
 ++        sparc_solaris_idle_mp_leave(env);
@@ -4596,10 +4686,10 @@ index 0000000..4c68ba7
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
 new file mode 100644
-index 0000000..a1a0918
+index 0000000..463121b
 --- /dev/null
 +++ b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,250 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris multiprocessor idle halt on sun4m
 +
@@ -4611,10 +4701,14 @@ index 0000000..a1a0918
 +runnable, the loop runs at full speed again. It must run at full speed
 +with solaris-smp-idle=off, at interrupt level 15 and with one CPU. Any
 +trap stops the test with the trap type in RAM.
++
++The PROM word at the RAM address of disp_nrunnable says 1: with the MMU
++off in boot mode an instruction fetch from there would read it, so the
++idle case also checks that the helper reads RAM, as the loop does.
 +---
 + tests/qtest/meson.build                   |   3 +-
-+ tests/qtest/sun4m-solaris-smp-idle-test.c | 193 ++++++++++++++++++++++
-+ 2 files changed, 195 insertions(+), 1 deletion(-)
++ tests/qtest/sun4m-solaris-smp-idle-test.c | 209 ++++++++++++++++++++++
++ 2 files changed, 211 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4m-solaris-smp-idle-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -4633,10 +4727,10 @@ index 0000000..a1a0918
 + qtests_sparc64 = \
 +diff --git a/tests/qtest/sun4m-solaris-smp-idle-test.c b/tests/qtest/sun4m-solaris-smp-idle-test.c
 +new file mode 100644
-+index 0000000000..66b1ad7d1d
++index 0000000000..51ce8981cd
 +--- /dev/null
 ++++ b/tests/qtest/sun4m-solaris-smp-idle-test.c
-+@@ -0,0 +1,193 @@
++@@ -0,0 +1,209 @@
 ++/*
 ++ * QTest: halting idle CPUs in the multiprocessor idle loop of Solaris on
 ++ * sun4m
@@ -4664,7 +4758,8 @@ index 0000000..a1a0918
 ++#define RAM_COUNT       (RAM_CPU + 0)
 ++#define RAM_TRAP        (RAM_CPU + 0x20)
 ++#define RAM_NRUNNABLE   (RAM_CPU + 0x58)
-++#define PROM_WORDS      0x200
+++#define PROM_WORDS      0x420           /* up to past PROM_DECOY */
+++#define PROM_DECOY      (RAM_NRUNNABLE / 4)
 ++#define CODE            0x100           /* word index of the code */
 ++
 ++/* A loop that spins does far more rounds than this in 300 ms */
@@ -4685,7 +4780,7 @@ index 0000000..a1a0918
 ++        0x01000000,             /*        nop */
 ++        0x01000000,             /*        nop */
 ++        0x01000000,             /*        nop */
-++        0x90102000,             /*        clr   %o0             cpu_flags */
+++        0x90102000,             /*        clr   %o0            cpu_flags */
 ++        0x808a2004,             /* quies: btst  4, %o0 */
 ++        0x32bfffff,             /*        bne,a quies */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
@@ -4693,16 +4788,16 @@ index 0000000..a1a0918
 ++        0x80a22000,             /*        cmp   %o0, 0 */
 ++        0x22800008,             /*        be,a  idle */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
-++        0x40000013,             /*        call  ret             unset_idle_cpu */
+++        0x40000013,             /*        call  ret            unset_idle_cpu */
 ++        0x01000000,             /*         nop */
-++        0x40000011,             /*        call  ret             swtch */
+++        0x40000011,             /*        call  ret            swtch */
 ++        0x01000000,             /*         nop */
 ++        0x1080000a,             /*        b     count */
 ++        0x01000000,             /*         nop */
 ++        0x808a2020,             /* idle:  btst  0x20, %o0 */
 ++        0x32bffff2,             /*        bne,a quies */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
-++        0x4000000c,             /*        call  ret0            disp_getwork */
+++        0x4000000c,             /*        call  ret0           disp_getwork */
 ++        0x90100018,             /*         mov  %i0, %o0 */
 ++        0x80900008,             /*        tst   %o0 */
 ++        0x10800002,             /*        b     count */
@@ -4725,14 +4820,21 @@ index 0000000..a1a0918
 ++    be[0] = cpu_to_be32(0x10800000 | CODE);
 ++    be[1] = cpu_to_be32(0x01000000);
 ++    for (i = 1; i < CODE / 4; i++) {
-++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
-++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
-++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
-++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++        /* sethi %hi(0x1000), %g1; mov i, %g2; st %g2, [%g1 + 0x20]; b . */
+++        be[4 * i] = cpu_to_be32(0x03000004);
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i);
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);
 ++    }
 ++    for (i = 0; i < ARRAY_SIZE(code); i++) {
 ++        be[CODE + i] = cpu_to_be32(code[i]);
 ++    }
+++    /*
+++     * The PROM word at the RAM address of disp_nrunnable says 1. With the
+++     * MMU off in boot mode an instruction fetch from there reads it, a data
+++     * load reads RAM: the idle helper must read RAM, like the loop.
+++     */
+++    be[PROM_DECOY] = cpu_to_be32(1);
 ++    fd = g_file_open_tmp("sun4m-solaris-smp-idle-prom-XXXXXX", &path, NULL);
 ++    g_assert_cmpint(fd, >=, 0);
 ++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
@@ -4779,6 +4881,7 @@ index 0000000..a1a0918
 ++}
 ++
 ++#define PSR_S_ET        0xa0
+++#define PSR_S_ET_PIL15  0xfa0
 ++
 ++/*
 ++ * Nothing runnable, interrupts enabled at level 0: the CPU halts and the
@@ -4799,33 +4902,40 @@ index 0000000..a1a0918
 ++    finish(&r);
 ++}
 ++
+++typedef struct RunningCase {
+++    const char *name;
+++    const char *machine;
+++    uint32_t psr;
+++} RunningCase;
+++
 ++static void test_running(const void *data)
 ++{
-++    const char *const *t = data;
+++    const RunningCase *t = data;
 ++    Run r;
 ++
-++    start(&r, t[0], 0, strtoul(t[1], NULL, 0));
+++    start(&r, t->machine, 0, t->psr);
 ++    g_assert_cmpuint(rounds(&r), >, 10 * HALTED_MAX);
 ++    finish(&r);
 ++}
 ++
 ++int main(int argc, char **argv)
 ++{
-++    static const char *const off[] = {
-++        "SS-20,solaris-smp-idle=off -smp 2", "0xa0"
+++    static const RunningCase running[] = {
+++        { "off", "SS-20,solaris-smp-idle=off -smp 2", PSR_S_ET },
+++        { "pil15", "SS-20 -smp 2", PSR_S_ET_PIL15 },
+++        { "smp1", "SS-20", PSR_S_ET },
 ++    };
-++    static const char *const pil15[] = { "SS-20 -smp 2", "0xfa0" };
-++    static const char *const smp1[] = { "SS-20", "0xa0" };
+++    int i;
 ++
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    if (qtest_has_accel("tcg")) {
 ++        qtest_add_func("sun4m-solaris-smp-idle/idle", test_idle);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/off", off, test_running);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/pil15", pil15,
-++                            test_running);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/smp1", smp1,
-++                            test_running);
+++        for (i = 0; i < ARRAY_SIZE(running); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-solaris-smp-idle/%s", running[i].name);
+++            qtest_add_data_func(name, &running[i], test_running);
+++        }
 ++    }
 ++
 ++    return g_test_run();
@@ -6430,6 +6540,787 @@ index 0000000..97fdffa
 ++
 ++    qtest_add_func("sun4m-cs4231/playback", test_playback);
 ++    qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+new file mode 100644
+index 0000000..45cf114
+--- /dev/null
++++ b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+@@ -0,0 +1,113 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64/sun4u: take the IDPROM MAC address from a -device NIC
++
++OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
++NetBSD and Solaris use it for hme0: the sunhme has no local-mac-address
++of its own. NetBSD's wm (e1000) takes it too.
++
++sun4u fills the IDPROM while it builds the machine, from the onboard NIC
++(the first -nic/-net nic of the default model, at 01:01.1). A NIC added
++with -device, as qemu-server and libvirt add them, doesn't exist yet at
++that point, so the IDPROM gets QEMU's default 52:54:00:12:34:56: every
++guest has that address whatever mac= says, and two of them on one
++network clash.
++
++Without an onboard NIC, fill the IDPROM again once the machine is
++complete (a machine-init-done notifier, before the firmware runs): from
++the first NIC of the machine's own model (sunhme, the onboard NIC of a
++real Ultra 5/10), else from the first NIC of any model. The host id is
++made from the MAC address, as before, so it changes with it. With an
++onboard NIC, or with no NIC at all, the IDPROM is what it was.
++---
++ hw/sparc64/sun4u.c | 71 ++++++++++++++++++++++++++++++++++++++++++++++
++ 1 file changed, 71 insertions(+)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index a348096aee..42540f3dbc 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -153,6 +153,60 @@ static int sun4u_NVRAM_set_params(Nvram *nvram, uint16_t NVRAM_size,
++     return 0;
++ }
++ 
+++/*
+++ * Without an onboard NIC the IDPROM's MAC address is filled in once the
+++ * machine is complete, from the NICs added with -device (see below).
+++ */
+++typedef struct Sun4uIdprom {
+++    Notifier machine_done;
+++    Nvram *nvram;
+++    const char *nic_model;
+++} Sun4uIdprom;
+++
+++typedef struct Sun4uNicSearch {
+++    const char *model;
+++    NICState *nic;
+++} Sun4uNicSearch;
+++
+++static void sun4u_find_nic(NICState *nic, void *opaque)
+++{
+++    Sun4uNicSearch *search = opaque;
+++
+++    if (!search->nic && (!search->model ||
+++                         !strcmp(qemu_get_queue(nic)->model, search->model))) {
+++        search->nic = nic;
+++    }
+++}
+++
+++static void sun4u_idprom_machine_done(Notifier *notifier, void *data)
+++{
+++    Sun4uIdprom *idprom = container_of(notifier, Sun4uIdprom, machine_done);
+++    NvramClass *k = NVRAM_GET_CLASS(idprom->nvram);
+++    Sun4uNicSearch search = { .model = idprom->nic_model };
+++    struct Sun_nvram header;
+++    unsigned int i;
+++
+++    /*
+++     * The first NIC of the machine's own model (sunhme, the onboard NIC of
+++     * a real Ultra 5/10, whose MAC address is the one in its IDPROM), else
+++     * the first NIC of any model.
+++     */
+++    qemu_foreach_nic(sun4u_find_nic, &search);
+++    if (!search.nic) {
+++        search.model = NULL;
+++        qemu_foreach_nic(sun4u_find_nic, &search);
+++    }
+++    if (!search.nic) {
+++        return;
+++    }
+++
+++    memset(&header, 0, sizeof(header));
+++    Sun_init_header(&header, search.nic->conf->macaddr.a, 0x80);
+++    for (i = 0; i < sizeof(header); i++) {
+++        (k->write)(idprom->nvram, 0x1fd8 + i, ((uint8_t *)&header)[i]);
+++    }
+++}
+++
++ static uint64_t sun4u_load_kernel(const char *kernel_filename,
++                                   const char *initrd_filename,
++                                   ram_addr_t RAM_size, uint64_t *initrd_size,
++@@ -689,6 +743,23 @@ static void sun4uv_init(MemoryRegion *address_space_mem,
++                            graphic_width, graphic_height, graphic_depth,
++                            (uint8_t *)&macaddr);
++ 
+++    /*
+++     * OpenBIOS gives the guest the IDPROM's MAC address as the system's,
+++     * and the sunhme has no other: NetBSD and Solaris use it for hme0. A
+++     * NIC added with -device (as most management tools do) doesn't exist
+++     * yet, so without an onboard NIC the IDPROM has a default address that
+++     * is the same for every machine. Take the address from the NICs once
+++     * they are all there, before the firmware reads it.
+++     */
+++    if (!onboard_nic) {
+++        Sun4uIdprom *idprom = g_new0(Sun4uIdprom, 1);
+++
+++        idprom->nvram = nvram;
+++        idprom->nic_model = mc->default_nic;
+++        idprom->machine_done.notify = sun4u_idprom_machine_done;
+++        qemu_add_machine_init_done_notifier(&idprom->machine_done);
+++    }
+++
++     dev = qdev_new(TYPE_FW_CFG_IO);
++     qdev_prop_set_bit(dev, "dma_enabled", false);
++     object_property_add_child(OBJECT(ebus), TYPE_FW_CFG, OBJECT(dev));
+diff --git a/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+new file mode 100644
+index 0000000..84de575
+--- /dev/null
++++ b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+@@ -0,0 +1,167 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the IDPROM MAC address on sun4u
++
++The test reads the IDPROM from the m48t59 NVRAM through the ebus's I/O
++space (bus 1 behind the simba bridge at 00:01.1, with the bridge's I/O
++window opened over the NVRAM as OpenBIOS would) and checks its MAC
++address, format and machine type bytes, host id and checksum: QEMU's
++default without a NIC, the address of a sunhme added with -device, the
++first sunhme when a virtio-net-pci comes before it, the first NIC when
++there is no sunhme, and the onboard -net nic over a -device sunhme.
++
++Without the previous patch the device case fails (the IDPROM has
++52:54:00:12:34:56); with it all five pass.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4u-idprom-test.c | 128 ++++++++++++++++++++++++++++++++
++ 2 files changed, 130 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-idprom-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9b6a60b713..1eb55ea351 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -211,7 +211,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++-  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test']
+++  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
+++   'sun4u-idprom-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-idprom-test.c b/tests/qtest/sun4u-idprom-test.c
++new file mode 100644
++index 0000000000..d9902ba0ce
++--- /dev/null
+++++ b/tests/qtest/sun4u-idprom-test.c
++@@ -0,0 +1,128 @@
+++/*
+++ * QTest: the MAC address in the sun4u IDPROM
+++ *
+++ * OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
+++ * NetBSD and Solaris use it for hme0 (the sunhme has no address of its
+++ * own in the device tree). It must be the one given to the NIC, also when
+++ * the NIC is added with -device rather than as the onboard -nic.
+++ *
+++ * The IDPROM is the last 32 bytes of the m48t59 NVRAM, at 0x2000 in the
+++ * PCI I/O space of the ebus's bus (bus 1, behind the simba bridge at
+++ * 00:01.1). Nothing runs on the CPU, so the test opens the bridge's I/O
+++ * window over the NVRAM itself, as OpenBIOS would.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
+++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
+++#define DEVFN_SIMBA_A   0x09                /* 00:01.1 */
+++#define NVRAM_IO        0x2000              /* m48t59, 8 KB */
+++#define IDPROM          (PCI_IO + NVRAM_IO + 0x1fd8)
+++#define IDPROM_LEN      16
+++
+++#define DEFAULT_MAC     "52:54:00:12:34:56"
+++
+++static void cfg_writeb(QTestState *qts, int bus, int devfn, int reg,
+++                       uint8_t val)
+++{
+++    qtest_writeb(qts, PCI_CONFIG + (bus << 16) + (devfn << 8) + reg, val);
+++}
+++
+++/* Start the machine with `args` and read its IDPROM */
+++static void read_idprom(const char *args, uint8_t *idprom)
+++{
+++    QTestState *qts;
+++    int i;
+++
+++    qts = qtest_initf("-machine sun4u -nodefaults %s", args);
+++
+++    /* Bus 1 behind 00:01.1, its I/O window over 0x2000-0x3fff */
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SECONDARY_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SUBORDINATE_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_BASE, NVRAM_IO >> 8);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_LIMIT, (NVRAM_IO + 0x1fff) >> 8);
+++
+++    for (i = 0; i < IDPROM_LEN; i++) {
+++        idprom[i] = qtest_readb(qts, IDPROM + i);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++/* The IDPROM's MAC address is `mac`, and the header around it is valid */
+++static void check_idprom(const char *args, const char *mac)
+++{
+++    uint8_t idprom[IDPROM_LEN], sum = 0;
+++    char got[18];
+++    int i;
+++
+++    read_idprom(args, idprom);
+++    snprintf(got, sizeof(got), "%02x:%02x:%02x:%02x:%02x:%02x",
+++             idprom[2], idprom[3], idprom[4], idprom[5], idprom[6], idprom[7]);
+++    g_assert_cmpstr(got, ==, mac);
+++
+++    g_assert_cmphex(idprom[0], ==, 0x01);               /* format */
+++    g_assert_cmphex(idprom[1], ==, 0x80);               /* machine type */
+++    g_assert_cmpmem(&idprom[12], 3, &idprom[5], 3);     /* host id serial */
+++    for (i = 0; i < IDPROM_LEN - 1; i++) {
+++        sum ^= idprom[i];
+++    }
+++    g_assert_cmphex(idprom[15], ==, sum);
+++}
+++
+++/* No NIC: QEMU's default address, as before */
+++static void test_no_nic(void)
+++{
+++    check_idprom("", DEFAULT_MAC);
+++}
+++
+++/* A sunhme added with -device, as qemu-server and libvirt do */
+++static void test_device(void)
+++{
+++    check_idprom("-device sunhme,mac=bc:24:11:00:00:01,bus=pciB",
+++                 "bc:24:11:00:00:01");
+++}
+++
+++/* The first sunhme, though another NIC model comes first */
+++static void test_first_sunhme(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:02,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:03,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:04,bus=pciB",
+++                 "bc:24:11:00:00:03");
+++}
+++
+++/* No sunhme: the first NIC of any model */
+++static void test_other_model(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:05,bus=pciB "
+++                 "-device virtio-net-pci,mac=bc:24:11:00:00:06,bus=pciB",
+++                 "bc:24:11:00:00:05");
+++}
+++
+++/* The onboard NIC keeps its place in the IDPROM, as before */
+++static void test_onboard(void)
+++{
+++    check_idprom("-net nic,model=sunhme,macaddr=bc:24:11:00:00:07 "
+++                 "-device sunhme,mac=bc:24:11:00:00:08,bus=pciB",
+++                 "bc:24:11:00:00:07");
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-idprom/no-nic", test_no_nic);
+++    qtest_add_func("sun4u-idprom/device", test_device);
+++    if (qtest_has_device("virtio-net-pci")) {
+++        qtest_add_func("sun4u-idprom/first-sunhme", test_first_sunhme);
+++        qtest_add_func("sun4u-idprom/other-model", test_other_model);
+++    }
+++    qtest_add_func("sun4u-idprom/onboard", test_onboard);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
+new file mode 100644
+index 0000000..2d72ff3
+--- /dev/null
++++ b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
+@@ -0,0 +1,78 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: write %softint under the BQL
++
++The tick, stick and hstick timers set their bits in softint from the
++main loop, holding the BQL. The guest's %set_softint, %clear_softint
++and %softint writes read, modify and write softint in the vCPU thread
++without it, and took the BQL only afterwards, for cpu_check_irqs(). A
++timer that fired between the read and the write had its bit written
++over, and its interrupt was lost.
++
++illumos arms %tick_cmpr for its next clock tick only after it has
++handled the level 14 interrupt of the last one, and writes
++%set_softint and %clear_softint for every device interrupt. Tribblix
++(illumos) on sun4u lost its clock for good in about one of three long
++runs with heavy interrupt traffic: idle with interrupts enabled, but no
++level 14 interrupt ever again, and everything that sleeps hung. A trace
++caught it: tick_irq() saw softint 0x401, then the guest's clear of bit
++10 left 0x000.
++
++Take the BQL around the read-modify-write in the three helpers, as
++cpu_check_irqs() needs it anyway.
++---
++ target/sparc/int64_helper.c | 14 ++++++++++++--
++ 1 file changed, 12 insertions(+), 2 deletions(-)
++
++diff --git a/target/sparc/int64_helper.c b/target/sparc/int64_helper.c
++index 60ab0478fc..ea618296ce 100644
++--- a/target/sparc/int64_helper.c
+++++ b/target/sparc/int64_helper.c
++@@ -273,15 +273,19 @@ trap_state *cpu_tsptr(CPUSPARCState* env)
++     return &env->ts[env->tl & MAXTL_MASK];
++ }
++ 
+++/*
+++ * The tick, stick and hstick timers set their bits in softint from the
+++ * main loop, with the BQL held.  The guest's writes to softint must read,
+++ * modify and write it under the BQL too: a timer bit set between the read
+++ * and the write would be lost, and with it the timer interrupt.
+++ */
++ static bool do_modify_softint(CPUSPARCState *env, uint32_t value)
++ {
++     if (env->softint != value) {
++         env->softint = value;
++ #if !defined(CONFIG_USER_ONLY)
++         if (cpu_interrupts_enabled(env)) {
++-            bql_lock();
++             cpu_check_irqs(env);
++-            bql_unlock();
++         }
++ #endif
++         return true;
++@@ -291,6 +295,8 @@ static bool do_modify_softint(CPUSPARCState *env, uint32_t value)
++ 
++ void helper_set_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, env->softint | (uint32_t)value)) {
++         trace_int_helper_set_softint(env->softint);
++     }
++@@ -298,6 +304,8 @@ void helper_set_softint(CPUSPARCState *env, uint64_t value)
++ 
++ void helper_clear_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, env->softint & (uint32_t)~value)) {
++         trace_int_helper_clear_softint(env->softint);
++     }
++@@ -305,6 +313,8 @@ void helper_clear_softint(CPUSPARCState *env, uint64_t value)
++ 
++ void helper_write_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, (uint32_t)value)) {
++         trace_int_helper_write_softint(env->softint);
++     }
+diff --git a/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
+new file mode 100644
+index 0000000..913624b
+--- /dev/null
++++ b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
+@@ -0,0 +1,162 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test that a tick during a %softint write is kept on sun4u
++
++A boot PROM arms %tick_cmpr 10 us ahead and, with interrupts off, sets
++and clears soft interrupt 1 until %softint shows TICK_INT, then clears
++it, counts the tick and arms the next; if 16M rounds go by without one,
++it counts the tick as lost. The test runs it for up to 20000 ticks
++(10 s at most) and expects none lost.
++
++The race can't be made to happen on demand, but the loop is almost all
++%softint writes: without the previous patch a tick was lost within the
++first three in each of 30 runs; with it, 30 runs saw over 20000 ticks
++each and lost none. With the patch a tick can't be lost, so the test
++can't fail spuriously.
++---
++ tests/qtest/meson.build          |   2 +-
++ tests/qtest/sun4u-softint-test.c | 123 +++++++++++++++++++++++++++++++
++ 2 files changed, 124 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-softint-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 1eb55ea351..d3a2c22c84 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -212,7 +212,7 @@ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++-   'sun4u-idprom-test']
+++   'sun4u-idprom-test', 'sun4u-softint-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-softint-test.c b/tests/qtest/sun4u-softint-test.c
++new file mode 100644
++index 0000000000..4d45cbaedf
++--- /dev/null
+++++ b/tests/qtest/sun4u-softint-test.c
++@@ -0,0 +1,123 @@
+++/*
+++ * QTest: a tick interrupt that fires during a write to %softint on sun4u
+++ *
+++ * A boot PROM arms %tick_cmpr 10 us ahead and, with interrupts off, sets
+++ * and clears soft interrupt 1 with %set_softint and %clear_softint until
+++ * %softint shows the tick's bit (TICK_INT), clears it and counts the
+++ * tick; if 16M rounds go by without one, it counts the tick as lost. Then
+++ * it arms the next one.
+++ *
+++ * The tick timer sets TICK_INT from the main loop, holding the BQL; the
+++ * writes to %softint read, modify and write it in the vCPU thread. They
+++ * didn't take the BQL, so a tick that fired between their read and their
+++ * write was overwritten and lost, and a guest that waits for its clock
+++ * interrupt before arming the next (illumos) lost its clock for good.
+++ * The race can't be made to happen on demand, but the loop is almost all
+++ * %softint writes: without the lock a tick was lost within the first
+++ * three in each of 30 runs. With it, no tick can be lost.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: the ticks the PROM saw and lost */
+++#define RAM_SEEN        0x800ULL
+++#define RAM_LOST        0x808ULL
+++#define PROM_WORDS      0x100
+++#define RESET           (0x20 / 4)      /* power-on reset: prom + 0x20 */
+++
+++#define TICKS           20000           /* enough ticks */
+++#define MIN_TICKS       1000            /* the least for a pass */
+++#define SECONDS         10
+++
+++/*
+++ * Runs from power-on reset: RED state, MMU off, PSTATE.IE clear, so the
+++ * tick's level 14 interrupt is never taken and its bit stays in %softint.
+++ */
+++static const uint32_t code[] = {
+++    0xa0102000,     /*        mov   0, %l0          ticks seen */
+++    0xa2102000,     /*        mov   0, %l1          ticks lost */
+++    0x27004000,     /*        sethi %hi(0x1000000), %l3 */
+++    0x83410000,     /* again: rd    %tick, %g1 */
+++    0x820063e8,     /*        add   %g1, 1000, %g1  10 us on */
+++    0x83287001,     /*        sllx  %g1, 1, %g1 */
+++    0x83307001,     /*        srlx  %g1, 1, %g1     INT_DIS off */
+++    0xaf806000,     /*        wr    %g1, 0, %tick_cmpr */
+++    0xa4100013,     /*        mov   %l3, %l2 */
+++    0xa9802002,     /* spin:  wr    %g0, 2, %set_softint */
+++    0xab802002,     /*        wr    %g0, 2, %clear_softint */
+++    0x85458000,     /*        rd    %softint, %g2 */
+++    0x8088a001,     /*        andcc %g2, 1, %g0     TICK_INT */
+++    0x12800009,     /*        bne   got */
+++    0x01000000,     /*         nop */
+++    0xa4a4a001,     /*        subcc %l2, 1, %l2 */
+++    0x12bffff9,     /*        bne   spin */
+++    0x01000000,     /*         nop */
+++    0xa2046001,     /*        inc   %l1             lost */
+++    0xe2702808,     /*        stx   %l1, [%g0 + 0x808] */
+++    0x10bfffef,     /*        ba    again */
+++    0x01000000,     /*         nop */
+++    0xab802001,     /* got:   wr    %g0, 1, %clear_softint */
+++    0xa0042001,     /*        inc   %l0 */
+++    0xe0702800,     /*        stx   %l0, [%g0 + 0x800] */
+++    0x10bfffea,     /*        ba    again */
+++    0x01000000,     /*         nop */
+++};
+++
+++static char *write_prom(void)
+++{
+++    uint32_t be[PROM_WORDS];
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Anything else: b . */
+++    for (i = 0; i < PROM_WORDS; i++) {
+++        be[i] = cpu_to_be32(0x10800000);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[RESET + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4u-softint-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++static void test_tick(void)
+++{
+++    g_autofree char *prom = write_prom();
+++    gint64 end = g_get_monotonic_time() + SECONDS * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine sun4u -accel tcg -nodefaults "
+++                                  "-bios %s", prom);
+++    uint64_t seen = 0, lost = 0;
+++
+++    while (g_get_monotonic_time() < end) {
+++        g_usleep(10000);
+++        seen = qtest_readq(qts, RAM_SEEN);
+++        lost = qtest_readq(qts, RAM_LOST);
+++        if (lost || seen >= TICKS) {
+++            break;
+++        }
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++
+++    g_test_message("ticks seen %" PRIu64 ", lost %" PRIu64, seen, lost);
+++    g_assert_cmpuint(lost, ==, 0);
+++    g_assert_cmpuint(seen, >=, MIN_TICKS);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("sun4u-softint/tick", test_tick);
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+new file mode 100644
+index 0000000..8603a31
+--- /dev/null
++++ b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+@@ -0,0 +1,35 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] esp: don't count the message out bytes as part of the CDB
++
++esp_cdb_ready() compared the whole cmdfifo with the CDB's length, but
++the cmdfifo starts with the IDENTIFY byte and any further message out
++bytes, cmdfifo_cdb_offset of them. A driver that selects with ATN and
++Stop, sends a message and then the CDB one byte at a time with a
++Transfer Information command each had its command dispatched too
++early: after IDENTIFY and a 5-byte SDTR message, the first CDB byte
++alone made a "complete" 6-byte CDB.
++
++That is what Linux 2.6.18's esp driver does on sun4m when it
++negotiates synchronous transfers: the target got a one-byte command,
++answered CHECK CONDITION with ILLEGAL REQUEST, and Linux reset the bus
++and took the disk and CD-ROM offline.
++
++Count only the bytes after cmdfifo_cdb_offset.
++---
++ hw/scsi/esp.c | 3 ++-
++ 1 file changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 9e8d0d6cfa..b7c27e82c5 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -470,7 +470,8 @@ static bool esp_cdb_ready(ESPState *s)
++ 
++     cdblen = scsi_cdb_length((uint8_t *)&pbuf[s->cmdfifo_cdb_offset]);
++ 
++-    return cdblen < 0 ? false : (len >= cdblen);
+++    /* The IDENTIFY and other message bytes before the CDB don't count */
+++    return cdblen < 0 ? false : (len - s->cmdfifo_cdb_offset >= cdblen);
++ }
++ 
++ static void esp_dma_ti_check(ESPState *s)
+diff --git a/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+new file mode 100644
+index 0000000..4ac1b09
+--- /dev/null
++++ b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+@@ -0,0 +1,190 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a CDB sent byte by byte after a message out on sun4m
++
++Drive the SPARCstation 5's ESP without DMA as Linux 2.6's esp driver
++does when it negotiates synchronous transfers: Select with ATN and
++Stop with IDENTIFY, an extended SDTR message with Transfer Information,
++then TEST UNIT READY one byte per Transfer Information. The target must
++stay in the command phase until the sixth byte, and the command must
++reach it whole: twice, the first answered with the reset's unit
++attention, the second with GOOD.
++
++Without the previous patch the first CDB byte already ends the command
++phase.
++---
++ tests/qtest/meson.build      |   3 +-
++ tests/qtest/sun4m-esp-test.c | 151 +++++++++++++++++++++++++++++++++++
++ 2 files changed, 153 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-esp-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index d3a2c22c84..8759f3fd77 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -205,7 +205,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-pil-delay-slot-test',
++                 'sun4m-solaris-smp-idle-test',
++                 'sun4m-fsr-rd-test',
++-                'sun4m-cs4231-test'] + \
+++                'sun4m-cs4231-test',
+++                'sun4m-esp-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-esp-test.c b/tests/qtest/sun4m-esp-test.c
++new file mode 100644
++index 0000000000..c8e9a15a63
++--- /dev/null
+++++ b/tests/qtest/sun4m-esp-test.c
++@@ -0,0 +1,151 @@
+++/*
+++ * QTest: a CDB sent byte by byte after a message out phase on sun4m's ESP
+++ *
+++ * Linux 2.6's esp driver negotiates synchronous transfers: it selects
+++ * the target with Select with ATN and Stop (IDENTIFY only), sends an
+++ * extended SDTR message in the message out phase, and then puts the
+++ * CDB on the bus one byte at a time, a Transfer Information command
+++ * for each byte. The command must reach the target only when the whole
+++ * CDB is in, however many message bytes came before it.
+++ *
+++ * The ESP counted the IDENTIFY and message bytes as part of the CDB, so
+++ * here the first CDB byte alone made a "complete" 6-byte command: the
+++ * target got one byte, answered CHECK CONDITION (ILLEGAL REQUEST), and
+++ * Linux reset the bus and took the disk and CD-ROM offline.
+++ *
+++ * Nothing runs on the CPU: the test drives the ESP's registers itself,
+++ * without DMA, as the guest's driver does.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++/* SPARCstation 5: the ESP's registers are 4 bytes apart */
+++#define ESP_BASE        0x78800000ULL
+++#define ESP_REG(r)      (ESP_BASE + (r) * 4)
+++
+++#define ESP_FIFO        0x2
+++#define ESP_CMD         0x3
+++#define ESP_RSTAT       0x4
+++#define ESP_WBUSID      0x4
+++#define ESP_RINTR       0x5
+++#define ESP_RFLAGS      0x7
+++
+++#define CMD_TI          0x10
+++#define CMD_ICCS        0x11
+++#define CMD_MSGACC      0x12
+++#define CMD_SELATNS     0x43
+++
+++#define STAT_PHASE      0x07
+++#define STAT_CD         0x02
+++#define STAT_ST         0x03
+++#define STAT_MO         0x06
+++#define STAT_GE         0x40
+++
+++#define INTR_FC         0x08
+++#define INTR_BS         0x10
+++#define INTR_DC         0x20
+++
+++static uint8_t esp_readb(QTestState *qts, int reg)
+++{
+++    return qtest_readb(qts, ESP_REG(reg));
+++}
+++
+++static void esp_writeb(QTestState *qts, int reg, uint8_t val)
+++{
+++    qtest_writeb(qts, ESP_REG(reg), val);
+++}
+++
+++/* The bus phase after a command, with no gross error */
+++static uint8_t esp_phase(QTestState *qts)
+++{
+++    uint8_t stat = esp_readb(qts, ESP_RSTAT);
+++
+++    g_assert_cmphex(stat & STAT_GE, ==, 0);
+++    return stat & STAT_PHASE;
+++}
+++
+++/*
+++ * Select target 0 with ATN and Stop, send an SDTR message, then TEST UNIT
+++ * READY one byte at a time; return the status byte
+++ */
+++static uint8_t tur_after_sdtr(QTestState *qts)
+++{
+++    /* SDTR: 100 ns, offset 15 */
+++    static const uint8_t sdtr[] = { 0x01, 0x03, 0x01, 0x19, 0x0f };
+++    static const uint8_t cdb[6] = { 0x00 };     /* TEST UNIT READY */
+++    uint8_t intr, status;
+++    int i;
+++
+++    /* IDENTIFY (disconnects allowed, LUN 0), and stop in message out */
+++    esp_writeb(qts, ESP_FIFO, 0xc0);
+++    esp_writeb(qts, ESP_WBUSID, 0);
+++    esp_writeb(qts, ESP_CMD, CMD_SELATNS);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_MO);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & (INTR_BS | INTR_FC), ==, INTR_BS | INTR_FC);
+++
+++    /* The SDTR message: the target goes on to the command phase */
+++    for (i = 0; i < ARRAY_SIZE(sdtr); i++) {
+++        esp_writeb(qts, ESP_FIFO, sdtr[i]);
+++    }
+++    esp_writeb(qts, ESP_CMD, CMD_TI);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_BS, ==, INTR_BS);
+++
+++    /* The CDB, one byte per Transfer Information */
+++    for (i = 0; i < ARRAY_SIZE(cdb); i++) {
+++        esp_writeb(qts, ESP_FIFO, cdb[i]);
+++        esp_writeb(qts, ESP_CMD, CMD_TI);
+++        if (i < ARRAY_SIZE(cdb) - 1) {
+++            /* Not the whole CDB yet: the target waits for more */
+++            g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++        }
+++        esp_readb(qts, ESP_RINTR);
+++    }
+++
+++    /* The whole CDB: the target ran it and has its status */
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_ST);
+++    esp_writeb(qts, ESP_CMD, CMD_ICCS);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_FC, ==, INTR_FC);
+++    g_assert_cmpuint(esp_readb(qts, ESP_RFLAGS) & 0x1f, ==, 2);
+++    status = esp_readb(qts, ESP_FIFO);
+++    g_assert_cmphex(esp_readb(qts, ESP_FIFO), ==, 0x00);   /* COMMAND COMPLETE */
+++
+++    /* Accept the message: the target goes to bus free */
+++    esp_writeb(qts, ESP_CMD, CMD_MSGACC);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_DC, ==, INTR_DC);
+++
+++    return status;
+++}
+++
+++static void test_cdb_after_sdtr(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5 -nodefaults "
+++                                 "-drive if=scsi,index=0,format=raw,"
+++                                 "file=null-co://");
+++
+++    /*
+++     * The first command after the reset gets CHECK CONDITION with the
+++     * unit attention; the second one GOOD. A CDB cut short would get
+++     * CHECK CONDITION (ILLEGAL REQUEST) every time.
+++     */
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x02);
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x00);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-esp/cdb-after-sdtr", test_cdb_after_sdtr);
 ++
 ++    return g_test_run();
 ++}

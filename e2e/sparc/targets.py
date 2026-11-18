@@ -473,8 +473,8 @@ TARGETS = {
         "hostname": "sol10-sun4u",
         "nic": "hme0",
         # The installer sets the host name, address and netmask; the first boot writes /etc/defaultrouter
-        # and DNS (solaris10-firstboot.py). Every sun4u guest has the MAC 52:54:00:12:34:56 (OpenBIOS's
-        # IDPROM), not the one in net0.
+        # and DNS (solaris10-firstboot.py). hme0 uses the IDPROM's MAC, which is net0's with pve-qemu
+        # wsh/0034 (52:54:00:12:34:56 for every guest before it).
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
         "net_modes": ["static"],
         "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
@@ -506,7 +506,7 @@ TARGETS = {
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
         "hostname": "tribblix-m34",
         "nic": "hme0",
-        # Every sun4u guest has the MAC 52:54:00:12:34:56 (OpenBIOS's IDPROM), not the one in net0
+        # hme0 uses the IDPROM's MAC: net0's with pve-qemu wsh/0034, 52:54:00:12:34:56 before it
         "network": "hme0: a static address with ipadm (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns,"
                    " --domain)",
         "net_modes": ["static"],  # tribblix-firstboot.py has NET_MODE=dhcp (ipadm -T dhcp), not tried yet

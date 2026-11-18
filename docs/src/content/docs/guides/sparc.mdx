@@ -381,8 +381,13 @@ first boot about 19, check 8-9).
    DHCP or has the static one. `init 5` powers the VM off (it takes 3 to 6 minutes). Don't use `reboot` or `init 6`: they go through the same
    firmware call as the installer's reboot. Stop and start the VM instead.
 
-Every Solaris 10 guest gets the same system MAC address, 52:54:00:12:34:56, whatever the NIC's
-MAC is set to: two of them on one network clash. Details: `submodules/SPARC.md`, "Solaris on sun4u".
+The guest's system MAC address (the one in the IDPROM, which Solaris and NetBSD use for `hme0`) is
+the MAC address of the VM's first `sunhme` network device, as set in the VM's hardware, so DHCP
+reservations and firewall rules keyed on it match. The host id (`hostid`) is made from the same
+address, so it changes when the MAC address does. With pve-qemu-kvm packages before this change
+every sun4u guest had 52:54:00:12:34:56 and Solaris host id `80123456`; after the update an
+existing VM comes up with its own MAC and a new host id (intended, but software licensed to the old
+host id needs a new key). Details: `submodules/SPARC.md`, "The sun4u system MAC".
 
 ### Tribblix (illumos)
 

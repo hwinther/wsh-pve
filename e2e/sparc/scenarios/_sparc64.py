@@ -24,6 +24,7 @@ Variables (lab.py run ... --var KEY=VALUE):
   DISK_BUS  ide | lsi | virtio-scsi | virtio-blk | none        (ide)
   CD_BUS    ide | lsi | virtio-scsi | virtio-blk (a read-only disk) | none  (ide)
   NIC       sunhme | virtio-net-pci | e1000 | ne2k_pci | ... | none  (sunhme), on pciB
+  MAC       the NIC's MAC address (-device ...,mac=), as qemu-server sets net0's  (52:54:00:12:34:56)
   NET       user: QEMU user-mode networking with outside access (DHCP 10.0.2.15, gateway 10.0.2.2);
             anything else: the NIC is attached to a restricted user network (no outside access)
   BOOT      d (CD) | c (disk): OpenBIOS's `cdrom` or `disk` alias  (d)
@@ -43,12 +44,9 @@ import time
 DEFAULTS = {
     "QEMU": "qemu-system-sparc64", "BIOS": "openbios-sparc64", "MACHINE": "sun4u", "MEM": "512",
     "SMP": "1", "CPU": "", "VGA": "", "CONSOLE": "serial", "ISO": "", "DISK": "", "TEMPLATE": "",
-    "DISK_GB": "8", "DISK_BUS": "", "CD_BUS": "", "NIC": "sunhme", "NET": "", "BOOT": "d", "BOOTINDEX": "", "LAYOUT": "",
+    "DISK_GB": "8", "DISK_BUS": "", "CD_BUS": "", "NIC": "sunhme", "MAC": "52:54:00:12:34:56", "NET": "", "BOOT": "d", "BOOTINDEX": "", "LAYOUT": "",
     "EXTRA": "", "REFRESH": "0",
 }
-
-MAC = "52:54:00:12:34:56"
-
 
 def prepare_disk(v, out):
     disk = v["DISK"] or os.path.join(out, "disk.raw")
@@ -127,7 +125,7 @@ def qemu_args(v, out):
     if v["NIC"] != "none":
         net = "user,id=net0" if v.get("NET") == "user" else "user,id=net0,restrict=on"
         boot = ",bootindex=102" if bootidx else ""
-        args += ["-netdev", net, "-device", f"{v['NIC']},mac={MAC},netdev=net0,id=net0,bus=pciB{boot}"]
+        args += ["-netdev", net, "-device", f"{v['NIC']},mac={v.get('MAC') or DEFAULTS['MAC']},netdev=net0,id=net0,bus=pciB{boot}"]
     for ev in filter(None, v.get("TRACE", "").split(",")):
         args += ["-trace", ev]
     if v.get("TRACE"):

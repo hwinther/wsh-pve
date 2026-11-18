@@ -1,7 +1,15 @@
 # QEMU sparc64: a guest's `%softint` write can drop a tick interrupt that fires at the same time
 
-Material for a bug report to QEMU. Found by reading the code and caught once in a trace (below). We
-don't carry a fix: it would be a QEMU change (`submodules/pve-qemu.patch`).
+Material for a bug report to QEMU. Found by reading the code and caught once in a trace (below). The
+patch is pve-qemu's `debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch`, with
+the qtest `sun4u-softint-test` in `wsh/0037` (both in `submodules/pve-qemu.patch`). QEMU doesn't
+take AI-generated code, so this note describes the change for a patch written by hand.
+
+- **Affected:** QEMU 11.1.3 (where it was seen). `do_modify_softint()` has taken the BQL only around
+  `cpu_check_irqs()` since `5ee5993001` ("sparc/sparc64: grab BQL before calling cpu_check_irqs");
+  not bisected further.
+- **Who to tell:** Mark Cave-Ayland and Artyom Tarasenko (SPARC, `MAINTAINERS` "SPARC TCG CPUs"), on
+  qemu-devel@nongnu.org.
 
 ## What we saw
 
@@ -76,25 +84,51 @@ stored 0x400 & ~0x400. No `tick_irq_fire`, `tick set_limit` or `Set CPU IRQ 14` 
 remaining 2 500 trace lines (about ten minutes, while the SMF import, which needs no timer, went on
 from about 20 to 46 of 95 manifests).
 
-## Possible fix (not tested)
+## Fix
 
 Do the read-modify-write under the BQL, which `tick_irq()`, `stick_irq()` and `hstick_irq()` already
-hold:
+hold when they set their bits. In `target/sparc/int64_helper.c`:
 
-```c
-void HELPER(clear_softint)(CPUSPARCState *env, uint64_t value)
-{
-    bql_lock();
-    if (do_modify_softint(env, env->softint & (uint32_t)~value)) { ... }
-    bql_unlock();
-}
-```
+- `helper_set_softint()`, `helper_clear_softint()` and `helper_write_softint()` start with
+  `BQL_LOCK_GUARD();`, so the read of `env->softint`, the new value, the store, the
+  `cpu_check_irqs()` call and the trace all happen with the lock held (the guard takes the lock only
+  if the caller doesn't hold it already, and `BQL_LOCK_GUARD` works in the user-mode build too, where
+  these supervisor-only instructions never get this far);
+- `do_modify_softint()` no longer takes and drops the lock around `cpu_check_irqs()` itself.
 
-and the same for `set_softint` and `write_softint`, with `do_modify_softint()` no longer taking the
-lock itself. (An atomic or-and on `env->softint` would close the race too, but `cpu_check_irqs()`
-needs the BQL anyway.)
+No other code writes `env->softint` from the vCPU thread; `rd %softint` reads it without the lock,
+which is fine. `ppc` (`excp_helper.c`) and `riscv` (`cpu_helper.c`) take the BQL the same way for
+interrupt state that their timers change. An atomic or/and on `env->softint` would close the race
+only if the three timer callbacks also used atomics, and `cpu_check_irqs()` needs the BQL anyway.
+A plain `bql_lock()`/`bql_unlock()` pair in each helper would do the same as the guard.
 
-## What's missing
+The cost is one uncontended lock per `%softint` write; with the BQL held by the main loop the vCPU
+waits for it, as it already did for `cpu_check_irqs()` whenever interrupts were enabled.
 
-A run of the fix long enough to show the hang is gone: with a hang in about one of three long runs
-on a busy host, that takes many hours of guest time.
+## Test
+
+`tests/qtest/sun4u-softint-test.c` runs a 27-instruction boot PROM on `-M sun4u -accel tcg` (from
+power-on reset: RED state, MMU off, `PSTATE.IE` clear, so the level-14 interrupt is never taken and
+`TICK_INT` stays in `%softint`). The PROM arms `%tick_cmpr` 10 us ahead (1000 ticks at 100 MHz,
+`INT_DIS` cleared), then sets and clears soft interrupt 1 with `%set_softint`/`%clear_softint` in a
+loop until `%softint` shows `TICK_INT`, clears it, counts the tick in RAM and arms the next one. If
+16M rounds go by without the tick it counts the tick as lost. The test polls the two counters and
+passes after 20000 ticks with none lost (at most 10 s; it took under a second here).
+
+The race can't be triggered on demand, but the loop does almost nothing but `%softint` writes, so a
+tick usually lands inside one:
+
+| Binary | Runs | Result |
+| --- | --- | --- |
+| without the fix | 30 | 30 failed, every one within the first three ticks |
+| with the fix | 30 | 30 passed, 20 001-20 399 ticks each, none lost |
+
+With the fix a tick can't be lost, so the test doesn't fail spuriously; without it the test failed
+every time here, but nothing guarantees that on another host.
+
+## Results with the fix
+
+`make check-qtest-sparc` and `check-qtest-sparc64` pass as before with the fix (only the known
+`qmp-test` `oob` failures). Long Tribblix runs with the fix (a `lab.py install tribblix-m34-sun4u
+--check` through PVE and two lab installs on a busy host) were started on 2026-11-18 and had not
+finished when this was written; their results go into `submodules/SPARC.md` ("Tribblix on sun4u").

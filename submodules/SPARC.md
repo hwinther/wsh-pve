@@ -47,16 +47,16 @@ maintains the patches.
 | `0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau` | `-M <sun4m>,sunos-idle=on\|off` for 0012, on by default, off with `-smp` > 1 | [LEMU `fed03cc7`](https://github.com/tenox7/lemu/commit/fed03cc7f5f7c5d6e5e0144bfc1dad36d4844180) | not in QEMU |
 | `0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop` | Solaris 2.5.1-9 spin in `idle()` on every CPU module but the microSPARC-II with `pmc` (SS-10/SS-20 always); the translator recognises the call of `idle_cpu` in that loop and halts the CPU there until the next interrupt when `disp_nrunnable` is 0 | ours | not in QEMU |
 | `0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def` | `-M <sun4m>,solaris-idle=on\|off` for 0014, on by default, off with `-smp` > 1 | ours | not in QEMU |
-| `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015 | ours | not in QEMU |
+| `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015; a decoy 1 in the PROM at `disp_nrunnable`'s RAM address checks that the helper reads RAM with the MMU off | ours | not in QEMU |
 | `0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-` | Solaris on SS-5 ran call-heavy user code 4-10x slower than on SS-20: its microSPARC window-trap handlers set and clear the MMU no-fault bit (NF) twice per trap, and QEMU flushed its whole TLB on every NF change. Now NF flushes only while the TLB holds an entry made for a fault in no-fault mode (the only entries that depend on it); boot mode flushes as before. Trace event `sparc_mmu_ctrl_flush` ("Why SS-5 was slower", "Benchmarks") | ours | not fixed; see `upstream/qemu-srmmu-control-register-flush.md` |
 | `0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m` | qtest `sun4m-mmu-nofault-test` for 0017: an entry made in no-fault mode must not survive NF being cleared (SS-5 and SS-20) | ours | not in QEMU |
 | `0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-` | Solaris 2.x with more than one CPU (SS-10/SS-20) hung within minutes: a write to `%psr` in a delay slot (Solaris's `splx`) didn't end the translation block, so an interrupt it unmasked wasn't taken until something else stopped the CPU; a CPU spinning in such a loop never took the other CPU's cross-call ("SMP") | ours | not fixed (since 8.2.0, `25524734c6`); see `upstream/qemu-sun4m-smp-psr-delay-slot.md` |
 | `0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl` | qtest `sun4m-pil-delay-slot-test` for 0019: a pending soft interrupt must be taken after PIL is lowered by a plain `wr %psr` and by one in the delay slot of `ba`, `bne`, `bne,a` and `jmpl` | ours | not in QEMU |
-| `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to clear them; the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD) ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
-| `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, and the interrupt line (seen through the sabre) follows INTRQ | ours | not in QEMU |
-| `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
+| `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to them in config space (the BMDMA mirror of MRDMODE doesn't clear them); the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD), kept in a field that a device reset clears and that isn't in the migration stream ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
+| `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, the interrupt line (seen through the sabre) follows INTRQ, and a reset with INTRQ up leaves the line low | ours | not in QEMU |
+| `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry (with the MMU off the address is taken as physical: the debug lookup would read the PROM) ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
 | `0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by` | `-M <sun4m>,solaris-smp-idle=on\|off` for 0023, on by default, does nothing with one CPU | ours | not in QEMU |
-| `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024 | ours | not in QEMU |
+| `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024, with the same PROM decoy | ours | not in QEMU |
 | `0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd` | sparc32 raised an illegal instruction trap for `ld [..], %fsr` and `st %fsr, [..]` with rd other than 0; V7 and V8 chips ignore rd there. The `_sigtramp` of an old static SunOS 4 libc saves and restores the FSR with rd 4 (`c92ba0e0`, `c90ba0e0`), so such programs died with SIGILL at their first signal after using the FPU (LEMU's case: Island Productivity's 1992 licence daemon `islandLIC`). sparc32 takes any rd again, as before QEMU 8.2; sparc64 doesn't change | [LEMU `0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2) by Antoni Sawicki | not fixed (since 8.2.0, `3d3c06737b`); see `upstream/qemu-sparc32-ldfsr-rd.md` |
 | `0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m` | qtest `sun4m-fsr-rd-test` for 0026: `ld %fsr` and `st %fsr` with rd 0, 4 (the exact words above) and 31 run without a trap and the FSR reads back | ours | not in QEMU |
 | `0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin` | The SS-5's CS4231 was a register stub: its APC DMA kept what was written and never interrupted, so every program that waited for the end of a sound on `/dev/audio` hung (SunOS 4.1.4). The APC now plays its playback buffers, read through the IOMMU, into the machine's audiodev at the codec's rate (u-law, A-law, 8-bit, 16-bit LE and BE; ADPCM plays silence), with PI, PD, PM and PMI and the DAC volume. Capture is not done: the capture pipe reads as empty ("Audio") | [LEMU `2938ff88`](https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c) by Antoni Sawicki | not in QEMU |
@@ -65,6 +65,12 @@ maintains the patches.
 | `0031-hw-audio-cs4231-no-sound-without-an-audiodev` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio driver, and with none available didn't start (`no default audio driver available`). Without an audiodev the codec now opens no voice and keeps its registers only, as before (the PC speaker does the same) | ours | — |
 | `0032-hw-audio-cs4231-play-out-the-last-samples-when-playb` | The APC takes its samples up to 50 ms ahead of the codec's clock; turning the voice off when the pipe ran empty or the driver stopped the DMA dropped what the mixer still held, so every sound lost its last 50 ms. The voice stays on for 200 ms after playback stops | ours | — |
 | `0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA` | qtest `sun4m-cs4231-test` for 0028-0032: two u-law buffers behind IOMMU mappings, PEN, PI/PD/PM/PMI at SBus level 5 (processor level 9) in real time, every sample decoded in a `wav` audiodev; DMA off and the reset bit | ours | not in QEMU |
+| `0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-` | sun4u wrote QEMU's default MAC `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`; a NIC added with `-device` (as qemu-server adds `sunhme`) didn't exist yet. OpenBIOS gives the guest that address as the system MAC and NetBSD and Solaris use it for `hme0` (NetBSD's `wm` too), so every guest had the same MAC and host id whatever `net0` said. Without an onboard NIC the IDPROM is now written again when the machine is complete: from the first `sunhme`, else the first NIC of any model ("The sun4u system MAC") | ours (in review) | not fixed; see `upstream/qemu-sun4u-idprom-mac.md` |
+| `0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u` | qtest `sun4u-idprom-test` for 0034: reads the IDPROM from the NVRAM; default address without a NIC, a `-device sunhme`'s address, the first `sunhme` after a `virtio-net-pci`, the first NIC without a `sunhme`, the onboard `-net nic` ahead of a `-device sunhme` | ours (in review) | not in QEMU |
+| `0036-target-sparc-write-softint-under-the-BQL` | The guest's `%set_softint`, `%clear_softint` and `%softint` writes read, modified and wrote `env->softint` in the vCPU thread without the BQL, while the tick, stick and hstick timers set their bits from the main loop holding it: a tick that fired in between was written over. illumos arms its next clock tick only after handling the last one, so Tribblix lost its clock for good in about one of three long runs. The three helpers now hold the BQL for the read-modify-write ("Tribblix on sun4u") | ours (in review) | not fixed; see `upstream/qemu-sparc64-softint-race.md` |
+| `0037-tests-qtest-test-that-a-tick-during-a-softint-write-` | qtest `sun4u-softint-test` for 0036: a boot PROM sets and clears soft interrupt 1 in a loop with interrupts off while 10 us ticks fire, and counts the ticks it sees and loses; passes after 20000 ticks with none lost | ours (in review) | not in QEMU |
+| `0038-esp-don-t-count-the-message-out-bytes-as-part-of-the` | `esp_cdb_ready()` counted the IDENTIFY and other message out bytes in the command FIFO as CDB bytes. Linux 2.6.18's `esp` driver (Debian 4.0 on SS-5) selects with ATN and Stop, sends a 5-byte SDTR message and then the CDB one byte per Transfer Information: its first CDB byte alone made a "complete" 6-byte command, the target answered ILLEGAL REQUEST and Linux reset the bus and took the disk and CD-ROM offline. Only the bytes after the messages count now | ours (in review) | not fixed; see `upstream/qemu-esp-cdb-ready-after-message-out.md` |
+| `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -122,11 +128,35 @@ fails in `/sparc64/qmp/oob` the same way.
 `qtest-sparc` and `qtest-sparc64` suites: 37 OK, 4 skipped, and the two `qmp-test` `oob` failures
 as before; every sun4m qtest above passes, and an SS-5 without an audiodev starts.
 
+0034-0035 apply on top of 0001-0027 (written before 0028-0030; they touch `hw/sparc64/sun4u.c` and the
+`qtests_sparc64` list only). `sun4u-idprom-test` passes 5/5 with 0034 (`qemu-system-sparc64` built
+from 0001-0027 + 0034-0035); against the packaged 11.1.3-2+wsh16 binary its `device` case fails
+with `52:54:00:12:34:56` in the IDPROM. `sun4u-cmd646-test` still passes 2/2. Lab results under
+"The sun4u system MAC".
+
+0001-0039 apply to 11.1.3 with `patch -F0` (0034-0035 regenerated on top of 0033). `sun4u-softint-test`
+passed 30 of 30 runs with 0036 (20 001-20 399 ticks each, none lost, under a second each) and failed
+30 of 30 without it, each run losing a tick within its first three. `sun4m-esp-test` passes with
+0038 and fails without it (the first CDB byte after the SDTR message already ends the command
+phase).
+
+Carried back from the port of these patches to a LEMU fork (its `feat/sparc-fixes` branch), into
+the existing patches: 0023's helper takes `disp_nrunnable`'s address as physical when the MMU is
+off (the debug lookup tries an instruction fetch first, which boot mode takes from the PROM; real
+guests run with the MMU on and never hit it), and 0016 and 0025 put a decoy 1 in the PROM at that
+RAM address, so their idle cases fail with the old lookup (checked with the 0001-0037 binary: both
+fail); 0021's `cmd646_reset()` clears `intrq`, and 0022's new `reset-drops-intrq` case fails
+without it; checkpatch-style clean-ups in those tests and in 0021/0023 (line lengths, comments, a
+table instead of `atoi`/`strtoul`). The `SOL_*` macro comments in `translate.c` (0014/0023) were
+left as they are. With 0001-0039 the `qtest-sparc` and `qtest-sparc64` suites: 40 OK, 4 skipped,
+and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-idprom-test` 5/5,
+`sun4u-softint-test` 1/1, `sun4u-cmd646-test` 3/3, every sun4m qtest above).
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
-`sun4m-fsr-rd-test` and `sun4m-cs4231-test` (sparc),
-`sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
+`sun4m-fsr-rd-test`, `sun4m-cs4231-test` and `sun4m-esp-test` (sparc),
+`sun4u-cmd646-test`, `sun4u-idprom-test` and `sun4u-softint-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -1590,7 +1620,8 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   yet; that needs the installed system. QEMU writes the default MAC `52:54:00:12:34:56` into the
   sun4u IDPROM unless the NIC is the machine's onboard `-nic`. qemu-server and the lab add `sunhme`
   with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
-  the same thing on the wire. Measured since (below).
+  the same thing on the wire. Measured since (below); fixed by pve-qemu `wsh/0034` ("The sun4u system
+  MAC").
 
 **Status on the published pve-qemu-kvm 11.1.3-2+wsh13 (2026-11-17).** QEMU and `openbios-sparc64`
 from the package as installed in the lab image (no own builds), Solaris 10 1/13 DVD, 1024 MB, a
@@ -1619,7 +1650,8 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
   `-device` (as qemu-server and the lab do) isn't seen at that point, so the IDPROM gets QEMU's
   default `52:54:00:12:34:56`. With `-net nic,model=sunhme,macaddr=...` the NIC sits at a different
   PCI path, and the installed system (whose `hme0` is the `-device` NIC on bus B) didn't configure
-  it. The IDPROM MAC there wasn't read, so that variant is untested.
+  it. The IDPROM MAC there wasn't read, so that variant is untested. Fixed in QEMU since: "The sun4u
+  system MAC".
 
 **Status with 0010-0011 (2026-11-17).** Firmware built from the committed patches 0001-0011 (build
 records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`:
@@ -1635,7 +1667,7 @@ records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`,
   `ping 10.0.2.2` answers `alive`. `init 5` powers QEMU off (exit 0).
 - The sun4u system MAC: with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris uses `ether
   52:54:0:12:34:56`. QEMU writes its default MAC into the IDPROM when the NIC isn't `-nic`, so two
-  guests on one network would clash. Not fixed.
+  guests on one network would clash. Fixed since by pve-qemu `wsh/0034` ("The sun4u system MAC").
 - Not measured with this set: the install on the packaged QEMU (without the cmd646 patch); the
   reboot (0012, `.wip`); Solaris 7/8/9.
 
@@ -1790,6 +1822,46 @@ bits latched, and it removes multiword DMA and UDMA from the disk's IDENTIFY dat
 completion never arrives" after Solaris switches to MDMA2. It also patches Solaris's `uata` to stay
 on PIO. Here the install copied 4 GB to the disk with the latch patch alone and without an `ATA
 transport failed`, so DMA didn't fail in these runs. Whether Solaris used DMA or PIO wasn't measured.
+
+**The sun4u system MAC (pve-qemu `wsh/0034`-`0035`, in review, 2026-11-18).** OpenBIOS gives the
+guest the IDPROM's MAC address as the system's, and its `sunhme` node has no `local-mac-address`.
+NetBSD's `hme` and `wm` and Solaris's `hme` (OBP's default `local-mac-address?=false`) program that
+address into the NIC. QEMU's sun4u filled the IDPROM from the onboard `-nic` only; qemu-server and
+the lab add the NIC with `-device`, which doesn't exist yet when the NVRAM is written, so the IDPROM
+had `52:54:00:12:34:56` for every VM. With 0034, sun4u writes the IDPROM again once the machine is
+complete: from the first `sunhme`, else from the first NIC of any model; with an onboard `-nic`, or
+no NIC, nothing changes. The host id is made from the same bytes (`hostid` `80123456` before,
+`80000001` with `mac=bc:24:11:00:00:01`). The alternative without a QEMU change, qemu-server passing
+`-net nic,model=sunhme,macaddr=...`, puts the NIC at 01:01.1 on bus A instead of bus B: installed
+Solaris systems see a new `hme` instance and leave it unconfigured, and the NIC loses its `id`.
+
+Measured in the lab (`scenarios/_sparc64.py` with `MAC=bc:24:11:00:00:01`, the NIC with
+`-device <model>,mac=...,bus=pciB` as qemu-server builds it, the installed disks, `-snapshot`):
+
+| Guest, NIC | 11.1.3-2+wsh16 (package) | with 0034 |
+| --- | --- | --- |
+| NetBSD 11.1, `sunhme` | `hme0` `52:54:00:12:34:56` | `hme0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `e1000` | `wm0` `52:54:00:12:34:56` | `wm0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `virtio-net-pci` | `vioif0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| NetBSD 11.1, `rtl8139` | `re0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| Solaris 10 1/13, `sunhme` | `hme0` `ether 52:54:0:12:34:56`, hostid `80123456` | `hme0` `ether bc:24:11:0:0:1`, hostid `80000001`, DHCP lease, `ping 10.0.2.2` alive |
+
+A packet capture on the netdev (`-object filter-dump`) shows the guest's frames (DHCP, ARP, ICMP)
+leaving from `bc:24:11:00:00:01` with 0034 and from `52:54:00:12:34:56` without it, so a DHCP
+reservation or firewall rule keyed on `net0`'s MAC now matches. The DHCP server here is QEMU's
+user networking, which doesn't key on the MAC; a reservation on a real DHCP server wasn't tested.
+With 0034 and the default MAC (`52:54:00:12:34:56`) Solaris boots as before (1 of 1).
+
+The first runs used the packaged `openbios-sparc64` (without patch 0016): Solaris 10 booted to
+`console login:` with 0034 and `mac=bc:24:11:00:00:01` in 3 of 5 runs, the other 2 panicked with
+`BAD TRAP: type=4e` and the PC in the firmware (`0xffd0e74c` in `picld` during an `ioctl`, and
+`0xffd12744` in thread 0 before user processes run); the package without 0034 booted 3 of 3. That
+is the firmware bug OpenBIOS 0016 fixes (the client interface ran with interrupts enabled; "Tribblix
+on sun4u"), not the IDPROM. Re-tested with 0001-0037 and `openbios-sparc64` from patches 0001-0017
+(2026-11-18, the same installed disk, `-snapshot`, user networking, two boots at a time with other
+guests on the host): 10 of 10 boots reached `console login:` (boot 425-553 s), no `BAD TRAP`, every
+one with `hme0` `ether bc:24:11:0:0:1`, `hostid` `80000001` and `ping 10.0.2.2` alive; `init 5`
+powered off each. So no comparison run without 0034 was needed.
 
 **Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
 boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
@@ -2245,7 +2317,9 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   only warns about a second `-net nic`). The lance is peered with the `net0` netdev directly, so
   `set_link net0` reaches it as on x86 (it used to hang off a hub behind a netdev named `lance.0`,
   and every `set_link` failed with `Device 'net0' not found`). QEMU names the NIC itself `lance.0`.
-  sparc64 puts `sunhme` on `pciB`.
+  sparc64 puts `sunhme` on `pciB` with `-device ...,mac=<net0's MAC>`; the guest's system MAC (the
+  IDPROM's, which NetBSD and Solaris use for `hme0`) is the first `sunhme`'s with pve-qemu
+  `wsh/0034`, so qemu-server needs no sun4u-specific NIC argument ("The sun4u system MAC").
 - **Machine version:** QEMU's sparc machines have no versioned variants, so a running VM's machine
   (`SS-5+pve0`, `sun4u+pve0` from `query-machines`) carries none. `get_machine_version` in
   `PVE::QemuServer::Machine` resolves it to the QEMU version (of the running process when a VMID is
@@ -2339,7 +2413,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
   `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
-  `sun4m-cs4231-test` (0033) and `am53c974-test` with 0007;
+  `sun4m-cs4231-test` (0033), `sun4m-esp-test` (0039),
+  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).

@@ -36,10 +36,14 @@ raw disk on `ide.0`, DVD on `ide.1`:
 ## Fix
 
 In `cmd646_set_irq()`, keep the status bit set when `level` is 0. The bits are cleared only by
-the guest's write-1-to-clear (PCI config write, or the BMDMA register that mirrors MRDMODE). The
-PCI interrupt line follows the drives' INTRQ, kept in a new `PCIIDEState.intrq` field, not the
-latched bits: a first version drove the line from the bits, and guests that never clear them
-saw it stuck high (Linux: `irq 7: nobody cared`, interrupt disabled; OpenBSD hung at boot).
+the guest's write-1-to-clear in PCI config space; the BMDMA register that mirrors MRDMODE doesn't
+clear them (`bmdma_write()` masks them out of its writes, `& ~0x30`). The PCI interrupt line
+follows the drives' INTRQ, kept in a new `PCIIDEState.intrq` field, not the latched bits: a first
+version drove the line from the bits, and guests that never clear them saw it stuck high (Linux:
+`irq 7: nobody cared`, interrupt disabled; OpenBSD hung at boot). `cmd646_reset()` clears `intrq`
+(the drives come out of reset with INTRQ low); without that, a reset with INTRQ up left it set and
+the firmware's next config write raised the line again (found while porting the patch to a QEMU
+fork; the qtest's `reset-drops-intrq` case covers it).
 
 `intrq` isn't in the migration stream (`vmstate_ide_pci` is shared by every PCI IDE controller):
 a guest migrated with INTRQ up sees the line low until the drive raises it again. An upstream

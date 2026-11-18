@@ -52,6 +52,7 @@ come after that, not before.
 | Install targets: Red Hat Linux 6.2 on SS-5 and SS-20 (`redhat62-ss5`, `redhat62-ss20`, OpenBIOS): kickstart from an answer CD the tool makes on the node (the `unattended` method, `answer_media.py`), SILO's screens answered on the serial console, `/boot` first on the disk for SILO | in review | |
 | Sound on the SS-5: the CS4231 plays through its APC DMA (LEMU `2938ff88`, `42d32575` by Antoni Sawicki, pve-qemu `wsh/0028`-`0029`), at SBus level 5 as the real machine (`wsh/0030`, openbios 0018), no start failure without an audiodev (`wsh/0031`), no lost tail (`wsh/0032`), qtest (`wsh/0033`); qemu-server `audio0: device=cs4231` (drivers `none`, `alsa`, `pa`, `pipewire`; SPICE, SS-10/SS-20 and sparc64 refused), the UI offers only that on sparc. SunOS 4.1.4, Solaris 2.5.1 and 2.6 play in the lab under OpenBIOS and `ss5.bin`. Limits: no DBRI on SS-10/SS-20 (not emulated), nothing in the web console (no SPICE on sparc32), no capture | in review | |
 | Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
+| sun4u system MAC from `net0` (pve-qemu `wsh/0034`, qtest `wsh/0035`): QEMU wrote its default `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`, and NetBSD and Solaris use the IDPROM's MAC for `hme0`; now it is the first `sunhme`'s (else the first NIC's), so the guest sends from the MAC in the VM config (NetBSD `hme`/`wm`, Solaris 10 `hme`). No qemu-server change; upstream note written. The Solaris host id follows the MAC (`80123456` on every VM before), so it changes on existing VMs. Solaris 10 boots 10 of 10 with it and OpenBIOS 0013-0017 (the earlier `BAD TRAP: type=4e` in 2 of 5 was the firmware bug 0016 fixes) | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 | Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
 
@@ -78,8 +79,6 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    Debian installer boot as before. Still to do:
    - reboot: the installer's reboot and `reboot`/`init 6` return from the firmware; 0012
      (`.wip`) resets at the `ok` prompt but hangs when Solaris calls it;
-   - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
-     MAC into the IDPROM);
    - `sol10-sun4u` with `--ip dhcp` (not tested through the tool); the intermittent `bad unknown
      trap at TL 1` panic seen once before the package (none in 6 installs on it); a different one,
      `BAD TRAP: type=4e` in the firmware while the DVD boots, once in 6 DVD boots through PVE
@@ -111,7 +110,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
    the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
 2. **Solaris on sun4u**: see "In progress". Solaris 10 installs through `lab.py install`; next: a
-   reboot that works from Solaris (0012 hangs), then a per-VM system MAC.
+   reboot that works from Solaris (0012 hangs).
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
@@ -229,7 +228,8 @@ Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection ti
 powering the machine off (OpenBIOS),
 the 1-byte APC region (QEMU), the TLB flush on every change of the SRMMU no-fault bit (QEMU) and
 the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang) and
-sparc32 `ld`/`st %fsr` refused with rd other than 0 (QEMU, found and fixed by Antoni Sawicki in LEMU).
+sparc32 `ld`/`st %fsr` refused with rd other than 0 (QEMU, found and fixed by Antoni Sawicki in LEMU)
+and sun4u's IDPROM ignoring a NIC added with `-device` (QEMU).
 QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
 not written up yet: the TTE page-size truncation if it is not merged upstream, the ESCC mouse
 rate, and the ESCC break that never ends.

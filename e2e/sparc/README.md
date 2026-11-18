@@ -699,10 +699,10 @@ say so, `dhcp_note`); `--dns`/`--domain` = `/etc/resolv.conf`. The NIC is `hme0`
 no port (`netstat -an` has no `LISTEN` on sparc64 or on SS-20; `/etc/inetd.conf` has every service
 commented out) and sshd is off (sysinst's default).
 
-On sparc64 every VM gets the system MAC `52:54:00:12:34:56` (the IDPROM's default, `hme0:
-Ethernet address 52:54:00:12:34:56` whatever `net0` says; see "Network" above and
-`submodules/SPARC.md`), so only one of them per bridge segment gets a usable address; on sparc the
-lance uses `net0`'s MAC. NetBSD/sparc64 doesn't idle on sun4u (a host core at 100% while it runs).
+With pve-qemu-kvm before `wsh/0034` every sparc64 VM gets the system MAC `52:54:00:12:34:56` (the
+IDPROM's default, `hme0: Ethernet address 52:54:00:12:34:56` whatever `net0` says; see "Network"
+above and `submodules/SPARC.md`, "The sun4u system MAC"), so only one of them per bridge segment
+gets a usable address; with `wsh/0034` it is `net0`'s. On sparc the lance uses `net0`'s MAC. NetBSD/sparc64 doesn't idle on sun4u (a host core at 100% while it runs).
 
 **A halt that never powers off.** In the first sparc64 run, the first boot's `halt -p` stopped after
 halt's SIGTERM (`syslogd[500]: Exiting on signal 15`, then nothing: no `syncing disks`) and the VM
