@@ -301,7 +301,7 @@ TARGETS = {
         "title": "Solaris 7 3/99 End User on a SPARCstation 5 (OpenBIOS)",
         "status": "automated",
         "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
-        "disk": sun_disk("3G"),
+        "disk": sun_disk("3G", "9G"),  # 9G: tested 2026-11-18 (README.md, "Disk sizes")
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss5",
@@ -314,7 +314,7 @@ TARGETS = {
         "title": "Solaris 7 3/99 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
         "status": "automated",
         "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
-        "disk": sun_disk("3G"),
+        "disk": sun_disk("3G", "9G"),  # 9G: tested 2026-11-18 (README.md, "Disk sizes")
         "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "sol7-ss20",
