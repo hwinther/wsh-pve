@@ -576,7 +576,7 @@ The End User Group would need only Software 1 of 2 (its 274 packages are all on 
 CD's `.clustertoc`); Entire uses both, so the target exercises the swap. Booting Software 1 of 2
 directly would give the classic `suninstall` instead of Web Start; not tried.
 
-**Solaris 9** (the DVD, `sol9-ss20`): Sun dropped sun4m after Solaris 8, but the DVD's installer
+**Solaris 9** (the DVD, `sol9-ss20`): the last release for sun4m (Solaris 10 dropped it); the DVD's installer
 and the installed 32-bit kernel (`SunOS Release 5.9 Version Generic 32-bit`) run on the emulated
 SS-20 with OpenBIOS. The DVD asks for the language, a paged locale list (0 = English C) and the
 terminal type, then runs the same Web Start from the DVD (no mini-root copy) with a few more

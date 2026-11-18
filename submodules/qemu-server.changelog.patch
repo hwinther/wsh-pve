@@ -1,41 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 4a2d57f7..712a4399 100644
+index 504a6e51..732b13f8 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,36 @@
-+qemu-server (9.2.18+wsh4) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++qemu-server (9.2.19+wsh1) trixie; urgency=medium
 +
-+  * feat(sparc32): sound on the SPARCstation 5's CS4231 (LEMU) (#317)
++  * fix(qemu-server): refresh the patch for upstream 9.2.19 (#328)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 18:16:52 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 23:09:10 +0000
 +
-+qemu-server (9.2.18+wsh3) trixie; urgency=medium
-+
-+  * feat(sparc32): a CD that answers as a disk; Solaris 2.4 and 2.5.1
-+    install targets (#314)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 10:55:21 +0000
-+
-+qemu-server (9.2.18+wsh2) trixie; urgency=medium
-+
-+  * feat(sparc64): sun4u VMs take up to 8192 MB of memory (#312)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 09:39:22 +0000
-+
-+qemu-server (9.2.18+wsh1) trixie; urgency=medium
-+
-+  * fix(patches): pve-storage 9.1.18, qemu-server 9.2.18 and pve-manager
-+    9.2.30 (#308)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 07:20:40 +0000
-+
- qemu-server (9.2.18) trixie; urgency=medium
+ qemu-server (9.2.19) trixie; urgency=medium
  
-   * api: agent: mark the new guest password as sensitive.
+   * fix #5032: agent: add the 'sync-time-on-resume' option to set the guest
+     clock to the host time through the guest agent after operations that
+     leave it behind: resuming from hibernation or pause, rolling back to a
+     snapshot with RAM, live migration, taking a snapshot, and backups in
+     suspend mode. The option is off by default. The start, resume and rollback
+     API endpoints get a 'sync-time-on-resume' parameter to override it for a
+     single operation.
  
-   * api: record used VM IDs for supporting the new 'unique' property for the
-     'next-id' datacenter configuration option.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 17 Nov 2026 12:26:51 +0100
- 
- qemu-server (9.2.17) trixie; urgency=medium

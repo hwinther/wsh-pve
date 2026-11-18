@@ -690,7 +690,7 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 | Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
 | Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both, on the 3G or the 9G disk (`lab.py install sol7-ss5`/`sol7-ss20 [--disk-size 9G]`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
 | Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`) |
-| Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 Web Start installs End User and the installed 32-bit kernel boots to login, although Sun dropped sun4m after 8 (`sol9-ss20`) |
+| Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 Web Start installs End User and the installed 32-bit kernel boots to login (`sol9-ss20`); 9 is the last release for sun4m, Solaris 10 dropped it |
 | NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
 | NetBSD 11.1 GENERIC.MP (from the ISO) | `-smp 2`: `cpu0: booting secondary processors: cpu1`, `hw.ncpu = 2`; five 16-256 MB writes with `sync` pass; idle ~4% of a core |
 
