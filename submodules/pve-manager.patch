@@ -137,7 +137,7 @@ index b1e0b4f8..4b93f5c6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index d2ea786b..ae1b20b2 100644
+index e8e2bd0b..e34ff958 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -97,6 +97,7 @@ JSSRC= 							\
@@ -178,7 +178,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index 61b8def2..586eced9 100644
+index c616ab9b..48d7e311 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -262,7 +262,7 @@ index 61b8def2..586eced9 100644
              rootdir: gettext('Container'),
              snippets: gettext('Snippets'),
              import: gettext('Import'),
-@@ -1801,6 +1814,7 @@ Ext.define('PVE.Utils', {
+@@ -1813,6 +1826,7 @@ Ext.define('PVE.Utils', {
              rng: 1,
              tpmstate: 1,
              virtiofs: 10,
@@ -270,7 +270,7 @@ index 61b8def2..586eced9 100644
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1942,8 +1956,8 @@ Ext.define('PVE.Utils', {
+@@ -1954,8 +1968,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -282,11 +282,11 @@ index 61b8def2..586eced9 100644
                          ),
                          ['pve-static-mask'],
 diff --git a/www/manager6/form/ContentTypeSelector.js b/www/manager6/form/ContentTypeSelector.js
-index 60532251..7d9a4a1d 100644
+index 874bb3b6..3901af67 100644
 --- a/www/manager6/form/ContentTypeSelector.js
 +++ b/www/manager6/form/ContentTypeSelector.js
-@@ -10,7 +10,16 @@ Ext.define('PVE.form.ContentTypeSelector', {
-         me.comboItems = [];
+@@ -80,7 +80,16 @@ Ext.define('PVE.form.ContentTypeSelector', {
+         var me = this;
  
          if (me.cts === undefined) {
 -            me.cts = ['images', 'iso', 'vztmpl', 'backup', 'rootdir', 'snippets', 'import'];
@@ -302,7 +302,7 @@ index 60532251..7d9a4a1d 100644
 +            ];
          }
  
-         Ext.Array.each(me.cts, function (ct) {
+         me.comboItems = me.comboItemsFor(me.showVolumeTypes || me.usesVolumeType(me.value));
 diff --git a/www/manager6/form/ControllerSelector.js b/www/manager6/form/ControllerSelector.js
 index ceba1561..93d2a335 100644
 --- a/www/manager6/form/ControllerSelector.js
@@ -1099,7 +1099,7 @@ index 00000000..39eb1788
 +    },
 +});
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index bc0aa19d..6f67fa5a 100644
+index fdb1802c..1fed396c 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -65,6 +65,10 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -1122,7 +1122,7 @@ index bc0aa19d..6f67fa5a 100644
              },
              vga: {
                  header: gettext('Display'),
-@@ -230,7 +234,7 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -231,7 +235,7 @@ Ext.define('PVE.qemu.HardwareView', {
                  header: gettext('SCSI Controller'),
                  iconCls: 'database',
                  editor: caps.vms['VM.Config.Options'] ? 'PVE.qemu.ScsiHwEdit' : undefined,
@@ -1131,7 +1131,7 @@ index bc0aa19d..6f67fa5a 100644
                  group: 7,
                  never_delete: true,
                  defaultValue: '',
-@@ -322,6 +326,18 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -323,6 +327,18 @@ Ext.define('PVE.qemu.HardwareView', {
              header: gettext('TPM State'),
              renderer: Ext.htmlEncode,
          };
@@ -1150,7 +1150,7 @@ index bc0aa19d..6f67fa5a 100644
          for (let i = 0; i < PVE.Utils.hardware_counts.usb; i++) {
              let confid = 'usb' + i.toString();
              rows[confid] = {
-@@ -743,7 +759,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -744,7 +760,13 @@ Ext.define('PVE.qemu.HardwareView', {
              me.down('#addPci').setDisabled(noVMConfigHWTypePerm || isAtLimit('hostpci'));
              me.down('#addAudio').setDisabled(noVMConfigHWTypePerm || isAtLimit('audio'));
              me.down('#addSerial').setDisabled(noVMConfigHWTypePerm || isAtLimit('serial'));
@@ -1165,7 +1165,7 @@ index bc0aa19d..6f67fa5a 100644
              me.down('#addRng').setDisabled(noVMConfigHWTypePerm || isAtLimit('rng'));
              efidisk_menuitem.setDisabled(noVMConfigDiskPerm || isAtLimit('efidisk'));
              me.down('#addTpmState').setDisabled(noVMConfigDiskPerm || isAtLimit('tpmstate'));
-@@ -751,6 +773,7 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -752,6 +774,7 @@ Ext.define('PVE.qemu.HardwareView', {
              me.down('#addCloudinitDrive').setDisabled(
                  noVMConfigCDROMPerm || noVMConfigCloudinitPerm || hasCloudInit,
              );
@@ -1173,7 +1173,7 @@ index bc0aa19d..6f67fa5a 100644
  
              if (!rec) {
                  remove_btn.disable();
-@@ -799,10 +822,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -800,10 +823,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -1188,7 +1188,7 @@ index bc0aa19d..6f67fa5a 100644
              );
  
              edit_btn.setText(
-@@ -863,6 +886,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -864,6 +887,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.vms['VM.Config.CDROM'],
                                  handler: editorFactory('CDEdit'),
                              },
@@ -1448,7 +1448,7 @@ index df5ad8aa..b645da27 100644
              // default
              return os.x86_64;
 diff --git a/www/manager6/qemu/ProcessorEdit.js b/www/manager6/qemu/ProcessorEdit.js
-index bc8e4723..23f080d9 100644
+index bc8e4723..1b4aa5a8 100644
 --- a/www/manager6/qemu/ProcessorEdit.js
 +++ b/www/manager6/qemu/ProcessorEdit.js
 @@ -23,11 +23,19 @@ Ext.define('PVE.qemu.ProcessorInputPanel', {
@@ -1534,7 +1534,7 @@ index bc8e4723..23f080d9 100644
 +            smpHint.setValue(
 +                Ext.String.format(
 +                    gettext(
-+                        'SPARC (32-bit): up to {0} CPUs (sockets x cores) on this machine and firmware; Solaris sees each as a CPU of its own. Each vCPU keeps a host core busy even while the guest is idle, and a single job runs slower than with one CPU: more than one pays only for several jobs at once.',
++                        'SPARC (32-bit): up to {0} CPUs (sockets x cores) on this machine and firmware; Solaris sees each as a CPU of its own. With pve-qemu-kvm 11.1.3-2+wsh15 or later the idle CPUs of Solaris 2.5.1-9 stop (a few percent of one host core while the guest is idle); each busy vCPU takes a host core, so more than one pays off for several jobs at once.',
 +                    ),
 +                    maxCpus,
 +                ),
@@ -1720,7 +1720,7 @@ index 8d01c0c4..96d4c592 100644
          },
          {
 diff --git a/www/manager6/storage/Browser.js b/www/manager6/storage/Browser.js
-index d0237948..dcf983d2 100644
+index b4c20992..61dfcf5f 100644
 --- a/www/manager6/storage/Browser.js
 +++ b/www/manager6/storage/Browser.js
 @@ -107,6 +107,19 @@ Ext.define('PVE.storage.Browser', {
