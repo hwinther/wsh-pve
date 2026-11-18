@@ -25,6 +25,9 @@ Variables (lab.py run ... --var KEY=VALUE):
   REFRESH   seconds between display updates, 0 = none          (0.5 with a framebuffer, else 0)
             A connected VNC client does this; without it cg3 never raises its vsync interrupt.
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
+  AUDIO     wav: the SS-5's CS4231 plays into <out>/audio.wav (-audiodev wav, -machine audiodev),
+            44.1 kHz stereo. The header's sizes stay 0 when the guest powers off: the
+            samples are what follows its 44 bytes (SPARC.md, "Audio")  (none: no sound)
   NET       user: QEMU user networking (slirp; the guest is 10.0.2.15, the host side 10.0.2.2)
             tap: a tap interface in the lab container (labtap0, 10.0.2.2/24, the same addresses),
             which needs `docker run --cap-add NET_ADMIN --device /dev/net/tun`
@@ -102,6 +105,8 @@ def qemu_args(v, out):
         args += ["-trace", ev]
     if v.get("TRACE"):
         args += ["-D", os.path.join(out, "trace.log")]
+    if v.get("AUDIO") == "wav":
+        args += ["-audiodev", f"wav,id=snd0,path={os.path.join(out, 'audio.wav')}", "-machine", "audiodev=snd0"]
     if v.get("NET") == "user":
         args += ["-net", "nic,model=lance", "-net", "user"]
     elif v.get("NET") == "tap":
