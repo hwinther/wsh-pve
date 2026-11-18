@@ -81,6 +81,8 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
 | `redhat-install-sparc.py` | Red Hat Linux 6.2 from its CD with kickstart (the answer CD on target 5, written from `IP`/`NETMASK` unless `KS_ISO`), SILO's three screens answered; stops the VM when the install reboots. Needs a Sun-labelled disk (`TEMPLATE`) | ~2.5 min |
 | `redhat-firstboot.py`, `redhat-boot-disk.py` | boot an installed Red Hat 6.2 disk to `login:` on ttyS0; the first sets root's password, the marker, host name, router, DNS and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1-2 min |
+| `debian-install-sparc.py` | Debian 4.0 (etch) from the netinst CD with a preseed file (the answer CD on target 5, written from `IP`/`NETMASK`/`GATEWAY`/`DNS`/`DOMAIN`/`HOSTNAME` unless `ANSWERS_ISO`), loaded by `preseed/early_command` on SILO's boot line; the packages come from `archive.debian.org` (`NET=user` reaches it); stops the VM when the install reboots, fails at the first question box. Needs QEMU with `wsh/0038` | ~20 min |
+| `debian-firstboot.py`, `debian-boot-disk.py` | boot an installed Debian 4.0 disk to `login:` on ttyS0; the first sets root's password, the marker and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1.5 min |
 | `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -350,13 +352,13 @@ and `check`, each a scenario run against the VM:
    The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
    `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below); a target's
    `check` can bring its own `commands`.
-2. **Unattended by the installer's own mechanism (used by Red Hat 6.2; designed, not used for Solaris):**
+2. **Unattended by the installer's own mechanism (used by Red Hat 6.2 and Debian 4.0; designed, not used for Solaris):**
    `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
    image made by the standard library from the target's answers, never from vendor files, nothing
    secret on it) to the media storage as `wsh-lab-answers-<vmid>.iso`, puts it into the target's
    install `answers` drive for the install phase only, and removes the drive and the image
    afterwards, also when the install fails; first boot and check are the scripted ones. See "Red
-   Hat Linux 6.2" below. Solaris 2.6
+   Hat Linux 6.2" (kickstart) and "Debian GNU/Linux 4.0" (preseed) below. Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
    `floppy` content type and `floppyN` are x86 only), a boot server is out of scope, and the other
@@ -832,6 +834,127 @@ The installed systems listen on port 25 only (sendmail, on every address); Red H
 no inetd. `pve_matrix.py install` runs both targets, so the `install` choice of the `sparc lab`
 workflow needs `other-os/redhat-6.2-sparc.iso` under `--iso` and takes about 11 min longer. Not tried: DHCP, `--vlan`, the 9G disk, SS-10, `ss5.bin` or the SS-20 PROM for the
 install, other package groups (X needs a framebuffer and `Xsun`), a login as the `--user` user.
+
+### Debian GNU/Linux 4.0
+
+`debian40-ss5` (SS-5, 256 MB) and `debian40-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
+`vga: serial0`, install Debian GNU/Linux 4.0r9 "etch" for sparc (`debian-40r9-sparc-netinst.iso`,
+the last Debian release for sun4m; kernel 2.6.18-6-sparc32) onto a blank 3 GiB disk on `scsi3`,
+the netinst CD on `scsi6`, lance (`eth0`). They need **`pve-qemu-kvm` with `wsh/0038`** (below; no
+published package has it yet), so `pve_matrix.py install` leaves them out (`matrix_skip`).
+
+1. **Install** (the `unattended` method, `debian-install-sparc.py`). `install.Unattended` writes
+   the answer CD (`answer_media.preseed()` and the loader script `wshlab`) and puts it on `scsi5`.
+   The scenario boots the netinst as a whole device (`boot .../sd@6,0`, like Red Hat's) and types
+   one line at SILO's `boot:` (`_debian.boot_line()`):
+   `install priority=critical locale=en_US preseed/early_command="modprobe esp;modprobe sr_mod;modprobe isofs;until mount -r /dev/scsi/host0/bus0/target5/lun0/cd /mnt;do sleep 1;done;sh /mnt/wshlab"`.
+   debian-installer reads the kernel command line into its database at start-up and runs
+   `preseed/early_command` before its first question (`S35initrd-preseed`), so the command loads
+   the SCSI and CD drivers itself, mounts the answer CD by its target and runs `wshlab`, which
+   loads `preseed.cfg` with `debconf-set-selections`, unmounts the CD (`umount -l`; busybox's plain
+   `umount` gets `ENOSYS` there) and deletes its SCSI device (`/sys/.../device/delete`), and hides
+   the floppy drive (below). From then on nothing is asked: the network (static, from `--ip`,
+   `--netmask`, `--gateway`, `--dns`, `--domain` and the host name), the mirror
+   (`archive.debian.org`, `/debian`, suite `etch`, through `--apt-proxy` if given), the disk
+   (partman-auto with a recipe: `/boot` ext2 40-64 MB first, `/` ext3, swap 128-256 MB), the base
+   system and the kernel from the archive, no tasks, no popularity contest, SILO on the disk, the
+   reboot. The scenario stops the VM at OpenBIOS's banner, and fails at once with a snapshot if a
+   question box (`[!!] ...`) shows up.
+2. **First boot** (`debian-firstboot.py`): SILO boots `Linux` from the disk by itself; root logs
+   in on `ttyS0` without a password (the preseed file's late command emptied it; the installer
+   adds `T0:23:respawn:/sbin/getty -L ttyS0 9600 vt102` for a serial console), `passwd root` at its
+   prompts, the marker, the optional user (`useradd -m`, home under `/home`, `bash`), `poweroff`.
+   The network files are the installer's (`/etc/network/interfaces`, `/etc/resolv.conf`,
+   `/etc/hostname`).
+3. **Check** (`debian-boot-disk.py`): logs in with the password and records `uname -a`,
+   `hostname`, the marker, `/etc/debian_version` (`4.0`), `df -k`, `fdisk -l /dev/sda`,
+   `ifconfig -a`, `route -n`, `resolv.conf`, `sources.list` and the listening ports; requires
+   `target=<name>`.
+
+Why the preseed file comes this way:
+
+- `preseed/file=/cdrom/...` reads from the install CD, and a second CD isn't mounted by d-i at
+  all; `preseed/url` needs a web server on the node; a preseed file in the initrd would mean
+  remastering Debian's media. The early command on the boot line reads the tool's own CD instead.
+- **The answer CD must disappear:** Etch's `cdrom-detect` mounts the first CD-ROM that mounts
+  (`list-devices cd`: `sr0`, the answer CD on target 5, before the netinst on target 6) and only
+  then checks `.disk/info`, so with the answer CD still there it gives up ("not a Debian CD").
+- **The boot line's limits:** Linux 2.6.18 on sparc32 keeps 256 bytes of command line and cuts
+  the rest silently; it reads every word that starts with `-` as boot switches letter by letter
+  (`-h` halts, `-p` moves the console to the PROM; others print "Unknown boot switch"), so the
+  command has only `-r`; and d-i takes a word with a `.` for a module parameter
+  (`/mnt/wshlab.sh` gave "register-module: cannot create /var/lib/register-module//mnt/wshlab.params"),
+  so the script has no extension. The mount is retried because the device node comes from udev a
+  moment after `modprobe`.
+- **The expired archive key:** `archive.debian.org` still serves etch for sparc, but every key
+  that signed it has expired (the installed system's `apt-key list`: the etch automatic signing
+  key `6070D3A1` in 2009, `55BE302B` and `6D849617` in 2012-2013). The installer is told not to
+  check: `debian-installer/allow_unauthenticated` (base-installer 1.76etch1) runs debootstrap
+  without `--keyring` and writes `APT::Get::AllowUnauthenticated "true"` for the rest of the install
+  (finish-install removes it: the installed `apt.conf.d` has only `00trustcdrom` and `70debconf`).
+  An install without it wasn't tried. `apt-setup/security_host` is left empty (etch's security
+  archive isn't served at `security.debian.org`). On the installed system etch's apt (0.6.46) takes
+  the archive as it is: `apt-get update` prints no GPG warning, `apt-get -s install less` none about
+  authentication, and `apt-get -y install iproute` installed it.
+- `--apt-proxy URL` (or `WSH_LAB_APT_PROXY`), an http(s)://host[:port] URL such as an apt-cacher-ng
+  (`http://aptcache.example:3142`), becomes `mirror/http/proxy`: debootstrap and apt fetch through
+  it, and d-i writes it to the installed `/etc/apt/apt.conf` (`Acquire::http::Proxy`), as it does
+  for any install with a proxy, so later `apt-get` runs use it too (remove the line to go direct).
+  Only targets with `apt_proxy` take it (the option is refused for the others; the variable is
+  ignored for them).
+- The network is static only (`net_modes`), and `--gateway` and `--dns` are required
+  (`net_require`): the install fetches from the archive, so the router and name server must reach
+  it, or the proxy.
+- The late command also comments out the netinst's `deb cdrom:` line in `sources.list`.
+
+Found on the way:
+
+- **QEMU's ESP and Linux 2.6.18 (`wsh/0038`):** with the published `pve-qemu-kvm` (11.1.3-2+wsh16
+  and wsh17) the netinst's kernel takes the disk and both CD-ROMs offline ("sd 0:0:3:0: scsi: Device
+  offlined - not ready after error recovery", "rejecting I/O to offline device"), and d-i can't
+  mount its CD ("No medium found"). The old `esp.c` driver negotiates synchronous transfers with
+  Select with ATN and Stop, a 5-byte SDTR message out, then sends the CDB a byte at a time;
+  `esp_cdb_ready()` compared the whole command FIFO (identify and message bytes included) with the
+  CDB length, so the first CDB byte alone counted as a complete 6-byte command, the target answered
+  ILLEGAL REQUEST (`asc 0x20`), and the driver reset the bus until it gave up. One line in
+  `hw/scsi/esp.c` fixes it (`len - s->cmdfifo_cdb_offset >= cdblen`): the install, first boot and
+  check below ran on a `qemu-system-sparc` built with it. Solaris, SunOS, NetBSD and Red Hat 6.2's
+  2.2 kernel don't send that message sequence.
+- **The floppy drive:** QEMU's sun4m always has an (empty) floppy drive. partman's disk scan opens
+  `/dev/fd0`, and in about half the runs Linux 2.6.18's floppy driver then oopsed in keventd
+  (`reset_interrupt+0xb8`, a NULL pointer, with the driver's "lock fdc" timeout), after which the
+  installer never left "Scanning disks... 41%". `floppy=0,allowed_drive_mask` didn't help; `wshlab`
+  adds a udev rule that ignores `fd[0-9]*` and removes the device nodes, and the scan skips it
+  (none of the later runs hung).
+- **A blank disk:** on the lab's Sun-labelled 3 GiB disk partman's new Sun label kept a geometry
+  from the old one, `/` got 352 MB and the recipe failed ("Failed to partition the selected disk").
+  On a blank disk partman writes the label itself (255 heads, 63 sectors, 391 cylinders): `sda1`
+  `/boot` 64 MB from cylinder 0, `sda2` `/` 2.9 GB, `sda3` the whole disk, `sda4` swap 185 MB.
+- `partman-auto/disk` (`/dev/discs/disc0/disc`) is needed, or partman asks for the partitioning
+  method even at priority critical.
+- The installed base system has no `ip` (`iproute` isn't in it): the check uses `route -n`.
+
+Tested 2026-11-18 on the lab host (TCG; the host's 14 cores shared with other agents' runs and
+builds, so the times are from a busy host), the PVE runs on the e2e PVE image with the published
+pve-manager 9.2.30+wsh3, qemu-server 9.2.18+wsh4, pve-qemu-kvm 11.1.3-2+wsh17 and
+libpve-storage-perl 9.1.18+wsh1, `/usr/bin/qemu-system-sparc` bind-mounted from the local build with
+the ESP fix:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| the netinst with the lab's own QEMU (pve-qemu-kvm 11.1.3-2+wsh16), SS-5, OpenBIOS, `install` at SILO | the installer's language screen on ttya | |
+| the same at priority critical, the netinst alone; `TRACE=esp_*` | "Your installation CD-ROM couldn't be mounted"; `dmesg`: both disk and CD-ROM "Device offlined"; the trace shows the SDTR sequence and the 1-byte command (above) | |
+| the same with a local `qemu-system-sparc` built with the `esp_cdb_ready()` fix | `sda: 6291456 512-byte hdwr sectors`, `sr0: scsi3-mmc drive`; the installer loads its components from the CD | |
+| `debian-install-sparc.py` (lab QEMU with the fix, `NET=user`) before the floppy and blank-disk fixes, about 15 runs | about half hung at "Scanning disks... 41%" (the floppy oops, in the kernel log of the runs that printed it at full log level); the others reached partman and failed with "Failed to partition the selected disk" on the Sun-labelled disk | |
+| `debian-install-sparc.py`, `debian-firstboot.py`, `debian-boot-disk.py` (lab QEMU with the fix, `NET=user`, blank disk, three installs at once) | 3/3 installs passed; first boot and check of one: `uname -a` `2.6.18-6-sparc32`, `/etc/debian_version` `4.0`, `df -k` `/dev/sda2` 2.8 GB (296 MB used), `/dev/sda1` 60 MB on `/boot`; `apt-get update` from the archive works | 1258-1280 s, 84 s, 77 s |
+| `install debian40-ss5 --vmid 9900 --check --user lab --gateway --dns --apt-proxy` (the PVE test container, its `vmbr0` routed to the internet, `qemu-system-sparc` replaced by the build with the fix) | passed; `scsi5` and `local:iso/wsh-lab-answers-9900.iso` gone afterwards, `scsi6: none,media=cdrom`, `boot: order=scsi3`; `/etc/apt/apt.conf` has the proxy; a further boot: `apt-get -y install iproute` worked, `ping archive.debian.org` answered | 23.3 min (install 1180 s, first boot 132 s, check 68 s) |
+| `install debian40-ss20 --vmid 9901 --check --gateway --dns` (straight to the archive) | passed; no `apt.conf`; `netstat -ltn` lists no listener (inetd: "no services enabled"); a further boot: `apt-get update` no GPG warning | 19.2 min (965 s, 111 s, 59 s) |
+| `install debian40-ss20 --vmid 9902 --check --user lab --gateway --dns --apt-proxy` (the final code) | passed; the install's end seen at OpenBIOS's banner; `lab:1000:1000::/home/lab:/bin/bash` | 16.3 min (774 s, 124 s, 62 s) |
+| `install debian40-ss5 ...` without `--gateway` or with `--apt-proxy ftp://...`; `install redhat62-ss5 --apt-proxy ...` | refused before a VM is made | 0 s |
+
+Not tried: DHCP (d-i's default; `--ip dhcp` is refused for now), `--vlan`, SS-10, `ss5.bin` or the
+SS-20 PROM, more than one CPU, tasks beyond the base system, the netinst on sun4u (Etch's sparc64
+kernel; the sun4u profile's IDE and `sunhme` were not tried with it).
 
 ### The Tribblix install target
 

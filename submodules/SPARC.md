@@ -1369,6 +1369,40 @@ SS-20 profiles with OpenBIOS, a serial console and the published packages (pve-q
 The install target (`redhat62-ss5`, `redhat62-ss20`) and how it is driven: `e2e/sparc/README.md`,
 "Red Hat Linux 6.2".
 
+### Debian GNU/Linux 4.0 on sun4m
+
+Debian 4.0r9 "etch" for sparc (the netinst CD of May 2010; kernel 2.6.18-6-sparc32,
+debian-installer of etch, SILO 1.4.13), the last Debian release for sun4m, on the SS-5 and SS-20
+profiles with OpenBIOS and a serial console. What the guest finds:
+
+- **The ESP needs `wsh/0038`.** With pve-qemu-kvm 11.1.3-2+wsh16 and wsh17 the kernel's old `esp.c`
+  driver offlines the disk and the CD-ROMs right after loading ("Device offlined - not ready after
+  error recovery"). It negotiates synchronous transfers per target: Select with ATN and Stop (one
+  identify byte), Transfer Information with the 5-byte SDTR message in MESSAGE OUT, then, with the
+  target in COMMAND, the CDB one byte at a time through the FIFO. QEMU kept the message bytes in the
+  command FIFO (`cmdfifo_cdb_offset` 6) and `esp_cdb_ready()` compared the whole FIFO length (7 with
+  the first CDB byte) with the CDB length (6), so the command went out after one byte; the disk
+  answered ILLEGAL REQUEST (`asc 0x20`, the SDTR bytes taken as the CDB), REQUEST SENSE returned the
+  pending unit attention, and the driver reset the bus until the midlayer gave up. The fix compares
+  `len - s->cmdfifo_cdb_offset`; `do_message_phase()` already drops the extended message. With it
+  (a local build of `qemu-system-sparc`), `sda` reads its capacity and `sr0` is
+  `scsi3-mmc drive: 16x/50x cd/rw xa/form2 cdda tray`. Solaris, SunOS 4, NetBSD and Red Hat 6.2's
+  2.2 kernel don't negotiate that way and never hit it.
+- **The floppy drive:** QEMU's sun4m always has one (empty; qemu-server offers no floppy on sparc).
+  2.6.18's floppy driver oopsed in `reset_interrupt` (NULL pointer, in keventd, "lock fdc"
+  timeout) in about half of the runs, when debian-installer's partitioner opened `/dev/fd0`, and the
+  guest then sat idle for good. Not narrowed down to the controller model; the install target hides
+  the device instead (`e2e/sparc/README.md`, "Debian GNU/Linux 4.0").
+- Kernel otherwise as Red Hat's: `ARCH: SUN4M`, Fujitsu Swift srmmu, `sunlance` with `net0`'s MAC,
+  `ttyS0` as console, "Power off control detected" (`poweroff` ends the VM). 256 MB on SS-5:
+  234 MB free to Linux, 47 MB of it highmem.
+- SILO 1.4.13 from a 64 MB ext2 `/boot` at cylinder 0 boots by itself under OpenBIOS
+  (`Trying disk:a`), `Linux` after SILO's 10 s timeout.
+- Times (TCG, a busy host, three installs at once): install ~21 min, most of it fetching and
+  unpacking the base system from `archive.debian.org`; boot to `login:` ~35 s.
+
+The install target (`debian40-ss5`, `debian40-ss20`): `e2e/sparc/README.md`, "Debian GNU/Linux 4.0".
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
@@ -2465,6 +2499,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   [--local-env]` (the data disk on `/usr/local`, SVR4 packages with `pkgadd -n` from a CD in `scsi5`
   for one boot, PATH and the user's bash); needs the owner's local package CD, so it is in no matrix
   and no CI run; results in `e2e/sparc/README.md`, "Solaris post-install".
+- Debian 4.0 on sun4m: `debian40-ss5` and `debian40-ss20` (`lab.py install`; out of `pve_matrix.py
+  install` until a published pve-qemu-kvm has `wsh/0038`); results under "Debian GNU/Linux 4.0 on sun4m".
 
 ## Known gaps
 

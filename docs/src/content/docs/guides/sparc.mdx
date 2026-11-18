@@ -312,6 +312,30 @@ NIC (`eth0`) and the serial port (`ttyS0`) as they are, and `poweroff` powers th
 [Lab install targets](/guides/lab-install/) installs it unattended (`redhat62-ss5`,
 `redhat62-ss20`: kickstart from a small answer CD, about six minutes).
 
+## Installing Debian GNU/Linux 4.0
+
+Debian 4.0r9 "etch" (kernel 2.6.18), the last Debian release for sun4m, installs from its netinst
+CD on the SS-5 and SS-20 profiles with OpenBIOS and a serial console (`vga: serial0`), fetching its
+packages from `archive.debian.org`.
+
+- **It needs `pve-qemu-kvm` with `wsh/0038`** (no published package yet). Linux 2.6.18's ESP
+  driver negotiates synchronous transfers with a multi-byte message, which QEMU's ESP mishandled:
+  without the fix the kernel takes the disk and CD-ROM offline and the installer finds no CD.
+- **Boot the CD by device path** as for Red Hat: `boot /iommu/sbus/espdma/esp/sd@6,0`, then
+  `install` at SILO's `boot:`.
+- **Hide the floppy drive.** QEMU's sun4m always has an empty one; when the partitioner scans it,
+  2.6.18's floppy driver can crash and the installer stops at "Scanning disks". Remove `/dev/fd0`
+  in the installer's shell before partitioning (the lab's preseed loader does it with a udev rule).
+- **Start from a blank disk** and let the partitioner write the Sun label; put a small `/boot`
+  first, for the same SILO reason as Red Hat.
+- **The archive's signing key expired in 2012.** The lab boots the installer with
+  `debian-installer/allow_unauthenticated` preseeded, which installs without checking the
+  archive's signature (an install without it wasn't tried). Leave the security mirror out; etch's
+  security updates are no longer served.
+
+[Lab install targets](/guides/lab-install/) installs it unattended (`debian40-ss5`,
+`debian40-ss20`: preseed from a small answer CD, with `--apt-proxy` for a package cache).
+
 ## sparc64 (sun4u)
 
 Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC.md`, "sparc64"):

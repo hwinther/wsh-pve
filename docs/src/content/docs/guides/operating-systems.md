@@ -29,6 +29,8 @@ Older Linux releases (down to the 2.x kernel series) run on the legacy devices a
 
 On sparc (sun4m), Red Hat Linux 6.2 (kernel 2.2.14) installs from its CD on the SS-5 and SS-20 profiles with OpenBIOS and a serial console; the lab installs it unattended with kickstart in about six minutes ([Lab install targets](/guides/lab-install/)). Give the disk a small `/boot` as its first partition: SILO, the SPARC boot loader, can't load its second stage from far into the disk on these machines.
 
+Debian 4.0 "etch" (kernel 2.6.18), the last Debian release for sun4m, installs on the same profiles from its netinst CD with packages from `archive.debian.org`; the lab installs it unattended with a preseed file ([Lab install targets](/guides/lab-install/)). It needs `pve-qemu-kvm` with the ESP fix `wsh/0038` (no published package yet), see the [SPARC guide](/guides/sparc/).
+
 ## SunOS / Solaris
 
 Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC guide](/guides/sparc/) for the recommended machine, BIOS, disk, and network layout. For an installed Solaris 2.6, 7, 8 or 9 VM (sun4m) with known login details from one command on a node, see [Lab install targets](/guides/lab-install/).
