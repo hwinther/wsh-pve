@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index c2b51e7d..b34e9a2a 100644
+index c2b51e7d..549843e3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,29 @@
++pve-manager (9.2.30+wsh3) trixie; urgency=medium
++
++  * feat(sparc32): sound on the SPARCstation 5's CS4231 (LEMU) (#317)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 18:16:39 +0000
++
 +pve-manager (9.2.30+wsh2) trixie; urgency=medium
 +
 +  * feat(sparc64): sun4u VMs take up to 8192 MB of memory (#312)

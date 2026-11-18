@@ -56,6 +56,8 @@ TARGETS: per target
   net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
+  matrix_skip  why `pve_matrix.py install` leaves an automated target out (it needs more than the
+             published packages give); `lab.py install` still runs it
 """
 
 import re
@@ -138,6 +140,12 @@ MEDIA = {
         "title": "Red Hat Linux 6.2 for SPARC, install CD", "content": "iso", "size": 623771648,
         "sha256": "74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987",
         "lab": "other-os/redhat-6.2-sparc.iso"},
+    "tribblix-sparc-0m34.iso": {
+        "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
+        "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
+        "lab": "other-os/tribblix-sparc-0m34.iso",
+        # open source (illumos, CDDL); the download page publishes its SHA-1 (f76238cf...5ca9)
+        "url": "https://iso.tribblix.org/iso/tribblix-sparc-0m34.iso"},
 }
 
 # The geometry of the lab's SUN2.9G disk template (sparc-SUN2.9G.raw.template.xz, the sparc guide's
@@ -446,6 +454,36 @@ TARGETS = {
         "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
                    "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
+    },
+    # The live CD's own installer (live_install.sh -G: SMI label, ZFS root pool rpool, base overlay;
+    # ROOT_FS=ufs in the install scenario uses ufs_install.sh) from a root shell on ttya; the first
+    # boot sets root's password (the live CD's `tribblix` before), locks `jack`, writes the marker and
+    # the network with ipadm. Needs openbios-sparc64 with patches 0016 and 0017. README.md, "The
+    # Tribblix install target".
+    "tribblix-m34-sun4u": {
+        "title": "Tribblix m34 SPARC (illumos) base install on sun4u (OpenBIOS, IDE disk, ZFS root)",
+        "status": "automated",
+        "matrix_skip": "needs openbios-sparc64 with OpenBIOS patches 0016 and 0017, in no published "
+                       "pve-qemu-kvm yet",
+        "method": "scripted",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 2048,
+                    "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # live_install.sh labels it
+        "device": "c1t0d0",  # the IDE disk as Tribblix names it
+        "media": [{"name": "tribblix-sparc-0m34.iso", "drive": "ide2"}],
+        "install": {"scenario": "tribblix-install-sparc64.py", "vars": {}, "timeout": 10800},
+        "firstboot": {"scenario": "tribblix-firstboot.py", "vars": {}, "timeout": 7200},
+        "check": {"scenario": "tribblix-boot-disk.py", "vars": {}, "timeout": 3600,
+                  "commands": "uname -a; hostname; cat /etc/wsh-lab-target; df -k /; zpool status rpool;"
+                              " ipadm show-addr; netstat -rn -f inet; cat /etc/resolv.conf 2>/dev/null"},
+        "boot": "ide0",
+        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "hostname": "tribblix-m34",
+        "nic": "hme0",
+        # Every sun4u guest has the MAC 52:54:00:12:34:56 (OpenBIOS's IDPROM), not the one in net0
+        "network": "hme0: a static address with ipadm (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns,"
+                   " --domain)",
+        "net_modes": ["static"],  # tribblix-firstboot.py has NET_MODE=dhcp (ipadm -T dhcp), not tried yet
     },
     # The CD's microroot loads the install tools from the CD, then the same sysinst answers
     # (netbsd-install-sparc.py); a blank disk: no Sun label needed (sysinst writes a disklabel)

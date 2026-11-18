@@ -85,6 +85,25 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      (`install` retries it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
+3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
+   release, needed two more OpenBIOS fixes: 0016 runs the client interface with interrupts off
+   (illumos calls it with interrupts on; an interrupt while the firmware saved or restored the
+   caller's register windows corrupted them on 4 of 7 live CD boots; also the cause of Solaris 10's
+   one `BAD TRAP: type=4e`), and 0017 puts `xa+`/`xa1+` back into the 64-bit FCode table (every token
+   from 0x24a on ran the wrong word, so the illumos ZFS boot block crashed). With both, the live CD
+   boots to its login prompt, installs to the IDE disk with its own installer, and the installed disk
+   boots, gets its address and powers off; `lab.py install tribblix-m34-sun4u` drives it through PVE
+   (left out of `pve_matrix.py install` until a package has 0016 and 0017). Still open:
+   - the guest's clock stops for good in about one of three long runs (5 of 14, before and
+     after 0016), always under heavy interrupt traffic; a race in QEMU on `%softint`, caught in a trace
+     (`upstream/qemu-sparc64-softint-race.md`), would need a QEMU patch;
+   - with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first attempts that
+     ZFS retries; no data errors); a UFS install (`ROOT_FS=ufs`) avoids that but hasn't been booted;
+   - the live CD's package catalogue is older than its packages, so an offline install skips some
+     (curl, tcsh, GNU coreutils, ...); a Tribblix issue;
+   - very slow under TCG: about 45 minutes to the live CD's login, and the first boot of the
+     installed system imports the SMF manifests again.
+   Details: `submodules/SPARC.md`, "Tribblix on sun4u".
 
 ## Next, in this order
 

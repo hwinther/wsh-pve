@@ -31,6 +31,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
+| `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs an `openbios-sparc64` with patches 0016 and 0017 (no published package yet) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | TBD |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
@@ -70,6 +71,19 @@ Once in six DVD boots the kernel panicked before the installer's first question 
 firmware); the tool then runs the install once more, since nothing is on the disk yet.
 Every sun4u guest has the MAC address 52:54:00:12:34:56 whatever `net0` says, so two of them on one
 network clash (the [sparc guide](/guides/sparc/#solaris-10)).
+
+`tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
+so its login prompt takes about 45 minutes), answers the keyboard question with US-English, logs in
+as root and runs the CD's own installer (`live_install.sh -G`: a ZFS root pool on the whole disk)
+with the network down, so the result doesn't depend on the internet (with a network the installer
+fetches some packages from pkgs.tribblix.org; without one it skips those few, see the sparc lab's
+README). The first boot sets root's password, writes the marker, sets a static address with `ipadm`,
+the default route, DNS and the optional user, and locks the live CD's `jack` account that the
+installer copies along. The pool shows DEGRADED after the install: the fault manager counts the I/Os
+that ZFS had to retry on the emulated IDE disk (no data errors); the first boot runs `zpool clear
+rpool` (whether the mark stays away wasn't checked yet). In about one of three long runs the
+guest's clock stops and the phase stalls until its timeout (a race in QEMU, see the sparc
+guide). Like Solaris 10, don't `reboot` it: stop and start the VM.
 
 **SunOS 4.1.4** (`sunos414-ss5`) copies the CD's miniroot to the swap slice, reboots into it and
 runs `suninstall`'s Quick install (Programmer: everything but the full set; `/` 95 MB, swap 190 MB,

@@ -323,6 +323,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
+| Tribblix m34 (illumos) | with an `openbios-sparc64` that has patches 0016 and 0017 (no published package yet): the live CD boots, installs to the IDE disk with its own installer, and the installed system boots (see [Tribblix (illumos)](#tribblix-illumos)) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
 for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
@@ -382,6 +383,37 @@ first boot about 19, check 8-9).
 
 Every Solaris 10 guest gets the same system MAC address, 52:54:00:12:34:56, whatever the NIC's
 MAC is set to: two of them on one network clash. Details: `submodules/SPARC.md`, "Solaris on sun4u".
+
+### Tribblix (illumos)
+
+Tribblix m34 for SPARC (`tribblix-sparc-0m34.iso` from tribblix.org), the newest illumos release
+for SPARC, needs two OpenBIOS fixes that no published `pve-qemu-kvm` has yet (repository patches
+0016 and 0017: the firmware's client interface with interrupts off, and the 64-bit FCode tokens
+that the ZFS boot block uses). With the firmware of the published packages the live CD stops or
+hangs on most boots, and a ZFS root disk doesn't boot. With the fixes, measured in the sparc lab
+(QEMU started directly; the live CD also through Proxmox):
+
+1. Create the VM as for NetBSD with the Tribblix ISO, 2048 MB, an 8 GB disk and a serial console
+   (`serial0: socket`, Display: Serial terminal 0).
+2. The live CD boots by itself and imports its service descriptions, which takes about 45 minutes
+   under emulation; it asks for the keyboard layout (Return for US-English) and comes to `tribblix
+   console login:`. Log in as `root` (password `tribblix`). The disk is `c1t0d0`.
+3. Take the network down (`ipadm delete-if hme0`; otherwise the installer fetches some packages
+   from the internet) and install with the CD's installer: `cd /root; ./live_install.sh -G c1t0d0`
+   (Tribblix's default, a ZFS root pool; about an hour). The fault manager marks the disk DEGRADED
+   during the copy (I/O that ZFS had to retry on the emulated IDE disk; no data errors); `zpool clear
+   rpool` on the installed system should remove the mark (not checked yet).
+4. `init 5`, eject the CD (or put `ide0` first in the boot order) and start the VM: the installed
+   system's first boot imports the service descriptions again (about an hour), then `console
+   login:`. Change root's password and lock the live CD's `jack` account. Don't use `reboot`: stop
+   and start the VM. `init 5` itself takes several minutes.
+
+`wsh-lab install tribblix-m34-sun4u --vmid N --check` automates this on a VM it creates with the
+sparc64 profile, with a known root password and a static address. Several services time out on the
+way under emulation (`svc.startd` kills them); the system comes up anyway. In about one of three
+long runs the guest's clock stopped for good (the guest idles and nothing that waits for time ever
+wakes up): a race in QEMU that needs a QEMU fix; stop and start the VM. Details:
+`submodules/SPARC.md`, "Tribblix on sun4u".
 
 ## Known limitations
 
