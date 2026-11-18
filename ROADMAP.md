@@ -137,6 +137,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      vapic ROM off without `args:`); a DOS idle driver in the image so a DOS VM stops burning a host
      core; Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
      screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
+   - Driver and patch packs: the owner's curated DOS and Windows 9x drivers and patches (the VBE
+     display drivers among them) that the README and the guest operating systems guide mention. First
+     sort out what may be published: much of it is proprietary, and what isn't gets a source and a
+     licence next to it; the rest stays a list of what to get and where. Then a guide per pack.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
@@ -162,6 +166,41 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
   QEMU today.
+- **Solaris 8 and 9 on the SS-5.** They have SS-20 targets only (`sol8-ss20`, `sol9-ss20`), chosen
+  when the SS-5 ran Solaris about 9 times slower; since #262 it is as fast as the SS-20. To find out:
+  does Web Start install with 256 MB on the SS-5 (OpenBIOS, and `ss5.bin` for 8), how long it takes,
+  and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Both are supported on
+  sun4m by Sun (9 is the last release for it).
+- **More sparc32 guests and older releases.** QEMU emulates sun4m only (no sun4c or sun4), so the
+  floor is set by when each machine got support (Sun's System Handbook, its SPARC module guide, the
+  Solaris FAQ): SunOS 4.1.3 (Solaris 1.1) on the SS-10 (one CPU; SunOS 4 has no MP on it);
+  4.1.3_U1B (1.1.1B) on the SS-20 and the SS-5 (the SS-5 with the microSPARC-II kernel patch
+  101508); 4.1.4 (1.1.2) is what `sunos414-ss5` installs. Solaris 2.0 is sun4c only; 2.1 already
+  runs on the SS-10, 2.3 on the SS-20, and the SS-5 from 2.3 Edition II. The QEMU wiki lists
+  NeXTSTEP 3.3 and OPENSTEP 4.2 as partly working on sun4m (hangs on disk access, perhaps the ESP;
+  several ESP fixes are carried here since) and OpenBSD 5.8 as working with `-nographic`. Order: first what the lab
+  host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
+  sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
+  versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
+  NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
+  OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
+  only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
+  node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
+  all on the lab host now; then, once the owner has the media, SunOS 4.1.3/4.1.3_U1B, Solaris 2.1-2.3 and 2.5. Each one booted and
+  installed by hand first; an install target only for what works.
+- **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
+  the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
+  profile, 8 and 9 on the SS-5 (above). Needing media: 2.3 (Edition II is the first for the SS-5),
+  2.2 and 2.1 (SS-10; probably the SS-10 PROM rather than OpenBIOS), 2.5, the later updates of 8
+  (2/02, 2/04) and 9 (9/05) on the SS-20 and on sun4u (whether a later update gets past sun4u's
+  `pp is NULL or free`), and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
+  4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
+- **OpenBSD 8.0 on sun4u: the installed kernel.** The installer (`bsd.rd`) boots and installs, but the
+  installed GENERIC kernel stops after the loader (`Unimplemented service set-symbol-lookup`,
+  `Unhandled Exception 0x30`; `submodules/SPARC.md`, "sparc64"). Tested with OpenBIOS 0003-0011 only:
+  retest with 0013-0017 (0016 fixed firmware crashes in illumos and Solaris 10), then, if it still
+  stops, try `set-symbol-lookup` as a no-op in OpenBIOS (OBP has it; OpenBSD registers its ddb symbol
+  lookup with it). One agent at a time in `openbios/patches/`.
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
@@ -215,7 +254,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2 |
+| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
 | `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
 | `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
 | `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |

@@ -1,8 +1,8 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index 326e9d98..8a9aa82c 100644
+index e0661738..44f78573 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
-@@ -159,6 +159,8 @@ my $check_drive_param = sub {
+@@ -243,6 +243,8 @@ my $check_drive_param = sub {
              my $vtype = (PVE::Storage::parse_volname($storecfg, $volid))[0];
              raise_param_exc({ $opt => "explicit 'media=cdrom' is required for iso images" })
                  if $vtype eq 'iso' && !(defined($drive->{media}) && $drive->{media} eq 'cdrom');
@@ -11,7 +11,7 @@ index 326e9d98..8a9aa82c 100644
          }
  
          $extra_checks->($drive) if $extra_checks;
-@@ -201,9 +203,11 @@ my $check_storage_access = sub {
+@@ -285,9 +287,11 @@ my $check_storage_access = sub {
                  PVE::Storage::check_volume_access($rpcenv, $authuser, $storecfg, $vmid, $volid);
                  if ($storeid) {
                      my ($vtype) = PVE::Storage::parse_volname($storecfg, $volid);
@@ -25,7 +25,7 @@ index 326e9d98..8a9aa82c 100644
                  }
              }
  
-@@ -447,6 +451,38 @@ my $import_from_volid = sub {
+@@ -531,6 +535,38 @@ my $import_from_volid = sub {
      return $cloned->@{qw(file size)};
  };
  
@@ -64,7 +64,7 @@ index 326e9d98..8a9aa82c 100644
  my sub prohibit_tpm_version_change {
      my ($old, $new) = @_;
  
-@@ -715,8 +751,11 @@ my sub create_disks : prototype($$$$$$$$$$$) {
+@@ -799,8 +835,11 @@ my sub create_disks : prototype($$$$$$$$$$$) {
              if ($storeid) {
                  my ($vtype, $volume_format) = (checked_parse_volname($storecfg, $volid))[0, 6];
  
@@ -78,7 +78,7 @@ index 326e9d98..8a9aa82c 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1419,6 +1458,13 @@ __PACKAGE__->register_method({
+@@ -1503,6 +1542,13 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -91,8 +91,8 @@ index 326e9d98..8a9aa82c 100644
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
-         eval { PVE::QemuConfig->create_and_lock_config($vmid, $force) };
-@@ -1568,6 +1614,7 @@ __PACKAGE__->register_method({
+         # 'force' only covers the VM that the checks above saw, not one created in the meantime
+@@ -1653,6 +1699,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -100,7 +100,7 @@ index 326e9d98..8a9aa82c 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2301,6 +2348,16 @@ my $update_vm_api = sub {
+@@ -2386,6 +2433,16 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -118,7 +118,7 @@ index 326e9d98..8a9aa82c 100644
      };
  
 diff --git a/src/PVE/QemuConfig.pm b/src/PVE/QemuConfig.pm
-index d89a62e6..abaa858d 100644
+index cc8b8250..5feca3ca 100644
 --- a/src/PVE/QemuConfig.pm
 +++ b/src/PVE/QemuConfig.pm
 @@ -258,7 +258,11 @@ sub __snapshot_save_vmstate {
@@ -144,7 +144,7 @@ index d89a62e6..abaa858d 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 638afd80..04fcbbfe 100644
+index 148052cb..bb0905b9 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -697,7 +697,7 @@ index 638afd80..04fcbbfe 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5106,8 +5279,10 @@ sub vmconfig_update_disk {
+@@ -5109,8 +5282,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -710,7 +710,7 @@ index 638afd80..04fcbbfe 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5191,6 +5366,11 @@ sub vmconfig_update_disk {
+@@ -5194,6 +5369,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -722,7 +722,7 @@ index 638afd80..04fcbbfe 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5207,7 +5387,7 @@ sub vmconfig_update_disk {
+@@ -5210,7 +5390,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -731,7 +731,7 @@ index 638afd80..04fcbbfe 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5710,6 +5890,9 @@ sub vm_start_nolock {
+@@ -5713,6 +5893,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -741,7 +741,7 @@ index 638afd80..04fcbbfe 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5915,7 +6098,11 @@ sub vm_start_nolock {
+@@ -5918,7 +6101,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -754,7 +754,7 @@ index 638afd80..04fcbbfe 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8156,7 +8343,12 @@ sub bootorder_from_legacy {
+@@ -8172,7 +8359,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -768,7 +768,7 @@ index 638afd80..04fcbbfe 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8194,9 +8386,14 @@ sub get_default_bootdevices {
+@@ -8210,9 +8402,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1102,10 +1102,10 @@ index 621fcc2b..89656fd1 100644
  }
  
 diff --git a/src/PVE/QemuServer/Helpers.pm b/src/PVE/QemuServer/Helpers.pm
-index ecd1944f..2a1bb9bc 100644
+index 5efe7736..ffa38e03 100644
 --- a/src/PVE/QemuServer/Helpers.pm
 +++ b/src/PVE/QemuServer/Helpers.pm
-@@ -27,6 +27,8 @@ our @EXPORT_OK = qw(
+@@ -25,6 +25,8 @@ our @EXPORT_OK = qw(
  my $nodename = PVE::INotify::nodename();
  
  my $arch_to_qemu_binary = {
@@ -1114,7 +1114,7 @@ index ecd1944f..2a1bb9bc 100644
      aarch64 => '/usr/bin/qemu-system-aarch64',
      x86_64 => '/usr/bin/qemu-system-x86_64',
  };
-@@ -36,8 +38,10 @@ sub get_host_arch {
+@@ -34,8 +36,10 @@ sub get_host_arch {
      return PVE::Tools::get_host_arch();
  }
  
@@ -1127,7 +1127,7 @@ index ecd1944f..2a1bb9bc 100644
      return '/usr/bin/kvm' if get_host_arch() eq $arch; # i.e. native arch
  
      my $cmd = $arch_to_qemu_binary->{$arch}
-@@ -56,8 +60,13 @@ my $kvm_mtime = {};
+@@ -54,8 +58,13 @@ my $kvm_mtime = {};
  sub kvm_user_version {
      my ($binary) = @_;
  
@@ -1667,20 +1667,20 @@ index 0ab43614..ede73231 100644
          push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
 diff --git a/src/test/Makefile b/src/test/Makefile
-index 407567ef..40dd14ae 100644
+index fa14908e..ae3a9ad3 100644
 --- a/src/test/Makefile
 +++ b/src/test/Makefile
 @@ -1,6 +1,6 @@
  all: test
  
--test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_raw_config_write test_api
-+test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_raw_config_write test_api test_machine_version
+-test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_agent test_raw_config_write test_api test_api_cloudinit_dump
++test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_agent test_raw_config_write test_api test_api_cloudinit_dump test_machine_version
  
  test_snapshot: run_snapshot_tests.pl
  	./run_snapshot_tests.pl
-@@ -51,6 +51,9 @@ test_raw_config_write: run_raw_config_write_tests.pl
- test_api: run_api_tests.pl
- 	./run_api_tests.pl
+@@ -57,6 +57,9 @@ test_api: run_api_tests.pl
+ test_api_cloudinit_dump: run_api_cloudinit_dump_tests.pl
+ 	./run_api_cloudinit_dump_tests.pl
  
 +test_machine_version: run_machine_version_tests.pl
 +	./run_machine_version_tests.pl
