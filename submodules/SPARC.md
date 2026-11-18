@@ -1307,6 +1307,34 @@ Bandwidth spreads: slirp in 6-31%, out 7-28%; tap in 11-17%, out 3-14%. RPC spre
   first round for looping, ran normally when tried by hand on SS-20 for this round; not yet run on
   every profile.
 
+### Red Hat Linux 6.2 on sun4m
+
+Red Hat Linux 6.2 for SPARC (March 2000, kernel 2.2.14, anaconda 6.2, SILO 0.9.8) on the SS-5 and
+SS-20 profiles with OpenBIOS, a serial console and the published packages (pve-qemu-kvm
+11.1.3-2+wsh16): nothing to change in QEMU, OpenBIOS or qemu-server. What the guest finds:
+
+- The CD's SILO (`cd.b`, an a.out) boots from the whole CD-ROM device: `boot .../sd@6,0`, not
+  slice `d` (OpenBIOS: "No valid state has been set" for `sd@6,0:d`); OpenBIOS's `-boot d` /
+  `cdrom` alias finds it too, but takes the first CD-ROM, which is the answer CD in the install
+  target.
+- Kernel: `ARCH: SUN4M`, `TYPE: SPARCstation 5`, `Fujitsu Swift` srmmu, the ESP as
+  `ESP100A-FAST` (`sda` on target 3, `sr0`/`sr1`), `sunlance` with `net0`'s MAC, the Zilog ports
+  with `Console: ttyS0` (OpenBIOS's `output-device=ttya`), a floppy controller it detects
+  (`FDC 0 is a S82078B`; qemu-server offers no floppy on sparc), `cs4231` loaded at boot, and
+  "Power off control detected": `poweroff` ends QEMU with 0.
+- The installer runs on the serial console in text mode by itself ("using a serial console").
+- SILO on the disk reads `second.b` through the PROM, and on sun4m that doesn't reach far: with
+  `/` alone on a 3 GiB disk `second.b` was at byte offset ~2.1 GB and the first stage stopped after
+  `S` (OpenBIOS: `File not found`; `ss5.bin`: `Program terminated`). A 32 MB `/boot` from cylinder
+  0 boots under OpenBIOS by itself (`Trying disk:a`). Not narrowed down to where the limit is, or
+  whether it is in SILO's first stage or in the PROMs' read path (the CD's install guide doesn't
+  mention it).
+- Times (TCG, a busy host): the installer's first screen ~30 s after SILO; the Base install 1.8-2.2 min
+  on SS-5, ~1.4 min on SS-20; boot to `login:` ~20 s.
+
+The install target (`redhat62-ss5`, `redhat62-ss20`) and how it is driven: `e2e/sparc/README.md`,
+"Red Hat Linux 6.2".
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
@@ -2344,6 +2372,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   and drive the QEMU that PVE started: the Solaris 2.6 install and first boot on the default SS-5
   profile, NetBSD 11.1 sparc64 to its shell (laid out as the wizard creates it, OpenBIOS booting the
   CD by itself), Alpine aarch64 and x86_64 to a login.
+- Linux on sun4m: the install targets `redhat62-ss5` and `redhat62-ss20` (`lab.py install`, also in
+  `pve_matrix.py install`); results under "Red Hat Linux 6.2 on sun4m".
 
 ## Known gaps
 

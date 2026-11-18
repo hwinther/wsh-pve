@@ -292,6 +292,26 @@ OpenBIOS. Keep **cg3** unless you want 24-bit colour:
   a SCSI bus reset, and Solaris 2.5.1 looped on "gross error in esp status / undetermined selection
   failure". Fixed in `pve-qemu-kvm` 11.1.3-1+wsh1.
 
+## Installing Red Hat Linux 6.2
+
+Red Hat Linux 6.2 for SPARC (kernel 2.2.14) installs on the SS-5 and SS-20 profiles with OpenBIOS
+and a serial console (`vga: serial0`): its 32-bit kernel drives the ESP disk and CD-ROM, the lance
+NIC (`eth0`) and the serial port (`ttyS0`) as they are, and `poweroff` powers the VM off.
+
+- **Boot the CD by device path.** With the disk on target 3 first, OpenBIOS stops at `0 >`; the
+  CD's boot loader is not in slice `d`, so boot the whole device:
+  `boot /iommu/sbus/espdma/esp/sd@6,0`. At SILO's `boot:` type `linux` (or `text`).
+- **Give the disk a label first.** On a blank disk the installer asks to initialize it; a disk
+  with a Sun label (the [disk templates](#disks)) skips that question.
+- **Make `/boot` the first partition**, small (32 MB is plenty), from cylinder 0. SILO's first stage
+  loads its second stage through the PROM, which can't read that far into the disk: with one big
+  `/` the installed disk stops after SILO's `S`, under OpenBIOS and the SS-5 PROM alike.
+- **SILO on the "first sector of boot partition"** (the installer's default) is right on a Sun
+  label: that sector is the disk's boot block. The installed disk then boots by itself.
+
+[Lab install targets](/guides/lab-install/) installs it unattended (`redhat62-ss5`,
+`redhat62-ss20`: kickstart from a small answer CD, about six minutes).
+
 ## sparc64 (sun4u)
 
 Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC.md`, "sparc64"):

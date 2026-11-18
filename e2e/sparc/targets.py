@@ -35,9 +35,11 @@ TARGETS: per target
   method     "scripted": the installer is answered on the console by `install` (a scenario, with
              `vars`), then `firstboot` (a scenario) sets the root password, writes the marker file
              /etc/wsh-lab-target and optionally adds a user, and powers off; `check` (a scenario,
-             with --check) logs in and runs its "commands" (default: Solaris's). "unattended" (the
-             installer's own answer file on a second medium) is
-             designed (README.md, "Install targets") but not implemented. DOS targets: targets_dos.py.
+             with --check) logs in and runs its "commands" (default: Solaris's). "unattended": the
+             installer reads its own answer file from a CD made on the node (answer_media.py) that
+             is in install "answers" `drive` for the install phase only (`format`: "kickstart");
+             the install scenario answers what that leaves on the screen, first boot and check as
+             "scripted" (Red Hat 6.2). DOS targets: targets_dos.py.
              install may have `memory` (MB for the install phase only; the profile's afterwards) and
              `prom_env` (OpenBIOS variables for the install phase only); check may have `commands`
              (what the check boot runs and records; default: Solaris's)
@@ -58,6 +60,8 @@ TARGETS: per target
              published packages give); `lab.py install` still runs it
 """
 
+import re
+
 DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab VMs
 
 # MEDIA "from" conversions (install.convert_medium): name -> (input sector size, offset, output size)
@@ -71,6 +75,7 @@ PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+ws
 # qemu-server with cd_as_disk (9.2.18 built from the branch that added it; no published package yet)
 PACKAGES_2026_11_18_CD_AS_DISK = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18 + cd_as_disk",
                                   "pve-manager": "9.2.30+wsh1"}
+PACKAGES_2026_11_18 = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18+wsh3", "pve-manager": "9.2.30+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -131,6 +136,10 @@ MEDIA = {
         "sha256": "4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636",
         "lab": "other-os/NetBSD-11.1-sparc.iso",
         "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc.iso"},
+    "redhat-6.2-sparc.iso": {
+        "title": "Red Hat Linux 6.2 for SPARC, install CD", "content": "iso", "size": 623771648,
+        "sha256": "74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987",
+        "lab": "other-os/redhat-6.2-sparc.iso"},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
@@ -202,6 +211,26 @@ NETBSD_SCRIPTED = {
     "net_modes": ["static", "dhcp"],
     # dhcpcd sends no host name by default and keeps /etc/myname
     "dhcp_note": "router and name servers from the DHCP server; the host name stays as installed (/etc/myname)",
+}
+
+
+# Red Hat Linux 6.2: anaconda reads a kickstart file from the answer CD (`answers`: made on the node,
+# answer_media.py, in that drive for the install phase only); the first boot sets root's password,
+# the marker, the router and DNS, the optional user (redhat-firstboot.py)
+REDHAT_UNATTENDED = {
+    "method": "unattended",
+    "install": {"scenario": "redhat-install-sparc.py", "vars": {}, "timeout": 3600,
+                "answers": {"format": "kickstart", "drive": "scsi5"}},
+    "firstboot": {"scenario": "redhat-firstboot.py", "vars": {}, "timeout": 1200},
+    "check": {"scenario": "redhat-boot-disk.py", "vars": {}, "timeout": 900,
+              "commands": "uname -a; hostname; cat /etc/wsh-lab-target; df -k; /sbin/fdisk -l /dev/sda;"
+                          " /sbin/ifconfig -a; /sbin/route -n; cat /etc/resolv.conf 2>/dev/null"},
+    "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+    "nic": "eth0",
+    # the kickstart file sets the address and netmask (ifcfg-eth0); the first boot the host name
+    # (/etc/sysconfig/network, /etc/hosts), GATEWAY= and /etc/resolv.conf
+    "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+    "net_modes": ["static"],
 }
 
 
@@ -488,6 +517,35 @@ TARGETS = {
         "minutes": 7,  # 6.7-7.3 min: install 3.5, first boot 2, --check 1
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
+    # Kickstart from an answer CD made on the node (answer_media.py) on scsi5, the first CD-ROM Linux
+    # finds; SILO's three screens, which 6.2's kickstart doesn't skip on SPARC, answered by the
+    # scenario; a Sun-labelled disk (on a blank one anaconda asks to initialize it). ostype l26: the
+    # create wizard's "Linux" on sparc. README.md, "Red Hat Linux 6.2"
+    "redhat62-ss5": {
+        **REDHAT_UNATTENDED,
+        "title": "Red Hat Linux 6.2 Base on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "l26"},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "redhat-6.2-sparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "redhat62-ss5",
+        "minutes": 6,  # 5.3-5.9 min: install 1.8-2.2, first boot 2.2-2.4, --check 1
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18,
+                   "with": "--check --gateway --dns --domain"},
+    },
+    "redhat62-ss20": {
+        **REDHAT_UNATTENDED,
+        "title": "Red Hat Linux 6.2 Base on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "l26"},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "redhat-6.2-sparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "redhat62-ss20",
+        "minutes": 5,  # 4.3 min: install 1.4, first boot 1.9, --check 0.7 (6.6 before the sendmail fix)
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18, "with": "--check; --check --user lab"},
+    },
 }
 
 
@@ -526,6 +584,12 @@ def problems():
                 drives.add(med["drive"])
         if t.get("method") not in ("scripted", "unattended"):
             out.append(f"{name}: method {t.get('method')!r}")
+        if t.get("method") == "unattended":
+            ans = t.get("install", {}).get("answers") or {}
+            if not ans.get("format") or not re.fullmatch(r"(scsi|ide|sata)\d+", ans.get("drive", "")):
+                out.append(f"{name}: unattended without install answers (format, drive)")
+            elif ans["drive"] in drives | {t.get("disk", {}).get("bus")}:
+                out.append(f"{name}: the answer CD's drive {ans['drive']} is taken")
         # the marker is typed with echo '...' (solaris-firstboot.py, netbsd-firstboot.py)
         if any("'" in str(t.get(k, "")) for k in ("title", "hostname", "dhcp_note")):
             out.append(f"{name}: a single quote in what the marker file gets")

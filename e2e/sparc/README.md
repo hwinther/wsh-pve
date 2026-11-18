@@ -79,6 +79,8 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `smp-soak.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks that `psrinfo` lists them on-line, times one and `SMP` copies of Dhrystone and the `nawk` loop (speed-up), then loads every CPU for `SOAK` seconds (Dhrystone, Hanoi, `nawk`, a `tar` of the bench disk through `compress` with its `cksum` checked, a write, a fork loop; `SMP` + 1 shells) while `mpstat 60` records the CPUs; fails on a hang, a CPU off-line, a checksum mismatch or a CPU below `BUSY` % busy | `SOAK` + ~5 min |
 | `smp-idle.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks `psrinfo`, measures QEMU's host CPU use at the shell over `SECONDS` and the guest clock, the echo of `true` and ten `sleep 1`, then times work that has to wake an idle CPU: lmbench `lat_pipe` and `lat_proc fork`, a shell loop of 200 `expr`, a `dd \| cat \| cat` pipeline, bursts of short `nawk` jobs, one and `SMP` copies of Dhrystone and the `nawk` loop; `STRESS` adds `SMP` + 1 shell loops of short jobs, `sleep 1`, pipelines and `expr` for that many seconds with `psrinfo` every 60 s. For `solaris-smp-idle` (`submodules/SPARC.md`, "SMP"); numbers in `result.json` | ~7 min + `STRESS` |
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
+| `redhat-install-sparc.py` | Red Hat Linux 6.2 from its CD with kickstart (the answer CD on target 5, written from `IP`/`NETMASK` unless `KS_ISO`), SILO's three screens answered; stops the VM when the install reboots. Needs a Sun-labelled disk (`TEMPLATE`) | ~2.5 min |
+| `redhat-firstboot.py`, `redhat-boot-disk.py` | boot an installed Red Hat 6.2 disk to `login:` on ttyS0; the first sets root's password, the marker, host name, router, DNS and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1-2 min |
 | `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -348,7 +350,13 @@ and `check`, each a scenario run against the VM:
    The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
    `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below); a target's
    `check` can bring its own `commands`.
-2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
+2. **Unattended by the installer's own mechanism (used by Red Hat 6.2; designed, not used for Solaris):**
+   `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
+   image made by the standard library from the target's answers, never from vendor files, nothing
+   secret on it) to the media storage as `wsh-lab-answers-<vmid>.iso`, puts it into the target's
+   install `answers` drive for the install phase only, and removes the drive and the image
+   afterwards, also when the install fails; first boot and check are the scripted ones. See "Red
+   Hat Linux 6.2" below. Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
    `floppy` content type and `floppyN` are x86 only), a boot server is out of scope, and the other
@@ -745,6 +753,85 @@ boot (password, marker, host name, a static address and router), check (logs in 
 requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
 is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
 45). Not run on GitHub yet.
+
+### Red Hat Linux 6.2
+
+`redhat62-ss5` (SS-5, 256 MB) and `redhat62-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
+`vga: serial0`, install Red Hat Linux 6.2 for SPARC (`redhat-6.2-sparc.iso`, the one install CD;
+kernel 2.2.14) onto a Sun-labelled 3 GiB disk on `scsi3`, the CD on `scsi6`, lance (`eth0`). The
+32-bit kernel and initrd on the CD run on QEMU's sun4m as they are: ESP (`sda`, `sr0`), lance
+(`sunlance`), the Zilog serial port as the console (`ttyS0`, from the PROM's `output-device`), and
+"Power off control detected", so `poweroff` ends the VM. No QEMU, OpenBIOS or qemu-server change.
+
+1. **Install** (the `unattended` method, `redhat-install-sparc.py`). anaconda 6.2 reads a
+   kickstart file with `ks=cdrom:/ks.cfg` from the first CD-ROM it can mount, and the install
+   source from the first one with `RedHat/instimage` on it. `install.Unattended` writes the answer
+   CD (`answer_media.kickstart()`: the address and netmask, `/boot` 32 MB, `/` the rest but swap
+   128 MB, the Base group plus `iputils`, time zone MET, `reboot`) and puts it on `scsi5`, which
+   Linux finds before the Red Hat CD on `scsi6` (`sr0` and `sr1`). OpenBIOS stops at `0 >` (the
+   disk comes first and doesn't boot); the scenario boots the CD as a whole device
+   (`boot /iommu/sbus/espdma/esp/sd@6,0`: its SILO isn't in slice `d`, where Solaris's is) and types
+   `linux ks=cdrom:/ks.cfg` at SILO's `boot:`. Kickstart answers everything but SILO's three
+   screens (6.2's `lilo` command skips the step "lilo"; on SPARC the step is "silo"), which the
+   scenario takes with F12 (`\e[24~`, newt's "next screen": no kernel options, SILO in the first
+   sector of `/dev/sda1`, the PROM boot device and alias boxes as they come). The packages take
+   about 100 s. The install ends with `reboot`; the scenario stops the VM at OpenBIOS's banner.
+2. **First boot** (`redhat-firstboot.py`): SILO on the disk, root logs in on the serial console
+   without a password (the kickstart's `%post` left it empty; the installer had already put
+   `getty console` in `/etc/inittab` and `console` in `/etc/securetty`), `passwd root` at its
+   prompts, the marker, `HOSTNAME=` in `/etc/sysconfig/network` and the address in `/etc/hosts`
+   (anaconda 6.2 didn't take kickstart's `network --hostname` into the installed system, so the host
+   name is set here and the kickstart file has none), `GATEWAY=` and `/etc/resolv.conf`, the
+   optional user (`useradd -m`, home under `/home`, `bash`), `poweroff`.
+3. **Check** (`redhat-boot-disk.py`): logs in with the password, records `uname -a`, `hostname`,
+   the marker, `df -k`, `fdisk -l /dev/sda`, `ifconfig -a`, `route -n` and `resolv.conf`, requires
+   `target=<name>`.
+
+Found on the way:
+
+- **Blank disk:** anaconda asks "Bad Partition Table ... Initialize / Skip Drive" for a disk without
+  a label, and kickstart's `zerombr yes` doesn't answer it on SPARC; the target's disk has the Sun
+  label `sunlabel.py` writes for Solaris (SUN2.9G), and `clearpart --all` replaces its slices.
+- **SILO and the end of the disk:** with `/` alone on the 3 GiB disk, SILO's first stage printed `S`
+  and stopped (OpenBIOS: `File not found`, `halt, power off`; `ss5.bin`: `Program terminated`):
+  `/boot/second.b` was at 4 KB block 526410, past 2 GB, and SILO's first stage reads its second
+  stage through the PROM, which on sun4m doesn't reach that far. A 32 MB `/boot` as the first
+  partition (`sda1`, cylinder 0) fixes it; `/` is `sda2`, swap `sda4`.
+- `%packages` has no `ping` with Base alone (`iputils` is in "Networked Workstation"), so the
+  kickstart file adds `iputils`. kudzu is turned off in `%post` (its hardware probe asks on the
+  console at boot).
+- **sendmail at boot:** with only the short host name in `/etc/hosts` and no DNS, every boot
+  waited 120 s at `Starting sendmail:` (a check boot of 166 s instead of ~60). The first boot writes
+  `<host>.<domain> <host>` (`.localdomain` without `--domain`, as Red Hat names `localhost`).
+- **A flaky end marker:** root's `ls` is an alias with `--color`; once its last escape sequence
+  arrived split over two reads of the console, so `lab.Machine` (which strips escape sequences
+  per read) kept a `[m` in front of `END-OF-COMMAND` and the first boot waited for it until it was
+  stopped (the install failed cleanly: VM destroyed, answer CD gone). The first boot runs `/bin/ls`
+  now; stripping across reads in `lab.py` would fix it for every scenario (not done here).
+- Network: a static address only (`net_modes`); DHCP (Red Hat 6.2 has `pump`) wasn't tried.
+  The lance uses `net0`'s MAC, as for Solaris.
+
+Tested in the PVE test container on the lab host (the e2e PVE image with the published
+pve-qemu-kvm 11.1.3-2+wsh16, qemu-server 9.2.18+wsh3, pve-manager 9.2.30+wsh2, libpve-storage-perl
+9.1.18+wsh1; TCG; the host's 14 cores shared with two other agents' runs, so the times are from a
+busy host), 2026-11-18:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| the CD with the lab's own QEMU (SS-5, OpenBIOS), `linux text` | the installer's language screen on ttya after ~30 s | |
+| `redhat-install-sparc.py`, then `redhat-firstboot.py` (lab QEMU), `/` alone | the install passed; the disk didn't boot (SILO's `S`, above), also not with `ss5.bin` | install 136 s |
+| install, first boot, check with the lab's own QEMU (`/boot` first) | 3/3 passed; `df -k`: `/dev/sda2` 2.6 GB (134 MB used), `/dev/sda1` 32 MB on `/boot`; `ping` missing (now in the kickstart file) | 139 s, 104 s, 61 s |
+| `install redhat62-ss5 --vmid 9600 --check --gateway 10.0.2.2 --dns 10.0.2.2 --domain lab.test` | passed; `scsi5` and `local:iso/wsh-lab-answers-9600.iso` gone afterwards, `scsi6: none,media=cdrom`, `boot: order=scsi3`; `eth0` with `net0`'s MAC, `default 10.0.2.2`, `resolv.conf` as given; the password in no evidence file | 5.9 min (install 130 s, first boot 144 s, check 62 s) |
+| a further boot of VM 9600 with 10.0.2.2 on the container's `vmbr0`: `ping -c 3 10.0.2.2` | 2 of 3 answered (the first went to ARP) | 38 s |
+| `install redhat62-ss20 --vmid 9601 --check --user lab` | failed in the first boot: the `ls` end marker (above), stopped by hand; VM destroyed, `scsi5` and the answer CD gone | install 84 s |
+| the same again (`/bin/ls`) | passed; `lab:x:500:500::/home/lab:/bin/bash`, `passwd lab` exit 0; the check boot waited 120 s for sendmail (above) | 6.6 min (85 s, 127 s, 166 s) |
+| `install redhat62-ss20 --vmid 9601 --check` (`.localdomain` in `/etc/hosts`) | passed; a further boot: `netstat -an` lists one listener, sendmail on `0.0.0.0:25`; on at boot: atd, keytable, gpm, netfs, network, random, linuxconf, sendmail, syslog, crond | 4.3 min (83 s, 114 s, 44 s) |
+| `pve_matrix.py install --only install-redhat62-ss5` (the final code; the CD linked from `--iso`) | 1/1 passed, VM destroyed afterwards | 5.3 min (106 s, 131 s, 61 s) |
+
+The installed systems listen on port 25 only (sendmail, on every address); Red Hat 6.2's Base has
+no inetd. `pve_matrix.py install` runs both targets, so the `install` choice of the `sparc lab`
+workflow needs `other-os/redhat-6.2-sparc.iso` under `--iso` and takes about 11 min longer. Not tried: DHCP, `--vlan`, the 9G disk, SS-10, `ss5.bin` or the SS-20 PROM for the
+install, other package groups (X needs a framebuffer and `Xsun`), a login as the `--user` user.
 
 ### The Tribblix install target
 

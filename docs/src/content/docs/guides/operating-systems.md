@@ -27,6 +27,8 @@ This page is a work in progress. Driver packs, curated images, and detailed per-
 
 Older Linux releases (down to the 2.x kernel series) run on the legacy devices added by the extensions. Use the [reference pages](/reference/architecture/) to pick a display, network card, and audio device the guest has drivers for.
 
+On sparc (sun4m), Red Hat Linux 6.2 (kernel 2.2.14) installs from its CD on the SS-5 and SS-20 profiles with OpenBIOS and a serial console; the lab installs it unattended with kickstart in about six minutes ([Lab install targets](/guides/lab-install/)). Give the disk a small `/boot` as its first partition: SILO, the SPARC boot loader, can't load its second stage from far into the disk on these machines.
+
 ## SunOS / Solaris
 
 Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC guide](/guides/sparc/) for the recommended machine, BIOS, disk, and network layout. For an installed Solaris 2.6, 7, 8 or 9 VM (sun4m) with known login details from one command on a node, see [Lab install targets](/guides/lab-install/).
