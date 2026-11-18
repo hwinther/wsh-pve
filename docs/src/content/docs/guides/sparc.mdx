@@ -46,7 +46,7 @@ Hardware editors offer only it.
 
 | Machine | BIOS | CPU | RAM | Disks and CD-ROMs | Network | Display |
 | ------- | ---- | --- | --- | ----------------- | ------- | ------- |
-| `sun4u` | OpenBIOS (default) | one, the machine's UltraSPARC IIi | up to 3072 MB (512 MB in the wizard) | the built-in IDE: `ide0` to `ide3` (wizard: disk `ide0`, CD-ROM `ide2`) | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; at most four | `std` (VGA, default), `serial0`, none |
+| `sun4u` | OpenBIOS (default) | one, the machine's UltraSPARC IIi | up to 8192 MB (512 MB in the wizard) | the built-in IDE: `ide0` to `ide3` (wizard: disk `ide0`, CD-ROM `ide2`) | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; at most four | `std` (VGA, default), `serial0`, none |
 
 - **Boot device:** OpenBIOS boots one device and doesn't try the next, and it can't follow the boot
   paths x86 VMs get. qemu-server therefore passes the first drive of the boot order that holds
@@ -55,7 +55,7 @@ Hardware editors offer only it.
   first in the boot order, so it boots the install CD, and once the CD is ejected (or the boot order
   puts the disk first) it boots the disk.
 - **Refused:** SCSI (the LSI controller and virtio-scsi), virtio-blk and SATA disks, more than one
-  CPU, a CPU type, more than 3072 MB, `sun4v` and `niagara`, more than four network devices (they
+  CPU, a CPU type, more than 8192 MB, `sun4v` and `niagara`, more than four network devices (they
   share PCI bus B's four slots), `pcnet`, other displays, serial2/serial3, the guest agent.
   virtio-blk works as a second disk in NetBSD, but OpenBIOS can't boot it, so it isn't offered.
 - **No balloon device** (OpenBIOS can't manage one; nothing reads it).
@@ -73,7 +73,8 @@ Hardware editors offer only it.
 - **CD-ROM** — sparc: SCSI. sparc64: IDE (`ide2`).
 - **Network** — `lance` (sparc; built into the machine, not hot-pluggable, one per VM, with the MAC address of `net0`) or `sunhme` (sparc64). See [Network device](/reference/netdev/).
 - **Display** — sparc: `cg3` (preferred) or `tcx` framebuffer; sparc64: standard VGA (`std`) with a PS/2 keyboard. A serial console is also available (see [Display](/reference/display/) and [Serial port](/reference/serial/)). Solaris only runs X on TCX when it was installed with the TCX attached or has the TCX packages added, and a change of framebuffer needs a reconfigure boot; see [cg3 or TCX](#cg3-or-tcx).
-- **Audio** — not currently working on SPARC.
+- **Audio** — SS-5 only: its built-in CS4231 (`audio0: device=cs4231,driver=none`), playback only.
+  Not on SS-10/SS-20 or sparc64, and not heard in the web console; see [Sound on the SS-5](#sound-on-the-ss-5).
 - **USB / PCI passthrough** — not supported on SPARC.
 
 ## More than one CPU
@@ -98,6 +99,31 @@ writes too), because the idle CPUs poll. Then one CPU is faster for one interact
 (`ss20_v2.25_rom`) starts only the first CPU and SS-5 has one, so both stay at one. A change of the
 CPU count on a running VM is applied at the next start; there is no CPU hotplug (`vcpus` and the
 `cpu` hotplug option are refused).
+
+## Sound on the SS-5
+
+The SPARCstation 5 has a Crystal CS4231 sound chip built in. With a `pve-qemu-kvm` newer than
+11.1.3-2+wsh16 it plays sound (SunOS 4.1.4's `/dev/audio`, Solaris 2.5.1 and 2.6's `audioplay`,
+under OpenBIOS and the SS-5 PROM), and a program that waits for the end of a sound gets it in real
+time. Turn it on with an audio device on the VM's Hardware tab (only `cs4231` is offered on SPARC)
+or from the shell:
+
+```sh
+qm set <vmid> --audio0 device=cs4231,driver=none
+```
+
+Where the sound goes:
+
+- `none`: nowhere. The chip works (programs don't hang), nobody hears it.
+- `alsa`, `pa` or `pipewire`: the Proxmox node's own sound device or sound server (`pa` takes
+  `server=` for a PulseAudio server elsewhere). Not tested on a real node yet.
+- SPICE, the default for x86, is refused: it carries sound only to a SPICE display, and sparc32 has
+  none. The web console (noVNC) has no sound either.
+
+Without `audio0` the chip stays as it was: silent, and SunOS programs that wait for a sound to
+end hang. Recording isn't done (a recording program gets no data). SS-10 and SS-20 have a
+different chip (DBRI) that QEMU doesn't emulate, so `audio0` is refused there and on sparc64.
+Details: `submodules/SPARC.md`, "Audio".
 
 ## Changes to a running VM
 
@@ -125,7 +151,7 @@ emulated disk themselves. Start from a disk that is already labelled:
 | Template | Size | Label |
 | -------- | ---- | ----- |
 | `sparc-SUN2.9G.raw.template.xz` | 3 GiB | `SUN2.9G cyl 2734 alt 2 hd 21 sec 99` (Solaris 2.x) |
-| `sparc-Qemu9G.raw.template.xz` | 8 GiB | `QEmu8G cyl 16202 alt 2 hd 16 sec 60` (Solaris 8 needs more than 3 GB) |
+| `sparc-Qemu9G.raw.template.xz` | 8 GiB | `QEmu8G cyl 16202 alt 2 hd 16 sec 60` (Solaris 8 needs more than 3 GB; Solaris 2.6 and 7 install on it too) |
 
 The templates are in the
 [proxmox repository's vm-images](https://github.com/hwinther/proxmox/tree/main/vm-images) (raw `.xz`
@@ -138,9 +164,20 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 - Disk on SCSI target 3, CD-ROM on target 6 (the SPARCstation 5 convention).
 - **Solaris 2.4 and 2.5.1 need the CD to answer as a disk** (`scsi-hd`, read-only). From a CD-ROM
   device their kernel starts and then panics with `vfs_mountroot: cannot mount root`: real Sun CD-ROM
-  drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. A VM's CD-ROM drive
-  is always a CD-ROM device (`scsi-cd`). To present the CD as a disk, copy the ISO into a raw disk
-  image of the VM and attach it read-only on target 6, e.g. `scsi6: local:100/vm-100-disk-1.raw,ro=1,backup=0`.
+  drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. Add `cd_as_disk=1`
+  to the CD-ROM drive to present it as a read-only disk (needs qemu-server with this option):
+
+  ```sh
+  qm set 100 --scsi6 local:iso/solaris_2.5.1_1197.iso,media=cdrom,cd_as_disk=1
+  ```
+
+  The drive stays a CD-ROM drive in PVE: read only, not backed up, the ISO is never copied or
+  deleted, and ejecting it (`none`) leaves an empty CD-ROM drive. Only sparc32 (`arch: sparc`) SCSI
+  CD-ROMs with an ISO take the option; anything else is refused. A medium change while the VM runs
+  waits for the next start (a disk has no removable medium). The web UI keeps the option when you
+  change or eject the medium, but has no field for it: set it with `qm set` or the API. Before the
+  option existed the workaround was the ISO copied into a raw disk image of the VM, attached
+  read-only on target 6 (`scsi6: local:100/vm-100-disk-1.raw,ro=1,backup=0`); that still works.
 - A CD that answers as a disk also shows up in the installer's disk list (`c0t6d0`): select only
   `c0t3d0`.
 - Boot the CD from a Sun PROM with `boot cdrom`. OpenBIOS boots a CD-ROM device directly (`-boot d`);
@@ -184,9 +221,12 @@ More recordings, including a cg3 boot, are on [SPARC lab recordings](/guides/spa
 
 ### Sun PROM console on the serial port
 
-With a Sun PROM (`ss5.bin`) and no framebuffer, the PROM prints on ttya but still reads the
-(emulated) Sun keyboard. Type `ttya io` at the `ok` prompt (on the keyboard, through the console's
-send-key) to take input from ttya as well; the Solaris installer then runs entirely on the serial port.
+With a Sun PROM (`ss5.bin`) and no framebuffer (Display: a serial port or none), qemu-server starts
+QEMU with `-nographic`, which also leaves out the Sun keyboard: the PROM reports `SPARCstation 5, No
+Keyboard` and uses ttya for input and output, so `qm terminal` is the whole console (checked with
+`vga: serial0`). A QEMU started by hand with `-vga none` but without `-nographic` keeps the keyboard:
+the PROM then prints on ttya but reads the keyboard, and `ttya io` typed on the keyboard at the `ok`
+prompt moves input to ttya as well.
 
 ### Booting the installed disk
 
@@ -252,6 +292,26 @@ OpenBIOS. Keep **cg3** unless you want 24-bit colour:
   a SCSI bus reset, and Solaris 2.5.1 looped on "gross error in esp status / undetermined selection
   failure". Fixed in `pve-qemu-kvm` 11.1.3-1+wsh1.
 
+## Installing Red Hat Linux 6.2
+
+Red Hat Linux 6.2 for SPARC (kernel 2.2.14) installs on the SS-5 and SS-20 profiles with OpenBIOS
+and a serial console (`vga: serial0`): its 32-bit kernel drives the ESP disk and CD-ROM, the lance
+NIC (`eth0`) and the serial port (`ttyS0`) as they are, and `poweroff` powers the VM off.
+
+- **Boot the CD by device path.** With the disk on target 3 first, OpenBIOS stops at `0 >`; the
+  CD's boot loader is not in slice `d`, so boot the whole device:
+  `boot /iommu/sbus/espdma/esp/sd@6,0`. At SILO's `boot:` type `linux` (or `text`).
+- **Give the disk a label first.** On a blank disk the installer asks to initialize it; a disk
+  with a Sun label (the [disk templates](#disks)) skips that question.
+- **Make `/boot` the first partition**, small (32 MB is plenty), from cylinder 0. SILO's first stage
+  loads its second stage through the PROM, which can't read that far into the disk: with one big
+  `/` the installed disk stops after SILO's `S`, under OpenBIOS and the SS-5 PROM alike.
+- **SILO on the "first sector of boot partition"** (the installer's default) is right on a Sun
+  label: that sector is the disk's boot block. The installed disk then boots by itself.
+
+[Lab install targets](/guides/lab-install/) installs it unattended (`redhat62-ss5`,
+`redhat62-ss20`: kickstart from a small answer CD, about six minutes).
+
 ## sparc64 (sun4u)
 
 Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC.md`, "sparc64"):
@@ -263,13 +323,20 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
+| Tribblix m34 (illumos) | with an `openbios-sparc64` that has patches 0016 and 0017 (no published package yet): the live CD boots, installs to the IDE disk with its own installer, and the installed system boots (see [Tribblix (illumos)](#tribblix-illumos)) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
 for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
-`e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a serial console, one CPU, up to 3 GB of RAM. The
+`e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a serial console, one CPU, up to 8 GB of RAM. The
 LSI SCSI controller and virtio-scsi don't work (no firmware driver, and the guests' drivers time out
 or fail). A VM created by the wizard with the NetBSD 11.1 CD boots it to the installer through Proxmox
 by itself (tested in the sparc lab's `pve` matrix, serial console).
+
+More than 3 GB needs pve-qemu-kvm 11.1.3-2+wsh16 or later: its OpenBIOS carries patches 0013-0015.
+With older firmware 4 GB stops NetBSD right after its loader and from about 4.3 GB the firmware itself
+stops. With the patches NetBSD 11.1 ran with 4, 6 and 8 GB and Solaris 10 1/13 with 4 and 8 GB in the
+sparc lab (QEMU started directly, not through Proxmox), each using most of that memory without
+errors. 8 GB is the largest size tested, so the profile stops there.
 
 ### Installing NetBSD
 
@@ -314,12 +381,49 @@ first boot about 19, check 8-9).
    DHCP or has the static one. `init 5` powers the VM off (it takes 3 to 6 minutes). Don't use `reboot` or `init 6`: they go through the same
    firmware call as the installer's reboot. Stop and start the VM instead.
 
-Every Solaris 10 guest gets the same system MAC address, 52:54:00:12:34:56, whatever the NIC's
-MAC is set to: two of them on one network clash. Details: `submodules/SPARC.md`, "Solaris on sun4u".
+The guest's system MAC address (the one in the IDPROM, which Solaris and NetBSD use for `hme0`) is
+the MAC address of the VM's first `sunhme` network device, as set in the VM's hardware, so DHCP
+reservations and firewall rules keyed on it match. The host id (`hostid`) is made from the same
+address, so it changes when the MAC address does. With pve-qemu-kvm packages before this change
+every sun4u guest had 52:54:00:12:34:56 and Solaris host id `80123456`; after the update an
+existing VM comes up with its own MAC and a new host id (intended, but software licensed to the old
+host id needs a new key). Details: `submodules/SPARC.md`, "The sun4u system MAC".
+
+### Tribblix (illumos)
+
+Tribblix m34 for SPARC (`tribblix-sparc-0m34.iso` from tribblix.org), the newest illumos release
+for SPARC, needs two OpenBIOS fixes that no published `pve-qemu-kvm` has yet (repository patches
+0016 and 0017: the firmware's client interface with interrupts off, and the 64-bit FCode tokens
+that the ZFS boot block uses). With the firmware of the published packages the live CD stops or
+hangs on most boots, and a ZFS root disk doesn't boot. With the fixes, measured in the sparc lab
+(QEMU started directly; the live CD also through Proxmox):
+
+1. Create the VM as for NetBSD with the Tribblix ISO, 2048 MB, an 8 GB disk and a serial console
+   (`serial0: socket`, Display: Serial terminal 0).
+2. The live CD boots by itself and imports its service descriptions, which takes about 45 minutes
+   under emulation; it asks for the keyboard layout (Return for US-English) and comes to `tribblix
+   console login:`. Log in as `root` (password `tribblix`). The disk is `c1t0d0`.
+3. Take the network down (`ipadm delete-if hme0`; otherwise the installer fetches some packages
+   from the internet) and install with the CD's installer: `cd /root; ./live_install.sh -G c1t0d0`
+   (Tribblix's default, a ZFS root pool; about an hour). The fault manager marks the disk DEGRADED
+   during the copy (I/O that ZFS had to retry on the emulated IDE disk; no data errors); `zpool clear
+   rpool` on the installed system should remove the mark (not checked yet).
+4. `init 5`, eject the CD (or put `ide0` first in the boot order) and start the VM: the installed
+   system's first boot imports the service descriptions again (about an hour), then `console
+   login:`. Change root's password and lock the live CD's `jack` account. Don't use `reboot`: stop
+   and start the VM. `init 5` itself takes several minutes.
+
+`wsh-lab install tribblix-m34-sun4u --vmid N --check` automates this on a VM it creates with the
+sparc64 profile, with a known root password and a static address. Several services time out on the
+way under emulation (`svc.startd` kills them); the system comes up anyway. In about one of three
+long runs the guest's clock stopped for good (the guest idles and nothing that waits for time ever
+wakes up): a race in QEMU that needs a QEMU fix; stop and start the VM. Details:
+`submodules/SPARC.md`, "Tribblix on sun4u".
 
 ## Known limitations
 
-- Audio does not work on SPARC guests.
+- Sound only on SS-5 (playback, not in the web console); none on SS-10/SS-20 or sparc64 (see
+  [Sound on the SS-5](#sound-on-the-ss-5)).
 - sparc32: more than one CPU only on SS-10/SS-20 with OpenBIOS (up to 4), and the idle halt with
   more than one CPU only for Solaris 2.5.1-9 (NetBSD's MP kernel idles by itself); 256 MB on SS-5,
   512 MB on SS-10/SS-20.
@@ -351,7 +455,9 @@ new ones.
 
 For a finished VM with known login details, `lab.py install sol26-ss5 --vmid 120` (or `sol26-ss20`)
 does everything below in one command, from the tested CD on the node's storage: see
-[Lab install targets](/guides/lab-install/).
+[Lab install targets](/guides/lab-install/). With a second disk on `/usr/local` it can also add the GNU
+packages of a local package CD for Solaris 2.6 after the install (2.6 and 7) (`--post-install sun26gnu`; the CD is
+not published), and set up `PATH` and bash for the user (`--local-env`).
 
 The same scenarios can install a VM that Proxmox VE runs. On the node (the lab needs `python3-pyte`,
 `python3-pil`, `tesseract-ocr` and `fonts-dejavu-core`), create the VM with a serial console, the

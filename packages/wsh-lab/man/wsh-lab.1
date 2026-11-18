@@ -46,11 +46,38 @@ overwrites an existing VMID. Options include
 .BR \-\-storage ", " \-\-media\-storage ", " \-\-bridge ", " \-\-vlan ,
 .BR \-\-ip " (an address, or " dhcp " where the target supports it), " \-\-netmask ", " \-\-gateway ,
 .BR \-\-dns ", " \-\-domain ,
-.BR \-\-disk\-size " (a size the target was tested with: 3G or 9G for Solaris 2.6), " \-\-data\-disk ,
+.BR \-\-disk\-size " (a size the target was tested with: 3G or 9G for Solaris 2.6 and 7), " \-\-data\-disk ,
 .BR \-\-hostname ", " \-\-root\-password ", " \-\-user ", " \-\-check ", " \-\-template ", "
 .BR \-\-keep\-on\-failure " and " \-\-out ;
 .B wsh-lab install \-\-help
 lists them all.
+.PP
+For Solaris 2.6 and 7,
+.BI \-\-post\-install " sun26gnu"
+adds the SVR4 packages of the owner's own GNU package CD
+.RI ( sun26gnu.iso ,
+a local medium: not published, not downloaded) after the first boot, with
+.B pkgadd \-n
+and an admin file, onto the data disk, which
+.B \-\-data\-disk
+then mounts on
+.I /usr/local
+(also by itself with
+.BR "\-\-data\-mount /usr/local" ).
+.B \-\-local\-env
+(with it) puts
+.I /usr/local/bin
+on
+.B PATH
+in
+.I /etc/profile
+and the user's
+.IR .profile ,
+and makes bash the
+.B \-\-user
+account's login shell; root keeps
+.I /sbin/sh
+so that it can log in single-user, when the data disk isn't mounted.
 .PP
 .B wsh-lab targets
 lists the catalogue (which targets are automated, their profiles and what was tested);

@@ -379,6 +379,227 @@ test.describe('refused combinations', () => {
   })
 })
 
+// A CD that answers as a disk (`cd_as_disk=1` on a sparc32 SCSI CD-ROM): the Solaris 2.4 and 2.5.1
+// installers boot only from such a CD (submodules/SPARC.md, "CD as a disk"). CI runs these tests
+// against the published packages: the tests of what the option does need a qemu-server that has it
+// (probed once, skipped otherwise); the refusals hold with either, the older one refusing the
+// unknown property itself.
+test.describe('a CD that answers as a disk (cd_as_disk)', () => {
+  let hasCdAsDisk = false
+  const UNKNOWN = 'cd_as_disk: property is not defined in schema'
+
+  test.beforeAll(async () => {
+    const { code } = await pveExec(['grep', '-q', 'cd_as_disk', '/usr/share/perl5/PVE/QemuServer/Drive.pm'])
+    hasCdAsDisk = code === 0
+  })
+
+  test('SS-5 with ss5.bin: a read-only scsi-hd on target 6, an empty scsi-cd once ejected', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has cd_as_disk
+    test.skip(!hasCdAsDisk, 'the installed qemu-server has no cd_as_disk yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      bios: 'ss5.bin',
+      machine: 'SS-5',
+      memory: 256,
+      name: 'sparc-cd-as-disk',
+      scsi3: 'local:0.0625,format=raw',
+      scsi6: `${ISO},media=cdrom,cd_as_disk=1`,
+      serial0: 'socket',
+      vga: 'serial0',
+    })
+    expect(await vmConfFile(vmid)).toMatch(/^scsi6: local:iso\/e2e-sparc\.iso,cd_as_disk=1,media=cdrom/m)
+
+    const cmd = await showcmd(vmid)
+    expect(cmd).toMatch(/-device 'scsi-hd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,[^']*physical_block_size=512'/)
+    expect(cmd).not.toContain("'scsi-cd,")
+    expect(cmd).toMatch(
+      /"filename":"\/var\/lib\/vz\/template\/iso\/e2e-sparc\.iso"[^']*"node-name":"drive-scsi6","read-only":true/,
+    )
+    const qemu = await qemuAccepts(vmid)
+    expect(qemu.code, qemu.output).toBe(0)
+
+    // Ejected as the web UI does it (the option stays): an empty CD-ROM drive.
+    await pve.post(`/nodes/${NODE}/qemu/${vmid}/config`, { scsi6: 'none,media=cdrom,cd_as_disk=1' })
+    const ejected = await showcmd(vmid)
+    expect(ejected).toMatch(/-device 'scsi-cd,channel=0,scsi-id=6,lun=0,id=scsi6,/)
+    expect(ejected).not.toContain('drive-scsi6","read-only"')
+    const qemuEjected = await qemuAccepts(vmid)
+    expect(qemuEjected.code, qemuEjected.output).toBe(0)
+  })
+
+  const refusals: { name: string; params: Record<string, number | string>; message: string }[] = [
+    {
+      message: "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on x86_64",
+      name: 'on x86_64',
+      params: { memory: 512, scsi2: `${ISO},media=cdrom,cd_as_disk=1`, scsihw: 'virtio-scsi-pci' },
+    },
+    {
+      message: "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on aarch64",
+      name: 'on aarch64',
+      params: { arch: 'aarch64', memory: 1024, scsi2: `${ISO},media=cdrom,cd_as_disk=1`, scsihw: 'virtio-scsi-pci' },
+    },
+    {
+      message: "sparc: scsi4: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)",
+      name: 'sparc32: on a disk',
+      params: { arch: 'sparc', memory: 256, scsi4: 'local:0.0625,format=raw,cd_as_disk=1' },
+    },
+    {
+      message: "sparc: scsi6: 'cd_as_disk' needs an image (an ISO volume), not the host's CD-ROM drive",
+      name: "sparc32: the host's CD-ROM drive",
+      params: { arch: 'sparc', memory: 256, scsi6: 'cdrom,media=cdrom,cd_as_disk=1' },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid, ...c.params })
+      expect(refused.message).toContain(hasCdAsDisk ? c.message : UNKNOWN)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('create refused: on IDE (only SCSI drives have the option)', async () => {
+    const vmid = Number(await pve.get<string>('/cluster/nextid'))
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, {
+      ide2: `${ISO},media=cdrom,cd_as_disk=1`,
+      memory: 512,
+      vmid,
+    })
+    expect(refused.message).toContain(`ide2.${UNKNOWN}`)
+  })
+
+  test('update refused: on an existing x86_64 VM, and on a sparc32 disk', async () => {
+    const x86 = await createVm({ memory: 512, name: 'x86-cd-as-disk', scsihw: 'virtio-scsi-pci' })
+    const x86Refused = await pve.refused('POST', `/nodes/${NODE}/qemu/${x86}/config`, {
+      scsi2: `${ISO},media=cdrom,cd_as_disk=1`,
+    })
+    expect(x86Refused.message).toContain(
+      hasCdAsDisk ? "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on x86_64" : UNKNOWN,
+    )
+    expect(await vmConfFile(x86)).not.toContain('scsi2:')
+
+    const sparc = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-cd-as-disk-update' })
+    const sparcRefused = await pve.refused('POST', `/nodes/${NODE}/qemu/${sparc}/config`, {
+      scsi4: 'local:0.0625,format=raw,cd_as_disk=1',
+    })
+    expect(sparcRefused.message).toContain(
+      hasCdAsDisk ? "sparc: scsi4: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)" : UNKNOWN,
+    )
+    expect(await vmConfFile(sparc)).not.toContain('scsi4:')
+  })
+})
+
+// Sound (`audio0: device=cs4231`): the SPARCstation 5's built-in CS4231 gets the backend through
+// `-machine audiodev=` (submodules/SPARC.md, "Audio"); SS-10/SS-20 (DBRI), sun4u and SPICE are
+// refused. CI runs against the published packages: what the option does needs a qemu-server that
+// has it, and QEMU starting it a pve-qemu-kvm whose sun4m has the audiodev property (each probed
+// once, skipped otherwise); the refusals hold with either qemu-server where the older one refuses
+// too (the unknown device), and are skipped where it accepted the config.
+test.describe('sound on the SS-5 (audio0: device=cs4231)', () => {
+  let hasAudio = false
+  let qemuHasAudiodev = false
+  const UNKNOWN = "audio0.device: value 'cs4231' does not have a value in the enumeration"
+
+  test.beforeAll(async () => {
+    const { code } = await pveExec(['grep', '-q', 'cs4231', '/usr/share/perl5/PVE/QemuServer.pm'])
+    hasAudio = code === 0
+    const machine = await pveExec(['sh', '-c', 'qemu-system-sparc -machine SS-5,help 2>&1 | grep -q audiodev'])
+    qemuHasAudiodev = machine.code === 0
+  })
+
+  for (const driver of ['none', 'alsa']) {
+    test(`SS-5, driver ${driver}: -audiodev and -machine audiodev, no -device`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has cs4231
+      test.skip(!hasAudio, 'the installed qemu-server has no cs4231 yet')
+      const vmid = await createVm({
+        arch: 'sparc',
+        audio0: `device=cs4231,driver=${driver}`,
+        machine: 'SS-5',
+        memory: 256,
+        name: `sparc-audio-${driver}`,
+      })
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain(`-machine 'audiodev=${driver}-backend0'`)
+      expect(cmd).toContain(`-audiodev '${driver},id=${driver}-backend0'`)
+      expect(cmd).not.toMatch(/-device '[^']*(hda|AC97|sb16|cs4231)/)
+    })
+  }
+
+  // driver none only: the e2e container has no sound card
+  test('SS-5, driver none: QEMU starts it', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published packages have cs4231
+    test.skip(!hasAudio || !qemuHasAudiodev, 'the installed qemu-server or pve-qemu-kvm has no CS4231 sound yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      audio0: 'device=cs4231,driver=none',
+      machine: 'SS-5',
+      memory: 256,
+      name: 'sparc-audio-start',
+    })
+    const qemu = await qemuAccepts(vmid)
+    expect(qemu.code, qemu.output).toBe(0)
+  })
+
+  const refusals: { name: string; params: Record<string, number | string>; message: string; old?: string }[] = [
+    {
+      message:
+        "sparc: audio driver 'spice' is not supported, sparc32 has no SPICE display; use one of: alsa, none, pa, pipewire",
+      name: 'SPICE, the default driver',
+      old: UNKNOWN,
+      params: { arch: 'sparc', audio0: 'device=cs4231', memory: 256 },
+    },
+    {
+      message:
+        "sparc: audio0 is not supported on SS-20, its sound chip (DBRI) isn't emulated; only SS-5 has sound (device cs4231)",
+      name: 'SS-20',
+      old: UNKNOWN,
+      params: { arch: 'sparc', audio0: 'device=cs4231,driver=none', machine: 'SS-20', memory: 512 },
+    },
+    {
+      message:
+        "audio0: device 'cs4231' is the SPARCstation 5's built-in sound chip, only on arch sparc (machine SS-5), not on x86_64",
+      name: 'the CS4231 on x86_64',
+      old: UNKNOWN,
+      params: { audio0: 'device=cs4231,driver=none', memory: 512 },
+    },
+    {
+      message: "sparc: audio device 'ich9-intel-hda' is not supported on SS-5, use cs4231 (built in)",
+      name: 'an x86 sound card on SS-5',
+      params: { arch: 'sparc', audio0: 'device=ich9-intel-hda,driver=none', memory: 256 },
+    },
+    {
+      message: 'sparc64: audio0 is not supported, no sound device was tested on sun4u',
+      name: 'sparc64',
+      params: { arch: 'sparc64', audio0: 'device=AC97,driver=none', memory: 512 },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- the published qemu-server accepts this config
+      test.skip(!hasAudio && !c.old, 'the installed qemu-server has no audio rules for sparc yet')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid, ...c.params })
+      expect(refused.message).toContain(hasAudio ? c.message : c.old)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('update refused: SPICE on an existing SS-5', async () => {
+    const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-audio-update' })
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu/${vmid}/config`, { audio0: 'device=cs4231' })
+    expect(refused.message).toContain(
+      hasAudio
+        ? "sparc: audio driver 'spice' is not supported, sparc32 has no SPICE display; use one of: alsa, none, pa, pipewire"
+        : UNKNOWN,
+    )
+    expect(await vmConfFile(vmid)).not.toContain('audio0:')
+  })
+})
+
 test.describe('backup and restore', () => {
   /** Fills the first 4 MB of the VM's scsi3 disk with random data, returns the image's sha256. */
   async function fillDisk(vmid: number): Promise<string> {
@@ -609,7 +830,10 @@ test.describe('more than one CPU', () => {
       await next(wizard) // to CPU
       await expect(sockets).toBeEnabled()
       await expect(cores).toBeEnabled()
-      await expect(wizard.getByText(/up to 4 CPUs .*keeps a host core busy/)).toBeVisible()
+      // the published pve-manager may still carry the hint from before SMP idle (+wsh15)
+      await expect(
+        wizard.getByText(/up to 4 CPUs .*(idle CPUs of Solaris 2\.5\.1-9 stop|keeps a host core busy)/),
+      ).toBeVisible()
       await cores.fill('5')
       await expect(nextButton).toBeDisabled()
       await cores.fill('2')

@@ -1,0 +1,43 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] fcode: put xa+ and xa1+ into the 64-bit FCode table
+
+The 64-bit FCode tokens of IEEE 1275's 64-bit extension run from 0x241
+to 0x254. The table's 32-bit branch keeps that layout (seven reserved
+tokens, /x at 0x248, twelve reserved tokens), but the 64-bit branch has
+the entries for 0x24a and 0x24b commented out (and misnamed /xa+ and
+/xa1+), so every token from 0x24a on runs the word two places further
+down: xbflip runs at xa+'s token, ..., and xlsplit (0x251) runs xwflips.
+forth/lib/64bit.fs defines xa+ and xa1+ already.
+
+The illumos/Solaris ZFS boot block (zfs.fth, the "zfs-file-system"
+package) uses xlsplit in its 64-bit compares (x0=, xcmp). Booting a
+Tribblix (illumos) ZFS root disk on sun4u stopped right after the boot
+block had loaded its file system package:
+
+  Evaluating FCode...
+  Unhandled Exception 0x0000000000000030
+  PC = 0x00000000ffd0f498 NPC = 0x00000000ffd0f49c
+
+(the PC in unaligned-l@: xwflips took the value to be split as an
+address, 0). With the two entries in the table the boot block reads the
+pool, loads the kernel and the boot archive from ZFS, and the system
+boots.
+---
+ forth/device/table.fs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/forth/device/table.fs b/forth/device/table.fs
+index 04d22c8..9b00a6e 100644
+--- a/forth/device/table.fs
++++ b/forth/device/table.fs
+@@ -414,8 +414,8 @@ create fcode-master-table
+   ['], x!
+   ['], /x
+   ['], /x*
+-\   ['], /xa+
+-\   ['], /xa1+
++  ['], xa+
++  ['], xa1+
+   ['], xbflip
+   ['], xbflips
+   ['], xbsplit

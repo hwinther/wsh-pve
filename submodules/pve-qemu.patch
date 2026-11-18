@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..e92b751 100644
+index 7b0cba5..ba39100 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,28 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,42 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -101,6 +101,20 @@ index 7b0cba5..e92b751 100644
 +wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
 +wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
 +wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
++wsh/0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd.patch
++wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
++wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
++wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
++wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
++wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
++wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
++wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
++wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
++wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
++wsh/0036-target-sparc-write-softint-under-the-BQL.patch
++wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
++wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
++wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -2637,10 +2651,10 @@ index 0000000..2f00a93
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
 new file mode 100644
-index 0000000..3c8dbea
+index 0000000..14236fd
 --- /dev/null
 +++ b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,205 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris idle halt on sun4m
 +
@@ -2651,10 +2665,14 @@ index 0000000..3c8dbea
 +solaris-idle=off, with a runnable thread, at interrupt level 15 and on
 +an SS-20 with two CPUs. Any trap stops the test with the trap type in
 +RAM.
++
++The PROM word at the RAM address of disp_nrunnable says 1: with the MMU
++off in boot mode an instruction fetch from there would read it, so the
++idle case also checks that the helper reads RAM, as the loop does.
 +---
 + tests/qtest/meson.build               |   3 +-
-+ tests/qtest/sun4m-solaris-idle-test.c | 148 ++++++++++++++++++++++++++
-+ 2 files changed, 150 insertions(+), 1 deletion(-)
++ tests/qtest/sun4m-solaris-idle-test.c | 165 ++++++++++++++++++++++++++
++ 2 files changed, 167 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4m-solaris-idle-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -2673,10 +2691,10 @@ index 0000000..3c8dbea
 + qtests_sparc64 = \
 +diff --git a/tests/qtest/sun4m-solaris-idle-test.c b/tests/qtest/sun4m-solaris-idle-test.c
 +new file mode 100644
-+index 0000000000..59faaa721b
++index 0000000000..12b5a053cb
 +--- /dev/null
 ++++ b/tests/qtest/sun4m-solaris-idle-test.c
-+@@ -0,0 +1,148 @@
++@@ -0,0 +1,165 @@
 ++/*
 ++ * QTest: halting the CPU in the Solaris idle loop on sun4m
 ++ *
@@ -2700,7 +2718,8 @@ index 0000000..3c8dbea
 ++#define RAM_CPU         0x1000ULL
 ++#define RAM_COUNT       (RAM_CPU + 0)
 ++#define RAM_TRAP        (RAM_CPU + 0x20)
-++#define PROM_WORDS      0x200
+++#define PROM_WORDS      0x420           /* up to past PROM_DECOY */
+++#define PROM_DECOY      ((RAM_CPU + 0x58) / 4)
 ++#define CODE            0x100           /* word index of the code */
 ++
 ++/*
@@ -2747,14 +2766,20 @@ index 0000000..3c8dbea
 ++    be[0] = cpu_to_be32(0x10800000 | CODE);
 ++    be[1] = cpu_to_be32(0x01000000);
 ++    for (i = 1; i < CODE / 4; i++) {
-++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
-++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
-++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
-++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++        be[4 * i] = cpu_to_be32(0x03000004);     /* sethi %hi(0x1000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i);    /* mov i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020); /* st %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000); /* b . */
 ++    }
 ++    for (i = 0; i < ARRAY_SIZE(code); i++) {
 ++        be[CODE + i] = cpu_to_be32(code[i]);
 ++    }
+++    /*
+++     * The PROM word at the RAM address of disp_nrunnable says 1. With the
+++     * MMU off in boot mode an instruction fetch from there reads it, a data
+++     * load reads RAM: the idle helper must read RAM, like the loop.
+++     */
+++    be[PROM_DECOY] = cpu_to_be32(1);
 ++    fd = g_file_open_tmp("sun4m-solaris-idle-prom-XXXXXX", &path, NULL);
 ++    g_assert_cmpint(fd, >=, 0);
 ++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
@@ -2785,7 +2810,14 @@ index 0000000..3c8dbea
 ++}
 ++
 ++#define PSR_S_ET        0xa0
-++#define PSR_PIL15       0xf00
+++#define PSR_S_ET_PIL15  0xfa0
+++
+++typedef struct IdleCase {
+++    const char *name;
+++    const char *machine;
+++    uint32_t nrunnable;
+++    uint32_t psr;
+++} IdleCase;
 ++
 ++/* Nothing runnable, interrupts enabled at level 0: the CPU stops */
 ++static void test_idle(void)
@@ -2798,29 +2830,32 @@ index 0000000..3c8dbea
 ++
 ++static void test_running(const void *data)
 ++{
-++    const char *const *t = data;
+++    const IdleCase *t = data;
 ++    uint32_t before, after;
 ++
-++    run(t[0], atoi(t[1]), strtoul(t[2], NULL, 0), &before, &after);
+++    run(t->machine, t->nrunnable, t->psr, &before, &after);
 ++    g_assert_cmpuint(after, >, before);
 ++}
 ++
 ++int main(int argc, char **argv)
 ++{
-++    static const char *const off[] = { "SS-5,solaris-idle=off", "0", "0xa0" };
-++    static const char *const runnable[] = { "SS-5", "1", "0xa0" };
-++    static const char *const pil15[] = { "SS-5", "0", "0xfa0" };
-++    static const char *const smp2[] = { "SS-20 -smp 2", "0", "0xa0" };
+++    static const IdleCase running[] = {
+++        { "off", "SS-5,solaris-idle=off", 0, PSR_S_ET },
+++        { "runnable", "SS-5", 1, PSR_S_ET },
+++        { "pil15", "SS-5", 0, PSR_S_ET_PIL15 },
+++        { "smp2", "SS-20 -smp 2", 0, PSR_S_ET },
+++    };
+++    int i;
 ++
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    if (qtest_has_accel("tcg")) {
 ++        qtest_add_func("sun4m-solaris-idle/idle", test_idle);
-++        qtest_add_data_func("sun4m-solaris-idle/off", off, test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/runnable", runnable,
-++                            test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/pil15", pil15, test_running);
-++        qtest_add_data_func("sun4m-solaris-idle/smp2", smp2, test_running);
+++        for (i = 0; i < ARRAY_SIZE(running); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-solaris-idle/%s", running[i].name);
+++            qtest_add_data_func(name, &running[i], test_running);
+++        }
 ++    }
 ++
 ++    return g_test_run();
@@ -3456,10 +3491,10 @@ index 0000000..89e6cc1
 ++}
 diff --git a/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
 new file mode 100644
-index 0000000..50f760f
+index 0000000..8e6ca96
 --- /dev/null
 +++ b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,108 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] ide/cmd646: latch the interrupt status bits until the
 + guest clears them
@@ -3476,12 +3511,15 @@ index 0000000..50f760f
 +
 +  WARNING: Interrupt not seen after set_features
 +
-+Keep the status bits set when INTRQ drops; the guest's write-1-to-clear
-+(config space, or the BMDMA register that mirrors MRDMODE) clears them.
-+The PCI interrupt line keeps following the drives' INTRQ, now kept in a
-+field of its own: driving it from the latched bits instead left it
-+asserted for guests that don't clear them, and Linux disabled the
-+interrupt ("irq 7: nobody cared") and OpenBSD hung at boot.
++Keep the status bits set when INTRQ drops, until the guest writes 1 to
++them in config space (the BMDMA register that mirrors MRDMODE doesn't
++clear them: bmdma_write() masks them out). The PCI interrupt line keeps
++following the drives' INTRQ, now kept in a field of its own: driving it
++from the latched bits instead left it asserted for guests that don't
++clear them, and Linux disabled the interrupt ("irq 7: nobody cared") and
++OpenBSD hung at boot. A device reset clears that field (the drives come
++out of reset with INTRQ low); otherwise the next config write after a
++reset raised the line again.
 +
 +Tested on sun4u, the only machine in this package with a cmd646 (alpha
 +and hppa have one too, and aren't built here): Solaris 10 1/13 attaches
@@ -3499,15 +3537,15 @@ index 0000000..50f760f
 +line from them; this is a separate implementation that keeps the line on
 +INTRQ.
 +---
-+ hw/ide/cmd646.c      | 17 ++++++++++++-----
++ hw/ide/cmd646.c      | 20 +++++++++++++++-----
 + include/hw/ide/pci.h |  1 +
-+ 2 files changed, 13 insertions(+), 5 deletions(-)
++ 2 files changed, 16 insertions(+), 5 deletions(-)
 +
 +diff --git a/hw/ide/cmd646.c b/hw/ide/cmd646.c
-+index d44a90a162..b184c0ce63 100644
++index d44a90a162..0e3b11208a 100644
 +--- a/hw/ide/cmd646.c
 ++++ b/hw/ide/cmd646.c
-+@@ -182,12 +182,12 @@ static void bmdma_setup_bar(PCIIDEState *d)
++@@ -182,12 +182,13 @@ static void bmdma_setup_bar(PCIIDEState *d)
 + 
 + static void cmd646_update_irq(PCIDevice *pd)
 + {
@@ -3519,12 +3557,13 @@ index 0000000..50f760f
 +-        ((pd->config[MRDMODE] & MRDMODE_INTR_CH1) &&
 +-         !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
 ++    /* The interrupt line follows the drives' INTRQ, not the latched status */
-++    pci_level = ((d->intrq & 1) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
+++    pci_level =
+++        ((d->intrq & 1) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH0)) ||
 ++        ((d->intrq & 2) && !(pd->config[MRDMODE] & MRDMODE_BLK_CH1));
 +     pci_set_irq(pd, pci_level);
 + }
 + 
-+@@ -199,10 +199,17 @@ static void cmd646_set_irq(void *opaque, int channel, int level)
++@@ -199,10 +200,17 @@ static void cmd646_set_irq(void *opaque, int channel, int level)
 +     int irq_mask;
 + 
 +     irq_mask = MRDMODE_INTR_CH0 << channel;
@@ -3543,24 +3582,33 @@ index 0000000..50f760f
 +     }
 +     cmd646_update_dma_interrupts(pd);
 +     cmd646_update_irq(pd);
++@@ -216,6 +224,8 @@ static void cmd646_reset(DeviceState *dev)
++     for (i = 0; i < 2; i++) {
++         ide_bus_reset(&d->bus[i]);
++     }
+++    /* The drives come out of reset with INTRQ low */
+++    d->intrq = 0;
++ }
++ 
++ static uint32_t cmd646_pci_config_read(PCIDevice *d,
 +diff --git a/include/hw/ide/pci.h b/include/hw/ide/pci.h
-+index ef03764caa..65ca115755 100644
++index ef03764caa..6ecbc84130 100644
 +--- a/include/hw/ide/pci.h
 ++++ b/include/hw/ide/pci.h
 +@@ -51,6 +51,7 @@ struct PCIIDEState {
 +     BMDMAState bmdma[2];
 +     qemu_irq isa_irq[2];
 +     uint32_t secondary; /* used only for cmd646 */
-++    uint8_t intrq; /* used only for cmd646: the drives' INTRQ, bit n = channel n */
+++    uint8_t intrq; /* used only for cmd646: INTRQ of channel n in bit n */
 +     MemoryRegion bmdma_bar;
 +     MemoryRegion cmd_bar[2];
 +     MemoryRegion data_bar[2];
 diff --git a/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
 new file mode 100644
-index 0000000..2ca308b
+index 0000000..778856a
 --- /dev/null
 +++ b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,286 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the cmd646 interrupt status latch on
 + sun4u
@@ -3574,14 +3622,19 @@ index 0000000..2ca308b
 +whatever the bits are: the line is seen through the sabre, which raises
 +its request again when the guest clears it while the line is still up.
 +
++reset-drops-intrq resets the machine with INTRQ up: the drives come out
++of the reset with INTRQ low, so the line must stay down when the
++firmware sets the controller up again.
++
 +Without the previous patch status-latched fails (MRDMODE reads 0 after
 +the status read). With the line driven from the latched bits instead of
 +INTRQ (the variant that broke Linux and OpenBSD) it fails too (the line
-+stays up after the status read). With the patch both cases pass.
++stays up after the status read). Without the clear of INTRQ in
++cmd646_reset() reset-drops-intrq fails. With the patch all three pass.
 +---
 + tests/qtest/meson.build         |   2 +-
-+ tests/qtest/sun4u-cmd646-test.c | 208 ++++++++++++++++++++++++++++++++
-+ 2 files changed, 209 insertions(+), 1 deletion(-)
++ tests/qtest/sun4u-cmd646-test.c | 239 ++++++++++++++++++++++++++++++++
++ 2 files changed, 240 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4u-cmd646-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -3599,10 +3652,10 @@ index 0000000..2ca308b
 +   ['npcm7xx_adc-test',
 +diff --git a/tests/qtest/sun4u-cmd646-test.c b/tests/qtest/sun4u-cmd646-test.c
 +new file mode 100644
-+index 0000000000..c112a210d9
++index 0000000000..1a982268ba
 +--- /dev/null
 ++++ b/tests/qtest/sun4u-cmd646-test.c
-+@@ -0,0 +1,208 @@
++@@ -0,0 +1,239 @@
 ++/*
 ++ * QTest: the cmd646 interrupt status bits on sun4u
 ++ *
@@ -3632,8 +3685,9 @@ index 0000000..2ca308b
 ++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
 ++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
 ++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
-++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004) /* OBIO interrupt map, ino 0x20 */
-++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804) /* OBIO interrupt clear, ino 0x20 */
+++/* OBIO interrupt map and clear registers of ino 0x20, the IDE controller */
+++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004)
+++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804)
 ++#define IMR_ENABLED     0x80000000
 ++#define IVEC_HDD        0x20
 ++
@@ -3699,16 +3753,9 @@ index 0000000..2ca308b
 ++    g_assert_not_reached();
 ++}
 ++
-++static QTestState *setup(void)
+++/* What OpenBIOS would set up, after power-on or a reset */
+++static void configure(QTestState *qts)
 ++{
-++    QTestState *qts;
-++
-++    qts = qtest_init("-machine sun4u -nodefaults "
-++                     "-blockdev driver=null-co,read-zeroes=on,node-name=d0 "
-++                     "-device ide-hd,drive=d0,bus=ide.0,unit=0");
-++
-++    /* The sabre's request for the IDE interrupt reaches the test, not the CPU */
-++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
 ++    qtest_writel(qts, OBIO_IMR_HDD, IMR_ENABLED);
 ++
 ++    /* Bus 1 behind 00:01.1, which already forwards I/O 0-0xfff */
@@ -3724,6 +3771,19 @@ index 0000000..2ca308b
 ++    /* Drive interrupts on (nIEN clear), no interrupt so far */
 ++    qtest_writeb(qts, PCI_IO + IO_CTL0 + ATA_DEVCTL, 0);
 ++    g_assert_false(qtest_get_irq(qts, IVEC_HDD));
+++}
+++
+++static QTestState *setup(void)
+++{
+++    QTestState *qts;
+++
+++    qts = qtest_init("-machine sun4u -nodefaults "
+++                     "-blockdev driver=null-co,read-zeroes=on,node-name=d0 "
+++                     "-device ide-hd,drive=d0,bus=ide.0,unit=0");
+++
+++    /* The sabre's IDE interrupt request goes to the test, not the CPU */
+++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
+++    configure(qts);
 ++    return qts;
 ++}
 ++
@@ -3746,7 +3806,10 @@ index 0000000..2ca308b
 ++    return cfg_read(qts, 1, DEVFN_CMD646, CFR) & CFR_INTR_CH0;
 ++}
 ++
-++/* The guest acknowledges the sabre's request; it comes back while the line is up */
+++/*
+++ * The guest acknowledges the sabre's request; it comes back while the line
+++ * is up
+++ */
 ++static bool line_after_clear(QTestState *qts)
 ++{
 ++    qtest_writel(qts, OBIO_CLR_HDD, 0);
@@ -3802,21 +3865,42 @@ index 0000000..2ca308b
 ++    qtest_quit(qts);
 ++}
 ++
+++/*
+++ * A reset with INTRQ up: the drives come out of it with INTRQ low, so the
+++ * line must stay down when the firmware sets the controller up again.
+++ */
+++static void test_reset_drops_intrq(void)
+++{
+++    QTestState *qts = setup();
+++
+++    set_features(qts);
+++    g_assert_true(qtest_get_irq(qts, IVEC_HDD));
+++    /* Masking the interrupt in the sabre withdraws its request */
+++    qtest_writel(qts, OBIO_IMR_HDD, 0);
+++    g_assert_false(qtest_get_irq(qts, IVEC_HDD));
+++
+++    qtest_system_reset(qts);
+++    configure(qts);
+++
+++    qtest_quit(qts);
+++}
+++
 ++int main(int argc, char **argv)
 ++{
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    qtest_add_func("sun4u-cmd646/status-latched", test_status_latched);
 ++    qtest_add_func("sun4u-cmd646/clear-keeps-line", test_clear_keeps_line);
+++    qtest_add_func("sun4u-cmd646/reset-drops-intrq", test_reset_drops_intrq);
 ++
 ++    return g_test_run();
 ++}
 diff --git a/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
 new file mode 100644
-index 0000000..5c0c030
+index 0000000..b8c9204
 --- /dev/null
 +++ b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,715 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: halt idle CPUs in the Solaris multiprocessor idle loop
 +
@@ -3858,6 +3942,8 @@ index 0000000..5c0c030
 +The Solaris idle helpers now read disp_nrunnable through a host pointer
 +looked up once by a page table walk: probe_access_flags() would assert
 +when another CPU had flushed the TLB entry since the loop's load.
++With the MMU off the address is physical: the debug lookup tries an
++instruction fetch first, which boot mode would take from the PROM.
 +
 +The board turns this on with env->solaris_idle_mp.
 +-trace sparc_solaris_idle_mp_match shows whether a kernel was recognised,
@@ -3878,11 +3964,11 @@ index 0000000..5c0c030
 + target/sparc/cpu.h          |  14 ++
 + target/sparc/helper.h       |   1 +
 + target/sparc/machine.c      |  34 +++++
-+ target/sparc/solaris_idle.c | 270 ++++++++++++++++++++++++++++++++++--
++ target/sparc/solaris_idle.c | 282 ++++++++++++++++++++++++++++++++++--
 + target/sparc/trace-events   |   3 +
-+ target/sparc/translate.c    | 142 ++++++++++++++++++-
++ target/sparc/translate.c    | 142 +++++++++++++++++-
 + target/sparc/win_helper.c   |   5 +
-+ 8 files changed, 460 insertions(+), 16 deletions(-)
++ 8 files changed, 472 insertions(+), 16 deletions(-)
 +
 +diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
 +index 13ebb122a3..102ac45e91 100644
@@ -4006,7 +4092,7 @@ index 0000000..5c0c030
 +     },
 + #endif
 +diff --git a/target/sparc/solaris_idle.c b/target/sparc/solaris_idle.c
-+index 747d6c2944..8f0cf87361 100644
++index 747d6c2944..fc9cb97f99 100644
 +--- a/target/sparc/solaris_idle.c
 ++++ b/target/sparc/solaris_idle.c
 +@@ -47,11 +47,10 @@
@@ -4023,7 +4109,7 @@ index 0000000..5c0c030
 + #include "trace.h"
 + 
 + /*
-+@@ -73,23 +72,50 @@ static bool solaris_idle_polled(CPUSPARCState *env)
++@@ -73,23 +72,58 @@ static bool solaris_idle_polled(CPUSPARCState *env)
 +     return now - env->solaris_idle_since >= SOLARIS_IDLE_POLL_NS;
 + }
 + 
@@ -4055,9 +4141,17 @@ index 0000000..5c0c030
 +-                               cpu_mmu_index(env_cpu(env), false), true,
 +-                               &host, 0);
 +-    if ((flags & TLB_INVALID_MASK) || !host) {
-++    pa = sparc_cpu_get_phys_addr_debug(cs, addr);
-++    if (pa == -1) {
-++        return NULL;
+++    if (env->mmuregs[0] & MMU_E) {
+++        pa = sparc_cpu_get_phys_addr_debug(cs, addr);
+++        if (pa == -1) {
+++            return NULL;
+++        }
+++    } else {
+++        /*
+++         * MMU off: data addresses are physical. (The debug lookup tries an
+++         * instruction fetch first, which boot mode takes from the PROM.)
+++         */
+++        pa = addr;
 ++    }
 ++    RCU_READ_LOCK_GUARD();
 ++    mr = address_space_translate(cs->as, pa, &xlat, &len, false,
@@ -4085,7 +4179,7 @@ index 0000000..5c0c030
 +     return true;
 + }
 + 
-+@@ -122,3 +148,219 @@ void HELPER(solaris_idle)(CPUSPARCState *env, target_ulong pc,
++@@ -122,3 +156,223 @@ void HELPER(solaris_idle)(CPUSPARCState *env, target_ulong pc,
 +     cs->exception_index = EXCP_HLT;
 +     cpu_loop_exit(cs);
 + }
@@ -4288,8 +4382,12 @@ index 0000000..5c0c030
 ++    }
 ++    qatomic_set(&env->solaris_idle_kick, false);
 ++    qatomic_set(&env->solaris_idle_mp_halted, true);
-++    /* Full barrier: a CPU that queues work from now on sees this one */
 ++    qatomic_or(&solaris_idle_mp_halted, 1u << cs->cpu_index);
+++    /*
+++     * Full barrier, pairs with the one in sparc_solaris_idle_mp_poke(): a
+++     * CPU that queues work from now on sees this one in the mask, or this
+++     * one sees its disp_nrunnable below.
+++     */
 ++    smp_mb();
 ++    if (be32_to_cpu(qatomic_read(nr))) {
 ++        sparc_solaris_idle_mp_leave(env);
@@ -4588,10 +4686,10 @@ index 0000000..4c68ba7
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
 new file mode 100644
-index 0000000..a1a0918
+index 0000000..463121b
 --- /dev/null
 +++ b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,250 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris multiprocessor idle halt on sun4m
 +
@@ -4603,10 +4701,14 @@ index 0000000..a1a0918
 +runnable, the loop runs at full speed again. It must run at full speed
 +with solaris-smp-idle=off, at interrupt level 15 and with one CPU. Any
 +trap stops the test with the trap type in RAM.
++
++The PROM word at the RAM address of disp_nrunnable says 1: with the MMU
++off in boot mode an instruction fetch from there would read it, so the
++idle case also checks that the helper reads RAM, as the loop does.
 +---
 + tests/qtest/meson.build                   |   3 +-
-+ tests/qtest/sun4m-solaris-smp-idle-test.c | 193 ++++++++++++++++++++++
-+ 2 files changed, 195 insertions(+), 1 deletion(-)
++ tests/qtest/sun4m-solaris-smp-idle-test.c | 209 ++++++++++++++++++++++
++ 2 files changed, 211 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4m-solaris-smp-idle-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -4625,10 +4727,10 @@ index 0000000..a1a0918
 + qtests_sparc64 = \
 +diff --git a/tests/qtest/sun4m-solaris-smp-idle-test.c b/tests/qtest/sun4m-solaris-smp-idle-test.c
 +new file mode 100644
-+index 0000000000..66b1ad7d1d
++index 0000000000..51ce8981cd
 +--- /dev/null
 ++++ b/tests/qtest/sun4m-solaris-smp-idle-test.c
-+@@ -0,0 +1,193 @@
++@@ -0,0 +1,209 @@
 ++/*
 ++ * QTest: halting idle CPUs in the multiprocessor idle loop of Solaris on
 ++ * sun4m
@@ -4656,7 +4758,8 @@ index 0000000..a1a0918
 ++#define RAM_COUNT       (RAM_CPU + 0)
 ++#define RAM_TRAP        (RAM_CPU + 0x20)
 ++#define RAM_NRUNNABLE   (RAM_CPU + 0x58)
-++#define PROM_WORDS      0x200
+++#define PROM_WORDS      0x420           /* up to past PROM_DECOY */
+++#define PROM_DECOY      (RAM_NRUNNABLE / 4)
 ++#define CODE            0x100           /* word index of the code */
 ++
 ++/* A loop that spins does far more rounds than this in 300 ms */
@@ -4677,7 +4780,7 @@ index 0000000..a1a0918
 ++        0x01000000,             /*        nop */
 ++        0x01000000,             /*        nop */
 ++        0x01000000,             /*        nop */
-++        0x90102000,             /*        clr   %o0             cpu_flags */
+++        0x90102000,             /*        clr   %o0            cpu_flags */
 ++        0x808a2004,             /* quies: btst  4, %o0 */
 ++        0x32bfffff,             /*        bne,a quies */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
@@ -4685,16 +4788,16 @@ index 0000000..a1a0918
 ++        0x80a22000,             /*        cmp   %o0, 0 */
 ++        0x22800008,             /*        be,a  idle */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
-++        0x40000013,             /*        call  ret             unset_idle_cpu */
+++        0x40000013,             /*        call  ret            unset_idle_cpu */
 ++        0x01000000,             /*         nop */
-++        0x40000011,             /*        call  ret             swtch */
+++        0x40000011,             /*        call  ret            swtch */
 ++        0x01000000,             /*         nop */
 ++        0x1080000a,             /*        b     count */
 ++        0x01000000,             /*         nop */
 ++        0x808a2020,             /* idle:  btst  0x20, %o0 */
 ++        0x32bffff2,             /*        bne,a quies */
 ++        0xd0162008,             /*         lduh [%i0 + 8], %o0 */
-++        0x4000000c,             /*        call  ret0            disp_getwork */
+++        0x4000000c,             /*        call  ret0           disp_getwork */
 ++        0x90100018,             /*         mov  %i0, %o0 */
 ++        0x80900008,             /*        tst   %o0 */
 ++        0x10800002,             /*        b     count */
@@ -4717,14 +4820,21 @@ index 0000000..a1a0918
 ++    be[0] = cpu_to_be32(0x10800000 | CODE);
 ++    be[1] = cpu_to_be32(0x01000000);
 ++    for (i = 1; i < CODE / 4; i++) {
-++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
-++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
-++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
-++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++        /* sethi %hi(0x1000), %g1; mov i, %g2; st %g2, [%g1 + 0x20]; b . */
+++        be[4 * i] = cpu_to_be32(0x03000004);
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i);
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);
 ++    }
 ++    for (i = 0; i < ARRAY_SIZE(code); i++) {
 ++        be[CODE + i] = cpu_to_be32(code[i]);
 ++    }
+++    /*
+++     * The PROM word at the RAM address of disp_nrunnable says 1. With the
+++     * MMU off in boot mode an instruction fetch from there reads it, a data
+++     * load reads RAM: the idle helper must read RAM, like the loop.
+++     */
+++    be[PROM_DECOY] = cpu_to_be32(1);
 ++    fd = g_file_open_tmp("sun4m-solaris-smp-idle-prom-XXXXXX", &path, NULL);
 ++    g_assert_cmpint(fd, >=, 0);
 ++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
@@ -4771,6 +4881,7 @@ index 0000000..a1a0918
 ++}
 ++
 ++#define PSR_S_ET        0xa0
+++#define PSR_S_ET_PIL15  0xfa0
 ++
 ++/*
 ++ * Nothing runnable, interrupts enabled at level 0: the CPU halts and the
@@ -4791,34 +4902,2425 @@ index 0000000..a1a0918
 ++    finish(&r);
 ++}
 ++
+++typedef struct RunningCase {
+++    const char *name;
+++    const char *machine;
+++    uint32_t psr;
+++} RunningCase;
+++
 ++static void test_running(const void *data)
 ++{
-++    const char *const *t = data;
+++    const RunningCase *t = data;
 ++    Run r;
 ++
-++    start(&r, t[0], 0, strtoul(t[1], NULL, 0));
+++    start(&r, t->machine, 0, t->psr);
 ++    g_assert_cmpuint(rounds(&r), >, 10 * HALTED_MAX);
 ++    finish(&r);
 ++}
 ++
 ++int main(int argc, char **argv)
 ++{
-++    static const char *const off[] = {
-++        "SS-20,solaris-smp-idle=off -smp 2", "0xa0"
+++    static const RunningCase running[] = {
+++        { "off", "SS-20,solaris-smp-idle=off -smp 2", PSR_S_ET },
+++        { "pil15", "SS-20 -smp 2", PSR_S_ET_PIL15 },
+++        { "smp1", "SS-20", PSR_S_ET },
 ++    };
-++    static const char *const pil15[] = { "SS-20 -smp 2", "0xfa0" };
-++    static const char *const smp1[] = { "SS-20", "0xa0" };
+++    int i;
 ++
 ++    g_test_init(&argc, &argv, NULL);
 ++
 ++    if (qtest_has_accel("tcg")) {
 ++        qtest_add_func("sun4m-solaris-smp-idle/idle", test_idle);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/off", off, test_running);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/pil15", pil15,
-++                            test_running);
-++        qtest_add_data_func("sun4m-solaris-smp-idle/smp1", smp1,
-++                            test_running);
+++        for (i = 0; i < ARRAY_SIZE(running); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-solaris-smp-idle/%s", running[i].name);
+++            qtest_add_data_func(name, &running[i], test_running);
+++        }
 ++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd.patch b/debian/patches/wsh/0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd.patch
+new file mode 100644
+index 0000000..bc46d35
+--- /dev/null
++++ b/debian/patches/wsh/0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd.patch
+@@ -0,0 +1,102 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] target/sparc: let sparc32 ld and st %fsr ignore rd
++
++Real V7 and V8 chips ignore the rd field of LDFSR and STFSR. Since the
++move to decodetree (upstream 3d3c06737b, QEMU 8.2) QEMU took them only
++with rd 0 and raised an illegal instruction for any other rd.
++
++Old static SunOS 4 binaries have rd 4 there: the _sigtramp of an old
++libc saves the FSR with c92ba0e0 (st %fsr, [%sp + 0xe0]) and loads it
++back with c90ba0e0. These programs died with SIGILL at the first signal
++after they had used the FPU. One is islandLIC, the 1992 FLEXlm daemon
++of Island Productivity Series 3.0: it died about a minute after it
++started.
++
++sparc32 now takes any rd, as QEMU did before 8.2. sparc64 does not
++change: rd 0 is LDFSR and STFSR, rd 1 LDXFSR and STXFSR, rd 3 LDXEFSR,
++and the rest are still illegal.
++
++Tested on SunOS 4.1.4 (SS-5): a program with both words gets SIGILL on
++the old build and runs on the new one, islandLIC stays up, and the
++sparc and sparc64 qtests pass.
++
++Origin: https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2
++---
++ target/sparc/insns.decode | 14 +++++++++-----
++ target/sparc/translate.c  | 23 +++++++++++++++++++++--
++ 2 files changed, 30 insertions(+), 7 deletions(-)
++
++diff --git a/target/sparc/insns.decode b/target/sparc/insns.decode
++index 242ec42016..bb781c3891 100644
++--- a/target/sparc/insns.decode
+++++ b/target/sparc/insns.decode
++@@ -662,15 +662,19 @@ STX         11 ..... 011110 ..... . .............          @r_r_r_asi # STXA
++ STX         11 ..... 011110 ..... . .............          @r_r_i_asi # STXA
++ 
++ LDF         11 ..... 100000 ..... . .............          @r_r_ri_na
++-LDFSR       11 00000 100001 ..... . .............          @n_r_ri
++-LDXFSR      11 00001 100001 ..... . .............          @n_r_ri
++-LDXEFSR     11 00011 100001 ..... . .............          @n_r_ri
+++{
+++  LDXFSR    11 00001 100001 ..... . .............          @n_r_ri
+++  LDXEFSR   11 00011 100001 ..... . .............          @n_r_ri
+++  LDFSR     11 ..... 100001 ..... . .............          @r_r_ri    # v7,v8: any rd
+++}
++ LDQF        11 ..... 100010 ..... . .............          @q_r_ri_na
++ LDDF        11 ..... 100011 ..... . .............          @d_r_ri_na
++ 
++ STF         11 ..... 100100 ..... . .............          @r_r_ri_na
++-STFSR       11 00000 100101 ..... . .............          @n_r_ri
++-STXFSR      11 00001 100101 ..... . .............          @n_r_ri
+++{
+++  STXFSR    11 00001 100101 ..... . .............          @n_r_ri
+++  STFSR     11 ..... 100101 ..... . .............          @r_r_ri    # v7,v8: any rd
+++}
++ {
++   STQF      11 ..... 100110 ..... . .............          @q_r_ri_na # v9
++   STDFQ     11 ..... 100110 ..... . .............          @r_r_ri    # v7,v8
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 913c012917..65bc139929 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -4659,11 +4659,26 @@ static bool trans_STDFQ(DisasContext *dc, arg_STDFQ *a)
++ #endif
++ }
++ 
+++/*
+++ * V9 has LDFSR and STFSR only with rd 0 (rd 1 is LDXFSR and STXFSR, rd 3
+++ * LDXEFSR). V7 and V8 chips ignore rd, and old SunOS binaries have rd 4
+++ * there: the _sigtramp of an old static libc saves the FSR with c92ba0e0.
+++ * So sparc32 takes any rd.
+++ */
+++static bool fsr_rd_ok(DisasContext *dc, int rd)
+++{
+++    return !avail_64(dc) || rd == 0;
+++}
+++
++ static bool trans_LDFSR(DisasContext *dc, arg_r_r_ri *a)
++ {
++-    TCGv addr = gen_ldst_addr(dc, a->rs1, a->imm, a->rs2_or_imm);
+++    TCGv addr;
++     TCGv_i32 tmp;
++ 
+++    if (!fsr_rd_ok(dc, a->rd)) {
+++        return false;
+++    }
+++    addr = gen_ldst_addr(dc, a->rs1, a->imm, a->rs2_or_imm);
++     if (addr == NULL) {
++         return false;
++     }
++@@ -4739,7 +4754,11 @@ static bool do_stfsr(DisasContext *dc, arg_r_r_ri *a, MemOp mop)
++     return advance_pc(dc);
++ }
++ 
++-TRANS(STFSR, ALL, do_stfsr, a, MO_BEUL)
+++static bool trans_STFSR(DisasContext *dc, arg_r_r_ri *a)
+++{
+++    return fsr_rd_ok(dc, a->rd) && do_stfsr(dc, a, MO_BEUL);
+++}
+++
++ TRANS(STXFSR, 64, do_stfsr, a, MO_BEUQ)
++ 
++ static bool do_fc(DisasContext *dc, int rd, int32_t c)
+diff --git a/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch b/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
+new file mode 100644
+index 0000000..11203ae
+--- /dev/null
++++ b/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
+@@ -0,0 +1,168 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test ld and st %fsr with any rd on sun4m
++
++A tiny boot PROM enables the FPU, loads a value into the FSR with
++ld [%sp + 0xe0], %fsr, clears the word and stores the FSR back with
++st %fsr, [%sp + 0xe0], both with the same rd: 0, 4 (c90ba0e0 and
++c92ba0e0, the words of an old SunOS libc's _sigtramp) and 31. It must
++get to the end without a trap, and RD, TEM, fcc, aexc and cexc must
++read back.
++
++Without the previous patch the rd 4 case fails with trap type 2
++(illegal instruction); rd 0 passes with and without it.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4m-fsr-rd-test.c | 130 ++++++++++++++++++++++++++++++++
++ 2 files changed, 132 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-fsr-rd-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9bd606b70d..0ebc864fa5 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -203,7 +203,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-escc-test', 'sun4m-apc-test',
++                 'sun4m-solaris-idle-test', 'sun4m-mmu-nofault-test',
++                 'sun4m-pil-delay-slot-test',
++-                'sun4m-solaris-smp-idle-test'] + \
+++                'sun4m-solaris-smp-idle-test',
+++                'sun4m-fsr-rd-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-fsr-rd-test.c b/tests/qtest/sun4m-fsr-rd-test.c
++new file mode 100644
++index 0000000000..b7d9973f7c
++--- /dev/null
+++++ b/tests/qtest/sun4m-fsr-rd-test.c
++@@ -0,0 +1,130 @@
+++/*
+++ * QTest: ld and st %fsr with any rd on sun4m
+++ *
+++ * V7 and V8 chips ignore the rd field of LDFSR and STFSR. Old static
+++ * SunOS 4 binaries have rd 4 there: the _sigtramp of an old libc saves
+++ * the FSR with c92ba0e0 (st %fsr, [%sp + 0xe0]) and loads it back with
+++ * c90ba0e0 (ld [%sp + 0xe0], %fsr). QEMU 8.2 to 11.1 took these words
+++ * only with rd 0 and raised an illegal instruction trap for any other rd.
+++ *
+++ * A boot PROM enables the FPU, stores a value at [%sp + 0xe0], loads it
+++ * into the FSR, clears the word and stores the FSR back there, with the
+++ * same rd in both words. It must get to the end without a trap, and the
+++ * fields that LDFSR sets must read back.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: the trap marker, the end marker and the FSR word at %sp + 0xe0 */
+++#define RAM_TRAP        0x1020ULL
+++#define RAM_DONE        0x1024ULL
+++#define RAM_FSR         0x20e0ULL
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++
+++/* The FSR fields LDFSR sets: RD, TEM, fcc, aexc and cexc */
+++#define FSR_LD_MASK     0xcf800fffu
+++
+++typedef struct FsrCase {
+++    const char *name;
+++    unsigned rd;
+++    uint32_t fsr;
+++} FsrCase;
+++
+++static const FsrCase cases[] = {
+++    { "rd0", 0, 0x80000460 },   /* RD +inf, fcc 1, aexc dz nx */
+++    { "rd4", 4, 0x48000ca0 },   /* RD zero, NVM, fcc 3, aexc uf nx */
+++    { "rd31", 31, 0xc0800815 }, /* RD -inf, NXM, fcc 2, cexc nv uf nx */
+++};
+++
+++/*
+++ * The PROM: a trap table whose entries store their trap type at RAM_TRAP
+++ * and stop, and at 0x400 the test. It runs from reset: MMU off, so
+++ * instructions come from the PROM and data from RAM.
+++ */
+++static char *write_prom(const FsrCase *c)
+++{
+++    uint32_t code[] = {
+++        0x03000004,                 /* sethi %hi(0x1000), %g1 */
+++        0x82106fa0,                 /* or    %g1, 0xfa0, %g1 */
+++        0x81886000,                 /* wr    %g1, %psr     EF, PIL 15, S, ET */
+++        0x01000000,                 /* nop */
+++        0x01000000,                 /* nop */
+++        0x01000000,                 /* nop */
+++        0x1d000008,                 /* sethi %hi(0x2000), %sp */
+++        0x05000000 | (c->fsr >> 10),    /* sethi %hi(fsr), %g2 */
+++        0x8410a000 | (c->fsr & 0x3ff),  /* or    %g2, %lo(fsr), %g2 */
+++        0xc423a0e0,                 /* st    %g2, [%sp + 0xe0] */
+++        0xc10ba0e0 | (c->rd << 25), /* ld    [%sp + 0xe0], %fsr (c90ba0e0) */
+++        0xc023a0e0,                 /* st    %g0, [%sp + 0xe0] */
+++        0xc12ba0e0 | (c->rd << 25), /* st    %fsr, [%sp + 0xe0] (c92ba0e0) */
+++        0x03000004,                 /* sethi %hi(0x1000), %g1 */
+++        0x86102001,                 /* mov   1, %g3 */
+++        0xc6206024,                 /* st    %g3, [%g1 + 0x24]  done */
+++        0x10800000,                 /* b     . */
+++        0x01000000,                 /*  nop */
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(0x01000000);
+++    /* Trap i: store i at RAM_TRAP and stop */
+++    for (i = 1; i < CODE / 4; i++) {
+++        be[4 * i] = cpu_to_be32(0x03000004);         /* sethi %hi(0x1000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-fsr-rd-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++static void test_fsr_rd(const void *data)
+++{
+++    const FsrCase *c = data;
+++    g_autofree char *prom = write_prom(c);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine SS-5 -accel tcg -bios %s", prom);
+++
+++    while (qtest_readl(qts, RAM_TRAP) == 0 &&
+++           qtest_readl(qts, RAM_DONE) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    /* An illegal instruction would be trap type 2 */
+++    g_assert_cmphex(qtest_readl(qts, RAM_TRAP), ==, 0);
+++    g_assert_cmpuint(qtest_readl(qts, RAM_DONE), ==, 1);
+++    g_assert_cmphex(qtest_readl(qts, RAM_FSR) & FSR_LD_MASK, ==, c->fsr);
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-fsr-rd/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_fsr_rd);
+++        }
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch b/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
+new file mode 100644
+index 0000000..5fff9ae
+--- /dev/null
++++ b/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
+@@ -0,0 +1,652 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/audio/cs4231: play sound through the apc dma engine
++
++The SPARCstation 5 codec made no sound: the APC DMA registers only kept
++what was written, so SunOS 4.1.4's driver waited for ever for its first
++buffer to end. Every program that drained /dev/audio hung, and SimCity
++for HyperLook froze at its first sound.
++
++Play the APC's playback buffers. Take the next buffer when the codec
++asks for samples, which needs playback on in the codec too (PEN), and
++raise PI and PD; raise PM and PMI when the pipe runs empty. Read the
++samples through the IOMMU at the codec's rate and play them into the
++audiodev, in all the codec's formats but ADPCM, with the DAC volume.
++Capture is still not done.
++
++The codec asks for its first samples at the next audio callback, not in
++the register write that turns it on. SunOS queues the rest of a write
++in that moment; when the first PI came before it, the driver played its
++first buffer twice.
++
++Tested with SunOS 4.1.4: a drain of 8000 bytes returns after 1.0 s with
++8000 samples played, twice in a row. /usr/demo/SOUND/play of
++spacemusic.au plays for 6.00 s and peaks at -5.2 dBFS (the file: -4.8).
++SimCity for HyperLook runs with its own audiomixer and plays its sounds.
++
++Origin: https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c
++---
++ hw/audio/cs4231.c     | 496 +++++++++++++++++++++++++++++++++++++++++-
++ hw/audio/trace-events |   3 +
++ 2 files changed, 487 insertions(+), 12 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index 7844b5b6c9..fba2553a35 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -22,21 +22,108 @@
++  * THE SOFTWARE.
++  */
++ 
+++/*
+++ * The SPARCstation 5 has the CS4231 codec behind Sun's APC DMA engine.
+++ * The first 16 bytes are the codec's own registers, the rest the APC's:
+++ *
+++ *   0x00 codec index      0x04 codec data       0x08 codec status
+++ *   0x0c codec PIO data   0x10 APC CSR
+++ *   0x20 capture VA       0x24 capture count    0x28 next VA   0x2c next count
+++ *   0x30 playback VA      0x34 playback count   0x38 next VA   0x3c next count
+++ *
+++ * Playback: the driver writes the next address and then the next count.
+++ * When the codec first asks for samples, and again each time the current
+++ * buffer is done, the APC moves the next buffer into the current
+++ * registers, sets PD (the next registers are free again) and raises PI.
+++ * When a buffer ends and no next one is loaded the pipe is
+++ * empty: PM and PMI. The interrupt bits are cleared by writing 1s. The
+++ * addresses go through the IOMMU, and the samples are played into the
+++ * audiodev at the codec's rate, so a driver that waits for the end of its
+++ * sound (SunOS AUDIO_DRAIN) gets it in real time. The buffers are taken
+++ * at that rate too, at most 50 ms ahead: the real APC has only a small
+++ * FIFO, and SunOS loads the next buffer only after PI, so taking a whole
+++ * buffer at once would leave the pipe empty.
+++ *
+++ * Capture is not done: its registers keep what is written, and the
+++ * capture pipe always reads as empty.
+++ */
+++
++ #include "qemu/osdep.h"
++ #include "hw/core/sysbus.h"
+++#include "hw/core/irq.h"
+++#include "hw/core/qdev-properties.h"
+++#include "hw/sparc/sun4m_iommu.h"
++ #include "migration/vmstate.h"
+++#include "qemu/audio.h"
+++#include "qemu/bswap.h"
+++#include "qemu/host-utils.h"
++ #include "qemu/module.h"
+++#include "qemu/timer.h"
+++#include "system/address-spaces.h"
+++#include "system/dma.h"
++ #include "trace.h"
++ #include "qom/object.h"
++ 
++-/*
++- * In addition to Crystal CS4231 there is a DMA controller on Sparc.
++- */
++ #define CS_SIZE 0x40
++ #define CS_REGS 16
++ #define CS_DREGS 32
++ #define CS_MAXDREG (CS_DREGS - 1)
++ 
+++/* Registers, as offset / 4 */
+++#define CS_IAR      0       /* codec index */
+++#define CS_IDR      1       /* codec data */
+++#define CS_STATUS   2       /* codec status */
+++#define CS_CSR      4       /* APC control and status */
+++#define CS_PVA      12      /* playback address */
+++#define CS_PC       13      /* playback count */
+++#define CS_PNVA     14      /* next playback address */
+++#define CS_PNC      15      /* next playback count */
+++
+++/* APC CSR */
+++#define APC_IP      0x00800000  /* an interrupt is pending (read only) */
+++#define APC_PI      0x00400000  /* playback took the next buffer */
+++#define APC_CI      0x00200000  /* capture took the next buffer */
+++#define APC_EI      0x00100000  /* error */
+++#define APC_IE      0x00080000  /* interrupt enable */
+++#define APC_PIE     0x00040000  /* PI enable */
+++#define APC_CIE     0x00020000  /* CI enable */
+++#define APC_EIE     0x00010000  /* EI enable */
+++#define APC_PMI     0x00008000  /* playback pipe went empty */
+++#define APC_PM      0x00004000  /* playback pipe is empty (read only) */
+++#define APC_PD      0x00002000  /* next playback registers free (read only) */
+++#define APC_PMIE    0x00001000  /* PMI enable */
+++#define APC_CM      0x00000800  /* capture pipe is empty (read only) */
+++#define APC_CD      0x00000400  /* next capture registers free (read only) */
+++#define APC_CMI     0x00000200  /* capture pipe went empty */
+++#define APC_CMIE    0x00000100  /* CMI enable */
+++#define APC_PPAUSE  0x00000080  /* pause playback */
+++#define APC_CPAUSE  0x00000040  /* pause capture */
+++#define APC_PDMA_GO 0x00000008  /* playback DMA on */
+++#define APC_CDMA_GO 0x00000004  /* capture DMA on */
+++#define APC_RESET   0x00000001
+++
+++#define APC_INTS    (APC_PI | APC_CI | APC_EI | APC_PMI | APC_CMI)
+++#define APC_RW      (APC_IE | APC_PIE | APC_CIE | APC_EIE | APC_PMIE | \
+++                     APC_CMIE | 0xff)
+++
+++/* Codec indirect registers */
+++#define CS_LDAC     6       /* left DAC output: mute, attenuation */
+++#define CS_RDAC     7       /* right DAC output */
+++#define CS_PFMT     8       /* playback format and rate */
+++#define CS_ICONF    9       /* interface configuration */
+++#define CS_MODE     12      /* mode and ID */
+++#define CS_DAC_MUTE 0x80
+++#define CS_PEN      0x01    /* playback on (in CS_ICONF) */
+++#define CS_MODE2    0x40
+++
+++/* Playback formats, bits 7-5 of CS_PFMT */
+++#define CS_FMT_U8       0
+++#define CS_FMT_ULAW     1
+++#define CS_FMT_S16LE    2
+++#define CS_FMT_ALAW     3
+++#define CS_FMT_ADPCM    5
+++#define CS_FMT_S16BE    6
+++
++ #define TYPE_CS4231 "sun-CS4231"
++ typedef struct CSState CSState;
++ DECLARE_INSTANCE_CHECKER(CSState, CS4231,
++@@ -47,14 +134,322 @@ struct CSState {
++ 
++     MemoryRegion iomem;
++     qemu_irq irq;
+++    IOMMUState *iommu;
+++    AudioBackend *audio_be;
+++    SWVoiceOut *voice;
++     uint32_t regs[CS_REGS];
++     uint8_t dregs[CS_DREGS];
+++    bool play_next;         /* the next playback registers are loaded */
+++    int play_fmt;           /* from CS_PFMT */
+++    int play_channels;
+++    int play_freq;
+++    bool play_running;      /* since play_start, without a gap */
+++    int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
+++    uint64_t play_units;    /* taken since play_start */
++ };
++ 
++-#define CS_RAP(s) ((s)->regs[0] & CS_MAXDREG)
+++#define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++ #define CS_VER 0xa0
++ #define CS_CDC_VER 0x8a
++ 
+++static AddressSpace *cs_dma_as(CSState *s)
+++{
+++    return s->iommu ? &s->iommu->iommu_as : &address_space_memory;
+++}
+++
+++static bool cs_play_go(CSState *s)
+++{
+++    return (s->regs[CS_CSR] & (APC_PDMA_GO | APC_PPAUSE)) == APC_PDMA_GO;
+++}
+++
+++/*
+++ * The APC fetches only when the codec asks for samples, so it takes no
+++ * buffer before playback is on in the codec too. SunOS and the BSDs load
+++ * the first buffer, then write the CSR with PI set to clear old
+++ * interrupts, and only then set PEN: a buffer taken before that write
+++ * would lose its PI, and the driver would never load the next one.
+++ *
+++ * The codec asks a moment after PEN, here at the next audio callback,
+++ * not in the register write. SunOS queues the rest of a write in that
+++ * moment. If the first PI comes before that, its driver thinks the
+++ * sound has ended, and it plays the first buffer again with the rest.
+++ */
+++static bool cs_play_fetch(CSState *s)
+++{
+++    return cs_play_go(s) && (s->dregs[CS_ICONF] & CS_PEN);
+++}
+++
+++/* There is a buffer to play, or one to take. */
+++static bool cs_play_active(CSState *s)
+++{
+++    return cs_play_fetch(s) && (s->regs[CS_PC] != 0 || s->play_next);
+++}
+++
+++static uint32_t cs_read_csr(CSState *s)
+++{
+++    uint32_t csr = s->regs[CS_CSR];
+++
+++    if (csr & APC_INTS) {
+++        csr |= APC_IP;
+++    }
+++    if (!s->play_next) {
+++        csr |= APC_PD;
+++        if (s->regs[CS_PC] == 0) {
+++            csr |= APC_PM;
+++        }
+++    }
+++    if (!cs_play_go(s)) {
+++        csr |= APC_PM;
+++    }
+++    return csr | APC_CM | APC_CD;
+++}
+++
+++static void cs_update_irq(CSState *s)
+++{
+++    uint32_t csr = s->regs[CS_CSR];
+++    bool level = (csr & APC_IE) &&
+++                 (((csr & APC_PI) && (csr & APC_PIE)) ||
+++                  ((csr & APC_PMI) && (csr & APC_PMIE)) ||
+++                  ((csr & APC_CI) && (csr & APC_CIE)) ||
+++                  ((csr & APC_CMI) && (csr & APC_CMIE)) ||
+++                  ((csr & APC_EI) && (csr & APC_EIE)));
+++
+++    qemu_set_irq(s->irq, level);
+++}
+++
+++/* The current playback buffer is done: take the next one, if any. */
+++static void cs_play_next(CSState *s)
+++{
+++    if (s->play_next) {
+++        s->regs[CS_PVA] = s->regs[CS_PNVA];
+++        s->regs[CS_PC] = s->regs[CS_PNC];
+++        s->play_next = false;
+++        s->regs[CS_CSR] |= APC_PI;
+++        trace_cs4231_play_next(s->regs[CS_PVA], s->regs[CS_PC]);
+++    } else {
+++        s->regs[CS_CSR] |= APC_PMI;
+++        trace_cs4231_play_empty();
+++    }
+++}
+++
+++static void cs_play_update(CSState *s)
+++{
+++    bool run = cs_play_active(s);
+++
+++    if (run && !s->play_running) {
+++        s->play_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        s->play_units = 0;
+++    }
+++    s->play_running = run;
+++    if (s->voice) {
+++        audio_be_set_active_out(s->audio_be, s->voice, run);
+++    }
+++    cs_update_irq(s);
+++}
+++
+++/* G.711 decoders, after Sun's public domain g711.c */
+++static int16_t cs_ulaw(uint8_t u)
+++{
+++    int t;
+++
+++    u = ~u;
+++    t = (((u & 0x0f) << 3) + 0x84) << ((u & 0x70) >> 4);
+++    return (u & 0x80) ? 0x84 - t : t - 0x84;
+++}
+++
+++static int16_t cs_alaw(uint8_t a)
+++{
+++    int t, seg;
+++
+++    a ^= 0x55;
+++    t = (a & 0x0f) << 4;
+++    seg = (a & 0x70) >> 4;
+++    if (seg == 0) {
+++        t += 8;
+++    } else {
+++        t = (t + 0x108) << (seg - 1);
+++    }
+++    return (a & 0x80) ? t : -t;
+++}
+++
+++/*
+++ * Guest bytes per unit and host bytes per unit: a unit is one sample of
+++ * each channel, or two of them for 4-bit ADPCM. The host side is always
+++ * 16-bit signed.
+++ */
+++static void cs_play_units(CSState *s, uint32_t *in, uint32_t *out)
+++{
+++    uint32_t ch = s->play_channels;
+++
+++    switch (s->play_fmt) {
+++    case CS_FMT_S16LE:
+++    case CS_FMT_S16BE:
+++        *in = 2 * ch;
+++        *out = 2 * ch;
+++        break;
+++    case CS_FMT_ADPCM:
+++        *in = ch;
+++        *out = 4 * ch;
+++        break;
+++    default:
+++        *in = ch;
+++        *out = 2 * ch;
+++        break;
+++    }
+++}
+++
+++static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
+++                       uint32_t units)
+++{
+++    uint32_t i, n = units * s->play_channels;
+++
+++    switch (s->play_fmt) {
+++    case CS_FMT_U8:
+++        for (i = 0; i < n; i++) {
+++            out[i] = (in[i] - 128) * 256;
+++        }
+++        break;
+++    case CS_FMT_ULAW:
+++        for (i = 0; i < n; i++) {
+++            out[i] = cs_ulaw(in[i]);
+++        }
+++        break;
+++    case CS_FMT_ALAW:
+++        for (i = 0; i < n; i++) {
+++            out[i] = cs_alaw(in[i]);
+++        }
+++        break;
+++    case CS_FMT_S16LE:
+++        for (i = 0; i < n; i++) {
+++            out[i] = lduw_le_p(in + 2 * i);
+++        }
+++        break;
+++    case CS_FMT_S16BE:
+++        for (i = 0; i < n; i++) {
+++            out[i] = lduw_be_p(in + 2 * i);
+++        }
+++        break;
+++    default:
+++        /* ADPCM and the reserved formats: silence at the right rate */
+++        memset(out, 0, units * 4 * s->play_channels);
+++        break;
+++    }
+++}
+++
+++/* The audiodev has room for avail bytes: feed it from the DMA buffers. */
+++static void cs_audio_callback(void *opaque, int avail)
+++{
+++    CSState *s = opaque;
+++    uint8_t in[1024];
+++    int16_t out[2048];
+++    uint32_t unit_in, unit_out;
+++
+++    uint32_t room = MAX(avail, 0);
+++    uint64_t rate, due, budget;
+++
+++    if (!s->play_running) {
+++        return;
+++    }
+++    /* units a second: one sample of each channel, two for ADPCM */
+++    rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
+++    due = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->play_start,
+++                   rate, NANOSECONDS_PER_SECOND) + rate / 20;
+++    budget = due > s->play_units ? due - s->play_units : 0;
+++
+++    cs_play_units(s, &unit_in, &unit_out);
+++    while (cs_play_fetch(s)) {
+++        uint32_t pc = s->regs[CS_PC];
+++        uint32_t units;
+++
+++        if (pc == 0) {
+++            /* the first buffer, or one loaded after the pipe ran empty */
+++            if (!s->play_next) {
+++                break;
+++            }
+++            cs_play_next(s);
+++            cs_update_irq(s);
+++            continue;
+++        }
+++        if (pc < unit_in) {
+++            /* a partial sample at the end of a buffer: skip it */
+++            s->regs[CS_PVA] += pc;
+++            s->regs[CS_PC] = 0;
+++        } else {
+++            units = MIN(pc / unit_in, room / unit_out);
+++            units = MIN(units, sizeof(in) / unit_in);
+++            units = MIN(units, sizeof(out) / unit_out);
+++            units = MIN(units, budget);
+++            if (units == 0) {
+++                break;
+++            }
+++            dma_memory_read(cs_dma_as(s), s->regs[CS_PVA], in,
+++                            units * unit_in, MEMTXATTRS_UNSPECIFIED);
+++            cs_convert(s, in, out, units);
+++            units = audio_be_write(s->audio_be, s->voice, out,
+++                                   units * unit_out) / unit_out;
+++            if (units == 0) {
+++                break;
+++            }
+++            s->regs[CS_PVA] += units * unit_in;
+++            s->regs[CS_PC] -= units * unit_in;
+++            room -= units * unit_out;
+++            budget -= units;
+++            s->play_units += units;
+++        }
+++        if (s->regs[CS_PC] == 0) {
+++            cs_play_next(s);
+++            cs_update_irq(s);
+++        }
+++    }
+++    /* after a gap the clock starts again with the next buffer */
+++    s->play_running = cs_play_active(s);
+++}
+++
+++/* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
+++static uint8_t cs_dac_level(uint8_t reg)
+++{
+++    uint32_t i, v = 255 << 8;
+++
+++    if (reg & CS_DAC_MUTE) {
+++        return 0;
+++    }
+++    for (i = 0; i < (reg & 0x3f); i++) {
+++        v = v * 215 / 256;
+++    }
+++    return v >> 8;
+++}
+++
+++static void cs_set_volume(CSState *s)
+++{
+++    uint8_t l = s->dregs[CS_LDAC], r = s->dregs[CS_RDAC];
+++
+++    if (s->voice) {
+++        audio_be_set_volume_out_lr(s->audio_be, s->voice,
+++                                   (l & r & CS_DAC_MUTE) != 0,
+++                                   cs_dac_level(l), cs_dac_level(r));
+++    }
+++}
+++
+++/* (Re)open the voice for the codec's playback format and rate */
+++static void cs_play_setup(CSState *s)
+++{
+++    static const int divide[8] = { 3072, 1536, 896, 768, 448, 384, 512, 2560 };
+++    uint8_t val = s->dregs[CS_PFMT];
+++    struct audsettings as;
+++
+++    as.freq = ((val & 1) ? 16934400 : 24576000) / divide[(val >> 1) & 7];
+++    as.nchannels = (val & 0x10) ? 2 : 1;
+++    as.fmt = AUDIO_FORMAT_S16;
+++    as.big_endian = HOST_BIG_ENDIAN;
+++    s->play_channels = as.nchannels;
+++    s->play_freq = as.freq;
+++    s->play_fmt = (val >> 5) & ((s->dregs[CS_MODE] & CS_MODE2) ? 7 : 3);
+++    trace_cs4231_play_format(as.freq, as.nchannels, s->play_fmt);
+++    s->voice = audio_be_open_out(s->audio_be, s->voice, "cs4231", s,
+++                                 cs_audio_callback, &as);
+++    cs_set_volume(s);
+++}
+++
++ static void cs_reset(DeviceState *d)
++ {
++     CSState *s = CS4231(d);
++@@ -63,6 +458,12 @@ static void cs_reset(DeviceState *d)
++     memset(s->dregs, 0, CS_DREGS);
++     s->dregs[12] = CS_CDC_VER;
++     s->dregs[25] = CS_VER;
+++    s->play_next = false;
+++    s->play_running = false;
+++    if (s->audio_be) {
+++        cs_play_setup(s);
+++        cs_play_update(s);
+++    }
++ }
++ 
++ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++@@ -73,7 +474,7 @@ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++ 
++     saddr = addr >> 2;
++     switch (saddr) {
++-    case 1:
+++    case CS_IDR:
++         switch (CS_RAP(s)) {
++         case 3: // Write only
++             ret = 0;
++@@ -84,6 +485,10 @@ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++         }
++         trace_cs4231_mem_readl_dreg(CS_RAP(s), ret);
++         break;
+++    case CS_CSR:
+++        ret = cs_read_csr(s);
+++        trace_cs4231_mem_readl_reg(saddr, ret);
+++        break;
++     default:
++         ret = s->regs[saddr];
++         trace_cs4231_mem_readl_reg(saddr, ret);
++@@ -96,12 +501,13 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++                          uint64_t val, unsigned size)
++ {
++     CSState *s = opaque;
++-    uint32_t saddr;
+++    uint32_t saddr, csr;
+++    bool was_go;
++ 
++     saddr = addr >> 2;
++     trace_cs4231_mem_writel_reg(saddr, s->regs[saddr], val);
++     switch (saddr) {
++-    case 1:
+++    case CS_IDR:
++         trace_cs4231_mem_writel_dreg(CS_RAP(s), s->dregs[CS_RAP(s)], val);
++         switch(CS_RAP(s)) {
++         case 11:
++@@ -111,20 +517,56 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++             val &= 0x40;
++             val |= CS_CDC_VER; // Codec version
++             s->dregs[CS_RAP(s)] = val;
+++            cs_play_setup(s);
+++            break;
+++        case CS_LDAC:
+++        case CS_RDAC:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_set_volume(s);
+++            break;
+++        case CS_PFMT:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_play_setup(s);
+++            cs_play_update(s);
+++            break;
+++        case CS_ICONF:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_play_update(s);
++             break;
++         default:
++             s->dregs[CS_RAP(s)] = val;
++             break;
++         }
++         break;
++-    case 2: // Read only
+++    case CS_STATUS: // Read only
++         break;
++-    case 4:
++-        if (val & 1) {
+++    case CS_CSR:
+++        csr = s->regs[CS_CSR];
+++        was_go = csr & APC_PDMA_GO;
+++        if (val & APC_RESET) {
++             cs_reset(DEVICE(s));
+++            csr = 0;
+++            was_go = false;
+++        }
+++        /* 1s clear the interrupt bits; the read only bits are not kept */
+++        csr = (csr & APC_INTS & ~val) | (val & APC_RW);
+++        s->regs[CS_CSR] = csr;
+++        if (was_go && !(csr & APC_PDMA_GO)) {
+++            /* playback DMA off: drop what it still had */
+++            s->regs[CS_PC] = 0;
+++            s->play_next = false;
++         }
++-        val &= 0x7f;
+++        cs_play_update(s);
+++        break;
+++    case CS_PC:
+++        s->regs[saddr] = val;
+++        cs_play_update(s);
+++        break;
+++    case CS_PNC:
+++        /* the count loads the next buffer; a count of 0 unloads it */
++         s->regs[saddr] = val;
+++        s->play_next = val != 0;
+++        cs_play_update(s);
++         break;
++     default:
++         s->regs[saddr] = val;
++@@ -138,13 +580,25 @@ static const MemoryRegionOps cs_mem_ops = {
++     .endianness = DEVICE_BIG_ENDIAN,
++ };
++ 
+++static int cs_post_load(void *opaque, int version_id)
+++{
+++    CSState *s = opaque;
+++
+++    s->play_running = false;
+++    cs_play_setup(s);
+++    cs_play_update(s);
+++    return 0;
+++}
+++
++ static const VMStateDescription vmstate_cs4231 = {
++     .name ="cs4231",
++-    .version_id = 1,
+++    .version_id = 2,
++     .minimum_version_id = 1,
+++    .post_load = cs_post_load,
++     .fields = (const VMStateField[]) {
++         VMSTATE_UINT32_ARRAY(regs, CSState, CS_REGS),
++         VMSTATE_UINT8_ARRAY(dregs, CSState, CS_DREGS),
+++        VMSTATE_BOOL_V(play_next, CSState, 2),
++         VMSTATE_END_OF_LIST()
++     }
++ };
++@@ -160,11 +614,29 @@ static void cs4231_init(Object *obj)
++     sysbus_init_irq(dev, &s->irq);
++ }
++ 
+++static void cs4231_realize(DeviceState *dev, Error **errp)
+++{
+++    CSState *s = CS4231(dev);
+++
+++    if (!audio_be_check(&s->audio_be, errp)) {
+++        return;
+++    }
+++    cs_play_setup(s);
+++}
+++
+++static const Property cs4231_properties[] = {
+++    DEFINE_AUDIO_PROPERTIES(CSState, audio_be),
+++    DEFINE_PROP_LINK("iommu", CSState, iommu, TYPE_SUN4M_IOMMU,
+++                     IOMMUState *),
+++};
+++
++ static void cs4231_class_init(ObjectClass *klass, const void *data)
++ {
++     DeviceClass *dc = DEVICE_CLASS(klass);
++ 
+++    dc->realize = cs4231_realize;
++     device_class_set_legacy_reset(dc, cs_reset);
+++    device_class_set_props(dc, cs4231_properties);
++     dc->vmsd = &vmstate_cs4231;
++ }
++ 
++diff --git a/hw/audio/trace-events b/hw/audio/trace-events
++index 30f5921545..444554004a 100644
++--- a/hw/audio/trace-events
+++++ b/hw/audio/trace-events
++@@ -5,6 +5,9 @@ cs4231_mem_readl_dreg(uint32_t reg, uint32_t ret) "read dreg %d: 0x%02x"
++ cs4231_mem_readl_reg(uint32_t reg, uint32_t ret) "read reg %d: 0x%08x"
++ cs4231_mem_writel_reg(uint32_t reg, uint32_t old, uint32_t val) "write reg %d: 0x%08x -> 0x%08x"
++ cs4231_mem_writel_dreg(uint32_t reg, uint32_t old, uint32_t val) "write dreg %d: 0x%02x -> 0x%02x"
+++cs4231_play_format(int freq, int channels, int fmt) "playback %d Hz, %d channels, format %d"
+++cs4231_play_next(uint32_t va, uint32_t count) "playback buffer 0x%08x, %u bytes"
+++cs4231_play_empty(void) "playback pipe empty"
++ 
++ # es1370.c
++ es1370_frame_address_rd(int ch, uint32_t addr) "ch=%d addr=0x%08x"
+diff --git a/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch b/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
+new file mode 100644
+index 0000000..3a1e670
+--- /dev/null
++++ b/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
+@@ -0,0 +1,69 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/sparc/sun4m: give the cs4231 its interrupt level, iommu and audiodev
++
++OpenBIOS gives the SUNW,CS4231 node "intr" 5, and SunOS 4.1.4 takes the
++chip's interrupt at level 5 (dmesg: pri 5). The chip raised interrupt
++bit 5, which is level 11, so SunOS never saw it. Use bit 9: level 5.
++
++Link the chip to the IOMMU for its DMA, and add the machine's audiodev
++property, so -machine audiodev= picks the sound backend.
++
++Origin: https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6
++---
++ hw/sparc/sun4m.c | 22 +++++++++++++++++++---
++ 1 file changed, 19 insertions(+), 3 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 833b41a998..8b8a5d8baf 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -863,6 +863,7 @@ static void sun4m_hw_init(MachineState *machine)
++     DeviceState *dev, *ms_kb_orgate, *serial_orgate;
++     DeviceState *cpus[MAX_CPUS];
++     SysBusDevice *s;
+++    void *iommu;
++     unsigned int smp_cpus = machine->smp.cpus;
++     unsigned int max_cpus = machine->smp.max_cpus;
++     HostMemoryBackend *ram_memdev = machine->memdev;
++@@ -921,7 +922,8 @@ static void sun4m_hw_init(MachineState *machine)
++         afx_init(hwdef->afx_base);
++     }
++ 
++-    iommu_init(hwdef->iommu_base, hwdef->iommu_version, slavio_irq[30]);
+++    iommu = iommu_init(hwdef->iommu_base, hwdef->iommu_version,
+++                       slavio_irq[30]);
++ 
++     if (hwdef->iommu_pad_base) {
++         /* On the real hardware (SS-5, LX) the MMU is not padded, but aliased.
++@@ -1082,8 +1084,21 @@ static void sun4m_hw_init(MachineState *machine)
++                      slavio_irq[30], fdc_tc);
++ 
++     if (hwdef->cs_base) {
++-        sysbus_create_simple("sun-CS4231", hwdef->cs_base,
++-                             slavio_irq[5]);
+++        /* the APC DMA in front of the codec reads memory through the IOMMU */
+++        dev = qdev_new("sun-CS4231");
+++        if (machine->audiodev) {
+++            qdev_prop_set_string(dev, "audiodev", machine->audiodev);
+++        }
+++        object_property_set_link(OBJECT(dev), "iommu", OBJECT(iommu),
+++                                 &error_abort);
+++        s = SYS_BUS_DEVICE(dev);
+++        sysbus_realize_and_unref(s, &error_fatal);
+++        sysbus_mmio_map(s, 0, hwdef->cs_base);
+++        /*
+++         * OpenBIOS gives the node "intr" 5, so the guest's handler is at
+++         * interrupt level 5: interrupt bit 9 (SBus level 3) raises it.
+++         */
+++        sysbus_connect_irq(s, 0, slavio_irq[9]);
++     }
++ 
++     if (hwdef->dbri_base) {
++@@ -1173,6 +1188,7 @@ static void sun4m_machine_class_init(ObjectClass *oc, const void *data)
++     mc->default_boot_order = "c";
++     mc->default_display = "tcx";
++     mc->default_ram_id = "sun4m.ram";
+++    machine_add_audiodev_property(mc);
++ 
++     object_class_property_add_bool(oc, "sunos-idle", sun4m_get_sunos_idle,
++                                    sun4m_set_sunos_idle);
+diff --git a/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
+new file mode 100644
+index 0000000..6e022d2
+--- /dev/null
++++ b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
+@@ -0,0 +1,89 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: raise the SS-5's cs4231 at SBus level 5
++
++The real SPARCstation 5 has its CS4231 at SBus level 5, processor level
++9: its PROM (ss5.bin 2.15) gives the node "intr" 0x39, an SBus
++interrupt at level 9. The chip raised interrupt bit 9, SBus level 3
++(processor level 5), the level OpenBIOS's "intr" 5 gives SunOS 4.
++Solaris takes OpenBIOS's "interrupts" 5, SBus level 5, and waits at
++level 9 instead: Solaris 2.6's audioplay stopped after its first
++buffers with "processor level 3 SBus interrupt not serviced". Under the
++Sun PROM no guest would have found the interrupt.
++
++Raise interrupt bit 11, SBus level 5, as the real machine. The frame
++buffer (cg3 or TCX) is at SBus level 5 too, so both go through an OR
++gate, as the keyboard and mouse do. OpenBIOS gives the node "intr" 9
++to match (wsh-pve openbios patch 0016).
++---
++ hw/sparc/sun4m.c | 29 +++++++++++++++++++++++------
++ 1 file changed, 23 insertions(+), 6 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 8b8a5d8baf..44e10094d3 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -860,7 +860,8 @@ static void sun4m_hw_init(MachineState *machine)
++     uint32_t initrd_size;
++     DriveInfo *fd[MAX_FD];
++     FWCfgState *fw_cfg;
++-    DeviceState *dev, *ms_kb_orgate, *serial_orgate;
+++    DeviceState *dev, *ms_kb_orgate, *serial_orgate, *sbus5_orgate = NULL;
+++    qemu_irq sbus5_irq;
++     DeviceState *cpus[MAX_CPUS];
++     SysBusDevice *s;
++     void *iommu;
++@@ -910,6 +911,21 @@ static void sun4m_hw_init(MachineState *machine)
++     for (i = 0; i < 32; i++) {
++         slavio_irq[i] = qdev_get_gpio_in(slavio_intctl, i);
++     }
+++
+++    /*
+++     * SBus level 5 (interrupt bit 11, processor level 9): the frame buffer,
+++     * and on the SS-5 the CS4231 too, as on the real machine. Two devices
+++     * on one level need an OR gate.
+++     */
+++    sbus5_irq = slavio_irq[11];
+++    if (hwdef->cs_base) {
+++        sbus5_orgate = qdev_new(TYPE_OR_IRQ);
+++        object_property_set_int(OBJECT(sbus5_orgate), "num-lines", 2,
+++                                &error_fatal);
+++        qdev_realize_and_unref(sbus5_orgate, NULL, &error_fatal);
+++        qdev_connect_gpio_out(sbus5_orgate, 0, slavio_irq[11]);
+++        sbus5_irq = qdev_get_gpio_in(sbus5_orgate, 0);
+++    }
++     for (i = 0; i < MAX_CPUS; i++) {
++         slavio_cpu_irq[i] = qdev_get_gpio_in(slavio_intctl, 32 + i);
++     }
++@@ -975,7 +991,7 @@ static void sun4m_hw_init(MachineState *machine)
++             }
++ 
++             /* sbus irq 5 */
++-            cg3_init(hwdef->tcx_base, slavio_irq[11],
+++            cg3_init(hwdef->tcx_base, sbus5_irq,
++                      MAX(CG3_VRAM_SIZE,
++                          ROUND_UP(graphic_width * graphic_height, MiB)),
++                      graphic_width, graphic_height, graphic_depth);
++@@ -993,7 +1009,7 @@ static void sun4m_hw_init(MachineState *machine)
++                 exit(1);
++             }
++ 
++-            tcx_init(hwdef->tcx_base, slavio_irq[11], 0x00100000,
+++            tcx_init(hwdef->tcx_base, sbus5_irq, 0x00100000,
++                      graphic_width, graphic_height, graphic_depth);
++             vga_interface_created = true;
++         }
++@@ -1095,10 +1111,11 @@ static void sun4m_hw_init(MachineState *machine)
++         sysbus_realize_and_unref(s, &error_fatal);
++         sysbus_mmio_map(s, 0, hwdef->cs_base);
++         /*
++-         * OpenBIOS gives the node "intr" 5, so the guest's handler is at
++-         * interrupt level 5: interrupt bit 9 (SBus level 3) raises it.
+++         * SBus level 5, processor level 9, as the real SS-5 and its PROM
+++         * have it. OpenBIOS (wsh patch 0016) gives the node "interrupts" 5
+++         * and "intr" 9 to match: Solaris takes the first, SunOS 4 the second.
++          */
++-        sysbus_connect_irq(s, 0, slavio_irq[9]);
+++        sysbus_connect_irq(s, 0, qdev_get_gpio_in(sbus5_orgate, 1));
++     }
++ 
++     if (hwdef->dbri_base) {
+diff --git a/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch b/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
+new file mode 100644
+index 0000000..61ad457
+--- /dev/null
++++ b/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
+@@ -0,0 +1,40 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: no sound without an audiodev
++
++The machine gives the codec the -machine audiodev, and without one the
++codec asked for QEMU's default audio driver. With none available QEMU
++did not start ("no default audio driver available"), so an SS-5 without
++an audiodev, which ran before, did not run at all; with one, the codec
++took whatever host sound the default found.
++
++Do as the PC speaker does: open a voice only when an audiodev is set.
++Without one the chip keeps its registers and plays nothing, as before.
++---
++ hw/audio/cs4231.c | 7 +++++++
++ 1 file changed, 7 insertions(+)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index fba2553a35..e2b1fd5ccd 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -445,6 +445,9 @@ static void cs_play_setup(CSState *s)
++     s->play_freq = as.freq;
++     s->play_fmt = (val >> 5) & ((s->dregs[CS_MODE] & CS_MODE2) ? 7 : 3);
++     trace_cs4231_play_format(as.freq, as.nchannels, s->play_fmt);
+++    if (!s->audio_be) {
+++        return;
+++    }
++     s->voice = audio_be_open_out(s->audio_be, s->voice, "cs4231", s,
++                                  cs_audio_callback, &as);
++     cs_set_volume(s);
++@@ -618,6 +621,10 @@ static void cs4231_realize(DeviceState *dev, Error **errp)
++ {
++     CSState *s = CS4231(dev);
++ 
+++    /* no audiodev: the registers only, no sound (the machine's default) */
+++    if (!s->audio_be) {
+++        return;
+++    }
++     if (!audio_be_check(&s->audio_be, errp)) {
++         return;
++     }
+diff --git a/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
+new file mode 100644
+index 0000000..9e2a072
+--- /dev/null
++++ b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
+@@ -0,0 +1,126 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: play out the last samples when playback stops
++
++The APC takes its samples up to 50 ms ahead of the codec's clock, and
++the audiodev holds them until it has played them. When the pipe ran
++empty or the driver turned the playback DMA off, the codec turned its
++voice off at once, and the mixer drops what a voice that is off has not
++played yet: every sound lost its last 50 ms.
++
++Keep the voice on for 200 ms after playback stops, feeding nothing, and
++turn it off from the audio callback after that. A reset still turns it
++off at once.
++---
++ hw/audio/cs4231.c | 35 +++++++++++++++++++++++++++++++----
++ 1 file changed, 31 insertions(+), 4 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index e2b1fd5ccd..02578b35a8 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -44,6 +44,11 @@
++  * FIFO, and SunOS loads the next buffer only after PI, so taking a whole
++  * buffer at once would leave the pipe empty.
++  *
+++ * Because the samples are taken that far ahead, the voice stays on for
+++ * CS_DRAIN_NS after playback stops, at the end of the last buffer or when
+++ * the driver turns the DMA off, so that the audiodev still plays what was
+++ * taken: turning it off at once drops the last 50 ms of every sound.
+++ *
++  * Capture is not done: its registers keep what is written, and the
++  * capture pipe always reads as empty.
++  */
++@@ -65,6 +70,7 @@
++ #include "qom/object.h"
++ 
++ #define CS_SIZE 0x40
+++#define CS_DRAIN_NS (200 * SCALE_MS)   /* well past the 50 ms taken ahead */
++ #define CS_REGS 16
++ #define CS_DREGS 32
++ #define CS_MAXDREG (CS_DREGS - 1)
++@@ -146,6 +152,7 @@ struct CSState {
++     bool play_running;      /* since play_start, without a gap */
++     int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
++     uint64_t play_units;    /* taken since play_start */
+++    int64_t play_drain;     /* the voice stays on until then */
++ };
++ 
++ #define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++@@ -232,17 +239,28 @@ static void cs_play_next(CSState *s)
++     }
++ }
++ 
+++/* Playback stopped: let the audiodev play what was taken ahead */
+++static void cs_play_stopped(CSState *s, int64_t now)
+++{
+++    s->play_running = false;
+++    s->play_drain = now + CS_DRAIN_NS;
+++}
+++
++ static void cs_play_update(CSState *s)
++ {
++     bool run = cs_play_active(s);
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (run && !s->play_running) {
++-        s->play_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        s->play_start = now;
++         s->play_units = 0;
+++    } else if (!run && s->play_running) {
+++        cs_play_stopped(s, now);
++     }
++     s->play_running = run;
++     if (s->voice) {
++-        audio_be_set_active_out(s->audio_be, s->voice, run);
+++        audio_be_set_active_out(s->audio_be, s->voice,
+++                                run || now < s->play_drain);
++     }
++     cs_update_irq(s);
++ }
++@@ -346,13 +364,18 @@ static void cs_audio_callback(void *opaque, int avail)
++ 
++     uint32_t room = MAX(avail, 0);
++     uint64_t rate, due, budget;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (!s->play_running) {
+++        /* stopped: the voice is on only to play out the last samples */
+++        if (now >= s->play_drain) {
+++            audio_be_set_active_out(s->audio_be, s->voice, false);
+++        }
++         return;
++     }
++     /* units a second: one sample of each channel, two for ADPCM */
++     rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
++-    due = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->play_start,
+++    due = muldiv64(now - s->play_start,
++                    rate, NANOSECONDS_PER_SECOND) + rate / 20;
++     budget = due > s->play_units ? due - s->play_units : 0;
++ 
++@@ -402,7 +425,9 @@ static void cs_audio_callback(void *opaque, int avail)
++         }
++     }
++     /* after a gap the clock starts again with the next buffer */
++-    s->play_running = cs_play_active(s);
+++    if (!cs_play_active(s)) {
+++        cs_play_stopped(s, now);
+++    }
++ }
++ 
++ /* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
++@@ -463,6 +488,7 @@ static void cs_reset(DeviceState *d)
++     s->dregs[25] = CS_VER;
++     s->play_next = false;
++     s->play_running = false;
+++    s->play_drain = 0;
++     if (s->audio_be) {
++         cs_play_setup(s);
++         cs_play_update(s);
++@@ -588,6 +614,7 @@ static int cs_post_load(void *opaque, int version_id)
++     CSState *s = opaque;
++ 
++     s->play_running = false;
+++    s->play_drain = 0;
++     cs_play_setup(s);
++     cs_play_update(s);
++     return 0;
+diff --git a/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
+new file mode 100644
+index 0000000..97fdffa
+--- /dev/null
++++ b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
+@@ -0,0 +1,309 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test CS4231 playback through the APC DMA on sun4m
++
++Program the SPARCstation 5's codec and APC as the SunOS and NetBSD
++drivers do, with the buffers behind IOMMU mappings, and drive it with
++the virtual clock: the first buffer is taken only after PEN, the second
++when the first has played (about 100 ms at 8000 Hz), and then the pipe
++runs empty. PI, PD, PM and PMI must follow, each interrupt at SBus
++level 5 (system bit 11), the CPU's level 9, and not at level 5 or 11.
++A wav audiodev must get every sample of both buffers decoded from
++u-law, also when the DMA is turned off as soon as the pipe is empty,
++and nothing after them. A second case checks that DMA off drops the
++buffers and that the reset bit clears the APC.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4m-cs4231-test.c | 270 ++++++++++++++++++++++++++++++++
++ 2 files changed, 272 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-cs4231-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 0ebc864fa5..9b6a60b713 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -204,7 +204,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-solaris-idle-test', 'sun4m-mmu-nofault-test',
++                 'sun4m-pil-delay-slot-test',
++                 'sun4m-solaris-smp-idle-test',
++-                'sun4m-fsr-rd-test'] + \
+++                'sun4m-fsr-rd-test',
+++                'sun4m-cs4231-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
++new file mode 100644
++index 0000000000..f34e0fb3ee
++--- /dev/null
+++++ b/tests/qtest/sun4m-cs4231-test.c
++@@ -0,0 +1,270 @@
+++/*
+++ * QTest: CS4231 playback through the APC DMA engine on the SPARCstation 5
+++ *
+++ * The test programs the chip the way the SunOS and NetBSD drivers do:
+++ * IOMMU mappings for two u-law buffers, the playback format in the codec,
+++ * the first buffer in the APC's next registers, the CSR with DMA on and
+++ * its interrupts enabled, and then playback on in the codec (PEN). Driven
+++ * by the virtual clock, the APC must take the first buffer (PI, the next
+++ * registers free again: PD), take the second one when the first has been
+++ * played and then run empty (PMI, PM), in real time at 8000 Hz, with each
+++ * of those interrupts at SBus level 5, the CPU's level 9, as on the real
+++ * machine. The samples must reach the audiodev decoded, all of them, also
+++ * when the driver turns the DMA off as soon as the pipe is empty: a wav
+++ * file with the right values for exactly the length of the two buffers.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* SPARCstation 5 */
+++#define CS_BASE         0x6c000000ULL
+++#define IOMMU_BASE      0x10000000ULL
+++#define INTCTL_CPU0     0x71e00000ULL   /* per-CPU pending: 1 << PIL */
+++#define INTCTL_SYS      0x71e10000ULL   /* system pending: 1 << bit */
+++
+++/* Codec and APC registers */
+++#define CS_IAR          (CS_BASE + 0x00)
+++#define CS_IDR          (CS_BASE + 0x04)
+++#define APC_CSR         (CS_BASE + 0x10)
+++#define APC_PVA         (CS_BASE + 0x30)
+++#define APC_PC          (CS_BASE + 0x34)
+++#define APC_PNVA        (CS_BASE + 0x38)
+++#define APC_PNC         (CS_BASE + 0x3c)
+++
+++#define APC_IP          0x00800000
+++#define APC_PI          0x00400000
+++#define APC_IE          0x00080000
+++#define APC_PIE         0x00040000
+++#define APC_PMI         0x00008000
+++#define APC_PM          0x00004000
+++#define APC_PD          0x00002000
+++#define APC_PMIE        0x00001000
+++#define APC_PDMA_GO     0x00000008
+++#define APC_ENABLES     (APC_IE | APC_PIE | APC_PMIE | APC_PDMA_GO)
+++
+++#define CS_PFMT         8
+++#define CS_ICONF        9
+++#define CS_PFMT_ULAW_8K 0x20            /* u-law, mono, 24.576 MHz / 3072 */
+++#define CS_PEN          0x01
+++
+++/* The buffers in RAM and their DVMA addresses through the IOMMU */
+++#define IOPTE_TABLE     0x200000ULL
+++#define BUF_RAM         0x100000ULL
+++#define BUF_DVMA        0xff000000U
+++#define BUF_LEN         800             /* 100 ms at 8000 Hz */
+++#define BUF2_OFFSET     0x1000          /* the second one on the next page */
+++
+++#define CS_LEVEL        9               /* processor level, the "intr" */
+++#define CS_INTBIT       11              /* system bit: SBus level 5 */
+++#define OLD_LEVELS      ((1u << 5) | (1u << 11))    /* earlier wirings */
+++
+++/* Two u-law values and what they decode to (G.711) */
+++#define ULAW_POS        0xa0
+++#define ULAW_NEG        0x20
+++#define PCM_VALUE       7932
+++
+++static void codec_write(QTestState *qts, uint8_t reg, uint8_t val)
+++{
+++    qtest_writeb(qts, CS_IAR, reg);
+++    qtest_writeb(qts, CS_IDR, val);
+++}
+++
+++static bool level_pending(QTestState *qts, int level)
+++{
+++    return qtest_readl(qts, INTCTL_CPU0) & (1u << level);
+++}
+++
+++/* Step the virtual clock 1 ms at a time until the CSR has `bits` */
+++static int64_t wait_csr(QTestState *qts, uint32_t bits, int64_t limit_ms)
+++{
+++    int64_t ms;
+++
+++    for (ms = 0; ms < limit_ms; ms++) {
+++        if ((qtest_readl(qts, APC_CSR) & bits) == bits) {
+++            return ms;
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/*
+++ * The wav file is stereo: the mixer doubles a mono voice played into a
+++ * mono output (it adds left and right), so the test does not use one.
+++ */
+++static void check_wav(const char *path)
+++{
+++    g_autofree uint8_t *wav = NULL;
+++    gsize len, frames, i, start, sound;
+++    int16_t l, r;
+++
+++    g_assert_true(g_file_get_contents(path, (gchar **)&wav, &len, NULL));
+++    g_assert_cmpuint(len, >, 44);
+++    g_assert_cmpmem(wav, 4, "RIFF", 4);
+++    g_assert_cmpuint(lduw_le_p(wav + 22), ==, 2);           /* channels */
+++    g_assert_cmpuint(ldl_le_p(wav + 24), ==, 8000);         /* Hz */
+++    g_assert_cmpuint(lduw_le_p(wav + 34), ==, 16);          /* bits */
+++    frames = (len - 44) / 4;
+++
+++    /* Skip any silence before the sound starts */
+++    for (start = 0; start < frames; start++) {
+++        if (lduw_le_p(wav + 44 + 4 * start) != 0) {
+++            break;
+++        }
+++    }
+++    /* Both buffers, every sample, in order, and nothing after them */
+++    for (sound = 0; start + sound < frames; sound++) {
+++        if (lduw_le_p(wav + 44 + 4 * (start + sound)) == 0) {
+++            break;
+++        }
+++    }
+++    g_assert_cmpuint(sound, ==, 2 * BUF_LEN);
+++    for (i = 0; i < 2 * BUF_LEN; i++) {
+++        l = lduw_le_p(wav + 44 + 4 * (start + i));
+++        r = lduw_le_p(wav + 44 + 4 * (start + i) + 2);
+++        g_assert_cmpint(l, ==, r);
+++        g_assert_cmpint(abs(l), >=, PCM_VALUE - 2);
+++        g_assert_cmpint(abs(l), <=, PCM_VALUE + 2);
+++        g_assert_cmpint(l > 0, ==, i < BUF_LEN);
+++    }
+++}
+++
+++static void test_playback(void)
+++{
+++    g_autofree char *wav = NULL;
+++    uint8_t buf[BUF_LEN];
+++    QTestState *qts;
+++    uint32_t csr;
+++    int64_t t1, t2;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.wav", &wav, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    qts = qtest_initf("-machine SS-5,audiodev=snd0 "
+++                      "-audiodev wav,id=snd0,path=%s,out.frequency=8000,"
+++                      "out.channels=2,out.format=s16", wav);
+++
+++    /* Before anything is loaded: the pipe is empty, no interrupt */
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PM | APC_PD | APC_IP), ==, APC_PM | APC_PD);
+++
+++    /* Two pages mapped at BUF_DVMA, the second buffer on the second */
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);         /* 16 MB range, enabled */
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    memset(buf, ULAW_NEG, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++
+++    /* Loaded, but the codec has not asked for samples: nothing taken */
+++    qtest_clock_step(qts, 50 * 1000 * 1000);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PD | APC_IP), ==, 0);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++
+++    /* PEN: the first buffer is taken at the next audio callback */
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    t1 = wait_csr(qts, APC_PI, 100);
+++    g_assert_cmpint(t1, <=, 20);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PD | APC_PM), ==, APC_IP | APC_PD);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==, BUF_DVMA);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), <=, BUF_LEN);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    g_assert_true(qtest_readl(qts, INTCTL_SYS) & (1u << CS_INTBIT));
+++    g_assert_false(qtest_readl(qts, INTCTL_CPU0) & OLD_LEVELS);
+++
+++    /* The driver clears PI and loads the second buffer */
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & (APC_PI | APC_IP));
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PD);
+++
+++    /* It takes the second one when the first has played: about 100 ms */
+++    t2 = wait_csr(qts, APC_PI, 300);
+++    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, <=, 130);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==,
+++                    BUF_DVMA + BUF2_OFFSET);
+++    g_assert_true(qtest_readl(qts, APC_CSR) & APC_PD);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++
+++    /* No third buffer: the pipe runs empty when the second has played */
+++    t2 = wait_csr(qts, APC_PMI, 300);
+++    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, <=, 130);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PM | APC_PD), ==,
+++                    APC_IP | APC_PM | APC_PD);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA), ==,
+++                    BUF_DVMA + BUF2_OFFSET + BUF_LEN);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++
+++    /* At once PMI cleared and the DMA off, as a driver may: quiet */
+++    qtest_writel(qts, APC_CSR, APC_PMI);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_IP);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    /* The backend still plays what was taken ahead; then the file */
+++    qtest_clock_step(qts, 300 * 1000 * 1000);
+++    qtest_quit(qts);
+++    check_wav(wav);
+++    unlink(wav);
+++}
+++
+++/* DMA off drops the buffers, and the reset bit clears the APC */
+++static void test_stop_reset(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                                 "-audiodev none,id=snd0");
+++
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++
+++    /* DMA off: the buffer is dropped, the pipe empty */
+++    qtest_writel(qts, APC_CSR, APC_PI | (APC_ENABLES & ~APC_PDMA_GO));
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    g_assert_true(qtest_readl(qts, APC_CSR) & APC_PM);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++
+++    /* Reset: CSR back to the empty state, nothing pending */
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, 0x1);
+++    g_assert_cmphex(qtest_readl(qts, APC_CSR) & ~0x1, ==,
+++                    APC_PM | APC_PD | 0x800 | 0x400);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-cs4231/playback", test_playback);
+++    qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+new file mode 100644
+index 0000000..45cf114
+--- /dev/null
++++ b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+@@ -0,0 +1,113 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64/sun4u: take the IDPROM MAC address from a -device NIC
++
++OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
++NetBSD and Solaris use it for hme0: the sunhme has no local-mac-address
++of its own. NetBSD's wm (e1000) takes it too.
++
++sun4u fills the IDPROM while it builds the machine, from the onboard NIC
++(the first -nic/-net nic of the default model, at 01:01.1). A NIC added
++with -device, as qemu-server and libvirt add them, doesn't exist yet at
++that point, so the IDPROM gets QEMU's default 52:54:00:12:34:56: every
++guest has that address whatever mac= says, and two of them on one
++network clash.
++
++Without an onboard NIC, fill the IDPROM again once the machine is
++complete (a machine-init-done notifier, before the firmware runs): from
++the first NIC of the machine's own model (sunhme, the onboard NIC of a
++real Ultra 5/10), else from the first NIC of any model. The host id is
++made from the MAC address, as before, so it changes with it. With an
++onboard NIC, or with no NIC at all, the IDPROM is what it was.
++---
++ hw/sparc64/sun4u.c | 71 ++++++++++++++++++++++++++++++++++++++++++++++
++ 1 file changed, 71 insertions(+)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index a348096aee..42540f3dbc 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -153,6 +153,60 @@ static int sun4u_NVRAM_set_params(Nvram *nvram, uint16_t NVRAM_size,
++     return 0;
++ }
++ 
+++/*
+++ * Without an onboard NIC the IDPROM's MAC address is filled in once the
+++ * machine is complete, from the NICs added with -device (see below).
+++ */
+++typedef struct Sun4uIdprom {
+++    Notifier machine_done;
+++    Nvram *nvram;
+++    const char *nic_model;
+++} Sun4uIdprom;
+++
+++typedef struct Sun4uNicSearch {
+++    const char *model;
+++    NICState *nic;
+++} Sun4uNicSearch;
+++
+++static void sun4u_find_nic(NICState *nic, void *opaque)
+++{
+++    Sun4uNicSearch *search = opaque;
+++
+++    if (!search->nic && (!search->model ||
+++                         !strcmp(qemu_get_queue(nic)->model, search->model))) {
+++        search->nic = nic;
+++    }
+++}
+++
+++static void sun4u_idprom_machine_done(Notifier *notifier, void *data)
+++{
+++    Sun4uIdprom *idprom = container_of(notifier, Sun4uIdprom, machine_done);
+++    NvramClass *k = NVRAM_GET_CLASS(idprom->nvram);
+++    Sun4uNicSearch search = { .model = idprom->nic_model };
+++    struct Sun_nvram header;
+++    unsigned int i;
+++
+++    /*
+++     * The first NIC of the machine's own model (sunhme, the onboard NIC of
+++     * a real Ultra 5/10, whose MAC address is the one in its IDPROM), else
+++     * the first NIC of any model.
+++     */
+++    qemu_foreach_nic(sun4u_find_nic, &search);
+++    if (!search.nic) {
+++        search.model = NULL;
+++        qemu_foreach_nic(sun4u_find_nic, &search);
+++    }
+++    if (!search.nic) {
+++        return;
+++    }
+++
+++    memset(&header, 0, sizeof(header));
+++    Sun_init_header(&header, search.nic->conf->macaddr.a, 0x80);
+++    for (i = 0; i < sizeof(header); i++) {
+++        (k->write)(idprom->nvram, 0x1fd8 + i, ((uint8_t *)&header)[i]);
+++    }
+++}
+++
++ static uint64_t sun4u_load_kernel(const char *kernel_filename,
++                                   const char *initrd_filename,
++                                   ram_addr_t RAM_size, uint64_t *initrd_size,
++@@ -689,6 +743,23 @@ static void sun4uv_init(MemoryRegion *address_space_mem,
++                            graphic_width, graphic_height, graphic_depth,
++                            (uint8_t *)&macaddr);
++ 
+++    /*
+++     * OpenBIOS gives the guest the IDPROM's MAC address as the system's,
+++     * and the sunhme has no other: NetBSD and Solaris use it for hme0. A
+++     * NIC added with -device (as most management tools do) doesn't exist
+++     * yet, so without an onboard NIC the IDPROM has a default address that
+++     * is the same for every machine. Take the address from the NICs once
+++     * they are all there, before the firmware reads it.
+++     */
+++    if (!onboard_nic) {
+++        Sun4uIdprom *idprom = g_new0(Sun4uIdprom, 1);
+++
+++        idprom->nvram = nvram;
+++        idprom->nic_model = mc->default_nic;
+++        idprom->machine_done.notify = sun4u_idprom_machine_done;
+++        qemu_add_machine_init_done_notifier(&idprom->machine_done);
+++    }
+++
++     dev = qdev_new(TYPE_FW_CFG_IO);
++     qdev_prop_set_bit(dev, "dma_enabled", false);
++     object_property_add_child(OBJECT(ebus), TYPE_FW_CFG, OBJECT(dev));
+diff --git a/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+new file mode 100644
+index 0000000..84de575
+--- /dev/null
++++ b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+@@ -0,0 +1,167 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the IDPROM MAC address on sun4u
++
++The test reads the IDPROM from the m48t59 NVRAM through the ebus's I/O
++space (bus 1 behind the simba bridge at 00:01.1, with the bridge's I/O
++window opened over the NVRAM as OpenBIOS would) and checks its MAC
++address, format and machine type bytes, host id and checksum: QEMU's
++default without a NIC, the address of a sunhme added with -device, the
++first sunhme when a virtio-net-pci comes before it, the first NIC when
++there is no sunhme, and the onboard -net nic over a -device sunhme.
++
++Without the previous patch the device case fails (the IDPROM has
++52:54:00:12:34:56); with it all five pass.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4u-idprom-test.c | 128 ++++++++++++++++++++++++++++++++
++ 2 files changed, 130 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-idprom-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9b6a60b713..1eb55ea351 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -211,7 +211,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++-  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test']
+++  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
+++   'sun4u-idprom-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-idprom-test.c b/tests/qtest/sun4u-idprom-test.c
++new file mode 100644
++index 0000000000..d9902ba0ce
++--- /dev/null
+++++ b/tests/qtest/sun4u-idprom-test.c
++@@ -0,0 +1,128 @@
+++/*
+++ * QTest: the MAC address in the sun4u IDPROM
+++ *
+++ * OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
+++ * NetBSD and Solaris use it for hme0 (the sunhme has no address of its
+++ * own in the device tree). It must be the one given to the NIC, also when
+++ * the NIC is added with -device rather than as the onboard -nic.
+++ *
+++ * The IDPROM is the last 32 bytes of the m48t59 NVRAM, at 0x2000 in the
+++ * PCI I/O space of the ebus's bus (bus 1, behind the simba bridge at
+++ * 00:01.1). Nothing runs on the CPU, so the test opens the bridge's I/O
+++ * window over the NVRAM itself, as OpenBIOS would.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
+++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
+++#define DEVFN_SIMBA_A   0x09                /* 00:01.1 */
+++#define NVRAM_IO        0x2000              /* m48t59, 8 KB */
+++#define IDPROM          (PCI_IO + NVRAM_IO + 0x1fd8)
+++#define IDPROM_LEN      16
+++
+++#define DEFAULT_MAC     "52:54:00:12:34:56"
+++
+++static void cfg_writeb(QTestState *qts, int bus, int devfn, int reg,
+++                       uint8_t val)
+++{
+++    qtest_writeb(qts, PCI_CONFIG + (bus << 16) + (devfn << 8) + reg, val);
+++}
+++
+++/* Start the machine with `args` and read its IDPROM */
+++static void read_idprom(const char *args, uint8_t *idprom)
+++{
+++    QTestState *qts;
+++    int i;
+++
+++    qts = qtest_initf("-machine sun4u -nodefaults %s", args);
+++
+++    /* Bus 1 behind 00:01.1, its I/O window over 0x2000-0x3fff */
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SECONDARY_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SUBORDINATE_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_BASE, NVRAM_IO >> 8);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_LIMIT, (NVRAM_IO + 0x1fff) >> 8);
+++
+++    for (i = 0; i < IDPROM_LEN; i++) {
+++        idprom[i] = qtest_readb(qts, IDPROM + i);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++/* The IDPROM's MAC address is `mac`, and the header around it is valid */
+++static void check_idprom(const char *args, const char *mac)
+++{
+++    uint8_t idprom[IDPROM_LEN], sum = 0;
+++    char got[18];
+++    int i;
+++
+++    read_idprom(args, idprom);
+++    snprintf(got, sizeof(got), "%02x:%02x:%02x:%02x:%02x:%02x",
+++             idprom[2], idprom[3], idprom[4], idprom[5], idprom[6], idprom[7]);
+++    g_assert_cmpstr(got, ==, mac);
+++
+++    g_assert_cmphex(idprom[0], ==, 0x01);               /* format */
+++    g_assert_cmphex(idprom[1], ==, 0x80);               /* machine type */
+++    g_assert_cmpmem(&idprom[12], 3, &idprom[5], 3);     /* host id serial */
+++    for (i = 0; i < IDPROM_LEN - 1; i++) {
+++        sum ^= idprom[i];
+++    }
+++    g_assert_cmphex(idprom[15], ==, sum);
+++}
+++
+++/* No NIC: QEMU's default address, as before */
+++static void test_no_nic(void)
+++{
+++    check_idprom("", DEFAULT_MAC);
+++}
+++
+++/* A sunhme added with -device, as qemu-server and libvirt do */
+++static void test_device(void)
+++{
+++    check_idprom("-device sunhme,mac=bc:24:11:00:00:01,bus=pciB",
+++                 "bc:24:11:00:00:01");
+++}
+++
+++/* The first sunhme, though another NIC model comes first */
+++static void test_first_sunhme(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:02,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:03,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:04,bus=pciB",
+++                 "bc:24:11:00:00:03");
+++}
+++
+++/* No sunhme: the first NIC of any model */
+++static void test_other_model(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:05,bus=pciB "
+++                 "-device virtio-net-pci,mac=bc:24:11:00:00:06,bus=pciB",
+++                 "bc:24:11:00:00:05");
+++}
+++
+++/* The onboard NIC keeps its place in the IDPROM, as before */
+++static void test_onboard(void)
+++{
+++    check_idprom("-net nic,model=sunhme,macaddr=bc:24:11:00:00:07 "
+++                 "-device sunhme,mac=bc:24:11:00:00:08,bus=pciB",
+++                 "bc:24:11:00:00:07");
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-idprom/no-nic", test_no_nic);
+++    qtest_add_func("sun4u-idprom/device", test_device);
+++    if (qtest_has_device("virtio-net-pci")) {
+++        qtest_add_func("sun4u-idprom/first-sunhme", test_first_sunhme);
+++        qtest_add_func("sun4u-idprom/other-model", test_other_model);
+++    }
+++    qtest_add_func("sun4u-idprom/onboard", test_onboard);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
+new file mode 100644
+index 0000000..2d72ff3
+--- /dev/null
++++ b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
+@@ -0,0 +1,78 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: write %softint under the BQL
++
++The tick, stick and hstick timers set their bits in softint from the
++main loop, holding the BQL. The guest's %set_softint, %clear_softint
++and %softint writes read, modify and write softint in the vCPU thread
++without it, and took the BQL only afterwards, for cpu_check_irqs(). A
++timer that fired between the read and the write had its bit written
++over, and its interrupt was lost.
++
++illumos arms %tick_cmpr for its next clock tick only after it has
++handled the level 14 interrupt of the last one, and writes
++%set_softint and %clear_softint for every device interrupt. Tribblix
++(illumos) on sun4u lost its clock for good in about one of three long
++runs with heavy interrupt traffic: idle with interrupts enabled, but no
++level 14 interrupt ever again, and everything that sleeps hung. A trace
++caught it: tick_irq() saw softint 0x401, then the guest's clear of bit
++10 left 0x000.
++
++Take the BQL around the read-modify-write in the three helpers, as
++cpu_check_irqs() needs it anyway.
++---
++ target/sparc/int64_helper.c | 14 ++++++++++++--
++ 1 file changed, 12 insertions(+), 2 deletions(-)
++
++diff --git a/target/sparc/int64_helper.c b/target/sparc/int64_helper.c
++index 60ab0478fc..ea618296ce 100644
++--- a/target/sparc/int64_helper.c
+++++ b/target/sparc/int64_helper.c
++@@ -273,15 +273,19 @@ trap_state *cpu_tsptr(CPUSPARCState* env)
++     return &env->ts[env->tl & MAXTL_MASK];
++ }
++ 
+++/*
+++ * The tick, stick and hstick timers set their bits in softint from the
+++ * main loop, with the BQL held.  The guest's writes to softint must read,
+++ * modify and write it under the BQL too: a timer bit set between the read
+++ * and the write would be lost, and with it the timer interrupt.
+++ */
++ static bool do_modify_softint(CPUSPARCState *env, uint32_t value)
++ {
++     if (env->softint != value) {
++         env->softint = value;
++ #if !defined(CONFIG_USER_ONLY)
++         if (cpu_interrupts_enabled(env)) {
++-            bql_lock();
++             cpu_check_irqs(env);
++-            bql_unlock();
++         }
++ #endif
++         return true;
++@@ -291,6 +295,8 @@ static bool do_modify_softint(CPUSPARCState *env, uint32_t value)
++ 
++ void helper_set_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, env->softint | (uint32_t)value)) {
++         trace_int_helper_set_softint(env->softint);
++     }
++@@ -298,6 +304,8 @@ void helper_set_softint(CPUSPARCState *env, uint64_t value)
++ 
++ void helper_clear_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, env->softint & (uint32_t)~value)) {
++         trace_int_helper_clear_softint(env->softint);
++     }
++@@ -305,6 +313,8 @@ void helper_clear_softint(CPUSPARCState *env, uint64_t value)
++ 
++ void helper_write_softint(CPUSPARCState *env, uint64_t value)
++ {
+++    BQL_LOCK_GUARD();
+++
++     if (do_modify_softint(env, (uint32_t)value)) {
++         trace_int_helper_write_softint(env->softint);
++     }
+diff --git a/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
+new file mode 100644
+index 0000000..913624b
+--- /dev/null
++++ b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
+@@ -0,0 +1,162 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test that a tick during a %softint write is kept on sun4u
++
++A boot PROM arms %tick_cmpr 10 us ahead and, with interrupts off, sets
++and clears soft interrupt 1 until %softint shows TICK_INT, then clears
++it, counts the tick and arms the next; if 16M rounds go by without one,
++it counts the tick as lost. The test runs it for up to 20000 ticks
++(10 s at most) and expects none lost.
++
++The race can't be made to happen on demand, but the loop is almost all
++%softint writes: without the previous patch a tick was lost within the
++first three in each of 30 runs; with it, 30 runs saw over 20000 ticks
++each and lost none. With the patch a tick can't be lost, so the test
++can't fail spuriously.
++---
++ tests/qtest/meson.build          |   2 +-
++ tests/qtest/sun4u-softint-test.c | 123 +++++++++++++++++++++++++++++++
++ 2 files changed, 124 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-softint-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 1eb55ea351..d3a2c22c84 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -212,7 +212,7 @@ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++-   'sun4u-idprom-test']
+++   'sun4u-idprom-test', 'sun4u-softint-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-softint-test.c b/tests/qtest/sun4u-softint-test.c
++new file mode 100644
++index 0000000000..4d45cbaedf
++--- /dev/null
+++++ b/tests/qtest/sun4u-softint-test.c
++@@ -0,0 +1,123 @@
+++/*
+++ * QTest: a tick interrupt that fires during a write to %softint on sun4u
+++ *
+++ * A boot PROM arms %tick_cmpr 10 us ahead and, with interrupts off, sets
+++ * and clears soft interrupt 1 with %set_softint and %clear_softint until
+++ * %softint shows the tick's bit (TICK_INT), clears it and counts the
+++ * tick; if 16M rounds go by without one, it counts the tick as lost. Then
+++ * it arms the next one.
+++ *
+++ * The tick timer sets TICK_INT from the main loop, holding the BQL; the
+++ * writes to %softint read, modify and write it in the vCPU thread. They
+++ * didn't take the BQL, so a tick that fired between their read and their
+++ * write was overwritten and lost, and a guest that waits for its clock
+++ * interrupt before arming the next (illumos) lost its clock for good.
+++ * The race can't be made to happen on demand, but the loop is almost all
+++ * %softint writes: without the lock a tick was lost within the first
+++ * three in each of 30 runs. With it, no tick can be lost.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: the ticks the PROM saw and lost */
+++#define RAM_SEEN        0x800ULL
+++#define RAM_LOST        0x808ULL
+++#define PROM_WORDS      0x100
+++#define RESET           (0x20 / 4)      /* power-on reset: prom + 0x20 */
+++
+++#define TICKS           20000           /* enough ticks */
+++#define MIN_TICKS       1000            /* the least for a pass */
+++#define SECONDS         10
+++
+++/*
+++ * Runs from power-on reset: RED state, MMU off, PSTATE.IE clear, so the
+++ * tick's level 14 interrupt is never taken and its bit stays in %softint.
+++ */
+++static const uint32_t code[] = {
+++    0xa0102000,     /*        mov   0, %l0          ticks seen */
+++    0xa2102000,     /*        mov   0, %l1          ticks lost */
+++    0x27004000,     /*        sethi %hi(0x1000000), %l3 */
+++    0x83410000,     /* again: rd    %tick, %g1 */
+++    0x820063e8,     /*        add   %g1, 1000, %g1  10 us on */
+++    0x83287001,     /*        sllx  %g1, 1, %g1 */
+++    0x83307001,     /*        srlx  %g1, 1, %g1     INT_DIS off */
+++    0xaf806000,     /*        wr    %g1, 0, %tick_cmpr */
+++    0xa4100013,     /*        mov   %l3, %l2 */
+++    0xa9802002,     /* spin:  wr    %g0, 2, %set_softint */
+++    0xab802002,     /*        wr    %g0, 2, %clear_softint */
+++    0x85458000,     /*        rd    %softint, %g2 */
+++    0x8088a001,     /*        andcc %g2, 1, %g0     TICK_INT */
+++    0x12800009,     /*        bne   got */
+++    0x01000000,     /*         nop */
+++    0xa4a4a001,     /*        subcc %l2, 1, %l2 */
+++    0x12bffff9,     /*        bne   spin */
+++    0x01000000,     /*         nop */
+++    0xa2046001,     /*        inc   %l1             lost */
+++    0xe2702808,     /*        stx   %l1, [%g0 + 0x808] */
+++    0x10bfffef,     /*        ba    again */
+++    0x01000000,     /*         nop */
+++    0xab802001,     /* got:   wr    %g0, 1, %clear_softint */
+++    0xa0042001,     /*        inc   %l0 */
+++    0xe0702800,     /*        stx   %l0, [%g0 + 0x800] */
+++    0x10bfffea,     /*        ba    again */
+++    0x01000000,     /*         nop */
+++};
+++
+++static char *write_prom(void)
+++{
+++    uint32_t be[PROM_WORDS];
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Anything else: b . */
+++    for (i = 0; i < PROM_WORDS; i++) {
+++        be[i] = cpu_to_be32(0x10800000);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[RESET + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4u-softint-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++static void test_tick(void)
+++{
+++    g_autofree char *prom = write_prom();
+++    gint64 end = g_get_monotonic_time() + SECONDS * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine sun4u -accel tcg -nodefaults "
+++                                  "-bios %s", prom);
+++    uint64_t seen = 0, lost = 0;
+++
+++    while (g_get_monotonic_time() < end) {
+++        g_usleep(10000);
+++        seen = qtest_readq(qts, RAM_SEEN);
+++        lost = qtest_readq(qts, RAM_LOST);
+++        if (lost || seen >= TICKS) {
+++            break;
+++        }
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++
+++    g_test_message("ticks seen %" PRIu64 ", lost %" PRIu64, seen, lost);
+++    g_assert_cmpuint(lost, ==, 0);
+++    g_assert_cmpuint(seen, >=, MIN_TICKS);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("sun4u-softint/tick", test_tick);
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+new file mode 100644
+index 0000000..8603a31
+--- /dev/null
++++ b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+@@ -0,0 +1,35 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] esp: don't count the message out bytes as part of the CDB
++
++esp_cdb_ready() compared the whole cmdfifo with the CDB's length, but
++the cmdfifo starts with the IDENTIFY byte and any further message out
++bytes, cmdfifo_cdb_offset of them. A driver that selects with ATN and
++Stop, sends a message and then the CDB one byte at a time with a
++Transfer Information command each had its command dispatched too
++early: after IDENTIFY and a 5-byte SDTR message, the first CDB byte
++alone made a "complete" 6-byte CDB.
++
++That is what Linux 2.6.18's esp driver does on sun4m when it
++negotiates synchronous transfers: the target got a one-byte command,
++answered CHECK CONDITION with ILLEGAL REQUEST, and Linux reset the bus
++and took the disk and CD-ROM offline.
++
++Count only the bytes after cmdfifo_cdb_offset.
++---
++ hw/scsi/esp.c | 3 ++-
++ 1 file changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 9e8d0d6cfa..b7c27e82c5 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -470,7 +470,8 @@ static bool esp_cdb_ready(ESPState *s)
++ 
++     cdblen = scsi_cdb_length((uint8_t *)&pbuf[s->cmdfifo_cdb_offset]);
++ 
++-    return cdblen < 0 ? false : (len >= cdblen);
+++    /* The IDENTIFY and other message bytes before the CDB don't count */
+++    return cdblen < 0 ? false : (len - s->cmdfifo_cdb_offset >= cdblen);
++ }
++ 
++ static void esp_dma_ti_check(ESPState *s)
+diff --git a/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+new file mode 100644
+index 0000000..4ac1b09
+--- /dev/null
++++ b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+@@ -0,0 +1,190 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a CDB sent byte by byte after a message out on sun4m
++
++Drive the SPARCstation 5's ESP without DMA as Linux 2.6's esp driver
++does when it negotiates synchronous transfers: Select with ATN and
++Stop with IDENTIFY, an extended SDTR message with Transfer Information,
++then TEST UNIT READY one byte per Transfer Information. The target must
++stay in the command phase until the sixth byte, and the command must
++reach it whole: twice, the first answered with the reset's unit
++attention, the second with GOOD.
++
++Without the previous patch the first CDB byte already ends the command
++phase.
++---
++ tests/qtest/meson.build      |   3 +-
++ tests/qtest/sun4m-esp-test.c | 151 +++++++++++++++++++++++++++++++++++
++ 2 files changed, 153 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-esp-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index d3a2c22c84..8759f3fd77 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -205,7 +205,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-pil-delay-slot-test',
++                 'sun4m-solaris-smp-idle-test',
++                 'sun4m-fsr-rd-test',
++-                'sun4m-cs4231-test'] + \
+++                'sun4m-cs4231-test',
+++                'sun4m-esp-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-esp-test.c b/tests/qtest/sun4m-esp-test.c
++new file mode 100644
++index 0000000000..c8e9a15a63
++--- /dev/null
+++++ b/tests/qtest/sun4m-esp-test.c
++@@ -0,0 +1,151 @@
+++/*
+++ * QTest: a CDB sent byte by byte after a message out phase on sun4m's ESP
+++ *
+++ * Linux 2.6's esp driver negotiates synchronous transfers: it selects
+++ * the target with Select with ATN and Stop (IDENTIFY only), sends an
+++ * extended SDTR message in the message out phase, and then puts the
+++ * CDB on the bus one byte at a time, a Transfer Information command
+++ * for each byte. The command must reach the target only when the whole
+++ * CDB is in, however many message bytes came before it.
+++ *
+++ * The ESP counted the IDENTIFY and message bytes as part of the CDB, so
+++ * here the first CDB byte alone made a "complete" 6-byte command: the
+++ * target got one byte, answered CHECK CONDITION (ILLEGAL REQUEST), and
+++ * Linux reset the bus and took the disk and CD-ROM offline.
+++ *
+++ * Nothing runs on the CPU: the test drives the ESP's registers itself,
+++ * without DMA, as the guest's driver does.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++/* SPARCstation 5: the ESP's registers are 4 bytes apart */
+++#define ESP_BASE        0x78800000ULL
+++#define ESP_REG(r)      (ESP_BASE + (r) * 4)
+++
+++#define ESP_FIFO        0x2
+++#define ESP_CMD         0x3
+++#define ESP_RSTAT       0x4
+++#define ESP_WBUSID      0x4
+++#define ESP_RINTR       0x5
+++#define ESP_RFLAGS      0x7
+++
+++#define CMD_TI          0x10
+++#define CMD_ICCS        0x11
+++#define CMD_MSGACC      0x12
+++#define CMD_SELATNS     0x43
+++
+++#define STAT_PHASE      0x07
+++#define STAT_CD         0x02
+++#define STAT_ST         0x03
+++#define STAT_MO         0x06
+++#define STAT_GE         0x40
+++
+++#define INTR_FC         0x08
+++#define INTR_BS         0x10
+++#define INTR_DC         0x20
+++
+++static uint8_t esp_readb(QTestState *qts, int reg)
+++{
+++    return qtest_readb(qts, ESP_REG(reg));
+++}
+++
+++static void esp_writeb(QTestState *qts, int reg, uint8_t val)
+++{
+++    qtest_writeb(qts, ESP_REG(reg), val);
+++}
+++
+++/* The bus phase after a command, with no gross error */
+++static uint8_t esp_phase(QTestState *qts)
+++{
+++    uint8_t stat = esp_readb(qts, ESP_RSTAT);
+++
+++    g_assert_cmphex(stat & STAT_GE, ==, 0);
+++    return stat & STAT_PHASE;
+++}
+++
+++/*
+++ * Select target 0 with ATN and Stop, send an SDTR message, then TEST UNIT
+++ * READY one byte at a time; return the status byte
+++ */
+++static uint8_t tur_after_sdtr(QTestState *qts)
+++{
+++    /* SDTR: 100 ns, offset 15 */
+++    static const uint8_t sdtr[] = { 0x01, 0x03, 0x01, 0x19, 0x0f };
+++    static const uint8_t cdb[6] = { 0x00 };     /* TEST UNIT READY */
+++    uint8_t intr, status;
+++    int i;
+++
+++    /* IDENTIFY (disconnects allowed, LUN 0), and stop in message out */
+++    esp_writeb(qts, ESP_FIFO, 0xc0);
+++    esp_writeb(qts, ESP_WBUSID, 0);
+++    esp_writeb(qts, ESP_CMD, CMD_SELATNS);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_MO);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & (INTR_BS | INTR_FC), ==, INTR_BS | INTR_FC);
+++
+++    /* The SDTR message: the target goes on to the command phase */
+++    for (i = 0; i < ARRAY_SIZE(sdtr); i++) {
+++        esp_writeb(qts, ESP_FIFO, sdtr[i]);
+++    }
+++    esp_writeb(qts, ESP_CMD, CMD_TI);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_BS, ==, INTR_BS);
+++
+++    /* The CDB, one byte per Transfer Information */
+++    for (i = 0; i < ARRAY_SIZE(cdb); i++) {
+++        esp_writeb(qts, ESP_FIFO, cdb[i]);
+++        esp_writeb(qts, ESP_CMD, CMD_TI);
+++        if (i < ARRAY_SIZE(cdb) - 1) {
+++            /* Not the whole CDB yet: the target waits for more */
+++            g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++        }
+++        esp_readb(qts, ESP_RINTR);
+++    }
+++
+++    /* The whole CDB: the target ran it and has its status */
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_ST);
+++    esp_writeb(qts, ESP_CMD, CMD_ICCS);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_FC, ==, INTR_FC);
+++    g_assert_cmpuint(esp_readb(qts, ESP_RFLAGS) & 0x1f, ==, 2);
+++    status = esp_readb(qts, ESP_FIFO);
+++    g_assert_cmphex(esp_readb(qts, ESP_FIFO), ==, 0x00);   /* COMMAND COMPLETE */
+++
+++    /* Accept the message: the target goes to bus free */
+++    esp_writeb(qts, ESP_CMD, CMD_MSGACC);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_DC, ==, INTR_DC);
+++
+++    return status;
+++}
+++
+++static void test_cdb_after_sdtr(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5 -nodefaults "
+++                                 "-drive if=scsi,index=0,format=raw,"
+++                                 "file=null-co://");
+++
+++    /*
+++     * The first command after the reset gets CHECK CONDITION with the
+++     * unit attention; the second one GOOD. A CDB cut short would get
+++     * CHECK CONDITION (ILLEGAL REQUEST) every time.
+++     */
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x02);
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x00);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-esp/cdb-after-sdtr", test_cdb_after_sdtr);
 ++
 ++    return g_test_run();
 ++}

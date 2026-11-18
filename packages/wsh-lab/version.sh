@@ -28,7 +28,8 @@ e2e/sparc/mcp_server.py
 e2e/sparc/scenarios
 e2e/sparc/tests/test_targets.py
 e2e/sparc/lab-requirements.txt
-e2e/sparc/mcp-requirements.txt"
+e2e/sparc/mcp-requirements.txt
+e2e/sparc/answer_media.py"
 
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
 	echo "version.sh: a shallow clone can't count the commits (fetch the full history)" >&2

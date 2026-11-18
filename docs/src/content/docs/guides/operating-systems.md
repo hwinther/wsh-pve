@@ -15,7 +15,8 @@ This page is a work in progress. Driver packs, curated images, and detailed per-
 | ---------------- | ------------ | ----- |
 | Linux (as old as 2.x) | x86_64, sparc, sparc64 | Generally works with legacy devices; on sparc64 the Debian 12 ports installer starts but its install fails (see the [SPARC guide](/guides/sparc/#sparc64-sun4u)) |
 | SunOS / Solaris 2.4+ | sparc | See the [SPARC guide](/guides/sparc/); on sparc64 (sun4u with OpenBIOS) Solaris 10 reaches its installer but doesn't install yet, older releases don't boot |
-| NetBSD | sparc, sparc64 | NetBSD 11.1 installs and runs on sparc64 (sun4u) |
+| illumos (Tribblix m34) | sparc64 | On sun4u with OpenBIOS the live CD boots and installs to the IDE disk, and the installed system boots, with an `openbios-sparc64` that has patches 0016 and 0017 (not in a published package yet); slow under emulation (about 45 minutes to the live CD's login). See the [SPARC guide](/guides/sparc/#tribblix-illumos) |
+| NetBSD | sparc, sparc64 | NetBSD 11.1 installs and runs on sparc (SS-5, SS-20) and sparc64 (sun4u); the lab installs it with one command ([Lab install targets](/guides/lab-install/)) |
 | MS-DOS 3+ | x86_64 | Performance improved with a curated set of drivers and patches |
 | Windows 1.x and up | x86_64 | Works with legacy display/network/audio devices |
 | Windows 9x | x86_64 | VBE-enhanced drivers, plus 3DFX/Mesa passthrough for 3D acceleration |
@@ -25,6 +26,8 @@ This page is a work in progress. Driver packs, curated images, and detailed per-
 <!-- TODO: recommended device choices and any kernel/driver caveats per architecture -->
 
 Older Linux releases (down to the 2.x kernel series) run on the legacy devices added by the extensions. Use the [reference pages](/reference/architecture/) to pick a display, network card, and audio device the guest has drivers for.
+
+On sparc (sun4m), Red Hat Linux 6.2 (kernel 2.2.14) installs from its CD on the SS-5 and SS-20 profiles with OpenBIOS and a serial console; the lab installs it unattended with kickstart in about six minutes ([Lab install targets](/guides/lab-install/)). Give the disk a small `/boot` as its first partition: SILO, the SPARC boot loader, can't load its second stage from far into the disk on these machines.
 
 ## SunOS / Solaris
 

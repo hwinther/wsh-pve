@@ -16,6 +16,9 @@ The following audio devices are defined in the UI, and the existing Intel device
 - **adlib**: Yamaha YM3812 (ISA)
 - **pcspk**: PC Speaker
 - **sb16-adlib-pcspk**: A combination of sb16, adlib, and pcspk with a single driver
+- **cs4231**: Crystal CS4231, built into the SPARCstation 5 (SPARC 32-bit, machine SS-5 only; the
+  only device offered there). Use it with `none`, `alsa`, `pa` or `pipewire`: SPICE needs a SPICE
+  display, which SPARC doesn't have. See [Sound on the SS-5](/guides/sparc/#sound-on-the-ss-5).
 
 ## Backend driver (audio output)
 

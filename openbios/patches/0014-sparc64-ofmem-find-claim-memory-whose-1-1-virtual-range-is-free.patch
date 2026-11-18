@@ -1,0 +1,64 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] libopenbios: ofmem: find claim memory whose 1:1 virtual range is free
+
+A client interface "claim" with an alignment (virt = 0) takes physical
+memory from the top of RAM down and maps it 1:1, but it only looks for
+free physical memory. If the virtual range at the same address is taken
+the claim fails, although free memory with a free virtual range exists
+lower down.
+
+On sparc64 the firmware keeps its own virtual range from OFMEM_VIRT_TOP
+(0xff000000) to 4 GB, and its .data and .bss at the top of RAM. With
+4 GB of RAM the highest free physical memory ends at 0xffe80000, inside
+that range, and with more RAM it is above 4 GB. NetBSD 11.1's first claim
+(pmap_alloc_bootargs(): OF_claim(NULL, 2 * PAGE_SIZE, PAGE_SIZE))
+then fails, and it stops right after its loader:
+
+  qemu-system-sparc64 -M sun4u -m 4096:
+    panic: Can't claim two pages of memory.
+    Unhandled Exception 0x0000000000000030
+
+Search below ofmem_arch_get_virt_top() (the claims stay below 4 GB, where
+they are with less RAM) and, while the virtual range of the area found is
+taken, below that area. With up to 3 GB of RAM the first area found has a
+free virtual range, as before, and nothing changes.
+---
+ libopenbios/ofmem_common.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/libopenbios/ofmem_common.c b/libopenbios/ofmem_common.c
+index 194db15..609692b 100644
+--- a/libopenbios/ofmem_common.c
++++ b/libopenbios/ofmem_common.c
+@@ -643,10 +643,29 @@ ucell ofmem_claim( ucell addr, ucell size, ucell align )
+ 			return -1;
+ 		}
+ 	} else {
++		ucell max = get_ram_size(), found = -1;
++
+ 		if( align < PAGE_SIZE )
+ 			align = PAGE_SIZE;
+-		phys = ofmem_claim_phys_( -1, size, align, 0, get_ram_size(), 1 /* reverse */ );
+-		virt = ofmem_claim_virt_( phys, size, 0, 0, 0, 0 );
++		/* The memory is mapped 1:1, so its virtual range must be free
++		   too. With RAM up to or beyond ofmem_arch_get_virt_top() the
++		   top of RAM is the firmware's own virtual range: search below
++		   it, and lower down for as long as the virtual range is taken */
++		if( max > ofmem_arch_get_virt_top() )
++			max = ofmem_arch_get_virt_top();
++		while( max >= size ) {
++			found = find_area( align, size, ofmem->phys_range, 0, max, 1 /* reverse */ );
++			if( found == (ucell)-1 || is_free( found, size, ofmem->virt_range ) )
++				break;
++			max = found;
++			found = -1;
++		}
++		phys = -1;
++		virt = -1;
++		if( found != (ucell)-1 ) {
++			phys = ofmem_claim_phys_( found, size, 0, 0, 0, 0 );
++			virt = ofmem_claim_virt_( found, size, 0, 0, 0, 0 );
++		}
+ 		if( phys == -1 || virt == -1 ) {
+ 			OFMEM_TRACE("ofmem_claim failed\n");
+ 			return -1;

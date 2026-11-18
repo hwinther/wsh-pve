@@ -1,0 +1,104 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: run the client interface with interrupts disabled
+
+sparc64_of_client_interface saves the caller's register windows and
+trap registers into a context (SAVE_CPU_STATE), resets the window
+registers for the firmware and puts it all back on the way out
+(RESTORE_CPU_STATE). Both macros walk %cwp through every window with
+wrpr and rewrite %tl, %tpc, %tnpc, %tstate and %tba. They run with the
+caller's PSTATE.IE. Solaris and illumos (client_handler in sun4u
+mach_locore.S) call in with interrupts enabled and their own trap table
+in %tba.
+
+An interrupt taken in the middle of either walk runs the client's trap
+handler with %cwp pointing at an arbitrary window while %cansave,
+%canrestore and %otherwin still describe the caller's window. The
+handler's save overwrites a window that holds the caller's registers,
+and the trap registers it leaves behind are rewritten afterwards.
+Tribblix m34 (illumos) on sun4u stopped in one of these ways in four of
+seven boots of its live CD:
+
+- client_handler's %l4 (the %pstate it restores after the call) comes
+  back as 0: the kernel runs on in user mode at a kernel address, traps
+  into a window spill loop at TL 1 (QEMU -d int: "Window Spill
+  (v=00bc)" at priv_trap+0x44, endlessly);
+- "panic[cpu0]/thread=180e000: bad stack overflow at TL 2" with trap
+  frames from prom_finddevice whose %tpc are 0x1, 0x3 and 0x7.
+
+With this change neither came back in about ten boots (live CD,
+installs, installed systems).
+
+Solaris 10 showed the same once in six boots of its DVD: "BAD TRAP:
+type=4e" (interrupt level 14) with the PC in the firmware, from
+prom_finddevice in vfs_mountroot.
+
+Clear PSTATE.IE on entry, before the state is saved, keep the caller's
+%pstate in the context so RESTORE_CPU_STATE puts the rest back with
+interrupts still off, and write the caller's %pstate last, just before
+returning. Clients that call in with interrupts disabled see no
+change.
+---
+ arch/sparc64/call-client.S | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/arch/sparc64/call-client.S b/arch/sparc64/call-client.S
+index 4129505..2b0cd3b 100644
+--- a/arch/sparc64/call-client.S
++++ b/arch/sparc64/call-client.S
+@@ -1,4 +1,5 @@
+ #include "cpustate.h"
++#include "pstate.h"
+ 
+ 	.globl	sparc64_of_client_interface, client_tba
+ 
+@@ -44,6 +45,18 @@ sparc64_of_client_interface:
+ 	stx	%g6, [%sp + 2047 - 248 + 232]
+ 	stx	%g7, [%sp + 2047 - 248 + 240]
+ 
++	/*
++	 * No interrupts until the client's state is back: SAVE_CPU_STATE and
++	 * RESTORE_CPU_STATE rotate %cwp through every window and rewrite the
++	 * trap registers, and a client whose trap table takes an interrupt in
++	 * between (Solaris and illumos call in with PSTATE.IE set) gets its
++	 * register windows and trap state overwritten. %g2 keeps the client's
++	 * %pstate.
++	 */
++	rdpr	%pstate, %g2
++	andn	%g2, PSTATE_IE, %g3
++	wrpr	%g3, %pstate
++
+ 	/* Save existing stack */
+ 	setx	client_stack, %g6, %g7
+ 	stx	%sp, [%g7]
+@@ -77,6 +90,9 @@ sparc64_of_client_interface:
+ 	
+ 	SAVE_CPU_STATE(cif)
+ 	
++	/* The client's %pstate as it called in (SAVE_CPU_STATE saw IE cleared) */
++	stx	%g2, [%g1 + 0xb0]
++
+ 	RESET_CPU_WINDOW_STATE(cif)
+ 	
+ 	/* Update __context to point to saved area */
+@@ -117,6 +133,11 @@ sparc64_of_client_interface:
+ 	setx	__context, %g6, %g7
+ 	stx	%g3, [%g7]
+ 	
++	/* The client's state back with interrupts still off, its %pstate (%g2) last */
++	ldx	[%g1 + 0xb0], %g2
++	andn	%g2, PSTATE_IE, %g3
++	stx	%g3, [%g1 + 0xb0]
++
+ 	RESTORE_CPU_STATE(cif)
+ 	
+ 	add	%g1, CONTEXT_STATE_SIZE, %g5
+@@ -130,6 +151,9 @@ sparc64_of_client_interface:
+ 	/* Restore %pc */
+ 	ldx	[%g1 + 0x4d0], %o7
+ 	
++	/* Interrupts as the client had them */
++	wrpr	%g2, %pstate
++
+ 	/* Restore globals */
+ 	ldx	[%g1 + 0x38], %g2
+ 	ldx	[%g1 + 0x40], %g3

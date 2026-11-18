@@ -47,18 +47,32 @@ maintains the patches.
 | `0013-hw-sparc-sun4m-add-the-sunos-idle-option-on-by-defau` | `-M <sun4m>,sunos-idle=on\|off` for 0012, on by default, off with `-smp` > 1 | [LEMU `fed03cc7`](https://github.com/tenox7/lemu/commit/fed03cc7f5f7c5d6e5e0144bfc1dad36d4844180) | not in QEMU |
 | `0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop` | Solaris 2.5.1-9 spin in `idle()` on every CPU module but the microSPARC-II with `pmc` (SS-10/SS-20 always); the translator recognises the call of `idle_cpu` in that loop and halts the CPU there until the next interrupt when `disp_nrunnable` is 0 | ours | not in QEMU |
 | `0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def` | `-M <sun4m>,solaris-idle=on\|off` for 0014, on by default, off with `-smp` > 1 | ours | not in QEMU |
-| `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015 | ours | not in QEMU |
+| `0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m` | qtest `sun4m-solaris-idle-test` for 0014-0015; a decoy 1 in the PROM at `disp_nrunnable`'s RAM address checks that the helper reads RAM with the MMU off | ours | not in QEMU |
 | `0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-` | Solaris on SS-5 ran call-heavy user code 4-10x slower than on SS-20: its microSPARC window-trap handlers set and clear the MMU no-fault bit (NF) twice per trap, and QEMU flushed its whole TLB on every NF change. Now NF flushes only while the TLB holds an entry made for a fault in no-fault mode (the only entries that depend on it); boot mode flushes as before. Trace event `sparc_mmu_ctrl_flush` ("Why SS-5 was slower", "Benchmarks") | ours | not fixed; see `upstream/qemu-srmmu-control-register-flush.md` |
 | `0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m` | qtest `sun4m-mmu-nofault-test` for 0017: an entry made in no-fault mode must not survive NF being cleared (SS-5 and SS-20) | ours | not in QEMU |
 | `0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-` | Solaris 2.x with more than one CPU (SS-10/SS-20) hung within minutes: a write to `%psr` in a delay slot (Solaris's `splx`) didn't end the translation block, so an interrupt it unmasked wasn't taken until something else stopped the CPU; a CPU spinning in such a loop never took the other CPU's cross-call ("SMP") | ours | not fixed (since 8.2.0, `25524734c6`); see `upstream/qemu-sun4m-smp-psr-delay-slot.md` |
 | `0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl` | qtest `sun4m-pil-delay-slot-test` for 0019: a pending soft interrupt must be taken after PIL is lowered by a plain `wr %psr` and by one in the delay slot of `ba`, `bne`, `bne,a` and `jmpl` | ours | not in QEMU |
-| `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to clear them; the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD) ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
-| `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, and the interrupt line (seen through the sabre) follows INTRQ | ours | not in QEMU |
-| `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
+| `0021-ide-cmd646-latch-the-interrupt-status-bits-until-the` | The cmd646 (sun4u's built-in IDE) cleared its interrupt status bits (MRDMODE, CFR, ARTTIM23) when the drive dropped INTRQ, i.e. when the guest read the drive's status. Solaris 10 reads the status and then polls those bits: `WARNING: Interrupt not seen after set_features` for every IDE device. Now they stay set until the guest writes 1 to them in config space (the BMDMA mirror of MRDMODE doesn't clear them); the PCI interrupt line keeps following INTRQ (driving it from the latched bits broke Linux and OpenBSD), kept in a field that a device reset clears and that isn't in the migration stream ("Solaris on sun4u") | ours | not fixed; see `upstream/qemu-cmd646-interrupt-latch.md` |
+| `0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o` | qtest `sun4u-cmd646-test` for 0021: after SET FEATURES and a status read the bits stay set until written 1, the interrupt line (seen through the sabre) follows INTRQ, and a reset with INTRQ up leaves the line low | ours | not in QEMU |
+| `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry (with the MMU off the address is taken as physical: the debug lookup would read the PROM) ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
 | `0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by` | `-M <sun4m>,solaris-smp-idle=on\|off` for 0023, on by default, does nothing with one CPU | ours | not in QEMU |
-| `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024 | ours | not in QEMU |
+| `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024, with the same PROM decoy | ours | not in QEMU |
+| `0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd` | sparc32 raised an illegal instruction trap for `ld [..], %fsr` and `st %fsr, [..]` with rd other than 0; V7 and V8 chips ignore rd there. The `_sigtramp` of an old static SunOS 4 libc saves and restores the FSR with rd 4 (`c92ba0e0`, `c90ba0e0`), so such programs died with SIGILL at their first signal after using the FPU (LEMU's case: Island Productivity's 1992 licence daemon `islandLIC`). sparc32 takes any rd again, as before QEMU 8.2; sparc64 doesn't change | [LEMU `0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2) by Antoni Sawicki | not fixed (since 8.2.0, `3d3c06737b`); see `upstream/qemu-sparc32-ldfsr-rd.md` |
+| `0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m` | qtest `sun4m-fsr-rd-test` for 0026: `ld %fsr` and `st %fsr` with rd 0, 4 (the exact words above) and 31 run without a trap and the FSR reads back | ours | not in QEMU |
+| `0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin` | The SS-5's CS4231 was a register stub: its APC DMA kept what was written and never interrupted, so every program that waited for the end of a sound on `/dev/audio` hung (SunOS 4.1.4). The APC now plays its playback buffers, read through the IOMMU, into the machine's audiodev at the codec's rate (u-law, A-law, 8-bit, 16-bit LE and BE; ADPCM plays silence), with PI, PD, PM and PMI and the DAC volume. Capture is not done: the capture pipe reads as empty ("Audio") | [LEMU `2938ff88`](https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c) by Antoni Sawicki | not in QEMU |
+| `0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i` | The machine side of 0028: `-machine audiodev=` on sun4m, the codec's IOMMU link, and its interrupt on bit 9 (processor level 5, OpenBIOS's `intr` 5; 0030 moves it) | [LEMU `42d32575`](https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6) by Antoni Sawicki | not in QEMU |
+| `0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level` | The real SS-5 has the codec at SBus level 5, processor level 9 (`ss5.bin` 2.15 gives the node `intr 0x39`). On bit 9, Solaris, which takes OpenBIOS's `interrupts 5`, never got its interrupt: audioplay stopped after the first second with `processor level 3 SBus interrupt not serviced`. Now SBus level 5 (bit 11), through an OR gate with the cg3 or TCX, which use that level too. Needs openbios patch 0018 for SunOS 4 | ours | not in QEMU (upstream wires the stub to bit 5, processor level 11) |
+| `0031-hw-audio-cs4231-no-sound-without-an-audiodev` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio driver, and with none available didn't start (`no default audio driver available`). Without an audiodev the codec now opens no voice and keeps its registers only, as before (the PC speaker does the same) | ours | — |
+| `0032-hw-audio-cs4231-play-out-the-last-samples-when-playb` | The APC takes its samples up to 50 ms ahead of the codec's clock; turning the voice off when the pipe ran empty or the driver stopped the DMA dropped what the mixer still held, so every sound lost its last 50 ms. The voice stays on for 200 ms after playback stops | ours | — |
+| `0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA` | qtest `sun4m-cs4231-test` for 0028-0032: two u-law buffers behind IOMMU mappings, PEN, PI/PD/PM/PMI at SBus level 5 (processor level 9) in real time, every sample decoded in a `wav` audiodev; DMA off and the reset bit | ours | not in QEMU |
+| `0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-` | sun4u wrote QEMU's default MAC `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`; a NIC added with `-device` (as qemu-server adds `sunhme`) didn't exist yet. OpenBIOS gives the guest that address as the system MAC and NetBSD and Solaris use it for `hme0` (NetBSD's `wm` too), so every guest had the same MAC and host id whatever `net0` said. Without an onboard NIC the IDPROM is now written again when the machine is complete: from the first `sunhme`, else the first NIC of any model ("The sun4u system MAC") | ours (in review) | not fixed; see `upstream/qemu-sun4u-idprom-mac.md` |
+| `0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u` | qtest `sun4u-idprom-test` for 0034: reads the IDPROM from the NVRAM; default address without a NIC, a `-device sunhme`'s address, the first `sunhme` after a `virtio-net-pci`, the first NIC without a `sunhme`, the onboard `-net nic` ahead of a `-device sunhme` | ours (in review) | not in QEMU |
+| `0036-target-sparc-write-softint-under-the-BQL` | The guest's `%set_softint`, `%clear_softint` and `%softint` writes read, modified and wrote `env->softint` in the vCPU thread without the BQL, while the tick, stick and hstick timers set their bits from the main loop holding it: a tick that fired in between was written over. illumos arms its next clock tick only after handling the last one, so Tribblix lost its clock for good in about one of three long runs. The three helpers now hold the BQL for the read-modify-write ("Tribblix on sun4u") | ours (in review) | not fixed; see `upstream/qemu-sparc64-softint-race.md` |
+| `0037-tests-qtest-test-that-a-tick-during-a-softint-write-` | qtest `sun4u-softint-test` for 0036: a boot PROM sets and clears soft interrupt 1 in a loop with interrupts off while 10 us ticks fire, and counts the ticks it sees and loses; passes after 20000 ticks with none lost | ours (in review) | not in QEMU |
+| `0038-esp-don-t-count-the-message-out-bytes-as-part-of-the` | `esp_cdb_ready()` counted the IDENTIFY and other message out bytes in the command FIFO as CDB bytes. Linux 2.6.18's `esp` driver (Debian 4.0 on SS-5) selects with ATN and Stop, sends a 5-byte SDTR message and then the CDB one byte per Transfer Information: its first CDB byte alone made a "complete" 6-byte command, the target answered ILLEGAL REQUEST and Linux reset the bus and took the disk and CD-ROM offline. Only the bytes after the messages count now | ours (in review) | not fixed; see `upstream/qemu-esp-cdb-ready-after-message-out.md` |
+| `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
 
-The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
+The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
 carry it ourselves. Each patch keeps its author and has an `Origin:` line.
 
@@ -101,10 +115,48 @@ caught it (0 rounds). `sun4m-solaris-idle-test` passes 5/5 with 0023 (the read o
 `disp_nrunnable` changed under it). With 0001-0025, `make check-qtest-sparc`: 20 OK, 2 skipped, the
 same `qmp-test` failure. Lab results under "SMP".
 
+0026 is LEMU's change without its `machines/sun4m/README.md` hunk; it applies to 11.1.3 on top of
+0001-0025 with line offsets only. `sun4m-fsr-rd-test` passes 3/3 with it; without it the `rd4`
+case fails with trap type 2 (illegal instruction) and `rd0` passes. With 0001-0027,
+`make check-qtest-sparc`: 21 OK, 2 skipped, the same `qmp-test` failure;
+`make check-qtest-sparc64`: 15 OK (`sun4u-cmd646-test` 2/2 among them), 2 skipped, and `qmp-test`
+fails in `/sparc64/qmp/oob` the same way.
+
+0028 and 0029 are LEMU's commits unchanged: they apply to 11.1.3 on top of 0001-0027 without fuzz.
+0030-0033 are ours, from the lab ("Audio"). `sun4m-cs4231-test` passes 2/2 with 0028-0033; without
+0032 its playback case fails (1200 of the 1600 samples reach the wav file). With 0001-0033 the
+`qtest-sparc` and `qtest-sparc64` suites: 37 OK, 4 skipped, and the two `qmp-test` `oob` failures
+as before; every sun4m qtest above passes, and an SS-5 without an audiodev starts.
+
+0034-0035 apply on top of 0001-0027 (written before 0028-0030; they touch `hw/sparc64/sun4u.c` and the
+`qtests_sparc64` list only). `sun4u-idprom-test` passes 5/5 with 0034 (`qemu-system-sparc64` built
+from 0001-0027 + 0034-0035); against the packaged 11.1.3-2+wsh16 binary its `device` case fails
+with `52:54:00:12:34:56` in the IDPROM. `sun4u-cmd646-test` still passes 2/2. Lab results under
+"The sun4u system MAC".
+
+0001-0039 apply to 11.1.3 with `patch -F0` (0034-0035 regenerated on top of 0033). `sun4u-softint-test`
+passed 30 of 30 runs with 0036 (20 001-20 399 ticks each, none lost, under a second each) and failed
+30 of 30 without it, each run losing a tick within its first three. `sun4m-esp-test` passes with
+0038 and fails without it (the first CDB byte after the SDTR message already ends the command
+phase).
+
+Carried back from the port of these patches to a LEMU fork (its `feat/sparc-fixes` branch), into
+the existing patches: 0023's helper takes `disp_nrunnable`'s address as physical when the MMU is
+off (the debug lookup tries an instruction fetch first, which boot mode takes from the PROM; real
+guests run with the MMU on and never hit it), and 0016 and 0025 put a decoy 1 in the PROM at that
+RAM address, so their idle cases fail with the old lookup (checked with the 0001-0037 binary: both
+fail); 0021's `cmd646_reset()` clears `intrq`, and 0022's new `reset-drops-intrq` case fails
+without it; checkpatch-style clean-ups in those tests and in 0021/0023 (line lengths, comments, a
+table instead of `atoi`/`strtoul`). The `SOL_*` macro comments in `translate.c` (0014/0023) were
+left as they are. With 0001-0039 the `qtest-sparc` and `qtest-sparc64` suites: 40 OK, 4 skipped,
+and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-idprom-test` 5/5,
+`sun4u-softint-test` 1/1, `sun4u-cmd646-test` 3/3, every sun4m qtest above).
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
-`sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test` and `sun4m-solaris-smp-idle-test` (sparc),
-`sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
+`sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
+`sun4m-fsr-rd-test`, `sun4m-cs4231-test` and `sun4m-esp-test` (sparc),
+`sun4u-cmd646-test`, `sun4u-idprom-test` and `sun4u-softint-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -131,6 +183,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0001-esp-treat-a-selection-timeout-as-no-device` | Every empty SCSI target was probed as a device of unknown type (`UNKNOWN0`-`UNKNOWN7` aliases), so the disk on target 3 had only `disk3`: no `disk` alias, and the default boot (`disk:a disk`) failed with "No valid state has been set by load or init-program". Broken since OpenBIOS's ESP changes of 2024-09 (QEMU 9.2 and later) | not fixed; see `upstream/openbios-esp-selection-timeout.md` |
 | `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
 | `0008-sparc32-enter-the-prompt-on-op_enter-and-resume-with-go` | Stop-A (the romvec's `op_enter`) on a running Solaris or SunOS powered the machine off ("abort, power off"); it now stops at the prompt and `go` resumes the client, `boot` resets first ("Stop-A") | not fixed; see `upstream/openbios-sparc32-op-enter-powers-off.md` |
+| `0018-sparc32-give-the-cs4231-intr-9-the-level-of-its-sbus-level` | The SS-5's `SUNW,CS4231` node had `interrupts` 5 (SBus level 5, processor level 9) and `intr` 5 (processor level 5): Solaris waits where the first says, SunOS 4 where the second says, so no wiring served both. `intr` is now 9, as the Sun PROM's `0x39`, for QEMU patch 0030 ("Audio") | not in OpenBIOS (QEMU had no working codec) |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -156,6 +209,11 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not fixed; see `upstream/openbios-sparc64-ide-tree.md` |
 | `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | as 0010 |
 | `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Resets at the `ok` prompt, but Solaris's `reboot` then hangs the VM, so it stays `.wip` (the Dockerfile only applies `*.patch`) | — |
+| `0013-sparc64-ofmem-keep-the-upper-bits-of-physical-addresses-in-align_ptr` | `align_ptr()` masked with a 32-bit `size_t`, so the firmware's heap broke once it sat above 4 GB (it is at the top of RAM): from about 4.3 GB OpenBIOS stopped before its banner (`Unhandled Exception 0x0000000000000030`; at 8192 MB `out of malloc memory (28)!` first). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-sparc64-ram-above-4g.md` |
+| `0014-sparc64-ofmem-find-claim-memory-whose-1-1-virtual-range-is-free` | A client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking the virtual side; with 4 GB that is the firmware's own range, the claim failed and NetBSD stopped after its loader (`Can't claim two pages of memory.`). It now searches below `0xff000000` and lower while the virtual range is taken. Generic code, applied to sparc64 only here | as 0013 |
+| `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
+| `0016-sparc64-client-interface-runs-with-interrupts-disabled` | The client interface walked `%cwp` through every window and rewrote the trap registers (saving and restoring the caller's state) with the caller's `PSTATE.IE`. Solaris and illumos call in with interrupts enabled and their own trap table: an interrupt in between overwrote the caller's windows. Tribblix's live CD stopped on most boots (corrupted locals after a call, `bad stack overflow at TL 2`); Solaris 10's one `BAD TRAP: type=4e` in the firmware was the same. Interrupts are now off from entry until the caller's `%pstate` is written back ("Tribblix on sun4u") | not fixed; see `upstream/openbios-sparc64-client-interface-interrupts.md` |
+| `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -513,6 +571,63 @@ A fix would be in QEMU's ESCC: a break with an end (clear the bit after a charac
 NUL character a real break leaves in the receiver), so Solaris sees the transition and enters the
 prompt; a candidate for a `wsh/` patch and an upstream report.
 
+### Audio
+
+The SS-5's CS4231 plays sound with pve-qemu 0028-0033 and openbios 0016: the APC DMA engine reads
+the guest's buffers through the IOMMU and plays them into the audiodev given with
+`-machine audiodev=<id>` (qemu-server: `audio0: device=cs4231,driver=...`). The codec is built into
+the machine, so there is no `-device`. Without an audiodev (no `audio0`) the chip is the old
+register stub: no sound and no interrupts, and a program that waits for the end of a sound hangs,
+as before (SunOS 4.1.4, LEMU's report). `driver=none` gives a working chip that nobody hears.
+
+Measured in the lab (2026-11-18) with a `qemu-system-sparc` built from 0001-0033 and the patched
+`openbios-sparc32`, `-audiodev wav` (44.1 kHz stereo; the lab variable `AUDIO=wav` does the same).
+The sound is a 3-second 400 Hz square wave of u-law bytes made in the guest with `nawk`: none of
+the installed disks has Sun's demo sounds (SunOS's Programmer install has no `/usr/demo/SOUND`,
+the Solaris End User installs no `SUNWauda`). It went as raw bytes to `/dev/audio` on SunOS, and
+with a 24-byte `.au` header through `audioplay -v 100` on Solaris:
+
+| Guest | Firmware | Command time | In the wav file |
+| --- | --- | --- | --- |
+| SunOS 4.1.4 (`SUNW,CS42310 ... pri 9`) | OpenBIOS | 3.03 s | 3.000 s, 400.0 Hz, every half period 55-56 samples; peak -35.3 dBFS (SunOS's default play gain) |
+| Solaris 2.6 | OpenBIOS | 3.16 s | 3.000 s, 400.0 Hz, half periods 55-56 samples, peak -12.3 dBFS (the samples' own level, 7932) |
+| Solaris 2.6 | `ss5.bin` | 3.39 s | the same |
+| Solaris 2.5.1 | OpenBIOS | 3.21 s | the same |
+| Solaris 2.5.1 | `ss5.bin` | 3.22 s | the same |
+
+No sample was lost or repeated, there were no gaps, and the command ends when the sound does. All
+runs had `-vga none` (the lab's serial console): sound with the cg3 or TCX interrupting on the same
+SBus level through the OR gate was not played. With a cg3 attached, Solaris 2.6 (OpenBIOS) booted
+with its console on the cg3, up to its first-boot questions. What was wrong on the way, and is
+fixed:
+
+- With LEMU's interrupt (bit 9, processor level 5, which matches OpenBIOS's old `intr` 5) SunOS
+  4.1.4 played, but Solaris 2.6 stopped after 1.02 s with `WARNING: processor level 3 SBus interrupt
+  not serviced` on the console: Solaris attaches the driver by `interrupts` (SBus level 5). The Sun
+  PROM's node says `intr 0x39`, an SBus interrupt at processor level 9, which is SBus level 5 on
+  sun4m. 0030 raises SBus level 5 and openbios 0018 makes `intr` 9; then all of the above play.
+- Each sound lost its last 50 ms when the driver stopped the DMA as soon as the pipe ran empty
+  (0032).
+- An SS-5 without an audiodev didn't start (0031).
+
+Not done or not tested: capture (the capture pipe reads as empty, so a recording program gets no
+data); ADPCM (plays silence); Solaris 7 and later and NetBSD (not run); Sun's demo `.au` files and
+LEMU's `/usr/demo/SOUND/play` (not on our disks; LEMU measured `spacemusic.au` at 6.00 s, peak
+-5.2 dBFS); the host backends (`alsa`, `pa`, `pipewire`) on a real node: qemu-server emits them,
+the lab used only `wav` (the qtests `wav` and `none`).
+
+QEMU's mixer doubles a mono voice played into a mono output (it adds left and right), so a wav
+audiodev with `out.channels=1` is 6 dB too loud; the qtest uses stereo. The `wav` backend leaves the
+header's sizes at 0 when the guest powers the machine off; the samples follow the 44-byte header.
+
+Where the sound goes on PVE: SPICE carries sound only to a SPICE display, which sparc32 doesn't
+have, so qemu-server refuses `driver=spice` on sparc. The web console (noVNC) has no sound.
+`alsa`, `pa` and `pipewire` play on the node's own sound device or sound server (with `pa`, the
+existing `server=` option points at a PulseAudio server, as on x86); `none` is silent.
+
+SS-10 and SS-20 have a DBRI with a CS4215 instead, which QEMU doesn't emulate: qemu-server refuses
+`audio0` there. sun4u: no sound device was tested, and `audio0` is refused.
+
 ### SS-10 and SS-20
 
 Which machine, firmware, CPU count and RAM run Solaris, and whether anything beats SS-5 + one CPU
@@ -569,7 +684,7 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 | Guest | Result |
 | --- | --- |
 | Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
-| Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both (`lab.py install sol7-ss5`/`sol7-ss20`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
+| Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both, on the 3G or the 9G disk (`lab.py install sol7-ss5`/`sol7-ss20 [--disk-size 9G]`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
 | Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`) |
 | Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 Web Start installs End User and the installed 32-bit kernel boots to login, although Sun dropped sun4m after 8 (`sol9-ss20`) |
 | NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
@@ -1222,6 +1337,34 @@ Bandwidth spreads: slirp in 6-31%, out 7-28%; tap in 11-17%, out 3-14%. RPC spre
   first round for looping, ran normally when tried by hand on SS-20 for this round; not yet run on
   every profile.
 
+### Red Hat Linux 6.2 on sun4m
+
+Red Hat Linux 6.2 for SPARC (March 2000, kernel 2.2.14, anaconda 6.2, SILO 0.9.8) on the SS-5 and
+SS-20 profiles with OpenBIOS, a serial console and the published packages (pve-qemu-kvm
+11.1.3-2+wsh16): nothing to change in QEMU, OpenBIOS or qemu-server. What the guest finds:
+
+- The CD's SILO (`cd.b`, an a.out) boots from the whole CD-ROM device: `boot .../sd@6,0`, not
+  slice `d` (OpenBIOS: "No valid state has been set" for `sd@6,0:d`); OpenBIOS's `-boot d` /
+  `cdrom` alias finds it too, but takes the first CD-ROM, which is the answer CD in the install
+  target.
+- Kernel: `ARCH: SUN4M`, `TYPE: SPARCstation 5`, `Fujitsu Swift` srmmu, the ESP as
+  `ESP100A-FAST` (`sda` on target 3, `sr0`/`sr1`), `sunlance` with `net0`'s MAC, the Zilog ports
+  with `Console: ttyS0` (OpenBIOS's `output-device=ttya`), a floppy controller it detects
+  (`FDC 0 is a S82078B`; qemu-server offers no floppy on sparc), `cs4231` loaded at boot, and
+  "Power off control detected": `poweroff` ends QEMU with 0.
+- The installer runs on the serial console in text mode by itself ("using a serial console").
+- SILO on the disk reads `second.b` through the PROM, and on sun4m that doesn't reach far: with
+  `/` alone on a 3 GiB disk `second.b` was at byte offset ~2.1 GB and the first stage stopped after
+  `S` (OpenBIOS: `File not found`; `ss5.bin`: `Program terminated`). A 32 MB `/boot` from cylinder
+  0 boots under OpenBIOS by itself (`Trying disk:a`). Not narrowed down to where the limit is, or
+  whether it is in SILO's first stage or in the PROMs' read path (the CD's install guide doesn't
+  mention it).
+- Times (TCG, a busy host): the installer's first screen ~30 s after SILO; the Base install 1.8-2.2 min
+  on SS-5, ~1.4 min on SS-20; boot to `login:` ~20 s.
+
+The install target (`redhat62-ss5`, `redhat62-ss20`) and how it is driven: `e2e/sparc/README.md`,
+"Red Hat Linux 6.2".
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
@@ -1309,7 +1452,7 @@ raw; NIC: DHCP from QEMU's user network and an HTTP fetch).
   Can't claim two pages of memory.` right after the loader, then `Unhandled Exception
   0x0000000000000030`; 8192 MB: OpenBIOS itself stops (`out of malloc memory (28)!`, `Unhandled
   Exception 0x0000000000000030`). QEMU accepts up to what the host can allocate. The Debian installer
-  ran with 1024 MB.
+  ran with 1024 MB. Three OpenBIOS bugs, fixed by patches 0013-0015; see "More than 3 GB" below.
 - **`-cpu`**: default `TI-UltraSparc-IIi` (what OpenBIOS reports, `SUNW,UltraSPARC-IIi`). Nothing
   needs another model.
 
@@ -1477,7 +1620,8 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   yet; that needs the installed system. QEMU writes the default MAC `52:54:00:12:34:56` into the
   sun4u IDPROM unless the NIC is the machine's onboard `-nic`. qemu-server and the lab add `sunhme`
   with `-device`, so every guest gets that system MAC whatever `mac=` says. proxmox-solaris reports
-  the same thing on the wire. Measured since (below).
+  the same thing on the wire. Measured since (below); fixed by pve-qemu `wsh/0034` ("The sun4u system
+  MAC").
 
 **Status on the published pve-qemu-kvm 11.1.3-2+wsh13 (2026-11-17).** QEMU and `openbios-sparc64`
 from the package as installed in the lab image (no own builds), Solaris 10 1/13 DVD, 1024 MB, a
@@ -1506,7 +1650,8 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
   `-device` (as qemu-server and the lab do) isn't seen at that point, so the IDPROM gets QEMU's
   default `52:54:00:12:34:56`. With `-net nic,model=sunhme,macaddr=...` the NIC sits at a different
   PCI path, and the installed system (whose `hme0` is the `-device` NIC on bus B) didn't configure
-  it. The IDPROM MAC there wasn't read, so that variant is untested.
+  it. The IDPROM MAC there wasn't read, so that variant is untested. Fixed in QEMU since: "The sun4u
+  system MAC".
 
 **Status with 0010-0011 (2026-11-17).** Firmware built from the committed patches 0001-0011 (build
 records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`:
@@ -1522,7 +1667,7 @@ records its source commit), Solaris 10 1/13 DVD, 1024 MB, 16 GB disk on `ide.0`,
   `ping 10.0.2.2` answers `alive`. `init 5` powers QEMU off (exit 0).
 - The sun4u system MAC: with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris uses `ether
   52:54:0:12:34:56`. QEMU writes its default MAC into the IDPROM when the NIC isn't `-nic`, so two
-  guests on one network would clash. Not fixed.
+  guests on one network would clash. Fixed since by pve-qemu `wsh/0034` ("The sun4u system MAC").
 - Not measured with this set: the install on the packaged QEMU (without the cmd646 patch); the
   reboot (0012, `.wip`); Solaris 7/8/9.
 
@@ -1532,6 +1677,134 @@ NetBSD's ofwboot reads the boot device's target with `my-unit` on the instance `
 which is the interposed disk-label package, and OpenBIOS answered 0 0 there; with the channel
 nodes NetBSD made up for that with an OpenBIOS-specific offset. 0010 makes the interposed package
 answer with the device's unit (`0 2` for `cdrom@2,0`), and NetBSD roots on `cd0` again.
+
+**More than 3 GB (patches 0013-0015, 2026-11-18).** QEMU's sun4u takes any `-m`; OpenBIOS was the
+limit, with three bugs (`upstream/openbios-sparc64-ram-above-4g.md`):
+
+- 0013: `align_ptr()` in `ofmem_common.c` masked with a 32-bit `size_t`. The firmware's heap sits
+  at the top of RAM; once that is above 4 GB the first `malloc()` got a truncated address. With the
+  package's firmware (11.1.3-2+wsh15): 4352 to 7168 MB stop before the banner with `Unhandled
+  Exception 0x0000000000000030` (PC in `ofmem_posix_memalign`), 8192 MB with `out of malloc memory
+  (28)!` first. 6144 MB stops like 4352.
+- 0014: a client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking
+  the virtual range. With 4096 MB that is the firmware's own range (`0xff000000`-4 GB): NetBSD's
+  first claim (`pmap_alloc_bootargs()`) failed and the kernel stopped right after the loader
+  (`Unhandled Exception 0x0000000000000030` at `0x13f5394` with the package's firmware and with 0013
+  alone).
+- 0015: `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but NetBSD (`CELL2HDQ`) and
+  64-bit Solaris (`p1275_cells2ull`) read `phys.lo` alone. With 0013+0014 NetBSD booted with 6144 and
+  8192 MB, but `ofwboot` mapped its allocations at the truncated addresses (a firmware trace: claim
+  `0x17fe7e000`, map `0x7fe7e000`), and while a tmpfs was being filled (about 55 s into it, the same with both sizes) the kernel stopped with `trap
+  type 0x10: cpu 0, pc=1000d00` and `panic: illegal instruction` (its trap table overwritten).
+
+Measured with `openbios-sparc64` built from the committed patches 0001-0011 and 0013-0015 (commit
+`6e4e296`, the `openbios/Dockerfile` steps in the lab's builder image) on the published QEMU
+11.1.3-2+wsh15, the installed disks booted with `-snapshot`, one CPU, serial console. The load: swap
+off, copies of a 32 MB random file written into a tmpfs (NetBSD `mount_tmpfs`, Solaris `/tmp`) until
+most of RAM is used, then the MD5 of every copy:
+
+| Guest | RAM | Reports | Load | Result |
+| --- | --- | --- | --- | --- |
+| NetBSD 11.1 | 3072 MB | `hw.physmem64` 3221225472, `avail memory = 2995 MB` | 64 copies (2 GB) | all identical, power off |
+| NetBSD 11.1 | 4096 MB | `hw.physmem64` 4294967296, `avail memory = 4001 MB` | 96 copies (3 GB) | all identical, power off |
+| NetBSD 11.1 | 6144 MB | `hw.physmem64` 6442450944, `avail memory = 6014 MB` | 160 copies (5 GB) | all identical, power off |
+| NetBSD 11.1 | 8192 MB | `hw.physmem64` 8589934592, `avail memory = 8026 MB` | 224 copies (7 GB) | all identical, power off |
+| Solaris 10 1/13 | 2048 MB | `Memory size: 2048 Megabytes`, `::memstat` total 1999 MB | 32 copies (1 GB) | all identical, `init 5` |
+| Solaris 10 1/13 | 3072 MB | `Memory size: 3072 Megabytes`, total 3002 MB | 64 copies (2 GB) | all identical, `init 5` |
+| Solaris 10 1/13 | 4096 MB | `Memory size: 4096 Megabytes`, total 4010 MB | 96 copies (3 GB), freelist 440 MB left | all identical, `init 5` |
+| Solaris 10 1/13 | 8192 MB | `Memory size: 8192 Megabytes`, total 8033 MB | 192 copies (6 GB), freelist 1484 MB left | all identical, `init 5` |
+
+Solaris needs about 30 minutes (4096 MB) to 38 minutes (8192 MB) for the run, most of it the boot
+and `digest`. `prtdiag` was run but its output not checked. NetBSD with 6144 MB and the firmware
+before 0015 is the crash above; with 0013+0014 the 3072 and 4096 MB NetBSD runs and the 2048 and
+3072 MB Solaris runs passed as well. Regression with this firmware in the lab image: the `sparc64`
+matrix 9/9 and the `solaris10` matrix 2/2 (DVD to the installer, installed disk at 1024 MB with
+`format`, DHCP and ping).
+
+Not measured: more than 8 GB, other RAM sizes between 4 and 8 GB than 6144 MB, Solaris with 6144 MB,
+OpenBSD and Debian with more than 3 GB, more than 3 GB through PVE (the profile's cap is 8192 MB,
+the largest size measured, since pve-qemu-kvm 11.1.3-2+wsh16 carries 0013-0015).
+
+**Tribblix on sun4u (2026-11-18).** Tribblix m34 (`tribblix-sparc-0m34.iso`, illumos built from a
+pre-2024 gate, the newest SPARC release) is the first illumos tried here: QEMU issue #216 is about
+an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU started directly, the
+`_sparc64.py` layout (blank 8 GB disk on `ide.0`, the CD on `ide.1`, `sunhme`, serial console),
+2048 MB:
+
+- **Boot:** OpenBIOS boots `cdrom:f` (every slice of the CD's Sun label starts at 0; the hsfs FCode
+  boot block is in sectors 1-15), the kernel prints `Welcome to Tribblix` instead of the usual
+  banner, then the same harmless warnings as Solaris 10 (`could not find
+  debugger-vocabulary-hook`, `ebus0 assigning default interrupt level 1 for device i80420`, `add_spec:
+  No major number for sf`, `Out of range register specification from device node <fdthree>`). The
+  IDE disk attaches as `dad1` at `/pci@1f,0/pci@1,1/ide@3/dad@0,0` and is `c1t0d0` (not `c0t0d0` as
+  in Solaris 10); the CD is `c1t2d0`. The live CD imports its 95 SMF manifests on every boot (25-35
+  minutes under TCG with other guests on the host), asks for the keyboard layout on ttya
+  (Return: US-English) and comes to `tribblix console login:` after about 45 minutes. Several
+  services time out on the way (`svc:/system/rbac`, `svc:/network/location`; `svc.startd` kills
+  them), which costs time but nothing else. `Unimplemented service SUNW,asr-export-len` is printed
+  once (an OBP extension OpenBIOS doesn't have; harmless).
+- **The firmware bug (patch 0016):** with `openbios-sparc64` from 11.1.3-2+wsh15 or wsh16, or built
+  from 0001-0011 or 0001-0015, 4 of 7 boots of the live CD ended with corrupted registers:
+  client_handler's `%l4` (its saved `%pstate`) came back as 0 and the kernel ended in an endless
+  window spill at TL 1 (twice; one of them at the live shell, just after login); or `bad stack
+  overflow at TL 2` with nested trap frames from `prom_finddevice` and `%tpc` values like `0x1`
+  (twice, 1024 and 3072 MB, identical register dumps). Two more hung with a dead clock (below), the
+  seventh got as far as the keyboard layout question, where it was stopped. The cause: the client
+  interface saves and restores the caller's register windows and trap registers with interrupts
+  enabled, and illumos calls it with interrupts enabled; see
+  `upstream/openbios-sparc64-client-interface-interrupts.md`. Solaris 10's one `BAD TRAP: type=4e`
+  in the firmware during the `sol10-sun4u` runs is the same bug. With 0016 (firmware from the
+  committed patches 0001-0011 and 0013-0016, later 0013-0017) neither came back in about ten boots:
+  live CD boots in the lab and through PVE, one with 30 rounds of `prtconf -vp` and `eeprom` (device
+  tree walks through the client interface) and a complete install, and the installed system's first
+  and later boots. Regression with the 0013-0017 firmware: the `sparc64` matrix 9/9 and the
+  `solaris10` matrix 2/2.
+- **The clock stops (not fixed):** in 5 of 14 long runs, 2 before 0016 and 3 with it, the tick interrupt
+  stopped for good: the kernel sits in its idle loop with `%pil` 0, `-d int` shows no level-14
+  interrupt any more (device interrupts are still taken when a key is pressed), the kernel never
+  writes `%tick_cmpr` again (QEMU trace), `%softint` holds no pending tick. Anything that sleeps hangs:
+  the live CD after its SMF import (twice), during the SMF import (once, through PVE), an
+  install in its package installs (once, with network downloads) and one while it configured the
+  devices (through PVE). Each time with
+  heavy interrupt traffic, and the two through PVE with other emulated guests busy on the host
+  (leftover VMs of earlier runs). The cause: the guest's `%set_softint`/`%clear_softint` writes run in
+  QEMU's vCPU thread as a read-modify-write of `env->softint` without the BQL, while the tick timer
+  sets its bit from the main loop thread, so a tick that fires in between is lost
+  (`upstream/qemu-sparc64-softint-race.md`, caught once in a trace: the tick fired while the guest cleared another bit, and the guest's store
+  dropped it; no fix carried: it would be a QEMU change).
+- **Install, ZFS (Tribblix's default):** `/root/live_install.sh -G -n <host> c1t0d0` from the live
+  root shell (an SMI label with one big slice 0, a ZFS pool `rpool` of version 28, a 2 GB swap zvol,
+  the base overlay from the CD, `installboot -F zfs`, the boot archive) completed in 64 minutes
+  (exit 0, `Welcome to Tribblix`). On the way, in both runs, FMA diagnosed `ZFS-8000-FD` ("The number
+  of I/O errors associated with a ZFS device exceeded acceptable levels") a few minutes into the
+  copy and marked `c1t0d0s0` DEGRADED ("too many errors"); `zpool status` showed 0 read, write and
+  checksum errors and "No known data errors", `iostat -En` 0 soft, hard and transport errors on the
+  disk, and `fmdump -e` 9097 `ereport.fs.zfs.io`, all but one with `zio_err = 5` (EIO), sizes from
+  512 bytes to 384 KB. So single I/Os failed with EIO and succeeded when ZFS retried them. ZFS
+  sends its first attempt with `B_FAILFAST`; whether `dad`/`uata` fails those early under QEMU's
+  cmd646, and why, wasn't traced. The OpenIndiana SPARC README's note that root pools on the Ultra
+  5/10 built-in IDE "will be unusable" (workaround: disable `fmd`) looks like the same thing on real
+  hardware.
+- **The ZFS boot block (patch 0017):** OpenBIOS loads the ZFS boot block from the disk and it loads
+  its second stage (the `zfs-file-system` package from 512 KB into the slice), then
+  `Unhandled Exception 0x0000000000000030` with the PC in `unaligned-l@`. The Forth return stack read
+  from the firmware's memory after the exception showed `$open-package` → the package's `open` →
+  `scan-vdev` → `x0=`, whose `xlsplit` ran `xwflips`: OpenBIOS's 64-bit FCode table lacked `xa+` and
+  `xa1+`, which shifted every token from 0x24a on by two (`upstream/openbios-fcode-64bit-token-table.md`).
+  With 0017 the boot block reads the pool and loads the kernel and boot archive from ZFS, and the
+  installed system boots from its ZFS root.
+- **Install, UFS:** `/root/ufs_install.sh -n <host> c1t0d0s0` after labelling the disk with slice 0
+  for `/` and slice 1 for swap (`format-a-disk.sh`, then `fmthard`; its newfs asks `(y/n)?`). Through
+  PVE it ran newfs, the copy, the overlays and `installboot -F ufs` without ZFS's EIO reports, then
+  the clock stopped (below) while it configured the devices. Not booted yet; the install target
+  stays with ZFS.
+- **The package set:** the live CD's package catalogue names older versions than the CD carries
+  (the base overlay asks for `TRIBcurl.8.12.1.1.zap`, `/pkgs` has `TRIBcurl.8.19.0.0.zap`). With a
+  network the installer fetched those packages from pkgs.tribblix.org (some downloads failed with
+  `has wrong size`); offline it skips them (`pkgadd: ERROR: no packages were found`: 18 skipped and
+  33 installed in the ZFS run, among the skipped curl, tcsh, nss, gnutls, xz, less, GNU coreutils and
+  grep), and the system they are missing from
+  still boots: `live_install.sh` copies the live root first. A Tribblix issue, not reported yet.
 
 **maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
 Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its
@@ -1549,6 +1822,46 @@ bits latched, and it removes multiword DMA and UDMA from the disk's IDENTIFY dat
 completion never arrives" after Solaris switches to MDMA2. It also patches Solaris's `uata` to stay
 on PIO. Here the install copied 4 GB to the disk with the latch patch alone and without an `ATA
 transport failed`, so DMA didn't fail in these runs. Whether Solaris used DMA or PIO wasn't measured.
+
+**The sun4u system MAC (pve-qemu `wsh/0034`-`0035`, in review, 2026-11-18).** OpenBIOS gives the
+guest the IDPROM's MAC address as the system's, and its `sunhme` node has no `local-mac-address`.
+NetBSD's `hme` and `wm` and Solaris's `hme` (OBP's default `local-mac-address?=false`) program that
+address into the NIC. QEMU's sun4u filled the IDPROM from the onboard `-nic` only; qemu-server and
+the lab add the NIC with `-device`, which doesn't exist yet when the NVRAM is written, so the IDPROM
+had `52:54:00:12:34:56` for every VM. With 0034, sun4u writes the IDPROM again once the machine is
+complete: from the first `sunhme`, else from the first NIC of any model; with an onboard `-nic`, or
+no NIC, nothing changes. The host id is made from the same bytes (`hostid` `80123456` before,
+`80000001` with `mac=bc:24:11:00:00:01`). The alternative without a QEMU change, qemu-server passing
+`-net nic,model=sunhme,macaddr=...`, puts the NIC at 01:01.1 on bus A instead of bus B: installed
+Solaris systems see a new `hme` instance and leave it unconfigured, and the NIC loses its `id`.
+
+Measured in the lab (`scenarios/_sparc64.py` with `MAC=bc:24:11:00:00:01`, the NIC with
+`-device <model>,mac=...,bus=pciB` as qemu-server builds it, the installed disks, `-snapshot`):
+
+| Guest, NIC | 11.1.3-2+wsh16 (package) | with 0034 |
+| --- | --- | --- |
+| NetBSD 11.1, `sunhme` | `hme0` `52:54:00:12:34:56` | `hme0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `e1000` | `wm0` `52:54:00:12:34:56` | `wm0` `bc:24:11:00:00:01`, DHCP lease 10.0.2.15 |
+| NetBSD 11.1, `virtio-net-pci` | `vioif0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| NetBSD 11.1, `rtl8139` | `re0` `bc:24:11:00:00:01` | not run (the driver reads the device) |
+| Solaris 10 1/13, `sunhme` | `hme0` `ether 52:54:0:12:34:56`, hostid `80123456` | `hme0` `ether bc:24:11:0:0:1`, hostid `80000001`, DHCP lease, `ping 10.0.2.2` alive |
+
+A packet capture on the netdev (`-object filter-dump`) shows the guest's frames (DHCP, ARP, ICMP)
+leaving from `bc:24:11:00:00:01` with 0034 and from `52:54:00:12:34:56` without it, so a DHCP
+reservation or firewall rule keyed on `net0`'s MAC now matches. The DHCP server here is QEMU's
+user networking, which doesn't key on the MAC; a reservation on a real DHCP server wasn't tested.
+With 0034 and the default MAC (`52:54:00:12:34:56`) Solaris boots as before (1 of 1).
+
+The first runs used the packaged `openbios-sparc64` (without patch 0016): Solaris 10 booted to
+`console login:` with 0034 and `mac=bc:24:11:00:00:01` in 3 of 5 runs, the other 2 panicked with
+`BAD TRAP: type=4e` and the PC in the firmware (`0xffd0e74c` in `picld` during an `ioctl`, and
+`0xffd12744` in thread 0 before user processes run); the package without 0034 booted 3 of 3. That
+is the firmware bug OpenBIOS 0016 fixes (the client interface ran with interrupts enabled; "Tribblix
+on sun4u"), not the IDPROM. Re-tested with 0001-0037 and `openbios-sparc64` from patches 0001-0017
+(2026-11-18, the same installed disk, `-snapshot`, user networking, two boots at a time with other
+guests on the host): 10 of 10 boots reached `console login:` (boot 425-553 s), no `BAD TRAP`, every
+one with `hme0` `ether bc:24:11:0:0:1`, `hostid` `80000001` and `ping 10.0.2.2` alive; `init 5`
+powered off each. So no comparison run without 0034 was needed.
 
 **Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
 boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
@@ -1720,7 +2033,7 @@ Done for sparc64 (was → now), in `submodules/qemu-server.patch` and mirrored i
 | NIC | `sunhme` on `pciB`, any model | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; `pcnet` refused (no NetBSD driver) |
 | PCI slots | NIC and every SCSI/virtio controller on `pciB`; a fifth device stopped QEMU (`no slot/function available`) | only NICs go there (the controllers are refused): at most four, refused with `sparc64: at most 4 network devices fit on PCI bus B, not 5 (...)` |
 | CPUs | `-smp 1,...` from sockets × cores; QEMU refused more | sockets × cores > 1 refused; the `cpu` option refused (it was never passed) |
-| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS); the wizard presets 512 MB |
+| RAM | anything | at most 8192 MB, the largest size measured (without OpenBIOS patches 0013-0015 4096 MB panics NetBSD and 8192 MB stops OpenBIOS, see "More than 3 GB"); the wizard presets 512 MB |
 | Machine | `sun4[a-z]` | `sun4u` only (`sun4v` refused; `niagara` never matched the machine format) |
 | Firmware | no `-bios` unless `bios` is set | `bios` unset or `openbios-sparc64` |
 | virtio-balloon | `virtio-balloon-pci` without a bus: it took one of pciB's four slots (with four NICs QEMU refused the fourth, `PCI: no slot/function available for rtl8139`), and OpenBIOS can't manage it (`Cannot manage 'undefined' PCI device type`) | none, and no balloon polling at start: four NICs fit |
@@ -1736,7 +2049,7 @@ valid is accepted.
 
 | Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs | Disk | CD-ROM | NIC | Display |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
+| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-8192 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
 
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
@@ -1745,7 +2058,7 @@ valid is accepted.
   package built with `openbios-sparc64` and `wsh/0021`, Solaris 10 1/13 reaches its installer and
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
-- Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
+- Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 8 GB,
   `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
 
@@ -1947,7 +2260,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   `pve-qemu-kvm` 11.1.3-2+wsh10 or later (patch 0019; Solaris hangs without it); details, cost and
   why the Sun PROM stays at one under "SMP".
 - sparc64 has one profile, `$SPARC64_PROFILE` in `PVE::QemuServer::Machine` (mirrored in
-  `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 3072 MB, disks
+  `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 8192 MB, disks
   and CD-ROMs on the built-in IDE, `-boot order=c|d` instead of `bootindex`, no balloon, at most four
   NICs (`sunhme`, `virtio`, `e1000`, `rtl8139`, `ne2k_pci`), displays `std`, `serial0`, `none`. Details
   under "sparc64 (sun4u)".
@@ -1964,7 +2277,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
   `SS-\d{1,2}` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
-  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only and one lance NIC.
+  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC and `audio0` (SS-5 only, `device=cs4231`, no SPICE).
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
   vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
@@ -1980,6 +2293,21 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Disks:** sparc32 drives are `scsi-hd`/`scsi-cd` on the built-in ESP
   (`channel=0,scsi-id=<unit>,lun=0`); sparc64 drives are `ide-hd`/`ide-cd` on the built-in IDE
   (`bus=ide.<n>,unit=<n>`).
+- **CD as a disk:** Solaris 2.4 and 2.5.1 boot their installer only from a CD that answers as a
+  disk; from a `scsi-cd` their kernel panics with `vfs_mountroot: cannot mount root`. A sparc32
+  SCSI CD-ROM with an ISO takes `cd_as_disk=1` (`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`):
+  qemu-server then emits `scsi-hd` (with the CD-ROM's `physical_block_size=512`) instead of
+  `scsi-cd`. The drive stays a CD-ROM to PVE (`media=cdrom`): its blockdev is read only, and it is
+  not backed up, snapshotted, cloned or freed, as before. `assert_cd_as_disk` (Machine.pm) refuses it
+  on every other architecture, on a disk (no `media=cdrom`), on the host's CD-ROM drive or a `/dev`
+  path, at create, update and start; other buses don't have the option in their schema (`ide2:
+  invalid format`). Without a medium (`none`) the drive is an empty `scsi-cd`, so ejecting from the
+  web UI (which keeps the option) still works. A medium change, an eject or turning the option on or
+  off on a running VM stays pending until the next start (a `scsi-hd` has no removable medium).
+  Tests: qemu-server's `cfg2cmd/sparc32-ss5-cd-as-disk.conf`, `sparc32-cd-as-disk-ejected.conf`,
+  four `*-cd-as-disk-*-error.conf`, `hotplug/sparc32-cd-as-disk-*.conf`; e2e
+  `sparc-profiles.spec.ts` ("a CD that answers as a disk"); the lab's `sol251-ss5` and `sol24-ss5`
+  install targets through PVE. The web UI has no field for it (set with `qm set` or the API).
 - **Boot:** sparc64 devices get no `bootindex`; the boot device is `-boot order=c|d` from the boot
   order (`sparc64_boot_device`), and the default boot order of a new sparc64 VM has the CD-ROM first. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
@@ -1989,7 +2317,9 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   only warns about a second `-net nic`). The lance is peered with the `net0` netdev directly, so
   `set_link net0` reaches it as on x86 (it used to hang off a hub behind a netdev named `lance.0`,
   and every `set_link` failed with `Device 'net0' not found`). QEMU names the NIC itself `lance.0`.
-  sparc64 puts `sunhme` on `pciB`.
+  sparc64 puts `sunhme` on `pciB` with `-device ...,mac=<net0's MAC>`; the guest's system MAC (the
+  IDPROM's, which NetBSD and Solaris use for `hme0`) is the first `sunhme`'s with pve-qemu
+  `wsh/0034`, so qemu-server needs no sun4u-specific NIC argument ("The sun4u system MAC").
 - **Machine version:** QEMU's sparc machines have no versioned variants, so a running VM's machine
   (`SS-5+pve0`, `sun4u+pve0` from `query-machines`) carries none. `get_machine_version` in
   `PVE::QemuServer::Machine` resolves it to the QEMU version (of the running process when a VMID is
@@ -2006,6 +2336,16 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   vmgenid, virtio-balloon.
 - **Snapshots with RAM:** a sparc VM usually runs without `-cpu`, so `runningcpu` is only recorded
   when there is one.
+- **Sound:** `audio0: device=cs4231,driver=none|alsa|pa|pipewire` on SS-5 emits
+  `-audiodev <driver>,id=<driver>-backend0` and `-machine audiodev=<driver>-backend0` (the CS4231 is
+  built in: no `-device`). `cs4231` is a new value of `audio0`'s `device`; no driver was added.
+  Refused: `driver=spice`, the default (no SPICE display on sparc32), another device on SS-5,
+  `audio0` on SS-10/SS-20 (DBRI, not emulated) and on sparc64 (`assert_sparc32_profile`,
+  `assert_sparc64_profile`), and `cs4231` on any other architecture (`assert_audio_device`); all at
+  create, update and start. Needs a pve-qemu-kvm with 0028-0033: older ones have no `audiodev` on
+  sun4m and don't start the VM. Tests: `cfg2cmd/sparc32-ss5-audio*.conf`,
+  `sparc32-ss20-audio-error.conf`, `sparc64-audio-error.conf`, `audio-cs4231-x86-error.conf`; e2e
+  `sparc-profiles.spec.ts` ("sound on the SS-5"). Details under "Audio".
 
 ### Operations on a running VM
 
@@ -2047,6 +2387,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 `submodules/pve-manager.patch`:
 
+- `qemu/AudioEdit.js`: on a sparc VM the Audio Device editor offers only `cs4231` and no SPICE
+  driver (`none` preselected).
 - `qemu/Architecture.js`: SPARC (32-bit) and SPARC (64-bit) in the create wizard's vCPU
   Architecture (an advanced option); per architecture the OS types (Linux, Solaris, Other),
   machines, firmware, displays, SCSI controller and buses; the mirrored sparc32 profiles; the
@@ -2058,7 +2400,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
   target 6.
 - sparc64 in the wizard and the Hardware editors, from `sparc64Profile`: disks and CD-ROMs on IDE
-  only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 3072, sockets, cores
+  only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 8192, sockets, cores
   and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
   the default), Add → Network Device disabled at four NICs.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).
@@ -2070,7 +2412,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
-  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020) and `am53c974-test` with 0007;
+  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
+  `sun4m-cs4231-test` (0033), `sun4m-esp-test` (0039),
+  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
@@ -2103,14 +2447,18 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   and drive the QEMU that PVE started: the Solaris 2.6 install and first boot on the default SS-5
   profile, NetBSD 11.1 sparc64 to its shell (laid out as the wizard creates it, OpenBIOS booting the
   CD by itself), Alpine aarch64 and x86_64 to a login.
+- Linux on sun4m: the install targets `redhat62-ss5` and `redhat62-ss20` (`lab.py install`, also in
+  `pve_matrix.py install`); results under "Red Hat Linux 6.2 on sun4m".
+- Packages after a Solaris install: `lab.py install ... --data-disk N --post-install sun26gnu
+  [--local-env]` (the data disk on `/usr/local`, SVR4 packages with `pkgadd -n` from a CD in `scsi5`
+  for one boot, PATH and the user's bash); needs the owner's local package CD, so it is in no matrix
+  and no CI run; results in `e2e/sparc/README.md`, "Solaris post-install".
 
 ## Known gaps
 
-- **CD as a disk:** Solaris 2.4 and 2.5.1 only boot their installer from a CD that answers as a
-  disk (`scsi-hd`). A CD-ROM drive (`media=cdrom`) is always a `scsi-cd`, and the API refuses an ISO
-  volume without `media=cdrom`. Workaround: copy the ISO into a raw disk image of the VM and attach
-  it as `scsi6: <volume>,ro=1,backup=0` (a read-only disk on target 6). A first-class option would be
-  a sparc32-only drive flag; not added.
+- **Sound:** SS-5 only, playback only, and not in the web console ("Audio").
+- **CD as a disk in the web UI:** `cd_as_disk=1` (see "Supported profiles") has no field in the CD/DVD
+  editor; the editor keeps it when the medium is changed or ejected.
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
   Solaris' X server need).
 - **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").
@@ -2126,4 +2474,17 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   (`reboot -- disk:b`) and boots `boot-device` again; Solaris 8's Web Start relies on it to start
   its mini-root from the swap slice. `setenv` at the `0 >` prompt doesn't survive the reset; the
   install target sets `-prom-env auto-boot?=false` (`args`) for the install only and boots the
-  slice by path. A fix in OpenBIOS (keep the boot string across the reset) is not written.
+  slice by path. A fix in OpenBIOS (keep the boot string across the reset) is not written. SunOS
+  4.1.4's CD does the same after copying its miniroot to `sd0b` (option 1, reboot); its install
+  target works around it the same way (`boot .../sd@3,0:b -sw` at `0 >`).
+- **SunOS 4.1.4's install kernel and 256 MB:** the CD's kernel (`munix`, booted from slice d) stops
+  QEMU right after it is loaded with 256 MB: `qemu: fatal: Trap 0x29 (Data Access Error) while
+  interrupts disabled, Error state` in the node's journal, the VM is off (pve-qemu-kvm
+  11.1.3-2+wsh15, SS-5, OpenBIOS, through PVE; the same with the lab's own QEMU). 64 MB works, and
+  the installed kernel runs with 256 MB. qemu-server has nothing per boot, so the install target
+  sets `memory: 64` for its install phase and the profile's 256 afterwards (`qm set`); not
+  investigated in QEMU.
+- **SunOS 4.1.4 on ttya holds back output:** the last character of a burst of console output often
+  arrives only when the next key is typed (a curses cursor move, a field's echo). Seen under `suninstall` and sys-config, not with Solaris; the lab's
+  SunOS scenarios match the text before it. Cause not investigated (the guest's `zs` driver or
+  QEMU's ESCC transmit interrupt).

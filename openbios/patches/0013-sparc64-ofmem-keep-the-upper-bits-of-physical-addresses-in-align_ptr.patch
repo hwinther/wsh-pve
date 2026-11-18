@@ -1,0 +1,48 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] libopenbios: ofmem: keep the upper bits of physical addresses in
+ align_ptr()
+
+align_ptr() takes the alignment as a size_t, which is 32 bits wide in
+OpenBIOS (include/config.h), and masks the address with ~(a - 1). That
+mask is zero-extended to the 64-bit phys_addr_t, so every bit above
+bit 31 of the address is cleared.
+
+ofmem_posix_memalign() aligns the physical address of its next block
+with align_ptr() and turns it back into a virtual one with pa2va(). On
+sparc64 the firmware's .data and .bss (the heap among them) sit at the
+top of RAM, so with more than 4 GB of RAM their physical address is
+above 4 GB. pa2va() does not recognise the truncated address as one of
+the firmware's and returns it unchanged, and the very first malloc()
+in ofmem_init() goes wrong before the banner is printed:
+
+  qemu-system-sparc64 -M sun4u -m 4352 (5120, 6144, 7168 the same):
+    Unhandled Exception 0x0000000000000030
+    PC = 0x00000000ffd15030   (in ofmem_posix_memalign)
+
+  qemu-system-sparc64 -M sun4u -m 8192:
+    out of malloc memory (28)!
+    Unhandled Exception 0x0000000000000030
+
+Widen the mask to phys_addr_t and take the address as one too.
+---
+ libopenbios/ofmem_common.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/libopenbios/ofmem_common.c b/libopenbios/ofmem_common.c
+index e86eefd..194db15 100644
+--- a/libopenbios/ofmem_common.c
++++ b/libopenbios/ofmem_common.c
+@@ -33,9 +33,11 @@ static inline size_t align_size(size_t x, size_t a)
+     return (x + a - 1) & ~(a - 1);
+ }
+ 
+-static inline phys_addr_t align_ptr(uintptr_t x, size_t a)
++static inline phys_addr_t align_ptr(phys_addr_t x, size_t a)
+ {
+-    return (x + a - 1) & ~(a - 1);
++    /* size_t is 32 bits wide: widen the mask, or a physical address
++       above 4 GB (sparc64 with more RAM than that) loses its upper bits */
++    return (x + a - 1) & ~((phys_addr_t)a - 1);
+ }
+ 
+ static ucell get_ram_size( void )

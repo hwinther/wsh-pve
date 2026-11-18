@@ -1,0 +1,67 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] SPARC64: return the whole physical address in phys.lo
+
+The /memory "claim" and "SUNW,retain" methods and the /virtual-memory
+"translate" method return a physical address as phys.lo phys.hi, with
+phys.lo cut to its lower 32 bits. 64-bit clients read phys.lo alone:
+NetBSD/sparc64's kernel and ofwboot (CELL2HDQ(hi, lo) is lo, and
+HDQ2CELL_HI() is 0 when they pass an address in) and 64-bit Solaris
+(p1275_cells2ull() on sparcv9). Above 4 GB they get the wrong address.
+
+With 6 or 8 GB of RAM, ofwboot claims the pages for the NetBSD kernel
+from the top of RAM, above 4 GB, maps its own allocations at the
+truncated addresses (map 0x7fe7e000 for a claim that returned
+0x17fe7e000), and the kernel's pages are not where NetBSD believes they
+are. NetBSD 11.1 boots and runs until, with most of its memory in use,
+its trap table is overwritten (apparently its own pages were handed out
+as free), then stops:
+
+  trap type 0x10: cpu 0, pc=1000d00 npc=1000d04 ...
+  panic: illegal instruction
+
+(while filling a tmpfs, at the same point with 6144 and 8192 MB).
+
+Keep the whole address in phys.lo. phys.hi still carries the upper
+32 bits, so a client that combines (phys.hi << 32) | phys.lo gets the
+same address, and the methods that take an address in already decode
+it that way.
+---
+ arch/sparc64/lib.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/arch/sparc64/lib.c b/arch/sparc64/lib.c
+index 1a5c9f1..822d999 100644
+--- a/arch/sparc64/lib.c
++++ b/arch/sparc64/lib.c
+@@ -138,7 +138,12 @@ mmu_translate(void)
+     phys = ofmem_translate(virt, &mode);
+ 
+     if (phys != -1UL) {
+-		PUSH(phys & 0xffffffff);
++		/* 64-bit clients take the whole physical address from phys.lo
++		   and ignore phys.hi (NetBSD's CELL2HDQ(), Solaris'
++		   p1275_cells2ull() on sparcv9), so phys.lo must not be cut to
++		   32 bits. phys.hi keeps the upper bits for (hi << 32) | lo.
++		   The same for claim and retain */
++		PUSH(phys);
+ 		PUSH(phys >> 32);
+ 		PUSH(mode);
+ 		PUSH(-1);
+@@ -375,7 +380,7 @@ mem_claim( void )
+ 
+     phys = ofmem_claim_phys(phys, size, align);
+ 
+-    PUSH(phys & 0xffffffffUL);
++    PUSH(phys);    /* phys.lo: the whole address, see mmu_translate() */
+     PUSH(phys >> 32);
+ }
+ 
+@@ -414,7 +419,7 @@ mem_retain ( void )
+ 
+     phys = ofmem_retain(phys, size, align);
+ 
+-    PUSH(phys & 0xffffffffUL);
++    PUSH(phys);    /* phys.lo: the whole address, see mmu_translate() */
+     PUSH(phys >> 32);
+ }
+ 

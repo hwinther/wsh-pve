@@ -25,6 +25,9 @@ Variables (lab.py run ... --var KEY=VALUE):
   REFRESH   seconds between display updates, 0 = none          (0.5 with a framebuffer, else 0)
             A connected VNC client does this; without it cg3 never raises its vsync interrupt.
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
+  AUDIO     wav: the SS-5's CS4231 plays into <out>/audio.wav (-audiodev wav, -machine audiodev),
+            44.1 kHz stereo. The header's sizes stay 0 when the guest powers off: the
+            samples are what follows its 44 bytes (SPARC.md, "Audio")  (none: no sound)
   NET       user: QEMU user networking (slirp; the guest is 10.0.2.15, the host side 10.0.2.2)
             tap: a tap interface in the lab container (labtap0, 10.0.2.2/24, the same addresses),
             which needs `docker run --cap-add NET_ADMIN --device /dev/net/tun`
@@ -102,6 +105,8 @@ def qemu_args(v, out):
         args += ["-trace", ev]
     if v.get("TRACE"):
         args += ["-D", os.path.join(out, "trace.log")]
+    if v.get("AUDIO") == "wav":
+        args += ["-audiodev", f"wav,id=snd0,path={os.path.join(out, 'audio.wav')}", "-machine", "audiodev=snd0"]
     if v.get("NET") == "user":
         args += ["-net", "nic,model=lance", "-net", "user"]
     elif v.get("NET") == "tap":
@@ -135,8 +140,11 @@ def prom_boot(m, v, target):
 
     OpenBIOS: its `cdrom` alias only finds a CD-ROM device, and stock OpenBIOS since QEMU 9.2 has no
     `disk` alias (the packaged one is fixed, and so was the one in 7.2: they boot the disk by
-    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: input stays
-    on the keyboard while output goes to ttya, so `ttya io` is typed on the keyboard first."""
+    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: with a
+    keyboard ("Keyboard Present", the lab's own QEMU with -vga none) input stays on the keyboard
+    while output goes to ttya, so `ttya io` is typed on the keyboard first; without one ("No
+    Keyboard": QEMU's -nographic, which qemu-server passes for `vga: serialN`) the PROM reads ttya
+    already."""
     if v["BIOS"].startswith("openbios"):
         if target == "cdrom" and v["CDROM_AS"] != "hd" and v.get("BOOT", "d") == "d":
             return  # -boot d: OpenBIOS boots the CD by itself
@@ -146,9 +154,12 @@ def prom_boot(m, v, target):
         path = f"{ESP}/sd@6,0:d" if target == "cdrom" else f"{ESP}/sd@3,0:a"
         m.send(f"boot {path}\r")
         return
-    m.expect(r"\nok ", 600)
+    seen = m.expect_any([r"Keyboard Present", r"No Keyboard", r"\nok "], 600)
+    keyboard = seen != 1  # the banner missed (attached late): as before, type `ttya io`
+    if seen != 2:
+        m.expect(r"\nok ", 600)
     m.snap("PROM prompt")
-    if v["CONSOLE"] == "serial":
+    if v["CONSOLE"] == "serial" and keyboard:
         m.fb_type("ttya io\r")
         m.expect(r"ok ", 30)
     m.send(f"boot {target}\r")

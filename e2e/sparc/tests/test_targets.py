@@ -178,6 +178,9 @@ class DiskSizes(unittest.TestCase):
     def test_tested_sizes(self):
         self.assertEqual(targets.TARGETS["sol26-ss5"]["disk"]["sizes"], ["3G", "9G"])
         self.assertEqual(targets.TARGETS["sol26-ss20"]["disk"]["sizes"], ["3G", "9G"])
+        # Solaris 7: 9G tested 2026-11-18 on both; 3G stays the default (End User fits, as on 2.6)
+        self.assertEqual(targets.TARGETS["sol7-ss5"]["disk"]["sizes"], ["3G", "9G"])
+        self.assertEqual(targets.TARGETS["sol7-ss20"]["disk"]["sizes"], ["3G", "9G"])
 
     def test_choice(self):
         t = targets.TARGETS["sol26-ss5"]
@@ -196,6 +199,16 @@ class DiskSizes(unittest.TestCase):
         a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="121", name=None, target="sol26-ss20")
         p = install.vm_params(t, a, {"solaris_2.6_598_sparc.iso": "local:iso/x.iso"}, None, install.disk_choice(t, "9G"))
         self.assertEqual(p["scsi3"], "local:8,format=raw")
+
+    def test_sol7_choice(self):
+        for name in ("sol7-ss5", "sol7-ss20"):
+            t = targets.TARGETS[name]
+            self.assertEqual(install.disk_choice(t, None)["name"], "3G")
+            nine = install.disk_choice(t, "9G")
+            self.assertEqual((nine["size"], nine["geometry"]["name"]), (8, "QEmu8G"))
+            a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="122", name=None, target=name)
+            p = install.vm_params(t, a, {"Sol7.399InstallationSparc.iso": "local:iso/x.iso"}, None, nine)
+            self.assertEqual(p["scsi3"], "local:8,format=raw")
 
     def test_data_disk_label(self):
         for gib in (1, 4, 32):
@@ -287,6 +300,28 @@ class VmParams(unittest.TestCase):
         self.assertEqual(p["net0"], "lance,bridge=vmbr1")
         self.assertEqual((p["arch"], p["machine"], p["bios"], p["memory"]), ("sparc", "SS-5", "openbios-sparc32", 256))
         self.assertEqual((p["name"], p["vmid"], p["tags"]), ("sol26-ss5", "120", "wsh-lab"))
+
+    def test_cd_as_disk(self):
+        # Solaris 2.4/2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk), under ss5.bin
+        for name, iso in (("sol251-ss5", "solaris_2.5.1_1197.iso"), ("sol24-ss5", "solaris_2.4_sparc.iso")):
+            a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
+            p = install.vm_params(targets.TARGETS[name], a, {iso: f"local:iso/{iso}"}, None)
+            self.assertEqual(p["scsi6"], f"local:iso/{iso},media=cdrom,cd_as_disk=1")
+            self.assertEqual(p["bios"], "ss5.bin")
+        self.assertEqual(install.drive_volume("scsi6", "local:iso/x.iso"), "local:iso/x.iso,media=cdrom")
+        # as_disk only where qemu-server takes it: a sparc32 SCSI CD-ROM, inserted at the start
+        saved = targets.TARGETS["sol26-ss5"]
+        try:
+            for med in ({"drive": "ide2", "as_disk": True}, {"drive": "scsi6", "as_disk": True, "at": "scenario"}):
+                targets.TARGETS["sol26-ss5"] = {**saved, "media": [{"name": "solaris_2.6_598_sparc.iso", **med}]}
+                self.assertTrue(any("as_disk" in p for p in targets.problems()), med)
+        finally:
+            targets.TARGETS["sol26-ss5"] = saved
+        # what pve_vars() tells the scenarios (CDROM_AS), from the drive as `qm config` prints it
+        for drive, want in (("local:iso/x.iso,cd_as_disk=1,media=cdrom,size=1M", "hd"),
+                            ("none,cd_as_disk=1,media=cdrom", "cd"), ("local:iso/x.iso,media=cdrom", "cd"),
+                            ("local:1/vm-1-disk-1.raw,ro=1,backup=0", "hd")):
+            self.assertEqual(lab.pve_cdrom_as(drive), want, drive)
 
     def test_later_media_are_not_attached_at_the_start(self):
         t = targets.TARGETS["sol8-ss20"]
@@ -512,6 +547,416 @@ class WebStart(unittest.TestCase):
     def test_prom_env_only_during_the_install(self):
         for name in ("sol8-ss20", "sol9-ss20"):
             self.assertEqual(targets.TARGETS[name]["install"]["prom_env"], {"auto-boot?": "false"})
+
+
+class SunOS4(unittest.TestCase):
+    """sunos414-ss5: the converted CD, the install-phase memory, the refused network options and the
+    sys-config screens of the first boot."""
+    t = targets.TARGETS["sunos414-ss5"]
+
+    def test_target(self):
+        self.assertEqual(self.t["install"]["memory"], 64)
+        self.assertEqual(self.t["profile"]["memory"], 256)
+        self.assertEqual(self.t["install"]["prom_env"], {"auto-boot?": "false"})
+        g = self.t["disk"]["geometry"]
+        self.assertEqual(g["parts"][6], (4, 0, 282, 2079000))  # g: 1000 cylinders of 21 x 99
+        self.assertLess(g["parts"][6][3] * 512, 2 << 30)
+        self.assertEqual(g["parts"][:6], targets.SUN29G["parts"][:6])
+        cd = targets.MEDIA["sunos414-cd.iso"]
+        src = targets.MEDIA[cd["from"]["name"]]
+        self.assertEqual(cd["size"], src["size"] // 2352 * 2048)
+
+    def test_convert(self):
+        bin_ = b"".join(bytes([0] + [255] * 10 + [0]) + bytes(4) + bytes([i]) * 2048 + bytes(288) for i in range(3))
+        cd = b"".join(bytes([i]) * 2048 for i in range(3))
+        media = {"raw.iso": {"content": "iso", "size": len(bin_), "sha256": hashlib.sha256(bin_).hexdigest(),
+                             "lab": "raw.iso"},
+                 "cd.iso": {"content": "iso", "size": len(cd), "sha256": hashlib.sha256(cd).hexdigest(),
+                            "lab": "cd.iso", "from": {"name": "raw.iso", "convert": "bin2352"}}}
+        saved = dict(targets.MEDIA)
+        targets.MEDIA.update(media)
+        d = tempfile.mkdtemp()
+        try:
+            src = os.path.join(d, "raw.iso")
+            with open(src, "wb") as f:
+                f.write(bin_)
+            self.assertEqual(install.convert_medium("cd.iso", src, os.path.join(d, "cd.iso")), media["cd.iso"]["sha256"])
+            with open(os.path.join(d, "cd.iso"), "rb") as f:
+                self.assertEqual(f.read(), cd)
+            with self.assertRaises(install.InstallFailed):  # never overwrites
+                install.convert_medium("cd.iso", src, os.path.join(d, "cd.iso"))
+            media["cd.iso"]["sha256"] = "0" * 64  # a result that isn't the tested medium is removed
+            with self.assertRaises(install.InstallFailed):
+                install.convert_medium("cd.iso", src, os.path.join(d, "other.iso"))
+            self.assertEqual(sorted(os.listdir(d)), ["cd.iso", "raw.iso"])
+            with open(src, "r+b") as f:  # another source of the same size
+                f.write(b"x")
+            with self.assertRaises(install.InstallFailed):
+                install.convert_medium("cd.iso", src, os.path.join(d, "third.iso"))
+        finally:
+            targets.MEDIA.clear()
+            targets.MEDIA.update(saved)
+            for n in os.listdir(d):
+                os.unlink(os.path.join(d, n))
+            os.rmdir(d)
+
+    def test_network(self):
+        n = install.network_choice(self.t, net_args(target="sunos414-ss5", ip="10.0.2.20", gateway="10.0.2.2"))
+        self.assertEqual((n["ip"], n["gateway"]), ("10.0.2.20", "10.0.2.2"))
+        for kw, msg in ((dict(dns="10.0.2.3"), "--dns: not with"), (dict(ip="dhcp"), "supports static")):
+            with self.subTest(**kw), self.assertRaises(SystemExit) as e:
+                install.network_choice(self.t, net_args(target="sunos414-ss5", **kw))
+            self.assertIn(msg, str(e.exception))
+
+    def test_sysconfig_screens(self):
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "sunos-firstboot.py"))
+        import _sunos4
+        v = {**sc.DEFAULTS, "HOSTNAME": "sun4", "ROOT_PASSWORD": "pw", "NET_IP": "10.0.2.20", "USER": "lab",
+             "USER_PASSWORD": "upw"}
+        rules = _sunos4.sysconfig_rules(v)
+
+        def reply(screen):
+            i = _sunos4.which(rules, screen)
+            answer = rules[i][1]
+            return answer(screen) if callable(answer) else answer
+
+        regions = (" SysConfB1                    SYSTEM CONFIGURATION\n                                   TIME ZONE\n"
+                   + "\n".join(f"                        *   {r}" for r in (
+                       "United States", "Canada", "Mexico", "South America", "Europe", "Asia",
+                       "Australia and New Zealand", "Greenwich Mean Time")))
+        for screen, want in [
+            ("Enter choice (1, 2, or 3) and press the RETURN key.", "2\r"),
+            (" SysConfA1                    SYSTEM CONFIGURATION\n        Hostname =>", "sun4\r"),
+            (regions, " " * 7 + "x"),
+            (" SysConfC8              SYSTEM CONFIGURATION\n                        GREENWICH MEAN TIME", "x"),
+            (" SysConfE1                    SYSTEM CONFIGURATION\n                                     NETWORK", "1\r"),
+            (" SysConfE2   NETWORK ADDRESS\n     Network Address (e.g. 192.9.200.1) =>", "10.0.2.20\r"),
+            (" SysConfH1   SUPERUSER PASSWORD\n     Password =>", "pw\r"),
+            (" SysConfH1   SUPERUSER PASSWORD\n  Retype new password:", "pw\r"),
+            (" SysConfI1   USER ACCOUNT\n  Do you want to set up a user account(y/n)?", "y\r"),
+            (" SysConfI3   USER ACCOUNT - USER NAME\n     User name => luser", "\b" * 12 + "lab\r"),
+            (" SysConfI5   USER PASSWORD\n  Retype new password:", "upw\r"),
+        ]:
+            self.assertEqual(reply(screen), want, screen)
+        self.assertIsNone(_sunos4.which(rules, "something else"))
+        no_user = _sunos4.sysconfig_rules({**v, "USER": "", "NET_IP": ""})
+        self.assertEqual(no_user[_sunos4.which(no_user, " SysConfI1 ")][1], "n\r")
+        self.assertEqual(no_user[_sunos4.which(no_user, " SysConfE1 ")][1], "2\r")
+
+
+class RedHat62(unittest.TestCase):
+    """redhat62-ss5/-ss20: the unattended method (kickstart from an answer CD made on the node), the
+    answer CD itself, the kickstart file and the drive it goes into."""
+    names = ("redhat62-ss5", "redhat62-ss20")
+
+    def test_targets(self):
+        for name in self.names:
+            t = targets.TARGETS[name]
+            self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "eth0"))
+            self.assertEqual(t["install"]["answers"], {"format": "kickstart", "drive": "scsi5"})
+            self.assertEqual([m["name"] for m in t["media"]], ["redhat-6.2-sparc.iso"])
+            self.assertEqual(t["media"][0]["drive"], "scsi6")  # the install source: sr1, after the answers' sr0
+            self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("scsi3", "sun"))  # anaconda wants a label
+            self.assertEqual(t["net_modes"], ["static"])
+            self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertEqual(targets.TARGETS["redhat62-ss5"]["profile"]["machine"], "SS-5")
+        self.assertEqual(targets.TARGETS["redhat62-ss20"]["profile"]["machine"], "SS-20")
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9600", name=None, target="redhat62-ss5")
+        p = install.vm_params(targets.TARGETS["redhat62-ss5"], a, {"redhat-6.2-sparc.iso": "local:iso/rh.iso"},
+                              "/work/disk-label.raw")
+        self.assertEqual(p["scsi6"], "local:iso/rh.iso,media=cdrom")
+        self.assertNotIn("scsi5", p)  # the answer CD goes in for the install phase only (Unattended)
+
+    def test_answers_drive_checked(self):
+        saved = targets.TARGETS["redhat62-ss5"]
+        try:
+            for answers in ({"format": "kickstart", "drive": "scsi6"}, {"format": "kickstart", "drive": "scsi3"},
+                            {"format": "kickstart"}, None):
+                install_ = {**saved["install"], "answers": answers}
+                targets.TARGETS["redhat62-ss5"] = {**saved, "install": install_}
+                self.assertTrue(any(p.startswith("redhat62-ss5:") for p in targets.problems()), answers)
+        finally:
+            targets.TARGETS["redhat62-ss5"] = saved
+        self.assertEqual(targets.problems(), [])
+
+    def test_iso9660(self):
+        import answer_media
+        import dos_tools
+        data = answer_media.iso9660({"KS.CFG": b"hello\n", "B.TXT": b"x" * 5000}, "WSH_LAB_KS")
+        self.assertEqual(len(data) % 2048, 0)
+        self.assertEqual(data, answer_media.iso9660({"KS.CFG": b"hello\n", "B.TXT": b"x" * 5000}, "WSH_LAB_KS"))
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["B.TXT", "KS.CFG"])
+            self.assertEqual(iso.cat("ks.cfg"), b"hello\n")
+            self.assertEqual(iso.cat("B.TXT"), b"x" * 5000)
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(data[16 * 2048 + 40:16 * 2048 + 72].rstrip(), b"WSH_LAB_KS")
+        for bad in ({"ks.cfg": b""}, {"TOOLONGNAME.CFG": b""}, {"A-B": b""}):
+            with self.assertRaises(ValueError):
+                answer_media.iso9660(bad)
+
+    def test_kickstart(self):
+        import answer_media
+        ks = answer_media.kickstart("10.77.0.60", "255.255.252.0")
+        self.assertIn("network --bootproto static --ip 10.77.0.60 --netmask 255.255.252.0\n", ks)
+        lines = ks.splitlines()
+        # /boot first (SILO's second stage must be near the start of the disk), then /, then swap
+        parts = [line.split()[1] for line in lines if line.startswith("part ")]
+        self.assertEqual(parts, ["/boot", "/", "swap"])
+        for cmd in ("cdrom", "install", "zerombr yes", "clearpart --all", "skipx", "reboot", "%packages", "@ Base"):
+            self.assertIn(cmd, lines)
+        self.assertIn("rootpw --iscrypted *", lines)  # no password: the first boot sets it
+        self.assertLess(lines.index("%packages"), lines.index("%post"))
+        for bad in (("10.0.2.15; rm -rf /", "255.255.255.0"), ("10.0.2.15", "")):
+            with self.assertRaises(ValueError):
+                answer_media.kickstart(*bad)
+        iso = answer_media.image("kickstart", "10.0.2.15", "255.255.255.0")
+        self.assertIn(answer_media.kickstart("10.0.2.15", "255.255.255.0").encode(), iso)
+        with self.assertRaises(ValueError):
+            answer_media.image("preseed", "10.0.2.15", "255.255.255.0")
+
+    def test_unattended_install(self):
+        """The answer CD is written to the media storage, put into scsi5 for the install phase only, and
+        the drive and the image are gone afterwards, also when the install fails."""
+        d = tempfile.mkdtemp()
+        calls = []
+
+        def fake_run(*cmd, check=True):
+            calls.append(cmd)
+            if cmd[:2] == ("pvesm", "path"):
+                return os.path.join(d, cmd[2].split("/")[-1])
+            return ""
+
+        class Job:
+            target = targets.TARGETS["redhat62-ss5"]
+            volids, net, hostname = {}, {"ip": "10.0.2.20", "netmask": "255.255.255.0"}, "rh"
+            root_password = "wshlab"
+            a = types.SimpleNamespace(timeout=None, vmid="9600", media_storage="local", out=d)
+
+            def __init__(self, fail=False):
+                self.fail, self.phases, self.logs = fail, [], []
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                path = os.path.join(d, "wsh-lab-answers-9600.iso")
+                with open(path, "rb") as f:
+                    self.phases.append((name, scenario, f.read()))
+                if self.fail:
+                    raise install.InstallFailed("install: stalled")
+
+            def log(self, msg):
+                self.logs.append(msg)
+
+        saved = install.run, install.storage_content, install.save_config
+        install.run, install.storage_content = fake_run, lambda s: {"iso", "images"}
+        install.save_config = lambda vmid, work: None
+        try:
+            job = Job()
+            install.Unattended().install(job)
+            (name, scenario, data), = job.phases
+            self.assertEqual((name, scenario), ("install", "redhat-install-sparc.py"))
+            self.assertEqual(data, install.answer_media.image("kickstart", "10.0.2.20", "255.255.255.0"))
+            self.assertIn(("qm", "set", "9600", "--scsi5", "local:iso/wsh-lab-answers-9600.iso,media=cdrom"), calls)
+            self.assertEqual(calls[-1], ("qm", "set", "9600", "--delete", "scsi5"))
+            self.assertEqual(os.listdir(d), [])
+            calls.clear()
+            with self.assertRaises(install.InstallFailed):
+                install.Unattended().install(Job(fail=True))
+            self.assertEqual(calls[-1], ("qm", "set", "9600", "--delete", "scsi5"))
+            self.assertEqual(os.listdir(d), [])
+            with open(os.path.join(d, "wsh-lab-answers-9600.iso"), "wb"):
+                pass  # an image left by someone else is never overwritten
+            with self.assertRaises(install.InstallFailed):
+                install.Unattended().install(Job())
+            install.storage_content = lambda s: {"images"}
+            os.unlink(os.path.join(d, "wsh-lab-answers-9600.iso"))
+            with self.assertRaises(install.InstallFailed):  # no iso content on the media storage
+                install.Unattended().install(Job())
+        finally:
+            install.run, install.storage_content, install.save_config = saved
+            for n in os.listdir(d):
+                os.unlink(os.path.join(d, n))
+            os.rmdir(d)
+
+
+def post_args(**kw):
+    a = dict(target="sol26-ss20", data_disk=2, data_mount=None, post_install="sun26gnu", local_env=False, user=None)
+    a.update(kw)
+    return types.SimpleNamespace(**a)
+
+
+class PostInstall(unittest.TestCase):
+    """--data-mount, --post-install and --local-env (README.md, "Solaris post-install")."""
+    b = targets.POST_INSTALL["sun26gnu"]
+
+    def test_medium_is_local_only(self):
+        med = targets.MEDIA["sun26gnu.iso"]
+        self.assertEqual((med["size"], med["content"], med["lab"]), (287309824, "iso", "sun26gnu.iso"))
+        self.assertTrue(med["sha256"].startswith("7630cbd8866bdf64"))
+        self.assertTrue(med.get("local_only"))
+        self.assertNotIn("url", med)  # never downloaded: CI can't and mustn't need it
+        # no target's own media: `lab.py media`, pve_matrix.py and the CI matrices never ask for it
+        self.assertFalse([n for n, t in targets.TARGETS.items() if any(m["name"] == "sun26gnu.iso" for m in t["media"])])
+
+    def test_bundle(self):
+        self.assertEqual(targets.problems(), [])
+        self.assertEqual(self.b["medium"], "sun26gnu.iso")
+        self.assertEqual((self.b["basedir"], self.b["drive"], self.b["shell"]), ("/usr/local", "scsi5", "/usr/local/bin/bash"))
+        for name in self.b["targets"]:
+            self.assertEqual(targets.TARGETS[name]["status"], "automated")
+            self.assertEqual(targets.TARGETS[name]["firstboot"]["scenario"], "solaris-firstboot.py")
+
+    def test_bundle_problems(self):
+        saved = dict(targets.POST_INSTALL)
+        try:
+            targets.POST_INSTALL["x"] = {**self.b, "medium": "nope.iso", "targets": ["redhat62-ss5"]}
+            out = " ".join(targets.problems())
+            self.assertIn("nope.iso isn't in MEDIA", out)
+            self.assertIn("redhat62-ss5 isn't a Solaris target", out)
+            targets.POST_INSTALL["x"] = {**self.b, "drive": "scsi6"}
+            self.assertIn("drive scsi6 is taken", " ".join(targets.problems()))
+        finally:
+            targets.POST_INSTALL.clear()
+            targets.POST_INSTALL.update(saved)
+
+    def test_accepted(self):
+        for kw in ({}, dict(target="sol26-ss5", data_disk=1), dict(local_env=True, user="lab"),
+                   dict(data_mount="/usr/local"), dict(local_env=True)):
+            with self.subTest(**kw):
+                install.check_post_install(post_args(**kw))
+                self.assertEqual(install.data_mount(post_args(**kw)), "/usr/local")
+
+    def test_data_mount(self):
+        self.assertEqual(install.data_mount(post_args(post_install=None)), "/data")
+        self.assertEqual(install.data_mount(post_args(post_install=None, data_mount="/usr/local")), "/usr/local")
+        install.check_post_install(post_args(post_install=None, data_mount="/usr/local"))
+        self.assertEqual(install.data_mount(types.SimpleNamespace(data_disk=2)), "/data")  # callers without the options
+
+    def test_refusals(self):
+        for kw, msg in ((dict(target="redhat62-ss5"), "tested on sol26-ss5, sol26-ss20, sol7-ss5, sol7-ss20, not redhat62-ss5"),
+                        (dict(target="sol10-sun4u"), "not sol10-sun4u"),
+                        (dict(data_disk=None), "needs --data-disk"),
+                        (dict(data_mount="/data"), "must be on /usr/local"),
+                        (dict(post_install=None, local_env=True), "--local-env: only with --post-install"),
+                        (dict(post_install=None, data_disk=None, data_mount="/usr/local"), "--data-mount: only with --data-disk")):
+            with self.subTest(**kw), self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(**kw))
+            self.assertIn(msg, str(e.exception))
+        saved = dict(targets.POST_INSTALL)
+        try:
+            targets.POST_INSTALL["sun26gnu"] = {**self.b, "min_data_disk": 3}
+            with self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(data_disk=2))
+            self.assertIn("--data-disk 3 GiB or more", str(e.exception))
+            targets.POST_INSTALL["sun26gnu"] = {**self.b, "shell": None}
+            with self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(local_env=True))
+            self.assertIn("brings no login shell", str(e.exception))
+        finally:
+            targets.POST_INSTALL.clear()
+            targets.POST_INSTALL.update(saved)
+
+    def test_cli(self):
+        import argparse
+        p = argparse.ArgumentParser()
+        install.add_commands(p.add_subparsers(dest="cmd"))
+        a = p.parse_args(["install", "sol26-ss20", "--vmid", "9300", "--data-disk", "2", "--post-install", "sun26gnu",
+                          "--local-env", "--user", "lab"])
+        self.assertEqual((a.data_disk, a.data_mount, a.post_install, a.local_env), (2, None, "sun26gnu", True))
+        a = p.parse_args(["install", "sol26-ss20", "--vmid", "1", "--data-disk", "2", "--data-mount", "/usr/local"])
+        self.assertEqual((a.data_mount, a.post_install, a.local_env), ("/usr/local", None, False))
+        import contextlib
+        import io
+        for bad in (["--post-install", "nope"], ["--data-mount", "/opt"]):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                p.parse_args(["install", "sol26-ss20", "--vmid", "1", *bad])
+
+    def test_cd_only_for_the_phase(self):
+        """The bundle's CD goes into scsi5 for the post-install phase and is removed afterwards, also
+        when the phase fails."""
+        calls, phases = [], []
+
+        def fake_run(*cmd, check=True):
+            calls.append(cmd)
+            return ""
+
+        class Job:
+            volids = {"sun26gnu.iso": "local:iso/sun26gnu.iso"}
+            root_password = "wshlab"
+            a = types.SimpleNamespace(vmid="9300", out="/x", post_install="sun26gnu", local_env=True, user="lab")
+
+            def __init__(self, fail=False):
+                self.fail = fail
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                phases.append((name, scenario, v, timeout))
+                if self.fail:
+                    raise install.InstallFailed("postinstall: stalled")
+
+            def log(self, msg):
+                pass
+
+        saved = install.run, install.save_config
+        install.run, install.save_config = fake_run, lambda vmid, work: None
+        try:
+            install.PostInstall().run(Job())
+            (name, scenario, v, timeout), = phases
+            self.assertEqual((name, scenario, timeout), ("postinstall", "solaris-post-install.py", 5400))
+            self.assertEqual((v["CD"], v["DIR"], v["DATA_DISK"], v["BASEDIR"], v["LOCAL_ENV"], v["USER"], v["LOGIN_SHELL"]),
+                             ("c0t5d0", "gnu/pkgs", "c0t4d0", "/usr/local", "1", "lab", "/usr/local/bin/bash"))
+            self.assertEqual(calls[0], ("qm", "set", "9300", "--scsi5", "local:iso/sun26gnu.iso,media=cdrom"))
+            self.assertEqual(calls[-1], ("qm", "set", "9300", "--delete", "scsi5"))
+            calls.clear()
+            with self.assertRaises(install.InstallFailed):
+                install.PostInstall().run(Job(fail=True))
+            self.assertEqual(calls[-1], ("qm", "set", "9300", "--delete", "scsi5"))
+        finally:
+            install.run, install.save_config = saved
+
+    def test_checks(self):
+        """The --check boot's extra commands: one console line each, and each regex matches what the
+        guest prints but not the command line the console echoes."""
+        job = types.SimpleNamespace(a=post_args(local_env=True, user="lab"))
+        v = install.post_install_checks(job)
+        cmds, rxs = v["MORE_COMMANDS"].split("\n"), v["MORE_EXPECT"].split("\n")
+        self.assertEqual(len(cmds), len(rxs))
+        self.assertEqual(len(cmds), 1 + 3 + 1 + 2 + 2)
+        good = ["df: /dev/dsk/c0t4d0s0      2033311  241000 1731318    13%    /usr/local",
+                "GNU bash, version 4.1.0(1)-release (sparc-sun-solaris2.6)", "VIM - Vi IMproved 7.3 (2010 Aug 15)",
+                "GNU Wget 1.12 built on solaris2.6.", "pkginfo knows 35 of 35 packages",
+                "root PATH=/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin", "root:/sbin/sh",
+                "lab:/usr/local/bin/bash", "which: /usr/local/bin/bash"]
+        for cmd, rx, out in zip(cmds, rxs, good):
+            with self.subTest(cmd=cmd):
+                self.assertLess(len(cmd), 250)
+                self.assertTrue(re.search(rx, out + "\n", re.M), (rx, out))
+                self.assertFalse(re.search(rx, "# " + cmd + "\n", re.M), (rx, cmd))
+        self.assertFalse(re.search(rxs[4], "pkginfo knows 34 of 35 packages"))
+        self.assertFalse(re.search(rxs[4], "pkginfo knows 0 of 0 packages"))
+        self.assertFalse(re.search(rxs[0], "df: /dev/dsk/c0t3d0s0 1 2 3 4% /usr/local"))  # / on the root disk
+        v = install.post_install_checks(types.SimpleNamespace(a=post_args()))
+        self.assertEqual(len(v["MORE_COMMANDS"].split("\n")), 5)  # without --local-env
+
+    def test_post_install_scenario(self):
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-post-install.py"))
+        lines = sc.pkgadd_script({"BUNDLE": "sun26gnu", "DIR": "gnu/pkgs"})
+        self.assertTrue(all(len(line) <= 200 for line in lines + sc.ADMIN_LINES))
+        self.assertIn("pkgadd -n -a /var/sadm/wsh-lab-admin -d $d all >> $L 2>&1; rc=$?", "\n".join(lines))
+        admin = dict(line.split("=", 1) for line in sc.ADMIN_LINES)
+        self.assertEqual(admin["basedir"], "default")
+        self.assertEqual(admin["instance"], "overwrite")
+        self.assertEqual(admin["mail"], "")
+        for key in ("partial", "runlevel", "idepend", "rdepend", "space", "setuid", "conflict", "action"):
+            self.assertEqual(admin[key], "nocheck", key)
+
+    def test_boot_disk_more_commands(self):
+        """solaris-boot-disk.py types MORE_COMMANDS one per line and expects MORE_EXPECT for each."""
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-boot-disk.py"))
+        self.assertEqual((sc.DEFAULTS["MORE_COMMANDS"], sc.DEFAULTS["MORE_EXPECT"]), ("", ""))
 
 
 if __name__ == "__main__":

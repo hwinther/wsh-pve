@@ -46,6 +46,15 @@ come after that, not before.
 | qemu-3dfx pin moves only through a promotion PR with a 3dfx-only build check | merged | #272 |
 | Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
+| Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
+| A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
+| sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note written | in review | |
+| Install targets: Red Hat Linux 6.2 on SS-5 and SS-20 (`redhat62-ss5`, `redhat62-ss20`, OpenBIOS): kickstart from an answer CD the tool makes on the node (the `unattended` method, `answer_media.py`), SILO's screens answered on the serial console, `/boot` first on the disk for SILO | in review | |
+| Sound on the SS-5: the CS4231 plays through its APC DMA (LEMU `2938ff88`, `42d32575` by Antoni Sawicki, pve-qemu `wsh/0028`-`0029`), at SBus level 5 as the real machine (`wsh/0030`, openbios 0018), no start failure without an audiodev (`wsh/0031`), no lost tail (`wsh/0032`), qtest (`wsh/0033`); qemu-server `audio0: device=cs4231` (drivers `none`, `alsa`, `pa`, `pipewire`; SPICE, SS-10/SS-20 and sparc64 refused), the UI offers only that on sparc. SunOS 4.1.4, Solaris 2.5.1 and 2.6 play in the lab under OpenBIOS and `ss5.bin`. Limits: no DBRI on SS-10/SS-20 (not emulated), nothing in the web console (no SPICE on sparc32), no capture | in review | |
+| Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
+| sun4u system MAC from `net0` (pve-qemu `wsh/0034`, qtest `wsh/0035`): QEMU wrote its default `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`, and NetBSD and Solaris use the IDPROM's MAC for `hme0`; now it is the first `sunhme`'s (else the first NIC's), so the guest sends from the MAC in the VM config (NetBSD `hme`/`wm`, Solaris 10 `hme`). No qemu-server change; upstream note written. The Solaris host id follows the MAC (`80123456` on every VM before), so it changes on existing VMs. Solaris 10 boots 10 of 10 with it and OpenBIOS 0013-0017 (the earlier `BAD TRAP: type=4e` in 2 of 5 was the firmware bug 0016 fixes) | in review | |
+| sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
+| Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
 
 ## In progress
 
@@ -70,21 +79,38 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    Debian installer boot as before. Still to do:
    - reboot: the installer's reboot and `reboot`/`init 6` return from the firmware; 0012
      (`.wip`) resets at the `ok` prompt but hangs when Solaris calls it;
-   - every sun4u guest gets the system MAC 52:54:00:12:34:56 (QEMU only takes the onboard `-nic`'s
-     MAC into the IDPROM);
    - `sol10-sun4u` with `--ip dhcp` (not tested through the tool); the intermittent `bad unknown
      trap at TL 1` panic seen once before the package (none in 6 installs on it); a different one,
      `BAD TRAP: type=4e` in the firmware while the DVD boots, once in 6 DVD boots through PVE
      (`install` retries it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
+3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
+   release, needed two more OpenBIOS fixes: 0016 runs the client interface with interrupts off
+   (illumos calls it with interrupts on; an interrupt while the firmware saved or restored the
+   caller's register windows corrupted them on 4 of 7 live CD boots; also the cause of Solaris 10's
+   one `BAD TRAP: type=4e`), and 0017 puts `xa+`/`xa1+` back into the 64-bit FCode table (every token
+   from 0x24a on ran the wrong word, so the illumos ZFS boot block crashed). With both, the live CD
+   boots to its login prompt, installs to the IDE disk with its own installer, and the installed disk
+   boots, gets its address and powers off; `lab.py install tribblix-m34-sun4u` drives it through PVE
+   (left out of `pve_matrix.py install` until a package has 0016 and 0017). Still open:
+   - the guest's clock stops for good in about one of three long runs (5 of 14, before and
+     after 0016), always under heavy interrupt traffic; a race in QEMU on `%softint`, caught in a trace
+     (`upstream/qemu-sparc64-softint-race.md`), would need a QEMU patch;
+   - with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first attempts that
+     ZFS retries; no data errors); a UFS install (`ROOT_FS=ufs`) avoids that but hasn't been booted;
+   - the live CD's package catalogue is older than its packages, so an offline install skips some
+     (curl, tcsh, GNU coreutils, ...); a Tribblix issue;
+   - very slow under TCG: about 45 minutes to the live CD's login, and the first boot of the
+     installed system imports the SMF manifests again.
+   Details: `submodules/SPARC.md`, "Tribblix on sun4u".
 
 ## Next, in this order
 
 1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
    the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
 2. **Solaris on sun4u**: see "In progress". Solaris 10 installs through `lab.py install`; next: a
-   reboot that works from Solaris (0012 hangs), then a per-VM system MAC.
+   reboot that works from Solaris (0012 hangs).
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
    published 11.1.3 without a QEMU patch: Solaris 10 1/13 reaches its text installer ("Identify
    This System") with Sun's firmware and a fixed 1 GB machine description, or with firmware built
@@ -140,17 +166,17 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
   Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
-  more targets (Solaris 2.5.1 needs the CD as a disk; 7, 8 and 9, SunOS 4.1.4 and NetBSD are in the
-  catalogue with what blocks each). Today the weekly `pve` matrix reinstalls Solaris 2.6 on SS-5.
+  more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, and Red Hat
+  Linux 6.2 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
+  SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
-- **SPARC audio and cg14**, after the platform is stable. Researched, not started: sun4u first
-  (OpenBSD/sparc64 has `eap` for QEMU's ES1370; NetBSD/OpenBSD USB audio; Solaris 10 has only USB
-  audio), then CS4231 with APC DMA on sun4m (QEMU's `cs4231.c` is a register stub; the MiSTer SS-20
-  core plays sound with the SS-5's CS4231 in an SBus slot under Solaris 8 and NetBSD), then cg14
-  without SX (an old MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI
-  and SX last. Docs today say audio doesn't work on SPARC: true for sparc32, untested on sparc64.
+- **More SPARC audio and cg14**, after the platform is stable. The SS-5's CS4231 plays (Done).
+  Researched, not started: sun4u (OpenBSD/sparc64 has `eap` for QEMU's ES1370; NetBSD/OpenBSD USB
+  audio; Solaris 10 has only USB audio), the CS4231 in an SBus slot of the SS-10/SS-20 as the MiSTer
+  SS-20 core does (an FCode PROM and an OpenBIOS node), CS4231 capture, cg14 without SX (an old
+  MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI and SX last.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
 - **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
   expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and
@@ -165,14 +191,14 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | What | Notes |
 | --- | --- |
 | The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
-| The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB |
+| The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB. The install target `sunos414-ss5` runs its install phase with 64 MB and sets 256 MB afterwards |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
-| A CD that answers as a disk (Solaris 2.4/2.5.1 installers) has no option | Workaround: copy the ISO to a raw volume on `scsi6` |
+| A CD that answers as a disk (`cd_as_disk=1`) has no field in the web UI | Set it with `qm set` or the API; the CD/DVD editor keeps it when the medium changes |
 | Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
@@ -186,7 +212,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine |
+| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine, Red Hat Linux 6.2 |
 | `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
 | `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
 | `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
@@ -201,7 +227,9 @@ from it.
 Write-ups are in `upstream/`: the ESP bus reset bug (QEMU), the ESP selection timeout and Stop-A
 powering the machine off (OpenBIOS),
 the 1-byte APC region (QEMU), the TLB flush on every change of the SRMMU no-fault bit (QEMU) and
-the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang).
+the interrupt not taken after a write to `%psr` in a delay slot (QEMU, the Solaris SMP hang) and
+sparc32 `ld`/`st %fsr` refused with rd other than 0 (QEMU, found and fixed by Antoni Sawicki in LEMU)
+and sun4u's IDPROM ignoring a NIC added with `-device` (QEMU).
 QEMU declines AI-generated code contributions, so these are bug reports, not patches. Candidates
 not written up yet: the TTE page-size truncation if it is not merged upstream, the ESCC mouse
 rate, and the ESCC break that never ends.

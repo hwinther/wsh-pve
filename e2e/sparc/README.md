@@ -66,7 +66,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 
 | Scenario | What it does | Time (11.1, one core) |
 | -------- | ------------ | --------------------- |
-| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update |
+| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update; 2.4 (the same, through PVE): ~5 min |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
@@ -79,6 +79,8 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `smp-soak.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks that `psrinfo` lists them on-line, times one and `SMP` copies of Dhrystone and the `nawk` loop (speed-up), then loads every CPU for `SOAK` seconds (Dhrystone, Hanoi, `nawk`, a `tar` of the bench disk through `compress` with its `cksum` checked, a write, a fork loop; `SMP` + 1 shells) while `mpstat 60` records the CPUs; fails on a hang, a CPU off-line, a checksum mismatch or a CPU below `BUSY` % busy | `SOAK` + ~5 min |
 | `smp-idle.py` | boots an installed Solaris disk with `SMP` CPUs and the bench disk (`DISK2`), checks `psrinfo`, measures QEMU's host CPU use at the shell over `SECONDS` and the guest clock, the echo of `true` and ten `sleep 1`, then times work that has to wake an idle CPU: lmbench `lat_pipe` and `lat_proc fork`, a shell loop of 200 `expr`, a `dd \| cat \| cat` pipeline, bursts of short `nawk` jobs, one and `SMP` copies of Dhrystone and the `nawk` loop; `STRESS` adds `SMP` + 1 shell loops of short jobs, `sleep 1`, pipelines and `expr` for that many seconds with `psrinfo` every 60 s. For `solaris-smp-idle` (`submodules/SPARC.md`, "SMP"); numbers in `result.json` | ~7 min + `STRESS` |
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
+| `redhat-install-sparc.py` | Red Hat Linux 6.2 from its CD with kickstart (the answer CD on target 5, written from `IP`/`NETMASK` unless `KS_ISO`), SILO's three screens answered; stops the VM when the install reboots. Needs a Sun-labelled disk (`TEMPLATE`) | ~2.5 min |
+| `redhat-firstboot.py`, `redhat-boot-disk.py` | boot an installed Red Hat 6.2 disk to `login:` on ttyS0; the first sets root's password, the marker, host name, router, DNS and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1-2 min |
 | `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
@@ -207,8 +209,11 @@ Scenarios run in both modes: `pve_vars()` reads the VM's config (`qm config`) an
 scenarios read as variables, between the scenario's `DEFAULTS` and `--var`: `ARCH`, `MEM`, `SERIAL`,
 `CONSOLE` (`serial` without a display, else `fb`) and, for `arch: sparc`, `MACHINE`, `BIOS`, `VGA`
 (`none` for `vga: serialN`), `BOOT=c` (qemu-server sets no boot device, so OpenBIOS tries the disk first and
-`prom_boot()` boots the CD at the `0 >` prompt), `CDROM_AS` (`hd` for a target 6 without
-`media=cdrom`) and `REFRESH`. `solaris-install-serial.py` and `solaris-boot-disk.py` ran unchanged
+`prom_boot()` boots the CD at the `0 >` prompt), `CDROM_AS` (`hd` for a target 6 CD-ROM with
+`cd_as_disk=1` and a medium, or a target 6 disk without `media=cdrom`) and `REFRESH`. With a Sun
+PROM, `prom_boot()` types `ttya io` on the keyboard only when the banner says `Keyboard Present`:
+qemu-server starts a VM without a framebuffer with `-nographic`, which leaves the keyboard out, and
+the PROM (`No Keyboard`) reads ttya by itself. `solaris-install-serial.py` and `solaris-boot-disk.py` ran unchanged
 against a PVE VM; `solaris-boot-cd.py`, `idle.py` and `bench.py` read only these variables but weren't
 run in attach mode; `cg3-display.py` needs `--var GUEST=1` or `GUEST=` (its `qemu_args()` sets it).
 `alpine-boot-cd.py` and `netbsd-boot-cd.py` are attach mode only.
@@ -340,8 +345,18 @@ and `check`, each a scenario run against the VM:
    password, `/etc/wsh-lab-target`, the optional user, `init 5`), and `solaris-boot-disk.py` with
    `ROOT_PASSWORD`, `COMMANDS` and `CHECK` for `--check`. Solaris 7 uses the same three unchanged;
    Solaris 8 uses `solaris-webstart-serial.py` for the install (Web Start, see "Solaris 7, 8 and 9"
-   below) and the same first boot and check.
-2. **Unattended by the installer's own mechanism (designed, not used for Solaris):** Solaris 2.6
+   below) and the same first boot and check. SunOS 4.1.4 has its own three
+   (`sunos-install-serial.py`, `sunos-firstboot.py`, `sunos-boot-disk.py`; "SunOS 4.1.4" below).
+   The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
+   `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below); a target's
+   `check` can bring its own `commands`.
+2. **Unattended by the installer's own mechanism (used by Red Hat 6.2; designed, not used for Solaris):**
+   `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
+   image made by the standard library from the target's answers, never from vendor files, nothing
+   secret on it) to the media storage as `wsh-lab-answers-<vmid>.iso`, puts it into the target's
+   install `answers` drive for the install phase only, and removes the drive and the image
+   afterwards, also when the install fails; first boot and check are the scripted ones. See "Red
+   Hat Linux 6.2" below. Solaris 2.6
    reads a `sysidcfg` and a custom JumpStart profile (`rules.ok`) only from a diskette or over NFS
    (`boot net - install`, with RARP/bootparams). The sparc32 profiles have no floppy drive (the
    `floppy` content type and `floppyN` are x86 only), a boot server is out of scope, and the other
@@ -491,7 +506,9 @@ The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check
 and the user command are the same code), and `pve_matrix.py install` runs every automated target
 the same way (the `install` choice of the `sparc lab` workflow): the machinery for the "scheduled
 reinstalls" in `ROADMAP.md`. `pve_matrix.py` links each target's media from `--iso` into the test
-node's `local` storage under the expected names. `tests/test_targets.py` (standard library only,
+node's `local` storage under the expected names; a converted medium (the SunOS CD) that `--iso`
+doesn't have is made there from its source with `lab.py media --convert` (about 6 minutes more for
+`sunos414-ss5` in the `install` choice, which needs `sunos_4.1.4_install.iso` in `--iso`). `tests/test_targets.py` (standard library only,
 `python3 -m unittest -v tests/test_targets.py` in `e2e/sparc`) checks every target's profile against
 `$SPARC32_PROFILES`/`$SPARC64_PROFILE` in `submodules/qemu-server.patch` (skipped without the
 repository around it), unique names, the Sun label against the template's first MiB, the VM
@@ -591,6 +608,303 @@ SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their
 `["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
 `--vlan`, `--user` and `--data-disk` with them.
 
+### Solaris 2.4 and 2.5.1
+
+`sol24-ss5` (2.4 Hardware 3/95) and `sol251-ss5` (2.5.1 11/97) boot their installer only from a CD
+that answers as a disk, and 2.4 only under a Sun PROM: SS-5 with `bios: ss5.bin`, and the CD's
+medium has `as_disk: True`, which `install.drive_volume()` turns into qemu-server's `cd_as_disk=1`
+(`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`, a read-only `scsi-hd` on target 6;
+`submodules/SPARC.md`, "Supported profiles"). `targets.problems()` allows `as_disk` only on a sparc32
+SCSI drive at the start (a medium swap would wait for the next start). `pve_vars()` sets
+`CDROM_AS=hd` for such a drive, so `solaris-install-serial.py` answers the installer as in the
+lab's own QEMU; the installer also lists the CD as `c0t6d0`, and `disks()` marks only `c0t3d0`.
+Two things were new through PVE:
+
+- **No keyboard under the Sun PROM.** qemu-server starts a VM with `vga: serial0` with
+  `-nographic`, which leaves out the Sun keyboard: the PROM says `SPARCstation 5, No Keyboard` and
+  reads ttya. `prom_boot()` typed `ttya io` on the keyboard and waited 30 s for `ok` in vain (the
+  first run); it now types it only after `Keyboard Present` (the lab's own QEMU, `-vga none`).
+  Under PVE the PROM tries the network first (`Boot device: .../le@5,8c00000`, `Can't open boot
+  device`) and stops at `ok`, where `prom_boot()` types `boot cdrom` (the PROM's `cdrom` alias is
+  `sd@6,0:d`, which works for the `scsi-hd` too) and later `boot disk`.
+- **2.4's date screen:** it shows 2026 as `Year (4 digits) : 1912`, and confirming that ends in
+  `Unable to convert given date` and the time zone screen again, in a loop. `date()` types the
+  4-digit year (`YEAR`, default the host's) over the highlighted field when it shows a year before
+  1970; 2.4 then takes 2026. 2.5.1 and later take the year they show.
+
+2.5.1's install ends with its Maintenance Update (`install_mu`: "It will take from 15 to 45 minutes
+to determine the file system space requirements"), so the root shell comes up to an hour after the
+postinstall phase starts: the target sets `FINISH_TIMEOUT=6000` (the scenario's wait for the shell,
+1800 s by default; the first run through PVE hit that). The first boot and the check are those of
+2.6 (`solaris-firstboot.py`, `solaris-boot-disk.py`, a static address only: there is no DHCP client
+before 2.6). 2.4 has no `hostname` command (the check's `hostname` prints `not found`; the marker
+has the name), and its auto-layout makes small slices on the 3G disk: `/` 25 MB, swap 129 MB,
+`/usr` 108 MB (85% used), `/export/home` 2.4 GB.
+
+Tested in the PVE test container on the lab host, 2026-11-18: the published packages (pve-qemu-kvm
+11.1.3-2+wsh16, pve-manager 9.2.30+wsh1) with qemu-server built from this branch (9.2.18 plus
+`cd_as_disk`), each with `--check`. Another agent's container ran on the host at the same time, and
+some runs overlapped (noted):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol251-ss5` (first) | failed: `ttya io` on a keyboard the VM doesn't have (above) | 1 min |
+| `install sol251-ss5` | failed in the Maintenance Update: no root shell within the scenario's 1800 s (above) | 34 min |
+| `install sol24-ss5` (first) | stopped by hand in the date loop (above) | 6 min |
+| `install sol24-ss5` (alongside the 2.5.1 run) | passed; `SunOS sol24-ss5 5.4 generic sun4m sparc`; the marker; `le0 10.0.2.15 netmask ffffff00`; the slices above | 9.3 min (install 315 s, first boot 141 s, check 85 s) |
+| `install sol251-ss5` (`FINISH_TIMEOUT=6000`; the sol26 run overlapped its first 15 min) | passed; `SunOS sol251-ss5 5.5.1 Generic_103640-12 sun4m sparc SUNW,SPARCstation-5`; the marker; `/` 123024 KB, `/usr` 110550 (87% used), `/export/home` 2313661; `le0 10.0.2.15 netmask ffffff00`; the finished VM has `scsi6: none,media=cdrom` | 43.9 min (install 2336 s, of which ~18 min without console output in the Maintenance Update; first boot 182 s, check 98 s) |
+| `install sol26-ss5` (regression of the scenario changes, alongside 2.5.1) | passed | 14.4 min (install 518 s, first boot 218 s, check 111 s) |
+| `matrix.py smoke` (lab image with the branch's `e2e/sparc`: the 2.5.1 disk under `ss5.bin` takes the `Keyboard Present` path) | 3/3 passed | 161 s, 111 s, 66 s |
+| `solaris-boot-cd.py` 2.5.1 CD, `CDROM_AS=hd`, SS-20 with the SS-20 PROM (lab image) | passed (installer's first question) | 57 s |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now also needs the 2.4 and 2.5.1 CDs and takes about 55 min longer; with a published
+qemu-server that lacks `cd_as_disk` both cases fail at VM creation (`cd_as_disk: property is not
+defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the network options other
+than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
+(one passing run each so far).
+
+### NetBSD install targets
+
+`netbsd111-sparc64` (sun4u, the sparc64 profile: an 8 GiB blank disk on `ide0`, the CD on `ide2`,
+`sunhme`, 512 MB), `netbsd111-sparc` (SS-5, 256 MB) and `netbsd111-sparc-ss20` (SS-20, 512 MB, one
+CPU; both with a 3 GiB blank disk on `scsi3`, the CD on `scsi6`, lance) install NetBSD 11.1 from the
+official CDs (`NetBSD-11.1-sparc64.iso`, `NetBSD-11.1-sparc.iso`; their SHA512 matches the release's
+`images/SHA512`). No Sun label is needed: sysinst writes its own disklabel on the blank disk.
+
+1. **Install.** sysinst on the serial console (vt100), the same answers on both architectures
+   (`_netbsd.sysinst()`): English, install to hard disk, the first disk, the default partition
+   sizes, the sets (`SETS`: `b` = without X11 on sparc64, `c` = Minimal on sparc), from the CD-ROM,
+   root without a password, entropy "not now", the configuration menu's defaults, Exit. On sparc64
+   the CD's kernel asks only the terminal type (OpenBIOS boots the CD by itself; the API's boot
+   order has the CD first) and Exit leaves a shell, where the scenario types `sync; halt -p`. On
+   sparc OpenBIOS stops at `0 >` (the blank disk on target 3 comes first) and the scenario boots the
+   CD by path; the CD's kernel runs a microroot that loads the installation tools from the CD
+   (`1` = cdrom, `/dev/cd0a`, the path of `instfs.tgz`, the terminal type, `I`), and after Exit it
+   halts and powers the VM off by itself (`Back in microroot; halting machine...`).
+2. **First boot** (`netbsd-firstboot.py`): root logs in without a password, `passwd root` sets the
+   password at its prompts (NetBSD's passwd asks once more after an all-lower-case password, then
+   takes it), the marker, `/etc/myname`, the network, the optional user (`useradd -m`, home under
+   `/home`, group `wheel`), `sync; halt -p`.
+3. **Check** (`netbsd-boot-disk.py`, the target's `check` `commands`): logs in with the password,
+   records `uname -a`, `hostname`, the marker, `df -k`, the disklabel, `ifconfig -a`, `netstat -rn
+   -f inet` and `/etc/resolv.conf`, requires `target=<name>`, `halt -p`.
+
+Network, in NetBSD's own files: static = `/etc/ifconfig.<nic>` (`inet <ip> netmask <mask>`),
+`defaultroute=<gw>` in `/etc/rc.conf`, the address and host name in `/etc/hosts`; DHCP =
+`dhcpcd=YES` in `/etc/rc.conf` (dhcpcd takes the address, router and name servers and writes
+`/etc/resolv.conf` through resolvconf; it sends no host name and keeps `/etc/myname`, so the notes
+say so, `dhcp_note`); `--dns`/`--domain` = `/etc/resolv.conf`. The NIC is `hme0` on sparc64 and
+`le0` on sparc (`nic` in the target, for the notes and the marker). The installed systems listen on
+no port (`netstat -an` has no `LISTEN` on sparc64 or on SS-20; `/etc/inetd.conf` has every service
+commented out) and sshd is off (sysinst's default).
+
+With pve-qemu-kvm before `wsh/0034` every sparc64 VM gets the system MAC `52:54:00:12:34:56` (the
+IDPROM's default, `hme0: Ethernet address 52:54:00:12:34:56` whatever `net0` says; see "Network"
+above and `submodules/SPARC.md`, "The sun4u system MAC"), so only one of them per bridge segment
+gets a usable address; with `wsh/0034` it is `net0`'s. On sparc the lance uses `net0`'s MAC. NetBSD/sparc64 doesn't idle on sun4u (a host core at 100% while it runs).
+
+**A halt that never powers off.** In the first sparc64 run, the first boot's `halt -p` stopped after
+halt's SIGTERM (`syslogd[500]: Exiting on signal 15`, then nothing: no `syncing disks`) and the VM
+was still running ten minutes later. It didn't come back: four more sparc64 first boots, their
+four check boots, a further DHCP boot and nine boot/login/halt rounds on an installed sparc64 VM
+through PVE all powered off about 9 s after `halt -p`. `_netbsd.power_off()` now waits 300 s; if the VM is still up it sends a break on the
+console (QMP `chardev-send-break`), which enters NetBSD's kernel debugger, records `ps`, `bt`,
+`show uvmexp` and the stacks of `halt` and `makemandb` (`bt/a`), and powers off with `reboot 0x808`
+(RB_HALT | RB_POWERDOWN: the disks are synced); the run passes with `halt_hung: 1` in its metrics
+and the debugger output in its evidence. The break, the debugger and `reboot 0x808` were tried on
+an installed sparc64 VM (a scratch scenario that skips `halt -p`): QEMU exited 0, and `bt/a` showed
+`makemandb` (the man page index NetBSD builds in the background at boot) in `biowait`. Not seen on sparc.
+
+Tested in the PVE test container on the lab host (the e2e PVE image with pve-qemu-kvm
+11.1.3-2+wsh15, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4; up to three guests at a time; the
+lab host is a VM on an i9-9900K), 2026-11-17, each with `--check`:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install netbsd111-sparc64` (first version) | install passed; first boot: `halt -p` hung (above), stopped at the 600 s power-off limit, failed | install 383 s |
+| `install netbsd111-sparc64` | passed; `NetBSD netbsd111-sparc64 11.1 ... sparc64`, the marker, `hme0 10.0.2.15/24` | 10.8 min (install 391 s, first boot 144 s, check 100 s) |
+| `install netbsd111-sparc64` | passed | 11.2 min (404 s, 145 s, 105 s) |
+| `install netbsd111-sparc64 --bridge vmbr1 --ip dhcp` | passed; dnsmasq leased 10.77.0.111 to `52:54:00:12:34:56` (the IDPROM MAC, not `net0`'s), `default 10.77.0.1` and `resolv.conf` from the lease, `hostname` = `netbsd111-sparc64`; a further boot: both pings by name, no `LISTEN` socket | 10.1 min (364 s, 135 s, 94 s) |
+| `install netbsd111-sparc` (first version) | sysinst passed; the scenario expected a shell after Exit, but the microroot powers off by itself: failed, fixed (`finish_install()`) | 3.6 min |
+| `install netbsd111-sparc` | passed; `/dev/sd0a` 3064094 KB (210624 used), swap `sd0b` 32 MB, `le0 10.0.2.15/24` with `net0`'s MAC | 6.6 min (201 s, 116 s, 62 s) |
+| `install netbsd111-sparc` | passed | 6.8 min (212 s, 118 s, 63 s) |
+| `install netbsd111-sparc --bridge vmbr1 --ip dhcp` | passed; lease 10.77.0.142 from dnsmasq, `default 10.77.0.1` and `resolv.conf` (`domain lab.test`, `nameserver 10.77.0.1`) from the lease, `hostname` = `netbsd111-sparc`; a further boot: `ping gw.lab.test` and `ping far.lab.test` (through the router) 2/2 | 6.8 min (221 s, 111 s, 63 s) |
+| `install netbsd111-sparc-ss20` | passed | 6.7 min (205 s, 122 s, 62 s) |
+| `install netbsd111-sparc-ss20 --bridge vmbr1 --ip 10.77.0.60 --gateway 10.77.0.1 --dns 10.77.0.1 --domain lab.test` | passed; `default 10.77.0.1`, `resolv.conf` as given; a further boot: both pings by name, no `LISTEN` socket | 7.3 min (216 s, 136 s, 67 s) |
+| nine boot, login, `halt -p` rounds on the installed `netbsd111-sparc64` VM (`netbsd-boot-disk.py --pve`) | 9/9 passed | 85-100 s each |
+| `tests/test_netbsd.py` with the lab's own QEMU (in the PVE container, `NETBSD_ISO` = the lab host's copy) | passed | 623 s (install 415 s, first boot 109 s, check 97 s) |
+| `install netbsd111-sparc --user lab --user-password ... --template` | passed; `lab:*:1000:100::/home/lab:/bin/sh` (in `wheel`), `passwd lab` exit 0, converted to a template; the passwords are in no evidence file but the VM's notes (a login as `lab` wasn't tried) | 6.8 min (199 s, 133 s, 60 s) |
+| `pve_matrix.py install --only install-netbsd111-sparc64 --only install-netbsd111-sparc --only install-netbsd111-sparc-ss20` (the final code, one guest at a time) | 3/3 passed | sparc64 9.9 min (347 s, 140 s, 94 s); SS-5 6.5 min (197 s, 118 s, 62 s); SS-20 6.3 min (190 s, 117 s, 58 s) |
+| `pve_matrix.py pve` and `matrix.py smoke` (regressions, the final code; smoke in the PVE container, whose pve-qemu-kvm is the lab image's) | 5/5 and 3/3 passed | `sol26-install-ss5` 741 s, the others 48-215 s; smoke 156 s, 110 s, 67 s |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now also needs the two NetBSD CDs (`other-os/` under `--iso`) and takes about 23 min longer.
+Not tried: `--vlan` (`bridge vlan add` on the test container's bridge failed with `Invalid
+argument` this time; NetBSD doesn't see the tag), a login as the `--user` user, sparc64 with more
+memory, SS-10, and the sets other than these two.
+
+**In CI.** The NetBSD CDs are freely redistributable, so `sparc lab NetBSD`
+(`.github/workflows/sparc-lab-netbsd.yml`, on pull requests that change `e2e/sparc` and by hand)
+runs `tests/test_netbsd.py` in the lab image on a GitHub-hosted runner: it downloads
+`NetBSD-11.1-sparc64.iso` from `cdn.netbsd.org` (the URL in `targets.MEDIA`), checks its size and
+sha256, and runs the target's three scenarios with the lab's own QEMU (TCG, sun4u): install, first
+boot (password, marker, host name, a static address and router), check (logs in with the password,
+requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
+is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
+45). Not run on GitHub yet.
+
+### Red Hat Linux 6.2
+
+`redhat62-ss5` (SS-5, 256 MB) and `redhat62-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
+`vga: serial0`, install Red Hat Linux 6.2 for SPARC (`redhat-6.2-sparc.iso`, the one install CD;
+kernel 2.2.14) onto a Sun-labelled 3 GiB disk on `scsi3`, the CD on `scsi6`, lance (`eth0`). The
+32-bit kernel and initrd on the CD run on QEMU's sun4m as they are: ESP (`sda`, `sr0`), lance
+(`sunlance`), the Zilog serial port as the console (`ttyS0`, from the PROM's `output-device`), and
+"Power off control detected", so `poweroff` ends the VM. No QEMU, OpenBIOS or qemu-server change.
+
+1. **Install** (the `unattended` method, `redhat-install-sparc.py`). anaconda 6.2 reads a
+   kickstart file with `ks=cdrom:/ks.cfg` from the first CD-ROM it can mount, and the install
+   source from the first one with `RedHat/instimage` on it. `install.Unattended` writes the answer
+   CD (`answer_media.kickstart()`: the address and netmask, `/boot` 32 MB, `/` the rest but swap
+   128 MB, the Base group plus `iputils`, time zone MET, `reboot`) and puts it on `scsi5`, which
+   Linux finds before the Red Hat CD on `scsi6` (`sr0` and `sr1`). OpenBIOS stops at `0 >` (the
+   disk comes first and doesn't boot); the scenario boots the CD as a whole device
+   (`boot /iommu/sbus/espdma/esp/sd@6,0`: its SILO isn't in slice `d`, where Solaris's is) and types
+   `linux ks=cdrom:/ks.cfg` at SILO's `boot:`. Kickstart answers everything but SILO's three
+   screens (6.2's `lilo` command skips the step "lilo"; on SPARC the step is "silo"), which the
+   scenario takes with F12 (`\e[24~`, newt's "next screen": no kernel options, SILO in the first
+   sector of `/dev/sda1`, the PROM boot device and alias boxes as they come). The packages take
+   about 100 s. The install ends with `reboot`; the scenario stops the VM at OpenBIOS's banner.
+2. **First boot** (`redhat-firstboot.py`): SILO on the disk, root logs in on the serial console
+   without a password (the kickstart's `%post` left it empty; the installer had already put
+   `getty console` in `/etc/inittab` and `console` in `/etc/securetty`), `passwd root` at its
+   prompts, the marker, `HOSTNAME=` in `/etc/sysconfig/network` and the address in `/etc/hosts`
+   (anaconda 6.2 didn't take kickstart's `network --hostname` into the installed system, so the host
+   name is set here and the kickstart file has none), `GATEWAY=` and `/etc/resolv.conf`, the
+   optional user (`useradd -m`, home under `/home`, `bash`), `poweroff`.
+3. **Check** (`redhat-boot-disk.py`): logs in with the password, records `uname -a`, `hostname`,
+   the marker, `df -k`, `fdisk -l /dev/sda`, `ifconfig -a`, `route -n` and `resolv.conf`, requires
+   `target=<name>`.
+
+Found on the way:
+
+- **Blank disk:** anaconda asks "Bad Partition Table ... Initialize / Skip Drive" for a disk without
+  a label, and kickstart's `zerombr yes` doesn't answer it on SPARC; the target's disk has the Sun
+  label `sunlabel.py` writes for Solaris (SUN2.9G), and `clearpart --all` replaces its slices.
+- **SILO and the end of the disk:** with `/` alone on the 3 GiB disk, SILO's first stage printed `S`
+  and stopped (OpenBIOS: `File not found`, `halt, power off`; `ss5.bin`: `Program terminated`):
+  `/boot/second.b` was at 4 KB block 526410, past 2 GB, and SILO's first stage reads its second
+  stage through the PROM, which on sun4m doesn't reach that far. A 32 MB `/boot` as the first
+  partition (`sda1`, cylinder 0) fixes it; `/` is `sda2`, swap `sda4`.
+- `%packages` has no `ping` with Base alone (`iputils` is in "Networked Workstation"), so the
+  kickstart file adds `iputils`. kudzu is turned off in `%post` (its hardware probe asks on the
+  console at boot).
+- **sendmail at boot:** with only the short host name in `/etc/hosts` and no DNS, every boot
+  waited 120 s at `Starting sendmail:` (a check boot of 166 s instead of ~60). The first boot writes
+  `<host>.<domain> <host>` (`.localdomain` without `--domain`, as Red Hat names `localhost`).
+- **A flaky end marker:** root's `ls` is an alias with `--color`; once its last escape sequence
+  arrived split over two reads of the console, so `lab.Machine` (which strips escape sequences
+  per read) kept a `[m` in front of `END-OF-COMMAND` and the first boot waited for it until it was
+  stopped (the install failed cleanly: VM destroyed, answer CD gone). The first boot runs `/bin/ls`
+  now; stripping across reads in `lab.py` would fix it for every scenario (not done here).
+- Network: a static address only (`net_modes`); DHCP (Red Hat 6.2 has `pump`) wasn't tried.
+  The lance uses `net0`'s MAC, as for Solaris.
+
+Tested in the PVE test container on the lab host (the e2e PVE image with the published
+pve-qemu-kvm 11.1.3-2+wsh16, qemu-server 9.2.18+wsh3, pve-manager 9.2.30+wsh2, libpve-storage-perl
+9.1.18+wsh1; TCG; the host's 14 cores shared with two other agents' runs, so the times are from a
+busy host), 2026-11-18:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| the CD with the lab's own QEMU (SS-5, OpenBIOS), `linux text` | the installer's language screen on ttya after ~30 s | |
+| `redhat-install-sparc.py`, then `redhat-firstboot.py` (lab QEMU), `/` alone | the install passed; the disk didn't boot (SILO's `S`, above), also not with `ss5.bin` | install 136 s |
+| install, first boot, check with the lab's own QEMU (`/boot` first) | 3/3 passed; `df -k`: `/dev/sda2` 2.6 GB (134 MB used), `/dev/sda1` 32 MB on `/boot`; `ping` missing (now in the kickstart file) | 139 s, 104 s, 61 s |
+| `install redhat62-ss5 --vmid 9600 --check --gateway 10.0.2.2 --dns 10.0.2.2 --domain lab.test` | passed; `scsi5` and `local:iso/wsh-lab-answers-9600.iso` gone afterwards, `scsi6: none,media=cdrom`, `boot: order=scsi3`; `eth0` with `net0`'s MAC, `default 10.0.2.2`, `resolv.conf` as given; the password in no evidence file | 5.9 min (install 130 s, first boot 144 s, check 62 s) |
+| a further boot of VM 9600 with 10.0.2.2 on the container's `vmbr0`: `ping -c 3 10.0.2.2` | 2 of 3 answered (the first went to ARP) | 38 s |
+| `install redhat62-ss20 --vmid 9601 --check --user lab` | failed in the first boot: the `ls` end marker (above), stopped by hand; VM destroyed, `scsi5` and the answer CD gone | install 84 s |
+| the same again (`/bin/ls`) | passed; `lab:x:500:500::/home/lab:/bin/bash`, `passwd lab` exit 0; the check boot waited 120 s for sendmail (above) | 6.6 min (85 s, 127 s, 166 s) |
+| `install redhat62-ss20 --vmid 9601 --check` (`.localdomain` in `/etc/hosts`) | passed; a further boot: `netstat -an` lists one listener, sendmail on `0.0.0.0:25`; on at boot: atd, keytable, gpm, netfs, network, random, linuxconf, sendmail, syslog, crond | 4.3 min (83 s, 114 s, 44 s) |
+| `pve_matrix.py install --only install-redhat62-ss5` (the final code; the CD linked from `--iso`) | 1/1 passed, VM destroyed afterwards | 5.3 min (106 s, 131 s, 61 s) |
+
+The installed systems listen on port 25 only (sendmail, on every address); Red Hat 6.2's Base has
+no inetd. `pve_matrix.py install` runs both targets, so the `install` choice of the `sparc lab`
+workflow needs `other-os/redhat-6.2-sparc.iso` under `--iso` and takes about 11 min longer. Not tried: DHCP, `--vlan`, the 9G disk, SS-10, `ss5.bin` or the SS-20 PROM for the
+install, other package groups (X needs a framebuffer and `Xsun`), a login as the `--user` user.
+
+### The Tribblix install target
+
+`tribblix-m34-sun4u` installs Tribblix m34 for SPARC (illumos) from its live CD
+(`tribblix-sparc-0m34.iso`, from iso.tribblix.org; the download page's SHA-1 matches) on the
+sparc64 profile: sun4u, OpenBIOS, 2048 MB, a blank 8 GiB disk on `ide0`, the CD on `ide2`,
+`sunhme`, `vga: serial0`. It needs `openbios-sparc64` with patches 0016 and 0017 (no published
+package has them yet; see `submodules/SPARC.md`, "Tribblix on sun4u"): with the firmware of
+11.1.3-2+wsh16 the live CD stops or hangs on most boots, and a ZFS root doesn't boot.
+
+1. **Install** (`tribblix-install-sparc64.py`): the live CD boots by itself (`-boot order=d`),
+   imports its SMF manifests, asks for the keyboard layout (Return) and comes to `console login:`;
+   the scenario logs in as root with the live CD's password (`tribblix`), turns off bash's bracketed
+   paste mode (its `ESC [?2004l` in front of each command's output hid `shell()`'s marker), finds the
+   IDE disk (`c1t0d0`, the one at `ide@3/dad@0,0`), takes the network down and runs
+   `/root/live_install.sh -G -n <host name> c1t0d0` (Tribblix's default: a ZFS root pool on the whole
+   disk; FMA marks the disk DEGRADED during the copy, see SPARC.md). It powers off with `init 5`.
+   `ROOT_FS=ufs` labels the disk instead (`format-a-disk.sh`, then `fmthard`: slice 0 for `/`,
+   `SWAP_MB` = 1 GB of swap on slice 1) and runs `echo y | /root/ufs_install.sh -n <host name>
+   c1t0d0s0` (its newfs asks); that ran through PVE up to its last steps but hasn't been booted.
+2. **First boot** (`tribblix-firstboot.py`): root logs in with `tribblix` (the installer copies the
+   live CD's `/etc`), `passwd root` sets the target's password (with `MINNONALPHA` relaxed for that
+   call, as on Solaris 10), `passwd -l jack` locks the live CD's user, the marker, the network with
+   `ipadm` (`-T static` with the address and `route -p add default`, or `-T dhcp`), DNS
+   (`/etc/resolv.conf`, `nsswitch.dns`), the optional user, `zpool clear rpool` (the DEGRADED mark),
+   `init 5`. NWAM (`network/physical:nwam`) is switched off for `network/physical:default` first; its
+   stop method times out under TCG and leaves it in maintenance, so the scenario polls and clears it
+   instead of `svcadm disable -s`. The first boot imports the SMF
+   manifests again (99 of them), which takes most of its time.
+3. **Check** (`tribblix-boot-disk.py`, the target's `commands`): logs in with the password, records
+   `uname -a`, `hostname`, the marker, `df -k /`, `prtvtoc` of the disk, `ipadm show-addr`, the routes
+   and `resolv.conf`, requires `target=<name>`, `init 5`.
+
+**Offline on purpose.** The live CD's package catalogue is older than the packages on the CD
+(the install asks for `TRIBcurl.8.12.1.1.zap`, `/pkgs` on the CD has `TRIBcurl.8.19.0.0.zap`), so the base overlay's install
+looks for some packages on pkgs.tribblix.org instead of the CD. With a network it fetched them (and
+some downloads failed with `has wrong size`); without one those packages are skipped (`pkgadd:
+ERROR: no packages were found`) and the rest of the system comes from the live CD's own root, which
+`live_install.sh` copies first. The scenario takes the network down before the install so the
+result doesn't depend on the internet.
+
+**Slow, and a clock that can stop.** Under TCG with other guests on the host: about 45-55 minutes
+from power-on to the live CD's login prompt (most of it the SMF import), 48-64 minutes for
+`live_install.sh`, 60 minutes for the installed system's first boot (it imports
+the SMF manifests again), 15-17 minutes to the login prompt on later boots, and `init 5` takes 4-13
+minutes because service methods time out on the way down (`_tribblix.power_off()` waits 30). Many
+service methods time out on the way up as well (`svc:/network/location`, `rbac`, `routing/route`,
+`update-man-index`; `svc.startd` kills them); the system comes up anyway. In about one of three long
+runs the guest's clock stopped for good (submodules/SPARC.md, "Tribblix on sun4u": a race
+in QEMU, no fix carried); the phase then stalls until its timeout and fails.
+
+Tested in the lab and in the PVE test container on the lab host (TCG, pve-qemu-kvm 11.1.3-2+wsh16
+with `openbios-sparc64` built from this branch's patches, qemu-server 9.2.18+wsh1, pve-manager
+9.2.30+wsh1; the container's packages from Proxmox's no-subscription and test repositories, which
+the published packages needed that day), 2026-11-18:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| live CD, lab, firmware without 0016 (wsh15, wsh16, 0001-0011, 0001-0015), 7 boots | 4 corrupted registers (window spill loop, `bad stack overflow at TL 2`), 2 dead clocks, 1 to the keyboard question | |
+| live CD, lab, with 0016: by hand, `live_install.sh -G` offline | passed: `install-exit=0`, 33 packages installed, 18 skipped (offline), `rpool` DEGRADED (FMA, no data errors) | login ~45 min, install 64 min |
+| the same with a network | the clock stopped during the overlay install | |
+| installed ZFS disk, firmware without 0017 | `Unhandled Exception 0x30` in the boot block | |
+| installed ZFS disk, with 0017: first boot by hand | `tribblix-m34 console login:` after the SMF import | ~60 min |
+| `tribblix-firstboot.py` on that disk (static, `--user`) | passed: root's password, `jack` locked, marker, `hme0/v4 static 10.0.2.15/24`, default route, DNS, user `lab` | 38 min (login 17, power-off 9) |
+| `tribblix-boot-disk.py` on that disk | the commands passed (`target=tribblix-m34-sun4u`, `hme0/v4` static after the reboot, `jack LK`, `lab`); the default route was missing after the reboot (since then also in `/etc/defaultrouter`); `init 5` took longer than the 900 s the scenario waited then (now 1800) | login 16 min |
+| `tribblix-install-sparc64.py ROOT_FS=zfs`, lab | passed: disk `c1t0d0` found, offline, `live_install.sh` exit 0, 18 packages skipped, `rpool` DEGRADED, `init 5` | 106 min (live CD login 55, install 48, power-off 3) |
+| `lab.py install tribblix-m34-sun4u --vmid 9401`/`9402` (ZFS, first versions) | the live CD booted through PVE, login after 48 min; the scenario's marker never matched behind bash's bracketed paste escapes (fixed); stopped | |
+| `--vmid 9403` (UFS) | label written, `ufs_install.sh` waited at newfs's `(y/n)?` (fixed: `echo y \|`); stopped | |
+| `--vmid 9404` (UFS) | the clock stopped during the live CD's SMF import (11/95); stopped | |
+| `--vmid 9405 --check` (UFS) | see below | |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 78 passed | 6 s |
+| `matrix.py sparc64` and `solaris10` with the 0013-0017 firmware | 9/9 and 2/2 passed | |
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
@@ -614,9 +928,93 @@ this branch, one guest at a time), 2026-11-17:
 | `install sol26-ss20 --disk-size 9G --data-disk 2 --check` | passed; auto-layout as on SS-5 but swap 295 MB (512 MB of memory) and `/export/home` 6973 MB; `df -k` `/export/home` 7026317 KB; the data disk: `prtvtoc` 2048 cylinders (2046 accessible) of 16 x 128, slice 0 4190208 sectors, `newfs` 2046 MB in 64 cylinder groups, `/data` 2030575 KB mounted from `/etc/vfstab` at the check boot | 12.3 min (408 s, 205 s, 107 s) |
 | `install sol26-ss5 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
 
-Not done: a 9G install of Solaris 2.5.1 and 7 (Solaris 8 and 9 are tested with the 9G disk only,
+Solaris 7 on the 9G disk, 2026-11-18 (published packages: qemu-server 9.2.18+wsh3, pve-manager
+9.2.30+wsh2, pve-qemu-kvm 11.1.3-2+wsh16, libpve-storage-perl 9.1.18+wsh1; the host shared with
+three other agents' runs). Nothing but the targets' `sizes` changed: Solaris 7's installer and kernel
+take the QEmu8G label as 2.6's do (16204 cylinders, far below the label's 65535 and the 1 TB VTOC and
+UFS limits of a 32-bit kernel), and auto-layout puts `/` at cylinder 0 as on the 3G disk:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-ss20 --disk-size 9G --check` | passed; the installer lists `c0t3d0 (7594 MB) boot disk`, auto-layout `/` 89 MB, swap 295 MB, `/usr` 299 MB, `/export/home` 6910 MB; `df -k`: `/` 85615 KB (23990 used), `/usr` 288143 (186974, 72355 free), `/export/home` 6963389 (9); `prtvtoc`: 16204 cylinders, 16202 accessible, slices 0 (0-182399), 1, 2, 6, 7 (1400640-15553919) | 11.7 min (382 s, 208 s, 93 s) |
+| `install sol7-ss5 --disk-size 9G --check` | passed; as on SS-20 but swap 148 MB (256 MB of memory) and `/export/home` 7057 MB; `df -k` `/export/home` 7111805 KB, `/usr` the same 288143 (72355 free) | 14.1 min (529 s, 204 s, 95 s) |
+| `install sol7-ss20 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
+
+3G stays Solaris 7's default: End User fits it with room to spare, the 9G install took about a minute
+longer on SS-20 (the bigger `/export/home` newfs; the SS-5 run's longer install phase is within the
+busy host's spread), and 2.6 has the same default. Solaris 8 defaults to 9G because its Entire Group
+needs more than 3 GB.
+
+Not done: a 9G install of Solaris 2.5.1 (Solaris 8 and 9 are tested with the 9G disk only,
 a 3G one not tried); the in-guest `format` route for a
 blank second disk.
+
+### Solaris post-install
+
+Three options for the Solaris targets, after the first boot:
+
+- `--data-mount /usr/local` (with `--data-disk`): the first boot mounts the data disk on `/usr/local`
+  instead of `/data` (`solaris-firstboot.py`, `DATA_MOUNT`; anything already in `/usr/local` is
+  copied onto the new file system first). `/data` stays the default: it is what `--data-disk` was
+  tested and documented with, and an empty `/usr/local` on its own disk only pays off once something
+  installs there, which is what `--post-install` does (it picks `/usr/local` by itself).
+- `--post-install BUNDLE` (`targets.POST_INSTALL`): a CD of SVR4 packages goes into its own drive
+  (`scsi5`, `c0t5d0`) for one more boot only, and is removed again whatever that boot did, as the
+  Red Hat answer CD is (`install.PostInstall`). `solaris-post-install.py` checks that the bundle's
+  `basedir` is the data disk in `df -k`, makes the drive's device nodes (`drvconfig; disks`), stops
+  vold, mounts the CD (`mount -F hsfs -o ro`), writes an admin file (`mail=`,
+  `instance=overwrite`, `partial`, `runlevel`, `idepend`, `rdepend`, `space`, `setuid`, `conflict`
+  and `action` `nocheck`, `basedir=default`) and runs `pkgadd -n -a <admin> -d <datastream> all` for
+  every datastream in the bundle's directory, one console line per package (`pkgadd ok: <pkg>` or
+  `pkgadd FAILED (exit N)`), pkgadd's own output in `/var/sadm/wsh-lab-<bundle>.log` and the added
+  instances in `/etc/wsh-lab-<bundle>.pkgs`. Exit codes 0, 10 and 20 count as added; the phase fails
+  when one package fails or none was added. A bundle needs `--data-disk` (its packages go to
+  `/usr/local`; `/usr` has about 70 MB free on the 3G and 9G layouts) and is offered only on the
+  targets it was tested on: Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7).
+- `--local-env` (with `--post-install`): `/usr/local/bin` and `/usr/local/sbin` at the end of `PATH`
+  and `MANPATH` in `/etc/profile` and in the `--user` account's `~/.profile`, and that account's login
+  shell the bundle's bash (`usermod -s`). Root keeps `/sbin/sh`: single-user mode mounts only the root
+  file system, so a root shell on the data disk would leave no way to log in for repairs (and `/sbin/sh`
+  is statically linked for that reason). Appending rather than prepending keeps Sun's commands first
+  for everyone; the user can reorder `PATH` in `~/.profile`.
+
+`--check` then also checks that `/usr/local` is the data disk (`df -k`), runs the bundle's commands
+(`bash --version`, `vim --version`, `wget --version`), that `pkginfo` knows every package the
+post-install added and, with `--local-env`, root's `PATH`, root's shell and the user's login shell and
+`which bash` (`MORE_COMMANDS`/`MORE_EXPECT` in `solaris-boot-disk.py`, one console line per command:
+the tty takes 256 characters a line).
+
+The one bundle, `sun26gnu`, is the owner's own CD image of free software packages for Solaris 2.6
+(`sun26gnu.iso` in `MEDIA`, `local_only`: no URL, in no target's media, so neither CI nor the
+matrices ever ask for it). Only its `gnu/pkgs` directory is used: 34 package datastreams (bash 4.1,
+coreutils, vim 7.3, wget, curl, less, screen, sudo, rsync, openssl, ncurses, libgcc and others), all
+with `BASEDIR=/usr/local`. The CD's own `installgnu.sh` isn't used (csh, waits for Enter, expects vold's
+`/cdrom/sun26gnu`); the image has no Rock Ridge (Joliet only), so Solaris sees its ISO 9660 names in
+lower case (`bash_4.1_sol26_sparc_local`), which `pkgadd -d` takes as they are. Its patches and
+third-party programs are left alone. Neither the image nor anything from it is in the repository, and
+runs with it are not published as recordings.
+
+Tested in the PVE test container on the lab host, 2026-11-18 (published packages: pve-qemu-kvm
+11.1.3-2+wsh17, qemu-server 9.2.18+wsh4, pve-manager 9.2.30+wsh3; up to three of these installs at
+once on a host shared with other agents' runs, so the times are on the slow side). The runs are
+local evidence only, not recordings for the docs:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss20 --ip 10.0.2.16 --data-disk 2 --post-install sun26gnu --local-env --user lab --check` | passed; `/usr/local` was empty on the installed system (nothing to copy), the first boot mounted the new UFS there (`df -k` 2030575 KB); the post-install boot: `/usr/local` the data disk from `/etc/vfstab`, `pkgadd ok` for all 34, `post-install sun26gnu: 34 installed, 0 failed`, 168050 KB used; `lab`: `PATH=/usr/bin::/usr/local/bin:/usr/local/sbin` and `/usr/local/bin/bash` from a login shell; the check boot: `GNU bash, version 4.1.0(2)-release (sparc-sun-solaris2.6)`, `VIM - Vi IMproved 7.3`, `GNU Wget 1.12 built on solaris2.6.`, `pkginfo knows 34 of 34 packages`, root's `PATH` ends in `/usr/local/bin:/usr/local/sbin`, `root:/sbin/sh`, `lab:/usr/local/bin/bash`, `which: /usr/local/bin/bash`; `scsi5` gone from the config | 24.6 min (install 589 s, first boot 297 s, post-install 412 s, check 148 s) |
+| `install sol26-ss5 --ip 10.0.2.17 --data-disk 1 --post-install sun26gnu --check` | passed; 34 installed, 0 failed; `/usr/local` 984047 KB, 168050 used (19%); the check's five commands as above | 23.8 min (597 s, 287 s, 374 s, 136 s) |
+| `install sol7-ss20 --data-disk 2 --post-install sun26gnu --local-env --user lab --check` | passed; the 2.6 packages install and run on Solaris 7 (`SunOS sol7-ss20 5.7 Generic_106541-02`): 34 installed, 0 failed, the same 168050 KB, every check as on 2.6 | 23.2 min (507 s, 265 s, 453 s, 134 s) |
+| `install sol7-ss5 --ip 10.0.2.18 --data-disk 1 --post-install sun26gnu --local-env --check` (no `--user`: `/etc/profile` only) | passed; 34 installed, 0 failed; `/usr/local` 984047 KB, 168050 used; root's `PATH` ends in `/usr/local/bin:/usr/local/sbin`, `root:/sbin/sh` | 21.7 min (451 s, 245 s, 438 s, 131 s) |
+
+Adding the 34 packages takes 4 to 5 minutes of the post-install boot (the rest is the boot, the
+typing and `init 5`). Two earlier runs failed and changed the scenarios: a regex that ended in `\s*$`
+took the newline before the prompt when the output had only arrived up to it, so the prompt's
+`\n#` never came (now `[ \t]*$`); and `su - lab -c 'which bash'` printed `no bash in /usr/bin .`:
+Solaris's `su` runs the user's shell with `-c` but not as a login shell, so neither `/etc/profile`
+nor `~/.profile` was read (now `su - lab -c '$SHELL -l -c "which bash"'`). Not tried: a 9G first
+disk with the post-install (the data disk is the same either way), DHCP, and a reboot of the
+finished VM by hand beyond the post-install and check boots, which both mount `/usr/local` from
+`/etc/vfstab`.
 
 ### Network
 
@@ -823,7 +1221,8 @@ through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Re
 (English), `a` (install), `b` (yes), `a` (sd0), `b` (default partition sizes), `x`, `b`, `c` (Minimal
 installation), `a` (CD-ROM); root password empty, entropy `x` (not now), `x` (finished configuring),
 Return, `x` (exit), then `sync; halt -p`. Its GENERIC kernel attaches `apc0`; NetBSD 9.3's has no APC
-driver and spins.
+driver and spins. `netbsd-install-sparc.py` now gives the same answers by script (the
+`netbsd111-sparc` install target); the disk itself wasn't remade.
 
 ## The bench disk
 
@@ -932,8 +1331,68 @@ the start and end, `load1_start`/`load1_end`).
 
 ## SunOS 4.1.4
 
-`sunos414-installed.raw` was installed by hand through `serve` (no scenario: the curses menus of
-`suninstall` redraw lazily, a key's echo arrives with the next key). The machine is the lab's SS-5 with
+`lab.py install sunos414-ss5` installs it through PVE (the install target; the user side is in
+`docs/src/content/docs/guides/lab-install.md`). It follows the hand install below, with three
+scenarios on the serial console:
+
+- **The medium** is the BIN cut to 2048-byte sectors, `sunos414-cd.iso` (329297920 bytes, sha256
+  `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8`), made by the user with
+  `lab.py media sunos414-ss5 --convert sunos_4.1.4_install.iso` (`install.convert_medium`: the
+  source's size and sha256 first, the 2048 data bytes at offset 16 of each 2352-byte sector, the
+  result's sha256, else nothing is left behind). `targets.MEDIA` has it with `"from": {"name":
+  "sunos_4.1.4_install.iso", "convert": "bin2352"}`; `lab.py media` prints the command for a
+  missing one, and `pve_matrix.py` converts it into the test node's `local` storage when `--iso` has
+  only the BIN. The `scsi6` CD-ROM is qemu-server's `scsi-cd` with `physical_block_size=512`, as in
+  the lab: nothing else to change.
+- **The disk** is SUN2.9G with slice g cut to 1000 cylinders (`targets.SUN29G_SUNOS4`, written by
+  `sunlabel.write_disk`), so Quick install's "preserve the data partitions" newfs's a (/) and g
+  (/usr) as the label has them.
+- **The install phase** (`sunos-install-serial.py`) runs with 64 MB and `args: -prom-env
+  auto-boot?=false`, both for that phase only (`install: {"memory": 64, "prom_env": ...}`;
+  `Job.finish()` sets the profile's 256 MB and deletes `args`). At `0 >` it boots the CD's slice d,
+  answers `1` (mini-root) and `2` (no format), takes `1` (reboot), boots
+  `.../sd@3,0:b -sw` at `0 >`, runs `suninstall` with `TERM=vt100`: `1` (Quick), `y` (preserve),
+  Programmer from the menu (Space moves, `x` selects), `y` to start, `y` to reboot, and powers off
+  at `0 >` (`power-off`). suninstall's own part took under 2 minutes, the whole phase 126-146 s.
+- **The first boot** (`sunos-firstboot.py`) boots the disk by itself and answers sys-config by its
+  screen codes (`SysConfA1` host name ... `SysConfI5` user password; `_sunos4.sysconfig`): `2`
+  (manual setup), the host name, Greenwich Mean Time / GMT, accept the time, networked with the
+  static address, no NIS, the root password twice, and the user (`--user`: full name `wsh-lab
+  user`, uid 1001, group staff, csh, home `/home/<host>/<user>`) or none. Then it logs in, starts
+  `/bin/sh` (root's csh would expand `!`), writes the marker and `/etc/netmasks` (the netmask
+  under the classful network number: without it `le0` comes up with `netmask ff000000`) and, with
+  `--gateway`, `/etc/defaultrouter` (4.1.4's `rc.boot` and `rc.local` read both), and `halt`s
+  (OpenBIOS powers off).
+- **The check** (`sunos-boot-disk.py`) logs in and runs the target's `check: {"commands": ...}`
+  (`uname -a`, the marker, `df`, `dkinfo sd0`, `ifconfig -a`, `netstat -rn`).
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh15, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), one guest at a time, 2026-11-17:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `media sunos414-ss5 --convert sunos_4.1.4_install.iso` into `local`, then `media sunos414-ss5` | written, sha256 as above; `ok`; without the medium `media` printed `missing` and the `--convert` command | |
+| `install sunos414-ss5 --check` | passed; `SunOS sunos414 4.1.4 2 sun4m`; `df`: `/dev/sd0a` 91744 KB (3838 used), `/dev/sd0g` 976987 (65530 used); `le0 10.0.2.15 netmask ffffff00`; the finished VM: `memory: 256`, no `args`, `scsi6: none,media=cdrom`, `boot: order=scsi3` | 5.8 min (install 126 s, first boot 151 s, check 55 s) |
+| `install sunos414-ss5 --check --user lab --ip 10.0.2.20 --gateway 10.0.2.2 --hostname sun4 --template` | passed; `default 10.0.2.2 UG` in `netstat -rn`, `lab:1001:10:wsh-lab user:/home/sun4/lab:/bin/csh`, a template | 6.5 min (133 s, 182 s, 53 s) |
+| `pve_matrix.py install --only install-sunos414-ss5`, `--iso` with the BIN only (the converted CD removed first) | 1/1 passed; the CD converted into `local` by `lab.py media --convert` | 6.1 min (139 s, 151 s, 54 s) |
+| `install sunos414-ss5 --check --user lab --root-password ... --user-password ...` (not the defaults) | passed; then a boot by hand: `lab` logs in with its password (`uid=1001(lab) gid=10(staff)`, home `/home/sunos414/lab`); neither password is in the evidence directory, and `/etc/passwd` is shown without its hash field | 6.6 min (146 s, 172 s, 57 s) |
+| `--ip dhcp`, `--dns 10.0.2.3`, `--data-disk 2`, `--disk-size 9G` | refused before a VM is made | 0 s |
+| the CD booted with 256 MB (a VM made by hand like the target's) | `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled, Error state` in the journal right after the kernel loaded, VM off | 9 s |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 73 passed | |
+| `pve_matrix.py pve` (regression, same code) | 5/5 passed | `sol26-install-ss5` 825 s (the host was shared with other runs), the others 67-240 s |
+| `matrix.py smoke` (the lab image with the branch's `e2e/sparc`, pve-qemu-kvm 11.1.3-2+wsh13 in that image) | 3/3 passed | 159 s, 111 s, 65 s |
+
+Not tried: Typical_user, Full_install and Mini_install through the scenario, a second disk, `--vlan`,
+a router that answers (the routes were checked, not traffic through them), the lab's own QEMU
+instead of PVE for the three scenarios.
+
+The lazy redraw that kept the hand install off the scripted driver is the console holding back the
+last character of a burst until the next key (a menu's cursor move, a field's echo): the scenarios
+match the text before it, sys-config's screen codes and, on the menu, the entry list, and never wait
+for that character. DNS (`--dns`, `--domain`) is refused (`net_refuse`: 4.1.4's libc resolves
+through `/etc/hosts` or NIS), and so is `--ip dhcp` (no DHCP client).
+
+`sunos414-installed.raw` was installed by hand through `serve`. The machine is the lab's SS-5 with
 OpenBIOS and the CD at target 6 with 512-byte blocks:
 
 1. **The CD image.** `sunos_4.1.4_install.iso` is a raw BIN (2352-byte sectors, 16-byte header each), not an
@@ -976,6 +1435,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | -------- | ------------ | ---- |
 | `sparc64-boot-cd.py` | boots a CD (`GUEST=netbsd`, `openbsd`, `debian`, `solaris`, or `EXPECT`) to the installer's first prompt; `CONSOLE=fb` waits for it on the VGA screen (OCR) and `TYPE` types on the keyboard | ~1 min |
 | `netbsd-install-sparc64.py` | NetBSD/sparc64 install with sysinst on the serial console (`SETS=b`: without X11), root without a password, ends powered off | ~8 min |
+| `netbsd-install-sparc.py` | the same for NetBSD/sparc on sun4m (SS-5, `MACHINE=SS-20`): the CD's microroot, then the same sysinst answers (`SETS=c`: Minimal); the microroot powers off after Exit | ~3.5 min |
+| `netbsd-firstboot.py`, `netbsd-boot-disk.py` | either architecture (`ARCH`; from the VM with `--pve`): the install targets' first boot (root password, marker, host name, network, user) and check boot ("NetBSD install targets") | ~2 min each |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
 
@@ -1296,8 +1757,9 @@ lab.
 - **With a working `disk` alias the Solaris 2.6 installer pre-selects the boot disk**
   (`[X] c0t3d0 ... boot disk`); `disks()` only marks it when it isn't selected yet.
 - **Solaris 2.4 and 2.5.1 need the CD as a disk** (`CDROM_AS=hd`): from a `scsi-cd` their kernel
-  panics with `vfs_mountroot: cannot mount root`. qemu-server always makes a sparc CD-ROM a
-  `scsi-cd`. A CD that answers as a disk is also listed as an install target (`c0t6d0`).
+  panics with `vfs_mountroot: cannot mount root`. Through PVE that is the CD-ROM drive's
+  `cd_as_disk=1` (qemu-server, sparc32 only; the install targets' `as_disk`). A CD that answers as
+  a disk is also listed as an install target (`c0t6d0`).
 - **Solaris 2.4 doesn't boot under OpenBIOS** ("Unhandled Exception 0x00000009", any CD device);
   2.4 and 2.5.1 boot with `ss5.bin`. 2.5.1 installed and booted fine on 11.1.3+wsh1 (the ESP fix).
 - **Stop-A powered the VM off under OpenBIOS** (fixed by `openbios/patches/0008`): its `op_enter`
