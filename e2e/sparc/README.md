@@ -949,6 +949,73 @@ Not done: a 9G install of Solaris 2.5.1 (Solaris 8 and 9 are tested with the 9G 
 a 3G one not tried); the in-guest `format` route for a
 blank second disk.
 
+### Solaris post-install
+
+Three options for the Solaris targets, after the first boot:
+
+- `--data-mount /usr/local` (with `--data-disk`): the first boot mounts the data disk on `/usr/local`
+  instead of `/data` (`solaris-firstboot.py`, `DATA_MOUNT`; anything already in `/usr/local` is
+  copied onto the new file system first). `/data` stays the default: it is what `--data-disk` was
+  tested and documented with, and an empty `/usr/local` on its own disk only pays off once something
+  installs there, which is what `--post-install` does (it picks `/usr/local` by itself).
+- `--post-install BUNDLE` (`targets.POST_INSTALL`): a CD of SVR4 packages goes into its own drive
+  (`scsi5`, `c0t5d0`) for one more boot only, and is removed again whatever that boot did, as the
+  Red Hat answer CD is (`install.PostInstall`). `solaris-post-install.py` checks that the bundle's
+  `basedir` is the data disk in `df -k`, makes the drive's device nodes (`drvconfig; disks`), stops
+  vold, mounts the CD (`mount -F hsfs -o ro`), writes an admin file (`mail=`,
+  `instance=overwrite`, `partial`, `runlevel`, `idepend`, `rdepend`, `space`, `setuid`, `conflict`
+  and `action` `nocheck`, `basedir=default`) and runs `pkgadd -n -a <admin> -d <datastream> all` for
+  every datastream in the bundle's directory, one console line per package (`pkgadd ok: <pkg>` or
+  `pkgadd FAILED (exit N)`), pkgadd's own output in `/var/sadm/wsh-lab-<bundle>.log` and the added
+  instances in `/etc/wsh-lab-<bundle>.pkgs`. Exit codes 0, 10 and 20 count as added; the phase fails
+  when one package fails or none was added. A bundle needs `--data-disk` (its packages go to
+  `/usr/local`; `/usr` has about 70 MB free on the 3G and 9G layouts) and is offered only on the
+  targets it was tested on: Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7).
+- `--local-env` (with `--post-install`): `/usr/local/bin` and `/usr/local/sbin` at the end of `PATH`
+  and `MANPATH` in `/etc/profile` and in the `--user` account's `~/.profile`, and that account's login
+  shell the bundle's bash (`usermod -s`). Root keeps `/sbin/sh`: single-user mode mounts only the root
+  file system, so a root shell on the data disk would leave no way to log in for repairs (and `/sbin/sh`
+  is statically linked for that reason). Appending rather than prepending keeps Sun's commands first
+  for everyone; the user can reorder `PATH` in `~/.profile`.
+
+`--check` then also checks that `/usr/local` is the data disk (`df -k`), runs the bundle's commands
+(`bash --version`, `vim --version`, `wget --version`), that `pkginfo` knows every package the
+post-install added and, with `--local-env`, root's `PATH`, root's shell and the user's login shell and
+`which bash` (`MORE_COMMANDS`/`MORE_EXPECT` in `solaris-boot-disk.py`, one console line per command:
+the tty takes 256 characters a line).
+
+The one bundle, `sun26gnu`, is the owner's own CD image of free software packages for Solaris 2.6
+(`sun26gnu.iso` in `MEDIA`, `local_only`: no URL, in no target's media, so neither CI nor the
+matrices ever ask for it). Only its `gnu/pkgs` directory is used: 34 package datastreams (bash 4.1,
+coreutils, vim 7.3, wget, curl, less, screen, sudo, rsync, openssl, ncurses, libgcc and others), all
+with `BASEDIR=/usr/local`. The CD's own `installgnu.sh` isn't used (csh, waits for Enter, expects vold's
+`/cdrom/sun26gnu`); the image has no Rock Ridge (Joliet only), so Solaris sees its ISO 9660 names in
+lower case (`bash_4.1_sol26_sparc_local`), which `pkgadd -d` takes as they are. Its patches and
+third-party programs are left alone. Neither the image nor anything from it is in the repository, and
+runs with it are not published as recordings.
+
+Tested in the PVE test container on the lab host, 2026-11-18 (published packages: pve-qemu-kvm
+11.1.3-2+wsh17, qemu-server 9.2.18+wsh4, pve-manager 9.2.30+wsh3; up to three of these installs at
+once on a host shared with other agents' runs, so the times are on the slow side). The runs are
+local evidence only, not recordings for the docs:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-ss20 --ip 10.0.2.16 --data-disk 2 --post-install sun26gnu --local-env --user lab --check` | passed; `/usr/local` was empty on the installed system (nothing to copy), the first boot mounted the new UFS there (`df -k` 2030575 KB); the post-install boot: `/usr/local` the data disk from `/etc/vfstab`, `pkgadd ok` for all 34, `post-install sun26gnu: 34 installed, 0 failed`, 168050 KB used; `lab`: `PATH=/usr/bin::/usr/local/bin:/usr/local/sbin` and `/usr/local/bin/bash` from a login shell; the check boot: `GNU bash, version 4.1.0(2)-release (sparc-sun-solaris2.6)`, `VIM - Vi IMproved 7.3`, `GNU Wget 1.12 built on solaris2.6.`, `pkginfo knows 34 of 34 packages`, root's `PATH` ends in `/usr/local/bin:/usr/local/sbin`, `root:/sbin/sh`, `lab:/usr/local/bin/bash`, `which: /usr/local/bin/bash`; `scsi5` gone from the config | 24.6 min (install 589 s, first boot 297 s, post-install 412 s, check 148 s) |
+| `install sol26-ss5 --ip 10.0.2.17 --data-disk 1 --post-install sun26gnu --check` | passed; 34 installed, 0 failed; `/usr/local` 984047 KB, 168050 used (19%); the check's five commands as above | 23.8 min (597 s, 287 s, 374 s, 136 s) |
+| `install sol7-ss20 --data-disk 2 --post-install sun26gnu --local-env --user lab --check` | passed; the 2.6 packages install and run on Solaris 7 (`SunOS sol7-ss20 5.7 Generic_106541-02`): 34 installed, 0 failed, the same 168050 KB, every check as on 2.6 | 23.2 min (507 s, 265 s, 453 s, 134 s) |
+| `install sol7-ss5 --ip 10.0.2.18 --data-disk 1 --post-install sun26gnu --local-env --check` (no `--user`: `/etc/profile` only) | passed; 34 installed, 0 failed; `/usr/local` 984047 KB, 168050 used; root's `PATH` ends in `/usr/local/bin:/usr/local/sbin`, `root:/sbin/sh` | 21.7 min (451 s, 245 s, 438 s, 131 s) |
+
+Adding the 34 packages takes 4 to 5 minutes of the post-install boot (the rest is the boot, the
+typing and `init 5`). Two earlier runs failed and changed the scenarios: a regex that ended in `\s*$`
+took the newline before the prompt when the output had only arrived up to it, so the prompt's
+`\n#` never came (now `[ \t]*$`); and `su - lab -c 'which bash'` printed `no bash in /usr/bin .`:
+Solaris's `su` runs the user's shell with `-c` but not as a login shell, so neither `/etc/profile`
+nor `~/.profile` was read (now `su - lab -c '$SHELL -l -c "which bash"'`). Not tried: a 9G first
+disk with the post-install (the data disk is the same either way), DHCP, and a reboot of the
+finished VM by hand beyond the post-install and check boots, which both mount `/usr/local` from
+`/etc/vfstab`.
+
 ### Network
 
 `install.network_choice()` turns `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`,
