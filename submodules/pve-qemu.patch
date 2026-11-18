@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..0441458 100644
+index 7b0cba5..330a6c6 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,30 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,36 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -103,6 +103,12 @@ index 7b0cba5..0441458 100644
 +wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
 +wsh/0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd.patch
 +wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
++wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
++wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
++wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
++wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
++wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
++wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -5103,6 +5109,1327 @@ index 0000000..11203ae
 ++            qtest_add_data_func(name, &cases[i], test_fsr_rd);
 ++        }
 ++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch b/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
+new file mode 100644
+index 0000000..5fff9ae
+--- /dev/null
++++ b/debian/patches/wsh/0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin.patch
+@@ -0,0 +1,652 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/audio/cs4231: play sound through the apc dma engine
++
++The SPARCstation 5 codec made no sound: the APC DMA registers only kept
++what was written, so SunOS 4.1.4's driver waited for ever for its first
++buffer to end. Every program that drained /dev/audio hung, and SimCity
++for HyperLook froze at its first sound.
++
++Play the APC's playback buffers. Take the next buffer when the codec
++asks for samples, which needs playback on in the codec too (PEN), and
++raise PI and PD; raise PM and PMI when the pipe runs empty. Read the
++samples through the IOMMU at the codec's rate and play them into the
++audiodev, in all the codec's formats but ADPCM, with the DAC volume.
++Capture is still not done.
++
++The codec asks for its first samples at the next audio callback, not in
++the register write that turns it on. SunOS queues the rest of a write
++in that moment; when the first PI came before it, the driver played its
++first buffer twice.
++
++Tested with SunOS 4.1.4: a drain of 8000 bytes returns after 1.0 s with
++8000 samples played, twice in a row. /usr/demo/SOUND/play of
++spacemusic.au plays for 6.00 s and peaks at -5.2 dBFS (the file: -4.8).
++SimCity for HyperLook runs with its own audiomixer and plays its sounds.
++
++Origin: https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c
++---
++ hw/audio/cs4231.c     | 496 +++++++++++++++++++++++++++++++++++++++++-
++ hw/audio/trace-events |   3 +
++ 2 files changed, 487 insertions(+), 12 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index 7844b5b6c9..fba2553a35 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -22,21 +22,108 @@
++  * THE SOFTWARE.
++  */
++ 
+++/*
+++ * The SPARCstation 5 has the CS4231 codec behind Sun's APC DMA engine.
+++ * The first 16 bytes are the codec's own registers, the rest the APC's:
+++ *
+++ *   0x00 codec index      0x04 codec data       0x08 codec status
+++ *   0x0c codec PIO data   0x10 APC CSR
+++ *   0x20 capture VA       0x24 capture count    0x28 next VA   0x2c next count
+++ *   0x30 playback VA      0x34 playback count   0x38 next VA   0x3c next count
+++ *
+++ * Playback: the driver writes the next address and then the next count.
+++ * When the codec first asks for samples, and again each time the current
+++ * buffer is done, the APC moves the next buffer into the current
+++ * registers, sets PD (the next registers are free again) and raises PI.
+++ * When a buffer ends and no next one is loaded the pipe is
+++ * empty: PM and PMI. The interrupt bits are cleared by writing 1s. The
+++ * addresses go through the IOMMU, and the samples are played into the
+++ * audiodev at the codec's rate, so a driver that waits for the end of its
+++ * sound (SunOS AUDIO_DRAIN) gets it in real time. The buffers are taken
+++ * at that rate too, at most 50 ms ahead: the real APC has only a small
+++ * FIFO, and SunOS loads the next buffer only after PI, so taking a whole
+++ * buffer at once would leave the pipe empty.
+++ *
+++ * Capture is not done: its registers keep what is written, and the
+++ * capture pipe always reads as empty.
+++ */
+++
++ #include "qemu/osdep.h"
++ #include "hw/core/sysbus.h"
+++#include "hw/core/irq.h"
+++#include "hw/core/qdev-properties.h"
+++#include "hw/sparc/sun4m_iommu.h"
++ #include "migration/vmstate.h"
+++#include "qemu/audio.h"
+++#include "qemu/bswap.h"
+++#include "qemu/host-utils.h"
++ #include "qemu/module.h"
+++#include "qemu/timer.h"
+++#include "system/address-spaces.h"
+++#include "system/dma.h"
++ #include "trace.h"
++ #include "qom/object.h"
++ 
++-/*
++- * In addition to Crystal CS4231 there is a DMA controller on Sparc.
++- */
++ #define CS_SIZE 0x40
++ #define CS_REGS 16
++ #define CS_DREGS 32
++ #define CS_MAXDREG (CS_DREGS - 1)
++ 
+++/* Registers, as offset / 4 */
+++#define CS_IAR      0       /* codec index */
+++#define CS_IDR      1       /* codec data */
+++#define CS_STATUS   2       /* codec status */
+++#define CS_CSR      4       /* APC control and status */
+++#define CS_PVA      12      /* playback address */
+++#define CS_PC       13      /* playback count */
+++#define CS_PNVA     14      /* next playback address */
+++#define CS_PNC      15      /* next playback count */
+++
+++/* APC CSR */
+++#define APC_IP      0x00800000  /* an interrupt is pending (read only) */
+++#define APC_PI      0x00400000  /* playback took the next buffer */
+++#define APC_CI      0x00200000  /* capture took the next buffer */
+++#define APC_EI      0x00100000  /* error */
+++#define APC_IE      0x00080000  /* interrupt enable */
+++#define APC_PIE     0x00040000  /* PI enable */
+++#define APC_CIE     0x00020000  /* CI enable */
+++#define APC_EIE     0x00010000  /* EI enable */
+++#define APC_PMI     0x00008000  /* playback pipe went empty */
+++#define APC_PM      0x00004000  /* playback pipe is empty (read only) */
+++#define APC_PD      0x00002000  /* next playback registers free (read only) */
+++#define APC_PMIE    0x00001000  /* PMI enable */
+++#define APC_CM      0x00000800  /* capture pipe is empty (read only) */
+++#define APC_CD      0x00000400  /* next capture registers free (read only) */
+++#define APC_CMI     0x00000200  /* capture pipe went empty */
+++#define APC_CMIE    0x00000100  /* CMI enable */
+++#define APC_PPAUSE  0x00000080  /* pause playback */
+++#define APC_CPAUSE  0x00000040  /* pause capture */
+++#define APC_PDMA_GO 0x00000008  /* playback DMA on */
+++#define APC_CDMA_GO 0x00000004  /* capture DMA on */
+++#define APC_RESET   0x00000001
+++
+++#define APC_INTS    (APC_PI | APC_CI | APC_EI | APC_PMI | APC_CMI)
+++#define APC_RW      (APC_IE | APC_PIE | APC_CIE | APC_EIE | APC_PMIE | \
+++                     APC_CMIE | 0xff)
+++
+++/* Codec indirect registers */
+++#define CS_LDAC     6       /* left DAC output: mute, attenuation */
+++#define CS_RDAC     7       /* right DAC output */
+++#define CS_PFMT     8       /* playback format and rate */
+++#define CS_ICONF    9       /* interface configuration */
+++#define CS_MODE     12      /* mode and ID */
+++#define CS_DAC_MUTE 0x80
+++#define CS_PEN      0x01    /* playback on (in CS_ICONF) */
+++#define CS_MODE2    0x40
+++
+++/* Playback formats, bits 7-5 of CS_PFMT */
+++#define CS_FMT_U8       0
+++#define CS_FMT_ULAW     1
+++#define CS_FMT_S16LE    2
+++#define CS_FMT_ALAW     3
+++#define CS_FMT_ADPCM    5
+++#define CS_FMT_S16BE    6
+++
++ #define TYPE_CS4231 "sun-CS4231"
++ typedef struct CSState CSState;
++ DECLARE_INSTANCE_CHECKER(CSState, CS4231,
++@@ -47,14 +134,322 @@ struct CSState {
++ 
++     MemoryRegion iomem;
++     qemu_irq irq;
+++    IOMMUState *iommu;
+++    AudioBackend *audio_be;
+++    SWVoiceOut *voice;
++     uint32_t regs[CS_REGS];
++     uint8_t dregs[CS_DREGS];
+++    bool play_next;         /* the next playback registers are loaded */
+++    int play_fmt;           /* from CS_PFMT */
+++    int play_channels;
+++    int play_freq;
+++    bool play_running;      /* since play_start, without a gap */
+++    int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
+++    uint64_t play_units;    /* taken since play_start */
++ };
++ 
++-#define CS_RAP(s) ((s)->regs[0] & CS_MAXDREG)
+++#define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++ #define CS_VER 0xa0
++ #define CS_CDC_VER 0x8a
++ 
+++static AddressSpace *cs_dma_as(CSState *s)
+++{
+++    return s->iommu ? &s->iommu->iommu_as : &address_space_memory;
+++}
+++
+++static bool cs_play_go(CSState *s)
+++{
+++    return (s->regs[CS_CSR] & (APC_PDMA_GO | APC_PPAUSE)) == APC_PDMA_GO;
+++}
+++
+++/*
+++ * The APC fetches only when the codec asks for samples, so it takes no
+++ * buffer before playback is on in the codec too. SunOS and the BSDs load
+++ * the first buffer, then write the CSR with PI set to clear old
+++ * interrupts, and only then set PEN: a buffer taken before that write
+++ * would lose its PI, and the driver would never load the next one.
+++ *
+++ * The codec asks a moment after PEN, here at the next audio callback,
+++ * not in the register write. SunOS queues the rest of a write in that
+++ * moment. If the first PI comes before that, its driver thinks the
+++ * sound has ended, and it plays the first buffer again with the rest.
+++ */
+++static bool cs_play_fetch(CSState *s)
+++{
+++    return cs_play_go(s) && (s->dregs[CS_ICONF] & CS_PEN);
+++}
+++
+++/* There is a buffer to play, or one to take. */
+++static bool cs_play_active(CSState *s)
+++{
+++    return cs_play_fetch(s) && (s->regs[CS_PC] != 0 || s->play_next);
+++}
+++
+++static uint32_t cs_read_csr(CSState *s)
+++{
+++    uint32_t csr = s->regs[CS_CSR];
+++
+++    if (csr & APC_INTS) {
+++        csr |= APC_IP;
+++    }
+++    if (!s->play_next) {
+++        csr |= APC_PD;
+++        if (s->regs[CS_PC] == 0) {
+++            csr |= APC_PM;
+++        }
+++    }
+++    if (!cs_play_go(s)) {
+++        csr |= APC_PM;
+++    }
+++    return csr | APC_CM | APC_CD;
+++}
+++
+++static void cs_update_irq(CSState *s)
+++{
+++    uint32_t csr = s->regs[CS_CSR];
+++    bool level = (csr & APC_IE) &&
+++                 (((csr & APC_PI) && (csr & APC_PIE)) ||
+++                  ((csr & APC_PMI) && (csr & APC_PMIE)) ||
+++                  ((csr & APC_CI) && (csr & APC_CIE)) ||
+++                  ((csr & APC_CMI) && (csr & APC_CMIE)) ||
+++                  ((csr & APC_EI) && (csr & APC_EIE)));
+++
+++    qemu_set_irq(s->irq, level);
+++}
+++
+++/* The current playback buffer is done: take the next one, if any. */
+++static void cs_play_next(CSState *s)
+++{
+++    if (s->play_next) {
+++        s->regs[CS_PVA] = s->regs[CS_PNVA];
+++        s->regs[CS_PC] = s->regs[CS_PNC];
+++        s->play_next = false;
+++        s->regs[CS_CSR] |= APC_PI;
+++        trace_cs4231_play_next(s->regs[CS_PVA], s->regs[CS_PC]);
+++    } else {
+++        s->regs[CS_CSR] |= APC_PMI;
+++        trace_cs4231_play_empty();
+++    }
+++}
+++
+++static void cs_play_update(CSState *s)
+++{
+++    bool run = cs_play_active(s);
+++
+++    if (run && !s->play_running) {
+++        s->play_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        s->play_units = 0;
+++    }
+++    s->play_running = run;
+++    if (s->voice) {
+++        audio_be_set_active_out(s->audio_be, s->voice, run);
+++    }
+++    cs_update_irq(s);
+++}
+++
+++/* G.711 decoders, after Sun's public domain g711.c */
+++static int16_t cs_ulaw(uint8_t u)
+++{
+++    int t;
+++
+++    u = ~u;
+++    t = (((u & 0x0f) << 3) + 0x84) << ((u & 0x70) >> 4);
+++    return (u & 0x80) ? 0x84 - t : t - 0x84;
+++}
+++
+++static int16_t cs_alaw(uint8_t a)
+++{
+++    int t, seg;
+++
+++    a ^= 0x55;
+++    t = (a & 0x0f) << 4;
+++    seg = (a & 0x70) >> 4;
+++    if (seg == 0) {
+++        t += 8;
+++    } else {
+++        t = (t + 0x108) << (seg - 1);
+++    }
+++    return (a & 0x80) ? t : -t;
+++}
+++
+++/*
+++ * Guest bytes per unit and host bytes per unit: a unit is one sample of
+++ * each channel, or two of them for 4-bit ADPCM. The host side is always
+++ * 16-bit signed.
+++ */
+++static void cs_play_units(CSState *s, uint32_t *in, uint32_t *out)
+++{
+++    uint32_t ch = s->play_channels;
+++
+++    switch (s->play_fmt) {
+++    case CS_FMT_S16LE:
+++    case CS_FMT_S16BE:
+++        *in = 2 * ch;
+++        *out = 2 * ch;
+++        break;
+++    case CS_FMT_ADPCM:
+++        *in = ch;
+++        *out = 4 * ch;
+++        break;
+++    default:
+++        *in = ch;
+++        *out = 2 * ch;
+++        break;
+++    }
+++}
+++
+++static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
+++                       uint32_t units)
+++{
+++    uint32_t i, n = units * s->play_channels;
+++
+++    switch (s->play_fmt) {
+++    case CS_FMT_U8:
+++        for (i = 0; i < n; i++) {
+++            out[i] = (in[i] - 128) * 256;
+++        }
+++        break;
+++    case CS_FMT_ULAW:
+++        for (i = 0; i < n; i++) {
+++            out[i] = cs_ulaw(in[i]);
+++        }
+++        break;
+++    case CS_FMT_ALAW:
+++        for (i = 0; i < n; i++) {
+++            out[i] = cs_alaw(in[i]);
+++        }
+++        break;
+++    case CS_FMT_S16LE:
+++        for (i = 0; i < n; i++) {
+++            out[i] = lduw_le_p(in + 2 * i);
+++        }
+++        break;
+++    case CS_FMT_S16BE:
+++        for (i = 0; i < n; i++) {
+++            out[i] = lduw_be_p(in + 2 * i);
+++        }
+++        break;
+++    default:
+++        /* ADPCM and the reserved formats: silence at the right rate */
+++        memset(out, 0, units * 4 * s->play_channels);
+++        break;
+++    }
+++}
+++
+++/* The audiodev has room for avail bytes: feed it from the DMA buffers. */
+++static void cs_audio_callback(void *opaque, int avail)
+++{
+++    CSState *s = opaque;
+++    uint8_t in[1024];
+++    int16_t out[2048];
+++    uint32_t unit_in, unit_out;
+++
+++    uint32_t room = MAX(avail, 0);
+++    uint64_t rate, due, budget;
+++
+++    if (!s->play_running) {
+++        return;
+++    }
+++    /* units a second: one sample of each channel, two for ADPCM */
+++    rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
+++    due = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->play_start,
+++                   rate, NANOSECONDS_PER_SECOND) + rate / 20;
+++    budget = due > s->play_units ? due - s->play_units : 0;
+++
+++    cs_play_units(s, &unit_in, &unit_out);
+++    while (cs_play_fetch(s)) {
+++        uint32_t pc = s->regs[CS_PC];
+++        uint32_t units;
+++
+++        if (pc == 0) {
+++            /* the first buffer, or one loaded after the pipe ran empty */
+++            if (!s->play_next) {
+++                break;
+++            }
+++            cs_play_next(s);
+++            cs_update_irq(s);
+++            continue;
+++        }
+++        if (pc < unit_in) {
+++            /* a partial sample at the end of a buffer: skip it */
+++            s->regs[CS_PVA] += pc;
+++            s->regs[CS_PC] = 0;
+++        } else {
+++            units = MIN(pc / unit_in, room / unit_out);
+++            units = MIN(units, sizeof(in) / unit_in);
+++            units = MIN(units, sizeof(out) / unit_out);
+++            units = MIN(units, budget);
+++            if (units == 0) {
+++                break;
+++            }
+++            dma_memory_read(cs_dma_as(s), s->regs[CS_PVA], in,
+++                            units * unit_in, MEMTXATTRS_UNSPECIFIED);
+++            cs_convert(s, in, out, units);
+++            units = audio_be_write(s->audio_be, s->voice, out,
+++                                   units * unit_out) / unit_out;
+++            if (units == 0) {
+++                break;
+++            }
+++            s->regs[CS_PVA] += units * unit_in;
+++            s->regs[CS_PC] -= units * unit_in;
+++            room -= units * unit_out;
+++            budget -= units;
+++            s->play_units += units;
+++        }
+++        if (s->regs[CS_PC] == 0) {
+++            cs_play_next(s);
+++            cs_update_irq(s);
+++        }
+++    }
+++    /* after a gap the clock starts again with the next buffer */
+++    s->play_running = cs_play_active(s);
+++}
+++
+++/* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
+++static uint8_t cs_dac_level(uint8_t reg)
+++{
+++    uint32_t i, v = 255 << 8;
+++
+++    if (reg & CS_DAC_MUTE) {
+++        return 0;
+++    }
+++    for (i = 0; i < (reg & 0x3f); i++) {
+++        v = v * 215 / 256;
+++    }
+++    return v >> 8;
+++}
+++
+++static void cs_set_volume(CSState *s)
+++{
+++    uint8_t l = s->dregs[CS_LDAC], r = s->dregs[CS_RDAC];
+++
+++    if (s->voice) {
+++        audio_be_set_volume_out_lr(s->audio_be, s->voice,
+++                                   (l & r & CS_DAC_MUTE) != 0,
+++                                   cs_dac_level(l), cs_dac_level(r));
+++    }
+++}
+++
+++/* (Re)open the voice for the codec's playback format and rate */
+++static void cs_play_setup(CSState *s)
+++{
+++    static const int divide[8] = { 3072, 1536, 896, 768, 448, 384, 512, 2560 };
+++    uint8_t val = s->dregs[CS_PFMT];
+++    struct audsettings as;
+++
+++    as.freq = ((val & 1) ? 16934400 : 24576000) / divide[(val >> 1) & 7];
+++    as.nchannels = (val & 0x10) ? 2 : 1;
+++    as.fmt = AUDIO_FORMAT_S16;
+++    as.big_endian = HOST_BIG_ENDIAN;
+++    s->play_channels = as.nchannels;
+++    s->play_freq = as.freq;
+++    s->play_fmt = (val >> 5) & ((s->dregs[CS_MODE] & CS_MODE2) ? 7 : 3);
+++    trace_cs4231_play_format(as.freq, as.nchannels, s->play_fmt);
+++    s->voice = audio_be_open_out(s->audio_be, s->voice, "cs4231", s,
+++                                 cs_audio_callback, &as);
+++    cs_set_volume(s);
+++}
+++
++ static void cs_reset(DeviceState *d)
++ {
++     CSState *s = CS4231(d);
++@@ -63,6 +458,12 @@ static void cs_reset(DeviceState *d)
++     memset(s->dregs, 0, CS_DREGS);
++     s->dregs[12] = CS_CDC_VER;
++     s->dregs[25] = CS_VER;
+++    s->play_next = false;
+++    s->play_running = false;
+++    if (s->audio_be) {
+++        cs_play_setup(s);
+++        cs_play_update(s);
+++    }
++ }
++ 
++ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++@@ -73,7 +474,7 @@ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++ 
++     saddr = addr >> 2;
++     switch (saddr) {
++-    case 1:
+++    case CS_IDR:
++         switch (CS_RAP(s)) {
++         case 3: // Write only
++             ret = 0;
++@@ -84,6 +485,10 @@ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++         }
++         trace_cs4231_mem_readl_dreg(CS_RAP(s), ret);
++         break;
+++    case CS_CSR:
+++        ret = cs_read_csr(s);
+++        trace_cs4231_mem_readl_reg(saddr, ret);
+++        break;
++     default:
++         ret = s->regs[saddr];
++         trace_cs4231_mem_readl_reg(saddr, ret);
++@@ -96,12 +501,13 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++                          uint64_t val, unsigned size)
++ {
++     CSState *s = opaque;
++-    uint32_t saddr;
+++    uint32_t saddr, csr;
+++    bool was_go;
++ 
++     saddr = addr >> 2;
++     trace_cs4231_mem_writel_reg(saddr, s->regs[saddr], val);
++     switch (saddr) {
++-    case 1:
+++    case CS_IDR:
++         trace_cs4231_mem_writel_dreg(CS_RAP(s), s->dregs[CS_RAP(s)], val);
++         switch(CS_RAP(s)) {
++         case 11:
++@@ -111,20 +517,56 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++             val &= 0x40;
++             val |= CS_CDC_VER; // Codec version
++             s->dregs[CS_RAP(s)] = val;
+++            cs_play_setup(s);
+++            break;
+++        case CS_LDAC:
+++        case CS_RDAC:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_set_volume(s);
+++            break;
+++        case CS_PFMT:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_play_setup(s);
+++            cs_play_update(s);
+++            break;
+++        case CS_ICONF:
+++            s->dregs[CS_RAP(s)] = val;
+++            cs_play_update(s);
++             break;
++         default:
++             s->dregs[CS_RAP(s)] = val;
++             break;
++         }
++         break;
++-    case 2: // Read only
+++    case CS_STATUS: // Read only
++         break;
++-    case 4:
++-        if (val & 1) {
+++    case CS_CSR:
+++        csr = s->regs[CS_CSR];
+++        was_go = csr & APC_PDMA_GO;
+++        if (val & APC_RESET) {
++             cs_reset(DEVICE(s));
+++            csr = 0;
+++            was_go = false;
+++        }
+++        /* 1s clear the interrupt bits; the read only bits are not kept */
+++        csr = (csr & APC_INTS & ~val) | (val & APC_RW);
+++        s->regs[CS_CSR] = csr;
+++        if (was_go && !(csr & APC_PDMA_GO)) {
+++            /* playback DMA off: drop what it still had */
+++            s->regs[CS_PC] = 0;
+++            s->play_next = false;
++         }
++-        val &= 0x7f;
+++        cs_play_update(s);
+++        break;
+++    case CS_PC:
+++        s->regs[saddr] = val;
+++        cs_play_update(s);
+++        break;
+++    case CS_PNC:
+++        /* the count loads the next buffer; a count of 0 unloads it */
++         s->regs[saddr] = val;
+++        s->play_next = val != 0;
+++        cs_play_update(s);
++         break;
++     default:
++         s->regs[saddr] = val;
++@@ -138,13 +580,25 @@ static const MemoryRegionOps cs_mem_ops = {
++     .endianness = DEVICE_BIG_ENDIAN,
++ };
++ 
+++static int cs_post_load(void *opaque, int version_id)
+++{
+++    CSState *s = opaque;
+++
+++    s->play_running = false;
+++    cs_play_setup(s);
+++    cs_play_update(s);
+++    return 0;
+++}
+++
++ static const VMStateDescription vmstate_cs4231 = {
++     .name ="cs4231",
++-    .version_id = 1,
+++    .version_id = 2,
++     .minimum_version_id = 1,
+++    .post_load = cs_post_load,
++     .fields = (const VMStateField[]) {
++         VMSTATE_UINT32_ARRAY(regs, CSState, CS_REGS),
++         VMSTATE_UINT8_ARRAY(dregs, CSState, CS_DREGS),
+++        VMSTATE_BOOL_V(play_next, CSState, 2),
++         VMSTATE_END_OF_LIST()
++     }
++ };
++@@ -160,11 +614,29 @@ static void cs4231_init(Object *obj)
++     sysbus_init_irq(dev, &s->irq);
++ }
++ 
+++static void cs4231_realize(DeviceState *dev, Error **errp)
+++{
+++    CSState *s = CS4231(dev);
+++
+++    if (!audio_be_check(&s->audio_be, errp)) {
+++        return;
+++    }
+++    cs_play_setup(s);
+++}
+++
+++static const Property cs4231_properties[] = {
+++    DEFINE_AUDIO_PROPERTIES(CSState, audio_be),
+++    DEFINE_PROP_LINK("iommu", CSState, iommu, TYPE_SUN4M_IOMMU,
+++                     IOMMUState *),
+++};
+++
++ static void cs4231_class_init(ObjectClass *klass, const void *data)
++ {
++     DeviceClass *dc = DEVICE_CLASS(klass);
++ 
+++    dc->realize = cs4231_realize;
++     device_class_set_legacy_reset(dc, cs_reset);
+++    device_class_set_props(dc, cs4231_properties);
++     dc->vmsd = &vmstate_cs4231;
++ }
++ 
++diff --git a/hw/audio/trace-events b/hw/audio/trace-events
++index 30f5921545..444554004a 100644
++--- a/hw/audio/trace-events
+++++ b/hw/audio/trace-events
++@@ -5,6 +5,9 @@ cs4231_mem_readl_dreg(uint32_t reg, uint32_t ret) "read dreg %d: 0x%02x"
++ cs4231_mem_readl_reg(uint32_t reg, uint32_t ret) "read reg %d: 0x%08x"
++ cs4231_mem_writel_reg(uint32_t reg, uint32_t old, uint32_t val) "write reg %d: 0x%08x -> 0x%08x"
++ cs4231_mem_writel_dreg(uint32_t reg, uint32_t old, uint32_t val) "write dreg %d: 0x%02x -> 0x%02x"
+++cs4231_play_format(int freq, int channels, int fmt) "playback %d Hz, %d channels, format %d"
+++cs4231_play_next(uint32_t va, uint32_t count) "playback buffer 0x%08x, %u bytes"
+++cs4231_play_empty(void) "playback pipe empty"
++ 
++ # es1370.c
++ es1370_frame_address_rd(int ch, uint32_t addr) "ch=%d addr=0x%08x"
+diff --git a/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch b/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
+new file mode 100644
+index 0000000..3a1e670
+--- /dev/null
++++ b/debian/patches/wsh/0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i.patch
+@@ -0,0 +1,69 @@
++From: Antoni Sawicki <as@tenoware.com>
++Subject: [PATCH] hw/sparc/sun4m: give the cs4231 its interrupt level, iommu and audiodev
++
++OpenBIOS gives the SUNW,CS4231 node "intr" 5, and SunOS 4.1.4 takes the
++chip's interrupt at level 5 (dmesg: pri 5). The chip raised interrupt
++bit 5, which is level 11, so SunOS never saw it. Use bit 9: level 5.
++
++Link the chip to the IOMMU for its DMA, and add the machine's audiodev
++property, so -machine audiodev= picks the sound backend.
++
++Origin: https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6
++---
++ hw/sparc/sun4m.c | 22 +++++++++++++++++++---
++ 1 file changed, 19 insertions(+), 3 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 833b41a998..8b8a5d8baf 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -863,6 +863,7 @@ static void sun4m_hw_init(MachineState *machine)
++     DeviceState *dev, *ms_kb_orgate, *serial_orgate;
++     DeviceState *cpus[MAX_CPUS];
++     SysBusDevice *s;
+++    void *iommu;
++     unsigned int smp_cpus = machine->smp.cpus;
++     unsigned int max_cpus = machine->smp.max_cpus;
++     HostMemoryBackend *ram_memdev = machine->memdev;
++@@ -921,7 +922,8 @@ static void sun4m_hw_init(MachineState *machine)
++         afx_init(hwdef->afx_base);
++     }
++ 
++-    iommu_init(hwdef->iommu_base, hwdef->iommu_version, slavio_irq[30]);
+++    iommu = iommu_init(hwdef->iommu_base, hwdef->iommu_version,
+++                       slavio_irq[30]);
++ 
++     if (hwdef->iommu_pad_base) {
++         /* On the real hardware (SS-5, LX) the MMU is not padded, but aliased.
++@@ -1082,8 +1084,21 @@ static void sun4m_hw_init(MachineState *machine)
++                      slavio_irq[30], fdc_tc);
++ 
++     if (hwdef->cs_base) {
++-        sysbus_create_simple("sun-CS4231", hwdef->cs_base,
++-                             slavio_irq[5]);
+++        /* the APC DMA in front of the codec reads memory through the IOMMU */
+++        dev = qdev_new("sun-CS4231");
+++        if (machine->audiodev) {
+++            qdev_prop_set_string(dev, "audiodev", machine->audiodev);
+++        }
+++        object_property_set_link(OBJECT(dev), "iommu", OBJECT(iommu),
+++                                 &error_abort);
+++        s = SYS_BUS_DEVICE(dev);
+++        sysbus_realize_and_unref(s, &error_fatal);
+++        sysbus_mmio_map(s, 0, hwdef->cs_base);
+++        /*
+++         * OpenBIOS gives the node "intr" 5, so the guest's handler is at
+++         * interrupt level 5: interrupt bit 9 (SBus level 3) raises it.
+++         */
+++        sysbus_connect_irq(s, 0, slavio_irq[9]);
++     }
++ 
++     if (hwdef->dbri_base) {
++@@ -1173,6 +1188,7 @@ static void sun4m_machine_class_init(ObjectClass *oc, const void *data)
++     mc->default_boot_order = "c";
++     mc->default_display = "tcx";
++     mc->default_ram_id = "sun4m.ram";
+++    machine_add_audiodev_property(mc);
++ 
++     object_class_property_add_bool(oc, "sunos-idle", sun4m_get_sunos_idle,
++                                    sun4m_set_sunos_idle);
+diff --git a/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
+new file mode 100644
+index 0000000..6e022d2
+--- /dev/null
++++ b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
+@@ -0,0 +1,89 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: raise the SS-5's cs4231 at SBus level 5
++
++The real SPARCstation 5 has its CS4231 at SBus level 5, processor level
++9: its PROM (ss5.bin 2.15) gives the node "intr" 0x39, an SBus
++interrupt at level 9. The chip raised interrupt bit 9, SBus level 3
++(processor level 5), the level OpenBIOS's "intr" 5 gives SunOS 4.
++Solaris takes OpenBIOS's "interrupts" 5, SBus level 5, and waits at
++level 9 instead: Solaris 2.6's audioplay stopped after its first
++buffers with "processor level 3 SBus interrupt not serviced". Under the
++Sun PROM no guest would have found the interrupt.
++
++Raise interrupt bit 11, SBus level 5, as the real machine. The frame
++buffer (cg3 or TCX) is at SBus level 5 too, so both go through an OR
++gate, as the keyboard and mouse do. OpenBIOS gives the node "intr" 9
++to match (wsh-pve openbios patch 0016).
++---
++ hw/sparc/sun4m.c | 29 +++++++++++++++++++++++------
++ 1 file changed, 23 insertions(+), 6 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 8b8a5d8baf..44e10094d3 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -860,7 +860,8 @@ static void sun4m_hw_init(MachineState *machine)
++     uint32_t initrd_size;
++     DriveInfo *fd[MAX_FD];
++     FWCfgState *fw_cfg;
++-    DeviceState *dev, *ms_kb_orgate, *serial_orgate;
+++    DeviceState *dev, *ms_kb_orgate, *serial_orgate, *sbus5_orgate = NULL;
+++    qemu_irq sbus5_irq;
++     DeviceState *cpus[MAX_CPUS];
++     SysBusDevice *s;
++     void *iommu;
++@@ -910,6 +911,21 @@ static void sun4m_hw_init(MachineState *machine)
++     for (i = 0; i < 32; i++) {
++         slavio_irq[i] = qdev_get_gpio_in(slavio_intctl, i);
++     }
+++
+++    /*
+++     * SBus level 5 (interrupt bit 11, processor level 9): the frame buffer,
+++     * and on the SS-5 the CS4231 too, as on the real machine. Two devices
+++     * on one level need an OR gate.
+++     */
+++    sbus5_irq = slavio_irq[11];
+++    if (hwdef->cs_base) {
+++        sbus5_orgate = qdev_new(TYPE_OR_IRQ);
+++        object_property_set_int(OBJECT(sbus5_orgate), "num-lines", 2,
+++                                &error_fatal);
+++        qdev_realize_and_unref(sbus5_orgate, NULL, &error_fatal);
+++        qdev_connect_gpio_out(sbus5_orgate, 0, slavio_irq[11]);
+++        sbus5_irq = qdev_get_gpio_in(sbus5_orgate, 0);
+++    }
++     for (i = 0; i < MAX_CPUS; i++) {
++         slavio_cpu_irq[i] = qdev_get_gpio_in(slavio_intctl, 32 + i);
++     }
++@@ -975,7 +991,7 @@ static void sun4m_hw_init(MachineState *machine)
++             }
++ 
++             /* sbus irq 5 */
++-            cg3_init(hwdef->tcx_base, slavio_irq[11],
+++            cg3_init(hwdef->tcx_base, sbus5_irq,
++                      MAX(CG3_VRAM_SIZE,
++                          ROUND_UP(graphic_width * graphic_height, MiB)),
++                      graphic_width, graphic_height, graphic_depth);
++@@ -993,7 +1009,7 @@ static void sun4m_hw_init(MachineState *machine)
++                 exit(1);
++             }
++ 
++-            tcx_init(hwdef->tcx_base, slavio_irq[11], 0x00100000,
+++            tcx_init(hwdef->tcx_base, sbus5_irq, 0x00100000,
++                      graphic_width, graphic_height, graphic_depth);
++             vga_interface_created = true;
++         }
++@@ -1095,10 +1111,11 @@ static void sun4m_hw_init(MachineState *machine)
++         sysbus_realize_and_unref(s, &error_fatal);
++         sysbus_mmio_map(s, 0, hwdef->cs_base);
++         /*
++-         * OpenBIOS gives the node "intr" 5, so the guest's handler is at
++-         * interrupt level 5: interrupt bit 9 (SBus level 3) raises it.
+++         * SBus level 5, processor level 9, as the real SS-5 and its PROM
+++         * have it. OpenBIOS (wsh patch 0016) gives the node "interrupts" 5
+++         * and "intr" 9 to match: Solaris takes the first, SunOS 4 the second.
++          */
++-        sysbus_connect_irq(s, 0, slavio_irq[9]);
+++        sysbus_connect_irq(s, 0, qdev_get_gpio_in(sbus5_orgate, 1));
++     }
++ 
++     if (hwdef->dbri_base) {
+diff --git a/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch b/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
+new file mode 100644
+index 0000000..61ad457
+--- /dev/null
++++ b/debian/patches/wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
+@@ -0,0 +1,40 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: no sound without an audiodev
++
++The machine gives the codec the -machine audiodev, and without one the
++codec asked for QEMU's default audio driver. With none available QEMU
++did not start ("no default audio driver available"), so an SS-5 without
++an audiodev, which ran before, did not run at all; with one, the codec
++took whatever host sound the default found.
++
++Do as the PC speaker does: open a voice only when an audiodev is set.
++Without one the chip keeps its registers and plays nothing, as before.
++---
++ hw/audio/cs4231.c | 7 +++++++
++ 1 file changed, 7 insertions(+)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index fba2553a35..e2b1fd5ccd 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -445,6 +445,9 @@ static void cs_play_setup(CSState *s)
++     s->play_freq = as.freq;
++     s->play_fmt = (val >> 5) & ((s->dregs[CS_MODE] & CS_MODE2) ? 7 : 3);
++     trace_cs4231_play_format(as.freq, as.nchannels, s->play_fmt);
+++    if (!s->audio_be) {
+++        return;
+++    }
++     s->voice = audio_be_open_out(s->audio_be, s->voice, "cs4231", s,
++                                  cs_audio_callback, &as);
++     cs_set_volume(s);
++@@ -618,6 +621,10 @@ static void cs4231_realize(DeviceState *dev, Error **errp)
++ {
++     CSState *s = CS4231(dev);
++ 
+++    /* no audiodev: the registers only, no sound (the machine's default) */
+++    if (!s->audio_be) {
+++        return;
+++    }
++     if (!audio_be_check(&s->audio_be, errp)) {
++         return;
++     }
+diff --git a/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
+new file mode 100644
+index 0000000..9e2a072
+--- /dev/null
++++ b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
+@@ -0,0 +1,126 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: play out the last samples when playback stops
++
++The APC takes its samples up to 50 ms ahead of the codec's clock, and
++the audiodev holds them until it has played them. When the pipe ran
++empty or the driver turned the playback DMA off, the codec turned its
++voice off at once, and the mixer drops what a voice that is off has not
++played yet: every sound lost its last 50 ms.
++
++Keep the voice on for 200 ms after playback stops, feeding nothing, and
++turn it off from the audio callback after that. A reset still turns it
++off at once.
++---
++ hw/audio/cs4231.c | 35 +++++++++++++++++++++++++++++++----
++ 1 file changed, 31 insertions(+), 4 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index e2b1fd5ccd..02578b35a8 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -44,6 +44,11 @@
++  * FIFO, and SunOS loads the next buffer only after PI, so taking a whole
++  * buffer at once would leave the pipe empty.
++  *
+++ * Because the samples are taken that far ahead, the voice stays on for
+++ * CS_DRAIN_NS after playback stops, at the end of the last buffer or when
+++ * the driver turns the DMA off, so that the audiodev still plays what was
+++ * taken: turning it off at once drops the last 50 ms of every sound.
+++ *
++  * Capture is not done: its registers keep what is written, and the
++  * capture pipe always reads as empty.
++  */
++@@ -65,6 +70,7 @@
++ #include "qom/object.h"
++ 
++ #define CS_SIZE 0x40
+++#define CS_DRAIN_NS (200 * SCALE_MS)   /* well past the 50 ms taken ahead */
++ #define CS_REGS 16
++ #define CS_DREGS 32
++ #define CS_MAXDREG (CS_DREGS - 1)
++@@ -146,6 +152,7 @@ struct CSState {
++     bool play_running;      /* since play_start, without a gap */
++     int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
++     uint64_t play_units;    /* taken since play_start */
+++    int64_t play_drain;     /* the voice stays on until then */
++ };
++ 
++ #define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++@@ -232,17 +239,28 @@ static void cs_play_next(CSState *s)
++     }
++ }
++ 
+++/* Playback stopped: let the audiodev play what was taken ahead */
+++static void cs_play_stopped(CSState *s, int64_t now)
+++{
+++    s->play_running = false;
+++    s->play_drain = now + CS_DRAIN_NS;
+++}
+++
++ static void cs_play_update(CSState *s)
++ {
++     bool run = cs_play_active(s);
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (run && !s->play_running) {
++-        s->play_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        s->play_start = now;
++         s->play_units = 0;
+++    } else if (!run && s->play_running) {
+++        cs_play_stopped(s, now);
++     }
++     s->play_running = run;
++     if (s->voice) {
++-        audio_be_set_active_out(s->audio_be, s->voice, run);
+++        audio_be_set_active_out(s->audio_be, s->voice,
+++                                run || now < s->play_drain);
++     }
++     cs_update_irq(s);
++ }
++@@ -346,13 +364,18 @@ static void cs_audio_callback(void *opaque, int avail)
++ 
++     uint32_t room = MAX(avail, 0);
++     uint64_t rate, due, budget;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (!s->play_running) {
+++        /* stopped: the voice is on only to play out the last samples */
+++        if (now >= s->play_drain) {
+++            audio_be_set_active_out(s->audio_be, s->voice, false);
+++        }
++         return;
++     }
++     /* units a second: one sample of each channel, two for ADPCM */
++     rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
++-    due = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - s->play_start,
+++    due = muldiv64(now - s->play_start,
++                    rate, NANOSECONDS_PER_SECOND) + rate / 20;
++     budget = due > s->play_units ? due - s->play_units : 0;
++ 
++@@ -402,7 +425,9 @@ static void cs_audio_callback(void *opaque, int avail)
++         }
++     }
++     /* after a gap the clock starts again with the next buffer */
++-    s->play_running = cs_play_active(s);
+++    if (!cs_play_active(s)) {
+++        cs_play_stopped(s, now);
+++    }
++ }
++ 
++ /* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
++@@ -463,6 +488,7 @@ static void cs_reset(DeviceState *d)
++     s->dregs[25] = CS_VER;
++     s->play_next = false;
++     s->play_running = false;
+++    s->play_drain = 0;
++     if (s->audio_be) {
++         cs_play_setup(s);
++         cs_play_update(s);
++@@ -588,6 +614,7 @@ static int cs_post_load(void *opaque, int version_id)
++     CSState *s = opaque;
++ 
++     s->play_running = false;
+++    s->play_drain = 0;
++     cs_play_setup(s);
++     cs_play_update(s);
++     return 0;
+diff --git a/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
+new file mode 100644
+index 0000000..97fdffa
+--- /dev/null
++++ b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
+@@ -0,0 +1,309 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test CS4231 playback through the APC DMA on sun4m
++
++Program the SPARCstation 5's codec and APC as the SunOS and NetBSD
++drivers do, with the buffers behind IOMMU mappings, and drive it with
++the virtual clock: the first buffer is taken only after PEN, the second
++when the first has played (about 100 ms at 8000 Hz), and then the pipe
++runs empty. PI, PD, PM and PMI must follow, each interrupt at SBus
++level 5 (system bit 11), the CPU's level 9, and not at level 5 or 11.
++A wav audiodev must get every sample of both buffers decoded from
++u-law, also when the DMA is turned off as soon as the pipe is empty,
++and nothing after them. A second case checks that DMA off drops the
++buffers and that the reset bit clears the APC.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4m-cs4231-test.c | 270 ++++++++++++++++++++++++++++++++
++ 2 files changed, 272 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-cs4231-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 0ebc864fa5..9b6a60b713 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -204,7 +204,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-solaris-idle-test', 'sun4m-mmu-nofault-test',
++                 'sun4m-pil-delay-slot-test',
++                 'sun4m-solaris-smp-idle-test',
++-                'sun4m-fsr-rd-test'] + \
+++                'sun4m-fsr-rd-test',
+++                'sun4m-cs4231-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
++new file mode 100644
++index 0000000000..f34e0fb3ee
++--- /dev/null
+++++ b/tests/qtest/sun4m-cs4231-test.c
++@@ -0,0 +1,270 @@
+++/*
+++ * QTest: CS4231 playback through the APC DMA engine on the SPARCstation 5
+++ *
+++ * The test programs the chip the way the SunOS and NetBSD drivers do:
+++ * IOMMU mappings for two u-law buffers, the playback format in the codec,
+++ * the first buffer in the APC's next registers, the CSR with DMA on and
+++ * its interrupts enabled, and then playback on in the codec (PEN). Driven
+++ * by the virtual clock, the APC must take the first buffer (PI, the next
+++ * registers free again: PD), take the second one when the first has been
+++ * played and then run empty (PMI, PM), in real time at 8000 Hz, with each
+++ * of those interrupts at SBus level 5, the CPU's level 9, as on the real
+++ * machine. The samples must reach the audiodev decoded, all of them, also
+++ * when the driver turns the DMA off as soon as the pipe is empty: a wav
+++ * file with the right values for exactly the length of the two buffers.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* SPARCstation 5 */
+++#define CS_BASE         0x6c000000ULL
+++#define IOMMU_BASE      0x10000000ULL
+++#define INTCTL_CPU0     0x71e00000ULL   /* per-CPU pending: 1 << PIL */
+++#define INTCTL_SYS      0x71e10000ULL   /* system pending: 1 << bit */
+++
+++/* Codec and APC registers */
+++#define CS_IAR          (CS_BASE + 0x00)
+++#define CS_IDR          (CS_BASE + 0x04)
+++#define APC_CSR         (CS_BASE + 0x10)
+++#define APC_PVA         (CS_BASE + 0x30)
+++#define APC_PC          (CS_BASE + 0x34)
+++#define APC_PNVA        (CS_BASE + 0x38)
+++#define APC_PNC         (CS_BASE + 0x3c)
+++
+++#define APC_IP          0x00800000
+++#define APC_PI          0x00400000
+++#define APC_IE          0x00080000
+++#define APC_PIE         0x00040000
+++#define APC_PMI         0x00008000
+++#define APC_PM          0x00004000
+++#define APC_PD          0x00002000
+++#define APC_PMIE        0x00001000
+++#define APC_PDMA_GO     0x00000008
+++#define APC_ENABLES     (APC_IE | APC_PIE | APC_PMIE | APC_PDMA_GO)
+++
+++#define CS_PFMT         8
+++#define CS_ICONF        9
+++#define CS_PFMT_ULAW_8K 0x20            /* u-law, mono, 24.576 MHz / 3072 */
+++#define CS_PEN          0x01
+++
+++/* The buffers in RAM and their DVMA addresses through the IOMMU */
+++#define IOPTE_TABLE     0x200000ULL
+++#define BUF_RAM         0x100000ULL
+++#define BUF_DVMA        0xff000000U
+++#define BUF_LEN         800             /* 100 ms at 8000 Hz */
+++#define BUF2_OFFSET     0x1000          /* the second one on the next page */
+++
+++#define CS_LEVEL        9               /* processor level, the "intr" */
+++#define CS_INTBIT       11              /* system bit: SBus level 5 */
+++#define OLD_LEVELS      ((1u << 5) | (1u << 11))    /* earlier wirings */
+++
+++/* Two u-law values and what they decode to (G.711) */
+++#define ULAW_POS        0xa0
+++#define ULAW_NEG        0x20
+++#define PCM_VALUE       7932
+++
+++static void codec_write(QTestState *qts, uint8_t reg, uint8_t val)
+++{
+++    qtest_writeb(qts, CS_IAR, reg);
+++    qtest_writeb(qts, CS_IDR, val);
+++}
+++
+++static bool level_pending(QTestState *qts, int level)
+++{
+++    return qtest_readl(qts, INTCTL_CPU0) & (1u << level);
+++}
+++
+++/* Step the virtual clock 1 ms at a time until the CSR has `bits` */
+++static int64_t wait_csr(QTestState *qts, uint32_t bits, int64_t limit_ms)
+++{
+++    int64_t ms;
+++
+++    for (ms = 0; ms < limit_ms; ms++) {
+++        if ((qtest_readl(qts, APC_CSR) & bits) == bits) {
+++            return ms;
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/*
+++ * The wav file is stereo: the mixer doubles a mono voice played into a
+++ * mono output (it adds left and right), so the test does not use one.
+++ */
+++static void check_wav(const char *path)
+++{
+++    g_autofree uint8_t *wav = NULL;
+++    gsize len, frames, i, start, sound;
+++    int16_t l, r;
+++
+++    g_assert_true(g_file_get_contents(path, (gchar **)&wav, &len, NULL));
+++    g_assert_cmpuint(len, >, 44);
+++    g_assert_cmpmem(wav, 4, "RIFF", 4);
+++    g_assert_cmpuint(lduw_le_p(wav + 22), ==, 2);           /* channels */
+++    g_assert_cmpuint(ldl_le_p(wav + 24), ==, 8000);         /* Hz */
+++    g_assert_cmpuint(lduw_le_p(wav + 34), ==, 16);          /* bits */
+++    frames = (len - 44) / 4;
+++
+++    /* Skip any silence before the sound starts */
+++    for (start = 0; start < frames; start++) {
+++        if (lduw_le_p(wav + 44 + 4 * start) != 0) {
+++            break;
+++        }
+++    }
+++    /* Both buffers, every sample, in order, and nothing after them */
+++    for (sound = 0; start + sound < frames; sound++) {
+++        if (lduw_le_p(wav + 44 + 4 * (start + sound)) == 0) {
+++            break;
+++        }
+++    }
+++    g_assert_cmpuint(sound, ==, 2 * BUF_LEN);
+++    for (i = 0; i < 2 * BUF_LEN; i++) {
+++        l = lduw_le_p(wav + 44 + 4 * (start + i));
+++        r = lduw_le_p(wav + 44 + 4 * (start + i) + 2);
+++        g_assert_cmpint(l, ==, r);
+++        g_assert_cmpint(abs(l), >=, PCM_VALUE - 2);
+++        g_assert_cmpint(abs(l), <=, PCM_VALUE + 2);
+++        g_assert_cmpint(l > 0, ==, i < BUF_LEN);
+++    }
+++}
+++
+++static void test_playback(void)
+++{
+++    g_autofree char *wav = NULL;
+++    uint8_t buf[BUF_LEN];
+++    QTestState *qts;
+++    uint32_t csr;
+++    int64_t t1, t2;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.wav", &wav, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    qts = qtest_initf("-machine SS-5,audiodev=snd0 "
+++                      "-audiodev wav,id=snd0,path=%s,out.frequency=8000,"
+++                      "out.channels=2,out.format=s16", wav);
+++
+++    /* Before anything is loaded: the pipe is empty, no interrupt */
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PM | APC_PD | APC_IP), ==, APC_PM | APC_PD);
+++
+++    /* Two pages mapped at BUF_DVMA, the second buffer on the second */
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);         /* 16 MB range, enabled */
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    memset(buf, ULAW_NEG, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++
+++    /* Loaded, but the codec has not asked for samples: nothing taken */
+++    qtest_clock_step(qts, 50 * 1000 * 1000);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PD | APC_IP), ==, 0);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++
+++    /* PEN: the first buffer is taken at the next audio callback */
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    t1 = wait_csr(qts, APC_PI, 100);
+++    g_assert_cmpint(t1, <=, 20);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PD | APC_PM), ==, APC_IP | APC_PD);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==, BUF_DVMA);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), <=, BUF_LEN);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    g_assert_true(qtest_readl(qts, INTCTL_SYS) & (1u << CS_INTBIT));
+++    g_assert_false(qtest_readl(qts, INTCTL_CPU0) & OLD_LEVELS);
+++
+++    /* The driver clears PI and loads the second buffer */
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & (APC_PI | APC_IP));
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PD);
+++
+++    /* It takes the second one when the first has played: about 100 ms */
+++    t2 = wait_csr(qts, APC_PI, 300);
+++    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, <=, 130);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==,
+++                    BUF_DVMA + BUF2_OFFSET);
+++    g_assert_true(qtest_readl(qts, APC_CSR) & APC_PD);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++
+++    /* No third buffer: the pipe runs empty when the second has played */
+++    t2 = wait_csr(qts, APC_PMI, 300);
+++    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, <=, 130);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PM | APC_PD), ==,
+++                    APC_IP | APC_PM | APC_PD);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, APC_PVA), ==,
+++                    BUF_DVMA + BUF2_OFFSET + BUF_LEN);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++
+++    /* At once PMI cleared and the DMA off, as a driver may: quiet */
+++    qtest_writel(qts, APC_CSR, APC_PMI);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_IP);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    /* The backend still plays what was taken ahead; then the file */
+++    qtest_clock_step(qts, 300 * 1000 * 1000);
+++    qtest_quit(qts);
+++    check_wav(wav);
+++    unlink(wav);
+++}
+++
+++/* DMA off drops the buffers, and the reset bit clears the APC */
+++static void test_stop_reset(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                                 "-audiodev none,id=snd0");
+++
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++
+++    /* DMA off: the buffer is dropped, the pipe empty */
+++    qtest_writel(qts, APC_CSR, APC_PI | (APC_ENABLES & ~APC_PDMA_GO));
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    g_assert_true(qtest_readl(qts, APC_CSR) & APC_PM);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++
+++    /* Reset: CSR back to the empty state, nothing pending */
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, 0x1);
+++    g_assert_cmphex(qtest_readl(qts, APC_CSR) & ~0x1, ==,
+++                    APC_PM | APC_PD | 0x800 | 0x400);
+++    g_assert_cmpuint(qtest_readl(qts, APC_PC), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-cs4231/playback", test_playback);
+++    qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
 ++
 ++    return g_test_run();
 ++}
