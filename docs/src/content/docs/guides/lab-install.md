@@ -50,9 +50,8 @@ An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each m
 target. Solaris 8 and 9 have SS-20 targets only: Web Start is a Java program, and when the targets
 were written the SS-5 ran the lab's Solaris jobs about 9 times slower than the SS-20. Since #262 the
 SS-5 is as fast as the SS-20 for Solaris, but 8 and 9 on the SS-5 haven't been tried again (see the
-roadmap). Solaris 9 is not supported on sun4m by
-Sun (8 was the last release for it), but its installer and installed 32-bit kernel run on the
-emulated SS-20; treat it as a curiosity. During the Solaris 8 and 9 installs the VM has
+roadmap). Solaris 9 is the last release for sun4m (Solaris 10 dropped
+it); its installer and installed 32-bit kernel run on the emulated SS-20. During the Solaris 8 and 9 installs the VM has
 `args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
 the install stops at the firmware prompt and boots the right slice itself); the install removes it
 again, the finished VM has no `args`.

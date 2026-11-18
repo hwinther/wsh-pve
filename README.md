@@ -30,7 +30,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | 💾🪟🐧 MS-DOS 3+, Windows 1.x-9x (3dfx/Mesa 3D), Linux 2.x | ✔ | | | | |
 
 ✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
-¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ Sun didn't support Solaris 9 on sun4m (8 was the last release for it); it runs on the emulated SS-20 as a curiosity. 8 and 9 on the SS-5 are not tested yet.
+¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ on the SS-20; 8 and 9 on the SS-5 are not tested yet.
 Profiles, limits and known problems per system: [guest operating systems](https://debian.wshosting.no/guides/operating-systems/), [SPARC](https://debian.wshosting.no/guides/sparc/), [DOS](https://debian.wshosting.no/guides/dos/).
 
 ## Getting started

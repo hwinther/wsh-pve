@@ -168,17 +168,21 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 - **Solaris 8 and 9 on the SS-5.** They have SS-20 targets only (`sol8-ss20`, `sol9-ss20`), chosen
   when the SS-5 ran Solaris about 9 times slower; since #262 it is as fast as the SS-20. To find out:
   does Web Start install with 256 MB on the SS-5 (OpenBIOS, and `ss5.bin` for 8), how long it takes,
-  and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Solaris 9 isn't
-  supported on sun4m by Sun (8 was the last release), so 9 stays a curiosity either way.
+  and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Both are supported on
+  sun4m by Sun (9 is the last release for it).
 - **More sparc32 guests and older releases.** QEMU emulates sun4m only (no sun4c or sun4), so the
-  floor is set by when each machine got support: SunOS 4.1.3 (Solaris 1.1) on the SS-10 and 4.1.3_U1
-  (1.1.1) on the SS-20; the SS-5 needs 4.1.4 (1.1.2), which `sunos414-ss5` already installs. Solaris
-  2.0/2.1 are sun4c only; 2.2 and 2.3 are possible on the SS-10/SS-20. Order: first what the lab
+  floor is set by when each machine got support (Sun's System Handbook, its SPARC module guide, the
+  Solaris FAQ): SunOS 4.1.3 (Solaris 1.1) on the SS-10 (one CPU; SunOS 4 has no MP on it);
+  4.1.3_U1B (1.1.1B) on the SS-20 and the SS-5 (the SS-5 with the microSPARC-II kernel patch
+  101508); 4.1.4 (1.1.2) is what `sunos414-ss5` installs. Solaris 2.0 is sun4c only; 2.1 already
+  runs on the SS-10, 2.3 on the SS-20, and the SS-5 from 2.3 Edition II. The QEMU wiki lists
+  NeXTSTEP 3.3 and OPENSTEP 4.2 as partly working on sun4m (hangs on disk access, perhaps the ESP;
+  several ESP fixes are carried here since) and OpenBSD 5.8 as working with `-nographic`. Order: first what the lab
   host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer), then, once the
-  owner has the media, NeXTSTEP 3.3 for SPARC, OpenBSD 5.9 (the last release with sparc32), SunOS 4.1.3/4.1.3_U1, Solaris
-  2.3 and 2.5. Each one booted and installed by hand first; an install target only for what works.
+  owner has the media, NeXTSTEP 3.3 for SPARC, OpenBSD 5.9 (the last release with sparc32), SunOS 4.1.3/4.1.3_U1B, Solaris
+  2.1-2.3 and 2.5. Each one booted and installed by hand first; an install target only for what works.
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
