@@ -10,8 +10,10 @@ user, and shuts down with `init 5`.
   USER           a non-root user to add (home /export/home/USER, /bin/sh)           (none)
   USER_PASSWORD  that user's password, set with passwd as root                      (none: locked)
   DATA_DISK      a Sun-labelled disk added after the install (c0t4d0): its device    (none)
-                 nodes (drvconfig; disks), newfs of slice 0, mounted on /data and in
-                 /etc/vfstab
+                 nodes (drvconfig; disks), newfs of slice 0, mounted on DATA_MOUNT
+                 and in /etc/vfstab
+  DATA_MOUNT     where the data disk is mounted: /data or /usr/local (what was in     (/data)
+                 /usr/local is copied onto the new file system first)
   NET_MODE       static | dhcp: the network beyond the installer's address (network())  (none)
   NET_IP, NET_NETMASK, NET_NETWORK, NET_GATEWAY   static: the address, its netmask and network, the
                  default router (none)
@@ -23,7 +25,7 @@ The values are typed on the serial console: passwords at prompts that don't echo
 from _sparc32 import DEFAULTS as BASE, login, power_off, prom_boot, qemu_args as sparc32_args
 
 DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1", "ROOT_PASSWORD": "", "MARKER": "",
-            "USER": "", "USER_PASSWORD": "", "DATA_DISK": "", "NET_MODE": "", "NET_IP": "", "NET_NETMASK": "",
+            "USER": "", "USER_PASSWORD": "", "DATA_DISK": "", "DATA_MOUNT": "/data", "NET_MODE": "", "NET_IP": "", "NET_NETMASK": "",
             "NET_NETWORK": "", "NET_GATEWAY": "", "NET_DNS": "", "NET_DOMAIN": ""}
 MARKER_FILE = "/etc/wsh-lab-target"
 
@@ -64,7 +66,7 @@ def run(m, v):
         shell(m, f"grep '^{user}:' /etc/passwd; ls -ld /export/home/{user}")
         m.snap(f"user {user}")
     if v["DATA_DISK"]:
-        data_disk(m, v["DATA_DISK"])
+        data_disk(m, v["DATA_DISK"], v["DATA_MOUNT"] or "/data")
     if v["NET_MODE"]:
         network(m, v)
     power_off(m, "init 5")
@@ -115,15 +117,22 @@ def network(m, v):
     m.snap(f"network: {v['NET_MODE']}")
 
 
-def data_disk(m, disk):
+def data_disk(m, disk, mount="/data"):
     """A disk added after the install, already labelled (sunlabel.data_geometry: slice 0 = the disk):
-    the device nodes for the new target, a UFS on slice 0, mounted on /data at every boot."""
+    the device nodes for the new target, a UFS on slice 0, mounted on `mount` at every boot. A
+    mount point that has files already (/usr/local) gets them copied onto the new file system
+    first, so mounting over it hides nothing."""
+    if mount not in ("/data", "/usr/local"):
+        raise ValueError(f"DATA_MOUNT {mount!r}: /data or /usr/local")
     shell(m, "drvconfig; disks", 300)
     shell(m, f"prtvtoc /dev/rdsk/{disk}s2")
     m.send(f"newfs /dev/rdsk/{disk}s0\r")
     m.expect(r"\(y/n\)\?\s*$", 120)
     m.send("y\r")
     m.expect(r"\n#\s*$", 1800)
-    shell(m, f"mkdir -p /data; echo '/dev/dsk/{disk}s0 /dev/rdsk/{disk}s0 /data ufs 2 yes -' >> /etc/vfstab")
-    shell(m, "mount /data; df -k /data", 300)
-    m.snap("data disk on /data")
+    shell(m, f"mkdir -p {mount}; ls -lA {mount}")
+    shell(m, f"if [ -n \"`ls -A {mount}`\" ]; then mount /dev/dsk/{disk}s0 /mnt && cd {mount} &&"
+             f" find . -print | cpio -pdm /mnt; cd /; umount /mnt; fi", 600)
+    shell(m, f"echo '/dev/dsk/{disk}s0 /dev/rdsk/{disk}s0 {mount} ufs 2 yes -' >> /etc/vfstab")
+    shell(m, f"mount {mount}; df -k {mount}; ls -lA {mount}", 300)
+    m.snap(f"data disk on {mount}")
