@@ -609,7 +609,10 @@ test.describe('more than one CPU', () => {
       await next(wizard) // to CPU
       await expect(sockets).toBeEnabled()
       await expect(cores).toBeEnabled()
-      await expect(wizard.getByText(/up to 4 CPUs .*keeps a host core busy/)).toBeVisible()
+      // the published pve-manager may still carry the hint from before SMP idle (+wsh15)
+      await expect(
+        wizard.getByText(/up to 4 CPUs .*(idle CPUs of Solaris 2\.5\.1-9 stop|keeps a host core busy)/),
+      ).toBeVisible()
       await cores.fill('5')
       await expect(nextButton).toBeDisabled()
       await cores.fill('2')
