@@ -493,6 +493,8 @@ TARGETS = {
     "tribblix-m34-sun4u": {
         "title": "Tribblix m34 SPARC (illumos) base install on sun4u (OpenBIOS, IDE disk, ZFS root)",
         "status": "automated",
+        "matrix_skip": "takes ~4.3 h, longer than the sparc lab job's 240-minute limit; install it once, then"
+                       " boot the stored disk (ROADMAP, \"Scheduled reinstalls\")",
         "method": "scripted",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 2048,
                     "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},

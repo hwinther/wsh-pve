@@ -93,7 +93,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    from 0x24a on ran the wrong word, so the illumos ZFS boot block crashed). With both, the live CD
    boots to its login prompt, installs to the IDE disk with its own installer, and the installed disk
    boots, gets its address and powers off; `lab.py install tribblix-m34-sun4u` drives it through PVE
-   (in `pve_matrix.py install` with pve-qemu-kvm 11.1.3-2+wsh20 or later; 257 minutes through PVE,
+   (with pve-qemu-kvm 11.1.3-2+wsh20 or later; 257 minutes through PVE, too long for `pve_matrix.py
+   install` under the job's 240-minute limit, so it stays out;
    3 of 3 long runs passed). The guest's clock that stopped in about one of three long runs (a QEMU
    race on `%softint`) is fixed by pve-qemu `wsh/0036`. Still open:
    - with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first attempts that
@@ -207,6 +208,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, and Red Hat
   Linux 6.2 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
+  For slow targets (Tribblix ~4.3 h, Solaris 10 on sun4u ~110 min) and as the default later: install
+  only when the stored disk is missing (or on demand), export it after a passing `--check`, and
+  otherwise boot a copy of the stored disk through PVE to the login prompt and run the target's check
+  (Tribblix ~14 min, Solaris 10 ~8 min). That keeps the weekly run short and still catches a package
+  that no longer boots the installed systems.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
   three start-up bugs fixed in #248 all passed the "QEMU accepts the command" tests.
