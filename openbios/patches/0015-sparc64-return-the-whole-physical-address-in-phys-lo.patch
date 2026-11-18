@@ -19,7 +19,7 @@ as free), then stops:
   trap type 0x10: cpu 0, pc=1000d00 npc=1000d04 ...
   panic: illegal instruction
 
-(after filling about 3 GB of a tmpfs, with 6144 and 8192 MB alike).
+(while filling a tmpfs, at the same point with 6144 and 8192 MB).
 
 Keep the whole address in phys.lo. phys.hi still carries the upper
 32 bits, so a client that combines (phys.hi << 32) | phys.lo gets the
