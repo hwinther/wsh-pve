@@ -136,6 +136,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      vapic ROM off without `args:`); a DOS idle driver in the image so a DOS VM stops burning a host
      core; Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
      screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
+   - Driver and patch packs: the owner's curated DOS and Windows 9x drivers and patches (the VBE
+     display drivers among them) that the README and the guest operating systems guide mention. First
+     sort out what may be published: much of it is proprietary, and what isn't gets a source and a
+     licence next to it; the rest stays a list of what to get and where. Then a guide per pack.
    - Audio: which devices work in which guests, and where the sound goes on a headless node
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
