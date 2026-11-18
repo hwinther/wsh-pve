@@ -13,7 +13,7 @@ import {
 } from './_pve'
 
 // The sparc64 profile (submodules/SPARC.md, "sparc64 (sun4u)"): sun4u with OpenBIOS, one CPU, up to
-// 3072 MB, disks and CD-ROMs on the built-in IDE, the boot device as `-boot order=c|d` instead of
+// 8192 MB, disks and CD-ROMs on the built-in IDE, the boot device as `-boot order=c|d` instead of
 // bootindex (which OpenBIOS can't follow), no balloon device, at most four NICs (PCI bus B), the NIC
 // models NetBSD drives, displays std/serial0/none. What qemu-server accepts and builds for it, what
 // it refuses, and the wizard and Hardware editors that offer only it.
@@ -150,7 +150,7 @@ test.describe('sparc64, created through the API', () => {
 })
 
 test.describe('refused combinations', () => {
-  const cases: { name: string; params: Record<string, number | string>; message: string }[] = [
+  const cases: { name: string; params: Record<string, number | string>; message: string | RegExp }[] = [
     {
       message: "sparc64: scsi0 can't be used, disks and CD-ROMs go on the built-in IDE (ide0 to ide3)",
       name: 'a SCSI disk (OpenBIOS has no lsi driver)',
@@ -182,9 +182,10 @@ test.describe('refused combinations', () => {
       params: { sockets: 2 },
     },
     {
-      message: 'sparc64: sun4u takes at most 3072 MB of memory, not 4096',
-      name: '4096 MB (NetBSD panics)',
-      params: { memory: 4096 },
+      // 8192 MB since pve-qemu-kvm 11.1.3-2+wsh16; the published qemu-server may still cap at 3072
+      message: /sparc64: sun4u takes at most (3072|8192) MB of memory, not 9216/,
+      name: '9216 MB (more than tested)',
+      params: { memory: 9216 },
     },
     {
       message: "sparc64: machine 'sun4v' is not supported, use sun4u",
@@ -233,7 +234,7 @@ test.describe('refused combinations', () => {
         vmid,
         ...c.params,
       })
-      expect(refused.message).toContain(c.message)
+      expect(refused.message).toMatch(c.message)
       const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
       expect(code, 'no config is left behind').not.toBe(0)
     })
@@ -243,8 +244,8 @@ test.describe('refused combinations', () => {
     const vmid = await createVm(WIZARD_LAYOUT)
     const config = `/nodes/${NODE}/qemu/${vmid}/config`
 
-    expect((await pve.refused('PUT', config, { memory: 4096 })).message).toContain(
-      'sparc64: sun4u takes at most 3072 MB of memory, not 4096',
+    expect((await pve.refused('PUT', config, { memory: 9216 })).message).toMatch(
+      /sparc64: sun4u takes at most (3072|8192) MB of memory, not 9216/,
     )
     expect((await pve.refused('PUT', config, { cores: 2 })).message).toContain('sparc64: only one CPU is supported')
     expect((await pve.refused('PUT', config, { scsi1: 'local:0.0625,format=raw' })).message).toContain(
@@ -328,10 +329,10 @@ test.describe('web UI', () => {
     await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeDisabled()
     await next(wizard)
 
-    // Memory: 512 MB, at most 3072.
+    // Memory: 512 MB, at most 8192 (3072 with an older published pve-manager).
     const memory = wizard.getByLabel(fieldLabel('Memory (MiB)'))
     await expect(memory).toHaveValue('512')
-    await memory.fill('4096')
+    await memory.fill('9216')
     await expect(wizard.getByRole('button', { name: 'Next' })).toBeDisabled()
     await memory.fill('512')
     await next(wizard)

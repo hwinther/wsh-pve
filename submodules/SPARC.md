@@ -1580,9 +1580,8 @@ matrix 9/9 and the `solaris10` matrix 2/2 (DVD to the installer, installed disk 
 `format`, DHCP and ping).
 
 Not measured: more than 8 GB, other RAM sizes between 4 and 8 GB than 6144 MB, Solaris with 6144 MB,
-OpenBSD and Debian with more than 3 GB, the profile through PVE (qemu-server still caps sparc64 at
-3072 MB; with a package carrying 0013-0015 the cap can go to at least 8192 MB, the largest size
-measured).
+OpenBSD and Debian with more than 3 GB, more than 3 GB through PVE (the profile's cap is 8192 MB,
+the largest size measured, since pve-qemu-kvm 11.1.3-2+wsh16 carries 0013-0015).
 
 **maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
 Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its
@@ -1771,7 +1770,7 @@ Done for sparc64 (was → now), in `submodules/qemu-server.patch` and mirrored i
 | NIC | `sunhme` on `pciB`, any model | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; `pcnet` refused (no NetBSD driver) |
 | PCI slots | NIC and every SCSI/virtio controller on `pciB`; a fifth device stopped QEMU (`no slot/function available`) | only NICs go there (the controllers are refused): at most four, refused with `sparc64: at most 4 network devices fit on PCI bus B, not 5 (...)` |
 | CPUs | `-smp 1,...` from sockets × cores; QEMU refused more | sockets × cores > 1 refused; the `cpu` option refused (it was never passed) |
-| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS; OpenBIOS patches 0013-0015 remove the reason, see "More than 3 GB"); the wizard presets 512 MB |
+| RAM | anything | at most 8192 MB, the largest size measured (without OpenBIOS patches 0013-0015 4096 MB panics NetBSD and 8192 MB stops OpenBIOS, see "More than 3 GB"); the wizard presets 512 MB |
 | Machine | `sun4[a-z]` | `sun4u` only (`sun4v` refused; `niagara` never matched the machine format) |
 | Firmware | no `-bios` unless `bios` is set | `bios` unset or `openbios-sparc64` |
 | virtio-balloon | `virtio-balloon-pci` without a bus: it took one of pciB's four slots (with four NICs QEMU refused the fourth, `PCI: no slot/function available for rtl8139`), and OpenBIOS can't manage it (`Cannot manage 'undefined' PCI device type`) | none, and no balloon polling at start: four NICs fit |
@@ -1787,7 +1786,7 @@ valid is accepted.
 
 | Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs | Disk | CD-ROM | NIC | Display |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-3072 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
+| `sun4u` | `openbios-sparc64` (default; no `-bios` needed) | none (TI UltraSparc IIi) | 512 MB default, 256-8192 MB | 1 | `ide0` (built-in IDE, primary master; `ide1` as a second disk) | `ide2` (secondary master) | `sunhme` (default); `virtio`, `e1000`, `rtl8139`, `ne2k_pci` for NetBSD | `std` (VGA + PS/2 keyboard), `serial0` or `none` |
 
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
@@ -1796,7 +1795,7 @@ valid is accepted.
   package built with `openbios-sparc64` and `wsh/0021`, Solaris 10 1/13 reaches its installer and
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
-- Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 3 GB,
+- Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 8 GB,
   `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
 
@@ -1998,7 +1997,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   `pve-qemu-kvm` 11.1.3-2+wsh10 or later (patch 0019; Solaris hangs without it); details, cost and
   why the Sun PROM stays at one under "SMP".
 - sparc64 has one profile, `$SPARC64_PROFILE` in `PVE::QemuServer::Machine` (mirrored in
-  `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 3072 MB, disks
+  `PVE.qemu.Architecture.sparc64Profile`): `sun4u`, `openbios-sparc64`, one CPU, up to 8192 MB, disks
   and CD-ROMs on the built-in IDE, `-boot order=c|d` instead of `bootindex`, no balloon, at most four
   NICs (`sunhme`, `virtio`, `e1000`, `rtl8139`, `ne2k_pci`), displays `std`, `serial0`, `none`. Details
   under "sparc64 (sun4u)".
@@ -2109,7 +2108,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
   target 6.
 - sparc64 in the wizard and the Hardware editors, from `sparc64Profile`: disks and CD-ROMs on IDE
-  only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 3072, sockets, cores
+  only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 8192, sockets, cores
   and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
   the default), Add → Network Device disabled at four NICs.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).

@@ -46,7 +46,7 @@ Hardware editors offer only it.
 
 | Machine | BIOS | CPU | RAM | Disks and CD-ROMs | Network | Display |
 | ------- | ---- | --- | --- | ----------------- | ------- | ------- |
-| `sun4u` | OpenBIOS (default) | one, the machine's UltraSPARC IIi | up to 3072 MB (512 MB in the wizard) | the built-in IDE: `ide0` to `ide3` (wizard: disk `ide0`, CD-ROM `ide2`) | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; at most four | `std` (VGA, default), `serial0`, none |
+| `sun4u` | OpenBIOS (default) | one, the machine's UltraSPARC IIi | up to 8192 MB (512 MB in the wizard) | the built-in IDE: `ide0` to `ide3` (wizard: disk `ide0`, CD-ROM `ide2`) | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; at most four | `std` (VGA, default), `serial0`, none |
 
 - **Boot device:** OpenBIOS boots one device and doesn't try the next, and it can't follow the boot
   paths x86 VMs get. qemu-server therefore passes the first drive of the boot order that holds
@@ -55,7 +55,7 @@ Hardware editors offer only it.
   first in the boot order, so it boots the install CD, and once the CD is ejected (or the boot order
   puts the disk first) it boots the disk.
 - **Refused:** SCSI (the LSI controller and virtio-scsi), virtio-blk and SATA disks, more than one
-  CPU, a CPU type, more than 3072 MB, `sun4v` and `niagara`, more than four network devices (they
+  CPU, a CPU type, more than 8192 MB, `sun4v` and `niagara`, more than four network devices (they
   share PCI bus B's four slots), `pcnet`, other displays, serial2/serial3, the guest agent.
   virtio-blk works as a second disk in NetBSD, but OpenBIOS can't boot it, so it isn't offered.
 - **No balloon device** (OpenBIOS can't manage one; nothing reads it).
@@ -266,16 +266,16 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
 for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
-`e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a serial console, one CPU, up to 3 GB of RAM. The
+`e1000`, `rtl8139` and `ne2k_pci`), standard VGA or a serial console, one CPU, up to 8 GB of RAM. The
 LSI SCSI controller and virtio-scsi don't work (no firmware driver, and the guests' drivers time out
 or fail). A VM created by the wizard with the NetBSD 11.1 CD boots it to the installer through Proxmox
 by itself (tested in the sparc lab's `pve` matrix, serial console).
 
-The 3 GB limit comes from OpenBIOS: with the published packages, 4 GB stops NetBSD right after its
-loader and from about 4.3 GB the firmware itself stops. The repository's OpenBIOS patches 0013-0015
-fix that, but no published package has them yet. With firmware built from them on 11.1.3-2+wsh15,
-NetBSD 11.1 ran with 4, 6 and 8 GB and Solaris 10 1/13 with 4 and 8 GB in the sparc lab (QEMU
-started directly, not through Proxmox), each using most of that memory without errors.
+More than 3 GB needs pve-qemu-kvm 11.1.3-2+wsh16 or later: its OpenBIOS carries patches 0013-0015.
+With older firmware 4 GB stops NetBSD right after its loader and from about 4.3 GB the firmware itself
+stops. With the patches NetBSD 11.1 ran with 4, 6 and 8 GB and Solaris 10 1/13 with 4 and 8 GB in the
+sparc lab (QEMU started directly, not through Proxmox), each using most of that memory without
+errors. 8 GB is the largest size tested, so the profile stops there.
 
 ### Installing NetBSD
 

@@ -1044,7 +1044,7 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..9c2be22a 100644
+index 960af5a9..5c6a1599 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1079,7 +1079,7 @@ index 960af5a9..9c2be22a 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +141,268 @@ sub default_machine_for_arch {
+@@ -135,6 +141,269 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1234,8 +1234,9 @@ index 960af5a9..9c2be22a 100644
 +our $SPARC64_PROFILE = {
 +    machine => 'sun4u',
 +    firmware => 'openbios-sparc64',
-+    # 4096 MB panics NetBSD, 8192 MB stops OpenBIOS
-+    'max-memory' => 3072,
++    # needs OpenBIOS patches 0013-0015 (pve-qemu-kvm 11.1.3-2+wsh16): without them 4096 MB panics
++    # NetBSD and 8192 MB stops OpenBIOS. 8192 MB is the largest size tested (NetBSD, Solaris 10).
++    'max-memory' => 8192,
 +    vga => [qw(std serial0 none)],
 +    nic => [qw(sunhme virtio e1000 rtl8139 ne2k_pci)],
 +    # pciB has four slots; qemu-server puts every NIC there
@@ -1348,7 +1349,7 @@ index 960af5a9..9c2be22a 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +437,7 @@ my sub machine_base_type {
+@@ -169,6 +438,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1356,7 +1357,7 @@ index 960af5a9..9c2be22a 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +574,44 @@ sub machine_version_cmp {
+@@ -305,11 +575,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1403,7 +1404,7 @@ index 960af5a9..9c2be22a 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +621,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +622,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1426,7 +1427,7 @@ index 960af5a9..9c2be22a 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +807,7 @@ sub get_power_state_flags {
+@@ -508,6 +808,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1434,7 +1435,7 @@ index 960af5a9..9c2be22a 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +815,7 @@ sub get_power_state_flags {
+@@ -515,6 +816,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -2404,14 +2405,14 @@ index 00000000..e086ee48
 +memory: 512
 diff --git a/src/test/cfg2cmd/sparc64-memory-error.conf b/src/test/cfg2cmd/sparc64-memory-error.conf
 new file mode 100644
-index 00000000..c6bf5981
+index 00000000..575582c9
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc64-memory-error.conf
 @@ -0,0 +1,4 @@
-+# TEST: sparc64 refuses more than 3072 MB (4096 MB panics NetBSD)
-+# EXPECT_ERROR: sparc64: sun4u takes at most 3072 MB of memory, not 4096
++# TEST: sparc64 refuses more than 8192 MB (the largest size tested)
++# EXPECT_ERROR: sparc64: sun4u takes at most 8192 MB of memory, not 9216
 +arch: sparc64
-+memory: 4096
++memory: 9216
 diff --git a/src/test/cfg2cmd/sparc64-nic-model-error.conf b/src/test/cfg2cmd/sparc64-nic-model-error.conf
 new file mode 100644
 index 00000000..93a24f66
