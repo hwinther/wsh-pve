@@ -10,8 +10,8 @@
 # Usage: scripts/upstream-released-commit.sh <submodule>
 # Env:   UPSTREAM_REF     the branch to search (default: origin/master, fetched first)
 #        PROXMOX_DISTS    apt dists URL (default: http://download.proxmox.com/debian/pve/dists/trixie)
-#        PROXMOX_SUITES   suites to read (default: "pve-no-subscription"). Not pvetest by default:
-#                         a pvetest release can depend on packages only pvetest has, and then
+#        PROXMOX_SUITES   suites to read (default: "pve-no-subscription"). Not pve-test by default:
+#                         a pve-test release can depend on packages only pve-test has, and then
 #                         our build of it doesn't install next to no-subscription.
 # Output: the commit on stdout; what it found on stderr.
 # Exit:  0 found; 1 not found (no published version, or no commit with exactly that version);
