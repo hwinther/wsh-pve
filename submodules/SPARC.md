@@ -169,6 +169,8 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0013-sparc64-ofmem-keep-the-upper-bits-of-physical-addresses-in-align_ptr` | `align_ptr()` masked with a 32-bit `size_t`, so the firmware's heap broke once it sat above 4 GB (it is at the top of RAM): from about 4.3 GB OpenBIOS stopped before its banner (`Unhandled Exception 0x0000000000000030`; at 8192 MB `out of malloc memory (28)!` first). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-sparc64-ram-above-4g.md` |
 | `0014-sparc64-ofmem-find-claim-memory-whose-1-1-virtual-range-is-free` | A client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking the virtual side; with 4 GB that is the firmware's own range, the claim failed and NetBSD stopped after its loader (`Can't claim two pages of memory.`). It now searches below `0xff000000` and lower while the virtual range is taken. Generic code, applied to sparc64 only here | as 0013 |
 | `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
+| `0016-sparc64-client-interface-runs-with-interrupts-disabled` | The client interface walked `%cwp` through every window and rewrote the trap registers (saving and restoring the caller's state) with the caller's `PSTATE.IE`. Solaris and illumos call in with interrupts enabled and their own trap table: an interrupt in between overwrote the caller's windows. Tribblix's live CD stopped on most boots (corrupted locals after a call, `bad stack overflow at TL 2`); Solaris 10's one `BAD TRAP: type=4e` in the firmware was the same. Interrupts are now off from entry until the caller's `%pstate` is written back ("Tribblix on sun4u") | not fixed; see `upstream/openbios-sparc64-client-interface-interrupts.md` |
+| `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1592,6 +1594,86 @@ matrix 9/9 and the `solaris10` matrix 2/2 (DVD to the installer, installed disk 
 Not measured: more than 8 GB, other RAM sizes between 4 and 8 GB than 6144 MB, Solaris with 6144 MB,
 OpenBSD and Debian with more than 3 GB, more than 3 GB through PVE (the profile's cap is 8192 MB,
 the largest size measured, since pve-qemu-kvm 11.1.3-2+wsh16 carries 0013-0015).
+
+**Tribblix on sun4u (2026-11-18).** Tribblix m34 (`tribblix-sparc-0m34.iso`, illumos built from a
+pre-2024 gate, the newest SPARC release) is the first illumos tried here: QEMU issue #216 is about
+an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU started directly, the
+`_sparc64.py` layout (blank 8 GB disk on `ide.0`, the CD on `ide.1`, `sunhme`, serial console),
+2048 MB:
+
+- **Boot:** OpenBIOS boots `cdrom:f` (every slice of the CD's Sun label starts at 0; the hsfs FCode
+  boot block is in sectors 1-15), the kernel prints `Welcome to Tribblix` instead of the usual
+  banner, then the same harmless warnings as Solaris 10 (`could not find
+  debugger-vocabulary-hook`, `ebus0 assigning default interrupt level 1 for device i80420`, `add_spec:
+  No major number for sf`, `Out of range register specification from device node <fdthree>`). The
+  IDE disk attaches as `dad1` at `/pci@1f,0/pci@1,1/ide@3/dad@0,0` and is `c1t0d0` (not `c0t0d0` as
+  in Solaris 10); the CD is `c1t2d0`. The live CD imports its 95 SMF manifests on every boot (25-35
+  minutes under TCG with other guests on the host), asks for the keyboard layout on ttya
+  (Return: US-English) and comes to `tribblix console login:` after about 45 minutes. Several
+  services time out on the way (`svc:/system/rbac`, `svc:/network/location`; `svc.startd` kills
+  them), which costs time but nothing else. `Unimplemented service SUNW,asr-export-len` is printed
+  once (an OBP extension OpenBIOS doesn't have; harmless).
+- **The firmware bug (patch 0016):** with `openbios-sparc64` from 11.1.3-2+wsh15 or wsh16, or built
+  from 0001-0011 or 0001-0015, 4 of 7 boots of the live CD ended with corrupted registers:
+  client_handler's `%l4` (its saved `%pstate`) came back as 0 and the kernel ended in an endless
+  window spill at TL 1 (twice; one of them at the live shell, just after login); or `bad stack
+  overflow at TL 2` with nested trap frames from `prom_finddevice` and `%tpc` values like `0x1`
+  (twice, 1024 and 3072 MB, identical register dumps). Two more hung with a dead clock (below), the
+  seventh got as far as the keyboard layout question, where it was stopped. The cause: the client
+  interface saves and restores the caller's register windows and trap registers with interrupts
+  enabled, and illumos calls it with interrupts enabled; see
+  `upstream/openbios-sparc64-client-interface-interrupts.md`. Solaris 10's one `BAD TRAP: type=4e`
+  in the firmware during the `sol10-sun4u` runs is the same bug. With 0016 (firmware from the
+  committed patches 0001-0011 and 0013-0016, later 0013-0017) neither came back in about ten boots:
+  live CD boots in the lab and through PVE, one with 30 rounds of `prtconf -vp` and `eeprom` (device
+  tree walks through the client interface) and a complete install, and the installed system's first
+  and later boots. Regression with the 0013-0017 firmware: the `sparc64` matrix 9/9 and the
+  `solaris10` matrix 2/2.
+- **The clock stops (not fixed):** in 5 of 14 long runs, 2 before 0016 and 3 with it, the tick interrupt
+  stopped for good: the kernel sits in its idle loop with `%pil` 0, `-d int` shows no level-14
+  interrupt any more (device interrupts are still taken when a key is pressed), the kernel never
+  writes `%tick_cmpr` again (QEMU trace), `%softint` holds no pending tick. Anything that sleeps hangs:
+  the live CD after its SMF import (twice), during the SMF import (once, through PVE), an
+  install in its package installs (once, with network downloads) and one while it configured the
+  devices (through PVE). Each time with
+  heavy interrupt traffic, and the two through PVE with other emulated guests busy on the host
+  (leftover VMs of earlier runs). Suspected: the guest's `%set_softint`/`%clear_softint` writes run in
+  QEMU's vCPU thread as a read-modify-write of `env->softint` without the BQL, while the tick timer
+  sets its bit from the main loop thread, so a tick that fires in between is lost
+  (`upstream/qemu-sparc64-softint-race.md`, not verified, no fix carried: it would be a QEMU change).
+- **Install, ZFS (Tribblix's default):** `/root/live_install.sh -G -n <host> c1t0d0` from the live
+  root shell (an SMI label with one big slice 0, a ZFS pool `rpool` of version 28, a 2 GB swap zvol,
+  the base overlay from the CD, `installboot -F zfs`, the boot archive) completed in 64 minutes
+  (exit 0, `Welcome to Tribblix`). On the way, in both runs, FMA diagnosed `ZFS-8000-FD` ("The number
+  of I/O errors associated with a ZFS device exceeded acceptable levels") a few minutes into the
+  copy and marked `c1t0d0s0` DEGRADED ("too many errors"); `zpool status` showed 0 read, write and
+  checksum errors and "No known data errors", `iostat -En` 0 soft, hard and transport errors on the
+  disk, and `fmdump -e` 9097 `ereport.fs.zfs.io`, all but one with `zio_err = 5` (EIO), sizes from
+  512 bytes to 384 KB. So single I/Os failed with EIO and succeeded when ZFS retried them. ZFS
+  sends its first attempt with `B_FAILFAST`; whether `dad`/`uata` fails those early under QEMU's
+  cmd646, and why, wasn't traced. The OpenIndiana SPARC README's note that root pools on the Ultra
+  5/10 built-in IDE "will be unusable" (workaround: disable `fmd`) looks like the same thing on real
+  hardware.
+- **The ZFS boot block (patch 0017):** OpenBIOS loads the ZFS boot block from the disk and it loads
+  its second stage (the `zfs-file-system` package from 512 KB into the slice), then
+  `Unhandled Exception 0x0000000000000030` with the PC in `unaligned-l@`. The Forth return stack read
+  from the firmware's memory after the exception showed `$open-package` → the package's `open` →
+  `scan-vdev` → `x0=`, whose `xlsplit` ran `xwflips`: OpenBIOS's 64-bit FCode table lacked `xa+` and
+  `xa1+`, which shifted every token from 0x24a on by two (`upstream/openbios-fcode-64bit-token-table.md`).
+  With 0017 the boot block reads the pool and loads the kernel and boot archive from ZFS, and the
+  installed system boots from its ZFS root.
+- **Install, UFS:** `/root/ufs_install.sh -n <host> c1t0d0s0` after labelling the disk with slice 0
+  for `/` and slice 1 for swap (`format-a-disk.sh`, then `fmthard`; its newfs asks `(y/n)?`). Through
+  PVE it ran newfs, the copy, the overlays and `installboot -F ufs` without ZFS's EIO reports, then
+  the clock stopped (below) while it configured the devices. Not booted yet; the install target
+  stays with ZFS.
+- **The package set:** the live CD's package catalogue names older versions than the CD carries
+  (the base overlay asks for `TRIBcurl.8.12.1.1.zap`, `/pkgs` has `TRIBcurl.8.19.0.0.zap`). With a
+  network the installer fetched those packages from pkgs.tribblix.org (some downloads failed with
+  `has wrong size`); offline it skips them (`pkgadd: ERROR: no packages were found`: 18 skipped and
+  33 installed in the ZFS run, among the skipped curl, tcsh, nss, gnutls, xz, less, GNU coreutils and
+  grep), and the system they are missing from
+  still boots: `live_install.sh` copies the live root first. A Tribblix issue, not reported yet.
 
 **maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
 Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its
