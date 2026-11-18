@@ -165,6 +165,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
   QEMU today.
+- **Solaris 8 and 9 on the SS-5.** They have SS-20 targets only (`sol8-ss20`, `sol9-ss20`), chosen
+  when the SS-5 ran Solaris about 9 times slower; since #262 it is as fast as the SS-20. To find out:
+  does Web Start install with 256 MB on the SS-5 (OpenBIOS, and `ss5.bin` for 8), how long it takes,
+  and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Solaris 9 isn't
+  supported on sun4m by Sun (8 was the last release), so 9 stays a curiosity either way.
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
