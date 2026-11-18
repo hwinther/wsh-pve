@@ -841,7 +841,24 @@ this branch, one guest at a time), 2026-11-17:
 | `install sol26-ss20 --disk-size 9G --data-disk 2 --check` | passed; auto-layout as on SS-5 but swap 295 MB (512 MB of memory) and `/export/home` 6973 MB; `df -k` `/export/home` 7026317 KB; the data disk: `prtvtoc` 2048 cylinders (2046 accessible) of 16 x 128, slice 0 4190208 sectors, `newfs` 2046 MB in 64 cylinder groups, `/data` 2030575 KB mounted from `/etc/vfstab` at the check boot | 12.3 min (408 s, 205 s, 107 s) |
 | `install sol26-ss5 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
 
-Not done: a 9G install of Solaris 2.5.1 and 7 (Solaris 8 and 9 are tested with the 9G disk only,
+Solaris 7 on the 9G disk, 2026-11-18 (published packages: qemu-server 9.2.18+wsh3, pve-manager
+9.2.30+wsh2, pve-qemu-kvm 11.1.3-2+wsh16, libpve-storage-perl 9.1.18+wsh1; the host shared with
+three other agents' runs). Nothing but the targets' `sizes` changed: Solaris 7's installer and kernel
+take the QEmu8G label as 2.6's do (16204 cylinders, far below the label's 65535 and the 1 TB VTOC and
+UFS limits of a 32-bit kernel), and auto-layout puts `/` at cylinder 0 as on the 3G disk:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-ss20 --disk-size 9G --check` | passed; the installer lists `c0t3d0 (7594 MB) boot disk`, auto-layout `/` 89 MB, swap 295 MB, `/usr` 299 MB, `/export/home` 6910 MB; `df -k`: `/` 85615 KB (23990 used), `/usr` 288143 (186974, 72355 free), `/export/home` 6963389 (9); `prtvtoc`: 16204 cylinders, 16202 accessible, slices 0 (0-182399), 1, 2, 6, 7 (1400640-15553919) | 11.7 min (382 s, 208 s, 93 s) |
+| `install sol7-ss5 --disk-size 9G --check` | passed; as on SS-20 but swap 148 MB (256 MB of memory) and `/export/home` 7057 MB; `df -k` `/export/home` 7111805 KB, `/usr` the same 288143 (72355 free) | 14.1 min (529 s, 204 s, 95 s) |
+| `install sol7-ss20 --disk-size 8G` | refused: `is tested with 3G, 9G`, exit 1, nothing created | 0 s |
+
+3G stays Solaris 7's default: End User fits it with room to spare, the 9G install took about a minute
+longer on SS-20 (the bigger `/export/home` newfs; the SS-5 run's longer install phase is within the
+busy host's spread), and 2.6 has the same default. Solaris 8 defaults to 9G because its Entire Group
+needs more than 3 GB.
+
+Not done: a 9G install of Solaris 2.5.1 (Solaris 8 and 9 are tested with the 9G disk only,
 a 3G one not tried); the in-guest `format` route for a
 blank second disk.
 

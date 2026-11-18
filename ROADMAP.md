@@ -49,6 +49,7 @@ come after that, not before.
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note written | in review | |
+| Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 
 ## In progress
@@ -188,7 +189,6 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 | What | Notes |
 | --- | --- |
-| The published qemu-server 9.2.18, pve-manager 9.2.30 and libpve-storage-perl 9.1.18 (+wsh1) don't install next to pve-no-subscription | Built from pve-test releases before the sync followed no-subscription only; they need libpve-common-perl 9.2.11, libpve-guest-common-perl 6.0.9, libpve-cluster-perl 9.1.10 and proxmox-widget-toolkit 5.2.14 from pve-test. Until no-subscription has them, the e2e image adds pve-test to no-subscription (`PVE_COMPONENT` in `e2e/pve/Dockerfile`); set it back to `pve-no-subscription` then |
 | The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
 | The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB. The install target `sunos414-ss5` runs its install phase with 64 MB and sets 256 MB afterwards |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |

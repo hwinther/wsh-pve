@@ -178,6 +178,9 @@ class DiskSizes(unittest.TestCase):
     def test_tested_sizes(self):
         self.assertEqual(targets.TARGETS["sol26-ss5"]["disk"]["sizes"], ["3G", "9G"])
         self.assertEqual(targets.TARGETS["sol26-ss20"]["disk"]["sizes"], ["3G", "9G"])
+        # Solaris 7: 9G tested 2026-11-18 on both; 3G stays the default (End User fits, as on 2.6)
+        self.assertEqual(targets.TARGETS["sol7-ss5"]["disk"]["sizes"], ["3G", "9G"])
+        self.assertEqual(targets.TARGETS["sol7-ss20"]["disk"]["sizes"], ["3G", "9G"])
 
     def test_choice(self):
         t = targets.TARGETS["sol26-ss5"]
@@ -196,6 +199,16 @@ class DiskSizes(unittest.TestCase):
         a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="121", name=None, target="sol26-ss20")
         p = install.vm_params(t, a, {"solaris_2.6_598_sparc.iso": "local:iso/x.iso"}, None, install.disk_choice(t, "9G"))
         self.assertEqual(p["scsi3"], "local:8,format=raw")
+
+    def test_sol7_choice(self):
+        for name in ("sol7-ss5", "sol7-ss20"):
+            t = targets.TARGETS[name]
+            self.assertEqual(install.disk_choice(t, None)["name"], "3G")
+            nine = install.disk_choice(t, "9G")
+            self.assertEqual((nine["size"], nine["geometry"]["name"]), (8, "QEmu8G"))
+            a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="122", name=None, target=name)
+            p = install.vm_params(t, a, {"Sol7.399InstallationSparc.iso": "local:iso/x.iso"}, None, nine)
+            self.assertEqual(p["scsi3"], "local:8,format=raw")
 
     def test_data_disk_label(self):
         for gib in (1, 4, 32):
