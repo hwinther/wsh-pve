@@ -522,7 +522,7 @@ index faeb530a..395a09e6 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..8b1367ce 100644
+index b8412b6f..0c3362de 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -617,7 +617,7 @@ index b8412b6f..8b1367ce 100644
 +    // The sparc64 profile: the one layout that was tested to boot, mirrored from $SPARC64_PROFILE in
 +    // qemu-server (PVE::QemuServer::Machine), which validates it. sun4u with OpenBIOS, one CPU (the
 +    // machine's default model), up to 3 GiB, disks and CD-ROMs on the built-in IDE, at most four NICs.
-+    sparc64Profile: { defaultMemory: 512, maxMemory: 3072, maxNics: 4 },
++    sparc64Profile: { defaultMemory: 512, maxMemory: 8192, maxNics: 4 },
 +
 +    // the memory a sparc VM is preset to in the wizard and capped at: { preset, max }, or undefined
 +    // for the other architectures
