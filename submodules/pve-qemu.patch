@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..330a6c6 100644
+index 7b0cba5..b88b3cc 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,36 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,38 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -109,6 +109,8 @@ index 7b0cba5..330a6c6 100644
 +wsh/0031-hw-audio-cs4231-no-sound-without-an-audiodev.patch
 +wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
 +wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
++wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
++wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -6430,6 +6432,298 @@ index 0000000..97fdffa
 ++
 ++    qtest_add_func("sun4m-cs4231/playback", test_playback);
 ++    qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+new file mode 100644
+index 0000000..45cf114
+--- /dev/null
++++ b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
+@@ -0,0 +1,113 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64/sun4u: take the IDPROM MAC address from a -device NIC
++
++OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
++NetBSD and Solaris use it for hme0: the sunhme has no local-mac-address
++of its own. NetBSD's wm (e1000) takes it too.
++
++sun4u fills the IDPROM while it builds the machine, from the onboard NIC
++(the first -nic/-net nic of the default model, at 01:01.1). A NIC added
++with -device, as qemu-server and libvirt add them, doesn't exist yet at
++that point, so the IDPROM gets QEMU's default 52:54:00:12:34:56: every
++guest has that address whatever mac= says, and two of them on one
++network clash.
++
++Without an onboard NIC, fill the IDPROM again once the machine is
++complete (a machine-init-done notifier, before the firmware runs): from
++the first NIC of the machine's own model (sunhme, the onboard NIC of a
++real Ultra 5/10), else from the first NIC of any model. The host id is
++made from the MAC address, as before, so it changes with it. With an
++onboard NIC, or with no NIC at all, the IDPROM is what it was.
++---
++ hw/sparc64/sun4u.c | 71 ++++++++++++++++++++++++++++++++++++++++++++++
++ 1 file changed, 71 insertions(+)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index a348096aee..42540f3dbc 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -153,6 +153,60 @@ static int sun4u_NVRAM_set_params(Nvram *nvram, uint16_t NVRAM_size,
++     return 0;
++ }
++ 
+++/*
+++ * Without an onboard NIC the IDPROM's MAC address is filled in once the
+++ * machine is complete, from the NICs added with -device (see below).
+++ */
+++typedef struct Sun4uIdprom {
+++    Notifier machine_done;
+++    Nvram *nvram;
+++    const char *nic_model;
+++} Sun4uIdprom;
+++
+++typedef struct Sun4uNicSearch {
+++    const char *model;
+++    NICState *nic;
+++} Sun4uNicSearch;
+++
+++static void sun4u_find_nic(NICState *nic, void *opaque)
+++{
+++    Sun4uNicSearch *search = opaque;
+++
+++    if (!search->nic && (!search->model ||
+++                         !strcmp(qemu_get_queue(nic)->model, search->model))) {
+++        search->nic = nic;
+++    }
+++}
+++
+++static void sun4u_idprom_machine_done(Notifier *notifier, void *data)
+++{
+++    Sun4uIdprom *idprom = container_of(notifier, Sun4uIdprom, machine_done);
+++    NvramClass *k = NVRAM_GET_CLASS(idprom->nvram);
+++    Sun4uNicSearch search = { .model = idprom->nic_model };
+++    struct Sun_nvram header;
+++    unsigned int i;
+++
+++    /*
+++     * The first NIC of the machine's own model (sunhme, the onboard NIC of
+++     * a real Ultra 5/10, whose MAC address is the one in its IDPROM), else
+++     * the first NIC of any model.
+++     */
+++    qemu_foreach_nic(sun4u_find_nic, &search);
+++    if (!search.nic) {
+++        search.model = NULL;
+++        qemu_foreach_nic(sun4u_find_nic, &search);
+++    }
+++    if (!search.nic) {
+++        return;
+++    }
+++
+++    memset(&header, 0, sizeof(header));
+++    Sun_init_header(&header, search.nic->conf->macaddr.a, 0x80);
+++    for (i = 0; i < sizeof(header); i++) {
+++        (k->write)(idprom->nvram, 0x1fd8 + i, ((uint8_t *)&header)[i]);
+++    }
+++}
+++
++ static uint64_t sun4u_load_kernel(const char *kernel_filename,
++                                   const char *initrd_filename,
++                                   ram_addr_t RAM_size, uint64_t *initrd_size,
++@@ -689,6 +743,23 @@ static void sun4uv_init(MemoryRegion *address_space_mem,
++                            graphic_width, graphic_height, graphic_depth,
++                            (uint8_t *)&macaddr);
++ 
+++    /*
+++     * OpenBIOS gives the guest the IDPROM's MAC address as the system's,
+++     * and the sunhme has no other: NetBSD and Solaris use it for hme0. A
+++     * NIC added with -device (as most management tools do) doesn't exist
+++     * yet, so without an onboard NIC the IDPROM has a default address that
+++     * is the same for every machine. Take the address from the NICs once
+++     * they are all there, before the firmware reads it.
+++     */
+++    if (!onboard_nic) {
+++        Sun4uIdprom *idprom = g_new0(Sun4uIdprom, 1);
+++
+++        idprom->nvram = nvram;
+++        idprom->nic_model = mc->default_nic;
+++        idprom->machine_done.notify = sun4u_idprom_machine_done;
+++        qemu_add_machine_init_done_notifier(&idprom->machine_done);
+++    }
+++
++     dev = qdev_new(TYPE_FW_CFG_IO);
++     qdev_prop_set_bit(dev, "dma_enabled", false);
++     object_property_add_child(OBJECT(ebus), TYPE_FW_CFG, OBJECT(dev));
+diff --git a/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+new file mode 100644
+index 0000000..84de575
+--- /dev/null
++++ b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
+@@ -0,0 +1,167 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the IDPROM MAC address on sun4u
++
++The test reads the IDPROM from the m48t59 NVRAM through the ebus's I/O
++space (bus 1 behind the simba bridge at 00:01.1, with the bridge's I/O
++window opened over the NVRAM as OpenBIOS would) and checks its MAC
++address, format and machine type bytes, host id and checksum: QEMU's
++default without a NIC, the address of a sunhme added with -device, the
++first sunhme when a virtio-net-pci comes before it, the first NIC when
++there is no sunhme, and the onboard -net nic over a -device sunhme.
++
++Without the previous patch the device case fails (the IDPROM has
++52:54:00:12:34:56); with it all five pass.
++---
++ tests/qtest/meson.build         |   3 +-
++ tests/qtest/sun4u-idprom-test.c | 128 ++++++++++++++++++++++++++++++++
++ 2 files changed, 130 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-idprom-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9b6a60b713..1eb55ea351 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -211,7 +211,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++-  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test']
+++  ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
+++   'sun4u-idprom-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-idprom-test.c b/tests/qtest/sun4u-idprom-test.c
++new file mode 100644
++index 0000000000..d9902ba0ce
++--- /dev/null
+++++ b/tests/qtest/sun4u-idprom-test.c
++@@ -0,0 +1,128 @@
+++/*
+++ * QTest: the MAC address in the sun4u IDPROM
+++ *
+++ * OpenBIOS gives the guest the IDPROM's MAC address as the system's, and
+++ * NetBSD and Solaris use it for hme0 (the sunhme has no address of its
+++ * own in the device tree). It must be the one given to the NIC, also when
+++ * the NIC is added with -device rather than as the onboard -nic.
+++ *
+++ * The IDPROM is the last 32 bytes of the m48t59 NVRAM, at 0x2000 in the
+++ * PCI I/O space of the ebus's bus (bus 1, behind the simba bridge at
+++ * 00:01.1). Nothing runs on the CPU, so the test opens the bridge's I/O
+++ * window over the NVRAM itself, as OpenBIOS would.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
+++#define PCI_IO          0x1fe02000000ULL    /* PCI I/O space */
+++#define DEVFN_SIMBA_A   0x09                /* 00:01.1 */
+++#define NVRAM_IO        0x2000              /* m48t59, 8 KB */
+++#define IDPROM          (PCI_IO + NVRAM_IO + 0x1fd8)
+++#define IDPROM_LEN      16
+++
+++#define DEFAULT_MAC     "52:54:00:12:34:56"
+++
+++static void cfg_writeb(QTestState *qts, int bus, int devfn, int reg,
+++                       uint8_t val)
+++{
+++    qtest_writeb(qts, PCI_CONFIG + (bus << 16) + (devfn << 8) + reg, val);
+++}
+++
+++/* Start the machine with `args` and read its IDPROM */
+++static void read_idprom(const char *args, uint8_t *idprom)
+++{
+++    QTestState *qts;
+++    int i;
+++
+++    qts = qtest_initf("-machine sun4u -nodefaults %s", args);
+++
+++    /* Bus 1 behind 00:01.1, its I/O window over 0x2000-0x3fff */
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SECONDARY_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_SUBORDINATE_BUS, 1);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_BASE, NVRAM_IO >> 8);
+++    cfg_writeb(qts, 0, DEVFN_SIMBA_A, PCI_IO_LIMIT, (NVRAM_IO + 0x1fff) >> 8);
+++
+++    for (i = 0; i < IDPROM_LEN; i++) {
+++        idprom[i] = qtest_readb(qts, IDPROM + i);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++/* The IDPROM's MAC address is `mac`, and the header around it is valid */
+++static void check_idprom(const char *args, const char *mac)
+++{
+++    uint8_t idprom[IDPROM_LEN], sum = 0;
+++    char got[18];
+++    int i;
+++
+++    read_idprom(args, idprom);
+++    snprintf(got, sizeof(got), "%02x:%02x:%02x:%02x:%02x:%02x",
+++             idprom[2], idprom[3], idprom[4], idprom[5], idprom[6], idprom[7]);
+++    g_assert_cmpstr(got, ==, mac);
+++
+++    g_assert_cmphex(idprom[0], ==, 0x01);               /* format */
+++    g_assert_cmphex(idprom[1], ==, 0x80);               /* machine type */
+++    g_assert_cmpmem(&idprom[12], 3, &idprom[5], 3);     /* host id serial */
+++    for (i = 0; i < IDPROM_LEN - 1; i++) {
+++        sum ^= idprom[i];
+++    }
+++    g_assert_cmphex(idprom[15], ==, sum);
+++}
+++
+++/* No NIC: QEMU's default address, as before */
+++static void test_no_nic(void)
+++{
+++    check_idprom("", DEFAULT_MAC);
+++}
+++
+++/* A sunhme added with -device, as qemu-server and libvirt do */
+++static void test_device(void)
+++{
+++    check_idprom("-device sunhme,mac=bc:24:11:00:00:01,bus=pciB",
+++                 "bc:24:11:00:00:01");
+++}
+++
+++/* The first sunhme, though another NIC model comes first */
+++static void test_first_sunhme(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:02,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:03,bus=pciB "
+++                 "-device sunhme,mac=bc:24:11:00:00:04,bus=pciB",
+++                 "bc:24:11:00:00:03");
+++}
+++
+++/* No sunhme: the first NIC of any model */
+++static void test_other_model(void)
+++{
+++    check_idprom("-device virtio-net-pci,mac=bc:24:11:00:00:05,bus=pciB "
+++                 "-device virtio-net-pci,mac=bc:24:11:00:00:06,bus=pciB",
+++                 "bc:24:11:00:00:05");
+++}
+++
+++/* The onboard NIC keeps its place in the IDPROM, as before */
+++static void test_onboard(void)
+++{
+++    check_idprom("-net nic,model=sunhme,macaddr=bc:24:11:00:00:07 "
+++                 "-device sunhme,mac=bc:24:11:00:00:08,bus=pciB",
+++                 "bc:24:11:00:00:07");
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-idprom/no-nic", test_no_nic);
+++    qtest_add_func("sun4u-idprom/device", test_device);
+++    if (qtest_has_device("virtio-net-pci")) {
+++        qtest_add_func("sun4u-idprom/first-sunhme", test_first_sunhme);
+++        qtest_add_func("sun4u-idprom/other-model", test_other_model);
+++    }
+++    qtest_add_func("sun4u-idprom/onboard", test_onboard);
 ++
 ++    return g_test_run();
 ++}
