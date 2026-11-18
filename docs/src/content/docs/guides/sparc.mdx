@@ -347,7 +347,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
-| Tribblix m34 (illumos) | with an `openbios-sparc64` that has patches 0016 and 0017 (no published package yet): the live CD boots, installs to the IDE disk with its own installer, and the installed system boots (see [Tribblix (illumos)](#tribblix-illumos)) |
+| Tribblix m34 (illumos) | with pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`): the live CD boots, installs to the IDE disk with its own installer, and the installed system boots (see [Tribblix (illumos)](#tribblix-illumos)) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
 for disks and the CD-ROM (OpenBIOS boots only from there), **`sunhme`** (NetBSD also drives `virtio`,
@@ -416,11 +416,11 @@ host id needs a new key). Details: `submodules/SPARC.md`, "The sun4u system MAC"
 ### Tribblix (illumos)
 
 Tribblix m34 for SPARC (`tribblix-sparc-0m34.iso` from tribblix.org), the newest illumos release
-for SPARC, needs two OpenBIOS fixes that no published `pve-qemu-kvm` has yet (repository patches
-0016 and 0017: the firmware's client interface with interrupts off, and the 64-bit FCode tokens
-that the ZFS boot block uses). With the firmware of the published packages the live CD stops or
-hangs on most boots, and a ZFS root disk doesn't boot. With the fixes, measured in the sparc lab
-(QEMU started directly; the live CD also through Proxmox):
+for SPARC, needs pve-qemu-kvm 11.1.3-2+wsh20 or later: two OpenBIOS fixes (repository patches 0016
+and 0017: the firmware's client interface with interrupts off, and the 64-bit FCode tokens that the
+ZFS boot block uses) and a QEMU fix for its clock (`wsh/0036`). With older packages the live CD
+stops or hangs on most boots, a ZFS root disk doesn't boot, and the guest's clock stopped for good
+in about one of three long runs. With the fixes, measured in the sparc lab and through Proxmox:
 
 1. Create the VM as for NetBSD with the Tribblix ISO, 2048 MB, an 8 GB disk and a serial console
    (`serial0: socket`, Display: Serial terminal 0).
@@ -433,16 +433,16 @@ hangs on most boots, and a ZFS root disk doesn't boot. With the fixes, measured 
    during the copy (I/O that ZFS had to retry on the emulated IDE disk; no data errors); `zpool clear
    rpool` on the installed system should remove the mark (not checked yet).
 4. `init 5`, eject the CD (or put `ide0` first in the boot order) and start the VM: the installed
-   system's first boot imports the service descriptions again (about an hour), then `console
-   login:`. Change root's password and lock the live CD's `jack` account. Don't use `reboot`: stop
+   system's first boot imports the service descriptions again (99 of them; `console login:` after
+   about 70 minutes). Only the first boot does that: later boots reach `console login:` in 12-14
+   minutes. Change root's password and lock the live CD's `jack` account. Don't use `reboot`: stop
    and start the VM. `init 5` itself takes several minutes.
 
 `wsh-lab install tribblix-m34-sun4u --vmid N --check` automates this on a VM it creates with the
 sparc64 profile, with a known root password and a static address. Several services time out on the
-way under emulation (`svc.startd` kills them); the system comes up anyway. In about one of three
-long runs the guest's clock stopped for good (the guest idles and nothing that waits for time ever
-wakes up): a race in QEMU that needs a QEMU fix; stop and start the VM. Details:
-`submodules/SPARC.md`, "Tribblix on sun4u".
+way under emulation (`svc.startd` kills them); the system comes up anyway. Through Proxmox it took
+4.3 hours (install 141 minutes, first boot 89, check 26). Details: `submodules/SPARC.md`, "Tribblix
+on sun4u".
 
 ## Known limitations
 

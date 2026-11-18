@@ -78,6 +78,10 @@ PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+ws
 PACKAGES_2026_11_18_CD_AS_DISK = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18 + cd_as_disk",
                                   "pve-manager": "9.2.30+wsh1"}
 PACKAGES_2026_11_18 = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18+wsh3", "pve-manager": "9.2.30+wsh2"}
+# qemu-system-sparc64 built from pve-qemu wsh/0001-0037 and openbios-sparc64 from openbios 0001-0017 (both
+# in pve-qemu-kvm 11.1.3-2+wsh20 and later), in the PVE test container with the packages of that day
+PACKAGES_2026_11_18_SUN4U = {"pve-qemu-kvm": "11.1.3-2+wsh16 + wsh/0034-0037 + openbios 0016-0017",
+                             "qemu-server": "9.2.18+wsh1", "pve-manager": "9.2.30+wsh1"}
 # Debian 4.0's Linux 2.6.18 esp driver: pve-qemu-kvm 11.1.3-2+wsh17 with the ESP fix (wsh/0038,
 # esp_cdb_ready() counting the message bytes) built in; no published package has it yet
 PACKAGES_ESP_FIX = {"pve-qemu-kvm": "11.1.3-2+wsh17, qemu-system-sparc a local build with wsh/0038",
@@ -526,8 +530,8 @@ TARGETS = {
     "tribblix-m34-sun4u": {
         "title": "Tribblix m34 SPARC (illumos) base install on sun4u (OpenBIOS, IDE disk, ZFS root)",
         "status": "automated",
-        "matrix_skip": "needs openbios-sparc64 with OpenBIOS patches 0016 and 0017, in no published "
-                       "pve-qemu-kvm yet",
+        "matrix_skip": "takes ~4.3 h, longer than the sparc lab job's 240-minute limit; install it once, then"
+                       " boot the stored disk (ROADMAP, \"Scheduled reinstalls\")",
         "method": "scripted",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 2048,
                     "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
@@ -547,6 +551,10 @@ TARGETS = {
         "network": "hme0: a static address with ipadm (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns,"
                    " --domain)",
         "net_modes": ["static"],  # tribblix-firstboot.py has NET_MODE=dhcp (ipadm -T dhcp), not tried yet
+        # Needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS 0016-0017, QEMU wsh/0036). The live CD and the
+        # installed system's first boot import the SMF manifests (~70 min each); later boots ~12-14 min
+        "minutes": 257,  # install 141 (live CD login 61), first boot 89 (login 70), --check 26 (login 14)
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_SUN4U, "with": "--check"},
     },
     # The CD's microroot loads the install tools from the CD, then the same sysinst answers
     # (netbsd-install-sparc.py); a blank disk: no Sun label needed (sysinst writes a disklabel)

@@ -148,7 +148,11 @@ RAM address, so their idle cases fail with the old lookup (checked with the 0001
 fail); 0021's `cmd646_reset()` clears `intrq`, and 0022's new `reset-drops-intrq` case fails
 without it; checkpatch-style clean-ups in those tests and in 0021/0023 (line lengths, comments, a
 table instead of `atoi`/`strtoul`). The `SOL_*` macro comments in `translate.c` (0014/0023) were
-left as they are. With 0001-0039 the `qtest-sparc` and `qtest-sparc64` suites: 40 OK, 4 skipped,
+left as they are. Lab regression with the 0001-0039 binaries (2026-11-18): `smoke` 3/3, `idle`
+13/13 (SunOS 4.1.4 and 2.5.1 among them), `smp` 3/3, `solaris10` 2/2, `sparc64` 9/9 (two cases,
+`nb111-cd-vga-sparc64` and `nb111-virtio-sparc64`, failed at the start in the first run because the
+lab's firmware directory lacked `vgabios-stdvga.bin` and `efi-virtio.rom`, a setup error, and
+passed when re-run with them). With 0001-0039 the `qtest-sparc` and `qtest-sparc64` suites: 40 OK, 4 skipped,
 and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-idprom-test` 5/5,
 `sun4u-softint-test` 1/1, `sun4u-cmd646-test` 3/3, every sun4m qtest above).
 
@@ -1793,7 +1797,7 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   tree walks through the client interface) and a complete install, and the installed system's first
   and later boots. Regression with the 0013-0017 firmware: the `sparc64` matrix 9/9 and the
   `solaris10` matrix 2/2.
-- **The clock stops (not fixed):** in 5 of 14 long runs, 2 before 0016 and 3 with it, the tick interrupt
+- **The clock stops (fixed by pve-qemu `wsh/0036`):** in 5 of 14 long runs, 2 before 0016 and 3 with it, the tick interrupt
   stopped for good: the kernel sits in its idle loop with `%pil` 0, `-d int` shows no level-14
   interrupt any more (device interrupts are still taken when a key is pressed), the kernel never
   writes `%tick_cmpr` again (QEMU trace), `%softint` holds no pending tick. Anything that sleeps hangs:
@@ -1805,7 +1809,15 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   QEMU's vCPU thread as a read-modify-write of `env->softint` without the BQL, while the tick timer
   sets its bit from the main loop thread, so a tick that fires in between is lost
   (`upstream/qemu-sparc64-softint-race.md`, caught once in a trace: the tick fired while the guest cleared another bit, and the guest's store
-  dropped it; no fix carried: it would be a QEMU change).
+  dropped it). pve-qemu `wsh/0036` takes the BQL around those writes (qtest `wsh/0037`). With it
+  there were three long Tribblix runs with the fix on 2026-11-18, all passed with the clock running: `lab.py
+  install tribblix-m34-sun4u --check` through PVE (257 minutes: install 141, first boot 89, check 26,
+  and a further boot from the disk) and two lab installs (`tribblix-install-sparc64.py`, 141 minutes
+  each: live CD login 72, install 64), all three at once with other emulated guests busy on the host.
+  Before the fix 5 of 14 such runs lost the clock.
+  The installed system imports the SMF manifests only on its first boot from the disk (99 of them;
+  login after 70 minutes); the check boot and one more came to `console login:` after 817 and 736 s
+  without importing anything, and `init 5` took 6-11 minutes.
 - **Install, ZFS (Tribblix's default):** `/root/live_install.sh -G -n <host> c1t0d0` from the live
   root shell (an SMI label with one big slice 0, a ZFS pool `rpool` of version 28, a 2 GB swap zvol,
   the base overlay from the CD, `installboot -F zfs`, the boot archive) completed in 64 minutes
