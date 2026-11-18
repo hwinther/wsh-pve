@@ -873,15 +873,15 @@ ERROR: no packages were found`) and the rest of the system comes from the live C
 `live_install.sh` copies first. The scenario takes the network down before the install so the
 result doesn't depend on the internet.
 
-**Slow, and a clock that can stop.** Under TCG with other guests on the host: about 45-55 minutes
-from power-on to the live CD's login prompt (most of it the SMF import), 48-64 minutes for
-`live_install.sh`, 60 minutes for the installed system's first boot (it imports
-the SMF manifests again), 15-17 minutes to the login prompt on later boots, and `init 5` takes 4-13
+**Slow.** Under TCG with other guests on the host: about 45-72 minutes from power-on to the live
+CD's login prompt (most of it the SMF import), 48-64 minutes for `live_install.sh`, 60-70 minutes
+for the installed system's first boot (it imports the 99 SMF manifests again), 12-17 minutes to the
+login prompt on later boots (no import), and `init 5` takes 4-13
 minutes because service methods time out on the way down (`_tribblix.power_off()` waits 30). Many
 service methods time out on the way up as well (`svc:/network/location`, `rbac`, `routing/route`,
-`update-man-index`; `svc.startd` kills them); the system comes up anyway. In about one of three long
-runs the guest's clock stopped for good (submodules/SPARC.md, "Tribblix on sun4u": a race
-in QEMU, no fix carried); the phase then stalls until its timeout and fails.
+`update-man-index`; `svc.startd` kills them); the system comes up anyway. Before pve-qemu
+`wsh/0036` the guest's clock stopped for good in about one of three long runs (submodules/SPARC.md,
+"Tribblix on sun4u": a race in QEMU) and the phase stalled until its timeout.
 
 Tested in the lab and in the PVE test container on the lab host (TCG, pve-qemu-kvm 11.1.3-2+wsh16
 with `openbios-sparc64` built from this branch's patches, qemu-server 9.2.18+wsh1, pve-manager
@@ -904,6 +904,16 @@ the published packages needed that day), 2026-11-18:
 | `--vmid 9405 --check` (UFS) | see below | |
 | unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 78 passed | 6 s |
 | `matrix.py sparc64` and `solaris10` with the 0013-0017 firmware | 9/9 and 2/2 passed | |
+
+With pve-qemu `wsh/0001-0037` (`qemu-system-sparc64` built from the branch, `wsh/0036` fixing the
+clock) and the 0001-0017 firmware, in the PVE test container (`wsh/0001-0039` for the lab runs),
+2026-11-18, three long runs at once with other emulated guests on the host:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `lab.py install tribblix-m34-sun4u --vmid 9801 --check` | passed: offline install, 18 packages skipped, first boot (static `hme0`, root's password, marker), check | 257 min: install 141 (live CD login 61), first boot 89 (login 70, 99 manifests imported), check 26 (login 14) |
+| one more boot of that disk (`tribblix-boot-disk.py --pve 9801`) | passed, no SMF import | login 12 min, `init 5` 6.5 min |
+| `tribblix-install-sparc64.py`, lab, twice | passed both: `live_install.sh` exit 0, 18 packages skipped | 141 min each (live CD login 72, install 64) |
 
 ### Disk sizes
 

@@ -129,6 +129,10 @@ every time here, but nothing guarantees that on another host.
 ## Results with the fix
 
 `make check-qtest-sparc` and `check-qtest-sparc64` pass as before with the fix (only the known
-`qmp-test` `oob` failures). Long Tribblix runs with the fix (a `lab.py install tribblix-m34-sun4u
---check` through PVE and two lab installs on a busy host) were started on 2026-11-18 and had not
-finished when this was written; their results go into `submodules/SPARC.md` ("Tribblix on sun4u").
+`qmp-test` `oob` failures), and so do the sparc lab's `sparc64` and `solaris10` matrices. There were
+three long Tribblix runs with the fix on 2026-11-18, all passed with the clock running: `lab.py
+install tribblix-m34-sun4u --check` through PVE (257 minutes: install 141, first boot 89, check 26,
+and a further boot from the disk) and two lab installs (`tribblix-install-sparc64.py`, 141 minutes
+each: live CD login 72, install 64), all three at once with other emulated guests busy on the host.
+Before the fix 5 of 14 such runs lost the clock. Three runs against a one-in-three failure rate is weak evidence on its own; with the
+qtest above (and the fix making the loss impossible by construction) it is consistent.

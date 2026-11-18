@@ -93,10 +93,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    from 0x24a on ran the wrong word, so the illumos ZFS boot block crashed). With both, the live CD
    boots to its login prompt, installs to the IDE disk with its own installer, and the installed disk
    boots, gets its address and powers off; `lab.py install tribblix-m34-sun4u` drives it through PVE
-   (left out of `pve_matrix.py install` until a package has 0016 and 0017). Still open:
-   - the guest's clock stops for good in about one of three long runs (5 of 14, before and
-     after 0016), always under heavy interrupt traffic; a race in QEMU on `%softint`, caught in a trace
-     (`upstream/qemu-sparc64-softint-race.md`), would need a QEMU patch;
+   (in `pve_matrix.py install` with pve-qemu-kvm 11.1.3-2+wsh20 or later; 257 minutes through PVE,
+   3 of 3 long runs passed). The guest's clock that stopped in about one of three long runs (a QEMU
+   race on `%softint`) is fixed by pve-qemu `wsh/0036`. Still open:
    - with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first attempts that
      ZFS retries; no data errors); a UFS install (`ROOT_FS=ufs`) avoids that but hasn't been booted;
    - the live CD's package catalogue is older than its packages, so an offline install skips some
