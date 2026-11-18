@@ -631,5 +631,144 @@ class SunOS4(unittest.TestCase):
         self.assertEqual(no_user[_sunos4.which(no_user, " SysConfE1 ")][1], "2\r")
 
 
+class RedHat62(unittest.TestCase):
+    """redhat62-ss5/-ss20: the unattended method (kickstart from an answer CD made on the node), the
+    answer CD itself, the kickstart file and the drive it goes into."""
+    names = ("redhat62-ss5", "redhat62-ss20")
+
+    def test_targets(self):
+        for name in self.names:
+            t = targets.TARGETS[name]
+            self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "eth0"))
+            self.assertEqual(t["install"]["answers"], {"format": "kickstart", "drive": "scsi5"})
+            self.assertEqual([m["name"] for m in t["media"]], ["redhat-6.2-sparc.iso"])
+            self.assertEqual(t["media"][0]["drive"], "scsi6")  # the install source: sr1, after the answers' sr0
+            self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("scsi3", "sun"))  # anaconda wants a label
+            self.assertEqual(t["net_modes"], ["static"])
+            self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertEqual(targets.TARGETS["redhat62-ss5"]["profile"]["machine"], "SS-5")
+        self.assertEqual(targets.TARGETS["redhat62-ss20"]["profile"]["machine"], "SS-20")
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9600", name=None, target="redhat62-ss5")
+        p = install.vm_params(targets.TARGETS["redhat62-ss5"], a, {"redhat-6.2-sparc.iso": "local:iso/rh.iso"},
+                              "/work/disk-label.raw")
+        self.assertEqual(p["scsi6"], "local:iso/rh.iso,media=cdrom")
+        self.assertNotIn("scsi5", p)  # the answer CD goes in for the install phase only (Unattended)
+
+    def test_answers_drive_checked(self):
+        saved = targets.TARGETS["redhat62-ss5"]
+        try:
+            for answers in ({"format": "kickstart", "drive": "scsi6"}, {"format": "kickstart", "drive": "scsi3"},
+                            {"format": "kickstart"}, None):
+                install_ = {**saved["install"], "answers": answers}
+                targets.TARGETS["redhat62-ss5"] = {**saved, "install": install_}
+                self.assertTrue(any(p.startswith("redhat62-ss5:") for p in targets.problems()), answers)
+        finally:
+            targets.TARGETS["redhat62-ss5"] = saved
+        self.assertEqual(targets.problems(), [])
+
+    def test_iso9660(self):
+        import answer_media
+        import dos_tools
+        data = answer_media.iso9660({"KS.CFG": b"hello\n", "B.TXT": b"x" * 5000}, "WSH_LAB_KS")
+        self.assertEqual(len(data) % 2048, 0)
+        self.assertEqual(data, answer_media.iso9660({"KS.CFG": b"hello\n", "B.TXT": b"x" * 5000}, "WSH_LAB_KS"))
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["B.TXT", "KS.CFG"])
+            self.assertEqual(iso.cat("ks.cfg"), b"hello\n")
+            self.assertEqual(iso.cat("B.TXT"), b"x" * 5000)
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(data[16 * 2048 + 40:16 * 2048 + 72].rstrip(), b"WSH_LAB_KS")
+        for bad in ({"ks.cfg": b""}, {"TOOLONGNAME.CFG": b""}, {"A-B": b""}):
+            with self.assertRaises(ValueError):
+                answer_media.iso9660(bad)
+
+    def test_kickstart(self):
+        import answer_media
+        ks = answer_media.kickstart("10.77.0.60", "255.255.252.0")
+        self.assertIn("network --bootproto static --ip 10.77.0.60 --netmask 255.255.252.0\n", ks)
+        lines = ks.splitlines()
+        # /boot first (SILO's second stage must be near the start of the disk), then /, then swap
+        parts = [line.split()[1] for line in lines if line.startswith("part ")]
+        self.assertEqual(parts, ["/boot", "/", "swap"])
+        for cmd in ("cdrom", "install", "zerombr yes", "clearpart --all", "skipx", "reboot", "%packages", "@ Base"):
+            self.assertIn(cmd, lines)
+        self.assertIn("rootpw --iscrypted *", lines)  # no password: the first boot sets it
+        self.assertLess(lines.index("%packages"), lines.index("%post"))
+        for bad in (("10.0.2.15; rm -rf /", "255.255.255.0"), ("10.0.2.15", "")):
+            with self.assertRaises(ValueError):
+                answer_media.kickstart(*bad)
+        iso = answer_media.image("kickstart", "10.0.2.15", "255.255.255.0")
+        self.assertIn(answer_media.kickstart("10.0.2.15", "255.255.255.0").encode(), iso)
+        with self.assertRaises(ValueError):
+            answer_media.image("preseed", "10.0.2.15", "255.255.255.0")
+
+    def test_unattended_install(self):
+        """The answer CD is written to the media storage, put into scsi5 for the install phase only, and
+        the drive and the image are gone afterwards, also when the install fails."""
+        d = tempfile.mkdtemp()
+        calls = []
+
+        def fake_run(*cmd, check=True):
+            calls.append(cmd)
+            if cmd[:2] == ("pvesm", "path"):
+                return os.path.join(d, cmd[2].split("/")[-1])
+            return ""
+
+        class Job:
+            target = targets.TARGETS["redhat62-ss5"]
+            volids, net, hostname = {}, {"ip": "10.0.2.20", "netmask": "255.255.255.0"}, "rh"
+            root_password = "wshlab"
+            a = types.SimpleNamespace(timeout=None, vmid="9600", media_storage="local", out=d)
+
+            def __init__(self, fail=False):
+                self.fail, self.phases, self.logs = fail, [], []
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                path = os.path.join(d, "wsh-lab-answers-9600.iso")
+                with open(path, "rb") as f:
+                    self.phases.append((name, scenario, f.read()))
+                if self.fail:
+                    raise install.InstallFailed("install: stalled")
+
+            def log(self, msg):
+                self.logs.append(msg)
+
+        saved = install.run, install.storage_content, install.save_config
+        install.run, install.storage_content = fake_run, lambda s: {"iso", "images"}
+        install.save_config = lambda vmid, work: None
+        try:
+            job = Job()
+            install.Unattended().install(job)
+            (name, scenario, data), = job.phases
+            self.assertEqual((name, scenario), ("install", "redhat-install-sparc.py"))
+            self.assertEqual(data, install.answer_media.image("kickstart", "10.0.2.20", "255.255.255.0"))
+            self.assertIn(("qm", "set", "9600", "--scsi5", "local:iso/wsh-lab-answers-9600.iso,media=cdrom"), calls)
+            self.assertEqual(calls[-1], ("qm", "set", "9600", "--delete", "scsi5"))
+            self.assertEqual(os.listdir(d), [])
+            calls.clear()
+            with self.assertRaises(install.InstallFailed):
+                install.Unattended().install(Job(fail=True))
+            self.assertEqual(calls[-1], ("qm", "set", "9600", "--delete", "scsi5"))
+            self.assertEqual(os.listdir(d), [])
+            with open(os.path.join(d, "wsh-lab-answers-9600.iso"), "wb"):
+                pass  # an image left by someone else is never overwritten
+            with self.assertRaises(install.InstallFailed):
+                install.Unattended().install(Job())
+            install.storage_content = lambda s: {"images"}
+            os.unlink(os.path.join(d, "wsh-lab-answers-9600.iso"))
+            with self.assertRaises(install.InstallFailed):  # no iso content on the media storage
+                install.Unattended().install(Job())
+        finally:
+            install.run, install.storage_content, install.save_config = saved
+            for n in os.listdir(d):
+                os.unlink(os.path.join(d, n))
+            os.rmdir(d)
+
+
 if __name__ == "__main__":
     unittest.main()

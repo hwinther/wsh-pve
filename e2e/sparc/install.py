@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 
+import answer_media
 import lab
 import sunlabel
 import targets
@@ -488,6 +489,36 @@ class Scripted:
         job.phase("check", t["check"]["scenario"], v, t["check"]["timeout"])
 
 
+class Unattended(Scripted):
+    """The installer reads its answers from a medium made on the node (answer_media.py: never from vendor
+    files, nothing secret on it): written to the media storage as wsh-lab-answers-<vmid>.iso, put
+    into the target's install "answers" drive for the install phase only, then the drive is removed
+    and the image deleted, whatever the install did. The install scenario types the boot line and
+    answers what the answer file leaves on the screen; first boot and check are Scripted's."""
+
+    def install(self, job):
+        a, ans = job.a, job.target["install"]["answers"]
+        if "iso" not in (storage_content(a.media_storage) or {"iso"}):
+            raise InstallFailed(f"storage {a.media_storage} has no iso content for the answer CD")
+        volid = f"{a.media_storage}:iso/wsh-lab-answers-{a.vmid}.iso"
+        path = run("pvesm", "path", volid)
+        if os.path.exists(path):
+            raise InstallFailed(f"{path} exists already (another install of VM {a.vmid}?)")
+        data = answer_media.image(ans["format"], job.net["ip"] or DEFAULT_IP, job.net["netmask"] or DEFAULT_NETMASK)
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+            job.log(f"answer CD ({ans['format']}): {volid}, {len(data)} bytes, in {ans['drive']}")
+            run("qm", "set", a.vmid, f"--{ans['drive']}", f"{volid},media=cdrom")
+            save_config(a.vmid, a.out)
+            super().install(job)
+        finally:
+            run("qm", "set", a.vmid, "--delete", ans["drive"], check=False)
+            if os.path.exists(path):
+                os.unlink(path)
+            job.log(f"answer CD removed ({ans['drive']}, {volid})")
+
+
 def net_vars(job):
     """The network for the first-boot scenario (solaris-firstboot.py)."""
     n = job.net
@@ -497,7 +528,7 @@ def net_vars(job):
             "NET_IF": job.nic}
 
 
-METHODS = {"scripted": Scripted}
+METHODS = {"scripted": Scripted, "unattended": Unattended}
 
 
 class Job:
