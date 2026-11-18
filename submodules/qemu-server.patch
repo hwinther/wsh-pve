@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index 326e9d98..f911f9bf 100644
+index 326e9d98..73d86b26 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -159,6 +159,8 @@ my $check_drive_param = sub {
@@ -78,7 +78,7 @@ index 326e9d98..f911f9bf 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1419,6 +1458,11 @@ __PACKAGE__->register_method({
+@@ -1419,6 +1458,12 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -86,11 +86,12 @@ index 326e9d98..f911f9bf 100644
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc';
 +        PVE::QemuServer::Machine::assert_sparc64_profile($param)
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc64';
++        PVE::QemuServer::Machine::assert_cd_as_disk($param) if !$archive;
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          eval { PVE::QemuConfig->create_and_lock_config($vmid, $force) };
-@@ -1568,6 +1612,7 @@ __PACKAGE__->register_method({
+@@ -1568,6 +1613,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -98,7 +99,7 @@ index 326e9d98..f911f9bf 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2301,6 +2346,14 @@ my $update_vm_api = sub {
+@@ -2301,6 +2347,15 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -109,6 +110,7 @@ index 326e9d98..f911f9bf 100644
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc';
 +        PVE::QemuServer::Machine::assert_sparc64_profile($new_conf)
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc64';
++        PVE::QemuServer::Machine::assert_cd_as_disk($new_conf);
 +
          return $conf;
      };
@@ -140,7 +142,7 @@ index d89a62e6..abaa858d 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 638afd80..e853aaf5 100644
+index 638afd80..c466c362 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -372,18 +374,19 @@ index 638afd80..e853aaf5 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3144,7 +3217,9 @@ sub config_to_command {
+@@ -3144,7 +3217,10 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
 -    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch);
 +    PVE::QemuServer::Machine::assert_sparc32_profile($conf) if $arch eq 'sparc';
 +    PVE::QemuServer::Machine::assert_sparc64_profile($conf) if $arch eq 'sparc64';
++    PVE::QemuServer::Machine::assert_cd_as_disk($conf);
 +    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3255,7 +3330,9 @@ sub config_to_command {
+@@ -3255,7 +3331,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -394,7 +397,7 @@ index 638afd80..e853aaf5 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3275,6 +3352,10 @@ sub config_to_command {
+@@ -3275,6 +3353,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -405,7 +408,7 @@ index 638afd80..e853aaf5 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3289,17 +3370,20 @@ sub config_to_command {
+@@ -3289,17 +3371,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -428,7 +431,7 @@ index 638afd80..e853aaf5 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3310,6 +3394,7 @@ sub config_to_command {
+@@ -3310,6 +3395,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -436,7 +439,7 @@ index 638afd80..e853aaf5 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3318,7 +3403,6 @@ sub config_to_command {
+@@ -3318,7 +3404,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -444,7 +447,7 @@ index 638afd80..e853aaf5 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3331,6 +3415,22 @@ sub config_to_command {
+@@ -3331,6 +3416,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -467,7 +470,7 @@ index 638afd80..e853aaf5 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3397,16 +3497,41 @@ sub config_to_command {
+@@ -3397,16 +3498,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -511,7 +514,7 @@ index 638afd80..e853aaf5 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3425,6 +3550,11 @@ sub config_to_command {
+@@ -3425,6 +3551,11 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -523,7 +526,7 @@ index 638afd80..e853aaf5 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3440,6 +3570,7 @@ sub config_to_command {
+@@ -3440,6 +3571,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -531,7 +534,7 @@ index 638afd80..e853aaf5 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3543,8 +3674,9 @@ sub config_to_command {
+@@ -3543,8 +3675,9 @@ sub config_to_command {
          }
      }
  
@@ -543,7 +546,7 @@ index 638afd80..e853aaf5 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3561,6 +3693,7 @@ sub config_to_command {
+@@ -3561,6 +3694,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -551,7 +554,7 @@ index 638afd80..e853aaf5 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3580,7 +3713,8 @@ sub config_to_command {
+@@ -3580,7 +3714,8 @@ sub config_to_command {
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -561,7 +564,7 @@ index 638afd80..e853aaf5 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3622,9 +3756,11 @@ sub config_to_command {
+@@ -3622,9 +3757,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -574,7 +577,7 @@ index 638afd80..e853aaf5 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3636,6 +3772,17 @@ sub config_to_command {
+@@ -3636,6 +3773,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -592,7 +595,7 @@ index 638afd80..e853aaf5 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3692,7 +3839,7 @@ sub config_to_command {
+@@ -3692,7 +3840,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -601,7 +604,7 @@ index 638afd80..e853aaf5 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3710,7 +3857,18 @@ sub config_to_command {
+@@ -3710,7 +3858,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -621,7 +624,7 @@ index 638afd80..e853aaf5 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3969,7 +4127,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4128,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -630,7 +633,7 @@ index 638afd80..e853aaf5 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4553,13 +4711,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4712,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -648,7 +651,7 @@ index 638afd80..e853aaf5 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4626,7 +4787,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4788,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -658,7 +661,7 @@ index 638afd80..e853aaf5 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4978,6 +5140,9 @@ sub vmconfig_update_net {
+@@ -4978,6 +5141,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -668,7 +671,7 @@ index 638afd80..e853aaf5 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5059,6 +5224,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5225,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -677,7 +680,7 @@ index 638afd80..e853aaf5 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5106,8 +5273,10 @@ sub vmconfig_update_disk {
+@@ -5106,8 +5274,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -690,7 +693,19 @@ index 638afd80..e853aaf5 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5207,7 +5376,7 @@ sub vmconfig_update_disk {
+@@ -5191,6 +5361,11 @@ sub vmconfig_update_disk {
+             }
+ 
+         } else { # cdrom
++            # a CD that answers as a disk is a scsi-hd, which has no removable medium: the change
++            # waits for the next start, as does turning cd_as_disk on or off
++            die "skip\n"
++                if PVE::QemuServer::Drive::drive_is_cd_as_disk($old_drive)
++                || PVE::QemuServer::Drive::drive_is_cd_as_disk($drive);
+             eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
+             my $err = $@;
+ 
+@@ -5207,7 +5382,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -699,7 +714,7 @@ index 638afd80..e853aaf5 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5710,6 +5879,9 @@ sub vm_start_nolock {
+@@ -5710,6 +5885,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -709,7 +724,7 @@ index 638afd80..e853aaf5 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5915,7 +6087,11 @@ sub vm_start_nolock {
+@@ -5915,7 +6093,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -722,7 +737,7 @@ index 638afd80..e853aaf5 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8156,7 +8332,12 @@ sub bootorder_from_legacy {
+@@ -8156,7 +8338,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -736,7 +751,7 @@ index 638afd80..e853aaf5 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8194,9 +8375,14 @@ sub get_default_bootdevices {
+@@ -8194,9 +8381,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -828,7 +843,7 @@ index 0d3206b2..ea6b4c44 100644
      my $descriptions = flag_descriptions($arch);
      my $base =
 diff --git a/src/PVE/QemuServer/Drive.pm b/src/PVE/QemuServer/Drive.pm
-index f974dfc9..d6018dd4 100644
+index f974dfc9..9db90c60 100644
 --- a/src/PVE/QemuServer/Drive.pm
 +++ b/src/PVE/QemuServer/Drive.pm
 @@ -26,6 +26,7 @@ our @EXPORT_OK = qw(
@@ -847,7 +862,36 @@ index f974dfc9..d6018dd4 100644
  our $MAX_UNUSED_DISKS = 256;
  our $NEW_DISK_RE = qr!^(([^/:\s]+):)?(\d+(\.\d+)?)$!;
  
-@@ -612,6 +614,41 @@ my $tpmstate_desc = {
+@@ -329,6 +331,20 @@ my %scsiblock_fmt = (
+     },
+ );
+ 
++# sparc32 only (Machine.pm, assert_cd_as_disk): Solaris 2.4 and 2.5.1 boot their installer only from
++# a CD that answers as a disk. The drive stays a CD-ROM (removable reference media: read only, not
++# backed up, snapshotted, cloned or freed); only the guest sees a scsi-hd instead of a scsi-cd.
++my %cd_as_disk_fmt = (
++    cd_as_disk => {
++        type => 'boolean',
++        description => "Present the CD-ROM image to the guest as a read-only SCSI disk (scsi-hd)"
++            . " instead of a CD-ROM drive (scsi-cd). Only for sparc32 (arch 'sparc') CD-ROMs"
++            . " (media=cdrom) with an image: the Solaris 2.4 and 2.5.1 installers need it.",
++        optional => 1,
++        default => 0,
++    },
++);
++
+ my %ssd_fmt = (
+     ssd => {
+         type => 'boolean',
+@@ -471,6 +487,7 @@ PVE::JSONSchema::register_standard_option("pve-qm-ide", $idedesc);
+ 
+ my $scsi_fmt = {
+     %drivedesc_base,
++    %cd_as_disk_fmt,
+     %iothread_fmt,
+     %product_fmt,
+     %queues_fmt,
+@@ -612,8 +629,44 @@ my $tpmstate_desc = {
  };
  use constant TPMSTATE_DISK_SIZE => 4 * 1024 * 1024;
  
@@ -888,8 +932,11 @@ index f974dfc9..d6018dd4 100644
 +
  my $alldrive_fmt = {
      %drivedesc_base,
++    %cd_as_disk_fmt,
      %iothread_fmt,
-@@ -719,6 +756,12 @@ $drivedesc_hash_with_alloc->{efidisk0} = $desc_with_alloc->('efidisk', $efidisk_
+     %model_fmt,
+     %product_fmt,
+@@ -719,6 +772,12 @@ $drivedesc_hash_with_alloc->{efidisk0} = $desc_with_alloc->('efidisk', $efidisk_
  $drivedesc_hash->{tpmstate0} = $tpmstate_desc;
  $drivedesc_hash_with_alloc->{tpmstate0} = $desc_with_alloc->('tpmstate', $tpmstate_desc);
  
@@ -902,7 +949,7 @@ index f974dfc9..d6018dd4 100644
  for (my $i = 0; $i < $MAX_UNUSED_DISKS; $i++) {
      $drivedesc_hash->{"unused$i"} = $unuseddesc;
      $drivedesc_hash_with_alloc->{"unused$i"} = $desc_with_alloc->('unused', $unuseddesc);
-@@ -737,6 +780,7 @@ sub valid_drive_names {
+@@ -737,6 +796,7 @@ sub valid_drive_names {
          (map { "sata$_" } (0 .. ($MAX_SATA_DISKS - 1))),
          'efidisk0',
          'tpmstate0',
@@ -910,7 +957,7 @@ index f974dfc9..d6018dd4 100644
      );
  }
  
-@@ -819,11 +863,21 @@ sub drive_is_cloudinit {
+@@ -819,14 +879,46 @@ sub drive_is_cloudinit {
      return $drive->{file} =~ m@[:/](?:vm-\d+-)?cloudinit(?:\.$QEMU_FORMAT_RE)?$@;
  }
  
@@ -932,7 +979,32 @@ index f974dfc9..d6018dd4 100644
      return $drive && $drive->{media} && ($drive->{media} eq 'cdrom');
  }
  
-@@ -972,7 +1026,13 @@ sub parse_drive {
++=head3 drive_is_cd_as_disk
++
++    my $bool = drive_is_cd_as_disk($drive);
++
++True for a CD-ROM with an image that the guest sees as a read-only SCSI disk (C<cd_as_disk>,
++sparc32 only, see C<PVE::QemuServer::Machine::assert_cd_as_disk>). Without a medium (C<none>) the
++drive is an empty CD-ROM drive like any other.
++
++=cut
++
++sub drive_is_cd_as_disk {
++    my ($drive) = @_;
++
++    return
++        $drive
++        && $drive->{cd_as_disk}
++        && $drive->{media}
++        && $drive->{media} eq 'cdrom'
++        && !drive_is_cloudinit($drive)
++        && $drive->{file} ne 'none';
++}
++
+ sub drive_has_absolute_path {
+     my ($drive) = @_;
+     return classify_drive_file($drive->{file}) eq "absolute";
+@@ -972,7 +1064,13 @@ sub parse_drive {
  
      if ($res->{media} && ($res->{media} eq 'cdrom')) {
          return if $res->{snapshot} || $res->{format};
@@ -947,6 +1019,17 @@ index f974dfc9..d6018dd4 100644
      }
  
      if (my $size = $res->{size}) {
+@@ -1183,7 +1281,9 @@ sub get_scsi_device_type {
+ 
+     my $devicetype = 'hd';
+     my $path = '';
+-    if (drive_is_cdrom($drive) || drive_is_cloudinit($drive)) {
++    if (drive_is_cd_as_disk($drive)) {
++        $devicetype = 'hd'; # still read only: a CD-ROM's blockdev is (Blockdev.pm)
++    } elsif (drive_is_cdrom($drive) || drive_is_cloudinit($drive)) {
+         $devicetype = 'cd';
+     } else {
+         if ($drive->{file} =~ m|^/|) {
 diff --git a/src/PVE/QemuServer/DriveDevice.pm b/src/PVE/QemuServer/DriveDevice.pm
 index 621fcc2b..89656fd1 100644
 --- a/src/PVE/QemuServer/DriveDevice.pm
@@ -1044,7 +1127,7 @@ index ecd1944f..2a1bb9bc 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..5c6a1599 100644
+index 960af5a9..fb7047bf 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1079,7 +1162,7 @@ index 960af5a9..5c6a1599 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +141,269 @@ sub default_machine_for_arch {
+@@ -135,6 +141,299 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1227,6 +1310,36 @@ index 960af5a9..5c6a1599 100644
 +    return;
 +}
 +
++=head3 assert_cd_as_disk
++
++    assert_cd_as_disk($conf);
++
++Dies if a drive of C<$conf> sets C<cd_as_disk> where it wasn't tested. Any architecture: the option
++is for sparc32 (C<arch: sparc>) only, where Solaris 2.4 and 2.5.1 boot their installer only from a CD
++that answers as a disk (wsh-pve submodules/SPARC.md, "CD as a disk"). There it takes a CD-ROM
++(C<media=cdrom>) on SCSI (the drive schema has it on C<scsiN> only) with an image or no medium, not
++the host's CD-ROM drive. The drive stays a CD-ROM, so it is read only and not backed up.
++
++=cut
++
++sub assert_cd_as_disk {
++    my ($conf) = @_;
++
++    my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
++    for my $opt (sort grep { m/^scsi\d+$/ && defined($conf->{$_}) } keys $conf->%*) {
++        my $drive = PVE::QemuServer::Drive::parse_drive($opt, $conf->{$opt}) or next;
++        next if !$drive->{cd_as_disk};
++        die "$opt: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on $arch\n"
++            if $arch ne 'sparc';
++        die "sparc: $opt: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)\n"
++            if !$drive->{media} || $drive->{media} ne 'cdrom';
++        die "sparc: $opt: 'cd_as_disk' needs an image (an ISO volume), not the host's CD-ROM drive\n"
++            if $drive->{file} eq 'cdrom' || $drive->{file} =~ m|^/dev/|;
++    }
++
++    return;
++}
++
 +# The sparc64 (arch: sparc64) profile: the one layout that was tested to boot (wsh-pve
 +# submodules/SPARC.md, "sparc64 (sun4u)"). sun4u with OpenBIOS and the machine's default CPU, one CPU,
 +# disks and CD-ROMs on the built-in IDE (OpenBIOS can't boot from SCSI or virtio), NICs on PCI bus B.
@@ -1349,7 +1462,7 @@ index 960af5a9..5c6a1599 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +438,7 @@ my sub machine_base_type {
+@@ -169,6 +468,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1357,7 +1470,7 @@ index 960af5a9..5c6a1599 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +575,44 @@ sub machine_version_cmp {
+@@ -305,11 +605,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1404,7 +1517,7 @@ index 960af5a9..5c6a1599 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +622,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +652,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1427,7 +1540,7 @@ index 960af5a9..5c6a1599 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +808,7 @@ sub get_power_state_flags {
+@@ -508,6 +838,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1435,7 +1548,7 @@ index 960af5a9..5c6a1599 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +816,7 @@ sub get_power_state_flags {
+@@ -515,6 +846,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1528,6 +1641,19 @@ index 7fd3e9f8..da718207 100644
              },
              path => '/var/lib/vz',
              type => 'dir',
+diff --git a/src/test/cfg2cmd/aarch64-cd-as-disk-error.conf b/src/test/cfg2cmd/aarch64-cd-as-disk-error.conf
+new file mode 100644
+index 00000000..5bb9c06f
+--- /dev/null
++++ b/src/test/cfg2cmd/aarch64-cd-as-disk-error.conf
+@@ -0,0 +1,7 @@
++# TEST: cd_as_disk is sparc32 only: refused on aarch64
++# EXPECT_ERROR: scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on aarch64
++arch: aarch64
++memory: 1024
++ostype: l26
++scsihw: virtio-scsi-pci
++scsi2: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
 diff --git a/src/test/cfg2cmd/floppy.conf b/src/test/cfg2cmd/floppy.conf
 new file mode 100644
 index 00000000..d606dfbf
@@ -1725,6 +1851,74 @@ index 00000000..a6ac8e6a
 +arch: sparc
 +agent: 1
 +memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf b/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf
+new file mode 100644
+index 00000000..7109d240
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf
+@@ -0,0 +1,8 @@
++# TEST: sparc32 cd_as_disk without a medium: an empty CD-ROM drive (scsi-cd), as when the medium was ejected in the web UI
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32-cdhd-empty
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=3G
++scsi6: none,media=cdrom,cd_as_disk=1
+diff --git a/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf.cmd b/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf.cmd
+new file mode 100644
+index 00000000..23af4057
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-cd-as-disk-ejected.conf.cmd
+@@ -0,0 +1,22 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32-cdhd-empty \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -device 'scsi-cd,channel=0,scsi-id=6,lun=0,id=scsi6,device_id=drive-scsi6,physical_block_size=512' \
++  -machine 'accel=tcg,type=SS-5+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-cd-as-disk-host-cdrom-error.conf b/src/test/cfg2cmd/sparc32-cd-as-disk-host-cdrom-error.conf
+new file mode 100644
+index 00000000..ab7f0c55
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-cd-as-disk-host-cdrom-error.conf
+@@ -0,0 +1,7 @@
++# TEST: cd_as_disk takes an image, not the host's CD-ROM drive (not tested)
++# EXPECT_ERROR: sparc: scsi6: 'cd_as_disk' needs an image (an ISO volume), not the host's CD-ROM drive
++arch: sparc
++memory: 256
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=3G
++scsi6: cdrom,media=cdrom,cd_as_disk=1
+diff --git a/src/test/cfg2cmd/sparc32-cd-as-disk-media-error.conf b/src/test/cfg2cmd/sparc32-cd-as-disk-media-error.conf
+new file mode 100644
+index 00000000..5f8516f7
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-cd-as-disk-media-error.conf
+@@ -0,0 +1,7 @@
++# TEST: cd_as_disk is for CD-ROM drives only, not for a disk
++# EXPECT_ERROR: sparc: scsi4: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)
++arch: sparc
++memory: 256
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=3G
++scsi4: local:8006/vm-8006-disk-1.raw,cd_as_disk=1,size=1G
 diff --git a/src/test/cfg2cmd/sparc32-cd-as-disk.conf b/src/test/cfg2cmd/sparc32-cd-as-disk.conf
 new file mode 100644
 index 00000000..08000fee
@@ -2152,6 +2346,59 @@ index 00000000..ad6e5be5
 +machine: SS-20
 +memory: 512
 +vcpus: 2
+diff --git a/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf b/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf
+new file mode 100644
+index 00000000..b97eaa67
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf
+@@ -0,0 +1,13 @@
++# TEST: sparc32 SS-5 with ss5.bin and an install CD that answers as a read-only disk (cd_as_disk, for the Solaris 2.4/2.5.1 installers): scsi-hd on target 6, its blockdev read only
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++machine: SS-5
++memory: 256
++name: sol251-ss5
++net0: lance=BC:24:11:B2:46:01,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=3G
++scsi6: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
++serial0: socket
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf.cmd
+new file mode 100644
+index 00000000..13d66f24
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-cd-as-disk.conf.cmd
+@@ -0,0 +1,28 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sol251-ss5 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -bios ss5.bin \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/zero.iso","node-name":"e0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"f0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}' \
++  -device 'scsi-hd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,id=scsi6,device_id=drive-scsi6,physical_block_size=512' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:01,netdev=net0' \
++  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-defaults.conf b/src/test/cfg2cmd/sparc32-ss5-defaults.conf
 new file mode 100644
 index 00000000..dc46457b
@@ -2571,6 +2818,91 @@ index 00000000..fc38c6b4
 +  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
 +  -device 'sunhme,mac=BC:24:11:B2:46:03,netdev=net0,id=net0,bus=pciB' \
 +  -machine 'accel=tcg,type=sun4u+pve0'
+diff --git a/src/test/cfg2cmd/x86-cd-as-disk-error.conf b/src/test/cfg2cmd/x86-cd-as-disk-error.conf
+new file mode 100644
+index 00000000..a3412c18
+--- /dev/null
++++ b/src/test/cfg2cmd/x86-cd-as-disk-error.conf
+@@ -0,0 +1,7 @@
++# TEST: cd_as_disk is sparc32 only: refused on x86_64
++# EXPECT_ERROR: scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on x86_64
++memory: 768
++ostype: l26
++scsihw: virtio-scsi-pci
++scsi0: local:8006/vm-8006-disk-0.raw,size=4G
++scsi2: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-change.conf b/src/test/hotplug/sparc32-cd-as-disk-change.conf
+new file mode 100644
+index 00000000..d0b32826
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cd-as-disk-change.conf
+@@ -0,0 +1,15 @@
++# TEST: another ISO in a sparc32 CD that answers as a disk stays pending (a scsi-hd has no removable medium)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom,cd_as_disk=1
++
++[PENDING]
++scsi6: local:iso/other.iso,media=cdrom,cd_as_disk=1
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-change.conf.expected b/src/test/hotplug/sparc32-cd-as-disk-change.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-eject.conf b/src/test/hotplug/sparc32-cd-as-disk-eject.conf
+new file mode 100644
+index 00000000..e4c36468
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cd-as-disk-eject.conf
+@@ -0,0 +1,15 @@
++# TEST: ejecting a sparc32 CD that answers as a disk stays pending until the next start
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom,cd_as_disk=1
++
++[PENDING]
++scsi6: none,media=cdrom
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-eject.conf.expected b/src/test/hotplug/sparc32-cd-as-disk-eject.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-turn-on.conf b/src/test/hotplug/sparc32-cd-as-disk-turn-on.conf
+new file mode 100644
+index 00000000..a625d05b
+--- /dev/null
++++ b/src/test/hotplug/sparc32-cd-as-disk-turn-on.conf
+@@ -0,0 +1,15 @@
++# TEST: turning cd_as_disk on for a running sparc32 CD-ROM stays pending (the device type changes at the next start)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++scsi6: local:iso/debian-13.iso,media=cdrom
++
++[PENDING]
++scsi6: local:iso/debian-13.iso,media=cdrom,cd_as_disk=1
+diff --git a/src/test/hotplug/sparc32-cd-as-disk-turn-on.conf.expected b/src/test/hotplug/sparc32-cd-as-disk-turn-on.conf.expected
+new file mode 100644
+index 00000000..e69de29b
 diff --git a/src/test/hotplug/sparc32-cdrom-change.conf b/src/test/hotplug/sparc32-cdrom-change.conf
 new file mode 100644
 index 00000000..5dfe9050
