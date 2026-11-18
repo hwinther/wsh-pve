@@ -480,7 +480,7 @@ TARGETS = {
         "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
         "hostname": "tribblix-m34",
         "nic": "hme0",
-        # Every sun4u guest has the MAC 52:54:00:12:34:56 (OpenBIOS's IDPROM), not the one in net0
+        # hme0 uses the IDPROM's MAC: net0's with pve-qemu wsh/0034, 52:54:00:12:34:56 before it
         "network": "hme0: a static address with ipadm (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns,"
                    " --domain)",
         "net_modes": ["static"],  # tribblix-firstboot.py has NET_MODE=dhcp (ipadm -T dhcp), not tried yet

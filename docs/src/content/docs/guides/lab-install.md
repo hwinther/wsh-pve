@@ -69,8 +69,9 @@ call returned!`: OpenBIOS has no reboot for Solaris yet), so the tool stops the 
 DVD and boots the disk. Don't use `reboot` or `init 6` in the guest either; stop and start the VM.
 Once in six DVD boots the kernel panicked before the installer's first question (a trap in the
 firmware); the tool then runs the install once more, since nothing is on the disk yet.
-Every sun4u guest has the MAC address 52:54:00:12:34:56 whatever `net0` says, so two of them on one
-network clash (the [sparc guide](/guides/sparc/#solaris-10)).
+With pve-qemu-kvm before `wsh/0034` every sun4u guest has the MAC address 52:54:00:12:34:56
+whatever `net0` says, so two of them on one network clash; with it the guest uses `net0`'s address
+(the [sparc guide](/guides/sparc/#solaris-10)).
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
 so its login prompt takes about 45 minutes), answers the keyboard question with US-English, logs in
@@ -109,9 +110,10 @@ label). The first boot sets root's password, writes the marker `/etc/wsh-lab-tar
 `/etc/myname`, and sets up the network in NetBSD's own files: `/etc/ifconfig.hme0` (sparc64) or
 `/etc/ifconfig.le0` (sparc) and `defaultroute=` in `/etc/rc.conf` for a static address,
 `dhcpcd=YES` for DHCP (the host name stays the target's), `/etc/resolv.conf` for `--dns`. sshd is
-off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: every
-sparc64 VM has the same system MAC address (52:54:00:12:34:56, whatever `net0` says), so put only
-one of them on a network segment; and NetBSD/sparc64 keeps a host core at 100% for as long as it
+off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: with
+pve-qemu-kvm before `wsh/0034` every sparc64 VM has the same system MAC address (52:54:00:12:34:56,
+whatever `net0` says), so put only one of them on a network segment (with it, `net0`'s address);
+and NetBSD/sparc64 keeps a host core at 100% for as long as it
 runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
