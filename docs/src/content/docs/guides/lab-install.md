@@ -271,7 +271,8 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # ~12 min
 Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--bridge` (`vmbr0`),
 `--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
 `--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
-(a second disk, mounted on `/data`; Solaris only), `--root-password`, `--user NAME` (and `--user-password`; a non-root
+(a second disk, mounted on `/data`, or `/usr/local` with `--data-mount /usr/local`; Solaris only),
+`--post-install sun26gnu` and `--local-env` (Solaris 2.6 and 7: see "Packages under /usr/local"), `--root-password`, `--user NAME` (and `--user-password`; a non-root
 user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD and Red Hat: `/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
@@ -291,8 +292,11 @@ What it does:
 4. Ejects the CD (the drive stays, empty) and sets the boot order to the disk.
 5. Boots the installed system once: answers the first-boot questions with the root password, writes
    `/etc/wsh-lab-target`, adds the optional user, shuts down with `init 5`.
-6. With `--check`, boots again, logs in as root with the password and checks the marker.
-7. Writes the login, console, host name, network, marker and media into the VM's notes
+6. With `--post-install`, boots once more with the package CD in a drive of its own, adds the
+   packages to the data disk (and with `--local-env` sets up `PATH` and the user's shell), shuts
+   down and removes the drive (see "Packages under /usr/local").
+7. With `--check`, boots again, logs in as root with the password and checks the marker.
+8. Writes the login, console, host name, network, marker and media into the VM's notes
    (description), optionally converts it to a template, and prints a summary.
 
 While it runs the tool owns the VM's serial console: close `qm terminal` and the web console's
@@ -357,6 +361,43 @@ A blank disk (`qm set 120 --scsi4 local:4`) instead needs a label from `format` 
 (`format c0t4d0`, then `type`, `Other` and the geometry, then `label`), since 2.6 can't work out an
 emulated disk's geometry by itself; the labelled image avoids that. `python3
 /usr/share/wsh-lab/sunlabel.py disk 9G <image>` writes the install targets' 9G disk the same way.
+
+`--data-mount /usr/local` mounts the data disk on `/usr/local` instead (whatever was in `/usr/local`
+is copied onto it first). `/data` stays the default; `--post-install` below picks `/usr/local` by
+itself.
+
+### Packages under /usr/local
+
+On Solaris 2.6 and 7 (`sol26-ss5`, `sol26-ss20`, `sol7-ss5`, `sol7-ss20`), `--post-install sun26gnu` adds the SVR4 packages from the
+owner's own CD image of free software for Solaris 2.6 (bash 4.1, coreutils, vim 7.3, wget, curl,
+less, screen, sudo, rsync and the libraries they need: 34 packages, all under `/usr/local`) after the
+first boot. That image, `sun26gnu.iso`, is a local medium: it is not published or downloaded, and
+`wsh-lab media` doesn't list it; put it on the media storage under that name (it is checked by size
+and sha256 like the install media) or leave the option out.
+
+```sh
+wsh-lab install sol26-ss20 --vmid 120 --data-disk 2 --post-install sun26gnu --local-env --user lab --check
+```
+
+- `--post-install` needs `--data-disk` (1 GiB or more), which is then mounted on `/usr/local`:
+  `/usr` has about 70 MB free on the 3G and 9G layouts, too little for the packages (164 MB
+  installed). The CD goes into a drive of its own (`scsi5`) for one more boot and is removed again,
+  also when that boot fails. Every package is added with `pkgadd -n` and an admin file, so nothing
+  asks; the console shows one line per package, pkgadd's output is in `/var/sadm/wsh-lab-sun26gnu.log`
+  in the guest, and one package that fails fails the install.
+- `--local-env` (only with `--post-install`) puts `/usr/local/bin` and `/usr/local/sbin` at the end
+  of `PATH` (and `/usr/local/man` in `MANPATH`) in `/etc/profile` and the `--user` account's
+  `.profile`, and makes bash that account's login shell. Root keeps `/sbin/sh`: in single-user mode
+  only the root file system is mounted, and root must still be able to log in when the data disk
+  isn't there.
+- With `--check`, the check boot also checks that `/usr/local` is the data disk, `bash --version`,
+  `vim --version` and `wget --version`, that `pkginfo` lists every package, and with `--local-env`
+  the user's login shell and `which bash`.
+
+Measured (2026-11-18, the PVE test container, other installs running at the same time): the
+post-install boot took 6 to 7.5 minutes, 4 to 5 of them adding the packages; with `--check` the whole
+`sol26-ss20` install took 24.6 minutes, `sol26-ss5` 23.8, `sol7-ss20` 23.2 and `sol7-ss5` 21.7. `/usr/local` then
+holds 164 MB (`df -k`: 168050 KB used).
 
 ## Network
 

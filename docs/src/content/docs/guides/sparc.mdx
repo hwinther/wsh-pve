@@ -455,7 +455,9 @@ new ones.
 
 For a finished VM with known login details, `lab.py install sol26-ss5 --vmid 120` (or `sol26-ss20`)
 does everything below in one command, from the tested CD on the node's storage: see
-[Lab install targets](/guides/lab-install/).
+[Lab install targets](/guides/lab-install/). With a second disk on `/usr/local` it can also add the GNU
+packages of a local package CD for Solaris 2.6 after the install (2.6 and 7) (`--post-install sun26gnu`; the CD is
+not published), and set up `PATH` and bash for the user (`--local-env`).
 
 The same scenarios can install a VM that Proxmox VE runs. On the node (the lab needs `python3-pyte`,
 `python3-pil`, `tesseract-ocr` and `fonts-dejavu-core`), create the VM with a serial console, the

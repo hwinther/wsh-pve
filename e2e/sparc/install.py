@@ -2,7 +2,8 @@
 
     lab.py install sol26-ss5 --vmid 120 [--storage local] [--media-storage local] [--bridge vmbr0]
         [--name NAME] [--root-password PW] [--user NAME [--user-password PW]] [--hostname H] [--ip A]
-        [--disk-size 3G|9G] [--data-disk GIB]
+        [--disk-size 3G|9G] [--data-disk GIB [--data-mount /data|/usr/local]]
+        [--post-install BUNDLE [--local-env]]
         [--check] [--template] [--keep-on-failure] [--allow-untested-media] [--timeout S] [--out DIR]
     lab.py targets [--json]
     lab.py media [<target>] [--storage local | --dir DIR] [--no-checksum]
@@ -203,6 +204,45 @@ def disk_choice(t, name):
 
 DATA_DISK_BUS = "scsi4"  # SCSI target 4: after the boot disk (3) in OpenBIOS's probe, before the CD (6)
 DATA_DISK_DEVICE = "c0t4d0"  # what Solaris calls it
+
+
+DATA_MOUNTS = ("/data", "/usr/local")  # --data-mount
+
+
+def data_mount(a):
+    """Where the data disk is mounted: --data-mount, else /usr/local with --post-install (the bundles'
+    BASEDIR), else /data."""
+    if getattr(a, "data_mount", None):
+        return a.data_mount
+    if getattr(a, "post_install", None):
+        return targets.POST_INSTALL[a.post_install]["basedir"]
+    return "/data"
+
+
+def check_post_install(a):
+    """Refuses (SystemExit) --data-mount, --post-install and --local-env where they don't apply: the
+    bundle only on the targets it was tested on, onto a data disk mounted on its BASEDIR and big
+    enough; --local-env only with a bundle that brings the login shell."""
+    bundle, local_env = getattr(a, "post_install", None), getattr(a, "local_env", False)
+    if getattr(a, "data_mount", None) and a.data_disk is None:
+        sys.exit("--data-mount: only with --data-disk")
+    if local_env and not bundle:
+        sys.exit("--local-env: only with --post-install (it puts the bundle's /usr/local/bin on PATH and "
+                 "makes its bash the user's login shell)")
+    if not bundle:
+        return
+    b = targets.POST_INSTALL[bundle]
+    if a.target not in b["targets"]:
+        sys.exit(f"--post-install {bundle}: tested on {', '.join(b['targets'])}, not {a.target}")
+    if a.data_disk is None:
+        sys.exit(f"--post-install {bundle}: needs --data-disk (at least {b['min_data_disk']} GiB): its packages go "
+                 f"to {b['basedir']}, and /usr has too little space on the 3G and 9G layouts")
+    if a.data_disk < b["min_data_disk"]:
+        sys.exit(f"--post-install {bundle}: --data-disk {b['min_data_disk']} GiB or more")
+    if data_mount(a) != b["basedir"]:
+        sys.exit(f"--post-install {bundle}: the data disk must be on {b['basedir']} (not --data-mount {a.data_mount})")
+    if local_env and not b.get("shell"):
+        sys.exit(f"--local-env: {bundle} brings no login shell")
 
 
 DEFAULT_IP, DEFAULT_NETMASK = "10.0.2.15", "255.255.255.0"
@@ -469,7 +509,7 @@ class Scripted:
         t = job.target
         v = {**t["firstboot"].get("vars", {}), "ROOT_PASSWORD": job.root_password, "MARKER": job.marker(),
              "USER": job.a.user or "", "USER_PASSWORD": job.user_password if job.a.user else "",
-             "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", **net_vars(job),
+             "DATA_DISK": DATA_DISK_DEVICE if job.a.data_disk else "", "DATA_MOUNT": job.data_mount, **net_vars(job),
              "KEYBOARD": getattr(job.a, "keyboard", None) or "us", "NIC_NAME": job.nic}
         job.phase("firstboot", t["firstboot"]["scenario"], v, t["firstboot"]["timeout"])
 
@@ -485,7 +525,9 @@ class Scripted:
             # without the password field: SunOS 4 keeps the hash in /etc/passwd itself
             v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd | cut -d: -f1,3-"
         if job.a.data_disk:
-            v["COMMANDS"] += f"; prtvtoc /dev/rdsk/{DATA_DISK_DEVICE}s2; df -k /data"
+            v["COMMANDS"] += f"; prtvtoc /dev/rdsk/{DATA_DISK_DEVICE}s2; df -k {job.data_mount}"
+        if getattr(job.a, "post_install", None):
+            v.update(post_install_checks(job))
         job.phase("check", t["check"]["scenario"], v, t["check"]["timeout"])
 
 
@@ -519,6 +561,50 @@ class Unattended(Scripted):
             job.log(f"answer CD removed ({ans['drive']}, {volid})")
 
 
+class PostInstall:
+    """--post-install BUNDLE (targets.POST_INSTALL): after the first boot, the bundle's CD in its own
+    drive for this phase only (removed again whatever the phase did, like Unattended's answer CD),
+    then scenarios/solaris-post-install.py adds its packages onto the data disk and, with
+    --local-env, sets up PATH and the user's login shell."""
+
+    def run(self, job):
+        a, b = job.a, targets.POST_INSTALL[job.a.post_install]
+        volid = job.volids[b["medium"]]
+        try:
+            run("qm", "set", a.vmid, f"--{b['drive']}", f"{volid},media=cdrom")
+            job.log(f"post-install {a.post_install}: {volid} in {b['drive']}")
+            save_config(a.vmid, a.out)
+            v = {"ROOT_PASSWORD": job.root_password, "BUNDLE": a.post_install, "CD": f"c0t{b['drive'][4:]}d0",
+                 "DIR": b["dir"], "DATA_DISK": DATA_DISK_DEVICE, "BASEDIR": b["basedir"],
+                 "USER": a.user or "", "LOCAL_ENV": "1" if a.local_env else "", "LOGIN_SHELL": b["shell"]}
+            job.phase("postinstall", "solaris-post-install.py", v, b["timeout"])
+        finally:
+            run("qm", "set", a.vmid, "--delete", b["drive"], check=False)
+            job.log(f"post-install CD removed ({b['drive']})")
+
+
+def post_install_checks(job):
+    """The --check boot's extra commands, each with the regex its output must have: BASEDIR is the
+    data disk, the bundle's commands answer, pkginfo knows every package the post-install added; with
+    --local-env root's PATH, root's shell still /sbin/sh, and the user's login shell and `which bash`.
+    One command per console line (the tty takes 256 characters)."""
+    a, b = job.a, targets.POST_INSTALL[job.a.post_install]
+    base, pkgs = b["basedir"], f"/etc/wsh-lab-{a.post_install}.pkgs"
+    pairs = [(f"df -k {base} | tail -1 | sed 's/^/df: /'", rf"df: /dev/dsk/{DATA_DISK_DEVICE}s0\s.*\s{re.escape(base)}[ \t]*$")]
+    pairs += list(b["check"])
+    pairs.append((f"n=0; for p in `cat {pkgs}`; do pkginfo -q $p && n=`expr $n + 1`; done;"
+                  f" echo pkginfo knows $n of `cat {pkgs} | wc -w` packages", r"pkginfo knows ([1-9]\d*) of \1 packages"))
+    if a.local_env:
+        pairs += [("echo root PATH=$PATH", rf"root PATH=\S*:{re.escape(base)}/bin"),
+                  ("grep '^root:' /etc/passwd | cut -d: -f1,7", r"(?m)^root:/sbin/sh[ \t]*$")]
+        if a.user:
+            pairs += [(f"grep '^{a.user}:' /etc/passwd | cut -d: -f1,7", rf"(?m)^{a.user}:{re.escape(b['shell'])}[ \t]*$"),
+                      # su -c doesn't start a login shell: $SHELL (the user's) -l reads what a login reads
+                      (f"su - {a.user} -c '$SHELL -l -c \"which bash\"' | sed 's/^/which: /'",
+                       rf"which: {re.escape(b['shell'])}[ \t]*$")]
+    return {"MORE_COMMANDS": "\n".join(c for c, _ in pairs), "MORE_EXPECT": "\n".join(rx for _, rx in pairs)}
+
+
 def net_vars(job):
     """The network for the first-boot scenario (solaris-firstboot.py)."""
     n = job.net
@@ -541,6 +627,7 @@ class Job:
         self.user_password = a.user_password or self.root_password
         self.hostname = a.hostname or self.target["hostname"]
         self.disk = disk_choice(self.target, a.disk_size)
+        self.data_mount = data_mount(a)
         self.net = network_choice(self.target, a)
         self.started = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.t0 = time.time()
@@ -571,7 +658,9 @@ class Job:
         lines.append(f"network={self.net_text()}")
         lines.append(f"disk={self.disk_text()}")
         if self.a.data_disk:
-            lines.append(f"data_disk={DATA_DISK_DEVICE} {self.a.data_disk}G on /data")
+            lines.append(f"data_disk={DATA_DISK_DEVICE} {self.a.data_disk}G on {self.data_mount}")
+        if getattr(self.a, "post_install", None):
+            lines.append(f"post_install={self.a.post_install}" + (" local_env" if self.a.local_env else ""))
         if self.a.user:
             lines.append(f"user={self.a.user}")
         return "\n".join(lines)
@@ -642,9 +731,15 @@ class Job:
             f"Console: {login['console'].replace('<vmid>', str(a.vmid))}",
             f"Hostname: {self.hostname}",
             f"Network: {self.net_text()}",
-            f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on /data"
-                                         if a.data_disk else ""),
+            f"Disk: {self.disk_text()}" + (f"; data disk {DATA_DISK_DEVICE} ({DATA_DISK_BUS}) {a.data_disk} GiB on"
+                                         f" {self.data_mount}" if a.data_disk else ""),
             f"Marker: {t.get('marker', '/etc/wsh-lab-target')}",
+        ]
+        if getattr(a, "post_install", None):
+            lines.append(f"Post-install: {a.post_install} ({targets.POST_INSTALL[a.post_install]['title']})"
+                         + ("; PATH in /etc/profile, the user's login shell bash (root's stays /sbin/sh)"
+                            if a.local_env else ""))
+        lines += [
             "Media: " + ", ".join(f"{m['name']} (sha256 {(m['sha256'] or 'unchecked')[:16]}...)" for m in self.media),
         ]
         return "\n".join(lines)
@@ -676,6 +771,7 @@ def cmd_install(a):
             sys.exit(f"--data-disk: only for the Solaris targets (their first boot sets it up), not {a.target}")
         if not 1 <= a.data_disk <= 32:
             sys.exit("--data-disk takes 1-32 (GiB)")
+    check_post_install(a)
     if not shutil.which("qm"):
         sys.exit("lab.py install runs on the PVE node (as root), where qm and pvesh are")
     for opt, rx in (("--root-password", PASSWORD), ("--user-password", PASSWORD), ("--user", USERNAME)):
@@ -694,6 +790,8 @@ def cmd_install(a):
         if vm_exists(a.vmid):
             raise InstallFailed(f"VM {a.vmid} exists already: lab.py install never overwrites a VM")
         names = [m["name"] for m in t["media"]]
+        if a.post_install:  # checked up front with the target's: a missing CD fails before the install
+            names.append(targets.POST_INSTALL[a.post_install]["medium"])
         job.media = check_media(names, storage=a.media_storage, checksum=True)
         for row in job.media:
             job.log(f"medium {row['name']}: {row['state']}" + (f" ({row['volid']})" if row["volid"] else ""))
@@ -716,6 +814,8 @@ def cmd_install(a):
             add_data_disk(a, a.out)
             job.log(f"data disk: {a.data_disk} GiB on {DATA_DISK_BUS} ({DATA_DISK_DEVICE}), Sun-labelled")
         method.firstboot(job)
+        if a.post_install:
+            PostInstall().run(job)
         if a.check:
             method.check(job)
         run("qm", "set", a.vmid, "--description", job.description())
@@ -779,6 +879,9 @@ def cmd_targets(a):
         if t["status"] == "automated":
             sizes = t["disk"].get("sizes") or [f"{t['disk']['size']}G"]
             print(f"{'':20} --disk-size {' | '.join(sizes)} (tested; default {sizes[0]})")
+            bundles = [b for b, p in targets.POST_INSTALL.items() if name in p["targets"]]
+            if bundles:
+                print(f"{'':20} --post-install {' | '.join(bundles)} (with --data-disk; local media)")
         else:
             print(f"{'':20} blocked: {t['blocked']}")
     print(f"\nlogin of an installed target: root / {targets.DEFAULT_ROOT_PASSWORD} unless --root-password"
@@ -863,7 +966,16 @@ def add_commands(sub):
                    help="the first disk: one of the sizes the target was tested with (`targets` lists them; "
                         "Solaris 2.6: 3G, the default, or 9G)")
     i.add_argument("--data-disk", type=int, metavar="GIB",
-                   help="also a second, Sun-labelled disk of 1-32 GiB on scsi4, newfs'd and mounted on /data")
+                   help="also a second, Sun-labelled disk of 1-32 GiB on scsi4, newfs'd and mounted on /data "
+                        "(or --data-mount)")
+    i.add_argument("--data-mount", choices=DATA_MOUNTS,
+                   help="with --data-disk: where it is mounted (/data; /usr/local with --post-install)")
+    i.add_argument("--post-install", metavar="BUNDLE", choices=sorted(targets.POST_INSTALL),
+                   help="Solaris: after the first boot, add a bundle's packages from its local CD onto the data "
+                        "disk on /usr/local (sun26gnu: the owner's GNU package CD, sun26gnu.iso; needs --data-disk)")
+    i.add_argument("--local-env", action="store_true",
+                   help="with --post-install: /usr/local/bin and sbin on PATH (/etc/profile, the user's .profile), "
+                        "MANPATH, and bash as --user's login shell (root keeps /sbin/sh)")
     i.add_argument("--check", action="store_true", help="boot once more, log in and check the marker")
     i.add_argument("--template", action="store_true", help="convert the VM to a template at the end")
     i.add_argument("--keep-on-failure", action="store_true", help="keep (stopped) instead of destroying a failed VM")

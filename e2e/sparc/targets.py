@@ -140,12 +140,38 @@ MEDIA = {
         "title": "Red Hat Linux 6.2 for SPARC, install CD", "content": "iso", "size": 623771648,
         "sha256": "74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987",
         "lab": "other-os/redhat-6.2-sparc.iso"},
+    # The owner's own collection of SVR4 packages for Solaris 2.6 (GNU and other free tools, all with
+    # BASEDIR /usr/local) on a CD image of his: a local-only medium for `lab.py install --post-install
+    # sun26gnu` (POST_INSTALL). No URL, never in CI or a published recording; only its gnu/pkgs
+    # directory is used (the image also has Sun patches and third-party apps, left alone).
+    "sun26gnu.iso": {
+        "title": "Solaris 2.6 GNU package collection (the owner's local CD image)", "content": "iso",
+        "size": 287309824, "sha256": "7630cbd8866bdf644c931c599b64b467ed88b58836073d84ca13a16d5b80c366",
+        "lab": "sun26gnu.iso", "local_only": True},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
         "lab": "other-os/tribblix-sparc-0m34.iso",
         # open source (illumos, CDDL); the download page publishes its SHA-1 (f76238cf...5ca9)
         "url": "https://iso.tribblix.org/iso/tribblix-sparc-0m34.iso"},
+}
+
+# `lab.py install --post-install <bundle>`: SVR4 packages from a CD added to an installed Solaris
+# target after its first boot (install.PostInstall, scenarios/solaris-post-install.py): the CD is in
+# `drive` for that phase only, every datastream in `dir` goes through `pkgadd -n -a <admin file>`
+# onto `basedir`, which must be the data disk (--data-disk, mounted there; /usr has ~70 MB free on
+# the 3G and 9G layouts). `targets`: where it was tested; `shell`: what --local-env makes the user's
+# login shell; `check`: (command, regex) pairs the --check boot runs and expects.
+POST_INSTALL = {
+    "sun26gnu": {
+        "title": "GNU and other free tools for Solaris 2.6 (bash, coreutils, vim, wget, ...) under /usr/local",
+        "medium": "sun26gnu.iso", "drive": "scsi5", "dir": "gnu/pkgs", "basedir": "/usr/local",
+        "min_data_disk": 1, "timeout": 5400, "shell": "/usr/local/bin/bash",
+        "targets": ["sol26-ss5", "sol26-ss20", "sol7-ss5", "sol7-ss20"],  # 2026-11-18, with --check
+        "check": [("/usr/local/bin/bash --version | head -1", r"GNU bash, version \d"),
+                  ("/usr/local/bin/vim --version | head -1", r"VIM - Vi IMproved \d"),
+                  ("/usr/local/bin/wget --version | head -1", r"GNU Wget \d")],
+    },
 }
 
 # The geometry of the lab's SUN2.9G disk template (sparc-SUN2.9G.raw.template.xz, the sparc guide's
@@ -614,6 +640,17 @@ def problems():
             out.append(f"{fname}: size and sha256 of the tested medium")
         if "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in CONVERSIONS):
             out.append(f"{fname}: made from {med['from']}: a medium in MEDIA and a known conversion")
+    for bname, b in POST_INSTALL.items():
+        if b.get("medium") not in MEDIA:
+            out.append(f"post-install {bname}: medium {b.get('medium')} isn't in MEDIA")
+        for tname in b.get("targets", []):
+            if tname not in TARGETS or TARGETS[tname].get("firstboot", {}).get("scenario") != "solaris-firstboot.py":
+                out.append(f"post-install {bname}: {tname} isn't a Solaris target with solaris-firstboot.py")
+            elif b.get("drive") in {m["drive"] for m in TARGETS[tname]["media"]} | {TARGETS[tname]["disk"]["bus"], "scsi4"}:
+                out.append(f"post-install {bname}: drive {b.get('drive')} is taken on {tname}")
+    for fname, med in MEDIA.items():
+        if med.get("local_only") and med.get("url"):
+            out.append(f"{fname}: a local-only medium has no URL")
     for name, t in TARGETS.items():
         for opt in t.get("net_refuse", {}):
             if opt not in ("dns", "domain", "gateway", "netmask"):

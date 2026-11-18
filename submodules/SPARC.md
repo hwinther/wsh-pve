@@ -2449,6 +2449,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   CD by itself), Alpine aarch64 and x86_64 to a login.
 - Linux on sun4m: the install targets `redhat62-ss5` and `redhat62-ss20` (`lab.py install`, also in
   `pve_matrix.py install`); results under "Red Hat Linux 6.2 on sun4m".
+- Packages after a Solaris install: `lab.py install ... --data-disk N --post-install sun26gnu
+  [--local-env]` (the data disk on `/usr/local`, SVR4 packages with `pkgadd -n` from a CD in `scsi5`
+  for one boot, PATH and the user's bash); needs the owner's local package CD, so it is in no matrix
+  and no CI run; results in `e2e/sparc/README.md`, "Solaris post-install".
 
 ## Known gaps
 
