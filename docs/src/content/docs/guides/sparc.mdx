@@ -138,9 +138,20 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 - Disk on SCSI target 3, CD-ROM on target 6 (the SPARCstation 5 convention).
 - **Solaris 2.4 and 2.5.1 need the CD to answer as a disk** (`scsi-hd`, read-only). From a CD-ROM
   device their kernel starts and then panics with `vfs_mountroot: cannot mount root`: real Sun CD-ROM
-  drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. A VM's CD-ROM drive
-  is always a CD-ROM device (`scsi-cd`). To present the CD as a disk, copy the ISO into a raw disk
-  image of the VM and attach it read-only on target 6, e.g. `scsi6: local:100/vm-100-disk-1.raw,ro=1,backup=0`.
+  drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. Add `cd_as_disk=1`
+  to the CD-ROM drive to present it as a read-only disk (needs qemu-server with this option):
+
+  ```sh
+  qm set 100 --scsi6 local:iso/solaris_2.5.1_1197.iso,media=cdrom,cd_as_disk=1
+  ```
+
+  The drive stays a CD-ROM drive in PVE: read only, not backed up, the ISO is never copied or
+  deleted, and ejecting it (`none`) leaves an empty CD-ROM drive. Only sparc32 (`arch: sparc`) SCSI
+  CD-ROMs with an ISO take the option; anything else is refused. A medium change while the VM runs
+  waits for the next start (a disk has no removable medium). The web UI keeps the option when you
+  change or eject the medium, but has no field for it: set it with `qm set` or the API. Before the
+  option existed the workaround was the ISO copied into a raw disk image of the VM, attached
+  read-only on target 6 (`scsi6: local:100/vm-100-disk-1.raw,ro=1,backup=0`); that still works.
 - A CD that answers as a disk also shows up in the installer's disk list (`c0t6d0`): select only
   `c0t3d0`.
 - Boot the CD from a Sun PROM with `boot cdrom`. OpenBIOS boots a CD-ROM device directly (`-boot d`);
@@ -184,9 +195,12 @@ More recordings, including a cg3 boot, are on [SPARC lab recordings](/guides/spa
 
 ### Sun PROM console on the serial port
 
-With a Sun PROM (`ss5.bin`) and no framebuffer, the PROM prints on ttya but still reads the
-(emulated) Sun keyboard. Type `ttya io` at the `ok` prompt (on the keyboard, through the console's
-send-key) to take input from ttya as well; the Solaris installer then runs entirely on the serial port.
+With a Sun PROM (`ss5.bin`) and no framebuffer (Display: a serial port or none), qemu-server starts
+QEMU with `-nographic`, which also leaves out the Sun keyboard: the PROM reports `SPARCstation 5, No
+Keyboard` and uses ttya for input and output, so `qm terminal` is the whole console (checked with
+`vga: serial0`). A QEMU started by hand with `-vga none` but without `-nographic` keeps the keyboard:
+the PROM then prints on ttya but reads the keyboard, and `ttya io` typed on the keyboard at the `ok`
+prompt moves input to ttya as well.
 
 ### Booting the installed disk
 

@@ -23,6 +23,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol24-ss5` | Solaris 2.4 HW 3/95, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol251-ss5` | Solaris 2.5.1 11/97, End User | as `sol24-ss5` | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20`, 3G disk | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
@@ -98,9 +100,16 @@ runs (no idle on sun4u). If a `halt -p` during the install never powers the VM o
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
 
-In the catalogue but not automated yet (each listed by `lab.py targets` with what blocks it):
-Solaris 2.5.1 (its installer boots only from a CD that answers as a disk, which a PVE CD-ROM drive
-can't be).
+**Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol251-ss5`) boot their installer only from a CD that
+answers as a disk, and 2.4 only under a Sun PROM: their VMs have the SPARCstation 5 PROM (`bios:
+ss5.bin`, part of the package's optional Sun PROM extra) and the CD-ROM drive has `cd_as_disk=1`
+(`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`; needs qemu-server with that option). The
+CD also shows up in the installer's disk list as `c0t6d0`; the install selects only `c0t3d0`. After
+the install the CD is ejected as for every target (`none`, an empty CD-ROM drive). Both take a
+static address only (no DHCP client before 2.6). 2.4 shows a year after 1999 as 19xx in its date
+screen and refuses it; the install types the 4-digit year there. 2.4's auto-layout makes small
+slices (`/` 25 MB, `/usr` 108 MB, swap 130 MB, the rest of the disk `/export/home`), and it has no
+`hostname` command. 2.5.1's install ends with its Maintenance Update, which takes most of its time.
 
 ## Media
 
@@ -111,6 +120,8 @@ software is never part of this project.
 
 | File name | Size (bytes) | sha256 |
 | --- | --- | --- |
+| `solaris_2.4_sparc.iso` | 455819264 | `c23fe150a9963e5dacbfc988fa700c5f2c7506d36ad0b40910e77444709d1fa4` |
+| `solaris_2.5.1_1197.iso` | 452157440 | `18da51043271d0aa69d6fc098b84156673ef4f0728dace4a9e679f79d70d2422` |
 | `solaris_2.6_598_sparc.iso` | 565862400 | `17351669cb91a89562ed6bb23345879c4d18bd019a85085ad53f777e7b7a6b14` |
 | `Sol7.399InstallationSparc.iso` | 588800000 | `3fe59c14307b924d40033f0f3a362c4384b4738a5a365a2f319d96883610c35d` |
 | `sun-solaris-8-0101-installation-sparc.iso` | 584232960 | `d01915baa0503ad21fd9b99e0684e1231200ca3295e84f60a1bf310a956d51d4` |
@@ -124,8 +135,7 @@ software is never part of this project.
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
-SHA512 checksums). The catalogue also lists the media of the targets that aren't automated yet
-(Solaris 2.5.1), with their checksums. Upload a medium through the storage's **ISO
+SHA512 checksums). Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 
 **The SunOS 4.1.4 CD** circulates as a raw CD image (a "BIN": 2352-byte sectors, each with a 16-byte
