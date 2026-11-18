@@ -37,9 +37,9 @@ TARGETS: per target
              /etc/wsh-lab-target and optionally adds a user, and powers off; `check` (a scenario,
              with --check) logs in and runs its "commands" (default: Solaris's). "unattended": the
              installer reads its own answer file from a CD made on the node (answer_media.py) that
-             is in install "answers" `drive` for the install phase only (`format`: "kickstart");
-             the install scenario answers what that leaves on the screen, first boot and check as
-             "scripted" (Red Hat 6.2). DOS targets: targets_dos.py.
+             is in install "answers" `drive` for the install phase only (`format`: "kickstart",
+             "preseed"); the install scenario answers what that leaves on the screen, first boot
+             and check as "scripted" (Red Hat 6.2, Debian 4.0). DOS targets: targets_dos.py.
              install may have `memory` (MB for the install phase only; the profile's afterwards) and
              `prom_env` (OpenBIOS variables for the install phase only); check may have `commands`
              (what the check boot runs and records; default: Solaris's)
@@ -54,6 +54,8 @@ TARGETS: per target
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
   net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
+  net_require  options a static address needs (["gateway", "dns"]: the installer fetches packages)
+  apt_proxy  True: the installer fetches packages and takes --apt-proxy / WSH_LAB_APT_PROXY
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
   matrix_skip  why `pve_matrix.py install` leaves an automated target out (it needs more than the
@@ -76,6 +78,12 @@ PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+ws
 PACKAGES_2026_11_18_CD_AS_DISK = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18 + cd_as_disk",
                                   "pve-manager": "9.2.30+wsh1"}
 PACKAGES_2026_11_18 = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18+wsh3", "pve-manager": "9.2.30+wsh2"}
+# Debian 4.0's Linux 2.6.18 esp driver: pve-qemu-kvm 11.1.3-2+wsh17 with the ESP fix (wsh/0038,
+# esp_cdb_ready() counting the message bytes) built in; no published package has it yet
+PACKAGES_ESP_FIX = {"pve-qemu-kvm": "11.1.3-2+wsh17, qemu-system-sparc a local build with wsh/0038",
+                    "qemu-server": "9.2.18+wsh4", "pve-manager": "9.2.30+wsh3"}
+ESP_FIX_NOTE = ("needs pve-qemu-kvm with wsh/0038 (QEMU's ESP took the first CDB byte after a multi-byte message"
+                " out as a whole command: Linux 2.6.18 offlined the disk and CD), in no published package yet")
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -148,6 +156,11 @@ MEDIA = {
         "title": "Solaris 2.6 GNU package collection (the owner's local CD image)", "content": "iso",
         "size": 287309824, "sha256": "7630cbd8866bdf644c931c599b64b467ed88b58836073d84ca13a16d5b80c366",
         "lab": "sun26gnu.iso", "local_only": True},
+    "debian-40r9-sparc-netinst.iso": {
+        "title": "Debian GNU/Linux 4.0r9 (etch) sparc netinst CD", "content": "iso", "size": 146124800,
+        "sha256": "91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd",
+        "lab": "other-os/debian-40r9-sparc-netinst.iso",
+        "url": "https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso"},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
@@ -257,6 +270,30 @@ REDHAT_UNATTENDED = {
     # (/etc/sysconfig/network, /etc/hosts), GATEWAY= and /etc/resolv.conf
     "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
     "net_modes": ["static"],
+}
+
+
+# Debian 4.0 (etch): debian-installer reads a preseed file from the answer CD (`answers`: made on the
+# node, answer_media.py, in that drive for the install phase only) and fetches the base system from
+# archive.debian.org (or through --apt-proxy); the first boot sets root's password, the marker and
+# the optional user (debian-firstboot.py)
+DEBIAN_UNATTENDED = {
+    "method": "unattended",
+    "install": {"scenario": "debian-install-sparc.py", "vars": {}, "timeout": 5400,
+                "answers": {"format": "preseed", "drive": "scsi5"}},
+    "firstboot": {"scenario": "debian-firstboot.py", "vars": {}, "timeout": 1200},
+    "check": {"scenario": "debian-boot-disk.py", "vars": {}, "timeout": 900,
+              "commands": "uname -a; hostname; cat /etc/wsh-lab-target; cat /etc/debian_version; df -k;"
+                          " /sbin/fdisk -l /dev/sda; /sbin/ifconfig -a; /sbin/route -n; cat /etc/resolv.conf;"
+                          " grep -v '^#' /etc/apt/sources.list; netstat -ltn"},
+    "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+    "nic": "eth0",
+    # the preseed file sets all of it (/etc/network/interfaces, /etc/resolv.conf, /etc/hostname)
+    "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask) with --gateway and --dns,"
+               " which must reach archive.debian.org (or --apt-proxy); --domain",
+    "net_modes": ["static"],
+    "net_require": ["gateway", "dns"],
+    "apt_proxy": True,
 }
 
 
@@ -571,6 +608,39 @@ TARGETS = {
         "hostname": "redhat62-ss20",
         "minutes": 5,  # 4.3 min: install 1.4, first boot 1.9, --check 0.7 (6.6 before the sendmail fix)
         "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18, "with": "--check; --check --user lab"},
+    },
+    # A preseed file from an answer CD made on the node (answer_media.py) on scsi5, loaded by
+    # preseed/early_command on SILO's boot line; the netinst on scsi6 fetches the rest from
+    # archive.debian.org (or --apt-proxy). A blank disk: on the lab's Sun-labelled one partman's new
+    # label kept the old geometry and the recipe didn't fit. Linux 2.6.18's esp driver needs QEMU's
+    # ESP fix for a multi-byte message out (sync negotiation). README.md, "Debian GNU/Linux 4.0"
+    "debian40-ss5": {
+        **DEBIAN_UNATTENDED,
+        "title": "Debian GNU/Linux 4.0 (etch) base system on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "l26"},
+        "disk": {"bus": "scsi3", "size": 3, "label": None},  # partman writes its own Sun label
+        "media": [{"name": "debian-40r9-sparc-netinst.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "debian40-ss5",
+        "minutes": 23,  # 23.3 min with --apt-proxy: install 19.7 (base system from the archive), first boot 2.2, check 1.1
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_ESP_FIX,
+                   "with": "--check --user lab --gateway --dns --apt-proxy"},
+        "matrix_skip": ESP_FIX_NOTE,
+    },
+    "debian40-ss20": {
+        **DEBIAN_UNATTENDED,
+        "title": "Debian GNU/Linux 4.0 (etch) base system on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "l26"},
+        "disk": {"bus": "scsi3", "size": 3, "label": None},  # partman writes its own Sun label
+        "media": [{"name": "debian-40r9-sparc-netinst.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "debian40-ss20",
+        "minutes": 19,  # 19.2 min straight to the archive: install 16.1, first boot 1.9, check 1
+        "tested": {"date": "2026-11-18", "packages": PACKAGES_ESP_FIX,
+                   "with": "--check --gateway --dns; --check --user lab --apt-proxy"},
+        "matrix_skip": ESP_FIX_NOTE,
     },
 }
 

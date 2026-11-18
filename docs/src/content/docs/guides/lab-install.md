@@ -40,6 +40,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `redhat62-ss5` | Red Hat Linux 6.2, Base, installed by kickstart | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~6 min |
 | `redhat62-ss20` | Red Hat Linux 6.2, Base, installed by kickstart | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `redhat62-ss5` | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~5 min |
+| `debian40-ss5` | Debian GNU/Linux 4.0 (etch), the base system, installed by preseed from the netinst CD and `archive.debian.org`; needs `pve-qemu-kvm` with `wsh/0038` (no published package yet) | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only; `--gateway` and `--dns` required | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~20-25 min |
+| `debian40-ss20` | as `debian40-ss5` | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `debian40-ss5` | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~20 min |
 
 The DOS targets are driven on the VGA text screen (read exactly from the text buffer), swap the
 floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS: HIMEM, `DOS=HIGH`,
@@ -134,6 +136,26 @@ service is sendmail on port 25 (on every address; Base has no inetd), as the ins
 it is a 2000-era system with its known holes, so keep it off untrusted networks
 (`chkconfig sendmail off` turns sendmail off). `poweroff` in the guest powers the VM off.
 
+**Debian GNU/Linux 4.0 "etch"** (`debian40-ss5`, `debian40-ss20`), the last Debian release for
+these machines, installs unattended from the netinst CD with a preseed file, debian-installer's own
+answer file. The tool writes a small CD with the preseed file and a loader script (made from your
+options, nothing secret on it) as `wsh-lab-answers-<vmid>.iso`, puts it into `scsi5` for the
+install and removes it afterwards; the only thing typed is one boot line at SILO's prompt, which
+makes the installer read that CD before its first question. The installer then fetches the base
+system and the kernel from `archive.debian.org`, so the guest needs a way out: give `--gateway` and
+`--dns` that reach the internet (they are required; the address defaults to 10.0.2.15/24 as for the
+other targets), or `--apt-proxy URL` for an HTTP proxy such as an apt-cacher-ng
+(`--apt-proxy http://aptcache.example:3142`, or the `WSH_LAB_APT_PROXY` environment variable; the
+installed system's apt keeps using it, from `/etc/apt/apt.conf`). etch's archive signing keys
+expired years ago, so the install runs with debian-installer's `allow_unauthenticated` (the
+packages come from the archive without a signature check; the installed system's `apt-get` then
+works as usual). The disk (blank,
+3 GiB) gets `/boot` (64 MB) first, then `/` and swap; the system is the base system with the console
+on `ttyS0`, `eth0` with the static address, the time zone UTC, no security updates (etch's are
+gone). The first boot sets root's password, writes the marker and adds the optional `--user` (home
+under `/home`). These targets need `pve-qemu-kvm` with the ESP fix `wsh/0038` (Linux 2.6.18's SCSI
+driver takes the disk offline without it), which no published package has yet.
+
 **Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol251-ss5`) boot their installer only from a CD that
 answers as a disk, and 2.4 only under a Sun PROM: their VMs have the SPARCstation 5 PROM (`bios:
 ss5.bin`, part of the package's optional Sun PROM extra) and the CD-ROM drive has `cd_as_disk=1`
@@ -167,10 +189,13 @@ software is never part of this project.
 | `NetBSD-11.1-sparc64.iso` | 694026240 | `a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e` |
 | `NetBSD-11.1-sparc.iso` | 367329280 | `4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636` |
 | `redhat-6.2-sparc.iso` | 623771648 | `74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987` |
+| `debian-40r9-sparc-netinst.iso` | 146124800 | `91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd` |
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
-SHA512 checksums). Upload a medium through the storage's **ISO
+SHA512 checksums). The Debian 4.0 netinst CD is freely redistributable too:
+`https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso`.
+Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 
 **The SunOS 4.1.4 CD** circulates as a raw CD image (a "BIN": 2352-byte sectors, each with a 16-byte
@@ -273,7 +298,8 @@ Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--b
 `--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
 (a second disk, mounted on `/data`, or `/usr/local` with `--data-mount /usr/local`; Solaris only),
 `--post-install sun26gnu` and `--local-env` (Solaris 2.6 and 7: see "Packages under /usr/local"), `--root-password`, `--user NAME` (and `--user-password`; a non-root
-user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD and Red Hat: `/home`), `--check` (boot once more, log in with the documented
+user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD, Red Hat and Debian: `/home`), `--apt-proxy URL` (Debian 4.0: an HTTP proxy for the packages the installer fetches; also
+`WSH_LAB_APT_PROXY`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
 `--out` (the evidence directory; default `/var/lib/wsh-lab/installs/<target>-<vmid>-<time>`).
@@ -286,7 +312,7 @@ What it does:
    2.6 installer lists only labelled disks; the label is written by the tool, no template needed;
    Solaris 10 labels a blank disk itself) and the CD in its drive, tagged `wsh-lab`.
 3. Starts it and answers the installer on the serial console (the lab's scenario for that release;
-   Red Hat 6.2 reads most answers from the kickstart CD the tool adds for this step only).
+   Red Hat 6.2 and Debian 4.0 read most answers from the kickstart or preseed CD the tool adds for this step only).
    The install ends with `halt`, which powers the VM off (Solaris 10: the tool stops the VM when the
    installer's reboot doesn't come back; Red Hat: when the install reboots).
 4. Ejects the CD (the drive stays, empty) and sets the boot order to the disk.
@@ -465,7 +491,8 @@ password from the notes. The notes say how the network was set up ("Network" abo
 later, edit the same files (`/etc/hostname.le0`, `hostname.hme0` on Solaris 10, and `/etc/hosts` for the address, `/etc/netmasks`,
 `/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot. On Red Hat 6.2:
 `/etc/sysconfig/network` (host name, `GATEWAY=`),
-`/etc/sysconfig/network-scripts/ifcfg-eth0`, `/etc/hosts` and `/etc/resolv.conf`.
+`/etc/sysconfig/network-scripts/ifcfg-eth0`, `/etc/hosts` and `/etc/resolv.conf`. On Debian 4.0:
+`/etc/network/interfaces`, `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf`.
 
 ## Licence keys
 

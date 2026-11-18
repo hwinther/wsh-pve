@@ -73,15 +73,19 @@ def iso9660(files, volume="CDROM"):
     return bytes(image)
 
 
-def image(fmt, ip, netmask):
-    """The answer CD of a target's install "answers" format, from the address and netmask `lab.py
-    install` gives the installer (--ip, --netmask)."""
+def image(fmt, ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None):
+    """The answer CD of a target's install "answers" format, from the network `lab.py install` gives
+    the installer (--ip, --netmask; the preseed file also takes --gateway, --dns, --domain, the host
+    name and --apt-proxy: Debian's netinst fetches its packages during the install)."""
     if fmt == "kickstart":
         return iso9660({"KS.CFG": kickstart(ip, netmask).encode()}, "WSH_LAB_KS")
+    if fmt == "preseed":
+        return iso9660({"PRESEED.CFG": preseed(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
+                        "WSHLAB": PRESEED_LOADER.encode()}, "WSH_LAB_PRESEED")
     raise ValueError(f"answer format {fmt!r}")
 
 
-FORMATS = ("kickstart",)
+FORMATS = ("kickstart", "preseed")
 
 
 # --- Red Hat Linux 6.2 ------------------------------------------------------------------------------
@@ -129,4 +133,112 @@ iputils
 sed 's/^root:[^:]*:/root::/' /etc/shadow > /etc/shadow.wsh && cat /etc/shadow.wsh > /etc/shadow
 rm -f /etc/shadow.wsh
 /sbin/chkconfig kudzu off
+"""
+
+
+# --- Debian GNU/Linux 4.0 "etch" ---------------------------------------------------------------------
+
+# What preseed/early_command on SILO's boot line runs (debian-installer reads the kernel command line
+# into its database at start-up and runs that command right away, before any question): the answer
+# CD's SCSI target is in the command (_debian.boot_line), this script (`wshlab`) is on the CD. It loads the
+# preseed file, unmounts the CD and takes it out of the kernel's sight, because Etch's cdrom-detect
+# mounts the first CD-ROM that mounts at all as the install CD and gives up when that isn't Debian's
+# (the answer CD on target 5 comes before the netinst on 6); and it hides the floppy drive.
+PRESEED_LOADER = """# lab.py install (wsh-pve e2e/sparc answer_media.PRESEED_LOADER): run by preseed/early_command
+set -e
+debconf-set-selections /mnt/preseed.cfg
+dev=
+while read d m rest; do [ "$m" != /mnt ] || dev=$d; done < /proc/mounts
+sys=$(udevinfo -q path -n "$dev")
+umount -l /mnt  # busybox's plain umount fails here (ENOSYS); the lazy one works
+echo 1 > "/sys$sys/device/delete"
+# The floppy drive QEMU's sun4m always has (empty): partman's disk scan opens it, and Linux 2.6.18's
+# floppy driver oopses in reset_interrupt (NULL pointer, in keventd), which stops the installer;
+# without a device node the scan skips it
+echo 'KERNEL=="fd[0-9]*", OPTIONS+="ignore_device"' > /etc/udev/rules.d/00-wsh-lab-nofloppy.rules
+rm -rf /dev/fd[0-9]* /dev/floppy
+logger -t wsh-lab "preseed loaded from $dev; $sys removed; no floppy device nodes"
+"""
+
+ETCH_MIRROR = ("archive.debian.org", "/debian")  # etch's packages since 2012 (sparc: still served)
+
+
+def preseed(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
+    """Debian 4.0 (etch) debian-installer's preseed file for `lab.py install` (README.md, "Debian
+    GNU/Linux 4.0"): the network static on eth0 (the netinst fetches the base system from
+    archive.debian.org, so the router and a name server must reach it), etch from archive.debian.org
+    without a signature check, the first (blank) disk with /boot (40-64 MB, ext2) first, then /
+    (ext3) and 128-256 MB swap, no tasks (the base system and the kernel), SILO on the disk, reboot at
+    the end.
+
+    The disk: SILO's first stage reads its second stage through the PROM, which on sun4m reads only
+    the start of the disk (Red Hat 6.2: /boot/second.b past 2 GB never loaded), hence /boot first.
+    partman-auto/disk names it (devfs name), or partman asks for the partitioning method; partman
+    writes the Sun label itself (on an old one the new label kept its geometry and / didn't fit).
+
+    The archive: every key that signed etch on archive.debian.org has expired (2009-2013);
+    debian-installer's own debian-installer/allow_unauthenticated makes debootstrap run without
+    --keyring and apt allow unauthenticated packages until the end of the install (base-installer
+    writes /etc/apt/apt.conf.d/00AllowUnauthenticated and finish-install removes it). The security
+    archive (security.debian.org, apt-setup/security_host) is left out: etch's isn't served there.
+
+    `proxy` (--apt-proxy, e.g. an apt-cacher-ng): mirror/http/proxy, which debootstrap and apt use
+    during the install; debian-installer also writes it to the installed system's /etc/apt/apt.conf
+    (Acquire::http::Proxy), its documented behaviour, so later apt-get runs use the same cache.
+
+    Root gets the hash `*` here (no password works) and the late command empties it, so nothing secret is
+    on the image: the first boot logs in on ttyS0 without one and sets it (debian-firstboot.py).
+    The late command also comments out the netinst's `deb cdrom:` line in sources.list (the CD is
+    ejected after the install; apt would ask for it).
+    No user is made here (passwd/make-user false); the first boot adds the optional one."""
+    dns = list(dns or [])
+    for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
+                      *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
+        if val is not None and not re.fullmatch(r"[A-Za-z0-9._/+-]+", val):
+            raise ValueError(f"preseed {what} {val!r}")
+    if proxy is not None and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?", proxy):
+        raise ValueError(f"preseed proxy {proxy!r}: an http(s)://host[:port] URL")
+    if not gateway or not dns:
+        raise ValueError("preseed: the netinst needs a router (--gateway) and a name server (--dns)")
+    recipe = ("wshlab :: "
+              "40 500 64 ext2 $bootable{ } method{ format } format{ } use_filesystem{ } filesystem{ ext2 } mountpoint{ /boot } . "
+              "1000 10000 1000000000 ext3 method{ format } format{ } use_filesystem{ } filesystem{ ext3 } mountpoint{ / } . "
+              "128 512 256 linux-swap method{ swap } format{ } .")
+    host, directory = ETCH_MIRROR
+    return f"""\
+# lab.py install (wsh-pve e2e/sparc answer_media.preseed): Debian GNU/Linux 4.0 (etch), sparc
+d-i preseed/early_command string
+d-i debian-installer/locale string en_US
+d-i console-keymaps-sun/keymap select us
+d-i netcfg/choose_interface select eth0
+d-i netcfg/disable_dhcp boolean true
+d-i netcfg/get_ipaddress string {ip}
+d-i netcfg/get_netmask string {netmask}
+d-i netcfg/get_gateway string {gateway}
+d-i netcfg/get_nameservers string {" ".join(dns)}
+d-i netcfg/confirm_static boolean true
+d-i netcfg/get_hostname string {hostname or "debian"}
+d-i netcfg/get_domain string {domain or ""}
+d-i mirror/country string enter information manually
+d-i mirror/http/hostname string {host}
+d-i mirror/http/directory string {directory}
+d-i mirror/http/proxy string {proxy or ""}
+d-i mirror/suite string etch
+d-i debian-installer/allow_unauthenticated string true
+d-i apt-setup/security_host string
+d-i clock-setup/utc boolean true
+d-i time/zone string {timezone}
+d-i partman-auto/disk string /dev/discs/disc0/disc
+d-i partman-auto/method string regular
+d-i partman-auto/expert_recipe string {recipe}
+d-i partman/confirm_write_new_label boolean true
+d-i partman/choose_partition select Finish partitioning and write changes to disk
+d-i partman/confirm boolean true
+d-i passwd/root-login boolean true
+d-i passwd/root-password-crypted password *
+d-i passwd/make-user boolean false
+tasksel tasksel/first multiselect
+popularity-contest popularity-contest/participate boolean false
+d-i finish-install/reboot_in_progress note
+d-i preseed/late_command string chroot /target passwd -d root; chroot /target sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list
 """

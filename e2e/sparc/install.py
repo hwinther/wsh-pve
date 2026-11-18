@@ -296,6 +296,9 @@ def network_choice(t, a):
         raise SystemExit(f"--ip {iface.ip} is the network's or broadcast address of {iface.network}")
     net.update(ip=str(iface.ip), netmask=str(iface.netmask), network=str(iface.network.network_address),
                prefix=iface.network.prefixlen)
+    for opt in t.get("net_require") or []:
+        if not getattr(a, opt, None):
+            raise SystemExit(f"--{opt}: {a.target} needs it with a static address (its installer fetches packages)")
     if a.gateway:
         try:
             gw = ipaddress.IPv4Address(a.gateway)
@@ -305,6 +308,26 @@ def network_choice(t, a):
             raise SystemExit(f"--gateway {gw} isn't another address in {iface.network}")
         net["gateway"] = str(gw)
     return net
+
+
+APT_PROXY = re.compile(r"https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:(?P<port>[0-9]{1,5}))?/?")
+
+
+def apt_proxy_choice(t, url, env=os.environ):
+    """--apt-proxy, else WSH_LAB_APT_PROXY: an http(s)://host[:port] URL for the targets whose installer
+    fetches packages itself (the target's "apt_proxy": Debian's netinst), None without one. --apt-proxy
+    for another target, or anything but such a URL (a path, user:password@, spaces), is refused before
+    a VM is made; the environment variable applies only to the targets that take it."""
+    if not url:
+        url = env.get("WSH_LAB_APT_PROXY") if t.get("apt_proxy") else None
+        if not url:
+            return None
+    elif not t.get("apt_proxy"):
+        raise SystemExit(f"--apt-proxy: {t.get('title', 'this target')} fetches no packages during the install")
+    m = APT_PROXY.fullmatch(url)
+    if not m or (m["port"] and not 0 < int(m["port"]) < 65536):
+        raise SystemExit(f"--apt-proxy {url}: not an http(s)://host[:port] URL")
+    return url
 
 
 def network_text(net, nic="le0", dhcp_note=None):
@@ -546,7 +569,10 @@ class Unattended(Scripted):
         path = run("pvesm", "path", volid)
         if os.path.exists(path):
             raise InstallFailed(f"{path} exists already (another install of VM {a.vmid}?)")
-        data = answer_media.image(ans["format"], job.net["ip"] or DEFAULT_IP, job.net["netmask"] or DEFAULT_NETMASK)
+        n = job.net
+        data = answer_media.image(ans["format"], n["ip"] or DEFAULT_IP, n["netmask"] or DEFAULT_NETMASK,
+                                  n.get("gateway"), n.get("dns") or (), n.get("domain"), job.hostname,
+                                  getattr(job, "apt_proxy", None))
         try:
             with open(path, "wb") as f:
                 f.write(data)
@@ -629,6 +655,7 @@ class Job:
         self.disk = disk_choice(self.target, a.disk_size)
         self.data_mount = data_mount(a)
         self.net = network_choice(self.target, a)
+        self.apt_proxy = apt_proxy_choice(self.target, getattr(a, "apt_proxy", None))
         self.started = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.t0 = time.time()
         self.phases = []
@@ -959,6 +986,9 @@ def add_commands(sub):
     i.add_argument("--gateway", help="with a static address: the default router (none)")
     i.add_argument("--dns", metavar="A[,B,C]", help="name servers: the guest resolves host names with DNS (none)")
     i.add_argument("--domain", help="the DNS domain (and search domain) of the guest, with --dns or DHCP")
+    i.add_argument("--apt-proxy", metavar="URL",
+                   help="targets that fetch packages during the install (Debian's netinst): an HTTP proxy for"
+                        " them, e.g. an apt-cacher-ng (WSH_LAB_APT_PROXY; none: straight to the archive)")
     i.add_argument("--root-password", help=f"root's password ({targets.DEFAULT_ROOT_PASSWORD}: a public default)")
     i.add_argument("--user", help="also add this user (home under /export/home; NetBSD: /home)")
     i.add_argument("--user-password", help="the user's password (the root password)")

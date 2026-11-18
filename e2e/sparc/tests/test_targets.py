@@ -718,7 +718,7 @@ class RedHat62(unittest.TestCase):
         iso = answer_media.image("kickstart", "10.0.2.15", "255.255.255.0")
         self.assertIn(answer_media.kickstart("10.0.2.15", "255.255.255.0").encode(), iso)
         with self.assertRaises(ValueError):
-            answer_media.image("preseed", "10.0.2.15", "255.255.255.0")
+            answer_media.image("autoyast", "10.0.2.15", "255.255.255.0")
 
     def test_unattended_install(self):
         """The answer CD is written to the media storage, put into scsi5 for the install phase only, and
@@ -957,6 +957,112 @@ class PostInstall(unittest.TestCase):
         """solaris-boot-disk.py types MORE_COMMANDS one per line and expects MORE_EXPECT for each."""
         sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-boot-disk.py"))
         self.assertEqual((sc.DEFAULTS["MORE_COMMANDS"], sc.DEFAULTS["MORE_EXPECT"]), ("", ""))
+class Debian40(unittest.TestCase):
+    """debian40-ss5/-ss20: the unattended method with a preseed file (answer CD on scsi5, loaded by
+    preseed/early_command), the network the netinst needs, --apt-proxy, the boot line's limits."""
+    names = ("debian40-ss5", "debian40-ss20")
+
+    def test_targets(self):
+        for name in self.names:
+            t = targets.TARGETS[name]
+            self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "eth0"))
+            self.assertEqual(t["install"]["answers"], {"format": "preseed", "drive": "scsi5"})
+            self.assertEqual(t["media"], [{"name": "debian-40r9-sparc-netinst.iso", "drive": "scsi6"}])
+            self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("scsi3", None))  # partman labels it
+            self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"]),
+                             (["static"], ["gateway", "dns"], True))
+            self.assertIn("wsh/0038", t["matrix_skip"])  # out of pve_matrix until the ESP fix is published
+            self.assertIn("cat /etc/debian_version", t["check"]["commands"])
+            self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertEqual(targets.TARGETS["debian40-ss5"]["profile"]["machine"], "SS-5")
+        self.assertEqual(targets.TARGETS["debian40-ss20"]["profile"]["machine"], "SS-20")
+
+    def test_network_needs_router_and_dns(self):
+        def a(**kw):
+            base = dict(target="debian40-ss5", ip=None, netmask=None, gateway=None, dns=None, domain=None,
+                        vlan=None, bridge="vmbr0")
+            return types.SimpleNamespace(**{**base, **kw})
+        t = targets.TARGETS["debian40-ss5"]
+        for bad in (a(), a(gateway="10.0.2.2"), a(dns="10.0.2.3"), a(ip="dhcp")):
+            with self.assertRaises(SystemExit):
+                install.network_choice(t, bad)
+        net = install.network_choice(t, a(gateway="10.0.2.2", dns="10.0.2.3", domain="lab.test"))
+        self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", "10.0.2.2", ["10.0.2.3"]))
+
+    def test_apt_proxy(self):
+        t, rh = targets.TARGETS["debian40-ss5"], targets.TARGETS["redhat62-ss5"]
+        url = "http://aptcache.example:3142"
+        self.assertIsNone(install.apt_proxy_choice(t, None, env={}))
+        self.assertEqual(install.apt_proxy_choice(t, url, env={}), url)
+        self.assertEqual(install.apt_proxy_choice(t, None, env={"WSH_LAB_APT_PROXY": url + "/"}), url + "/")
+        # the environment variable applies only to targets that fetch packages; the option is refused
+        self.assertIsNone(install.apt_proxy_choice(rh, None, env={"WSH_LAB_APT_PROXY": url}))
+        with self.assertRaises(SystemExit):
+            install.apt_proxy_choice(rh, url, env={})
+        for bad in ("aptcache.example:3142", "ftp://aptcache.example", "http://u:p@aptcache.example:3142",
+                    "http://aptcache.example:3142/debian", "http://aptcache.example:99999", "http://a b"):
+            with self.assertRaises(SystemExit, msg=bad):
+                install.apt_proxy_choice(t, bad, env={})
+
+    def test_preseed(self):
+        import answer_media
+        ps = answer_media.preseed("10.77.0.60", "255.255.255.0", "10.77.0.1", ["10.77.0.1", "10.77.0.2"],
+                                  "lab.test", "deb40")
+        lines = ps.splitlines()
+        for line in ("d-i netcfg/disable_dhcp boolean true", "d-i netcfg/get_ipaddress string 10.77.0.60",
+                     "d-i netcfg/get_gateway string 10.77.0.1",
+                     "d-i netcfg/get_nameservers string 10.77.0.1 10.77.0.2",
+                     "d-i netcfg/get_hostname string deb40", "d-i netcfg/get_domain string lab.test",
+                     "d-i mirror/http/hostname string archive.debian.org", "d-i mirror/suite string etch",
+                     "d-i mirror/http/proxy string ", "d-i debian-installer/allow_unauthenticated string true",
+                     "d-i apt-setup/security_host string", "d-i passwd/root-password-crypted password *",
+                     "d-i passwd/make-user boolean false", "d-i preseed/early_command string",
+                     "d-i preseed/late_command string chroot /target passwd -d root; chroot /target sed -i"
+                     " 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list"):
+            self.assertIn(line, lines)
+        recipe = next(line for line in lines if "expert_recipe" in line)
+        self.assertEqual(re.findall(r"mountpoint\{ (\S+) \}", recipe), ["/boot", "/"])  # /boot first (SILO)
+        self.assertLess(recipe.index("/boot"), recipe.index("linux-swap"))
+        self.assertIn("d-i mirror/http/proxy string http://aptcache.example:3142",
+                      answer_media.preseed("10.0.2.15", "255.255.255.0", "10.0.2.2", ["10.0.2.3"],
+                                           proxy="http://aptcache.example:3142").splitlines())
+        for bad in (dict(gateway=None), dict(dns=[]), dict(hostname="a b"), dict(proxy="http://x/;rm"),
+                    dict(dns=["10.0.2.3; reboot"])):
+            kw = {"gateway": "10.0.2.2", "dns": ["10.0.2.3"], **bad}
+            with self.assertRaises(ValueError, msg=bad):
+                answer_media.preseed("10.0.2.15", "255.255.255.0", **kw)
+
+    def test_answer_cd(self):
+        import answer_media
+        import dos_tools
+        data = answer_media.image("preseed", "10.0.2.15", "255.255.255.0", "10.0.2.2", ["10.0.2.3"], None,
+                                  "debian40-ss5", "http://aptcache.example:3142")
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["PRESEED.CFG", "WSHLAB"])
+            self.assertIn(b"d-i netcfg/get_hostname string debian40-ss5\n", iso.cat("preseed.cfg"))
+            self.assertEqual(iso.cat("wshlab"), answer_media.PRESEED_LOADER.encode())
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        loader = answer_media.PRESEED_LOADER
+        self.assertIn("debconf-set-selections /mnt/preseed.cfg", loader)
+        self.assertIn("/device/delete", loader)  # Etch's cdrom-detect must not find the answer CD
+
+    def test_boot_line(self):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian
+        line = _debian.boot_line()
+        self.assertTrue(line.startswith('install priority=critical locale=en_US preseed/early_command="'))
+        self.assertIn("/dev/scsi/host0/bus0/target5/lun0/cd /mnt", line)
+        self.assertLessEqual(len("cdrom " + line), 230)  # Linux 2.6.18 on sparc32 keeps 256 bytes
+        # sparc32 reads words starting with - as boot switches (-h halts, -p: PROM console)
+        self.assertEqual([w for w in line.split() if w.startswith("-")], ["-r"])
+        self.assertNotIn(".", line.split("early_command=")[1])  # d-i reads a.b=c as a module parameter
+        self.assertEqual("scsi" + _debian.ANSWERS_TARGET,
+                         targets.TARGETS["debian40-ss5"]["install"]["answers"]["drive"])
 
 
 if __name__ == "__main__":
