@@ -57,8 +57,10 @@ maintains the patches.
 | `0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc` | With 2-4 CPUs every idle vCPU of Solaris 2.5.1-9 spun at 100% of a host core: the multiprocessor idle loop never calls `idle_cpu`, and nothing tells an idle CPU that it has work. The translator recognises the call of `disp_getwork` in that loop and halts the CPU there; the halt ends when another CPU queues work for it (checked on its next `wr %psr`), on an interrupt, or after 10 ms. The Solaris idle helpers read `disp_nrunnable` through a page table walk instead of `probe_access_flags()`, which asserts when another CPU has flushed the TLB entry ("SMP", "Idle with more than one CPU") | ours | not in QEMU |
 | `0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by` | `-M <sun4m>,solaris-smp-idle=on\|off` for 0023, on by default, does nothing with one CPU | ours | not in QEMU |
 | `0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal` | qtest `sun4m-solaris-smp-idle-test` for 0023-0024 | ours | not in QEMU |
+| `0026-target-sparc-let-sparc32-ld-and-st-fsr-ignore-rd` | sparc32 raised an illegal instruction trap for `ld [..], %fsr` and `st %fsr, [..]` with rd other than 0; V7 and V8 chips ignore rd there. The `_sigtramp` of an old static SunOS 4 libc saves and restores the FSR with rd 4 (`c92ba0e0`, `c90ba0e0`), so such programs died with SIGILL at their first signal after using the FPU (LEMU's case: Island Productivity's 1992 licence daemon `islandLIC`). sparc32 takes any rd again, as before QEMU 8.2; sparc64 doesn't change | [LEMU `0cdd14c1`](https://github.com/tenox7/lemu/commit/0cdd14c1487c30b14a983db634658fd7a29789b2) by Antoni Sawicki | not fixed (since 8.2.0, `3d3c06737b`); see `upstream/qemu-sparc32-ldfsr-rd.md` |
+| `0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m` | qtest `sun4m-fsr-rd-test` for 0026: `ld %fsr` and `st %fsr` with rd 0, 4 (the exact words above) and 31 run without a trap and the FSR reads back | ours | not in QEMU |
 
-The ESCC, cg3 and SunOS idle patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
+The ESCC, cg3, SunOS idle and `%fsr` (0026) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
 carry it ourselves. Each patch keeps its author and has an `Origin:` line.
 
@@ -101,9 +103,17 @@ caught it (0 rounds). `sun4m-solaris-idle-test` passes 5/5 with 0023 (the read o
 `disp_nrunnable` changed under it). With 0001-0025, `make check-qtest-sparc`: 20 OK, 2 skipped, the
 same `qmp-test` failure. Lab results under "SMP".
 
+0026 is LEMU's change without its `machines/sun4m/README.md` hunk; it applies to 11.1.3 on top of
+0001-0025 with line offsets only. `sun4m-fsr-rd-test` passes 3/3 with it; without it the `rd4`
+case fails with trap type 2 (illegal instruction) and `rd0` passes. With 0001-0027,
+`make check-qtest-sparc`: 21 OK, 2 skipped, the same `qmp-test` failure;
+`make check-qtest-sparc64`: 15 OK (`sun4u-cmd646-test` 2/2 among them), 2 skipped, and `qmp-test`
+fails in `/sparc64/qmp/oob` the same way.
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
-`sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test` and `sun4m-solaris-smp-idle-test` (sparc),
+`sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
+`sun4m-fsr-rd-test` (sparc),
 `sun4u-cmd646-test` (sparc64) and `am53c974-test` (i386).
 
 ### QEMU 7.2
@@ -2135,7 +2145,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - `e2e/sparc` (#197): installs and boots Solaris 2.5.1 and 2.6 unattended against the shipped
   QEMU and records every step. Its README lists what it found about devices and boot paths.
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
-  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020) and `am53c974-test` with 0007;
+  `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027)
+  and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
