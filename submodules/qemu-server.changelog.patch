@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index fd392dfa..88050e7b 100644
+index fd392dfa..76f7c8fc 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,17 @@
+@@ -1,10 +1,24 @@
++qemu-server (9.2.16+wsh2) trixie; urgency=medium
++
++  * fix(qemu-server): put ne2k_isa on the ISA bus, not the PCI bus
++    (#304)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 07:06:08 +0000
++
 +qemu-server (9.2.16+wsh1) trixie; urgency=medium
 +
 +  * fix(submodules): pin pve-storage, qemu-server and pve-manager to

@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 2b87a3e7..f970c8b3 100644
+index 2b87a3e7..918c86b6 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,35 @@
+@@ -1,10 +1,42 @@
++pve-manager (9.2.28+wsh5) trixie; urgency=medium
++
++  * fix(pve-manager): the sparc32 CPU hint says idle Solaris CPUs now
++    stop (#305)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 07:05:07 +0000
++
 +pve-manager (9.2.28+wsh4) trixie; urgency=medium
 +
 +  * feat(sparc32): up to 4 CPUs on SS-10 and SS-20 with OpenBIOS (#267)
