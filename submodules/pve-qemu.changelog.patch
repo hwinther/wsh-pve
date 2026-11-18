@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 97fc676..44fda43 100644
+index 97fc676..2bdad66 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,127 @@
+@@ -1,10 +1,133 @@
++pve-qemu-kvm (11.1.3-2+wsh18) trixie; urgency=medium
++
++  * feat(sparc32): sound on the SPARCstation 5's CS4231 (LEMU) (#317)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 18:27:52 +0000
++
 +pve-qemu-kvm (11.1.3-2+wsh17) trixie; urgency=medium
 +
 +  * fix(pve-qemu): let sparc32 ld and st %fsr ignore rd (LEMU) (#315)
