@@ -37,6 +37,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
 | `netbsd111-sparc` | NetBSD 11.1, Minimal | SS-5, OpenBIOS, 256 MB, serial console, 3 GiB blank disk on `scsi3`, lance | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
+| `redhat62-ss5` | Red Hat Linux 6.2, Base, installed by kickstart | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~6 min |
+| `redhat62-ss20` | Red Hat Linux 6.2, Base, installed by kickstart | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `redhat62-ss5` | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~5 min |
 
 The DOS targets are driven on the VGA text screen (read exactly from the text buffer), swap the
 floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS: HIMEM, `DOS=HIGH`,
@@ -100,6 +102,22 @@ runs (no idle on sun4u). If a `halt -p` during the install never powers the VM o
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
 
+**Red Hat Linux 6.2** (`redhat62-ss5`, `redhat62-ss20`) installs unattended with kickstart, the
+installer's own answer file: the tool writes a small CD with `ks.cfg` (made from your network
+options, nothing secret on it) to the media storage as `wsh-lab-answers-<vmid>.iso`, puts it into
+`scsi5` for the install, and removes the drive and the file afterwards, whether the install passed
+or not. Only SILO's three screens, which 6.2's kickstart doesn't answer on SPARC, are typed on the
+serial console. The disk gets `/boot` (32 MB) first, then `/` and 128 MB swap: SILO's first stage
+can't load its second stage from far into the disk on these machines. The installed system has the
+Base package group plus `ping`, the time zone MET, the console on the serial port (`ttyS0`) and
+`eth0` with a static address (`--ip`, `--netmask`, `--gateway`, `--dns`, `--domain`; `--ip dhcp` is
+refused, not tested yet); the first boot sets root's password, the host name
+(`/etc/sysconfig/network`, `/etc/hosts`), the router and DNS, writes the marker
+`/etc/wsh-lab-target` and adds the optional `--user` (home under `/home`). The only network
+service is sendmail on port 25 (on every address; Base has no inetd), as the installer sets it up;
+it is a 2000-era system with its known holes, so keep it off untrusted networks
+(`chkconfig sendmail off` turns sendmail off). `poweroff` in the guest powers the VM off.
+
 **Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol251-ss5`) boot their installer only from a CD that
 answers as a disk, and 2.4 only under a Sun PROM: their VMs have the SPARCstation 5 PROM (`bios:
 ss5.bin`, part of the package's optional Sun PROM extra) and the CD-ROM drive has `cd_as_disk=1`
@@ -132,6 +150,7 @@ software is never part of this project.
 | `sunos414-cd.iso` (made from the BIN below) | 329297920 | `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8` |
 | `NetBSD-11.1-sparc64.iso` | 694026240 | `a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e` |
 | `NetBSD-11.1-sparc.iso` | 367329280 | `4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636` |
+| `redhat-6.2-sparc.iso` | 623771648 | `74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987` |
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
@@ -219,7 +238,7 @@ hash-checked dependencies:
 uv venv /opt/wsh-lab --python /usr/bin/python3
 uv pip install --python /opt/wsh-lab/bin/python --require-hashes -r e2e/sparc/lab-requirements.txt
 install -d /opt/wsh-lab/lab/scenarios
-install -m 644 e2e/sparc/{lab,recording,install,targets,targets_dos,vgatext,sunlabel}.py /opt/wsh-lab/lab/
+install -m 644 e2e/sparc/{lab,recording,install,targets,targets_dos,vgatext,sunlabel,answer_media}.py /opt/wsh-lab/lab/
 install -m 644 e2e/sparc/scenarios/*.py /opt/wsh-lab/lab/scenarios/
 alias wsh-lab='/opt/wsh-lab/bin/python /opt/wsh-lab/lab/lab.py'
 ```
@@ -237,7 +256,7 @@ Options: `--storage` (the VM's disk, `local`), `--media-storage` (`local`), `--b
 `--vlan`, `--ip` (an address or `dhcp`), `--netmask`, `--gateway`, `--dns`, `--domain` (see "Network"),
 `--name`, `--hostname`, `--disk-size` (`3G`, the default, or `9G`: see "Disk size"), `--data-disk GIB`
 (a second disk, mounted on `/data`; Solaris only), `--root-password`, `--user NAME` (and `--user-password`; a non-root
-user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD: `/home`), `--check` (boot once more, log in with the documented
+user with its home under `/export/home`; SunOS 4.1.4: `/home/<host>`; NetBSD and Red Hat: `/home`), `--check` (boot once more, log in with the documented
 password and check the marker), `--template` (convert the finished VM to a template),
 `--keep-on-failure`, `--allow-untested-media`, `--timeout` (seconds the install phase may take) and
 `--out` (the evidence directory; default `/var/lib/wsh-lab/installs/<target>-<vmid>-<time>`).
@@ -249,9 +268,10 @@ What it does:
 2. Creates the VM through the API with the target's profile, a disk with a Sun label (the Solaris
    2.6 installer lists only labelled disks; the label is written by the tool, no template needed;
    Solaris 10 labels a blank disk itself) and the CD in its drive, tagged `wsh-lab`.
-3. Starts it and answers the installer on the serial console (the lab's scenario for that release).
+3. Starts it and answers the installer on the serial console (the lab's scenario for that release;
+   Red Hat 6.2 reads most answers from the kickstart CD the tool adds for this step only).
    The install ends with `halt`, which powers the VM off (Solaris 10: the tool stops the VM when the
-   installer's reboot doesn't come back).
+   installer's reboot doesn't come back; Red Hat: when the install reboots).
 4. Ejects the CD (the drive stays, empty) and sets the boot order to the disk.
 5. Boots the installed system once: answers the first-boot questions with the root password, writes
    `/etc/wsh-lab-target`, adds the optional user, shuts down with `init 5`.
@@ -380,7 +400,9 @@ within the time limit) the exit code is 1, the evidence stays, and the VM is des
 Start it with `qm start 120` and log in on the serial console (`qm terminal 120`) as `root` with the
 password from the notes. The notes say how the network was set up ("Network" above); to change it
 later, edit the same files (`/etc/hostname.le0`, `hostname.hme0` on Solaris 10, and `/etc/hosts` for the address, `/etc/netmasks`,
-`/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot.
+`/etc/defaultrouter`, `/etc/resolv.conf`, or `/etc/dhcp.le0` for DHCP) and reboot. On Red Hat 6.2:
+`/etc/sysconfig/network` (host name, `GATEWAY=`),
+`/etc/sysconfig/network-scripts/ifcfg-eth0`, `/etc/hosts` and `/etc/resolv.conf`.
 
 ## Licence keys
 

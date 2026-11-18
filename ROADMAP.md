@@ -49,6 +49,7 @@ come after that, not before.
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note written | in review | |
+| Install targets: Red Hat Linux 6.2 on SS-5 and SS-20 (`redhat62-ss5`, `redhat62-ss20`, OpenBIOS): kickstart from an answer CD the tool makes on the node (the `unattended` method, `answer_media.py`), SILO's screens answered on the serial console, `/boot` first on the disk for SILO | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 
 ## In progress
@@ -144,8 +145,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
   Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
-  more targets (Solaris 2.4-10, SunOS 4.1.4 and NetBSD 11.1 on sun4u, SS-5 and SS-20 are
-  automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
+  more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, and Red Hat
+  Linux 6.2 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
@@ -192,7 +193,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine |
+| `/mnt/sparc/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD, Debian, Alpine, Red Hat Linux 6.2 |
 | `/srv/sparc/disks` | installed disks the matrices boot, and the Sun-labelled disk templates |
 | `/mnt/sparc/disks` | newer disks: sparc64 installs, the bench disk and its build disk. A matrix that boots one of them needs `disks_dir=/mnt/sparc/disks`, or the file copied to `/srv/sparc/disks` (done for `netbsd111-sparc64-installed.raw`, which the `sparc64` matrix needs) |
 | `/mnt/sparc/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
