@@ -135,8 +135,11 @@ def prom_boot(m, v, target):
 
     OpenBIOS: its `cdrom` alias only finds a CD-ROM device, and stock OpenBIOS since QEMU 9.2 has no
     `disk` alias (the packaged one is fixed, and so was the one in 7.2: they boot the disk by
-    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: input stays
-    on the keyboard while output goes to ttya, so `ttya io` is typed on the keyboard first."""
+    themselves), so anything else boots by device path at the `0 >` prompt. Sun PROMs: with a
+    keyboard ("Keyboard Present", the lab's own QEMU with -vga none) input stays on the keyboard
+    while output goes to ttya, so `ttya io` is typed on the keyboard first; without one ("No
+    Keyboard": QEMU's -nographic, which qemu-server passes for `vga: serialN`) the PROM reads ttya
+    already."""
     if v["BIOS"].startswith("openbios"):
         if target == "cdrom" and v["CDROM_AS"] != "hd" and v.get("BOOT", "d") == "d":
             return  # -boot d: OpenBIOS boots the CD by itself
@@ -146,9 +149,12 @@ def prom_boot(m, v, target):
         path = f"{ESP}/sd@6,0:d" if target == "cdrom" else f"{ESP}/sd@3,0:a"
         m.send(f"boot {path}\r")
         return
-    m.expect(r"\nok ", 600)
+    seen = m.expect_any([r"Keyboard Present", r"No Keyboard", r"\nok "], 600)
+    keyboard = seen != 1  # the banner missed (attached late): as before, type `ttya io`
+    if seen != 2:
+        m.expect(r"\nok ", 600)
     m.snap("PROM prompt")
-    if v["CONSOLE"] == "serial":
+    if v["CONSOLE"] == "serial" and keyboard:
         m.fb_type("ttya io\r")
         m.expect(r"ok ", 30)
     m.send(f"boot {target}\r")

@@ -47,6 +47,7 @@ come after that, not before.
 | Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
+| A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 
 ## In progress
@@ -142,8 +143,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
   installs every automated target with `--check` (the `install` choice of the `sparc lab` workflow).
   Still to do: run it on a schedule, export the passing disks to `/srv/sparc/disks`, and automate
-  more targets (Solaris 2.5.1 needs the CD as a disk; Solaris 2.6-10, SunOS 4.1.4 and NetBSD 11.1
-  on sun4u, SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
+  more targets (Solaris 2.4-10, SunOS 4.1.4 and NetBSD 11.1 on sun4u, SS-5 and SS-20 are
+  automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The
@@ -176,7 +177,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
-| A CD that answers as a disk (Solaris 2.4/2.5.1 installers) has no option | Workaround: copy the ISO to a raw volume on `scsi6` |
+| A CD that answers as a disk (`cd_as_disk=1`) has no field in the web UI | Set it with `qm set` or the API; the CD/DVD editor keeps it when the medium changes |
 | Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |

@@ -720,6 +720,16 @@ def pve_serial(conf):
     return next((n for n in range(4) if conf.get(f"serial{n}") == "socket"), None)
 
 
+def pve_cdrom_as(drive):
+    """`hd` when target 6 answers as a disk: a CD-ROM with cd_as_disk=1 and an image (qemu-server's
+    sparc32-only option; without a medium it is a plain CD-ROM) or a read-only disk image there (the
+    older workaround, the ISO copied into a VM disk); `cd` for a CD-ROM."""
+    opts = drive.split(",")
+    if "media=cdrom" not in opts:
+        return "hd"
+    return "hd" if "cd_as_disk=1" in opts and opts[0] != "none" else "cd"
+
+
 def pve_vars(vmid, conf=None):
     """The scenario variables that the VM's PVE config decides, so they needn't be repeated with --var:
     ARCH, MEM, SERIAL, CONSOLE (serial without a display, else fb) and, for sparc32, what _sparc32.py's
@@ -737,7 +747,7 @@ def pve_vars(vmid, conf=None):
                  VGA="none" if nofb else vga or "cg3",
                  # and no boot device: sun4m boots target 3 (the disk), and the PROM prompt boots the CD
                  BOOT="c",
-                 CDROM_AS="cd" if "media=cdrom" in c.get("scsi6", "media=cdrom") else "hd",
+                 CDROM_AS=pve_cdrom_as(c.get("scsi6", "media=cdrom")),
                  REFRESH="0" if nofb else "0.5")
     return v
 

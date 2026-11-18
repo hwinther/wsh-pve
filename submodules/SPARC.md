@@ -2030,6 +2030,21 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 - **Disks:** sparc32 drives are `scsi-hd`/`scsi-cd` on the built-in ESP
   (`channel=0,scsi-id=<unit>,lun=0`); sparc64 drives are `ide-hd`/`ide-cd` on the built-in IDE
   (`bus=ide.<n>,unit=<n>`).
+- **CD as a disk:** Solaris 2.4 and 2.5.1 boot their installer only from a CD that answers as a
+  disk; from a `scsi-cd` their kernel panics with `vfs_mountroot: cannot mount root`. A sparc32
+  SCSI CD-ROM with an ISO takes `cd_as_disk=1` (`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`):
+  qemu-server then emits `scsi-hd` (with the CD-ROM's `physical_block_size=512`) instead of
+  `scsi-cd`. The drive stays a CD-ROM to PVE (`media=cdrom`): its blockdev is read only, and it is
+  not backed up, snapshotted, cloned or freed, as before. `assert_cd_as_disk` (Machine.pm) refuses it
+  on every other architecture, on a disk (no `media=cdrom`), on the host's CD-ROM drive or a `/dev`
+  path, at create, update and start; other buses don't have the option in their schema (`ide2:
+  invalid format`). Without a medium (`none`) the drive is an empty `scsi-cd`, so ejecting from the
+  web UI (which keeps the option) still works. A medium change, an eject or turning the option on or
+  off on a running VM stays pending until the next start (a `scsi-hd` has no removable medium).
+  Tests: qemu-server's `cfg2cmd/sparc32-ss5-cd-as-disk.conf`, `sparc32-cd-as-disk-ejected.conf`,
+  four `*-cd-as-disk-*-error.conf`, `hotplug/sparc32-cd-as-disk-*.conf`; e2e
+  `sparc-profiles.spec.ts` ("a CD that answers as a disk"); the lab's `sol251-ss5` and `sol24-ss5`
+  install targets through PVE. The web UI has no field for it (set with `qm set` or the API).
 - **Boot:** sparc64 devices get no `bootindex`; the boot device is `-boot order=c|d` from the boot
   order (`sparc64_boot_device`), and the default boot order of a new sparc64 VM has the CD-ROM first. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
@@ -2156,11 +2171,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 
 ## Known gaps
 
-- **CD as a disk:** Solaris 2.4 and 2.5.1 only boot their installer from a CD that answers as a
-  disk (`scsi-hd`). A CD-ROM drive (`media=cdrom`) is always a `scsi-cd`, and the API refuses an ISO
-  volume without `media=cdrom`. Workaround: copy the ISO into a raw disk image of the VM and attach
-  it as `scsi6: <volume>,ro=1,backup=0` (a read-only disk on target 6). A first-class option would be
-  a sparc32-only drive flag; not added.
+- **CD as a disk in the web UI:** `cd_as_disk=1` (see "Supported profiles") has no field in the CD/DVD
+  editor; the editor keeps it when the medium is changed or ejected.
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
   Solaris' X server need).
 - **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").

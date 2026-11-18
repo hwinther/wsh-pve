@@ -379,6 +379,118 @@ test.describe('refused combinations', () => {
   })
 })
 
+// A CD that answers as a disk (`cd_as_disk=1` on a sparc32 SCSI CD-ROM): the Solaris 2.4 and 2.5.1
+// installers boot only from such a CD (submodules/SPARC.md, "CD as a disk"). CI runs these tests
+// against the published packages: the tests of what the option does need a qemu-server that has it
+// (probed once, skipped otherwise); the refusals hold with either, the older one refusing the
+// unknown property itself.
+test.describe('a CD that answers as a disk (cd_as_disk)', () => {
+  let hasCdAsDisk = false
+  const UNKNOWN = 'cd_as_disk: property is not defined in schema'
+
+  test.beforeAll(async () => {
+    const { code } = await pveExec(['grep', '-q', 'cd_as_disk', '/usr/share/perl5/PVE/QemuServer/Drive.pm'])
+    hasCdAsDisk = code === 0
+  })
+
+  test('SS-5 with ss5.bin: a read-only scsi-hd on target 6, an empty scsi-cd once ejected', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has cd_as_disk
+    test.skip(!hasCdAsDisk, 'the installed qemu-server has no cd_as_disk yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      bios: 'ss5.bin',
+      machine: 'SS-5',
+      memory: 256,
+      name: 'sparc-cd-as-disk',
+      scsi3: 'local:0.0625,format=raw',
+      scsi6: `${ISO},media=cdrom,cd_as_disk=1`,
+      serial0: 'socket',
+      vga: 'serial0',
+    })
+    expect(await vmConfFile(vmid)).toMatch(/^scsi6: local:iso\/e2e-sparc\.iso,cd_as_disk=1,media=cdrom/m)
+
+    const cmd = await showcmd(vmid)
+    expect(cmd).toMatch(/-device 'scsi-hd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,[^']*physical_block_size=512'/)
+    expect(cmd).not.toContain("'scsi-cd,")
+    expect(cmd).toMatch(
+      /"filename":"\/var\/lib\/vz\/template\/iso\/e2e-sparc\.iso"[^']*"node-name":"drive-scsi6","read-only":true/,
+    )
+    const qemu = await qemuAccepts(vmid)
+    expect(qemu.code, qemu.output).toBe(0)
+
+    // Ejected as the web UI does it (the option stays): an empty CD-ROM drive.
+    await pve.post(`/nodes/${NODE}/qemu/${vmid}/config`, { scsi6: 'none,media=cdrom,cd_as_disk=1' })
+    const ejected = await showcmd(vmid)
+    expect(ejected).toMatch(/-device 'scsi-cd,channel=0,scsi-id=6,lun=0,id=scsi6,/)
+    expect(ejected).not.toContain('drive-scsi6","read-only"')
+    const qemuEjected = await qemuAccepts(vmid)
+    expect(qemuEjected.code, qemuEjected.output).toBe(0)
+  })
+
+  const refusals: { name: string; params: Record<string, number | string>; message: string }[] = [
+    {
+      message: "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on x86_64",
+      name: 'on x86_64',
+      params: { memory: 512, scsi2: `${ISO},media=cdrom,cd_as_disk=1`, scsihw: 'virtio-scsi-pci' },
+    },
+    {
+      message: "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on aarch64",
+      name: 'on aarch64',
+      params: { arch: 'aarch64', memory: 1024, scsi2: `${ISO},media=cdrom,cd_as_disk=1`, scsihw: 'virtio-scsi-pci' },
+    },
+    {
+      message: "sparc: scsi4: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)",
+      name: 'sparc32: on a disk',
+      params: { arch: 'sparc', memory: 256, scsi4: 'local:0.0625,format=raw,cd_as_disk=1' },
+    },
+    {
+      message: "sparc: scsi6: 'cd_as_disk' needs an image (an ISO volume), not the host's CD-ROM drive",
+      name: "sparc32: the host's CD-ROM drive",
+      params: { arch: 'sparc', memory: 256, scsi6: 'cdrom,media=cdrom,cd_as_disk=1' },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid, ...c.params })
+      expect(refused.message).toContain(hasCdAsDisk ? c.message : UNKNOWN)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('create refused: on IDE (only SCSI drives have the option)', async () => {
+    const vmid = Number(await pve.get<string>('/cluster/nextid'))
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, {
+      ide2: `${ISO},media=cdrom,cd_as_disk=1`,
+      memory: 512,
+      vmid,
+    })
+    expect(refused.message).toContain(`ide2.${UNKNOWN}`)
+  })
+
+  test('update refused: on an existing x86_64 VM, and on a sparc32 disk', async () => {
+    const x86 = await createVm({ memory: 512, name: 'x86-cd-as-disk', scsihw: 'virtio-scsi-pci' })
+    const x86Refused = await pve.refused('POST', `/nodes/${NODE}/qemu/${x86}/config`, {
+      scsi2: `${ISO},media=cdrom,cd_as_disk=1`,
+    })
+    expect(x86Refused.message).toContain(
+      hasCdAsDisk ? "scsi2: 'cd_as_disk' is only supported on sparc32 (arch sparc), not on x86_64" : UNKNOWN,
+    )
+    expect(await vmConfFile(x86)).not.toContain('scsi2:')
+
+    const sparc = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-cd-as-disk-update' })
+    const sparcRefused = await pve.refused('POST', `/nodes/${NODE}/qemu/${sparc}/config`, {
+      scsi4: 'local:0.0625,format=raw,cd_as_disk=1',
+    })
+    expect(sparcRefused.message).toContain(
+      hasCdAsDisk ? "sparc: scsi4: 'cd_as_disk' needs a CD-ROM drive (media=cdrom)" : UNKNOWN,
+    )
+    expect(await vmConfFile(sparc)).not.toContain('scsi4:')
+  })
+})
+
 test.describe('backup and restore', () => {
   /** Fills the first 4 MB of the VM's scsi3 disk with random data, returns the image's sha256. */
   async function fillDisk(vmid: number): Promise<string> {
