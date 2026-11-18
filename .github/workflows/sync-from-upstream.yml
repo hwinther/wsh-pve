@@ -18,6 +18,14 @@ on:
         required: false
         default: "hwinther"
         type: string
+      track:
+        description: "Move the submodule to the release Proxmox has published, or to the tip of master"
+        required: false
+        default: "released"
+        type: choice
+        options:
+          - released
+          - master
   workflow_call:
     inputs:
       repository:
@@ -34,6 +42,11 @@ on:
         description: "GitHub username to assign when deb build fails"
         required: false
         default: "hwinther"
+        type: string
+      track:
+        description: "released (the commit of the version in Proxmox's apt repository) or master (the branch tip)"
+        required: false
+        default: "released"
         type: string
     outputs:
       build-deb-when-changed-success:
@@ -123,6 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ASSIGNEE: ${{ inputs.pr_assignee }}
+          TRACK: ${{ inputs.track || 'released' }}
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
@@ -132,7 +146,22 @@ jobs:
           echo "submodule=$submodule" >> $GITHUB_OUTPUT
 
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules # switch from ssh to https because we don't have ssh keys in the pipeline
-          git submodule update --init --remote submodules/$submodule
+          if [ "$TRACK" = master ]; then
+            git submodule update --init --remote submodules/$submodule
+          else
+            # Follow what Proxmox has published: the commit whose debian/changelog has the version in
+            # its apt repository (pvetest or no-subscription), never commits after it whose
+            # dependencies aren't released yet. Never moves the pointer backwards.
+            git submodule update --init submodules/$submodule
+            current=$(git -C submodules/$submodule rev-parse HEAD)
+            if ! released=$(scripts/upstream-released-commit.sh "$submodule"); then
+              echo "No published release found for $submodule; leaving it at $current"
+            elif git -C submodules/$submodule merge-base --is-ancestor "$released" "$current"; then
+              echo "$submodule is already at or past the published release ($released)"
+            else
+              git -C submodules/$submodule checkout -q "$released"
+            fi
+          fi
           git checkout -- .gitmodules # revert the change to .gitmodules
           changelogChanges=$(git diff --submodule=diff | grep "debian/changelog" | wc -l)
           if [ $changelogChanges -eq 0 ]; then
