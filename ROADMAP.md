@@ -170,6 +170,14 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   does Web Start install with 256 MB on the SS-5 (OpenBIOS, and `ss5.bin` for 8), how long it takes,
   and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Solaris 9 isn't
   supported on sun4m by Sun (8 was the last release), so 9 stays a curiosity either way.
+- **More sparc32 guests and older releases.** QEMU emulates sun4m only (no sun4c or sun4), so the
+  floor is set by when each machine got support: SunOS 4.1.3 (Solaris 1.1) on the SS-10 and 4.1.3_U1
+  (1.1.1) on the SS-20; the SS-5 needs 4.1.4 (1.1.2), which `sunos414-ss5` already installs. Solaris
+  2.0/2.1 are sun4c only; 2.2 and 2.3 are possible on the SS-10/SS-20. Order: first what the lab
+  host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
+  sparc64), then, once the owner has the media, NeXTSTEP 3.3 and OPENSTEP 4.2 for SPARC (both ran on
+  the SS-5 and SS-20), OpenBSD 5.9 (the last release with sparc32), SunOS 4.1.3/4.1.3_U1, Solaris
+  2.3 and 2.5. Each one booted and installed by hand first; an install target only for what works.
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
