@@ -573,7 +573,7 @@ prompt; a candidate for a `wsh/` patch and an upstream report.
 
 ### Audio
 
-The SS-5's CS4231 plays sound with pve-qemu 0028-0033 and openbios 0016: the APC DMA engine reads
+The SS-5's CS4231 plays sound with pve-qemu 0028-0033 and openbios 0018: the APC DMA engine reads
 the guest's buffers through the IOMMU and plays them into the audiodev given with
 `-machine audiodev=<id>` (qemu-server: `audio0: device=cs4231,driver=...`). The codec is built into
 the machine, so there is no `-device`. Without an audiodev (no `audio0`) the chip is the old

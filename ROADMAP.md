@@ -190,6 +190,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 | What | Notes |
 | --- | --- |
+| OpenBIOS 0009 on sparc64 prints `decode-unit isn't unique.` / `encode-unit isn't unique.` at power-on | Its `drivers/pci.c` hunk redefines the two words in the ebus node, which already has the PCI bridge's methods. Harmless so far; untested idea: give the ebus node its own methods (found by the LEMU port) |
+| SS-5 with OpenBIOS: `(enter)` then `go` at the prompt stops QEMU with `Trap 0x21` (instruction access error, traps off) | OpenBIOS 0008's prompt/resume path; not a supported path, reproducible with `-M SS-5 -prom-env auto-boot?=false` (found by the LEMU port) |
 | The Solaris 2.6 CD on SS-20 sometimes hangs after `Configuring devices...` | 1 of 6 boots on an idle host; the `machines` matrix can fail on it |
 | The SunOS 4.1.4 install kernel crashes QEMU with 256 MB (`Trap 0x29`) | 64 MB works; the installed system runs with 256 MB. The install target `sunos414-ss5` runs its install phase with 64 MB and sets 256 MB afterwards |
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |

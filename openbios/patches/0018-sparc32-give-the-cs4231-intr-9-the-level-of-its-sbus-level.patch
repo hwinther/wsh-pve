@@ -9,8 +9,9 @@ processor level 9: the two said different things. Solaris takes
 level 5, so no interrupt line served both. The SS-5's own PROM (2.15)
 gives the chip "intr" 0x39: an SBus interrupt at processor level 9.
 
-Make "intr" 9, so both systems wait where the chip interrupts (QEMU wsh
-patch 0030 wires it to SBus level 5, as the real machine).
+Make "intr" 9, so both systems wait where the chip interrupts (with the
+QEMU change that raises the SS-5's cs4231 at SBus level 5, as on the real
+machine).
 ---
  drivers/sbus.c | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)
