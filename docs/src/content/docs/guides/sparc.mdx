@@ -271,6 +271,12 @@ LSI SCSI controller and virtio-scsi don't work (no firmware driver, and the gues
 or fail). A VM created by the wizard with the NetBSD 11.1 CD boots it to the installer through Proxmox
 by itself (tested in the sparc lab's `pve` matrix, serial console).
 
+The 3 GB limit comes from OpenBIOS: with the published packages, 4 GB stops NetBSD right after its
+loader and from about 4.3 GB the firmware itself stops. The repository's OpenBIOS patches 0013-0015
+fix that, but no published package has them yet. With firmware built from them on 11.1.3-2+wsh15,
+NetBSD 11.1 ran with 4, 6 and 8 GB and Solaris 10 1/13 with 4 and 8 GB in the sparc lab (QEMU
+started directly, not through Proxmox), each using most of that memory without errors.
+
 ### Installing NetBSD
 
 1. Create VM, General: Advanced, vCPU Architecture **SPARC (64-bit)**. OS: the NetBSD sparc64 ISO,
