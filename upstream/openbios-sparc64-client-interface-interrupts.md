@@ -48,7 +48,7 @@ stopped on most boots of its live CD, in two ways, both shortly after a client i
    login prompt and then hung in the window spill loop of item 1 at the first command typed.
 
 Two further boots hung with the tick interrupt gone (the kernel idle, no level-14 interrupt any
-more). That happened with this fix too, so it is something else; we suspect a race in QEMU
+more). That happened with this fix too, so it is something else: a race in QEMU
 (`upstream/qemu-sparc64-softint-race.md`).
 
 Solaris 10 1/13 showed the same once in six DVD boots through Proxmox VE: `BAD TRAP: type=4e`

@@ -92,7 +92,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    boots, gets its address and powers off; `lab.py install tribblix-m34-sun4u` drives it through PVE
    (left out of `pve_matrix.py install` until a package has 0016 and 0017). Still open:
    - the guest's clock stops for good in about one of three long runs (5 of 14, before and
-     after 0016), always under heavy interrupt traffic; suspected a QEMU race on `%softint`
+     after 0016), always under heavy interrupt traffic; a race in QEMU on `%softint`, caught in a trace
      (`upstream/qemu-sparc64-softint-race.md`), would need a QEMU patch;
    - with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first attempts that
      ZFS retries; no data errors); a UFS install (`ROOT_FS=ufs`) avoids that but hasn't been booted;

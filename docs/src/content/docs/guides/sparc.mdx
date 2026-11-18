@@ -366,7 +366,7 @@ hangs on most boots, and a ZFS root disk doesn't boot. With the fixes, measured 
 sparc64 profile, with a known root password and a static address. Several services time out on the
 way under emulation (`svc.startd` kills them); the system comes up anyway. In about one of three
 long runs the guest's clock stopped for good (the guest idles and nothing that waits for time ever
-wakes up): a suspected race in QEMU that would need a QEMU fix; stop and start the VM. Details:
+wakes up): a race in QEMU that needs a QEMU fix; stop and start the VM. Details:
 `submodules/SPARC.md`, "Tribblix on sun4u".
 
 ## Known limitations

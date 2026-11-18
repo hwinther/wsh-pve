@@ -793,7 +793,7 @@ the SMF manifests again), 15-17 minutes to the login prompt on later boots, and 
 minutes because service methods time out on the way down (`_tribblix.power_off()` waits 30). Many
 service methods time out on the way up as well (`svc:/network/location`, `rbac`, `routing/route`,
 `update-man-index`; `svc.startd` kills them); the system comes up anyway. In about one of three long
-runs the guest's clock stopped for good (submodules/SPARC.md, "Tribblix on sun4u": suspected a race
+runs the guest's clock stopped for good (submodules/SPARC.md, "Tribblix on sun4u": a race
 in QEMU, no fix carried); the phase then stalls until its timeout and fails.
 
 Tested in the lab and in the PVE test container on the lab host (TCG, pve-qemu-kvm 11.1.3-2+wsh16

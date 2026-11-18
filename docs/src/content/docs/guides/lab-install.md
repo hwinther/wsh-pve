@@ -80,7 +80,7 @@ the default route, DNS and the optional user, and locks the live CD's `jack` acc
 installer copies along. The pool shows DEGRADED after the install: the fault manager counts the I/Os
 that ZFS had to retry on the emulated IDE disk (no data errors); the first boot runs `zpool clear
 rpool` (whether the mark stays away wasn't checked yet). In about one of three long runs the
-guest's clock stops and the phase stalls until its timeout (a suspected QEMU race, see the sparc
+guest's clock stops and the phase stalls until its timeout (a race in QEMU, see the sparc
 guide). Like Solaris 10, don't `reboot` it: stop and start the VM.
 
 **SunOS 4.1.4** (`sunos414-ss5`) copies the CD's miniroot to the swap slice, reboots into it and

@@ -1637,10 +1637,11 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   install in its package installs (once, with network downloads) and one while it configured the
   devices (through PVE). Each time with
   heavy interrupt traffic, and the two through PVE with other emulated guests busy on the host
-  (leftover VMs of earlier runs). Suspected: the guest's `%set_softint`/`%clear_softint` writes run in
+  (leftover VMs of earlier runs). The cause: the guest's `%set_softint`/`%clear_softint` writes run in
   QEMU's vCPU thread as a read-modify-write of `env->softint` without the BQL, while the tick timer
   sets its bit from the main loop thread, so a tick that fires in between is lost
-  (`upstream/qemu-sparc64-softint-race.md`, not verified, no fix carried: it would be a QEMU change).
+  (`upstream/qemu-sparc64-softint-race.md`, caught once in a trace: the tick fired while the guest cleared another bit, and the guest's store
+  dropped it; no fix carried: it would be a QEMU change).
 - **Install, ZFS (Tribblix's default):** `/root/live_install.sh -G -n <host> c1t0d0` from the live
   root shell (an SMI label with one big slice 0, a ZFS pool `rpool` of version 28, a 2 GB swap zvol,
   the base overlay from the CD, `installboot -F zfs`, the boot archive) completed in 64 minutes
