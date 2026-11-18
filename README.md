@@ -9,7 +9,29 @@
 
 Badges are rendered by [`repo-update.yml`](https://github.com/hwinther/wsh-pve/blob/main/.github/workflows/repo-update.yml) from the apt repository and the quality summary of the newest E2E run on main.
 
-WSH Proxmox Virtualization Environment patches
+WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordinary Proxmox VMs (created, configured, backed up and started from the web UI and API), on tested machine profiles, with the QEMU and firmware fixes they need.
+
+## What runs where
+
+| Guest | x86 | sparc32 SS-5 | sparc32 SS-10/SS-20 | sparc64 sun4u | aarch64 |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| SunOS 4.1.4 | | ✅ | | | |
+| Solaris 2.4, 2.5.1 | | ✅ ¹ | | | |
+| Solaris 2.6, 7 | | ✅ | ✅ | | |
+| Solaris 8, 9 | | | ✅ | | |
+| Solaris 10 | | | | ✅ | |
+| illumos (Tribblix m34) | | | | ✅ | |
+| NetBSD 11.1 | | ✅ | ✅ | ✅ | |
+| OpenBSD 8.0 | | | | ◐ ² | |
+| Red Hat Linux 6.2 | | ✅ | ✅ | | |
+| Debian 12 (ports) | | | | ◐ ² | |
+| Alpine Linux | ✔ | | | | ✔ |
+| MS-DOS 6.22, FreeDOS 1.4 | ✅ | | | | |
+| MS-DOS 3+, Windows 1.x-9x (3dfx/Mesa 3D), Linux 2.x | ✔ | | | | |
+
+✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
+¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u).
+Profiles, limits and known problems per system: [guest operating systems](https://debian.wshosting.no/guides/operating-systems/), [SPARC](https://debian.wshosting.no/guides/sparc/), [DOS](https://debian.wshosting.no/guides/dos/).
 
 ## Getting started
 
