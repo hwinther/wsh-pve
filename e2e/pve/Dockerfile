@@ -11,12 +11,13 @@
 #   PACKAGES=local    install the .deb files in e2e/pve/debs/ instead (the build-deb artifacts)
 FROM debian:13
 
-# TEMPORARY: pvetest, because the published qemu-server 9.2.18, pve-manager 9.2.30 and
-# libpve-storage-perl 9.1.18 (+wsh1) were built from pvetest releases and need libpve-common-perl
-# 9.2.11, libpve-guest-common-perl 6.0.9, libpve-cluster-perl 9.1.10 and proxmox-widget-toolkit
-# 5.2.14, which pve-no-subscription doesn't have yet. Back to pve-no-subscription (what users get)
-# once it has them; the sync follows no-subscription only from now on (ROADMAP, Known).
-ARG PVE_COMPONENT=pvetest
+# TEMPORARY: pvetest on top of no-subscription (pvetest only carries what changed). The published
+# qemu-server 9.2.18, pve-manager 9.2.30 and libpve-storage-perl 9.1.18 (+wsh1) were built from
+# pvetest releases and need libpve-common-perl 9.2.11, libpve-guest-common-perl 6.0.9,
+# libpve-cluster-perl 9.1.10 and proxmox-widget-toolkit 5.2.14, which pve-no-subscription doesn't
+# have yet. Back to pve-no-subscription (what users get) once it has them; the sync follows
+# no-subscription only from now on (ROADMAP, Known).
+ARG PVE_COMPONENT="pve-no-subscription pvetest"
 ARG PACKAGES=repo
 
 ENV DEBIAN_FRONTEND=noninteractive \
