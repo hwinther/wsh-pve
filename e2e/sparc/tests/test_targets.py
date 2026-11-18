@@ -783,5 +783,181 @@ class RedHat62(unittest.TestCase):
             os.rmdir(d)
 
 
+def post_args(**kw):
+    a = dict(target="sol26-ss20", data_disk=2, data_mount=None, post_install="sun26gnu", local_env=False, user=None)
+    a.update(kw)
+    return types.SimpleNamespace(**a)
+
+
+class PostInstall(unittest.TestCase):
+    """--data-mount, --post-install and --local-env (README.md, "Solaris post-install")."""
+    b = targets.POST_INSTALL["sun26gnu"]
+
+    def test_medium_is_local_only(self):
+        med = targets.MEDIA["sun26gnu.iso"]
+        self.assertEqual((med["size"], med["content"], med["lab"]), (287309824, "iso", "sun26gnu.iso"))
+        self.assertTrue(med["sha256"].startswith("7630cbd8866bdf64"))
+        self.assertTrue(med.get("local_only"))
+        self.assertNotIn("url", med)  # never downloaded: CI can't and mustn't need it
+        # no target's own media: `lab.py media`, pve_matrix.py and the CI matrices never ask for it
+        self.assertFalse([n for n, t in targets.TARGETS.items() if any(m["name"] == "sun26gnu.iso" for m in t["media"])])
+
+    def test_bundle(self):
+        self.assertEqual(targets.problems(), [])
+        self.assertEqual(self.b["medium"], "sun26gnu.iso")
+        self.assertEqual((self.b["basedir"], self.b["drive"], self.b["shell"]), ("/usr/local", "scsi5", "/usr/local/bin/bash"))
+        for name in self.b["targets"]:
+            self.assertEqual(targets.TARGETS[name]["status"], "automated")
+            self.assertEqual(targets.TARGETS[name]["firstboot"]["scenario"], "solaris-firstboot.py")
+
+    def test_bundle_problems(self):
+        saved = dict(targets.POST_INSTALL)
+        try:
+            targets.POST_INSTALL["x"] = {**self.b, "medium": "nope.iso", "targets": ["redhat62-ss5"]}
+            out = " ".join(targets.problems())
+            self.assertIn("nope.iso isn't in MEDIA", out)
+            self.assertIn("redhat62-ss5 isn't a Solaris target", out)
+            targets.POST_INSTALL["x"] = {**self.b, "drive": "scsi6"}
+            self.assertIn("drive scsi6 is taken", " ".join(targets.problems()))
+        finally:
+            targets.POST_INSTALL.clear()
+            targets.POST_INSTALL.update(saved)
+
+    def test_accepted(self):
+        for kw in ({}, dict(target="sol26-ss5", data_disk=1), dict(local_env=True, user="lab"),
+                   dict(data_mount="/usr/local"), dict(local_env=True)):
+            with self.subTest(**kw):
+                install.check_post_install(post_args(**kw))
+                self.assertEqual(install.data_mount(post_args(**kw)), "/usr/local")
+
+    def test_data_mount(self):
+        self.assertEqual(install.data_mount(post_args(post_install=None)), "/data")
+        self.assertEqual(install.data_mount(post_args(post_install=None, data_mount="/usr/local")), "/usr/local")
+        install.check_post_install(post_args(post_install=None, data_mount="/usr/local"))
+        self.assertEqual(install.data_mount(types.SimpleNamespace(data_disk=2)), "/data")  # callers without the options
+
+    def test_refusals(self):
+        for kw, msg in ((dict(target="redhat62-ss5"), "tested on sol26-ss5, sol26-ss20, sol7-ss5, sol7-ss20, not redhat62-ss5"),
+                        (dict(target="sol10-sun4u"), "not sol10-sun4u"),
+                        (dict(data_disk=None), "needs --data-disk"),
+                        (dict(data_mount="/data"), "must be on /usr/local"),
+                        (dict(post_install=None, local_env=True), "--local-env: only with --post-install"),
+                        (dict(post_install=None, data_disk=None, data_mount="/usr/local"), "--data-mount: only with --data-disk")):
+            with self.subTest(**kw), self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(**kw))
+            self.assertIn(msg, str(e.exception))
+        saved = dict(targets.POST_INSTALL)
+        try:
+            targets.POST_INSTALL["sun26gnu"] = {**self.b, "min_data_disk": 3}
+            with self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(data_disk=2))
+            self.assertIn("--data-disk 3 GiB or more", str(e.exception))
+            targets.POST_INSTALL["sun26gnu"] = {**self.b, "shell": None}
+            with self.assertRaises(SystemExit) as e:
+                install.check_post_install(post_args(local_env=True))
+            self.assertIn("brings no login shell", str(e.exception))
+        finally:
+            targets.POST_INSTALL.clear()
+            targets.POST_INSTALL.update(saved)
+
+    def test_cli(self):
+        import argparse
+        p = argparse.ArgumentParser()
+        install.add_commands(p.add_subparsers(dest="cmd"))
+        a = p.parse_args(["install", "sol26-ss20", "--vmid", "9300", "--data-disk", "2", "--post-install", "sun26gnu",
+                          "--local-env", "--user", "lab"])
+        self.assertEqual((a.data_disk, a.data_mount, a.post_install, a.local_env), (2, None, "sun26gnu", True))
+        a = p.parse_args(["install", "sol26-ss20", "--vmid", "1", "--data-disk", "2", "--data-mount", "/usr/local"])
+        self.assertEqual((a.data_mount, a.post_install, a.local_env), ("/usr/local", None, False))
+        import contextlib
+        import io
+        for bad in (["--post-install", "nope"], ["--data-mount", "/opt"]):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                p.parse_args(["install", "sol26-ss20", "--vmid", "1", *bad])
+
+    def test_cd_only_for_the_phase(self):
+        """The bundle's CD goes into scsi5 for the post-install phase and is removed afterwards, also
+        when the phase fails."""
+        calls, phases = [], []
+
+        def fake_run(*cmd, check=True):
+            calls.append(cmd)
+            return ""
+
+        class Job:
+            volids = {"sun26gnu.iso": "local:iso/sun26gnu.iso"}
+            root_password = "wshlab"
+            a = types.SimpleNamespace(vmid="9300", out="/x", post_install="sun26gnu", local_env=True, user="lab")
+
+            def __init__(self, fail=False):
+                self.fail = fail
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                phases.append((name, scenario, v, timeout))
+                if self.fail:
+                    raise install.InstallFailed("postinstall: stalled")
+
+            def log(self, msg):
+                pass
+
+        saved = install.run, install.save_config
+        install.run, install.save_config = fake_run, lambda vmid, work: None
+        try:
+            install.PostInstall().run(Job())
+            (name, scenario, v, timeout), = phases
+            self.assertEqual((name, scenario, timeout), ("postinstall", "solaris-post-install.py", 5400))
+            self.assertEqual((v["CD"], v["DIR"], v["DATA_DISK"], v["BASEDIR"], v["LOCAL_ENV"], v["USER"], v["LOGIN_SHELL"]),
+                             ("c0t5d0", "gnu/pkgs", "c0t4d0", "/usr/local", "1", "lab", "/usr/local/bin/bash"))
+            self.assertEqual(calls[0], ("qm", "set", "9300", "--scsi5", "local:iso/sun26gnu.iso,media=cdrom"))
+            self.assertEqual(calls[-1], ("qm", "set", "9300", "--delete", "scsi5"))
+            calls.clear()
+            with self.assertRaises(install.InstallFailed):
+                install.PostInstall().run(Job(fail=True))
+            self.assertEqual(calls[-1], ("qm", "set", "9300", "--delete", "scsi5"))
+        finally:
+            install.run, install.save_config = saved
+
+    def test_checks(self):
+        """The --check boot's extra commands: one console line each, and each regex matches what the
+        guest prints but not the command line the console echoes."""
+        job = types.SimpleNamespace(a=post_args(local_env=True, user="lab"))
+        v = install.post_install_checks(job)
+        cmds, rxs = v["MORE_COMMANDS"].split("\n"), v["MORE_EXPECT"].split("\n")
+        self.assertEqual(len(cmds), len(rxs))
+        self.assertEqual(len(cmds), 1 + 3 + 1 + 2 + 2)
+        good = ["df: /dev/dsk/c0t4d0s0      2033311  241000 1731318    13%    /usr/local",
+                "GNU bash, version 4.1.0(1)-release (sparc-sun-solaris2.6)", "VIM - Vi IMproved 7.3 (2010 Aug 15)",
+                "GNU Wget 1.12 built on solaris2.6.", "pkginfo knows 35 of 35 packages",
+                "root PATH=/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin", "root:/sbin/sh",
+                "lab:/usr/local/bin/bash", "which: /usr/local/bin/bash"]
+        for cmd, rx, out in zip(cmds, rxs, good):
+            with self.subTest(cmd=cmd):
+                self.assertLess(len(cmd), 250)
+                self.assertTrue(re.search(rx, out + "\n", re.M), (rx, out))
+                self.assertFalse(re.search(rx, "# " + cmd + "\n", re.M), (rx, cmd))
+        self.assertFalse(re.search(rxs[4], "pkginfo knows 34 of 35 packages"))
+        self.assertFalse(re.search(rxs[4], "pkginfo knows 0 of 0 packages"))
+        self.assertFalse(re.search(rxs[0], "df: /dev/dsk/c0t3d0s0 1 2 3 4% /usr/local"))  # / on the root disk
+        v = install.post_install_checks(types.SimpleNamespace(a=post_args()))
+        self.assertEqual(len(v["MORE_COMMANDS"].split("\n")), 5)  # without --local-env
+
+    def test_post_install_scenario(self):
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-post-install.py"))
+        lines = sc.pkgadd_script({"BUNDLE": "sun26gnu", "DIR": "gnu/pkgs"})
+        self.assertTrue(all(len(line) <= 200 for line in lines + sc.ADMIN_LINES))
+        self.assertIn("pkgadd -n -a /var/sadm/wsh-lab-admin -d $d all >> $L 2>&1; rc=$?", "\n".join(lines))
+        admin = dict(line.split("=", 1) for line in sc.ADMIN_LINES)
+        self.assertEqual(admin["basedir"], "default")
+        self.assertEqual(admin["instance"], "overwrite")
+        self.assertEqual(admin["mail"], "")
+        for key in ("partial", "runlevel", "idepend", "rdepend", "space", "setuid", "conflict", "action"):
+            self.assertEqual(admin[key], "nocheck", key)
+
+    def test_boot_disk_more_commands(self):
+        """solaris-boot-disk.py types MORE_COMMANDS one per line and expects MORE_EXPECT for each."""
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-boot-disk.py"))
+        self.assertEqual((sc.DEFAULTS["MORE_COMMANDS"], sc.DEFAULTS["MORE_EXPECT"]), ("", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
