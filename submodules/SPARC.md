@@ -156,6 +156,9 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not fixed; see `upstream/openbios-sparc64-ide-tree.md` |
 | `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | as 0010 |
 | `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Resets at the `ok` prompt, but Solaris's `reboot` then hangs the VM, so it stays `.wip` (the Dockerfile only applies `*.patch`) | — |
+| `0013-sparc64-ofmem-keep-the-upper-bits-of-physical-addresses-in-align_ptr` | `align_ptr()` masked with a 32-bit `size_t`, so the firmware's heap broke once it sat above 4 GB (it is at the top of RAM): from about 4.3 GB OpenBIOS stopped before its banner (`Unhandled Exception 0x0000000000000030`; at 8192 MB `out of malloc memory (28)!` first). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-sparc64-ram-above-4g.md` |
+| `0014-sparc64-ofmem-find-claim-memory-whose-1-1-virtual-range-is-free` | A client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking the virtual side; with 4 GB that is the firmware's own range, the claim failed and NetBSD stopped after its loader (`Can't claim two pages of memory.`). It now searches below `0xff000000` and lower while the virtual range is taken. Generic code, applied to sparc64 only here | as 0013 |
+| `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1309,7 +1312,7 @@ raw; NIC: DHCP from QEMU's user network and an HTTP fetch).
   Can't claim two pages of memory.` right after the loader, then `Unhandled Exception
   0x0000000000000030`; 8192 MB: OpenBIOS itself stops (`out of malloc memory (28)!`, `Unhandled
   Exception 0x0000000000000030`). QEMU accepts up to what the host can allocate. The Debian installer
-  ran with 1024 MB.
+  ran with 1024 MB. Three OpenBIOS bugs, fixed by patches 0013-0015; see "More than 3 GB" below.
 - **`-cpu`**: default `TI-UltraSparc-IIi` (what OpenBIOS reports, `SUNW,UltraSPARC-IIi`). Nothing
   needs another model.
 
@@ -1533,6 +1536,54 @@ which is the interposed disk-label package, and OpenBIOS answered 0 0 there; wit
 nodes NetBSD made up for that with an OpenBIOS-specific offset. 0010 makes the interposed package
 answer with the device's unit (`0 2` for `cdrom@2,0`), and NetBSD roots on `cd0` again.
 
+**More than 3 GB (patches 0013-0015, 2026-11-18).** QEMU's sun4u takes any `-m`; OpenBIOS was the
+limit, with three bugs (`upstream/openbios-sparc64-ram-above-4g.md`):
+
+- 0013: `align_ptr()` in `ofmem_common.c` masked with a 32-bit `size_t`. The firmware's heap sits
+  at the top of RAM; once that is above 4 GB the first `malloc()` got a truncated address. With the
+  package's firmware (11.1.3-2+wsh15): 4352 to 7168 MB stop before the banner with `Unhandled
+  Exception 0x0000000000000030` (PC in `ofmem_posix_memalign`), 8192 MB with `out of malloc memory
+  (28)!` first. 6144 MB stops like 4352.
+- 0014: a client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking
+  the virtual range. With 4096 MB that is the firmware's own range (`0xff000000`-4 GB): NetBSD's
+  first claim (`pmap_alloc_bootargs()`) failed and the kernel stopped right after the loader
+  (`Unhandled Exception 0x0000000000000030` at `0x13f5394` with the package's firmware and with 0013
+  alone).
+- 0015: `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but NetBSD (`CELL2HDQ`) and
+  64-bit Solaris (`p1275_cells2ull`) read `phys.lo` alone. With 0013+0014 NetBSD booted with 6144 and
+  8192 MB, but `ofwboot` mapped its allocations at the truncated addresses (a firmware trace: claim
+  `0x17fe7e000`, map `0x7fe7e000`), and while a tmpfs was being filled (about 55 s into it, the same with both sizes) the kernel stopped with `trap
+  type 0x10: cpu 0, pc=1000d00` and `panic: illegal instruction` (its trap table overwritten).
+
+Measured with `openbios-sparc64` built from the committed patches 0001-0011 and 0013-0015 (commit
+`6e4e296`, the `openbios/Dockerfile` steps in the lab's builder image) on the published QEMU
+11.1.3-2+wsh15, the installed disks booted with `-snapshot`, one CPU, serial console. The load: swap
+off, copies of a 32 MB random file written into a tmpfs (NetBSD `mount_tmpfs`, Solaris `/tmp`) until
+most of RAM is used, then the MD5 of every copy:
+
+| Guest | RAM | Reports | Load | Result |
+| --- | --- | --- | --- | --- |
+| NetBSD 11.1 | 3072 MB | `hw.physmem64` 3221225472, `avail memory = 2995 MB` | 64 copies (2 GB) | all identical, power off |
+| NetBSD 11.1 | 4096 MB | `hw.physmem64` 4294967296, `avail memory = 4001 MB` | 96 copies (3 GB) | all identical, power off |
+| NetBSD 11.1 | 6144 MB | `hw.physmem64` 6442450944, `avail memory = 6014 MB` | 160 copies (5 GB) | all identical, power off |
+| NetBSD 11.1 | 8192 MB | `hw.physmem64` 8589934592, `avail memory = 8026 MB` | 224 copies (7 GB) | all identical, power off |
+| Solaris 10 1/13 | 2048 MB | `Memory size: 2048 Megabytes`, `::memstat` total 1999 MB | 32 copies (1 GB) | all identical, `init 5` |
+| Solaris 10 1/13 | 3072 MB | `Memory size: 3072 Megabytes`, total 3002 MB | 64 copies (2 GB) | all identical, `init 5` |
+| Solaris 10 1/13 | 4096 MB | `Memory size: 4096 Megabytes`, total 4010 MB | 96 copies (3 GB), freelist 440 MB left | all identical, `init 5` |
+| Solaris 10 1/13 | 8192 MB | `Memory size: 8192 Megabytes`, total 8033 MB | 192 copies (6 GB), freelist 1484 MB left | all identical, `init 5` |
+
+Solaris needs about 30 minutes (4096 MB) to 38 minutes (8192 MB) for the run, most of it the boot
+and `digest`. `prtdiag` was run but its output not checked. NetBSD with 6144 MB and the firmware
+before 0015 is the crash above; with 0013+0014 the 3072 and 4096 MB NetBSD runs and the 2048 and
+3072 MB Solaris runs passed as well. Regression with this firmware in the lab image: the `sparc64`
+matrix 9/9 and the `solaris10` matrix 2/2 (DVD to the installer, installed disk at 1024 MB with
+`format`, DHCP and ping).
+
+Not measured: more than 8 GB, other RAM sizes between 4 and 8 GB than 6144 MB, Solaris with 6144 MB,
+OpenBSD and Debian with more than 3 GB, the profile through PVE (qemu-server still caps sparc64 at
+3072 MB; with a package carrying 0013-0015 the cap can go to at least 8192 MB, the largest size
+measured).
+
 **maxinjohn/proxmox-solaris** (2026-11-14, one script, no licence; read for facts only). It installs
 Solaris 10 by JumpStart (RARP/NFS from the host, `boot ... - install` from a `boot-command`). Its
 README notes that keystrokes don't reach Solaris on the serial console; patch 0009 here is the
@@ -1720,7 +1771,7 @@ Done for sparc64 (was → now), in `submodules/qemu-server.patch` and mirrored i
 | NIC | `sunhme` on `pciB`, any model | `sunhme` (default), `virtio`, `e1000`, `rtl8139`, `ne2k_pci`; `pcnet` refused (no NetBSD driver) |
 | PCI slots | NIC and every SCSI/virtio controller on `pciB`; a fifth device stopped QEMU (`no slot/function available`) | only NICs go there (the controllers are refused): at most four, refused with `sparc64: at most 4 network devices fit on PCI bus B, not 5 (...)` |
 | CPUs | `-smp 1,...` from sockets × cores; QEMU refused more | sockets × cores > 1 refused; the `cpu` option refused (it was never passed) |
-| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS); the wizard presets 512 MB |
+| RAM | anything | at most 3072 MB (4096 MB panics NetBSD, 8192 MB stops OpenBIOS; OpenBIOS patches 0013-0015 remove the reason, see "More than 3 GB"); the wizard presets 512 MB |
 | Machine | `sun4[a-z]` | `sun4u` only (`sun4v` refused; `niagara` never matched the machine format) |
 | Firmware | no `-bios` unless `bios` is set | `bios` unset or `openbios-sparc64` |
 | virtio-balloon | `virtio-balloon-pci` without a bus: it took one of pciB's four slots (with four NICs QEMU refused the fourth, `PCI: no slot/function available for rtl8139`), and OpenBIOS can't manage it (`Cannot manage 'undefined' PCI device type`) | none, and no balloon polling at start: four NICs fit |

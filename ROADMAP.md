@@ -47,6 +47,7 @@ come after that, not before.
 | Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
+| sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; qemu-server's 3072 MB cap stays until a package ships them | in review | |
 
 ## In progress
 
@@ -78,6 +79,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      `BAD TRAP: type=4e` in the firmware while the DVD boots, once in 6 DVD boots through PVE
      (`install` retries it);
    - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
+   - more than 3 GB: fixed in OpenBIOS by 0013-0015 (not in a published package yet); then raise
+     the sparc64 profile's 3072 MB cap in qemu-server and the UI to 8192 MB, the largest size
+     measured (GitHub #200 asks for Solaris 10 with more than 4 GB);
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 
 ## Next, in this order
