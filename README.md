@@ -24,6 +24,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | 🚩 NetBSD 11.1 | | ✅ | ✅ | ✅ | |
 | 🐡 OpenBSD 8.0 | | | | ◐ ² | |
 | 🎩 Red Hat Linux 6.2 | | ✅ | ✅ | | |
+| 🌀 Debian 4.0 | | ✅ | ✅ | | |
 | 🌀 Debian 12 (ports) | | | | ◐ ² | |
 | 🏔️ Alpine Linux | ✔ | | | | ✔ |
 | 💾 MS-DOS 6.22, FreeDOS 1.4 | ✅ | | | | |
