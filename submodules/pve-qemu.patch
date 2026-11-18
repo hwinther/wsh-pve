@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..30d2240 100644
+index 7b0cba5..ba39100 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,40 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,42 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -113,6 +113,8 @@ index 7b0cba5..30d2240 100644
 +wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
 +wsh/0036-target-sparc-write-softint-under-the-BQL.patch
 +wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
++wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
++wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -7082,6 +7084,243 @@ index 0000000..913624b
 ++    if (qtest_has_accel("tcg")) {
 ++        qtest_add_func("sun4u-softint/tick", test_tick);
 ++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+new file mode 100644
+index 0000000..8603a31
+--- /dev/null
++++ b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
+@@ -0,0 +1,35 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] esp: don't count the message out bytes as part of the CDB
++
++esp_cdb_ready() compared the whole cmdfifo with the CDB's length, but
++the cmdfifo starts with the IDENTIFY byte and any further message out
++bytes, cmdfifo_cdb_offset of them. A driver that selects with ATN and
++Stop, sends a message and then the CDB one byte at a time with a
++Transfer Information command each had its command dispatched too
++early: after IDENTIFY and a 5-byte SDTR message, the first CDB byte
++alone made a "complete" 6-byte CDB.
++
++That is what Linux 2.6.18's esp driver does on sun4m when it
++negotiates synchronous transfers: the target got a one-byte command,
++answered CHECK CONDITION with ILLEGAL REQUEST, and Linux reset the bus
++and took the disk and CD-ROM offline.
++
++Count only the bytes after cmdfifo_cdb_offset.
++---
++ hw/scsi/esp.c | 3 ++-
++ 1 file changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 9e8d0d6cfa..b7c27e82c5 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -470,7 +470,8 @@ static bool esp_cdb_ready(ESPState *s)
++ 
++     cdblen = scsi_cdb_length((uint8_t *)&pbuf[s->cmdfifo_cdb_offset]);
++ 
++-    return cdblen < 0 ? false : (len >= cdblen);
+++    /* The IDENTIFY and other message bytes before the CDB don't count */
+++    return cdblen < 0 ? false : (len - s->cmdfifo_cdb_offset >= cdblen);
++ }
++ 
++ static void esp_dma_ti_check(ESPState *s)
+diff --git a/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+new file mode 100644
+index 0000000..4ac1b09
+--- /dev/null
++++ b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
+@@ -0,0 +1,190 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a CDB sent byte by byte after a message out on sun4m
++
++Drive the SPARCstation 5's ESP without DMA as Linux 2.6's esp driver
++does when it negotiates synchronous transfers: Select with ATN and
++Stop with IDENTIFY, an extended SDTR message with Transfer Information,
++then TEST UNIT READY one byte per Transfer Information. The target must
++stay in the command phase until the sixth byte, and the command must
++reach it whole: twice, the first answered with the reset's unit
++attention, the second with GOOD.
++
++Without the previous patch the first CDB byte already ends the command
++phase.
++---
++ tests/qtest/meson.build      |   3 +-
++ tests/qtest/sun4m-esp-test.c | 151 +++++++++++++++++++++++++++++++++++
++ 2 files changed, 153 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-esp-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index d3a2c22c84..8759f3fd77 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -205,7 +205,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-pil-delay-slot-test',
++                 'sun4m-solaris-smp-idle-test',
++                 'sun4m-fsr-rd-test',
++-                'sun4m-cs4231-test'] + \
+++                'sun4m-cs4231-test',
+++                'sun4m-esp-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-esp-test.c b/tests/qtest/sun4m-esp-test.c
++new file mode 100644
++index 0000000000..c8e9a15a63
++--- /dev/null
+++++ b/tests/qtest/sun4m-esp-test.c
++@@ -0,0 +1,151 @@
+++/*
+++ * QTest: a CDB sent byte by byte after a message out phase on sun4m's ESP
+++ *
+++ * Linux 2.6's esp driver negotiates synchronous transfers: it selects
+++ * the target with Select with ATN and Stop (IDENTIFY only), sends an
+++ * extended SDTR message in the message out phase, and then puts the
+++ * CDB on the bus one byte at a time, a Transfer Information command
+++ * for each byte. The command must reach the target only when the whole
+++ * CDB is in, however many message bytes came before it.
+++ *
+++ * The ESP counted the IDENTIFY and message bytes as part of the CDB, so
+++ * here the first CDB byte alone made a "complete" 6-byte command: the
+++ * target got one byte, answered CHECK CONDITION (ILLEGAL REQUEST), and
+++ * Linux reset the bus and took the disk and CD-ROM offline.
+++ *
+++ * Nothing runs on the CPU: the test drives the ESP's registers itself,
+++ * without DMA, as the guest's driver does.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++/* SPARCstation 5: the ESP's registers are 4 bytes apart */
+++#define ESP_BASE        0x78800000ULL
+++#define ESP_REG(r)      (ESP_BASE + (r) * 4)
+++
+++#define ESP_FIFO        0x2
+++#define ESP_CMD         0x3
+++#define ESP_RSTAT       0x4
+++#define ESP_WBUSID      0x4
+++#define ESP_RINTR       0x5
+++#define ESP_RFLAGS      0x7
+++
+++#define CMD_TI          0x10
+++#define CMD_ICCS        0x11
+++#define CMD_MSGACC      0x12
+++#define CMD_SELATNS     0x43
+++
+++#define STAT_PHASE      0x07
+++#define STAT_CD         0x02
+++#define STAT_ST         0x03
+++#define STAT_MO         0x06
+++#define STAT_GE         0x40
+++
+++#define INTR_FC         0x08
+++#define INTR_BS         0x10
+++#define INTR_DC         0x20
+++
+++static uint8_t esp_readb(QTestState *qts, int reg)
+++{
+++    return qtest_readb(qts, ESP_REG(reg));
+++}
+++
+++static void esp_writeb(QTestState *qts, int reg, uint8_t val)
+++{
+++    qtest_writeb(qts, ESP_REG(reg), val);
+++}
+++
+++/* The bus phase after a command, with no gross error */
+++static uint8_t esp_phase(QTestState *qts)
+++{
+++    uint8_t stat = esp_readb(qts, ESP_RSTAT);
+++
+++    g_assert_cmphex(stat & STAT_GE, ==, 0);
+++    return stat & STAT_PHASE;
+++}
+++
+++/*
+++ * Select target 0 with ATN and Stop, send an SDTR message, then TEST UNIT
+++ * READY one byte at a time; return the status byte
+++ */
+++static uint8_t tur_after_sdtr(QTestState *qts)
+++{
+++    /* SDTR: 100 ns, offset 15 */
+++    static const uint8_t sdtr[] = { 0x01, 0x03, 0x01, 0x19, 0x0f };
+++    static const uint8_t cdb[6] = { 0x00 };     /* TEST UNIT READY */
+++    uint8_t intr, status;
+++    int i;
+++
+++    /* IDENTIFY (disconnects allowed, LUN 0), and stop in message out */
+++    esp_writeb(qts, ESP_FIFO, 0xc0);
+++    esp_writeb(qts, ESP_WBUSID, 0);
+++    esp_writeb(qts, ESP_CMD, CMD_SELATNS);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_MO);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & (INTR_BS | INTR_FC), ==, INTR_BS | INTR_FC);
+++
+++    /* The SDTR message: the target goes on to the command phase */
+++    for (i = 0; i < ARRAY_SIZE(sdtr); i++) {
+++        esp_writeb(qts, ESP_FIFO, sdtr[i]);
+++    }
+++    esp_writeb(qts, ESP_CMD, CMD_TI);
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_BS, ==, INTR_BS);
+++
+++    /* The CDB, one byte per Transfer Information */
+++    for (i = 0; i < ARRAY_SIZE(cdb); i++) {
+++        esp_writeb(qts, ESP_FIFO, cdb[i]);
+++        esp_writeb(qts, ESP_CMD, CMD_TI);
+++        if (i < ARRAY_SIZE(cdb) - 1) {
+++            /* Not the whole CDB yet: the target waits for more */
+++            g_assert_cmphex(esp_phase(qts), ==, STAT_CD);
+++        }
+++        esp_readb(qts, ESP_RINTR);
+++    }
+++
+++    /* The whole CDB: the target ran it and has its status */
+++    g_assert_cmphex(esp_phase(qts), ==, STAT_ST);
+++    esp_writeb(qts, ESP_CMD, CMD_ICCS);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_FC, ==, INTR_FC);
+++    g_assert_cmpuint(esp_readb(qts, ESP_RFLAGS) & 0x1f, ==, 2);
+++    status = esp_readb(qts, ESP_FIFO);
+++    g_assert_cmphex(esp_readb(qts, ESP_FIFO), ==, 0x00);   /* COMMAND COMPLETE */
+++
+++    /* Accept the message: the target goes to bus free */
+++    esp_writeb(qts, ESP_CMD, CMD_MSGACC);
+++    intr = esp_readb(qts, ESP_RINTR);
+++    g_assert_cmphex(intr & INTR_DC, ==, INTR_DC);
+++
+++    return status;
+++}
+++
+++static void test_cdb_after_sdtr(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5 -nodefaults "
+++                                 "-drive if=scsi,index=0,format=raw,"
+++                                 "file=null-co://");
+++
+++    /*
+++     * The first command after the reset gets CHECK CONDITION with the
+++     * unit attention; the second one GOOD. A CDB cut short would get
+++     * CHECK CONDITION (ILLEGAL REQUEST) every time.
+++     */
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x02);
+++    g_assert_cmphex(tur_after_sdtr(qts), ==, 0x00);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-esp/cdb-after-sdtr", test_cdb_after_sdtr);
 ++
 ++    return g_test_run();
 ++}
