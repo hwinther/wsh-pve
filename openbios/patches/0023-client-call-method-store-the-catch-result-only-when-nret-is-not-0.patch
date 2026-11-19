@@ -1,0 +1,54 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] client: store call-method's catch result only when the client asked for it
+
+handle_calls (call-method and interpret) writes the catch result into
+args[nargs] whatever nret is. A client that passes nret 0 has no cell
+there: args[nargs] is whatever follows its argument array in memory.
+
+OpenBSD 8.0's sparc64 kernel calls the MMU's "map" method that way
+(prom_map_phys in sys/arch/sparc64/sparc64/ofw_machdep.c: nargs 7,
+nreturns 0, the args structure on the stack, IEEE 1275 gives "map" no
+results). The cell after the structure is the function's stack
+protector canary, so the store overwrites it with 0 and the check at the
+end of prom_map_phys calls __stack_smash_handler from pmap_bootstrap.
+panic() then reads curcpu() (the per-CPU page at 0xe0018000, not mapped
+yet) and the installed GENERIC kernel stopped right after the loader:
+
+  [ using 1654104 bytes of bsd ELF symbol table ]
+  Unimplemented service set-symbol-lookup ([2] -- [0])
+  Unhandled Exception 0x0000000000000030
+  PC = 0x00000000013e04a8 NPC = 0x00000000013e04ac
+
+(the PC in panic, its format string "smashed stack in %s", called from
+__stack_smash_handler, called from prom_map_phys; QEMU -d int and
+-d exec). The installer kernel (bsd.rd) is built without the stack
+protector, so it booted. "Unimplemented service set-symbol-lookup" is
+unrelated: OpenBSD ignores its result.
+
+OpenBSD -current changed these calls to nreturns 1 after 8.0 (ofw_machdep.c
+1.39, "did not work with QEMU's OpenBIOS"); kernels up to 8.0 need the
+firmware to leave args[nargs] alone. With the store skipped for nret 0
+OpenBSD 8.0's installed kernel boots to login. prom_unmap_virt,
+prom_free_virt and prom_free_phys ("unmap", "release") use nreturns 0 in
+8.0 too.
+---
+ libopenbios/client.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/libopenbios/client.c b/libopenbios/client.c
+index 8b3d582..c4b0ac0 100644
+--- a/libopenbios/client.c
++++ b/libopenbios/client.c
+@@ -272,8 +272,10 @@ handle_calls(prom_args_t *pb)
+ 		return 0;
+ 	}
+ 
+-	/* Store catch result */
+-	pb->args[pb->nargs] = val;
++	/* Store catch result, if the client asked for any return values:
++	   with nret 0, args[nargs] is not part of its argument array */
++	if (pb->nret > 0)
++		pb->args[pb->nargs] = val;
+ 	
+ 	j = dstackcnt;
+ 	for (i = 1; i < pb->nret; i++, j--) {

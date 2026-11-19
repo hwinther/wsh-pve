@@ -1,6 +1,7 @@
 """Solaris 2.x initial install over the serial console, from boot CD to an installed disk that is
-powered off. Tested with 2.6 (5/98), 2.5.1 (11/97), 2.5 (HW 1/96), 2.4 (HW 3/95) and 2.3 Edition II
-(its older sysidtool screens and Quick Install: old_install(); it ends at the PROM's `ok`).
+powered off. Tested with 2.6 (5/98), 2.5.1 (11/97), 2.5 (HW 1/96), 2.4 (HW 3/95), 2.3 Edition II
+and 2.2 (their older sysidtool screens and Quick Install: old_install(); it ends at the PROM's `ok`,
+or OpenBIOS's `0 >`; 2.2 and, under OpenBIOS, 2.3 and 2.4 need openbios patches 0019-0022).
 
     lab.py run scenarios/solaris-install-serial.py --out /mnt/runs/s26 \
         --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso \
@@ -199,13 +200,15 @@ def old_install(m, v, screen):
         raise RuntimeError(f"no Quick Install Configuration:\n{screen}")
     m.snap("Quick Install Configuration")
     m.send("\r")  # ( Begin Install )
-    m.expect(r"Initial Installation of", 600, screen=True)
+    # 2.3 shows a progress screen; 2.2 clears the screen and makes the file systems first
+    m.expect(r"Initial Installation of|making filesystem on", 600, screen=True)
     m.snap("installing")
     m.expect(r"Installation successful\.\.\.", 7200)
     m.snap("installation finished")
-    # it reboots by itself; the Sun PROM tries the network and stops at `ok`
-    m.expect(r"Resetting", 300)
-    m.expect(r"\nok ", 600)
+    # it reboots by itself ("Resetting" from a Sun PROM, "rebooting" under OpenBIOS); the Sun PROM
+    # tries the network and stops at `ok`, OpenBIOS stops at `0 >` (or boots the disk by itself)
+    m.expect(r"Resetting|rebooting", 300)
+    m.expect(r"\nok |0 > |SunOS Release", 600)
     m.snap("PROM prompt after the install")
     m.stop()
 

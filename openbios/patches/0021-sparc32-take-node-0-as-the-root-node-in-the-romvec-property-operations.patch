@@ -1,0 +1,58 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: take node 0 as the root node in the romvec
+ property operations
+
+The property operations of the OpenBoot 2.x romvec (no_proplen,
+no_getprop, no_nextprop) take node 0 for the root node. The Solaris 2.3
+kernel asks for the root's "name" that way when it creates the root of
+its device tree (and boots under the SS-5's own PROM). OpenBIOS answered
+-1, and Solaris 2.3 allocated a buffer of that size and panicked with a
+data fault at 0xfffff000 right after its banner.
+
+Look node 0 up as the root node (the peer of node 0) in those operations.
+---
+ arch/sparc32/romvec.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/sparc32/romvec.c b/arch/sparc32/romvec.c
+index ca653a4..435b905 100644
+--- a/arch/sparc32/romvec.c
++++ b/arch/sparc32/romvec.c
+@@ -65,10 +65,21 @@ int obp_child(int node)
+     return child;
+ }
+ 
++/*
++ * The property operations of the OpenBoot 2.x PROMs take node 0 for the root
++ * node: the Solaris 2.3 kernel asks for the root's "name" that way when it
++ * creates the root of its device tree.
++ */
++static int obp_propnode(int node)
++{
++    return node ? node : obp_nextnode(0);
++}
++
+ int obp_proplen(int node, const char *name)
+ {
+     int notfound;
+ 
++    node = obp_propnode(node);
+     if (!node) {
+         DPRINTF("obp_proplen(0x0, %s) = -1\n", name);
+         return -1;
+@@ -115,6 +126,7 @@ int obp_getprop(int node, const char *name, char *value)
+     int len;
+     const char *str;
+ 
++    node = obp_propnode(node);
+     if (!node) {
+         DPRINTF("obp_getprop(0x0, %s) = -1\n", name);
+         return -1;
+@@ -176,6 +188,7 @@ const char *obp_nextprop(int node, const char *name)
+ {
+     int found;
+ 
++    node = obp_propnode(node);
+     if (!name || *name == '\0') {
+         // NULL name means get first property
+         push_str("");

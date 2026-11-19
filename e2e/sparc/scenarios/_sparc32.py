@@ -220,7 +220,7 @@ def power_off(m, command):
     """Shut the guest down with `command` ("halt", "init 5") and end QEMU. OpenBIOS powers the machine
     off; the Sun PROMs stop at `ok` ("Program terminated"), so QEMU is told to quit there. Solaris
     2.3's `init 5` reboots ("rebooting..."); the Sun PROM then fails its network boot and stops at
-    `ok` too."""
+    `ok` too, OpenBIOS starts again (its banner), and QEMU is told to quit there."""
     m.send(f"sync; {command}\r")
     try:
         i = m.expect_any([r"power off|Power down", r"Program terminated|rebooting\.\.\."], 600)
@@ -230,7 +230,7 @@ def power_off(m, command):
             return
         raise
     if i == 1:
-        m.expect(r"\nok ", 300)
+        m.expect(r"\nok |Welcome to OpenBIOS", 300)
         m.snap("PROM prompt after shutdown")
         m.stop()
         return

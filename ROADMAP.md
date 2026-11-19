@@ -57,6 +57,7 @@ come after that, not before.
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 | Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
 | Older Sun releases on sun4m: install targets for Solaris 2.3 Edition II (`sol23-ss5` with `ss5.bin`, `sol23-ss20` with `ss20_v2.25_rom`; sysidtool's older screens and Quick Install), Solaris 2.5 HW 1/96 (`sol25-ss5`, `sol25-ss20`, OpenBIOS) and SunOS 4.1.3_U1B (`sunos413u1b-ss5`, `sunos413u1b-ss20`, the 4.1.4 install unchanged), all with `cd_as_disk` where Solaris needs it, 6-11 min each through PVE; Solaris 2.1/2.2 and SunOS 4.1.3 (SS-10 era) and 4.1.2 on SS-600MP measured: they don't boot (`submodules/SPARC.md`, "Older Sun releases on sun4m") | in review | |
+| Solaris 2.1-2.4 under OpenBIOS on sun4m: openbios 0019-0022 (the FCode boot block's OBP 2.x words, the Forth heap inside the firmware's range, node 0 as the root, romvec calls with interrupts masked); 2.2 on SS-10, 2.3 and 2.4 on SS-5 install and boot in the lab (CD as a disk), 2.1 stops in QEMU (`Trap 0x21`); SunOS 4.1.3's `type=29` diagnosed (a probe of `0xd.0108_0000`); openbios 0023 (client interface: no catch result over the stack with `nret` 0) lets OpenBSD 8.0's installed sun4u kernel boot | in review | |
 
 ## In progress
 
@@ -188,10 +189,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
   node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
   all on the lab host now. Done (see "Done"): SunOS 4.1.3_U1B, Solaris 2.3 and 2.5 install;
-  Solaris 2.1/2.2, the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. What would open them:
-  OpenBIOS running the Solaris 2.1-2.4 boot program (`Unhandled Exception 0x00000009`; it would also
-  free 2.3/2.4 from the Sun PROMs) or QEMU running the SS-10 Sun PROM on its SS-10. Each one booted
-  and installed by hand first; an install target only for what works.
+  the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. OpenBIOS 0019-0022 run the Solaris
+  2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5) install and boot under OpenBIOS in the lab;
+  2.1 stops in QEMU after its device configuration. Next, once a package has them: OpenBIOS targets
+  (`sol22-ss10`, `sol23`/`sol24` on SS-5 and SS-20, the SS-20 with more CPUs) through PVE. Each one
+  booted and installed by hand first; an install target only for what works.
 - **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
   the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
   profile, 8 and 9 on the SS-5 (above). (2.3, 2.5, 2.1 and 2.2 are done: "Done" and the item
