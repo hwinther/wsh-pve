@@ -1036,7 +1036,9 @@ class Debian40(unittest.TestCase):
             self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("scsi3", None))  # partman labels it
             self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"]),
                              (["static"], ["gateway", "dns"], True))
-            self.assertIn("wsh/0038", t["matrix_skip"])  # out of pve_matrix until the ESP fix is published
+            # out of pve_matrix: it passes no --gateway/--dns (the ESP fix is published since +wsh20)
+            self.assertIn("--gateway", t["matrix_skip"])
+            self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh21")
             self.assertIn("cat /etc/debian_version", t["check"]["commands"])
             self.assertEqual(install.METHODS[t["method"]], install.Unattended)
         self.assertEqual(targets.TARGETS["debian40-ss5"]["profile"]["machine"], "SS-5")

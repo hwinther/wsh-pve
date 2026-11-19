@@ -330,7 +330,7 @@ Debian 4.0r9 "etch" (kernel 2.6.18), the last Debian release for sun4m, installs
 CD on the SS-5 and SS-20 profiles with OpenBIOS and a serial console (`vga: serial0`), fetching its
 packages from `archive.debian.org`.
 
-- **It needs `pve-qemu-kvm` with `wsh/0038`** (no published package yet). Linux 2.6.18's ESP
+- **It needs `pve-qemu-kvm` 11.1.3-2+wsh20 or later** (the ESP fix `wsh/0038`). Linux 2.6.18's ESP
   driver negotiates synchronous transfers with a multi-byte message, which QEMU's ESP mishandled:
   without the fix the kernel takes the disk and CD-ROM offline and the installer finds no CD.
 - **Boot the CD by device path** as for Red Hat: `boot /iommu/sbus/espdma/esp/sd@6,0`, then
