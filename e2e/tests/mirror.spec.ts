@@ -2,7 +2,7 @@ import { expect, type Locator, type Page, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 
-import { NODE, PASSWORD, type Pve, pveApi, pveExec, vmConfFile } from './_pve'
+import { NODE, PASSWORD, type Pve, pveApi, pveExec, serviceLogs, vmConfFile } from './_pve'
 
 // A mirror storage (docs: reference/mirror, `wsh-lab mirror`): a storage whose template/iso and
 // template/floppy hold symlinks to media elsewhere (a NAS), the folders kept in the link name with
@@ -339,12 +339,29 @@ test.describe('web UI: the search field above the ISO and floppy selectors', () 
 
 // Case 2: the ISOs and the mirror's links on one NFS export (from the nfs service, NFS-Ganesha in user
 // space), mounted by PVE as an NFS storage; links relative, so a second mount of the same export at
-// another path finds the files too. Without the nfs service (or where the runner can't mount NFS) the
-// same checks run on a dir storage and a bind mount, and the test says so in an annotation.
+// another path finds the files too. Without the nfs service, where the runner can't mount NFS, or where
+// the export fails the probe (what the tool does on it: files and directories created, renamed and
+// removed, a symlink replaced by rename) the same checks run on a dir storage and a bind mount; the
+// test says so in an annotation and attaches the probe's output and the NFS server's log.
 const NFS = 'e2enfs'
 const NFS_ALT = '/mnt/e2e-nfs-alt'
 const NFS_FALLBACK = '/srv/e2e-export'
 const MIRROR_PY = '/root/wsh-mirror.py'
+// What the tool does on the export, on scratch names; each step is echoed, so a failure names it.
+const PROBE = `set -e
+cd "$1"
+p=.wsh-mirror-probe.$$
+step() { echo "+ $*"; "$@"; }
+step mkdir -p $p/dir/sub
+step sh -c "echo data > $p/dir/file"
+step mv $p/dir/file $p/dir/moved
+step ln -s dir/moved $p/link
+step ln -s dir/sub $p/link.tmp
+step mv -T $p/link.tmp $p/link
+step rm $p/link $p/dir/moved
+step rmdir $p/dir/sub
+step rm -r $p
+echo probe ok`
 let nfsRoot = ''
 let nfsNote = ''
 
@@ -359,7 +376,7 @@ async function mirrorTool(args: string): Promise<{ code: number; output: string 
 }
 
 test.describe('case 2: ISOs and links on one NFS export', () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
     // the tool from this checkout, not the installed wsh-lab
     const py = gzipSync(readFileSync(new URL('../sparc/mirror.py', import.meta.url))).toString('base64')
     const copied = await pveExec(['sh', '-c', `echo "$1" | base64 -d | gunzip > ${MIRROR_PY}`, 'sh', py])
@@ -376,10 +393,17 @@ mountpoint -q /mnt/pve/${NFS}
 mkdir -p ${NFS_ALT}
 mount -t nfs4 -o vers=4.1 nfs:/export ${NFS_ALT}`,
     ])
-    if (nfs.code === 0) {
+    const probe = nfs.code === 0 ? await pveExec(['sh', '-c', PROBE, 'probe', `/mnt/pve/${NFS}`]) : nfs
+    if (probe.code === 0) {
       nfsRoot = `/mnt/pve/${NFS}`
     } else {
-      nfsNote = `no NFS (${nfs.output.trim().split('\n').pop()}): a dir storage and a bind mount instead`
+      const why = probe.output.trim().split('\n').slice(-2).join(': ')
+      const what = nfs.code === 0 ? 'the NFS export failed the probe' : 'no NFS'
+      nfsNote = `${what} (${why}): a dir storage and a bind mount instead`
+      await testInfo.attach('nfs-probe.txt', { body: probe.output, contentType: 'text/plain' })
+      await testInfo.attach('nfs-server.log', { body: await serviceLogs('nfs', 3000), contentType: 'text/plain' })
+      console.log(`${nfsNote}\n${probe.output}\n${await serviceLogs('nfs', 60)}`)
+      await pveExec(['umount', NFS_ALT])
       nfsRoot = NFS_FALLBACK
       await sh(`umount /mnt/pve/${NFS} 2> /dev/null; pvesm remove ${NFS} 2> /dev/null
 mkdir -p ${NFS_FALLBACK} ${NFS_ALT}
