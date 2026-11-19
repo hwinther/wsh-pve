@@ -362,9 +362,9 @@ NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also ca
 version) **don't install with the published `pve-qemu-kvm`** (11.1.3-2+wsh22): the CD boots, but the
 install hangs while the kernel mounts its root, prepares the disk or copies files, the CPU spinning in the
 guest's SCSI driver. QEMU's ESP signals a finished command earlier than real hardware can, and NeXT's
-driver deadlocks on that. In the lab, a QEMU that delays the ESP's interrupt by 500 µs installs both
-on an SS-5 and boots them to the Workspace; the fix isn't in a package yet. Details:
-`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+driver deadlocks on that. The fix, pve-qemu patch `wsh/0040`, delays the ESP's interrupt on sun4m
+by 500 µs; in the lab a QEMU built with it installs both on an SS-5 and boots them to the Workspace.
+It isn't in a package yet. Details: `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
 What works with that fix, for when it is published:
 

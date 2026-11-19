@@ -1348,9 +1348,11 @@ clock) and the 0001-0017 firmware, in the PVE test container (`wsh/0001-0039` fo
 `nextstep33-ss5` and `openstep42-ss5` are catalogue entries: with the published pve-qemu-kvm
 (11.1.3-2+wsh21 and +wsh22) both installers hang in NeXT's SCSI driver, an ESP interrupt that comes too early
 (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2", has the diagnosis, the results per machine
-and firmware and the proposed QEMU fix). With a local QEMU that asserts the ESP interrupt 500 us late
-both install on an SS-5 and reach the Workspace. What a scenario will have to do, from the lab runs
-(2026-11-19, by hand with `serve`/`ctl`, no scenario file yet):
+and firmware and the QEMU fix). pve-qemu patch `wsh/0040` makes the sun4m ESP's interrupt come 500 us
+after the event; with a `qemu-system-sparc` built from 0001-0041 both install on an SS-5 and reach the
+Workspace. The entries stay in the catalogue until a published package has 0040 and the scenarios
+below exist. What a scenario will have to do, from the lab runs (2026-11-19, by hand with
+`serve`/`ctl`, no scenario file yet):
 
 - **Machine:** `VGA=tcx` (NeXT has no cg3 driver; its S24 driver runs the 8-bit TCX), a blank disk
   (1-3 GiB tested; the installer writes a NeXT label), `BIOS=ss5.bin CONSOLE=fb` for the disk.
@@ -1363,13 +1365,16 @@ both install on an SS-5 and reach the Workspace. What a scenario will have to do
   (about 2-4 min).
 - **Each disk boot under `ss5.bin`:** after a failed network boot the first `boot disk` restarts the
   PROM, so `setenv diag-switch? false` first; at NeXT's `boot:` type `-v` within its 10 s (its boot
-  graphics end in `Data Access Error` on QEMU's TCX). The lab typed `-v` and Return every 2 s for
-  30 s from `boot disk` on, because OCR polling is slower than the countdown. Then Control-C at "No
-  response from network configuration server".
+  graphics end in `Data Access Error` on QEMU's TCX). The lab typed `-v` and Return every 2 s from
+  `boot disk` on, because OCR polling is slower than the countdown: 30 s was sometimes too short
+  (the PROM's restart came first), 60-90 s worked. Then Control-C at "No response from network
+  configuration server".
 - **Configure's "Summary of Devices"** needs the pointer on Save (608,457 at 1024x768): HMP
   `mouse_move` in steps of at most 10 (NeXT accelerates; a step of 10 moves about 9 pixels), with the
   pointer found in the screendump by its shape and the move corrected until it is there, then
-  `mouse_button 1`/`0`. The Installer's package list and Restart, and the language panel and its
+  `mouse_button 1`/`0`. From the pointer's start near (100,100), 40 `mouse_move 10 10` and 16
+  `mouse_move 10 0` land on Save on both systems. OCR can't read this panel (light grey), so it
+  has to be recognised another way. The Installer's package list and Restart, and the language panel and its
   alert after the reboot, take Return.
 - **Times** (TCG, one guest at a time or two): the CD stage 2-4 min, the packages 6 min (NeXTSTEP,
   293 MB) to 15 min (OPENSTEP, 532 MB), each boot to the desktop 2-3 min.

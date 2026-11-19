@@ -197,13 +197,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   device configuration.
   NeXTSTEP 3.3 and OPENSTEP 4.2 (lab, 2026-11-19): the disk hang is still there with our ESP fixes,
   and it is diagnosed: QEMU's ESP raises its interrupt in the instruction that starts a command, and
-  NeXT's SCSI driver then spins at PIL 4 on a lock the interrupted thread holds. A local QEMU that
-  asserts the ESP interrupt 500 us later installs both on an SS-5 to the Workspace (CD stage under
-  OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`; TCX, keyboard and mouse);
-  the SS-20 has no firmware that boots the installed disk. Next: the ESP latency fix in pve-qemu
-  (proposal and regressions in `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"), then
-  framebuffer scenarios and the catalogue entries `nextstep33-ss5`/`openstep42-ss5` made targets;
-  OpenBIOS's failure on the installed disk (exception 0x21 in NeXT's boot program) is open.
+  NeXT's SCSI driver then spins at PIL 4 on a lock the interrupted thread holds. pve-qemu patch
+  `wsh/0040` (with the qtest `wsh/0041`) makes the sun4m ESP's interrupt come 500 us after the event
+  (`x-irq-latency-us` on `sysbus-esp`, set by every sun4m machine); with 0001-0041 both install on an
+  SS-5 to the Workspace (CD stage under OpenBIOS or `ss5.bin`, the installed disk only under
+  `ss5.bin` with `-v`; TCX, keyboard and mouse), and the sparc32 regressions passed (results and the
+  disk numbers in `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"). The SS-20 has no firmware
+  that boots the installed disk. Next: a package with 0040, then framebuffer scenarios and the
+  catalogue entries `nextstep33-ss5`/`openstep42-ss5` made targets; OpenBIOS's failure on the
+  installed disk (exception 0x21 in NeXT's boot program) is open.
 - **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
   SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot it), 2.6 and 7 on the SS-10
   profile, 8 and 9 on the SS-5 (above). (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"

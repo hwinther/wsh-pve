@@ -71,6 +71,8 @@ maintains the patches.
 | `0037-tests-qtest-test-that-a-tick-during-a-softint-write-` | qtest `sun4u-softint-test` for 0036: a boot PROM sets and clears soft interrupt 1 in a loop with interrupts off while 10 us ticks fire, and counts the ticks it sees and loses; passes after 20000 ticks with none lost | ours (in review) | not in QEMU |
 | `0038-esp-don-t-count-the-message-out-bytes-as-part-of-the` | `esp_cdb_ready()` counted the IDENTIFY and other message out bytes in the command FIFO as CDB bytes. Linux 2.6.18's `esp` driver (Debian 4.0 on SS-5) selects with ATN and Stop, sends a 5-byte SDTR message and then the CDB one byte per Transfer Information: its first CDB byte alone made a "complete" 6-byte command, the target answered ILLEGAL REQUEST and Linux reset the bus and took the disk and CD-ROM offline. Only the bytes after the messages count now | ours (in review) | not fixed; see `upstream/qemu-esp-cdb-ready-after-message-out.md` |
 | `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
+| `0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ` | The ESP finished a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `x-irq-latency-us` (default 0, as before): the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). The sun4m machines set 500 (`-global sysbus-esp.x-irq-latency-us=0` turns it off). Every ESP interrupt on sun4m comes 0.5 ms later: about 2 ms more per disk command ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
+| `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt; with the property at 0 it comes at once | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -139,6 +141,16 @@ passed 30 of 30 runs with 0036 (20 001-20 399 ticks each, none lost, under a sec
 30 of 30 without it, each run losing a tick within its first three. `sun4m-esp-test` passes with
 0038 and fails without it (the first CDB byte after the SDTR message already ends the command
 phase).
+
+0001-0041 apply to 11.1.3 with `patch -F0` (the whole series, Proxmox's patches included, from
+`pve-qemu.patch` onto a fresh tree: the result is the tree the binaries below were built from).
+`sun4m-esp-test` passes 5/5 with 0040-0041; with 0040 left out `irq-latency` fails (STAT_INT
+right after the selection) and `irq-latency-off` doesn't start (no such property), while the two
+cancel cases pass, as they must without a latency. With 0001-0041 the `qtest-sparc` and
+`qtest-sparc64` suites: 40 OK, 4 skipped, and the two `qmp-test` `oob` failures as before;
+`am53c974-test` (i386) 12/12. A save and load by hand (`migrate` to a file 100 us after a
+selection, `-incoming` from it, qtest clock) kept the pending interrupt: none right after `cont`,
+STAT_INT and the line 500 us later. Lab results under "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
 Carried back from the port of these patches to a LEMU fork (its `feat/sparc-fixes` branch), into
 the existing patches: 0023's helper takes `disp_nrunnable`'s address as physical when the MMU is
@@ -1506,11 +1518,12 @@ What it would take for the rest:
 
 NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach ran on single-CPU microSPARC II and SuperSPARC machines (NeXT's
 list: SS-4, SS-5 85/110, SS-10, SS-20; no SMP, HyperSPARC or TurboSPARC). The QEMU wiki calls them
-"partially working" on sun4m: they hang on disk access. They still do with our ESP fixes, and the
-cause is now known: QEMU's ESP raises its interrupt too early for NeXT's SCSI driver (below). With an
-experimental QEMU that asserts the ESP interrupt 500 us late, both install on an SS-5 and boot to
-the Workspace. Lab only (no PVE run: the published package hangs), 2026-11-19, pve-qemu-kvm
-11.1.3-2+wsh21 and +wsh22 (a rebuild with the same patches) and a local build.
+"partially working" on sun4m: they hang on disk access. They still do with our ESP fixes up to
+`wsh/0039`, and the cause is known: QEMU's ESP raises its interrupt too early for NeXT's SCSI driver
+(below). pve-qemu patch `wsh/0040` makes the sun4m ESP's interrupt come 500 us after the event; with
+the whole series (0001-0041) both install on an SS-5 and boot to the Workspace. Lab only (no PVE
+run: no package has 0040 yet), 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh21 and +wsh22 (a rebuild with
+the same patches) and local builds.
 
 Media (both carry a Sun label, so OpenBIOS and OBP boot them): `nextstep33_risc.iso`, the NeXTSTEP 3.3
 User CD for SPARC and PA-RISC (a SPARC + hppa kernel), and `Openstep-4.2-Intel-User.iso`, which
@@ -1552,6 +1565,9 @@ it, steps of 10 move about 9 pixels).
 | OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | local, 500 us | yes | 3G disk: CD stage 4 min, packages 15 min | `ss5.bin` with `-v`: Workspace | |
 | NeXTSTEP 3.3 | SS-20 | OpenBIOS | local, 500 us | yes | CD stage 2 min | no firmware boots it (below) | |
 | NeXTSTEP 3.3 | SS-5 | OpenBIOS, `ss5.bin` | local, 50 us | | CD stage passed once, then hung during the packages; under `ss5.bin` hung at the SCSI probe | | ESP deadlock |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041, first version of 0040 (only the line late, STAT_INT at once) | yes | 3G disk: CD stage 2.5 min, then hung at 29% of the packages (497 MB, all selected) | | ESP deadlock (`pc` 0xf00c944c, PIL 4) |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 3.3 min, packages 6.6 min (497 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
+| OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 4.2 min, packages 8.5 min (532 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
 
 **The ESP deadlock.** Every hang has the CPU in a simple-lock spin (`ld [%l0]; cmp %o0, 0; bne`, at
 0xf00c944c in the 3.3 kernel, 0xf00c9f54 in 4.2) with PSR.PIL 4, which is `esp0`'s level (`esp0 at
@@ -1576,16 +1592,78 @@ installs and three first setups to the Workspace; N = 50 hung
 again (the package copy, and the SCSI probe under `ss5.bin`). A fixed delay is a model of the
 target's latency, not a proof that 500 us is always enough.
 
-The fix for the owner to sequence (not in `submodules/*.patch`): that timer in the ESP behind a
-property, say `x-irq-latency-us` on `sysbus-esp` (default 0, today's behaviour, so other machines
-don't change), sun4m setting it, or qemu-server passing `-global sysbus-esp.x-irq-latency-us=500` for
-sparc32; the soft and hard reset cancel the timer, and after migration (`post_load`) the line is
-raised at once when `STAT_INT` is set. A closer model would delay only the completion of a SCSI
-command (data and status phases), as a disk's seek and rotation do. Before it becomes the default the
-regressions to run are the Solaris, SunOS, NetBSD, Red Hat and Debian installs and `bench-disk.py`
-(every interrupt 0.5 ms later). The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to
-QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
-[#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner.
+**The fix, `wsh/0040`.** `sysbus-esp` has a property `x-irq-latency-us` (default 0, today's
+behaviour, so other machines don't change); every sun4m machine sets 500 as a compat property, so no
+qemu-server change is needed and `-global sysbus-esp.x-irq-latency-us=0` turns it off again. The
+interrupt as a whole, `STAT_INT` in the status register and the line (one signal on the real chip),
+comes from a `QEMU_CLOCK_VIRTUAL` timer that long after the event; the interrupt register and the bus
+phase are set at once, so OpenBIOS, which polls the interrupt register, sees no change. Reading the
+interrupt register before the timer fires takes the interrupt; the chip's reset command and a device
+reset cancel it; a pending interrupt is migrated (subsection `esp/irq_pending`) and comes a whole
+latency after loading.
+
+The first version of 0040 did what the experiment did, only the line late and `STAT_INT` at once: its
+first NeXTSTEP package install hung at 29%, in the same spin, with the property at 500 (checked in
+`info qtree`). A driver that checks `STAT_INT` right after starting a command sees it end at once,
+which no real target can do, so the status bit had to wait too. The other way, delaying only the end
+of a SCSI command (data and status phases) as a disk's seek does, was not taken: `esp.c` ends commands
+in many places, each would need its own deferral and migration state, while the interrupt has one
+raise and one lower. The price is that every ESP interrupt on sun4m comes 0.5 ms later, selection and
+bus service included; the regressions and the disk numbers are below. A fixed delay is a model of the
+target's latency, not a proof that 500 us is always enough: each system installed once with the final
+0040. The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to QEMU's issues
+[#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
+[#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner
+(`upstream/qemu-esp-irq-latency.md`).
+
+**Regressions with 0001-0041** (2026-11-19, the lab host shared with other agents and the `sparc
+lab` workflow, two to four guests at once; `qemu-system-sparc` and `-sparc64` built from the series
+on Debian 13, mounted into the lab image built from main with the published pve-qemu-kvm
+11.1.3-2+wsh22, and bind-mounted over `/usr/bin/qemu-system-sparc` in the e2e PVE image for the
+installs). Install times: the catalogue's `minutes` for comparison, from quieter runs.
+
+| What | Result | Time |
+| --- | --- | --- |
+| `matrix.py smoke` | 3/3 passed (twice: with the first version of 0040 and with the final one) | 2.8, 2.1, 1.3 min |
+| `matrix.py idle` | 13/13 passed; idle QEMU at 2.4-5.9% of a core with the halts (Solaris 2.6 SS-5/SS-20, 2 and 4 CPUs, 2.5.1, SunOS 4.1.4, NetBSD 11.1), 100-198% with them off, no clock drift | 2.8-4.3 min each |
+| `matrix.py machines` | 13/13 passed (SS-10/SS-20 CDs and disks, OpenBIOS and the SS-20 PROM, 512 MB, 2 and 4 CPUs) | 1.0-2.8 min each |
+| `matrix.py smp` | 3/3 passed (`SOAK=600` with the `tar` through `compress` checksum: SS-20 with 2 and 4 CPUs, SS-10 with 2; Dhrystone speed-up 1.96, 3.09, 1.72) | 15-16 min each |
+| `matrix.py sparc64` (sun4u has no ESP; `qemu-system-sparc64` from the same series) | 9/9 passed | 26 s-6 min each |
+| `matrix.py bench`, `benchdisk` | all passed, latency on and off (the table below) | |
+| `install sol26-ss5 --check` (OpenBIOS) | passed | 14.5 min (install 520 s, first boot 222 s, check 114 s; catalogue 12) |
+| `install sol26-ss20 --check` (OpenBIOS) | passed | 14.3 min (504 s, 224 s, 112 s; catalogue 12) |
+| `install sol24-ss5 --check` (OpenBIOS, `cd_as_disk`) | passed | 8.9 min (306 s, 141 s, 73 s; catalogue 8.2-8.3) |
+| `install netbsd111-sparc --check` | passed | 7.5 min (243 s, 124 s, 71 s; catalogue 6.6-6.8) |
+| `install redhat62-ss5 --check` | passed | 6.6 min (170 s, 138 s, 67 s; catalogue 5.3-5.9) |
+| `install sunos414-ss5 --check` | passed | 10.3 min (374 s, 159 s, 58 s; catalogue 6, its install phase 2.2 min) |
+| `install debian40-ss5 --check --gateway --dns` (the container's `vmbr0` NATed out) | passed with a public name server | 26.3 min (1356 s, 124 s, 74 s; catalogue 24) |
+| the same with the lab host's LAN resolver as `--dns` | failed three times at "Configuring apt" ("Bad archive mirror", after the base system had been fetched), twice with the latency and once with it off: the name server, not the ESP | 19-20 min |
+| `debian-install-sparc.py NET=user` (no PVE), latency on and off at the same time | both passed | 19.1 min, 18.4 min |
+
+**Disk numbers, latency on and off.** The same binary twice at the same time on the same host, in
+two lab containers: as built (500 us) and with `-global sysbus-esp.x-irq-latency-us=0` (the old
+behaviour), the cases of the `bench` and `benchdisk` matrices, one run each. The disk-bound numbers
+move together; the CPU-bound ones (Dhrystone, Whetstone, nawk) moved by up to 30% either way between
+the two runs, which is the shared host, not the ESP.
+
+| Case | Raw read 64 MB (`bench.py` `read_s`, 64 KB blocks) | 64 MB write + `sync` | `lat_fs` 0 KB create / delete per s | Boot to login |
+| --- | --- | --- | --- | --- |
+| SS-5, OpenBIOS | 3.2 s (20 MB/s) vs 0.9 s (71 MB/s) | 2.4 s vs 2.4 s | 135 / 258 vs 327 / 774 | 129 s vs 121 s |
+| SS-5, `ss5.bin` | (not in `bench`) | | 176 / 346 vs 622 / 1334 | 125 s vs 115 s |
+| SS-10, OpenBIOS | (not in `bench`) | | 165 / 316 vs 823 / 1370 | 125 s vs 118 s |
+| SS-20, OpenBIOS | 2.8 s (23 MB/s) vs 0.3 s | 2.4 s vs 1.9 s | 170 / 331 vs 547 / 1317 | 123-129 s vs 115-120 s |
+| SS-20, `ss20_v2.25_rom` | 2.8 s vs 0.4 s | 2.7 s vs 2.2 s | 163 / 328 vs 593 / 1198 | 123-131 s vs 116-119 s |
+| Solaris 2.5.1, SS-5, `ss5.bin` | (not in `bench`) | | (`lat_fs` times nothing on 2.5.1) | 84 s vs 80 s |
+
+Each disk command costs about 2 ms more (four interrupts of 0.5 ms: selection, bus service, status,
+disconnect): raw reads in 64 KB blocks fall to about 20 MB/s, synchronous metadata operations to
+roughly a quarter to a third, and a boot takes 6-11% longer; the `bench-disk.py` runs took 4-32%
+longer in all. Installs that write many small files feel it most: SunOS 4.1.4's install phase took
+374 s against the catalogue's 132 s. 20 MB/s is still twice what the SS-5's fast SCSI bus (10 MB/s)
+could carry. Not tried: a smaller latency, or deferring only the status interrupt (one interrupt per
+command instead of four); either would need the NeXT installs again. A guest that needs the old
+speed more than NeXT can set `-global sysbus-esp.x-irq-latency-us=0` (qemu-server has no option for
+it; PVE's root-only `args:` would pass it, not tried).
 
 **Firmware.**
 
@@ -1613,8 +1691,14 @@ QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
 
 **Through PVE.** The profile exists (SS-5, `ss5.bin`, `vga: tcx`, 256 MB); the CD stage under
 `ss5.bin` ran in the lab, so one firmware suffices. The catalogue lists `nextstep33-ss5` and
-`openstep42-ss5` as blocked until a package carries the ESP fix; then they need framebuffer
-scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`).
+`openstep42-ss5` as blocked until a package carries `wsh/0040`; then they need framebuffer
+scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`). From the
+0001-0041 runs: tesseract can't read Configure's light grey panel (not even "Display"), so the
+scenario has to find Configure another way (a fixed wait after the kernel's network prompt worked,
+or the screen's shape); the Installer's end panel ("Restart") reads fine. The pointer starts near
+(100,100) on both systems, and 40 HMP `mouse_move 10 10` plus 16 `mouse_move 10 0` put it on Save.
+After `ss5.bin` restarts itself at the first `boot disk`, NeXT's 10-second `boot:` countdown can start
+more than 30 s later: typing `-v` for 30 s was too short twice, 60-90 s worked.
 
 ## sparc64 (sun4u)
 
