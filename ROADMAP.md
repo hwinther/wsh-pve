@@ -199,12 +199,20 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   (2/02, 2/04) and 9 (9/05) on the SS-20 and on sun4u (whether a later update gets past sun4u's
   `pp is NULL or free`), and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
-- **OpenBSD 8.0 on sun4u: the installed kernel.** The installer (`bsd.rd`) boots and installs, but the
-  installed GENERIC kernel stops after the loader (`Unimplemented service set-symbol-lookup`,
-  `Unhandled Exception 0x30`; `submodules/SPARC.md`, "sparc64"). Tested with OpenBIOS 0003-0011 only:
-  retest with 0013-0017 (0016 fixed firmware crashes in illumos and Solaris 10), then, if it still
-  stops, try `set-symbol-lookup` as a no-op in OpenBIOS (OBP has it; OpenBSD registers its ddb symbol
-  lookup with it). One agent at a time in `openbios/patches/`.
+- **OpenBSD 8.0 on sun4u: the installed kernel.** The installer (`bsd.rd`) boots and installs; the
+  installed GENERIC kernel still stops with +wsh21 (OpenBIOS 0001-0017). Cause found
+  (`submodules/SPARC.md`, "sparc64"): OpenBIOS's `call-method` writes its catch result into
+  `args[nargs]` even when the client asked for no results, and OpenBSD 8.0's `prom_map_phys` (`map`,
+  `nreturns` 0) has its stack-protector canary there; `set-symbol-lookup` is unrelated. A one-line
+  fix in `libopenbios/client.c` (store it only when `nret` > 0) is prototyped and boots the
+  installed system to `login:` with DHCP on `hme0` and `halt -p`. Next, in order:
+  1. add the fix to `openbios/patches/` (after the agent working there now) and publish it;
+  2. the disk timeouts on the installed system with outside network access (`wd0: timeout` while
+     ntpd slews the clock; not seen without outside access, with ntpd disabled or with QEMU tracing
+     on): find the cause, or work around it in the target (ntpd off);
+  3. then the install target `openbsd80-sun4u` (`targets.py`, scenario, tests), like
+     `netbsd111-sparc64`; its installer answers are known from the hand install (base, comp, man,
+     game from the CD, ~17 min).
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install`, which
