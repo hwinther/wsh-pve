@@ -343,6 +343,11 @@ test.describe('web UI: the search field above the ISO and floppy selectors', () 
 // the export fails the probe (what the tool does on it: files and directories created, renamed and
 // removed, a symlink replaced by rename) the same checks run on a dir storage and a bind mount; the
 // test says so in an annotation and attaches the probe's output and the NFS server's log.
+//
+// NFS 4.0, not 4.1/4.2: Linux 7.0 (GitHub's runner) asks for directory delegations
+// (GET_DIR_DELEGATION, 4.1+), NFS-Ganesha 6.5 answers NFS4ERR_OP_ILLEGAL, and removing a directory
+// tree then fails (`rm -r`: EISDIR, EREMOTEIO). 4.0 has no directory delegations; the probe still
+// tries 4.1 and 4.2 when it fails, and reports which work.
 const NFS = 'e2enfs'
 const NFS_ALT = '/mnt/e2e-nfs-alt'
 const NFS_FALLBACK = '/srv/e2e-export'
@@ -396,11 +401,11 @@ test.describe('case 2: ISOs and links on one NFS export', () => {
       `set -e
 getent hosts nfs > /dev/null
 pvesm status --storage ${NFS} > /dev/null 2>&1 && pvesm remove ${NFS}
-pvesm add nfs ${NFS} --server nfs --export /export --options vers=4.1 --content iso,floppy
+pvesm add nfs ${NFS} --server nfs --export /export --options vers=4.0 --content iso,floppy
 pvesm status --storage ${NFS} > /dev/null
 mountpoint -q /mnt/pve/${NFS}
 mkdir -p ${NFS_ALT}
-mount -t nfs4 -o vers=4.1 nfs:/export ${NFS_ALT}`,
+mount -t nfs4 -o vers=4.0 nfs:/export ${NFS_ALT}`,
     ])
     const probe = nfs.code === 0 ? await pveExec(['sh', '-c', PROBE, 'probe', `/mnt/pve/${NFS}`]) : nfs
     if (probe.code === 0) {
@@ -413,7 +418,7 @@ mount -t nfs4 -o vers=4.1 nfs:/export ${NFS_ALT}`,
       await testInfo.attach('nfs-server.log', { body: await serviceLogs('nfs', 3000), contentType: 'text/plain' })
       if (nfs.code === 0) {
         const variants = [`kernel ${(await pveExec(['uname', '-r'])).output.trim()}`]
-        for (const opts of ['vers=4.0', 'vers=4.2', 'vers=4.1,lookupcache=none,noac', 'vers=4.1,nordirplus']) {
+        for (const opts of ['vers=4.1', 'vers=4.2']) {
           const v = await pveExec(['sh', '-c', VARIANT, 'variant', opts, PROBE])
           variants.push(`${opts}: ${v.code === 0 ? 'ok' : v.output.trim().split('\n').slice(-2).join(': ')}`)
         }
