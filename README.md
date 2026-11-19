@@ -17,26 +17,46 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | --- | :-: | :-: | :-: | :-: | :-: |
 | ☀️ SunOS 4.1.3_U1B | | ✅ | ✅ ⁴ | | |
 | ☀️ SunOS 4.1.4 | | ✅ | | | |
-| ☀️ Solaris 2.2 | | | ✅ ⁵ | | |
-| ☀️ Solaris 2.3, 2.4 | | ✅ ⁶ | ✅ ⁴ ⁶ | | |
-| ☀️ Solaris 2.5.1 | | ✅ ¹ | | | |
+| ☀️ Solaris 2.2 | | | ✅ ⁵ 🔧 | | |
+| ☀️ Solaris 2.3, 2.4 | | ✅ ⁶ 🔧 | ✅ ⁴ ⁶ 🔧 | | |
+| ☀️ Solaris 2.5.1 | | ✅ ¹ 🔧 | | | |
 | ☀️ Solaris 2.5 | | ✅ ⁶ | ✅ ⁴ ⁶ | | |
-| ☀️ Solaris 2.6, 7 | | ✅ | ✅ | | |
+| ☀️ Solaris 2.6, 7 | | ✅ 🔧 | ✅ | | |
 | ☀️ Solaris 8, 9 | | ✅ ³ | ✅ ⁴ | | |
-| ☀️ Solaris 10 | | | | ✅ | |
-| 🔥 illumos (Tribblix m34) | | | | ✅ | |
+| ☀️ Solaris 10 | | | | ✅ 🔧 | |
+| 🔥 illumos (Tribblix m34) | | | | ✅ 🔧 | |
 | 🚩 NetBSD 11.1 | | ✅ | ✅ | ✅ | |
-| 🐡 OpenBSD 5.9, 8.0 | | ✅ ⁹ | ✅ ⁹ | ✅ ⁷ | |
+| 🐡 OpenBSD 5.9, 8.0 | | ✅ ⁹ | ✅ ⁹ | ✅ ⁷ 🔧 | |
 | ⬛ NeXTSTEP 3.3, OPENSTEP 4.2 | | ◐ ⁸ | | | |
 | 🎩 Red Hat Linux 6.2 | | ✅ | ✅ | | |
-| 🌀 Debian 4.0 | | ✅ | ✅ | | |
+| 🌀 Debian 4.0 | | ✅ 🔧 | ✅ 🔧 | | |
 | 🌀 Debian 12 (ports) | | | | ◐ ² | |
 | 🏔️ Alpine Linux | ✔ | | | | ✔ |
 | 💾 MS-DOS 6.22, FreeDOS 1.4 | ✅ | | | | |
 | 💾🪟🐧 MS-DOS 3+, Windows 1.x-9x (3dfx/Mesa 3D), Linux 2.x | ✔ | | | | |
 
-✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
+🔧 doesn't work with stock QEMU 11.1 and OpenBIOS: needs this repository's patches (table below) · ✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
 ¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ the SS-5 targets install 8 2/02 and 9 9/05; on sun4u 8 and 9 (also these updates) stop at an early kernel panic in OpenBIOS's memory handling · ⁴ on the SS-20 · ⁵ on the SS-10 (its only sun4m machine), OpenBIOS with `cd_as_disk=1`, pve-qemu-kvm 11.1.3-2+wsh22 or later · ⁶ OpenBIOS with `cd_as_disk=1` (2.3 and 2.4: pve-qemu-kvm 11.1.3-2+wsh22 or later; on the SS-20 also with 2 or 4 CPUs) · ⁷ pve-qemu-kvm 11.1.3-2+wsh22 or later; ntpd off (with a network that reaches NTP servers the disk times out after ntpd slews the clock); now and then an IDE timeout stops the guest's disk without ntpd too, see ² · ⁸ in the lab: the installer boots, then hangs on the disk with the published `pve-qemu-kvm` (an ESP interrupt timing problem); with an ESP fix not yet in a package it installs with `ss5.bin` and a TCX. Solaris 2.1 and the original SunOS 4.1.3, whose only sun4m machine is the SS-10, don't boot: their kernels stop early (2.1: QEMU itself stops after the device configuration; 4.1.3: a bad trap in a device probe), and the SS-10 Sun PROM doesn't run on QEMU's SS-10 · ⁹ OpenBSD 5.9, the last release for 32-bit sparc (8.0 is the sun4u column), OpenBIOS, one CPU; a serial display only (with a framebuffer QEMU adds the Sun keyboard, and 5.9's kernel panics); the sets come from a CD that `wsh-lab media` makes from the release's files.
+
+### What stock QEMU and OpenBIOS can't do
+
+The 🔧 cells, and what breaks without the patches carried here (`pve-qemu-kvm`'s `wsh/` series and `openbios/patches/`; details in [`submodules/SPARC.md`](submodules/SPARC.md)). Rows without 🔧 aren't known to need them, but not every one was tried on stock QEMU.
+
+| Guest | Without the patches | Fixed by |
+| --- | --- | --- |
+| Solaris 2.2-2.4 under OpenBIOS | the boot block stops (`(is ?`, exception 0x9); 2.3/2.4 kernels panic (`can't remove OBP hole`, `BAD TRAP`) | OpenBIOS 0019-0022 |
+| Solaris 2.5.1 | its CD loops on "gross error in esp status" (QEMU 10.1 and later) | QEMU `wsh/0001` |
+| Solaris 2.6 on the SS-5 | panics when its `pmc` driver attaches (the APC region is 1 byte) | QEMU `wsh/0011` |
+| Solaris 2.5.1-9 with 2-4 CPUs (SS-10/SS-20) | hangs within minutes (an interrupt unmasked in a delay slot isn't taken) | QEMU `wsh/0019` |
+| Solaris 10 on sun4u | doesn't reach or finish its installer (`no nucleus hblk8`, no console input, DVD and disk not found, `Interrupt not seen`) | OpenBIOS 0003-0011, QEMU `wsh/0021` |
+| Tribblix (illumos) on sun4u | firmware crashes on the live CD, the ZFS boot block crashes; the clock stops in a third of long runs | OpenBIOS 0016-0017, QEMU `wsh/0036` |
+| OpenBSD 8.0 on sun4u | the installed kernel panics right after the loader | OpenBIOS 0023 |
+| Debian 4.0 | the disk and CD go offline at the first command (`esp` driver) | QEMU `wsh/0038` |
+| NeXTSTEP 3.3, OPENSTEP 4.2 | hang on disk access | an ESP interrupt-latency patch, in progress |
+| sun4u guests with more than 3 GB | OpenBIOS stops before its banner, NetBSD can't claim memory | OpenBIOS 0013-0015 |
+
+Not about whether a guest runs, but also carried: idle CPUs that stop instead of spinning (SunOS 4.1.4, Solaris 2.5.1-9, from LEMU and ours), sound on the SS-5 (CS4231, from LEMU), cg3 at any size (LEMU), the SS-5 as fast as the SS-20 (`wsh/0017`), each sun4u VM's own MAC (`wsh/0034`), Stop-A that stops instead of powering off (OpenBIOS 0008).
+
 Profiles, limits and known problems per system: [guest operating systems](https://debian.wshosting.no/guides/operating-systems/), [SPARC](https://debian.wshosting.no/guides/sparc/), [DOS](https://debian.wshosting.no/guides/dos/).
 
 ## Getting started
