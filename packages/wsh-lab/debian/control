@@ -14,6 +14,7 @@ Architecture: all
 Depends: fonts-dejavu-core,
          python3-pil,
          python3-pyte,
+         python3-yaml,
          ${misc:Depends},
          ${python3:Depends},
 Suggests: python3-venv,
