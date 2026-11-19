@@ -225,8 +225,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   otherwise `lab.py boot-test` boots a copy of it through PVE and runs the target's check, and the
   workflow's `reinstall` input (or `--reinstall`) installs targets again. `matrix_skip` targets
   (Tribblix ~4.3 h, Debian 4.0) are installed only on request and boot-tested once their disk exists.
-  Still to do: run the `install` choice on a schedule (weekly boot tests, a monthly `reinstall=all`),
-  and automate more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, Tribblix, and Red Hat
+  The `install` choice runs weekly (Sunday 07:17 UTC, after `smoke` and `pve`): boot tests of the
+  stored disks, plus installs of targets that have none yet. Still to do: maybe a monthly
+  `reinstall=all` (about 6 h, needs the 720-minute limit on a schedule), and automate more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, Tribblix, and Red Hat
   Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86

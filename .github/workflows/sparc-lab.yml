@@ -54,6 +54,7 @@ on:
   schedule:
     - cron: "17 3 * * 0"
     - cron: "47 4 * * 0" # the pve matrix
+    - cron: "17 7 * * 0" # the install matrix: boot-tests the stored disks, installs only missing ones
 
 permissions:
   contents: read
@@ -71,7 +72,7 @@ jobs:
       contents: read
     env:
       REINSTALL: ${{ inputs.reinstall || '' }}
-      MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || 'smoke' }}
+      MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || (github.event.schedule == '17 7 * * 0' && 'install') || 'smoke' }}
       ISO_DIR: ${{ inputs.iso_dir || '/mnt/os/iso' }}
       DISKS_DIR: ${{ inputs.disks_dir || '/mnt/os/disks' }}
       RUN_DIR: ${{ inputs.runs_dir || '/mnt/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}
