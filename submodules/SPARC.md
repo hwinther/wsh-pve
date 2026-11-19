@@ -637,6 +637,7 @@ Results (2026-11-20; "stock" = the package's firmware, "0026" = `openbios/Docker
 | --- | --- | --- |
 | firmware prompt, `7 emit` | inverted 9-11 s, prompt `1 >` | flash of 0-0.2 s, prompt `0 >` |
 | Solaris 2.6, `echo` of a BEL | hung, screen inverted (30 s) | answered; three BELs in a row answered |
+| Solaris 2.6 on TCX (`VGA=tcx`), `echo` of a BEL | not run | answered; three answered |
 | Solaris 9 9/05, `echo` of a BEL | hung | answered; three answered |
 | Solaris 9 9/05, bash 2.05, `echo /usr/s` + Tab | hung | answered (the flash caught in one screenshot, 0.1 s) |
 | SunOS 4.1.4, `echo` of a BEL | hung | answered; three answered |
@@ -645,7 +646,8 @@ Results (2026-11-20; "stock" = the package's firmware, "0026" = `openbios/Docker
 | sun4u prompt (`-vga std`), `7 emit` twice | flash 0.1 s, prompt `2 >` | prompt `0 >` |
 
 Regression with 0026 mounted: `matrix.py smoke` 3 of 3, `matrix.py solaris10` 2 of 2,
-`matrix.py sparc64` (below), and the stored disks `install-sol9-ss5`, `install-netbsd111-sparc`,
+`matrix.py sparc64` 9 of 9 (NetBSD 11.1 on `std` VGA with the console on the framebuffer
+included), and the stored disks `install-sol9-ss5`, `install-netbsd111-sparc`,
 `install-sunos414-ss5` booted to their check commands on a serial console (`solaris-boot-disk.py`,
 `netbsd-boot-disk.py`, `sunos-boot-disk.py`, `-nographic` as `vga: serial0`): all passed, each
 banner showing the 0026 build.
