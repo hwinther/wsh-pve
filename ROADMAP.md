@@ -265,7 +265,6 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
 | `build-deb.yml` builds the 3dfx extra in a job that also holds the PAT | Should be split so the third-party build never sees the token |
-| The MCP server test's `serial_read` check failed once (19 != 20 characters) | Passed on the next commit; a timing flake |
 | The issue path of the optional-extras report | Has only run with nothing missing |
 
 ## The lab host
