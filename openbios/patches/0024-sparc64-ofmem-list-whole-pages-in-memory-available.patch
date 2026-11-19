@@ -1,0 +1,108 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] libopenbios: ofmem: list whole pages in /memory available on
+ sparc64
+
+/memory "available" is built from the gaps between the claimed physical
+ranges, and claims are recorded to the byte: the ELF loader claims each
+segment of the boot program with its exact p_memsz. Solaris's boot
+program sits at 0x100000, so on sun4u the list it reads looks like
+
+  00000000 00100000   00123127 00000001   00181540 3cef2ac0
+
+where OBP lists whole pages only.
+
+Solaris 7, 8 and 9 count an entry that starts inside a page one page
+short at its top: the kernel has no page structure for the last page
+below 0x3d074000 in the example. OpenBIOS hands out physical memory from
+the top down, so a few boot allocations later the boot program claims
+exactly that page for the kernel heap, and the kernel panics:
+
+  SunOS Release 5.9 Version Generic_118558-34 64-bit
+  panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free
+
+The failing allocation covers the last page of the large entry with 1
+and 2 GB of RAM, for 9 9/05 and 8 2/02 alike (Solaris 7 says "kmem_getpages:
+pp is NULL or free"); nothing is released in between. Solaris 10 boots
+with the same list.
+
+Round the start of each /memory entry up and its end down to the page
+size, and leave out entries without a whole page, as OBP's list is. The
+allocator and the claimed ranges are unchanged, so a partly claimed page
+is no longer listed but is not handed out either (allocations are page
+aligned and must not overlap a claimed range). sparc64 only; the virtual
+list is unchanged.
+---
+ libopenbios/ofmem_common.c | 40 +++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/libopenbios/ofmem_common.c b/libopenbios/ofmem_common.c
+index 609692b..436f0df 100644
+--- a/libopenbios/ofmem_common.c
++++ b/libopenbios/ofmem_common.c
+@@ -278,12 +278,37 @@ static void ofmem_update_mmu_translations( void )
+ }
+ 
+ 
++/* On sparc64, /memory "available" lists whole pages, as OBP's does: the
++   start of an entry is rounded up and its end down, and an entry left
++   without a whole page is dropped. Claims are recorded to the byte (the
++   ELF loader claims the boot program's segments with their exact sizes),
++   so the gaps between them can start inside a page. Solaris 7-9 count
++   such an entry one page short at its top: when a later boot allocation
++   gets that page, the kernel has no page structure for it and panics
++   ("boot_alloc: pp is NULL or free"). Returns 0 to leave the entry out */
++static int ofmem_available_entry_pages( phandle_t ph, phys_addr_t *start, ucell *size )
++{
++#ifdef CONFIG_SPARC64
++	phys_addr_t s, e;
++
++	if (ph == s_phandle_memory) {
++		s = (*start + PAGE_SIZE - 1) & ~((phys_addr_t)PAGE_SIZE - 1);
++		e = (*start + *size) & ~((phys_addr_t)PAGE_SIZE - 1);
++		if (e <= s)
++			return 0;
++		*start = s;
++		*size = e - s;
++	}
++#endif
++	return 1;
++}
++
+ static void ofmem_update_memory_available( phandle_t ph, range_t *range,
+ 		ucell **mem_prop, int *mem_prop_size, int *mem_prop_used, u64 top_address )
+ {
+ 	range_t *r;
+ 	int ncells, prop_used, prop_size;
+-	phys_addr_t start;
++	phys_addr_t start, entry;
+ 	ucell size, *prop;
+ 
+ 	if (s_phandle_memory == 0)
+@@ -327,9 +352,10 @@ static void ofmem_update_memory_available( phandle_t ph, range_t *range,
+ 			break;
+ 		}
+ 
++		entry = start;
+ 		size = r->start - start;
+-		if (size) {
+-			ofmem_arch_create_available_entry(ph, &prop[ncells], start, size);
++		if (size && ofmem_available_entry_pages(ph, &entry, &size)) {
++			ofmem_arch_create_available_entry(ph, &prop[ncells], entry, size);
+ 			ncells += ofmem_arch_get_available_entry_size(ph);
+ 		}
+ 		start = r->start + r->size;
+@@ -337,8 +363,12 @@ static void ofmem_update_memory_available( phandle_t ph, range_t *range,
+ 
+ 	/* tail */
+ 	if ((start - 1) < top_address) {
+-		ofmem_arch_create_available_entry(ph, &prop[ncells], start, top_address - start + 1);
+-		ncells += ofmem_arch_get_available_entry_size(ph);
++		entry = start;
++		size = top_address - start + 1;
++		if (ofmem_available_entry_pages(ph, &entry, &size)) {
++			ofmem_arch_create_available_entry(ph, &prop[ncells], entry, size);
++			ncells += ofmem_arch_get_available_entry_size(ph);
++		}
+ 	}
+ 
+ 	ofmem_set_property(ph, "available",
