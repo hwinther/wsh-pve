@@ -39,7 +39,8 @@ say, per patch:
 
 The owner respects LEMU's wish and hopes it changes one day; if LEMU's author allows it, these
 columns change with it. Sending our patches *to LEMU* (for example the carry-backs from our port to
-a LEMU fork, see `submodules/SPARC.md`) is a separate matter and not covered by this rule.
+a LEMU fork, see `submodules/SPARC.md`; the patch-to-commit table is in [lemu-port.md](lemu-port.md))
+is a separate matter and not covered by this rule.
 
 ## Who wrote what
 
