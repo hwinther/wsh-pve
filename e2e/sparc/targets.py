@@ -80,6 +80,7 @@ PACKAGES_2026_11_17_WSH15 = {**PACKAGES_2026_11_16, "pve-qemu-kvm": "11.1.3-2+ws
 PACKAGES_2026_11_18_CD_AS_DISK = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18 + cd_as_disk",
                                   "pve-manager": "9.2.30+wsh1"}
 PACKAGES_2026_11_18 = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18+wsh3", "pve-manager": "9.2.30+wsh2"}
+PACKAGES_2026_11_19 = {"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+wsh1", "pve-manager": "9.2.31+wsh1"}
 # qemu-system-sparc64 built from pve-qemu wsh/0001-0037 and openbios-sparc64 from openbios 0001-0017 (both
 # in pve-qemu-kvm 11.1.3-2+wsh20 and later), in the PVE test container with the packages of that day
 PACKAGES_2026_11_18_SUN4U = {"pve-qemu-kvm": "11.1.3-2+wsh16 + wsh/0034-0037 + openbios 0016-0017",
@@ -532,8 +533,8 @@ TARGETS = {
     "tribblix-m34-sun4u": {
         "title": "Tribblix m34 SPARC (illumos) base install on sun4u (OpenBIOS, IDE disk, ZFS root)",
         "status": "automated",
-        "matrix_skip": "takes ~4.3 h, longer than the sparc lab job's 240-minute limit: installed on request"
-                       " (--reinstall), its stored disk boot-tested otherwise (~15 min)",
+        "matrix_skip": "takes 3.5-4.3 h, too much of the sparc lab job's 240 minutes: installed on request"
+                       " (--reinstall), its stored disk boot-tested otherwise (~26 min)",
         "method": "scripted",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 2048,
                     "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
@@ -555,8 +556,10 @@ TARGETS = {
         "net_modes": ["static"],  # tribblix-firstboot.py has NET_MODE=dhcp (ipadm -T dhcp), not tried yet
         # Needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS 0016-0017, QEMU wsh/0036). The live CD and the
         # installed system's first boot import the SMF manifests (~70 min each); later boots ~12-14 min
-        "minutes": 257,  # install 141 (live CD login 61), first boot 89 (login 70), --check 26 (login 14)
-        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_SUN4U, "with": "--check"},
+        # 2026-11-19 with the published packages: 207 (install 111, first boot 71, --check 25); 2026-11-18
+        # with a local build: 257. A boot test of the stored disk: 26 (login 14, init 5 11)
+        "minutes": 207,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check --export; boot-test"},
     },
     # The CD's microroot loads the install tools from the CD, then the same sysinst answers
     # (netbsd-install-sparc.py); a blank disk: no Sun label needed (sysinst writes a disklabel)

@@ -337,6 +337,24 @@ took 11.8 minutes (install 407 s, first boot 182 s, check 105 s), `sol26-ss20` 1
 191 s, 105 s). Without `--check` it is two minutes less. `sol10-sun4u` (packages of 2026-11-17,
 `pve-qemu-kvm` 11.1.3-2+wsh13): 108.5, 109.6 and 110.7 minutes in three runs that passed (install about 81 minutes, first boot about 19, check about 9; the first boot imports Solaris's service descriptions, and `init 5` takes 3 to 6 minutes).
 
+### Keep the installed disk, boot it again later
+
+A slow install only has to run once. With `--export DIR` (together with `--check`), the installed
+VM's first disk is copied to `DIR/install-<target>.raw` when the check passes, with
+`install-<target>.json` beside it (install date, minutes, package versions, profile, network, media
+checksums). The previous copy is replaced only when the new one is complete. `boot-test` then makes
+a new VM with the target's profile from a copy of that disk, boots it, logs in and checks the marker
+(the same check as `--check`), and destroys the VM:
+
+```sh
+wsh-lab install tribblix-m34-sun4u --vmid 130 --check --export /mnt/os/disks   # ~4.3 h, once
+wsh-lab boot-test tribblix-m34-sun4u --disk /mnt/os/disks/install-tribblix-m34-sun4u.raw --vmid 131
+```
+
+`--export` stores only the target's default install (it refuses `--root-password`, `--user`,
+`--data-disk`, `--post-install` and `--template`) and never replaces a file it didn't write itself.
+`boot-test` takes `--storage`, `--bridge`, `--name`, `--out` and `--keep` (keep the VM, stopped).
+
 ## Disk size
 
 The first disk comes in the sizes a target was tested with; `wsh-lab targets` lists them, and any
@@ -509,9 +527,12 @@ they stay out of the logs and recordings.
 ## How it is tested
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
-container with the published packages, and the `install` matrix runs every automated target (by
-hand from the `sparc lab` workflow; with `sol10-sun4u` it takes about two and a half hours and needs
-the Solaris 10 DVD in the lab's media directory). `e2e/sparc/tests/test_targets.py` checks the catalogue: every
+container with the published packages, and the `install` matrix (by hand from the `sparc lab`
+workflow) goes through every automated target: a target whose stored disk is missing is installed
+with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
+`reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
+installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
+the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
 On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD/sparc64
