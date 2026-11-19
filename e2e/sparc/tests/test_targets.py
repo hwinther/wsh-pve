@@ -749,7 +749,7 @@ class WebStartSun4u(unittest.TestCase):
         # takes Software 1 of 2 only
         self.assertNotIn("prom_env", targets.TARGETS["sol9-sun4u"]["install"])
         # 9 needs openbios 0025, not in a published package yet: the weekly matrix doesn't install it
-        self.assertIn("0025", targets.TARGETS["sol9-sun4u"]["matrix_skip"])
+        self.assertNotIn("matrix_skip", targets.TARGETS["sol9-sun4u"])
         self.assertNotIn("matrix_skip", targets.TARGETS["sol8-sun4u"])
         t8 = targets.TARGETS["sol8-sun4u"]
         self.assertEqual(t8["install"]["prom_env"], {"auto-boot?": "false"})
