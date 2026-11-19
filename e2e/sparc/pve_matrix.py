@@ -96,6 +96,27 @@ MATRICES = {
     # has none (or --reinstall), else that disk boot-tested; plan() decides. The "scheduled
     # reinstalls" of ROADMAP.md.
     "install": [(f"install-{t}", {"target": t}, None, None, []) for t in targets.automated()],
+    # Recordings for the docs gallery that no install target makes (publish_media.py; not in the
+    # weekly run): the stored Solaris 2.6 SS-20 disk (install-sol26-ss20.raw, lab.py install
+    # --export) on SS-20 with OpenBIOS and 4 CPUs, booted to login; psrinfo and mpstat show the four
+    # CPUs on-line and idle, then init 5. Solaris 2.2 on SS-10 with OpenBIOS (needs pve-qemu-kvm
+    # 11.1.3-2+wsh22 or later: openbios 0019-0023), until it has an install target: the CD image (a
+    # disk image, as a disk on target 6: cd_as_disk=1) installed onto a Sun-labelled disk on the 2.3
+    # path of solaris-install-serial.py, then the first boot (root password) and login.
+    "recordings": [
+        ("sol22-install-ss10", {**SPARC32, "machine": "SS-10", "memory": 256,
+                                "scsi3": "local:0,import-from={template},format=raw",
+                                "scsi6": "{iso},media=cdrom,cd_as_disk=1"},
+         "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img", "sparc-SUN2.9G.raw.template.xz",
+         [("solaris-install-serial.py", {}),
+          ("solaris-boot-disk.py", {"ROOT_PASSWORD": targets.DEFAULT_ROOT_PASSWORD, "CHECK": r"SunOS \S+ 5\.2"})]),
+        ("sol26-ss20-smp4", {**SPARC32, "machine": "SS-20", "memory": 512, "cores": 4,
+                             "scsi3": "local:0,import-from={template},format=raw"},
+         None, "install-sol26-ss20.raw",
+         [("solaris-boot-disk.py", {"ROOT_PASSWORD": targets.DEFAULT_ROOT_PASSWORD, "COMMANDS": "uname -a; psrinfo",
+                                    "CHECK": r"3\s+on-line", "MORE_COMMANDS": "mpstat 1 3",
+                                    "MORE_EXPECT": r"3\s+\d+(\s+\d+){14}"})]),
+    ],
 }
 
 

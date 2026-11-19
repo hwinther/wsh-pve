@@ -8,13 +8,14 @@ import LabVideo from "../../../components/LabVideo.astro";
 
 The [sparc lab](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc) records every run it makes:
 the serial console as an [asciinema](https://asciinema.org) recording and, when the guest has a
-framebuffer, a short time-lapse video of it. These few are from the lab's own runs against the
-packaged QEMU; the weekly lab run keeps the recordings of every case in its workflow artifact.
+framebuffer, a short time-lapse video of it. These are from the lab's own runs against the
+packaged QEMU, most of them through Proxmox VE; the weekly lab run keeps the recordings of every
+case in its workflow artifact.
 
 The recordings are documentary: short, time-compressed, from the lab's unattended runs. Pauses
-longer than a second are cut (and the install plays three times as fast); the marks on the progress
-bar are the lab's steps (hover for the title, or use `[` and `]` to jump between them). Space pauses,
-the arrow keys seek.
+longer than a second are cut, and the long ones also play faster (each caption says how much); the
+marks on the progress bar are the lab's steps (hover for the title, or use `[` and `]` to jump
+between them). Space pauses, the arrow keys seek.
 
 ## Solaris 2.6 text install on SS-5
 
@@ -69,6 +70,151 @@ times faster; the captions are the lab's steps.
   width={1024}
   height={768}
   caption="Solaris 2.6 on SS-5 with a cg3 framebuffer, OpenBIOS banner to dtlogin (time-lapse, 10x)"
+/>
+
+## Install targets through Proxmox VE
+
+The rest come from [install targets](/guides/lab-install/) run through PVE (`lab.py install <target>
+--check`, or `lab.py boot-test` for a stored disk of a long install): the VM created through the PVE
+API, started by `qm start`, the lab attached to its serial socket. Where the install is short there are
+two recordings from the same run: the install, and the check boot afterwards (the root password set at
+the first boot, login, the target's commands, power off).
+
+### SunOS 4.1.3_U1B on SS-5
+
+The oldest SunOS the lab runs. The install copies the CD's miniroot to the swap slice, boots it and
+runs suninstall's Quick install (Programmer); the check boots the disk, logs in, records the system
+state and halts. SS-5, OpenBIOS, 64 MB for the install (the CD's kernel stops with more), 256 MB
+after.
+
+<LabCast
+  src="/recordings/sunos413-install-ss5.cast"
+  caption="SunOS 4.1.3_U1B install from CD, SS-5 with OpenBIOS under PVE, serial console"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos413-boot-ss5.cast"
+  caption="SunOS 4.1.3_U1B booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.2 on SS-10
+
+The oldest Solaris the lab runs, made possible by OpenBIOS patches 0019-0023 (pve-qemu-kvm
+11.1.3-2+wsh22). The CD (as a disk on target 6) boots the installer, which asks one system
+identification question per screen as 2.3 does; then Quick Install, End User, the file systems and the
+packages. The second recording is the first boot of the installed disk: the root password on its own
+screen, login, `uname`/`df`/`ifconfig` and `init 5`. SS-10, OpenBIOS, 256 MB.
+
+<LabCast
+  src="/recordings/sol22-install-ss10.cast"
+  caption="Solaris 2.2 install, SS-10 with OpenBIOS under PVE, serial console (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol22-boot-ss10.cast"
+  caption="Solaris 2.2 first boot of the installed disk, SS-10 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.6 with four CPUs on SS-20
+
+The stored Solaris 2.6 SS-20 disk in a VM with four cores: the PROM and the kernel bring up four
+SuperSPARC CPUs, then login, `psrinfo` (four on-line) and `mpstat 1 3` at the idle shell, where the
+CPUs sit idle (QEMU's `solaris-smp-idle` halts them), and `init 5`. SS-20, OpenBIOS, 512 MB.
+
+<LabCast
+  src="/recordings/sol26-smp4-ss20.cast"
+  caption="Solaris 2.6 on SS-20 with 4 CPUs under PVE: psrinfo and mpstat, serial console"
+  poster="npt:0:10"
+/>
+
+### NetBSD 11.1 on SS-5
+
+sysinst from the NetBSD 11.1 sparc CD: the microroot loads the installation tools from the CD, then
+the disk, the Minimal set, root without a password and power off. The check boots the disk to
+`login:`, logs in and records `uname`, `df` and `ifconfig`. SS-5, OpenBIOS, 256 MB.
+
+<LabCast
+  src="/recordings/netbsd111-install-ss5.cast"
+  caption="NetBSD 11.1 sparc install with sysinst, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd111-boot-ss5.cast"
+  caption="NetBSD 11.1 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Debian GNU/Linux 4.0 on SS-5
+
+The netinst CD with a preseed file: one line typed at SILO's `boot:` loads the lab's answers from a
+second CD, and debian-installer runs unattended from there (network, the base system and the kernel
+from archive.debian.org, the disk, SILO, the reboot). The check boots Linux 2.6.18 from the disk, logs
+in on `ttyS0` and records the system state. SS-5, OpenBIOS, 256 MB.
+
+<LabCast
+  src="/recordings/debian40-install-ss5.cast"
+  caption="Debian 4.0 (etch) preseeded netinst install, SS-5 with OpenBIOS under PVE (4x)"
+  poster="npt:0:20"
+/>
+
+<LabCast
+  src="/recordings/debian40-boot-ss5.cast"
+  caption="Debian 4.0 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 10 on sun4u
+
+A boot of the stored Solaris 10 1/13 disk (its install takes about 110 minutes): OpenBIOS for sparc64,
+the kernel, the services, login, `uname`/`prtconf`/`df`/`ifconfig` and `init 5`. sun4u, OpenBIOS,
+1024 MB, IDE disk.
+
+<LabCast
+  src="/recordings/sol10-boot-sun4u.cast"
+  caption="Solaris 10 1/13 booting an installed disk, sun4u with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Tribblix m34 (illumos) on sun4u
+
+A boot of the stored Tribblix m34 disk (its install takes about 3.5 hours): OpenBIOS, the illumos
+kernel from a ZFS root, the SMF services, login, the system state and `init 5`. The run takes about
+29 minutes under TCG, most of it pauses, which are cut; it plays at 2x. sun4u, OpenBIOS, 2048 MB, IDE disk.
+
+<LabCast
+  src="/recordings/tribblix-m34-boot-sun4u.cast"
+  caption="Tribblix m34 (illumos) booting an installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+### FreeDOS 1.4 from floppies
+
+An x86 VM (i440fx, SeaBIOS, Pentium, std VGA, 32 MB, TCG): the FreeDOS 1.4 Floppy Edition installer on
+the VGA text screen, partitioning (with a reboot), formatting and the six disk swaps, which the lab
+does through the PVE API; then the check boot from the hard disk with `VER`, the marker and `MEM`. A
+frame a second, played ten times faster; the captions are the lab's steps.
+
+<LabVideo
+  src="/recordings/freedos14-install.webm"
+  captions="/recordings/freedos14-install.vtt"
+  poster="/recordings/freedos14-install-poster.png"
+  width={640}
+  height={480}
+  caption="FreeDOS 1.4 install from the Floppy Edition under PVE, VGA text screen (time-lapse, 10x)"
+/>
+
+<LabVideo
+  src="/recordings/freedos14-boot.webm"
+  captions="/recordings/freedos14-boot.vtt"
+  poster="/recordings/freedos14-boot-poster.png"
+  width={640}
+  height={480}
+  caption="FreeDOS 1.4 booting the installed disk under PVE (time-lapse, 10x)"
 />
 
 ## Recording your own
