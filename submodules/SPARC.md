@@ -1411,6 +1411,53 @@ profiles with OpenBIOS and a serial console. What the guest finds:
 
 The install target (`debian40-ss5`, `debian40-ss20`): `e2e/sparc/README.md`, "Debian GNU/Linux 4.0".
 
+### OpenBSD 5.9 on sun4m
+
+OpenBSD 5.9 (March 2016), the last release with the 32-bit sparc port, on the SS-5 and SS-20
+profiles. It needs no QEMU, OpenBIOS or qemu-server change, but one thing of the VM's:
+
+- **No keyboard ESCC: `-nographic`.** With a display (the lab's `-vga none`, or `-vga cg3`) QEMU's
+  sun4m has the second ESCC with the Sun keyboard and mouse; OpenBSD attaches `zskbd0 at zs1
+  channel 0: keyboard, type 5, layout 0x21`, then prints `stray interrupt ipl 0xc pc=...` (the ESCC
+  level) again and again during autoconf and stops with `panic: crazy interrupts` (`strayintr` from
+  `sparc_interrupt44c` in `cpu_configure`), the RAMDISK kernel of `cd59.iso` and the installed
+  GENERIC alike, on both machines. With `-nographic` QEMU leaves that ESCC disabled (`disabled` =
+  `!enable_graphics` in `sun4m.c`), `zskbd0` finds no keyboard and the kernel boots. qemu-server
+  passes `-nographic` for `vga: serial0`/`serial1`, so a VM with a serial display works and one with
+  `cg3` or `tcx` doesn't. Diagnosed this far: an `escc_*` trace shows the keyboard answering the
+  driver's probe (reset `0xff 0x04 0x7f`, layout `0xfe 0x21`, command 11) and then the level-12
+  interrupt raised and lowered for every console character; QEMU's ESCC trace events don't name the
+  chip, so which pending condition OpenBSD's handlers don't claim isn't known yet. Solaris, SunOS,
+  NetBSD and Linux run with the keyboard ESCC, so it is between OpenBSD's `zs`/`zskbd` and QEMU's
+  keyboard channel. The QEMU wiki's "5.8: working with -nographic" fits.
+- Boot: with a blank disk on target 3 OpenBIOS stops at `0 >`; `boot
+  /iommu/sbus/espdma/esp/sd@6,0:d` loads OpenBSD's boot block (`OpenBSD BOOT 2.11`) and `bsd.rd` in
+  ~5 s. `ss5.bin` boots the CD with `boot cdrom`. The installed disk boots by itself under OpenBIOS
+  (`sd@3,0`, partition `a`, also with the 8 GiB auto layout's 111 MB root). Under `ss5.bin` the
+  installed GENERIC kernel stops at `bpp0 at sbus0 slot 5 offset 0xc800000` (`data fault ...
+  sfva=0x7c800000`, `panic: kernel fault`): the SS-5 PROM's tree has the parallel port `SUNW,bpp`,
+  which QEMU's SS-5 doesn't emulate (OpenBIOS's tree has no such node; `bsd.rd` has no `bpp` driver);
+  `boot disk -c` and `disable bpp` in UKC boot it. The SS-20 PROM's `bpp` (slot 15) attaches as
+  "Unknown type", and the disk boots.
+- Kernel: `mainbus0 at root: SUNW,SPARCstation-5`, `cpu0: MB86904 @ 170 MHz` (SS-20: `TMS390Z50 v0
+  or TMS390Z55 @ 170 MHz`), `esp0` with `sd0` on target 3 and `cd0`/`cd1` on 5 and 6 (OpenBSD
+  numbers the CD-ROMs in target order), `le0` with `net0`'s MAC, `audiocs0` on the SS-5,
+  `power0 at obio0`, so `halt -p` powers the machine off ("attempting to power down...", QEMU
+  exits) from `bsd.rd` and the installed system. No multiprocessor kernel exists for sparc: on an
+  SS-20 with 4 CPUs the others are `cpu at mainbus0 not configured`.
+- The installer: `cd59.iso` has no sets (the release has no `install59.iso` for sparc). The sets
+  come from a second CD made on the node from the release's files (`answer_media.openbsd_sets()`);
+  it needs Rock Ridge names, because 5.9's `cd9660` shows plain ISO 9660 names in upper case
+  (`BASE59.TGZ`), which the installer doesn't take for sets. With `SHA256.sig` on the CD the
+  installer checks the signature and each set, if it finds 512 MB free on `/tmp`, `/home` or
+  `/usr/src` to copy them to (an 8 GiB disk's auto layout has that, a 3 GiB disk's doesn't).
+- Times (TCG, one guest per host core): the questions ~1 min, the sets ~2-3 min (base, comp, man,
+  game, 108 MB), the first boot to `login:` 2.5-3 min (host key generation), a later boot ~25 s; a
+  100 MB `dd` on the disk 29-35 MB/s written, 49-57 MB/s read.
+
+The install targets (`openbsd59-ss5`, `openbsd59-ss20`): `e2e/sparc/README.md`, "OpenBSD 5.9 on
+sun4m".
+
 ### Older Sun releases on sun4m
 
 Solaris 2.1, 2.2, 2.3 Edition II and 2.5 (HW 1/96), SunOS 4.1.2, 4.1.3 and 4.1.3_U1B, against the
@@ -2819,6 +2866,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Debian 4.0 on sun4m: `debian40-ss5` and `debian40-ss20` (`lab.py install`; need pve-qemu-kvm
   11.1.3-2+wsh20 or later for `wsh/0038`; out of `pve_matrix.py install`, which gives the guest no
   `--gateway`/`--dns` to reach `archive.debian.org`); results under "Debian GNU/Linux 4.0 on sun4m".
+- OpenBSD 5.9 on sun4m: `openbsd59-ss5` and `openbsd59-ss20` (`lab.py install`, also in
+  `pve_matrix.py install`, which makes the sets CD from `--iso`'s `other-os/openbsd5.9/`); results
+  under "OpenBSD 5.9 on sun4m".
 
 ## Known gaps
 
@@ -2828,6 +2878,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
   Solaris' X server need).
 - **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").
+- **OpenBSD/sparc with a display:** with `vga: cg3` or `tcx` QEMU adds the keyboard ESCC, and
+  OpenBSD 5.9 panics in autoconf ("crazy interrupts"); `vga: serial0` works ("OpenBSD 5.9 on sun4m").
 - **SS-20 PROM with a framebuffer:** Solaris 2.6 panics at boot with the console on cg3 or TCX
   under `ss20_v2.25_rom` ("cg3 and TCX"); with a serial console it boots.
 - **TCX depth:** qemu-server passes no `-g`, so TCX is 8-bit; 24-bit only works with OpenBIOS.

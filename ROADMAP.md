@@ -60,6 +60,7 @@ come after that, not before.
 | Solaris 2.1-2.4 under OpenBIOS on sun4m: openbios 0019-0022 (the FCode boot block's OBP 2.x words, the Forth heap inside the firmware's range, node 0 as the root, romvec calls with interrupts masked); 2.2 on SS-10, 2.3 and 2.4 on SS-5 install and boot in the lab (CD as a disk), 2.1 stops in QEMU (`Trap 0x21`); SunOS 4.1.3's `type=29` diagnosed (a probe of `0xd.0108_0000`); openbios 0023 (client interface: no catch result over the stack with `nret` 0) lets OpenBSD 8.0's installed sun4u kernel boot | in review | |
 | Install targets: Solaris 8 and 9 on the SS-5 (`sol8-ss5` from 8 2/02, `sol9-ss5` from 9 9/05, 256 MB, Web Start through PVE); Web Start's screens of the later updates answered (9 9/05's license question, 8 2/02's CD prompts); 8 2/02 and 9 9/05 on sun4u measured: they stop at the same `pp is NULL or free` panic as 8 1/01 and 9 (OpenBIOS's physical allocation, `submodules/SPARC.md`) | in review | |
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
+| Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
 
 ## In progress
 
@@ -191,10 +192,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
   NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
-  OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
-  only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
-  node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
-  all on the lab host now. Done (see "Done"): SunOS 4.1.3_U1B, Solaris 2.3 and 2.5 install;
+  OpenBSD 5.9 (the last release with sparc32), all on the lab host now. Done (see "Done"): SunOS
+  4.1.3_U1B, Solaris 2.3 and 2.5 install; OpenBSD 5.9 installs on SS-5 and SS-20 (`openbsd59-ss5`,
+  `openbsd59-ss20`; the sets from a CD made on the node, a serial display: with QEMU's keyboard
+  ESCC its kernel panics, which isn't narrowed down yet, `submodules/SPARC.md`, "OpenBSD 5.9 on
+  sun4m"; 5.8's `install58.iso` wasn't needed and isn't tried);
   the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. OpenBIOS 0019-0022 run the Solaris
   2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5 and SS-20) are install targets under OpenBIOS
   since pve-qemu-kvm 11.1.3-2+wsh22 (`sol22-ss10`, `sol23-ss5`, `sol23-ss20`, `sol24-ss5`,

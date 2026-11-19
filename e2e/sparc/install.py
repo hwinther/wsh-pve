@@ -163,6 +163,8 @@ def convert_medium(name, source, dest, checksum=True):
     med = targets.MEDIA[name]
     if "from" not in med:
         raise InstallFailed(f"{name} is used as it is, not converted")
+    if "files" in med["from"]:
+        return convert_files(name, source, dest, checksum)
     src = targets.MEDIA[med["from"]["name"]]
     size_in, offset, size_out = targets.CONVERSIONS[med["from"]["convert"]]
     if os.path.getsize(source) != src["size"]:
@@ -186,6 +188,40 @@ def convert_medium(name, source, dest, checksum=True):
         if os.path.exists(tmp):
             os.unlink(tmp)
     return h.hexdigest()
+
+
+def convert_files(name, source, dest, checksum=True):
+    """convert_medium for a medium made from several files (MEDIA "from" with "files", {file name:
+    (size, sha256)}): `source` is the directory with them (the release's), each must have its size
+    and, with `checksum`, its sha256; the CD is written with targets.FILE_CONVERSIONS[convert] (a function
+    of answer_media) and must be the tested one byte for byte."""
+    med = targets.MEDIA[name]
+    if not os.path.isdir(source):
+        raise InstallFailed(f"{source}: not a directory ({name} is made from the files {', '.join(med['from']['files'])})")
+    if os.path.exists(dest):
+        raise InstallFailed(f"{dest} exists already")
+    files = {}
+    for fname, (size, digest) in med["from"]["files"].items():
+        path = os.path.join(source, fname)
+        if not os.path.isfile(path) or os.path.getsize(path) != size:
+            raise InstallFailed(f"{path}: missing or not {size} bytes")
+        with open(path, "rb") as f:
+            files[fname] = f.read()
+        if checksum and hashlib.sha256(files[fname]).hexdigest() != digest:
+            raise InstallFailed(f"{path}: not the tested file (sha256 {digest})")
+    data = getattr(answer_media, targets.FILE_CONVERSIONS[med["from"]["convert"]])(files)
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != med["sha256"] or len(data) != med["size"]:
+        raise InstallFailed(f"the result's sha256 is {digest}, not the tested {med['sha256']}")
+    tmp = dest + ".part"
+    try:
+        with open(tmp, "wb") as o:
+            o.write(data)
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return digest
 
 
 # --- the VM ---------------------------------------------------------------------------------------
@@ -1177,7 +1213,11 @@ def cmd_media(a):
             where_found = r["volid"] or r["path"] or f"not in {where}"
             print(f"  {r['state']:17} {med['name']:46} {exp['size']:>11}  {exp['sha256']}  {where_found}")
             if "from" in exp and r["state"] == "missing":
-                print(f"  {'':17} made from {exp['from']['name']}: lab.py media {name} --convert <that file>")
+                if "files" in exp["from"]:
+                    print(f"  {'':17} made from {', '.join(exp['from']['files'])}: lab.py media {name} --convert"
+                          " <the directory with them>")
+                else:
+                    print(f"  {'':17} made from {exp['from']['name']}: lab.py media {name} --convert <that file>")
     notes = sorted({r["note"] for r in seen.values() if r.get("note")})
     for n in notes:
         print(f"\n{n}")
@@ -1185,8 +1225,9 @@ def cmd_media(a):
 
 
 def media_convert(a):
-    """lab.py media <target> --convert SOURCE: the target's medium made from SOURCE (MEDIA "from"),
-    written under its expected name into --dir or the storage's ISO directory."""
+    """lab.py media <target> --convert SOURCE: the target's medium made from SOURCE (MEDIA "from": a
+    medium, or a directory with the files a "files" medium is made of), written under its expected
+    name into --dir or the storage's ISO directory."""
     if not a.target:
         sys.exit("--convert needs the target whose medium it makes")
     names = [m["name"] for m in targets.TARGETS[a.target]["media"] if "from" in targets.MEDIA[m["name"]]]
@@ -1200,7 +1241,7 @@ def media_convert(a):
             if med["content"] not in (storage_content(a.storage) or set()):
                 sys.exit(f"storage {a.storage} has no {med['content']} content")
             dest = run("pvesm", "path", f"{a.storage}:{med['content']}/{name}")
-        print(f"{name}: from {a.convert} ({med['from']['name']}, {med['from']['convert']}) to {dest}")
+        print(f"{name}: from {a.convert} ({med['from'].get('name') or 'its files'}, {med['from']['convert']}) to {dest}")
         try:
             digest = convert_medium(name, a.convert, dest)
         except (InstallFailed, OSError) as e:
@@ -1273,8 +1314,8 @@ def add_commands(sub):
     m.add_argument("--dir", help="look in this directory instead of a PVE storage")
     m.add_argument("--no-checksum", action="store_true", help="compare sizes only")
     m.add_argument("--convert", metavar="SOURCE",
-                   help="make the target's converted medium (e.g. the SunOS CD from its raw BIN) from SOURCE, "
-                        "into --dir or the storage")
+                   help="make the target's converted medium from SOURCE (e.g. the SunOS CD from its raw BIN, "
+                        "OpenBSD 5.9's sets CD from the release's directory), into --dir or the storage")
 
 
 COMMANDS = {"install": cmd_install, "boot-test": cmd_boot_test, "targets": cmd_targets, "media": cmd_media}

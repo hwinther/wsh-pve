@@ -92,7 +92,9 @@ class Catalogue(unittest.TestCase):
                     self.assertIn(p["vga"], vga32)
                     self.assertEqual(p["net0"], "lance")
                     self.assertEqual(disk["bus"], "scsi3")  # the PROMs boot target 3
-                    self.assertTrue(all(m["drive"] == "scsi6" for m in t["media"]))  # CD-ROM on target 6
+                    # the CD-ROM on target 6; a second CD (OpenBSD 5.9's sets) on 5, after the disk
+                    self.assertEqual(t["media"][0]["drive"], "scsi6")
+                    self.assertTrue(all(m["drive"] in ("scsi6", "scsi5") for m in t["media"]))
                 else:
                     self.assertEqual(p["arch"], "sparc64")
                     self.assertEqual(p["machine"], s64["machine"])
@@ -911,6 +913,194 @@ class OpenBSD80(unittest.TestCase):
             self.ob.installer(m, self.v(), 60)
         self.assertIn("frobnicate", str(e.exception))
         self.assertEqual(m.sent, [])
+
+
+class OpenBSD59(unittest.TestCase):
+    """openbsd59-ss5 and openbsd59-ss20: the targets, the sets CD made from the release's files
+    (answer_media.openbsd_sets, install.convert_files) and 5.9's installer questions (_openbsd.py)."""
+    names = ("openbsd59-ss5", "openbsd59-ss20")
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _openbsd
+        cls.ob = _openbsd
+
+    def v(self, **kw):
+        return {"ARCH": "sparc", "HOSTNAME": "openbsd59-ss5", "IP": "10.0.2.15", "NETMASK": "255.255.255.0",
+                "ROOT_PASSWORD": "pw", "SETS": "", "SETS_CD": "cd0", "SETS_PATH": "/", **kw}
+
+    def test_targets(self):
+        for name in self.names:
+            t, p = targets.TARGETS[name], targets.TARGETS[name]["profile"]
+            self.assertEqual((p["arch"], p["bios"], p["net0"], p["vga"]), ("sparc", "openbios-sparc32", "lance", "serial0"))
+            self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"], t["nic"]), ("scsi3", None, "scsi3", "le0"))
+            # the sets CD on target 5 comes before the boot CD on 6: the installer's cd0
+            self.assertEqual(t["media"], [{"name": "cd59.iso", "drive": "scsi6"},
+                                          {"name": "openbsd59-sparc-sets.iso", "drive": "scsi5"}])
+            self.assertEqual(t["install"]["scenario"], "openbsd-install-sparc.py")
+            self.assertTrue(t["install"]["root_password"])
+            # 8 GiB: room for the installer's check of the sets, which the install requires
+            self.assertEqual((t["disk"]["size"], t["install"]["vars"]["VERIFY"]), (8, "1"))
+            self.assertEqual(t["check"]["scenario"], "openbsd-boot-disk.py")
+            line = t["check"]["commands"] + "; grep '^someuser:' /etc/passwd | cut -d: -f1,3-; echo END-OF-COMMAND"
+            self.assertLess(len(line), 255)  # OpenBSD's tty takes 255 characters
+            self.assertEqual(t["net_modes"], ["static"])
+        self.assertEqual(targets.TARGETS["openbsd59-ss5"]["profile"]["machine"], "SS-5")
+        self.assertEqual(targets.TARGETS["openbsd59-ss20"]["profile"]["machine"], "SS-20")
+
+    def test_media(self):
+        cd, sets = targets.MEDIA["cd59.iso"], targets.MEDIA["openbsd59-sparc-sets.iso"]
+        self.assertEqual((cd["size"], cd["lab"]), (4048896, "other-os/openbsd5.9/cd59.iso"))
+        self.assertTrue(cd["url"].startswith("https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/"))
+        f = sets["from"]
+        self.assertEqual((f["convert"], f["dir"]), ("openbsd-sets", "other-os/openbsd5.9"))
+        self.assertEqual(sorted(f["files"]), sorted(["bsd", "bsd.rd", "base59.tgz", "comp59.tgz", "man59.tgz",
+                                                     "game59.tgz", "SHA256.sig", "INSTALL.sparc"]))
+        # the files are the scenario's (a lab QEMU of its own writes the same CD from SETS_DIR)
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "openbsd-install-sparc.py"))
+        self.assertEqual(sorted(sc.SETS_FILES), sorted(f["files"]))
+        # an ISO 9660 image of these files: their sectors and the volume's 21 sectors before them
+        sectors = sum(max(1, -(-size // 2048)) for size, _ in f["files"].values())
+        self.assertEqual(sets["size"], (21 + sectors) * 2048)
+
+    def test_openbsd_sets(self):
+        import answer_media
+        import dos_tools
+        files = {"bsd": b"k" * 3000, "bsd.rd": b"r", "base59.tgz": b"b" * 5000, "SHA256.sig": b"s\n",
+                 "INSTALL.sparc": b"i"}
+        data = answer_media.openbsd_sets(files)
+        self.assertEqual(data, answer_media.openbsd_sets(dict(reversed(list(files.items())))))  # reproducible
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["BASE59.TGZ", "BSD", "BSD.RD", "INSTALL.SPA", "SHA256.SIG"])
+            self.assertEqual(iso.cat("BSD"), files["bsd"])
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        # the Rock Ridge names, as OpenBSD's cd9660 reads them (NM in each record, SP and the RRIP ER in "."
+        root = data[20 * 2048:21 * 2048]
+        self.assertIn(b"SP\x07\x01\xbe\xef\x00", root[:256])
+        self.assertIn(b"ER", root[:256])
+        self.assertIn(b"RRIP_1991A", root[:256])
+        for name in files:
+            self.assertIn(b"NM" + bytes([5 + len(name), 1, 0]) + name.encode(), root)
+        self.assertEqual(answer_media.iso_name("INSTALL.sparc"), "INSTALL.SPA")
+        self.assertEqual(answer_media.iso_name("site59-openbsd.tgz"), "SITE59_O.TGZ")
+        with self.assertRaises(ValueError):  # two names that end up the same in ISO 9660
+            answer_media.openbsd_sets({"abcdefgh1.tgz": b"", "abcdefgh2.tgz": b""})
+        with self.assertRaises(ValueError):
+            answer_media.iso9660({"A": b""}, rock_ridge={"A": "a/b"})
+        # without Rock Ridge the image is what it always was (the answer CDs)
+        plain = answer_media.iso9660({"KS.CFG": b"x"}, "WSH_LAB_KS")
+        self.assertNotIn(b"RRIP_1991A", plain)
+
+    def test_convert_files(self):
+        files = {"bsd": b"kernel", "base59.tgz": b"base" * 1000}
+        import answer_media
+        cd = answer_media.openbsd_sets(files)
+        media = {"sets.iso": {"content": "iso", "size": len(cd), "sha256": hashlib.sha256(cd).hexdigest(), "lab": "sets.iso",
+                              "from": {"convert": "openbsd-sets", "dir": "rel",
+                                       "files": {n: (len(b), hashlib.sha256(b).hexdigest()) for n, b in files.items()}}}}
+        saved = dict(targets.MEDIA)
+        targets.MEDIA.update(media)
+        d = tempfile.mkdtemp()
+        try:
+            rel = os.path.join(d, "rel")
+            os.mkdir(rel)
+            for n, b in files.items():
+                with open(os.path.join(rel, n), "wb") as f:
+                    f.write(b)
+            self.assertEqual(install.convert_medium("sets.iso", rel, os.path.join(d, "sets.iso")), media["sets.iso"]["sha256"])
+            with open(os.path.join(d, "sets.iso"), "rb") as f:
+                self.assertEqual(f.read(), cd)
+            with self.assertRaises(install.InstallFailed):  # never overwrites
+                install.convert_medium("sets.iso", rel, os.path.join(d, "sets.iso"))
+            with self.assertRaises(install.InstallFailed):  # a file, not the directory
+                install.convert_medium("sets.iso", os.path.join(rel, "bsd"), os.path.join(d, "x.iso"))
+            with open(os.path.join(rel, "bsd"), "wb") as f:  # another file of the same size
+                f.write(b"KERNEL")
+            with self.assertRaises(install.InstallFailed) as e:
+                install.convert_medium("sets.iso", rel, os.path.join(d, "x.iso"))
+            self.assertIn("not the tested file", str(e.exception))
+            self.assertEqual(sorted(os.listdir(d)), ["rel", "sets.iso"])
+        finally:
+            targets.MEDIA.clear()
+            targets.MEDIA.update(saved)
+        self.assertEqual(targets.problems(), [])
+
+    def test_rules(self):
+        # the questions as OpenBSD 5.9's installer asked them on the SS-5
+        rules = self.ob.install_rules(self.v(), {})
+        for line, want in [
+            ("(I)nstall, (U)pgrade, (A)utoinstall or (S)hell? ", "i"),
+            ("Terminal type? [sun] ", "vt220"),
+            ("System hostname? (short form, e.g. 'foo') ", "openbsd59-ss5"),
+            ("Which network interface do you wish to configure? (or 'done') [le0] ", "le0"),
+            ("IPv4 address for le0? (or 'dhcp' or 'none') [dhcp] ", "10.0.2.15"),
+            ("Netmask for le0? [255.255.255.0] ", "255.255.255.0"),
+            ("IPv6 address for le0? (or 'rtsol' or 'none') [none] ", "none"),
+            ("Which network interface do you wish to configure? (or 'done') [done] ", "done"),
+            ("Default IPv4 route? (IPv4 address or none) ", "none"),
+            ("DNS domain name? (e.g. 'bar.com') [my.domain] ", ""),
+            ("DNS nameservers? (IP address list or 'none') [none] ", "none"),
+            ("Password for root account? (will not echo) ", "pw"),
+            ("Start sshd(8) by default? [yes] ", "yes"),
+            ("Setup a user? (enter a lower-case loginname, or 'no') [no] ", "no"),
+            ("Allow root ssh login? (yes, no, prohibit-password) [no] ", "no"),
+            ("Which disk is the root disk? ('?' for details) [sd0] ", "sd0"),
+            ("Use (A)uto layout, (E)dit auto layout, or create (C)ustom layout? [a] ", "a"),
+            ("Location of sets? (cd0 cd1 disk http nfs or 'done') [cd0] ", "cd0"),
+            ("Pathname to the sets? (or 'done') [5.9/sparc] ", "/"),
+            ("INSTALL.sparc not found. Use sets found here anyway? [no] ", "yes"),
+            ("Set name(s)? (or 'abort' or 'done') [done] ", "done"),
+            ("Cannot determine prefetch area. Continue without verification? [no] ", "yes"),
+            ("Location of sets? (cd0 cd1 disk http nfs or 'done') [done] ", "done"),
+        ]:
+            i = self.ob.which_question(rules, line)
+            self.assertIsNotNone(i, line)
+            rx, answer = rules[i]
+            self.assertEqual(answer(re.search(rx, line)) if callable(answer) else answer, want, line)
+
+    def test_installer_ends_at_congratulations(self):
+        # 5.9 has no "Exit to (S)hell" question: it ends at its shell after CONGRATULATIONS
+        m = InstallerConsole([
+            "(I)nstall, (U)pgrade, (A)utoinstall or (S)hell? ",
+            "Location of sets? (cd0 cd1 disk http nfs or 'done') [cd0] ",
+            "Pathname to the sets? (or 'done') [5.9/sparc] ",
+            "Set name(s)? (or 'abort' or 'done') [done] ",
+            "Installing game59.tgz   100% |*****|  2771 KB    00:02\n"
+            "Location of sets? (cd0 cd1 disk http nfs or 'done') [done] ",
+            "Saving configuration files...done.\nMaking all device nodes...done.\n"
+            "CONGRATULATIONS! Your OpenBSD install has been successfully completed!\n"
+            "To boot the new system, enter 'reboot' at the command prompt.\n# ",
+        ])
+        asked = self.ob.installer(m, self.v(), 60)
+        self.assertEqual(m.sent, ["i\r", "cd0\r", "/\r", "done\r", "done\r"])
+        self.assertEqual(len(asked), 5)
+
+    def test_unknown_question_with_a_hint(self):
+        # a question with a `(hint)` after its `?` is a question too: no rule, the install fails at once
+        m = InstallerConsole(["IPv6 address for le0? (or 'slaac' or 'none') [none] "])
+        with self.assertRaises(AssertionError) as e:
+            self.ob.installer(m, self.v(), 60)
+        self.assertIn("slaac", str(e.exception))
+
+    def test_lab_machine(self):
+        # ARCH=sparc in a scenario with sparc64's DEFAULTS (first boot, check): a sun4m QEMU, -nographic
+        v = {**self.ob.DEFAULTS, "ARCH": "sparc", "NO_CD": "1", "DISK": os.devnull}
+        args = self.ob.qemu_args(v, tempfile.gettempdir())
+        self.assertEqual(args[0], "qemu-system-sparc")
+        self.assertIn("-nographic", args)
+        self.assertEqual(args[args.index("-m") + 1], "256")
+        self.assertIn("type=SS-5", " ".join(args))
+        v = {**self.ob.DEFAULTS, "ARCH": "sparc", "NO_CD": "1", "DISK": os.devnull, "MACHINE": "SS-20"}
+        args = self.ob.qemu_args(v, tempfile.gettempdir())
+        self.assertEqual(args[args.index("-m") + 1], "512")
+        self.assertEqual((self.ob.nic({"ARCH": "sparc"}), self.ob.disk({"ARCH": "sparc"})), ("le0", "sd0"))
+        self.assertEqual((self.ob.nic({}), self.ob.disk({})), ("hme0", "wd0"))
 
 
 class NeXT(unittest.TestCase):

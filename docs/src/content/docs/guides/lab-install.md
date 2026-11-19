@@ -46,6 +46,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 | `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
+| `openbsd59-ss5` | OpenBSD 5.9 (the last release for 32-bit sparc), all sets but X11 (base, comp, man, game), checked against the release's signature by the installer, ntpd off | SS-5, OpenBIOS, 256 MB, serial console (needed: with a framebuffer the kernel panics), 8 GiB blank disk on `scsi3`, the boot CD on `scsi6`, the sets CD on `scsi5`, lance (`le0`) | `cd59.iso`, `openbsd59-sparc-sets.iso` (made on the node, below) | `root` / `wshlab` | ~10 min |
+| `openbsd59-ss20` | as `openbsd59-ss5` | SS-20, OpenBIOS, 512 MB, one CPU (OpenBSD/sparc has no multiprocessor kernel), otherwise as `openbsd59-ss5` | `cd59.iso`, `openbsd59-sparc-sets.iso` | `root` / `wshlab` | ~10 min |
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
 | `netbsd111-sparc` | NetBSD 11.1, Minimal | SS-5, OpenBIOS, 256 MB, serial console, 3 GiB blank disk on `scsi3`, lance | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
@@ -238,6 +240,19 @@ kernel stays). It needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later: with older OpenB
 kernel stops right after the loader (`Unhandled Exception 0x30`). Like the other sun4u targets, it
 keeps a host core busy while it runs.
 
+**OpenBSD 5.9** (`openbsd59-ss5`, `openbsd59-ss20`) boots `cd59.iso`'s installer and answers it the
+same way as 8.0 (5.9 words some questions differently): `le0` with the static address, root's
+password, sshd on (root logins over ssh off), no user, the auto layout on `sd0` (on 8 GiB: `/` 111
+MB, swap 480 MB, `/tmp`, `/var`, `/usr` 932 MB, `/usr/X11R6`, `/usr/local` 2.1 GB, `/usr/src`,
+`/usr/obj`, `/home` 1.3 GB), the sets from the sets CD (`cd0`) with the installer's check of
+`SHA256.sig` (the install fails without "Signature Verified"), time zone UTC, ntpd off before the
+first boot (as for 8.0). The first boot (about 5 minutes: it generates the host keys) writes the
+marker, `/etc/myname`, `/etc/hostname.le0`, `/etc/mygate`, `/etc/resolv.conf`, the address in
+`/etc/hosts` and the optional `--user`, and powers off with `halt -p`. Static address only. The VM
+keeps `vga: serial0`: with `cg3` or `tcx` QEMU adds the Sun keyboard, and OpenBSD 5.9's kernel
+panics while it configures the devices ("crazy interrupts"). More CPUs on the SS-20 boot but stay
+unused.
+
 **SunOS 4.1.3_U1B** (`sunos413u1b-ss5`, `sunos413u1b-ss20`; Solaris 1.1.1B, the first SunOS 4 for
 the SS-5 and SS-20) installs exactly like 4.1.4: the same miniroot, `suninstall` and sys-config
 screens, the same disk layout, network options and refusals, 64 MB during the install. Its CD is a
@@ -272,13 +287,16 @@ software is never part of this project.
 | `redhat-6.2-sparc.iso` | 623771648 | `74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987` |
 | `debian-40r9-sparc-netinst.iso` | 146124800 | `91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd` |
 | `install80.iso` (OpenBSD 8.0 sparc64) | 467599360 | `b8a80e5a10424ef32863d28dac7ae343666adfcfe0bbdfb4fc0230c130a560cb` |
+| `cd59.iso` (OpenBSD 5.9 sparc) | 4048896 | `34fb9b618b8d36bd7425e4505f1604f1bd23e1795b41bb19dc2cb9958fccc330` |
+| `openbsd59-sparc-sets.iso` (made from the 5.9 release's files, below) | 116387840 | `d1bd7d02404299396b57c3ed39e4c1fc928d9c1743e6702e10c11dcd05d8c6af` |
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
 SHA512 checksums). The Debian 4.0 netinst CD is freely redistributable too:
 `https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso`.
 So is OpenBSD's: `https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso` (its sha256 is in
-the release's `SHA256` file there).
+the release's `SHA256` file there); 5.9 is on the official EU mirror, which keeps the old releases:
+`https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/` (`cd59.iso` and the files for the sets CD).
 Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 
@@ -297,6 +315,21 @@ It refuses a source of another size or checksum and writes `sunos414-cd.iso` onl
 has the checksum in the table above. The same by hand, from the BIN, is
 `python3 -c 'import sys; f=open(sys.argv[1],"rb"); o=open(sys.argv[2],"wb"); [o.write(s[16:2064]) for s in iter(lambda: f.read(2352), b"")]' sunos_4.1.4_install.iso sunos414-cd.iso`,
 then `sha256sum sunos414-cd.iso`.
+
+**The OpenBSD 5.9 sets CD.** OpenBSD/sparc 5.9 has no install CD with the sets, only `cd59.iso`,
+which boots the installer. The targets give it the sets on a second CD that the tool makes on the
+node from the release's files: put `bsd`, `bsd.rd`, `base59.tgz`, `comp59.tgz`, `man59.tgz`,
+`game59.tgz`, `SHA256.sig` and `INSTALL.sparc` (from `https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/`)
+in one directory, then
+
+```sh
+wsh-lab media openbsd59-ss5 --convert /path/to/openbsd5.9   # into local:iso/openbsd59-sparc-sets.iso
+```
+
+It checks each file's size and sha256 (those in the release's signed `SHA256`) and writes
+`openbsd59-sparc-sets.iso` only when the result has the checksum in the table above (the image is
+the same on every node: no dates, sorted names). The same CD serves `openbsd59-ss20`. The installer
+checks the sets again itself, against `SHA256.sig` with the release's key.
 
 The DOS targets' floppy images go on a storage with the **Floppy image** content type (no storage
 has it until it is enabled: `pvesm set local --content iso,vztmpl,backup,floppy`, the whole list),

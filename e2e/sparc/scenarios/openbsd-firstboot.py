@@ -19,7 +19,7 @@ The values are typed on the serial console with `echo`, so the marker must not c
 """
 import _openbsd
 
-DEFAULTS = {**_openbsd.DEFAULTS, "BOOT": "c", "ROOT_PASSWORD": "", "MARKER": "", "HOSTNAME": "", "USER": "",
+DEFAULTS = {**_openbsd.DEFAULTS, "BOOT": "c", "NO_CD": "1", "ROOT_PASSWORD": "", "MARKER": "", "HOSTNAME": "", "USER": "",
             "USER_PASSWORD": "", "NET_MODE": "", "NET_IP": "", "NET_NETMASK": "", "NET_NETWORK": "",
             "NET_GATEWAY": "", "NET_DNS": "", "NET_DOMAIN": ""}
 MARKER_FILE = "/etc/wsh-lab-target"
@@ -73,7 +73,7 @@ def network(m, v):
     """The network in OpenBSD's own files, read by netstart at boot: /etc/hostname.<nic> (`inet <ip>
     <netmask>`), /etc/mygate (the router), /etc/resolv.conf (NET_DNS, NET_DOMAIN), the address and
     host name in /etc/hosts."""
-    nic = v.get("NIC_NAME") or "hme0"
+    nic = _openbsd.nic(v)
     write_lines(m, f"/etc/hostname.{nic}", [f"inet {v['NET_IP']} {v['NET_NETMASK']}"])
     shell(m, f"chmod 640 /etc/hostname.{nic}")
     if v["NET_GATEWAY"]:

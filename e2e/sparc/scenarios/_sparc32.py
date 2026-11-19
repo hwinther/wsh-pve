@@ -15,6 +15,9 @@ Variables (lab.py run ... --var KEY=VALUE):
   CONSOLE   serial | fb: where the PROM puts its console     (serial)
             serial = ttya (OpenBIOS: input/output-device=ttya; the Sun PROMs fall back to ttya
             only without a keyboard, so `serial` with a Sun PROM also drops the framebuffer)
+  NOGRAPHIC 1 = -nographic instead of a -vga device, what qemu-server passes for `vga: serialN`:
+            no framebuffer, and QEMU disables the keyboard/mouse ESCC (zs1). OpenBSD/sparc 5.9
+            panics with a keyboard there ("stray interrupt ipl 0xc", "crazy interrupts")  (none)
   ISO       the install CD                                   (required)
   CDROM_AS  cd | hd: Solaris 2.4/2.5 only boot the installer from a CD that answers as a disk
   DISK      the guest disk; created from TEMPLATE when it doesn't exist  (<out>/disk.raw)
@@ -81,7 +84,9 @@ def qemu_args(v, out):
     if v.get("CPU"):
         args += ["-cpu", v["CPU"]]
     sun_prom = not v["BIOS"].startswith("openbios")
-    if v["VGA"] == "none" or (v["CONSOLE"] == "serial" and sun_prom):
+    if v.get("NOGRAPHIC") == "1":
+        args += ["-nographic"]
+    elif v["VGA"] == "none" or (v["CONSOLE"] == "serial" and sun_prom):
         args += ["-vga", "none"]
     else:
         args += ["-vga", v["VGA"]]
