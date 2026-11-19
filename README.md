@@ -21,7 +21,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | ☀️ Solaris 2.4, 2.5.1 | | ✅ ¹ | | | |
 | ☀️ Solaris 2.5 | | ✅ ⁶ | ✅ ⁴ ⁶ | | |
 | ☀️ Solaris 2.6, 7 | | ✅ | ✅ | | |
-| ☀️ Solaris 8, 9 | | | ✅ ³ | | |
+| ☀️ Solaris 8, 9 | | ✅ ³ | ✅ ⁴ | | |
 | ☀️ Solaris 10 | | | | ✅ | |
 | 🔥 illumos (Tribblix m34) | | | | ✅ | |
 | 🚩 NetBSD 11.1 | | ✅ | ✅ | ✅ | |
@@ -34,7 +34,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | 💾🪟🐧 MS-DOS 3+, Windows 1.x-9x (3dfx/Mesa 3D), Linux 2.x | ✔ | | | | |
 
 ✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
-¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ on the SS-20; 8 and 9 on the SS-5 are not tested yet · ⁴ on the SS-20 · ⁵ with the Sun PROM `ss20_v2.25_rom` and `cd_as_disk=1` · ⁶ OpenBIOS with `cd_as_disk=1`. Solaris 2.1, 2.2 and the original SunOS 4.1.3, whose only sun4m machine is the SS-10, don't boot: OpenBIOS stops in their boot program or kernel, and the SS-10 Sun PROM doesn't run on QEMU's SS-10.
+¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ the SS-5 targets install 8 2/02 and 9 9/05; on sun4u 8 and 9 (also these updates) stop at an early kernel panic in OpenBIOS's memory handling · ⁴ on the SS-20 · ⁵ with the Sun PROM `ss20_v2.25_rom` and `cd_as_disk=1` · ⁶ OpenBIOS with `cd_as_disk=1`. Solaris 2.1, 2.2 and the original SunOS 4.1.3, whose only sun4m machine is the SS-10, don't boot: OpenBIOS stops in their boot program or kernel, and the SS-10 Sun PROM doesn't run on QEMU's SS-10.
 Profiles, limits and known problems per system: [guest operating systems](https://debian.wshosting.no/guides/operating-systems/), [SPARC](https://debian.wshosting.no/guides/sparc/), [DOS](https://debian.wshosting.no/guides/dos/).
 
 ## Getting started

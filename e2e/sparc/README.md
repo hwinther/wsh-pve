@@ -92,7 +92,8 @@ e.g. `TI-SuperSparc-50`, which the Sun SS-20 PROM needs; none by default), `TCG_
 tcg,thread=single|multi`), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `DISK2` (a second disk on target `DISK2_ID`, 4; read only unless `DISK2_RO=0`),
-`REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
+`REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`), `PROM_ENV`
+(OpenBIOS variables as `-prom-env`, space separated, e.g. `auto-boot?=false` for Web Start).
 Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
 
 ### The lab and the qemu-server profiles
@@ -665,8 +666,9 @@ automatic reboot or eject, data preservation (no), and summaries that pause 30-9
 target installs the End User Group. Its prompts carry a key hint (`<Press ENTER to continue>
 {"!" exits}`) that the scenario strips.
 
-Solaris 8 and 9 are SS-20 only: Web Start is Java, and SS-5's CPU runs the lab's benchmark job
-about 9 times slower than SS-20's ("SS-10 and SS-20" in `submodules/SPARC.md`); no SS-5 run was tried.
+The SS-20 targets came first because Web Start is Java and the SS-5 then ran Solaris about 9 times
+slower than the SS-20; since #262 the two are equally fast, and 8 and 9 install on the SS-5 with
+256 MB too (`sol8-ss5`, `sol9-ss5`, "Solaris 8 and 9 on the SS-5" below).
 
 Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
 11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17, each with `--check`
@@ -687,6 +689,55 @@ workflow now needs the Solaris 7, 8 and 9 media too and takes about 80 min longe
 SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their `net_modes` is
 `["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
 `--vlan`, `--user` and `--data-disk` with them.
+
+### Solaris 8 and 9 on the SS-5
+
+`sol8-ss5` (8 2/02, Entire Group, three CDs) and `sol9-ss5` (9 9/05, End User, the DVD) are the
+SS-20 targets' Web Start installs on an SS-5 with 256 MB (OpenBIOS, 9G disk). They use the later
+updates, whose Web Start differs in four screens that `solaris-webstart-serial.py` now answers:
+
+- 9 9/05 shows a license after the installer options (paged, then `Enter 'y' to accept the license
+  agreement. Enter 'n' to decline the license agreement and exit the install.`). The question
+  ends in neither a colon nor a default in brackets, so `wait_prompt()` also settles on that line
+  (`PROMPT_END_BARE`).
+- 8 2/02's Installation CD asks `Do you want to format /dev/dsk/c0t3d0 [y,n,?,q]` (8 1/01: `c0t3d0?`).
+- 8 2/02 asks for the CDs as `Please insert the first Solaris Software disc from which you will
+  install the Solaris Operating Environment.` and `Please insert the CD/DVD for Solaris 8 Software 2
+  of 2 (2/02 SPARC Platform Edition).` (`INSERT`), and once the second CD is in, `Ready to Install
+  1. Install Now 2. Start Over 3. Exit Installation What would you like to do [1]?` (1).
+
+The SS-20 targets stay on 8 1/01 and the original 9 DVD: the later updates install there too (lab
+runs below), but no faster (8 2/02 took 31 min against 24 for 8 1/01, and hung once), and the old
+media have more passing runs and the stored disks of the weekly matrix. To run Web Start in the
+lab's own QEMU (not through PVE), give the scenario `PROM_ENV=auto-boot?=false BOOT=c` (what `install.py` sets through `args` and attach
+mode) and, for Solaris 8, `SWAPS="drive-scsi6=<Software 1 of 2> drive-scsi6=<Software 2 of 2>"`.
+
+Lab runs (the lab image with the published pve-qemu-kvm 11.1.3-2+wsh22, 9G template, up to three
+guests on the host at once, 2026-11-19); install = the Web Start scenario, boot = `solaris-boot-disk.py`
+on the installed disk:
+
+| Release | Machine | Install | Disk boot |
+| --- | --- | --- | --- |
+| 8 1/01 (Entire, both Software CDs) | SS-5, 256 MB | passed, 24.6 min | `SunOS sol8-ss5 5.8 Generic_108528-05 sun4m`, 2.4 min |
+| 9 (the original DVD, End User) | SS-5, 256 MB | passed, 21.0 min | `SunOS sol9-ss5 5.9 Generic sun4m`, 3.7 min |
+| 9 9/05 (End User) | SS-5, 256 MB | passed, 23.6 min | `SunOS sol9-ss5 5.9 Generic_118558-34 sun4m`, `/` 1126542 KB, 3.7 min |
+| 9 9/05 (End User) | SS-20, 512 MB | passed, 23.3 min | `SunOS sol9-ss20 5.9 Generic_118558-34 sun4m`, 3.4 min |
+| 8 2/02 (Entire, both Software CDs) | SS-5, 256 MB | passed through PVE (below); the lab runs found the three new screens | |
+| 8 2/02 (Entire, both Software CDs) | SS-20, 512 MB | 1 of 2: the first hung after the mini-root's `Skipping interface le0` (no output for 30 min, Web Start never started); the second passed, 30.9 min | `SunOS sol8-ss20 5.8 Generic_108528-13 sun4m`, `/` 1237902 KB, 2.5 min |
+
+Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-qemu-kvm
+11.1.3-2+wsh22, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol9-ss5 --check` | passed; login `root`/`wshlab`, the marker, `le0` 10.0.2.15/24 static | 29.8 min (install 1420 s, first boot 270 s, check 73 s) |
+| `install sol8-ss5 --check` | passed; both Software CDs swapped in by the scenario, the same login, marker and network | 37.2 min (install 1897 s, first boot 216 s, check 97 s) |
+
+`pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
+the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). Not tried: `--ip dhcp`, `--disk-size 3G` and the
+other network options with these two, `ss5.bin`
+for Solaris 8, and repeated runs (one PVE run each). The SS-20 hang with 8 2/02 happened once in
+two runs and wasn't diagnosed.
 
 ### Solaris 2.4 and 2.5.1
 
