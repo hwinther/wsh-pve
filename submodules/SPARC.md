@@ -223,6 +223,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0016-sparc64-client-interface-runs-with-interrupts-disabled` | The client interface walked `%cwp` through every window and rewrote the trap registers (saving and restoring the caller's state) with the caller's `PSTATE.IE`. Solaris and illumos call in with interrupts enabled and their own trap table: an interrupt in between overwrote the caller's windows. Tribblix's live CD stopped on most boots (corrupted locals after a call, `bad stack overflow at TL 2`); Solaris 10's one `BAD TRAP: type=4e` in the firmware was the same. Interrupts are now off from entry until the caller's `%pstate` is written back ("Tribblix on sun4u") | not fixed; see `upstream/openbios-sparc64-client-interface-interrupts.md` |
 | `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
+| `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1888,11 +1889,11 @@ directory, the same source as `openbios/Dockerfile` builds):
 | CD | Where it stops |
 | --- | --- |
 | 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device (fixed in QEMU, below). With 0003-0007 the installer took no input on ttya; 0009 fixes that (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
-| 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules` |
-| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below) |
-| 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free` |
-| 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05) |
-| 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free` |
+| 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules`. With 0024 (2026-11-19): the installer's `Select a Language` at 1024 and 2048 MB |
+| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below). With 0024: the installer at 1024 and 2048 MB; at 1024 MB Web Start installs End User to the IDE disk and the installed system boots to `console login:` (the first, reconfiguring boot panics in the floppy driver: "Solaris 7/8/9 with 0024") |
+| 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free`. With 0024: the installer's `Do you want to format /dev/dsk/c0t0d0?` at 1024 and 2048 MB |
+| 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05). With 0024: the installer at 1024 and 2048 MB; at 1024 MB the mini-root and Web Start install End User to the IDE disk (a fresh QEMU between the two) and the installed system boots to `console login:` |
+| 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free`. With 0024: the installer's `Select a Language` at 1024 and 2048 MB (IDE timeouts and `Interrupt not seen after set_features` on the way) |
 | 2.6 (5/98), 2.5.1 (11/97) | unchanged: `open isn't unique.`, `byte-load: exception caught!` in the boot block |
 
 How each patch moved them (each verified by booting with and without it):
@@ -2233,55 +2234,93 @@ guests on the host): 10 of 10 boots reached `console login:` (boot 425-553 s), n
 one with `hme0` `ether bc:24:11:0:0:1`, `hostid` `80000001` and `ping 10.0.2.2` alive; `init 5`
 powered off each. So no comparison run without 0034 was needed.
 
-**Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
-boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
-in that snapshot. The page behind Solaris 9's failing allocation is physical `0x3d092000`, near
-the top of 1 GB (`translate` at `0 >` after the panic). OpenBIOS hands out physical memory top
-down. The kernel doesn't know this page: either it was outside the snapshot, or it was freed and
-reused after the snapshot. Not found which. The Solaris 2.6 source (reference) shows the
-mechanism: `boot_getpages` and `page_numtopp`, with page structures built from the boot
-program's `physavail`. Likely places to look: OpenBIOS's byte-granular `ofmem` lists (fragments
-like `0x0011ae64` length 4 in `available`), and whether anything releases physical memory during
-boot.
+**Solaris 7/8/9: `pp is NULL or free` (fixed by OpenBIOS patch 0024).** The kernel builds its page
+structures from the boot program's copy of `/memory` `available`, and every later boot allocation
+must land on a page it has a page structure for. OpenBIOS records claimed physical ranges to the
+byte and builds `available` from the gaps between them; the ELF loader claims the Solaris boot
+program's segments at 0x100000 with their exact sizes, so the list Solaris reads looks like
+`00000000 00100000`, `00123127 00000001`, `00181540 3cef2ac0` (9 9/05, 1024 MB). Solaris 7, 8 and 9
+count an entry that starts inside a page one page short at its top (measured for 8 and 9; 7's
+`kmem_getpages: pp is NULL or free` goes away with the same fix), so they have no page structure
+for the last page of the big entry. OpenBIOS hands out physical memory top down: once the free
+pages under the firmware are used up, the next boot allocation gets exactly that page, and the
+kernel panics. Solaris 10 boots with the same list.
 
-The later updates don't get past it (2026-11-19; pve-qemu-kvm 11.1.3-2+wsh22, its
-`openbios-sparc64` from patches 0001-0023; CD on `ide.1`, serial console, the lab's
-`sparc64-boot-cd.py` and a scratch scenario that reads the firmware's state at `0 >` after the
-panic: `translate` of the failing address through `/virtual-memory`, and the `available` lists).
-8 2/02 (`Generic_108528-13`) and 9 9/05 (`Generic_118558-34`) panic with the same message within a
-minute of power-on; only the caller moved, because each kernel allocates differently in
-`startup_modules` (table above). The physical page behind the failing address is each time one of
-the last pages the firmware handed out, just above the top of what `/memory` `available` still
-lists:
+Evidence (2026-11-19, firmware 0001-0023 plus a scratch debug patch that logs every physical
+claim and release and every client `getprop` of `/memory` `available` with the list it returns;
+CD on `ide.1`, serial console):
 
-| Release, memory | Failing `boot_alloc` | Physical page | Top of `/memory` `available` |
+- 9 9/05, 1024 MB: the kernel reads the list five times; the last read lists `00181540 3cef2ac0`
+  (end `0x3d074000`) and `3fc00000 00120000` under the firmware. Nothing is released during the
+  boot. The boot allocations after that read are 8 KB `claim`s on `/memory` (align 0x1000),
+  answered from `0x3fd1e000` down to `0x3fc00000`, then `0x3d072000`, the last page of the big
+  entry: the panic (`translate` of the failing address at `0 >` gives `0x3d072000`).
+- 8 2/02, 1024 MB: top entry `001410f0 3d254f10` (end `0x3d396000`); the failing 80 KB allocation
+  ends there. 9 9/05, 2048 MB: `00181540 79e7eac0` (end `0x7a000000`); the failing 520 KB
+  allocation ends there.
+
+The earlier reading ("pages handed out after the kernel's snapshot") was wrong: every failing page
+was in the snapshot, the last page of an entry with an unaligned start, and the pages under the
+firmware were never released and claimed again (that was the top-down order of the claims). The
+earlier table of failing allocations:
+
+| Release, memory | Failing `boot_alloc` | First physical page | Top of `/memory` `available` at the panic |
 | --- | --- | --- | --- |
 | 9 9/05, 1024 MB | `0x30000058000`, 8 KB | `0x3d072000` | `0x3d062000` |
 | 9 9/05, 2048 MB | `0x30000146000`, 520 KB | `0x79f7e000` | `0x79f7e000` |
 | 8 2/02, 1024 MB | `0x300001be000`, 80 KB | `0x3d382000` | `0x3d37e000` |
 | 8 2/02, 2048 MB | `0x300001f6000`, 80 KB | `0x7a7ec000` | `0x7a7ea000` |
 
-The kernel heap pages mapped before the failing one came from two places: pages just under the
-firmware at `0x3fc00000`-`0x3fce6000` (claimed, released and claimed again during boot) and the
-first pages above `available`'s top (`0x3d062000`-`0x3d070000` for 9 9/05 at 1 GB; `0x3d37e000`,
-`0x3d380000` for 8 2/02), which passed. The likely reading (not proven: the kernel's own page
-structures weren't inspected) is that the panic comes where the firmware's top-down allocation
-reaches pages the kernel still counts as free: they were in `available` when the kernel took its
-snapshot and built its page structures, the firmware gave them out afterwards, and Solaris 8/9's
-`boot_mapin` insists that every page behind a boot allocation is a page the kernel doesn't own
-(`page_numtopp` returns a page that isn't free). Solaris 10 boots with the same firmware, so its
-kernel either takes the snapshot later or copes with such a page. The mechanism is the firmware's
-physical allocator, not something a later update changed: the stop follows the memory size and
-the top of `available`, not the release.
+Patch 0024 rounds each `/memory` `available` entry to whole pages (start up, end down) and drops
+entries without one, as OBP lists them (`00182000 3cef2000` above; the 1-byte entry goes). The
+allocator is unchanged: a partly claimed page is no longer listed and isn't handed out either.
+With it:
 
-A fix would be in OpenBIOS's `ofmem` (`openbios/patches/`; not attempted here): after the client
-has read `/memory` `available` for its page structures, physical memory that the firmware takes
-for a `claim` (and for its own mappings) must come from pages already outside that snapshot, as
-OBP's allocator arranges, or `available` must keep matching what the kernel later asks for. Ways
-to narrow it down: log every physical allocation in `ofmem` with the caller and compare with the
-kernel's reads of `available` (`getprop`/`getproplen` on `/memory` from the client interface);
-then try allocating bottom-up (lowest free page) instead of top-down, or keep the last
-allocations within the range the firmware had already claimed before the client's first read.
+**Solaris 7/8/9 with 0024** (2026-11-19; pve-qemu-kvm 11.1.3-2+wsh22 with `openbios-sparc64` built
+from 0001-0024 passed as `BIOS=`; sun4u, CD on `ide.1`, a blank 8 GB disk on `ide.0`, serial
+console; installs driven by a scratch wrapper around `solaris-webstart-serial.py` with the disk as
+`c0t0d0`, the 64-bit question answered "64-bit and 32-bit", End User, auto-boot? false):
+
+| Release | 1024 MB | 2048 MB |
+| --- | --- | --- |
+| 9 9/05 DVD (`Generic_118558-34`) | installer; Web Start installs End User to the IDE disk (~67 min, ~53 of them packages); the installed disk boots to `console login:`, root logs in, 64-bit kernel, `hme0` 10.0.2.15, `init 0` to the firmware (after a first boot that panics in `fd`, below) | installer (`Select a Language`) |
+| 9 DVD (`Generic`) | installer (`Select a Language`) | installer |
+| 8 2/02 (`Generic_108528-13`) | installer; mini-root to the swap slice, Web Start from it installs End User (Software 1 of 2 swapped in; ~47 min); the installed disk boots to `console login:`, as 9 9/05 | installer (`Do you want to format`) |
+| 8 1/01 (`Generic_108528-05`) | installer (`Do you want to format`) | installer |
+| 7 3/99 (`Generic_106541-02`) | installer (`Select a Language`), with IDE timeouts and `Interrupt not seen after set_features` on the way | installer |
+
+Installs with 2048 MB and of 9 (original), 8 1/01 and 7 weren't run. What else stood in the way,
+none of it from 0024:
+
+- **The reboot** returns from the firmware (0012, `.wip`): Solaris prints `prom_reboot: reboot call
+  returned!`, panics on it, dumps and exits to `0 >`. For 8's mini-root step that is where the
+  install continues: `boot disk:b` after `reset-all` panicked the mini-root's kernel (`page_free` ←
+  `add_physmem` ← `kphysm_init`; OpenBIOS doesn't clear RAM on reset and the old contents are still
+  there), while a fresh QEMU boots `disk:b` and the install goes on. An install target for 8 would
+  need a power cycle there, as a PVE VM gets with stop and start.
+- **The floppy node.** The first boot of the installed 9 9/05 reconfigures (`Configuring /dev and
+  /devices`) and panics in the floppy driver: `BAD TRAP: type=31 ... occurred in module "fd" due to
+  a NULL pointer dereference`, `ddi_regs_map_setup` ← `fd_cleanup` ← `fd_attach`. OpenBIOS's
+  `fdthree@0,0` under the ebus has one `reg` entry of size 0 (`Out of range register specification
+  from device node <fdthree>`, which 8 and 10 print and survive); 9's driver fails to map it and
+  crashes on the way out of its attach. Renamed at `0 >` before the boot (`"
+  /pci@1f,0/pci@1,1/ebus@1/fdthree" find-device`, `" nofdthree" device-name`, `device-end`) the
+  boot finishes, and later boots (no reconfiguration) reach `console login:` without the rename. A
+  fix belongs in OpenBIOS's ebus floppy node (OBP-like `reg` entries, or no node on sun4u); not
+  attempted.
+- The lab's own early stop: the first 8 2/02 disk boot wanted a manual `fsck` (done in single user,
+  then the boot above) because the wrapper stopped QEMU right after the installer's last Return,
+  before Solaris had synced; the wrapper now waits for the firmware prompt (not repeated for 8).
+
+Regression with the 0001-0024 firmware bind-mounted over the package's (2026-11-19): the `sparc64`
+matrix 9/9, `solaris10` 2/2 (the DVD to the installer, the installed disk to login with DHCP and
+ping), the installed OpenBSD 8.0 disk to `login:` and `halt -p`, the stored Tribblix m34 disk to
+`login:` and `init 5` (`tribblix-boot-disk.py`, 2048 MB, 21 min), and `smoke` 3/3 (the sparc32
+image doesn't get 0024; same sources as the package's).
+
+Targets that would follow once the package has 0024: `sol9-sun4u` (9 9/05, the DVD, Web Start as
+`sol9-ss5` with the sun4u answers above; the first boot needs the floppy node fixed or renamed),
+then `sol8-sun4u` (8 2/02, three CDs, a power cycle after the mini-root copy).
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not

@@ -111,8 +111,9 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 | 0018 | sparc32: the SS-5's `SUNW,CS4231` node gets `intr` 9, the processor level of its SBus level 5, as in the Sun PROM (`intr 0x39`) | wsh-pve, for QEMU 0030 | built on LEMU: not for QEMU | | none |
 | 0019-0022 | sparc32: Solaris 2.1-2.4 don't boot: the FCode boot block's OBP 2.x words, the Forth heap below 0xffd00000 (`can't remove OBP hole`), node 0 as the root in the property calls, romvec calls with interrupts enabled (2.4's idle thread) | wsh-pve | may send | none found | [openbios-sparc32-old-solaris.md](openbios-sparc32-old-solaris.md) |
 | 0023 | client interface: `call-method`/`interpret` store the catch result in `args[nargs]` even with `nret` 0, over the client's stack (OpenBSD 8.0's installed sun4u kernel: stack-protector canary after its `map` call) | wsh-pve | may send | none found | none (the patch's message has the evidence) |
+| 0024 | sparc64: `/memory` `available` lists partial pages (claims recorded to the byte), and Solaris 7/8/9 panic `boot_alloc: pp is NULL or free` on the last page of such an entry | wsh-pve | may send | none found | [openbios-sparc64-memory-available-pages.md](openbios-sparc64-memory-available-pages.md) |
 
-Counts: may send 20 (0001, 0003-0011, 0013-0017, 0019-0023), LEMU origin 1 (0002), built on LEMU 1
+Counts: may send 21 (0001, 0003-0011, 0013-0017, 0019-0024), LEMU origin 1 (0002), built on LEMU 1
 (0018), not ready 1 (0012, `.wip`). 0018 is our code, but it exists only for QEMU 0030's wiring of LEMU's CS4231
 (upstream QEMU's codec is a stub that never interrupts), so it goes with the audio patches.
 
