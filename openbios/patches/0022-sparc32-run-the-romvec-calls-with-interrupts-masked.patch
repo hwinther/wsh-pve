@@ -1,0 +1,63 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: run the romvec calls with interrupts masked
+
+The romvec handlers called into OpenBIOS at the client's processor
+interrupt level. Behind them is the Forth engine, which is not reentrant.
+The Solaris 2.4 kernel calls the romvec from its idle thread with
+interrupts enabled (prom_getproplen() for the root's "platform-pm" while
+it sets up idling on the SS-5's CPU); when an interrupt came in during
+that call, and the interrupt or the thread it woke called the romvec
+too, the Forth state was overwritten. 2.4 then panicked in two of four
+boots, with a data fault at address 0 in OpenBIOS's c@ under
+obp_proplen().
+
+Raise PIL to 15 in the handler for the duration of the call and return
+at the caller's PIL, as the sparc64 client interface does (patch 0016).
+The console is polled, so nothing the firmware does needs interrupts.
+---
+ arch/sparc32/call-romvec.S | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc32/call-romvec.S b/arch/sparc32/call-romvec.S
+index be77b23..2955bb9 100644
+--- a/arch/sparc32/call-romvec.S
++++ b/arch/sparc32/call-romvec.S
+@@ -15,7 +15,11 @@
+ 	_SV; _SV; _SV; _SV; _SV; _SV; _SV; \
+ 	_RS; _RS; _RS; _RS; _RS; _RS; _RS;
+ 
+-/* Macro for romvec handlers */
++/* Macro for romvec handlers. The call runs with interrupts masked (PIL 15)
++   and returns at the caller's PIL: the Forth engine behind it isn't
++   reentrant, and a client that calls with interrupts enabled (the Solaris
++   2.4 idle thread) could otherwise be preempted by an interrupt, or by
++   another thread, that calls the romvec too. */
+ #define ROMVEC_HANDLER(type) \
+ 	\
+ 	.globl type##_handler; \
+@@ -26,6 +30,11 @@ type##_handler: \
+ 	\
+ 	save %sp, -STACKFRAME_SZ - 0x20, %sp; \
+ 	\
++	rd %psr, %l0; \
++	or %l0, PSR_PIL, %l1; \
++	wr %l1, %psr; \
++	nop; nop; nop; \
++	\
+ 	st %g1, [ %sp + STACKFRAME_SZ + 0x0]; \
+ 	st %g2, [ %sp + STACKFRAME_SZ + 0x4]; \
+ 	st %g3, [ %sp + STACKFRAME_SZ + 0x8]; \
+@@ -54,6 +63,13 @@ type##_handler: \
+ 	ld [ %sp + STACKFRAME_SZ + 0x14], %g6; \
+ 	ld [ %sp + STACKFRAME_SZ + 0x18], %g7; \
+ 	\
++	rd %psr, %l1; \
++	andn %l1, PSR_PIL, %l1; \
++	and %l0, PSR_PIL, %l2; \
++	or %l1, %l2, %l1; \
++	wr %l1, %psr; \
++	nop; nop; nop; \
++	\
+ 	ret; \
+ 	 restore; \
+ 

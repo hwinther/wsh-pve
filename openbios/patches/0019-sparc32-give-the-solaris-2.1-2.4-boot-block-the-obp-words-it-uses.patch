@@ -1,0 +1,153 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: give the Solaris 2.1-2.4 boot block the OBP
+ words it uses
+
+The boot block on the CDs and disks of Solaris 2.1 to 2.4 is a small
+machine-code program that hands an FCode program to "byte-load" through
+the romvec's Forth interpreter (pv_fortheval). That FCode reads the UFS
+file system and loads /ufsboot, using words of the OpenBoot 2.x PROMs that
+it looks up by name with $find: "romvec" (with 0xffe80010, where those
+PROMs keep it, if not found), "(is" to set load-base, "op-open",
+"op-close", "op-read" and "op-seek" (the romvec's v2 device operations,
+arguments in the C order with the first one on top), "adjust-header",
+"init-program" and "?go". OpenBIOS has none of the first eight, so the
+boot block printed "(is ?" and stopped with "Unhandled Exception
+0x00000009" when it read the romvec at 0xffe80098. Solaris 2.5 and later
+have a boot block written in C, which OpenBIOS boots.
+
+Add the missing words to the sparc32 dictionary, make load-base a value
+(as on sparc64) so that "(is" can set it, and let init-program start code
+that a client has put at load-base itself: the boot block copies the ELF
+segments of /ufsboot to their addresses, sets load-base to the entry
+point and calls init-program and ?go. An a.out or ELF image at load-base
+still goes to OpenBIOS's own init-program, with the size the client
+stored in file-size.
+---
+ arch/sparc32/boot.c     |  9 +++++++++
+ arch/sparc32/boot.h     |  1 +
+ arch/sparc32/init.fs    | 44 +++++++++++++++++++++++++++++++++++++++++
+ arch/sparc32/openbios.c |  3 +++
+ forth/admin/nvram.fs    |  5 +++++
+ 5 files changed, 62 insertions(+)
+
+diff --git a/arch/sparc32/boot.c b/arch/sparc32/boot.c
+index bb5a579..a8e3f0e 100644
+--- a/arch/sparc32/boot.c
++++ b/arch/sparc32/boot.c
+@@ -193,6 +193,15 @@ void setup_romvec(void)
+ }
+ 
+ 
++/* init-program for code a client program has put in memory itself, starting
++   at load-base (the Solaris 2.1-2.4 boot block, see init.fs) */
++void init_program_at_load_base(void)
++{
++	feval("load-base load-state >ls.entry !");
++	arch_init_program();
++	feval("-1 state-valid !");
++}
++
+ void boot(void)
+ {
+ 	/* Boot preloaded kernel */
+diff --git a/arch/sparc32/boot.h b/arch/sparc32/boot.h
+index d225a31..b999c77 100644
+--- a/arch/sparc32/boot.h
++++ b/arch/sparc32/boot.h
+@@ -16,6 +16,7 @@ int linux_load(struct sys_info *info, const char *file, const char *cmdline);
+ extern const char *bootpath;
+ extern void boot(void);
+ extern void setup_romvec(void);
++extern void init_program_at_load_base(void);
+ 
+ // sys_info.c
+ extern unsigned int qemu_mem_size;
+diff --git a/arch/sparc32/init.fs b/arch/sparc32/init.fs
+index 325cc1c..fc7d40c 100644
+--- a/arch/sparc32/init.fs
++++ b/arch/sparc32/init.fs
+@@ -123,3 +123,47 @@ defer ignore-dfault
+     " QEMU,tcx.bin" $encode-file to tcx-driver-fcode
+   [THEN]
+ [THEN]
++
++\ Words of the OpenBoot 2.x PROMs that the boot block of Solaris 2.1-2.4
++\ needs. That boot block is an FCode program which its machine code hands to
++\ "byte-load" through the romvec's Forth interpreter (pv_fortheval). It looks
++\ these words up by name, reads the boot device path through the romvec,
++\ loads /ufsboot from the UFS file system at load-base and starts it.
++
++\ The romvec the client programs get (set by openbios.c)
++0 value romvec
++
++\ ( x xt -- ) store x in the value or defer xt, as "to" and "is" do
++: (is ( x xt -- ) (to) ;
++
++\ The romvec's v2 device operations, arguments in the C order with the first
++\ one on top
++: op-open ( cstr -- ihandle|0 ) dup cstrlen open-dev ;
++: op-close ( ihandle -- 0 ) close-dev 0 ;
++: op-read ( len adr ihandle -- actual ) >r swap " read" r> $call-method ;
++: op-seek ( lo hi ihandle -- status ) >r " seek" r> $call-method ;
++
++\ True if load-base holds an a.out header (init-program then moves the text
++\ down over the header)
++: adjust-header ( -- aout? )
++  load-base l@ ffff and
++  dup 107 = over 108 = or over 10b = or swap 0cc = or
++;
++
++\ init-program also for a program that a client put in memory itself: an
++\ a.out or ELF image at load-base is set up as after "load" (with the size
++\ the client stored in file-size); anything else is code that starts at
++\ load-base, as OBP does. The Solaris boot block copies the ELF segments of
++\ /ufsboot to their addresses itself and then sets load-base to the entry.
++: init-program ( -- )
++  load-base l@ 7f454c46 = adjust-header or if
++    file-size @ load-state >ls.file-size !
++    init-program
++  else
++    \ bound by openbios.c
++    s" (init-program-at-load-base)" $find if execute else 2drop then
++  then
++;
++
++\ Start the program that init-program set up, if there is one
++: ?go ( -- ) state-valid @ if go then ;
+diff --git a/arch/sparc32/openbios.c b/arch/sparc32/openbios.c
+index 9af4e18..17d47a9 100644
+--- a/arch/sparc32/openbios.c
++++ b/arch/sparc32/openbios.c
+@@ -920,6 +920,8 @@ arch_init( void )
+         setup_stdio();
+ 	/* Initialiase openprom romvec */
+         romvec = init_openprom();
++	PUSH(pointer2cell(romvec));
++	feval("to romvec");
+ 
+ 	kernel_size = fw_cfg_read_i32(FW_CFG_KERNEL_SIZE);
+ 	if (kernel_size) {
+@@ -985,6 +987,7 @@ arch_init( void )
+ 	
+ 	bind_func("platform-boot", boot );
+ 	bind_func("(arch-go)", setup_romvec );
++	bind_func("(init-program-at-load-base)", init_program_at_load_base );
+ 
+ 	/* Set up other properties */
+         push_str("/chosen");
+diff --git a/forth/admin/nvram.fs b/forth/admin/nvram.fs
+index 3fbd935..7d6bf28 100644
+--- a/forth/admin/nvram.fs
++++ b/forth/admin/nvram.fs
+@@ -380,6 +380,11 @@ s" "         s" boot-args"            str-config    \ ???
+ [IFDEF] CONFIG_SPARC64
+ load-base value load-base
+ [THEN]
++\ The same on sparc32, where the boot block of Solaris 2.1-2.4 sets it
++\ with "(is" (see arch/sparc32/init.fs).
++[IFDEF] CONFIG_SPARC32
++load-base value load-base
++[THEN]
+ 
+ : release-load-area
+     drop

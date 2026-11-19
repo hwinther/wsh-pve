@@ -703,7 +703,9 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 
 | System | Machine, firmware | CD boots | Installs | Disk boots | Stop point / note |
 | --- | --- | --- | --- | --- | --- |
-| Solaris 2.3 Ed. II | SS-5, OpenBIOS (CD or as a disk) | no | | | `Unhandled Exception 0x00000009`, PC `0xffd076c8`, right after the boot block (`(is ?`) |
+| Solaris 2.3 Ed. II | SS-5, OpenBIOS (CD or as a disk) | no | | | `Unhandled Exception 0x00000009`, PC `0xffd076c8`, right after the boot block (`(is ?`); fixed by openbios 0019-0022 |
+| Solaris 2.3 Ed. II | SS-5, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (5.5 min) | yes (login in 54 s) | `SunOS solaris 5.3 Generic_101498-02 sun4m`; from a `scsi-cd`: `cannot mount root`, as under `ss5.bin` |
+| Solaris 2.4 HW 3/95 | SS-5, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (4.2 min) | yes (69 s) | `SunOS solaris 5.4 generic sun4m`; before 0022 a panic in OpenBIOS in 2 of 4 boots |
 | Solaris 2.3 Ed. II | SS-5, `ss5.bin`, CD as a disk | yes (48 s) | yes (6.0 min) | yes | `SunOS sol23-ss5 5.3 Generic_101498-02 sun4m` |
 | Solaris 2.3 Ed. II | SS-5, `ss5.bin`, `scsi-cd` | kernel only | | | `panic: vfs_mountroot: cannot mount root` |
 | Solaris 2.3 Ed. II | SS-20, `ss20_v2.25_rom` -50, 512 MB, CD as a disk | yes (47 s) | yes (5.3 min) | yes | `SunOS sol23-ss20 5.3 Generic sun4m` |
@@ -715,10 +717,12 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | SunOS 4.1.3_U1B | SS-20, OpenBIOS, 64 MB | yes | yes (153 s) | yes (512 MB) | |
 | SunOS 4.1.3_U1B | SS-10, OpenBIOS, 64 MB | yes | yes (132 s) | not tried | |
 | Solaris 2.1 | SS-10, OpenBIOS | no | | | `Unhandled Exception 0x00000009` as 2.3 |
+| Solaris 2.1 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | kernel only | | | after device configuration `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` (also `-cpu TI-SuperSparc-40`) |
 | Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in a recursive walk early in the kernel, most likely over the device tree (`SunOS Release 5.1`) |
 | Solaris 2.2 | SS-10, OpenBIOS, CD as a disk | no | | | `Unhandled Exception 0x00000009` |
+| Solaris 2.2 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (the 2.3 path) | yes | `SunOS solaris 5.2 Generic sun4m` |
 | Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` |
-| SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root |
+| SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root: a probe read of physical `0xd.0108_0000`, where QEMU has nothing (`submodules/SPARC.md`) |
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | no | | | the kernel loads (`Boot: vmunix`), then `Unhandled Exception 0x00000029` before its banner |
@@ -727,6 +731,16 @@ The SS-10 Sun PROM doesn't run on QEMU's SS-10 ("SS-10 and SS-20" in `submodules
 2.1, 2.2 and 4.1.3 had OpenBIOS on the SS-10 or the SS-20 PROM on the SS-20 (they predate the
 SS-20). Not tried: 2.3 under OpenBIOS with a framebuffer console, 2.5 SS-5 installs under `ss5.bin`,
 2.6-era tricks for 2.1/2.2 (other `-cpu` models on the SS-20 PROM), 4.1.2 on the SS-10.
+
+The rows "with openbios 0019-0022" ran the lab image of the published package with a patched
+`openbios-sparc32` mounted over `/usr/share/kvm/openbios-sparc32`, one run each (the 2.3 install
+with 0019-0021 before 0022 existed; 2.4, the disk boots and 2.2 with 0019-0022, 2.2's second
+install with the image `openbios/Dockerfile` builds from 0001-0023); `solaris-install-serial.py` and
+`solaris-boot-disk.py` with `CDROM_AS=hd` (and `MACHINE=SS-10` for 2.2). With them the scenarios
+take OpenBIOS's side of 2.3's reboots (the end of the install and `init 5`: OpenBIOS's banner
+instead of the Sun PROM's `ok`) and 2.2's install (it makes the file systems on a cleared screen
+instead of 2.3's progress screen). Not tried with OpenBIOS: 2.3/2.4 on SS-20, more than one CPU,
+through PVE (needs a package with the patches).
 
 Through PVE (the PVE test container on the lab host, pve-qemu-kvm 11.1.3-2+wsh21, qemu-server
 9.2.19+wsh1, pve-manager 9.2.31+wsh1; up to three guests at a time, another agent's runs on the host

@@ -1,0 +1,41 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: keep the Forth heap inside the firmware's own
+ virtual range
+
+OpenBIOS mapped its 128K Forth heap (alloc-mem) right below 0xffd00000,
+outside the 2 MB from 0xffd00000 that ofmem_init() reserves for the
+firmware. A Sun PROM keeps all its mappings between 0xffd00000 and
+0xfff00000. The kernels of Solaris 2.3 and 2.4 put their kernelmap at
+0xfc000000-0xffd00000 and take every hole in /virtual-memory "available"
+inside it out of the map; a hole that reaches past 0xffd00000 can't be,
+and they panic: "panic - kernel: can't remove OBP hole". Solaris 2.5 and
+later put the kernelmap lower and never see it.
+
+Map the heap above the I/O mappings, inside the reserved range, when it
+fits there (it does: about 200K are free above them); otherwise where it
+was before.
+---
+ arch/sparc32/openbios.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc32/openbios.c b/arch/sparc32/openbios.c
+index 17d47a9..abdb799 100644
+--- a/arch/sparc32/openbios.c
++++ b/arch/sparc32/openbios.c
+@@ -802,7 +802,15 @@ static void init_memory(void)
+     if (!phys)
+         printk("panic: not enough physical memory on host system.\n");
+     
+-    virt = ofmem_claim_virt(OF_CODE_START - MEMORY_SIZE, MEMORY_SIZE, 0);
++    /* Put it above the I/O mappings, in the 2 MB from OF_CODE_START that
++       ofmem_init() keeps for OpenBIOS: a Sun PROM keeps all its mappings
++       between 0xffd00000 and 0xfff00000. The Solaris 2.3 and 2.4 kernels have
++       their kernelmap right below 0xffd00000 and panic ("can't remove OBP
++       hole") on a PROM mapping there. */
++    virt = ofmem_arch_get_iomem_top();
++    if (virt + MEMORY_SIZE > OF_CODE_START + 0x200000) {
++        virt = ofmem_claim_virt(OF_CODE_START - MEMORY_SIZE, MEMORY_SIZE, 0);
++    }
+     if (!virt)
+         printk("panic: not enough virtual memory on host system.\n");
+ 

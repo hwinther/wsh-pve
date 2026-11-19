@@ -188,6 +188,10 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0002-cgthree-map-only-the-console-lines-that-fit` | OpenBIOS maps at most 0xc0000 bytes (1024x768) of framebuffer; the ROM mapped that much and drew on the whole screen, so 1152x900 took a data access fault at power-on. The firmware console now uses the lines that fit (682 at 1152x900, 409 at 1920x1080); `width`, `height` and `linebytes` still give the real size. From [LEMU `9ea85e13`](https://github.com/tenox7/lemu/commit/9ea85e132e43d55422f8d527e9dfc74bca33aa59) (`machines/sun4m/cgthree/cgthree.fs`) | not in OpenBIOS |
 | `0008-sparc32-enter-the-prompt-on-op_enter-and-resume-with-go` | Stop-A (the romvec's `op_enter`) on a running Solaris or SunOS powered the machine off ("abort, power off"); it now stops at the prompt and `go` resumes the client, `boot` resets first ("Stop-A") | not fixed; see `upstream/openbios-sparc32-op-enter-powers-off.md` |
 | `0018-sparc32-give-the-cs4231-intr-9-the-level-of-its-sbus-level` | The SS-5's `SUNW,CS4231` node had `interrupts` 5 (SBus level 5, processor level 9) and `intr` 5 (processor level 5): Solaris waits where the first says, SunOS 4 where the second says, so no wiring served both. `intr` is now 9, as the Sun PROM's `0x39`, for QEMU patch 0030 ("Audio") | not in OpenBIOS (QEMU had no working codec) |
+| `0019-sparc32-give-the-solaris-2.1-2.4-boot-block-the-obp-words-it-uses` | The Solaris 2.1-2.4 boot block is FCode that its machine code hands to `byte-load` through the romvec; it looks up OBP 2.x words by name (`romvec`, `(is`, `op-open`/`op-close`/`op-read`/`op-seek`, `adjust-header`, `?go`) and sets `load-base` with `(is`. Without them: `(is ?`, then `Unhandled Exception 0x00000009` reading the romvec at 0xffe80098. Now the words exist, `load-base` is a value (as on sparc64), and `init-program` starts code the client put at `load-base` itself ("Older Sun releases on sun4m") | not fixed; see `upstream/openbios-sparc32-old-solaris.md` |
+| `0020-sparc32-keep-the-forth-heap-inside-the-firmwares-own-virtual-range` | The 128K Forth heap was mapped at 0xffce0000, below the 0xffd00000-0xfff00000 range a Sun PROM keeps to; the Solaris 2.3/2.4 kernelmap ends at 0xffd00000 and they panicked: `can't remove OBP hole`. Now above the I/O mappings, inside the firmware's reserved 2 MB | not fixed; same note |
+| `0021-sparc32-take-node-0-as-the-root-node-in-the-romvec-property-operations` | OBP 2.x takes node 0 for the root in `no_proplen`/`no_getprop`/`no_nextprop`; Solaris 2.3 asks for the root's `name` that way, got -1 and panicked (`BAD TRAP: type=9 ... addr=fffff000`) | not fixed; same note |
+| `0022-sparc32-run-the-romvec-calls-with-interrupts-masked` | The romvec handlers ran OpenBIOS at the client's PIL; Solaris 2.4 calls `prom_getproplen()` from its idle thread with interrupts on, and in 2 of 4 boots a second romvec call got into the (non-reentrant) Forth engine meanwhile: `BAD TRAP: type=9 ... addr=0` in OpenBIOS's `c@`. Now PIL 15 for the call, back to the caller's PIL after (sparc64's client interface does the same, 0016) | not fixed; same note |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -218,6 +222,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
 | `0016-sparc64-client-interface-runs-with-interrupts-disabled` | The client interface walked `%cwp` through every window and rewrote the trap registers (saving and restoring the caller's state) with the caller's `PSTATE.IE`. Solaris and illumos call in with interrupts enabled and their own trap table: an interrupt in between overwrote the caller's windows. Tribblix's live CD stopped on most boots (corrupted locals after a call, `bad stack overflow at TL 2`); Solaris 10's one `BAD TRAP: type=4e` in the firmware was the same. Interrupts are now off from entry until the caller's `%pstate` is written back ("Tribblix on sun4u") | not fixed; see `upstream/openbios-sparc64-client-interface-interrupts.md` |
 | `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
+| `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1414,34 +1419,73 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | System | Machine, firmware | Result |
 | --- | --- | --- |
 | Solaris 2.3 Edition II | SS-5 `ss5.bin`, SS-20 `ss20_v2.25_rom`, CD as a disk | installs (End User, Quick Install, ~5-6 min) and boots; targets `sol23-ss5`, `sol23-ss20` (~10-11 min through PVE) |
-| Solaris 2.3 Edition II | SS-5 OpenBIOS | `Unhandled Exception 0x00000009` after the boot block, as 2.4 |
+| Solaris 2.3 Edition II | SS-5 OpenBIOS with openbios 0019-0022, CD as a disk | installs (Quick Install, 5.5 min) and boots (`SunOS solaris 5.3 Generic_101498-02 sun4m`); from a `scsi-cd` the kernel can't mount root, as under `ss5.bin`. Before 0019: `Unhandled Exception 0x00000009` after the boot block |
+| Solaris 2.4 HW 3/95 | SS-5 OpenBIOS with openbios 0019-0022, CD as a disk | installs (4.2 min) and boots (`SunOS solaris 5.4 generic sun4m`) |
 | Solaris 2.5 HW 1/96 | SS-5 and SS-20, OpenBIOS, CD as a disk | installs (~5 min) and boots; targets `sol25-ss5`, `sol25-ss20` (~9 min). From a `scsi-cd` the kernel hangs after its banner |
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
-| Solaris 2.1, 2.2 | SS-10 OpenBIOS | `Unhandled Exception 0x00000009` after the boot block |
+| Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install) and boots (`SunOS solaris 5.2 Generic sun4m`) |
+| Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx` in its symbol table); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root` |
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, while walking the device tree (64 and 256 MB) |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
 
-What it would take for the rest (not tried here; no patch written):
+**Solaris 2.1-2.4 under OpenBIOS (openbios 0019-0022).** Four gaps, one behind the other, each
+found by booting the 2.3 CD (lab, pve-qemu-kvm 11.1.3-2+wsh21 with the patched `openbios-sparc32`
+mounted over the package's):
 
-- **OpenBIOS and the Solaris 2.1-2.4 boot block:** the boot program those CDs boot from (an a.out
-  `bootblk` on slice d) prints `(is ?` and ends in `Unhandled Exception 0x00000009` at PC
-  `0xffd076c8` (OpenBIOS's own code) on every sun4m machine; 2.5 and later get past it. Probably a
-  romvec v0/v2 entry or property the old boot program uses that OpenBIOS's `romvec.c` doesn't
-  implement. A fix would let 2.3/2.4 run under OpenBIOS (and the SS-10, whose Sun PROM doesn't run
-  on QEMU) and let 2.1/2.2 try their only supported machine.
+1. The boot block on slice d (an a.out at 0x4000) is a little machine code around an FCode
+   program, which it hands to `byte-load` through the romvec's Forth interpreter. The FCode reads
+   UFS and loads `/ufsboot` with OBP 2.x words it looks up by name: `romvec` (else it uses
+   0xffe80010, where those PROMs keep it: the `Unhandled Exception 0x00000009` at `0xffd076c8`,
+   OpenBIOS's `@`), `(is` (the `(is ?` it printed) on `load-base`, `op-open`/`op-close`/`op-read`/
+   `op-seek`, `adjust-header`, `init-program` on code it has already copied to its ELF addresses,
+   `?go`. 0019 adds them (found with OpenBIOS's `CONFIG_DEBUG_OBP` output and `detok` on the
+   boot block's FCode).
+2. The 2.3 and 2.4 kernels' kernelmap is 0xfc000000-0xffd00000 (`Sysbase`/`Syslimit` in their
+   symbol tables; 2.1's ends at 0xfe400000) and they panic with `can't remove OBP hole` on a
+   mapping in `/virtual-memory` `available` that reaches past 0xffd00000: OpenBIOS's Forth heap at
+   0xffce0000. 0020 moves the heap into the firmware's own 0xffd00000-0xfff00000.
+3. Right after its banner the 2.3 kernel asks for the root's `name` with node 0, which OBP takes
+   as the root; OpenBIOS said -1, and the kernel's buffer of that size ended in `BAD TRAP: type=9
+   ... addr=fffff000`. 0021 maps node 0 to the root in the property calls.
+4. 2.4 then panicked in 2 of 4 boots inside OpenBIOS (`addr=0`, `c@` under `obp_proplen`), called
+   from its idle thread (`init_swift_idle_cpu` → `prom_getproplen` for `platform-pm`) with
+   interrupts on: a second romvec call got into the Forth engine meanwhile. 0022 masks interrupts
+   for every romvec call, as the sparc64 client interface does (0016).
+
+The targets stay on the Sun PROMs (`sol23-ss5`, `sol24-ss5`, `sol23-ss20`) until a package with
+0019-0022 is published: with today's package an OpenBIOS target would stop at the boot block. Then
+OpenBIOS variants become possible: `sol23`/`sol24` on SS-5 and SS-20 with OpenBIOS (on the SS-20
+with more than one CPU and up to 512 MB, not tried), and `sol22` on SS-10, its only sun4m machine
+(the install scenario takes 2.2 now; installed in the lab, not made a target). The scenarios accept
+OpenBIOS's end of a 2.3 install and of `init 5` (it reboots: OpenBIOS's banner instead of `ok`).
+
+Regression with the images `openbios/Dockerfile` builds from 0001-0023 (lab image of the published
+package, ours mounted over its `openbios-sparc32`/`openbios-sparc64`): `smoke` 3/3, `idle` 13/13,
+`sparc64` 9/9, `solaris10` 2/2, and OpenBSD 8.0's installed sun4u disk to `login:` (0023).
+
+What it would take for the rest:
 - **Solaris 2.1/2.2 on the SS-20 PROM:** they predate the SS-20 and its SuperSPARC/PROM 2.25 device
   tree; the panic is a null pointer read in a recursive walk early in the kernel (`pc=0xf002b300`,
   the traceback calls the same function five levels deep), most likely over the device tree.
   Either a node their kernels can't handle (find it by removing nodes in QEMU's SS-20 or in the
   PROM's tree with `nvramrc`) or SS-10 Sun PROM support in QEMU's SS-10 (`Cpu #0 Data Access
   Error` at its memory probe, "SS-10 and SS-20").
-- **SunOS 4.1.3 (original):** the data access error comes from a device access QEMU doesn't
-  answer, right after the floppy probe (QEMU's sun4m answers unassigned accesses with a data access
-  trap); `-trace` on unassigned accesses (`-d unimp,guest_errors`) would name the address.
-  4.1.3_U1B, which Sun supports on the same SS-10 and the later machines, installs, so this is
-  probably not worth a QEMU change.
+- **Solaris 2.1 on SS-10 (OpenBIOS):** with 0019-0022 it gets through device configuration, then
+  QEMU itself stops (`Trap 0x21 ... while interrupts disabled, Error state`) right after the
+  kernel's SRMMU context flush: an instruction fetch whose translation (or table walk) ends on a
+  physical address with nothing behind it. A QEMU SRMMU/SuperSPARC matter, not the firmware; next
+  step `-d mmu,int` around `srmmu_mmu_flushctx` to see the context table and the failing walk.
+- **SunOS 4.1.3 (original), diagnosis:** the `BAD TRAP: type=29` after `SUNW,fdtwo0` is a probe.
+  The kernel arms its fault catcher and reads kernel VA 0xff009000 (`ld [%o5]` at `0xf00a0970`,
+  QEMU `-d in_asm`), which the QEMU monitor (`gva2gpa`, VM stopped at the trap) puts at physical
+  `0xd.0108_0000` on the SS-10. QEMU has nothing there and answers with a synchronous data access
+  error (trap 0x29), which this kernel's catcher doesn't take. (`-d unimp` also shows 64-bit reads
+  of the MXCC error register, ASI 2 `0x01c00e00`, which QEMU doesn't implement; they come from the
+  boot program and the trap path, not before the fault.) A fix would be a QEMU stub at that
+  address that answers as the hardware does; 4.1.3_U1B, which Sun supports on the same SS-10 and
+  the later machines, installs, so this is probably not worth it.
 - **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
