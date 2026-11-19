@@ -675,6 +675,163 @@ class WebStart(unittest.TestCase):
             self.assertEqual(targets.TARGETS[name]["install"]["prom_env"], {"auto-boot?": "false"})
 
 
+class ScriptedConsole:
+    """What the Web Start scenario's boot steps use of a Machine, over scripted console output: expect
+    and expect_any consume `text` like lab.Machine; power_cycle() appends `after_cycle` (the new
+    QEMU's output)."""
+
+    def __init__(self, text, after_cycle="", can_cycle=True):
+        self.text, self.pos, self.after_cycle = text, 0, after_cycle
+        self.sent, self.cycles, self.stopped = [], 0, False
+        if can_cycle:
+            self.power_cycle = self._power_cycle
+
+    def expect(self, pattern, timeout=300, screen=False):
+        m = re.compile(pattern, re.M).search(self.text, self.pos)
+        if not m:
+            raise lab.Timeout(f"no {pattern!r}")
+        self.pos = m.end()
+        return m
+
+    def expect_any(self, patterns, timeout=300, screen=False):
+        m = self.expect("|".join(f"(?P<p{i}>{p})" for i, p in enumerate(patterns)), timeout)
+        return next(i for i in range(len(patterns)) if m.group(f"p{i}") is not None)
+
+    def _power_cycle(self):
+        self.cycles += 1
+        self.text += self.after_cycle
+
+    def send(self, text):
+        self.sent.append(text)
+
+    def serial_cursor(self):
+        return len(self.text)
+
+    def quiet(self, seconds, timeout=600):
+        pass
+
+    def snap(self, title):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+
+class WebStartSun4u(unittest.TestCase):
+    """sol8-sun4u and sol9-sun4u: the Web Start installs on sun4u (IDE disk c0t0d0, the 64-bit default,
+    the reboot that returns to `0 >` and the power cycle after 8's mini-root copy)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-webstart-serial.py"))
+        import _sparc32
+        cls.sparc32 = _sparc32
+
+    def test_targets(self):
+        for name, medium in (("sol9-sun4u", "solaris-2.9-sparc.iso"), ("sol8-sun4u", "Sol8.0202.Sparc.iso")):
+            t = targets.TARGETS[name]
+            with self.subTest(target=name):
+                self.assertEqual(t["status"], "automated")
+                self.assertEqual(t["profile"], targets.SUN4U_SOLARIS)
+                self.assertEqual(t["profile"]["memory"], 1024)
+                self.assertEqual(t["disk"], {"bus": "ide0", "size": 8, "label": None})
+                self.assertEqual((t["device"], t["boot"], t["nic"]), ("c0t0d0", "ide0", "hme0"))
+                self.assertEqual(t["media"][0], {"name": medium, "drive": "ide2"})
+                self.assertEqual(t["install"]["scenario"], "solaris-webstart-serial.py")
+                self.assertEqual(t["install"]["vars"]["DISK"], "c0t0d0")
+                self.assertTrue(t["install"]["root_password"])
+                self.assertEqual(t["firstboot"]["scenario"], "solaris-firstboot.py")
+                a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="8701", name=None, target=name)
+                p = install.vm_params(t, a, {m["name"]: f"local:iso/{m['name']}" for m in t["media"]}, None)
+                self.assertEqual((p["ide0"], p["ide2"]), ("local:8,format=raw", f"local:iso/{medium},media=cdrom"))
+                self.assertEqual(p["net0"], "sunhme,bridge=vmbr0")
+        # 9 runs Web Start from the DVD: no prom_env; 8 stops at `0 >` for its mini-root, and End User
+        # takes Software 1 of 2 only
+        self.assertNotIn("prom_env", targets.TARGETS["sol9-sun4u"]["install"])
+        # 9 needs openbios 0025, not in a published package yet: the weekly matrix doesn't install it
+        self.assertIn("0025", targets.TARGETS["sol9-sun4u"]["matrix_skip"])
+        self.assertNotIn("matrix_skip", targets.TARGETS["sol8-sun4u"])
+        t8 = targets.TARGETS["sol8-sun4u"]
+        self.assertEqual(t8["install"]["prom_env"], {"auto-boot?": "false"})
+        self.assertEqual(t8["media"][1:], [{"name": "Sol8.0202.Sparc-Software_1of2.iso", "drive": "ide2",
+                                            "at": "scenario"}])
+
+    def reply(self, screen, disk="c0t0d0"):
+        v = {**self.sc.DEFAULTS, "HOSTNAME": "h1", "ROOT_PASSWORD": "pw", "DISK": disk}
+        text = self.sc.tail(screen)
+        for rx, reply, _ in self.sc.prompts(self.sc.Installer(None, {"SWAPS": ""}), v):
+            if re.search(rx, text):
+                return reply(screen) if callable(reply) else reply
+        return None
+
+    def test_prompts(self):
+        bits = ("1. Software will be installed with 64-bit and 32-bit support (Recommended).\n"
+                "2. Software will be installed with 32-bit support only.\n"
+                "   Enter the number corresponding to your choice [{}]")
+        self.assertEqual(self.reply(bits.format(1)), "1")  # sun4u keeps 64-bit
+        self.assertEqual(self.reply(bits.format(2), "c0t3d0"), "2")  # sun4m: 32-bit only, as before
+        layout = "   Layout file systems on disk {} (bootdisk) (y/n) [y]?"
+        self.assertEqual(self.reply(layout.format("c0t0d0")), "y")
+        self.assertIsNone(self.reply(layout.format("c0t3d0")))  # not the disk DISK names
+        self.assertEqual(self.reply(layout.format("c0t3d0"), "c0t3d0"), "y")
+
+    def test_mini_root_power_cycles_on_sun4u(self):
+        before = ("Rebooting to continue the installation.\nsyncing file systems... done\nrebooting...\n"
+                  "BOOTpanic - kernel: prom_reboot: reboot call returned!\nEXIT\n0 > ")
+        after = "OpenBIOS for Sparc64\nWelcome to OpenBIOS v1.1\n0 > "
+        m = ScriptedConsole("Enter a swap slice size between 384MB and 8000MB [?]\n"
+                            "Can the swap slice start at the beginning of the disk [y,n,?,q]\n"
+                            "Is this OK [y,n,?,q]\n" + before, after + "SunOS Release 5.8 Version Generic_108528-13 64-bit\n")
+        self.sc.mini_root(m, {**self.sc.DEFAULTS, "ARCH": "sparc64", "DISK": "c0t0d0"})
+        self.assertEqual(m.cycles, 1)
+        self.assertEqual(m.sent[-1], "boot disk:b\r")
+        # sun4m: the reboot stops at `0 >` (auto-boot? false) and the slice is booted by path, no cycle
+        m = ScriptedConsole("Enter a swap slice size between 384MB and 2000MB [?]\n"
+                            "Can the swap slice start at the beginning of the disk [y,n,?,q]\nIs this OK [y,n,?,q]\n"
+                            "Rebooting to continue the installation.\nrebooting...\n0 > SunOS Release 5.8\n")
+        self.sc.mini_root(m, dict(self.sc.DEFAULTS))
+        self.assertEqual((m.cycles, m.sent[-1]), (0, f"boot {self.sc.ESP}/sd@3,0:b\r"))
+        # without PVE (a QEMU of the lab's own) there is nothing to cycle: a clear failure
+        m = ScriptedConsole("Enter a swap slice size between 384MB and 8000MB [?]\nCan the swap slice start at the beginning of the disk [y,n,?,q]\n"
+                            "Is this OK [y,n,?,q]\n" + before, can_cycle=False)
+        with self.assertRaisesRegex(RuntimeError, "through PVE"):
+            self.sc.mini_root(m, {**self.sc.DEFAULTS, "ARCH": "sparc64"})
+
+    def test_prom_boot_on_sun4u(self):
+        v = {**self.sparc32.DEFAULTS, "ARCH": "sparc64"}
+        m = ScriptedConsole("Welcome to OpenBIOS v1.1\n  Type 'help' for detailed information\n0 > ")
+        self.sparc32.prom_boot(m, v, "cdrom")
+        self.assertEqual(m.sent, ["boot cdrom:f\r"])  # auto-boot? false: the alias at the prompt
+        m = ScriptedConsole("Welcome to OpenBIOS v1.1\nTrying disk:a...\nNot a bootable ELF image\n")
+        self.sparc32.prom_boot(m, v, "disk")
+        self.assertEqual(m.sent, [])  # the boot order: OpenBIOS boots by itself
+
+    def test_power_cycle_only_a_vm_the_lab_started(self):
+        calls = []
+        m = object.__new__(lab.PveMachine)
+        m.vmid, m.started, m.metrics, m.ser = "8702", True, {}, None
+        m.proc = types.SimpleNamespace(wait=lambda timeout=None: 0, pid=1)
+        m.log = lambda msg: None
+        m.mark = lambda label: calls.append(("mark", label))
+        m.cond = threading.Condition()
+        m._start = lambda conf, log_name: calls.append(("start", log_name))
+        orig = lab.qm, lab.pve_config
+        lab.qm = lambda *args, check=True: calls.append(("qm",) + args) or ""
+        lab.pve_config = lambda vmid: {}
+        try:
+            m.elapsed = lambda: 0
+            m.power_cycle()
+            m.power_cycle()
+            self.assertEqual(calls, [("qm", "stop", "8702"), ("mark", "power cycle 1"), ("start", "qm-start-2.log"),
+                                     ("qm", "stop", "8702"), ("mark", "power cycle 2"), ("start", "qm-start-3.log")])
+            self.assertEqual(m.metrics["power_cycles"], 2)
+            m.started = False
+            with self.assertRaisesRegex(RuntimeError, "running before the lab attached"):
+                m.power_cycle()
+        finally:
+            lab.qm, lab.pve_config = orig
+
+
 class SunOS4(unittest.TestCase):
     """sunos414-ss5: the converted CD, the install-phase memory, the refused network options and the
     sys-config screens of the first boot."""

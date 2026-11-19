@@ -237,6 +237,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
 | `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
+| `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -2006,7 +2007,7 @@ directory, the same source as `openbios/Dockerfile` builds):
 | --- | --- |
 | 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device (fixed in QEMU, below). With 0003-0007 the installer took no input on ttya; 0009 fixes that (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
 | 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules`. With 0024 (2026-11-19): the installer's `Select a Language` at 1024 and 2048 MB |
-| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below). With 0024: the installer at 1024 and 2048 MB; at 1024 MB Web Start installs End User to the IDE disk and the installed system boots to `console login:` (the first, reconfiguring boot panics in the floppy driver: "Solaris 7/8/9 with 0024") |
+| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below). With 0024: the installer at 1024 and 2048 MB; at 1024 MB Web Start installs End User to the IDE disk and the installed system boots to `console login:` (the first, reconfiguring boot panicked in the floppy driver until 0025: "Solaris 7/8/9 with 0024"; the install targets `sol9-sun4u` and `sol8-sun4u`: "Solaris 8 and 9 install targets on sun4u") |
 | 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free`. With 0024: the installer's `Do you want to format /dev/dsk/c0t0d0?` at 1024 and 2048 MB |
 | 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05). With 0024: the installer at 1024 and 2048 MB; at 1024 MB the mini-root and Web Start install End User to the IDE disk (a fresh QEMU between the two) and the installed system boots to `console login:` |
 | 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free`. With 0024: the installer's `Select a Language` at 1024 and 2048 MB (IDE timeouts and `Interrupt not seen after set_features` on the way) |
@@ -2413,7 +2414,7 @@ none of it from 0024:
   install continues: `boot disk:b` after `reset-all` panicked the mini-root's kernel (`page_free` ←
   `add_physmem` ← `kphysm_init`; OpenBIOS doesn't clear RAM on reset and the old contents are still
   there), while a fresh QEMU boots `disk:b` and the install goes on. An install target for 8 would
-  need a power cycle there, as a PVE VM gets with stop and start.
+  need a power cycle there, as a PVE VM gets with stop and start: `sol8-sun4u` does that (below).
 - **The floppy node.** The first boot of the installed 9 9/05 reconfigures (`Configuring /dev and
   /devices`) and panics in the floppy driver: `BAD TRAP: type=31 ... occurred in module "fd" due to
   a NULL pointer dereference`, `ddi_regs_map_setup` ← `fd_cleanup` ← `fd_attach`. OpenBIOS's
@@ -2421,9 +2422,8 @@ none of it from 0024:
   from device node <fdthree>`, which 8 and 10 print and survive); 9's driver fails to map it and
   crashes on the way out of its attach. Renamed at `0 >` before the boot (`"
   /pci@1f,0/pci@1,1/ebus@1/fdthree" find-device`, `" nofdthree" device-name`, `device-end`) the
-  boot finishes, and later boots (no reconfiguration) reach `console login:` without the rename. A
-  fix belongs in OpenBIOS's ebus floppy node (OBP-like `reg` entries, or no node on sun4u); not
-  attempted.
+  boot finishes, and later boots (no reconfiguration) reach `console login:` without the rename.
+  Fixed since by OpenBIOS patch 0025, which leaves the node out on sun4u (below).
 - The lab's own early stop: the first 8 2/02 disk boot wanted a manual `fsck` (done in single user,
   then the boot above) because the wrapper stopped QEMU right after the installer's last Return,
   before Solaris had synced; the wrapper now waits for the firmware prompt (not repeated for 8).
@@ -2434,9 +2434,60 @@ ping), the installed OpenBSD 8.0 disk to `login:` and `halt -p`, the stored Trib
 `login:` and `init 5` (`tribblix-boot-disk.py`, 2048 MB, 21 min), and `smoke` 3/3 (the sparc32
 image doesn't get 0024; same sources as the package's).
 
-Targets that would follow once the package has 0024: `sol9-sun4u` (9 9/05, the DVD, Web Start as
-`sol9-ss5` with the sun4u answers above; the first boot needs the floppy node fixed or renamed),
-then `sol8-sun4u` (8 2/02, three CDs, a power cycle after the mini-root copy).
+**Solaris 8 and 9 install targets on sun4u** (2026-11-19). `sol9-sun4u` (9 9/05, the DVD) and
+`sol8-sun4u` (8 2/02, the Installation CD and Software 1 of 2) are the Web Start installs of
+`sol9-ss5`/`sol8-ss5` on the sparc64 profile (1024 MB, a blank 8 GiB disk on `ide0` = `c0t0d0`, the
+CD on `ide2`, `sunhme`, serial console), End User, through PVE with `lab.py install` (e2e/sparc/README.md,
+"Solaris 8 and 9 on sun4u"). What had to change:
+
+- **The floppy node** (OpenBIOS patch 0025): the ebus's `fdthree` is gone on sun4u. The fix chosen
+  over OBP-like `reg` entries: OBP's node on the Ultra 5/10 has three of them (the 82077, the ebus
+  DMA engine that drives it, the auxio register) plus an interrupt, while QEMU's sun4u has a
+  PC-style FDC at I/O `0x3f0` behind the ebus's second BAR, created without DMA
+  (`hw/sparc64/sun4u.c`), and neither a DMA engine nor auxio. No `reg` set would describe a
+  controller a driver for OBP's node can run, and entries pointing at nothing would let a driver
+  attach and then wait for DMA. OpenBIOS never booted from the node either (`-boot a` sets
+  `boot-device` to `/obio/SUNW,fdtwo`, sun4m's path), and NetBSD left it unconfigured (`fdthree at
+  ebus0 addr 0-ffffffff not configured`). With 0025 the installed 9 9/05's first, reconfiguring boot
+  goes through without the rename, and none of the installs prints `Out of range register
+  specification from device node <fdthree>` any more.
+- **The reboot** (no firmware change; 0012 stays `.wip`): Solaris's reboot returns (`prom_reboot:
+  reboot call returned!`), the kernel panics and exits to `0 >`. `solaris-webstart-serial.py` waits
+  for that prompt (Solaris has synced by then) and, at the end of the install, stops the VM there as
+  `sol10-sun4u` does; `install` then ejects the media and boots `ide0`. For 8's reboot into the
+  mini-root it power-cycles the VM through PVE (`lab.PveMachine.power_cycle()`: `qm stop`, `qm
+  start`, the serial console reconnected, the step log and recordings go on) and boots `disk:b` at
+  `0 >` (the install phase has `-prom-env auto-boot?=false`, as the sun4m Solaris 8 targets). A fresh
+  QEMU process is what `reset-all` doesn't give: OpenBIOS keeps the RAM's contents across a reset,
+  and the mini-root's kernel then panicked in `page_free`.
+- The sun4u answers: the 64-bit question defaults to "64-bit and 32-bit support" (kept), the disk is
+  `c0t0d0` (`DISK`), and with `auto-boot?` false the CD is booted at `0 >` (`boot cdrom:f`;
+  `_sparc32.prom_boot()` for `ARCH` sparc64). The first boot and the check are the sun4m targets'
+  `solaris-firstboot.py` and `solaris-boot-disk.py` (the VM's `-boot order=c` boots the disk).
+
+Results through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, published
+pve-qemu-kvm 11.1.3-2+wsh23, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1; "0025" = an
+`openbios-sparc64` built from `openbios/` with 0001-0025 mounted over the package's; up to two guests
+on the host at once, 2026-11-19):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol9-sun4u --check` (0025) | passed: the first boot reconfigures (`Configuring /dev and /devices`) without a panic, root/`wshlab`, the marker, `SunOS sol9-sun4u 5.9 Generic_118558-34 sun4u`, `/` 1126422 KB on `c0t0d0s0`, `hme0` 10.0.2.15/24, `boot: order=ide0`, `ide2` empty | 70.0 min (install 3559 s, first boot 401 s, check 215 s) |
+| `install sol8-sun4u --check` (0025) | passed: one power cycle after the mini-root copy, Software 1 of 2 swapped in, `SunOS sol8-sun4u 5.8 Generic_108528-13 sun4u`, `/` 738902 KB, no `fdthree` warning in any phase | 56.9 min (2752 s, 378 s, 264 s) |
+| `install sol8-sun4u --check` (the package's firmware) | passed; the `fdthree` warning in the install and first boot, as before | 53.4 min (2536 s, 382 s, 267 s) |
+| `install sol9-sun4u --check --export` (0025), a second run | passed, the same checks; the disk and its sidecar exported | 67.2 min (3393 s, 405 s, 217 s) |
+| `matrix.py sparc64` (0025) | 9 of 9 passed: NetBSD 11.1 and 9.3, OpenBSD 8.0 and Debian 12 CDs, NetBSD 11.1 on `std` VGA, install, disk, virtio and idle | 18 min (the cases added up) |
+| `matrix.py solaris10` (0025) | 2 of 2 passed: the DVD and the installed disk | 12 min (the cases added up) |
+| `boot-test` of the stored disks (0025): `openbsd80-sun4u`, `netbsd111-sparc64`, `sol10-sun4u`, `tribblix-m34-sun4u` | 4 of 4 passed | 3.4, 1.7, 8.6, 25.5 min |
+| unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
+
+So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
+install matrix ran on the same host at the time). `sol9-sun4u` has `matrix_skip` until a published package has 0025;
+`sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
+min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
+it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
+set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
+`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not
