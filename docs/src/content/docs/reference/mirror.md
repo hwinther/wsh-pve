@@ -1,23 +1,24 @@
 ---
 title: Mirror Storage Reference
-description: ISO and floppy images from a NAS folder tree as symlinks in a directory storage, shown in folders in the web UI.
+description: ISO and floppy images from a NAS, a torrent folder or any other tree as symlinks in a storage, shown in folders in the web UI, kept up to date from a description file.
 ---
 
-A **mirror storage** is an ordinary Proxmox VE `dir` storage whose `template/iso` and
-`template/floppy` directories hold **symlinks** to ISO and floppy images that live somewhere else,
-typically on a NAS in a deep folder tree. Nothing is copied: the storage is an index of the NAS.
+A **mirror storage** is an ordinary Proxmox VE storage whose `template/iso` and `template/floppy`
+directories hold **symlinks** to ISO and floppy images that live somewhere else: a NAS in a deep
+folder tree, a VMware datastore being migrated, a folder of archive.org torrents that must stay as
+they are for seeding. Nothing is copied: the storage is an index of the files.
 
-It needs no backend change. PVE lists a dir storage's ISO and floppy directories with `stat()`,
-which follows symlinks, so a link shows up as a volume with its target's size, QEMU opens the target
-through the link, and removing the volume removes only the link. Symlinks cross file systems, so the
-target may be on an NFS or CIFS mount.
+It needs no backend change. PVE lists a storage's ISO and floppy directories with `stat()`, which
+follows symlinks, so a link shows up as a volume with its target's size, QEMU opens the target through
+the link, and removing the volume removes only the link. Links work in `dir`, `btrfs`, `nfs` and
+`cephfs` storages, and in `cifs` storages mounted with `mfsymlinks`.
 
-## The folders are in the link's name
+## The folders are in the volume's name
 
-A volume name can't contain a `/`, so the folders are kept in the link's name, joined with a double
+A volume name can't contain a `/`, so the folders are kept in the name, joined with a double
 underscore:
 
-| On the NAS (below the tree's top) | Volume |
+| File (below the tree's top) | Volume |
 | --- | --- |
 | `Solaris/2.6/solaris_2.6_598_sparc.iso` | `mirror:iso/Solaris__2.6__solaris_2.6_598_sparc.iso` |
 | `DOS/MS-DOS 6.22/Disk 1.img` | `mirror:floppy/DOS__MS-DOS_6.22__Disk_1.img` |
@@ -25,30 +26,196 @@ underscore:
 
 VM configs and the API use the volume name as it is
 (`ide2: mirror:iso/Solaris__2.6__solaris_2.6_598_sparc.iso,media=cdrom`). The web UI shows the
-folders:
+folders, in **any** storage, links or not:
 
 - the storage's **ISO Images** and **Floppy Images** tabs group the images by folder
   (`Solaris / 2.6`, files without `__` under **Top level**), with the file name in the row and the
   volume name as its tooltip. Sorting, search (on the whole volume name), upload, download from URL
   and remove work as before. A storage without such names shows the usual flat list;
 - the ISO selector of the CD/DVD drive editor and of the create wizard, and the floppy selector, show
-  `Solaris / 2.6 / solaris_2.6_598_sparc.iso`; typing filters on the volume name, so any folder or
-  file name part finds it.
+  `Solaris / 2.6 / solaris_2.6_598_sparc.iso`.
 
 Only ISO and floppy volumes are split, and only names whose parts are all non-empty (`__a.iso` and
 `a____b.iso` stay as they are).
 
-## Making the links: `wsh-lab mirror`
+### The search field
 
-The [`wsh-lab`](/guides/lab-install/#install-the-lab-on-a-node) package makes and checks the links,
-on the node, as root:
+The CD/DVD drive editor, the floppy drive editor (both on the VM's **Hardware** tab) and the create
+wizard's **OS** tab have a **Search** field above the storage and image selectors. It has the focus
+when the window opens (in the wizard, when the OS tab is shown), so you can type right away:
+
+- it filters the image list as you type and opens it with what is left;
+- case doesn't matter, and a word matches anywhere in the volume's name, folders included;
+- several words separated by spaces must all match: `solaris 2.6` finds
+  `Solaris__2.6__solaris_2.6_598_sparc.iso`, `598` finds it too;
+- **Enter** picks the first entry left; a second Enter submits the dialog;
+- an empty field shows every image, as before. The search changes nothing in the volume IDs or the
+  VM config, and works the same in a storage without `__` names.
+
+## Four ways to use it
+
+None is forced: pick the simplest one that covers your media.
+
+### 0. Plain files with `__` names
+
+Rename (or upload) the images in any ISO/floppy storage with their folders in the name:
+`Solaris__2.6__solaris_2.6_598_sparc.iso`. The UI shows the folders; there are no links and no tool.
+A rename changes the volume ID, so set the CD drive of VMs that use the image to the new name.
+
+### 1. One node: a local storage of links
+
+A local `dir` (or `btrfs`) storage holds links to images on anything mounted on the node: a NAS share,
+a second disk. Link a whole tree with `wsh-lab mirror sync`, or describe it in a
+[description file](#the-description-file) and run `apply`:
 
 ```sh
-# a dir storage for the links, with both content types
 mkdir -p /srv/mirror
 pvesm add dir mirror --path /srv/mirror --content iso,floppy
+wsh-lab mirror sync /mnt/nas/media --storage mirror        # every image below the folder
+```
 
-# link every ISO and floppy image below a NAS folder (again later: only what is new)
+The links point at absolute paths, so VMs on other nodes find the images only where the share is
+mounted at the same path.
+
+### 2. A cluster: ISOs and links on one NFS export
+
+Keep the images and the mirror on the same NFS export (or CephFS; CIFS only with `mfsymlinks`) and
+add it as a PVE storage with `iso` and `floppy` content. The images go below a folder of their own on
+the export, the description file at its top:
+
+```text
+/export (the PVE storage "nasmirror", mounted at /mnt/pve/nasmirror on every node)
+├── wsh-mirror.yaml
+├── archive/Solaris/2.6/solaris_2.6_598_sparc.iso
+└── template/iso/Solaris__2.6__solaris_2.6_598_sparc.iso -> ../../archive/Solaris/2.6/solaris_2.6_598_sparc.iso
+```
+
+```sh
+pvesm add nfs nasmirror --server nas.example --export /export --content iso,floppy --options vers=4.2
+wsh-lab mirror init --storage nasmirror --watch /mnt/pve/nasmirror/archive
+wsh-lab mirror import --storage nasmirror && wsh-lab mirror apply --storage nasmirror
+```
+
+The links are **relative**, because each image is on the same file system as the link directory, so
+they work wherever the export is mounted, and every node sees the same links. One node runs `apply`
+(or a [timer](#a-changing-archive) on each node: a lock on the export lets only one run at a time).
+
+### 3. An externally managed tree
+
+The files are organised by something else and must stay where they are: a VMware migration's
+datastore, torrents still seeding, hand-made folders next to them. The source needn't be a PVE storage
+at all (an fstab mount, a storage whose content isn't `iso`; as an ISO storage it would look empty,
+since PVE lists only files directly in `template/iso`). A [description file](#the-description-file)
+stitches them into one tree: rules give each source a folder prefix, entries name single files, and
+`import` adds what nothing covers yet. A [timer](#a-changing-archive) keeps the links up to date while
+files arrive.
+
+```yaml
+# wsh-mirror.yaml at the root of the mirror storage
+version: 1
+storage: mirror
+watch:
+  - path: /mnt/torrents/complete
+    prefix: Torrents
+auto_import: false
+incomplete:
+  patterns: ['*.part', '*.!qB', '*.!ut', '*.incomplete', '*.crdownload', '*.partial']
+  min_age: 5min
+links: auto
+rules:
+  - source: /mnt/vmware/iso # every image below it
+    prefix: VMware
+    exclude: ['*/old/*']
+  - source: /mnt/archive/sunsite/*/*.iso # a glob
+    prefix: Sun
+    flatten: true # the file name alone after the prefix
+entries:
+  # hand-made names for files that already are in VM configs
+  - name: Solaris__2.6__solaris_2.6_598_sparc.iso
+    source: /mnt/archive/sol-2.6-598-sparc.iso
+    origin: manual
+  - name: Torrents__debian-40r9-sparc__netinst.iso
+    source: /mnt/torrents/complete/debian-40r9-sparc/netinst.iso
+    origin: import
+```
+
+## The description file
+
+`wsh-mirror.yaml` at the mirror storage's root (its `path`; PVE doesn't see the file) is the source of
+truth: the links are derived from it. `wsh-lab mirror init` writes a commented one. A per-node mirror
+can keep the file elsewhere, for instance in `/etc/pve/nodes/<node>/`, with `--config PATH` on every
+command. Paths in it are absolute, or relative to the storage's root.
+
+| Key | Meaning |
+| --- | --- |
+| `version` | `1` |
+| `storage` | the PVE storage the file belongs to (checked; lets `--config` alone find it) |
+| `watch` | directories (or `{path, prefix}`) whose images `plan` reports when no rule or entry covers them; `import` adds them as entries |
+| `auto_import` | `true`: `apply` also links what `watch` finds and nothing covers, named by the default rule (the path below the watch directory, its folders joined with `__`, after the prefix); `false` (default): such files wait in `plan` until `import` |
+| `incomplete.patterns` | names (of the file or any folder above it below its source) that are never linked; default `*.part`, `*.!qB`, `*.!ut`, `*.incomplete`, `*.crdownload`, `*.partial` |
+| `incomplete.min_age` | a file changed (mtime) less than this ago isn't linked yet: `300`, `30s`, `5min`, `2h` (default 5 min) |
+| `links` | `auto` (default): relative when the file is on the link directory's file system, inside its mount, else absolute; or always `relative`, `absolute` |
+| `checksums` | `true` (default): `apply` records each linked file's sha256 once (to recognise a moved file); `false`: by inode only |
+| `rules` | `source` (a directory, or a glob with `*`, `?`, `[...]`, `**`), `prefix` (folders, `Sun/Solaris`), `exclude` (patterns on the path below the source or the file name), `img_as` (`auto`, `iso`, `floppy` for `.img`), `flatten`. The first rule that matches a file names it |
+| `entries` | `name` (the volume name), `source`, `origin` (`manual`, the default, or `import`), `content` (`iso`/`floppy`, for `.img`). A file with an entry is linked under the entry's name only, not by a rule |
+
+YAML comments are kept: `import` and `tidy` edit only the entries they add, drop or change.
+
+## Commands
+
+All on the node, as root; `--storage S` names the mirror storage (or `storage:` in the `--config`
+file).
+
+| Command | What it does |
+| --- | --- |
+| `wsh-lab mirror init --storage S [--watch DIR ...]` | writes a commented `wsh-mirror.yaml` |
+| `wsh-lab mirror plan --storage S [--json]` | what `apply` would link, relink and unlink; files no rule or entry covers (`new`); entries whose file is gone or moved (the same size and sha256 at a new path); name clashes; files still being written (`waiting`); links `apply` didn't make (`unmanaged`). Exit code 1 on clashes, conflicts or errors |
+| `wsh-lab mirror apply --storage S [--dry-run] [--quiet]` | makes the links match the file. Idempotent, under a lock (`.wsh-mirror.lock` at the storage's root, an NFS lock on an export: exit code 75 while another run holds it, `--wait SECONDS` to wait). It never touches a regular file, nor a link it didn't make (its links are listed in `.wsh-mirror-state.json`), except to take over a link that already leads to the same file |
+| `wsh-lab mirror import --storage S [--dry-run]` | **merges**: adds an entry (`origin: import`) for each complete file below a watch directory that no rule or entry covers, named by the default rule; never changes an existing entry |
+| `wsh-lab mirror tidy --storage S [--dry-run] [--include-manual]` | drops entries whose file is gone and writes a moved file's new path into its entry; `import` entries only, unless `--include-manual` |
+| `wsh-lab mirror timer --storage S [--interval 10min] [--remove]` | installs (or removes) a systemd timer that runs `apply --quiet` |
+
+What `apply` does with files that are gone or moved:
+
+- a file that moved (found again by size and sha256) keeps its entry's volume name: `apply` links
+  the name to the new place at once, `tidy` writes the new path into the file;
+- the link of a rule or an imported entry whose file is gone is removed; the link of a **manual**
+  entry is kept and flagged (`tidy --include-manual` drops the entry);
+- when a source's share isn't mounted (its directory is missing or empty), nothing below it counts as
+  gone: links are kept and flagged as unreachable, and `tidy` keeps the entries.
+
+**Renaming** a volume: edit its entry's `name` (or add an entry for a file a rule names) and run
+`apply`; the old link goes, the new one comes. Set the CD drive of VMs that use the old name to the
+new one.
+
+## A changing archive
+
+Torrents still downloading, files copied in by hand: inotify doesn't see writes made on the NFS server
+or by other clients, so a **scheduled job** keeps the links up to date:
+
+```sh
+wsh-lab mirror timer --storage nasmirror --interval 10min    # wsh-lab-mirror-nasmirror.timer
+systemctl list-timers wsh-lab-mirror-nasmirror.timer
+journalctl -u wsh-lab-mirror-nasmirror.service
+wsh-lab mirror timer --storage nasmirror --remove
+```
+
+Each run is an `apply`: new files under a rule (and with `auto_import`, below a watch directory) are
+linked, links of removed files go. Several nodes may run the timer on a shared export: the lock lets one
+run at a time and the others skip that round.
+
+**Incomplete files are never linked**: a file whose name (or a folder above it) matches
+`incomplete.patterns`, or that changed less than `min_age` ago, waits (`plan` lists it as `waiting`).
+Better still, let the download client keep unfinished files in a separate folder outside the watched
+tree and move them in when they are complete (qBittorrent, Transmission and others have an
+"incomplete downloads" folder setting).
+
+## Linking by hand: `link`, `sync`, `list`
+
+Without a description file:
+
+```sh
+# link every ISO and floppy image below a folder (again later: only what is new)
 wsh-lab mirror sync /mnt/pve/nas/media --storage mirror
 wsh-lab mirror sync /mnt/pve/nas/media --storage mirror --prune --dry-run   # what would change
 wsh-lab mirror sync /mnt/pve/nas/media --storage mirror --prune
@@ -61,35 +228,40 @@ wsh-lab mirror link /mnt/pve/nas/media/odd/name.iso --storage mirror --as Odd__n
 wsh-lab mirror list --storage mirror
 ```
 
+`link` and `sync` write absolute link targets (`--links relative` or `auto` for relative ones).
+`--prune` removes links whose target is gone **or outside the synced tree**: keep one mirror storage
+per tree, or links made with `link` from other places are pruned. `sync` refuses a storage that has a
+description file; use `import` and `apply` there.
+
+## Names and safety
+
 - **Content by extension**: `.iso` is an ISO; `.ima` and `.vfd` are floppies; `.img` (both kinds use
-  it) is a floppy up to 2.88 MB and an ISO above, unless `link --content iso|floppy` or
-  `sync --img-as iso|floppy` says otherwise.
+  it) is a floppy up to 2.88 MB and an ISO above, unless `link --content`, `sync --img-as`, a rule's
+  `img_as` or an entry's `content` says otherwise.
 - **Names**: each folder and file name is cleaned the way PVE cleans an uploaded file's name:
-  characters other than `A-Z a-z 0-9 _ . -` become `_` (a run of them one `_`), so no space or
-  comma reaches a VM config. The result must split back on `__` into the same parts, so a folder or
-  file name that contains `__` and a folder whose name ends in `_` are **refused**: rename it on the
-  NAS, or link it by hand with `--as`. `sync` reports such files, and two files that would get the
-  same name, as conflicts (exit code 1) and links the rest.
-- **Safety**: the tool only creates, replaces (`link --force`) and removes symlinks. A regular file of
-  the same name in the storage is never touched (a conflict); link targets are absolute paths. It
-  refuses a storage that isn't of type `dir` and one without `iso` or `floppy` content, and reads the
-  storage's paths, `content-dirs` included, from `/etc/pve/storage.cfg`.
-- **`--prune`** removes links whose target is gone **or outside the synced tree**. Keep one mirror
-  storage per tree, or links made with `link` from other places are pruned.
+  characters other than `A-Z a-z 0-9 _ . -` become `_` (a run of them one `_`), so no space or comma
+  reaches a VM config. The result must split back on `__` into the same parts, so a folder or file
+  name that contains `__` and a folder whose name ends in `_` are **refused**: rename the source, or
+  give the file a name of its own (`link --as`, an entry). Two files that would get the same name
+  are a clash, and neither is linked.
+- **Safety**: the tool only creates, replaces and removes symlinks. A regular file of the same name in
+  the storage is never touched (a conflict). It reads the storage's paths, `content-dirs` included,
+  from `/etc/pve/storage.cfg`, refuses storage types that can't hold links and a network storage that
+  isn't mounted (so no link lands in an empty mount point), and warns about a CIFS storage without
+  `mfsymlinks`.
 
 ## Caveats
 
-- **Cluster**: links are plain files on one node's disk, but the targets must be at the same path on
-  every node that runs the VMs (mount the NAS share at the same mount point everywhere). Marking the
-  storage `shared` only makes sense when the link directory itself is shared.
-- **A dangling link hides the volume**: when the NAS is not mounted or a file moved, PVE doesn't list
+- **Absolute links need the same mount path everywhere**: links in a local storage are plain files on
+  one node, and their targets must be at the same path on every node that runs the VMs. Relative links
+  on a shared export (way 2) don't have that problem.
+- **A dangling link hides the volume**: when the share isn't mounted or a file moved, PVE doesn't list
   the volume, and a VM whose drive points at it doesn't start (the CD/DVD drive can be set to "no
-  media" first). `wsh-lab mirror list` shows dangling links; `sync --prune` removes them.
+  media" first). `wsh-lab mirror list` shows dangling links.
 - **Uploads are regular files**: an upload or download from URL into the mirror storage writes a real
-  file in `template/iso` or `template/floppy`, not onto the NAS. `wsh-lab mirror` leaves such files
-  alone.
+  file in `template/iso` or `template/floppy`, not onto the NAS. The tool leaves such files alone.
 - **Write access**: floppy drives are writable by default, and a write goes through the link to the
-  NAS file. Add `ro=1` to the drive for reference media.
+  file. Add `ro=1` to the drive for reference media.
 - **Install targets** find a medium by name first, then by size and sha256 among the storage's
   volumes: `wsh-lab media` and `wsh-lab install --media-storage mirror` find
   `Solaris__2.6__solaris_2.6_598_sparc.iso` as `solaris_2.6_598_sparc.iso`

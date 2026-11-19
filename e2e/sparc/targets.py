@@ -102,6 +102,8 @@ PACKAGES_2026_11_19_WSH22 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+ws
 # from 0001-0025 mounted over the package's (0025 isn't in a package yet)
 PACKAGES_2026_11_19_WSH23 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23"}
 PACKAGES_2026_11_19_SUN4U89 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23 + openbios 0025"}
+# the NetBSD 9.3 targets (published packages)
+PACKAGES_2026_11_19_NB93 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9.2.19+wsh2", "pve-manager": "9.2.31+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -196,6 +198,17 @@ MEDIA = {
         "sha256": "4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636",
         "lab": "other-os/NetBSD-11.1-sparc.iso",
         "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc.iso"},
+    # NetBSD 9.3: the release moved to archive.netbsd.org (both SHA512s match its images/SHA512)
+    "NetBSD-9.3-sparc64.iso": {
+        "title": "NetBSD 9.3 sparc64 install CD (archive.netbsd.org)", "content": "iso", "size": 366673920,
+        "sha256": "0db1b0bcde6c718d3f97fcade7d7dc31c030ab696d989ca45b431b8ac4d78a29",
+        "lab": "other-os/NetBSD-9.3-sparc64.iso",
+        "url": "https://archive.netbsd.org/pub/NetBSD-archive/NetBSD-9.3/images/NetBSD-9.3-sparc64.iso"},
+    "NetBSD-9.3-sparc.iso": {
+        "title": "NetBSD 9.3 sparc install CD (archive.netbsd.org)", "content": "iso", "size": 270991360,
+        "sha256": "cc60918c249c7382b418c7a7da8040298ccef201d65087de12f0ed49629fa91e",
+        "lab": "other-os/NetBSD-9.3-sparc.iso",
+        "url": "https://archive.netbsd.org/pub/NetBSD-archive/NetBSD-9.3/images/NetBSD-9.3-sparc.iso"},
     "install80.iso": {
         "title": "OpenBSD 8.0 sparc64 install CD (cdn.openbsd.org)", "content": "iso", "size": 467599360,
         "sha256": "b8a80e5a10424ef32863d28dac7ae343666adfcfe0bbdfb4fc0230c130a560cb",
@@ -840,7 +853,7 @@ TARGETS = {
     # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
     # support), End User. Both need openbios-sparc64 with patch 0024 (pp is NULL or free; pve-qemu-kvm
-    # 11.1.3-2+wsh23 and later), 9 also 0025 (no ebus floppy node: its first, reconfiguring boot
+    # 11.1.3-2+wsh23 and later), 9 also 0025 (pve-qemu-kvm 11.1.3-2+wsh25 and later; no ebus floppy node: its first, reconfiguring boot
     # panicked in the fd driver; 8 only warns). A reboot doesn't
     # come back on sun4u: the scenario stops the VM at `0 >` after the install (as sol10-sun4u), and
     # 8's reboot into the mini-root is a power cycle through PVE (lab.PveMachine.power_cycle()).
@@ -848,9 +861,6 @@ TARGETS = {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 9 9/05 End User on sun4u (OpenBIOS, IDE disk)",
         "status": "automated",
-        # remove once a published pve-qemu-kvm has openbios 0025
-        "matrix_skip": "needs openbios-sparc64 with patch 0025 (the ebus floppy node), which no published"
-                       " pve-qemu-kvm has yet: with the package's firmware the first boot panics in fd",
         "install": {"scenario": "solaris-webstart-serial.py",
                     "vars": {"TIMEZONE": "MET", "SOFTWARE": "4", "DISK": "c0t0d0", "PROMPT_TIMEOUT": "5400"},
                     "timeout": 9000, "root_password": True},
@@ -964,6 +974,55 @@ TARGETS = {
         "hostname": "netbsd111-ss20",
         "minutes": 7,  # 6.7-7.3 min: install 3.5, first boot 2, --check 1
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
+    },
+    # NetBSD 9.3: the 11.1 targets' profiles, scenarios and answers; 9.3's sysinst has no root password
+    # prompt and no entropy question after the sets (_netbsd.AFTER_SETS)
+    "netbsd93-sparc64": {
+        **NETBSD_SCRIPTED,
+        "title": "NetBSD 9.3 sparc64 without X11 (sun4u, OpenBIOS)",
+        "status": "automated",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},
+        "media": [{"name": "NetBSD-9.3-sparc64.iso", "drive": "ide2"}],
+        "install": {"scenario": "netbsd-install-sparc64.py", "vars": {"SETS": "b"}, "timeout": 2400},
+        "check": netbsd_check("wd0"),
+        "boot": "ide0",
+        "nic": "hme0",
+        "hostname": "netbsd93-sparc64",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "minutes": 18,  # 18.4 min: install 13.9 (11.1's: 6-7), first boot 2.4, --check 1.7; boot-test 1.5
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_NB93, "with": "--check --export; boot-test"},
+    },
+    "netbsd93-sparc": {
+        **NETBSD_SCRIPTED,
+        "title": "NetBSD 9.3 sparc Minimal on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "other"},
+        "disk": {"bus": "scsi3", "size": 3, "label": None},
+        "media": [{"name": "NetBSD-9.3-sparc.iso", "drive": "scsi6"}],
+        "install": {"scenario": "netbsd-install-sparc.py", "vars": {"SETS": "c"}, "timeout": 2400},
+        "check": netbsd_check("sd0"),
+        "boot": "scsi3",
+        "nic": "le0",
+        "hostname": "netbsd93-sparc",
+        "minutes": 7,  # 6.8 min: install 3.2, first boot 2, --check 1.2; boot-test of the stored disk 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_NB93, "with": "--check --export; boot-test"},
+    },
+    "netbsd93-sparc-ss20": {
+        **NETBSD_SCRIPTED,
+        "title": "NetBSD 9.3 sparc Minimal on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "other"},
+        "disk": {"bus": "scsi3", "size": 3, "label": None},
+        "media": [{"name": "NetBSD-9.3-sparc.iso", "drive": "scsi6"}],
+        "install": {"scenario": "netbsd-install-sparc.py", "vars": {"SETS": "c"}, "timeout": 2400},
+        "check": netbsd_check("sd0"),
+        "boot": "scsi3",
+        "nic": "le0",
+        "hostname": "netbsd93-ss20",
+        "minutes": 6,  # 6.1 min: install 2.8, first boot 2, --check 0.9
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_NB93, "with": "--check --export; boot-test"},
     },
     # Kickstart from an answer CD made on the node (answer_media.py) on scsi5, the first CD-ROM Linux
     # finds; SILO's three screens, which 6.2's kickstart doesn't skip on SPARC, answered by the

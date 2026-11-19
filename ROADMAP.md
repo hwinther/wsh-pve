@@ -63,8 +63,10 @@ come after that, not before.
 | Solaris 7/8/9 on sun4u: OpenBIOS 0024 lists `/memory` `available` in whole pages, which ends `boot_alloc: pp is NULL or free` (claims recorded to the byte left entries starting inside a page; Solaris 7-9 counted them one page short and a later boot allocation got the missing page). 7, 8 1/01, 8 2/02, 9, 9 9/05 reach the installer with 1 and 2 GB; 8 2/02 and 9 9/05 install and boot to `console login:` in the lab (1 GB); upstream note | in review | |
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
 | Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
+| Install targets: NetBSD 9.3 on sun4u, SS-5 and SS-20 (`netbsd93-sparc64`, `netbsd93-sparc`, `netbsd93-sparc-ss20`) with the 11.1 targets' profiles and sysinst answers; 9.3's sysinst goes from the sets straight to its configuration menu (no root password prompt, no entropy question), handled in `_netbsd.sysinst` with tests for both releases; installed through PVE with `--check --export` and boot-tested from the stored disks (sun4u 18 min, SS-5 7, SS-20 6; boot tests 1.2-1.5 min) | in review | |
 | Install targets: Solaris 9 9/05 and 8 2/02 on sun4u (`sol9-sun4u`, `sol8-sun4u`, End User 64-bit, Web Start through PVE); OpenBIOS 0025 leaves out the ebus floppy node (a zero-sized `reg` for hardware QEMU's sun4u doesn't have; Solaris 9's first boot panicked in `fd`); the reboot that returns on sun4u is handled by the tool: the VM is stopped at `0 >` after the install, and 8's reboot into its mini-root is a power cycle through PVE (`PveMachine.power_cycle()`) | in review | |
-| Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | in review | |
+| Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | merged | #345 |
+| Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
 
 ## In progress
@@ -99,8 +101,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      lab 7, 8 1/01, 8 2/02, 9 and 9 9/05 reach their installers with 1 and 2 GB; 8 2/02 and 9 9/05
      install to the IDE disk with 1 GB and boot to `console login:`; the install targets
      `sol9-sun4u` and `sol8-sun4u` do it through PVE (the floppy node: OpenBIOS 0025; the reboot:
-     the tool stops the VM, and power-cycles it for 8's mini-root). Open: a `pve-qemu-kvm` with
-     0025 (until then `sol9-sun4u` needs the firmware from `openbios/`; `matrix_skip` until then), the
+     the tool stops the VM, and power-cycles it for 8's mini-root). 0025 is in pve-qemu-kvm 11.1.3-2+wsh25. Open: the
      firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
      exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
@@ -180,41 +181,6 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Later
 
-- **Mirror storage, step 2b: four ways to use it, a description file, and keeping up with a changing
-  archive.** Steps 1 and 2 are done ("Done", `docs/src/content/docs/reference/mirror.md`). The user
-  picks a level; none is forced:
-  0. plain files renamed with `__` in any ISO/floppy storage: the UI shows folders, no links or tool;
-  1. one node: the mirror is a local `dir` (or `btrfs`) storage of links to anything mounted;
-  2. a cluster: ISOs and mirror on the same NFS (or CephFS; CIFS only with `mfsymlinks`), with
-     **relative** links when source and mirror share an export, so the mount path doesn't matter;
-  3. an externally managed tree (a VMware migration, archive.org torrents kept as they are for
-     seeding, plus hand-made folders) stitched into one PVE-friendly tree. The source needn't be a
-     PVE storage (an fstab mount, or a storage whose content isn't iso); as a PVE ISO storage it
-     would look empty, since PVE lists only files directly in `template/iso`.
-  A **description file** (`wsh-mirror.yaml` at the mirror storage's root, invisible to PVE) is the
-  source of truth and the links are derived from it: rules (source dir or glob → folder prefix,
-  excludes) and single entries (explicit names, each with `origin: manual|import`), comments.
-  `wsh-lab mirror plan` shows the difference to the source (new unmatched files, entries whose target
-  is gone, files that look moved: same size and sha256 at a new path, name clashes); `apply` makes the
-  links match the file (idempotent, never touches regular files); `import` **merges**: it adds only
-  files no rule or entry covers and never changes existing entries; `tidy [--dry-run]` removes
-  entries whose target is gone and follows moved files, `import` entries only unless asked. Rename =
-  edit the file + `apply`. In case 2 the file lives on the NFS with the links (one `apply` with
-  `flock` serves the cluster); per-node mirrors can keep the file in `/etc/pve` instead.
-  **A changing archive** (torrents still downloading, files added by hand): inotify doesn't see
-  writes made on the NFS server or by other clients, so a scheduled job runs `apply`, set up by the
-  lab tool (`wsh-lab mirror timer --interval 10min` installs and removes it); nothing else (no path
-  units or torrent-client hooks). Incomplete files are never linked: name patterns (`*.part`,
-  `*.!qB`, `*.incomplete`), a minimum age since the last change (e.g. 5 min) or the same size on two
-  runs, and the advice to use the client's separate incomplete folder. New files under a rule are
-  linked automatically; others follow a default rule (`auto_import: true`, the relative path joined
-  with `__`) or wait in `plan`. Links of rule/import entries whose file is gone are removed; manual
-  entries are only flagged.
-  Tests, one per case: 0 renamed files in a `dir` storage; 1 local links (as in step 2); 2 an NFS
-  export from a helper container in the e2e compose network (userspace `nfs-ganesha`, so no `nfsd`
-  module on the runner), mounted as a PVE NFS storage, with relative links checked through two mount
-  paths; 3 `plan`/`apply`/`import`/`tidy` against a changing source tree (added, removed, moved,
-  still-downloading files).
 - **Mirror storage, step 3.** Next: a rename API for `iso` and `floppy` volumes in libpve-storage-perl (a link or a file renamed
   in place, so folders can be reorganised from the UI), and an "add link from another storage" call
   (link a volume of one storage, an NFS or CIFS storage's ISO, into the mirror storage under a folder

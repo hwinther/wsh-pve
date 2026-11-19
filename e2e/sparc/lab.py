@@ -16,6 +16,8 @@ Install a target: lab.py install sol26-ss5 --vmid 120 [--out DIR]   (on the PVE 
                   lab.py targets | lab.py media [<target>]
 Mirror storage:   lab.py mirror sync /mnt/nas/media --storage mirror [--prune]   (symlinks; see mirror.py)
                   lab.py mirror link <file> [--root DIR | --as NAME] | lab.py mirror list
+                  lab.py mirror init|plan|apply|import|tidy --storage mirror   (from wsh-mirror.yaml)
+                  lab.py mirror timer --storage mirror --interval 10min [--remove]
 
 The wsh-lab package installs it as `wsh-lab` (wsh-lab install ..., wsh-lab targets, ...), with the
 scenarios in /usr/share/wsh-lab/scenarios.
@@ -1214,7 +1216,7 @@ def main():
     import install  # install targets (install.py, targets.py): `install`, `targets`, `media`
 
     install.add_commands(sub)
-    import mirror  # a mirror storage of symlinks (mirror.py): `mirror link|sync|list`
+    import mirror  # a mirror storage of symlinks (mirror.py): `mirror link|sync|list|init|plan|apply|...`
 
     mirror.add_commands(sub)
     a = p.parse_args()

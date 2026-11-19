@@ -2542,7 +2542,7 @@ on the host at once, 2026-11-19):
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
-install matrix ran on the same host at the time). `sol9-sun4u` has `matrix_skip` until a published package has 0025;
+install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
 `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after

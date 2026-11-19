@@ -785,8 +785,8 @@ two runs and wasn't diagnosed.
 run the same `solaris-webstart-serial.py` on the sparc64 profile of `sol10-sun4u` (1024 MB, `sunhme`,
 `vga: serial0`) with a blank 8 GiB disk on `ide0` and the media on `ide2`, End User. They need
 `openbios-sparc64` with patch 0024 (pve-qemu-kvm 11.1.3-2+wsh23 or later); `sol9-sun4u` also needs
-0025 (the ebus floppy node left out; without it 9's first boot panics in `fd`), which isn't in a
-package yet (`submodules/SPARC.md`, "Solaris 8 and 9 install targets on sun4u"). What the scenario
+0025 (the ebus floppy node left out; without it 9's first boot panics in `fd`), in pve-qemu-kvm
+11.1.3-2+wsh25 and later (`submodules/SPARC.md`, "Solaris 8 and 9 install targets on sun4u"). What the scenario
 does differently on sun4u (`ARCH` sparc64 from the VM's config, `DISK=c0t0d0`):
 
 - **Boot:** `_sparc32.prom_boot()` lets OpenBIOS boot by itself (`Trying cdrom:f...`/`disk:a`,
@@ -827,7 +827,7 @@ on the host at once, 2026-11-19):
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
-install matrix ran on the same host at the time). `sol9-sun4u` has `matrix_skip` until a published package has 0025;
+install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
 `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
@@ -1070,6 +1070,18 @@ official CDs (`NetBSD-11.1-sparc64.iso`, `NetBSD-11.1-sparc.iso`; their SHA512 m
 3. **Check** (`netbsd-boot-disk.py`, the target's `check` `commands`): logs in with the password,
    records `uname -a`, `hostname`, the marker, `df -k`, the disklabel, `ifconfig -a`, `netstat -rn
    -f inet` and `/etc/resolv.conf`, requires `target=<name>`, `halt -p`.
+
+**NetBSD 9.3** (`netbsd93-sparc64`, `netbsd93-sparc`, `netbsd93-sparc-ss20`): the same profiles,
+scenarios and answers with the 9.3 CDs (`NetBSD-9.3-sparc64.iso`, `NetBSD-9.3-sparc.iso` from
+archive.netbsd.org; their SHA512 matches the release's `images/SHA512`). The one difference in
+sysinst: after the sets 9.3 asks neither for root's password nor about entropy and shows its
+configuration menu at once (root's password is an item there, `***EMPTY***`), so `_netbsd.sysinst()`
+waits for any of `AFTER_SETS` and answers the password and entropy screens only when they come
+(`tests/test_targets.py`, `NetBSDSysinst`). Through PVE (packages of 2026-11-19, pve-qemu-kvm
+11.1.3-2+wsh25), one install each: `netbsd93-sparc64` 18.4 min (install 833 s, first boot 144 s,
+check 103 s; the install phase takes about twice as long as 11.1's, not looked into), `netbsd93-sparc` 6.8 min
+(190 s, 120 s, 72 s), `netbsd93-sparc-ss20` 6.1 min (169 s, 117 s, 53 s); boot tests of the stored
+disks 1.5, 1.3 and 1.2 min.
 
 Network, in NetBSD's own files: static = `/etc/ifconfig.<nic>` (`inet <ip> netmask <mask>`),
 `defaultroute=<gw>` in `/etc/rc.conf`, the address and host name in `/etc/hosts`; DHCP =

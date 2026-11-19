@@ -178,7 +178,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index c616ab9b..31533c36 100644
+index c616ab9b..d3d8c318 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -262,7 +262,7 @@ index c616ab9b..31533c36 100644
              rootdir: gettext('Container'),
              snippets: gettext('Snippets'),
              import: gettext('Import'),
-@@ -1130,6 +1143,51 @@ Ext.define('PVE.Utils', {
+@@ -1130,6 +1143,105 @@ Ext.define('PVE.Utils', {
              return Ext.String.htmlEncode(result);
          },
  
@@ -298,6 +298,60 @@ index c616ab9b..31533c36 100644
 +            return `<span style="opacity: 0.65;">${parts.join(' / ')} / </span>${file}`;
 +        },
 +
++        // the words of an ISO/floppy search ('solaris 2.6'), lower case
++        volume_search_words: function (text) {
++            return (text || '')
++                .toLowerCase()
++                .split(/\s+/)
++                .filter((word) => word !== '');
++        },
++
++        // whether a volume's name contains every word, its folders shown or joined with '__'
++        volume_matches_search: function (data, words) {
++            let parts = PVE.Utils.volume_path_parts(data);
++            let name =
++                `${parts.join(PVE.Utils.mirrorSeparator)} ${parts.join(' / ')}`.toLowerCase();
++            return words.every((word) => name.includes(word));
++        },
++
++        // Focuses the first enabled ISO/floppy search field when its window opens (it becomes the
++        // window's default focus), or when the wizard tab holding it is shown.
++        focus_media_search_on_open: function (field) {
++            let holder = field;
++            while (holder.ownerCt && !(holder.ownerCt instanceof Ext.tab.Panel)) {
++                holder = holder.ownerCt;
++            }
++            let inTab = !!holder.ownerCt;
++            if (!inTab) {
++                holder = field.up('window');
++            }
++            if (!holder || holder.pveMediaSearchFocus) {
++                return;
++            }
++            holder.pveMediaSearchFocus = true;
++            let search = () =>
++                holder
++                    .query('textfield[isMediaSearch]')
++                    .find((f) => f.isVisible(true) && !f.isDisabled());
++            // later again, if the focus went elsewhere: to the Next button clicked, or back to the
++            // Add menu's button when the menu that opened the window closes
++            let refocus = () =>
++                Ext.defer(() => {
++                    if (!holder.destroyed && !holder.containsFocus) {
++                        search()?.focus();
++                    }
++                }, 150);
++            if (inTab) {
++                holder.on('activate', refocus);
++            } else {
++                let defaultFocus = holder.getDefaultFocus;
++                holder.getDefaultFocus = function () {
++                    return search() || defaultFocus.apply(holder, arguments);
++                };
++                holder.on('show', refocus);
++            }
++        },
++
 +        // the file name alone (its folder is the group header), the volume's name as tooltip
 +        render_volume_file: function (value, metaData, record) {
 +            let parts = PVE.Utils.volume_path_parts(record.data);
@@ -314,7 +368,7 @@ index c616ab9b..31533c36 100644
          render_serverity: function (value) {
              return PVE.Utils.log_severity_hash[value] || value;
          },
-@@ -1813,6 +1871,7 @@ Ext.define('PVE.Utils', {
+@@ -1813,6 +1925,7 @@ Ext.define('PVE.Utils', {
              rng: 1,
              tpmstate: 1,
              virtiofs: 10,
@@ -322,7 +376,7 @@ index c616ab9b..31533c36 100644
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1954,8 +2013,8 @@ Ext.define('PVE.Utils', {
+@@ -1954,8 +2067,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -391,10 +445,77 @@ index ceba1561..93d2a335 100644
              clist = PVE.Utils.sortByPreviousUsage(me.vmconfig, me.nodename);
          }
 diff --git a/www/manager6/form/FileSelector.js b/www/manager6/form/FileSelector.js
-index d42fd19a..5dda7da5 100644
+index d42fd19a..bed5e640 100644
 --- a/www/manager6/form/FileSelector.js
 +++ b/www/manager6/form/FileSelector.js
-@@ -103,6 +103,9 @@ Ext.define('PVE.form.FileSelector', {
+@@ -72,6 +72,9 @@ Ext.define('PVE.form.FileSelector', {
+         if (me.archStoreFilter && !me.showForeignArch && Proxmox.NodeArch) {
+             filters.push(me.archStoreFilter);
+         }
++        if (me.searchFilter) {
++            filters.push(me.searchFilter);
++        }
+ 
+         me.store.clearFilter();
+         if (filters.length) {
+@@ -79,6 +82,56 @@ Ext.define('PVE.form.FileSelector', {
+         }
+     },
+ 
++    // The search field above the ISO and floppy selectors (PVE.form.IsoSelector, FloppySelector):
++    // only volumes whose name contains every word of `text`, in any case, folder parts included.
++    // `expand` opens the list with what is left.
++    setSearch: function (text, expand) {
++        let me = this;
++        let words = PVE.Utils.volume_search_words(text);
++        me.searchFilter = words.length
++            ? new Ext.util.Filter({
++                  id: 'pve-file-selector-search',
++                  filterFn: (rec) => PVE.Utils.volume_matches_search(rec.data, words),
++              })
++            : undefined;
++        me.applyFilters();
++        if (expand && words.length && !me.isDisabled()) {
++            me.expand();
++        }
++    },
++
++    // While a search hides entries the selected volume may be one of them: look it up among all of
++    // the storage's volumes too, so the selection and its display stay (ComboBox drops a value it
++    // can't find when the store's filters change, or when the field loses the focus).
++    findHidden: function (field, value) {
++        let me = this;
++        let source = me.searchFilter ? me.store.getData().getSource() : undefined;
++        return source?.findBy((rec) => rec.get(field) === value) || false;
++    },
++
++    findRecord: function (field, value) {
++        let me = this;
++        return me.callParent([field, value]) || me.findHidden(field, value);
++    },
++
++    findRecordByValue: function (value) {
++        let me = this;
++        return me.callParent([value]) || me.findHidden(me.valueField, value);
++    },
++
++    // Enter in the search field: select the first entry the search left. False when there is
++    // nothing to select or it is selected already, so a second Enter submits the dialog.
++    pickFirstMatch: function () {
++        let me = this;
++        let first = me.searchFilter ? me.store.getAt(0) : undefined;
++        if (!first || me.getValue() === first.data.volid) {
++            return false;
++        }
++        me.setValue(first.data.volid);
++        me.collapse();
++        return true;
++    },
++
+     setNodename: function (nodename) {
+         this.setStorage(undefined, nodename);
+     },
+@@ -103,6 +156,9 @@ Ext.define('PVE.form.FileSelector', {
                  dataIndex: 'text',
                  hideable: false,
                  flex: 1,
@@ -406,10 +527,10 @@ index d42fd19a..5dda7da5 100644
                  header: gettext('Format'),
 diff --git a/www/manager6/form/FloppySelector.js b/www/manager6/form/FloppySelector.js
 new file mode 100644
-index 00000000..2277bc65
+index 00000000..e7003d5e
 --- /dev/null
 +++ b/www/manager6/form/FloppySelector.js
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,146 @@
 +Ext.define('PVE.form.FloppySelector', {
 +    extend: 'Ext.container.Container',
 +    alias: 'widget.pveFloppySelector',
@@ -470,14 +591,46 @@ index 00000000..2277bc65
 +
 +    setDisabled: function (disabled) {
 +        let me = this;
++        me.lookup('search').setDisabled(disabled);
 +        me.lookup('storage').setDisabled(disabled);
 +        me.lookup('file').setDisabled(disabled);
 +        return me.callParent([disabled]);
 +    },
 +
++    afterRender: function () {
++        let me = this;
++        me.callParent(arguments);
++        PVE.Utils.focus_media_search_on_open(me.lookup('search'));
++    },
++
 +    referenceHolder: true,
 +
 +    items: [
++        {
++            // filters the image list as you type: every word must be in the volume's name
++            xtype: 'textfield',
++            reference: 'search',
++            isFormField: false,
++            isMediaSearch: true,
++            fieldLabel: gettext('Search'),
++            emptyText: gettext('Words in the name, e.g. solaris 2.6'),
++            cbind: {
++                disabled: '{disabled}',
++                labelWidth: '{labelWidth}',
++                labelAlign: '{labelAlign}',
++            },
++            listeners: {
++                change: function (field, value) {
++                    field.up('pveFloppySelector').lookup('file').setSearch(value, field.hasFocus);
++                },
++                specialkey: function (field, event) {
++                    let file = field.up('pveFloppySelector').lookup('file');
++                    if (event.getKey() === event.ENTER && file.pickFirstMatch()) {
++                        event.stopEvent();
++                    }
++                },
++            },
++        },
 +        {
 +            xtype: 'pveStorageSelector',
 +            reference: 'storage',
@@ -524,6 +677,57 @@ index 00000000..2277bc65
 +        },
 +    ],
 +});
+diff --git a/www/manager6/form/IsoSelector.js b/www/manager6/form/IsoSelector.js
+index b2d94ed3..db4dffca 100644
+--- a/www/manager6/form/IsoSelector.js
++++ b/www/manager6/form/IsoSelector.js
+@@ -58,14 +58,46 @@ Ext.define('PVE.form.IsoSelector', {
+ 
+     setDisabled: function (disabled) {
+         let me = this;
++        me.lookup('search').setDisabled(disabled);
+         me.lookup('storage').setDisabled(disabled);
+         me.lookup('file').setDisabled(disabled);
+         return me.callParent([disabled]);
+     },
+ 
++    afterRender: function () {
++        let me = this;
++        me.callParent(arguments);
++        PVE.Utils.focus_media_search_on_open(me.lookup('search'));
++    },
++
+     referenceHolder: true,
+ 
+     items: [
++        {
++            // filters the image list as you type: every word must be in the volume's name
++            xtype: 'textfield',
++            reference: 'search',
++            isFormField: false,
++            isMediaSearch: true,
++            fieldLabel: gettext('Search'),
++            emptyText: gettext('Words in the name, e.g. solaris 2.6'),
++            cbind: {
++                disabled: '{disabled}',
++                labelWidth: '{labelWidth}',
++                labelAlign: '{labelAlign}',
++            },
++            listeners: {
++                change: function (field, value) {
++                    field.up('pveIsoSelector').lookup('file').setSearch(value, field.hasFocus);
++                },
++                specialkey: function (field, event) {
++                    let file = field.up('pveIsoSelector').lookup('file');
++                    if (event.getKey() === event.ENTER && file.pickFirstMatch()) {
++                        event.stopEvent();
++                    }
++                },
++            },
++        },
+         {
+             xtype: 'pveStorageSelector',
+             reference: 'storage',
 diff --git a/www/manager6/form/NetworkCardSelector.js b/www/manager6/form/NetworkCardSelector.js
 index a6630418..f65137ca 100644
 --- a/www/manager6/form/NetworkCardSelector.js
