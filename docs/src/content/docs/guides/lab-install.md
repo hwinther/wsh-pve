@@ -25,6 +25,10 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol24-ss5` | Solaris 2.4 HW 3/95, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol251-ss5` | Solaris 2.5.1 11/97, End User | as `sol24-ss5` | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
+| `sol23-ss5` | Solaris 2.3 Edition II, End User (Quick Install) | as `sol24-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~11 min |
+| `sol23-ss20` | Solaris 2.3 Edition II, End User (Quick Install) | SS-20, `ss20_v2.25_rom` (Sun PROM), 512 MB, one CPU, otherwise as `sol24-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~10 min |
+| `sol25-ss5` | Solaris 2.5 HW 1/96, End User | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
+| `sol25-ss20` | Solaris 2.5 HW 1/96, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol25-ss5` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
@@ -33,6 +37,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
+| `sunos413u1b-ss5` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
+| `sunos413u1b-ss20` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | SS-20, OpenBIOS, 512 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
@@ -172,6 +178,23 @@ screen and refuses it; the install types the 4-digit year there. 2.4's auto-layo
 slices (`/` 25 MB, `/usr` 108 MB, swap 130 MB, the rest of the disk `/export/home`), and it has no
 `hostname` command. 2.5.1's install ends with its Maintenance Update, which takes most of its time.
 
+**Solaris 2.3 and 2.5** need the same CD-as-disk drive. 2.3 Edition II (`sol23-ss5`, `sol23-ss20`,
+the first release for the SS-5; the SS-20 needs 2.3 or later) boots only under a Sun PROM, like 2.4:
+`ss5.bin` on the SS-5, `ss20_v2.25_rom` on the SS-20 (qemu-server adds `-cpu TI-SuperSparc-50`).
+Its installer asks one question per screen and installs with Quick Install (End User; `/` 17 MB,
+swap 512 MB, `/opt` 9 MB, `/usr` 120 MB, the rest `/export/home`), then reboots by itself. Its
+first boot asks for the root password on its own screen, and the first login may insist on a new
+password: the install types the same one. 2.3 shows the year as 19xx like 2.4 (typed over), keeps
+its clock in 1970 after a reboot, and its `init 5` reboots to the PROM's `ok` instead of powering
+off (stop the VM there). 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
+machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for both.
+
+**SunOS 4.1.3_U1B** (`sunos413u1b-ss5`, `sunos413u1b-ss20`; Solaris 1.1.1B, the first SunOS 4 for
+the SS-5 and SS-20) installs exactly like 4.1.4: the same miniroot, `suninstall` and sys-config
+screens, the same disk layout, network options and refusals, 64 MB during the install. Its CD is a
+plain image (no conversion). Sun lists the kernel patch 101508 for the SS-5's microSPARC-II; the CD's
+kernel and the installed one run without it on QEMU's SS-5. Host name `sunos413`.
+
 ## Media
 
 The media must be on the node's storage (`local` by default, content type ISO image) under these
@@ -181,6 +204,9 @@ software is never part of this project.
 
 | File name | Size (bytes) | sha256 |
 | --- | --- | --- |
+| `Solaris2.3Edition-II.iso` | 426979328 | `e1c85daa46da28704bf21cb0e5bb71471c78516da6550a8230ed89a1f61d1d8f` |
+| `solaris2.5_sparc.iso` | 378101760 | `33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259` |
+| `sunos_4.1.3U1B.iso` | 335851520 | `37bbb203e0e4267bb0977aa9237e777bdda840b03cb5a6044cf777bfe8ebb202` |
 | `solaris_2.4_sparc.iso` | 455819264 | `c23fe150a9963e5dacbfc988fa700c5f2c7506d36ad0b40910e77444709d1fa4` |
 | `solaris_2.5.1_1197.iso` | 452157440 | `18da51043271d0aa69d6fc098b84156673ef4f0728dace4a9e679f79d70d2422` |
 | `solaris_2.6_598_sparc.iso` | 565862400 | `17351669cb91a89562ed6bb23345879c4d18bd019a85085ad53f777e7b7a6b14` |

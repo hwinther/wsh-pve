@@ -1403,6 +1403,51 @@ profiles with OpenBIOS and a serial console. What the guest finds:
 
 The install target (`debian40-ss5`, `debian40-ss20`): `e2e/sparc/README.md`, "Debian GNU/Linux 4.0".
 
+### Older Sun releases on sun4m
+
+Solaris 2.1, 2.2, 2.3 Edition II and 2.5 (HW 1/96), SunOS 4.1.2, 4.1.3 and 4.1.3_U1B, against the
+first release Sun supports on each machine (SS-10: SunOS 4.1.3, Solaris 2.1; SS-20: 4.1.3_U1B, 2.3;
+SS-5: 4.1.3_U1B with patch 101508, 2.3 Edition II). pve-qemu-kvm 11.1.3-2+wsh21, serial console,
+lab first, then through PVE (qemu-server 9.2.19+wsh1). The full table, the times and the scenario
+changes are in `e2e/sparc/README.md`, "Older Sun releases".
+
+| System | Machine, firmware | Result |
+| --- | --- | --- |
+| Solaris 2.3 Edition II | SS-5 `ss5.bin`, SS-20 `ss20_v2.25_rom`, CD as a disk | installs (End User, Quick Install, ~5-6 min) and boots; targets `sol23-ss5`, `sol23-ss20` (~10-11 min through PVE) |
+| Solaris 2.3 Edition II | SS-5 OpenBIOS | `Unhandled Exception 0x00000009` after the boot block, as 2.4 |
+| Solaris 2.5 HW 1/96 | SS-5 and SS-20, OpenBIOS, CD as a disk | installs (~5 min) and boots; targets `sol25-ss5`, `sol25-ss20` (~9 min). From a `scsi-cd` the kernel hangs after its banner |
+| SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
+| Solaris 2.1, 2.2 | SS-10 OpenBIOS | `Unhandled Exception 0x00000009` after the boot block |
+| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, while walking the device tree (64 and 256 MB) |
+| SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
+| SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
+| SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
+
+What it would take for the rest (not tried here; no patch written):
+
+- **OpenBIOS and the Solaris 2.1-2.4 boot block:** the boot program those CDs boot from (an a.out
+  `bootblk` on slice d) prints `(is ?` and ends in `Unhandled Exception 0x00000009` at PC
+  `0xffd076c8` (OpenBIOS's own code) on every sun4m machine; 2.5 and later get past it. Probably a
+  romvec v0/v2 entry or property the old boot program uses that OpenBIOS's `romvec.c` doesn't
+  implement. A fix would let 2.3/2.4 run under OpenBIOS (and the SS-10, whose Sun PROM doesn't run
+  on QEMU) and let 2.1/2.2 try their only supported machine.
+- **Solaris 2.1/2.2 on the SS-20 PROM:** they predate the SS-20 and its SuperSPARC/PROM 2.25 device
+  tree; the panic is a null pointer read in a recursive walk early in the kernel (`pc=0xf002b300`,
+  the traceback calls the same function five levels deep), most likely over the device tree.
+  Either a node their kernels can't handle (find it by removing nodes in QEMU's SS-20 or in the
+  PROM's tree with `nvramrc`) or SS-10 Sun PROM support in QEMU's SS-10 (`Cpu #0 Data Access
+  Error` at its memory probe, "SS-10 and SS-20").
+- **SunOS 4.1.3 (original):** the data access error comes from a device access QEMU doesn't
+  answer, right after the floppy probe (QEMU's sun4m answers unassigned accesses with a data access
+  trap); `-trace` on unassigned accesses (`-d unimp,guest_errors`) would name the address.
+  4.1.3_U1B, which Sun supports on the same SS-10 and the later machines, installs, so this is
+  probably not worth a QEMU change.
+- **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
+  `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
+  first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
+  `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
+  it doesn't run removed. SS-600MP has no profile (Solaris 2.6 refuses it, and 4.1.2 doesn't start).
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the
