@@ -114,8 +114,9 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 | 0023 | client interface: `call-method`/`interpret` store the catch result in `args[nargs]` even with `nret` 0, over the client's stack (OpenBSD 8.0's installed sun4u kernel: stack-protector canary after its `map` call) | wsh-pve | may send | none found | none (the patch's message has the evidence) |
 | 0024 | sparc64: `/memory` `available` lists partial pages (claims recorded to the byte), and Solaris 7/8/9 panic `boot_alloc: pp is NULL or free` on the last page of such an entry | wsh-pve | may send | none found | [openbios-sparc64-memory-available-pages.md](openbios-sparc64-memory-available-pages.md) |
 | 0025 | sparc64: the ebus `fdthree` node has one `reg` entry of size 0 for hardware QEMU's sun4u doesn't have (OBP's has the 82077, the ebus DMA engine and auxio); Solaris 9's `fd` driver panics on it in a reconfiguration boot | wsh-pve | may send | not searched (added 2026-11-19) | [openbios-sparc64-floppy-node.md](openbios-sparc64-floppy-node.md) |
+| 0026 | sparc32 framebuffer console: a BEL from the client (Solaris 2.x, SunOS 4.1.4) inverts the screen and hangs the console: `fb8-blink-screen` waits `2000 ms` (hex) on `obp-ticks`, which stops once the client owns the trap table; also one cell left on the data stack per BEL | wsh-pve | may send | none found (searched 2026-11-20) | [openbios-fb8-blink-screen-hangs-client-console.md](openbios-fb8-blink-screen-hangs-client-console.md) |
 
-Counts: may send 22 (0001, 0003-0011, 0013-0017, 0019-0025), LEMU origin 1 (0002), built on LEMU 1
+Counts: may send 23 (0001, 0003-0011, 0013-0017, 0019-0026), LEMU origin 1 (0002), built on LEMU 1
 (0018), not ready 1 (0012, `.wip`). 0018 is our code, but it exists only for QEMU 0030's wiring of LEMU's CS4231
 (upstream QEMU's codec is a stub that never interrupts), so it goes with the audio patches.
 

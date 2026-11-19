@@ -205,6 +205,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0020-sparc32-keep-the-forth-heap-inside-the-firmwares-own-virtual-range` | The 128K Forth heap was mapped at 0xffce0000, below the 0xffd00000-0xfff00000 range a Sun PROM keeps to; the Solaris 2.3/2.4 kernelmap ends at 0xffd00000 and they panicked: `can't remove OBP hole`. Now above the I/O mappings, inside the firmware's reserved 2 MB | not fixed; same note |
 | `0021-sparc32-take-node-0-as-the-root-node-in-the-romvec-property-operations` | OBP 2.x takes node 0 for the root in `no_proplen`/`no_getprop`/`no_nextprop`; Solaris 2.3 asks for the root's `name` that way, got -1 and panicked (`BAD TRAP: type=9 ... addr=fffff000`) | not fixed; same note |
 | `0022-sparc32-run-the-romvec-calls-with-interrupts-masked` | The romvec handlers ran OpenBIOS at the client's PIL; Solaris 2.4 calls `prom_getproplen()` from its idle thread with interrupts on, and in 2 of 4 boots a second romvec call got into the (non-reentrant) Forth engine meanwhile: `BAD TRAP: type=9 ... addr=0` in OpenBIOS's `c@`. Now PIL 15 for the call, back to the caller's PIL after (sparc64's client interface does the same, 0016) | not fixed; same note |
+| `0026-fb8-blink-screen-dont-wait-on-a-counter-that-may-be-stopped` | Shared Forth code (built into both images; matters on sparc32): BEL on a framebuffer console (cg3, TCX) inverted the screen and then waited `2000 ms` on `obp-ticks`, which only OpenBIOS's own level-14 timer handler advances. Solaris 2.x and SunOS 4.1.4 write their framebuffer console through the romvec with their own trap table installed, so the counter stood still and the console hung with the screen inverted on the first BEL (bash's completion bell). The wait is now at most 100 ms on the counter and at most 20000 reads of it; `2000` was hex (8.2 s at the firmware prompt). Also drops the flag the BEL case left on the data stack ("BEL on the framebuffer console") | not fixed; see `upstream/openbios-fb8-blink-screen-hangs-client-console.md` |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -594,6 +595,63 @@ QEMU stays up. Not reachable through PVE (its serial console is a plain Unix soc
 A fix would be in QEMU's ESCC: a break with an end (clear the bit after a character time, with the
 NUL character a real break leaves in the receiver), so Solaris sees the transition and enters the
 prompt; a candidate for a `wsh/` patch and an upstream report.
+
+### BEL on the framebuffer console
+
+Reported from Solaris 2.6 on an SS-5 (under LEMU, whose OpenBIOS is the same code): on the cg3
+console, Tab in bash with no unique completion turned the white background black, and then the
+console hung. Reproduced in the lab with `scenarios/fb-bell.py` (cg3, console on the framebuffer
+and the Sun keyboard, `boot disk:a -s`, a BEL from `echo B | tr B '\007'` or bash's Tab), stored
+disks copied, `pve-qemu-kvm` 11.1.3-2+wsh25 (firmware 0001-0025):
+
+- The screen inverts and stays inverted; the shell never answers. While hung, `info registers`:
+  PSR `04400fe5` (PIL 15, from 0022), the PC in OpenBIOS's Forth inner interpreter (`semis`,
+  `dovar`, `enterforth`, `next`, `docon` in five samples; symbols from `openbios-builtin.elf.nostrip`
+  of the same sources, whose `.text` is byte-identical to the package's), `$tbr` `0xf0040050`
+  (Solaris's own trap table; SunOS 4.1.4: `0xfe022050`), and `obp_ticks` → `0xffd27cbc` read
+  20970 and again 20970 five seconds later.
+- **Cause:** `fb8-blink-screen` (`forth/device/display.fs`, shared by cg3, TCX and VGA) is
+  "invert, `2000 ms`, invert". `ms` polls `get-msecs`, which on sparc32 reads `obp-ticks`, and only
+  OpenBIOS's level-14 handler `irq_entry14` (`arch/sparc32/vectors.S`) advances it. With the
+  client's trap table installed that handler never runs (and 0022 masks interrupts during the
+  romvec call too), so the wait never ends: the first analysis's guess (the counter stops once the
+  client owns the traps) holds.
+- Two more bugs on the same path: `2000` is hex in that file (the blink at the firmware's own
+  prompt lasted 9-11 s in the screenshots, 0x2000 ms = 8.2 s), and the BEL case of `(term-emit)`
+  leaves `execute-device-method`'s flag for `/screen`'s missing `ring-bell` on the data stack
+  (`0 > 7 emit ok`, then `1 >`).
+- sun4u: `obp-ticks` stays 0 at the prompt (`get-msecs .d` twice, 10 s apart: 0, then 1: the
+  fallback that counts its own calls), so `ms` ends after that many calls and never hung there; the
+  stack leak was there too (`1 >`, `2 >` after two `7 emit`).
+
+**Fix (openbios 0026):** wait at most 100 ms on the counter and at most 20000 reads of it
+(100000 reads took 400-680 ms at the prompt on the lab host, so 80-140 ms when the counter stands
+still), `d#` numbers, and `drop` the flag. Making `ms` itself work under a client would mean
+reading the counter-timer (sparc32) or `%tick` (sparc64) directly; `ms` has no other caller in
+the tree, so the blink is bounded instead.
+
+Results (2026-11-20; "stock" = the package's firmware, "0026" = `openbios/Dockerfile` with
+0001-0026 bind-mounted over it; WAIT 30 s):
+
+| Guest (SS-5, cg3 console) | stock | 0026 |
+| --- | --- | --- |
+| firmware prompt, `7 emit` | inverted 9-11 s, prompt `1 >` | flash of 0-0.2 s, prompt `0 >` |
+| Solaris 2.6, `echo` of a BEL | hung, screen inverted (30 s) | answered; three BELs in a row answered |
+| Solaris 9 9/05, `echo` of a BEL | hung | answered; three answered |
+| Solaris 9 9/05, bash 2.05, `echo /usr/s` + Tab | hung | answered (the flash caught in one screenshot, 0.1 s) |
+| SunOS 4.1.4, `echo` of a BEL | hung | answered; three answered |
+| NetBSD 11.1 (its own wscons console), `echo` of a BEL | answered | answered |
+| Solaris 2.6 on the serial console (`-vga none`), `echo` of a BEL | answered (the BEL went out on ttya) | not run |
+| sun4u prompt (`-vga std`), `7 emit` twice | flash 0.1 s, prompt `2 >` | prompt `0 >` |
+
+Regression with 0026 mounted: `matrix.py smoke` 3 of 3, `matrix.py solaris10` 2 of 2,
+`matrix.py sparc64` (below), and the stored disks `install-sol9-ss5`, `install-netbsd111-sparc`,
+`install-sunos414-ss5` booted to their check commands on a serial console (`solaris-boot-disk.py`,
+`netbsd-boot-disk.py`, `sunos-boot-disk.py`, `-nographic` as `vga: serial0`): all passed, each
+banner showing the 0026 build.
+
+Workaround for packages without 0026: `set bell-style none` in `~/.inputrc`, or a serial display or
+telnet/ssh (guide, "The bell on a framebuffer console").
 
 ### Audio
 
