@@ -39,6 +39,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
 | `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
+| `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs an `openbios-sparc64` with patches 0024 and 0025 (0025 is in no package yet) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
+| `sol8-sun4u` | Solaris 8 2/02, End User (64-bit), Web Start from the Installation CD and Software 1 of 2 (swapped by the install) | as `sol9-sun4u`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso` | `root` / `wshlab` | ~55 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss5` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
@@ -94,6 +96,20 @@ firmware); the tool then runs the install once more, since nothing is on the dis
 With pve-qemu-kvm before `wsh/0034` every sun4u guest has the MAC address 52:54:00:12:34:56
 whatever `net0` says, so two of them on one network clash; with it the guest uses `net0`'s address
 (the [sparc guide](/guides/sparc/#solaris-10)).
+
+`sol9-sun4u` and `sol8-sun4u` are the Web Start installs of `sol9-ss5` and `sol8-ss5` on sun4u: the
+same answers on the serial console (static address on `hme0`, no name service, time zone MET, the root
+password from `--root-password`), End User with 64-bit support, auto-layout on `c0t0d0`. As for
+Solaris 10, a reboot doesn't come back on sun4u (`prom_reboot: reboot call returned!`): the tool
+stops the VM at the firmware prompt after the install and boots the disk. Solaris 8's Installation CD
+copies a mini-root to the disk and reboots into it; there the tool stops the VM and starts it again
+(a power cycle through PVE; a firmware reset isn't enough, OpenBIOS keeps the old memory contents)
+and boots the mini-root's slice at the prompt (`args: -prom-env auto-boot?=false` during the install
+only, as for the sun4m Solaris 8 targets). The first boot of an installed Solaris 9 panics in the
+floppy driver with an `openbios-sparc64` without patch 0025 (OpenBIOS's floppy node, which QEMU's
+sun4u can't back); until a `pve-qemu-kvm` has it, `sol9-sun4u` needs that firmware built from
+`openbios/` in place of the package's. Don't use `reboot` or `init 6` in these guests: stop and start
+the VM.
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
 so its login prompt takes 45-70 minutes), answers the keyboard question with US-English, logs in
@@ -686,7 +702,7 @@ container with the published packages, and the `install` matrix (by hand from th
 workflow) goes through every automated target: a target whose stored disk is missing is installed
 with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
 `reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
-installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
+installed only when `reinstall` names them, and `sol9-sun4u` too, until a published package has OpenBIOS patch 0025. Installing `sol10-sun4u` needs the Solaris 10 DVD in
 the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).

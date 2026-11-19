@@ -1,0 +1,56 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: leave out the ebus floppy node
+
+The ebus got an "fdthree" node with a single reg entry of space 0,
+offset 0 and size 0, and no interrupts. OBP's fdthree on the Ultra 5/10
+has three reg entries, the 82077 registers, the ebus DMA engine and the
+auxio register, plus an interrupt: on that machine the floppy controller
+is driven through the ebus DMA engine.
+
+QEMU's sun4u has none of that hardware: its floppy controller is a
+PC-style ISA FDC at I/O port 0x3f0 behind the ebus's second BAR, created
+without DMA, and the ebus has no DMA engine and no auxio register. So
+there is no reg/interrupt set for the node that a driver for OBP's
+fdthree could use.
+
+With the zero-sized entry, Solaris 8 and 10 print "Out of range register
+specification from device node <fdthree>" and go on; Solaris 9 9/05's
+first, reconfiguring boot after an install loads the fd driver, which
+fails to map the entry and crashes on its way out of attach:
+
+  BAD TRAP: type=31 ... occurred in module "fd" due to a NULL pointer
+  dereference
+  ... ddi_regs_map_setup <- fd_cleanup <- fd_attach
+
+NetBSD lists it as "fdthree at ebus0 addr 0-ffffffff not configured".
+The firmware itself never boots from it either: "-boot a" sets
+boot-device to /obio/SUNW,fdtwo, which only exists on sun4m.
+
+Don't create the node on sun4u (the ebus is sun4u only). The floppy
+driver and its other callers (sun4m's SUNW,fdtwo, x86) are unchanged.
+---
+ drivers/pci.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+index bdf8e22..b83e5a8 100644
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -1182,9 +1182,14 @@ int ebus_config_cb(const pci_config_t *config)
+     fword("device-name");
+     fword("finish-device");
+ 
+-#ifdef CONFIG_DRIVER_FLOPPY
+-    ob_floppy_init(config->path, "fdthree", 0x3f0ULL, 0);
+-#endif
++    /* No floppy node. OBP's "fdthree" on the ebus has three reg entries
++       (the 82077, the ebus DMA engine, the auxio register) and an
++       interrupt, and the controller works through that DMA engine.
++       QEMU's sun4u has a PC-style FDC at I/O 0x3f0 without DMA, no ebus
++       DMA engine and no auxio. The node this built had a single reg entry
++       of size 0: Solaris 9's fd driver crashed on it during a
++       reconfiguration boot (NULL pointer in fd_cleanup), others warned or
++       left it unattached. "-boot a" doesn't lead here either. */
+ #ifdef CONFIG_DRIVER_PC_SERIAL
+     ob_pc_serial_init(config->path, "su", (PCI_BASE_ADDR_1 | 0ULL) << 32, 0x3f8ULL, 0);
+ #endif

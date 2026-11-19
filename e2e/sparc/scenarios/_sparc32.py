@@ -153,7 +153,17 @@ def prom_boot(m, v, target):
     keyboard ("Keyboard Present", the lab's own QEMU with -vga none) input stays on the keyboard
     while output goes to ttya, so `ttya io` is typed on the keyboard first; without one ("No
     Keyboard": QEMU's -nographic, which qemu-server passes for `vga: serialN`) the PROM reads ttya
-    already."""
+    already.
+
+    A sun4u VM through PVE (ARCH sparc64, from lab.pve_vars; the Solaris 8/9 sun4u targets share these
+    scenarios): qemu-server passes the boot device as `-boot order=c|d` and OpenBIOS boots it by
+    itself ("Trying disk:a..."); with `auto-boot?` false (an install's prom_env) it stops at `0 >`,
+    where the `cdrom:f` or `disk:a` alias is booted."""
+    if v.get("ARCH") == "sparc64":
+        if m.expect_any([r"0 >", r"Trying \S+\.\.\."], 300) == 0:
+            m.snap("OpenBIOS prompt")
+            m.send(f"boot {'cdrom:f' if target == 'cdrom' else 'disk:a'}\r")
+        return
     if v["BIOS"].startswith("openbios"):
         if target == "cdrom" and v["CDROM_AS"] != "hd" and v.get("BOOT", "d") == "d":
             return  # -boot d: OpenBIOS boots the CD by itself
