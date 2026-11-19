@@ -85,7 +85,7 @@ class Catalogue(unittest.TestCase):
                 cpus = int(p.get("sockets", 1)) * int(p.get("cores", 1))
                 self.assertNotIn("cpu", p)
                 if p["arch"] == "sparc":
-                    prof = s32[p["machine"]]
+                    prof = s32[p["machine"].split(",")[0]]  # the type, without machine options
                     self.assertIn(p["bios"], prof["firmware"])
                     self.assertLessEqual(int(p["memory"]), prof["max-memory"])
                     self.assertLessEqual(cpus, prof["firmware"][p["bios"]]["max-cpus"])
@@ -1121,7 +1121,8 @@ class NeXT(unittest.TestCase):
         # TCX, which NeXT's S24 driver drives (it has no cg3 driver)
         for name in self.names:
             p = targets.TARGETS[name]["profile"]
-            self.assertEqual((p["arch"], p["machine"], p["bios"], p["vga"]), ("sparc", "SS-5", "ss5.bin", "tcx"))
+            self.assertEqual((p["arch"], p["machine"], p["bios"], p["vga"]),
+                             ("sparc", "SS-5,esp-irq-latency=500", "ss5.bin", "tcx"))
             self.assertEqual(targets.TARGETS[name]["disk"], {"bus": "scsi3", "size": 2, "label": None})
 
     def test_media_are_local(self):

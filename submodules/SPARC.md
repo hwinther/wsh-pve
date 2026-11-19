@@ -71,6 +71,8 @@ maintains the patches.
 | `0037-tests-qtest-test-that-a-tick-during-a-softint-write-` | qtest `sun4u-softint-test` for 0036: a boot PROM sets and clears soft interrupt 1 in a loop with interrupts off while 10 us ticks fire, and counts the ticks it sees and loses; passes after 20000 ticks with none lost | ours (in review) | not in QEMU |
 | `0038-esp-don-t-count-the-message-out-bytes-as-part-of-the` | `esp_cdb_ready()` counted the IDENTIFY and other message out bytes in the command FIFO as CDB bytes. Linux 2.6.18's `esp` driver (Debian 4.0 on SS-5) selects with ATN and Stop, sends a 5-byte SDTR message and then the CDB one byte per Transfer Information: its first CDB byte alone made a "complete" 6-byte command, the target answered ILLEGAL REQUEST and Linux reset the bus and took the disk and CD-ROM offline. Only the bytes after the messages count now | ours (in review) | not fixed; see `upstream/qemu-esp-cdb-ready-after-message-out.md` |
 | `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
+| `0040-esp-let-the-interrupt-come-late-as-from-a-real-targe` | The ESP finishes a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `irq-latency-us`, 0 (off) on every machine: set, the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). Per VM through qemu-server's `machine: SS-5,esp-irq-latency=500` ("qemu-server"). At 500 every ESP interrupt comes 0.5 ms later, about 2 ms per disk command, so it stays off unless a guest needs it ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
+| `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): by default the interrupt comes at once; with `-global sysbus-esp.irq-latency-us=500`, after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -139,6 +141,17 @@ passed 30 of 30 runs with 0036 (20 001-20 399 ticks each, none lost, under a sec
 30 of 30 without it, each run losing a tick within its first three. `sun4m-esp-test` passes with
 0038 and fails without it (the first CDB byte after the SDTR message already ends the command
 phase).
+
+0001-0041 apply to 11.1.3 with `patch -F0` (the whole series, Proxmox's patches included, from
+`pve-qemu.patch` onto a fresh tree: the result is the tree the binaries below were built from).
+`sun4m-esp-test` passes 5/5 with 0040-0041; with 0040 left out the three cases that set the
+latency don't start (no such property) and `irq-latency-default-off` passes. (The first versions of
+0040 set 500 on every sun4m machine; with that one left out, `irq-latency` failed with STAT_INT
+right after the selection.) With 0001-0041 the `qtest-sparc` and
+`qtest-sparc64` suites: 40 OK, 4 skipped, and the two `qmp-test` `oob` failures as before;
+`am53c974-test` (i386) 12/12. A save and load by hand (`migrate` to a file 100 us after a
+selection, `-incoming` from it, qtest clock) kept the pending interrupt: none right after `cont`,
+STAT_INT and the line 500 us later. Lab results under "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
 Carried back from the port of these patches to a LEMU fork (its `feat/sparc-fixes` branch), into
 the existing patches: 0023's helper takes `disp_nrunnable`'s address as physical when the MMU is
@@ -223,6 +236,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0016-sparc64-client-interface-runs-with-interrupts-disabled` | The client interface walked `%cwp` through every window and rewrote the trap registers (saving and restoring the caller's state) with the caller's `PSTATE.IE`. Solaris and illumos call in with interrupts enabled and their own trap table: an interrupt in between overwrote the caller's windows. Tribblix's live CD stopped on most boots (corrupted locals after a call, `bad stack overflow at TL 2`); Solaris 10's one `BAD TRAP: type=4e` in the firmware was the same. Interrupts are now off from entry until the caller's `%pstate` is written back ("Tribblix on sun4u") | not fixed; see `upstream/openbios-sparc64-client-interface-interrupts.md` |
 | `0017-sparc64-fcode-put-xa-plus-and-xa1-plus-into-the-64-bit-table` | The 64-bit FCode table had the entries for `xa+` (0x24a) and `xa1+` (0x24b) commented out, so every token from 0x24a on ran the word two places further down (`xlsplit` ran `xwflips`). The illumos ZFS boot block uses `xlsplit`: a Tribblix ZFS root disk stopped with `Unhandled Exception 0x30` right after the boot block had loaded its file system package; now it boots ("Tribblix on sun4u"). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-fcode-64bit-token-table.md` |
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
+| `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -1554,11 +1568,12 @@ What it would take for the rest:
 
 NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach ran on single-CPU microSPARC II and SuperSPARC machines (NeXT's
 list: SS-4, SS-5 85/110, SS-10, SS-20; no SMP, HyperSPARC or TurboSPARC). The QEMU wiki calls them
-"partially working" on sun4m: they hang on disk access. They still do with our ESP fixes, and the
-cause is now known: QEMU's ESP raises its interrupt too early for NeXT's SCSI driver (below). With an
-experimental QEMU that asserts the ESP interrupt 500 us late, both install on an SS-5 and boot to
-the Workspace. Lab only (no PVE run: the published package hangs), 2026-11-19, pve-qemu-kvm
-11.1.3-2+wsh21 and +wsh22 (a rebuild with the same patches) and a local build.
+"partially working" on sun4m: they hang on disk access. They still do with our ESP fixes up to
+`wsh/0039`, and the cause is known: QEMU's ESP raises its interrupt too early for NeXT's SCSI driver
+(below). pve-qemu patch `wsh/0040` makes the sun4m ESP's interrupt come 500 us after the event; with
+the whole series (0001-0041) both install on an SS-5 and boot to the Workspace. Lab only (no PVE
+run: no package has 0040 yet), 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh21 and +wsh22 (a rebuild with
+the same patches) and local builds.
 
 Media (both carry a Sun label, so OpenBIOS and OBP boot them): `nextstep33_risc.iso`, the NeXTSTEP 3.3
 User CD for SPARC and PA-RISC (a SPARC + hppa kernel), and `Openstep-4.2-Intel-User.iso`, which
@@ -1600,6 +1615,10 @@ it, steps of 10 move about 9 pixels).
 | OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | local, 500 us | yes | 3G disk: CD stage 4 min, packages 15 min | `ss5.bin` with `-v`: Workspace | |
 | NeXTSTEP 3.3 | SS-20 | OpenBIOS | local, 500 us | yes | CD stage 2 min | no firmware boots it (below) | |
 | NeXTSTEP 3.3 | SS-5 | OpenBIOS, `ss5.bin` | local, 50 us | | CD stage passed once, then hung during the packages; under `ss5.bin` hung at the SCSI probe | | ESP deadlock |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041, first version of 0040 (only the line late, STAT_INT at once) | yes | 3G disk: CD stage 2.5 min, then hung at 29% of the packages (497 MB, all selected) | | ESP deadlock (`pc` 0xf00c944c, PIL 4) |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 3.3 min, packages 6.6 min (497 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
+| OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 4.2 min, packages 8.5 min (532 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
+| NeXTSTEP 3.3 | SS-5 | `ss5.bin` (CD and disk) | 0001-0041 (off by default), through PVE: VM made by `qm create` with `machine: SS-5,esp-irq-latency=500`, qemu-server with the option | yes (`boot cdrom`) | 3G disk, 256 MB: CD stage 3 min, packages 7.2 min (497 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
 
 **The ESP deadlock.** Every hang has the CPU in a simple-lock spin (`ld [%l0]; cmp %o0, 0; bne`, at
 0xf00c944c in the 3.3 kernel, 0xf00c9f54 in 4.2) with PSR.PIL 4, which is `esp0`'s level (`esp0 at
@@ -1624,16 +1643,93 @@ installs and three first setups to the Workspace; N = 50 hung
 again (the package copy, and the SCSI probe under `ss5.bin`). A fixed delay is a model of the
 target's latency, not a proof that 500 us is always enough.
 
-The fix for the owner to sequence (not in `submodules/*.patch`): that timer in the ESP behind a
-property, say `x-irq-latency-us` on `sysbus-esp` (default 0, today's behaviour, so other machines
-don't change), sun4m setting it, or qemu-server passing `-global sysbus-esp.x-irq-latency-us=500` for
-sparc32; the soft and hard reset cancel the timer, and after migration (`post_load`) the line is
-raised at once when `STAT_INT` is set. A closer model would delay only the completion of a SCSI
-command (data and status phases), as a disk's seek and rotation do. Before it becomes the default the
-regressions to run are the Solaris, SunOS, NetBSD, Red Hat and Debian installs and `bench-disk.py`
-(every interrupt 0.5 ms later). The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to
-QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
-[#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner.
+**The fix, `wsh/0040`, and how to turn it on.** `sysbus-esp` has a property `irq-latency-us`, 0
+(off) on every machine, so nothing changes unless a VM asks for it. NeXTSTEP 3.3 and OPENSTEP 4.2
+need it at 500, no other guest does:
+
+- in the web UI: Hardware → Machine, Advanced → "SCSI IRQ delay (µs)" = 500 (sparc32 VMs only);
+- `qm set <vmid> --machine SS-5,esp-irq-latency=500` (the `machine` property string: qemu-server
+  emits `-global sysbus-esp.irq-latency-us=500`; refused on other architectures; "qemu-server");
+- QEMU directly: `-global sysbus-esp.irq-latency-us=500`.
+
+It costs about 2 ms per disk command (the table below), which is why it isn't the sun4m default: the
+first versions of this branch set 500 on every sun4m machine, and the owner turned that down (raw
+reads 70 → 20 MB/s). The property has no `x-` prefix: VM configs carry it through qemu-server, so
+it should stay stable. The
+interrupt as a whole, `STAT_INT` in the status register and the line (one signal on the real chip),
+comes from a `QEMU_CLOCK_VIRTUAL` timer that long after the event; the interrupt register and the bus
+phase are set at once, so OpenBIOS, which polls the interrupt register, sees no change. Reading the
+interrupt register before the timer fires takes the interrupt; the chip's reset command and a device
+reset cancel it; a pending interrupt is migrated (subsection `esp/irq_pending`) and comes a whole
+latency after loading.
+
+The first version of 0040 did what the experiment did, only the line late and `STAT_INT` at once: its
+first NeXTSTEP package install hung at 29%, in the same spin, with the property at 500 (checked in
+`info qtree`). A driver that checks `STAT_INT` right after starting a command sees it end at once,
+which no real target can do, so the status bit had to wait too. The other way, delaying only the end
+of a SCSI command (data and status phases) as a disk's seek does, was not taken: `esp.c` ends commands
+in many places, each would need its own deferral and migration state, while the interrupt has one
+raise and one lower. The price is that every ESP interrupt comes 0.5 ms later, selection and bus
+service included; the regressions and the disk numbers are below. A fixed delay is a model of the
+target's latency, not a proof that 500 us is always enough: each system installed once with the final
+0040. The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to QEMU's issues
+[#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
+[#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner
+(`upstream/qemu-esp-irq-latency.md`).
+
+**Regressions with the latency on every guest** (2026-11-19, the earlier revision of 0040 that set
+500 on every sun4m machine, so every sparc32 case below ran with the delay; the lab host shared with
+other agents and the `sparc lab` workflow, two to four guests at once; `qemu-system-sparc` and `-sparc64` built from the series
+on Debian 13, mounted into the lab image built from main with the published pve-qemu-kvm
+11.1.3-2+wsh22, and bind-mounted over `/usr/bin/qemu-system-sparc` in the e2e PVE image for the
+installs). Install times: the catalogue's `minutes` for comparison, from quieter runs.
+
+| What | Result | Time |
+| --- | --- | --- |
+| `matrix.py smoke` | 3/3 passed (twice: with the first version of 0040 and with the final one) | 2.8, 2.1, 1.3 min |
+| `matrix.py idle` | 13/13 passed; idle QEMU at 2.4-5.9% of a core with the halts (Solaris 2.6 SS-5/SS-20, 2 and 4 CPUs, 2.5.1, SunOS 4.1.4, NetBSD 11.1), 100-198% with them off, no clock drift | 2.8-4.3 min each |
+| `matrix.py machines` | 13/13 passed (SS-10/SS-20 CDs and disks, OpenBIOS and the SS-20 PROM, 512 MB, 2 and 4 CPUs) | 1.0-2.8 min each |
+| `matrix.py smp` | 3/3 passed (`SOAK=600` with the `tar` through `compress` checksum: SS-20 with 2 and 4 CPUs, SS-10 with 2; Dhrystone speed-up 1.96, 3.09, 1.72) | 15-16 min each |
+| `matrix.py sparc64` (sun4u has no ESP; `qemu-system-sparc64` from the same series) | 9/9 passed | 26 s-6 min each |
+| `matrix.py bench`, `benchdisk` | all passed, latency on and off (the table below) | |
+| `install sol26-ss5 --check` (OpenBIOS) | passed | 14.5 min (install 520 s, first boot 222 s, check 114 s; catalogue 12) |
+| `install sol26-ss20 --check` (OpenBIOS) | passed | 14.3 min (504 s, 224 s, 112 s; catalogue 12) |
+| `install sol24-ss5 --check` (OpenBIOS, `cd_as_disk`) | passed | 8.9 min (306 s, 141 s, 73 s; catalogue 8.2-8.3) |
+| `install netbsd111-sparc --check` | passed | 7.5 min (243 s, 124 s, 71 s; catalogue 6.6-6.8) |
+| `install redhat62-ss5 --check` | passed | 6.6 min (170 s, 138 s, 67 s; catalogue 5.3-5.9) |
+| `install sunos414-ss5 --check` | passed | 10.3 min (374 s, 159 s, 58 s; catalogue 6, its install phase 2.2 min) |
+| `install debian40-ss5 --check --gateway --dns` (the container's `vmbr0` NATed out) | passed with a public name server | 26.3 min (1356 s, 124 s, 74 s; catalogue 24) |
+| the same with the lab host's LAN resolver as `--dns` | failed three times at "Configuring apt" ("Bad archive mirror", after the base system had been fetched), twice with the latency and once with it off: the name server, not the ESP | 19-20 min |
+| `debian-install-sparc.py NET=user` (no PVE), latency on and off at the same time | both passed | 19.1 min, 18.4 min |
+
+**Disk numbers, latency on and off.** The same binary twice at the same time on the same host, in
+two lab containers: with the latency at 500 us and with it at 0 (the old behaviour, now the default), the cases of the `bench` and `benchdisk` matrices, one run each. The disk-bound numbers
+move together; the CPU-bound ones (Dhrystone, Whetstone, nawk) moved by up to 30% either way between
+the two runs, which is the shared host, not the ESP.
+
+| Case | Raw read 64 MB (`bench.py` `read_s`, 64 KB blocks) | 64 MB write + `sync` | `lat_fs` 0 KB create / delete per s | Boot to login |
+| --- | --- | --- | --- | --- |
+| SS-5, OpenBIOS | 3.2 s (20 MB/s) vs 0.9 s (71 MB/s) | 2.4 s vs 2.4 s | 135 / 258 vs 327 / 774 | 129 s vs 121 s |
+| SS-5, `ss5.bin` | (not in `bench`) | | 176 / 346 vs 622 / 1334 | 125 s vs 115 s |
+| SS-10, OpenBIOS | (not in `bench`) | | 165 / 316 vs 823 / 1370 | 125 s vs 118 s |
+| SS-20, OpenBIOS | 2.8 s (23 MB/s) vs 0.3 s | 2.4 s vs 1.9 s | 170 / 331 vs 547 / 1317 | 123-129 s vs 115-120 s |
+| SS-20, `ss20_v2.25_rom` | 2.8 s vs 0.4 s | 2.7 s vs 2.2 s | 163 / 328 vs 593 / 1198 | 123-131 s vs 116-119 s |
+| Solaris 2.5.1, SS-5, `ss5.bin` | (not in `bench`) | | (`lat_fs` times nothing on 2.5.1) | 84 s vs 80 s |
+
+Each disk command costs about 2 ms more (four interrupts of 0.5 ms: selection, bus service, status,
+disconnect): raw reads in 64 KB blocks fall to about 20 MB/s, synchronous metadata operations to
+roughly a quarter to a third, and a boot takes 6-11% longer; the `bench-disk.py` runs took 4-32%
+longer in all. Installs that write many small files feel it most: SunOS 4.1.4's install phase took
+374 s against the catalogue's 132 s. 20 MB/s is still twice what the SS-5's fast SCSI bus (10 MB/s)
+could carry. Not tried: a smaller latency, or deferring only the status interrupt (one interrupt per
+command instead of four); either would need the NeXT installs again.
+
+**With the final 0040 (off by default)**, the same day, `qemu-system-sparc` built from 0001-0041
+mounted into the lab image without any `-global`: `smoke` 3/3 (2.6, 1.9, 1.1 min); `bench.py` on SS-5
+with OpenBIOS: raw read 64 MB 0.8 s, write + `sync` 2.5 s, boot 116 s; `bench-disk.py` on the same:
+`lat_fs` 849 creates / 1419 deletes per s, boot 119 s. That is the old speed (the 0-latency column
+above), not the 500 us one. `qtest-sparc`/`qtest-sparc64` as before (40 OK, the two `qmp-test` `oob`
+failures).
 
 **Firmware.**
 
@@ -1661,8 +1757,14 @@ QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
 
 **Through PVE.** The profile exists (SS-5, `ss5.bin`, `vga: tcx`, 256 MB); the CD stage under
 `ss5.bin` ran in the lab, so one firmware suffices. The catalogue lists `nextstep33-ss5` and
-`openstep42-ss5` as blocked until a package carries the ESP fix; then they need framebuffer
-scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`).
+`openstep42-ss5` as blocked until a package carries `wsh/0040`; then they need framebuffer
+scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`). From the
+0001-0041 runs: tesseract can't read Configure's light grey panel (not even "Display"), so the
+scenario has to find Configure another way (a fixed wait after the kernel's network prompt worked,
+or the screen's shape); the Installer's end panel ("Restart") reads fine. The pointer starts near
+(100,100) on both systems, and 40 HMP `mouse_move 10 10` plus 16 `mouse_move 10 0` put it on Save.
+After `ss5.bin` restarts itself at the first `boot disk`, NeXT's 10-second `boot:` countdown can start
+more than 30 s later: typing `-v` for 30 s was too short twice, 60-90 s worked.
 
 ## sparc64 (sun4u)
 
@@ -1888,11 +1990,11 @@ directory, the same source as `openbios/Dockerfile` builds):
 | CD | Where it stops |
 | --- | --- |
 | 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device (fixed in QEMU, below). With 0003-0007 the installer took no input on ttya; 0009 fixes that (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
-| 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules` |
-| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below) |
-| 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free` |
-| 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05) |
-| 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free` |
+| 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules`. With 0024 (2026-11-19): the installer's `Select a Language` at 1024 and 2048 MB |
+| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below). With 0024: the installer at 1024 and 2048 MB; at 1024 MB Web Start installs End User to the IDE disk and the installed system boots to `console login:` (the first, reconfiguring boot panics in the floppy driver: "Solaris 7/8/9 with 0024") |
+| 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free`. With 0024: the installer's `Do you want to format /dev/dsk/c0t0d0?` at 1024 and 2048 MB |
+| 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05). With 0024: the installer at 1024 and 2048 MB; at 1024 MB the mini-root and Web Start install End User to the IDE disk (a fresh QEMU between the two) and the installed system boots to `console login:` |
+| 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free`. With 0024: the installer's `Select a Language` at 1024 and 2048 MB (IDE timeouts and `Interrupt not seen after set_features` on the way) |
 | 2.6 (5/98), 2.5.1 (11/97) | unchanged: `open isn't unique.`, `byte-load: exception caught!` in the boot block |
 
 How each patch moved them (each verified by booting with and without it):
@@ -2233,55 +2335,93 @@ guests on the host): 10 of 10 boots reached `console login:` (boot 425-553 s), n
 one with `hme0` `ether bc:24:11:0:0:1`, `hostid` `80000001` and `ping 10.0.2.2` alive; `init 5`
 powered off each. So no comparison run without 0034 was needed.
 
-**Solaris 7/8/9: `pp is NULL or free`.** After the kernel has built its page structures from the
-boot program's snapshot of `/memory` `available`, further boot allocations must come from pages
-in that snapshot. The page behind Solaris 9's failing allocation is physical `0x3d092000`, near
-the top of 1 GB (`translate` at `0 >` after the panic). OpenBIOS hands out physical memory top
-down. The kernel doesn't know this page: either it was outside the snapshot, or it was freed and
-reused after the snapshot. Not found which. The Solaris 2.6 source (reference) shows the
-mechanism: `boot_getpages` and `page_numtopp`, with page structures built from the boot
-program's `physavail`. Likely places to look: OpenBIOS's byte-granular `ofmem` lists (fragments
-like `0x0011ae64` length 4 in `available`), and whether anything releases physical memory during
-boot.
+**Solaris 7/8/9: `pp is NULL or free` (fixed by OpenBIOS patch 0024).** The kernel builds its page
+structures from the boot program's copy of `/memory` `available`, and every later boot allocation
+must land on a page it has a page structure for. OpenBIOS records claimed physical ranges to the
+byte and builds `available` from the gaps between them; the ELF loader claims the Solaris boot
+program's segments at 0x100000 with their exact sizes, so the list Solaris reads looks like
+`00000000 00100000`, `00123127 00000001`, `00181540 3cef2ac0` (9 9/05, 1024 MB). Solaris 7, 8 and 9
+count an entry that starts inside a page one page short at its top (measured for 8 and 9; 7's
+`kmem_getpages: pp is NULL or free` goes away with the same fix), so they have no page structure
+for the last page of the big entry. OpenBIOS hands out physical memory top down: once the free
+pages under the firmware are used up, the next boot allocation gets exactly that page, and the
+kernel panics. Solaris 10 boots with the same list.
 
-The later updates don't get past it (2026-11-19; pve-qemu-kvm 11.1.3-2+wsh22, its
-`openbios-sparc64` from patches 0001-0023; CD on `ide.1`, serial console, the lab's
-`sparc64-boot-cd.py` and a scratch scenario that reads the firmware's state at `0 >` after the
-panic: `translate` of the failing address through `/virtual-memory`, and the `available` lists).
-8 2/02 (`Generic_108528-13`) and 9 9/05 (`Generic_118558-34`) panic with the same message within a
-minute of power-on; only the caller moved, because each kernel allocates differently in
-`startup_modules` (table above). The physical page behind the failing address is each time one of
-the last pages the firmware handed out, just above the top of what `/memory` `available` still
-lists:
+Evidence (2026-11-19, firmware 0001-0023 plus a scratch debug patch that logs every physical
+claim and release and every client `getprop` of `/memory` `available` with the list it returns;
+CD on `ide.1`, serial console):
 
-| Release, memory | Failing `boot_alloc` | Physical page | Top of `/memory` `available` |
+- 9 9/05, 1024 MB: the kernel reads the list five times; the last read lists `00181540 3cef2ac0`
+  (end `0x3d074000`) and `3fc00000 00120000` under the firmware. Nothing is released during the
+  boot. The boot allocations after that read are 8 KB `claim`s on `/memory` (align 0x1000),
+  answered from `0x3fd1e000` down to `0x3fc00000`, then `0x3d072000`, the last page of the big
+  entry: the panic (`translate` of the failing address at `0 >` gives `0x3d072000`).
+- 8 2/02, 1024 MB: top entry `001410f0 3d254f10` (end `0x3d396000`); the failing 80 KB allocation
+  ends there. 9 9/05, 2048 MB: `00181540 79e7eac0` (end `0x7a000000`); the failing 520 KB
+  allocation ends there.
+
+The earlier reading ("pages handed out after the kernel's snapshot") was wrong: every failing page
+was in the snapshot, the last page of an entry with an unaligned start, and the pages under the
+firmware were never released and claimed again (that was the top-down order of the claims). The
+earlier table of failing allocations:
+
+| Release, memory | Failing `boot_alloc` | First physical page | Top of `/memory` `available` at the panic |
 | --- | --- | --- | --- |
 | 9 9/05, 1024 MB | `0x30000058000`, 8 KB | `0x3d072000` | `0x3d062000` |
 | 9 9/05, 2048 MB | `0x30000146000`, 520 KB | `0x79f7e000` | `0x79f7e000` |
 | 8 2/02, 1024 MB | `0x300001be000`, 80 KB | `0x3d382000` | `0x3d37e000` |
 | 8 2/02, 2048 MB | `0x300001f6000`, 80 KB | `0x7a7ec000` | `0x7a7ea000` |
 
-The kernel heap pages mapped before the failing one came from two places: pages just under the
-firmware at `0x3fc00000`-`0x3fce6000` (claimed, released and claimed again during boot) and the
-first pages above `available`'s top (`0x3d062000`-`0x3d070000` for 9 9/05 at 1 GB; `0x3d37e000`,
-`0x3d380000` for 8 2/02), which passed. The likely reading (not proven: the kernel's own page
-structures weren't inspected) is that the panic comes where the firmware's top-down allocation
-reaches pages the kernel still counts as free: they were in `available` when the kernel took its
-snapshot and built its page structures, the firmware gave them out afterwards, and Solaris 8/9's
-`boot_mapin` insists that every page behind a boot allocation is a page the kernel doesn't own
-(`page_numtopp` returns a page that isn't free). Solaris 10 boots with the same firmware, so its
-kernel either takes the snapshot later or copes with such a page. The mechanism is the firmware's
-physical allocator, not something a later update changed: the stop follows the memory size and
-the top of `available`, not the release.
+Patch 0024 rounds each `/memory` `available` entry to whole pages (start up, end down) and drops
+entries without one, as OBP lists them (`00182000 3cef2000` above; the 1-byte entry goes). The
+allocator is unchanged: a partly claimed page is no longer listed and isn't handed out either.
+With it:
 
-A fix would be in OpenBIOS's `ofmem` (`openbios/patches/`; not attempted here): after the client
-has read `/memory` `available` for its page structures, physical memory that the firmware takes
-for a `claim` (and for its own mappings) must come from pages already outside that snapshot, as
-OBP's allocator arranges, or `available` must keep matching what the kernel later asks for. Ways
-to narrow it down: log every physical allocation in `ofmem` with the caller and compare with the
-kernel's reads of `available` (`getprop`/`getproplen` on `/memory` from the client interface);
-then try allocating bottom-up (lowest free page) instead of top-down, or keep the last
-allocations within the range the firmware had already claimed before the client's first read.
+**Solaris 7/8/9 with 0024** (2026-11-19; pve-qemu-kvm 11.1.3-2+wsh22 with `openbios-sparc64` built
+from 0001-0024 passed as `BIOS=`; sun4u, CD on `ide.1`, a blank 8 GB disk on `ide.0`, serial
+console; installs driven by a scratch wrapper around `solaris-webstart-serial.py` with the disk as
+`c0t0d0`, the 64-bit question answered "64-bit and 32-bit", End User, auto-boot? false):
+
+| Release | 1024 MB | 2048 MB |
+| --- | --- | --- |
+| 9 9/05 DVD (`Generic_118558-34`) | installer; Web Start installs End User to the IDE disk (~67 min, ~53 of them packages); the installed disk boots to `console login:`, root logs in, 64-bit kernel, `hme0` 10.0.2.15, `init 0` to the firmware (after a first boot that panics in `fd`, below) | installer (`Select a Language`) |
+| 9 DVD (`Generic`) | installer (`Select a Language`) | installer |
+| 8 2/02 (`Generic_108528-13`) | installer; mini-root to the swap slice, Web Start from it installs End User (Software 1 of 2 swapped in; ~47 min); the installed disk boots to `console login:`, as 9 9/05 | installer (`Do you want to format`) |
+| 8 1/01 (`Generic_108528-05`) | installer (`Do you want to format`) | installer |
+| 7 3/99 (`Generic_106541-02`) | installer (`Select a Language`), with IDE timeouts and `Interrupt not seen after set_features` on the way | installer |
+
+Installs with 2048 MB and of 9 (original), 8 1/01 and 7 weren't run. What else stood in the way,
+none of it from 0024:
+
+- **The reboot** returns from the firmware (0012, `.wip`): Solaris prints `prom_reboot: reboot call
+  returned!`, panics on it, dumps and exits to `0 >`. For 8's mini-root step that is where the
+  install continues: `boot disk:b` after `reset-all` panicked the mini-root's kernel (`page_free` ←
+  `add_physmem` ← `kphysm_init`; OpenBIOS doesn't clear RAM on reset and the old contents are still
+  there), while a fresh QEMU boots `disk:b` and the install goes on. An install target for 8 would
+  need a power cycle there, as a PVE VM gets with stop and start.
+- **The floppy node.** The first boot of the installed 9 9/05 reconfigures (`Configuring /dev and
+  /devices`) and panics in the floppy driver: `BAD TRAP: type=31 ... occurred in module "fd" due to
+  a NULL pointer dereference`, `ddi_regs_map_setup` ← `fd_cleanup` ← `fd_attach`. OpenBIOS's
+  `fdthree@0,0` under the ebus has one `reg` entry of size 0 (`Out of range register specification
+  from device node <fdthree>`, which 8 and 10 print and survive); 9's driver fails to map it and
+  crashes on the way out of its attach. Renamed at `0 >` before the boot (`"
+  /pci@1f,0/pci@1,1/ebus@1/fdthree" find-device`, `" nofdthree" device-name`, `device-end`) the
+  boot finishes, and later boots (no reconfiguration) reach `console login:` without the rename. A
+  fix belongs in OpenBIOS's ebus floppy node (OBP-like `reg` entries, or no node on sun4u); not
+  attempted.
+- The lab's own early stop: the first 8 2/02 disk boot wanted a manual `fsck` (done in single user,
+  then the boot above) because the wrapper stopped QEMU right after the installer's last Return,
+  before Solaris had synced; the wrapper now waits for the firmware prompt (not repeated for 8).
+
+Regression with the 0001-0024 firmware bind-mounted over the package's (2026-11-19): the `sparc64`
+matrix 9/9, `solaris10` 2/2 (the DVD to the installer, the installed disk to login with DHCP and
+ping), the installed OpenBSD 8.0 disk to `login:` and `halt -p`, the stored Tribblix m34 disk to
+`login:` and `init 5` (`tribblix-boot-disk.py`, 2048 MB, 21 min), and `smoke` 3/3 (the sparc32
+image doesn't get 0024; same sources as the package's).
+
+Targets that would follow once the package has 0024: `sol9-sun4u` (9 9/05, the DVD, Web Start as
+`sol9-ss5` with the sun4u answers above; the first boot needs the floppy node fixed or renamed),
+then `sol8-sun4u` (8 2/02, three CDs, a power cycle after the mini-root copy).
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not
@@ -2718,6 +2858,16 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   four `*-cd-as-disk-*-error.conf`, `hotplug/sparc32-cd-as-disk-*.conf`; e2e
   `sparc-profiles.spec.ts` ("a CD that answers as a disk"); the lab's `sol251-ss5` and `sol24-ss5`
   install targets through PVE. The web UI has no field for it (set with `qm set` or the API).
+- **ESP interrupt latency (NeXTSTEP, OPENSTEP):** `machine: SS-5,esp-irq-latency=500` (any sparc32
+  machine; microseconds, 0-100000, unset or 0 = off) makes qemu-server emit `-global
+  sysbus-esp.irq-latency-us=500` (pve-qemu `wsh/0040`): the ESP's interrupt comes that long after
+  each SCSI event. NeXTSTEP 3.3 and OPENSTEP 4.2 need it ("NeXTSTEP 3.3 and OPENSTEP 4.2"); every
+  other guest is better off without it, as each disk command gets about 2 ms slower at 500. It is a
+  key of the `machine` property string, like `viommu`, so `qm set <vmid> --machine
+  SS-5,esp-irq-latency=500` sets it and the type stays explicit. `assert_esp_irq_latency`
+  (Machine.pm) refuses it on every other architecture, at create, update and start. Tests: qemu-server's
+  `cfg2cmd/sparc32-ss5-esp-irq-latency.conf`, `x86-esp-irq-latency-error.conf`,
+  `sparc64-esp-irq-latency-error.conf`. It takes effect at the next start.
 - **Boot:** sparc64 devices get no `bootindex`; the boot device is `-boot order=c|d` from the boot
   order (`sparc64_boot_device`), and the default boot order of a new sparc64 VM has the CD-ROM first. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
@@ -2813,6 +2963,11 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 8192, sockets, cores
   and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
   the default), Add → Network Device disabled at four NICs.
+- `qemu/MachineEdit.js`: on a sparc32 VM, Hardware → Machine has "SCSI IRQ delay (µs)" behind the
+  Advanced checkbox, below vIOMMU (empty = off), with a hint that only NeXTSTEP 3.3 and OPENSTEP 4.2
+  need it (500 µs); it writes the `esp-irq-latency` key of `machine` and spells out the default
+  machine type when it is set. A save with Advanced collapsed keeps the value. Hidden, disabled and not
+  submitted on other architectures, Advanced or not.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).
 - Selectors: firmware (OpenBIOS, SPARCstation 5/20 PROM), display (TCX, CG3), network (Lance, Sun
   Happy Meal).

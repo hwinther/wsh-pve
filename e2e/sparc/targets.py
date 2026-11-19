@@ -987,19 +987,21 @@ TARGETS["sunos413u1b-ss20"] = {
 # Sun PROM ss5.bin (OpenBIOS stops in NeXT's boot program) and only with `-v` typed at its `boot:`
 # prompt (its boot graphics end in "Data Access Error" on QEMU's 8-bit TCX). README.md and
 # submodules/SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2".
-_NEXT_BLOCKED = ("With the published pve-qemu-kvm the guest's SCSI driver deadlocks (it spins at PIL 4 on a lock"
+_NEXT_BLOCKED = ("Without a delayed ESP interrupt the guest's SCSI driver deadlocks (it spins at PIL 4 on a lock"
                  " that the code it interrupted holds) because QEMU's ESP raises its interrupt in the same"
                  " instruction that starts a command: each of 6 installs with the published packages (11.1.3-2+wsh21 and +wsh22) stopped that way"
-                 " (while mounting root, preparing the disk or copying). A QEMU whose ESP asserts the interrupt 500 us"
-                 " later installed both to the Workspace (50 us wasn't enough); no package has such a fix"
-                 " yet. The install also needs framebuffer scenarios (TCX, keyboard"
-                 " and mouse) and a Sun PROM boot with -v after the CD stage.")
+                 " (while mounting root, preparing the disk or copying). pve-qemu patch wsh/0040 and the VM option"
+                 " machine: SS-5,esp-irq-latency=500 (qemu-server, set in the profile) fix it; the targets wait for"
+                 " published packages with them and for framebuffer scenarios (TCX, keyboard and mouse) and a Sun"
+                 " PROM boot with -v after the CD stage.")
 _NEXT = {
     "status": "catalogue",
     "blocked": _NEXT_BLOCKED,
     "method": "scripted",
     # ss5.bin for the whole install: the CD boots under it, the installed disk only under it
-    "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256, "ostype": "other", "vga": "tcx"},
+    # esp-irq-latency: the ESP's interrupt 500 us after the event, or NeXT's SCSI driver deadlocks
+    "profile": {**SPARC32, "machine": "SS-5,esp-irq-latency=500", "bios": "ss5.bin", "memory": 256, "ostype": "other",
+                "vga": "tcx"},
     "disk": {"bus": "scsi3", "size": 2, "label": None},  # the installer writes its own (NeXT) label
     "boot": "scsi3",
     # the setup ends logged in as `me` (no password; root has none either)

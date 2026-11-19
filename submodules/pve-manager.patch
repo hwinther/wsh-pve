@@ -1288,10 +1288,18 @@ index fdb1802c..1fed396c 100644
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index cd759703..68cc6eef 100644
+index cd759703..d829526e 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
-@@ -51,7 +51,18 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -9,6 +9,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+         },
+         formulas: {
+             q35: (get) => get('type') === 'q35',
++            sparc32: (get) => get('arch') === 'sparc',
+         },
+     },
+ 
+@@ -51,7 +52,18 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              if (defaultMachine === 'pc') {
                  defaultMachine = 'i440fx'; // the default in the backend is 'pc' which means 'i440fx' for the qemu machinetype
              }
@@ -1311,7 +1319,17 @@ index cd759703..68cc6eef 100644
              let store = me.lookup('version').getStore();
              store.clearFilter();
              store.addFilter((val) => val.data.id === 'latest' || val.data.type === type);
-@@ -80,6 +91,11 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -72,7 +84,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+         // arch is a hidden field used only for the machine-default lookup; do not submit it.
+         let arch = values.arch;
+         delete values.arch;
+-        if (values.delete === 'machine' && values.viommu) {
++        // the default machine type with an option set needs the type written out
++        if (values.delete === 'machine' && (values.viommu || values['esp-irq-latency'])) {
+             delete values.delete;
+             values.machine = PVE.qemu.Architecture.defaultMachines[arch];
+         }
+@@ -80,8 +93,13 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              values.machine = values.version;
              delete values.delete;
          }
@@ -1321,9 +1339,12 @@ index cd759703..68cc6eef 100644
 +            }
 +        }
          delete values.version;
-         if (values.delete === 'machine' && !values.viommu) {
+-        if (values.delete === 'machine' && !values.viommu) {
++        if (values.delete === 'machine' && !values.viommu && !values['esp-irq-latency']) {
              return values;
-@@ -91,6 +107,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+         }
+         let ret = {};
+@@ -91,6 +109,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
      setValues: function (values) {
          let me = this;
@@ -1331,9 +1352,11 @@ index cd759703..68cc6eef 100644
  
          let machineConf = PVE.Parser.parsePropertyString(values.machine, 'type');
          values.machine = machineConf.type;
-@@ -117,14 +134,36 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -116,15 +135,38 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+         }
  
          values.viommu = machineConf.viommu || '__default__';
++        values['esp-irq-latency'] = machineConf['esp-irq-latency'] ?? '';
  
 -        if (values.machine !== '__default__' && values.machine !== 'q35') {
 +        // sparc32: SS-5 (the default), SS-10 or SS-20, without versions
@@ -1370,6 +1393,38 @@ index cd759703..68cc6eef 100644
          this.callParent(arguments);
          this.getController().setVersionFilter(values.machine);
          this.getController().setArch(values.arch);
+@@ -240,6 +282,31 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+                 disabled: '{q35}',
+             },
+         },
++        {
++            // sparc32 only, behind Advanced: the ESP's interrupt this many microseconds after the
++            // SCSI event (hidden fields are still submitted, so saving works collapsed too)
++            xtype: 'proxmoxintegerfield',
++            name: 'esp-irq-latency',
++            fieldLabel: gettext('SCSI IRQ delay') + ' (µs)',
++            emptyText: gettext('Off'),
++            minValue: 0,
++            maxValue: 100000,
++            bind: {
++                hidden: '{!sparc32}',
++                disabled: '{!sparc32}',
++            },
++        },
++        {
++            xtype: 'displayfield',
++            userCls: 'pmx-hint',
++            value: gettext(
++                'Only NeXTSTEP 3.3 and OPENSTEP 4.2 need it (500 µs);' +
++                    ' every disk access gets slower.',
++            ),
++            bind: {
++                hidden: '{!sparc32}',
++            },
++        },
+     ],
+ });
+ 
 diff --git a/www/manager6/qemu/MemoryEdit.js b/www/manager6/qemu/MemoryEdit.js
 index 0f6bd656..7037ce12 100644
 --- a/www/manager6/qemu/MemoryEdit.js
