@@ -194,6 +194,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   2.1 stops in QEMU after its device configuration. Next, once a package has them: OpenBIOS targets
   (`sol22-ss10`, `sol23`/`sol24` on SS-5 and SS-20, the SS-20 with more CPUs) through PVE. Each one
   booted and installed by hand first; an install target only for what works.
+  NeXTSTEP 3.3 and OPENSTEP 4.2 (lab, 2026-11-19): the disk hang is still there with our ESP fixes,
+  and it is diagnosed: QEMU's ESP raises its interrupt in the instruction that starts a command, and
+  NeXT's SCSI driver then spins at PIL 4 on a lock the interrupted thread holds. A local QEMU that
+  asserts the ESP interrupt 500 us later installs both on an SS-5 to the Workspace (CD stage under
+  OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`; TCX, keyboard and mouse);
+  the SS-20 has no firmware that boots the installed disk. Next: the ESP latency fix in pve-qemu
+  (proposal and regressions in `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"), then
+  framebuffer scenarios and the catalogue entries `nextstep33-ss5`/`openstep42-ss5` made targets;
+  OpenBIOS's failure on the installed disk (exception 0x21 in NeXT's boot program) is open.
 - **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
   the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
   profile, 8 and 9 on the SS-5 (above). (2.3, 2.5, 2.1 and 2.2 are done: "Done" and the item
@@ -259,6 +268,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
+| NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. A 500 us ESP interrupt latency fixed it in the lab (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"); not in a package |
+| OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
 | A CD that answers as a disk (`cd_as_disk=1`) has no field in the web UI | Set it with `qm set` or the API; the CD/DVD editor keeps it when the medium changes |

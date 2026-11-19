@@ -1494,6 +1494,120 @@ What it would take for the rest:
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
   it doesn't run removed. SS-600MP has no profile (Solaris 2.6 refuses it, and 4.1.2 doesn't start).
 
+### NeXTSTEP 3.3 and OPENSTEP 4.2 on sun4m
+
+NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach ran on single-CPU microSPARC II and SuperSPARC machines (NeXT's
+list: SS-4, SS-5 85/110, SS-10, SS-20; no SMP, HyperSPARC or TurboSPARC). The QEMU wiki calls them
+"partially working" on sun4m: they hang on disk access. They still do with our ESP fixes, and the
+cause is now known: QEMU's ESP raises its interrupt too early for NeXT's SCSI driver (below). With an
+experimental QEMU that asserts the ESP interrupt 500 us late, both install on an SS-5 and boot to
+the Workspace. Lab only (no PVE run: the published package hangs), 2026-11-19, pve-qemu-kvm
+11.1.3-2+wsh21 and +wsh22 (a rebuild with the same patches) and a local build.
+
+Media (both carry a Sun label, so OpenBIOS and OBP boot them): `nextstep33_risc.iso`, the NeXTSTEP 3.3
+User CD for SPARC and PA-RISC (a SPARC + hppa kernel), and `Openstep-4.2-Intel-User.iso`, which
+despite its name also carries SPARC and m68k (an m68k + i386 + SPARC kernel). Their drivers for sun4m:
+`CG14FrameBuffer`, `CG6FrameBuffer`, `S24FrameBuffer` (the TCX), `SCSAController`, `SunLe`,
+`TYPE5Keyboard`, `SUNMouse`, `SunAudio`. No cg3 driver: the TCX is the only QEMU framebuffer they
+can use, and NeXT's S24 driver runs QEMU's 8-bit TCX (`Display: Mode configured: 1024 x 768
+(RGB:256/8)`).
+
+**How the install goes.** Everything is on the framebuffer console with the Sun keyboard: the kernel
+doesn't use ttya even when OpenBIOS's `input-device`/`output-device` are ttya (only the firmware's
+lines show there).
+
+1. The CD: NeXT's `boot` (v3.3.4.17, v40.13.1) asks for the language, loads the kernel, and
+   `/etc/rc.cdrom` asks three text questions (prepare to install, install on this disk, ready), runs
+   `disk -i` (a NeXT label at sector 30; sector 0 gets a Sun label with only its magic and checksum,
+   no slices or geometry), copies the base system (55 MB) and asks for Return to restart. 2-4 min.
+2. The disk: Configure ("Summary of Devices": S24 Graphics Subsystem, SUN Mouse, Sun Lance Ethernet,
+   Sun SCSI, Sun Audio, SUN TYPE5 Keyboard; Save), then the Installer's package list (all selected:
+   NeXTSTEP 293 MB, OPENSTEP 532 MB; Return) and Restart. 6-15 min.
+3. The disk again: the language and keyboard panel, then the Workspace, logged in as `me` (no
+   password; root has none either).
+
+The kernel waits for a network configuration server at each boot until Control-C. `sd0: Illegal
+request; FATAL. op:Mode Sense` appears twice at the SCSI probe (QEMU's scsi-disk doesn't have a mode
+page the driver asks for) and is harmless. The mouse works (QEMU's relative motion; NeXT accelerates
+it, steps of 10 move about 9 pixels).
+
+| System | Machine | Firmware | QEMU | CD boot | Install | Disk boot | Stop point |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS | wsh21 | language prompt in 40 s | hangs, 2 of 2 (disk preparation, base copy) | | ESP deadlock (below) |
+| OPENSTEP 4.2 | SS-5 | OpenBIOS | wsh21 | language prompt | hangs while preparing the disk (1 of 1) | | ESP deadlock |
+| OPENSTEP 4.2 | SS-20 | OpenBIOS | wsh21 | language prompt | hangs at `root on sd1`, before the first question (1 of 1) | | ESP deadlock |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS | wsh22 | language prompt | hangs at `root on sd1`, before the first question (1 of 1) | | ESP deadlock |
+| OPENSTEP 4.2 | SS-5 | OpenBIOS | wsh22 | language prompt | hangs in `/etc/rc` after the kernel's banner, before the first question (1 of 1) | | ESP deadlock |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS | local, no delay | | hangs during the copy (1 of 1) | | ESP deadlock |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | local, 500 us | yes | 3G and 1G disk: CD stage 2-4 min, packages 6 min (64 MB) | `ss5.bin` with `-v`: Workspace | |
+| NeXTSTEP 3.3 | SS-5 | `ss5.bin` (the target's profile) | local, 500 us | yes (`boot cdrom`) | 2G disk, 256 MB: CD stage 3.5 min, packages 6 min | with `-v`: Workspace; 18 min from power-on | |
+| OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | local, 500 us | yes | 3G disk: CD stage 4 min, packages 15 min | `ss5.bin` with `-v`: Workspace | |
+| NeXTSTEP 3.3 | SS-20 | OpenBIOS | local, 500 us | yes | CD stage 2 min | no firmware boots it (below) | |
+| NeXTSTEP 3.3 | SS-5 | OpenBIOS, `ss5.bin` | local, 50 us | | CD stage passed once, then hung during the packages; under `ss5.bin` hung at the SCSI probe | | ESP deadlock |
+
+**The ESP deadlock.** Every hang has the CPU in a simple-lock spin (`ld [%l0]; cmp %o0, 0; bne`, at
+0xf00c944c in the 3.3 kernel, 0xf00c9f54 in 4.2) with PSR.PIL 4, which is `esp0`'s level (`esp0 at
+... pri 4`), for good: timer interrupts go on, the ESP is never touched again (`-trace esp_*`: the
+last access is Enable Selection after the disconnect of a finished 8 KB write), no disk I/O. The
+caller (the window's `%i7` and the saved frame) is the kernel's built-in ESP code `_esp_finish` (an
+exported symbol), which calls the request's completion routine in the `SCSAController` driver, which
+sends `-lock` (`_objc_msgSend`) to a lock object that is already held. The holder is the thread that
+issued the request: it takes that lock, starts the command and releases the lock later, which on a
+real SS-5 always happens before the target answers (milliseconds of seek and rotation). QEMU's ESP
+completes the command in the register write that starts it (selection, the DMA transfer to a cached
+image, message accepted) and raises the interrupt in the same instruction, so the whole
+select-data-status-message-disconnect sequence runs from the first interrupt, at PIL 4, while the
+issuing thread still holds the lock.
+
+Shown with a local build (the lab host's pve-qemu tree with wsh/0001-0027 and an experimental change
+in `hw/scsi/esp.c`, `qemu-system-sparc` mounted over the lab image's): `esp_raise_irq()` sets
+`STAT_INT` as before but asserts the line from a `QEMU_CLOCK_VIRTUAL` timer N us later;
+`esp_lower_irq()` and the soft reset cancel it. N = 0 hangs as the package does; N = 500 ran
+every stage it was given without a hang: five CD stages (NeXTSTEP four, OPENSTEP one), three package
+installs and three first setups to the Workspace; N = 50 hung
+again (the package copy, and the SCSI probe under `ss5.bin`). A fixed delay is a model of the
+target's latency, not a proof that 500 us is always enough.
+
+The fix for the owner to sequence (not in `submodules/*.patch`): that timer in the ESP behind a
+property, say `x-irq-latency-us` on `sysbus-esp` (default 0, today's behaviour, so other machines
+don't change), sun4m setting it, or qemu-server passing `-global sysbus-esp.x-irq-latency-us=500` for
+sparc32; the soft and hard reset cancel the timer, and after migration (`post_load`) the line is
+raised at once when `STAT_INT` is set. A closer model would delay only the completion of a SCSI
+command (data and status phases), as a disk's seek and rotation do. Before it becomes the default the
+regressions to run are the Solaris, SunOS, NetBSD, Red Hat and Debian installs and `bench-disk.py`
+(every interrupt 0.5 ms later). The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to
+QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
+[#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner.
+
+**Firmware.**
+
+- OpenBIOS boots both CDs but not an installed disk: it loads NeXT's boot block, whose boot program
+  (at 0x80000) stops with `Unhandled Exception 0x00000021` (instruction access) at 0x856f8 (3.3) or
+  0x8a1bc (4.2), before its banner, on SS-5 and SS-20. OpenBIOS's `sun-parts` refuses a slice of size 0
+  ("Partition size is 0"), and `disk -i`'s Sun label has none, but a full label written over it
+  (slice a the whole disk) only moved the fault (0x85788). Not diagnosed further; the next step is
+  OpenBIOS's `CONFIG_DEBUG_OBP` output for the boot program's romvec calls, to find the one that
+  answers differently from the Sun PROM.
+- `ss5.bin` boots the installed disk, but its boot graphics ("Boot Graphics" = "Yes" in
+  `/usr/Devices/System.config/Default.table`) end in `Data Access Error` at `ok` when `boot:` times
+  out, on both systems, with 64 or 256 MB. Typed at `boot:`, `-v` boots in text and everything after
+  it works (Configure, the Installer and the Workspace draw on the TCX). Most likely the boot
+  program draws its panel into a TCX plane that QEMU's 8-bit TCX doesn't have; "Boot Graphics" =
+  "No" would avoid it in the guest (not tried).
+- `ss5.bin` after its failed network boot: the first `boot disk` restarts the PROM (`Rebooting with
+  command:`), as on the SS-20 ("cg3 and TCX"); `setenv diag-switch? false` first.
+- `ss20_v2.25_rom` with the TCX: QEMU stops (`qemu: fatal: Trap 0x29 (Data Access Error) while
+  interrupts disabled`, pc 0xf0002198) right after `boot disk`. With OpenBIOS unable to boot the disk,
+  the SS-20 has no way to the second stage.
+- `-a` (ask for the root device) with the CD's kernel: its `root device?` prompt takes no input,
+  neither from the Sun keyboard nor from ttya, so the CD's kernel with root on the disk isn't a way
+  around the firmware.
+
+**Through PVE.** The profile exists (SS-5, `ss5.bin`, `vga: tcx`, 256 MB); the CD stage under
+`ss5.bin` ran in the lab, so one firmware suffices. The catalogue lists `nextstep33-ss5` and
+`openstep42-ss5` as blocked until a package carries the ESP fix; then they need framebuffer
+scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`).
+
 ## sparc64 (sun4u)
 
 What runs on `qemu-system-sparc64` from the published `pve-qemu-kvm` 11.1.3-2+wsh7, measured in the

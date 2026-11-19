@@ -137,7 +137,7 @@ Reportable only after they have been reproduced on plain QEMU, without any LEMU 
 | [#2534](https://gitlab.com/qemu-project/qemu/-/issues/2534) | Solaris can't be powered off with `system_powerdown` on sun4m | Not checked against PVE's shutdown |
 | [#597](https://gitlab.com/qemu-project/qemu/-/issues/597) | `sunhme` sometimes hangs the VM | Not seen |
 | [#1163](https://gitlab.com/qemu-project/qemu/-/issues/1163), [#2017](https://gitlab.com/qemu-project/qemu/-/issues/2017) | Solaris 2.2 doesn't boot; Solaris 2.4 with the Sun PROM times out | Not tried |
-| [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620), [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674) | NeXTSTEP/OPENSTEP for SPARC freeze while installing; graphics glitches | Not tried |
+| [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620), [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674) | NeXTSTEP/OPENSTEP for SPARC freeze while installing; graphics glitches | Reproduced (every install with 11.1.3-2+wsh21 and +wsh22) and diagnosed: the ESP raises its interrupt in the instruction that starts a command and NeXT's SCSI driver deadlocks on a lock; a 500 us interrupt latency fixed it in the lab (`SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"). Our own finding on QEMU's ESP, no report written yet; no graphics glitches seen on the 8-bit TCX |
 | [#260](https://gitlab.com/qemu-project/qemu/-/issues/260) | `-M sun4v` aborts on a Tribblix ISO | `niagara`/sun4v parked |
 | [#3147](https://gitlab.com/qemu-project/qemu/-/issues/3147) | Solaris 11.4 detects sigsetjmp/siglongjmp between threads | Solaris 11 not run here |
 

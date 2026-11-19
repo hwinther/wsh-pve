@@ -1232,6 +1232,37 @@ clock) and the 0001-0017 firmware, in the PVE test container (`wsh/0001-0039` fo
 | one more boot of that disk (`tribblix-boot-disk.py --pve 9801`) | passed, no SMF import | login 12 min, `init 5` 6.5 min |
 | `tribblix-install-sparc64.py`, lab, twice | passed both: `live_install.sh` exit 0, 18 packages skipped | 141 min each (live CD login 72, install 64) |
 
+### NeXTSTEP 3.3 and OPENSTEP 4.2 (catalogue)
+
+`nextstep33-ss5` and `openstep42-ss5` are catalogue entries: with the published pve-qemu-kvm
+(11.1.3-2+wsh21 and +wsh22) both installers hang in NeXT's SCSI driver, an ESP interrupt that comes too early
+(`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2", has the diagnosis, the results per machine
+and firmware and the proposed QEMU fix). With a local QEMU that asserts the ESP interrupt 500 us late
+both install on an SS-5 and reach the Workspace. What a scenario will have to do, from the lab runs
+(2026-11-19, by hand with `serve`/`ctl`, no scenario file yet):
+
+- **Machine:** `VGA=tcx` (NeXT has no cg3 driver; its S24 driver runs the 8-bit TCX), a blank disk
+  (1-3 GiB tested; the installer writes a NeXT label), `BIOS=ss5.bin CONSOLE=fb` for the disk.
+  OpenBIOS boots the CD but not the installed disk; the CD stage also runs under `ss5.bin` (`setenv
+  diag-switch? false`, then `boot cdrom`). SS-20: no firmware boots the installed disk.
+- **Everything is on the framebuffer** with the Sun keyboard (`fb_type`, `fb_key`), and OCR reads
+  the text stage (tesseract misreads "Type" as "Tue"/"Tupe" and "start installing" as "start,
+  installing": match on other words). The CD stage: `English language` → `1`, `prepare to install`
+  → `1`, `on this disk` → `1`, `Ready to install` → `1`, then `restart the computer` → Return
+  (about 2-4 min).
+- **Each disk boot under `ss5.bin`:** after a failed network boot the first `boot disk` restarts the
+  PROM, so `setenv diag-switch? false` first; at NeXT's `boot:` type `-v` within its 10 s (its boot
+  graphics end in `Data Access Error` on QEMU's TCX). The lab typed `-v` and Return every 2 s for
+  30 s from `boot disk` on, because OCR polling is slower than the countdown. Then Control-C at "No
+  response from network configuration server".
+- **Configure's "Summary of Devices"** needs the pointer on Save (608,457 at 1024x768): HMP
+  `mouse_move` in steps of at most 10 (NeXT accelerates; a step of 10 moves about 9 pixels), with the
+  pointer found in the screendump by its shape and the move corrected until it is there, then
+  `mouse_button 1`/`0`. The Installer's package list and Restart, and the language panel and its
+  alert after the reboot, take Return.
+- **Times** (TCG, one guest at a time or two): the CD stage 2-4 min, the packages 6 min (NeXTSTEP,
+  293 MB) to 15 min (OPENSTEP, 532 MB), each boot to the desktop 2-3 min.
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
