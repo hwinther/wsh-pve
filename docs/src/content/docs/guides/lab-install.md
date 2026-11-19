@@ -36,6 +36,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
+| `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
+| `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
@@ -65,11 +67,10 @@ TCX) wait for a `pve-qemu-kvm` with a fix to the ESP's interrupt timing: with th
 their installers hang on the disk (see the [SPARC guide](/guides/sparc/#nextstep-33-and-openstep-42)).
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
-target. Solaris 8 and 9 have SS-20 targets only: Web Start is a Java program, and when the targets
-were written the SS-5 ran the lab's Solaris jobs about 9 times slower than the SS-20. Since #262 the
-SS-5 is as fast as the SS-20 for Solaris, but 8 and 9 on the SS-5 haven't been tried again (see the
-roadmap). Solaris 9 is the last release for sun4m (Solaris 10 dropped
-it); its installer and installed 32-bit kernel run on the emulated SS-20. During the Solaris 8 and 9 installs the VM has
+target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
+whose Web Start the install answers too; the SS-5 takes about as long as the SS-20 with 256 MB.
+Solaris 9 is the last release for sun4m (Solaris 10 dropped it); its installer and installed 32-bit
+kernel run on the emulated SS-5 and SS-20. During the Solaris 8 and 9 installs the VM has
 `args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
 the install stops at the firmware prompt and boots the right slice itself); the install removes it
 again, the finished VM has no `args`.

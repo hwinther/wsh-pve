@@ -512,12 +512,27 @@ class WebStart(unittest.TestCase):
             ("   Select the number corresponding to a file system operation, 'Return to\n"
              "   beginning' to change selections, or 'Done' to proceed with the install [4]:", ""),
             ("    <--[90%]--[ENTER To Continue]--[n To Finish]-->", "n"),
+            # Solaris 9 9/05: the license question has no default in brackets
+            ("   Enter 'y' to accept the license agreement. Enter 'n' to decline the license\n"
+             "   agreement and exit the install.", "y"),
+            # Solaris 8 2/02 after the second Software CD went in
+            ("   Solaris 8 packages (part 2)  291.3 MB\n   Ready to Install\n   1. Install Now\n   2. Start Over\n"
+             "   3. Exit Installation\n   What would you like to do [1]?", "1"),
             ("   <Press Return to reboot the system>", ""),
             ('<Press Return to reboot the system> {"!" exits}\n    []', ""),
             ("   the next step unless you select \"Pause\". Enter 'p' to pause. Enter 'c' to\n   continue. [c]", "c"),
         ]:
             self.assertEqual(self.reply(inst, screen), want, screen)
         self.assertIsNone(self.reply(inst, "   Something new [q]:"))
+
+    def test_prompt_ends(self):
+        """wait_prompt() settles on a line ending like a prompt, and on 9/05's bare license line."""
+        sc = self.sc
+        for last in ("   Enter host name []:", "   Media [1]:", "    <--[25%]--[ENTER To Continue]--[n To Finish]-->",
+                     "   agreement and exit the install."):
+            self.assertTrue(re.search(sc.PROMPT_END, last) or re.search(sc.PROMPT_END_BARE, last), last)
+        for last in ("Reading disc for Solaris Operating Environment...", "Installing SUNWcsr."):
+            self.assertFalse(re.search(sc.PROMPT_END, last) or re.search(sc.PROMPT_END_BARE, last), last)
 
     def test_cds_are_deselected(self):
         """Documentation and Supplement off (a partly selected CD goes [-] -> [X] -> [ ]), Software 2
@@ -550,6 +565,23 @@ class WebStart(unittest.TestCase):
                                               "Edition).\nAfter you insert the CD, please press Enter.\n    []"), "")
             with self.assertRaises(RuntimeError):
                 self.reply(inst, "Please insert the Solaris 8 Software 1 of 2 CD.\n    []")
+        finally:
+            self.sc.time.sleep = sleep
+        self.assertEqual(changes, [("scsi6", "local:iso/cd1.iso"), ("scsi6", "local:iso/cd2.iso")])
+
+    def test_first_disc_wording_of_8_0202(self):
+        changes = []
+        m = types.SimpleNamespace(change_medium=lambda d, vol: changes.append((d, vol)))
+        inst = self.sc.Installer(m, {"SWAPS": "scsi6=local:iso/cd1.iso scsi6=local:iso/cd2.iso"})
+        self.sc.time.sleep, sleep = (lambda s: None), self.sc.time.sleep
+        try:
+            self.assertEqual(self.reply(inst, "Please insert the first Solaris Software disc from which you will\n"
+                                              "install the Solaris Operating Environment.\n"
+                                              "To select a different media, enter B to go Back.\n    []"), "")
+            self.assertEqual(self.reply(inst, "Please insert the CD/DVD for Solaris 8 Software 2 of 2 (2/02 SPARC\n"
+                                              "Platform Edition). After you insert the disc, please press Enter.\n"
+                                              "Enter S to skip this disc and go on to the next one.\n"
+                                              "To select a different media, enter B to go Back.\n    []"), "")
         finally:
             self.sc.time.sleep = sleep
         self.assertEqual(changes, [("scsi6", "local:iso/cd1.iso"), ("scsi6", "local:iso/cd2.iso")])

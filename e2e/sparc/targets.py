@@ -141,6 +141,22 @@ MEDIA = {
         "title": "Solaris 9 SPARC, DVD", "content": "iso", "size": 3368878080,
         "sha256": "feb49d1fa21227a1493b5b4a083b2ca12e60577ccd84e4a22b5d3b86fd209911",
         "lab": "SOL_9_SPARC_DVD.iso"},
+    "Sol8.0202.Sparc.iso": {
+        "title": "Solaris 8 2/02 SPARC, Installation CD", "content": "iso", "size": 584232960,
+        "sha256": "82256fd48d4913332ecdfb5214965f869e7b2df3c8714d11815fc2d30c4fb8d9",
+        "lab": "Solaris_8_0202_Bonus/Sol8.0202.Sparc.iso"},
+    "Sol8.0202.Sparc-Software_1of2.iso": {
+        "title": "Solaris 8 2/02 SPARC, Software CD 1 of 2", "content": "iso", "size": 655011840,
+        "sha256": "79b9a265fc13d6fd3c6f9acb0bf48371372ba562d2cf8f4f3ed79a6363d4e5fe",
+        "lab": "Solaris_8_0202_Bonus/Sol8.0202.Sparc-Software_1of2.iso"},
+    "Sol8.0202.Sparc-Software_2of2.iso": {
+        "title": "Solaris 8 2/02 SPARC, Software CD 2 of 2", "content": "iso", "size": 217231360,
+        "sha256": "3d22d0782314d13d4fa6af5f47e7c7ff6723e49e316fb0f121499d4aa890f74f",
+        "lab": "Solaris_8_0202_Bonus/Sol8.0202.Sparc-Software_2of2.iso"},
+    "solaris-2.9-sparc.iso": {
+        "title": "Solaris 9 9/05 SPARC, DVD", "content": "iso", "size": 3104112640,
+        "sha256": "a7c3c20a95afc7124e5b7f0837ba9fb5c4167a7a4c76199390325062c983095d",
+        "lab": "solaris-2.9-sparc/solaris-2.9-sparc.iso"},
     "sol-10-u11-ga-sparc-dvd.iso": {
         "title": "Solaris 10 1/13 (u11) SPARC, DVD", "content": "iso", "size": 2314731520,
         "sha256": "b1df86b976282145fd317d9def4efc27d7d64589f5542184a3e781c0787cf02b",
@@ -626,6 +642,41 @@ TARGETS = {
         "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 27,  # install 20, first boot 5, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
+    },
+    # Solaris 8 and 9 on the SS-5 (256 MB): the same Web Start installs as on the SS-20, from the
+    # later updates (8 2/02, 9 9/05). 8 2/02's Installation CD asks for the first Software CD in its
+    # own words, 9 9/05 adds a license question (solaris-webstart-serial.py).
+    "sol8-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 8 2/02 Entire Group on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "2"},
+                    "timeout": 7200, "root_password": True, "prom_env": {"auto-boot?": "false"}},
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
+        "disk": sun_disk("9G"),
+        "media": [{"name": "Sol8.0202.Sparc.iso", "drive": "scsi6"},
+                  {"name": "Sol8.0202.Sparc-Software_1of2.iso", "drive": "scsi6", "at": "scenario"},
+                  {"name": "Sol8.0202.Sparc-Software_2of2.iso", "drive": "scsi6", "at": "scenario"}],
+        "boot": "scsi3",
+        "hostname": "sol8-ss5",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 37,  # install 31.6, first boot 3.6, --check 1.6
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
+    },
+    "sol9-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 9 9/05 End User on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "4"},
+                    "timeout": 7200, "root_password": True, "prom_env": {"auto-boot?": "false"}},
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
+        "disk": sun_disk("9G"),
+        "media": [{"name": "solaris-2.9-sparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "sol9-ss5",
+        "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
+        "minutes": 30,  # install 23.7, first boot 4.5, --check 1.2
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
     },
     # The CD's miniroot copied to swap (slice b), suninstall's Quick install from it, then the first
     # boot's sys-config (host name, time zone GMT, address, root password, the optional user). The CD
