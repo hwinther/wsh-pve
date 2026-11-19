@@ -12,7 +12,9 @@ matrix, which links them into the test node's storage). size and sha256 are of t
 tested; `lab.py install` refuses a medium with another checksum unless --allow-untested-media. No medium
 is in the repository or downloaded by the tests. A medium with `from` is made by the user from another
 medium in MEDIA (`convert`: "bin2352" = the 2048 data bytes of each 2352-byte raw CD sector) with
-`lab.py media <target> --convert <source>`, which checks the source's and the result's sha256.
+`lab.py media <target> --convert <source>`, which checks the source's and the result's sha256; with
+`from` "files" ({name: (size, sha256)}) it is made from those files in a directory (`--convert <dir>`;
+`convert`: "openbsd-sets" = OpenBSD's sets on a CD, answer_media.openbsd_sets), each checked first.
 
 TARGETS: per target
   title      what it is
@@ -70,6 +72,8 @@ DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab V
 
 # MEDIA "from" conversions (install.convert_medium): name -> (input sector size, offset, output size)
 CONVERSIONS = {"bin2352": (2352, 16, 2048)}  # raw CD sectors (Mode 1): sync + header, 2048 data, EDC/ECC
+# MEDIA "from" with "files" (install.convert_files): name -> the function of answer_media that makes the CD
+FILE_CONVERSIONS = {"openbsd-sets": "openbsd_sets"}
 
 # The packages of the last test run (the PVE test node with the published packages).
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
@@ -175,6 +179,34 @@ MEDIA = {
         "lab": "other-os/openbsd8.0/install80.iso",
         # freely redistributable; the sha256 is the one in the release's SHA256 file
         "url": "https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso"},
+    # OpenBSD 5.9, the last release with the sparc (sun4m) port: its CD boots bsd.rd only (the release
+    # has no install CD with the sets for sparc), so the sets come from a second CD made on the node from
+    # the release's files (`lab.py media openbsd59-ss5 --convert <the release's directory>`). Sizes and
+    # sha256 as in the release's signed SHA256 (the official EU mirror keeps the old releases)
+    "cd59.iso": {
+        "title": "OpenBSD 5.9 sparc boot CD (bsd.rd; ftp.eu.openbsd.org)", "content": "iso", "size": 4048896,
+        "sha256": "34fb9b618b8d36bd7425e4505f1604f1bd23e1795b41bb19dc2cb9958fccc330",
+        "lab": "other-os/openbsd5.9/cd59.iso",
+        "url": "https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/cd59.iso"},
+    "openbsd59-sparc-sets.iso": {
+        "title": "OpenBSD 5.9 sparc sets CD (bsd, bsd.rd, base, comp, man, game, SHA256.sig; made from the"
+                 " release's files)",
+        "content": "iso", "size": 116387840,
+        "sha256": "d1bd7d02404299396b57c3ed39e4c1fc928d9c1743e6702e10c11dcd05d8c6af",
+        "lab": "openbsd59-sparc-sets.iso",  # not on the lab host: pve_matrix.py makes it from "dir"
+        "from": {"convert": "openbsd-sets", "dir": "other-os/openbsd5.9",
+                 "url": "https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/",
+                 "files": {
+                     "bsd": (3561739, "b9ac44a58d8e6fbb2dfc34ab46e52d56169162da4f0974113426cc58f34f38ae"),
+                     "bsd.rd": (3504248, "6cb41aecf52926f2e1b9ab55eaeff2e5fff59c2cd8c2699b6875bb5af9b1ff5f"),
+                     "base59.tgz": (50438928, "751a6531b1e9d34508288013bf329ee4c3b0038bc5ac919234c598a9c69bf4fd"),
+                     "comp59.tgz": (46930332, "0bde8eab2e4d1ae01f61de3a4c0487106a114c2438755d0fea60f4fd52fe2469"),
+                     "man59.tgz": (8994056, "5b2b14c5f83733c75eda3eb652f722765b20685f1da617be83d941fe318ab98b"),
+                     "game59.tgz": (2838173, "c6217de3f64975077de376cff32dfc0002276b306b404abd67abfcca9ca5e517"),
+                     # the signed list the installer checks the sets with, and the install notes (it
+                     # asks before using a directory without them)
+                     "SHA256.sig": (1802, "ddd3e98d4e8b74f1ddcba839e89eeddd8669b3cf97d8054b312a82a456bf4839"),
+                     "INSTALL.sparc": (65874, "69113f6dab24e4ac79db8a3a80c4b341da312939f3cc75850803ce3c696bc3cf")}}},
     "redhat-6.2-sparc.iso": {
         "title": "Red Hat Linux 6.2 for SPARC, install CD", "content": "iso", "size": 623771648,
         "sha256": "74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987",
@@ -340,6 +372,30 @@ DEBIAN_UNATTENDED = {
     # node's vmbr0 routes nowhere), which these targets refuse before a VM is made
     "matrix_skip": "needs a network to archive.debian.org (--gateway and --dns are required); pve_matrix.py"
                    " install passes neither",
+}
+
+
+OPENBSD59_SCRIPTED = {
+    "method": "scripted",
+    # the installer writes its disklabel. 8 GiB: the auto layout then has a 1 GB /usr/src, where the
+    # installer copies the sets to check them against SHA256.sig (on 3 GiB it finds no room and
+    # installs them unchecked)
+    "disk": {"bus": "scsi3", "size": 8, "label": None},
+    # the sets CD on target 5 is the installer's cd0 (scanned before the boot CD on 6)
+    "media": [{"name": "cd59.iso", "drive": "scsi6"}, {"name": "openbsd59-sparc-sets.iso", "drive": "scsi5"}],
+    "install": {"scenario": "openbsd-install-sparc.py", "vars": {"SETS_CD": "cd0", "VERIFY": "1"}, "timeout": 2400,
+                "root_password": True},
+    "firstboot": {"scenario": "openbsd-firstboot.py", "vars": {}, "timeout": 1800},
+    "check": {"scenario": "openbsd-boot-disk.py", "vars": {}, "timeout": 1200,
+              # one console line: OpenBSD's tty takes 255 characters (with --user's grep and the end marker)
+              "commands": "uname -a; cat /etc/wsh-lab-target; df -k; disklabel sd0 | sed -n '/partitions:/,$p';"
+                          " ifconfig le0; netstat -rn -f inet; cat /etc/resolv.conf; rcctl get ntpd flags;"
+                          " pgrep -lx ntpd"},
+    "boot": "scsi3",
+    "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+    "nic": "le0",
+    "network": "le0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+    "net_modes": ["static"],
 }
 
 
@@ -659,6 +715,33 @@ TARGETS = {
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22,
                    "with": "--check; --check --export; --check --ip --gateway --dns --domain --user; boot-test"},
     },
+    # OpenBSD 5.9, the last release of the sparc port, on sun4m: cd59.iso boots bsd.rd (by path at
+    # OpenBIOS's `0 >`), the sets come from the sets CD made on the node (`lab.py media <target>
+    # --convert <the release's directory>`, MEDIA "from") on scsi5, the installer's cd0; answered on
+    # ttya by what it asks (_openbsd.installer, 5.9's wording): le0 static, root's password, the auto
+    # layout on sd0, all the sets on the CD (no X11), ntpd off; the first boot writes the marker and
+    # the network files. The VM's -nographic (vga: serial0) matters: with the keyboard ESCC that QEMU
+    # adds with a display, 5.9's kernel panics ("crazy interrupts"). README.md, "OpenBSD 5.9 on sun4m"
+    "openbsd59-ss5": {
+        **OPENBSD59_SCRIPTED,
+        "title": "OpenBSD 5.9 sparc without X11 on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256, "ostype": "other"},
+        "hostname": "openbsd59-ss5",
+        "minutes": 11,  # 10.2-12.2 min (3 runs, 8 GiB): install 3.2-4, first boot 5-7.6, --check ~1
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22,
+                   "with": "--check; --check --export; --check --ip --gateway --dns --domain --user; boot-test"},
+    },
+    # The same on an SS-20 (one CPU: OpenBSD/sparc has no multiprocessor kernel)
+    "openbsd59-ss20": {
+        **OPENBSD59_SCRIPTED,
+        "title": "OpenBSD 5.9 sparc without X11 on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "other"},
+        "hostname": "openbsd59-ss20",
+        "minutes": 10,  # 10.0-10.2 min (2 runs, 8 GiB): install 3-3.7, first boot 5-6, --check ~1
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check; --check --ip --user"},
+    },
     "sol10-sun4u": {
         "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",
         "status": "automated",
@@ -948,7 +1031,13 @@ def problems():
             out.append(f"{fname}: content {med['content']!r}")
         if len(med["sha256"]) != 64 or not med["size"]:
             out.append(f"{fname}: size and sha256 of the tested medium")
-        if "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in CONVERSIONS):
+        if "from" in med and "files" in med["from"]:
+            f = med["from"]
+            if f.get("convert") not in FILE_CONVERSIONS or not f.get("dir") or not f["files"] or any(
+                    not isinstance(size, int) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    for size, digest in f["files"].values()):
+                out.append(f"{fname}: made from files: a known conversion, the lab directory, (size, sha256) each")
+        elif "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in CONVERSIONS):
             out.append(f"{fname}: made from {med['from']}: a medium in MEDIA and a known conversion")
     for bname, b in POST_INSTALL.items():
         if b.get("medium") not in MEDIA:
