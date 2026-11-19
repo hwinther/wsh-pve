@@ -388,7 +388,7 @@ package yet. Details: `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
 What works with that fix, for when it is published:
 
-- **Turn on the delay for these VMs only.** Hardware → Machine → "SCSI IRQ delay (µs)": 500, or
+- **Turn on the delay for these VMs only.** Hardware → Machine, tick Advanced, "SCSI IRQ delay (µs)": 500, or
   `qm set <vmid> --machine SS-5,esp-irq-latency=500`. It is off by default: every disk access of the
   VM gets slower (about 2 ms per SCSI command; Solaris reads its disk at about 20 MB/s instead of
   70), and no other guest needs it. sparc32 VMs only; other architectures refuse the option.

@@ -1646,7 +1646,7 @@ target's latency, not a proof that 500 us is always enough.
 (off) on every machine, so nothing changes unless a VM asks for it. NeXTSTEP 3.3 and OPENSTEP 4.2
 need it at 500, no other guest does:
 
-- in the web UI: Hardware → Machine → "SCSI IRQ delay (µs)" = 500 (sparc32 VMs only);
+- in the web UI: Hardware → Machine, Advanced → "SCSI IRQ delay (µs)" = 500 (sparc32 VMs only);
 - `qm set <vmid> --machine SS-5,esp-irq-latency=500` (the `machine` property string: qemu-server
   emits `-global sysbus-esp.irq-latency-us=500`; refused on other architectures; "qemu-server");
 - QEMU directly: `-global sysbus-esp.irq-latency-us=500`.
@@ -2924,10 +2924,11 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 8192, sockets, cores
   and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
   the default), Add → Network Device disabled at four NICs.
-- `qemu/MachineEdit.js`: on a sparc32 VM, Hardware → Machine has "SCSI IRQ delay (µs)" (empty =
-  off) with a hint that only NeXTSTEP 3.3 and OPENSTEP 4.2 need it (500 µs); it writes the
-  `esp-irq-latency` key of `machine` and spells out the default machine type when it is set. Hidden
-  and not submitted on other architectures.
+- `qemu/MachineEdit.js`: on a sparc32 VM, Hardware → Machine has "SCSI IRQ delay (µs)" behind the
+  Advanced checkbox, below vIOMMU (empty = off), with a hint that only NeXTSTEP 3.3 and OPENSTEP 4.2
+  need it (500 µs); it writes the `esp-irq-latency` key of `machine` and spells out the default
+  machine type when it is set. A save with Advanced collapsed keeps the value. Hidden, disabled and not
+  submitted on other architectures, Advanced or not.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).
 - Selectors: firmware (OpenBIOS, SPARCstation 5/20 PROM), display (TCX, CG3), network (Lance, Sun
   Happy Meal).

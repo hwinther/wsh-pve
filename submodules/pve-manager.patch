@@ -1222,7 +1222,7 @@ index fdb1802c..1fed396c 100644
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index cd759703..08982644 100644
+index cd759703..d829526e 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -9,6 +9,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -1327,12 +1327,13 @@ index cd759703..08982644 100644
          this.callParent(arguments);
          this.getController().setVersionFilter(values.machine);
          this.getController().setArch(values.arch);
-@@ -148,6 +190,30 @@ Ext.define('PVE.qemu.MachineInputPanel', {
-             reference: 'arch',
-             bind: '{arch}',
+@@ -240,6 +282,31 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+                 disabled: '{q35}',
+             },
          },
 +        {
-+            // sparc32 only: the ESP's interrupt this many microseconds after the SCSI event
++            // sparc32 only, behind Advanced: the ESP's interrupt this many microseconds after the
++            // SCSI event (hidden fields are still submitted, so saving works collapsed too)
 +            xtype: 'proxmoxintegerfield',
 +            name: 'esp-irq-latency',
 +            fieldLabel: gettext('SCSI IRQ delay') + ' (µs)',
@@ -1356,8 +1357,8 @@ index cd759703..08982644 100644
 +            },
 +        },
      ],
+ });
  
-     advancedItems: [
 diff --git a/www/manager6/qemu/MemoryEdit.js b/www/manager6/qemu/MemoryEdit.js
 index 0f6bd656..7037ce12 100644
 --- a/www/manager6/qemu/MemoryEdit.js
