@@ -351,8 +351,9 @@ and `check`, each a scenario run against the VM:
    below) and the same first boot and check. SunOS 4.1.4 has its own three
    (`sunos-install-serial.py`, `sunos-firstboot.py`, `sunos-boot-disk.py`; "SunOS 4.1.4" below).
    The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
-   `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below); a target's
-   `check` can bring its own `commands`.
+   `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below), OpenBSD
+   `openbsd-install-sparc64.py`, `openbsd-firstboot.py` and `openbsd-boot-disk.py` ("The OpenBSD 8.0
+   install target"); a target's `check` can bring its own `commands`.
 2. **Unattended by the installer's own mechanism (used by Red Hat 6.2 and Debian 4.0; designed, not used for Solaris):**
    `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
    image made by the standard library from the target's answers, never from vendor files, nothing
@@ -683,7 +684,8 @@ SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their
 ### Solaris 2.4 and 2.5.1
 
 `sol24-ss5` (2.4 Hardware 3/95) and `sol251-ss5` (2.5.1 11/97) boot their installer only from a CD
-that answers as a disk, and 2.4 only under a Sun PROM: SS-5 with `bios: ss5.bin`, and the CD's
+that answers as a disk, and 2.4 (until pve-qemu-kvm 11.1.3-2+wsh22, whose OpenBIOS 0019-0022 boot
+it: "Older Sun releases") only under a Sun PROM: SS-5 with `bios: ss5.bin`, and the CD's
 medium has `as_disk: True`, which `install.drive_volume()` turns into qemu-server's `cd_as_disk=1`
 (`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`, a read-only `scsi-hd` on target 6;
 `submodules/SPARC.md`, "Supported profiles"). `targets.problems()` allows `as_disk` only on a sparc32
@@ -743,21 +745,27 @@ from 4.1.3_U1B and 2.3, the SS-5 from 4.1.3_U1B (with the kernel patch 101508) a
 Each release was first booted and installed in the lab's own QEMU (pve-qemu-kvm 11.1.3-2+wsh21),
 then the ones that installed got targets:
 
-- **`sol23-ss5`, `sol23-ss20`** (Solaris 2.3 Edition II): only under a Sun PROM (`ss5.bin`, or
-  `ss20_v2.25_rom` with qemu-server's `-cpu TI-SuperSparc-50`) and only from a CD that answers as a
-  disk, as 2.4. 2.3's sysidtool asks one question per screen (a sentence, a box with a field or a
+- **`sol23-ss5`, `sol23-ss20`** (Solaris 2.3 Edition II): only from a CD that answers as a disk, as
+  2.4; first only under a Sun PROM (`ss5.bin`, or `ss20_v2.25_rom` with qemu-server's `-cpu
+  TI-SuperSparc-50`), under OpenBIOS since openbios 0019-0022 (pve-qemu-kvm 11.1.3-2+wsh22; the
+  targets have OpenBIOS since, below). 2.3's sysidtool asks one question per screen (a sentence, a box with a field or a
   menu whose cursor is `>`, "Press Return to continue."), with no title line, so
   `solaris-install-serial.py` has a second path for it (`OLD_SCREENS`, `old_select()` by menu
   label, `old_date()`): host name, networked yes, the address, name service none, no subnets,
   Europe / Middle Europe, the date (the 19xx year typed over as for 2.4; Return walks the five
   fields and takes the form after the last), then the installer's own menus: Quick Install, End
   User (already marked), `c0t3d0` (already marked), Begin Install. It ends with "Installation
-  successful..." and reboots by itself; the PROM then fails its network boot and stops at `ok`,
-  where the scenario stops the VM. First boot: the root password on its own screen ("What is your
+  successful..." and reboots by itself; the Sun PROM then fails its network boot and stops at `ok`
+  (OpenBIOS prints its banner and boots the disk), where the scenario stops the VM. First boot: the root password on its own screen ("What is your
   root password?", "Please re-enter your root password."), handled by `_sparc32.login()`, which
   also answers a forced "Choose a new password." at the first login with the same password (seen
   once by hand, not in the scripted runs). `init 5` reboots on 2.3 instead of powering off:
   `power_off()` takes "rebooting..." like "Program terminated" and waits for `ok`.
+- **`sol24-ss5`, `sol24-ss20`** (Solaris 2.4 HW 3/95) and **`sol22-ss10`** (Solaris 2.2, on the
+  SS-10, its only sun4m machine): OpenBIOS with 0019-0022 and the CD as a disk. 2.4 has 2.6's
+  screens (`sol24-ss5` had `ss5.bin` until +wsh22, "Solaris 2.4 and 2.5.1"); 2.2 takes the 2.3 path
+  of `solaris-install-serial.py` (it makes the file systems on a cleared screen instead of 2.3's
+  progress screen). 2.2's CD image is `Solaris_2.2.img` (checked against the md5 that came with the copy).
 - **`sol25-ss5`, `sol25-ss20`** (Solaris 2.5 HW 1/96): OpenBIOS on both machines, the CD as a disk
   (from a `scsi-cd` the kernel hangs after its banner, as 2.5.1's did); the screens are 2.6's, and
   there is no Maintenance Update.
@@ -808,8 +816,8 @@ install with the image `openbios/Dockerfile` builds from 0001-0023); `solaris-in
 `solaris-boot-disk.py` with `CDROM_AS=hd` (and `MACHINE=SS-10` for 2.2). With them the scenarios
 take OpenBIOS's side of 2.3's reboots (the end of the install and `init 5`: OpenBIOS's banner
 instead of the Sun PROM's `ok`) and 2.2's install (it makes the file systems on a cleared screen
-instead of 2.3's progress screen). Not tried with OpenBIOS: 2.3/2.4 on SS-20, more than one CPU,
-through PVE (needs a package with the patches).
+instead of 2.3's progress screen). Through PVE with the published package that has the patches: the
+next table but one.
 
 Through PVE (the PVE test container on the lab host, pve-qemu-kvm 11.1.3-2+wsh21, qemu-server
 9.2.19+wsh1, pve-manager 9.2.31+wsh1; up to three guests at a time, another agent's runs on the host
@@ -826,6 +834,35 @@ too), each `lab.py install <target> --check`, 2026-11-19:
 | `install sol24-ss5` (regression of `_sparc32.login()`/`power_off()` under `ss5.bin`) | passed | 8.3 min (263 s, 139 s, 80 s) |
 | `install sol26-ss5` (regression, OpenBIOS) | passed | 12.9 min (438 s, 216 s, 106 s) |
 | unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 107 passed | |
+
+**OpenBIOS targets with the published patches** (pve-qemu-kvm 11.1.3-2+wsh22, qemu-server
+9.2.19+wsh1, pve-manager 9.2.31+wsh1, the PVE test container built `--no-cache`; up to three guests
+at a time, another agent's guests on the host too), each `lab.py install <target> --check`,
+2026-11-19. `sol23-ss5`, `sol23-ss20` and `sol24-ss5` changed from the Sun PROMs to OpenBIOS (as
+reliable here, no Sun firmware needed, more than one CPU on the SS-20), `sol24-ss20` and
+`sol22-ss10` are new:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol22-ss10` | passed; `SunOS sol22-ss10 5.2 Generic sun4m sparc`; the marker | 8.8 min (install 294 s, first boot 140 s, check 75 s) |
+| `install sol22-ss10` (second run) | passed | 9.1 min (318 s, 136 s, 75 s) |
+| `install sol23-ss5` (twice) | passed both; `SunOS sol23-ss5 5.3 Generic_101498-02 sun4m sparc`; `bios: openbios-sparc32` | 9.8 min (358 s, 141 s, 74 s); 9.8 min (355 s, 140 s, 78 s) |
+| `install sol23-ss20` | passed; `SunOS sol23-ss20 5.3 Generic sun4m sparc` | 9.0 min (306 s, 140 s, 80 s) |
+| `install sol23-ss20` (second run) | passed | 9.2 min (326 s, 137 s, 75 s) |
+| `install sol24-ss5` (twice) | passed both; `SunOS sol24-ss5 5.4 generic sun4m sparc` | 8.3 min (280 s, 131 s, 70 s); 8.2 min (270 s, 131 s, 72 s) |
+| `install sol24-ss20` | passed; `SunOS sol24-ss20 5.4 generic sun4m sparc` | 7.9 min (256 s, 130 s, 73 s) |
+| `install sol24-ss20` (second run) | passed | 7.9 min (258 s, 129 s, 70 s) |
+| the installed `sol23-ss20` and `sol24-ss20` VMs with `cores: 2` (`solaris-boot-disk.py --pve`: `psrinfo -v`, 4 `nawk` loops at once, `mpstat 10 3`, `psrinfo`, `init 5`) | passed both; 2 CPUs on-line, both at 100% `usr` during the loops | 2.2 min each |
+| the same with `cores: 4` (8 loops) | passed both; 4 CPUs on-line, all at 100% `usr`; load average 6.5 | 3.4 min each |
+| the same VMs with `cores: 4` at the login prompt, QEMU's host CPU over 30 s | 5% of a host core each (the idle loop of 2.3/2.4 doesn't spin; QEMU's `solaris-smp-idle` matches only 2.5.1-9) | |
+| a 10-minute soak on 4 CPUs (6 shell loops of `nawk` and `cat /usr/bin/*`, `psrinfo` after ~5 and ~10 min with `MORE_EXPECT` `3 +on-line`, `init 5`) | passed both (2.3 and 2.4) | 11.3 min each |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`, `test_stored_disks.py`, in the PVE lab image with `--network none`) | 129 passed (the profiles checked against `qemu-server.patch`) | |
+
+Not tried: `--user`, `--gateway`, the 9G disk and DHCP on these targets, 2.2 with more than one CPU
+(the SS-10 profile allows 4), and a framebuffer console. The stored Sun PROM disk of `sol24-ss5`
+(`install-sol24-ss5.raw` in the matrix's directory, installed under `ss5.bin`) under the new
+OpenBIOS profile: `lab.py boot-test sol24-ss5` passed (1.3 min), so the matrix's next boot test of
+it passes without a reinstall (a `--reinstall` gives it an OpenBIOS install).
 
 `pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
 workflow now also needs the 2.3, 2.5 and 4.1.3_U1B CDs (`--iso` with the lab host's layout:
@@ -922,6 +959,80 @@ boot (password, marker, host name, a static address and router), check (logs in 
 requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
 is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
 45). Not run on GitHub yet.
+
+### The OpenBSD 8.0 install target
+
+`openbsd80-sun4u` (the sparc64 profile: sun4u, OpenBIOS, 512 MB, an 8 GiB blank disk on `ide0`, the
+CD on `ide2`, `sunhme`) installs OpenBSD 8.0 from `install80.iso` (467599360 bytes, its sha256 the
+one in the release's `SHA256`; freely redistributable, but not downloaded by any test). It needs
+openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22): before, the installed GENERIC kernel stops right after
+the loader (`submodules/SPARC.md`, "sparc64").
+
+- **Install** (`openbsd-install-sparc64.py`, `_openbsd.py`): OpenBIOS boots the CD's `bsd.rd`; the
+  installer's questions are one line each, ending in `?` and the default in brackets.
+  `_openbsd.installer()` answers them by what they ask (`install_rules()`: a regex per question),
+  not in a fixed order, so a question a release adds or skips (8.0 asks about disk encryption and
+  no X question on sparc64, and the time zone only after the sets) doesn't break it, and a question
+  no rule knows fails the install with that question in the error. A question is answered only when
+  it is the console's last line and the console has been quiet for a second: in the first run a
+  kernel message (`duplicate IP address`, from a Solaris VM with the same default address on the
+  bridge) came in the middle of a question, the installer's line editor drew the question again,
+  and answering both copies answered the next question too (the passwords then didn't match). The
+  answers: terminal `vt220`, the host name, `hme0` with the static address and netmask, no IPv6, no
+  route, the default DNS domain, no name servers, root's password (the target's `root_password`:
+  the installer asks for it), sshd yes, no user, root ssh login no, `wd0`, no encryption, the auto
+  layout, the sets from `cd0` with `-x*` (`SETS`: base, comp, man, game, `bsd`, `bsd.rd`), yes to the
+  missing `SHA256.sig` (the CD has none), time zone UTC, then **S**hell. From the installer's shell
+  it writes `ntpd_flags=NO` into the new system's `/etc/rc.conf.local` (what `rcctl disable ntpd`
+  writes), unmounts and halts; `bsd.rd`'s `halt -p` stops at "halted" without powering off, so the
+  scenario stops the VM.
+- **First boot** (`openbsd-firstboot.py`): login as root with the installer's password, the marker,
+  `/etc/myname` (`<host>.<domain>` with `--domain`), `/etc/hostname.hme0` (`inet <ip> <netmask>`),
+  `/etc/mygate` (`--gateway`), `/etc/resolv.conf` (`--dns`, `--domain`), the address in
+  `/etc/hosts`, the optional `--user` (`useradd -m -G wheel -s /bin/ksh`, `passwd`), a check that
+  ntpd is disabled and not running (`rcctl get ntpd flags` = `NO`, no `ntpd` process), `halt -p`.
+- **Check** (`openbsd-boot-disk.py`): login, `uname -a`, the marker, `df -k`, the disklabel,
+  `ifconfig hme0`, the routes, `resolv.conf`, `rcctl get ntpd flags`, `pgrep -lx ntpd` (one console
+  line: OpenBSD's tty takes 255 characters, which `tests/test_targets.py` checks); a `wd` timeout
+  anywhere on the console fails it.
+
+Why ntpd is off: with QEMU's user network with outside access, ntpd found the guest ~430 ms off and
+slewed the clock, and from then on `wd0` reads timed out in 5 of 6 boots (`submodules/SPARC.md`,
+"Disk timeouts with a synced clock"); with ntpd disabled it didn't happen. The cause isn't known
+(ROADMAP), so the target doesn't start ntpd; `rcctl enable ntpd` turns it on again.
+
+Through PVE (the same container and packages as the OpenBIOS Solaris runs above, 2026-11-19; the
+test bridge `vmbr0` has no way out, so ntpd would find no server anyway):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install openbsd80-sun4u --ip 10.0.2.30` (first run with the final scenario; another VM had 10.0.2.15) | passed; `OpenBSD openbsd80-sun4u 8.0 GENERIC#52 sparc64`; the marker; `/` 1 GB, swap 256 MB, `/usr` 3 GB (1 GB used), `/home` 2 GB; `hme0` 10.0.2.30/24 with net0's MAC; `rcctl get ntpd flags` = `NO` | 18.5 min (install 541 s, first boot 333 s, check 219 s) |
+| `install openbsd80-sun4u --ip 10.0.2.31 --export <scratch>` (two 4-CPU Solaris soaks on the host at the same time) | passed; disk exported | 22.4 min (694 s, 391 s, 233 s) |
+| `install openbsd80-sun4u --ip 10.0.2.32 --gateway 10.0.2.2 --dns 10.0.2.3 --domain lab.example --user lab` (before the stuck detection existed) | failed: while `bsd.rd` extracted `base80.tgz` (34%) from the CD, nine `cd0(pciide0:1:0): timeout`, then no console output; VM stopped by hand after 11 minutes of silence | 17 min |
+| the same again | passed; `OpenBSD openbsd80-sun4u.lab.example 8.0 GENERIC#52 sparc64`; `default 10.0.2.2`, `resolv.conf` with `domain lab.example` and `nameserver 10.0.2.3`; `lab:1000:1000::/home/lab:/bin/ksh` | 18.5 min (528 s, 348 s, 216 s) |
+| `install openbsd80-sun4u` (the defaults, the final scenario with the stuck detection and the retry) | passed (no IDE timeout, so no retry); `hme0` 10.0.2.15/24 | 18.0 min (538 s, 316 s, 211 s) | |
+| `boot-test openbsd80-sun4u` of the exported disk | passed | 5.1 min |
+| six boots of that disk with disk load (`openbsd-boot-disk.py --pve` with `COMMANDS`: `tar cf - /usr \| cksum`, 1 083 463 680 bytes, and a 200 MB `dd` write; one or two other guests running) | 5 of 6 passed without a timeout (`tar` 2m24s-3m15s, `dd` 6-8 s); one stopped after `wd0(pciide0:0:0): timeout` and `wd0d: device timeout reading fsbn 3408952 ..., retrying` (below) | ~6-7 min each |
+
+**IDE timeouts without ntpd.** Two of these runs hit the IDE timeouts with ntpd off and no outside
+network: an install on the CD and a boot under disk load, at a host load average of 4-13 on 14
+cores. Both guests then stopped for good. The hung boot, inspected in the QEMU monitor before it was
+stopped: the CPU in OpenBSD's idle loop (`pc` 0x12d9cac, `pstate` 6: interrupts on, PIL 0), no I/O
+on the disk for 321 s (`info blockstats`, `idle_time_ns`), no IDE, BMDMA or cmd646 trace event in 40
+s, and no answer on the serial console to Return or a break (which enters ddb on a live system). So
+after the timeouts no interrupt reaches the CPU, not even the console's; the state is in the run's
+evidence (`hang-state.txt`). It looks like a lost or stuck interrupt in QEMU's sun4u path, which
+ntpd's slew makes more likely (`submodules/SPARC.md`, "IDE timeouts without ntpd"; ROADMAP). Until
+it is found, `openbsd-install-sparc64.py` fails an install that stays silent for 5 minutes after an
+IDE timeout (`_openbsd.installer()`, `STUCK_S`), and the target's `retry_on: "IDE timeouts"` runs the
+install once more (as Solaris 10's early panic); a hung first boot or check fails at its phase
+timeout.
+
+Every `halt -p` after a boot printed `reorder_kernel: failed -- see /usr/share/relink/kernel/GENERIC/relink.log`:
+each boot relinks the kernel in the background (KARL), which takes longer than these short boots
+under TCG, and the halt stops it; the old kernel stays, and the next boot tries again. Not tried
+through the tool: DHCP (`--ip dhcp` is refused; the lab's own runs got an address with `inet
+autoconf`), more memory, the VGA console, a network with outside access.
 
 ### Red Hat Linux 6.2
 
@@ -1756,6 +1867,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `netbsd-install-sparc64.py` | NetBSD/sparc64 install with sysinst on the serial console (`SETS=b`: without X11), root without a password, ends powered off | ~8 min |
 | `netbsd-install-sparc.py` | the same for NetBSD/sparc on sun4m (SS-5, `MACHINE=SS-20`): the CD's microroot, then the same sysinst answers (`SETS=c`: Minimal); the microroot powers off after Exit | ~3.5 min |
 | `netbsd-firstboot.py`, `netbsd-boot-disk.py` | either architecture (`ARCH`; from the VM with `--pve`): the install targets' first boot (root password, marker, host name, network, user) and check boot ("NetBSD install targets") | ~2 min each |
+| `openbsd-install-sparc64.py` | OpenBSD/sparc64 install from `install80.iso` on the serial console, the questions answered by what they ask (`_openbsd.py`), ntpd off, halted ("The OpenBSD 8.0 install target") | ~9-12 min |
+| `openbsd-firstboot.py`, `openbsd-boot-disk.py` | the install target's first boot (marker, host name, network, user, ntpd check) and check boot | ~4-6 min each |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
 
@@ -1763,7 +1876,7 @@ The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sp
 defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`
 (OpenBSD 8.0 from `install80.iso`: `I`, `vt100`, hostname, `hme0` autoconf, no IPv6, root password
 `lab`, no sshd, no user, `UTC`, `wd0`, auto layout, sets from `cd0`, `-x*`, `yes` to the missing
-`SHA256.sig`, `h`; its installed kernel doesn't boot, see `submodules/SPARC.md`). They are kept in
+`SHA256.sig`, `h`; its installed kernel boots with openbios 0023, see `submodules/SPARC.md`). They are kept in
 `/mnt/os/disks` on the lab host, so the `sparc64` matrix runs with `--disks /mnt/os/disks`
 (workflow input `disks_dir`). The CDs are in `other-os/` under `--iso`.
 

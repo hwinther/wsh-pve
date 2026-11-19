@@ -58,6 +58,7 @@ come after that, not before.
 | Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
 | Older Sun releases on sun4m: install targets for Solaris 2.3 Edition II (`sol23-ss5` with `ss5.bin`, `sol23-ss20` with `ss20_v2.25_rom`; sysidtool's older screens and Quick Install), Solaris 2.5 HW 1/96 (`sol25-ss5`, `sol25-ss20`, OpenBIOS) and SunOS 4.1.3_U1B (`sunos413u1b-ss5`, `sunos413u1b-ss20`, the 4.1.4 install unchanged), all with `cd_as_disk` where Solaris needs it, 6-11 min each through PVE; Solaris 2.1/2.2 and SunOS 4.1.3 (SS-10 era) and 4.1.2 on SS-600MP measured: they don't boot (`submodules/SPARC.md`, "Older Sun releases on sun4m") | in review | |
 | Solaris 2.1-2.4 under OpenBIOS on sun4m: openbios 0019-0022 (the FCode boot block's OBP 2.x words, the Forth heap inside the firmware's range, node 0 as the root, romvec calls with interrupts masked); 2.2 on SS-10, 2.3 and 2.4 on SS-5 install and boot in the lab (CD as a disk), 2.1 stops in QEMU (`Trap 0x21`); SunOS 4.1.3's `type=29` diagnosed (a probe of `0xd.0108_0000`); openbios 0023 (client interface: no catch result over the stack with `nret` 0) lets OpenBSD 8.0's installed sun4u kernel boot | in review | |
+| Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
 
 ## In progress
 
@@ -181,7 +182,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   runs on the SS-10, 2.3 on the SS-20, and the SS-5 from 2.3 Edition II. The QEMU wiki lists
   NeXTSTEP 3.3 and OPENSTEP 4.2 as partly working on sun4m (hangs on disk access, perhaps the ESP;
   several ESP fixes are carried here since) and OpenBSD 5.8 as working with `-nographic`. Order: first what the lab
-  host has media for (SunOS 4.1.4, Solaris 2.4 and 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
+  host has media for (SunOS 4.1.4, Solaris 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
   NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
@@ -190,31 +191,27 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
   all on the lab host now. Done (see "Done"): SunOS 4.1.3_U1B, Solaris 2.3 and 2.5 install;
   the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. OpenBIOS 0019-0022 run the Solaris
-  2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5) install and boot under OpenBIOS in the lab;
-  2.1 stops in QEMU after its device configuration. Next, once a package has them: OpenBIOS targets
-  (`sol22-ss10`, `sol23`/`sol24` on SS-5 and SS-20, the SS-20 with more CPUs) through PVE. Each one
-  booted and installed by hand first; an install target only for what works.
-- **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
-  the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
-  profile, 8 and 9 on the SS-5 (above). (2.3, 2.5, 2.1 and 2.2 are done: "Done" and the item
-  above.) Needing media: the later updates of 8
+  2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5 and SS-20) are install targets under OpenBIOS
+  since pve-qemu-kvm 11.1.3-2+wsh22 (`sol22-ss10`, `sol23-ss5`, `sol23-ss20`, `sol24-ss5`,
+  `sol24-ss20`; 2.3 and 2.4 on the SS-20 also run with 2 and 4 CPUs); 2.1 stops in QEMU after its
+  device configuration.
+- **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
+  SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot it), 2.6 and 7 on the SS-10
+  profile, 8 and 9 on the SS-5 (above). (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"
+  and the item above.) Needing media: the later updates of 8
   (2/02, 2/04) and 9 (9/05) on the SS-20 and on sun4u (whether a later update gets past sun4u's
   `pp is NULL or free`), and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
-- **OpenBSD 8.0 on sun4u: the installed kernel.** The installer (`bsd.rd`) boots and installs; the
-  installed GENERIC kernel still stops with +wsh21 (OpenBIOS 0001-0017). Cause found
-  (`submodules/SPARC.md`, "sparc64"): OpenBIOS's `call-method` writes its catch result into
-  `args[nargs]` even when the client asked for no results, and OpenBSD 8.0's `prom_map_phys` (`map`,
-  `nreturns` 0) has its stack-protector canary there; `set-symbol-lookup` is unrelated. A one-line
-  fix in `libopenbios/client.c` (store it only when `nret` > 0) is prototyped and boots the
-  installed system to `login:` with DHCP on `hme0` and `halt -p`. Next, in order:
-  1. add the fix to `openbios/patches/` (after the agent working there now) and publish it;
-  2. the disk timeouts on the installed system with outside network access (`wd0: timeout` while
-     ntpd slews the clock; not seen without outside access, with ntpd disabled or with QEMU tracing
-     on): find the cause, or work around it in the target (ntpd off);
-  3. then the install target `openbsd80-sun4u` (`targets.py`, scenario, tests), like
-     `netbsd111-sparc64`; its installer answers are known from the hand install (base, comp, man,
-     game from the CD, ~17 min).
+- **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
+  kernel boots since openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22) and `openbsd80-sun4u` installs it
+  through PVE with ntpd off ("Done"). Still open: with outside network access, `wd0: timeout` follows
+  ntpd's clock slew in 5 of 6 boots; without ntpd it happens too, rarely (1 of 5 installs on
+  the CD, one of several boots with a 1 GB `tar` of `/usr`), and the guest then sits in its idle
+  loop with interrupts enabled, no I/O and no answer to the console or a break
+  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Find the lost interrupt in QEMU's
+  sun4u path (cmd646, sabre, interrupt vector; `wsh/0021`'s latch is a suspect), then drop the
+  target's install retry and let it keep ntpd on. Also not tried through the tool: DHCP
+  (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install` (the
@@ -226,8 +223,8 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   workflow's `reinstall` input (or `--reinstall`) installs targets again. `matrix_skip` targets
   (Tribblix ~4.3 h, Debian 4.0) are installed only on request and boot-tested once their disk exists.
   Still to do: run the `install` choice on a schedule (weekly boot tests, a monthly `reinstall=all`),
-  and automate more targets (Solaris 2.4-10, SunOS 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, Tribblix, and Red Hat
-  Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
+  and automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0
+  on sun4u, Tribblix, and Red Hat Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
   takes about a minute and needs only a small ISO, so it could run on GitHub-hosted runners. The

@@ -17,15 +17,16 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | --- | :-: | :-: | :-: | :-: | :-: |
 | ☀️ SunOS 4.1.3_U1B | | ✅ | ✅ ⁴ | | |
 | ☀️ SunOS 4.1.4 | | ✅ | | | |
-| ☀️ Solaris 2.3 | | ✅ ¹ | ✅ ⁴ ⁵ | | |
-| ☀️ Solaris 2.4, 2.5.1 | | ✅ ¹ | | | |
+| ☀️ Solaris 2.2 | | | ✅ ⁵ | | |
+| ☀️ Solaris 2.3, 2.4 | | ✅ ⁶ | ✅ ⁴ ⁶ | | |
+| ☀️ Solaris 2.5.1 | | ✅ ¹ | | | |
 | ☀️ Solaris 2.5 | | ✅ ⁶ | ✅ ⁴ ⁶ | | |
 | ☀️ Solaris 2.6, 7 | | ✅ | ✅ | | |
 | ☀️ Solaris 8, 9 | | | ✅ ³ | | |
 | ☀️ Solaris 10 | | | | ✅ | |
 | 🔥 illumos (Tribblix m34) | | | | ✅ | |
 | 🚩 NetBSD 11.1 | | ✅ | ✅ | ✅ | |
-| 🐡 OpenBSD 8.0 | | | | ◐ ² | |
+| 🐡 OpenBSD 8.0 | | | | ✅ ⁷ | |
 | 🎩 Red Hat Linux 6.2 | | ✅ | ✅ | | |
 | 🌀 Debian 4.0 | | ✅ | ✅ | | |
 | 🌀 Debian 12 (ports) | | | | ◐ ² | |
@@ -34,7 +35,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | 💾🪟🐧 MS-DOS 3+, Windows 1.x-9x (3dfx/Mesa 3D), Linux 2.x | ✔ | | | | |
 
 ✅ installs unattended with `wsh-lab install <target>` through PVE and is checked after its first boot ([lab install targets](https://debian.wshosting.no/guides/lab-install/)) · ✔ runs (booted through PVE in the tests, or installed by hand) · ◐ the installer boots, the install or the installed system doesn't finish · blank: not tried or not supported.
-¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ on the SS-20; 8 and 9 on the SS-5 are not tested yet · ⁴ on the SS-20 · ⁵ with the Sun PROM `ss20_v2.25_rom` and `cd_as_disk=1` · ⁶ OpenBIOS with `cd_as_disk=1`. Solaris 2.1, 2.2 and the original SunOS 4.1.3, whose only sun4m machine is the SS-10, don't boot: OpenBIOS stops in their boot program or kernel, and the SS-10 Sun PROM doesn't run on QEMU's SS-10.
+¹ with the Sun PROM `ss5.bin` and the CD answering as a disk (`cd_as_disk=1`) · ² see the [SPARC guide](https://debian.wshosting.no/guides/sparc/#sparc64-sun4u) · ³ on the SS-20; 8 and 9 on the SS-5 are not tested yet · ⁴ on the SS-20 · ⁵ on the SS-10 (its only sun4m machine), OpenBIOS with `cd_as_disk=1`, pve-qemu-kvm 11.1.3-2+wsh22 or later · ⁶ OpenBIOS with `cd_as_disk=1` (2.3 and 2.4: pve-qemu-kvm 11.1.3-2+wsh22 or later; on the SS-20 also with 2 or 4 CPUs) · ⁷ pve-qemu-kvm 11.1.3-2+wsh22 or later; ntpd off (with a network that reaches NTP servers the disk times out after ntpd slews the clock); now and then an IDE timeout stops the guest's disk without ntpd too, see ². Solaris 2.1 and the original SunOS 4.1.3, whose only sun4m machine is the SS-10, don't boot: their kernels stop early (2.1: QEMU itself stops after the device configuration; 4.1.3: a bad trap in a device probe), and the SS-10 Sun PROM doesn't run on QEMU's SS-10.
 Profiles, limits and known problems per system: [guest operating systems](https://debian.wshosting.no/guides/operating-systems/), [SPARC](https://debian.wshosting.no/guides/sparc/), [DOS](https://debian.wshosting.no/guides/dos/).
 
 ## Getting started
