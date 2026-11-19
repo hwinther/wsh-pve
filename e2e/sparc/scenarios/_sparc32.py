@@ -167,10 +167,24 @@ def prom_boot(m, v, target):
 
 def login(m, prompt=r"console login:", timeout=1800, password=""):
     """Wait for the login prompt, answering Solaris's first-boot questions on the way (the root
-    password they ask for: `password`, none by default), and log in as root with `password`."""
+    password they ask for: `password`, none by default), and log in as root with `password`.
+
+    Solaris 2.3 asks in its older style, one screen per prompt ("What is your root password?", then
+    "Please re-enter your root password."), and its first login then insists on a new password
+    ("Choose a new password."): `password` again, twice."""
     form = r"create a root password"
-    i = m.expect_any([form, r"Press Return to continue", prompt], timeout)
+    old = r"What is your root password\?"
+    i = m.expect_any([form, r"Press Return to continue", prompt, old], timeout)
     while i != 2:
+        if i == 3:
+            m.quiet(2, 120)
+            m.snap("root password")
+            m.send(password + "\r")
+            m.expect(r"re-enter your root password", 120)
+            m.quiet(2, 120)
+            m.send(password + "\r")
+            i = m.expect_any([form, r"(?!)", prompt, old], timeout)
+            continue
         if i == 1:
             m.snap("press return")
             m.send("\r")
@@ -184,30 +198,39 @@ def login(m, prompt=r"console login:", timeout=1800, password=""):
         for _ in range(2):
             m.quiet(2, 120)
             m.send(password + "\r")
-        i = m.expect_any([form, r"System identification is completed", prompt], timeout)
+        i = m.expect_any([form, r"System identification is completed", prompt, old], timeout)
         if i == 1:
-            i = m.expect_any([form, r"(?!)", prompt], timeout)
+            i = m.expect_any([form, r"(?!)", prompt, old], timeout)
     m.snap("login prompt")
     m.send("root\r")
     if password:
         m.expect(r"Password:\s*$", 60)
         m.send(password + "\r")
+        if m.expect_any([r"#\s*$", r"New password:\s*$"], 120) == 1:
+            m.snap("new password")
+            m.send(password + "\r")
+            m.expect(r"Re-enter new\s+password:\s*$", 60)
+            m.send(password + "\r")
+            m.expect(r"#\s*$", 120)
+        return
     m.expect(r"#\s*$", 120)
 
 
 def power_off(m, command):
     """Shut the guest down with `command` ("halt", "init 5") and end QEMU. OpenBIOS powers the machine
-    off; the Sun PROMs stop at `ok` ("Program terminated"), so QEMU is told to quit there."""
+    off; the Sun PROMs stop at `ok` ("Program terminated"), so QEMU is told to quit there. Solaris
+    2.3's `init 5` reboots ("rebooting..."); the Sun PROM then fails its network boot and stops at
+    `ok` too."""
     m.send(f"sync; {command}\r")
     try:
-        i = m.expect_any([r"power off|Power down", r"Program terminated"], 600)
+        i = m.expect_any([r"power off|Power down", r"Program terminated|rebooting\.\.\."], 600)
     except QemuDied:
         if m.proc.returncode == 0:  # powered off before the message was read
             m.log("QEMU exited with 0")
             return
         raise
     if i == 1:
-        m.expect(r"ok ", 60)
+        m.expect(r"\nok ", 300)
         m.snap("PROM prompt after shutdown")
         m.stop()
         return

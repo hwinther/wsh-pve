@@ -302,12 +302,18 @@ class VmParams(unittest.TestCase):
         self.assertEqual((p["name"], p["vmid"], p["tags"]), ("sol26-ss5", "120", "wsh-lab"))
 
     def test_cd_as_disk(self):
-        # Solaris 2.4/2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk), under ss5.bin
-        for name, iso in (("sol251-ss5", "solaris_2.5.1_1197.iso"), ("sol24-ss5", "solaris_2.4_sparc.iso")):
+        # Solaris 2.3-2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk); 2.3 and 2.4 under a
+        # Sun PROM, 2.5 under OpenBIOS
+        for name, iso, bios in (("sol251-ss5", "solaris_2.5.1_1197.iso", "ss5.bin"),
+                                ("sol24-ss5", "solaris_2.4_sparc.iso", "ss5.bin"),
+                                ("sol23-ss5", "Solaris2.3Edition-II.iso", "ss5.bin"),
+                                ("sol23-ss20", "Solaris2.3Edition-II.iso", "ss20_v2.25_rom"),
+                                ("sol25-ss5", "solaris2.5_sparc.iso", "openbios-sparc32"),
+                                ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32")):
             a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
             p = install.vm_params(targets.TARGETS[name], a, {iso: f"local:iso/{iso}"}, None)
             self.assertEqual(p["scsi6"], f"local:iso/{iso},media=cdrom,cd_as_disk=1")
-            self.assertEqual(p["bios"], "ss5.bin")
+            self.assertEqual(p["bios"], bios)
         self.assertEqual(install.drive_volume("scsi6", "local:iso/x.iso"), "local:iso/x.iso,media=cdrom")
         # as_disk only where qemu-server takes it: a sparc32 SCSI CD-ROM, inserted at the start
         saved = targets.TARGETS["sol26-ss5"]
@@ -642,6 +648,65 @@ class SunOS4(unittest.TestCase):
         no_user = _sunos4.sysconfig_rules({**v, "USER": "", "NET_IP": ""})
         self.assertEqual(no_user[_sunos4.which(no_user, " SysConfI1 ")][1], "n\r")
         self.assertEqual(no_user[_sunos4.which(no_user, " SysConfE1 ")][1], "2\r")
+
+
+class OlderSun(unittest.TestCase):
+    """Solaris 2.3 (sysidtool's older screens, Quick Install) and SunOS 4.1.3_U1B (the 4.1.4 install)."""
+    sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-install-serial.py"))
+
+    def test_sunos413u1b(self):
+        base = targets.TARGETS["sunos414-ss5"]
+        for name, machine, memory in (("sunos413u1b-ss5", "SS-5", 256), ("sunos413u1b-ss20", "SS-20", 512)):
+            t = targets.TARGETS[name]
+            self.assertEqual((t["profile"]["machine"], t["profile"]["memory"]), (machine, memory))
+            self.assertEqual(t["profile"]["bios"], "openbios-sparc32")
+            self.assertEqual((t["install"], t["firstboot"], t["check"], t["disk"]),
+                             (base["install"], base["firstboot"], base["check"], base["disk"]))
+            self.assertEqual(t["media"], [{"name": "sunos_4.1.3U1B.iso", "drive": "scsi6"}])
+            self.assertNotIn("from", targets.MEDIA["sunos_4.1.3U1B.iso"])  # 2048-byte sectors already
+            self.assertIn("4.1.3_U1B", t["net_refuse"]["dns"])
+        self.assertIn("4.1.4", base["net_refuse"]["dns"])  # the copy didn't change the 4.1.4 target
+
+    def test_sun_media_have_no_url(self):
+        for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso"):
+            self.assertNotIn("url", targets.MEDIA[name])
+            self.assertFalse(targets.MEDIA[name]["lab"].startswith("/"))
+
+    def test_old_select(self):
+        m = FakeScreen("Will this system be connected to a network?\n\n     ┌────┐\n     │>No │\n     │ Yes│\n"
+                       "     └────┘\n")
+        self.sc.old_select(m, m.screen, "Yes")
+        self.assertEqual(m.typed, ["ctrl-n", "\r"])
+        m = FakeScreen("    │ NIS+ Client             │\n    │ NIS (formerly yp) Client│\n"
+                       "    │>None - use /etc files   │\n")
+        self.sc.old_select(m, m.screen, "NIS+")
+        self.assertEqual(m.typed, ["ctrl-p", "ctrl-p", "\r"])
+        with self.assertRaises(RuntimeError):
+            self.sc.old_select(FakeScreen(""), "    │>No │\n    │ Yes│\n", "Maybe")
+
+    def test_old_date(self):
+        screen = "".join(f"    │ {f} :  {v}   │\n" for f, v in (
+            ("Year   (4 digits)", "1912"), ("Month  (1-12)    ", "11"), ("Day    (1-31)    ", "19"),
+            ("Hour   (0-23)    ", "01"), ("Minute (0-59)    ", "45")))
+        orig, self.sc.time.sleep = self.sc.time.sleep, lambda s: None
+        try:
+            m = FakeScreen(screen)
+            self.sc.old_date(m, {"YEAR": "2026"}, screen)
+            self.assertEqual(m.typed, ["2026"] + ["\r"] * 5)  # the year typed over 1912, Return x5
+            m = FakeScreen(screen.replace("1912", "1996"))
+            self.sc.old_date(m, {}, m.screen)
+            self.assertEqual(m.typed, ["\r"] * 5)
+        finally:
+            self.sc.time.sleep = orig
+
+    def test_old_screens_in_order(self):
+        def rule(screen):
+            return next(rx for rx, _ in self.sc.OLD_SCREENS if re.search(rx, screen))
+        self.assertIn("hostname", rule("What is the hostname for your workstation?"))
+        # the confirmation repeats what was answered; it must not match the question screens
+        self.assertIn("correct", rule("Is the following information correct?\n\nHostname:  sol23-ss5\n"
+                                      "Connected to network:  Yes\nIP address:  10.0.2.15\n"))
+        self.assertIn("correct", rule("Is the following information correct?\n\nTime zone:  MET\n"))
 
 
 class RedHat62(unittest.TestCase):
