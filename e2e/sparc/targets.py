@@ -64,6 +64,9 @@ TARGETS: per target
              the sparc lab job, or it needs more than the published packages give): only when
              --reinstall names it; once its stored disk exists (install-<target>.raw) the matrix
              boot-tests that. `lab.py install` still runs it
+  matrix_needs  "apt_cache": `pve_matrix.py install` installs it only with an apt cache (--apt-cache /
+             WSH_LAB_APT_CACHE), which it hands the guest as --apt-proxy through a pinhole on its
+             node's vmbr0; without one it skips it as it would a matrix_skip target
 """
 
 import re
@@ -327,7 +330,11 @@ SOLARIS_SCRIPTED = {
     "method": "scripted",
     # solaris-install-serial.py's defaults: End User System Support, auto-layout, Networked with a
     # static address, no name service, time zone MET, manual reboot (it halts at the end)
-    "install": {"scenario": "solaris-install-serial.py", "vars": {}, "timeout": 3600},
+    # retry_on: a boot of the CD that hangs before the installer's first prompt (QEMU's ESP deadlock,
+    # SPARC.md "The ESP deadlock"; sol23-ss20 in install matrix run 44533778163) fails within
+    # FIRST_PROMPT_TIMEOUT and gets one more boot: nothing is on the disk yet
+    "install": {"scenario": "solaris-install-serial.py", "vars": {}, "timeout": 3600,
+                "retry_on": "before the installer"},
     "firstboot": {"scenario": "solaris-firstboot.py", "vars": {}, "timeout": 1800},
     "check": {"scenario": "solaris-boot-disk.py", "vars": {}, "timeout": 1200},
     "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
@@ -387,14 +394,14 @@ DEBIAN_UNATTENDED = {
     "nic": "eth0",
     # the preseed file sets all of it (/etc/network/interfaces, /etc/resolv.conf, /etc/hostname)
     "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask) with --gateway and --dns,"
-               " which must reach archive.debian.org (or --apt-proxy); --domain",
+               " which must reach archive.debian.org (or --apt-proxy), or only --apt-proxy at an address on"
+               " the guest's network (no router, no name server); --domain",
     "net_modes": ["static"],
-    "net_require": ["gateway", "dns"],
+    "net_require": ["gateway", "dns"],  # unless --apt-proxy is an address on the guest's network
     "apt_proxy": True,
-    # pve_matrix.py install runs `lab.py install <target> --check` with no --gateway or --dns (and its
-    # node's vmbr0 routes nowhere), which these targets refuse before a VM is made
-    "matrix_skip": "needs a network to archive.debian.org (--gateway and --dns are required); pve_matrix.py"
-                   " install passes neither",
+    # pve_matrix.py install gives them the apt cache through a pinhole on its node's vmbr0 (10.0.2.2:3142,
+    # --apt-cache / WSH_LAB_APT_CACHE) and nothing else; without one it skips them
+    "matrix_needs": "apt_cache",
 }
 
 
@@ -1054,19 +1061,21 @@ TARGETS["sunos413u1b-ss20"] = {
 # Sun PROM ss5.bin (OpenBIOS stops in NeXT's boot program) and only with `-v` typed at its `boot:`
 # prompt (its boot graphics end in "Data Access Error" on QEMU's 8-bit TCX). README.md and
 # submodules/SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2".
-_NEXT_BLOCKED = ("With the published pve-qemu-kvm the guest's SCSI driver deadlocks (it spins at PIL 4 on a lock"
+_NEXT_BLOCKED = ("Without a delayed ESP interrupt the guest's SCSI driver deadlocks (it spins at PIL 4 on a lock"
                  " that the code it interrupted holds) because QEMU's ESP raises its interrupt in the same"
                  " instruction that starts a command: each of 6 installs with the published packages (11.1.3-2+wsh21 and +wsh22) stopped that way"
-                 " (while mounting root, preparing the disk or copying). A QEMU whose ESP asserts the interrupt 500 us"
-                 " later installed both to the Workspace (50 us wasn't enough); no package has such a fix"
-                 " yet. The install also needs framebuffer scenarios (TCX, keyboard"
-                 " and mouse) and a Sun PROM boot with -v after the CD stage.")
+                 " (while mounting root, preparing the disk or copying). pve-qemu patch wsh/0040 and the VM option"
+                 " machine: SS-5,esp-irq-latency=500 (qemu-server, set in the profile) fix it; the targets wait for"
+                 " published packages with them and for framebuffer scenarios (TCX, keyboard and mouse) and a Sun"
+                 " PROM boot with -v after the CD stage.")
 _NEXT = {
     "status": "catalogue",
     "blocked": _NEXT_BLOCKED,
     "method": "scripted",
     # ss5.bin for the whole install: the CD boots under it, the installed disk only under it
-    "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256, "ostype": "other", "vga": "tcx"},
+    # esp-irq-latency: the ESP's interrupt 500 us after the event, or NeXT's SCSI driver deadlocks
+    "profile": {**SPARC32, "machine": "SS-5,esp-irq-latency=500", "bios": "ss5.bin", "memory": 256, "ostype": "other",
+                "vga": "tcx"},
     "disk": {"bus": "scsi3", "size": 2, "label": None},  # the installer writes its own (NeXT) label
     "boot": "scsi3",
     # the setup ends logged in as `me` (no password; root has none either)

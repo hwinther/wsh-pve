@@ -65,8 +65,10 @@ guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte
 
 `wsh-lab targets` also lists catalogue entries that don't install yet, each with what blocks it.
 `nextstep33-ss5` and `openstep42-ss5` (NeXTSTEP 3.3 and OPENSTEP 4.2 on an SS-5 with `ss5.bin` and the
-TCX) wait for a `pve-qemu-kvm` with a fix to the ESP's interrupt timing: with the published package
-their installers hang on the disk (see the [SPARC guide](/guides/sparc/#nextstep-33-and-openstep-42)).
+TCX) wait for packages with pve-qemu patch `wsh/0040` and qemu-server's `esp-irq-latency` machine
+option, which fix the ESP's interrupt timing (their profiles set `machine: SS-5,esp-irq-latency=500`):
+with the published packages their installers hang on the disk (see the [SPARC
+guide](/guides/sparc/#nextstep-33-and-openstep-42)).
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
@@ -181,10 +183,13 @@ options, nothing secret on it) as `wsh-lab-answers-<vmid>.iso`, puts it into `sc
 install and removes it afterwards; the only thing typed is one boot line at SILO's prompt, which
 makes the installer read that CD before its first question. The installer then fetches the base
 system and the kernel from `archive.debian.org`, so the guest needs a way out: give `--gateway` and
-`--dns` that reach the internet (they are required; the address defaults to 10.0.2.15/24 as for the
-other targets), or `--apt-proxy URL` for an HTTP proxy such as an apt-cacher-ng
+`--dns` that reach the internet (the address defaults to 10.0.2.15/24 as for the other targets),
+and optionally `--apt-proxy URL` for an HTTP proxy such as an apt-cacher-ng
 (`--apt-proxy http://aptcache.example:3142`, or the `WSH_LAB_APT_PROXY` environment variable; the
-installed system's apt keeps using it, from `/etc/apt/apt.conf`). etch's archive signing keys
+installed system's apt keeps using it, from `/etc/apt/apt.conf`). A proxy given by address on the
+guest's own network (`--apt-proxy http://10.0.2.2:3142` with the default address) replaces
+`--gateway` and `--dns`: the installer hands the proxy whole URLs, so the guest needs no router and
+no name server, and can be kept on a network where that proxy is the only way out (see Network). etch's archive signing keys
 expired years ago, so the install runs with debian-installer's `allow_unauthenticated` (the
 packages come from the archive without a signature check; the installed system's `apt-get` then
 works as usual). The disk (blank,
@@ -224,7 +229,10 @@ its kernel panics) and installs exactly like 2.3 (the same one-question screens 
 Its CD image is `Solaris_2.2.img`, a plain 2048-byte-sector image with an `.img` name, which PVE's
 ISO storage accepts as it is. 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
 machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for all of
-them.
+them. Now and then a CD boot of Solaris 2.2-2.6 hangs after the kernel banner, before the
+installer's first question (seen once, 2.3 on the SS-20; QEMU's emulated SCSI controller is the
+suspect): when no first question comes within 5 minutes, the tool boots the CD once more, since
+nothing is on the disk yet.
 
 **More CPUs on the SS-20 for 2.3 and 2.4.** The targets install with one CPU. Afterwards the VM
 can have 2 or 4 (`qm set <vmid> --cores 4`; the SS-20 profile with OpenBIOS allows up to 4): 2.3 and
@@ -369,6 +377,27 @@ Check what a node has:
 wsh-lab media                 # every target's media on storage local, with sha256
 wsh-lab media sol26-ss5 --storage nas-iso
 wsh-lab media --dir /path/to/isos --no-checksum
+```
+
+A medium is found on a storage by its file name first, and otherwise by its size and sha256 among
+the storage's volumes of that content type (only volumes of the right size are read), so a renamed
+upload or a link in a [mirror storage](/reference/mirror/) counts:
+`mirror:iso/Solaris__2.6__solaris_2.6_598_sparc.iso` is `solaris_2.6_598_sparc.iso`
+(`wsh-lab media sol26-ss5 --storage mirror`, `wsh-lab install sol26-ss5 --media-storage mirror ...`).
+`--dir` looks up file names only.
+
+### Media on a NAS: a mirror storage
+
+Instead of copying the media to the node, link them from a NAS folder tree into a `dir` storage with
+`wsh-lab mirror`; the folders end up in the link names (`Solaris__2.6__....iso`) and the web UI
+shows them as folders. The [Mirror Storage Reference](/reference/mirror/) has the naming rules and
+the caveats (the NAS mounted at the same path on every node, dangling links):
+
+```sh
+pvesm add dir mirror --path /srv/mirror --content iso,floppy
+wsh-lab mirror sync /mnt/pve/nas/media --storage mirror [--prune] [--dry-run]
+wsh-lab mirror link <file> --storage mirror [--root DIR | --as NAME]
+wsh-lab mirror list --storage mirror
 ```
 
 ## Install the lab on a node
@@ -586,6 +615,20 @@ guest, a target supports the modes its catalogue entry lists as tested (`wsh-lab
   default route), `--dns` (up to three name servers; none: `/etc/hosts` only) and `--domain`.
 - **DHCP**: `--ip dhcp`. Address, netmask, default router, name servers, domain and host name come
   from the DHCP server. `--dns`/`--domain` are used only if the server sends no name servers.
+
+The Debian targets fetch their packages during the install and need `--gateway` and `--dns`, or an
+`--apt-proxy` at an address on the guest's network. That makes a closed install network possible:
+a bridge with no route out, where one address forwards only to your apt cache. The lab's own
+install matrix does that on its test node (`pve_matrix.py --apt-cache aptcache.example:3142`):
+`10.0.2.2/24` on `vmbr0`, IP forwarding off, and a socat service forwarding `10.0.2.2:3142` to the
+cache; the guests get `--apt-proxy http://10.0.2.2:3142` and nothing else. By hand on a node, the
+same (as root; the bridge must carry no other traffic you care about):
+
+```sh
+ip addr add 10.0.2.2/24 dev vmbr9
+systemd-run --unit=apt-pinhole socat TCP4-LISTEN:3142,bind=10.0.2.2,fork,reuseaddr TCP:aptcache.example:3142
+wsh-lab install debian40-ss5 --vmid 9900 --bridge vmbr9 --check --apt-proxy http://10.0.2.2:3142
+```
 
 Solaris 10 (`sol10-sun4u`) supports the static mode only: its installer gets the host name, the
 address and the netmask (and no default route); the first boot writes `/etc/defaultrouter` and,

@@ -382,11 +382,16 @@ NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also ca
 version) **don't install with the published `pve-qemu-kvm`** (11.1.3-2+wsh22): the CD boots, but the
 install hangs while the kernel mounts its root, prepares the disk or copies files, the CPU spinning in the
 guest's SCSI driver. QEMU's ESP signals a finished command earlier than real hardware can, and NeXT's
-driver deadlocks on that. In the lab, a QEMU that delays the ESP's interrupt by 500 µs installs both
-on an SS-5 and boots them to the Workspace; the fix isn't in a package yet. Details:
-`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+driver deadlocks on that. The fix, pve-qemu patch `wsh/0040`, can delay the ESP's interrupt; in the
+lab a QEMU built with it installs both on an SS-5 and boots them to the Workspace. It isn't in a
+package yet. Details: `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
 What works with that fix, for when it is published:
+
+- **Turn on the delay for these VMs only.** Hardware → Machine, tick Advanced, "SCSI IRQ delay (µs)": 500, or
+  `qm set <vmid> --machine SS-5,esp-irq-latency=500`. It is off by default: every disk access of the
+  VM gets slower (about 2 ms per SCSI command; Solaris reads its disk at about 20 MB/s instead of
+  70), and no other guest needs it. sparc32 VMs only; other architectures refuse the option.
 
 - **SS-5 with `bios: ss5.bin` and `vga: tcx`.** NeXT has no cg3 driver; its TCX driver runs QEMU's
   8-bit TCX at 1024x768. OpenBIOS boots the CD but not the installed disk, so use the Sun PROM

@@ -22,6 +22,7 @@ on:
       - "e2e/sparc/*-requirements.txt"
       - "e2e/sparc/scenarios/**"
       - "e2e/sparc/tests/test_targets.py"
+      - "e2e/sparc/tests/test_mirror.py"
       - ".github/workflows/wsh-lab.yml"
   push:
     branches:
@@ -32,6 +33,7 @@ on:
       - "e2e/sparc/*-requirements.txt"
       - "e2e/sparc/scenarios/**"
       - "e2e/sparc/tests/test_targets.py"
+      - "e2e/sparc/tests/test_mirror.py"
       - ".github/workflows/wsh-lab.yml"
 
 permissions: {}

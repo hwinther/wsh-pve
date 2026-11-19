@@ -34,6 +34,30 @@ wsh-lab \- install and drive sparc guests in Proxmox VE VMs, unattended
 .RB [ \-\-var
 .IR KEY=VALUE " ...]"
 .br
+.B wsh-lab mirror sync
+.I source\-dir
+.RB [ \-\-storage
+.IR STORAGE ]
+.RB [ \-\-prune ]
+.RB [ \-\-img\-as
+.RB { auto | iso | floppy }]
+.RB [ \-\-dry\-run ]
+.br
+.B wsh-lab mirror link
+.I source\-file
+.RB [ \-\-storage
+.IR STORAGE ]
+.RB [ \-\-root
+.IR DIR " | " B\-\-asR " " NAME ]
+.RB [ \-\-content
+.RB { iso | floppy }]
+.RB [ \-\-force ]
+.br
+.B wsh-lab mirror list
+.RB [ \-\-storage
+.IR STORAGE ]
+.RB [ \-\-json ]
+.br
 .B wsh-lab
 .RB { serve | ctl | cast }
 .RI ...
@@ -103,7 +127,57 @@ check (login, marker) and destroys the VM
 .B wsh-lab targets
 lists the catalogue (which targets are automated, their profiles and what was tested);
 .B wsh-lab media
-checks which targets' media a storage or directory has.
+checks which targets' media a storage or directory has. A medium is found on a storage by its file
+name, or else by its size and sha256 among the storage's volumes (a renamed upload, a mirror link).
+.PP
+.B wsh-lab mirror
+manages a mirror storage: a
+.B dir
+storage whose
+.I template/iso
+and
+.I template/floppy
+hold symlinks to ISO and floppy images elsewhere (a NAS). The folders below the source tree are kept
+in the link's name, joined with a double underscore:
+.I Solaris/2.6/solaris_2.6_598_sparc.iso
+becomes the volume
+.IR mirror:iso/Solaris__2.6__solaris_2.6_598_sparc.iso ,
+which the web UI shows in the folder
+.IR "Solaris / 2.6" .
+.B sync
+links every
+.IR .iso ", " .img ", " .ima " and " .vfd
+file below
+.I source\-dir
+.RI ( .img
+up to 2.88 MB is a floppy, larger an ISO, unless
+.BR \-\-img\-as ),
+skips links that are already right and reports conflicts (exit code 1);
+.B \-\-prune
+also removes links whose target is gone or outside the tree.
+.B link
+links one file, named after its path below
+.B \-\-root
+(default: its file name) or
+.BR \-\-as .
+.B list
+shows the links, their targets and dangling ones (exit code 1 when there is one).
+Folder and file names are cleaned as PVE cleans an upload's name (other characters than
+.B A\-Z a\-z 0\-9 _ . \-
+become one
+.BR _ );
+a name that contains
+.B __
+or a folder name that ends in
+.B _
+is refused, because the link name wouldn't split back into the same folders. The tool only creates,
+replaces
+.RB ( \-\-force )
+and removes symlinks, never a regular file, with absolute targets, and refuses a storage that isn't
+of type
+.BR dir .
+The NAS must be mounted at the same path on every node that runs the VMs; a dangling link hides
+the volume, and a VM that uses it doesn't start.
 .PP
 No install media are included or downloaded: Sun and Oracle software is never part of the project.
 .SH FILES
@@ -124,4 +198,5 @@ VM is reachable from anywhere untrusted.
 .SH SEE ALSO
 .BR wsh-lab-mcp (1),
 .BR qm (1),
-https://debian.wshosting.no/guides/lab-install/
+https://debian.wshosting.no/guides/lab-install/,
+https://debian.wshosting.no/reference/mirror/

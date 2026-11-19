@@ -50,6 +50,7 @@ come after that, not before.
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note kept as a record only (LEMU origin, not for QEMU) | in review | |
 | Install targets: Red Hat Linux 6.2 on SS-5 and SS-20 (`redhat62-ss5`, `redhat62-ss20`, OpenBIOS): kickstart from an answer CD the tool makes on the node (the `unattended` method, `answer_media.py`), SILO's screens answered on the serial console, `/boot` first on the disk for SILO | in review | |
+| Install matrix fixes after the first full run (27/29): `sol8-ss5` no longer takes the line after the answered "Ready to Install" menu for a prompt (`PROMPT_END`); a Solaris 2.2-2.6 CD boot that hangs before the installer's first prompt (`sol23-ss20` once, likely the ESP deadlock) fails after 300 s and is retried once; Debian 4.0 in `pve_matrix.py install` through an apt cache pinhole (`--apt-cache` / `WSH_LAB_APT_CACHE`, no general way out for the guests), no `matrix_skip`; `lab.py boot-test` of a Debian disk no longer demands `--gateway`/`--dns` | in review | |
 | Install targets: Debian GNU/Linux 4.0 "etch" on SS-5 and SS-20 (`debian40-ss5`, `debian40-ss20`, OpenBIOS): preseed from an answer CD the tool makes on the node, loaded by `preseed/early_command` on SILO's boot line, packages from `archive.debian.org` (expired archive key: `allow_unauthenticated`), `--apt-proxy` for a package cache; needs the ESP fix `wsh/0038` (Linux 2.6.18's `esp.c` sync negotiation), published in pve-qemu-kvm 11.1.3-2+wsh20 (both targets passed on +wsh21); out of `pve_matrix.py install`, which gives the guest no `--gateway`/`--dns` | merged | #325 |
 | Sound on the SS-5: the CS4231 plays through its APC DMA (LEMU `2938ff88`, `42d32575` by Antoni Sawicki, pve-qemu `wsh/0028`-`0029`), at SBus level 5 as the real machine (`wsh/0030`, openbios 0018), no start failure without an audiodev (`wsh/0031`), no lost tail (`wsh/0032`), qtest (`wsh/0033`); qemu-server `audio0: device=cs4231` (drivers `none`, `alsa`, `pa`, `pipewire`; SPICE, SS-10/SS-20 and sparc64 refused), the UI offers only that on sparc. SunOS 4.1.4, Solaris 2.5.1 and 2.6 play in the lab under OpenBIOS and `ss5.bin`. Limits: no DBRI on SS-10/SS-20 (not emulated), nothing in the web console (no SPICE on sparc32), no capture | in review | |
 | Install targets: Solaris 7 (`sol7-ss5`, `sol7-ss20`) also on the 9G disk (`--disk-size 9G`; 3G stays the default), measured through PVE | in review | |
@@ -63,6 +64,7 @@ come after that, not before.
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
 | Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
 | Install targets: Solaris 9 9/05 and 8 2/02 on sun4u (`sol9-sun4u`, `sol8-sun4u`, End User 64-bit, Web Start through PVE); OpenBIOS 0025 leaves out the ebus floppy node (a zero-sized `reg` for hardware QEMU's sun4u doesn't have; Solaris 9's first boot panicked in `fd`); the reboot that returns on sun4u is handled by the tool: the VM is stopped at `0 >` after the install, and 8's reboot into its mini-root is a power cycle through PVE (`PveMachine.power_cycle()`) | in review | |
+| Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | in review | |
 
 ## In progress
 
@@ -177,6 +179,47 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Later
 
+- **Mirror storage, step 2b: four ways to use it, a description file, and keeping up with a changing
+  archive.** Steps 1 and 2 are done ("Done", `docs/src/content/docs/reference/mirror.md`). The user
+  picks a level; none is forced:
+  0. plain files renamed with `__` in any ISO/floppy storage: the UI shows folders, no links or tool;
+  1. one node: the mirror is a local `dir` (or `btrfs`) storage of links to anything mounted;
+  2. a cluster: ISOs and mirror on the same NFS (or CephFS; CIFS only with `mfsymlinks`), with
+     **relative** links when source and mirror share an export, so the mount path doesn't matter;
+  3. an externally managed tree (a VMware migration, archive.org torrents kept as they are for
+     seeding, plus hand-made folders) stitched into one PVE-friendly tree. The source needn't be a
+     PVE storage (an fstab mount, or a storage whose content isn't iso); as a PVE ISO storage it
+     would look empty, since PVE lists only files directly in `template/iso`.
+  A **description file** (`wsh-mirror.yaml` at the mirror storage's root, invisible to PVE) is the
+  source of truth and the links are derived from it: rules (source dir or glob → folder prefix,
+  excludes) and single entries (explicit names, each with `origin: manual|import`), comments.
+  `wsh-lab mirror plan` shows the difference to the source (new unmatched files, entries whose target
+  is gone, files that look moved: same size and sha256 at a new path, name clashes); `apply` makes the
+  links match the file (idempotent, never touches regular files); `import` **merges**: it adds only
+  files no rule or entry covers and never changes existing entries; `tidy [--dry-run]` removes
+  entries whose target is gone and follows moved files, `import` entries only unless asked. Rename =
+  edit the file + `apply`. In case 2 the file lives on the NFS with the links (one `apply` with
+  `flock` serves the cluster); per-node mirrors can keep the file in `/etc/pve` instead.
+  **A changing archive** (torrents still downloading, files added by hand): inotify doesn't see
+  writes made on the NFS server or by other clients, so a scheduled job runs `apply`, set up by the
+  lab tool (`wsh-lab mirror timer --interval 10min` installs and removes it); nothing else (no path
+  units or torrent-client hooks). Incomplete files are never linked: name patterns (`*.part`,
+  `*.!qB`, `*.incomplete`), a minimum age since the last change (e.g. 5 min) or the same size on two
+  runs, and the advice to use the client's separate incomplete folder. New files under a rule are
+  linked automatically; others follow a default rule (`auto_import: true`, the relative path joined
+  with `__`) or wait in `plan`. Links of rule/import entries whose file is gone are removed; manual
+  entries are only flagged.
+  Tests, one per case: 0 renamed files in a `dir` storage; 1 local links (as in step 2); 2 an NFS
+  export from a helper container in the e2e compose network (userspace `nfs-ganesha`, so no `nfsd`
+  module on the runner), mounted as a PVE NFS storage, with relative links checked through two mount
+  paths; 3 `plan`/`apply`/`import`/`tidy` against a changing source tree (added, removed, moved,
+  still-downloading files).
+- **Mirror storage, step 3.** Next: a rename API for `iso` and `floppy` volumes in libpve-storage-perl (a link or a file renamed
+  in place, so folders can be reorganised from the UI), and an "add link from another storage" call
+  (link a volume of one storage, an NFS or CIFS storage's ISO, into the mirror storage under a folder
+  name) with its UI in the storage's ISO and floppy tabs. Open questions: who may create links that
+  point outside a storage (`Datastore.Allocate` on both storages at least), and what a cluster node
+  without the target's mount shows.
 - **A larger package CD for Solaris 2.6/7.** `sun26gnu.iso` (34 packages) came from the sunfreeware
   collection now on the lab host (521 packages for `sol26-sparc`); four of its packages have newer
   builds there (ddrescue, openssl, sed, top) and many useful ones are missing (openssh with prngd,
@@ -211,13 +254,17 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   device configuration.
   NeXTSTEP 3.3 and OPENSTEP 4.2 (lab, 2026-11-19): the disk hang is still there with our ESP fixes,
   and it is diagnosed: QEMU's ESP raises its interrupt in the instruction that starts a command, and
-  NeXT's SCSI driver then spins at PIL 4 on a lock the interrupted thread holds. A local QEMU that
-  asserts the ESP interrupt 500 us later installs both on an SS-5 to the Workspace (CD stage under
-  OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`; TCX, keyboard and mouse);
-  the SS-20 has no firmware that boots the installed disk. Next: the ESP latency fix in pve-qemu
-  (proposal and regressions in `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"), then
-  framebuffer scenarios and the catalogue entries `nextstep33-ss5`/`openstep42-ss5` made targets;
-  OpenBIOS's failure on the installed disk (exception 0x21 in NeXT's boot program) is open.
+  NeXT's SCSI driver then spins at PIL 4 on a lock the interrupted thread holds. pve-qemu patch
+  `wsh/0040` (with the qtest `wsh/0041`) adds `irq-latency-us` to `sysbus-esp`, off by default
+  (it costs about 2 ms per disk command); a VM turns it on with `machine: SS-5,esp-irq-latency=500`
+  (qemu-server, a field in the web UI's Machine editor). With it both install on an SS-5 to the
+  Workspace (CD stage under OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`;
+  TCX, keyboard and mouse), also through PVE; the sparc32 regressions passed with the delay on every
+  guest and with it off (results and disk numbers in `submodules/SPARC.md`, "NeXTSTEP 3.3 and
+  OPENSTEP 4.2"). The SS-20 has no firmware that boots the installed disk. Next: packages with 0040
+  and the qemu-server option, then framebuffer scenarios and the catalogue entries
+  `nextstep33-ss5`/`openstep42-ss5` (their profiles set the option) made targets; OpenBIOS's failure on the
+  installed disk (exception 0x21 in NeXT's boot program) is open.
 - **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
   SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot it), 2.6 and 7 on the SS-10
   profile, 8 with `ss5.bin` on the SS-5. (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"
@@ -243,7 +290,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   `install-<target>.raw` with a JSON sidecar (date, packages, minutes) once the check passed;
   otherwise `lab.py boot-test` boots a copy of it through PVE and runs the target's check, and the
   workflow's `reinstall` input (or `--reinstall`) installs targets again. `matrix_skip` targets
-  (Tribblix ~4.3 h, Debian 4.0) are installed only on request and boot-tested once their disk exists.
+  (Tribblix ~4.3 h) are installed only on request and boot-tested once their disk exists. Debian 4.0
+  is in the matrix when the repository has `WSH_LAB_APT_CACHE` (a secret or variable, HOST:PORT of
+  an apt-cacher-ng the runner reaches): the guests get that cache through a pinhole on the test
+  node's `vmbr0` (10.0.2.2:3142, socat, no forwarding or NAT) and nothing else; without it they are
+  skipped.
   The `install` choice runs weekly (Sunday 07:17 UTC, after `smoke` and `pve`): boot tests of the
   stored disks, plus installs of targets that have none yet. Still to do: maybe a monthly
   `reinstall=all` (about 6 h, needs the 720-minute limit on a schedule), and automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0

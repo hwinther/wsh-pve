@@ -57,10 +57,13 @@ DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15", "NE
             "PROMPT_TIMEOUT": "3600"}
 # Solaris's reboot on sun4u: the firmware's `boot` service returns, the kernel panics and exits to `0 >`
 REBOOT_RETURNED = r"reboot call returned"
-# The end of a line that waits for input: "... [y,n,?,q]", "[n]:", "(y/n):", "[]", "-->", "[?]",
-# and on Solaris 9 the same followed by a key hint: "<Press ENTER to continue> {"!" exits}"
+# The end of a line that waits for input: "... [y,n,?,q]", "[n]:", "(y/n):", "(y/n)", "[]", "-->",
+# "[?]", and on Solaris 9 the same followed by a key hint: "<Press ENTER to continue> {"!" exits}".
+# A closing parenthesis counts only after a choice like "(y/n)": the line the installer prints when
+# it starts a CD's packages, "Installing Solaris 8 packages (part 2)", stays on the screen for a while
+# before the progress bar and is no prompt.
 HINT = r'\s*\{"[^{}]*\}'
-PROMPT_END = r"(?:[:?\]>)]|\[[^\]]*\])(?:" + HINT + r")?\s*$"
+PROMPT_END = r"(?:[:?\]>]|\[[^\]]*\]|\([a-z]+(?:/[a-z]+)+\))(?:" + HINT + r")?\s*$"
 # Prompts without such an ending: Solaris 9 9/05's license question ("Enter 'y' to accept the license
 # agreement. Enter 'n' to decline the license agreement and exit the install.")
 PROMPT_END_BARE = r"exit the install\.\s*$"
@@ -84,14 +87,19 @@ def tail(screen, n=6):
     return re.sub(r"\s+", " ", re.sub(HINT, "", " ".join(lines))).strip()
 
 
+def waits_for_input(screen):
+    """Whether the screen's last non-empty line ends like a prompt."""
+    last = next((x for x in reversed(screen.splitlines()) if x.strip()), "")
+    return bool(re.search(PROMPT_END, last) or re.search(PROMPT_END_BARE, last))
+
+
 def wait_prompt(m, since, timeout):
     """Wait until output came after serial cursor `since` and the console settled on a prompt."""
     end = time.time() + timeout
     while True:
         m.quiet(3, timeout)
         screen = m.screen_text()
-        last = next((x for x in reversed(screen.splitlines()) if x.strip()), "")
-        if m.serial_cursor() > since and (re.search(PROMPT_END, last) or re.search(PROMPT_END_BARE, last)):
+        if m.serial_cursor() > since and waits_for_input(screen):
             return screen
         if time.time() > end:
             raise RuntimeError(f"no prompt within {timeout}s; the screen:\n{screen}")
@@ -220,7 +228,8 @@ def prompts(inst, v):
         # after each CD's packages (the default is Done), the media for Software 2 of 2 ("Media [1]:"
         # above), and the end
         (r"information, or enter \d to continue \[\d\]:$", "", "installation details"),
-        # 8 2/02, after Software 2 of 2 went in: "Ready to Install 1. Install Now 2. Start Over ..."
+        # 8 2/02, after each CD after the first went in: "Ready to Install 1. Install Now 2. Start
+        # Over ..." (anchored at the end: an answered copy, "... [1]? 1", is never matched again)
         (r"Ready to Install .*1\. Install Now .*What would you like to do \[1\]\?$", "1", "install the next CD"),
         # Solaris 9: a summary that moves on by itself after 30-90 s
         (r"Enter 'p' to pause\. Enter 'c' to continue\. \[c\]$", "c", None),

@@ -10,6 +10,12 @@ Playwright tests against a single-node Proxmox VE running in a container with th
 - `tests/floppy.spec.ts`: floppy support across all three packages: the `floppy` storage content
   type and its upload tab, floppy drives on i440fx and q35 (and their refusal on other
   architectures), and Hardware → Add → Floppy Drive.
+- `tests/mirror.spec.ts`: a mirror storage (a dir storage of symlinks to images in a NAS tree made in
+  the container, folders in the names with `__`): the volumes with the targets' sizes, a dangling
+  link left out, removing a volume removes only the link, a VM keeps the volume ID; and pve-manager's
+  folder view (the ISO and floppy tabs grouped by folder, search, remove, the CD/DVD and floppy
+  selectors showing `Solaris / 2.6 / ...`). The UI tests probe the installed pve-manager and are
+  skipped on one without the folder view.
 - `tests/sparc-profiles.spec.ts`: the sparc32 profiles (`submodules/SPARC.md`): each one created
   through the API and the create wizard, the refused combinations, `arch` set on create only, the
   Hardware editors, vzdump/qmrestore and snapshots, the lab's machine arguments against

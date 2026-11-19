@@ -144,6 +144,17 @@ class BootTest(unittest.TestCase):
                 install.cmd_boot_test(self.args(os.path.join(d, "sol10-sun4u-installed.raw"), "sol10-sun4u"))
             self.assertIn("stored disk is named", str(e.exception))
 
+    def test_debian_needs_no_network_options(self):
+        """A boot test installs nothing: the Debian targets' net_require (--gateway/--dns for the
+        netinst) doesn't apply, as cmd_boot_test marks with `boot_test` (it used to refuse)."""
+        a = types.SimpleNamespace(target="debian40-ss5", ip=None, netmask=None, gateway=None, dns=None, domain=None,
+                                  vlan=None, bridge="vmbr0", apt_proxy=None)
+        t = targets.TARGETS["debian40-ss5"]
+        with self.assertRaises(SystemExit):
+            install.network_choice(t, a)
+        a.boot_test = True
+        self.assertEqual(install.network_choice(t, a)["gateway"], None)
+
     def test_vm_params(self):
         a = types.SimpleNamespace(target="tribblix-m34-sun4u", vmid="9951", bridge="vmbr0", storage="local", name=None)
         p = install.boot_test_vm_params(targets.TARGETS[a.target], a, "/mnt/os/disks/install-tribblix-m34-sun4u.raw")
@@ -179,6 +190,66 @@ class MatrixPlan(unittest.TestCase):
             self.assertEqual(pve_matrix.plan(slow, d, {slow})[0], "install")
             open(install.stored_disk(d, "sol26-ss5")[0], "wb").close()  # not ours: never replaced
             self.assertEqual(pve_matrix.plan("sol26-ss5", d, {"all", "sol26-ss5"})[0], "refuse")
+
+    def test_plan_apt_cache(self):
+        """Debian's netinst (matrix_needs apt_cache) installs only with an apt cache; without one it is
+        skipped, also when --reinstall names it; a stored disk is boot-tested either way."""
+        deb, cache = "debian40-ss5", "aptcache.example:3142"
+        self.assertEqual(targets.TARGETS[deb].get("matrix_needs"), "apt_cache")
+        self.assertIsNone(targets.TARGETS[deb].get("matrix_skip"))
+        with tempfile.TemporaryDirectory() as d:
+            action, why = pve_matrix.plan(deb, d)
+            self.assertEqual(action, "skip")
+            self.assertIn("WSH_LAB_APT_CACHE", why)
+            self.assertEqual(pve_matrix.plan(deb, d, {deb})[0], "skip")
+            self.assertEqual(pve_matrix.plan(deb, d, apt_cache=cache)[0], "install")
+            self.assertEqual(pve_matrix.plan(deb, d, {deb}, cache)[0], "install")
+            store(d, deb)
+            self.assertEqual(pve_matrix.plan(deb, d)[0], "boot-test")
+            self.assertEqual(pve_matrix.plan(deb, d, {"all"})[0], "boot-test")
+            self.assertEqual(pve_matrix.plan(deb, d, {"all"}, cache)[0], "install")
+
+    def test_apt_cache_choice(self):
+        self.assertIsNone(pve_matrix.apt_cache_choice(None))
+        self.assertIsNone(pve_matrix.apt_cache_choice(" "))  # an unset workflow variable
+        for value in ("aptcache.example:3142", "http://aptcache.example:3142/", " aptcache.example:3142\n"):
+            self.assertEqual(pve_matrix.apt_cache_choice(value), "aptcache.example:3142")
+        self.assertEqual(pve_matrix.apt_cache_choice("192.0.2.7:3142"), "192.0.2.7:3142")
+        for bad in ("aptcache.example", "aptcache.example:0", "aptcache.example:70000", "a b:3142",
+                    "https://aptcache.example:3142", "aptcache.example:3142/debian", "-x:1"):
+            with self.assertRaises(SystemExit, msg=bad) as e:
+                pve_matrix.apt_cache_choice(bad)
+            self.assertNotIn(bad.strip(), str(e.exception))  # never echoed (a workflow secret)
+
+    def test_apt_cache_pinhole(self):
+        """The guests get 10.0.2.2:3142 forwarded to the cache by socat, no IP forwarding, and the
+        targets that fetch packages --apt-proxy there and no router or name server."""
+        cmds = pve_matrix.apt_cache_pinhole_cmds("aptcache.example:3142")
+        self.assertIn(["ip", "addr", "replace", "10.0.2.2/24", "dev", "vmbr0"], cmds)
+        self.assertIn(["sysctl", "-q", "-w", "net.ipv4.ip_forward=0"], cmds)
+        socat = cmds[-1]
+        self.assertEqual(socat[:2], ["systemd-run", "--unit=wsh-lab-apt-cache"])
+        self.assertEqual(socat[-2:], ["TCP4-LISTEN:3142,bind=10.0.2.2,fork,reuseaddr", "TCP:aptcache.example:3142"])
+        self.assertFalse(any("MASQUERADE" in " ".join(c) or "iptables" in c[0] for c in cmds))  # no NAT
+        a = types.SimpleNamespace(apt_cache="aptcache.example:3142")
+        self.assertEqual(pve_matrix.install_net_args("debian40-ss20", a), ["--apt-proxy", "http://10.0.2.2:3142"])
+        self.assertEqual(pve_matrix.install_net_args("sol26-ss5", a), [])
+        self.assertEqual(pve_matrix.install_net_args("debian40-ss20", types.SimpleNamespace(apt_cache=None)), [])
+        # what lab.py install then accepts: the proxy on the guest's network instead of --gateway/--dns
+        args = parser().parse_args(["install", "debian40-ss20", "--vmid", "1",
+                                    *pve_matrix.install_net_args("debian40-ss20", a)])
+        net = install.network_choice(targets.TARGETS["debian40-ss20"], args)
+        self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", None, []))
+
+    def test_pinhole_failure_fails_only_those_installs(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = types.SimpleNamespace(runs=d, disks=d, reinstall=set(), timeout=3600, apt_cache="aptcache.example:3142",
+                                      pinhole_error="apt cache pinhole: no HTTP answer through http://10.0.2.2:3142")
+            res = pve_matrix.run_case("install-debian40-ss5", {"target": "debian40-ss5"}, None, None, [], a)
+            self.assertEqual((res["code"], res["status"]), (3, a.pinhole_error))
+            self.assertNotIn("aptcache.example", res["status"])
+            store(d, "debian40-ss5")  # a stored disk is still boot-tested (needs no cache): not refused here
+            self.assertEqual(pve_matrix.plan("debian40-ss5", d, apt_cache=a.apt_cache)[0], "boot-test")
 
     def test_reinstall_values(self):
         self.assertEqual(pve_matrix.reinstall_set(None), set())
