@@ -709,6 +709,34 @@ class OlderSun(unittest.TestCase):
         self.assertIn("correct", rule("Is the following information correct?\n\nTime zone:  MET\n"))
 
 
+class NeXT(unittest.TestCase):
+    """nextstep33-ss5 and openstep42-ss5: catalogue entries until a pve-qemu-kvm with the ESP interrupt
+    fix is published (SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
+    names = {"nextstep33-ss5": "nextstep33_risc.iso", "openstep42-ss5": "Openstep-4.2-Intel-User.iso"}
+
+    def test_catalogue_only(self):
+        for name, medium in self.names.items():
+            t = targets.TARGETS[name]
+            self.assertEqual(t["status"], "catalogue")
+            self.assertNotIn(name, targets.automated())
+            self.assertIn("ESP", t["blocked"])
+            self.assertEqual(t["media"], [{"name": medium, "drive": "scsi6"}])
+
+    def test_profile(self):
+        # the installed disk boots only under ss5.bin; the installer and the system need the framebuffer:
+        # TCX, which NeXT's S24 driver drives (it has no cg3 driver)
+        for name in self.names:
+            p = targets.TARGETS[name]["profile"]
+            self.assertEqual((p["arch"], p["machine"], p["bios"], p["vga"]), ("sparc", "SS-5", "ss5.bin", "tcx"))
+            self.assertEqual(targets.TARGETS[name]["disk"], {"bus": "scsi3", "size": 2, "label": None})
+
+    def test_media_are_local(self):
+        for medium in self.names.values():
+            m = targets.MEDIA[medium]
+            self.assertNotIn("url", m)  # commercial media
+            self.assertTrue(m["lab"].startswith("other-os/"))
+
+
 class RedHat62(unittest.TestCase):
     """redhat62-ss5/-ss20: the unattended method (kickstart from an answer CD made on the node), the
     answer CD itself, the kickstart file and the drive it goes into."""

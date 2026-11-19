@@ -348,6 +348,34 @@ packages from `archive.debian.org`.
 [Lab install targets](/guides/lab-install/) installs it unattended (`debian40-ss5`,
 `debian40-ss20`: preseed from a small answer CD, with `--apt-proxy` for a package cache).
 
+## NeXTSTEP 3.3 and OPENSTEP 4.2
+
+NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also carries the SPARC
+version) **don't install with the published `pve-qemu-kvm`** (11.1.3-2+wsh22): the CD boots, but the
+install hangs while the kernel mounts its root, prepares the disk or copies files, the CPU spinning in the
+guest's SCSI driver. QEMU's ESP signals a finished command earlier than real hardware can, and NeXT's
+driver deadlocks on that. In the lab, a QEMU that delays the ESP's interrupt by 500 µs installs both
+on an SS-5 and boots them to the Workspace; the fix isn't in a package yet. Details:
+`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+
+What works with that fix, for when it is published:
+
+- **SS-5 with `bios: ss5.bin` and `vga: tcx`.** NeXT has no cg3 driver; its TCX driver runs QEMU's
+  8-bit TCX at 1024x768. OpenBIOS boots the CD but not the installed disk, so use the Sun PROM
+  throughout. A blank disk of 1-3 GB.
+- **The whole install is on the framebuffer** (the VNC console) with the keyboard and mouse: a text
+  stage from the CD (language, the disk, copying the base system; 2-4 minutes), then from the disk
+  Configure (click Save) and the Installer's package list (6-15 minutes), then the language panel and
+  the Workspace, logged in as `me` without a password.
+- **At each disk boot:** in the Sun PROM, `setenv diag-switch? false` once, then `boot disk`; at
+  NeXT's `boot:` prompt type `-v` within 10 seconds (its boot graphics stop the PROM with `Data
+  Access Error` on this TCX); press Control-C when it waits for a network configuration server.
+- **Not the SS-20:** the CD stage runs there, but neither OpenBIOS nor `ss20_v2.25_rom` (QEMU stops
+  with a trap) boots the installed disk.
+
+The lab lists them as `nextstep33-ss5` and `openstep42-ss5` in its catalogue, not yet installable
+([Lab install targets](/guides/lab-install/)).
+
 ## sparc64 (sun4u)
 
 Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC.md`, "sparc64"):
@@ -471,6 +499,8 @@ on sun4u".
   firmware, or OpenBIOS.
 - Moving the mouse pointer in the Solaris desktop didn't work in the lab's tests (keyboard input
   does); not yet checked from a VNC console.
+- NeXTSTEP 3.3 and OPENSTEP 4.2 hang during their install with the published package (an ESP
+  interrupt timing problem; see [NeXTSTEP 3.3 and OPENSTEP 4.2](#nextstep-33-and-openstep-42)).
 - The architecture can't be changed after the VM is created.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
