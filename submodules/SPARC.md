@@ -2359,11 +2359,14 @@ on the host at once, 2026-11-19):
 | `install sol9-sun4u --check` (0025) | passed: the first boot reconfigures (`Configuring /dev and /devices`) without a panic, root/`wshlab`, the marker, `SunOS sol9-sun4u 5.9 Generic_118558-34 sun4u`, `/` 1126422 KB on `c0t0d0s0`, `hme0` 10.0.2.15/24, `boot: order=ide0`, `ide2` empty | 70.0 min (install 3559 s, first boot 401 s, check 215 s) |
 | `install sol8-sun4u --check` (0025) | passed: one power cycle after the mini-root copy, Software 1 of 2 swapped in, `SunOS sol8-sun4u 5.8 Generic_108528-13 sun4u`, `/` 738902 KB, no `fdthree` warning in any phase | 56.9 min (2752 s, 378 s, 264 s) |
 | `install sol8-sun4u --check` (the package's firmware) | passed; the `fdthree` warning in the install and first boot, as before | 53.4 min (2536 s, 382 s, 267 s) |
+| `install sol9-sun4u --check --export` (0025), a second run | passed, the same checks; the disk and its sidecar exported | 67.2 min (3393 s, 405 s, 217 s) |
+| `matrix.py sparc64` (0025) | 9 of 9 passed: NetBSD 11.1 and 9.3, OpenBSD 8.0 and Debian 12 CDs, NetBSD 11.1 on `std` VGA, install, disk, virtio and idle | 18 min (the cases added up) |
+| `matrix.py solaris10` (0025) | 2 of 2 passed: the DVD and the installed disk | 12 min (the cases added up) |
+| `boot-test` of the stored disks (0025): `openbsd80-sun4u`, `netbsd111-sparc64`, `sol10-sun4u`, `tribblix-m34-sun4u` | 4 of 4 passed | 3.4, 1.7, 8.6, 25.5 min |
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
-A second `sol9-sun4u` run (with `--export`) and the regression of 0025 (`sparc64` and `solaris10`
-matrices, the stored OpenBSD 8.0 disk, a NetBSD sun4u boot) were still running when this was
-written; see the pull request. `sol9-sun4u` has `matrix_skip` until a published package has 0025;
+So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
+install matrix ran on the same host at the time). `sol9-sun4u` has `matrix_skip` until a published package has 0025;
 `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
