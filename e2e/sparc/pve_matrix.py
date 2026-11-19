@@ -16,8 +16,16 @@ install-<target>.json, lab.py install --export) and per target either
   - boot-tests the stored disk (`lab.py boot-test`): a VM with the target's profile from a copy of it,
     booted through PVE, the target's check (login, marker, state), the VM destroyed, or
   - skips it: a target with `matrix_skip` (too slow for the sparc lab job, or it needs more than the
-    published packages) is installed only when --reinstall names it, and boot-tested once its disk exists.
+    published packages) is installed only when --reinstall names it, and boot-tested once its disk exists;
+    a target with `matrix_needs: apt_cache` (Debian's netinst) is installed only with --apt-cache.
 A file under the stored disk's name that lab.py install didn't write fails the case (it is never replaced).
+
+--apt-cache HOST:PORT (or WSH_LAB_APT_CACHE): an apt cache (apt-cacher-ng) the node reaches. The guests
+get it and nothing else: the node's vmbr0 gets APT_PINHOLE_IP/24, a socat service forwards
+APT_PINHOLE_IP:3142 to the cache, IP forwarding is off, and the targets that fetch packages are
+installed with `--apt-proxy http://APT_PINHOLE_IP:3142` and no router or name server (the proxy is
+handed whole URLs and resolves the archive's name itself). The cache's address isn't printed. When
+the pinhole gets no answer from the cache, those installs fail and the other cases run.
 
 Runs on the PVE node: the e2e node with the lab in it (pve.Dockerfile). Each case creates its VM
 (`pvesh create /nodes/<node>/qemu`, the install media linked into the `local` storage, a disk template
@@ -29,6 +37,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -39,6 +48,10 @@ import install
 import targets
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The guests' side of the apt cache pinhole (--apt-cache): an address on the node's vmbr0 in the
+# targets' default network (10.0.2.15/24), and the port socat forwards to the cache
+APT_PINHOLE_IP, APT_PINHOLE_PORT, APT_PINHOLE_UNIT = "10.0.2.2", 3142, "wsh-lab-apt-cache"
+APT_PINHOLE_PROXY = f"http://{APT_PINHOLE_IP}:{APT_PINHOLE_PORT}"
 ISO_DIR = "/var/lib/vz/template/iso"  # the `local` storage's ISO directory
 # {"install": <target>} as a case's VM config: `lab.py install <target> --check` creates and installs
 # the VM (the target's media linked into the `local` storage under their expected names) instead of
@@ -132,22 +145,82 @@ def reinstall_set(values):
     return out
 
 
-def plan(target, disks, reinstall=frozenset()):
+# (the summary shows 160 characters of a status)
+NO_APT_CACHE = "needs an apt cache for archive.debian.org (WSH_LAB_APT_CACHE or --apt-cache HOST:PORT)"
+
+
+def plan(target, disks, reinstall=frozenset(), apt_cache=None):
     """What the install matrix does with a target: ("install" | "boot-test" | "skip" | "refuse", why)."""
     t = targets.TARGETS[target]
     try:
         meta = install.read_sidecar(disks, target)
     except install.InstallFailed as e:
         return "refuse", str(e)
+    no_cache = t.get("matrix_needs") == "apt_cache" and not apt_cache
     if target in reinstall:
+        if no_cache:
+            return "skip", f"--reinstall {target}: {NO_APT_CACHE}"
         return "install", f"--reinstall {target}"
-    if meta and "all" in reinstall and not t.get("matrix_skip"):
+    if meta and "all" in reinstall and not t.get("matrix_skip") and not no_cache:
         return "install", "--reinstall all"
     if meta:
         return "boot-test", f"stored disk installed {meta.get('installed')} with {meta.get('packages')}"
     if t.get("matrix_skip"):
         return "skip", f"no stored disk; installed only on request (--reinstall {target}): {t['matrix_skip']}"
+    if no_cache:
+        return "skip", f"no stored disk; {NO_APT_CACHE}"
     return "install", "no stored disk"
+
+
+def apt_cache_choice(value):
+    """--apt-cache / WSH_LAB_APT_CACHE: HOST:PORT (a host name or IPv4 address; an http:// in front
+    and a / after are dropped), None when empty; SystemExit otherwise. The value is never echoed."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    m = re.fullmatch(r"(?:http://)?([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?):([0-9]{1,5})/?", value)
+    if not m or not 0 < int(m[2]) < 65536:
+        raise SystemExit("--apt-cache / WSH_LAB_APT_CACHE: not HOST:PORT")
+    return f"{m[1]}:{m[2]}"
+
+
+def apt_cache_pinhole_cmds(cache, bridge="vmbr0"):
+    """The commands that give the guests on `bridge` the apt cache and nothing else: the pinhole
+    address on the bridge, IP forwarding off (a guest that takes the node for its router gets
+    nowhere), and a transient systemd service with socat forwarding APT_PINHOLE_IP:APT_PINHOLE_PORT
+    to the cache (a new connection to the cache per guest connection; it listens on the bridge
+    address only). The first two systemctl commands clear an earlier run's service and may fail."""
+    host, port = cache.rsplit(":", 1)
+    return [
+        ["systemctl", "stop", APT_PINHOLE_UNIT],
+        ["systemctl", "reset-failed", APT_PINHOLE_UNIT],
+        ["ip", "addr", "replace", f"{APT_PINHOLE_IP}/24", "dev", bridge],
+        ["ip", "link", "set", bridge, "up"],
+        ["sysctl", "-q", "-w", "net.ipv4.ip_forward=0"],
+        ["systemd-run", f"--unit={APT_PINHOLE_UNIT}", "--property=Restart=always", "--quiet", "socat",
+         f"TCP4-LISTEN:{APT_PINHOLE_PORT},bind={APT_PINHOLE_IP},fork,reuseaddr", f"TCP:{host}:{port}"],
+    ]
+
+
+def open_apt_cache_pinhole(cache):
+    """Run apt_cache_pinhole_cmds() and check the forward: an HTTP request through it, which the
+    cache answers with any status line. The cache's address stays out of the output. RuntimeError
+    when it doesn't work."""
+    for cmd in apt_cache_pinhole_cmds(cache):
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode and cmd[:2] not in (["systemctl", "stop"], ["systemctl", "reset-failed"]):
+            raise RuntimeError(f"apt cache pinhole: {' '.join(cmd[:4])} failed (exit {r.returncode})")
+    for _ in range(10):
+        try:
+            with socket.create_connection((APT_PINHOLE_IP, APT_PINHOLE_PORT), timeout=5) as c:
+                c.sendall(b"HEAD http://archive.debian.org/debian/dists/etch/Release HTTP/1.0\r\n\r\n")
+                if c.recv(12).startswith(b"HTTP/"):
+                    print(f"=== apt cache pinhole: {APT_PINHOLE_PROXY} on vmbr0 answers (IP forwarding off)", flush=True)
+                    return
+        except OSError:
+            pass
+        time.sleep(1)
+    raise RuntimeError(f"apt cache pinhole: no HTTP answer through {APT_PINHOLE_PROXY} (does the node reach the cache?)")
 
 
 def boot_test_timeout(target, a):
@@ -264,17 +337,27 @@ def install_timeout(target, a):
     return max(a.timeout * 2, phases + 600)
 
 
+def install_net_args(target, a):
+    """`lab.py install` options for the network: --apt-proxy through the pinhole for a target that
+    fetches packages when the matrix has an apt cache (no --gateway or --dns: the guest gets no way out)."""
+    if getattr(a, "apt_cache", None) and targets.TARGETS[target].get("apt_proxy"):
+        return ["--apt-proxy", APT_PINHOLE_PROXY]
+    return []
+
+
 def run_case(name, config, iso, template, steps, a):
     work = os.path.join(a.runs, name)
     os.makedirs(work, exist_ok=True)
     t0, vmid, results = time.time(), None, []
     if "target" in config:
-        action, why = plan(config["target"], a.disks, a.reinstall)
+        action, why = plan(config["target"], a.disks, a.reinstall, getattr(a, "apt_cache", None))
         print(f"=== {name}: {action}: {why}", flush=True)
         if action == "skip":
             return {"code": 0, "skipped": True, "elapsed": 0, "steps": [], "status": f"skipped: {why}"}
         if action == "refuse":
             return {"code": 3, "elapsed": 0, "steps": [], "status": f"refused: {why}"}
+        if action == "install" and install_net_args(config["target"], a) and getattr(a, "pinhole_error", None):
+            return {"code": 3, "elapsed": 0, "steps": [], "status": a.pinhole_error}
     try:
         first = 1
         if "target" in config:
@@ -286,7 +369,8 @@ def run_case(name, config, iso, template, steps, a):
                 out = os.path.join(work, f"1-install-{target}")
                 results.append(run_step(name, f"install {target}", out, a,
                                         [*lab_py, "install", target, "--vmid", vmid, "--out", out, "--check",
-                                         "--export", a.disks], timeout=install_timeout(target, a)))
+                                         "--export", a.disks, *install_net_args(target, a)],
+                                        timeout=install_timeout(target, a)))
             else:
                 out = os.path.join(work, f"1-boot-test-{target}")
                 results.append(run_step(name, f"boot-test {target}", out, a,
@@ -344,13 +428,25 @@ def main():
                    help="the bench disk (e2e/sparc/README.md, \"The bench disk\"; read only)")
     p.add_argument("--timeout", type=int, default=3600, help="seconds per scenario")
     p.add_argument("--only", action="append", help="run only these cases")
+    p.add_argument("--apt-cache", metavar="HOST:PORT",
+                   help="install: an apt cache the node reaches (WSH_LAB_APT_CACHE); the targets that fetch"
+                        f" packages get it as {APT_PINHOLE_PROXY} on vmbr0 and nothing else (none: they are skipped)")
     a = p.parse_args()
     if a.reinstall and a.matrix != "install":
         p.error("--reinstall: only with the install matrix")
     a.reinstall = reinstall_set(a.reinstall)
+    a.apt_cache = apt_cache_choice(a.apt_cache or os.environ.get("WSH_LAB_APT_CACHE"))
 
     rows, failed, skipped = [], 0, 0
     cases = [c for c in MATRICES[a.matrix] if not a.only or c[0] in a.only]
+    if a.apt_cache and any(install_net_args(c[1]["target"], a)
+                           and plan(c[1]["target"], a.disks, a.reinstall, a.apt_cache)[0] == "install"
+                           for c in cases if "target" in c[1]):
+        try:
+            open_apt_cache_pinhole(a.apt_cache)
+        except RuntimeError as e:  # those installs fail (run_case), the rest of the matrix runs
+            a.pinhole_error = str(e)
+            print(f"=== {e}", flush=True)
     for name, config, iso, template, steps in cases:
         res = run_case(name, config, iso, template, steps, a)
         failed += res["code"] != 0

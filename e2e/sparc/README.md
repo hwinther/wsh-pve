@@ -581,15 +581,40 @@ again only when asked:
   `install --check --export <disks>`; there → `boot-test`; `--reinstall TARGET[,TARGET]` installs
   those again, `--reinstall` alone (or `all`) every target without `matrix_skip`. A target with
   `matrix_skip` is never installed by the matrix unless `--reinstall` names it: without a stored disk
-  it is listed as `skip`, with one it is boot-tested. A file under the stored disk's name that isn't
-  ours fails the case. The summary counts skipped cases separately.
+  it is listed as `skip`, with one it is boot-tested. A target with `matrix_needs: apt_cache` (the
+  Debian targets, whose netinst fetches the base system) is installed only when the matrix has an
+  apt cache (`--apt-cache HOST:PORT` or `WSH_LAB_APT_CACHE`, "The apt cache pinhole" below);
+  without one it is skipped like a `matrix_skip` target, also when `--reinstall` names it. A file
+  under the stored disk's name that isn't ours fails the case. The summary counts skipped cases
+  separately.
 
 `matrix_skip` thus marks the targets an unattended run shouldn't install: Tribblix (3.5-4.3 h, too
-much of the 240-minute job) and the Debian targets (their `matrix_skip` says why; the matrix passes
-no `--gateway`/`--dns`/`--apt-proxy`, which their installer needs to reach archive.debian.org).
-`--export` accepts the network options, so such a disk can be made by hand on a node with a route
-out (`lab.py install debian40-ss5 --vmid N --check --export /mnt/os/disks --gateway G --dns D`); the
-matrix boot-tests it from then on (the check needs no network). The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
+much of the 240-minute job). `--export` accepts the network options, so a Debian disk can also be
+made by hand on a node with a route out (`lab.py install debian40-ss5 --vmid N --check --export
+/mnt/os/disks --gateway G --dns D`); the matrix boot-tests a stored disk without any network (the
+check needs none).
+
+**The apt cache pinhole.** The guests' bridge in the PVE test container, `vmbr0`, has no route out,
+and the Debian targets get no general way out either: `pve_matrix.py --apt-cache HOST:PORT` (or the
+`WSH_LAB_APT_CACHE` environment variable; the `sparc lab` workflow passes the repository secret or
+variable `WSH_LAB_APT_CACHE`) gives them one destination only, an apt cache (apt-cacher-ng) the
+node reaches. Before the first install that needs it, the node gets `10.0.2.2/24` on `vmbr0`
+(`APT_PINHOLE_IP`, in the targets' default network 10.0.2.0/24), IP forwarding off
+(`net.ipv4.ip_forward=0`), and a transient systemd service `wsh-lab-apt-cache` running
+`socat TCP4-LISTEN:3142,bind=10.0.2.2,fork,reuseaddr TCP:HOST:PORT`; the matrix checks that an HTTP
+request through it gets an answer (when it gets none, those installs fail and the rest of the
+matrix runs). The targets that fetch packages are installed with
+`--apt-proxy http://10.0.2.2:3142` and no `--gateway` or `--dns`: apt and debian-installer hand an
+HTTP proxy whole URLs, so the cache resolves `archive.debian.org` and the guest needs neither a
+router nor a name server (`net_require` is satisfied by a proxy at an address on the guest's own
+network, `install.proxy_on_network()`). What a guest on `vmbr0` can reach: the cache through
+10.0.2.2:3142, the other guests on `vmbr0`, and the node itself (10.0.2.2: its services such as the
+PVE API answer there; the test container has no firewall). Not: anything past the node (no default
+route in the guest, and with one set by hand no forwarding or NAT in the node), nor a name server. The cache's address isn't printed, isn't in the
+evidence (the guest and its logs see only 10.0.2.2) and isn't in the repository; the installed
+system keeps `Acquire::http::Proxy "http://10.0.2.2:3142"` in `/etc/apt/apt.conf` (harmless
+elsewhere: apt fails to connect). Without a cache the matrix skips the Debian targets (no stored
+disk) and changes nothing on `vmbr0`. The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
 `reinstall` input (empty by default: boot-test what is stored, install what is missing); any
 `reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
 a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
@@ -707,6 +732,17 @@ updates, whose Web Start differs in four screens that `solaris-webstart-serial.p
   install the Solaris Operating Environment.` and `Please insert the CD/DVD for Solaris 8 Software 2
   of 2 (2/02 SPARC Platform Edition).` (`INSERT`), and once the second CD is in, `Ready to Install
   1. Install Now 2. Start Over 3. Exit Installation What would you like to do [1]?` (1).
+- After that answer the installer prints `Installing Solaris 8 packages (part 2)` and, a while
+  later, the progress bar. `PROMPT_END` used to take any closing parenthesis as the end of a prompt
+  (for `(y/n)`), so when the console went quiet on that line the scenario took it for a prompt,
+  found none in its table (the answered menu, `... [1]? 1`, doesn't match: the table's patterns
+  end at the question) and failed with `unknown prompt` (install matrix run 44533778163, the only
+  failure of `sol8-ss5` so far; it depends on how long the line stays the last one). Now a closing
+  parenthesis ends a prompt only after a choice such as `(y/n)` (`waits_for_input()`); the menu
+  itself is answered whenever it is on the screen. The prompt endings of the passing 8 2/02 and 9
+  9/05 runs' snapshots are the same under both rules. In both runs with the fix the progress
+  bar came 4-4.5 s after that line (`serial.cast`), more than the 3 s of quiet `wait_prompt()` waits
+  for, so the old rule would most likely have failed there again.
 
 The SS-20 targets stay on 8 1/01 and the original 9 DVD: the later updates install there too (lab
 runs below), but no faster (8 2/02 took 31 min against 24 for 8 1/01, and hung once), and the old
@@ -734,11 +770,11 @@ Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-
 | --- | --- | --- |
 | `install sol9-ss5 --check` | passed; login `root`/`wshlab`, the marker, `le0` 10.0.2.15/24 static | 29.8 min (install 1420 s, first boot 270 s, check 73 s) |
 | `install sol8-ss5 --check` | passed; both Software CDs swapped in by the scenario, the same login, marker and network | 37.2 min (install 1897 s, first boot 216 s, check 97 s) |
-
+| `pve_matrix.py install --only install-sol8-ss5` with the `PROMPT_END` fix (scratch `--disks`, pve-qemu-kvm 11.1.3-2+wsh22, another guest running), twice | passed both; after the answered "Ready to Install" the console stayed 4.0 and 4.5 s on `Installing Solaris 8 packages (part 2)` before the progress bar, and the scenario waited for the next prompt (`installation details`, 5-6 min later) | 34.6 min (install 1733 s, first boot 216 s, check 97 s); 36.7 min (1853 s, 217 s, 98 s) |
 `pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
 the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). Not tried: `--ip dhcp`, `--disk-size 3G` and the
 other network options with these two, `ss5.bin`
-for Solaris 8, and repeated runs (one PVE run each). The SS-20 hang with 8 2/02 happened once in
+for Solaris 8, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
 two runs and wasn't diagnosed.
 
 ### Solaris 2.4 and 2.5.1
@@ -923,6 +959,28 @@ Not tried: `--user`, `--gateway`, the 9G disk and DHCP on these targets, 2.2 wit
 (`install-sol24-ss5.raw` in the matrix's directory, installed under `ss5.bin`) under the new
 OpenBIOS profile: `lab.py boot-test sol24-ss5` passed (1.3 min), so the matrix's next boot test of
 it passes without a reinstall (a `--reinstall` gives it an OpenBIOS install).
+
+**A CD boot that hangs before the installer** (the first full `install` matrix, GitHub run
+44533778163). `sol23-ss20` timed out after 900 s waiting for the terminal prompt. Its console:
+the CD booted as a disk (`boot .../sd@6,0:d`, the right device; the VM config was the target's,
+the same as `lab.py install sol23-ss20` makes), the kernel banner, `corrupt label - bad geometry`
+(`Label says 1310720 blocks, Drive says 833944 blocks`: the image is shorter than the CD's label;
+every passing 2.2-2.4 boot prints it), `clock gained 11969 days`, 17 turns of the spinner, then
+nothing. A good boot prints `Configuring the /devices directory` after the same 17 turns. The same
+target passed before (twice, above) and after (the runs below), so it is intermittent, not the
+matrix's VM; most likely the ESP deadlock (`submodules/SPARC.md`, "The ESP deadlock": QEMU raises
+the disk's interrupt in the register write that starts the command), not traced. The scenario now
+fails such a boot early: `solaris-install-serial.py` waits `FIRST_PROMPT_TIMEOUT` (300 s; 35-55 s
+in the lab runs) from the banner to the first prompt and then fails with "before the installer";
+the Solaris 2.2-2.6 targets (`SOLARIS_SCRIPTED`) have `retry_on: "before the installer"`, so
+`install` boots the CD once more (evidence in `install-retry1/`; nothing is on the disk yet). A
+second hang in a row still fails the case. The retry itself ran only in the unit tests (no hang in
+the runs below).
+
+| Run (through PVE, `pve_matrix.py install --only install-sol23-ss20`, scratch `--disks`) | Result | Time |
+| --- | --- | --- |
+| run 1 (the scenario before the early-hang change; Debian or Solaris 8 at the same time) | passed; banner to the terminal prompt 34 s | 8.4 min (install 273 s, first boot 135 s, check 74 s) |
+| run 2 (with `FIRST_PROMPT_TIMEOUT` and `retry_on`) | passed (banner to the terminal prompt 34 s), no retry needed | 8.7 min (277 s, 145 s, 80 s) |
 
 `pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
 workflow now also needs the 2.3, 2.5 and 4.1.3_U1B CDs (`--iso` with the lab host's layout:
@@ -1305,9 +1363,10 @@ install, other package groups (X needs a framebuffer and `Xsun`), a login as the
 `vga: serial0`, install Debian GNU/Linux 4.0r9 "etch" for sparc (`debian-40r9-sparc-netinst.iso`,
 the last Debian release for sun4m; kernel 2.6.18-6-sparc32) onto a blank 3 GiB disk on `scsi3`,
 the netinst CD on `scsi6`, lance (`eth0`). They need **`pve-qemu-kvm` 11.1.3-2+wsh20 or later**
-(the ESP fix `wsh/0038`, below). `pve_matrix.py install` still leaves them out (`matrix_skip`): it
-runs `lab.py install <target> --check` without `--gateway` and `--dns`, which these targets refuse
-before a VM is made, and its node's `vmbr0` has no route out.
+(the ESP fix `wsh/0038`, below). `pve_matrix.py install` installs them when it has an apt cache
+(`--apt-cache` / `WSH_LAB_APT_CACHE`; "The apt cache pinhole" above): `lab.py install <target>
+--check --export <disks> --apt-proxy http://10.0.2.2:3142`, no router and no name server, the cache
+the guest's only way out. Without a cache it skips them (`matrix_needs: apt_cache`).
 
 1. **Install** (the `unattended` method, `debian-install-sparc.py`). `install.Unattended` writes
    the answer CD (`answer_media.preseed()` and the loader script `wshlab`) and puts it on `scsi5`.
@@ -1370,7 +1429,16 @@ Why the preseed file comes this way:
   ignored for them).
 - The network is static only (`net_modes`), and `--gateway` and `--dns` are required
   (`net_require`): the install fetches from the archive, so the router and name server must reach
-  it, or the proxy.
+  it, or the proxy. An `--apt-proxy` by address on the guest's own network replaces both
+  (`install.proxy_on_network()`): apt and debian-installer hand an HTTP proxy whole URLs
+  (`GET http://archive.debian.org/...`), so the guest resolves no names and needs no router.
+  etch's netcfg puts the network's first address (10.0.2.1) in for an empty router and name
+  server; the late command then removes the `gateway` line from `/etc/network/interfaces` and the
+  `nameserver` lines from `/etc/resolv.conf`, so the installed system has neither.
+- `lab.py boot-test` of a stored Debian disk no longer asks for `--gateway`/`--dns` (it installs
+  nothing; before, it refused, so the matrix could never have boot-tested one). The boot-test VM
+  has a new MAC, which etch's udev (`z25_persistent-net.rules`) names `eth1`, so the boot test
+  runs with the network down; the check doesn't need it.
 - The late command also comments out the netinst's `deb cdrom:` line in `sources.list`.
 
 Found on the way:
@@ -1430,8 +1498,20 @@ once on the shared lab host:
 | `install debian40-ss20 --check --gateway --dns` (straight to the archive) | passed | 17.4 min (849 s, 111 s, 65 s) |
 | `install debian40-ss5 --check --gateway --dns` (straight to the archive) | passed | 26.0 min (1325 s, 132 s, 87 s) |
 | `install debian40-ss20 --check --user lab --gateway --dns` with `WSH_LAB_APT_PROXY` | passed; `lab:1000:1000::/home/lab:/bin/bash` | 20.7 min (1021 s, 134 s, 67 s) |
-| `install debian40-ss5 --vmid N --out DIR --check`, the command `pve_matrix.py install` runs | refused: "--gateway: debian40-ss5 needs it with a static address", so the targets keep `matrix_skip` | 0 s |
+| `install debian40-ss5 --vmid N --out DIR --check`, the command `pve_matrix.py install` ran then | refused: "--gateway: debian40-ss5 needs it with a static address", so the targets kept `matrix_skip` | 0 s |
 
+Through the apt cache pinhole (the PVE test container built `--no-cache`: pve-qemu-kvm
+11.1.3-2+wsh22, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1; `pve_matrix.py install --only
+<case> --apt-cache <the owner's apt-cacher-ng> --disks <scratch>`, another Solaris install at the
+same time, 2026-11-19):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install-debian40-ss5` (`--apt-proxy http://10.0.2.2:3142`, no `--gateway`/`--dns`) | passed and exported; d-i fetched its components, the base system and the kernel through the pinhole; the check showed `nameserver 10.0.2.1` and a default route via 10.0.2.1 (netcfg's defaults, now removed by the late command) | 20.2 min (install 1005 s, first boot 118 s, check 68 s) |
+| the same disk booted again (`boot-test --keep`, then `debian-boot-disk.py` with probe commands; the interface brought up by hand, as `eth1`) | `ping 1.1.1.1`: network unreachable; `wget http://1.1.1.1/` and `wget http://archive.debian.org/debian/` fail; with `route add default gw 10.0.2.2`: ping and wget to 1.1.1.1 still fail (no forwarding in the node); `http_proxy=http://10.0.2.2:3142 wget .../dists/etch/Release` and `apt-get update` (the installed `Acquire::http::Proxy`) work | 2.1 min |
+| `install-debian40-ss20` (the same, with the late command that drops netcfg's 10.0.2.1) | passed and exported; the check: only the `10.0.2.0/24` route on `eth0`, no default route, no `nameserver` in `/etc/resolv.conf` | 20.1 min (1002 s, 116 s, 63 s) |
+| `pve_matrix.py install --only install-debian40-ss5 --only install-debian40-ss20` without a cache, the two stored disks in `--disks` | both boot-tested and passed (no `--gateway`/`--dns` asked for any more) | 1.4 min, 1.2 min |
+| the same with an empty `--disks` and `WSH_LAB_APT_CACHE` empty (as the workflow without the secret) | both `skip`, exit 0, nothing done on `vmbr0` | 0 s |
 Not tried: DHCP (d-i's default; `--ip dhcp` is refused for now), `--vlan`, SS-10, `ss5.bin` or the
 SS-20 PROM, more than one CPU, tasks beyond the base system, the netinst on sun4u (Etch's sparc64
 kernel; the sun4u profile's IDE and `sunhme` were not tried with it).

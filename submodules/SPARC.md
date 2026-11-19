@@ -1635,6 +1635,21 @@ regressions to run are the Solaris, SunOS, NetBSD, Red Hat and Debian installs a
 QEMU's issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
 [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner.
 
+**Solaris 2.3 on the SS-20, once.** In the `install` matrix (GitHub run 44533778163, pve-qemu-kvm
+11.1.3-2+wsh22) `sol23-ss20` booted its CD (as a disk, `sd@6,0:d`, OpenBIOS) to the kernel banner,
+the usual `corrupt label - bad geometry` for the CD image (`Label says 1310720 blocks, Drive says
+833944 blocks`: the image is shorter than the CD's label says; every passing 2.2-2.4 boot prints it
+too) and `clock gained 11969 days`, turned the spinner 17 times, and then printed nothing for 900 s,
+where a good boot prints `Configuring the /devices directory` after the same 17 turns (the kernel's
+own disk I/O, mounting root and loading modules). The VM config was the target's (the same as
+`lab.py install sol23-ss20` makes; the CD was the right device), and the target's other installs
+through PVE passed (two before the matrix run, two after it). Not traced (only the console evidence is left; the VM was destroyed); it fits the ESP
+deadlock above (the interrupt raised in the same register write, before the driver is ready, once
+in a while), not proven. The lab's answer, until the ESP gets a latency: `solaris-install-serial.py`
+fails a boot that shows no first prompt within `FIRST_PROMPT_TIMEOUT` (300 s; 35-55 s in the lab)
+of the banner with "before the installer", and the Solaris 2.2-2.6 targets retry such a failure
+once (`retry_on`; nothing is on the disk yet).
+
 **Firmware.**
 
 - OpenBIOS boots both CDs but not an installed disk: it loads NeXT's boot block, whose boot program

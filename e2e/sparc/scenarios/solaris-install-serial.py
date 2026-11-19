@@ -26,12 +26,19 @@ import re
 import time
 
 from _sparc32 import DEFAULTS as BASE, power_off, prom_boot, qemu_args as sparc32_args
+from lab import Timeout
 
 DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15",
             "REGION_UP": "3", "ZONE_DOWN": "5",  # from United States up to Europe, then Middle Europe (MET)
             "REGION": "Europe", "ZONE": "Middle Europe",  # the same by name (2.3's menus)
             "SOFTWARE_UP": "0",  # 0 = End User System Support, 3 = Entire Distribution
-            "FINISH_TIMEOUT": "1800"}  # s from the postinstall phase to the root shell
+            "FINISH_TIMEOUT": "1800",  # s from the postinstall phase to the root shell
+            # s from the kernel banner to the first prompt (35-55 s in the lab); a boot that hangs
+            # there (QEMU's ESP deadlock: the CPU spins, no more disk I/O) fails with EARLY_HANG
+            "FIRST_PROMPT_TIMEOUT": "300"}
+# In the status of a boot that never reached the installer: nothing is on the disk yet, and
+# `lab.py install` boots once more (the targets' install "retry_on")
+EARLY_HANG = "before the installer"
 
 
 def qemu_args(v, out):
@@ -217,9 +224,21 @@ def run(m, v):
     prom_boot(m, v, "cdrom")
     m.expect(r"SunOS Release 5\.\d", 900)
     m.snap("kernel banner")
+    first = True
     while True:  # the prompts before the curses screens
-        i = m.expect_any([r"Select a Language", r"Type a number and press Return or Enter \[0\]",
-                          r"What type of terminal are you using"], 900)
+        prompts = [r"Select a Language", r"Type a number and press Return or Enter \[0\]",
+                   r"What type of terminal are you using"]
+        if first:
+            first = False
+            wait = int(v["FIRST_PROMPT_TIMEOUT"])
+            try:
+                i = m.expect_any(prompts, wait)
+            except Timeout:
+                m.snap("hung before the installer")
+                raise AssertionError(f"{EARLY_HANG}: no language, locale or terminal prompt within {wait}s of the"
+                                     " kernel banner (the boot hung; nothing is on the disk yet)")
+        else:
+            i = m.expect_any(prompts, 900)
         m.snap(["Select a Language", "Select a Locale", "terminal type"][i])
         if i == 2:
             m.send("3\r")  # DEC VT100

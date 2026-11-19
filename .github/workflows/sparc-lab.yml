@@ -127,6 +127,13 @@ jobs:
 
       - name: Run the ${{ env.MATRIX }} matrix on the PVE node
         if: ${{ env.MATRIX == 'pve' || env.MATRIX == 'install' }}
+        env:
+          # install: the apt cache (HOST:PORT of an apt-cacher-ng the runner reaches) for the Debian
+          # targets, which get it through a pinhole on the node's vmbr0 and nothing else
+          # (e2e/sparc/pve_matrix.py --apt-cache). A secret keeps the address out of the public log
+          # (a variable works too, but the step's env shows its value); unset: the Debian targets
+          # are skipped
+          WSH_LAB_APT_CACHE: ${{ secrets.WSH_LAB_APT_CACHE || vars.WSH_LAB_APT_CACHE }}
         run: |
           # The bench disk's directory, only when it exists (the sol26-ss20-smp2 case imports it)
           bench=()
@@ -158,7 +165,9 @@ jobs:
             sleep 5
           done
           # WSH_LAB_COMMIT: the commit the stored disks' sidecars name (lab_commit)
-          docker exec -e WSH_LAB_COMMIT="$GITHUB_SHA" "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
+          # (-e NAME without a value: docker copies it from this step's environment, so the address
+          # isn't on the command line)
+          docker exec -e WSH_LAB_COMMIT="$GITHUB_SHA" -e WSH_LAB_APT_CACHE "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
             --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK" --floppy "$FLOPPY_DIR" \
             "${reinstall[@]}"
 

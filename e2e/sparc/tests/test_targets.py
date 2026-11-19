@@ -476,6 +476,71 @@ class Masking(unittest.TestCase):
                              "MARKER": "target=x", "EMPTY_PASSWORD": ""})
 
 
+class SolarisEarlyHang(unittest.TestCase):
+    """solaris-install-serial.py: a CD boot that hangs between the kernel banner and the first prompt
+    (sol23-ss20 in install matrix run 44533778163: QEMU's ESP deadlock) fails after
+    FIRST_PROMPT_TIMEOUT with "before the installer", which the targets retry once."""
+
+    def test_scenario_fails_early_with_the_retry_text(self):
+        sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-install-serial.py"))
+        self.assertEqual(sc.DEFAULTS["FIRST_PROMPT_TIMEOUT"], "300")
+        waits = []
+
+        class M:
+            def expect(self, rx, timeout=300):
+                return None
+
+            def expect_any(self, patterns, timeout=300):
+                waits.append(timeout)
+                raise lab.Timeout(f"no prompt within {timeout}s")
+
+            def snap(self, title):
+                pass
+
+        orig, sc.prom_boot = sc.prom_boot, lambda m, v, dev: None
+        try:
+            with self.assertRaises(AssertionError) as e:
+                sc.run(M(), dict(sc.DEFAULTS))
+        finally:
+            sc.prom_boot = orig
+        self.assertEqual(waits, [300])
+        self.assertTrue(str(e.exception).startswith(sc.EARLY_HANG))
+        for name, t in targets.TARGETS.items():
+            if t.get("install", {}).get("scenario") == "solaris-install-serial.py":
+                self.assertTrue(re.search(t["install"]["retry_on"], str(e.exception)), name)
+
+    def test_install_boots_once_more(self):
+        t = targets.TARGETS["sol23-ss20"]
+
+        class Job:
+            target, volids, net = t, {}, {"ip": "10.0.2.15", "netmask": "255.255.255.0", "mode": "static",
+                                          "gateway": None, "dns": [], "domain": None}
+            hostname, root_password, a = "sol23-ss20", "wshlab", types.SimpleNamespace(timeout=None, vmid="1")
+
+            def __init__(self, failures):
+                self.failures, self.phases = list(failures), []
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                self.phases.append(name)
+                if self.failures:
+                    raise install.InstallFailed(f"{name}: failed: AssertionError: {self.failures.pop(0)}")
+
+            def log(self, msg):
+                pass
+
+        orig, install.vm_running = install.vm_running, lambda vmid: False
+        try:
+            job = Job(["before the installer: no language, locale or terminal prompt within 300s"])
+            install.Scripted().install(job)
+            self.assertEqual(job.phases, ["install", "install-retry1"])
+            job = Job(["timed out: no 'Disk' within 900s"])  # later: the disk may be written
+            with self.assertRaises(install.InstallFailed):
+                install.Scripted().install(job)
+            self.assertEqual(job.phases, ["install"])
+        finally:
+            install.vm_running = orig
+
+
 class WebStart(unittest.TestCase):
     """solaris-webstart-serial.py's prompt table against screens of the Solaris 8 and 9 runs."""
 
@@ -533,6 +598,25 @@ class WebStart(unittest.TestCase):
             self.assertTrue(re.search(sc.PROMPT_END, last) or re.search(sc.PROMPT_END_BARE, last), last)
         for last in ("Reading disc for Solaris Operating Environment...", "Installing SUNWcsr."):
             self.assertFalse(re.search(sc.PROMPT_END, last) or re.search(sc.PROMPT_END_BARE, last), last)
+        for last in ("   Enter 'y' to apply these values (y/n)", "Exit the install (yes/no)"):
+            self.assertTrue(re.search(sc.PROMPT_END, last), last)
+
+    def test_answered_ready_to_install_is_no_prompt(self):
+        """8 2/02 after Software 2 of 2 (install matrix run 44533778163): the answered "Ready to
+        Install" menu with the next line, "Installing Solaris 8 packages (part 2)", the last on the
+        screen until the progress bar comes. Its closing parenthesis is no prompt end: wait_prompt()
+        keeps waiting, and the answered menu ("... [1]? 1") matches no prompt of the table."""
+        screen = ("Product: Solaris 8 packages (part 2)\nLocation: /\nSize: 291.3 MB\n"
+                  "Solaris 8 packages (part 2)    291.3 MB\n\n\n\nReady to Install\n\n1. Install Now\n2. Start Over\n"
+                  "3. Exit Installation\n\n   What would you like to do [1]? 1\n\nInstalling Solaris 8 packages (part 2)\n\n")
+        self.assertFalse(self.sc.waits_for_input(screen))
+        self.assertIsNone(self.reply(self.sc.Installer(None, {"SWAPS": ""}), screen))
+        self.assertTrue(self.sc.waits_for_input(screen + "|-1%--------------25%---\n\n   Enter 'y' (y/n):"))
+        # and the menu is answered whenever it is up (once per CD after the first)
+        menu = screen[:screen.index("? 1") + 1]
+        inst = self.sc.Installer(None, {"SWAPS": ""})
+        self.assertTrue(self.sc.waits_for_input(menu))
+        self.assertEqual([self.reply(inst, menu) for _ in range(2)], ["1", "1"])
 
     def test_cds_are_deselected(self):
         """Documentation and Supplement off (a partly selected CD goes [-] -> [X] -> [ ]), Software 2
@@ -1458,8 +1542,9 @@ class Debian40(unittest.TestCase):
             self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("scsi3", None))  # partman labels it
             self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"]),
                              (["static"], ["gateway", "dns"], True))
-            # out of pve_matrix: it passes no --gateway/--dns (the ESP fix is published since +wsh20)
-            self.assertIn("--gateway", t["matrix_skip"])
+            # in pve_matrix only with an apt cache (the pinhole on vmbr0); no matrix_skip
+            self.assertEqual(t["matrix_needs"], "apt_cache")
+            self.assertNotIn("matrix_skip", t)
             self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh21")
             self.assertIn("cat /etc/debian_version", t["check"]["commands"])
             self.assertEqual(install.METHODS[t["method"]], install.Unattended)
@@ -1477,6 +1562,25 @@ class Debian40(unittest.TestCase):
                 install.network_choice(t, bad)
         net = install.network_choice(t, a(gateway="10.0.2.2", dns="10.0.2.3", domain="lab.test"))
         self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", "10.0.2.2", ["10.0.2.3"]))
+
+    def test_network_proxy_on_the_guests_network(self):
+        """An --apt-proxy by address on the guest's own network (pve_matrix's pinhole) replaces
+        --gateway and --dns; a proxy by name or elsewhere doesn't."""
+        def a(**kw):
+            base = dict(target="debian40-ss5", ip=None, netmask=None, gateway=None, dns=None, domain=None,
+                        vlan=None, bridge="vmbr0", apt_proxy=None)
+            return types.SimpleNamespace(**{**base, **kw})
+        t = targets.TARGETS["debian40-ss5"]
+        net = install.network_choice(t, a(apt_proxy="http://10.0.2.2:3142"))
+        self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", None, []))
+        net = install.network_choice(t, a(ip="192.168.7.20", apt_proxy="http://192.168.7.1:3142/"))
+        self.assertEqual(net["gateway"], None)
+        for bad in (a(apt_proxy="http://aptcache.example:3142"), a(apt_proxy="http://10.0.3.2:3142"),
+                    a(ip="192.168.7.20", apt_proxy="http://10.0.2.2:3142")):
+            with self.assertRaises(SystemExit, msg=bad.apt_proxy):
+                install.network_choice(t, bad)
+        self.assertTrue(install.proxy_on_network("http://10.0.2.2:3142", install.ipaddress.ip_network("10.0.2.0/24")))
+        self.assertFalse(install.proxy_on_network(None, install.ipaddress.ip_network("10.0.2.0/24")))
 
     def test_apt_proxy(self):
         t, rh = targets.TARGETS["debian40-ss5"], targets.TARGETS["redhat62-ss5"]
@@ -1515,8 +1619,18 @@ class Debian40(unittest.TestCase):
         self.assertIn("d-i mirror/http/proxy string http://aptcache.example:3142",
                       answer_media.preseed("10.0.2.15", "255.255.255.0", "10.0.2.2", ["10.0.2.3"],
                                            proxy="http://aptcache.example:3142").splitlines())
+        # a proxy by address replaces the router and the name server (pve_matrix's pinhole)
+        lines = answer_media.preseed("10.0.2.15", "255.255.255.0", proxy="http://10.0.2.2:3142").splitlines()
+        for line in ("d-i netcfg/get_gateway string ", "d-i netcfg/get_nameservers string ",
+                     "d-i mirror/http/proxy string http://10.0.2.2:3142"):
+            self.assertIn(line, lines)
+        # etch's netcfg puts in 10.0.2.1 for both; the late command takes them out again
+        late = next(line for line in lines if "late_command" in line)
+        self.assertIn("chroot /target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces", late)
+        self.assertIn("chroot /target sed -i '/^nameserver /d' /etc/resolv.conf", late)
+        self.assertNotIn("gateway /d", next(line for line in ps.splitlines() if "late_command" in line))
         for bad in (dict(gateway=None), dict(dns=[]), dict(hostname="a b"), dict(proxy="http://x/;rm"),
-                    dict(dns=["10.0.2.3; reboot"])):
+                    dict(dns=["10.0.2.3; reboot"]), dict(gateway=None, proxy="http://aptcache.example:3142")):
             kw = {"gateway": "10.0.2.2", "dns": ["10.0.2.3"], **bad}
             with self.assertRaises(ValueError, msg=bad):
                 answer_media.preseed("10.0.2.15", "255.255.255.0", **kw)

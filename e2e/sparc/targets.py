@@ -64,6 +64,9 @@ TARGETS: per target
              the sparc lab job, or it needs more than the published packages give): only when
              --reinstall names it; once its stored disk exists (install-<target>.raw) the matrix
              boot-tests that. `lab.py install` still runs it
+  matrix_needs  "apt_cache": `pve_matrix.py install` installs it only with an apt cache (--apt-cache /
+             WSH_LAB_APT_CACHE), which it hands the guest as --apt-proxy through a pinhole on its
+             node's vmbr0; without one it skips it as it would a matrix_skip target
 """
 
 import re
@@ -320,7 +323,11 @@ SOLARIS_SCRIPTED = {
     "method": "scripted",
     # solaris-install-serial.py's defaults: End User System Support, auto-layout, Networked with a
     # static address, no name service, time zone MET, manual reboot (it halts at the end)
-    "install": {"scenario": "solaris-install-serial.py", "vars": {}, "timeout": 3600},
+    # retry_on: a boot of the CD that hangs before the installer's first prompt (QEMU's ESP deadlock,
+    # SPARC.md "The ESP deadlock"; sol23-ss20 in install matrix run 44533778163) fails within
+    # FIRST_PROMPT_TIMEOUT and gets one more boot: nothing is on the disk yet
+    "install": {"scenario": "solaris-install-serial.py", "vars": {}, "timeout": 3600,
+                "retry_on": "before the installer"},
     "firstboot": {"scenario": "solaris-firstboot.py", "vars": {}, "timeout": 1800},
     "check": {"scenario": "solaris-boot-disk.py", "vars": {}, "timeout": 1200},
     "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
@@ -380,14 +387,14 @@ DEBIAN_UNATTENDED = {
     "nic": "eth0",
     # the preseed file sets all of it (/etc/network/interfaces, /etc/resolv.conf, /etc/hostname)
     "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask) with --gateway and --dns,"
-               " which must reach archive.debian.org (or --apt-proxy); --domain",
+               " which must reach archive.debian.org (or --apt-proxy), or only --apt-proxy at an address on"
+               " the guest's network (no router, no name server); --domain",
     "net_modes": ["static"],
-    "net_require": ["gateway", "dns"],
+    "net_require": ["gateway", "dns"],  # unless --apt-proxy is an address on the guest's network
     "apt_proxy": True,
-    # pve_matrix.py install runs `lab.py install <target> --check` with no --gateway or --dns (and its
-    # node's vmbr0 routes nowhere), which these targets refuse before a VM is made
-    "matrix_skip": "needs a network to archive.debian.org (--gateway and --dns are required); pve_matrix.py"
-                   " install passes neither",
+    # pve_matrix.py install gives them the apt cache through a pinhole on its node's vmbr0 (10.0.2.2:3142,
+    # --apt-cache / WSH_LAB_APT_CACHE) and nothing else; without one it skips them
+    "matrix_needs": "apt_cache",
 }
 
 
