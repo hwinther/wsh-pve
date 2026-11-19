@@ -1070,6 +1070,18 @@ official CDs (`NetBSD-11.1-sparc64.iso`, `NetBSD-11.1-sparc.iso`; their SHA512 m
    records `uname -a`, `hostname`, the marker, `df -k`, the disklabel, `ifconfig -a`, `netstat -rn
    -f inet` and `/etc/resolv.conf`, requires `target=<name>`, `halt -p`.
 
+**NetBSD 9.3** (`netbsd93-sparc64`, `netbsd93-sparc`, `netbsd93-sparc-ss20`): the same profiles,
+scenarios and answers with the 9.3 CDs (`NetBSD-9.3-sparc64.iso`, `NetBSD-9.3-sparc.iso` from
+archive.netbsd.org; their SHA512 matches the release's `images/SHA512`). The one difference in
+sysinst: after the sets 9.3 asks neither for root's password nor about entropy and shows its
+configuration menu at once (root's password is an item there, `***EMPTY***`), so `_netbsd.sysinst()`
+waits for any of `AFTER_SETS` and answers the password and entropy screens only when they come
+(`tests/test_targets.py`, `NetBSDSysinst`). Through PVE (packages of 2026-11-19, pve-qemu-kvm
+11.1.3-2+wsh25), one install each: `netbsd93-sparc64` 18.4 min (install 833 s, first boot 144 s,
+check 103 s; the install phase takes about twice as long as 11.1's, not looked into), `netbsd93-sparc` 6.8 min
+(190 s, 120 s, 72 s), `netbsd93-sparc-ss20` 6.1 min (169 s, 117 s, 53 s); boot tests of the stored
+disks 1.5, 1.3 and 1.2 min.
+
 Network, in NetBSD's own files: static = `/etc/ifconfig.<nic>` (`inet <ip> netmask <mask>`),
 `defaultroute=<gw>` in `/etc/rc.conf`, the address and host name in `/etc/hosts`; DHCP =
 `dhcpcd=YES` in `/etc/rc.conf` (dhcpcd takes the address, router and name servers and writes
