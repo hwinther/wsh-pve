@@ -14,6 +14,8 @@ Install a target: lab.py install sol26-ss5 --vmid 120 [--out DIR]   (on the PVE 
                   lab.py install sol26-ss5 --vmid 120 --check --export /mnt/os/disks   (store the disk)
                   lab.py boot-test sol26-ss5 --disk /mnt/os/disks/install-sol26-ss5.raw --vmid 121
                   lab.py targets | lab.py media [<target>]
+Mirror storage:   lab.py mirror sync /mnt/nas/media --storage mirror [--prune]   (symlinks; see mirror.py)
+                  lab.py mirror link <file> [--root DIR | --as NAME] | lab.py mirror list
 
 The wsh-lab package installs it as `wsh-lab` (wsh-lab install ..., wsh-lab targets, ...), with the
 scenarios in /usr/share/wsh-lab/scenarios.
@@ -1185,10 +1187,14 @@ def main():
     import install  # install targets (install.py, targets.py): `install`, `targets`, `media`
 
     install.add_commands(sub)
+    import mirror  # a mirror storage of symlinks (mirror.py): `mirror link|sync|list`
+
+    mirror.add_commands(sub)
     a = p.parse_args()
     if getattr(a, "qemu_args", None) and a.qemu_args[0] == "--":
         a.qemu_args = a.qemu_args[1:]
-    cmds = {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast, **install.COMMANDS}
+    cmds = {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast, **install.COMMANDS,
+            **mirror.COMMANDS}
     return cmds[a.cmd](a)
 
 

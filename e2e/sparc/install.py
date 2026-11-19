@@ -76,12 +76,20 @@ def node():
 
 # --- media ----------------------------------------------------------------------------------------
 
+_SHA256 = {}
+
+
 def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
+    """The file's sha256, computed once per file, size and time (a medium may be looked at twice)."""
+    st = os.stat(path)
+    key = (os.path.realpath(path), st.st_size, st.st_mtime_ns)
+    if key not in _SHA256:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        _SHA256[key] = h.hexdigest()
+    return _SHA256[key]
 
 
 class NoFloppyContent(InstallFailed):
@@ -103,7 +111,9 @@ def storage_content(storage):
 
 def find_medium(name, storage=None, directory=None):
     """(volume ID or None, local path or None) of the medium `name`: on a PVE storage (its content of
-    the medium's type) or, with `directory`, as `<dir>/<name>` or `<dir>/<lab path>`."""
+    the medium's type) or, with `directory`, as `<dir>/<name>` or `<dir>/<lab path>`. On a storage
+    without a volume of that name, a volume of the medium's size and sha256 under any other name is it
+    (a mirror storage's `Solaris__2.6__solaris_2.6_598_sparc.iso`, a renamed upload)."""
     med = targets.MEDIA[name]
     if directory:
         for rel in (name, med["lab"]):
@@ -124,9 +134,24 @@ def find_medium(name, storage=None, directory=None):
     except InstallFailed as e:
         raise InstallFailed(f"storage {storage}: {e} (does it exist and hold {med['content']} content?)")
     volid = f"{storage}:{med['content']}/{name}"
-    if not any(c.get("volid") == volid for c in content or []):
-        return None, None
-    return volid, run("pvesm", "path", volid)
+    if any(c.get("volid") == volid for c in content or []):
+        return volid, run("pvesm", "path", volid)
+    return find_by_checksum(med, content)
+
+
+def find_by_checksum(med, content):
+    """(volume ID, path) of the first volume in `content` (a storage's content list) with the medium's
+    size and sha256, or (None, None). Only volumes of the right size are read."""
+    for c in content or []:
+        if c.get("size") != med["size"] or not c.get("volid"):
+            continue
+        try:
+            path = run("pvesm", "path", c["volid"])
+            if sha256(path) == med["sha256"]:
+                return c["volid"], path
+        except (InstallFailed, OSError):
+            continue
+    return None, None
 
 
 def check_media(names, storage=None, directory=None, checksum=True):

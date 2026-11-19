@@ -4,9 +4,9 @@
 #   docker run --rm -v "$PWD/build/wsh-lab:/deb:ro" -v "$PWD/packages/wsh-lab/test.sh:/test.sh:ro" \
 #     debian:trixie sh /test.sh /deb/wsh-lab_<version>_all.deb
 #
-# apt installs it with its dependencies; wsh-lab --version/--help, targets, media --dir and the refusal
-# off a PVE node work; the catalogue's unit tests pass against the installed copy; wsh-lab-mcp explains
-# its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
+# apt installs it with its dependencies; wsh-lab --version/--help, targets, media --dir, the refusal
+# off a PVE node and mirror sync/list/prune (on a storage.cfg of its own) work; the catalogue's and the
+# mirror tool's unit tests pass against the installed copy; wsh-lab-mcp explains its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
 # --check from the venv. Then `apt purge` must leave nothing of the package behind: no file of it, no
 # venv, no __pycache__, no /var/lib/wsh-lab. Exit 0 when everything passed.
 set -eu
@@ -65,8 +65,31 @@ wsh-lab install sol26-ss5 --vmid 120 > /tmp/install.out 2>&1 || rc=$?
 cat /tmp/install.out
 [ "$rc" != 0 ] && grep -q 'runs on the PVE node' /tmp/install.out || fail "install without qm wasn't refused (rc $rc)"
 
-step "the catalogue's unit tests against the installed copy"
+step "wsh-lab mirror: sync, list, prune on a dir storage (a storage.cfg of its own)"
+mkdir -p /tmp/nas/Solaris/2.6 /tmp/nas/DOS
+truncate -s 4M /tmp/nas/Solaris/2.6/solaris_2.6_598_sparc.iso
+truncate -s 1440K /tmp/nas/DOS/disk1.img
+printf 'dir: mirror
+	path /tmp/mirror
+	content iso,floppy
+' > /tmp/storage.cfg
+export WSH_LAB_STORAGE_CFG=/tmp/storage.cfg
+wsh-lab mirror sync /tmp/nas --storage mirror | tee /tmp/mirror.out
+[ "$(readlink /tmp/mirror/template/iso/Solaris__2.6__solaris_2.6_598_sparc.iso)" = /tmp/nas/Solaris/2.6/solaris_2.6_598_sparc.iso ] 	|| fail "mirror sync didn't link the ISO"
+[ -L /tmp/mirror/template/floppy/DOS__disk1.img ] || fail "mirror sync didn't link the floppy"
+rm /tmp/nas/DOS/disk1.img
+rc=0
+wsh-lab mirror list --storage mirror > /tmp/mirror.out || rc=$?
+cat /tmp/mirror.out
+[ "$rc" = 1 ] && grep -q '^dangling mirror:floppy/DOS__disk1.img' /tmp/mirror.out || fail "a dangling link isn't reported (rc $rc)"
+wsh-lab mirror sync /tmp/nas --storage mirror --prune
+[ ! -L /tmp/mirror/template/floppy/DOS__disk1.img ] || fail "--prune left the dangling link"
+unset WSH_LAB_STORAGE_CFG
+rm -r /tmp/nas /tmp/mirror /tmp/storage.cfg /tmp/mirror.out
+
+step "the catalogue's and the mirror tool's unit tests against the installed copy"
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_targets.py')
+(cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_mirror.py')
 
 step "wsh-lab-mcp without its venv"
 rc=0

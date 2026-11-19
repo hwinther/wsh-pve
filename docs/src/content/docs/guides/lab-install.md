@@ -363,6 +363,27 @@ wsh-lab media sol26-ss5 --storage nas-iso
 wsh-lab media --dir /path/to/isos --no-checksum
 ```
 
+A medium is found on a storage by its file name first, and otherwise by its size and sha256 among
+the storage's volumes of that content type (only volumes of the right size are read), so a renamed
+upload or a link in a [mirror storage](/reference/mirror/) counts:
+`mirror:iso/Solaris__2.6__solaris_2.6_598_sparc.iso` is `solaris_2.6_598_sparc.iso`
+(`wsh-lab media sol26-ss5 --storage mirror`, `wsh-lab install sol26-ss5 --media-storage mirror ...`).
+`--dir` looks up file names only.
+
+### Media on a NAS: a mirror storage
+
+Instead of copying the media to the node, link them from a NAS folder tree into a `dir` storage with
+`wsh-lab mirror`; the folders end up in the link names (`Solaris__2.6__....iso`) and the web UI
+shows them as folders. The [Mirror Storage Reference](/reference/mirror/) has the naming rules and
+the caveats (the NAS mounted at the same path on every node, dangling links):
+
+```sh
+pvesm add dir mirror --path /srv/mirror --content iso,floppy
+wsh-lab mirror sync /mnt/pve/nas/media --storage mirror [--prune] [--dry-run]
+wsh-lab mirror link <file> --storage mirror [--root DIR | --as NAME]
+wsh-lab mirror list --storage mirror
+```
+
 ## Install the lab on a node
 
 The lab runs as root on the node, where `qm`, `pvesh` and the VMs' sockets are. On a node that has
