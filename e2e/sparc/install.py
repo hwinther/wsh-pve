@@ -339,9 +339,14 @@ def network_choice(t, a):
         raise SystemExit(f"--ip {iface.ip} is the network's or broadcast address of {iface.network}")
     net.update(ip=str(iface.ip), netmask=str(iface.netmask), network=str(iface.network.network_address),
                prefix=iface.network.prefixlen)
+    # Not needed with an --apt-proxy at an address on the guest's own network (the lab's apt cache
+    # pinhole, pve_matrix.py --apt-cache): apt and debian-installer hand the proxy whole URLs. Nor in
+    # a boot test (`boot_test`), which installs nothing
+    local_proxy = proxy_on_network(apt_proxy_choice(t, getattr(a, "apt_proxy", None)), iface.network)
     for opt in t.get("net_require") or []:
-        if not getattr(a, opt, None):
-            raise SystemExit(f"--{opt}: {a.target} needs it with a static address (its installer fetches packages)")
+        if not getattr(a, opt, None) and not local_proxy and not getattr(a, "boot_test", False):
+            raise SystemExit(f"--{opt}: {a.target} needs it with a static address (its installer fetches packages),"
+                             " unless --apt-proxy is an address on the guest's network")
     if a.gateway:
         try:
             gw = ipaddress.IPv4Address(a.gateway)
@@ -371,6 +376,19 @@ def apt_proxy_choice(t, url, env=os.environ):
     if not m or (m["port"] and not 0 < int(m["port"]) < 65536):
         raise SystemExit(f"--apt-proxy {url}: not an http(s)://host[:port] URL")
     return url
+
+
+def proxy_on_network(url, network):
+    """Whether an --apt-proxy URL names an IPv4 address inside `network` (an ipaddress network): the
+    guest reaches it without a router or a name server."""
+    m = APT_PROXY.fullmatch(url or "")
+    if not m:
+        return False
+    host = re.match(r"https?://([^:/]+)", url).group(1)
+    try:
+        return ipaddress.IPv4Address(host) in network
+    except ValueError:
+        return False
 
 
 def network_text(net, nic="le0", dhcp_note=None):
@@ -668,6 +686,7 @@ def cmd_boot_test(a):
                        data_disk=None, data_mount=None, post_install=None, local_env=False, keyboard=None,
                        timeout=None).items():
         setattr(a, k, getattr(a, k, val))
+    a.boot_test = True  # no install: the Debian targets' net_require doesn't apply
     job = Job(a)
     result = {"target": a.target, "vmid": a.vmid, "out": a.out, "started": job.started.isoformat(),
               "disk": os.path.abspath(a.disk), "stored": {k: meta.get(k) for k in ("installed", "packages", "minutes")}}
@@ -1268,7 +1287,8 @@ def add_commands(sub):
     i.add_argument("--domain", help="the DNS domain (and search domain) of the guest, with --dns or DHCP")
     i.add_argument("--apt-proxy", metavar="URL",
                    help="targets that fetch packages during the install (Debian's netinst): an HTTP proxy for"
-                        " them, e.g. an apt-cacher-ng (WSH_LAB_APT_PROXY; none: straight to the archive)")
+                        " them, e.g. an apt-cacher-ng (WSH_LAB_APT_PROXY; none: straight to the archive). At an"
+                        " address on the guest's network it replaces --gateway and --dns")
     i.add_argument("--root-password", help=f"root's password ({targets.DEFAULT_ROOT_PASSWORD}: a public default)")
     i.add_argument("--user", help="also add this user (home under /export/home; NetBSD: /home)")
     i.add_argument("--user-password", help="the user's password (the root password)")

@@ -246,12 +246,16 @@ def preseed(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy
 
     `proxy` (--apt-proxy, e.g. an apt-cacher-ng): mirror/http/proxy, which debootstrap and apt use
     during the install; debian-installer also writes it to the installed system's /etc/apt/apt.conf
-    (Acquire::http::Proxy), its documented behaviour, so later apt-get runs use the same cache.
+    (Acquire::http::Proxy), its documented behaviour, so later apt-get runs use the same cache. A
+    proxy by address on the guest's own network (the lab's apt cache pinhole, pve_matrix.py
+    --apt-cache) replaces the router and the name server: the proxy gets whole URLs and resolves
+    archive.debian.org itself, and the guest has no route anywhere else.
 
     Root gets the hash `*` here (no password works) and the late command empties it, so nothing secret is
     on the image: the first boot logs in on ttyS0 without one and sets it (debian-firstboot.py).
     The late command also comments out the netinst's `deb cdrom:` line in sources.list (the CD is
-    ejected after the install; apt would ask for it).
+    ejected after the install; apt would ask for it), and without a router or name server removes
+    the ones etch's netcfg puts in for them (the network's first address).
     No user is made here (passwd/make-user false); the first boot adds the optional one."""
     dns = list(dns or [])
     for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
@@ -260,13 +264,21 @@ def preseed(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy
             raise ValueError(f"preseed {what} {val!r}")
     if proxy is not None and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?", proxy):
         raise ValueError(f"preseed proxy {proxy!r}: an http(s)://host[:port] URL")
-    if not gateway or not dns:
-        raise ValueError("preseed: the netinst needs a router (--gateway) and a name server (--dns)")
+    if (not gateway or not dns) and not (proxy and re.fullmatch(r"https?://\d+\.\d+\.\d+\.\d+(:[0-9]{1,5})?/?", proxy)):
+        raise ValueError("preseed: the netinst needs a router (--gateway) and a name server (--dns), or a proxy"
+                         " by address (--apt-proxy http://A.B.C.D:PORT)")
     recipe = ("wshlab :: "
               "40 500 64 ext2 $bootable{ } method{ format } format{ } use_filesystem{ } filesystem{ ext2 } mountpoint{ /boot } . "
               "1000 10000 1000000000 ext3 method{ format } format{ } use_filesystem{ } filesystem{ ext3 } mountpoint{ / } . "
               "128 512 256 linux-swap method{ swap } format{ } .")
     host, directory = ETCH_MIRROR
+    # etch's netcfg fills an empty router (and name server) with the network's first address, so
+    # without --gateway/--dns the late command takes them out of the installed system again
+    late = "chroot /target passwd -d root; chroot /target sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list"
+    if not gateway:
+        late += "; chroot /target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces"
+    if not dns:
+        late += "; chroot /target sed -i '/^nameserver /d' /etc/resolv.conf"
     return f"""\
 # lab.py install (wsh-pve e2e/sparc answer_media.preseed): Debian GNU/Linux 4.0 (etch), sparc
 d-i preseed/early_command string
@@ -276,7 +288,7 @@ d-i netcfg/choose_interface select eth0
 d-i netcfg/disable_dhcp boolean true
 d-i netcfg/get_ipaddress string {ip}
 d-i netcfg/get_netmask string {netmask}
-d-i netcfg/get_gateway string {gateway}
+d-i netcfg/get_gateway string {gateway or ""}
 d-i netcfg/get_nameservers string {" ".join(dns)}
 d-i netcfg/confirm_static boolean true
 d-i netcfg/get_hostname string {hostname or "debian"}
@@ -302,5 +314,5 @@ d-i passwd/make-user boolean false
 tasksel tasksel/first multiselect
 popularity-contest popularity-contest/participate boolean false
 d-i finish-install/reboot_in_progress note
-d-i preseed/late_command string chroot /target passwd -d root; chroot /target sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list
+d-i preseed/late_command string {late}
 """

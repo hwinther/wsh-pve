@@ -167,10 +167,13 @@ options, nothing secret on it) as `wsh-lab-answers-<vmid>.iso`, puts it into `sc
 install and removes it afterwards; the only thing typed is one boot line at SILO's prompt, which
 makes the installer read that CD before its first question. The installer then fetches the base
 system and the kernel from `archive.debian.org`, so the guest needs a way out: give `--gateway` and
-`--dns` that reach the internet (they are required; the address defaults to 10.0.2.15/24 as for the
-other targets), or `--apt-proxy URL` for an HTTP proxy such as an apt-cacher-ng
+`--dns` that reach the internet (the address defaults to 10.0.2.15/24 as for the other targets),
+and optionally `--apt-proxy URL` for an HTTP proxy such as an apt-cacher-ng
 (`--apt-proxy http://aptcache.example:3142`, or the `WSH_LAB_APT_PROXY` environment variable; the
-installed system's apt keeps using it, from `/etc/apt/apt.conf`). etch's archive signing keys
+installed system's apt keeps using it, from `/etc/apt/apt.conf`). A proxy given by address on the
+guest's own network (`--apt-proxy http://10.0.2.2:3142` with the default address) replaces
+`--gateway` and `--dns`: the installer hands the proxy whole URLs, so the guest needs no router and
+no name server, and can be kept on a network where that proxy is the only way out (see Network). etch's archive signing keys
 expired years ago, so the install runs with debian-installer's `allow_unauthenticated` (the
 packages come from the archive without a signature check; the installed system's `apt-get` then
 works as usual). The disk (blank,
@@ -210,7 +213,10 @@ its kernel panics) and installs exactly like 2.3 (the same one-question screens 
 Its CD image is `Solaris_2.2.img`, a plain 2048-byte-sector image with an `.img` name, which PVE's
 ISO storage accepts as it is. 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
 machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for all of
-them.
+them. Now and then a CD boot of Solaris 2.2-2.6 hangs after the kernel banner, before the
+installer's first question (seen once, 2.3 on the SS-20; QEMU's emulated SCSI controller is the
+suspect): when no first question comes within 5 minutes, the tool boots the CD once more, since
+nothing is on the disk yet.
 
 **More CPUs on the SS-20 for 2.3 and 2.4.** The targets install with one CPU. Afterwards the VM
 can have 2 or 4 (`qm set <vmid> --cores 4`; the SS-20 profile with OpenBIOS allows up to 4): 2.3 and
@@ -572,6 +578,20 @@ guest, a target supports the modes its catalogue entry lists as tested (`wsh-lab
   default route), `--dns` (up to three name servers; none: `/etc/hosts` only) and `--domain`.
 - **DHCP**: `--ip dhcp`. Address, netmask, default router, name servers, domain and host name come
   from the DHCP server. `--dns`/`--domain` are used only if the server sends no name servers.
+
+The Debian targets fetch their packages during the install and need `--gateway` and `--dns`, or an
+`--apt-proxy` at an address on the guest's network. That makes a closed install network possible:
+a bridge with no route out, where one address forwards only to your apt cache. The lab's own
+install matrix does that on its test node (`pve_matrix.py --apt-cache aptcache.example:3142`):
+`10.0.2.2/24` on `vmbr0`, IP forwarding off, and a socat service forwarding `10.0.2.2:3142` to the
+cache; the guests get `--apt-proxy http://10.0.2.2:3142` and nothing else. By hand on a node, the
+same (as root; the bridge must carry no other traffic you care about):
+
+```sh
+ip addr add 10.0.2.2/24 dev vmbr9
+systemd-run --unit=apt-pinhole socat TCP4-LISTEN:3142,bind=10.0.2.2,fork,reuseaddr TCP:aptcache.example:3142
+wsh-lab install debian40-ss5 --vmid 9900 --bridge vmbr9 --check --apt-proxy http://10.0.2.2:3142
+```
 
 Solaris 10 (`sol10-sun4u`) supports the static mode only: its installer gets the host name, the
 address and the netmask (and no default route); the first boot writes `/etc/defaultrouter` and,
