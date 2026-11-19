@@ -360,8 +360,17 @@ step ln -s dir/sub $p/link.tmp
 step mv -T $p/link.tmp $p/link
 step rm $p/link $p/dir/moved
 step rmdir $p/dir/sub
-step rm -r $p
+step rmdir $p/dir
+step mkdir -p $p/tree/a/b
+step touch $p/tree/a/file
+step rm -r $p/tree
+step rmdir $p
 echo probe ok`
+// The probe through other mount options of the same export ($1), to tell a client from a server problem
+const VARIANT = `mkdir -p /mnt/e2e-nfs-v && mount -t nfs4 -o "$1" nfs:/export /mnt/e2e-nfs-v || exit 1
+sh -c "$2" probe /mnt/e2e-nfs-v; rc=$?
+umount /mnt/e2e-nfs-v
+exit $rc`
 let nfsRoot = ''
 let nfsNote = ''
 
@@ -402,6 +411,15 @@ mount -t nfs4 -o vers=4.1 nfs:/export ${NFS_ALT}`,
       nfsNote = `${what} (${why}): a dir storage and a bind mount instead`
       await testInfo.attach('nfs-probe.txt', { body: probe.output, contentType: 'text/plain' })
       await testInfo.attach('nfs-server.log', { body: await serviceLogs('nfs', 3000), contentType: 'text/plain' })
+      if (nfs.code === 0) {
+        const variants = [`kernel ${(await pveExec(['uname', '-r'])).output.trim()}`]
+        for (const opts of ['vers=4.0', 'vers=4.2', 'vers=4.1,lookupcache=none,noac', 'vers=4.1,nordirplus']) {
+          const v = await pveExec(['sh', '-c', VARIANT, 'variant', opts, PROBE])
+          variants.push(`${opts}: ${v.code === 0 ? 'ok' : v.output.trim().split('\n').slice(-2).join(': ')}`)
+        }
+        await testInfo.attach('nfs-variants.txt', { body: variants.join('\n'), contentType: 'text/plain' })
+        console.log(variants.join('\n'))
+      }
       console.log(`${nfsNote}\n${probe.output}\n${await serviceLogs('nfs', 60)}`)
       await pveExec(['umount', NFS_ALT])
       nfsRoot = NFS_FALLBACK
