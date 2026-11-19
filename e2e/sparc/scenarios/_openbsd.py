@@ -1,11 +1,19 @@
-"""What the OpenBSD/sparc64 install, first-boot and boot scenarios share (sun4u, OpenBIOS, disk and CD-ROM
-on the built-in IDE, sunhme, serial console; _sparc64.py for a QEMU of the lab's own). Attached to a
-PVE VM (`--pve`, `lab.py install openbsd80-sun4u`) the VM is what PVE built from the target's profile.
+"""What the OpenBSD install, first-boot and boot scenarios share: OpenBSD/sparc64 (sun4u, OpenBIOS, disk
+and CD-ROM on the built-in IDE, sunhme; _sparc64.py for a QEMU of the lab's own) and OpenBSD/sparc
+(ARCH=sparc: sun4m, disk on SCSI target 3, CD-ROM on 6, lance; _sparc32.py), serial console.
+Attached to a PVE VM (`--pve`, `lab.py install openbsd80-sun4u`, `openbsd59-ss5`) the VM is what PVE
+built from the target's profile, and ARCH comes from its config.
 
 The installer (bsd.rd from the install CD) is a dialogue of one-line questions on the console, each
 ending in `?` and the default in brackets. installer() answers them by what they ask (INSTALL_RULES),
 not by their order, so a question that a release asks or skips doesn't break it; a question no rule
 knows fails the install with the question in the error.
+
+OpenBSD 5.9 (the last release with the sparc port) asks some questions in other words than 8.0
+(`Which network interface do you wish to configure?`, `(or 'dhcp' or 'none')`, `(or 'rtsol' or
+'none')`, a domain example `'bar.com'`) and has no "Exit to (S)hell" question: its installer ends
+with "CONGRATULATIONS!" at the shell. The rules know both. SETS_CD and SETS_PATH say where the sets
+are (8.0: the install CD, cd0, the default path; 5.9 on sun4m: the sets CD on target 5, cd0, `/`).
 
 ntpd stays off in the installed system (`ntpd_flags=NO` in /etc/rc.conf.local, what `rcctl disable
 ntpd` writes, set from the installer's shell before the first boot): with a network that reaches NTP
@@ -16,19 +24,54 @@ import re
 import time
 
 import _netbsd
+import _sparc32
 import _sparc64
 from lab import QemuDied, Timeout
 
-DEFAULTS = {**_sparc64.DEFAULTS, "NIC_NAME": "hme0", "TIMEOUT": "900"}
+NICS = {"sparc64": "hme0", "sparc": "le0"}
+DISKS = {"sparc64": "wd0", "sparc": "sd0"}
+
+
+def defaults(arch):
+    """The scenario's DEFAULTS for ARCH (sparc64 | sparc): the machine's variables, then these."""
+    # sparc: -nographic, as qemu-server runs a sparc32 VM with a serial display (_sparc32.py, NOGRAPHIC)
+    base = _sparc64.DEFAULTS if arch == "sparc64" else {**_sparc32.DEFAULTS, "VGA": "none", "NOGRAPHIC": "1"}
+    return {**base, "ARCH": arch, "NIC_NAME": "", "DISK_NAME": "", "TIMEOUT": "900"}
+
+
+DEFAULTS = defaults("sparc64")
 PROMPT = _netbsd.PROMPT  # root's ksh prompt (`#` or `<host>#`)
-ANY_QUESTION = r"\? (\[[^\]\n]*\] )?$"  # a line that is an installer question
+# a line that is an installer question: `?`, an optional `(hint)`, an optional `[default]`
+ANY_QUESTION = r"\? (\([^\n]*\) )?(\[[^\]\n]*\] )?$"
 QUESTION_END = r"[?)\]] \Z"  # the output ends like a question (`?`, `[default]`, `(again)`)
 IDE_TIMEOUT = r"\b(?:cd|wd)\d+\(pciide\d+:\d+:\d+\): timeout"  # the IDE driver gave up waiting
 STUCK_S = 300  # s of silence after an IDE timeout that fail the install
 
 
 def qemu_args(v, out):
+    """The lab's own QEMU. ARCH=sparc in a scenario whose DEFAULTS are sparc64's (first boot, boot
+    check): the sun4m variables it lacks are added, and QEMU, BIOS and MACHINE still at their sparc64
+    defaults (which can't run sun4m) take the sun4m ones, MEM too when it is 512 on an SS-5 (its
+    limit is 256); pass MACHINE=SS-20 MEM=512 for an SS-20."""
+    if v.get("ARCH") == "sparc":
+        sparc = defaults("sparc")
+        for k, val in sparc.items():
+            if k not in v or (k in ("QEMU", "BIOS", "MACHINE") and v[k] == _sparc64.DEFAULTS[k]):
+                v[k] = val
+        if v["MACHINE"] == "SS-5" and v["MEM"] == _sparc64.DEFAULTS["MEM"]:
+            v["MEM"] = sparc["MEM"]
+        return _sparc32.qemu_args(v, out)
     return _sparc64.qemu_args(v, out)
+
+
+def nic(v):
+    """The guest's interface: NIC_NAME, else hme0 (sparc64) or le0 (sparc)."""
+    return v.get("NIC_NAME") or NICS[v.get("ARCH") or "sparc64"]
+
+
+def disk(v):
+    """The guest's disk: DISK_NAME, else wd0 (sparc64, IDE) or sd0 (sparc, SCSI)."""
+    return v.get("DISK_NAME") or DISKS[v.get("ARCH") or "sparc64"]
 
 
 def shell(m, command, timeout=300):
@@ -46,17 +89,18 @@ def passwd(m, user, password):
 def install_rules(v, state):
     """[(regex, answer)] for the installer's questions; `answer` is a string or a function of the match.
     `state` keeps what was answered (the interface configured, the sets selected)."""
-    nic = v.get("NIC_NAME") or "hme0"
+    nic_ = nic(v)
     sets = [s for s in v.get("SETS", "").split() if s]
+    cd = v.get("SETS_CD") or "cd0"
 
     def interface(mt):
-        if mt.group(1) != "done" and nic not in state.setdefault("configured", []):
-            state["configured"].append(nic)
-            return nic
+        if mt.group(1) != "done" and nic_ not in state.setdefault("configured", []):
+            state["configured"].append(nic_)
+            return nic_
         return "done"
 
     def sets_location(mt):
-        return "done" if state.get("sets_done") else "cd0"
+        return "done" if state.get("sets_done") else cd
 
     def select_sets(mt):
         i = state.setdefault("selected", 0)
@@ -71,13 +115,16 @@ def install_rules(v, state):
         (r"Choose your keyboard layout \(.*\) \[[^\]\n]*\] $", ""),
         (r"Terminal type\? \[[^\]\n]*\] $", "vt220"),
         (r"System hostname\? \(short form, e\.g\. 'foo'\) (\[[^\]\n]*\] )?$", v["HOSTNAME"]),
-        (r"Network interface to configure\? \(name, lladdr, '\?', or 'done'\) \[([^\]\n]*)\] $", interface),
-        (rf"IPv4 address for {nic}\? \(or 'autoconf' or 'none'\) \[[^\]\n]*\] $", v["IP"]),
-        (rf"Netmask for {nic}\? \[[^\]\n]*\] $", v["NETMASK"]),
-        (rf"IPv6 address for {nic}\? \(or 'autoconf' or 'none'\) \[[^\]\n]*\] $", "none"),
+        # 8.0: "Network interface to configure? (name, lladdr, '?', or 'done') [hme0]"; 5.9: "Which
+        # network interface do you wish to configure? (or 'done') [le0]"
+        (r"(?:Network interface to configure|Which network interface do you wish to configure)\?"
+         r" \((?:name, lladdr, '\?', )?or 'done'\) \[([^\]\n]*)\] $", interface),
+        (rf"IPv4 address for {nic_}\? \(or '(?:autoconf|dhcp)' or 'none'\) \[[^\]\n]*\] $", v["IP"]),
+        (rf"Netmask for {nic_}\? \[[^\]\n]*\] $", v["NETMASK"]),
+        (rf"IPv6 address for {nic_}\? \(or '(?:autoconf|rtsol)' or 'none'\) \[[^\]\n]*\] $", "none"),
         # the router, name servers and domain: the first boot writes them (openbsd-firstboot.py)
-        (r"Default IPv4 route\? \(IPv4 address or 'none'\) (\[[^\]\n]*\] )?$", "none"),
-        (r"DNS domain name\? \(e\.g\. 'example\.com'\) \[[^\]\n]*\] $", ""),
+        (r"Default IPv4 route\? \(IPv4 address or '?none'?\) (\[[^\]\n]*\] )?$", "none"),
+        (r"DNS domain name\? \(e\.g\. '[\w.]+'\) \[[^\]\n]*\] $", ""),
         (r"DNS nameservers\? \(IP address list or 'none'\) \[[^\]\n]*\] $", "none"),
         (r"Password for root account\? \(will not echo\) $", v["ROOT_PASSWORD"]),
         (r"Password for root account\? \(again\) $", v["ROOT_PASSWORD"]),
@@ -86,12 +133,15 @@ def install_rules(v, state):
         (r"Setup a user\? \(.*\) \[\w+\] $", "no"),  # the first boot adds --user
         (r"Allow root ssh login\? \(.*\) \[[\w-]+\] $", "no"),
         (r"What timezone are you in\? \('\?' for list\) \[[^\]\n]*\] $", v.get("TIMEZONE") or "UTC"),
-        (r"Which disk is the root disk\? \('\?' for details\) \[\w*\] $", v.get("DISK_NAME") or "wd0"),
+        (r"Which disk is the root disk\? \('\?' for details\) \[\w*\] $", disk(v)),
         (r"Use \(A\)uto layout, \(E\)dit auto layout, or create \(C\)ustom layout\? \[\w\] $", "a"),
         (r"Encrypt the root disk with a \(p\)assphrase or \(k\)eydisk\? \[\w+\] $", "no"),
         (r"Location of sets\? \(.*\) \[\w*\] $", sets_location),
-        (r"Which CD-ROM contains the install media\? \(or 'done'\) \[\w*\] $", "cd0"),
-        (r"Pathname to the sets\? \(or 'done'\) \[[^\]\n]*\] $", ""),
+        (r"Which CD-ROM contains the install media\? \(or 'done'\) \[\w*\] $", cd),
+        (r"Pathname to the sets\? \(or 'done'\) \[[^\]\n]*\] $", v.get("SETS_PATH", "")),
+        # a directory without the release's INSTALL.<arch> (the sets CD made on the node has it,
+        # answer_media.openbsd_sets: the sets in its root, so SETS_PATH `/`)
+        (r"INSTALL\.\w+ not found\. Use sets found here anyway\? \[\w+\] $", "yes"),
         (r"Set name\(s\)\? \(or 'abort' or 'done'\) \[done\] $", select_sets),
         (r"Continue without verification\? \[\w+\] $", "yes"),
         (r"Time appears wrong\. Set to .*\? \[\w+\] $", "yes"),
@@ -125,9 +175,13 @@ def which_question(rules, line):
     return next((j for j, (rx, _) in enumerate(rules) if re.search(rx, line)), None)
 
 
+CONGRATULATIONS = r"CONGRATULATIONS! Your OpenBSD install has been successfully completed!"
+
+
 def installer(m, v, timeout):
     """Answer the installer from its first question to "Exit to (S)hell, (H)alt or (R)eboot?" (answered
-    with the shell). Returns the questions answered, in order.
+    with the shell; 8.0), or to "CONGRATULATIONS!" (5.9, which then leaves its shell). Returns the
+    questions answered, in order.
 
     A question is answered only when it is the console's last line and the console has been quiet for
     a second: a kernel message in the middle of a question makes the installer's line editor draw the
@@ -140,7 +194,11 @@ def installer(m, v, timeout):
     rules = install_rules(v, state)
     end = time.time() + timeout
     while True:
-        if m.expect_any([QUESTION_END, IDE_TIMEOUT], max(1, end - time.time())) == 1:
+        seen = m.expect_any([QUESTION_END, IDE_TIMEOUT, CONGRATULATIONS], max(1, end - time.time()))
+        if seen == 2:
+            m.snap("install complete")
+            return asked
+        if seen == 1:
             m.metrics["ide_timeouts"] = m.metrics.get("ide_timeouts", 0) + 1
             if silent(m, STUCK_S):
                 m.snap("stuck after IDE timeouts")

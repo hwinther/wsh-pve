@@ -15,6 +15,9 @@ Variables (lab.py run ... --var KEY=VALUE):
   CONSOLE   serial | fb: where the PROM puts its console     (serial)
             serial = ttya (OpenBIOS: input/output-device=ttya; the Sun PROMs fall back to ttya
             only without a keyboard, so `serial` with a Sun PROM also drops the framebuffer)
+  NOGRAPHIC 1 = -nographic instead of a -vga device, what qemu-server passes for `vga: serialN`:
+            no framebuffer, and QEMU disables the keyboard/mouse ESCC (zs1). OpenBSD/sparc 5.9
+            panics with a keyboard there ("stray interrupt ipl 0xc", "crazy interrupts")  (none)
   ISO       the install CD                                   (required)
   CDROM_AS  cd | hd: Solaris 2.4/2.5 only boot the installer from a CD that answers as a disk
   DISK      the guest disk; created from TEMPLATE when it doesn't exist  (<out>/disk.raw)
@@ -25,6 +28,8 @@ Variables (lab.py run ... --var KEY=VALUE):
   REFRESH   seconds between display updates, 0 = none          (0.5 with a framebuffer, else 0)
             A connected VNC client does this; without it cg3 never raises its vsync interrupt.
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
+  PROM_ENV  OpenBIOS variables, space separated, each passed as -prom-env (auto-boot?=false for
+            solaris-webstart-serial.py; through PVE, install.py puts them into the VM's `args`)  (none)
   AUDIO     wav: the SS-5's CS4231 plays into <out>/audio.wav (-audiodev wav, -machine audiodev),
             44.1 kHz stereo. The header's sizes stay 0 when the guest powers off: the
             samples are what follows its 44 bytes (SPARC.md, "Audio")  (none: no sound)
@@ -79,7 +84,9 @@ def qemu_args(v, out):
     if v.get("CPU"):
         args += ["-cpu", v["CPU"]]
     sun_prom = not v["BIOS"].startswith("openbios")
-    if v["VGA"] == "none" or (v["CONSOLE"] == "serial" and sun_prom):
+    if v.get("NOGRAPHIC") == "1":
+        args += ["-nographic"]
+    elif v["VGA"] == "none" or (v["CONSOLE"] == "serial" and sun_prom):
         args += ["-vga", "none"]
     else:
         args += ["-vga", v["VGA"]]
@@ -87,6 +94,8 @@ def qemu_args(v, out):
             args += ["-g", v["RES"]]
     if v["CONSOLE"] == "serial" and not sun_prom:
         args += ["-prom-env", "input-device=ttya", "-prom-env", "output-device=ttya"]
+    for env in v.get("PROM_ENV", "").split():
+        args += ["-prom-env", env]
     args += ["-drive", f"file={disk},if=none,id=drive-scsi3,format=raw,cache=unsafe",
              "-device", "scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3"]
     if v.get("DISK2"):

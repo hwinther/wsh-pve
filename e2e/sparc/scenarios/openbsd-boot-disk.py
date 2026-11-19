@@ -18,7 +18,7 @@ import re
 
 import _openbsd
 
-DEFAULTS = {**_openbsd.DEFAULTS, "BOOT": "c", "ROOT_PASSWORD": "", "CHECK": "",
+DEFAULTS = {**_openbsd.DEFAULTS, "BOOT": "c", "NO_CD": "1", "ROOT_PASSWORD": "", "CHECK": "",
             "COMMANDS": "uname -a; df -k; ifconfig -a", "COMMANDS_TIMEOUT": "600"}
 
 

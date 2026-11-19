@@ -58,7 +58,9 @@ come after that, not before.
 | Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
 | Older Sun releases on sun4m: install targets for Solaris 2.3 Edition II (`sol23-ss5` with `ss5.bin`, `sol23-ss20` with `ss20_v2.25_rom`; sysidtool's older screens and Quick Install), Solaris 2.5 HW 1/96 (`sol25-ss5`, `sol25-ss20`, OpenBIOS) and SunOS 4.1.3_U1B (`sunos413u1b-ss5`, `sunos413u1b-ss20`, the 4.1.4 install unchanged), all with `cd_as_disk` where Solaris needs it, 6-11 min each through PVE; Solaris 2.1/2.2 and SunOS 4.1.3 (SS-10 era) and 4.1.2 on SS-600MP measured: they don't boot (`submodules/SPARC.md`, "Older Sun releases on sun4m") | in review | |
 | Solaris 2.1-2.4 under OpenBIOS on sun4m: openbios 0019-0022 (the FCode boot block's OBP 2.x words, the Forth heap inside the firmware's range, node 0 as the root, romvec calls with interrupts masked); 2.2 on SS-10, 2.3 and 2.4 on SS-5 install and boot in the lab (CD as a disk), 2.1 stops in QEMU (`Trap 0x21`); SunOS 4.1.3's `type=29` diagnosed (a probe of `0xd.0108_0000`); openbios 0023 (client interface: no catch result over the stack with `nret` 0) lets OpenBSD 8.0's installed sun4u kernel boot | in review | |
+| Install targets: Solaris 8 and 9 on the SS-5 (`sol8-ss5` from 8 2/02, `sol9-ss5` from 9 9/05, 256 MB, Web Start through PVE); Web Start's screens of the later updates answered (9 9/05's license question, 8 2/02's CD prompts); 8 2/02 and 9 9/05 on sun4u measured: they stop at the same `pp is NULL or free` panic as 8 1/01 and 9 (OpenBIOS's physical allocation, `submodules/SPARC.md`) | in review | |
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
+| Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
 
 ## In progress
 
@@ -87,7 +89,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      trap at TL 1` panic seen once before the package (none in 6 installs on it); a different one,
      `BAD TRAP: type=4e` in the firmware while the DVD boots, once in 6 DVD boots through PVE
      (`install` retries it);
-   - Solaris 7/8/9 `pp is NULL or free`; 2.5.1/2.6 boot-block exceptions.
+   - Solaris 7/8/9 `pp is NULL or free`, also with the later updates 8 2/02 and 9 9/05: the page
+     behind the failing boot allocation is just above the top of `/memory` `available`, so the
+     fix is in OpenBIOS's `ofmem` (physical pages for a `claim` after the kernel read `available`
+     must come from outside that snapshot); not started. 2.5.1/2.6 boot-block exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
    release, needed two more OpenBIOS fixes: 0016 runs the client interface with interrupts off
@@ -165,15 +170,16 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Later
 
+- **A larger package CD for Solaris 2.6/7.** `sun26gnu.iso` (34 packages) came from the sunfreeware
+  collection now on the lab host (521 packages for `sol26-sparc`); four of its packages have newer
+  builds there (ddrescue, openssl, sed, top) and many useful ones are missing (openssh with prngd,
+  gcc/binutils/make/gdb and the autotools, tar/findutils/grep/gawk, tcsh/zsh/emacs, perl, python,
+  ntp, cvs/subversion). A second local-only CD and `--post-install` bundle, with dependencies in
+  order and a bigger data disk. The owner will choose the set.
 - **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
   QEMU today.
-- **Solaris 8 and 9 on the SS-5.** They have SS-20 targets only (`sol8-ss20`, `sol9-ss20`), chosen
-  when the SS-5 ran Solaris about 9 times slower; since #262 it is as fast as the SS-20. To find out:
-  does Web Start install with 256 MB on the SS-5 (OpenBIOS, and `ss5.bin` for 8), how long it takes,
-  and does the installed system boot; if so, `sol8-ss5`/`sol9-ss5` targets. Both are supported on
-  sun4m by Sun (9 is the last release for it).
 - **More sparc32 guests and older releases.** QEMU emulates sun4m only (no sun4c or sun4), so the
   floor is set by when each machine got support (Sun's System Handbook, its SPARC module guide, the
   Solaris FAQ): SunOS 4.1.3 (Solaris 1.1) on the SS-10 (one CPU; SunOS 4 has no MP on it);
@@ -186,10 +192,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
   NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
-  OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
-  only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
-  node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
-  all on the lab host now. Done (see "Done"): SunOS 4.1.3_U1B, Solaris 2.3 and 2.5 install;
+  OpenBSD 5.9 (the last release with sparc32), all on the lab host now. Done (see "Done"): SunOS
+  4.1.3_U1B, Solaris 2.3 and 2.5 install; OpenBSD 5.9 installs on SS-5 and SS-20 (`openbsd59-ss5`,
+  `openbsd59-ss20`; the sets from a CD made on the node, a serial display: with QEMU's keyboard
+  ESCC its kernel panics, which isn't narrowed down yet, `submodules/SPARC.md`, "OpenBSD 5.9 on
+  sun4m"; 5.8's `install58.iso` wasn't needed and isn't tried);
   the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. OpenBIOS 0019-0022 run the Solaris
   2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5 and SS-20) are install targets under OpenBIOS
   since pve-qemu-kvm 11.1.3-2+wsh22 (`sol22-ss10`, `sol23-ss5`, `sol23-ss20`, `sol24-ss5`,
@@ -208,10 +215,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   installed disk (exception 0x21 in NeXT's boot program) is open.
 - **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
   SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot it), 2.6 and 7 on the SS-10
-  profile, 8 and 9 on the SS-5 (above). (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"
-  and the item above.) Needing media: the later updates of 8
-  (2/02, 2/04) and 9 (9/05) on the SS-20 and on sun4u (whether a later update gets past sun4u's
-  `pp is NULL or free`), and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
+  profile, 8 with `ss5.bin` on the SS-5. (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"
+  and the item above; 8 2/02 and 9 9/05 install on the SS-5 and SS-20 and stop on sun4u like 8 1/01
+  and 9.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
 - **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
   kernel boots since openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22) and `openbsd80-sun4u` installs it

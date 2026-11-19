@@ -356,6 +356,26 @@ packages from `archive.debian.org`.
 [Lab install targets](/guides/lab-install/) installs it unattended (`debian40-ss5`,
 `debian40-ss20`: preseed from a small answer CD, with `--apt-proxy` for a package cache).
 
+## Installing OpenBSD 5.9
+
+OpenBSD 5.9, the last release with the 32-bit sparc port, installs on the SS-5 and SS-20 profiles
+with OpenBIOS (one CPU: OpenBSD/sparc has no multiprocessor kernel; more CPUs are left unused).
+
+- **Use a serial display (`vga: serial0`).** With `cg3` or `tcx` QEMU adds the Sun keyboard, and
+  OpenBSD's kernel stops during device configuration with `panic: crazy interrupts` (endless `stray
+  interrupt ipl 0xc` messages first). With a serial display it boots.
+- **The sets.** The release's `cd59.iso` only boots the installer; there is no install CD with the
+  sets for sparc. Give the installer the sets on a second CD (`scsi5`, which the installer calls
+  `cd0`; the boot CD on `scsi6` is `cd1`) with Rock Ridge names, or fetch them over HTTP from a
+  mirror (`ftp.eu.openbsd.org` keeps 5.9). With `SHA256.sig` next to the sets and at least 512 MB free
+  on `/tmp`, `/home` or `/usr/src` (an 8 GiB disk with the auto layout), the installer checks their
+  signature.
+- **Boot the CD by device path:** with a blank disk OpenBIOS stops at `0 >`; `boot
+  /iommu/sbus/espdma/esp/sd@6,0:d`. The installed disk boots by itself; `halt -p` powers the VM off.
+
+[Lab install targets](/guides/lab-install/) installs it unattended (`openbsd59-ss5`,
+`openbsd59-ss20`, about 10 minutes), with the sets CD made on the node from the release's files.
+
 ## NeXTSTEP 3.3 and OPENSTEP 4.2
 
 NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also carries the SPARC
@@ -394,7 +414,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | OpenBSD 8.0 | with 11.1.3-2+wsh22 or later (OpenBIOS patch 0023): installs from `install80.iso` (about 10 minutes; `wsh-lab install openbsd80-sun4u` does it through Proxmox) and the installed system boots to its login, gets its address on `hme0` (static or DHCP) and powers off with `halt -p`. Keep ntpd off (`rcctl disable ntpd`; the lab target does): with a reachable NTP server the IDE disk timed out (`wd0: timeout`) after ntpd slewed the clock, in 5 of 6 boots. Without ntpd it happens too, rarely (once in five installs, once in several boots with heavy disk use), and then the guest stops answering: stop and start the VM. Before +wsh22 the installed kernel stops in the firmware (`Unhandled Exception 0x30`: the firmware overwrote a value on the kernel's stack) |
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
-| Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS (stops in the boot block or panics early in the kernel) |
+| Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS: 2.5.1 and 2.6 stop in the boot block; 7, 8 (1/01 and 2/02) and 9 (the original DVD and 9/05) panic early in the kernel with `pp is NULL or free` (a firmware memory-allocation problem, not fixed). On sparc32 Solaris 8 and 9 install on the SS-5 and SS-20 |
 | Tribblix m34 (illumos) | with pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`): the live CD boots, installs to the IDE disk with its own installer, and the installed system boots (see [Tribblix (illumos)](#tribblix-illumos)) |
 
 What works is what [the sparc64 profile](#the-sparc64-profile) allows: the machine's built-in **IDE**
@@ -510,6 +530,8 @@ on sun4u".
   does); not yet checked from a VNC console.
 - NeXTSTEP 3.3 and OPENSTEP 4.2 hang during their install with the published package (an ESP
   interrupt timing problem; see [NeXTSTEP 3.3 and OPENSTEP 4.2](#nextstep-33-and-openstep-42)).
+- OpenBSD 5.9 on sparc32 needs a serial display: with `cg3` or `tcx` its kernel panics ("crazy
+  interrupts"; see [Installing OpenBSD 5.9](#installing-openbsd-59)).
 - The architecture can't be changed after the VM is created.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.

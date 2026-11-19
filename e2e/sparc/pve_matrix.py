@@ -213,8 +213,9 @@ def enable_floppy_content(storage="local"):
 
 def link_media(target, a):
     """The target's media into the `local` storage under their expected names, as links to --iso (CDs)
-    or --floppy (floppy images). A converted medium (MEDIA "from", e.g. the SunOS CD) that isn't in
-    --iso is made there from its source with `lab.py media --convert`, as a user would, and kept."""
+    or --floppy (floppy images). A converted medium (MEDIA "from", e.g. the SunOS CD, OpenBSD 5.9's sets
+    CD from the release's directory) that isn't in --iso is made there from its source with `lab.py media
+    --convert`, as a user would, and kept."""
     for med in targets.TARGETS[target]["media"]:
         m = targets.MEDIA[med["name"]]
         if m["content"] == "floppy":
@@ -228,8 +229,9 @@ def link_media(target, a):
                 continue  # converted by an earlier case
             if os.path.lexists(link):
                 os.unlink(link)
-            sh(sys.executable, os.path.join(HERE, "lab.py"), "media", target, "--convert",
-               os.path.join(a.iso, targets.MEDIA[m["from"]["name"]]["lab"]), "--dir", d)
+            source = m["from"]["dir"] if "files" in m["from"] else targets.MEDIA[m["from"]["name"]]["lab"]
+            sh(sys.executable, os.path.join(HERE, "lab.py"), "media", target, "--convert", os.path.join(a.iso, source),
+               "--dir", d)
             continue
         if os.path.lexists(link):
             os.unlink(link)

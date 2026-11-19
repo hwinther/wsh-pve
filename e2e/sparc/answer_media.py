@@ -1,8 +1,11 @@
 """Answer media: a small CD image made on the node from a target's answers (never from vendor files),
-which the installer reads its answer file from (README.md, "Install methods", unattended).
+which the installer reads its answer file from (README.md, "Install methods", unattended). And one
+CD that does hold vendor files, OpenBSD 5.9's sets (openbsd_sets: made with `lab.py media --convert`
+from the release's files, each checked against its sha256 first).
 
     iso9660({"KS.CFG": b"..."}, "WSH_LAB_KS")   -> the bytes of a one-directory ISO 9660 image
     kickstart(ip=..., netmask=...)                -> Red Hat 6.2's ks.cfg (README.md, "Red Hat Linux 6.2")
+    openbsd_sets({"base59.tgz": b"...", ...})    -> OpenBSD's sets on a CD, names in Rock Ridge
 
 Standard library only: the node needs no genisoimage, and tests/test_targets.py reads the image back
 with dos_tools.Iso.
@@ -29,21 +32,46 @@ _RECORDED = bytes([70, 1, 1, 0, 0, 0, 0])
 _VOLUME_DATE = b"1970010100000000\x00"
 
 
-def _record(name, lba, size, is_dir):
+def _record(name, lba, size, is_dir, system_use=b""):
     rec = (bytes([0]) + _both32(lba) + _both32(size) + _RECORDED + bytes([2 if is_dir else 0, 0, 0])
            + _both16(1) + bytes([len(name)]) + name)
     rec += b"\x00" * (len(rec) % 2 == 0)  # padded to an even length (33 + name length)
+    rec += system_use + b"\x00" * (len(system_use) % 2)
     return bytes([len(rec) + 1]) + rec
 
 
-def iso9660(files, volume="CDROM"):
-    """A one-directory ISO 9660 image (level 1, no Rock Ridge or Joliet) with `files` ({8.3 name in
-    upper case: bytes}); Linux shows the names in lower case (`ks.cfg`)."""
+# Rock Ridge (SUSP / RRIP 1.10), just enough for the names: SP and ER in the root's "." record (the
+# ER identifier is what OpenBSD's cd9660 looks for before it reads any RRIP entry), then NM (the
+# name) and PX (mode 0444 or 0555, one link, root) in each record
+_SUSP_SP = b"SP\x07\x01\xbe\xef\x00"
+_RRIP_ID, _RRIP_DES, _RRIP_SRC = b"RRIP_1991A", b"ROCK RIDGE POSIX NAMES", b"WSH-PVE ANSWER_MEDIA"
+_RRIP_ER = (b"ER" + bytes([8 + len(_RRIP_ID) + len(_RRIP_DES) + len(_RRIP_SRC), 1,
+                           len(_RRIP_ID), len(_RRIP_DES), len(_RRIP_SRC), 1]) + _RRIP_ID + _RRIP_DES + _RRIP_SRC)
+
+
+def _rrip_px(mode):
+    return b"PX\x24\x01" + _both32(mode) + _both32(1) + _both32(0) + _both32(0)
+
+
+def _rrip_nm(name):
+    return b"NM" + bytes([5 + len(name), 1, 0]) + name
+
+
+def iso9660(files, volume="CDROM", rock_ridge=None):
+    """A one-directory ISO 9660 image (level 1, no Joliet) with `files` ({8.3 name in upper case:
+    bytes}); Linux shows the names in lower case (`ks.cfg`). `rock_ridge` ({8.3 name: the name it
+    shows}) adds Rock Ridge names (any case, longer than 8.3), which Linux and OpenBSD show instead."""
     if not VOLUME.fullmatch(volume):
         raise ValueError(f"volume ID {volume!r}: up to 32 of A-Z 0-9 _")
     for name in files:
         if not NAME.fullmatch(name):
             raise ValueError(f"{name!r}: not an ISO 9660 level 1 name (8.3, A-Z 0-9 _)")
+    if rock_ridge is not None:
+        if set(rock_ridge) != set(files) or len(set(rock_ridge.values())) != len(files):
+            raise ValueError("rock_ridge: one distinct name for each file")
+        for posix in rock_ridge.values():
+            if not re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", posix) or posix in (".", ".."):
+                raise ValueError(f"Rock Ridge name {posix!r}: up to 64 of A-Z a-z 0-9 . _ + -")
     names = sorted(files)
     root_lba, data_lba = 20, 21
     extents, lba = {}, data_lba
@@ -51,9 +79,12 @@ def iso9660(files, volume="CDROM"):
         extents[name] = lba
         lba += max(1, -(-len(files[name]) // SECTOR))
     total = lba
-    root = _record(b"\x00", root_lba, SECTOR, True) + _record(b"\x01", root_lba, SECTOR, True)
+    rr = rock_ridge is not None
+    root = (_record(b"\x00", root_lba, SECTOR, True, _SUSP_SP + _rrip_px(0o40555) + _RRIP_ER if rr else b"")
+            + _record(b"\x01", root_lba, SECTOR, True, _rrip_px(0o40555) if rr else b""))
     for name in names:
-        root += _record(f"{name};1".encode(), extents[name], len(files[name]), False)
+        su = _rrip_px(0o100444) + _rrip_nm(rock_ridge[name].encode()) if rr else b""
+        root += _record(f"{name};1".encode(), extents[name], len(files[name]), False, su)
     if len(root) > SECTOR:
         raise ValueError("too many files for one directory sector")
     path_l = bytes([1, 0]) + struct.pack("<I", root_lba) + struct.pack("<H", 1) + b"\x00\x00"
@@ -86,6 +117,37 @@ def image(fmt, ip, netmask, gateway=None, dns=(), domain=None, hostname=None, pr
 
 
 FORMATS = ("kickstart", "preseed")
+
+
+# --- OpenBSD 5.9 sets CD -----------------------------------------------------------------------------
+
+def iso_name(name):
+    """An ISO 9660 level 1 name for `name`: upper case, 8.3, other characters as `_`
+    ("INSTALL.sparc" -> "INSTALL.SPA", "SHA256.sig" -> "SHA256.SIG")."""
+    base, dot, ext = name.upper().partition(".")
+    clean = lambda part, n: re.sub(r"[^A-Z0-9_]", "_", part)[:n]  # noqa: E731
+    return clean(base, 8) + ("." + clean(ext.replace(".", "_"), 3) if dot else "")
+
+
+def openbsd_sets(files, volume="OPENBSD_SETS"):
+    """A CD with OpenBSD's install sets in its root ({file name as in the release: bytes}, e.g.
+    "base59.tgz", "bsd", "bsd.rd", "SHA256.sig", "INSTALL.sparc"), for the installer's "Location of
+    sets? (cd0 cd1 ...)" (README.md, "OpenBSD 5.9 on sun4m"): OpenBSD/sparc 5.9 has no install CD with
+    the sets, only cd59.iso.
+
+    Unlike the answer CDs, this one holds vendor files: `lab.py media <target> --convert <directory>`
+    makes it on the node from the release's files, each checked against the sha256 in targets.MEDIA
+    first, and the result is the same image byte for byte (no dates, sorted names), so it has a tested
+    sha256 like any medium. The release's names are Rock Ridge names (OpenBSD 5.9's cd9660 shows the
+    ISO 9660 names as they are, upper case, and the installer finds no sets by those), so with
+    SHA256.sig on it the installer checks the sets' signature itself."""
+    isos = {}
+    for name in files:
+        iso = iso_name(name)
+        if iso in isos:
+            raise ValueError(f"{name!r} and {isos[iso]!r} get the same ISO 9660 name {iso}")
+        isos[iso] = name
+    return iso9660({iso: files[name] for iso, name in isos.items()}, volume, rock_ridge=isos)
 
 
 # --- Red Hat Linux 6.2 ------------------------------------------------------------------------------

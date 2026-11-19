@@ -1,8 +1,8 @@
-"""Solaris 8 (1/01) and 9 initial install with Web Start on the serial console, to an installed disk
-that is powered off. Solaris 8: the Installation CD, then Software 1 of 2 and 2 of 2 swapped in when
-the installer asks; Solaris 9: the DVD. Written for `lab.py install sol8-ss20` / `sol9-ss20` (attach
-mode, a PVE VM); the VM needs `auto-boot?=false` in OpenBIOS (install.py sets `-prom-env` for the
-install phase only, targets.py "prom_env"):
+"""Solaris 8 (1/01, 2/02) and 9 (the original DVD, 9/05) initial install with Web Start on the serial
+console, to an installed disk that is powered off. Solaris 8: the Installation CD, then Software 1 of
+2 and 2 of 2 swapped in when the installer asks; Solaris 9: the DVD. Written for `lab.py install`
+of sol8-ss20, sol9-ss20, sol8-ss5 and sol9-ss5 (attach mode, a PVE VM); the VM needs
+`auto-boot?=false` in OpenBIOS (install.py sets `-prom-env` for the install phase only, targets.py "prom_env"):
 
   1. Solaris 8: the Installation CD's mini-root asks to format the boot disk and put a swap slice at
      its start, copies a mini-root there and reboots with `reboot -- <that slice>`. OpenBIOS drops
@@ -44,9 +44,15 @@ DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15", "NE
 # and on Solaris 9 the same followed by a key hint: "<Press ENTER to continue> {"!" exits}"
 HINT = r'\s*\{"[^{}]*\}'
 PROMPT_END = r"(?:[:?\]>)]|\[[^\]]*\])(?:" + HINT + r")?\s*$"
+# Prompts without such an ending: Solaris 9 9/05's license question ("Enter 'y' to accept the license
+# agreement. Enter 'n' to decline the license agreement and exit the install.")
+PROMPT_END_BARE = r"exit the install\.\s*$"
 # "Please insert the Solaris 8 Software 1 of 2 CD." (before the install), "Please insert the CD for
-# Solaris 8 Software 2 of 2 (SPARC Platform Edition)." (after the first CD's packages)
-INSERT = r"Please insert the (?:CD for )?Solaris \d+ Software (\d) of 2"
+# Solaris 8 Software 2 of 2 (SPARC Platform Edition)." (after the first CD's packages); 8 2/02 asks
+# for the first one as "Please insert the first Solaris Software disc from which you will install ...",
+# the second as "Please insert the CD/DVD for Solaris 8 Software 2 of 2 (2/02 SPARC Platform Edition)."
+INSERT = (r"Please insert the (?:CD for |CD/DVD for )?Solaris \d+ (?P<what>Software \d of 2)"
+          r"|Please insert the (?P<which>\w+) Solaris Software disc")
 CD_ROW = r"^\s*\[([X\- ])\]\s+(\d+)\s+(\S.*?)\s{2,}"
 
 
@@ -68,7 +74,7 @@ def wait_prompt(m, since, timeout):
         m.quiet(3, timeout)
         screen = m.screen_text()
         last = next((x for x in reversed(screen.splitlines()) if x.strip()), "")
-        if m.serial_cursor() > since and re.search(PROMPT_END, last):
+        if m.serial_cursor() > since and (re.search(PROMPT_END, last) or re.search(PROMPT_END_BARE, last)):
             return screen
         if time.time() > end:
             raise RuntimeError(f"no prompt within {timeout}s; the screen:\n{screen}")
@@ -92,9 +98,10 @@ class Installer:
         self.cd, self.mark = None, None  # the CD whose products are on screen, and its [X]/[-]/[ ]
 
     def insert(self, screen):
-        n = re.findall(INSERT, tail(screen, 8))[-1]
+        found = list(re.finditer(INSERT, tail(screen, 8)))[-1]
+        what = found["what"] or f"the {found['which']} Software disc"
         if not self.swaps:
-            raise RuntimeError(f"the installer asks for Software {n} of 2; SWAPS has no more CDs")
+            raise RuntimeError(f"the installer asks for {what}; SWAPS has no more CDs")
         drive, volume = self.swaps.pop(0)
         self.m.change_medium(drive, volume)
         time.sleep(5)  # the target notices the new medium (unit attention) before it is read
@@ -170,7 +177,7 @@ def prompts(inst, v):
         (r"Eject a CD/DVD automatically after software installation \[y\]\?$", "n", None),
         (r"Enter 'y' if this is correct, or 'n' to make changes \[y\]$", "y", "installer options"),
         (r"Media \[1\]:$", "1", None),
-        (INSERT + r".*\[\]$", inst.insert, "insert a CD"),
+        (r"(?:" + INSERT + r").*\[\]$", inst.insert, "insert a CD"),
         (r"type of install you would like \[1\]:$", "2", "custom install"),
         (r"Enter n when finished\. \[n\]$", "", "regions"),  # the regions: English only
         (r"enter n to use the default\. \[n\]$", lambda s: inst.locale(s, "region"), None),
@@ -178,6 +185,8 @@ def prompts(inst, v):
          lambda s: inst.locale(s, "locale"), "locale C"),
         (r"Toggle .* \[n\]\?$", "y", None),
         (r"\[n To Finish\]-->$", "n", None),
+        # Solaris 9 9/05: the license after the installer options (paged above, then this)
+        (r"Enter 'y' to accept the license agreement\..* exit the install\.$", "y", "license agreement"),
         (r"Enter n when finished \[n\]$", inst.finished, "CDs and products"),
         (r"Web Start Ready product scan location \[1\]:$", "1", None),
         (r"installed with 32-bit support only\. Enter the number corresponding to your choice \[2\]$", "2",
@@ -191,6 +200,8 @@ def prompts(inst, v):
         # after each CD's packages (the default is Done), the media for Software 2 of 2 ("Media [1]:"
         # above), and the end
         (r"information, or enter \d to continue \[\d\]:$", "", "installation details"),
+        # 8 2/02, after Software 2 of 2 went in: "Ready to Install 1. Install Now 2. Start Over ..."
+        (r"Ready to Install .*1\. Install Now .*What would you like to do \[1\]\?$", "1", "install the next CD"),
         # Solaris 9: a summary that moves on by itself after 30-90 s
         (r"Enter 'p' to pause\. Enter 'c' to continue\. \[c\]$", "c", None),
         (r"<Press Return to reboot the system>(?: \[\])?$", "", "reboot"),
@@ -223,7 +234,8 @@ def run(m, v):
     # runs Web Start from the DVD after asking for the language, the locale (a paged list, 0 is
     # English C) and the terminal type
     while True:
-        i = m.expect_any([r"Do you want to format /dev/dsk/c0t3d0\?\s+\[y,n,\?,q\]", r"Select a Language",
+        # 8 1/01 asks "... c0t3d0? [y,n,?,q]", 8 2/02 without the question mark
+        i = m.expect_any([r"Do you want to format /dev/dsk/c0t3d0\??\s+\[y,n,\?,q\]", r"Select a Language",
                           r"Please make a choice \(0 - \d\d+\)", r"What type of terminal are you using",
                           r"Running in command line mode"], 1800)
         m.quiet(1, 60)

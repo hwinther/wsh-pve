@@ -706,8 +706,9 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 | --- | --- |
 | Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
 | Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both, on the 3G or the 9G disk (`lab.py install sol7-ss5`/`sol7-ss20 [--disk-size 9G]`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
-| Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`) |
-| Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 Web Start installs End User and the installed 32-bit kernel boots to login (`sol9-ss20`); 9 is the last release for sun4m, Solaris 10 dropped it |
+| Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`); the same on SS-5 with 256 MB (lab, 2026-11-19) |
+| Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 (and SS-5, lab, 2026-11-19) Web Start installs End User and the installed 32-bit kernel boots to login (`sol9-ss20`); 9 is the last release for sun4m, Solaris 10 dropped it |
+| Solaris 8 2/02 Installation CD, Solaris 9 9/05 DVD | as 8 1/01 and 9, SS-5 (256 MB) and SS-20: Web Start installs (9/05 adds a license question, 8 2/02 words its CD prompts differently; `e2e/sparc/README.md`, "Solaris 8 and 9 on the SS-5") and the installed systems boot (`Generic_108528-13`, `Generic_118558-34`); install targets `sol8-ss5` and `sol9-ss5` (2026-11-19). On the SS-20 8 2/02 hung once in two lab runs after the mini-root came up |
 | NetBSD 11.1, SS-5 disk | boots on SS-20; GENERIC attaches one CPU (`cpu at mainbus0 not configured`, `hw.ncpu = 1`) and `apc0`, idles at 2.4% of a core with `-smp 2` |
 | NetBSD 11.1 GENERIC.MP (from the ISO) | `-smp 2`: `cpu0: booting secondary processors: cpu1`, `hw.ncpu = 2`; five 16-256 MB writes with `sync` pass; idle ~4% of a core |
 
@@ -1422,6 +1423,53 @@ profiles with OpenBIOS and a serial console. What the guest finds:
 
 The install target (`debian40-ss5`, `debian40-ss20`): `e2e/sparc/README.md`, "Debian GNU/Linux 4.0".
 
+### OpenBSD 5.9 on sun4m
+
+OpenBSD 5.9 (March 2016), the last release with the 32-bit sparc port, on the SS-5 and SS-20
+profiles. It needs no QEMU, OpenBIOS or qemu-server change, but one thing of the VM's:
+
+- **No keyboard ESCC: `-nographic`.** With a display (the lab's `-vga none`, or `-vga cg3`) QEMU's
+  sun4m has the second ESCC with the Sun keyboard and mouse; OpenBSD attaches `zskbd0 at zs1
+  channel 0: keyboard, type 5, layout 0x21`, then prints `stray interrupt ipl 0xc pc=...` (the ESCC
+  level) again and again during autoconf and stops with `panic: crazy interrupts` (`strayintr` from
+  `sparc_interrupt44c` in `cpu_configure`), the RAMDISK kernel of `cd59.iso` and the installed
+  GENERIC alike, on both machines. With `-nographic` QEMU leaves that ESCC disabled (`disabled` =
+  `!enable_graphics` in `sun4m.c`), `zskbd0` finds no keyboard and the kernel boots. qemu-server
+  passes `-nographic` for `vga: serial0`/`serial1`, so a VM with a serial display works and one with
+  `cg3` or `tcx` doesn't. Diagnosed this far: an `escc_*` trace shows the keyboard answering the
+  driver's probe (reset `0xff 0x04 0x7f`, layout `0xfe 0x21`, command 11) and then the level-12
+  interrupt raised and lowered for every console character; QEMU's ESCC trace events don't name the
+  chip, so which pending condition OpenBSD's handlers don't claim isn't known yet. Solaris, SunOS,
+  NetBSD and Linux run with the keyboard ESCC, so it is between OpenBSD's `zs`/`zskbd` and QEMU's
+  keyboard channel. The QEMU wiki's "5.8: working with -nographic" fits.
+- Boot: with a blank disk on target 3 OpenBIOS stops at `0 >`; `boot
+  /iommu/sbus/espdma/esp/sd@6,0:d` loads OpenBSD's boot block (`OpenBSD BOOT 2.11`) and `bsd.rd` in
+  ~5 s. `ss5.bin` boots the CD with `boot cdrom`. The installed disk boots by itself under OpenBIOS
+  (`sd@3,0`, partition `a`, also with the 8 GiB auto layout's 111 MB root). Under `ss5.bin` the
+  installed GENERIC kernel stops at `bpp0 at sbus0 slot 5 offset 0xc800000` (`data fault ...
+  sfva=0x7c800000`, `panic: kernel fault`): the SS-5 PROM's tree has the parallel port `SUNW,bpp`,
+  which QEMU's SS-5 doesn't emulate (OpenBIOS's tree has no such node; `bsd.rd` has no `bpp` driver);
+  `boot disk -c` and `disable bpp` in UKC boot it. The SS-20 PROM's `bpp` (slot 15) attaches as
+  "Unknown type", and the disk boots.
+- Kernel: `mainbus0 at root: SUNW,SPARCstation-5`, `cpu0: MB86904 @ 170 MHz` (SS-20: `TMS390Z50 v0
+  or TMS390Z55 @ 170 MHz`), `esp0` with `sd0` on target 3 and `cd0`/`cd1` on 5 and 6 (OpenBSD
+  numbers the CD-ROMs in target order), `le0` with `net0`'s MAC, `audiocs0` on the SS-5,
+  `power0 at obio0`, so `halt -p` powers the machine off ("attempting to power down...", QEMU
+  exits) from `bsd.rd` and the installed system. No multiprocessor kernel exists for sparc: on an
+  SS-20 with 4 CPUs the others are `cpu at mainbus0 not configured`.
+- The installer: `cd59.iso` has no sets (the release has no `install59.iso` for sparc). The sets
+  come from a second CD made on the node from the release's files (`answer_media.openbsd_sets()`);
+  it needs Rock Ridge names, because 5.9's `cd9660` shows plain ISO 9660 names in upper case
+  (`BASE59.TGZ`), which the installer doesn't take for sets. With `SHA256.sig` on the CD the
+  installer checks the signature and each set, if it finds 512 MB free on `/tmp`, `/home` or
+  `/usr/src` to copy them to (an 8 GiB disk's auto layout has that, a 3 GiB disk's doesn't).
+- Times (TCG, one guest per host core): the questions ~1 min, the sets ~2-3 min (base, comp, man,
+  game, 108 MB), the first boot to `login:` 2.5-3 min (host key generation), a later boot ~25 s; a
+  100 MB `dd` on the disk 29-35 MB/s written, 49-57 MB/s read.
+
+The install targets (`openbsd59-ss5`, `openbsd59-ss20`): `e2e/sparc/README.md`, "OpenBSD 5.9 on
+sun4m".
+
 ### Older Sun releases on sun4m
 
 Solaris 2.1, 2.2, 2.3 Edition II and 2.5 (HW 1/96), SunOS 4.1.2, 4.1.3 and 4.1.3_U1B, against the
@@ -1925,7 +1973,9 @@ directory, the same source as `openbios/Dockerfile` builds):
 | --- | --- |
 | 10 1/13 (u11) DVD | `SunOS Release 5.10 Version Generic_147147-26 64-bit`, `Configuring devices.`, the installer's `Select a Language` prompt (~3 min). `hme0` attaches (`Attempting to configure interface hme0...`, `Skipped interface hme0` without a bootparams server). The IDE driver warns `WARNING: Interrupt not seen after set_features` once per device (fixed in QEMU, below). With 0003-0007 the installer took no input on ttya; 0009 fixes that (below). Also `could not find debugger-vocabulary-hook>threads` (optional Forth symbol lookup, harmless), `i8042: undefined symbol 'i_ddi_alloc_ispec'` (no PS/2 keyboard), `Out of range register specification from device node <fdthree>` |
 | 9 DVD | `SunOS Release 5.9 Version Generic 64-bit`, then `panic[cpu0]/thread=140a000: boot_alloc: pp is NULL or free` in `boot_mapin` ← `boot_alloc(0x30000136000, 0x2000, 0x1000)` ← `segkmem_alloc` ← `kobj_vmem_init`, from `modloadonly` in `startup_modules` |
+| 9 9/05 DVD | `SunOS Release 5.9 Version Generic_118558-34 64-bit`, then the same `boot_alloc: pp is NULL or free`, earlier in `startup_modules`: at 1024 MB `boot_alloc(0x30000058000, 0x2000)` for a `kmem_alloc` in `kobj_load_module` ← `modload` ← `mod_setup`; at 2048 MB `boot_alloc(0x30000146000, 0x82000)` (with the published `openbios-sparc64`, 0001-0023; "Solaris 7/8/9: `pp is NULL or free`" below) |
 | 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free` |
+| 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05) |
 | 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free` |
 | 2.6 (5/98), 2.5.1 (11/97) | unchanged: `open isn't unique.`, `byte-load: exception caught!` in the boot block |
 
@@ -2277,6 +2327,45 @@ mechanism: `boot_getpages` and `page_numtopp`, with page structures built from t
 program's `physavail`. Likely places to look: OpenBIOS's byte-granular `ofmem` lists (fragments
 like `0x0011ae64` length 4 in `available`), and whether anything releases physical memory during
 boot.
+
+The later updates don't get past it (2026-11-19; pve-qemu-kvm 11.1.3-2+wsh22, its
+`openbios-sparc64` from patches 0001-0023; CD on `ide.1`, serial console, the lab's
+`sparc64-boot-cd.py` and a scratch scenario that reads the firmware's state at `0 >` after the
+panic: `translate` of the failing address through `/virtual-memory`, and the `available` lists).
+8 2/02 (`Generic_108528-13`) and 9 9/05 (`Generic_118558-34`) panic with the same message within a
+minute of power-on; only the caller moved, because each kernel allocates differently in
+`startup_modules` (table above). The physical page behind the failing address is each time one of
+the last pages the firmware handed out, just above the top of what `/memory` `available` still
+lists:
+
+| Release, memory | Failing `boot_alloc` | Physical page | Top of `/memory` `available` |
+| --- | --- | --- | --- |
+| 9 9/05, 1024 MB | `0x30000058000`, 8 KB | `0x3d072000` | `0x3d062000` |
+| 9 9/05, 2048 MB | `0x30000146000`, 520 KB | `0x79f7e000` | `0x79f7e000` |
+| 8 2/02, 1024 MB | `0x300001be000`, 80 KB | `0x3d382000` | `0x3d37e000` |
+| 8 2/02, 2048 MB | `0x300001f6000`, 80 KB | `0x7a7ec000` | `0x7a7ea000` |
+
+The kernel heap pages mapped before the failing one came from two places: pages just under the
+firmware at `0x3fc00000`-`0x3fce6000` (claimed, released and claimed again during boot) and the
+first pages above `available`'s top (`0x3d062000`-`0x3d070000` for 9 9/05 at 1 GB; `0x3d37e000`,
+`0x3d380000` for 8 2/02), which passed. The likely reading (not proven: the kernel's own page
+structures weren't inspected) is that the panic comes where the firmware's top-down allocation
+reaches pages the kernel still counts as free: they were in `available` when the kernel took its
+snapshot and built its page structures, the firmware gave them out afterwards, and Solaris 8/9's
+`boot_mapin` insists that every page behind a boot allocation is a page the kernel doesn't own
+(`page_numtopp` returns a page that isn't free). Solaris 10 boots with the same firmware, so its
+kernel either takes the snapshot later or copes with such a page. The mechanism is the firmware's
+physical allocator, not something a later update changed: the stop follows the memory size and
+the top of `available`, not the release.
+
+A fix would be in OpenBIOS's `ofmem` (`openbios/patches/`; not attempted here): after the client
+has read `/memory` `available` for its page structures, physical memory that the firmware takes
+for a `claim` (and for its own mappings) must come from pages already outside that snapshot, as
+OBP's allocator arranges, or `available` must keep matching what the kernel later asks for. Ways
+to narrow it down: log every physical allocation in `ofmem` with the caller and compare with the
+kernel's reads of `available` (`getprop`/`getproplen` on `/memory` from the client interface);
+then try allocating bottom-up (lowest free page) instead of top-down, or keep the last
+allocations within the range the firmware had already claimed before the client's first read.
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not
@@ -2861,6 +2950,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - Debian 4.0 on sun4m: `debian40-ss5` and `debian40-ss20` (`lab.py install`; need pve-qemu-kvm
   11.1.3-2+wsh20 or later for `wsh/0038`; out of `pve_matrix.py install`, which gives the guest no
   `--gateway`/`--dns` to reach `archive.debian.org`); results under "Debian GNU/Linux 4.0 on sun4m".
+- OpenBSD 5.9 on sun4m: `openbsd59-ss5` and `openbsd59-ss20` (`lab.py install`, also in
+  `pve_matrix.py install`, which makes the sets CD from `--iso`'s `other-os/openbsd5.9/`); results
+  under "OpenBSD 5.9 on sun4m".
 
 ## Known gaps
 
@@ -2870,6 +2962,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - **Resolution:** qemu-server has no option for `-g`; cg3 runs at 1024x768 (what the Sun PROMs and
   Solaris' X server need).
 - **Live migration:** fails for a VM without `-cpu` (see "Backup and restore").
+- **OpenBSD/sparc with a display:** with `vga: cg3` or `tcx` QEMU adds the keyboard ESCC, and
+  OpenBSD 5.9 panics in autoconf ("crazy interrupts"); `vga: serial0` works ("OpenBSD 5.9 on sun4m").
 - **SS-20 PROM with a framebuffer:** Solaris 2.6 panics at boot with the console on cg3 or TCX
   under `ss20_v2.25_rom` ("cg3 and TCX"); with a serial console it boots.
 - **TCX depth:** qemu-server passes no `-g`, so TCX is 8-bit; 24-bit only works with OpenBIOS.

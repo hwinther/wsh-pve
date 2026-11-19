@@ -92,7 +92,8 @@ e.g. `TI-SuperSparc-50`, which the Sun SS-20 PROM needs; none by default), `TCG_
 tcg,thread=single|multi`), `VGA` (cg3, tcx, none), `RES` (`-g`, e.g. `1152x900`), `CONSOLE`,
 `CDROM_AS` (`hd` for Solaris 2.4/2.5, which only boot the installer from a CD that answers as a disk),
 `TEMPLATE`/`DISK`, `DISK2` (a second disk on target `DISK2_ID`, 4; read only unless `DISK2_RO=0`),
-`REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`).
+`REFRESH`, `TRACE` (QEMU trace events into `trace.log`, e.g. `cg3_write` or `esp_*`), `PROM_ENV`
+(OpenBIOS variables as `-prom-env`, space separated, e.g. `auto-boot?=false` for Web Start).
 Machine options go with the type: `MACHINE=SS-5,sunos-idle=off`.
 
 ### The lab and the qemu-server profiles
@@ -360,8 +361,9 @@ and `check`, each a scenario run against the VM:
    (`sunos-install-serial.py`, `sunos-firstboot.py`, `sunos-boot-disk.py`; "SunOS 4.1.4" below).
    The NetBSD targets use `netbsd-install-sparc64.py` or `netbsd-install-sparc.py`, then
    `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below), OpenBSD
-   `openbsd-install-sparc64.py`, `openbsd-firstboot.py` and `openbsd-boot-disk.py` ("The OpenBSD 8.0
-   install target"); a target's `check` can bring its own `commands`.
+   `openbsd-install-sparc64.py` (8.0) or `openbsd-install-sparc.py` (5.9 on sun4m, with a sets CD
+   made on the node), `openbsd-firstboot.py` and `openbsd-boot-disk.py` ("The OpenBSD 8.0 install
+   target", "OpenBSD 5.9 on sun4m"); a target's `check` can bring its own `commands`.
 2. **Unattended by the installer's own mechanism (used by Red Hat 6.2 and Debian 4.0; designed, not used for Solaris):**
    `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
    image made by the standard library from the target's answers, never from vendor files, nothing
@@ -666,8 +668,9 @@ automatic reboot or eject, data preservation (no), and summaries that pause 30-9
 target installs the End User Group. Its prompts carry a key hint (`<Press ENTER to continue>
 {"!" exits}`) that the scenario strips.
 
-Solaris 8 and 9 are SS-20 only: Web Start is Java, and SS-5's CPU runs the lab's benchmark job
-about 9 times slower than SS-20's ("SS-10 and SS-20" in `submodules/SPARC.md`); no SS-5 run was tried.
+The SS-20 targets came first because Web Start is Java and the SS-5 then ran Solaris about 9 times
+slower than the SS-20; since #262 the two are equally fast, and 8 and 9 install on the SS-5 with
+256 MB too (`sol8-ss5`, `sol9-ss5`, "Solaris 8 and 9 on the SS-5" below).
 
 Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
 11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17, each with `--check`
@@ -688,6 +691,55 @@ workflow now needs the Solaris 7, 8 and 9 media too and takes about 80 min longe
 SS-5 install of 8 or 9, a 3G disk for 8 or 9, `--ip dhcp` with 7, 8 and 9 (their `net_modes` is
 `["static"]` until it is; the first boot writes the same files as for 2.6), `--gateway`, `--dns`,
 `--vlan`, `--user` and `--data-disk` with them.
+
+### Solaris 8 and 9 on the SS-5
+
+`sol8-ss5` (8 2/02, Entire Group, three CDs) and `sol9-ss5` (9 9/05, End User, the DVD) are the
+SS-20 targets' Web Start installs on an SS-5 with 256 MB (OpenBIOS, 9G disk). They use the later
+updates, whose Web Start differs in four screens that `solaris-webstart-serial.py` now answers:
+
+- 9 9/05 shows a license after the installer options (paged, then `Enter 'y' to accept the license
+  agreement. Enter 'n' to decline the license agreement and exit the install.`). The question
+  ends in neither a colon nor a default in brackets, so `wait_prompt()` also settles on that line
+  (`PROMPT_END_BARE`).
+- 8 2/02's Installation CD asks `Do you want to format /dev/dsk/c0t3d0 [y,n,?,q]` (8 1/01: `c0t3d0?`).
+- 8 2/02 asks for the CDs as `Please insert the first Solaris Software disc from which you will
+  install the Solaris Operating Environment.` and `Please insert the CD/DVD for Solaris 8 Software 2
+  of 2 (2/02 SPARC Platform Edition).` (`INSERT`), and once the second CD is in, `Ready to Install
+  1. Install Now 2. Start Over 3. Exit Installation What would you like to do [1]?` (1).
+
+The SS-20 targets stay on 8 1/01 and the original 9 DVD: the later updates install there too (lab
+runs below), but no faster (8 2/02 took 31 min against 24 for 8 1/01, and hung once), and the old
+media have more passing runs and the stored disks of the weekly matrix. To run Web Start in the
+lab's own QEMU (not through PVE), give the scenario `PROM_ENV=auto-boot?=false BOOT=c` (what `install.py` sets through `args` and attach
+mode) and, for Solaris 8, `SWAPS="drive-scsi6=<Software 1 of 2> drive-scsi6=<Software 2 of 2>"`.
+
+Lab runs (the lab image with the published pve-qemu-kvm 11.1.3-2+wsh22, 9G template, up to three
+guests on the host at once, 2026-11-19); install = the Web Start scenario, boot = `solaris-boot-disk.py`
+on the installed disk:
+
+| Release | Machine | Install | Disk boot |
+| --- | --- | --- | --- |
+| 8 1/01 (Entire, both Software CDs) | SS-5, 256 MB | passed, 24.6 min | `SunOS sol8-ss5 5.8 Generic_108528-05 sun4m`, 2.4 min |
+| 9 (the original DVD, End User) | SS-5, 256 MB | passed, 21.0 min | `SunOS sol9-ss5 5.9 Generic sun4m`, 3.7 min |
+| 9 9/05 (End User) | SS-5, 256 MB | passed, 23.6 min | `SunOS sol9-ss5 5.9 Generic_118558-34 sun4m`, `/` 1126542 KB, 3.7 min |
+| 9 9/05 (End User) | SS-20, 512 MB | passed, 23.3 min | `SunOS sol9-ss20 5.9 Generic_118558-34 sun4m`, 3.4 min |
+| 8 2/02 (Entire, both Software CDs) | SS-5, 256 MB | passed through PVE (below); the lab runs found the three new screens | |
+| 8 2/02 (Entire, both Software CDs) | SS-20, 512 MB | 1 of 2: the first hung after the mini-root's `Skipping interface le0` (no output for 30 min, Web Start never started); the second passed, 30.9 min | `SunOS sol8-ss20 5.8 Generic_108528-13 sun4m`, `/` 1237902 KB, 2.5 min |
+
+Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-qemu-kvm
+11.1.3-2+wsh22, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol9-ss5 --check` | passed; login `root`/`wshlab`, the marker, `le0` 10.0.2.15/24 static | 29.8 min (install 1420 s, first boot 270 s, check 73 s) |
+| `install sol8-ss5 --check` | passed; both Software CDs swapped in by the scenario, the same login, marker and network | 37.2 min (install 1897 s, first boot 216 s, check 97 s) |
+
+`pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
+the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). Not tried: `--ip dhcp`, `--disk-size 3G` and the
+other network options with these two, `ss5.bin`
+for Solaris 8, and repeated runs (one PVE run each). The SS-20 hang with 8 2/02 happened once in
+two runs and wasn't diagnosed.
 
 ### Solaris 2.4 and 2.5.1
 
@@ -1041,6 +1093,132 @@ each boot relinks the kernel in the background (KARL), which takes longer than t
 under TCG, and the halt stops it; the old kernel stays, and the next boot tries again. Not tried
 through the tool: DHCP (`--ip dhcp` is refused; the lab's own runs got an address with `inet
 autoconf`), more memory, the VGA console, a network with outside access.
+
+### OpenBSD 5.9 on sun4m
+
+`openbsd59-ss5` (SS-5, 256 MB) and `openbsd59-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
+`vga: serial0`, install OpenBSD 5.9 for sparc, the last release with the 32-bit sparc port (the
+port was discontinued after it), onto a blank 8 GiB disk on `scsi3`, lance (`le0`). No QEMU,
+OpenBIOS or qemu-server change.
+
+**The media.** The release has no CD with the sets for sparc (its signed `SHA256` lists no
+`install59.iso`), only `cd59.iso` (4048896 bytes, `bsd.rd` and the boot blocks) and the sets as
+files. The target has two CDs: `cd59.iso` on `scsi6`, which boots, and on `scsi5` a sets CD made on
+the node from the release's files, `openbsd59-sparc-sets.iso`: `lab.py media openbsd59-ss5
+--convert <the release's directory>` checks each file's size and sha256 (`MEDIA` "from" "files":
+`bsd`, `bsd.rd`, `base59.tgz`, `comp59.tgz`, `man59.tgz`, `game59.tgz`, `SHA256.sig`,
+`INSTALL.sparc`, as in the release's signed `SHA256`), writes the CD with
+`answer_media.openbsd_sets()` and keeps it only if it is the tested image (116387840 bytes, sha256
+`d1bd7d02...`): no dates, sorted names, so the same files give the same image on every node, and
+`lab.py install` checks it like any other medium. `pve_matrix.py` makes it the same way from
+`--iso`'s `other-os/openbsd5.9/`. The files are freely redistributable
+(`https://ftp.eu.openbsd.org/pub/OpenBSD/5.9/sparc/`, the official mirror that keeps old
+releases; its `SHA256` is the lab host's byte for byte); no test downloads them.
+
+The names on that CD are Rock Ridge names (`iso9660(..., rock_ridge=...)`: SP and an `RRIP_1991A`
+ER in the root's "." record, NM and PX in each file's record). The first version had only ISO 9660
+names (`BASE59.TGZ`, `BSD.RD`): OpenBSD 5.9's `cd9660` shows them in upper case, as they are, and
+the installer "found no OpenBSD/sparc 5.9 sets" (it looks for `base59.tgz`). With Rock Ridge, Linux
+(`isoinfo -R`) and OpenBSD show the release's names, `SHA256.sig` and `INSTALL.sparc` included, so
+the installer checks the sets itself: `Signature Verified` (signify with the 5.9 base key in
+`bsd.rd`), then `Verifying` each set against the signed list.
+
+That check needs room: the installer copies the sets to a file system with more than 512 MB free
+on `/tmp`, `/home` or `/usr/src` (or 2 GB on any other) first. The auto layout of a 3 GiB disk
+(`/` 852 MB, swap 184 MB, `/usr` 1.7 GB, `/home` 327 MB) has none: "Cannot determine prefetch area.
+Continue without verification?", and the sets go on unchecked. On 8 GiB the auto layout has the
+full set of partitions (`/` 111 MB, swap 480 MB, `/tmp` 170 MB, `/var` 162 MB, `/usr` 932 MB,
+`/usr/X11R6` 531 MB, `/usr/local` 2.1 GB, `/usr/src` 1 GB, `/usr/obj` 1.3 GB, `/home` 1.3 GB), and
+it checks; the target's install has `VERIFY=1`, which fails an install without `Signature
+Verified`.
+
+- **Install** (`openbsd-install-sparc.py`, `_openbsd.py` with `ARCH=sparc`): the disk is blank, so
+  OpenBIOS stops at `0 >` and `_sparc32.prom_boot()` boots `/iommu/sbus/espdma/esp/sd@6,0:d`
+  (OpenBSD's boot block, `OpenBSD BOOT 2.11`, `bsd.rd` in ~5 s). `_openbsd.installer()` answers by
+  what is asked, with rules for 5.9's wording where it differs from 8.0's ("Which network
+  interface do you wish to configure? (or 'done') [le0]", "(or 'dhcp' or 'none')", "(or 'rtsol' or
+  'none')", "IPv4 address or none" without quotes, the `'bar.com'` domain example, "INSTALL.sparc
+  not found", "Cannot determine prefetch area"). 5.9 has no "Exit to (S)hell" question: it ends
+  with "CONGRATULATIONS!" at its shell, which ends the dialogue. An installer question with a hint
+  after its `?` ("(or 'rtsol' or 'none')") now counts as a question, so one without a rule fails at
+  once instead of waiting for the install's timeout (`ANY_QUESTION`). The sets CD on target 5 is
+  `cd0` (the boot CD on 6 is `cd1`): "Location of sets? (cd0 cd1 disk http nfs or 'done')" `cd0`,
+  "Pathname to the sets?" `/`, the default selection (everything on the CD: `bsd`, `bsd.rd`, base,
+  comp, man, game). Time zone UTC; no kernel relink in 5.9 (KARL came in 6.2). Then, as for 8.0,
+  `ntpd_flags=NO` in the new system's `/etc/rc.conf.local` and `halt -p`, which powers the SS-5 and
+  SS-20 off ("attempting to power down...", QEMU exits).
+- **First boot** (`openbsd-firstboot.py`, unchanged but for `NIC_NAME` `le0`): OpenBIOS boots
+  `sd@3,0` by itself; `login:` after 2.5-3 min (the first boot generates the host keys: RSA, DSA,
+  ECDSA, ED25519 under TCG), then the marker, `/etc/myname`, `/etc/hostname.le0`, `/etc/mygate`,
+  `/etc/resolv.conf`, `/etc/hosts`, the optional user, ntpd off and not running, `halt -p`.
+- **Check** (`openbsd-boot-disk.py`): `login:` ~25 s after QEMU starts; `uname -a` (`OpenBSD
+  <host> 5.9 GENERIC#2 sparc`), the marker, `df -k`, the disklabel of `sd0`, `ifconfig le0` (net0's
+  MAC), the routes, `resolv.conf`, ntpd's flags (one console line under 255 characters).
+
+**The keyboard ESCC panic.** The first lab runs used `-vga none`, as the other sparc32 scenarios
+do: QEMU then still has the second ESCC with the Sun keyboard and mouse, the kernel attaches
+`zskbd0 at zs1 channel 0: keyboard, type 5`, and right after it (in autoconf, `cpu_configure`) it
+prints `stray interrupt ipl 0xc` (the ESCCs' level) over and over and stops with `panic: crazy
+interrupts`, on the SS-5 and SS-20 alike, `bsd.rd` and the installed GENERIC alike; with `-vga cg3`
+the same on the framebuffer console. With `-nographic` QEMU disables that ESCC (its `disabled`
+property is `!enable_graphics`), the kernel finds no keyboard (`zskbd0 at zs1 channel 0`, no type)
+and boots. qemu-server passes `-nographic` for `vga: serialN`, so the targets run that way; the lab
+scenarios have `NOGRAPHIC=1` for it (`_sparc32.py`; `_openbsd.defaults("sparc")` sets it). An
+`escc_*` trace of the panicking boot shows the keyboard answering its probe (reset: `0xff 0x04
+0x7f`, layout: `0xfe 0x21`, then command 11) and the level-12 interrupt raised and dropped for each
+console character after it; QEMU's ESCC trace events don't say which of the two chips they come
+from, so which interrupt nobody claims isn't narrowed down. Solaris, SunOS, NetBSD and Linux run
+with that ESCC present (the lab's `-vga none`), so it is between OpenBSD 5.9's `zs`/`zskbd` and
+QEMU's keyboard channel; the QEMU wiki's "working with -nographic" for 5.8 is probably the same
+thing.
+
+Lab runs (`wsh-sparc-lab` with the published pve-qemu-kvm 11.1.3-2+wsh22, one guest per QEMU,
+2026-11-19):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `cd59.iso`, SS-5 and SS-20, OpenBIOS, `-vga none` | `bsd.rd` panics after `zskbd0` ("crazy interrupts", above) | 6 s |
+| the same with `-nographic`, sets CD with ISO 9660 names only | the installer runs; "found no OpenBSD/sparc 5.9 sets" (upper-case names) | |
+| install, SS-5 and SS-20, 3 GiB disk, Rock Ridge sets CD | passed; the sets unchecked ("Cannot determine prefetch area") | 2.5-3 min |
+| first boot (`--var ARCH=sparc NET=user`, router, DNS, domain, a user) | passed on both: `login:` after 160-180 s, `halt -p` powers off | 4.3-4.6 min |
+| check with a disk and network load: `ping 10.0.2.2`, a 100 MB `dd` write and read on `/home`, `tar cf - /usr/share \| cksum` (68 MB) | passed on both: write 29-35 MB/s, read 49-57 MB/s, `tar` 12 s; 3/3 pings | ~1 min |
+| install, SS-5, 8 GiB disk | passed, `Signature Verified` and every set verified | 4 min |
+| boot of the SS-20 disk with 4 CPUs (`SMP=4`) | boots; OpenBSD/sparc has no multiprocessor kernel: `cpu at mainbus0 not configured` three times | |
+| boot of the installed disk with `-vga cg3` | the same panic, on the framebuffer | |
+| install, SS-5 with `ss5.bin` (`boot cdrom`; 3 GiB) | passed | 3.2 min |
+| boot of that disk under `ss5.bin` (`boot disk`) | the GENERIC kernel stops: `bpp0 at sbus0 slot 5 offset 0xc800000`, `data fault: pc=0xf82abaa0 sfva=0x7c800000`, `panic: kernel fault` | |
+| the same with `boot disk -c`, `disable bpp` at `UKC>` | boots, `"SUNW,bpp" ... not configured`, login; `halt -p` powers off | 2.6 min |
+| install, SS-20 with `ss20_v2.25_rom` and `TI-SuperSparc-50`, then a boot of that disk (`boot disk`) | both passed; `bpp0 at sbus0 slot 15 offset 0x4800000: Unknown type` | 2.6 min, 2.9 min |
+
+Through PVE (the e2e PVE image with the published pve-qemu-kvm 11.1.3-2+wsh22, qemu-server
+9.2.19+wsh1, pve-manager 9.2.31+wsh1; `lab.py media openbsd59-ss5 --convert
+/mnt/os/iso/other-os/openbsd5.9` on the node first, which wrote the tested image):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install openbsd59-ss5 --check --ip 10.0.2.41` (3 GiB disk, before `VERIFY`) | passed; the sets unchecked | 10.1 min (212 s, 317 s, 57 s) |
+| `install openbsd59-ss20 --check --ip 10.0.2.42 --gateway 10.0.2.2 --dns 10.0.2.3 --domain lab.example --user lab` (3 GiB) | passed; `OpenBSD openbsd59-ss20.lab.example 5.9 GENERIC#2 sparc`, `default 10.0.2.2`, `le0` with net0's MAC | 10.3 min (196 s, 348 s, 60 s) |
+| `install openbsd59-ss5 --check` (8 GiB, `VERIFY=1`: the final target) | passed; `Signature Verified`; `/` 111 MB, `/usr` 932 MB (319 MB used), `/home` 1.3 GB; ntpd `NO` | 10.2 min (242 s, 297 s, 55 s) |
+| `install openbsd59-ss20 --check --ip 10.0.2.44` (8 GiB) | passed; `Signature Verified`; `le0` 10.0.2.44/24 | 10.0 min (224 s, 306 s, 54 s) |
+| `install openbsd59-ss5 --check --export <scratch>` (8 GiB) | passed; disk exported (`install-openbsd59-ss5.raw` and `.json`) | 12.2 min (199 s, 455 s, 52 s) |
+| `install openbsd59-ss20 --check --ip 10.0.2.46 --user lab` (8 GiB) | passed; `lab:1000:1000::/home/lab:/bin/ksh` | 10.2 min (184 s, 356 s, 57 s) |
+| `install openbsd59-ss5 --check --ip 10.0.2.47 --gateway 10.0.2.2 --dns 10.0.2.3 --domain lab.example --user lab` (8 GiB) | passed; `OpenBSD openbsd59-ss5.lab.example 5.9 GENERIC#2 sparc`, `default 10.0.2.2`, `domain lab.example`, `nameserver 10.0.2.3`, `lab:1000:1000::/home/lab:/bin/ksh` | 10.7 min (194 s, 373 s, 57 s) |
+| `boot-test openbsd59-ss5` of the exported disk | passed | 1.0 min |
+
+The `--check` boots and the boot test found no disk timeout and ntpd off (`NO`, no process).
+`pve_matrix.py install` runs both targets (no `matrix_skip`, ~20 min together), so the `install`
+choice of the `sparc lab` workflow needs the release's files under `--iso`'s
+`other-os/openbsd5.9/`.
+
+**`ss5.bin` and the parallel port.** The SS-5 PROM's device tree has a `SUNW,bpp` (SBus slot 5,
+offset `0xc800000`) that QEMU's SS-5 doesn't emulate; OpenBIOS's tree has none. `bsd.rd` has no
+`bpp` driver and installs, but the installed GENERIC attaches `bpp0` there and takes a data fault
+reading it (`sfva=0x7c800000`). `disable bpp` in UKC (`boot disk -c`) boots it; the SS-20 PROM's
+`bpp` (slot 15) reads back as "Unknown type" and doesn't fault. The targets use OpenBIOS, so this
+isn't in them.
+
+Not tried through the tool: DHCP (`--ip dhcp` is refused), `ss5.bin` and the SS-20 PROM (lab only,
+above), SS-10, X11, a framebuffer (it would panic, above).
 
 ### Red Hat Linux 6.2
 
@@ -1927,7 +2105,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `netbsd-install-sparc.py` | the same for NetBSD/sparc on sun4m (SS-5, `MACHINE=SS-20`): the CD's microroot, then the same sysinst answers (`SETS=c`: Minimal); the microroot powers off after Exit | ~3.5 min |
 | `netbsd-firstboot.py`, `netbsd-boot-disk.py` | either architecture (`ARCH`; from the VM with `--pve`): the install targets' first boot (root password, marker, host name, network, user) and check boot ("NetBSD install targets") | ~2 min each |
 | `openbsd-install-sparc64.py` | OpenBSD/sparc64 install from `install80.iso` on the serial console, the questions answered by what they ask (`_openbsd.py`), ntpd off, halted ("The OpenBSD 8.0 install target") | ~9-12 min |
-| `openbsd-firstboot.py`, `openbsd-boot-disk.py` | the install target's first boot (marker, host name, network, user, ntpd check) and check boot | ~4-6 min each |
+| `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
+| `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
 
