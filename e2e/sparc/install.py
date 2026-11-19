@@ -4,7 +4,8 @@
         [--name NAME] [--root-password PW] [--user NAME [--user-password PW]] [--hostname H] [--ip A]
         [--disk-size 3G|9G] [--data-disk GIB [--data-mount /data|/usr/local]]
         [--post-install BUNDLE [--local-env]]
-        [--check] [--template] [--keep-on-failure] [--allow-untested-media] [--timeout S] [--out DIR]
+        [--check [--export DIR]] [--template] [--keep-on-failure] [--allow-untested-media] [--timeout S] [--out DIR]
+    lab.py boot-test sol26-ss5 --disk /mnt/os/disks/install-sol26-ss5.raw --vmid 121 [--keep] [--out DIR]
     lab.py targets [--json]
     lab.py media [<target>] [--storage local | --dir DIR] [--no-checksum]
     lab.py media <target> --convert SOURCE [--storage local | --dir DIR]
@@ -20,6 +21,12 @@ marker, (7) writes the login details and target metadata into the VM's descripti
 --template converts it to a template, and prints a summary. The evidence of every phase (serial log,
 steps with screenshots, recordings) is in --out. On a failure the VM is destroyed, or with
 --keep-on-failure stopped and kept with "FAILED" in its description; the exit code is 1.
+
+With --export DIR (needs --check, the target's default install), a passing install's first disk is
+copied to DIR/install-<target>.raw with install-<target>.json (what made it) beside it, replacing the
+previous ones only when complete. `boot-test` creates a VM with the target's profile from a copy of
+that disk (`import-from`: the stored disk is only read), boots it through PVE, runs the target's check
+(the --check boot: login, marker, state) and destroys the VM: minutes instead of the install's hours.
 """
 import datetime
 import hashlib
@@ -433,6 +440,233 @@ def destroy_vm(vmid):
     run("qm", "destroy", vmid, "--purge", "--destroy-unreferenced-disks", "1", check=False)
 
 
+# --- stored disks ----------------------------------------------------------------------------------
+# `lab.py install --check --export DIR` copies the first disk of an install that passed its check to
+# DIR/install-<target>.raw (sparse, written to a temporary name and renamed: the previous disk stays
+# until the new one has passed) with install-<target>.json beside it, which says what made it.
+# `lab.py boot-test <target> --disk DIR/install-<target>.raw` boots a copy of it in a new VM through PVE
+# and runs the target's check (the --check boot). The prefix keeps them apart from the hand-made
+# disks in the same directory (matrix.py's netbsd111-sparc64-installed.raw, sol10-sun4u-installed.raw).
+
+STORED_BY = "lab.py install --check --export (wsh-pve e2e/sparc)"
+# What the stored disk must be: the target's default install, so that the boot test can log in with
+# the default password and the check needs nothing but the first disk
+EXPORT_REFUSED = {"root_password": "--root-password", "user": "--user", "user_password": "--user-password",
+                  "data_disk": "--data-disk", "post_install": "--post-install", "template": "--template"}
+PACKAGES = ("pve-qemu-kvm", "qemu-server", "pve-manager", "wsh-lab")  # wsh-lab: None when run from a clone
+
+
+def stored_disk(directory, target):
+    """The stored disk of a target and its sidecar: (DIR/install-<target>.raw, DIR/install-<target>.json)."""
+    base = os.path.join(directory, f"install-{target}")
+    return base + ".raw", base + ".json"
+
+
+def read_sidecar(directory, target):
+    """The sidecar of the target's stored disk (a dict), or None when there is no stored disk; raises
+    InstallFailed for a disk that this machinery didn't write (no sidecar, another target's, unreadable),
+    which neither the boot test nor an export touches."""
+    raw, side = stored_disk(directory, target)
+    if not os.path.exists(raw) and not os.path.exists(side):
+        return None
+    if not os.path.isfile(raw):
+        raise InstallFailed(f"{side} without {os.path.basename(raw)}")
+    try:
+        with open(side, encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError) as e:
+        raise InstallFailed(f"{raw} has no readable sidecar {os.path.basename(side)} ({e}): not a stored disk"
+                            " of lab.py install --export; move it away") from None
+    if not isinstance(meta, dict) or meta.get("target") != target or meta.get("by") != STORED_BY:
+        raise InstallFailed(f"{side} isn't the sidecar of {target}'s stored disk (target {meta.get('target')!r})"
+                            if isinstance(meta, dict) else f"{side}: not a JSON object")
+    return meta
+
+
+def export_problems(a):
+    """Why --export can't be used with these options ([] when it can): it needs --check, the target's
+    default install and a writable directory with no foreign file under the stored disk's name."""
+    if not getattr(a, "export", None):
+        return []
+    out = []
+    if not a.check:
+        out.append("--export needs --check: only a disk that passed its check is stored")
+    out += [f"--export stores the target's default install, not one with {opt} (the boot test logs in with"
+            f" the default password and checks the first disk only)" for key, opt in EXPORT_REFUSED.items()
+            if getattr(a, key, None)]
+    if not os.path.isdir(a.export):
+        out.append(f"--export {a.export}: no such directory")
+    elif not os.access(a.export, os.W_OK):
+        out.append(f"--export {a.export}: not writable")
+    else:
+        try:
+            read_sidecar(a.export, a.target)
+        except InstallFailed as e:
+            out.append(f"--export: {e}")
+    return out
+
+
+def sparse_copy(src, dest, block=1 << 20):
+    """Copy src to dest leaving holes where src has all-zero blocks (the disk images are sparse), then
+    fsync dest."""
+    zero = bytes(block)
+    with open(src, "rb") as fi, open(dest, "wb") as fo:
+        while True:
+            chunk = fi.read(block)
+            if not chunk:
+                break
+            if chunk == zero[:len(chunk)]:
+                fo.seek(len(chunk), os.SEEK_CUR)
+            else:
+                fo.write(chunk)
+        fo.truncate()
+        fo.flush()
+        os.fsync(fo.fileno())
+
+
+def write_stored_disk(src, directory, target, meta):
+    """src (the VM's disk image) as the target's stored disk with `meta` in its sidecar, atomically:
+    both are written to temporary names first and renamed over the old ones only when complete."""
+    raw, side = stored_disk(directory, target)
+    tmp_raw, tmp_side = f"{raw}.tmp-{os.getpid()}", f"{side}.tmp-{os.getpid()}"
+    try:
+        sparse_copy(src, tmp_raw)
+        meta = {**meta, "target": target, "by": STORED_BY, "disk": os.path.basename(raw),
+                "bytes": os.path.getsize(tmp_raw)}
+        with open(tmp_side, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_raw, raw)
+        os.replace(tmp_side, side)
+    finally:
+        for p in (tmp_raw, tmp_side):
+            if os.path.exists(p):
+                os.unlink(p)
+    return raw, side
+
+
+def package_versions(names=PACKAGES):
+    """The installed versions of the PVE packages the lab depends on ({name: version or None})."""
+    out = {}
+    for n in names:
+        r = subprocess.run(["dpkg-query", "-W", "-f", "${Version}", n], capture_output=True, text=True)
+        out[n] = r.stdout.strip() if r.returncode == 0 else None
+    return out
+
+
+def vm_disk_path(vmid, bus):
+    """The image file of the VM's disk on `bus` (its volume through `pvesm path`)."""
+    m = re.search(rf"(?m)^{re.escape(bus)}: ([^,\s]+)", run("qm", "config", vmid))
+    if not m or m.group(1) == "none":
+        raise InstallFailed(f"VM {vmid} has no disk on {bus}")
+    return run("pvesm", "path", m.group(1))
+
+
+def export_disk(job):
+    """--export: the installed VM's first disk as the target's stored disk (after a passing check)."""
+    a, t = job.a, job.target
+    meta = {"title": t["title"], "installed": job.started.isoformat().replace("+00:00", "Z"),
+            "exported": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+            .replace("+00:00", "Z"),
+            "minutes": round((time.time() - job.t0) / 60, 1),
+            "phases": {p["phase"]: p["elapsed"] for p in job.phases},
+            "packages": package_versions(), "profile": t["profile"], "boot_disk": job.disk["bus"],
+            "disk_size": job.disk["name"], "hostname": job.hostname, "network": job.net_text(),
+            "root_password": "the default (targets.DEFAULT_ROOT_PASSWORD)",
+            "media": [{"name": m["name"], "sha256": m["sha256"]} for m in job.media],
+            "lab_commit": os.environ.get("WSH_LAB_COMMIT") or None}
+    src = vm_disk_path(a.vmid, job.disk["bus"])
+    raw, _ = write_stored_disk(src, a.export, a.target, meta)
+    job.log(f"exported {job.disk['bus']} ({src}) to {raw} after {meta['minutes']} min")
+    return raw
+
+
+def boot_test_vm_params(t, a, disk_file):
+    """The VM of a boot test: the target's profile as `install` leaves it (the media drives empty, the
+    boot order on the disk), the disk imported from a copy of the stored disk."""
+    p = dict(t["profile"])
+    p["net0"] = f"{p['net0']},bridge={a.bridge}"
+    p[t["disk"]["bus"]] = f"{a.storage}:0,import-from={disk_file},format=raw"
+    for drive in dict.fromkeys(med["drive"] for med in t["media"]):
+        p[drive] = "none" if drive.startswith("floppy") else "none,media=cdrom"
+    p.update(boot=f"order={t['boot']}", vmid=a.vmid, name=a.name or f"{a.target}-boot-test", tags="wsh-lab",
+             description=f"wsh-lab boot test of {a.target} from {disk_file} (lab.py boot-test)")
+    return p
+
+
+def boot_test_problems(a):
+    """Why `lab.py boot-test` can't run ([] when it can) and the stored disk's sidecar."""
+    t = targets.TARGETS.get(a.target)
+    if not t:
+        return [f"unknown target {a.target!r}; `lab.py targets` lists them"], None
+    if t["status"] != "automated" or "check" not in t:
+        return [f"{a.target} has no check to run (not an automated target)"], None
+    d, name = os.path.dirname(os.path.abspath(a.disk)), os.path.basename(a.disk)
+    if name != os.path.basename(stored_disk(d, a.target)[0]):
+        return [f"--disk {a.disk}: {a.target}'s stored disk is named {os.path.basename(stored_disk(d, a.target)[0])}"], None
+    try:
+        meta = read_sidecar(d, a.target)
+    except InstallFailed as e:
+        return [str(e)], None
+    if meta is None:
+        return [f"--disk {a.disk}: no such file (lab.py install {a.target} --check --export {d} makes it)"], None
+    return [], meta
+
+
+def cmd_boot_test(a):
+    """lab.py boot-test: a new VM from a copy of the target's stored disk, booted through PVE, the
+    target's check run against it, the VM destroyed (kept stopped with --keep)."""
+    problems, meta = boot_test_problems(a)
+    if problems:
+        sys.exit("\n".join(problems))
+    if not shutil.which("qm"):
+        sys.exit("lab.py boot-test runs on the PVE node (as root), where qm and pvesh are")
+    t = targets.TARGETS[a.target]
+    a.vmid = str(a.vmid)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    a.out = os.path.abspath(a.out or os.path.join("/var/lib/wsh-lab/boot-tests", f"{a.target}-{a.vmid}-{stamp}"))
+    os.makedirs(a.out, exist_ok=True)
+    # the defaults of `install` (the stored disk is the target's default install: export_problems)
+    for k, val in dict(root_password=None, user_password=None, user=None, hostname=meta.get("hostname"), ip=None,
+                       netmask=None, gateway=None, dns=None, domain=None, vlan=None, apt_proxy=None, disk_size=None,
+                       data_disk=None, data_mount=None, post_install=None, local_env=False, keyboard=None,
+                       timeout=None).items():
+        setattr(a, k, getattr(a, k, val))
+    job = Job(a)
+    result = {"target": a.target, "vmid": a.vmid, "out": a.out, "started": job.started.isoformat(),
+              "disk": os.path.abspath(a.disk), "stored": {k: meta.get(k) for k in ("installed", "packages", "minutes")}}
+    created = False
+    try:
+        if vm_exists(a.vmid):
+            raise InstallFailed(f"VM {a.vmid} exists already: lab.py boot-test never overwrites a VM")
+        params = boot_test_vm_params(t, a, os.path.abspath(a.disk))
+        job.log(f"creating VM {a.vmid} from a copy of {a.disk} (installed {meta.get('installed')})")
+        run("pvesh", "create", f"/nodes/{node()}/qemu", *[x for k, val in params.items() for x in (f"--{k}", val)])
+        created = True
+        save_config(a.vmid, a.out)
+        job.log(f"created VM {a.vmid} on {node()}")
+        METHODS[t["method"]]().check(job)
+        result.update(code=0, status="passed")
+    except (InstallFailed, lab.QemuDied, lab.Timeout, OSError) as e:
+        result.update(code=1, status=f"failed: {e}")
+        job.log(f"FAILED: {e}")
+    finally:
+        if created:
+            if a.keep:
+                run("qm", "stop", a.vmid, check=False)
+                job.log(f"VM {a.vmid} kept (--keep), stopped")
+            else:
+                destroy_vm(a.vmid)
+                job.log(f"VM {a.vmid} destroyed")
+    result.update(elapsed=round(time.time() - job.t0, 1), phases=job.phases)
+    with open(os.path.join(a.out, "result.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+    print(f"\n== lab.py boot-test {a.target} -> VM {a.vmid}: {result['status']} in {result['elapsed'] / 60:.1f} min"
+          f"\n   disk:     {a.disk} (installed {meta.get('installed')}, {meta.get('packages')})"
+          f"\n   evidence: {a.out}")
+    return result["code"]
+
+
 # --- install methods -------------------------------------------------------------------------------
 
 class MediaSwapper:
@@ -799,6 +1033,9 @@ def cmd_install(a):
         if not 1 <= a.data_disk <= 32:
             sys.exit("--data-disk takes 1-32 (GiB)")
     check_post_install(a)
+    problems = export_problems(a)  # before the install: a refused export mustn't cost hours first
+    if problems:
+        sys.exit("\n".join(problems))
     if not shutil.which("qm"):
         sys.exit("lab.py install runs on the PVE node (as root), where qm and pvesh are")
     for opt, rx in (("--root-password", PASSWORD), ("--user-password", PASSWORD), ("--user", USERNAME)):
@@ -846,6 +1083,8 @@ def cmd_install(a):
         if a.check:
             method.check(job)
         run("qm", "set", a.vmid, "--description", job.description())
+        if getattr(a, "export", None):
+            result["stored"] = export_disk(job)
         if a.template:
             run("qm", "template", a.vmid)
             job.log(f"VM {a.vmid} is now a template")
@@ -1007,12 +1246,25 @@ def add_commands(sub):
                    help="with --post-install: /usr/local/bin and sbin on PATH (/etc/profile, the user's .profile), "
                         "MANPATH, and bash as --user's login shell (root keeps /sbin/sh)")
     i.add_argument("--check", action="store_true", help="boot once more, log in and check the marker")
+    i.add_argument("--export", metavar="DIR",
+                   help="with --check, when it passes: copy the first disk to DIR/install-<target>.raw (atomically,"
+                        " sparse) with install-<target>.json saying what made it, for `boot-test` (e.g. /mnt/os/disks)")
     i.add_argument("--template", action="store_true", help="convert the VM to a template at the end")
     i.add_argument("--keep-on-failure", action="store_true", help="keep (stopped) instead of destroying a failed VM")
     i.add_argument("--allow-untested-media", action="store_true", help="accept media with another checksum")
     i.add_argument("--timeout", type=int, help="seconds the install phase may take (the target's)")
     i.add_argument("--keyboard", help="DOS targets: the keyboard layout KEYB loads, e.g. no (us: none)")
     i.add_argument("--out", help="evidence directory (/var/lib/wsh-lab/installs/<target>-<vmid>-<time>)")
+    b = sub.add_parser("boot-test", help="boot a copy of a target's stored disk (install --export) in a new VM and"
+                                         " run the target's check (on the node, as root)")
+    b.add_argument("target")
+    b.add_argument("--disk", required=True, help="the stored disk: <dir>/install-<target>.raw")
+    b.add_argument("--vmid", required=True, type=int)
+    b.add_argument("--storage", default="local", help="storage for the VM's copy of the disk (local)")
+    b.add_argument("--bridge", default="vmbr0", help="bridge for the VM's NIC (vmbr0)")
+    b.add_argument("--name", help="VM name (<target>-boot-test)")
+    b.add_argument("--keep", action="store_true", help="keep the VM (stopped) instead of destroying it")
+    b.add_argument("--out", help="evidence directory (/var/lib/wsh-lab/boot-tests/<target>-<vmid>-<time>)")
     t = sub.add_parser("targets", help="list the install targets")
     t.add_argument("--json", action="store_true")
     m = sub.add_parser("media", help="check the targets' media on a storage or in a directory")
@@ -1025,4 +1277,4 @@ def add_commands(sub):
                         "into --dir or the storage")
 
 
-COMMANDS = {"install": cmd_install, "targets": cmd_targets, "media": cmd_media}
+COMMANDS = {"install": cmd_install, "boot-test": cmd_boot_test, "targets": cmd_targets, "media": cmd_media}

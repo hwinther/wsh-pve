@@ -506,9 +506,9 @@ wsh-lab install sol26-ss5 --vmid 120 --check    # --template, --user lab, --keep
 ```
 
 The `pve` matrix's `sol26-install-ss5` case is `lab.py install sol26-ss5 --check` (so the weekly test
-and the user command are the same code), and `pve_matrix.py install` runs every automated target
-the same way (the `install` choice of the `sparc lab` workflow): the machinery for the "scheduled
-reinstalls" in `ROADMAP.md`. `pve_matrix.py` links each target's media from `--iso` into the test
+and the user command are the same code), and `pve_matrix.py install` goes through every automated
+target (the `install` choice of the `sparc lab` workflow): installed once, then boot-tested from its
+stored disk (see "Install once, then boot-test the stored disk" below). `pve_matrix.py` links each target's media from `--iso` into the test
 node's `local` storage under the expected names; a converted medium (the SunOS CD) that `--iso`
 doesn't have is made there from its source with `lab.py media --convert` (about 6 minutes more for
 `sunos414-ss5` in the `install` choice, which needs `sunos_4.1.4_install.iso` in `--iso`). `tests/test_targets.py` (standard library only,
@@ -538,6 +538,75 @@ The first run failed at the first boot and found a bug in the old `login()`: sys
 password form draws all its prompts at once, and matching them one by one typed the password ahead
 of the form (it ended up echoed, root without a password). With an empty password that never
 mattered. The password appears in none of the evidence files of the passing runs.
+
+### Install once, then boot-test the stored disk
+
+An install proves the installer still works; most regressions a package brings show up already when
+the installed system boots. So the `install` matrix keeps one installed disk per target and installs
+again only when asked:
+
+- **`lab.py install <target> --check --export DIR`**: when the check passes, the VM's first disk is
+  copied (sparse) to `DIR/install-<target>.raw`, and `DIR/install-<target>.json` beside it says what
+  made it: the target, install date, `minutes`, the phases' seconds, the `pve-qemu-kvm`,
+  `qemu-server` and `pve-manager` versions, the profile, disk size, host name, network, media
+  checksums (and `lab_commit` from `WSH_LAB_COMMIT` when set). Both are written to temporary names
+  and renamed when complete, so the previous disk stays until a new install has passed. `--export`
+  takes only the target's default install: it refuses `--root-password`, `--user`,
+  `--user-password`, `--data-disk`, `--post-install` and `--template` (the boot test logs in with
+  the default password and checks the first disk), needs `--check` and a writable `DIR`, and
+  refuses before installing anything when a file under the stored disk's name has no sidecar of its
+  own (it never replaces a disk it didn't write). The `install-` prefix keeps the stored disks apart
+  from the hand-made ones in the same directory (`matrix.py`'s `sol10-sun4u-installed.raw` was made
+  with DHCP and is booted by the `solaris10` matrix).
+- **`lab.py boot-test <target> --disk DIR/install-<target>.raw --vmid N`**: a new VM with the
+  target's profile as `install` leaves it (media drives empty, `boot: order=<disk>`), its disk
+  imported from the stored disk (`import-from` copies it into the VM's storage; the stored disk is
+  only read), started by PVE, then the target's check scenario, the same `--check` runs (login with
+  the default password, `target=<name>` in `/etc/wsh-lab-target`, the target's commands, power off).
+  The VM is destroyed afterwards (`--keep` keeps it stopped). Evidence and `result.json` (with the
+  stored disk's install date and packages) in `--out`. It refuses a disk without its sidecar or with
+  another target's.
+- **`pve_matrix.py install`** decides per target (`plan()`): its stored disk in `--disks` missing →
+  `install --check --export <disks>`; there → `boot-test`; `--reinstall TARGET[,TARGET]` installs
+  those again, `--reinstall` alone (or `all`) every target without `matrix_skip`. A target with
+  `matrix_skip` is never installed by the matrix unless `--reinstall` names it: without a stored disk
+  it is listed as `skip`, with one it is boot-tested. A file under the stored disk's name that isn't
+  ours fails the case. The summary counts skipped cases separately.
+
+`matrix_skip` thus marks the targets an unattended run shouldn't install: Tribblix (3.5-4.3 h, too
+much of the 240-minute job) and the Debian targets (their `matrix_skip` says why; the matrix passes
+no `--gateway`/`--dns`/`--apt-proxy`, which their installer needs to reach archive.debian.org).
+`--export` accepts the network options, so such a disk can be made by hand on a node with a route
+out (`lab.py install debian40-ss5 --vmid N --check --export /mnt/os/disks --gateway G --dns D`); the
+matrix boot-tests it from then on (the check needs no network). The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
+`reinstall` input (empty by default: boot-test what is stored, install what is missing); any
+`reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
+a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
+
+```sh
+wsh-lab install tribblix-m34-sun4u --vmid 9401 --check --export /mnt/os/disks   # ~4.3 h, once
+wsh-lab boot-test tribblix-m34-sun4u --disk /mnt/os/disks/install-tribblix-m34-sun4u.raw --vmid 9402
+python3 pve_matrix.py install --runs /mnt/runs/i1 --reinstall tribblix-m34-sun4u --only install-tribblix-m34-sun4u
+```
+
+`tests/test_stored_disks.py` (standard library only) covers the names, the sidecar, the atomic
+replace (a failed copy keeps the old disk), the sparse copy, the refusals and `plan()`.
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh21, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1), 2026-11-19, with up to three
+guests on the host at once (the Tribblix install ran beside the full matrix):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| unit tests (`test_stored_disks.py`, `test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 117 passed | 6 s |
+| `pve_matrix.py install --only install-netbsd111-sparc`, empty disks directory | installed and exported: `install-netbsd111-sparc.raw` (3 GiB, 277 MB allocated) and its sidecar | 6.5 min |
+| the same again | `boot-test` from the stored disk, VM destroyed | 66 s |
+| `--only install-tribblix-m34-sun4u --reinstall tribblix-m34-sun4u` | installed and exported (8 GiB, 1.1 GB allocated) | 207 min: install 111, first boot 71, check 25 |
+| the same without `--reinstall` | `boot-test` passed | 25.7 min: login after 13.7, `init 5` 10.7 |
+| `pve_matrix.py install` (the workflow's default), Tribblix still installing | 18/18 passed, 2 skipped (Debian): 15 installed and exported, Tribblix (its disk had just appeared) and `netbsd111-sparc` boot-tested | 5.6 h of installs; `sol10-sun4u` 107 min |
+| `pve_matrix.py install` once more, every disk stored | 18/18 passed, 2 skipped: all boot-tests | 56 min: Tribblix 25.8, `sol10-sun4u` 8.8, the others 25-119 s each |
+| `boot-test sol10-sun4u` beside the matrix | passed | 11.7 min |
+| refusals on the node: `boot-test` of `sol10-sun4u-installed.raw`, `install --export` without `--check`, `boot-test` of a missing disk, `--reinstall nope` | refused, exit 1, nothing created | |
 
 ### Solaris 7, 8 and 9
 
@@ -1075,9 +1144,12 @@ kernel; the sun4u profile's IDE and `sunhme` were not tried with it).
 `tribblix-m34-sun4u` installs Tribblix m34 for SPARC (illumos) from its live CD
 (`tribblix-sparc-0m34.iso`, from iso.tribblix.org; the download page's SHA-1 matches) on the
 sparc64 profile: sun4u, OpenBIOS, 2048 MB, a blank 8 GiB disk on `ide0`, the CD on `ide2`,
-`sunhme`, `vga: serial0`. It needs `openbios-sparc64` with patches 0016 and 0017 (no published
-package has them yet; see `submodules/SPARC.md`, "Tribblix on sun4u"): with the firmware of
-11.1.3-2+wsh16 the live CD stops or hangs on most boots, and a ZFS root doesn't boot.
+`sunhme`, `vga: serial0`. It needs `openbios-sparc64` with patches 0016 and 0017 (in pve-qemu-kvm
+11.1.3-2+wsh20 and later; see `submodules/SPARC.md`, "Tribblix on sun4u"): with the firmware of
+11.1.3-2+wsh16 the live CD stops or hangs on most boots, and a ZFS root doesn't boot. With the
+published 11.1.3-2+wsh21 the install took 207 minutes on 2026-11-19; its disk is kept as
+`install-tribblix-m34-sun4u.raw` and boot-tested in about 26 minutes (see "Install once, then
+boot-test the stored disk").
 
 1. **Install** (`tribblix-install-sparc64.py`): the live CD boots by itself (`-boot order=d`),
    imports its SMF manifests, asks for the keyboard layout (Return) and comes to `console login:`;
