@@ -8,6 +8,21 @@ For each curated case that is in it and passed, the cast is time-compressed for 
 the limits below) and the video copied, into <out dir>; then `gh release upload media <out dir>/*
 --clobber` replaces those assets, and the docs site serves them as /recordings/ from its next deploy
 (repo-update.yml). Prints what it wrote; writes nothing for a run without curated cases.
+
+The paths are the case directories the matrices write, so one runs directory can hold several runs
+(`--runs` is the same for each; their case directories don't overlap). The gallery's recordings come
+from these, all in the PVE test container (pve.Dockerfile):
+
+  pve_matrix.py pve                           sol26-install-ss5, netbsd-sparc64, alpine-aarch64
+  pve_matrix.py install --disks <stored disks> boot-tests: tribblix-m34-sun4u, sol10-sun4u
+  pve_matrix.py install --disks <empty dir>   installs (install, then the --check boot of the same
+                                              run): netbsd111-sparc, sunos413u1b-ss5, freedos14
+  pve_matrix.py recordings                    sol26-ss20-smp4, sol22-install-ss10
+  lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5
+                                              (a route out: pve_matrix.py passes none)
+  matrix.py machines, display                 sol26-disk-openbios-ss20, sol26-disk-openbios-cg3-1024x768
+
+A matrix run that has only some of them (the `sparc lab` workflow's publish_media) replaces only those.
 """
 import json
 import os
@@ -22,9 +37,28 @@ CASTS = [
     ("netbsd-sparc64/1-netbsd-boot-cd", "netbsd-sparc64-pve.cast", 1, 1),  # pve
     ("alpine-aarch64/1-alpine-boot-cd", "alpine-aarch64-pve.cast", 1, 1),  # pve
     ("sol26-disk-openbios-ss20", "sol26-boot-ss20.cast", 1, 1),  # machines
+    # install: boot-tests of the stored disks (their installs take hours)
+    ("install-tribblix-m34-sun4u/1-boot-test-tribblix-m34-sun4u/check", "tribblix-m34-boot-sun4u.cast", 1, 2),
+    ("install-sol10-sun4u/1-boot-test-sol10-sun4u/check", "sol10-boot-sun4u.cast", 1, 1),
+    # install: installs into an empty --disks, each with the --check boot of the same run
+    ("install-netbsd111-sparc/1-install-netbsd111-sparc/install", "netbsd111-install-ss5.cast", 1, 2),
+    ("install-netbsd111-sparc/1-install-netbsd111-sparc/check", "netbsd111-boot-ss5.cast", 1, 1),
+    ("install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/install", "sunos413-install-ss5.cast", 1, 1),
+    ("install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/check", "sunos413-boot-ss5.cast", 1, 1),
+    # lab.py install debian40-ss5 --check (with a route out)
+    ("debian40-ss5/1-install-debian40-ss5/install", "debian40-install-ss5.cast", 1, 4),
+    ("debian40-ss5/1-install-debian40-ss5/check", "debian40-boot-ss5.cast", 1, 1),
+    # recordings
+    ("sol26-ss20-smp4/1-solaris-boot-disk", "sol26-smp4-ss20.cast", 1, 1),
+    ("sol22-install-ss10/1-solaris-install-serial", "sol22-install-ss10.cast", 1, 2),
+    ("sol22-install-ss10/2-solaris-boot-disk", "sol22-boot-ss10.cast", 1, 1),
 ]
 # videos: case -> asset base name (fb.webm, fb.vtt and the first step's screenshot as the poster)
-VIDEOS = [("sol26-disk-openbios-cg3-1024x768", "sol26-cg3-ss5")]  # display
+VIDEOS = [
+    ("sol26-disk-openbios-cg3-1024x768", "sol26-cg3-ss5"),  # display
+    ("install-freedos14/1-install-freedos14/install", "freedos14-install"),  # install (VGA)
+    ("install-freedos14/1-install-freedos14/check", "freedos14-boot"),
+]
 
 
 def passed(case):
