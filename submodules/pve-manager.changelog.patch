@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6657dde6..39bd1e1b 100644
+index 6657dde6..57a8007f 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,29 @@
++pve-manager (9.2.31+wsh3) trixie; urgency=medium
++
++  * feat(storage): mirror storage of symlinks with a folder view (#345)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 19 Nov 2026 19:23:12 +0000
++
 +pve-manager (9.2.31+wsh2) trixie; urgency=medium
 +
 +  * feat(sparc): opt-in ESP interrupt delay so NeXTSTEP and OPENSTEP
