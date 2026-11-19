@@ -175,8 +175,42 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Later
 
-- **Mirror storage, step 3.** Steps 1 and 2 are done ("Done", `docs/src/content/docs/reference/mirror.md`).
-  Next: a rename API for `iso` and `floppy` volumes in libpve-storage-perl (a link or a file renamed
+- **Mirror storage, step 2b: four ways to use it, a description file, and keeping up with a changing
+  archive.** Steps 1 and 2 are done ("Done", `docs/src/content/docs/reference/mirror.md`). The user
+  picks a level; none is forced:
+  0. plain files renamed with `__` in any ISO/floppy storage: the UI shows folders, no links or tool;
+  1. one node: the mirror is a local `dir` (or `btrfs`) storage of links to anything mounted;
+  2. a cluster: ISOs and mirror on the same NFS (or CephFS; CIFS only with `mfsymlinks`), with
+     **relative** links when source and mirror share an export, so the mount path doesn't matter;
+  3. an externally managed tree (a VMware migration, archive.org torrents kept as they are for
+     seeding, plus hand-made folders) stitched into one PVE-friendly tree. The source needn't be a
+     PVE storage (an fstab mount, or a storage whose content isn't iso); as a PVE ISO storage it
+     would look empty, since PVE lists only files directly in `template/iso`.
+  A **description file** (`wsh-mirror.yaml` at the mirror storage's root, invisible to PVE) is the
+  source of truth and the links are derived from it: rules (source dir or glob → folder prefix,
+  excludes) and single entries (explicit names, each with `origin: manual|import`), comments.
+  `wsh-lab mirror plan` shows the difference to the source (new unmatched files, entries whose target
+  is gone, files that look moved: same size and sha256 at a new path, name clashes); `apply` makes the
+  links match the file (idempotent, never touches regular files); `import` **merges**: it adds only
+  files no rule or entry covers and never changes existing entries; `tidy [--dry-run]` removes
+  entries whose target is gone and follows moved files, `import` entries only unless asked. Rename =
+  edit the file + `apply`. In case 2 the file lives on the NFS with the links (one `apply` with
+  `flock` serves the cluster); per-node mirrors can keep the file in `/etc/pve` instead.
+  **A changing archive** (torrents still downloading, files added by hand): inotify doesn't see
+  writes made on the NFS server or by other clients, so a systemd timer runs `apply` (`wsh-lab
+  mirror timer --interval 10min`); a path unit can add instant runs for local writes; an optional
+  torrent-client "on completion" hook. Incomplete files are never linked: name patterns (`*.part`,
+  `*.!qB`, `*.incomplete`), a minimum age since the last change (e.g. 5 min) or the same size on two
+  runs, and the advice to use the client's separate incomplete folder. New files under a rule are
+  linked automatically; others follow a default rule (`auto_import: true`, the relative path joined
+  with `__`) or wait in `plan`. Links of rule/import entries whose file is gone are removed; manual
+  entries are only flagged.
+  Tests, one per case: 0 renamed files in a `dir` storage; 1 local links (as in step 2); 2 an NFS
+  export from a helper container in the e2e compose network (userspace `nfs-ganesha`, so no `nfsd`
+  module on the runner), mounted as a PVE NFS storage, with relative links checked through two mount
+  paths; 3 `plan`/`apply`/`import`/`tidy` against a changing source tree (added, removed, moved,
+  still-downloading files).
+- **Mirror storage, step 3.** Next: a rename API for `iso` and `floppy` volumes in libpve-storage-perl (a link or a file renamed
   in place, so folders can be reorganised from the UI), and an "add link from another storage" call
   (link a volume of one storage, an NFS or CIFS storage's ISO, into the mirror storage under a folder
   name) with its UI in the storage's ISO and floppy tabs. Open questions: who may create links that
