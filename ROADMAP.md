@@ -197,9 +197,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   edit the file + `apply`. In case 2 the file lives on the NFS with the links (one `apply` with
   `flock` serves the cluster); per-node mirrors can keep the file in `/etc/pve` instead.
   **A changing archive** (torrents still downloading, files added by hand): inotify doesn't see
-  writes made on the NFS server or by other clients, so a systemd timer runs `apply` (`wsh-lab
-  mirror timer --interval 10min`); a path unit can add instant runs for local writes; an optional
-  torrent-client "on completion" hook. Incomplete files are never linked: name patterns (`*.part`,
+  writes made on the NFS server or by other clients, so a scheduled job runs `apply`, set up by the
+  lab tool (`wsh-lab mirror timer --interval 10min` installs and removes it); nothing else (no path
+  units or torrent-client hooks). Incomplete files are never linked: name patterns (`*.part`,
   `*.!qB`, `*.incomplete`), a minimum age since the last change (e.g. 5 min) or the same size on two
   runs, and the advice to use the client's separate incomplete folder. New files under a rule are
   linked automatically; others follow a default rule (`auto_import: true`, the relative path joined
