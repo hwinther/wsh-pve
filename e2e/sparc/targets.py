@@ -58,8 +58,10 @@ TARGETS: per target
   apt_proxy  True: the installer fetches packages and takes --apt-proxy / WSH_LAB_APT_PROXY
   minutes    how long `lab.py install` took on the lab host (TCG, one guest at a time)
   tested     date and packages of the last run that passed
-  matrix_skip  why `pve_matrix.py install` leaves an automated target out (it needs more than the
-             published packages give); `lab.py install` still runs it
+  matrix_skip  why `pve_matrix.py install` doesn't install an automated target by itself (too slow for
+             the sparc lab job, or it needs more than the published packages give): only when
+             --reinstall names it; once its stored disk exists (install-<target>.raw) the matrix
+             boot-tests that. `lab.py install` still runs it
 """
 
 import re
@@ -530,8 +532,8 @@ TARGETS = {
     "tribblix-m34-sun4u": {
         "title": "Tribblix m34 SPARC (illumos) base install on sun4u (OpenBIOS, IDE disk, ZFS root)",
         "status": "automated",
-        "matrix_skip": "takes ~4.3 h, longer than the sparc lab job's 240-minute limit; install it once, then"
-                       " boot the stored disk (ROADMAP, \"Scheduled reinstalls\")",
+        "matrix_skip": "takes ~4.3 h, longer than the sparc lab job's 240-minute limit: installed on request"
+                       " (--reinstall), its stored disk boot-tested otherwise (~15 min)",
         "method": "scripted",
         "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 2048,
                     "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},

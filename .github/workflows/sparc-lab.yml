@@ -6,7 +6,8 @@ name: sparc lab
 # Runs on a self-hosted runner that has the media, which a public repo must not hand to pull requests:
 # manual and weekly runs only, never pull_request or push. The runner needs Docker and three host
 # directories (inputs below; the schedule uses the defaults): the install CDs and the installed
-# disk images, both mounted read only, and a directory for run output; for benchdisk and smp also the bench
+# disk images, both mounted read only (the install matrix writes its stored disks into the latter),
+# and a directory for run output; for benchdisk and smp also the bench
 # disk (e2e/sparc/README.md, "The bench disk"), whose directory is mounted read only.
 
 on:
@@ -35,7 +36,7 @@ on:
         description: "Install CDs on the runner host (mounted read only)"
         default: /mnt/os/iso
       disks_dir:
-        description: "Installed disk images on the runner host (mounted read only, copied per case)"
+        description: "Installed disk images on the runner host (read only, copied per case; install stores its disks here)"
         default: /mnt/os/disks
       runs_dir:
         description: "Run output on the runner host (a per-run subdirectory, removed afterwards)"
@@ -47,6 +48,9 @@ on:
       bench_disk:
         description: "The bench disk on the runner host (benchdisk; its directory is mounted read only)"
         default: /mnt/os/disks/bench-sol26.raw
+      reinstall:
+        description: "install: targets to install again instead of boot-testing their stored disks (all, or names separated by commas; empty: install only the missing ones). Sets the job limit to 720 min"
+        default: ""
   schedule:
     - cron: "17 3 * * 0"
     - cron: "47 4 * * 0" # the pve matrix
@@ -61,10 +65,12 @@ concurrency:
 jobs:
   matrix:
     runs-on: [self-hosted, Linux, X64, sparc-lab]
-    timeout-minutes: 240
+    # A reinstall may take hours (Tribblix ~4.3 h on its own); everything else fits in 240 minutes
+    timeout-minutes: ${{ inputs.reinstall != '' && inputs.matrix == 'install' && 720 || 240 }}
     permissions:
       contents: read
     env:
+      REINSTALL: ${{ inputs.reinstall || '' }}
       MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || 'smoke' }}
       ISO_DIR: ${{ inputs.iso_dir || '/mnt/os/iso' }}
       DISKS_DIR: ${{ inputs.disks_dir || '/mnt/os/disks' }}
@@ -107,7 +113,9 @@ jobs:
 
       # pve, install: VMs created through the API of a PVE node in a container (the e2e image with the
       # lab in it), started by PVE and driven by the lab in attach mode (e2e/sparc/pve_matrix.py);
-      # install runs `lab.py install --check` for every automated install target (targets.py)
+      # install goes through every automated install target (targets.py): `lab.py install --check
+      # --export` when its stored disk in DISKS_DIR is missing or the reinstall input names it, else
+      # `lab.py boot-test` of the stored disk
       - name: Build the PVE node with the lab
         if: ${{ env.MATRIX == 'pve' || env.MATRIX == 'install' }}
         run: |
@@ -129,16 +137,29 @@ jobs:
           if [ -d "$FLOPPY_DIR" ]; then
             bench+=(-v "$FLOPPY_DIR:$FLOPPY_DIR:ro")
           fi
+          # install stores each passing install's disk in DISKS_DIR (install-<target>.raw and .json,
+          # nothing else) and boot-tests the stored ones; pve only reads it
+          disks_mode=ro
+          reinstall=()
+          if [ "$MATRIX" = install ]; then
+            disks_mode=rw
+            # pve_matrix.py refuses names that aren't automated install targets
+            if [ -n "$REINSTALL" ]; then
+              reinstall=(--reinstall "$REINSTALL")
+            fi
+          fi
           # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
           docker run -d --name "sparc-lab-${GITHUB_RUN_ID}" --hostname pve --privileged \
             --tmpfs /run --tmpfs /run/lock \
-            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:ro" -v "$RUN_DIR:$RUN_DIR" "${bench[@]}" "$IMAGE"
+            -v "$ISO_DIR:$ISO_DIR:ro" -v "$DISKS_DIR:$DISKS_DIR:$disks_mode" -v "$RUN_DIR:$RUN_DIR" "${bench[@]}" "$IMAGE"
           for _ in $(seq 1 60); do
             docker exec "sparc-lab-${GITHUB_RUN_ID}" test -f /run/pve-e2e-ready && break
             sleep 5
           done
-          docker exec "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
-            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK" --floppy "$FLOPPY_DIR"
+          # WSH_LAB_COMMIT: the commit the stored disks' sidecars name (lab_commit)
+          docker exec -e WSH_LAB_COMMIT="$GITHUB_SHA" "sparc-lab-${GITHUB_RUN_ID}" python3 pve_matrix.py "$MATRIX" \
+            --runs "$RUN_DIR" --iso "$ISO_DIR" --disks "$DISKS_DIR" --bench "$BENCH_DISK" --floppy "$FLOPPY_DIR" \
+            "${reinstall[@]}"
 
       - name: Summary
         if: ${{ !cancelled() }}

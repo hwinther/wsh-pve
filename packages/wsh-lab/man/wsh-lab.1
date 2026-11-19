@@ -17,6 +17,14 @@ wsh-lab \- install and drive sparc guests in Proxmox VE VMs, unattended
 .I N
 .RI [ options ]
 .br
+.B wsh-lab boot-test
+.I target
+.B \-\-disk
+.I DIR/install\-target.raw
+.B \-\-vmid
+.I N
+.RB [ \-\-keep ]
+.br
 .B wsh-lab run
 .I scenario
 .B \-\-out
@@ -78,6 +86,19 @@ and makes bash the
 account's login shell; root keeps
 .I /sbin/sh
 so that it can log in single-user, when the data disk isn't mounted.
+.PP
+.BI \-\-export " DIR"
+(with
+.BR \-\-check ,
+the target's default install only) copies the disk of an install that passed its check to
+.I DIR/install\-<target>.raw
+with
+.I install\-<target>.json
+beside it (date, minutes, package versions), replacing the previous copy only when complete.
+.B wsh-lab boot-test
+creates a VM with the target's profile from a copy of that disk, boots it, runs the target's
+check (login, marker) and destroys the VM
+.RB ( \-\-keep " keeps it, stopped)."
 .PP
 .B wsh-lab targets
 lists the catalogue (which targets are automated, their profiles and what was tested);

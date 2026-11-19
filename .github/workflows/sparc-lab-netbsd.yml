@@ -34,9 +34,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Unit tests (install catalogue)
+      - name: Unit tests (install catalogue, stored disks)
         working-directory: e2e/sparc
-        run: python3 -m unittest -v tests/test_targets.py
+        run: python3 -m unittest -v tests/test_targets.py tests/test_stored_disks.py
 
       - name: Build the lab image
         run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .

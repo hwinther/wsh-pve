@@ -5,7 +5,19 @@
     pve_matrix.py pve --runs /work/runs/p1 [--iso /mnt/os/iso] [--disks /mnt/os/disks]
         [--bench /mnt/os/disks/bench-sol26.raw]
 
-    pve_matrix.py install --runs /work/runs/i1     # every automated install target (targets.py)
+    pve_matrix.py install --runs /work/runs/i1 [--reinstall [all|TARGET[,TARGET]]]
+        # every automated install target (targets.py): installed once, then boot-tested
+
+The install matrix keeps one installed disk per target in --disks (install-<target>.raw with
+install-<target>.json, lab.py install --export) and per target either
+  - installs it (`lab.py install <target> --check --export <disks>`) when its stored disk is missing or
+    --reinstall names it (`--reinstall` alone or `all`: every target without `matrix_skip`); the new
+    disk replaces the old one only when the install passed its check, or
+  - boot-tests the stored disk (`lab.py boot-test`): a VM with the target's profile from a copy of it,
+    booted through PVE, the target's check (login, marker, state), the VM destroyed, or
+  - skips it: a target with `matrix_skip` (too slow for the sparc lab job, or it needs more than the
+    published packages) is installed only when --reinstall names it, and boot-tested once its disk exists.
+A file under the stored disk's name that lab.py install didn't write fails the case (it is never replaced).
 
 Runs on the PVE node: the e2e node with the lab in it (pve.Dockerfile). Each case creates its VM
 (`pvesh create /nodes/<node>/qemu`, the install media linked into the `local` storage, a disk template
@@ -23,6 +35,7 @@ import subprocess
 import sys
 import time
 
+import install
 import targets
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,12 +92,47 @@ MATRICES = {
                            "ide2": "{iso},media=cdrom"},
          "sol-10-u11-ga-sparc-dvd.iso", None, [("sparc64-boot-cd.py", {"GUEST": "solaris10"})]),
     ],
-    # Every automated install target (targets.py), each with --check: the "scheduled reinstalls" of
-    # ROADMAP.md, without replacing stored disks yet. A target with `matrix_skip` needs more than
-    # the published packages give (it says what) and stays out until they do.
-    "install": [(f"install-{t}", {"install": t}, None, None, []) for t in targets.automated()
-                if not targets.TARGETS[t].get("matrix_skip")],
+    # Every automated install target (targets.py): installed with --check and its disk stored when it
+    # has none (or --reinstall), else that disk boot-tested; plan() decides. The "scheduled
+    # reinstalls" of ROADMAP.md.
+    "install": [(f"install-{t}", {"target": t}, None, None, []) for t in targets.automated()],
 }
+
+
+def reinstall_set(values):
+    """--reinstall's values (each `all` or targets, comma or space separated) as a set; SystemExit for
+    an unknown or non-automated target."""
+    out = set()
+    for v in values or []:
+        out |= set(filter(None, v.replace(",", " ").split()))
+    bad = sorted(out - {"all"} - set(targets.automated()))
+    if bad:
+        raise SystemExit(f"--reinstall: not automated install targets: {', '.join(bad)} (`lab.py targets` lists them)")
+    return out
+
+
+def plan(target, disks, reinstall=frozenset()):
+    """What the install matrix does with a target: ("install" | "boot-test" | "skip" | "refuse", why)."""
+    t = targets.TARGETS[target]
+    try:
+        meta = install.read_sidecar(disks, target)
+    except install.InstallFailed as e:
+        return "refuse", str(e)
+    if target in reinstall:
+        return "install", f"--reinstall {target}"
+    if meta and "all" in reinstall and not t.get("matrix_skip"):
+        return "install", "--reinstall all"
+    if meta:
+        return "boot-test", f"stored disk installed {meta.get('installed')} with {meta.get('packages')}"
+    if t.get("matrix_skip"):
+        return "skip", f"no stored disk; installed only on request (--reinstall {target}): {t['matrix_skip']}"
+    return "install", "no stored disk"
+
+
+def boot_test_timeout(target, a):
+    """Seconds `lab.py boot-test <target>` may take: the target's check and 10 minutes for the copy."""
+    return max(a.timeout, targets.TARGETS[target]["check"]["timeout"] + 600)
+
 
 LEFTOVERS = ("_fb_poll.png", "_refresh.ppm", "*.sock", "_frames")  # the recordings stay
 
@@ -197,9 +245,32 @@ def run_case(name, config, iso, template, steps, a):
     work = os.path.join(a.runs, name)
     os.makedirs(work, exist_ok=True)
     t0, vmid, results = time.time(), None, []
+    if "target" in config:
+        action, why = plan(config["target"], a.disks, a.reinstall)
+        print(f"=== {name}: {action}: {why}", flush=True)
+        if action == "skip":
+            return {"code": 0, "skipped": True, "elapsed": 0, "steps": [], "status": f"skipped: {why}"}
+        if action == "refuse":
+            return {"code": 3, "elapsed": 0, "steps": [], "status": f"refused: {why}"}
     try:
         first = 1
-        if "install" in config:
+        if "target" in config:
+            target = config["target"]
+            vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
+            lab_py = [sys.executable, os.path.join(HERE, "lab.py")]
+            if action == "install":
+                link_media(target, a)
+                out = os.path.join(work, f"1-install-{target}")
+                results.append(run_step(name, f"install {target}", out, a,
+                                        [*lab_py, "install", target, "--vmid", vmid, "--out", out, "--check",
+                                         "--export", a.disks], timeout=install_timeout(target, a)))
+            else:
+                out = os.path.join(work, f"1-boot-test-{target}")
+                results.append(run_step(name, f"boot-test {target}", out, a,
+                                        [*lab_py, "boot-test", target, "--vmid", vmid, "--out", out,
+                                         "--disk", install.stored_disk(a.disks, target)[0]],
+                                        timeout=boot_test_timeout(target, a)))
+        elif "install" in config:
             target = config["install"]
             link_media(target, a)
             vmid = sh("pvesh", "get", "/cluster/nextid", "--output-format", "json").strip('"')
@@ -239,7 +310,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("matrix", choices=sorted(MATRICES))
     p.add_argument("--runs", required=True, help="output directory, one subdirectory per case")
-    p.add_argument("--disks", default="/mnt/os/disks", help="disk templates (read only)")
+    p.add_argument("--disks", default="/mnt/os/disks",
+                   help="disk templates and installed disks (read only; install writes its stored disks here)")
+    p.add_argument("--reinstall", nargs="?", const="all", action="append", metavar="all|TARGET[,TARGET]",
+                   help="install: install these targets again (alone or `all`: every target without matrix_skip)"
+                        " instead of boot-testing their stored disks")
     p.add_argument("--iso", default="/mnt/os/iso", help="install CDs (read only)")
     p.add_argument("--floppy", default="/mnt/os/floppy", help="install floppies (read only)")
     p.add_argument("--bench", default="/mnt/os/disks/bench-sol26.raw",
@@ -247,16 +322,23 @@ def main():
     p.add_argument("--timeout", type=int, default=3600, help="seconds per scenario")
     p.add_argument("--only", action="append", help="run only these cases")
     a = p.parse_args()
+    if a.reinstall and a.matrix != "install":
+        p.error("--reinstall: only with the install matrix")
+    a.reinstall = reinstall_set(a.reinstall)
 
-    rows, failed = [], 0
+    rows, failed, skipped = [], 0, 0
     cases = [c for c in MATRICES[a.matrix] if not a.only or c[0] in a.only]
     for name, config, iso, template, steps in cases:
         res = run_case(name, config, iso, template, steps, a)
         failed += res["code"] != 0
-        done = ", ".join(f"`{r['scenario']}` {r.get('elapsed', '?')}s" for r in res["steps"])
-        status = res["status"].splitlines()[0][:120].replace("|", "\\|")
-        rows.append(f"| {name} | {done} | {'pass' if res['code'] == 0 else 'FAIL'} | {res['elapsed']:.0f}s | {status} |")
-    table = "\n".join([f"### sparc lab: {a.matrix} ({len(rows) - failed}/{len(rows)} passed)", "",
+        skipped += bool(res.get("skipped"))
+        done = ", ".join(f"`{r['scenario']}` {r.get('elapsed', '?')}s" for r in res["steps"]) or "-"
+        status = res["status"].splitlines()[0][:160].replace("|", "\\|")
+        result = "skip" if res.get("skipped") else "pass" if res["code"] == 0 else "FAIL"
+        rows.append(f"| {name} | {done} | {result} | {res['elapsed']:.0f}s | {status} |")
+    ran = len(rows) - skipped
+    table = "\n".join([f"### sparc lab: {a.matrix} ({ran - failed}/{ran} passed"
+                       + (f", {skipped} skipped" if skipped else "") + ")", "",
                        "| Case | Scenarios | Result | Time | Status |",
                        "| --- | --- | --- | --- | --- |", *rows])
     print("\n" + table)
