@@ -20,6 +20,19 @@ of sol8-ss20, sol9-ss20, sol8-ss5 and sol9-ss5 (attach mode, a PVE VM); the VM n
   3. At the end it asks for Return to reboot; the reboot stops at `0 >` and this scenario powers the
      VM off there (`power-off`). The first boot is solaris-firstboot.py's.
 
+On sun4u (sol8-sun4u, sol9-sun4u: ARCH sparc64 from the VM's config, the IDE disk c0t0d0 in DISK, the
+CD on the IDE) the same answers, with three differences:
+
+  - the 64-bit question defaults to "64-bit and 32-bit support"; that default is kept;
+  - a reboot doesn't come back: OpenBIOS's client-interface `boot` returns, Solaris panics on it
+    (`prom_reboot: reboot call returned!`) and exits to `0 >`. After the mini-root copy (Solaris 8)
+    the VM is power-cycled through PVE (lab.PveMachine.power_cycle(): `qm stop`, `qm start`) and the
+    mini-root booted at `0 >` (`disk:b`, auto-boot? false): `reset-all` isn't enough, OpenBIOS keeps
+    the RAM's contents and the mini-root's kernel then panics in `page_free`. At the end the VM is
+    stopped at `0 >` instead of `power-off`, as solaris10-install-sparc64.py does;
+  - with auto-boot? false the CD is booted at `0 >` (`cdrom:f`, _sparc32.prom_boot); without it the
+    VM's boot order boots it.
+
 Variables:
   HOSTNAME, IP, NETMASK   the system identification answers        (solaris, 10.0.2.15, 255.255.255.0)
   TIMEZONE                a file under /usr/share/lib/zoneinfo     (MET)
@@ -28,6 +41,7 @@ Variables:
                           5 Core                                   (2)
   SWAPS                   "scsi6=local:iso/<Software 1 of 2> scsi6=local:iso/<Software 2 of 2>": the
                           CDs, in order, for the "Please insert" prompts (install.py passes them)
+  DISK                    the boot disk as Solaris names it         (c0t3d0; sun4u's IDE disk: c0t0d0)
   PROMPT_TIMEOUT          seconds to wait for the next prompt      (3600: package installation)
 
 Prompts are matched on the last lines of the screen, in the order of prompts(); an unknown prompt
@@ -39,7 +53,10 @@ import time
 from _sparc32 import DEFAULTS as BASE, ESP, prom_boot, qemu_args as sparc32_args
 
 DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15", "NETMASK": "255.255.255.0",
-            "TIMEZONE": "MET", "ROOT_PASSWORD": "", "SOFTWARE": "2", "SWAPS": "", "PROMPT_TIMEOUT": "3600"}
+            "TIMEZONE": "MET", "ROOT_PASSWORD": "", "SOFTWARE": "2", "SWAPS": "", "DISK": "c0t3d0",
+            "PROMPT_TIMEOUT": "3600"}
+# Solaris's reboot on sun4u: the firmware's `boot` service returns, the kernel panics and exits to `0 >`
+REBOOT_RETURNED = r"reboot call returned"
 # The end of a line that waits for input: "... [y,n,?,q]", "[n]:", "(y/n):", "[]", "-->", "[?]",
 # and on Solaris 9 the same followed by a key hint: "<Press ENTER to continue> {"!" exits}"
 HINT = r'\s*\{"[^{}]*\}'
@@ -191,9 +208,12 @@ def prompts(inst, v):
         (r"Web Start Ready product scan location \[1\]:$", "1", None),
         (r"installed with 32-bit support only\. Enter the number corresponding to your choice \[2\]$", "2",
          "32-bit only"),
+        # sun4u: the default is 1, "64-bit and 32-bit support (Recommended)"
+        (r"installed with 32-bit support only\. Enter the number corresponding to your choice \[1\]$", "1",
+         "64-bit and 32-bit"),
         (r"desired Solaris software group \[\d\]:$", v["SOFTWARE"], "software group"),
         (r"Default Packages or Custom Packages \[1\]$", "1", None),
-        (r"Layout file systems on disk c0t3d0 \(bootdisk\) \(y/n\) \[y\]\?$", "y", None),
+        (rf"Layout file systems on disk {re.escape(v['DISK'])} \(bootdisk\) \(y/n\) \[y\]\?$", "y", None),
         (r"Enter y to preserve data or n to skip data preservation\. \[n\]$", "n", None),  # Solaris 9
         (r"or 'Done' to proceed with the install \[\d\]:$", "", "file system layout"),  # Done: 3 (8), 4 (9)
         (r"Enter 'y' to accept these values and start the installation.*\(y/n\):$", "y", "start the installation"),
@@ -208,10 +228,15 @@ def prompts(inst, v):
     ]
 
 
-def mini_root(m):
+def sun4u(v):
+    return v.get("ARCH") == "sparc64"
+
+
+def mini_root(m, v):
     """The Solaris 8 Installation CD: the boot disk becomes a swap slice at cylinder 0 (the default
     512 MB) with a mini-root on it, and the reboot into it ends at the OpenBIOS prompt (auto-boot?
-    false), where the mini-root's slice is booted by path."""
+    false), where the mini-root's slice is booted by path. On sun4u the reboot ends in a panic at
+    `0 >`, and the VM is power-cycled first (the docstring)."""
     answer(m, "y", "format the boot disk")
     for rx, reply, title in [(r"Enter a swap slice size between .*\[\?\]", "", "swap slice size"),
                              (r"Can the swap slice start at the beginning of the disk\s+\[y,n,\?,q\]", "y", None),
@@ -220,9 +245,16 @@ def mini_root(m):
         m.quiet(1, 60)
         answer(m, reply, title)
     m.expect(r"Rebooting to continue the installation", 1800)
-    m.expect(r"0 >", 300)
+    if m.expect_any([r"0 >", REBOOT_RETURNED], 900) == 1:
+        m.expect(r"0 >", 300)
+        m.quiet(1, 30)
+        m.snap("reboot returned to the OpenBIOS prompt")
+        if not hasattr(m, "power_cycle"):
+            raise RuntimeError("the mini-root needs a fresh machine: run this through PVE (lab.py install)")
+        m.power_cycle()
+        m.expect(r"0 >", 300)
     m.snap("OpenBIOS prompt after the mini-root copy")
-    m.send(f"boot {ESP}/sd@3,0:b\r")
+    m.send(f"boot {'disk:b' if sun4u(v) else ESP + '/sd@3,0:b'}\r")
     m.expect(r"SunOS Release 5\.\d", 600)
 
 
@@ -235,12 +267,12 @@ def run(m, v):
     # English C) and the terminal type
     while True:
         # 8 1/01 asks "... c0t3d0? [y,n,?,q]", 8 2/02 without the question mark
-        i = m.expect_any([r"Do you want to format /dev/dsk/c0t3d0\??\s+\[y,n,\?,q\]", r"Select a Language",
-                          r"Please make a choice \(0 - \d\d+\)", r"What type of terminal are you using",
-                          r"Running in command line mode"], 1800)
+        i = m.expect_any([rf"Do you want to format /dev/dsk/{re.escape(v['DISK'])}\??\s+\[y,n,\?,q\]",
+                          r"Select a Language", r"Please make a choice \(0 - \d\d+\)",
+                          r"What type of terminal are you using", r"Running in command line mode"], 1800)
         m.quiet(1, 60)
         if i == 0:
-            mini_root(m)
+            mini_root(m, v)
         elif i in (1, 2):
             answer(m, "0", ["", "language", "locale"][i])
         elif i == 3:
@@ -269,9 +301,15 @@ def run(m, v):
             break
     if inst.swaps:
         raise RuntimeError(f"the installer never asked for {len(inst.swaps)} of the CDs in SWAPS")
-    # The reboot stops at the OpenBIOS prompt (auto-boot? false): power off there; the first boot is
-    # solaris-firstboot.py's
-    m.expect(r"0 >", 900)
+    # The reboot stops at the OpenBIOS prompt (auto-boot? false; sun4u: after the panic on the returned
+    # reboot call, once Solaris has synced): power off there; the first boot is solaris-firstboot.py's
+    returned = m.expect_any([r"0 >", REBOOT_RETURNED], 1800) == 1
+    if returned:
+        m.expect(r"0 >", 300)
+        m.quiet(1, 30)
     m.snap("OpenBIOS prompt after the installation")
+    if returned or sun4u(v):
+        m.stop()  # through PVE: `qm stop` (the lab started the VM)
+        return
     m.send("power-off\r")
     m.wait_exit(120)

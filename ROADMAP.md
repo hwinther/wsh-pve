@@ -62,6 +62,7 @@ come after that, not before.
 | Solaris 7/8/9 on sun4u: OpenBIOS 0024 lists `/memory` `available` in whole pages, which ends `boot_alloc: pp is NULL or free` (claims recorded to the byte left entries starting inside a page; Solaris 7-9 counted them one page short and a later boot allocation got the missing page). 7, 8 1/01, 8 2/02, 9, 9 9/05 reach the installer with 1 and 2 GB; 8 2/02 and 9 9/05 install and boot to `console login:` in the lab (1 GB); upstream note | in review | |
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
 | Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
+| Install targets: Solaris 9 9/05 and 8 2/02 on sun4u (`sol9-sun4u`, `sol8-sun4u`, End User 64-bit, Web Start through PVE); OpenBIOS 0025 leaves out the ebus floppy node (a zero-sized `reg` for hardware QEMU's sun4u doesn't have; Solaris 9's first boot panicked in `fd`); the reboot that returns on sun4u is handled by the tool: the VM is stopped at `0 >` after the install, and 8's reboot into its mini-root is a power cycle through PVE (`PveMachine.power_cycle()`) | in review | |
 
 ## In progress
 
@@ -93,10 +94,12 @@ Work that exists but is not merged. If this list is stale, check the open pull r
    - Solaris 7/8/9 `pp is NULL or free`: fixed by OpenBIOS 0024 (`/memory` `available` in whole
      pages; its entries started inside a page and Solaris 7-9 counted them one page short). In the
      lab 7, 8 1/01, 8 2/02, 9 and 9 9/05 reach their installers with 1 and 2 GB; 8 2/02 and 9 9/05
-     install to the IDE disk with 1 GB and boot to `console login:`. Open: the reboot (0012, also
-     the 8 mini-root step: a power cycle), the ebus floppy node (9's first, reconfiguring boot
-     panics in `fd`), then the targets `sol9-sun4u` and `sol8-sun4u` once the package has 0024.
-     2.5.1/2.6 boot-block exceptions.
+     install to the IDE disk with 1 GB and boot to `console login:`; the install targets
+     `sol9-sun4u` and `sol8-sun4u` do it through PVE (the floppy node: OpenBIOS 0025; the reboot:
+     the tool stops the VM, and power-cycles it for 8's mini-root). Open: a `pve-qemu-kvm` with
+     0025 (until then `sol9-sun4u` needs the firmware from `openbios/`; `matrix_skip` until then), the
+     firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
+     exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
    release, needed two more OpenBIOS fixes: 0016 runs the client interface with interrupts off

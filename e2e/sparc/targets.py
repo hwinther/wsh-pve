@@ -95,6 +95,10 @@ PACKAGES_2026_11_19 ={"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+w
 # Solaris 2.2-2.4 under OpenBIOS (openbios 0019-0022) and OpenBSD 8.0 on sun4u (openbios 0023): in
 # pve-qemu-kvm 11.1.3-2+wsh22 and later
 PACKAGES_2026_11_19_WSH22 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh22"}
+# Solaris 8/9 on sun4u: pve-qemu-kvm 11.1.3-2+wsh23 (openbios 0001-0024) with openbios-sparc64 built
+# from 0001-0025 mounted over the package's (0025 isn't in a package yet)
+PACKAGES_2026_11_19_WSH23 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23"}
+PACKAGES_2026_11_19_SUN4U89 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23 + openbios 0025"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -315,6 +319,9 @@ def sun_disk(*sizes, bus="scsi3"):
 
 SPARC32 = {"arch": "sparc", "bios": "openbios-sparc32", "ostype": "solaris", "net0": "lance",
            "serial0": "socket", "vga": "serial0"}  # the text installer runs on ttya (no framebuffer)
+# The sparc64 profile for Solaris on sun4u (sol10-sun4u's): 1 GB, sunhme, the console on ttya
+SUN4U_SOLARIS = {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 1024,
+                 "ostype": "solaris", "net0": "sunhme", "serial0": "socket", "vga": "serial0"}
 
 SOLARIS_SCRIPTED = {
     "method": "scripted",
@@ -822,6 +829,66 @@ TARGETS = {
         "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
                    "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
+    },
+    # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
+    # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
+    # support), End User. Both need openbios-sparc64 with patch 0024 (pp is NULL or free; pve-qemu-kvm
+    # 11.1.3-2+wsh23 and later), 9 also 0025 (no ebus floppy node: its first, reconfiguring boot
+    # panicked in the fd driver; 8 only warns). A reboot doesn't
+    # come back on sun4u: the scenario stops the VM at `0 >` after the install (as sol10-sun4u), and
+    # 8's reboot into the mini-root is a power cycle through PVE (lab.PveMachine.power_cycle()).
+    "sol9-sun4u": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 9 9/05 End User on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        # remove once a published pve-qemu-kvm has openbios 0025
+        "matrix_skip": "needs openbios-sparc64 with patch 0025 (the ebus floppy node), which no published"
+                       " pve-qemu-kvm has yet: with the package's firmware the first boot panics in fd",
+        "install": {"scenario": "solaris-webstart-serial.py",
+                    "vars": {"TIMEZONE": "MET", "SOFTWARE": "4", "DISK": "c0t0d0", "PROMPT_TIMEOUT": "5400"},
+                    "timeout": 9000, "root_password": True},
+        "firstboot": {**SOLARIS_SCRIPTED["firstboot"], "timeout": 3600},
+        "check": {**SOLARIS_SCRIPTED["check"], "timeout": 2400},
+        "profile": {**SUN4U_SOLARIS},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # a blank image: Web Start labels it
+        "device": "c0t0d0",
+        "media": [{"name": "solaris-2.9-sparc.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "sol9-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        "minutes": 70,  # 70.0 min (install 59, first boot 6.7, --check 3.6), openbios 0025 mounted
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_SUN4U89, "with": "--check"},
+    },
+    # The Installation CD copies a mini-root to the swap slice (b) and reboots into it: on sun4u the
+    # reboot returns to `0 >` (a panic), the VM is power-cycled and slice b booted at `0 >` (auto-boot?
+    # false for the install phase); Web Start from the mini-root asks for Software 1 of 2 (End User
+    # needs no Software 2 of 2)
+    "sol8-sun4u": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 8 2/02 End User on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py",
+                    "vars": {"TIMEZONE": "MET", "SOFTWARE": "4", "DISK": "c0t0d0", "PROMPT_TIMEOUT": "5400"},
+                    "timeout": 9000, "root_password": True, "prom_env": {"auto-boot?": "false"}},
+        "firstboot": {**SOLARIS_SCRIPTED["firstboot"], "timeout": 3600},
+        "check": {**SOLARIS_SCRIPTED["check"], "timeout": 2400},
+        "profile": {**SUN4U_SOLARIS},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # the Installation CD labels it
+        "device": "c0t0d0",
+        "media": [{"name": "Sol8.0202.Sparc.iso", "drive": "ide2"},
+                  {"name": "Sol8.0202.Sparc-Software_1of2.iso", "drive": "ide2", "at": "scenario"}],
+        "boot": "ide0",
+        "hostname": "sol8-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        # 53.4-56.9 min (2 runs): install 42-46 (mini-root copy, power cycle, Web Start), first boot 6.3-6.4,
+        # --check 4.4-4.5; one run with openbios 0025 mounted, one with the package's firmware
+        "minutes": 55,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH23,
+                   "with": "--check (the published firmware); --check (openbios 0025)"},
     },
     # The live CD's own installer (live_install.sh -G: SMI label, ZFS root pool rpool, base overlay;
     # ROOT_FS=ufs in the install scenario uses ufs_install.sh) from a root shell on ttya; the first

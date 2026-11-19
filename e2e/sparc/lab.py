@@ -173,10 +173,11 @@ class Machine:
         s.connect(path)
         return s
 
-    def _reader(self):
+    def _reader(self, sock=None):
+        sock = sock or self.ser  # its own socket: PveMachine.power_cycle() replaces self.ser
         while True:
             try:
-                data = self.ser.recv(4096)
+                data = sock.recv(4096)
             except OSError:
                 data = b""
             with self.cond:
@@ -882,6 +883,14 @@ class PveMachine(Machine):
             raise SystemExit(f"{self.serial_path} already has a client (qm terminal, the web console?): "
                                "close it, the lab needs the serial console to itself")
         self.started = "status: running" not in qm("status", vmid)
+        self._start(conf, "qm-start.log")
+        console = f"console on {self.serial_path}" if self.ser else "no serial socket (framebuffer only)"
+        self.log(f"{'started' if self.started else 'attached to running'} VM {vmid} (pid {self.proc.pid}), {console}")
+
+    def _start(self, conf, log_name):
+        """`qm start` the VM if self.started (else attach to the running one), connect the serial
+        console and start reading it; the QEMU process and its command line become self.proc and
+        self.args."""
         if self.started:
             # Connect while `qm start` runs, so the console output from the first instruction on is seen.
             start = subprocess.Popen(["qm", "start", self.vmid], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -890,25 +899,43 @@ class PveMachine(Machine):
                 self.ser = self._try_connect(self.serial_path)
                 time.sleep(0.05)
             log = start.communicate()[0]
-            with open(os.path.join(out, "qm-start.log"), "w", encoding="utf-8") as f:
+            with open(os.path.join(self.out, log_name), "w", encoding="utf-8") as f:
                 f.write(log)
             if start.returncode:
-                raise SystemExit(f"qm start {vmid} failed: {log.strip()[-2000:]}")
+                raise SystemExit(f"qm start {self.vmid} failed: {log.strip()[-2000:]}")
         if self.serial_path and not self.ser:
             self.ser = self._try_connect(self.serial_path)
             if not self.ser:
                 raise SystemExit(f"can't connect to {self.serial_path}")
         if self.ser:
-            threading.Thread(target=self._reader, daemon=True).start()
+            threading.Thread(target=self._reader, args=(self.ser,), daemon=True).start()
         self.proc = PveProcess(self.vmid)
         with open(f"/proc/{self.proc.pid}/cmdline", "rb") as f:
             self.args = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
-        with open(os.path.join(out, "qemu.cmd"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.out, "qemu.cmd"), "a" if log_name != "qm-start.log" else "w", encoding="utf-8") as f:
             f.write(shlex.join(self.args) + "\n")
         if self.started and conf.get("freeze") == "1":
             self.qmp.cmd("cont")  # `freeze: 1` holds the CPU until now
-        console = f"console on {self.serial_path}" if self.ser else "no serial socket (framebuffer only)"
-        self.log(f"{'started' if self.started else 'attached to running'} VM {vmid} (pid {self.proc.pid}), {console}")
+
+    def power_cycle(self):
+        """Power the VM off and on again through PVE (`qm stop`, `qm start`), as a new QEMU process:
+        for a guest whose reboot doesn't come back (sun4u: OpenBIOS's client-interface `boot` returns,
+        submodules/SPARC.md) and where a firmware reset isn't enough (OpenBIOS keeps the RAM's old
+        contents). The serial output goes on in the same terminal, log and recordings; only a VM that
+        the lab started (not one it attached to) is cycled."""
+        if not self.started:
+            raise RuntimeError(f"VM {self.vmid} was running before the lab attached: not power-cycling it")
+        out = qm("stop", self.vmid, check=False).strip()
+        self.log(f"power cycle: qm stop {self.vmid}" + (f": {out}" if out else ""))
+        self.proc.wait(120)
+        if self.ser:
+            self.ser.close()  # the reader thread ends on it
+            self.ser = None
+        self.metrics["power_cycles"] = n = self.metrics.get("power_cycles", 0) + 1
+        with self.cond:
+            self.mark(f"power cycle {n}")
+        self._start(pve_config(self.vmid), f"qm-start-{n + 1}.log")
+        self.log(f"power cycle: started VM {self.vmid} again (pid {self.proc.pid})")
 
     @staticmethod
     def _try_connect(path):

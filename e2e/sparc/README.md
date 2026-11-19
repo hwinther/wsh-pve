@@ -736,10 +736,63 @@ Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-
 | `install sol8-ss5 --check` | passed; both Software CDs swapped in by the scenario, the same login, marker and network | 37.2 min (install 1897 s, first boot 216 s, check 97 s) |
 
 `pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
-the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). Not tried: `--ip dhcp`, `--disk-size 3G` and the
+the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). The same releases install on sun4u too: "Solaris 8
+and 9 on sun4u" below. Not tried: `--ip dhcp`, `--disk-size 3G` and the
 other network options with these two, `ss5.bin`
 for Solaris 8, and repeated runs (one PVE run each). The SS-20 hang with 8 2/02 happened once in
 two runs and wasn't diagnosed.
+
+### Solaris 8 and 9 on sun4u
+
+`sol9-sun4u` (9 9/05, the DVD) and `sol8-sun4u` (8 2/02, the Installation CD and Software 1 of 2)
+run the same `solaris-webstart-serial.py` on the sparc64 profile of `sol10-sun4u` (1024 MB, `sunhme`,
+`vga: serial0`) with a blank 8 GiB disk on `ide0` and the media on `ide2`, End User. They need
+`openbios-sparc64` with patch 0024 (pve-qemu-kvm 11.1.3-2+wsh23 or later); `sol9-sun4u` also needs
+0025 (the ebus floppy node left out; without it 9's first boot panics in `fd`), which isn't in a
+package yet (`submodules/SPARC.md`, "Solaris 8 and 9 install targets on sun4u"). What the scenario
+does differently on sun4u (`ARCH` sparc64 from the VM's config, `DISK=c0t0d0`):
+
+- **Boot:** `_sparc32.prom_boot()` lets OpenBIOS boot by itself (`Trying cdrom:f...`/`disk:a`,
+  from qemu-server's `-boot order=`) or, at `0 >` (`auto-boot?` false), types `boot cdrom:f` or
+  `boot disk:a`. So `solaris-firstboot.py` and `solaris-boot-disk.py` serve the sun4u targets
+  unchanged.
+- **Answers:** the 64-bit question's default on sun4u is 1 (64-bit and 32-bit support), kept; the
+  format question and the layout name `c0t0d0`.
+- **Reboots:** Solaris's reboot returns from OpenBIOS on sun4u (`prom_reboot: reboot call
+  returned!`, a panic, `EXIT`, `0 >`). After the installer's last Return the scenario waits for that
+  prompt (Solaris has synced the disk by then) and stops the VM (`m.stop()`, i.e. `qm stop`), as
+  `solaris10-install-sparc64.py` does; `install` ejects the media and sets `boot: order=ide0`.
+  After 8's mini-root copy it calls `lab.PveMachine.power_cycle()`: `qm stop`, then `qm start` with
+  the serial console connected while it starts, the same terminal, step log and recordings
+  (a marker "power cycle N" in the cast, `power_cycles` in `result.json`'s metrics, the second
+  `qm start`'s output in `qm-start-2.log`). The VM's `args: -prom-env auto-boot?=false` (the
+  target's `prom_env`) stops OpenBIOS at `0 >`, where the scenario boots `disk:b`. Only a VM the lab
+  started is power-cycled; outside PVE (the lab's own QEMU) the scenario fails there with a
+  message. `reset-all` at the prompt doesn't do: OpenBIOS keeps the RAM's contents, and the
+  mini-root's kernel panicked in `page_free` (SPARC.md).
+- **Media:** End User needs only Software 1 of 2 (the one `at: "scenario"` medium), put into `ide2`
+  live when the mini-root's Web Start asks for the first Software disc.
+
+Results through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, published
+pve-qemu-kvm 11.1.3-2+wsh23, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1; "0025" = an
+`openbios-sparc64` built from `openbios/` with 0001-0025 mounted over the package's; up to two guests
+on the host at once, 2026-11-19):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol9-sun4u --check` (0025) | passed: the first boot reconfigures (`Configuring /dev and /devices`) without a panic, root/`wshlab`, the marker, `SunOS sol9-sun4u 5.9 Generic_118558-34 sun4u`, `/` 1126422 KB on `c0t0d0s0`, `hme0` 10.0.2.15/24, `boot: order=ide0`, `ide2` empty | 70.0 min (install 3559 s, first boot 401 s, check 215 s) |
+| `install sol8-sun4u --check` (0025) | passed: one power cycle after the mini-root copy, Software 1 of 2 swapped in, `SunOS sol8-sun4u 5.8 Generic_108528-13 sun4u`, `/` 738902 KB, no `fdthree` warning in any phase | 56.9 min (2752 s, 378 s, 264 s) |
+| `install sol8-sun4u --check` (the package's firmware) | passed; the `fdthree` warning in the install and first boot, as before | 53.4 min (2536 s, 382 s, 267 s) |
+| unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
+
+A second `sol9-sun4u` run (with `--export`) and the regression of 0025 (`sparc64` and `solaris10`
+matrices, the stored OpenBSD 8.0 disk, a NetBSD sun4u boot) were still running when this was
+written; see the pull request. `sol9-sun4u` has `matrix_skip` until a published package has 0025;
+`sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
+min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
+it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
+set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
+`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
 
 ### Solaris 2.4 and 2.5.1
 
