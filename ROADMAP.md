@@ -56,6 +56,7 @@ come after that, not before.
 | sun4u system MAC from `net0` (pve-qemu `wsh/0034`, qtest `wsh/0035`): QEMU wrote its default `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`, and NetBSD and Solaris use the IDPROM's MAC for `hme0`; now it is the first `sunhme`'s (else the first NIC's), so the guest sends from the MAC in the VM config (NetBSD `hme`/`wm`, Solaris 10 `hme`). No qemu-server change; upstream note written. The Solaris host id follows the MAC (`80123456` on every VM before), so it changes on existing VMs. Solaris 10 boots 10 of 10 with it and OpenBIOS 0013-0017 (the earlier `BAD TRAP: type=4e` in 2 of 5 was the firmware bug 0016 fixes) | in review | |
 | sun4u with more than 3 GB: OpenBIOS patches 0013-0015 (heap above 4 GB, `claim` against the firmware's virtual range, the whole address in `phys.lo`); NetBSD 11.1 and Solaris 10 run with up to 8 GB in the lab, an upstream note; the sparc64 profile's cap in qemu-server and the UI goes from 3072 to 8192 MB | merged | #309 |
 | Install targets, Solaris post-install: the data disk on `/usr/local` (`--data-mount`), `--post-install sun26gnu` (34 GNU packages from the owner's local CD with `pkgadd -n` and an admin file, the CD in `scsi5` for that boot only) and `--local-env` (`PATH`, `MANPATH`, bash for `--user`; root keeps `/sbin/sh`), checked by `--check`; Solaris 2.6 and 7 on SS-5 and SS-20 (the 2.6 packages run on 7) | in review | |
+| Older Sun releases on sun4m: install targets for Solaris 2.3 Edition II (`sol23-ss5` with `ss5.bin`, `sol23-ss20` with `ss20_v2.25_rom`; sysidtool's older screens and Quick Install), Solaris 2.5 HW 1/96 (`sol25-ss5`, `sol25-ss20`, OpenBIOS) and SunOS 4.1.3_U1B (`sunos413u1b-ss5`, `sunos413u1b-ss20`, the 4.1.4 install unchanged), all with `cd_as_disk` where Solaris needs it, 6-11 min each through PVE; Solaris 2.1/2.2 and SunOS 4.1.3 (SS-10 era) and 4.1.2 on SS-600MP measured: they don't boot (`submodules/SPARC.md`, "Older Sun releases on sun4m") | in review | |
 
 ## In progress
 
@@ -186,12 +187,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   OpenBSD 5.9 (the last release with sparc32; its signed `SHA256` has no `install59.iso` for sparc,
   only the small bootable `cd59.iso` plus the sets, so the sets come from a second CD made on the
   node or over HTTP; 5.8's `install58.iso` is the fallback, which the QEMU wiki lists as working),
-  all on the lab host now; then, once the owner has the media, SunOS 4.1.3/4.1.3_U1B, Solaris 2.1-2.3 and 2.5. Each one booted and
-  installed by hand first; an install target only for what works.
+  all on the lab host now. Done (see "Done"): SunOS 4.1.3_U1B, Solaris 2.3 and 2.5 install;
+  Solaris 2.1/2.2, the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. What would open them:
+  OpenBIOS running the Solaris 2.1-2.4 boot program (`Unhandled Exception 0x00000009`; it would also
+  free 2.3/2.4 from the Sun PROMs) or QEMU running the SS-10 Sun PROM on its SS-10. Each one booted
+  and installed by hand first; an install target only for what works.
 - **Solaris releases not tried yet.** With media on the lab host: 2.4 and 2.5.1 on the SS-20 (only
   the SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot them), 2.6 and 7 on the SS-10
-  profile, 8 and 9 on the SS-5 (above). Needing media: 2.3 (Edition II is the first for the SS-5),
-  2.2 and 2.1 (SS-10; probably the SS-10 PROM rather than OpenBIOS), 2.5, the later updates of 8
+  profile, 8 and 9 on the SS-5 (above). (2.3, 2.5, 2.1 and 2.2 are done: "Done" and the item
+  above.) Needing media: the later updates of 8
   (2/02, 2/04) and 9 (9/05) on the SS-20 and on sun4u (whether a later update gets past sun4u's
   `pp is NULL or free`), and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).

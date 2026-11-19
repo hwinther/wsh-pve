@@ -162,9 +162,10 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 ### CD-ROM
 
 - Disk on SCSI target 3, CD-ROM on target 6 (the SPARCstation 5 convention).
-- **Solaris 2.4 and 2.5.1 need the CD to answer as a disk** (`scsi-hd`, read-only). From a CD-ROM
-  device their kernel starts and then panics with `vfs_mountroot: cannot mount root`: real Sun CD-ROM
-  drives used 512-byte blocks. Solaris 2.6 boots from the CD-ROM device as is. Add `cd_as_disk=1`
+- **Solaris 2.3 to 2.5.1 need the CD to answer as a disk** (`scsi-hd`, read-only). From a CD-ROM
+  device their kernel starts and then panics with `vfs_mountroot: cannot mount root` (2.3, 2.4,
+  2.5.1) or hangs (2.5): real Sun CD-ROM drives used 512-byte blocks. Solaris 2.6 boots from the
+  CD-ROM device as is. Add `cd_as_disk=1`
   to the CD-ROM drive to present it as a read-only disk (needs qemu-server with this option):
 
   ```sh
@@ -183,8 +184,19 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 - Boot the CD from a Sun PROM with `boot cdrom`. OpenBIOS boots a CD-ROM device directly (`-boot d`);
   a CD that answers as a disk needs the full path,
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@6,0:d`.
-- Solaris 2.4 doesn't boot under OpenBIOS at all ("Unhandled Exception 0x00000009"); use `ss5.bin`.
-- The Solaris 2.5.1 installer shows the year 2026 as `12` in its date screen.
+- Solaris 2.3 and 2.4 don't boot under OpenBIOS at all ("Unhandled Exception 0x00000009"); use
+  `ss5.bin` on the SS-5 or `ss20_v2.25_rom` on the SS-20 (2.3 Edition II is the first release for
+  both). 2.5 and 2.5.1 boot under OpenBIOS too.
+- The Solaris 2.5.1 installer shows the year 2026 as `12` in its date screen; 2.3 and 2.4 show it
+  as `1912` and refuse it: type the 4-digit year over it.
+- Solaris 2.3's installer asks one question per screen (Return answers, Ctrl-N/Ctrl-P move in a
+  menu) and offers Quick Install; it reboots by itself at the end. On the installed 2.3, `init 5`
+  reboots to the PROM's `ok` instead of powering off: stop the VM there.
+- SunOS 4.1.3_U1B installs like 4.1.4 (OpenBIOS, 64 MB while the CD's kernel runs) on the SS-5,
+  SS-10 and SS-20; its CD image needs no conversion. The original SunOS 4.1.3 and Solaris 2.1/2.2
+  don't boot on any machine and firmware QEMU and the package offer (their only supported machine
+  is the SS-10, whose Sun PROM doesn't run on QEMU); details in `submodules/SPARC.md`, "Older Sun
+  releases on sun4m".
 
 ### Text install on the serial console
 

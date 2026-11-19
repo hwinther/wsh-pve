@@ -1,5 +1,6 @@
 """Solaris 2.x initial install over the serial console, from boot CD to an installed disk that is
-powered off. Tested with 2.6 (5/98), 2.5.1 (11/97) and 2.4 (HW 3/95).
+powered off. Tested with 2.6 (5/98), 2.5.1 (11/97), 2.5 (HW 1/96), 2.4 (HW 3/95) and 2.3 Edition II
+(its older sysidtool screens and Quick Install: old_install(); it ends at the PROM's `ok`).
 
     lab.py run scenarios/solaris-install-serial.py --out /mnt/runs/s26 \
         --var ISO=/mnt/os/iso/solaris_2.6_598_sparc.iso \
@@ -27,6 +28,7 @@ from _sparc32 import DEFAULTS as BASE, power_off, prom_boot, qemu_args as sparc3
 
 DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15",
             "REGION_UP": "3", "ZONE_DOWN": "5",  # from United States up to Europe, then Middle Europe (MET)
+            "REGION": "Europe", "ZONE": "Middle Europe",  # the same by name (2.3's menus)
             "SOFTWARE_UP": "0",  # 0 = End User System Support, 3 = Entire Distribution
             "FINISH_TIMEOUT": "1800"}  # s from the postinstall phase to the root shell
 
@@ -107,6 +109,107 @@ def next_screen(m, old, timeout=600):
         time.sleep(1)
 
 
+# Solaris 2.3 (and older): sysidtool asks one question per screen, a sentence at the top, a box with a
+# field or a menu (">" marks the cursor; Ctrl-N / Ctrl-P move it) and "Press Return to continue.";
+# Return answers. Then the installer's own menu: Quick Install, the software configuration, the disk,
+# Begin Install. It reboots by itself at the end ("Installation successful...").
+OLD = r"Press Return to continue\.|\[ Solaris Installation \]"
+MENU_ITEM = r"│([> ])(\S.*?)\s*│"
+
+
+def old_select(m, screen, label):
+    """Move the menu's cursor to the item starting with `label` and take it."""
+    items = re.findall(MENU_ITEM, screen)
+    names = [name for _, name in items]
+    here = next((i for i, (mark, _) in enumerate(items) if mark == ">"), None)
+    there = next((i for i, name in enumerate(names) if name.startswith(label)), None)
+    if here is None or there is None:
+        raise RuntimeError(f"no {label!r} (or no cursor) in the menu {names}")
+    for _ in range(abs(there - here)):
+        m.key("ctrl-n" if there > here else "ctrl-p")
+    m.send("\r")
+
+
+def old_date(m, v, screen):
+    # Like 2.4, 2.3 shows a year after 1999 as 19xx (1912 in 2026). The cursor is in the Year field,
+    # its value highlighted: typing replaces it. Return moves to the next field; Return in the last
+    # one (Minute) takes the form.
+    year = re.search(r"Year\s+\(4 digits\)\s*:\s*(\d+)", screen)
+    if year and int(year[1]) < 1970:
+        m.send(v.get("YEAR") or time.strftime("%Y"))
+    for _ in range(len(re.findall(r"\((?:4 digits|\d+-\d+)\)\s*:", screen))):
+        m.send("\r")
+        time.sleep(1)
+
+
+# Question (regex on the screen) -> answer, in this order.
+OLD_SCREENS = [
+    (r"What is the hostname", lambda m, v, s: m.send(v["HOSTNAME"] + "\r")),
+    (r"connected to a network\?", lambda m, v, s: old_select(m, s, "Yes")),
+    (r"Internet Protocol \(IP\) address\?", lambda m, v, s: m.send(v["IP"] + "\r")),
+    (r"Is the following information correct\?", lambda m, v, s: old_select(m, s, "Yes")),
+    (r"client of a name service\?", lambda m, v, s: old_select(m, s, "None")),
+    (r"have sub-networks\?", lambda m, v, s: old_select(m, s, "No")),
+    (r"What is your geographic region\?", lambda m, v, s: old_select(m, s, v["REGION"])),
+    (r"What is your time zone\?", lambda m, v, s: old_select(m, s, v["ZONE"])),
+    (r"What is the current date and time\?", lambda m, v, s: old_date(m, v, s)),
+]
+
+
+def settled_change(m, old, timeout=600):
+    """The screen once it differs from `old` and has been quiet for 2 s."""
+    end = time.time() + timeout
+    while True:
+        m.quiet(2, timeout)
+        screen = m.screen_text()
+        if screen != old:
+            return screen
+        if time.time() > end:
+            raise RuntimeError(f"the installer didn't move on from:\n{old}")
+        time.sleep(1)
+
+
+def old_install(m, v, screen):
+    """sysidtool's questions, then Quick Install (End User, the boot disk, auto-layout)."""
+    if v["SOFTWARE_UP"] != "0":
+        raise ValueError("the Solaris 2.3 path installs End User System Support only (SOFTWARE_UP=0)")
+    while "[ Solaris Installation ]" not in screen:
+        for rx, action in OLD_SCREENS:
+            if re.search(rx, screen):
+                m.snap(rx.replace("\\", ""))
+                action(m, v, screen)
+                break
+        else:
+            raise RuntimeError(f"an unknown sysidtool screen:\n{screen}")
+        screen = settled_change(m, screen)
+    m.snap("Solaris Installation")
+    m.send("\r")  # ( Quick Install... ), the first button
+    screen = settled_change(m, screen)
+    if not re.search(r"\[\* End User System Support", screen):
+        raise RuntimeError(f"End User isn't the selected configuration:\n{screen}")
+    m.snap("Quick Install: Software Configurations")
+    m.send("\r")  # Return on the list applies it
+    screen = settled_change(m, screen)
+    if not re.search(r"\[\* c0t3d0", screen):
+        raise RuntimeError(f"c0t3d0 isn't selected:\n{screen}")
+    m.snap("Quick Install Disk Selection")
+    m.send("\r")
+    screen = settled_change(m, screen)
+    if "Quick Install Configuration" not in screen:
+        raise RuntimeError(f"no Quick Install Configuration:\n{screen}")
+    m.snap("Quick Install Configuration")
+    m.send("\r")  # ( Begin Install )
+    m.expect(r"Initial Installation of", 600, screen=True)
+    m.snap("installing")
+    m.expect(r"Installation successful\.\.\.", 7200)
+    m.snap("installation finished")
+    # it reboots by itself; the Sun PROM tries the network and stops at `ok`
+    m.expect(r"Resetting", 300)
+    m.expect(r"\nok ", 600)
+    m.snap("PROM prompt after the install")
+    m.stop()
+
+
 def run(m, v):
     prom_boot(m, v, "cdrom")
     m.expect(r"SunOS Release 5\.\d", 900)
@@ -119,6 +222,19 @@ def run(m, v):
             m.send("3\r")  # DEC VT100
             break
         m.send(["0\r", "\r"][i])
+
+    # 2.4 and later: screens with a title line; 2.3: sysidtool's older one-question screens
+    end = time.time() + 900
+    while True:
+        m.quiet(2, 900)
+        screen = m.screen_text()
+        if re.search(TITLE, screen, re.M):
+            break
+        if re.search(OLD, screen):
+            return old_install(m, v, screen)
+        if time.time() > end:
+            raise RuntimeError(f"no installer screen after the terminal type:\n{screen}")
+        time.sleep(1)
 
     screen = None
     while True:

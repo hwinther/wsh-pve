@@ -91,6 +91,8 @@ PACKAGES_ESP_FIX = {"pve-qemu-kvm": "11.1.3-2+wsh17, qemu-system-sparc a local b
                     "qemu-server": "9.2.18+wsh4", "pve-manager": "9.2.30+wsh3"}
 ESP_FIX_NOTE = ("needs pve-qemu-kvm with wsh/0038 (QEMU's ESP took the first CDB byte after a multi-byte message"
                 " out as a whole command: Linux 2.6.18 offlined the disk and CD), in no published package yet")
+# Solaris 2.3/2.5 and SunOS 4.1.3_U1B (the published packages of that day)
+PACKAGES_2026_11_19 = {"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+wsh1", "pve-manager": "9.2.31+wsh1"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -105,6 +107,14 @@ MEDIA = {
         "title": "Solaris 2.5.1 11/97 SPARC, Software CD", "content": "iso", "size": 452157440,
         "sha256": "18da51043271d0aa69d6fc098b84156673ef4f0728dace4a9e679f79d70d2422",
         "lab": "solaris_2.5.1_1197.iso"},
+    "Solaris2.3Edition-II.iso": {
+        "title": "Solaris 2.3 Edition II SPARC, Software CD", "content": "iso", "size": 426979328,
+        "sha256": "e1c85daa46da28704bf21cb0e5bb71471c78516da6550a8230ed89a1f61d1d8f",
+        "lab": "sun_solaris/Solaris/2.3/SPARC/Solaris2.3Edition-II.iso"},
+    "solaris2.5_sparc.iso": {
+        "title": "Solaris 2.5 HW 1/96 SPARC, Software CD", "content": "iso", "size": 378101760,
+        "sha256": "33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259",
+        "lab": "sun_solaris/Solaris/2.5/SPARC/solaris2.5_sparc.iso"},
     "Sol7.399InstallationSparc.iso": {
         "title": "Solaris 7 3/99 SPARC, Installation CD", "content": "iso", "size": 588800000,
         "sha256": "3fe59c14307b924d40033f0f3a362c4384b4738a5a365a2f319d96883610c35d",
@@ -139,6 +149,12 @@ MEDIA = {
         "title": "SunOS 4.1.4 install CD, 2048-byte sectors (from sunos_4.1.4_install.iso)", "content": "iso",
         "size": 329297920, "sha256": "7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8",
         "lab": "sunos414-cd.iso", "from": {"name": "sunos_4.1.4_install.iso", "convert": "bin2352"}},
+    # SunOS 4.1.3_U1B (Solaris 1.1.1B): a plain image with 2048-byte sectors (no conversion), from the
+    # lab host's .gz (gunzip -k)
+    "sunos_4.1.3U1B.iso": {
+        "title": "SunOS 4.1.3_U1B (Solaris 1.1.1B) install CD", "content": "iso", "size": 335851520,
+        "sha256": "37bbb203e0e4267bb0977aa9237e777bdda840b03cb5a6044cf777bfe8ebb202",
+        "lab": "sunos_202004/SunOS/SPARC/4.1.3U1B/sunos_4.1.3U1B.iso"},
     "NetBSD-11.1-sparc64.iso": {
         "title": "NetBSD 11.1 sparc64 install CD (cdn.netbsd.org)", "content": "iso", "size": 694026240,
         "sha256": "a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e",
@@ -371,6 +387,65 @@ TARGETS = {
         "net_modes": ["static"],  # no DHCP client before 2.6
         "minutes": 10,  # install 5, first boot 2.4, --check 1.4
         "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
+    },
+    # Solaris 2.3 Edition II (the first release for the SS-5): like 2.4, only under a Sun PROM
+    # ("Unhandled Exception 0x00000009" under OpenBIOS) and only from a CD that answers as a disk (from
+    # a scsi-cd its kernel can't mount root). sysidtool's older one-question screens and Quick Install
+    # (solaris-install-serial.py's 2.3 path); the installer reboots by itself at the end.
+    "sol23-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.3 Edition II End User on a SPARCstation 5 (ss5.bin)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Solaris2.3Edition-II.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol23-ss5",
+        "net_modes": ["static"],  # no DHCP client before 2.6
+        "minutes": 11,  # install 6.4, first boot 2.6, --check 1.6
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+    },
+    # The SS-20 needs 2.3 or later; the Sun SS-20 PROM (qemu-server adds -cpu TI-SuperSparc-50)
+    "sol23-ss20": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.3 Edition II End User on a SPARCstation 20 (ss20_v2.25_rom)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "bios": "ss20_v2.25_rom", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Solaris2.3Edition-II.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol23-ss20",
+        "net_modes": ["static"],
+        "minutes": 10,  # install 5.6, first boot 2.6, --check 1.6
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+    },
+    # Solaris 2.5 (HW 1/96): OpenBIOS boots it, but like 2.5.1 its installer needs a CD that answers
+    # as a disk (from a scsi-cd it hangs after the kernel banner). 2.6's screens; no Maintenance Update.
+    "sol25-ss5": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.5 HW 1/96 End User on a SPARCstation 5 (OpenBIOS)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris2.5_sparc.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol25-ss5",
+        "net_modes": ["static"],  # no DHCP client before 2.6
+        "minutes": 9,  # install 4.3, first boot 2.7, --check 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+    },
+    "sol25-ss20": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.5 HW 1/96 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris2.5_sparc.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol25-ss20",
+        "net_modes": ["static"],
+        "minutes": 9,  # install 4.4, first boot 2.7, --check 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
     },
     # Solaris 7 asks 2.6's questions plus Subnets (default yes) and Select 64 Bit (default no):
     # solaris-install-serial.py unchanged
@@ -655,6 +730,29 @@ TARGETS = {
                    "with": "--check --gateway --dns; --check --user lab --apt-proxy"},
         "matrix_skip": ESP_FIX_NOTE,
     },
+}
+
+# SunOS 4.1.3_U1B (Solaris 1.1.1B): the first SunOS 4 for the SS-5 and SS-20 (Sun lists the kernel patch
+# 101508 for the SS-5's microSPARC-II; the CD's kernel and the installed one run without it). The 4.1.4
+# install unchanged: the same miniroot on slice d, suninstall and sys-config screens.
+_SUNOS4 = {k: v for k, v in TARGETS["sunos414-ss5"].items() if k not in ("title", "tested", "minutes")}
+_SUNOS4["net_refuse"] = {k: v.replace("4.1.4", "4.1.3_U1B") for k, v in _SUNOS4["net_refuse"].items()}
+TARGETS["sunos413u1b-ss5"] = {
+    **_SUNOS4,
+    "title": "SunOS 4.1.3_U1B Programmer install on a SPARCstation 5 (OpenBIOS)",
+    "media": [{"name": "sunos_4.1.3U1B.iso", "drive": "scsi6"}],
+    "hostname": "sunos413",
+    "minutes": 6,  # install 2.5, first boot 2.6, --check 0.9
+    "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+}
+TARGETS["sunos413u1b-ss20"] = {
+    **_SUNOS4,
+    "title": "SunOS 4.1.3_U1B Programmer install on a SPARCstation 20 (OpenBIOS, one CPU)",
+    "profile": {**SPARC32, "machine": "SS-20", "memory": 512, "ostype": "other"},
+    "media": [{"name": "sunos_4.1.3U1B.iso", "drive": "scsi6"}],
+    "hostname": "sunos413",
+    "minutes": 6,  # install 2.5, first boot 2.6, --check 1
+    "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
 }
 
 

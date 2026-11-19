@@ -67,7 +67,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 
 | Scenario | What it does | Time (11.1, one core) |
 | -------- | ------------ | --------------------- |
-| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update; 2.4 (the same, through PVE): ~5 min |
+| `solaris-install-serial.py` | Solaris 2.x initial install (End User) on ttya, ends powered off (2.3: at the PROM's `ok`, QEMU stopped) | 2.6: ~9 min; 2.5.1 (`CDROM_AS=hd BIOS=ss5.bin`): ~60 min, mostly its Maintenance Update; 2.4 (the same, through PVE): ~5 min; 2.5 (`CDROM_AS=hd`): ~5 min; 2.3 (`CDROM_AS=hd BIOS=ss5.bin`, Quick Install): ~6 min |
 | `solaris-boot-disk.py` | boots an installed disk (OpenBIOS or `BIOS=ss5.bin`), answers first-boot questions, logs in, records `uname`/`df`/`ifconfig`, shuts down | ~2-3 min |
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
@@ -735,6 +735,89 @@ qemu-server that lacks `cd_as_disk` both cases fail at VM creation (`cd_as_disk:
 defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the network options other
 than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
 (one passing run each so far).
+
+### Older Sun releases: Solaris 2.1-2.5, SunOS 4.1.2-4.1.3_U1B
+
+The sun4m floor by machine (Sun's documents): the SS-10 from SunOS 4.1.3 and Solaris 2.1, the SS-20
+from 4.1.3_U1B and 2.3, the SS-5 from 4.1.3_U1B (with the kernel patch 101508) and 2.3 Edition II.
+Each release was first booted and installed in the lab's own QEMU (pve-qemu-kvm 11.1.3-2+wsh21),
+then the ones that installed got targets:
+
+- **`sol23-ss5`, `sol23-ss20`** (Solaris 2.3 Edition II): only under a Sun PROM (`ss5.bin`, or
+  `ss20_v2.25_rom` with qemu-server's `-cpu TI-SuperSparc-50`) and only from a CD that answers as a
+  disk, as 2.4. 2.3's sysidtool asks one question per screen (a sentence, a box with a field or a
+  menu whose cursor is `>`, "Press Return to continue."), with no title line, so
+  `solaris-install-serial.py` has a second path for it (`OLD_SCREENS`, `old_select()` by menu
+  label, `old_date()`): host name, networked yes, the address, name service none, no subnets,
+  Europe / Middle Europe, the date (the 19xx year typed over as for 2.4; Return walks the five
+  fields and takes the form after the last), then the installer's own menus: Quick Install, End
+  User (already marked), `c0t3d0` (already marked), Begin Install. It ends with "Installation
+  successful..." and reboots by itself; the PROM then fails its network boot and stops at `ok`,
+  where the scenario stops the VM. First boot: the root password on its own screen ("What is your
+  root password?", "Please re-enter your root password."), handled by `_sparc32.login()`, which
+  also answers a forced "Choose a new password." at the first login with the same password (seen
+  once by hand, not in the scripted runs). `init 5` reboots on 2.3 instead of powering off:
+  `power_off()` takes "rebooting..." like "Program terminated" and waits for `ok`.
+- **`sol25-ss5`, `sol25-ss20`** (Solaris 2.5 HW 1/96): OpenBIOS on both machines, the CD as a disk
+  (from a `scsi-cd` the kernel hangs after its banner, as 2.5.1's did); the screens are 2.6's, and
+  there is no Maintenance Update.
+- **`sunos413u1b-ss5`, `sunos413u1b-ss20`** (SunOS 4.1.3_U1B): the `sunos414-ss5` target with
+  another CD and, for the SS-20, its profile: the same three scenarios unchanged, 64 MB during the
+  install, OpenBIOS. The CD is a plain image with 2048-byte sectors (no `--convert`). Without patch
+  101508 the CD's and the installed kernel run on the SS-5 (`SunOS Release 4.1.3_U1 (MUNIX) #2`).
+  The SS-10 also installs it in the lab (152 s), not made a target.
+
+Results in the lab's own QEMU (serial console, Sun-labelled 3G disk, `solaris-boot-cd.py` for "CD
+boots", the install scenarios for "installs", their first boot and check for "boots"):
+
+| System | Machine, firmware | CD boots | Installs | Disk boots | Stop point / note |
+| --- | --- | --- | --- | --- | --- |
+| Solaris 2.3 Ed. II | SS-5, OpenBIOS (CD or as a disk) | no | | | `Unhandled Exception 0x00000009`, PC `0xffd076c8`, right after the boot block (`(is ?`) |
+| Solaris 2.3 Ed. II | SS-5, `ss5.bin`, CD as a disk | yes (48 s) | yes (6.0 min) | yes | `SunOS sol23-ss5 5.3 Generic_101498-02 sun4m` |
+| Solaris 2.3 Ed. II | SS-5, `ss5.bin`, `scsi-cd` | kernel only | | | `panic: vfs_mountroot: cannot mount root` |
+| Solaris 2.3 Ed. II | SS-20, `ss20_v2.25_rom` -50, 512 MB, CD as a disk | yes (47 s) | yes (5.3 min) | yes | `SunOS sol23-ss20 5.3 Generic sun4m` |
+| Solaris 2.5 HW 1/96 | SS-5, OpenBIOS, `scsi-cd` | kernel only | | | hangs after the banner (the spinner turns) |
+| Solaris 2.5 HW 1/96 | SS-5, OpenBIOS, CD as a disk | yes (50 s) | yes (4.6 min) | yes | `SunOS sol25-ss5 5.5 Generic sun4m sparc SUNW,SPARCstation-5` |
+| Solaris 2.5 HW 1/96 | SS-5, `ss5.bin`, CD as a disk | yes (55 s) | not tried | | |
+| Solaris 2.5 HW 1/96 | SS-20, OpenBIOS, 512 MB, CD as a disk | yes | yes (4.7 min) | yes | `SunOS sol25-ss20 5.5 Generic sun4m sparc SUNW,SPARCstation-20` |
+| SunOS 4.1.3_U1B | SS-5, OpenBIOS, 64 MB | yes | yes (139 s) | yes (256 MB) | `SunOS sunos413 4.1.3_U1 2 sun4m` |
+| SunOS 4.1.3_U1B | SS-20, OpenBIOS, 64 MB | yes | yes (153 s) | yes (512 MB) | |
+| SunOS 4.1.3_U1B | SS-10, OpenBIOS, 64 MB | yes | yes (132 s) | not tried | |
+| Solaris 2.1 | SS-10, OpenBIOS | no | | | `Unhandled Exception 0x00000009` as 2.3 |
+| Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in a recursive walk early in the kernel, most likely over the device tree (`SunOS Release 5.1`) |
+| Solaris 2.2 | SS-10, OpenBIOS, CD as a disk | no | | | `Unhandled Exception 0x00000009` |
+| Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` |
+| SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root |
+| SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
+| SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
+| SunOS 4.1.2 | SS-600MP, OpenBIOS | no | | | the kernel loads (`Boot: vmunix`), then `Unhandled Exception 0x00000029` before its banner |
+
+The SS-10 Sun PROM doesn't run on QEMU's SS-10 ("SS-10 and SS-20" in `submodules/SPARC.md`), so
+2.1, 2.2 and 4.1.3 had OpenBIOS on the SS-10 or the SS-20 PROM on the SS-20 (they predate the
+SS-20). Not tried: 2.3 under OpenBIOS with a framebuffer console, 2.5 SS-5 installs under `ss5.bin`,
+2.6-era tricks for 2.1/2.2 (other `-cpu` models on the SS-20 PROM), 4.1.2 on the SS-10.
+
+Through PVE (the PVE test container on the lab host, pve-qemu-kvm 11.1.3-2+wsh21, qemu-server
+9.2.19+wsh1, pve-manager 9.2.31+wsh1; up to three guests at a time, another agent's runs on the host
+too), each `lab.py install <target> --check`, 2026-11-19:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol23-ss5` | passed; `SunOS sol23-ss5 5.3 Generic_101498-02 sun4m sparc`; the marker; `le0 10.0.2.15 netmask ffffff00`; the finished VM `bios: ss5.bin`, `scsi6: none,media=cdrom` | 10.8 min (install 381 s, first boot 156 s, check 96 s) |
+| `install sol23-ss20` | passed; `SunOS sol23-ss20 5.3 Generic sun4m sparc`; `bios: ss20_v2.25_rom`, 512 MB | 10.1 min (336 s, 157 s, 97 s) |
+| `install sol25-ss5` | passed; `SunOS sol25-ss5 5.5 Generic sun4m sparc SUNW,SPARCstation-5` | 8.6 min (260 s, 160 s, 80 s) |
+| `install sol25-ss20` | passed; `SunOS sol25-ss20 5.5 Generic sun4m sparc SUNW,SPARCstation-20` | 8.6 min (262 s, 164 s, 78 s) |
+| `install sunos413u1b-ss5` | passed; `SunOS sunos413 4.1.3_U1 2 sun4m`; `/dev/sd0a` 91744 KB, `/dev/sd0g` 976987 KB | 6.3 min (152 s, 153 s, 54 s) |
+| `install sunos413u1b-ss20` | passed | 6.4 min (149 s, 155 s, 57 s) |
+| `install sol24-ss5` (regression of `_sparc32.login()`/`power_off()` under `ss5.bin`) | passed | 8.3 min (263 s, 139 s, 80 s) |
+| `install sol26-ss5` (regression, OpenBIOS) | passed | 12.9 min (438 s, 216 s, 106 s) |
+| unit tests (`test_targets.py`, `test_dos.py`, `test_vgatext.py`) | 107 passed | |
+
+`pve_matrix.py install` runs every automated target, so the `install` choice of the `sparc lab`
+workflow now also needs the 2.3, 2.5 and 4.1.3_U1B CDs (`--iso` with the lab host's layout:
+`sun_solaris/Solaris/2.3/SPARC/`, `sun_solaris/Solaris/2.5/SPARC/`,
+`sunos_202004/SunOS/SPARC/4.1.3U1B/`) and takes about 50 min longer. Not tried: `--user`,
+`--gateway`, `--data-disk`, the 9G disk and a second run of each (one passing run each so far).
 
 ### NetBSD install targets
 
