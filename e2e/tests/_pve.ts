@@ -77,6 +77,26 @@ export async function pveExec(cmd: string[]): Promise<{ code: number; output: st
   return { code: ExitCode, output }
 }
 
+/**
+ * The last lines of the log of a compose service's container (by the compose service label), for a
+ * test to attach when a helper service misbehaves. '' when there is no such container.
+ */
+export async function serviceLogs(service: string, tail = 200): Promise<string> {
+  const filters = encodeURIComponent(JSON.stringify({ label: [`com.docker.compose.service=${service}`] }))
+  const [found] = (await docker('GET', `/containers/json?filters=${filters}`)) as { Id: string }[]
+  if (!found) return ''
+  const path = `/containers/${found.Id}/logs?stdout=1&stderr=1&tail=${tail}`
+  const raw = (await docker('GET', path, undefined, 'buffer')) as Buffer
+  // without a TTY the log is frames: an 8-byte header (stream, 0, 0, 0, size as uint32 BE), then the text
+  const lines: string[] = []
+  for (let at = 0; at + 8 <= raw.length;) {
+    const size = raw.readUInt32BE(at + 4)
+    lines.push(raw.subarray(at + 8, at + 8 + size).toString('utf8'))
+    at += 8 + size
+  }
+  return lines.join('')
+}
+
 /** The VM's config file as pmxcfs stores it. */
 export async function vmConfFile(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['cat', `/etc/pve/qemu-server/${vmid}.conf`])
@@ -156,7 +176,7 @@ exit $rc
   return pveExec(['sh', '-c', script])
 }
 
-function docker(method: string, path: string, body?: unknown, raw = false): Promise<unknown> {
+function docker(method: string, path: string, body?: unknown, raw: boolean | 'buffer' = false): Promise<unknown> {
   const host = process.env.DOCKER_HOST
   const target = host?.startsWith('tcp://')
     ? (() => {
@@ -172,9 +192,12 @@ function docker(method: string, path: string, body?: unknown, raw = false): Prom
         const chunks: Buffer[] = []
         res.on('data', (c: Buffer) => chunks.push(c))
         res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8')
+          const data = Buffer.concat(chunks)
+          const text = data.toString('utf8')
           if ((res.statusCode ?? 500) >= 400) {
             reject(new Error(`docker ${method} ${path}: ${res.statusCode} ${text}`))
+          } else if (raw === 'buffer') {
+            resolve(data)
           } else {
             resolve(raw || !text ? text : JSON.parse(text))
           }

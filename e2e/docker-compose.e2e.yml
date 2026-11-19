@@ -19,3 +19,18 @@ services:
       timeout: 5s
       start_period: 60s
       retries: 24
+
+  # An NFSv4 server in user space (NFS-Ganesha, nfs/Dockerfile) that the PVE node mounts as an NFS
+  # storage: the mirror storage's case 2 (tests/mirror.spec.ts). Built here; the PVE node reaches it
+  # as `nfs`.
+  nfs:
+    build: nfs
+    image: wsh-pve-e2e-nfs:local
+    pull_policy: build
+    # Ganesha's VFS backend opens files by handle (CAP_DAC_READ_SEARCH and more)
+    privileged: true
+    volumes:
+      - nfs-export:/export
+
+volumes:
+  nfs-export:

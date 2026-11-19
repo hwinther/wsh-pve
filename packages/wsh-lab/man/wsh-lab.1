@@ -58,6 +58,27 @@ wsh-lab \- install and drive sparc guests in Proxmox VE VMs, unattended
 .IR STORAGE ]
 .RB [ \-\-json ]
 .br
+.B wsh-lab mirror init
+.B \-\-storage
+.I STORAGE
+.RB [ \-\-watch
+.IR DIR " ...]"
+.br
+.B wsh-lab mirror
+.RB { plan | apply | import | tidy }
+.B \-\-storage
+.I STORAGE
+.RB [ \-\-config
+.IR PATH ]
+.RB [ \-\-dry\-run ]
+.br
+.B wsh-lab mirror timer
+.B \-\-storage
+.I STORAGE
+.RB [ \-\-interval
+.IR 10min ]
+.RB [ \-\-remove ]
+.br
 .B wsh-lab
 .RB { serve | ctl | cast }
 .RI ...
@@ -132,8 +153,10 @@ name, or else by its size and sha256 among the storage's volumes (a renamed uplo
 .PP
 .B wsh-lab mirror
 manages a mirror storage: a
-.B dir
-storage whose
+.BR dir ", " btrfs ", " nfs ", " cephfs " or " cifs
+(with the
+.B mfsymlinks
+mount option) storage whose
 .I template/iso
 and
 .I template/floppy
@@ -173,11 +196,75 @@ or a folder name that ends in
 is refused, because the link name wouldn't split back into the same folders. The tool only creates,
 replaces
 .RB ( \-\-force )
-and removes symlinks, never a regular file, with absolute targets, and refuses a storage that isn't
-of type
-.BR dir .
-The NAS must be mounted at the same path on every node that runs the VMs; a dangling link hides
-the volume, and a VM that uses it doesn't start.
+and removes symlinks, never a regular file;
+.B link
+and
+.B sync
+write absolute targets unless
+.B \-\-links relative\fR|\fBauto
+says otherwise. A network storage must be mounted. With absolute targets the NAS must be mounted at
+the same path on every node that runs the VMs; a dangling link hides the volume, and a VM that uses
+it doesn't start.
+.PP
+A description file,
+.I wsh\-mirror.yaml
+at the storage's root (or
+.BR \-\-config ,
+e.g. in
+.I /etc/pve/nodes/<node>/
+for a per-node mirror), is the source of truth for the links:
+.I watch
+directories, rules (a source directory or glob, a folder
+.IR prefix ", " exclude
+patterns), single entries (a
+.I name
+and a
+.IR source ", " origin
+.BR manual " or " import ),
+.IR auto_import ,
+the incomplete-file
+.I patterns
+.RB ( *.part ", " *.!qB ", " *.incomplete ", ...)"
+and
+.I min_age
+(5 minutes). Relative paths in it are relative to the storage's path.
+.B init
+writes a commented one.
+.B plan
+shows what
+.B apply
+would change and the files no rule or entry covers, entries whose file is gone or moved (same size
+and sha256 elsewhere), name clashes and files still being written.
+.B apply
+makes the links match the file: idempotent, under a lock
+.RI ( .wsh\-mirror.lock ;
+exit code 75 while another run holds it), never touching a regular file or a link it didn't make
+(its links are listed in
+.IR .wsh\-mirror\-state.json ).
+A link is relative when its file is on the same file system as the link directory (an NFS export
+that holds both), so every mount path of the export finds the file, and absolute otherwise.
+Links of rules and imported entries whose file is gone are removed, a manual entry's link is kept
+and flagged, and nothing is removed while a source's share is unreachable.
+.B import
+adds entries
+.RB ( "origin: import" )
+for the files nothing covers, without changing the existing ones.
+.B tidy
+drops imported entries whose file is gone and writes a moved file's new path into its entry
+.RB ( \-\-include\-manual :
+manual entries too). Comments in the file are kept. To rename a volume, edit its entry's name and run
+.BR apply .
+.B timer
+installs (or with
+.B \-\-remove
+removes) the systemd timer
+.I wsh\-lab\-mirror\-<storage>.timer
+that runs
+.B apply
+every
+.BR \-\-interval ;
+.B sync
+refuses a storage that has a description file.
 .PP
 No install media are included or downloaded: Sun and Oracle software is never part of the project.
 .SH FILES

@@ -5,7 +5,8 @@
 #     debian:trixie sh /test.sh /deb/wsh-lab_<version>_all.deb
 #
 # apt installs it with its dependencies; wsh-lab --version/--help, targets, media --dir, the refusal
-# off a PVE node and mirror sync/list/prune (on a storage.cfg of its own) work; the catalogue's and the
+# off a PVE node, mirror sync/list/prune and a description file's init/import/apply/plan and timer units
+# (on a storage.cfg of its own) work; the catalogue's and the
 # mirror tool's unit tests pass against the installed copy; wsh-lab-mcp explains its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
 # --check from the venv. Then `apt purge` must leave nothing of the package behind: no file of it, no
 # venv, no __pycache__, no /var/lib/wsh-lab. Exit 0 when everything passed.
@@ -84,8 +85,25 @@ cat /tmp/mirror.out
 [ "$rc" = 1 ] && grep -q '^dangling mirror:floppy/DOS__disk1.img' /tmp/mirror.out || fail "a dangling link isn't reported (rc $rc)"
 wsh-lab mirror sync /tmp/nas --storage mirror --prune
 [ ! -L /tmp/mirror/template/floppy/DOS__disk1.img ] || fail "--prune left the dangling link"
+rm -r /tmp/mirror
+
+step "wsh-lab mirror: a description file (init, import, apply) and the timer's unit files"
+mkdir -p /tmp/mirror/archive && mv /tmp/nas/Solaris /tmp/mirror/archive/
+touch -d '1 hour ago' /tmp/mirror/archive/Solaris/2.6/solaris_2.6_598_sparc.iso
+wsh-lab mirror init --storage mirror --watch /tmp/mirror/archive
+grep -q '^  - archive$' /tmp/mirror/wsh-mirror.yaml || fail "mirror init didn't write the watch directory"
+wsh-lab mirror import --storage mirror | tee /tmp/mirror.out
+grep -q 'origin: import' /tmp/mirror/wsh-mirror.yaml || fail "mirror import added no entry"
+wsh-lab mirror apply --storage mirror | tee /tmp/mirror.out
+[ "$(readlink /tmp/mirror/template/iso/Solaris__2.6__solaris_2.6_598_sparc.iso)" = ../../archive/Solaris/2.6/solaris_2.6_598_sparc.iso ] \
+	|| fail "mirror apply didn't make the relative link"
+wsh-lab mirror plan --storage mirror | grep -q '0 to link, 0 to relink, 0 to unlink, 1 in place' || fail "apply isn't idempotent"
+mkdir -p /tmp/units
+WSH_LAB_SYSTEMD_DIR=/tmp/units wsh-lab mirror timer --storage mirror --interval 15min 2>&1 | tee /tmp/mirror.out || true
+grep -q '^ExecStart=/usr/bin/wsh-lab mirror apply --storage mirror --quiet$' /tmp/units/wsh-lab-mirror-mirror.service \
+	|| fail "mirror timer didn't write the service"
 unset WSH_LAB_STORAGE_CFG
-rm -r /tmp/nas /tmp/mirror /tmp/storage.cfg /tmp/mirror.out
+rm -r /tmp/nas /tmp/mirror /tmp/units /tmp/storage.cfg /tmp/mirror.out
 
 step "the catalogue's and the mirror tool's unit tests against the installed copy"
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_targets.py')
