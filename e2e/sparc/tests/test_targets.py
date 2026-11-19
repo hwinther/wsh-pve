@@ -1043,6 +1043,114 @@ class InstallerConsole:
         pass
 
 
+class SysinstConsole(InstallerConsole):
+    """What _netbsd.sysinst() uses of a Machine: `script` holds sysinst's screens, the first at the start
+    and the next after each Return (a letter only moves the cursor). screen=True looks at the screen
+    shown now, the serial text from where the last match ended otherwise."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self.shown = self.text
+
+    def expect(self, pattern, timeout=300, screen=False):
+        if not screen:
+            return super().expect(pattern, timeout)
+        m = re.compile(pattern, re.M).search(self.shown)
+        if not m:
+            raise lab.Timeout(f"no {pattern!r} on the screen {self.shown!r}")
+        return m
+
+    def expect_any(self, patterns, timeout=300, screen=False):
+        m = self.expect("|".join(f"(?P<p{i}>{p})" for i, p in enumerate(patterns)), timeout, screen)
+        return next(i for i in range(len(patterns)) if m.group(f"p{i}") is not None)
+
+    def send(self, text):
+        self.sent.append(text)
+        if text.endswith("\r"):
+            self.shown = self.script.pop(0) if self.script else ""
+            self.text += "\n" + self.shown
+
+
+class NetBSDSysinst(unittest.TestCase):
+    """The NetBSD targets (11.1 and 9.3) and sysinst's answers (_netbsd.sysinst), with the screens
+    where the releases differ."""
+    # sysinst's screens up to the sets, the same in 11.1 and 9.3 (shortened)
+    BEFORE_SETS = ["a: Installation messages in English", "a: Install NetBSD to hard disk",
+                   "Shall we continue?\n a: No\n b: Yes", "Available disks\n a: wd0", "b: Use default partition sizes",
+                   "x: Partition sizes ok", "Are you sure? ... ready to install NetBSD", "Select your distribution",
+                   "Install from\n a: CD-ROM / DVD", "Hit enter to continue"]
+    END = ["The installation of NetBSD-{r} is now complete.\n Hit enter to continue",
+           "x: Exit Install System", "# "]
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _netbsd
+        cls.nb = _netbsd
+
+    def setUp(self):
+        self.sleep, self.nb.time.sleep = self.nb.time.sleep, lambda s: None
+
+    def tearDown(self):
+        self.nb.time.sleep = self.sleep
+
+    def test_targets(self):
+        for name, release, iso, disk in [
+                ("netbsd111-sparc64", "11.1", "NetBSD-11.1-sparc64.iso", "wd0"),
+                ("netbsd111-sparc", "11.1", "NetBSD-11.1-sparc.iso", "sd0"),
+                ("netbsd111-sparc-ss20", "11.1", "NetBSD-11.1-sparc.iso", "sd0"),
+                ("netbsd93-sparc64", "9.3", "NetBSD-9.3-sparc64.iso", "wd0"),
+                ("netbsd93-sparc", "9.3", "NetBSD-9.3-sparc.iso", "sd0"),
+                ("netbsd93-sparc-ss20", "9.3", "NetBSD-9.3-sparc.iso", "sd0")]:
+            t = targets.TARGETS[name]
+            self.assertIn(f"NetBSD {release} ", t["title"], name)
+            self.assertEqual(t["media"][0]["name"], iso, name)
+            self.assertIn(f"disklabel {disk} ", t["check"]["commands"], name)
+            self.assertEqual(t["firstboot"]["scenario"], "netbsd-firstboot.py", name)
+            med = targets.MEDIA[iso]
+            self.assertEqual(med["lab"], f"other-os/{iso}", name)
+            self.assertTrue(med["url"].endswith(f"/NetBSD-{release}/images/{iso}"), name)
+        # the same profiles, installs and checks per machine in both releases
+        for old, new in [("netbsd93-sparc64", "netbsd111-sparc64"), ("netbsd93-sparc", "netbsd111-sparc"),
+                         ("netbsd93-sparc-ss20", "netbsd111-sparc-ss20")]:
+            a, b = targets.TARGETS[old], targets.TARGETS[new]
+            for key in ("profile", "disk", "install", "check", "boot", "nic"):
+                self.assertEqual(a[key], b[key], f"{old} {key}")
+
+    def run_sysinst(self, script, sets="b"):
+        m = SysinstConsole(script)
+        at_shell = self.nb.sysinst(m, {"SETS": sets})
+        return m, at_shell
+
+    def test_sysinst_111(self):
+        # 11.1: root's password and the entropy question after the sets, then the configuration menu
+        m, at_shell = self.run_sysinst(self.BEFORE_SETS + [
+            "New password:", "x: Not now, continue", "x: Finished configuring",
+            *(s.format(r="11.1") for s in self.END)])
+        self.assertTrue(at_shell)
+        self.assertEqual(m.sent, ["a", "\r", "a", "\r", "b", "\r", "a", "\r", "b", "\r", "x", "\r", "b", "\r",
+                                  "b", "\r", "a", "\r", "\r", "\r", "x", "\r", "x", "\r", "\r", "x", "\r"])
+
+    def test_sysinst_93(self):
+        # 9.3: no password prompt and no entropy question; root's password is an item of the
+        # configuration menu, left empty (netbsd-firstboot.py sets it)
+        m, at_shell = self.run_sysinst(self.BEFORE_SETS + [
+            "The extraction of the selected sets for NetBSD-9.3 is complete.\n Hit enter to continue",
+            " d: Change root password   ***EMPTY***\n> x: Finished configuring",
+            *(s.format(r="9.3") for s in self.END)], sets="c")
+        self.assertTrue(at_shell)
+        self.assertEqual(m.sent, ["a", "\r", "a", "\r", "b", "\r", "a", "\r", "b", "\r", "x", "\r", "b", "\r",
+                                  "c", "\r", "a", "\r", "\r", "\r", "x", "\r", "\r", "x", "\r"])
+        self.assertNotIn("Not now", m.text[:m.text.index("Finished configuring")])
+
+    def test_sysinst_sparc_microroot_halts(self):
+        # the sparc CD's microroot halts by itself after "Exit Install System"
+        m, at_shell = self.run_sysinst(self.BEFORE_SETS + [
+            "x: Finished configuring", "The installation of NetBSD-9.3 is now complete.",
+            "x: Exit Install System", "Back in microroot; halting machine"], sets="c")
+        self.assertFalse(at_shell)
+
+
 class OpenBSD80(unittest.TestCase):
     """openbsd80-sun4u: the target, the installer's questions answered by what they ask (_openbsd.py),
     the check's console line."""

@@ -25,7 +25,7 @@ WSH Proxmox Virtualization Environment patches: old and non-x86 guests as ordina
 | ☀️ Solaris 8, 9 | | ✅ ³ | ✅ ⁴ | ✅ ³ 🔧 | |
 | ☀️ Solaris 10 | | | | ✅ 🔧 | |
 | 🔥 illumos (Tribblix m34) | | | | ✅ 🔧 | |
-| 🚩 NetBSD 11.1 | | ✅ | ✅ | ✅ | |
+| 🚩 NetBSD 9.3, 11.1 | | ✅ | ✅ | ✅ | |
 | 🐡 OpenBSD 5.9, 8.0 | | ✅ ⁹ | ✅ ⁹ | ✅ ⁷ 🔧 | |
 | ⬛ NeXTSTEP 3.3, OPENSTEP 4.2 | | ◐ ⁸ | | | |
 | 🎩 Red Hat Linux 6.2 | | ✅ | ✅ | | |

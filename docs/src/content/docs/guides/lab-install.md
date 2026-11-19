@@ -53,6 +53,9 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
 | `netbsd111-sparc` | NetBSD 11.1, Minimal | SS-5, OpenBIOS, 256 MB, serial console, 3 GiB blank disk on `scsi3`, lance | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
+| `netbsd93-sparc64` | NetBSD 9.3, without X11 | as `netbsd111-sparc64` | `NetBSD-9.3-sparc64.iso` | `root` / `wshlab` | ~18 min |
+| `netbsd93-sparc` | NetBSD 9.3, Minimal | as `netbsd111-sparc` (SS-5) | `NetBSD-9.3-sparc.iso` | `root` / `wshlab` | ~7 min |
+| `netbsd93-sparc-ss20` | NetBSD 9.3, Minimal | as `netbsd111-sparc-ss20` (SS-20, one CPU) | `NetBSD-9.3-sparc.iso` | `root` / `wshlab` | ~6 min |
 | `redhat62-ss5` | Red Hat Linux 6.2, Base, installed by kickstart | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~6 min |
 | `redhat62-ss20` | Red Hat Linux 6.2, Base, installed by kickstart | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `redhat62-ss5` | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~5 min |
 | `debian40-ss5` | Debian GNU/Linux 4.0 (etch), the base system, installed by preseed from the netinst CD and `archive.debian.org`; needs `pve-qemu-kvm` 11.1.3-2+wsh20 or later (the ESP fix `wsh/0038`) | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only; `--gateway` and `--dns` required | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~22-26 min |
@@ -158,6 +161,11 @@ and NetBSD/sparc64 keeps a host core at 100% for as long as it
 runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
+
+The NetBSD 9.3 targets (`netbsd93-*`) have the 11.1 targets' profiles and answers. Where 9.3's
+sysinst differs: after the sets it asks neither for root's password nor about entropy, and goes
+straight to its configuration menu, where root's password is an item that stays empty until the
+first boot sets it.
 
 **Red Hat Linux 6.2** (`redhat62-ss5`, `redhat62-ss20`) installs unattended with kickstart, the
 installer's own answer file: the tool writes a small CD with `ks.cfg` (made from your network
@@ -307,6 +315,8 @@ software is never part of this project.
 | `sunos414-cd.iso` (made from the BIN below) | 329297920 | `7b9b092a63bf5dde9f09eea25614c6da58e5c065758a8c24b96be1574bcaa0c8` |
 | `NetBSD-11.1-sparc64.iso` | 694026240 | `a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e` |
 | `NetBSD-11.1-sparc.iso` | 367329280 | `4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636` |
+| `NetBSD-9.3-sparc64.iso` | 366673920 | `0db1b0bcde6c718d3f97fcade7d7dc31c030ab696d989ca45b431b8ac4d78a29` |
+| `NetBSD-9.3-sparc.iso` | 270991360 | `cc60918c249c7382b418c7a7da8040298ccef201d65087de12f0ed49629fa91e` |
 | `redhat-6.2-sparc.iso` | 623771648 | `74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987` |
 | `debian-40r9-sparc-netinst.iso` | 146124800 | `91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd` |
 | `install80.iso` (OpenBSD 8.0 sparc64) | 467599360 | `b8a80e5a10424ef32863d28dac7ae343666adfcfe0bbdfb4fc0230c130a560cb` |
@@ -315,7 +325,8 @@ software is never part of this project.
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
-SHA512 checksums). The Debian 4.0 netinst CD is freely redistributable too:
+SHA512 checksums); 9.3's are on the archive server,
+`https://archive.netbsd.org/pub/NetBSD-archive/NetBSD-9.3/images/`. The Debian 4.0 netinst CD is freely redistributable too:
 `https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso`.
 So is OpenBSD's: `https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso` (its sha256 is in
 the release's `SHA256` file there); 5.9 is on the official EU mirror, which keeps the old releases:
