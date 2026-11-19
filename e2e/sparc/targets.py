@@ -88,6 +88,9 @@ PACKAGES_2026_11_18_SUN4U = {"pve-qemu-kvm": "11.1.3-2+wsh16 + wsh/0034-0037 + o
 # Solaris 2.3/2.5, SunOS 4.1.3_U1B and Debian 4.0 (the published packages of that day; Debian 4.0's
 # Linux 2.6.18 esp driver needs the ESP fix wsh/0038, in pve-qemu-kvm 11.1.3-2+wsh20 and later)
 PACKAGES_2026_11_19 ={"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+wsh1", "pve-manager": "9.2.31+wsh1"}
+# Solaris 2.2-2.4 under OpenBIOS (openbios 0019-0022) and OpenBSD 8.0 on sun4u (openbios 0023): in
+# pve-qemu-kvm 11.1.3-2+wsh22 and later
+PACKAGES_2026_11_19_WSH22 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh22"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -106,6 +109,10 @@ MEDIA = {
         "title": "Solaris 2.3 Edition II SPARC, Software CD", "content": "iso", "size": 426979328,
         "sha256": "e1c85daa46da28704bf21cb0e5bb71471c78516da6550a8230ed89a1f61d1d8f",
         "lab": "sun_solaris/Solaris/2.3/SPARC/Solaris2.3Edition-II.iso"},
+    "Solaris_2.2.img": {
+        "title": "Solaris 2.2 SPARC, Software CD (a raw CD image)", "content": "iso", "size": 388608000,
+        "sha256": "276af9322e3f311b8bd8e4a567feb47ccc771cf9fd98a02aac61db749cbdafd8",
+        "lab": "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"},
     "solaris2.5_sparc.iso": {
         "title": "Solaris 2.5 HW 1/96 SPARC, Software CD", "content": "iso", "size": 378101760,
         "sha256": "33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259",
@@ -162,6 +169,12 @@ MEDIA = {
         "sha256": "4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636",
         "lab": "other-os/NetBSD-11.1-sparc.iso",
         "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc.iso"},
+    "install80.iso": {
+        "title": "OpenBSD 8.0 sparc64 install CD (cdn.openbsd.org)", "content": "iso", "size": 467599360,
+        "sha256": "b8a80e5a10424ef32863d28dac7ae343666adfcfe0bbdfb4fc0230c130a560cb",
+        "lab": "other-os/openbsd8.0/install80.iso",
+        # freely redistributable; the sha256 is the one in the release's SHA256 file
+        "url": "https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso"},
     "redhat-6.2-sparc.iso": {
         "title": "Red Hat Linux 6.2 for SPARC, install CD", "content": "iso", "size": 623771648,
         "sha256": "74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987",
@@ -382,52 +395,82 @@ TARGETS = {
         "minutes": 44,  # install 39 (most of it the Maintenance Update), first boot 3, --check 1.6
         "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
     },
-    # Solaris 2.4 boots only under the Sun PROM ("Unhandled Exception 0x00000009" under OpenBIOS) and,
-    # like 2.5.1, only from a CD that answers as a disk
+    # Solaris 2.2-2.4 boot under OpenBIOS with openbios 0019-0022 (pve-qemu-kvm 11.1.3-2+wsh22 and later;
+    # SPARC.md, "Older Sun releases on sun4m"); before, only under a Sun PROM (ss5.bin, ss20_v2.25_rom).
+    # Like 2.5.1, their installers need a CD that answers as a disk (from a scsi-cd the kernel can't
+    # mount root). Solaris 2.4: 2.6's screens
     "sol24-ss5": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 2.4 HW 3/95 End User on a SPARCstation 5 (ss5.bin)",
+        "title": "Solaris 2.4 HW 3/95 End User on a SPARCstation 5 (OpenBIOS)",
         "status": "automated",
         "install": {**SOLARIS_SCRIPTED["install"], "timeout": 7200},
-        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
         "disk": sun_disk("3G"),
         "media": [{"name": "solaris_2.4_sparc.iso", "drive": "scsi6", "as_disk": True}],
         "boot": "scsi3",
         "hostname": "sol24-ss5",
         "net_modes": ["static"],  # no DHCP client before 2.6
-        "minutes": 10,  # install 5, first boot 2.4, --check 1.4
-        "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
+        "minutes": 8,  # 8.2-8.3 min: install 4.5-4.7, first boot 2.2, --check 1.2
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
     },
-    # Solaris 2.3 Edition II (the first release for the SS-5): like 2.4, only under a Sun PROM
-    # ("Unhandled Exception 0x00000009" under OpenBIOS) and only from a CD that answers as a disk (from
-    # a scsi-cd its kernel can't mount root). sysidtool's older one-question screens and Quick Install
-    # (solaris-install-serial.py's 2.3 path); the installer reboots by itself at the end.
+    "sol24-ss20": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.4 HW 3/95 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "install": {**SOLARIS_SCRIPTED["install"], "timeout": 7200},
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris_2.4_sparc.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol24-ss20",
+        "net_modes": ["static"],
+        "minutes": 8,  # 7.9 min (twice): install 4.3, first boot 2.2, --check 1.2
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
+    },
+    # Solaris 2.3 Edition II (the first release for the SS-5; the SS-20 needs 2.3 or later): sysidtool's
+    # older one-question screens and Quick Install (solaris-install-serial.py's 2.3 path); the installer
+    # reboots by itself at the end (OpenBIOS's banner instead of the Sun PROM's `ok`)
     "sol23-ss5": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 2.3 Edition II End User on a SPARCstation 5 (ss5.bin)",
+        "title": "Solaris 2.3 Edition II End User on a SPARCstation 5 (OpenBIOS)",
         "status": "automated",
-        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "profile": {**SPARC32, "machine": "SS-5", "memory": 256},
         "disk": sun_disk("3G"),
         "media": [{"name": "Solaris2.3Edition-II.iso", "drive": "scsi6", "as_disk": True}],
         "boot": "scsi3",
         "hostname": "sol23-ss5",
         "net_modes": ["static"],  # no DHCP client before 2.6
-        "minutes": 11,  # install 6.4, first boot 2.6, --check 1.6
-        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+        "minutes": 10,  # 9.8 min: install 5.9-6, first boot 2.3, --check 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
     },
-    # The SS-20 needs 2.3 or later; the Sun SS-20 PROM (qemu-server adds -cpu TI-SuperSparc-50)
     "sol23-ss20": {
         **SOLARIS_SCRIPTED,
-        "title": "Solaris 2.3 Edition II End User on a SPARCstation 20 (ss20_v2.25_rom)",
+        "title": "Solaris 2.3 Edition II End User on a SPARCstation 20 (OpenBIOS, one CPU)",
         "status": "automated",
-        "profile": {**SPARC32, "machine": "SS-20", "bios": "ss20_v2.25_rom", "memory": 512},
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
         "disk": sun_disk("3G"),
         "media": [{"name": "Solaris2.3Edition-II.iso", "drive": "scsi6", "as_disk": True}],
         "boot": "scsi3",
         "hostname": "sol23-ss20",
         "net_modes": ["static"],
-        "minutes": 10,  # install 5.6, first boot 2.6, --check 1.6
-        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+        "minutes": 9,  # 9.0-9.2 min: install 5.1-5.4, first boot 2.3, --check 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
+    },
+    # Solaris 2.2 runs on the SS-10 only of QEMU's sun4m machines (Sun supports it on the SS-10, not on
+    # the later SS-5 and SS-20; under the SS-20 PROM its kernel panics). The 2.3 path of
+    # solaris-install-serial.py (Quick Install); the CD as a disk
+    "sol22-ss10": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.2 End User on a SPARCstation 10 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-10", "memory": 256},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Solaris_2.2.img", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol22-ss10",
+        "net_modes": ["static"],
+        "minutes": 9,  # 8.8-9.1 min: install 4.9-5.3, first boot 2.3, --check 1.3
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
     },
     # Solaris 2.5 (HW 1/96): OpenBIOS boots it, but like 2.5.1 its installer needs a CD that answers
     # as a disk (from a scsi-cd it hangs after the kernel banner). 2.6's screens; no Maintenance Update.
@@ -579,6 +622,42 @@ TARGETS = {
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
         "minutes": 11,  # 10.1-11.2 min: install 6-7, first boot 2.5, --check 1.7
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
+    },
+    # The installer (bsd.rd) answered on ttya by what it asks (_openbsd.installer): hme0 static, root's
+    # password, the auto layout on wd0, the sets without X11; ntpd off before the first boot (with a
+    # network that reaches NTP servers, ntpd's clock slew was followed by wd0 read timeouts); the first
+    # boot writes the marker and the network files. The installed GENERIC kernel needs openbios 0023
+    # (pve-qemu-kvm 11.1.3-2+wsh22 and later). README.md, "The OpenBSD 8.0 install target"
+    "openbsd80-sun4u": {
+        "title": "OpenBSD 8.0 sparc64 without X11 (sun4u, OpenBIOS, IDE disk)",
+        "status": "automated",
+        "method": "scripted",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # the installer writes its disklabel
+        "media": [{"name": "install80.iso", "drive": "ide2"}],
+        # once in five installs the CD stopped answering while the sets were extracted (`cd0(pciide0:1:0):
+        # timeout`, then silence): the scenario fails after 5 minutes of it and the install runs once more
+        "install": {"scenario": "openbsd-install-sparc64.py", "vars": {"SETS": "-x*"}, "timeout": 5400,
+                    "root_password": True, "retry_on": "IDE timeouts"},
+        "firstboot": {"scenario": "openbsd-firstboot.py", "vars": {}, "timeout": 2400},
+        "check": {"scenario": "openbsd-boot-disk.py", "vars": {}, "timeout": 1800,
+                  # one console line: OpenBSD's tty takes 255 characters (with --user's grep and the
+                  # end marker the scenario adds)
+                  "commands": "uname -a; cat /etc/wsh-lab-target; df -k; disklabel wd0 | sed -n '/partitions:/,$p';"
+                              " ifconfig hme0; netstat -rn -f inet; cat /etc/resolv.conf; rcctl get ntpd flags;"
+                              " pgrep -lx ntpd"},
+        "boot": "ide0",
+        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "hostname": "openbsd80-sun4u",
+        "nic": "hme0",
+        # The installer sets the address (hostname.hme0); the first boot writes it again with the
+        # netmask, /etc/mygate and /etc/resolv.conf (openbsd-firstboot.py)
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        "minutes": 20,  # 18.0-22.4 min (4 runs): install 9-11.6 (the sets, the kernel relink), first boot 5.3-6.5, --check 3.5-3.9
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22,
+                   "with": "--check; --check --export; --check --ip --gateway --dns --domain --user; boot-test"},
     },
     "sol10-sun4u": {
         "title": "Solaris 10 1/13 default software group on sun4u (OpenBIOS, IDE disk)",

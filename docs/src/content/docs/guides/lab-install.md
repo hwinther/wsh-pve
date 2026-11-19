@@ -23,10 +23,12 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
-| `sol24-ss5` | Solaris 2.4 HW 3/95, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~10 min |
-| `sol251-ss5` | Solaris 2.5.1 11/97, End User | as `sol24-ss5` | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
-| `sol23-ss5` | Solaris 2.3 Edition II, End User (Quick Install) | as `sol24-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~11 min |
-| `sol23-ss20` | Solaris 2.3 Edition II, End User (Quick Install) | SS-20, `ss20_v2.25_rom` (Sun PROM), 512 MB, one CPU, otherwise as `sol24-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~10 min |
+| `sol22-ss10` | Solaris 2.2, End User (Quick Install) | SS-10, OpenBIOS, 256 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`); needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later | `Solaris_2.2.img` | `root` / `wshlab` | ~9 min |
+| `sol23-ss5` | Solaris 2.3 Edition II, End User (Quick Install) | SS-5, OpenBIOS, 256 MB, otherwise as `sol22-ss10` (also needs +wsh22) | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~10 min |
+| `sol23-ss20` | Solaris 2.3 Edition II, End User (Quick Install) | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol23-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~9 min |
+| `sol24-ss5` | Solaris 2.4 HW 3/95, End User | as `sol23-ss5` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
+| `sol24-ss20` | Solaris 2.4 HW 3/95, End User | as `sol23-ss20` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
+| `sol251-ss5` | Solaris 2.5.1 11/97, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
 | `sol25-ss5` | Solaris 2.5 HW 1/96, End User | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol25-ss20` | Solaris 2.5 HW 1/96, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol25-ss5` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
@@ -41,6 +43,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sunos413u1b-ss20` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | SS-20, OpenBIOS, 512 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
+| `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
 | `netbsd111-sparc` | NetBSD 11.1, Minimal | SS-5, OpenBIOS, 256 MB, serial console, 3 GiB blank disk on `scsi3`, lance | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
@@ -172,10 +175,12 @@ gone). The first boot sets root's password, writes the marker and adds the optio
 under `/home`). These targets need `pve-qemu-kvm` 11.1.3-2+wsh20 or later, which has the ESP fix
 `wsh/0038` (Linux 2.6.18's SCSI driver takes the disk offline without it).
 
-**Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol251-ss5`) boot their installer only from a CD that
-answers as a disk, and 2.4 only under a Sun PROM: their VMs have the SPARCstation 5 PROM (`bios:
-ss5.bin`, part of the package's optional Sun PROM extra) and the CD-ROM drive has `cd_as_disk=1`
-(`scsi6: local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`; needs qemu-server with that option). The
+**Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol24-ss20`, `sol251-ss5`) boot their installer only
+from a CD that answers as a disk: the CD-ROM drive has `cd_as_disk=1` (`scsi6:
+local:iso/<cd>.iso,media=cdrom,cd_as_disk=1`; needs qemu-server with that option). 2.5.1's VM has
+the SPARCstation 5 PROM (`bios: ss5.bin`, part of the package's optional Sun PROM extra); 2.4 runs
+under OpenBIOS with the OpenBIOS patches 0019-0022 (`pve-qemu-kvm` 11.1.3-2+wsh22 or later; before,
+only under a Sun PROM, and the 2.4 target had `ss5.bin`). The
 CD also shows up in the installer's disk list as `c0t6d0`; the install selects only `c0t3d0`. After
 the install the CD is ejected as for every target (`none`, an empty CD-ROM drive). Both take a
 static address only (no DHCP client before 2.6). 2.4 shows a year after 1999 as 19xx in its date
@@ -183,16 +188,54 @@ screen and refuses it; the install types the 4-digit year there. 2.4's auto-layo
 slices (`/` 25 MB, `/usr` 108 MB, swap 130 MB, the rest of the disk `/export/home`), and it has no
 `hostname` command. 2.5.1's install ends with its Maintenance Update, which takes most of its time.
 
-**Solaris 2.3 and 2.5** need the same CD-as-disk drive. 2.3 Edition II (`sol23-ss5`, `sol23-ss20`,
-the first release for the SS-5; the SS-20 needs 2.3 or later) boots only under a Sun PROM, like 2.4:
-`ss5.bin` on the SS-5, `ss20_v2.25_rom` on the SS-20 (qemu-server adds `-cpu TI-SuperSparc-50`).
+**Solaris 2.2, 2.3 and 2.5** need the same CD-as-disk drive. 2.3 Edition II (`sol23-ss5`,
+`sol23-ss20`, the first release for the SS-5; the SS-20 needs 2.3 or later) runs under OpenBIOS
+with the patches 0019-0022, like 2.4 (`pve-qemu-kvm` 11.1.3-2+wsh22 or later; with an older package
+OpenBIOS stops right after the boot block, `Unhandled Exception 0x00000009`; until then the 2.3 and
+2.4 targets had the Sun PROMs `ss5.bin` and `ss20_v2.25_rom`, and a VM of your own with them still
+installs those releases).
 Its installer asks one question per screen and installs with Quick Install (End User; `/` 17 MB,
 swap 512 MB, `/opt` 9 MB, `/usr` 120 MB, the rest `/export/home`), then reboots by itself. Its
 first boot asks for the root password on its own screen, and the first login may insist on a new
 password: the install types the same one. 2.3 shows the year as 19xx like 2.4 (typed over), keeps
-its clock in 1970 after a reboot, and its `init 5` reboots to the PROM's `ok` instead of powering
-off (stop the VM there). 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
-machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for both.
+its clock in 1970 after a reboot, and its `init 5` reboots instead of powering off (OpenBIOS
+starts again and boots the disk; stop the VM after `rebooting...`). **Solaris 2.2** (`sol22-ss10`)
+runs only on the SS-10 of QEMU's machines (its only supported sun4m machine; under the SS-20 PROM
+its kernel panics) and installs exactly like 2.3 (the same one-question screens and Quick Install).
+Its CD image is `Solaris_2.2.img`, a plain 2048-byte-sector image with an `.img` name, which PVE's
+ISO storage accepts as it is. 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
+machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for all of
+them.
+
+**More CPUs on the SS-20 for 2.3 and 2.4.** The targets install with one CPU. Afterwards the VM
+can have 2 or 4 (`qm set <vmid> --cores 4`; the SS-20 profile with OpenBIOS allows up to 4): 2.3 and
+2.4 boot with every CPU on-line (`psrinfo`), share a parallel load across all of them, and stayed up
+through 10 minutes of CPU and disk load on 4 CPUs (lab runs through PVE, 2026-11-19). Idle CPUs
+don't keep the host busy (4 CPUs at the login prompt: 5% of a host core). Not on the SS-5 (one CPU)
+and not with a Sun PROM (`ss20_v2.25_rom` starts one CPU only).
+
+**OpenBSD 8.0** (`openbsd80-sun4u`) boots the install CD's `bsd.rd` and answers the installer's
+questions on the serial console by what they ask, not by their order: the host name, `hme0` with the
+static address (`--ip`, `--netmask`; no IPv6), root's password, sshd on (root logins over ssh off),
+no user, the auto layout on `wd0` (`/` 1 GB, swap 256 MB, `/usr` 3 GB, `/home` 2 GB), the sets
+from the CD without X11, the time zone UTC. Before the first boot the install turns **ntpd off**
+(`ntpd_flags=NO` in `/etc/rc.conf.local`, what `rcctl disable ntpd` writes): with a network that
+reaches NTP servers, the disk timed out (`wd0: timeout`) in 5 of 6 boots after ntpd started slewing
+the clock (see the [sparc guide](/guides/sparc/#sparc64-sun4u)); turn it on again only if you want to
+try that out. The disk can also time out without ntpd: through PVE once in five installs the CD
+stopped answering while the sets were extracted (the tool notices 5 minutes of silence after the
+`cd0: timeout` messages and runs the install once more), and one of several heavy disk boots hung
+after `wd0: timeout` (stop and start the VM). The cause is being looked into (QEMU's sun4u interrupt
+path, see the roadmap). The first boot writes the marker, `/etc/myname`, the network files
+(`/etc/hostname.hme0`, `/etc/mygate` for `--gateway`, `/etc/resolv.conf` for `--dns`/`--domain`, the
+address in `/etc/hosts`) and the optional `--user` (group `wheel`, `ksh`, home under `/home`), and
+powers off with `halt -p`. Static address only (`--ip dhcp` is refused: not tested through the tool;
+the lab's own runs got a DHCP address with `inet autoconf` in `/etc/hostname.hme0`). The first boot
+takes about 5 minutes (key generation, the library relink); every boot relinks the kernel in the
+background, and a `halt -p` before that ends says `reorder_kernel: failed` (harmless: the old
+kernel stays). It needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later: with older OpenBIOS the installed
+kernel stops right after the loader (`Unhandled Exception 0x30`). Like the other sun4u targets, it
+keeps a host core busy while it runs.
 
 **SunOS 4.1.3_U1B** (`sunos413u1b-ss5`, `sunos413u1b-ss20`; Solaris 1.1.1B, the first SunOS 4 for
 the SS-5 and SS-20) installs exactly like 4.1.4: the same miniroot, `suninstall` and sys-config
@@ -210,6 +253,7 @@ software is never part of this project.
 | File name | Size (bytes) | sha256 |
 | --- | --- | --- |
 | `Solaris2.3Edition-II.iso` | 426979328 | `e1c85daa46da28704bf21cb0e5bb71471c78516da6550a8230ed89a1f61d1d8f` |
+| `Solaris_2.2.img` | 388608000 | `276af9322e3f311b8bd8e4a567feb47ccc771cf9fd98a02aac61db749cbdafd8` |
 | `solaris2.5_sparc.iso` | 378101760 | `33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259` |
 | `sunos_4.1.3U1B.iso` | 335851520 | `37bbb203e0e4267bb0977aa9237e777bdda840b03cb5a6044cf777bfe8ebb202` |
 | `solaris_2.4_sparc.iso` | 455819264 | `c23fe150a9963e5dacbfc988fa700c5f2c7506d36ad0b40910e77444709d1fa4` |
@@ -226,11 +270,14 @@ software is never part of this project.
 | `NetBSD-11.1-sparc.iso` | 367329280 | `4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636` |
 | `redhat-6.2-sparc.iso` | 623771648 | `74bdc6de56d3120f05372232cd4dae313d015e62be4b359672d9f8edca300987` |
 | `debian-40r9-sparc-netinst.iso` | 146124800 | `91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd` |
+| `install80.iso` (OpenBSD 8.0 sparc64) | 467599360 | `b8a80e5a10424ef32863d28dac7ae343666adfcfe0bbdfb4fc0230c130a560cb` |
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
 SHA512 checksums). The Debian 4.0 netinst CD is freely redistributable too:
 `https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso`.
+So is OpenBSD's: `https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso` (its sha256 is in
+the release's `SHA256` file there).
 Upload a medium through the storage's **ISO
 Images** tab, or copy it to `/var/lib/vz/template/iso/` on a directory storage.
 

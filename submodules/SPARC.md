@@ -1420,12 +1420,12 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 
 | System | Machine, firmware | Result |
 | --- | --- | --- |
-| Solaris 2.3 Edition II | SS-5 `ss5.bin`, SS-20 `ss20_v2.25_rom`, CD as a disk | installs (End User, Quick Install, ~5-6 min) and boots; targets `sol23-ss5`, `sol23-ss20` (~10-11 min through PVE) |
-| Solaris 2.3 Edition II | SS-5 OpenBIOS with openbios 0019-0022, CD as a disk | installs (Quick Install, 5.5 min) and boots (`SunOS solaris 5.3 Generic_101498-02 sun4m`); from a `scsi-cd` the kernel can't mount root, as under `ss5.bin`. Before 0019: `Unhandled Exception 0x00000009` after the boot block |
-| Solaris 2.4 HW 3/95 | SS-5 OpenBIOS with openbios 0019-0022, CD as a disk | installs (4.2 min) and boots (`SunOS solaris 5.4 generic sun4m`) |
+| Solaris 2.3 Edition II | SS-5 `ss5.bin`, SS-20 `ss20_v2.25_rom`, CD as a disk | installs (End User, Quick Install, ~5-6 min) and boots (~10-11 min through PVE); the targets until the package had 0019-0022 |
+| Solaris 2.3 Edition II | SS-5 and SS-20 OpenBIOS with openbios 0019-0022, CD as a disk | installs (Quick Install, 5-6 min) and boots (`SunOS solaris 5.3 Generic_101498-02 sun4m`); targets `sol23-ss5`, `sol23-ss20` through PVE with pve-qemu-kvm 11.1.3-2+wsh22 (~9-10 min). The SS-20 with 2 and 4 CPUs too (below). From a `scsi-cd` the kernel can't mount root, as under `ss5.bin`. Before 0019: `Unhandled Exception 0x00000009` after the boot block |
+| Solaris 2.4 HW 3/95 | SS-5 and SS-20 OpenBIOS with openbios 0019-0022, CD as a disk | installs (4-5 min) and boots (`SunOS solaris 5.4 generic sun4m`); targets `sol24-ss5` (until +wsh22 with `ss5.bin`), `sol24-ss20` (~8 min). The SS-20 with 2 and 4 CPUs too |
 | Solaris 2.5 HW 1/96 | SS-5 and SS-20, OpenBIOS, CD as a disk | installs (~5 min) and boots; targets `sol25-ss5`, `sol25-ss20` (~9 min). From a `scsi-cd` the kernel hangs after its banner |
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
-| Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install) and boots (`SunOS solaris 5.2 Generic sun4m`) |
+| Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
 | Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx` in its symbol table); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root` |
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, while walking the device tree (64 and 256 MB) |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
@@ -1456,12 +1456,20 @@ mounted over the package's):
    interrupts on: a second romvec call got into the Forth engine meanwhile. 0022 masks interrupts
    for every romvec call, as the sparc64 client interface does (0016).
 
-The targets stay on the Sun PROMs (`sol23-ss5`, `sol24-ss5`, `sol23-ss20`) until a package with
-0019-0022 is published: with today's package an OpenBIOS target would stop at the boot block. Then
-OpenBIOS variants become possible: `sol23`/`sol24` on SS-5 and SS-20 with OpenBIOS (on the SS-20
-with more than one CPU and up to 512 MB, not tried), and `sol22` on SS-10, its only sun4m machine
-(the install scenario takes 2.2 now; installed in the lab, not made a target). The scenarios accept
-OpenBIOS's end of a 2.3 install and of `init 5` (it reboots: OpenBIOS's banner instead of `ok`).
+Since pve-qemu-kvm 11.1.3-2+wsh22 (0019-0022 published) the targets run under OpenBIOS:
+`sol23-ss5`, `sol23-ss20`, `sol24-ss5` (all three had the Sun PROMs before), the new `sol24-ss20`
+and `sol22-ss10` (2.2's only sun4m machine), each installed twice through PVE with `--check`
+(2026-11-19, e2e/sparc/README.md, "Older Sun releases"). OpenBIOS replaced the Sun PROMs in the
+targets rather than adding variants: as reliable in these runs, no Sun firmware needed, and more than
+one CPU on the SS-20. The scenarios accept OpenBIOS's end of a 2.3 install and of `init 5` (it
+reboots: OpenBIOS's banner instead of `ok`).
+
+**More than one CPU for 2.3 and 2.4** (SS-20, OpenBIOS, the targets' installed disks with `cores`
+2 and 4 through PVE): every CPU on-line in `psrinfo`, 4 or 8 parallel `nawk` loops at 100% `usr` on
+every CPU in `mpstat`, then 10 minutes of CPU and disk load on 4 CPUs (6 shell loops of `nawk` and
+`cat /usr/bin/*`; `psrinfo` every ~5 minutes, all on-line), `init 5`: all passed, for both releases.
+Idle at the login prompt the 4 vCPUs used 5% of a host core: these releases' idle loop doesn't spin
+the way 2.5.1-9's multiprocessor idle loop does (which 0023-0024 of the QEMU patches halt).
 
 Regression with the images `openbios/Dockerfile` builds from 0001-0023 (lab image of the published
 package, ours mounted over its `openbios-sparc32`/`openbios-sparc64`): `smoke` 3/3, `idle` 13/13,
@@ -1621,7 +1629,7 @@ serial console unless stated.
 | --- | --- | --- | --- | --- |
 | NetBSD 11.1 | yes, sysinst in 46 s | yes: sysinst on the screen in 54 s (no terminal question there); `b` Return on the PS/2 keyboard switches it to German | yes: sysinst "without X11", ~7.5 min | yes: `login:` in 48-58 s; `halt -p` ends QEMU (exit 0) |
 | NetBSD 9.3 | yes | not tried | not tried | |
-| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included) | not with the published firmware (+wsh21): the GENERIC kernel panics in its first firmware calls (below). With a one-line OpenBIOS fix (not in the package yet): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts while ntpd slews the clock (below) |
+| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts while ntpd slews the clock (below), so the target keeps ntpd off |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
 
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
@@ -1653,8 +1661,8 @@ ignores that call's result. OpenBSD changed these calls (`map`, `unmap`, both `r
 `nreturns` 1 after 8.0 ("did not work with QEMU's OpenBIOS", `ofw_machdep.c` 1.39, 2026-11-13);
 8.0 and older need the firmware fixed.
 
-The fix: store the catch result only when `nret` > 0. Prototyped on top of 0001-0018 (lab firmware
-via `BIOS=<path>`; not in `openbios/patches/` yet, see ROADMAP). With it the installed disk boots:
+The fix: store the catch result only when `nret` > 0, openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22;
+first prototyped on top of 0001-0018). With it the installed disk boots:
 `OpenBSD 8.0 (GENERIC) #52`, `login:` in 220-270 s from QEMU start (the first boot generates its
 keys), `hme0` gets 10.0.2.15 by DHCP (`inet autoconf`) and the default route, `halt -p` ends QEMU
 with exit code 0 in ~10 s. With `-vga std` (console on the screen, no `-prom-env`) the boot messages
@@ -1671,8 +1679,32 @@ to 10.0.2.2 every 50 ms during the reads (2300 `hme0` interrupts) and after step
 `date` (674 MB read by `tar` from `/usr`, no timeout). With `NET=user` and ntpd disabled
 (`rcctl disable ntpd`) 0 of 1, and `ftp` fetches over HTTP from the internet through `hme0`. So it
 follows ntpd's slew (a timing race in the kernel's timeouts or in QEMU's IDE/timer emulation), not
-the network interrupts; not followed further. Lab runs of an OpenBSD target should keep ntpd off
-until it is understood.
+the network interrupts; not followed further. The install target `openbsd80-sun4u` keeps ntpd off
+(`ntpd_flags=NO` in `/etc/rc.conf.local`, set from the installer's shell before the first boot) until
+it is understood.
+
+**IDE timeouts without ntpd** (through PVE, pve-qemu-kvm 11.1.3-2+wsh22, 2026-11-19; `vmbr0` has no
+outside access, ntpd is off, other guests on the host, load average 4-13 on 14 cores; e2e/sparc/README.md,
+"The OpenBSD 8.0 install target"). The timeouts are not ntpd's alone:
+
+- 1 of 5 installs: while `bsd.rd` extracted `base80.tgz` from the CD, nine `cd0(pciide0:1:0):
+  timeout` (`type: atapi`, `c_bcount: 2048`), then no console output for 11 minutes (no ntpd in
+  `bsd.rd`).
+- Boots of the installed disk reading `/usr` with `tar` (1 GB) and writing 200 MB: 5 of 6 passed;
+  one stopped after `wd0(pciide0:0:0): timeout` and `wd0d: device timeout reading fsbn 3408952 ...,
+  retrying`, then nothing.
+
+The hung guest: the CPU in OpenBSD's idle loop (`pc` 0x12d9cac, `pstate` 6: interrupts enabled, PIL
+0), `info blockstats` with no I/O for 321 s (`idle_time_ns`), no IDE, BMDMA or cmd646 trace event in
+40 s (`trace-event ide_* on` etc. in the monitor), and no answer on the serial console to Return or
+a break (`chardev-send-break`, which normally enters ddb). So after the timeouts no interrupt reaches
+the CPU any more, not even the console's: a lost or stuck interrupt in QEMU's sun4u path (cmd646
+INTRQ through the sabre's interrupt mapping to the CPU's interrupt vector), which ntpd's slew makes
+more likely but doesn't cause. Next: `-d int` and the sabre/IVEC state at the hang, and whether
+`wsh/0021`'s latch (the cmd646 interrupt status bits stay set until written 1) leaves a level that
+the sabre no longer forwards. The install target fails an install that stays silent for 5 minutes
+after an IDE timeout and runs it once more (`retry_on`); a boot that hangs fails at the phase's
+timeout.
 
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
@@ -1763,8 +1795,8 @@ afterwards and powered off. Every power-off ended QEMU with exit code 0 (more th
 the boot tests with DHCP and HTTP fetches over `sunhme`, `virtio-net-pci`, `e1000`, `rtl8139` and
 `ne2k_pci`). No hang with NetBSD on the recommended layout (only I/O to the offline virtio-scsi disk
 hung, above). OpenBSD's installer `halt` stops at OpenBIOS's `0 >` instead
-of powering off; `halt -p` on the installed system (with the prototype firmware fix, above) ends
-QEMU with exit code 0.
+of powering off (through PVE `bsd.rd`'s `halt -p` printed `halted (with powerdown)` and the VM
+stayed on); `halt -p` on the installed system (openbios 0023, above) ends QEMU with exit code 0.
 
 **Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, serial console). With QEMU's
 `openbios-sparc64`, none reaches an installer. With the patched build from `openbios/`
@@ -2341,8 +2373,9 @@ valid is accepted.
 
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
-- Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
-  doesn't start with the published firmware; an OpenBIOS fix is prototyped, "sparc64"), not Debian 12.0 ports (install fails), not Solaris for real use (with the
+- Guests: NetBSD (11.1 tested end to end, 9.3's CD boots), OpenBSD 8.0 (with openbios 0023,
+  pve-qemu-kvm 11.1.3-2+wsh22: the install target `openbsd80-sun4u`, ntpd off; rare IDE timeouts
+  that stop the guest, "sparc64"), not Debian 12.0 ports (install fails), not Solaris for real use (with the
   package built with `openbios-sparc64` and `wsh/0021`, Solaris 10 1/13 reaches its installer and
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
