@@ -302,12 +302,14 @@ class VmParams(unittest.TestCase):
         self.assertEqual((p["name"], p["vmid"], p["tags"]), ("sol26-ss5", "120", "wsh-lab"))
 
     def test_cd_as_disk(self):
-        # Solaris 2.3-2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk); 2.3 and 2.4 under a
-        # Sun PROM, 2.5 under OpenBIOS
+        # Solaris 2.2-2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk); 2.5.1 under a Sun
+        # PROM, 2.2-2.5 under OpenBIOS (2.2-2.4 with openbios 0019-0022)
         for name, iso, bios in (("sol251-ss5", "solaris_2.5.1_1197.iso", "ss5.bin"),
-                                ("sol24-ss5", "solaris_2.4_sparc.iso", "ss5.bin"),
-                                ("sol23-ss5", "Solaris2.3Edition-II.iso", "ss5.bin"),
-                                ("sol23-ss20", "Solaris2.3Edition-II.iso", "ss20_v2.25_rom"),
+                                ("sol24-ss5", "solaris_2.4_sparc.iso", "openbios-sparc32"),
+                                ("sol24-ss20", "solaris_2.4_sparc.iso", "openbios-sparc32"),
+                                ("sol23-ss5", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
+                                ("sol23-ss20", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
+                                ("sol22-ss10", "Solaris_2.2.img", "openbios-sparc32"),
                                 ("sol25-ss5", "solaris2.5_sparc.iso", "openbios-sparc32"),
                                 ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32")):
             a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
@@ -700,9 +702,29 @@ class OlderSun(unittest.TestCase):
         self.assertIn("4.1.4", base["net_refuse"]["dns"])  # the copy didn't change the 4.1.4 target
 
     def test_sun_media_have_no_url(self):
-        for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso"):
+        for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso", "Solaris_2.2.img"):
             self.assertNotIn("url", targets.MEDIA[name])
             self.assertFalse(targets.MEDIA[name]["lab"].startswith("/"))
+
+    def test_openbios_targets(self):
+        # Solaris 2.2-2.4 under OpenBIOS (openbios 0019-0022, pve-qemu-kvm 11.1.3-2+wsh22): one CPU, the CD
+        # as a disk, static address only, tested with the package that has the patches
+        for name, machine, memory in (("sol22-ss10", "SS-10", 256), ("sol23-ss5", "SS-5", 256),
+                                      ("sol23-ss20", "SS-20", 512), ("sol24-ss5", "SS-5", 256),
+                                      ("sol24-ss20", "SS-20", 512)):
+            with self.subTest(target=name):
+                t = targets.TARGETS[name]
+                p = t["profile"]
+                self.assertEqual((p["machine"], p["bios"], p["memory"]), (machine, "openbios-sparc32", memory))
+                self.assertNotIn("cores", p)
+                self.assertEqual([m.get("as_disk") for m in t["media"]], [True])
+                self.assertEqual(t["net_modes"], ["static"])
+                self.assertEqual(t["install"]["scenario"], "solaris-install-serial.py")
+                self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh22")
+                self.assertIn("OpenBIOS", t["title"])
+                self.assertGreater(t["minutes"], 0)
+        med = targets.MEDIA["Solaris_2.2.img"]
+        self.assertEqual((med["size"], med["lab"]), (388608000, "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"))
 
     def test_old_select(self):
         m = FakeScreen("Will this system be connected to a network?\n\n     ┌────┐\n     │>No │\n     │ Yes│\n"
@@ -739,6 +761,184 @@ class OlderSun(unittest.TestCase):
         self.assertIn("correct", rule("Is the following information correct?\n\nHostname:  sol23-ss5\n"
                                       "Connected to network:  Yes\nIP address:  10.0.2.15\n"))
         self.assertIn("correct", rule("Is the following information correct?\n\nTime zone:  MET\n"))
+
+
+class InstallerConsole:
+    """What _openbsd.installer() uses of a Machine: the serial text with expect()/quiet(), send() and log.
+    `script`: the console output, one chunk at the start and one after each answer (the echo of the
+    answer is added unless it answers a password question)."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.text, self.pos, self.sent = self.script.pop(0), 0, []
+        self.cond = threading.Condition()
+        self.metrics = {}
+
+    def expect(self, pattern, timeout=300, screen=False):
+        m = re.compile(pattern, re.M).search(self.text, self.pos)
+        if not m:
+            raise lab.Timeout(f"no {pattern!r} in {self.text[self.pos:]!r}")
+        self.pos = m.end()
+        return m
+
+    def expect_any(self, patterns, timeout=300, screen=False):
+        m = self.expect("|".join(f"(?P<p{i}>{p})" for i, p in enumerate(patterns)), timeout)
+        return next(i for i in range(len(patterns)) if m.group(f"p{i}") is not None)
+
+    def quiet(self, seconds, timeout=600):
+        pass
+
+    def send(self, text):
+        self.sent.append(text)
+        echo = "" if "Password" in self.text.rsplit("\n", 1)[-1] else text.rstrip("\r")
+        self.text += echo + "\n" + (self.script.pop(0) if self.script else "")
+
+    def log(self, msg):
+        pass
+
+    def snap(self, title):
+        pass
+
+
+class OpenBSD80(unittest.TestCase):
+    """openbsd80-sun4u: the target, the installer's questions answered by what they ask (_openbsd.py),
+    the check's console line."""
+    t = targets.TARGETS["openbsd80-sun4u"]
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _openbsd
+        cls.ob = _openbsd
+
+    def v(self, **kw):
+        return {"HOSTNAME": "openbsd80-sun4u", "IP": "10.0.2.15", "NETMASK": "255.255.255.0",
+                "ROOT_PASSWORD": "pw", "SETS": "-x*", **kw}
+
+    def test_target(self):
+        t, p = self.t, self.t["profile"]
+        self.assertEqual((p["arch"], p["machine"], p["bios"], p["net0"]), ("sparc64", "sun4u", "openbios-sparc64", "sunhme"))
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"], t["nic"]), ("ide0", None, "ide0", "hme0"))
+        self.assertEqual(t["media"], [{"name": "install80.iso", "drive": "ide2"}])
+        self.assertTrue(t["install"]["root_password"])  # the installer asks for it
+        self.assertEqual(t["install"]["retry_on"], "IDE timeouts")  # _openbsd.installer()'s error
+        self.assertEqual(t["net_modes"], ["static"])
+        self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh22")  # openbios 0023
+        self.assertGreater(t["minutes"], 0)
+        med = targets.MEDIA["install80.iso"]
+        self.assertEqual((med["size"], med["lab"]), (467599360, "other-os/openbsd8.0/install80.iso"))
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9210", name=None, target="openbsd80-sun4u")
+        vp = install.vm_params(t, a, {"install80.iso": "local:iso/install80.iso"}, None)
+        self.assertEqual((vp["ide0"], vp["ide2"]), ("local:8,format=raw", "local:iso/install80.iso,media=cdrom"))
+
+    def test_check_fits_one_console_line(self):
+        # OpenBSD's tty takes 255 characters; the check adds --user's grep and the end marker
+        line = self.t["check"]["commands"] + "; grep '^someuser:' /etc/passwd | cut -d: -f1,3-; echo END-OF-COMMAND"
+        self.assertLess(len(line), 255)
+        self.assertIn("rcctl get ntpd flags", self.t["check"]["commands"])
+
+    def test_rules(self):
+        rules = self.ob.install_rules(self.v(SETS="-x* -game*"), {})
+        for line, want in [
+            ("(I)nstall, (U)pgrade, (A)utoinstall or (S)hell? ", "i"),
+            ("Terminal type? [sun] ", "vt220"),
+            ("System hostname? (short form, e.g. 'foo') ", "openbsd80-sun4u"),
+            ("Network interface to configure? (name, lladdr, '?', or 'done') [hme0] ", "hme0"),
+            ("IPv4 address for hme0? (or 'autoconf' or 'none') [autoconf] ", "10.0.2.15"),
+            ("Netmask for hme0? [255.255.255.0] ", "255.255.255.0"),
+            ("IPv6 address for hme0? (or 'autoconf' or 'none') [autoconf] ", "none"),
+            ("Network interface to configure? (name, lladdr, '?', or 'done') [done] ", "done"),
+            ("Default IPv4 route? (IPv4 address or 'none') ", "none"),
+            ("Password for root account? (again) ", "pw"),
+            ("Encrypt the root disk with a (p)assphrase or (k)eydisk? [no] ", "no"),
+            ("Location of sets? (cd0 disk http nfs or 'done') [http] ", "cd0"),
+            ("Set name(s)? (or 'abort' or 'done') [done] ", "-x*"),
+            ("Set name(s)? (or 'abort' or 'done') [done] ", "-game*"),
+            ("Set name(s)? (or 'abort' or 'done') [done] ", "done"),
+            ("Location of sets? (cd0 disk http nfs or 'done') [done] ", "done"),
+            ("Exit to (S)hell, (H)alt or (R)eboot? [reboot] ", "s"),
+        ]:
+            i = self.ob.which_question(rules, line)
+            self.assertIsNotNone(i, line)
+            rx, answer = rules[i]
+            self.assertEqual(answer(re.search(rx, line)) if callable(answer) else answer, want, line)
+        self.assertIsNone(self.ob.which_question(rules, "duplicate IP address 10.0.2.15 sent from ethernet address"))
+
+    def test_installer_answers_a_redrawn_question_once(self):
+        # a kernel message in the middle of a question: the line editor draws it again, and only the
+        # copy on the last line is answered (answering both answered the next question too)
+        q = "DNS domain name? (e.g. 'example.com') [my.domain] "
+        m = InstallerConsole([
+            "(I)nstall, (U)pgrade, (A)utoinstall or (S)hell? ",
+            q + "duplicate IP address 10.0.2.15 sent from ethernet address 52:54:00:00:00:01\n\n" + q,
+            "DNS nameservers? (IP address list or 'none') [none] ",
+            "Password for root account? (will not echo) ",
+            "Password for root account? (again) ",
+            "Exit to (S)hell, (H)alt or (R)eboot? [reboot] ",
+            "# ",
+        ])
+        asked = self.ob.installer(m, self.v(), 60)
+        self.assertEqual(m.sent, ["i\r", "\r", "none\r", "pw\r", "pw\r", "s\r"])
+        self.assertEqual(len(asked), 6)
+
+    def test_installer_fails_when_stuck_after_ide_timeouts(self):
+        # the CD stopped answering while the sets were extracted (once in five installs): fail after
+        # STUCK_S seconds of silence instead of waiting for the install's whole timeout
+        script = ["Installing base80.tgz    34% |*****    |  60 MB    05:00 ETA\ncd0(pciide0:1:0): timeout\n"
+                  "\ttype: atapi\n\tc_bcount: 2048\n"]
+        saved = self.ob.silent
+        try:
+            self.ob.silent = lambda m, seconds, poll=5: True
+            m = InstallerConsole(script)
+            with self.assertRaises(AssertionError) as e:
+                self.ob.installer(m, self.v(), 60)
+            self.assertIn("IDE timeouts (1)", str(e.exception))
+            # output goes on after a timeout (the driver recovered): the questions are answered as before
+            self.ob.silent = lambda m, seconds, poll=5: False
+            m = InstallerConsole([script[0] + "Location of sets? (cd0 disk http nfs or 'done') [done] ", "# "])
+            with self.assertRaises(lab.Timeout):  # no Exit question in this script: ends at its end
+                self.ob.installer(m, self.v(), 60)
+            self.assertEqual(m.sent, ["cd0\r"])
+            self.assertEqual(m.metrics["ide_timeouts"], 1)
+        finally:
+            self.ob.silent = saved
+        self.assertTrue(re.search(self.ob.IDE_TIMEOUT, "wd0(pciide0:0:0): timeout"))
+        self.assertIsNone(re.search(self.ob.IDE_TIMEOUT, "wd0d: device timeout reading fsbn 64"))
+
+    def test_installer_stops_at_an_unknown_question(self):
+        m = InstallerConsole(["Do you want to frobnicate? [no] "])
+        with self.assertRaises(AssertionError) as e:
+            self.ob.installer(m, self.v(), 60)
+        self.assertIn("frobnicate", str(e.exception))
+        self.assertEqual(m.sent, [])
+
+
+class NeXT(unittest.TestCase):
+    """nextstep33-ss5 and openstep42-ss5: catalogue entries until a pve-qemu-kvm with the ESP interrupt
+    fix is published (SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
+    names = {"nextstep33-ss5": "nextstep33_risc.iso", "openstep42-ss5": "Openstep-4.2-Intel-User.iso"}
+
+    def test_catalogue_only(self):
+        for name, medium in self.names.items():
+            t = targets.TARGETS[name]
+            self.assertEqual(t["status"], "catalogue")
+            self.assertNotIn(name, targets.automated())
+            self.assertIn("ESP", t["blocked"])
+            self.assertEqual(t["media"], [{"name": medium, "drive": "scsi6"}])
+
+    def test_profile(self):
+        # the installed disk boots only under ss5.bin; the installer and the system need the framebuffer:
+        # TCX, which NeXT's S24 driver drives (it has no cg3 driver)
+        for name in self.names:
+            p = targets.TARGETS[name]["profile"]
+            self.assertEqual((p["arch"], p["machine"], p["bios"], p["vga"]), ("sparc", "SS-5", "ss5.bin", "tcx"))
+            self.assertEqual(targets.TARGETS[name]["disk"], {"bus": "scsi3", "size": 2, "label": None})
+
+    def test_media_are_local(self):
+        for medium in self.names.values():
+            m = targets.MEDIA[medium]
+            self.assertNotIn("url", m)  # commercial media
+            self.assertTrue(m["lab"].startswith("other-os/"))
 
 
 class RedHat62(unittest.TestCase):

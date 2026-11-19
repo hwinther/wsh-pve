@@ -82,7 +82,10 @@ Hardware editors offer only it.
 SS-10 and SS-20 with OpenBIOS take up to 4 CPUs (Hardware → Processors, sockets × cores; in the
 wizard on the CPU tab once the machine is picked). Solaris 2.5.1 to 9 run on them as a
 multiprocessor; `psrinfo` lists each one. It needs `pve-qemu-kvm` 11.1.3-2+wsh10 or later: with an
-older package Solaris hangs within minutes with more than one CPU.
+older package Solaris hangs within minutes with more than one CPU. Solaris 2.3 and 2.4 on the SS-20
+(OpenBIOS, `pve-qemu-kvm` 11.1.3-2+wsh22 or later) run with 2 and 4 CPUs too: all on-line, a
+parallel load on every CPU, 10 minutes of CPU and disk load on 4 CPUs without a problem; their idle
+loop doesn't poll (4 idle CPUs: about 5% of a host core) without the idle halt below.
 
 It pays for parallel work, several CPU-bound processes at once (builds, batch jobs). With a
 `pve-qemu-kvm` that has the multiprocessor idle halt (pve-qemu patch `wsh/0023`, packages after
@@ -184,19 +187,24 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
 - Boot the CD from a Sun PROM with `boot cdrom`. OpenBIOS boots a CD-ROM device directly (`-boot d`);
   a CD that answers as a disk needs the full path,
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@6,0:d`.
-- Solaris 2.3 and 2.4 don't boot under OpenBIOS at all ("Unhandled Exception 0x00000009"); use
-  `ss5.bin` on the SS-5 or `ss20_v2.25_rom` on the SS-20 (2.3 Edition II is the first release for
-  both). 2.5 and 2.5.1 boot under OpenBIOS too.
+- Solaris 2.2, 2.3 and 2.4 boot under OpenBIOS with `pve-qemu-kvm` 11.1.3-2+wsh22 or later
+  (OpenBIOS patches 0019-0022); with an older package OpenBIOS stops right after their boot block
+  ("Unhandled Exception 0x00000009"), and only the Sun PROMs boot 2.3 and 2.4 (`ss5.bin` on the SS-5,
+  `ss20_v2.25_rom` on the SS-20; 2.3 Edition II is the first release for both). 2.2 runs on the
+  SS-10 only (its only supported sun4m machine). 2.5 and 2.5.1 boot under OpenBIOS too.
+- Solaris 2.3 and 2.4 on the SS-20 with OpenBIOS run with 2 or 4 CPUs (every CPU on-line, a
+  parallel load spread over all of them); idle CPUs don't keep the host busy.
 - The Solaris 2.5.1 installer shows the year 2026 as `12` in its date screen; 2.3 and 2.4 show it
   as `1912` and refuse it: type the 4-digit year over it.
-- Solaris 2.3's installer asks one question per screen (Return answers, Ctrl-N/Ctrl-P move in a
-  menu) and offers Quick Install; it reboots by itself at the end. On the installed 2.3, `init 5`
-  reboots to the PROM's `ok` instead of powering off: stop the VM there.
+- Solaris 2.2's and 2.3's installers ask one question per screen (Return answers, Ctrl-N/Ctrl-P
+  move in a menu) and offer Quick Install; they reboot by themselves at the end. On the installed
+  2.3, `init 5` reboots (to the Sun PROM's `ok`, or OpenBIOS boots the disk again) instead of
+  powering off: stop the VM there.
 - SunOS 4.1.3_U1B installs like 4.1.4 (OpenBIOS, 64 MB while the CD's kernel runs) on the SS-5,
-  SS-10 and SS-20; its CD image needs no conversion. The original SunOS 4.1.3 and Solaris 2.1/2.2
+  SS-10 and SS-20; its CD image needs no conversion. The original SunOS 4.1.3 and Solaris 2.1
   don't boot on any machine and firmware QEMU and the package offer (their only supported machine
-  is the SS-10, whose Sun PROM doesn't run on QEMU); details in `submodules/SPARC.md`, "Older Sun
-  releases on sun4m".
+  is the SS-10, whose Sun PROM doesn't run on QEMU; 2.1 gets through its device configuration under
+  OpenBIOS, then QEMU stops); details in `submodules/SPARC.md`, "Older Sun releases on sun4m".
 
 ### Text install on the serial console
 
@@ -348,6 +356,34 @@ packages from `archive.debian.org`.
 [Lab install targets](/guides/lab-install/) installs it unattended (`debian40-ss5`,
 `debian40-ss20`: preseed from a small answer CD, with `--apt-proxy` for a package cache).
 
+## NeXTSTEP 3.3 and OPENSTEP 4.2
+
+NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also carries the SPARC
+version) **don't install with the published `pve-qemu-kvm`** (11.1.3-2+wsh22): the CD boots, but the
+install hangs while the kernel mounts its root, prepares the disk or copies files, the CPU spinning in the
+guest's SCSI driver. QEMU's ESP signals a finished command earlier than real hardware can, and NeXT's
+driver deadlocks on that. In the lab, a QEMU that delays the ESP's interrupt by 500 µs installs both
+on an SS-5 and boots them to the Workspace; the fix isn't in a package yet. Details:
+`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+
+What works with that fix, for when it is published:
+
+- **SS-5 with `bios: ss5.bin` and `vga: tcx`.** NeXT has no cg3 driver; its TCX driver runs QEMU's
+  8-bit TCX at 1024x768. OpenBIOS boots the CD but not the installed disk, so use the Sun PROM
+  throughout. A blank disk of 1-3 GB.
+- **The whole install is on the framebuffer** (the VNC console) with the keyboard and mouse: a text
+  stage from the CD (language, the disk, copying the base system; 2-4 minutes), then from the disk
+  Configure (click Save) and the Installer's package list (6-15 minutes), then the language panel and
+  the Workspace, logged in as `me` without a password.
+- **At each disk boot:** in the Sun PROM, `setenv diag-switch? false` once, then `boot disk`; at
+  NeXT's `boot:` prompt type `-v` within 10 seconds (its boot graphics stop the PROM with `Data
+  Access Error` on this TCX); press Control-C when it waits for a network configuration server.
+- **Not the SS-20:** the CD stage runs there, but neither OpenBIOS nor `ss20_v2.25_rom` (QEMU stops
+  with a trap) boots the installed disk.
+
+The lab lists them as `nextstep33-ss5` and `openstep42-ss5` in its catalogue, not yet installable
+([Lab install targets](/guides/lab-install/)).
+
 ## sparc64 (sun4u)
 
 Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC.md`, "sparc64"):
@@ -355,7 +391,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | Guest | Result |
 | ----- | ------ |
 | NetBSD 11.1 (and 9.3) | CD boots to the installer on the serial console or the VGA screen; NetBSD 11.1 installs (about 8 minutes) and the installed system boots, gets a DHCP address and powers the VM off |
-| OpenBSD 8.0 | the installer boots and installs, but the installed kernel stops in the firmware (`Unhandled Exception 0x30`): the firmware overwrites a value on the kernel's stack in one of its first firmware calls. A fix for OpenBIOS is tested in the lab (the installed system boots to its login, gets a DHCP address on `hme0` and powers off with `halt -p`) and isn't in the package yet |
+| OpenBSD 8.0 | with 11.1.3-2+wsh22 or later (OpenBIOS patch 0023): installs from `install80.iso` (about 10 minutes; `wsh-lab install openbsd80-sun4u` does it through Proxmox) and the installed system boots to its login, gets its address on `hme0` (static or DHCP) and powers off with `halt -p`. Keep ntpd off (`rcctl disable ntpd`; the lab target does): with a reachable NTP server the IDE disk timed out (`wd0: timeout`) after ntpd slewed the clock, in 5 of 6 boots. Without ntpd it happens too, rarely (once in five installs, once in several boots with heavy disk use), and then the guest stops answering: stop and start the VM. Before +wsh22 the installed kernel stops in the firmware (`Unhandled Exception 0x30`: the firmware overwrote a value on the kernel's stack) |
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 2.5.1-9 | doesn't boot on sun4u with OpenBIOS: 2.5.1 and 2.6 stop in the boot block; 7, 8 (1/01 and 2/02) and 9 (the original DVD and 9/05) panic early in the kernel with `pp is NULL or free` (a firmware memory-allocation problem, not fixed). On sparc32 Solaris 8 and 9 install on the SS-5 and SS-20 |
@@ -461,7 +497,8 @@ on sun4u".
 - Sound only on SS-5 (playback, not in the web console); none on SS-10/SS-20 or sparc64 (see
   [Sound on the SS-5](#sound-on-the-ss-5)).
 - sparc32: more than one CPU only on SS-10/SS-20 with OpenBIOS (up to 4), and the idle halt with
-  more than one CPU only for Solaris 2.5.1-9 (NetBSD's MP kernel idles by itself); 256 MB on SS-5,
+  more than one CPU only for Solaris 2.5.1-9 (NetBSD's and Solaris 2.3/2.4's MP kernels idle by
+  themselves); 256 MB on SS-5,
   512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5) and `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) are
   supported; the SS-10 PROM doesn't run on QEMU's SS-10.
@@ -471,11 +508,13 @@ on sun4u".
   firmware, or OpenBIOS.
 - Moving the mouse pointer in the Solaris desktop didn't work in the lab's tests (keyboard input
   does); not yet checked from a VNC console.
+- NeXTSTEP 3.3 and OPENSTEP 4.2 hang during their install with the published package (an ESP
+  interrupt timing problem; see [NeXTSTEP 3.3 and OPENSTEP 4.2](#nextstep-33-and-openstep-42)).
 - The architecture can't be changed after the VM is created.
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
-- sparc64: NetBSD installs and runs; the OpenBSD and Debian installers start but their installs
-  don't end in a working system; Solaris 10 installs and boots, but doesn't reboot (see
+- sparc64: NetBSD and OpenBSD 8.0 install and run (OpenBSD with ntpd off); the Debian installer
+  starts but its install doesn't end in a working system; Solaris 10 installs and boots, but doesn't reboot (see
   [Solaris 10](#solaris-10)); older Solaris releases don't boot on sun4u. One layout only (see
   [the sparc64 profile](#the-sparc64-profile)); no network boot.
 
