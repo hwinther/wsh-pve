@@ -5,7 +5,9 @@ sysinst on the serial console (scenarios/netbsd-install-sparc64.py), then the fi
 root's password, the marker, the host name and a static address (netbsd-firstboot.py), then a boot
 that logs in with that password and checks the marker (netbsd-boot-disk.py).
 
-    docker run --rm --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
+    docker run --rm -e WSH_LAB_GUEST_TESTS=1 --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
+
+  WSH_LAB_GUEST_TESTS=1  required: without it the test is skipped (it installs a guest and may download)
 
   NETBSD_ISO     NetBSD-11.1-sparc64.iso; without it the pinned one (targets.MEDIA, "url") is
                  downloaded and its sha256 checked, into NETBSD_CACHE (default /tmp/wsh-lab-netbsd)
@@ -31,6 +33,11 @@ sys.modules.setdefault("lab", lab)
 TARGET = "netbsd111-sparc64"
 NAME = "NetBSD-11.1-sparc64.iso"
 
+
+
+# A whole guest install that may download its medium (minutes, network): only when asked for, so a plain
+# `unittest discover` stays offline and fast. The CI workflows set WSH_LAB_GUEST_TESTS=1.
+GUEST_TESTS = os.environ.get("WSH_LAB_GUEST_TESTS") == "1"
 
 def sha256(path):
     h = hashlib.sha256()
@@ -62,6 +69,7 @@ def qemu():
         raise unittest.SkipTest("no qemu-system-sparc64")
 
 
+@unittest.skipUnless(GUEST_TESTS, "a guest install that may download its CD; set WSH_LAB_GUEST_TESTS=1")
 class NetBSD(unittest.TestCase):
     def test_install_firstboot_check(self):
         qemu()

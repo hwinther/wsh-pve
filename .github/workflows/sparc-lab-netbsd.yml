@@ -44,7 +44,7 @@ jobs:
       - name: Install NetBSD/sparc64 from its CD in the lab
         run: |
           mkdir -p "$RUNNER_TEMP/netbsd"
-          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -e NETBSD_OUT=/out \
+          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -e NETBSD_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
 
       - name: Keep the evidence
