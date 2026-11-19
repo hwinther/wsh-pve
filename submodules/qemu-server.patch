@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index e0661738..44f78573 100644
+index e0661738..c078cb6f 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -243,6 +243,8 @@ my $check_drive_param = sub {
@@ -78,7 +78,7 @@ index e0661738..44f78573 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1503,6 +1542,13 @@ __PACKAGE__->register_method({
+@@ -1503,6 +1542,14 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -88,11 +88,12 @@ index e0661738..44f78573 100644
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_audio_device($param) if !$archive;
++        PVE::QemuServer::Machine::assert_esp_irq_latency($param) if !$archive;
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          # 'force' only covers the VM that the checks above saw, not one created in the meantime
-@@ -1653,6 +1699,7 @@ __PACKAGE__->register_method({
+@@ -1653,6 +1700,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -100,7 +101,7 @@ index e0661738..44f78573 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2386,6 +2433,16 @@ my $update_vm_api = sub {
+@@ -2386,6 +2434,17 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -113,6 +114,7 @@ index e0661738..44f78573 100644
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($new_conf);
 +        PVE::QemuServer::Machine::assert_audio_device($new_conf);
++        PVE::QemuServer::Machine::assert_esp_irq_latency($new_conf);
 +
          return $conf;
      };
@@ -144,7 +146,7 @@ index cc8b8250..5feca3ca 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 148052cb..bb0905b9 100644
+index 148052cb..62f69e08 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -381,7 +383,7 @@ index 148052cb..bb0905b9 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3144,7 +3221,11 @@ sub config_to_command {
+@@ -3144,7 +3221,12 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -390,11 +392,12 @@ index 148052cb..bb0905b9 100644
 +    PVE::QemuServer::Machine::assert_sparc64_profile($conf) if $arch eq 'sparc64';
 +    PVE::QemuServer::Machine::assert_cd_as_disk($conf);
 +    PVE::QemuServer::Machine::assert_audio_device($conf);
++    PVE::QemuServer::Machine::assert_esp_irq_latency($conf);
 +    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3255,7 +3336,9 @@ sub config_to_command {
+@@ -3255,7 +3337,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -405,7 +408,7 @@ index 148052cb..bb0905b9 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3275,6 +3358,10 @@ sub config_to_command {
+@@ -3275,6 +3359,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -416,7 +419,7 @@ index 148052cb..bb0905b9 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3289,17 +3376,20 @@ sub config_to_command {
+@@ -3289,17 +3377,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -439,7 +442,7 @@ index 148052cb..bb0905b9 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3310,6 +3400,7 @@ sub config_to_command {
+@@ -3310,6 +3401,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -447,7 +450,7 @@ index 148052cb..bb0905b9 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3318,7 +3409,6 @@ sub config_to_command {
+@@ -3318,7 +3410,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -455,7 +458,7 @@ index 148052cb..bb0905b9 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3331,6 +3421,22 @@ sub config_to_command {
+@@ -3331,6 +3422,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -478,7 +481,7 @@ index 148052cb..bb0905b9 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3361,7 +3467,7 @@ sub config_to_command {
+@@ -3361,7 +3468,7 @@ sub config_to_command {
      }
  
      if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
@@ -487,7 +490,7 @@ index 148052cb..bb0905b9 100644
          my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version);
          push @$devices, @$audio_devs;
      }
-@@ -3397,16 +3503,41 @@ sub config_to_command {
+@@ -3397,16 +3504,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -531,7 +534,7 @@ index 148052cb..bb0905b9 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3425,6 +3556,11 @@ sub config_to_command {
+@@ -3425,6 +3557,14 @@ sub config_to_command {
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -539,11 +542,14 @@ index 148052cb..bb0905b9 100644
 +        # the profile's CPU, or none for the machine's default; never the generic 'cpu' option
 +        my $cpu = PVE::QemuServer::Machine::sparc32_cpu_model($conf);
 +        push @$cmd, '-cpu', $cpu if $cpu;
++        # machine: esp-irq-latency (NeXTSTEP and OPENSTEP need the ESP's interrupt late)
++        my $esp_global = PVE::QemuServer::Machine::sparc32_esp_global($conf);
++        push @$cmd, '-global', $esp_global if $esp_global;
 +    } elsif ($arch ne 'sparc64') { # sparc64: the machine's default CPU
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3440,6 +3576,7 @@ sub config_to_command {
+@@ -3440,6 +3580,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -551,7 +557,7 @@ index 148052cb..bb0905b9 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3543,8 +3680,9 @@ sub config_to_command {
+@@ -3543,8 +3684,9 @@ sub config_to_command {
          }
      }
  
@@ -563,7 +569,7 @@ index 148052cb..bb0905b9 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3561,6 +3699,7 @@ sub config_to_command {
+@@ -3561,6 +3703,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -571,7 +577,7 @@ index 148052cb..bb0905b9 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3580,7 +3719,8 @@ sub config_to_command {
+@@ -3580,7 +3723,8 @@ sub config_to_command {
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -581,7 +587,7 @@ index 148052cb..bb0905b9 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3622,9 +3762,11 @@ sub config_to_command {
+@@ -3622,9 +3766,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -594,7 +600,7 @@ index 148052cb..bb0905b9 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3636,6 +3778,17 @@ sub config_to_command {
+@@ -3636,6 +3782,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -612,7 +618,7 @@ index 148052cb..bb0905b9 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3692,7 +3845,7 @@ sub config_to_command {
+@@ -3692,7 +3849,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -621,7 +627,7 @@ index 148052cb..bb0905b9 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3710,7 +3863,18 @@ sub config_to_command {
+@@ -3710,7 +3867,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -641,7 +647,7 @@ index 148052cb..bb0905b9 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3969,7 +4133,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4137,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -650,7 +656,7 @@ index 148052cb..bb0905b9 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4553,13 +4717,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4721,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -668,7 +674,7 @@ index 148052cb..bb0905b9 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4626,7 +4793,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4797,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -678,7 +684,7 @@ index 148052cb..bb0905b9 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4978,6 +5146,9 @@ sub vmconfig_update_net {
+@@ -4978,6 +5150,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -688,7 +694,7 @@ index 148052cb..bb0905b9 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5059,6 +5230,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5234,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -697,7 +703,7 @@ index 148052cb..bb0905b9 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5109,8 +5282,10 @@ sub vmconfig_update_disk {
+@@ -5109,8 +5286,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -710,7 +716,7 @@ index 148052cb..bb0905b9 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5194,6 +5369,11 @@ sub vmconfig_update_disk {
+@@ -5194,6 +5373,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -722,7 +728,7 @@ index 148052cb..bb0905b9 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5210,7 +5390,7 @@ sub vmconfig_update_disk {
+@@ -5210,7 +5394,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -731,7 +737,7 @@ index 148052cb..bb0905b9 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5713,6 +5893,9 @@ sub vm_start_nolock {
+@@ -5713,6 +5897,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -741,7 +747,7 @@ index 148052cb..bb0905b9 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5918,7 +6101,11 @@ sub vm_start_nolock {
+@@ -5918,7 +6105,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -754,7 +760,7 @@ index 148052cb..bb0905b9 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8172,7 +8359,12 @@ sub bootorder_from_legacy {
+@@ -8172,7 +8363,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -768,7 +774,7 @@ index 148052cb..bb0905b9 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8210,9 +8402,14 @@ sub get_default_bootdevices {
+@@ -8210,9 +8406,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1144,7 +1150,7 @@ index 5efe7736..ffa38e03 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..657cd17d 100644
+index 960af5a9..b284ca27 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1170,7 +1176,28 @@ index 960af5a9..657cd17d 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -126,6 +130,8 @@ sub print_machine {
+@@ -95,6 +99,20 @@ my $machine_fmt = {
+             "Enables S4 power state. Defaults to false beginning with machine types 9.2+pve1, true before.",
+         optional => 1,
+     },
++    'esp-irq-latency' => {
++        type => 'integer',
++        description => "sparc32 only: microseconds from a SCSI event to the ESP controller's"
++            . " interrupt (default 0, at once). NeXTSTEP 3.3 and OPENSTEP 4.2 need 500.",
++        verbose_description =>
++            "sparc32 (arch sparc) only: how many microseconds after a SCSI event the ESP"
++            . " controller raises its interrupt. 0 (the default) raises it at once. NeXTSTEP 3.3"
++            . " and OPENSTEP 4.2 deadlock in their SCSI driver without a delay and need 500. Every"
++            . " disk command gets slower by about four times the delay, so leave it off for other"
++            . " guests.",
++        minimum => 0,
++        maximum => 100000,
++        optional => 1,
++    },
+ };
+ 
+ PVE::JSONSchema::register_format('pve-qemu-machine-fmt', $machine_fmt);
+@@ -126,6 +144,8 @@ sub print_machine {
  my $default_machines = {
      x86_64 => 'pc',
      aarch64 => 'virt',
@@ -1179,7 +1206,7 @@ index 960af5a9..657cd17d 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +141,341 @@ sub default_machine_for_arch {
+@@ -135,6 +155,380 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1396,6 +1423,45 @@ index 960af5a9..657cd17d 100644
 +    return;
 +}
 +
++=head3 assert_esp_irq_latency
++
++    assert_esp_irq_latency($conf);
++
++Dies if the C<machine> property of C<$conf> sets C<esp-irq-latency> on anything but sparc32: the
++option goes to the ESP SCSI controller of the sun4m machines (C<sysbus-esp>), which no other
++architecture has.
++
++=cut
++
++sub assert_esp_irq_latency {
++    my ($conf) = @_;
++
++    my $machine_conf = parse_machine($conf->{machine}) or return;
++    return if !defined($machine_conf->{'esp-irq-latency'});
++    my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
++    die "machine: 'esp-irq-latency' is only supported on sparc32 (arch sparc), not on $arch\n"
++        if $arch ne 'sparc';
++
++    return;
++}
++
++=head3 sparc32_esp_global
++
++    my $global = sparc32_esp_global($conf); # 'sysbus-esp.irq-latency-us=500' or undef
++
++The C<-global> value for the ESP interrupt latency that the C<machine> property of the sparc32 VM
++config C<$conf> asks for, or undef when it asks for none (0 or unset, QEMU's default).
++
++=cut
++
++sub sparc32_esp_global {
++    my ($conf) = @_;
++
++    my $machine_conf = parse_machine($conf->{machine}) or return;
++    my $latency = $machine_conf->{'esp-irq-latency'} or return;
++    return "sysbus-esp.irq-latency-us=$latency";
++}
++
 +# The sparc64 (arch: sparc64) profile: the one layout that was tested to boot (wsh-pve
 +# submodules/SPARC.md, "sparc64 (sun4u)"). sun4u with OpenBIOS and the machine's default CPU, one CPU,
 +# disks and CD-ROMs on the built-in IDE (OpenBIOS can't boot from SCSI or virtio), NICs on PCI bus B.
@@ -1521,7 +1587,7 @@ index 960af5a9..657cd17d 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +510,7 @@ my sub machine_base_type {
+@@ -169,6 +563,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1529,7 +1595,7 @@ index 960af5a9..657cd17d 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +647,44 @@ sub machine_version_cmp {
+@@ -305,11 +700,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1576,7 +1642,7 @@ index 960af5a9..657cd17d 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +694,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +747,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1599,7 +1665,7 @@ index 960af5a9..657cd17d 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +880,7 @@ sub get_power_state_flags {
+@@ -508,6 +933,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1607,7 +1673,7 @@ index 960af5a9..657cd17d 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +888,7 @@ sub get_power_state_flags {
+@@ -515,6 +941,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -2634,6 +2700,56 @@ index 00000000..96932e92
 +  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
 +  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-5+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf b/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf
+new file mode 100644
+index 00000000..89357839
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf
+@@ -0,0 +1,13 @@
++# TEST: sparc32 SS-5 with ss5.bin and TCX, as NeXTSTEP needs it: the ESP's interrupt 500 us late
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++machine: SS-5,esp-irq-latency=500
++memory: 256
++name: nextstep
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: other
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vga: tcx
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf.cmd
+new file mode 100644
+index 00000000..eea2817e
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-esp-irq-latency.conf.cmd
+@@ -0,0 +1,25 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name nextstep \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -bios ss5.bin \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga tcx \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -global 'sysbus-esp.irq-latency-us=500' \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02,netdev=net0' \
++  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-memory-error.conf b/src/test/cfg2cmd/sparc32-ss5-memory-error.conf
 new file mode 100644
 index 00000000..27442665
@@ -2826,6 +2942,19 @@ index 00000000..bcea65c0
 +arch: sparc64
 +cpu: kvm64
 +memory: 512
+diff --git a/src/test/cfg2cmd/sparc64-esp-irq-latency-error.conf b/src/test/cfg2cmd/sparc64-esp-irq-latency-error.conf
+new file mode 100644
+index 00000000..53468e4b
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-esp-irq-latency-error.conf
+@@ -0,0 +1,7 @@
++# TEST: esp-irq-latency is for the sparc32 ESP only, sun4u has none
++# EXPECT_ERROR: machine: 'esp-irq-latency' is only supported on sparc32 (arch sparc), not on sparc64
++arch: sparc64
++ide0: local:8006/vm-8006-disk-0.raw,size=2G
++machine: sun4u,esp-irq-latency=500
++memory: 512
++ostype: other
 diff --git a/src/test/cfg2cmd/sparc64-five-nics-error.conf b/src/test/cfg2cmd/sparc64-five-nics-error.conf
 new file mode 100644
 index 00000000..c5e1aa79
@@ -3033,6 +3162,17 @@ index 00000000..a3412c18
 +scsihw: virtio-scsi-pci
 +scsi0: local:8006/vm-8006-disk-0.raw,size=4G
 +scsi2: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
+diff --git a/src/test/cfg2cmd/x86-esp-irq-latency-error.conf b/src/test/cfg2cmd/x86-esp-irq-latency-error.conf
+new file mode 100644
+index 00000000..4390317e
+--- /dev/null
++++ b/src/test/cfg2cmd/x86-esp-irq-latency-error.conf
+@@ -0,0 +1,5 @@
++# TEST: esp-irq-latency is for the sparc32 ESP only
++# EXPECT_ERROR: machine: 'esp-irq-latency' is only supported on sparc32 (arch sparc), not on x86_64
++machine: pc,esp-irq-latency=500
++memory: 512
++ostype: l26
 diff --git a/src/test/hotplug/sparc32-cd-as-disk-change.conf b/src/test/hotplug/sparc32-cd-as-disk-change.conf
 new file mode 100644
 index 00000000..d0b32826
