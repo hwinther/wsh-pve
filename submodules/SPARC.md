@@ -71,8 +71,8 @@ maintains the patches.
 | `0037-tests-qtest-test-that-a-tick-during-a-softint-write-` | qtest `sun4u-softint-test` for 0036: a boot PROM sets and clears soft interrupt 1 in a loop with interrupts off while 10 us ticks fire, and counts the ticks it sees and loses; passes after 20000 ticks with none lost | ours (in review) | not in QEMU |
 | `0038-esp-don-t-count-the-message-out-bytes-as-part-of-the` | `esp_cdb_ready()` counted the IDENTIFY and other message out bytes in the command FIFO as CDB bytes. Linux 2.6.18's `esp` driver (Debian 4.0 on SS-5) selects with ATN and Stop, sends a 5-byte SDTR message and then the CDB one byte per Transfer Information: its first CDB byte alone made a "complete" 6-byte command, the target answered ILLEGAL REQUEST and Linux reset the bus and took the disk and CD-ROM offline. Only the bytes after the messages count now | ours (in review) | not fixed; see `upstream/qemu-esp-cdb-ready-after-message-out.md` |
 | `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
-| `0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ` | The ESP finished a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `x-irq-latency-us` (default 0, as before): the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). The sun4m machines set 500 (`-global sysbus-esp.x-irq-latency-us=0` turns it off). Every ESP interrupt on sun4m comes 0.5 ms later: about 2 ms more per disk command ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
-| `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt; with the property at 0 it comes at once | ours | not in QEMU |
+| `0040-esp-let-the-interrupt-come-late-as-from-a-real-targe` | The ESP finishes a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `irq-latency-us`, 0 (off) on every machine: set, the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). Per VM through qemu-server's `machine: SS-5,esp-irq-latency=500` ("qemu-server"). At 500 every ESP interrupt comes 0.5 ms later, about 2 ms per disk command, so it stays off unless a guest needs it ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
+| `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): by default the interrupt comes at once; with `-global sysbus-esp.irq-latency-us=500`, after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -144,9 +144,10 @@ phase).
 
 0001-0041 apply to 11.1.3 with `patch -F0` (the whole series, Proxmox's patches included, from
 `pve-qemu.patch` onto a fresh tree: the result is the tree the binaries below were built from).
-`sun4m-esp-test` passes 5/5 with 0040-0041; with 0040 left out `irq-latency` fails (STAT_INT
-right after the selection) and `irq-latency-off` doesn't start (no such property), while the two
-cancel cases pass, as they must without a latency. With 0001-0041 the `qtest-sparc` and
+`sun4m-esp-test` passes 5/5 with 0040-0041; with 0040 left out the three cases that set the
+latency don't start (no such property) and `irq-latency-default-off` passes. (The first versions of
+0040 set 500 on every sun4m machine; with that one left out, `irq-latency` failed with STAT_INT
+right after the selection.) With 0001-0041 the `qtest-sparc` and
 `qtest-sparc64` suites: 40 OK, 4 skipped, and the two `qmp-test` `oob` failures as before;
 `am53c974-test` (i386) 12/12. A save and load by hand (`migrate` to a file 100 us after a
 selection, `-incoming` from it, qtest clock) kept the pending interrupt: none right after `cont`,
@@ -1616,6 +1617,7 @@ it, steps of 10 move about 9 pixels).
 | NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041, first version of 0040 (only the line late, STAT_INT at once) | yes | 3G disk: CD stage 2.5 min, then hung at 29% of the packages (497 MB, all selected) | | ESP deadlock (`pc` 0xf00c944c, PIL 4) |
 | NeXTSTEP 3.3 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 3.3 min, packages 6.6 min (497 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
 | OPENSTEP 4.2 | SS-5 | OpenBIOS (CD), `ss5.bin` (disk) | 0001-0041 | yes | 3G disk, 256 MB: CD stage 4.2 min, packages 8.5 min (532 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
+| NeXTSTEP 3.3 | SS-5 | `ss5.bin` (CD and disk) | 0001-0041 (off by default), through PVE: VM made by `qm create` with `machine: SS-5,esp-irq-latency=500`, qemu-server with the option | yes (`boot cdrom`) | 3G disk, 256 MB: CD stage 3 min, packages 7.2 min (497 MB, all selected) | `ss5.bin` with `-v`: language panel, Workspace | |
 
 **The ESP deadlock.** Every hang has the CPU in a simple-lock spin (`ld [%l0]; cmp %o0, 0; bne`, at
 0xf00c944c in the 3.3 kernel, 0xf00c9f54 in 4.2) with PSR.PIL 4, which is `esp0`'s level (`esp0 at
@@ -1640,9 +1642,19 @@ installs and three first setups to the Workspace; N = 50 hung
 again (the package copy, and the SCSI probe under `ss5.bin`). A fixed delay is a model of the
 target's latency, not a proof that 500 us is always enough.
 
-**The fix, `wsh/0040`.** `sysbus-esp` has a property `x-irq-latency-us` (default 0, today's
-behaviour, so other machines don't change); every sun4m machine sets 500 as a compat property, so no
-qemu-server change is needed and `-global sysbus-esp.x-irq-latency-us=0` turns it off again. The
+**The fix, `wsh/0040`, and how to turn it on.** `sysbus-esp` has a property `irq-latency-us`, 0
+(off) on every machine, so nothing changes unless a VM asks for it. NeXTSTEP 3.3 and OPENSTEP 4.2
+need it at 500, no other guest does:
+
+- in the web UI: Hardware → Machine → "SCSI IRQ delay (µs)" = 500 (sparc32 VMs only);
+- `qm set <vmid> --machine SS-5,esp-irq-latency=500` (the `machine` property string: qemu-server
+  emits `-global sysbus-esp.irq-latency-us=500`; refused on other architectures; "qemu-server");
+- QEMU directly: `-global sysbus-esp.irq-latency-us=500`.
+
+It costs about 2 ms per disk command (the table below), which is why it isn't the sun4m default: the
+first versions of this branch set 500 on every sun4m machine, and the owner turned that down (raw
+reads 70 → 20 MB/s). The property has no `x-` prefix: VM configs carry it through qemu-server, so
+it should stay stable. The
 interrupt as a whole, `STAT_INT` in the status register and the line (one signal on the real chip),
 comes from a `QEMU_CLOCK_VIRTUAL` timer that long after the event; the interrupt register and the bus
 phase are set at once, so OpenBIOS, which polls the interrupt register, sees no change. Reading the
@@ -1656,16 +1668,17 @@ first NeXTSTEP package install hung at 29%, in the same spin, with the property 
 which no real target can do, so the status bit had to wait too. The other way, delaying only the end
 of a SCSI command (data and status phases) as a disk's seek does, was not taken: `esp.c` ends commands
 in many places, each would need its own deferral and migration state, while the interrupt has one
-raise and one lower. The price is that every ESP interrupt on sun4m comes 0.5 ms later, selection and
-bus service included; the regressions and the disk numbers are below. A fixed delay is a model of the
+raise and one lower. The price is that every ESP interrupt comes 0.5 ms later, selection and bus
+service included; the regressions and the disk numbers are below. A fixed delay is a model of the
 target's latency, not a proof that 500 us is always enough: each system installed once with the final
 0040. The diagnosis is about QEMU's own ESP, not LEMU code, so it can go to QEMU's issues
 [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620) and
 [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674), written by the owner
 (`upstream/qemu-esp-irq-latency.md`).
 
-**Regressions with 0001-0041** (2026-11-19, the lab host shared with other agents and the `sparc
-lab` workflow, two to four guests at once; `qemu-system-sparc` and `-sparc64` built from the series
+**Regressions with the latency on every guest** (2026-11-19, the earlier revision of 0040 that set
+500 on every sun4m machine, so every sparc32 case below ran with the delay; the lab host shared with
+other agents and the `sparc lab` workflow, two to four guests at once; `qemu-system-sparc` and `-sparc64` built from the series
 on Debian 13, mounted into the lab image built from main with the published pve-qemu-kvm
 11.1.3-2+wsh22, and bind-mounted over `/usr/bin/qemu-system-sparc` in the e2e PVE image for the
 installs). Install times: the catalogue's `minutes` for comparison, from quieter runs.
@@ -1689,8 +1702,7 @@ installs). Install times: the catalogue's `minutes` for comparison, from quieter
 | `debian-install-sparc.py NET=user` (no PVE), latency on and off at the same time | both passed | 19.1 min, 18.4 min |
 
 **Disk numbers, latency on and off.** The same binary twice at the same time on the same host, in
-two lab containers: as built (500 us) and with `-global sysbus-esp.x-irq-latency-us=0` (the old
-behaviour), the cases of the `bench` and `benchdisk` matrices, one run each. The disk-bound numbers
+two lab containers: with the latency at 500 us and with it at 0 (the old behaviour, now the default), the cases of the `bench` and `benchdisk` matrices, one run each. The disk-bound numbers
 move together; the CPU-bound ones (Dhrystone, Whetstone, nawk) moved by up to 30% either way between
 the two runs, which is the shared host, not the ESP.
 
@@ -1709,9 +1721,14 @@ roughly a quarter to a third, and a boot takes 6-11% longer; the `bench-disk.py`
 longer in all. Installs that write many small files feel it most: SunOS 4.1.4's install phase took
 374 s against the catalogue's 132 s. 20 MB/s is still twice what the SS-5's fast SCSI bus (10 MB/s)
 could carry. Not tried: a smaller latency, or deferring only the status interrupt (one interrupt per
-command instead of four); either would need the NeXT installs again. A guest that needs the old
-speed more than NeXT can set `-global sysbus-esp.x-irq-latency-us=0` (qemu-server has no option for
-it; PVE's root-only `args:` would pass it, not tried).
+command instead of four); either would need the NeXT installs again.
+
+**With the final 0040 (off by default)**, the same day, `qemu-system-sparc` built from 0001-0041
+mounted into the lab image without any `-global`: `smoke` 3/3 (2.6, 1.9, 1.1 min); `bench.py` on SS-5
+with OpenBIOS: raw read 64 MB 0.8 s, write + `sync` 2.5 s, boot 116 s; `bench-disk.py` on the same:
+`lat_fs` 849 creates / 1419 deletes per s, boot 119 s. That is the old speed (the 0-latency column
+above), not the 500 us one. `qtest-sparc`/`qtest-sparc64` as before (40 OK, the two `qmp-test` `oob`
+failures).
 
 **Firmware.**
 
@@ -2802,6 +2819,16 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   four `*-cd-as-disk-*-error.conf`, `hotplug/sparc32-cd-as-disk-*.conf`; e2e
   `sparc-profiles.spec.ts` ("a CD that answers as a disk"); the lab's `sol251-ss5` and `sol24-ss5`
   install targets through PVE. The web UI has no field for it (set with `qm set` or the API).
+- **ESP interrupt latency (NeXTSTEP, OPENSTEP):** `machine: SS-5,esp-irq-latency=500` (any sparc32
+  machine; microseconds, 0-100000, unset or 0 = off) makes qemu-server emit `-global
+  sysbus-esp.irq-latency-us=500` (pve-qemu `wsh/0040`): the ESP's interrupt comes that long after
+  each SCSI event. NeXTSTEP 3.3 and OPENSTEP 4.2 need it ("NeXTSTEP 3.3 and OPENSTEP 4.2"); every
+  other guest is better off without it, as each disk command gets about 2 ms slower at 500. It is a
+  key of the `machine` property string, like `viommu`, so `qm set <vmid> --machine
+  SS-5,esp-irq-latency=500` sets it and the type stays explicit. `assert_esp_irq_latency`
+  (Machine.pm) refuses it on every other architecture, at create, update and start. Tests: qemu-server's
+  `cfg2cmd/sparc32-ss5-esp-irq-latency.conf`, `x86-esp-irq-latency-error.conf`,
+  `sparc64-esp-irq-latency-error.conf`. It takes effect at the next start.
 - **Boot:** sparc64 devices get no `bootindex`; the boot device is `-boot order=c|d` from the boot
   order (`sparc64_boot_device`), and the default boot order of a new sparc64 VM has the CD-ROM first. CD-ROMs get
   `physical_block_size=512` (Sun drives used 512-byte blocks). Drives are `-blockdev` nodes as on
@@ -2897,6 +2924,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   only (first disk `ide0`, CD-ROM `ide2`), memory preset to 512 MB and capped at 8192, sockets, cores
   and CPU type disabled, displays std (default), serial0 and none, the profile's NIC models (`sunhme`
   the default), Add → Network Device disabled at four NICs.
+- `qemu/MachineEdit.js`: on a sparc32 VM, Hardware → Machine has "SCSI IRQ delay (µs)" (empty =
+  off) with a hint that only NeXTSTEP 3.3 and OPENSTEP 4.2 need it (500 µs); it writes the
+  `esp-irq-latency` key of `machine` and spells out the default machine type when it is set. Hidden
+  and not submitted on other architectures.
 - The architecture of an existing VM is read-only (no editor, no Add → Architecture).
 - Selectors: firmware (OpenBIOS, SPARCstation 5/20 PROM), display (TCX, CG3), network (Lance, Sun
   Happy Meal).

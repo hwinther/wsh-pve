@@ -3,7 +3,7 @@
 Material for the owner, for QEMU issues [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620)
 and [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674) (NeXTSTEP and OPENSTEP for SPARC
 freeze while installing). The patch is pve-qemu's
-`debian/patches/wsh/0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ.patch`, with four
+`debian/patches/wsh/0040-esp-let-the-interrupt-come-late-as-from-a-real-targe.patch`, with four
 qtest cases in `sun4m-esp-test` in `wsh/0041` (both in `submodules/pve-qemu.patch`). QEMU doesn't
 take AI-generated code, so this note describes the change for a report or a patch written by hand.
 
@@ -53,10 +53,11 @@ chip), come a fixed time after the event, from a `QEMU_CLOCK_VIRTUAL` timer; the
   chip's reset command and the parent's reset line) drops a pending one.
 - The pending flag goes into a subsection of `vmstate_esp` (`esp/irq_pending`, sent only while
   something is pending), whose `post_load` re-arms the timer a whole latency ahead.
-- A `sysbus-esp` property `x-irq-latency-us` (default 0, today's behaviour, for every other
-  machine), copied into `ESPState` at realize. The sun4m machines set 500 as a compat property in
-  each concrete machine class (an abstract `MachineClass` has no `compat_props` array), so
-  `-global sysbus-esp.x-irq-latency-us=0` turns it off again.
+- A `sysbus-esp` property `irq-latency-us`, 0 (today's behaviour) by default on every machine,
+  copied into `ESPState` at realize. A VM that runs NeXTSTEP or OPENSTEP sets
+  `-global sysbus-esp.irq-latency-us=500` (here through a qemu-server option). An earlier version
+  made 500 the sun4m default (a compat property in each concrete machine class: an abstract
+  `MachineClass` has no `compat_props` array); it was dropped for the cost below.
 
 Delaying only the line and setting `STAT_INT` at once (the first experiment) is not enough: with it
 at 500 us a NeXTSTEP package install still hung once, in the same spin. A driver that checks
@@ -72,12 +73,12 @@ enough.
 The other way, delaying only the end of a SCSI command (its data and status phases) as a disk's seek
 does, was not taken: `esp.c` finishes commands from many places (`esp_command_complete`,
 `esp_transfer_data`, the DMA and non-DMA TI paths, `write_response`), and each would need its own
-deferral and migration state, while the interrupt has one raise and one lower. Every ESP interrupt
-now comes 0.5 ms later on sun4m, selection and bus service included, about 2 ms per disk command:
-Solaris 2.6 reads its raw disk at about 20 MB/s instead of 70-200 MB/s and creates files at a
-quarter to a third of the rate (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2", has the
-numbers and the regressions). For QEMU a smaller default, or deferring only the status interrupt,
-may be worth measuring.
+deferral and migration state, while the interrupt has one raise and one lower. With the latency
+set every ESP interrupt comes 0.5 ms later, selection and bus service included, about 2 ms per disk
+command: Solaris 2.6 reads its raw disk at about 20 MB/s instead of 70-200 MB/s and creates files at
+a quarter to a third of the rate (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2", has the
+numbers and the regressions). That is why it is opt-in. For QEMU a smaller latency, or deferring
+only the status interrupt, may be worth measuring before anything becomes a default.
 
 ## Test
 
@@ -85,7 +86,8 @@ may be worth measuring.
 the `DMA_INTR` bit of the ESP DMA's CSR (0x78400000), which follows it: after Select with ATN and Stop
 neither `STAT_INT` nor the line shows 1 ns before 500 us, both do at 500 us; `RINTR` has its bits at
 once, and reading it before then, the chip's reset command and `system_reset` cancel the interrupt;
-with `-global sysbus-esp.x-irq-latency-us=0` the interrupt comes in the same instruction. Without the
-fix `irq-latency` fails (`STAT_INT` right after the selection). A save/load by hand (`migrate` to a
+by default (`irq-latency-default-off`) the interrupt comes in the same instruction; the other three
+set the latency with `-global sysbus-esp.irq-latency-us=500`. Without the fix those three can't
+start QEMU (no such property). A save/load by hand (`migrate` to a
 file 100 us after a selection, `-incoming` from it) kept the pending interrupt: nothing right after
 `cont`, `STAT_INT` and the line 500 us later.

@@ -69,7 +69,7 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..60a9699 100644
+index 7b0cba5..acfbf9d 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
 @@ -72,3 +72,44 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
@@ -115,7 +115,7 @@ index 7b0cba5..60a9699 100644
 +wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
 +wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
 +wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
-+wsh/0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ.patch
++wsh/0040-esp-let-the-interrupt-come-late-as-from-a-real-targe.patch
 +wsh/0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
@@ -7326,46 +7326,47 @@ index 0000000..4ac1b09
 ++
 ++    return g_test_run();
 ++}
-diff --git a/debian/patches/wsh/0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ.patch b/debian/patches/wsh/0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ.patch
+diff --git a/debian/patches/wsh/0040-esp-let-the-interrupt-come-late-as-from-a-real-targe.patch b/debian/patches/wsh/0040-esp-let-the-interrupt-come-late-as-from-a-real-targe.patch
 new file mode 100644
-index 0000000..0bda0a9
+index 0000000..c85c33c
 --- /dev/null
-+++ b/debian/patches/wsh/0040-esp-raise-the-interrupt-late-on-sun4m-as-a-real-targ.patch
-@@ -0,0 +1,349 @@
++++ b/debian/patches/wsh/0040-esp-let-the-interrupt-come-late-as-from-a-real-targe.patch
+@@ -0,0 +1,251 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
-+Subject: [PATCH] esp: raise the interrupt late on sun4m, as a real target does
++Subject: [PATCH] esp: let the interrupt come late, as from a real target
 +
 +The ESP runs a command to its end in the register write that starts it
 +and raised its interrupt in the same instruction; a real target takes
-+milliseconds to seek and answer. NeXTSTEP 3.3 and OPENSTEP 4.2 rely on
-+that: their SCSI driver starts a command while holding a lock that the
-+completion routine takes too. With the interrupt at once the
-+completion ran at PIL 4 while the lock was still held, and spun on it
-+forever. Both hung on every install attempt, on SS-5 and SS-20.
++milliseconds to seek and answer. NeXTSTEP 3.3 and OPENSTEP 4.2 on
++sun4m rely on that: their SCSI driver starts a command while holding a
++lock that the completion routine takes too. With the interrupt at once
++the completion ran at PIL 4 while the lock was still held, and spun on
++it forever. Both hung on every install attempt, on SS-5 and SS-20.
 +
-+Add sysbus-esp's x-irq-latency-us. The interrupt, STAT_INT in the
-+status register and the line (one signal on the chip), comes from a
-+timer that much after the event. The interrupt register and the bus
-+phase are set at once, so a driver that polls the interrupt register,
-+as OpenBIOS does, sees no change; reading it before the timer fires
-+takes the interrupt, and the chip's reset command and a device reset
-+cancel it. A pending interrupt is migrated in a subsection and comes a
-+whole latency after loading. The default is 0, the old behaviour; the
-+sun4m machines set 500 as a compat property, so
-+-global sysbus-esp.x-irq-latency-us=0 turns it off again.
++Add sysbus-esp's irq-latency-us, 0 (off) by default. With it set, the
++interrupt, STAT_INT in the status register and the line (one signal on
++the chip), comes from a timer that long after the event. The interrupt
++register and the bus phase are set at once, so a driver that polls the
++interrupt register, as OpenBIOS does, sees no change; reading it before
++the timer fires takes the interrupt, and the chip's reset command and a
++device reset cancel it. A pending interrupt is migrated in a subsection
++and comes a whole latency after loading.
 +
-+Delaying only the line, with STAT_INT set at once, wasn't enough: a
-+NeXTSTEP package install still hung once at 500 us, as a driver that
-+checks STAT_INT right after starting a command sees it end at once.
++-global sysbus-esp.irq-latency-us=500 lets both systems install. It
++stays off by default because every ESP interrupt then comes 0.5 ms
++later, about 2 ms per disk command: Solaris 2.6 reads its raw disk at
++20 MB/s instead of 70. Delaying only the line, with STAT_INT set at
++once, wasn't enough: a NeXTSTEP package install still hung once at
++500 us, as a driver that checks STAT_INT right after starting a command
++sees it end at once.
 +---
-+ hw/scsi/esp.c         | 93 +++++++++++++++++++++++++++++++++++++++++--
++ hw/scsi/esp.c         | 95 +++++++++++++++++++++++++++++++++++++++++--
 + hw/scsi/trace-events  |  1 +
-+ hw/sparc/sun4m.c      | 27 +++++++++++++
 + include/hw/scsi/esp.h |  5 +++
-+ 4 files changed, 122 insertions(+), 4 deletions(-)
++ 3 files changed, 97 insertions(+), 4 deletions(-)
 +
 +diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
-+index b7c27e82c5..eb6c3b0854 100644
++index b7c27e82c5..1605a653fe 100644
 +--- a/hw/scsi/esp.c
 ++++ b/hw/scsi/esp.c
 +@@ -32,6 +32,8 @@
@@ -7377,7 +7378,7 @@ index 0000000..0bda0a9
 + 
 + /*
 +  * On Sparc32, this is the ESP (NCR53C90) part of chip STP2000 (Master I/O),
-+@@ -43,17 +45,54 @@
++@@ -43,17 +45,56 @@
 +  * On Macintosh Quadra it is a NCR53C96.
 +  */
 + 
@@ -7395,7 +7396,9 @@ index 0000000..0bda0a9
 ++ * milliseconds to seek and answer: a guest driver may rely on not seeing the
 ++ * end of a command while the thread that started it still holds its locks.
 ++ * The interrupt register and the bus phase are set at once, so a driver
-++ * that polls the interrupt register sees no change.
+++ * that polls the interrupt register sees no change. Off (0) by default:
+++ * NeXTSTEP 3.3 and OPENSTEP 4.2 on sun4m need 500 us, and every interrupt
+++ * coming later slows the disk for everything else.
 ++ */
 + static void esp_raise_irq(ESPState *s)
 + {
@@ -7436,7 +7439,7 @@ index 0000000..0bda0a9
 +     if (s->rregs[ESP_RSTAT] & STAT_INT) {
 +         s->rregs[ESP_RSTAT] &= ~STAT_INT;
 +         qemu_irq_lower(s->irq);
-+@@ -1099,6 +1138,8 @@ static void handle_ti(ESPState *s)
++@@ -1099,6 +1140,8 @@ static void handle_ti(ESPState *s)
 + 
 + void esp_hard_reset(ESPState *s)
 + {
@@ -7445,7 +7448,7 @@ index 0000000..0bda0a9
 +     memset(s->rregs, 0, ESP_REGS);
 +     memset(s->wregs, 0, ESP_REGS);
 +     s->tchi_written = 0;
-+@@ -1432,6 +1473,37 @@ static int esp_post_load(void *opaque, int version_id)
++@@ -1432,6 +1475,37 @@ static int esp_post_load(void *opaque, int version_id)
 +     return 0;
 + }
 + 
@@ -7483,7 +7486,7 @@ index 0000000..0bda0a9
 + const VMStateDescription vmstate_esp = {
 +     .name = "esp",
 +     .version_id = 8,
-+@@ -1469,6 +1541,10 @@ const VMStateDescription vmstate_esp = {
++@@ -1469,6 +1543,10 @@ const VMStateDescription vmstate_esp = {
 +         VMSTATE_UINT8_TEST(asc_mode, ESPState, esp_is_version_8),
 +         VMSTATE_END_OF_LIST()
 +     },
@@ -7494,7 +7497,7 @@ index 0000000..0bda0a9
 + };
 + 
 + static void sysbus_esp_mem_write(void *opaque, hwaddr addr,
-+@@ -1600,6 +1676,7 @@ static void sysbus_esp_realize(DeviceState *dev, Error **errp)
++@@ -1600,6 +1678,7 @@ static void sysbus_esp_realize(DeviceState *dev, Error **errp)
 +     sysbus_init_irq(sbd, &s->irq);
 +     sysbus_init_irq(sbd, &s->drq_irq);
 +     assert(sysbus->it_shift != -1);
@@ -7502,19 +7505,19 @@ index 0000000..0bda0a9
 + 
 +     s->chip_id = TCHI_FAS100A;
 +     memory_region_init_io(&sysbus->iomem, OBJECT(sysbus), &sysbus_esp_mem_ops,
-+@@ -1629,6 +1706,11 @@ static void sysbus_esp_init(Object *obj)
++@@ -1629,6 +1708,11 @@ static void sysbus_esp_init(Object *obj)
 +     object_initialize_child(obj, "esp", &sysbus->esp, TYPE_ESP);
 + }
 + 
 ++static const Property sysbus_esp_properties[] = {
-++    /* How long after the status says INT the interrupt line goes up */
-++    DEFINE_PROP_UINT32("x-irq-latency-us", SysBusESPState, irq_latency_us, 0),
+++    /* How long after an event its interrupt comes, 0 = at once */
+++    DEFINE_PROP_UINT32("irq-latency-us", SysBusESPState, irq_latency_us, 0),
 ++};
 ++
 + static const VMStateDescription vmstate_sysbus_esp_scsi = {
 +     .name = "sysbusespscsi",
 +     .version_id = 2,
-+@@ -1648,6 +1730,7 @@ static void sysbus_esp_class_init(ObjectClass *klass, const void *data)
++@@ -1648,6 +1732,7 @@ static void sysbus_esp_class_init(ObjectClass *klass, const void *data)
 +     dc->realize = sysbus_esp_realize;
 +     device_class_set_legacy_reset(dc, sysbus_esp_hard_reset);
 +     dc->vmsd = &vmstate_sysbus_esp_scsi;
@@ -7522,7 +7525,7 @@ index 0000000..0bda0a9
 +     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
 + }
 + 
-+@@ -1657,6 +1740,7 @@ static void esp_finalize(Object *obj)
++@@ -1657,6 +1742,7 @@ static void esp_finalize(Object *obj)
 + 
 +     fifo8_destroy(&s->fifo);
 +     fifo8_destroy(&s->cmdfifo);
@@ -7530,7 +7533,7 @@ index 0000000..0bda0a9
 + }
 + 
 + static void esp_init(Object *obj)
-+@@ -1665,6 +1749,7 @@ static void esp_init(Object *obj)
++@@ -1665,6 +1751,7 @@ static void esp_init(Object *obj)
 + 
 +     fifo8_create(&s->fifo, ESP_FIFO_SZ);
 +     fifo8_create(&s->cmdfifo, ESP_CMDFIFO_SZ);
@@ -7550,107 +7553,6 @@ index 0000000..0bda0a9
 + esp_lower_irq(void) "Lower IRQ"
 + esp_raise_drq(void) "Raise DREQ"
 + esp_lower_drq(void) "Lower DREQ"
-+diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
-+index 44e10094d3..46c5788b3c 100644
-+--- a/hw/sparc/sun4m.c
-++++ b/hw/sparc/sun4m.c
-+@@ -1196,6 +1196,24 @@ enum {
-+     ss600mp_id,
-+ };
-+ 
-++/*
-++ * The ESP's interrupt comes 500 us after the event, not in the instruction
-++ * that started the command: NeXTSTEP 3.3 and OPENSTEP 4.2 otherwise see a
-++ * command end while the thread that started it still holds their SCSI
-++ * driver's lock, and spin on it forever. -global
-++ * sysbus-esp.x-irq-latency-us=0 gives the old behaviour.
-++ */
-++static GlobalProperty sun4m_compat_props[] = {
-++    { TYPE_SYSBUS_ESP, "x-irq-latency-us", "500" },
-++};
-++
-++/* Only a concrete machine class has compat_props: each of them calls this */
-++static void sun4m_add_compat_props(MachineClass *mc)
-++{
-++    compat_props_add(mc->compat_props, sun4m_compat_props,
-++                     G_N_ELEMENTS(sun4m_compat_props));
-++}
-++
-+ static void sun4m_machine_class_init(ObjectClass *oc, const void *data)
-+ {
-+     MachineClass *mc = MACHINE_CLASS(oc);
-+@@ -1262,6 +1280,7 @@ static void ss5_class_init(ObjectClass *oc, const void *data)
-+     mc->is_default = true;
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("Fujitsu-MB86904");
-+     smc->hwdef = &ss5_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void ss10_class_init(ObjectClass *oc, const void *data)
-+@@ -1297,6 +1316,7 @@ static void ss10_class_init(ObjectClass *oc, const void *data)
-+     mc->max_cpus = 4;
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-SuperSparc-II");
-+     smc->hwdef = &ss10_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void ss600mp_class_init(ObjectClass *oc, const void *data)
-+@@ -1330,6 +1350,7 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
-+     mc->max_cpus = 4;
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-SuperSparc-II");
-+     smc->hwdef = &ss600mp_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void ss20_class_init(ObjectClass *oc, const void *data)
-+@@ -1381,6 +1402,7 @@ static void ss20_class_init(ObjectClass *oc, const void *data)
-+     mc->max_cpus = 4;
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-SuperSparc-II");
-+     smc->hwdef = &ss20_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void voyager_class_init(ObjectClass *oc, const void *data)
-+@@ -1413,6 +1435,7 @@ static void voyager_class_init(ObjectClass *oc, const void *data)
-+     mc->desc = "Sun4m platform, SPARCstation Voyager";
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("Fujitsu-MB86904");
-+     smc->hwdef = &voyager_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void ss_lx_class_init(ObjectClass *oc, const void *data)
-+@@ -1446,6 +1469,7 @@ static void ss_lx_class_init(ObjectClass *oc, const void *data)
-+     mc->desc = "Sun4m platform, SPARCstation LX";
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-MicroSparc-I");
-+     smc->hwdef = &ss_lx_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void ss4_class_init(ObjectClass *oc, const void *data)
-+@@ -1479,6 +1503,7 @@ static void ss4_class_init(ObjectClass *oc, const void *data)
-+     mc->desc = "Sun4m platform, SPARCstation 4";
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("Fujitsu-MB86904");
-+     smc->hwdef = &ss4_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void scls_class_init(ObjectClass *oc, const void *data)
-+@@ -1511,6 +1536,7 @@ static void scls_class_init(ObjectClass *oc, const void *data)
-+     mc->desc = "Sun4m platform, SPARCClassic";
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-MicroSparc-I");
-+     smc->hwdef = &scls_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static void sbook_class_init(ObjectClass *oc, const void *data)
-+@@ -1543,6 +1569,7 @@ static void sbook_class_init(ObjectClass *oc, const void *data)
-+     mc->desc = "Sun4m platform, SPARCbook";
-+     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("TI-MicroSparc-I");
-+     smc->hwdef = &sbook_hwdef;
-++    sun4m_add_compat_props(mc);
-+ }
-+ 
-+ static const TypeInfo sun4m_machine_types[] = {
 +diff --git a/include/hw/scsi/esp.h b/include/hw/scsi/esp.h
 +index 8887ba8512..3bb4474c9f 100644
 +--- a/include/hw/scsi/esp.h
@@ -7683,47 +7585,48 @@ index 0000000..0bda0a9
 + 
 diff --git a/debian/patches/wsh/0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m.patch b/debian/patches/wsh/0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m.patch
 new file mode 100644
-index 0000000..2b32fb2
+index 0000000..f215e65
 --- /dev/null
 +++ b/debian/patches/wsh/0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m.patch
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the ESP interrupt latency on sun4m
 +
 +Four cases in sun4m-esp-test on the SPARCstation 5, with the line seen
-+through the DMA_INTR bit of the ESP DMA's CSR: after Select with ATN
-+and Stop neither STAT_INT nor the line shows for 500 us, and both do
-+then; the interrupt register has its bits at once, and reading it
-+before then, the chip's reset command and a system reset cancel the
-+interrupt; with -global sysbus-esp.x-irq-latency-us=0 the interrupt
-+comes in the same instruction, as before.
++through the DMA_INTR bit of the ESP DMA's CSR: by default the interrupt
++comes in the same instruction, as before. With
++-global sysbus-esp.irq-latency-us=500, after Select with ATN and Stop
++neither STAT_INT nor the line shows for 500 us, and both do then; the
++interrupt register has its bits at once, and reading it before then,
++the chip's reset command and a system reset cancel the interrupt.
 +
-+Without the previous patch the irq-latency case fails: the interrupt
-+is there right after the selection.
++Without the previous patch QEMU doesn't start with the property: there
++is no such property.
 +---
-+ tests/qtest/sun4m-esp-test.c | 138 +++++++++++++++++++++++++++++++++++
-+ 1 file changed, 138 insertions(+)
++ tests/qtest/sun4m-esp-test.c | 141 +++++++++++++++++++++++++++++++++++
++ 1 file changed, 141 insertions(+)
 +
 +diff --git a/tests/qtest/sun4m-esp-test.c b/tests/qtest/sun4m-esp-test.c
-+index c8e9a15a63..5e8c6ce5e6 100644
++index c8e9a15a63..43a454991d 100644
 +--- a/tests/qtest/sun4m-esp-test.c
 ++++ b/tests/qtest/sun4m-esp-test.c
-+@@ -16,6 +16,14 @@
++@@ -16,6 +16,15 @@
 +  * Nothing runs on the CPU: the test drives the ESP's registers itself,
 +  * without DMA, as the guest's driver does.
 +  *
-++ * On sun4m the ESP's interrupt (STAT_INT and the line) comes 500 us after
-++ * the event (sysbus-esp's x-irq-latency-us): NeXTSTEP 3.3 and OPENSTEP 4.2
-++ * deadlock when a command ends in the instruction that started it. The
-++ * irq-latency cases check that neither shows until then, both do after it,
-++ * the interrupt register has its bits at once, and reading it or a reset
-++ * before then cancels the interrupt. They see the line in the ESP DMA's CSR,
-++ * whose DMA_INTR bit follows it.
+++ * With sysbus-esp's irq-latency-us the ESP's interrupt (STAT_INT and the
+++ * line) comes that long after the event: NeXTSTEP 3.3 and OPENSTEP 4.2
+++ * deadlock when a command ends in the instruction that started it, and
+++ * need 500 us. It is off by default. The irq-latency cases check that the
+++ * interrupt comes at once by default, and with 500 us that neither shows
+++ * until then, both do after it, the interrupt register has its bits at
+++ * once, and reading it or a reset before then cancels the interrupt. They
+++ * see the line in the ESP DMA's CSR, whose DMA_INTR bit follows it.
 ++ *
 +  * SPDX-License-Identifier: GPL-2.0-or-later
 +  */
 + 
-+@@ -26,6 +34,13 @@
++@@ -26,6 +35,14 @@
 + #define ESP_BASE        0x78800000ULL
 + #define ESP_REG(r)      (ESP_BASE + (r) * 4)
 + 
@@ -7731,13 +7634,14 @@ index 0000000..2b32fb2
 ++#define ESPDMA_CSR      0x78400000ULL
 ++#define DMA_INTR        0x01
 ++
-++/* sun4m's default x-irq-latency-us, in ns */
+++/* The latency the tests set, as NeXTSTEP needs it */
+++#define IRQ_LATENCY_ON  "-global sysbus-esp.irq-latency-us=500"
 ++#define IRQ_LATENCY_NS  500000
 ++
 + #define ESP_FIFO        0x2
 + #define ESP_CMD         0x3
 + #define ESP_RSTAT       0x4
-+@@ -33,6 +48,7 @@
++@@ -33,6 +50,7 @@
 + #define ESP_RINTR       0x5
 + #define ESP_RFLAGS      0x7
 + 
@@ -7745,7 +7649,7 @@ index 0000000..2b32fb2
 + #define CMD_TI          0x10
 + #define CMD_ICCS        0x11
 + #define CMD_MSGACC      0x12
-+@@ -43,6 +59,7 @@
++@@ -43,6 +61,7 @@
 + #define STAT_ST         0x03
 + #define STAT_MO         0x06
 + #define STAT_GE         0x40
@@ -7753,7 +7657,7 @@ index 0000000..2b32fb2
 + 
 + #define INTR_FC         0x08
 + #define INTR_BS         0x10
-+@@ -124,6 +141,121 @@ static uint8_t tur_after_sdtr(QTestState *qts)
++@@ -124,6 +143,121 @@ static uint8_t tur_after_sdtr(QTestState *qts)
 +     return status;
 + }
 + 
@@ -7790,7 +7694,7 @@ index 0000000..2b32fb2
 ++
 ++static void test_irq_latency(void)
 ++{
-++    QTestState *qts = esp_irq_init("");
+++    QTestState *qts = esp_irq_init(IRQ_LATENCY_ON);
 ++    uint8_t intr;
 ++
 ++    esp_select(qts);
@@ -7818,7 +7722,7 @@ index 0000000..2b32fb2
 ++
 ++static void test_irq_latency_cancel_lower(void)
 ++{
-++    QTestState *qts = esp_irq_init("");
+++    QTestState *qts = esp_irq_init(IRQ_LATENCY_ON);
 ++    uint8_t intr;
 ++
 ++    esp_select(qts);
@@ -7839,7 +7743,7 @@ index 0000000..2b32fb2
 ++
 ++static void test_irq_latency_cancel_reset(void)
 ++{
-++    QTestState *qts = esp_irq_init("");
+++    QTestState *qts = esp_irq_init(IRQ_LATENCY_ON);
 ++
 ++    /* The chip's own reset command */
 ++    esp_select(qts);
@@ -7858,11 +7762,11 @@ index 0000000..2b32fb2
 ++    qtest_quit(qts);
 ++}
 ++
-++static void test_irq_latency_off(void)
+++static void test_irq_latency_default_off(void)
 ++{
-++    QTestState *qts = esp_irq_init("-global sysbus-esp.x-irq-latency-us=0");
+++    QTestState *qts = esp_irq_init("");
 ++
-++    /* Without the latency the interrupt comes in the same instruction */
+++    /* By default the interrupt comes in the same instruction, as before */
 ++    esp_select(qts);
 ++    g_assert_cmphex(esp_stat_int(qts), ==, STAT_INT);
 ++    g_assert_true(esp_irq_line(qts));
@@ -7875,7 +7779,7 @@ index 0000000..2b32fb2
 + static void test_cdb_after_sdtr(void)
 + {
 +     QTestState *qts = qtest_init("-machine SS-5 -nodefaults "
-+@@ -146,6 +278,12 @@ int main(int argc, char **argv)
++@@ -146,6 +280,13 @@ int main(int argc, char **argv)
 +     g_test_init(&argc, &argv, NULL);
 + 
 +     qtest_add_func("sun4m-esp/cdb-after-sdtr", test_cdb_after_sdtr);
@@ -7884,7 +7788,8 @@ index 0000000..2b32fb2
 ++                   test_irq_latency_cancel_lower);
 ++    qtest_add_func("sun4m-esp/irq-latency-cancel-reset",
 ++                   test_irq_latency_cancel_reset);
-++    qtest_add_func("sun4m-esp/irq-latency-off", test_irq_latency_off);
+++    qtest_add_func("sun4m-esp/irq-latency-default-off",
+++                   test_irq_latency_default_off);
 + 
 +     return g_test_run();
 + }
