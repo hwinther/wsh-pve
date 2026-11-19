@@ -82,14 +82,9 @@ PACKAGES_2026_11_18 = {"pve-qemu-kvm": "11.1.3-2+wsh16", "qemu-server": "9.2.18+
 # in pve-qemu-kvm 11.1.3-2+wsh20 and later), in the PVE test container with the packages of that day
 PACKAGES_2026_11_18_SUN4U = {"pve-qemu-kvm": "11.1.3-2+wsh16 + wsh/0034-0037 + openbios 0016-0017",
                              "qemu-server": "9.2.18+wsh1", "pve-manager": "9.2.30+wsh1"}
-# Debian 4.0's Linux 2.6.18 esp driver: pve-qemu-kvm 11.1.3-2+wsh17 with the ESP fix (wsh/0038,
-# esp_cdb_ready() counting the message bytes) built in; no published package has it yet
-PACKAGES_ESP_FIX = {"pve-qemu-kvm": "11.1.3-2+wsh17, qemu-system-sparc a local build with wsh/0038",
-                    "qemu-server": "9.2.18+wsh4", "pve-manager": "9.2.30+wsh3"}
-ESP_FIX_NOTE = ("needs pve-qemu-kvm with wsh/0038 (QEMU's ESP took the first CDB byte after a multi-byte message"
-                " out as a whole command: Linux 2.6.18 offlined the disk and CD), in no published package yet")
-# Solaris 2.3/2.5 and SunOS 4.1.3_U1B (the published packages of that day)
-PACKAGES_2026_11_19 = {"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+wsh1", "pve-manager": "9.2.31+wsh1"}
+# Solaris 2.3/2.5, SunOS 4.1.3_U1B and Debian 4.0 (the published packages of that day; Debian 4.0's
+# Linux 2.6.18 esp driver needs the ESP fix wsh/0038, in pve-qemu-kvm 11.1.3-2+wsh20 and later)
+PACKAGES_2026_11_19 ={"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+wsh1", "pve-manager": "9.2.31+wsh1"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -314,6 +309,10 @@ DEBIAN_UNATTENDED = {
     "net_modes": ["static"],
     "net_require": ["gateway", "dns"],
     "apt_proxy": True,
+    # pve_matrix.py install runs `lab.py install <target> --check` with no --gateway or --dns (and its
+    # node's vmbr0 routes nowhere), which these targets refuse before a VM is made
+    "matrix_skip": "needs a network to archive.debian.org (--gateway and --dns are required); pve_matrix.py"
+                   " install passes neither",
 }
 
 
@@ -696,7 +695,8 @@ TARGETS = {
     # preseed/early_command on SILO's boot line; the netinst on scsi6 fetches the rest from
     # archive.debian.org (or --apt-proxy). A blank disk: on the lab's Sun-labelled one partman's new
     # label kept the old geometry and the recipe didn't fit. Linux 2.6.18's esp driver needs QEMU's
-    # ESP fix for a multi-byte message out (sync negotiation). README.md, "Debian GNU/Linux 4.0"
+    # ESP fix for a multi-byte message out (sync negotiation; wsh/0038, pve-qemu-kvm 11.1.3-2+wsh20 and
+    # later). README.md, "Debian GNU/Linux 4.0"
     "debian40-ss5": {
         **DEBIAN_UNATTENDED,
         "title": "Debian GNU/Linux 4.0 (etch) base system on a SPARCstation 5 (OpenBIOS)",
@@ -706,10 +706,11 @@ TARGETS = {
         "media": [{"name": "debian-40r9-sparc-netinst.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "debian40-ss5",
-        "minutes": 23,  # 23.3 min with --apt-proxy: install 19.7 (base system from the archive), first boot 2.2, check 1.1
-        "tested": {"date": "2026-11-18", "packages": PACKAGES_ESP_FIX,
-                   "with": "--check --user lab --gateway --dns --apt-proxy"},
-        "matrix_skip": ESP_FIX_NOTE,
+        # two installs at once on a shared host: 21.6 min with --apt-proxy (install 17.8, first boot 2.2,
+        # check 1.2), 26 straight to the archive (22.1, 2.2, 1.5)
+        "minutes": 24,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19,
+                   "with": "--check --user lab --gateway --dns --apt-proxy; --check --gateway --dns"},
     },
     "debian40-ss20": {
         **DEBIAN_UNATTENDED,
@@ -720,10 +721,11 @@ TARGETS = {
         "media": [{"name": "debian-40r9-sparc-netinst.iso", "drive": "scsi6"}],
         "boot": "scsi3",
         "hostname": "debian40-ss20",
-        "minutes": 19,  # 19.2 min straight to the archive: install 16.1, first boot 1.9, check 1
-        "tested": {"date": "2026-11-18", "packages": PACKAGES_ESP_FIX,
-                   "with": "--check --gateway --dns; --check --user lab --apt-proxy"},
-        "matrix_skip": ESP_FIX_NOTE,
+        # two installs at once on a shared host: 17.4 min straight to the archive (install 14.2, first
+        # boot 1.8, check 1.1), 20.7 with --apt-proxy (17, 2.2, 1.1)
+        "minutes": 19,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19,
+                   "with": "--check --gateway --dns; --check --user lab --gateway --dns --apt-proxy"},
     },
 }
 

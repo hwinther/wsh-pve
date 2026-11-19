@@ -82,7 +82,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `bench-build.py` | boots the build disk with the hand-over CD and a blank labelled `DISK2`, runs `build.sh`, which compiles the benchmarks and makes `DISK2` the bench disk; compile times go to `result.json` | ~3 min (SS-20) |
 | `redhat-install-sparc.py` | Red Hat Linux 6.2 from its CD with kickstart (the answer CD on target 5, written from `IP`/`NETMASK` unless `KS_ISO`), SILO's three screens answered; stops the VM when the install reboots. Needs a Sun-labelled disk (`TEMPLATE`) | ~2.5 min |
 | `redhat-firstboot.py`, `redhat-boot-disk.py` | boot an installed Red Hat 6.2 disk to `login:` on ttyS0; the first sets root's password, the marker, host name, router, DNS and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1-2 min |
-| `debian-install-sparc.py` | Debian 4.0 (etch) from the netinst CD with a preseed file (the answer CD on target 5, written from `IP`/`NETMASK`/`GATEWAY`/`DNS`/`DOMAIN`/`HOSTNAME` unless `ANSWERS_ISO`), loaded by `preseed/early_command` on SILO's boot line; the packages come from `archive.debian.org` (`NET=user` reaches it); stops the VM when the install reboots, fails at the first question box. Needs QEMU with `wsh/0038` | ~20 min |
+| `debian-install-sparc.py` | Debian 4.0 (etch) from the netinst CD with a preseed file (the answer CD on target 5, written from `IP`/`NETMASK`/`GATEWAY`/`DNS`/`DOMAIN`/`HOSTNAME` unless `ANSWERS_ISO`), loaded by `preseed/early_command` on SILO's boot line; the packages come from `archive.debian.org` (`NET=user` reaches it); stops the VM when the install reboots, fails at the first question box. Needs QEMU with `wsh/0038` (pve-qemu-kvm 11.1.3-2+wsh20 or later) | ~20 min |
 | `debian-firstboot.py`, `debian-boot-disk.py` | boot an installed Debian 4.0 disk to `login:` on ttyS0; the first sets root's password, the marker and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1.5 min |
 | `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
 
@@ -924,8 +924,10 @@ install, other package groups (X needs a framebuffer and `Xsun`), a login as the
 `debian40-ss5` (SS-5, 256 MB) and `debian40-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
 `vga: serial0`, install Debian GNU/Linux 4.0r9 "etch" for sparc (`debian-40r9-sparc-netinst.iso`,
 the last Debian release for sun4m; kernel 2.6.18-6-sparc32) onto a blank 3 GiB disk on `scsi3`,
-the netinst CD on `scsi6`, lance (`eth0`). They need **`pve-qemu-kvm` with `wsh/0038`** (below; no
-published package has it yet), so `pve_matrix.py install` leaves them out (`matrix_skip`).
+the netinst CD on `scsi6`, lance (`eth0`). They need **`pve-qemu-kvm` 11.1.3-2+wsh20 or later**
+(the ESP fix `wsh/0038`, below). `pve_matrix.py install` still leaves them out (`matrix_skip`): it
+runs `lab.py install <target> --check` without `--gateway` and `--dns`, which these targets refuse
+before a VM is made, and its node's `vmbr0` has no route out.
 
 1. **Install** (the `unattended` method, `debian-install-sparc.py`). `install.Unattended` writes
    the answer CD (`answer_media.preseed()` and the loader script `wshlab`) and puts it on `scsi5`.
@@ -1002,7 +1004,8 @@ Found on the way:
   CDB length, so the first CDB byte alone counted as a complete 6-byte command, the target answered
   ILLEGAL REQUEST (`asc 0x20`), and the driver reset the bus until it gave up. One line in
   `hw/scsi/esp.c` fixes it (`len - s->cmdfifo_cdb_offset >= cdblen`): the install, first boot and
-  check below ran on a `qemu-system-sparc` built with it. Solaris, SunOS, NetBSD and Red Hat 6.2's
+  check below ran first on a `qemu-system-sparc` built with it, then on the published
+  pve-qemu-kvm 11.1.3-2+wsh21 (the fix is in +wsh20 and later). Solaris, SunOS, NetBSD and Red Hat 6.2's
   2.2 kernel don't send that message sequence.
 - **The floppy drive:** QEMU's sun4m always has an (empty) floppy drive. partman's disk scan opens
   `/dev/fd0`, and in about half the runs Linux 2.6.18's floppy driver then oopsed in keventd
@@ -1035,6 +1038,19 @@ the ESP fix:
 | `install debian40-ss20 --vmid 9901 --check --gateway --dns` (straight to the archive) | passed; no `apt.conf`; `netstat -ltn` lists no listener (inetd: "no services enabled"); a further boot: `apt-get update` no GPG warning | 19.2 min (965 s, 111 s, 59 s) |
 | `install debian40-ss20 --vmid 9902 --check --user lab --gateway --dns --apt-proxy` (the final code) | passed; the install's end seen at OpenBIOS's banner; `lab:1000:1000::/home/lab:/bin/bash` | 16.3 min (774 s, 124 s, 62 s) |
 | `install debian40-ss5 ...` without `--gateway` or with `--apt-proxy ftp://...`; `install redhat62-ss5 --apt-proxy ...` | refused before a VM is made | 0 s |
+
+Rerun 2026-11-19 on the published packages only (the e2e PVE image built from the apt repo:
+pve-qemu-kvm 11.1.3-2+wsh21, qemu-server 9.2.19+wsh1, pve-manager 9.2.31+wsh1, libpve-storage-perl
+9.1.18+wsh1; nothing bind-mounted), the container's `vmbr0` routed to the internet, two installs at
+once on the shared lab host:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install debian40-ss5 --check --user lab --gateway --dns --apt-proxy` | passed; `uname -a` `2.6.18-6-sparc32`, `/etc/debian_version` `4.0`, `/dev/sda2` 2.8 GB (296 MB used) | 21.6 min (install 1068 s, first boot 134 s, check 73 s) |
+| `install debian40-ss20 --check --gateway --dns` (straight to the archive) | passed | 17.4 min (849 s, 111 s, 65 s) |
+| `install debian40-ss5 --check --gateway --dns` (straight to the archive) | passed | 26.0 min (1325 s, 132 s, 87 s) |
+| `install debian40-ss20 --check --user lab --gateway --dns` with `WSH_LAB_APT_PROXY` | passed; `lab:1000:1000::/home/lab:/bin/bash` | 20.7 min (1021 s, 134 s, 67 s) |
+| `install debian40-ss5 --vmid N --out DIR --check`, the command `pve_matrix.py install` runs | refused: "--gateway: debian40-ss5 needs it with a static address", so the targets keep `matrix_skip` | 0 s |
 
 Not tried: DHCP (d-i's default; `--ip dhcp` is refused for now), `--vlan`, SS-10, `ss5.bin` or the
 SS-20 PROM, more than one CPU, tasks beyond the base system, the netinst on sun4u (Etch's sparc64

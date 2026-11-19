@@ -46,8 +46,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `netbsd111-sparc-ss20` | NetBSD 11.1, Minimal | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `netbsd111-sparc` | `NetBSD-11.1-sparc.iso` | `root` / `wshlab` | ~7 min |
 | `redhat62-ss5` | Red Hat Linux 6.2, Base, installed by kickstart | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~6 min |
 | `redhat62-ss20` | Red Hat Linux 6.2, Base, installed by kickstart | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `redhat62-ss5` | `redhat-6.2-sparc.iso` | `root` / `wshlab` | ~5 min |
-| `debian40-ss5` | Debian GNU/Linux 4.0 (etch), the base system, installed by preseed from the netinst CD and `archive.debian.org`; needs `pve-qemu-kvm` with `wsh/0038` (no published package yet) | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only; `--gateway` and `--dns` required | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~20-25 min |
-| `debian40-ss20` | as `debian40-ss5` | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `debian40-ss5` | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~20 min |
+| `debian40-ss5` | Debian GNU/Linux 4.0 (etch), the base system, installed by preseed from the netinst CD and `archive.debian.org`; needs `pve-qemu-kvm` 11.1.3-2+wsh20 or later (the ESP fix `wsh/0038`) | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance (`eth0`); an answer CD on `scsi5` during the install only; `--gateway` and `--dns` required | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~22-26 min |
+| `debian40-ss20` | as `debian40-ss5` | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `debian40-ss5` | `debian-40r9-sparc-netinst.iso` | `root` / `wshlab` | ~17-21 min |
 
 The DOS targets are driven on the VGA text screen (read exactly from the text buffer), swap the
 floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-DOS: HIMEM, `DOS=HIGH`,
@@ -164,8 +164,8 @@ works as usual). The disk (blank,
 3 GiB) gets `/boot` (64 MB) first, then `/` and swap; the system is the base system with the console
 on `ttyS0`, `eth0` with the static address, the time zone UTC, no security updates (etch's are
 gone). The first boot sets root's password, writes the marker and adds the optional `--user` (home
-under `/home`). These targets need `pve-qemu-kvm` with the ESP fix `wsh/0038` (Linux 2.6.18's SCSI
-driver takes the disk offline without it), which no published package has yet.
+under `/home`). These targets need `pve-qemu-kvm` 11.1.3-2+wsh20 or later, which has the ESP fix
+`wsh/0038` (Linux 2.6.18's SCSI driver takes the disk offline without it).
 
 **Solaris 2.4 and 2.5.1** (`sol24-ss5`, `sol251-ss5`) boot their installer only from a CD that
 answers as a disk, and 2.4 only under a Sun PROM: their VMs have the SPARCstation 5 PROM (`bios:
