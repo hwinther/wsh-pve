@@ -61,6 +61,7 @@ come after that, not before.
 | Install targets: Solaris 8 and 9 on the SS-5 (`sol8-ss5` from 8 2/02, `sol9-ss5` from 9 9/05, 256 MB, Web Start through PVE); Web Start's screens of the later updates answered (9 9/05's license question, 8 2/02's CD prompts); 8 2/02 and 9 9/05 on sun4u measured: they stop at the same `pp is NULL or free` panic as 8 1/01 and 9 (OpenBIOS's physical allocation, `submodules/SPARC.md`) | in review | |
 | Install targets under OpenBIOS with pve-qemu-kvm 11.1.3-2+wsh22: `sol23-ss5`, `sol23-ss20`, `sol24-ss5` move from the Sun PROMs to OpenBIOS, new `sol24-ss20` and `sol22-ss10` (Solaris 2.2 on SS-10), each installed twice through PVE (~8-10 min); 2.3 and 2.4 on the SS-20 with 2 and 4 CPUs (10 min of load on 4, idle ~5% of a host core); OpenBSD 8.0 on sun4u (`openbsd80-sun4u`, openbios 0023): the installer answered by what it asks, ntpd off, ~19 min | in review | |
 | Install targets: OpenBSD 5.9, the last release for 32-bit sparc, on SS-5 and SS-20 (`openbsd59-ss5`, `openbsd59-ss20`, OpenBIOS, ~10 min): `cd59.iso` boots the installer, the sets come from a CD `lab.py media --convert` makes on the node from the release's files (Rock Ridge names, `answer_media.openbsd_sets`), the installer checks them against `SHA256.sig`; needs a serial display (with QEMU's keyboard ESCC the kernel panics, "crazy interrupts") | in review | |
+| Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | in review | |
 
 ## In progress
 
@@ -170,6 +171,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Later
 
+- **Mirror storage, step 3.** Steps 1 and 2 are done ("Done", `docs/src/content/docs/reference/mirror.md`).
+  Next: a rename API for `iso` and `floppy` volumes in libpve-storage-perl (a link or a file renamed
+  in place, so folders can be reorganised from the UI), and an "add link from another storage" call
+  (link a volume of one storage, an NFS or CIFS storage's ISO, into the mirror storage under a folder
+  name) with its UI in the storage's ISO and floppy tabs. Open questions: who may create links that
+  point outside a storage (`Datastore.Allocate` on both storages at least), and what a cluster node
+  without the target's mount shows.
 - **A larger package CD for Solaris 2.6/7.** `sun26gnu.iso` (34 packages) came from the sunfreeware
   collection now on the lab host (521 packages for `sol26-sparc`); four of its packages have newer
   builds there (ddrescue, openssl, sed, top) and many useful ones are missing (openssh with prngd,

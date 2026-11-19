@@ -114,6 +114,8 @@ Once the packages have been installed on a PVE host, the proxmox frontend will h
 
 * Floppy disk support: a dedicated `floppy` storage content type (stored in `template/floppy` next to the iso folder) with upload/listing in the UI, up to two floppy drives per VM (A:/B:) with boot-from-floppy and live media swap. Enable the **Floppy image** content type on a storage first (Datacenter → Storage → edit), or the storage list in **Add → Floppy Drive** stays empty - see the [floppy reference](https://debian.wshosting.no/reference/floppy/)
 
+* ISO and floppy images from a NAS folder tree without copying them: a mirror storage of symlinks (`wsh-lab mirror sync`), the folders kept in the volume name (`Solaris__2.6__solaris_2.6_598_sparc.iso`) and shown as folders in the storage view and the ISO and floppy selectors - see the [mirror storage reference](https://debian.wshosting.no/reference/mirror/)
+
 * Selecting an architecture and CPU outside of the default x86(-64) set (on create only; an existing VM keeps its architecture)
 
 * Support for forwarding GTK/SDL UI and alsa/pulseaudio/pipewire audio to the host.

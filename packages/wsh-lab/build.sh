@@ -25,15 +25,17 @@ mkdir -p "$tree/lab/scenarios" "$tree/lab/tests" "$tree/player"
 cp -r "$SRC/packages/wsh-lab/debian" "$SRC/packages/wsh-lab/bin" "$SRC/packages/wsh-lab/man" "$tree/"
 sparc="$SRC/e2e/sparc"
 for f in lab.py recording.py install.py targets.py targets_dos.py vgatext.py dos_tools.py dos_mem.py sunlabel.py \
-	answer_media.py mcp_server.py lab-requirements.txt mcp-requirements.txt; do
+	answer_media.py mirror.py mcp_server.py lab-requirements.txt mcp-requirements.txt; do
 	cp "$sparc/$f" "$tree/lab/"
 done
 cp "$sparc"/scenarios/*.py "$tree/lab/scenarios/"
-cp "$sparc/tests/test_targets.py" "$tree/lab/tests/"
+cp "$sparc/tests/test_targets.py" "$sparc/tests/test_mirror.py" "$tree/lab/tests/"
 echo "$WSH_LAB_VERSION" > "$tree/lab/VERSION"
 chmod 755 "$tree/bin/"* "$tree/lab/lab.py" "$tree/lab/mcp_server.py" "$tree/lab/sunlabel.py" "$tree/debian/rules"
 chmod 644 "$tree/lab/scenarios/"*.py "$tree/lab/tests/"*.py "$tree/lab/"*.txt
-for f in install.py recording.py targets.py targets_dos.py vgatext.py dos_tools.py dos_mem.py answer_media.py; do chmod 644 "$tree/lab/$f"; done
+for f in install.py recording.py targets.py targets_dos.py vgatext.py dos_tools.py dos_mem.py answer_media.py mirror.py; do
+	chmod 644 "$tree/lab/$f"
+done
 python3 "$sparc/recording.py" fetch-player "$tree/player"
 
 date=$(date -u -R -d "@$WSH_LAB_EPOCH")

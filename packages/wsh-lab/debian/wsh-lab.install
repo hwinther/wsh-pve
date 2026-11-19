@@ -5,5 +5,6 @@ lab/*.txt usr/share/wsh-lab
 lab/VERSION usr/share/wsh-lab
 lab/scenarios/*.py usr/share/wsh-lab/scenarios
 lab/tests/test_targets.py usr/share/wsh-lab/tests
+lab/tests/test_mirror.py usr/share/wsh-lab/tests
 player/asciinema-player.css usr/share/wsh-lab/asciinema-player
 player/asciinema-player.min.js usr/share/wsh-lab/asciinema-player
