@@ -7,7 +7,9 @@ blockdev-change-medium), then boots the installed system and writes and checks t
 (scenarios/freedos-install.py, dos-firstboot.py, dos-boot-disk.py). The screens are read from the VGA
 text buffer (vgatext.py) the whole way; no OCR.
 
-    docker run --rm --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_freedos.py
+    docker run --rm -e WSH_LAB_GUEST_TESTS=1 --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_freedos.py
+
+  WSH_LAB_GUEST_TESTS=1  required: without it the test is skipped (it installs a guest and may download)
 
   FREEDOS_ZIP     FD14-FloppyEdition.zip; without it the pinned one (targets_dos.FREEDOS_ZIP) is
                   downloaded and its sha256 checked, into FREEDOS_CACHE (default /tmp/wsh-lab-freedos)
@@ -32,6 +34,11 @@ import targets_dos  # noqa: E402
 
 sys.modules.setdefault("lab", lab)
 
+
+
+# A whole guest install that may download its medium (minutes, network): only when asked for, so a plain
+# `unittest discover` stays offline and fast. The CI workflows set WSH_LAB_GUEST_TESTS=1.
+GUEST_TESTS = os.environ.get("WSH_LAB_GUEST_TESTS") == "1"
 
 def sha256(path):
     h = hashlib.sha256()
@@ -74,6 +81,7 @@ def qemu():
     raise unittest.SkipTest("no qemu-system-x86_64")
 
 
+@unittest.skipUnless(GUEST_TESTS, "a guest install that may download its floppies; set WSH_LAB_GUEST_TESTS=1")
 class FreeDos(unittest.TestCase):
     def test_install_from_floppies(self):
         q = qemu()
