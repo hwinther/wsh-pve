@@ -1573,10 +1573,10 @@ class Debian40(unittest.TestCase):
         t = targets.TARGETS["debian40-ss5"]
         net = install.network_choice(t, a(apt_proxy="http://10.0.2.2:3142"))
         self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", None, []))
-        net = install.network_choice(t, a(ip="192.168.7.20", apt_proxy="http://192.168.7.1:3142/"))
+        net = install.network_choice(t, a(ip="192.0.2.20", apt_proxy="http://192.0.2.1:3142/"))
         self.assertEqual(net["gateway"], None)
         for bad in (a(apt_proxy="http://aptcache.example:3142"), a(apt_proxy="http://10.0.3.2:3142"),
-                    a(ip="192.168.7.20", apt_proxy="http://10.0.2.2:3142")):
+                    a(ip="192.0.2.20", apt_proxy="http://10.0.2.2:3142")):
             with self.assertRaises(SystemExit, msg=bad.apt_proxy):
                 install.network_choice(t, bad)
         self.assertTrue(install.proxy_on_network("http://10.0.2.2:3142", install.ipaddress.ip_network("10.0.2.0/24")))
