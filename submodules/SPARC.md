@@ -1463,7 +1463,7 @@ serial console unless stated.
 | --- | --- | --- | --- | --- |
 | NetBSD 11.1 | yes, sysinst in 46 s | yes: sysinst on the screen in 54 s (no terminal question there); `b` Return on the PS/2 keyboard switches it to German | yes: sysinst "without X11", ~7.5 min | yes: `login:` in 48-58 s; `halt -p` ends QEMU (exit 0) |
 | NetBSD 9.3 | yes | not tried | not tried | |
-| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included) | no: the GENERIC kernel loads, then OpenBIOS stops (below) |
+| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included) | not with the published firmware (+wsh21): the GENERIC kernel panics in its first firmware calls (below). With a one-line OpenBIOS fix (not in the package yet): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts while ntpd slews the clock (below) |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
 
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
@@ -1478,7 +1478,43 @@ Stopping execution
 
 The same with 256 MB, 1 GB, `-cpu TI-UltraSparc-II` and `Sun-UltraSparc-IIIi`. `bsd.rd` (4 MB) from the
 same disk (`-prom-env auto-boot?=false`, `boot disk:a bsd.rd`) boots to the installer, so the disk,
-label and boot block are fine; it is the GENERIC kernel under OpenBIOS. Not followed further.
+label and boot block are fine; it is the GENERIC kernel under OpenBIOS. Unchanged with
+pve-qemu-kvm 11.1.3-2+wsh21 (OpenBIOS 0001-0017) (2026-11-19).
+
+**Cause** (2026-11-19). The PC is in `panic()`, called by `__stack_smash_handler("prom_map_phys")`
+from `pmap_bootstrap()` (QEMU `-d int` for the registers at the trap: `%i0` = "smashed stack in %s",
+`%i7` in `__stack_smash_handler`; `-d exec` with `-dfilter` on the kernel's text for the calls before
+it). `panic()` then reads its per-CPU buffer at 0xe0018714 (`curcpu()`), not mapped yet that early:
+the data access exception. OpenBSD 8.0's `prom_map_phys` calls the MMU's `map` method with
+`call-method`, `nargs` 7 and `nreturns` 0 (IEEE 1275 gives `map` no results), with the argument
+array on the stack. OpenBIOS's `handle_calls` (`libopenbios/client.c`) stores the catch result in
+`args[nargs]` whatever `nret` is, so it writes 0 into the cell after the array, which is the
+function's stack-protector canary. `bsd.rd` is built without the stack protector (no "smashed
+stack" string in it), so it boots. `Unimplemented service set-symbol-lookup` is unrelated: OpenBSD
+ignores that call's result. OpenBSD changed these calls (`map`, `unmap`, both `release`s) to
+`nreturns` 1 after 8.0 ("did not work with QEMU's OpenBIOS", `ofw_machdep.c` 1.39, 2026-11-13);
+8.0 and older need the firmware fixed.
+
+The fix: store the catch result only when `nret` > 0. Prototyped on top of 0001-0018 (lab firmware
+via `BIOS=<path>`; not in `openbios/patches/` yet, see ROADMAP). With it the installed disk boots:
+`OpenBSD 8.0 (GENERIC) #52`, `login:` in 220-270 s from QEMU start (the first boot generates its
+keys), `hme0` gets 10.0.2.15 by DHCP (`inet autoconf`) and the default route, `halt -p` ends QEMU
+with exit code 0 in ~10 s. With `-vga std` (console on the screen, no `-prom-env`) the boot messages
+and `login:` come up on the VGA screen (the keyboard wasn't tried there). On ttya it is the console
+QEMU's `-nographic` gives too; the root device didn't need entering by hand.
+
+**Disk timeouts with a synced clock.** With QEMU's user network with outside access (`NET=user`)
+`ntpd` reaches its servers, finds the guest ~430 ms off and slews the clock (`clock unsynced`,
+adjtime). From then on reads from `wd0` time out (`wd0(pciide0:0:0): timeout`, `wd0d: device
+timeout reading fsbn ..., retrying`) and the shell hangs in the next program that has to be read
+from disk: 5 of 6 runs with `NET=user` (the sixth had QEMU's IDE, BMDMA and sabre trace events on,
+which slows QEMU down). Without outside access (restricted user network) 0 of 4, also with a ping
+to 10.0.2.2 every 50 ms during the reads (2300 `hme0` interrupts) and after stepping the clock with
+`date` (674 MB read by `tar` from `/usr`, no timeout). With `NET=user` and ntpd disabled
+(`rcctl disable ntpd`) 0 of 1, and `ftp` fetches over HTTP from the internet through `hme0`. So it
+follows ntpd's slew (a timing race in the kernel's timeouts or in QEMU's IDE/timer emulation), not
+the network interrupts; not followed further. Lab runs of an OpenBSD target should keep ntpd off
+until it is understood.
 
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
@@ -1569,7 +1605,8 @@ afterwards and powered off. Every power-off ended QEMU with exit code 0 (more th
 the boot tests with DHCP and HTTP fetches over `sunhme`, `virtio-net-pci`, `e1000`, `rtl8139` and
 `ne2k_pci`). No hang with NetBSD on the recommended layout (only I/O to the offline virtio-scsi disk
 hung, above). OpenBSD's installer `halt` stops at OpenBIOS's `0 >` instead
-of powering off (`halt -p` on an installed system couldn't be tried).
+of powering off; `halt -p` on the installed system (with the prototype firmware fix, above) ends
+QEMU with exit code 0.
 
 **Solaris on sun4u** (OpenBIOS, CD-ROM on the IDE, `-boot d`, serial console). With QEMU's
 `openbios-sparc64`, none reaches an installer. With the patched build from `openbios/`
@@ -2147,7 +2184,7 @@ valid is accepted.
 - Boot from the first drive of `boot: order=` that holds something, as `-boot order=c|d`, no
   `bootindex`. qemu-server holds this profile as `$SPARC64_PROFILE` (above); the wizard creates it.
 - Guests: NetBSD (11.1 tested end to end, 9.3's CD boots). Not OpenBSD 8.0 (installed kernel
-  doesn't start), not Debian 12.0 ports (install fails), not Solaris for real use (with the
+  doesn't start with the published firmware; an OpenBIOS fix is prototyped, "sparc64"), not Debian 12.0 ports (install fails), not Solaris for real use (with the
   package built with `openbios-sparc64` and `wsh/0021`, Solaris 10 1/13 reaches its installer and
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
