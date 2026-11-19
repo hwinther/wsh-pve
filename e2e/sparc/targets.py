@@ -198,6 +198,17 @@ MEDIA = {
         "lab": "other-os/tribblix-sparc-0m34.iso",
         # open source (illumos, CDDL); the download page publishes its SHA-1 (f76238cf...5ca9)
         "url": "https://iso.tribblix.org/iso/tribblix-sparc-0m34.iso"},
+    # NeXT's CDs carry a Sun label (OBP and OpenBIOS boot them) and a NeXT 4.3BSD file system with
+    # 2048-byte sectors. Commercial media: no URL.
+    "nextstep33_risc.iso": {
+        "title": "NeXTSTEP 3.3 User CD for SPARC and PA-RISC", "content": "iso", "size": 369573888,
+        "sha256": "19dae66e6623a034508097117036371f22b4a3d220a44baead904c343a1f09ea",
+        "lab": "other-os/nextstep33_risc.iso"},
+    # despite its name, the User CD also carries the SPARC and m68k versions (a three-way kernel)
+    "Openstep-4.2-Intel-User.iso": {
+        "title": "OPENSTEP 4.2 for Mach User CD (Intel, SPARC and m68k)", "content": "iso", "size": 512180224,
+        "sha256": "b2b38021a6e169a1a614e5e7700655e1b77d35e3f7d1062aa3f760242a6b7d3d",
+        "lab": "other-os/Openstep-4.2-Intel-User.iso"},
 }
 
 # `lab.py install --post-install <bundle>`: SVR4 packages from a CD added to an installed Solaris
@@ -834,6 +845,43 @@ TARGETS["sunos413u1b-ss20"] = {
     "hostname": "sunos413",
     "minutes": 6,  # install 2.5, first boot 2.6, --check 1
     "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+}
+
+# NeXTSTEP 3.3 and OPENSTEP 4.2 (Mach) for SPARC: the CD's text stage (language, disk, copy the base
+# system) and, after a reboot into the disk, Configure and the graphical Installer, all on the TCX
+# framebuffer with the Sun keyboard and mouse (not on ttya). The installed disk boots only under the
+# Sun PROM ss5.bin (OpenBIOS stops in NeXT's boot program) and only with `-v` typed at its `boot:`
+# prompt (its boot graphics end in "Data Access Error" on QEMU's 8-bit TCX). README.md and
+# submodules/SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+_NEXT_BLOCKED = ("With the published pve-qemu-kvm the guest's SCSI driver deadlocks (it spins at PIL 4 on a lock"
+                 " that the code it interrupted holds) because QEMU's ESP raises its interrupt in the same"
+                 " instruction that starts a command: each of 6 installs with the published packages (11.1.3-2+wsh21 and +wsh22) stopped that way"
+                 " (while mounting root, preparing the disk or copying). A QEMU whose ESP asserts the interrupt 500 us"
+                 " later installed both to the Workspace (50 us wasn't enough); no package has such a fix"
+                 " yet. The install also needs framebuffer scenarios (TCX, keyboard"
+                 " and mouse) and a Sun PROM boot with -v after the CD stage.")
+_NEXT = {
+    "status": "catalogue",
+    "blocked": _NEXT_BLOCKED,
+    "method": "scripted",
+    # ss5.bin for the whole install: the CD boots under it, the installed disk only under it
+    "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256, "ostype": "other", "vga": "tcx"},
+    "disk": {"bus": "scsi3", "size": 2, "label": None},  # the installer writes its own (NeXT) label
+    "boot": "scsi3",
+    # the setup ends logged in as `me` (no password; root has none either)
+    "login": {"user": "me", "console": "the TCX framebuffer (VNC console)"},
+}
+TARGETS["nextstep33-ss5"] = {
+    **_NEXT,
+    "title": "NeXTSTEP 3.3 on a SPARCstation 5 (ss5.bin, TCX)",
+    "media": [{"name": "nextstep33_risc.iso", "drive": "scsi6"}],
+    "hostname": "nextstep33",
+}
+TARGETS["openstep42-ss5"] = {
+    **_NEXT,
+    "title": "OPENSTEP 4.2 for Mach on a SPARCstation 5 (ss5.bin, TCX)",
+    "media": [{"name": "Openstep-4.2-Intel-User.iso", "drive": "scsi6"}],
+    "hostname": "openstep42",
 }
 
 

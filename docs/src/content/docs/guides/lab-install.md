@@ -57,6 +57,11 @@ floppies when the installer asks, write a known `CONFIG.SYS`/`AUTOEXEC.BAT` (MS-
 no SMARTDRV) and the marker `C:\WSHLAB.TXT`; `--keyboard no` adds `KEYB NO`. The [DOS
 guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte.
 
+`wsh-lab targets` also lists catalogue entries that don't install yet, each with what blocks it.
+`nextstep33-ss5` and `openstep42-ss5` (NeXTSTEP 3.3 and OPENSTEP 4.2 on an SS-5 with `ss5.bin` and the
+TCX) wait for a `pve-qemu-kvm` with a fix to the ESP's interrupt timing: with the published package
+their installers hang on the disk (see the [SPARC guide](/guides/sparc/#nextstep-33-and-openstep-42)).
+
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 have SS-20 targets only: Web Start is a Java program, and when the targets
 were written the SS-5 ran the lab's Solaris jobs about 9 times slower than the SS-20. Since #262 the

@@ -259,6 +259,14 @@ and prints a summary like `matrix.py`:
 
 One run took 12 min for `sol26-install-ss5` and about a minute for each of the others.
 
+`pve_matrix.py recordings` (not in the weekly run) has the cases only the docs' recordings need (see
+"Recordings in the docs"): `sol26-ss20-smp4`, the stored disk `install-sol26-ss20.raw` on SS-20 with
+OpenBIOS and `cores: 4`, `solaris-boot-disk.py` with `psrinfo` (CPU 3 on-line) and `mpstat 1 3`
+(116 s); `sol22-install-ss10`, Solaris 2.2 on SS-10 with OpenBIOS (pve-qemu-kvm 11.1.3-2+wsh22 or
+later), the CD image as a disk on target 6 (`cd_as_disk=1`), `solaris-install-serial.py` onto the
+Sun-labelled template disk, then `solaris-boot-disk.py` (first boot, root password, `uname -a` must
+show 5.2) (379 s: install 284 s, boot 84 s). Both passed on 2026-11-19.
+
 It runs in the e2e PVE node with the lab added, privileged like the e2e container, the media
 mounted read only:
 
@@ -1335,6 +1343,37 @@ clock) and the 0001-0017 firmware, in the PVE test container (`wsh/0001-0039` fo
 | one more boot of that disk (`tribblix-boot-disk.py --pve 9801`) | passed, no SMF import | login 12 min, `init 5` 6.5 min |
 | `tribblix-install-sparc64.py`, lab, twice | passed both: `live_install.sh` exit 0, 18 packages skipped | 141 min each (live CD login 72, install 64) |
 
+### NeXTSTEP 3.3 and OPENSTEP 4.2 (catalogue)
+
+`nextstep33-ss5` and `openstep42-ss5` are catalogue entries: with the published pve-qemu-kvm
+(11.1.3-2+wsh21 and +wsh22) both installers hang in NeXT's SCSI driver, an ESP interrupt that comes too early
+(`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2", has the diagnosis, the results per machine
+and firmware and the proposed QEMU fix). With a local QEMU that asserts the ESP interrupt 500 us late
+both install on an SS-5 and reach the Workspace. What a scenario will have to do, from the lab runs
+(2026-11-19, by hand with `serve`/`ctl`, no scenario file yet):
+
+- **Machine:** `VGA=tcx` (NeXT has no cg3 driver; its S24 driver runs the 8-bit TCX), a blank disk
+  (1-3 GiB tested; the installer writes a NeXT label), `BIOS=ss5.bin CONSOLE=fb` for the disk.
+  OpenBIOS boots the CD but not the installed disk; the CD stage also runs under `ss5.bin` (`setenv
+  diag-switch? false`, then `boot cdrom`). SS-20: no firmware boots the installed disk.
+- **Everything is on the framebuffer** with the Sun keyboard (`fb_type`, `fb_key`), and OCR reads
+  the text stage (tesseract misreads "Type" as "Tue"/"Tupe" and "start installing" as "start,
+  installing": match on other words). The CD stage: `English language` → `1`, `prepare to install`
+  → `1`, `on this disk` → `1`, `Ready to install` → `1`, then `restart the computer` → Return
+  (about 2-4 min).
+- **Each disk boot under `ss5.bin`:** after a failed network boot the first `boot disk` restarts the
+  PROM, so `setenv diag-switch? false` first; at NeXT's `boot:` type `-v` within its 10 s (its boot
+  graphics end in `Data Access Error` on QEMU's TCX). The lab typed `-v` and Return every 2 s for
+  30 s from `boot disk` on, because OCR polling is slower than the countdown. Then Control-C at "No
+  response from network configuration server".
+- **Configure's "Summary of Devices"** needs the pointer on Save (608,457 at 1024x768): HMP
+  `mouse_move` in steps of at most 10 (NeXT accelerates; a step of 10 moves about 9 pixels), with the
+  pointer found in the screendump by its shape and the move corrected until it is there, then
+  `mouse_button 1`/`0`. The Installer's package list and Restart, and the language panel and its
+  alert after the reboot, take Return.
+- **Times** (TCG, one guest at a time or two): the CD stage 2-4 min, the packages 6 min (NeXTSTEP,
+  293 MB) to 15 min (OPENSTEP, 532 MB), each boot to the desktop 2-3 min.
+
 ### Disk sizes
 
 `targets.DISKS` names the disks `--disk-size` offers after the templates they reproduce, and each
@@ -1617,6 +1656,21 @@ assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't nee
 | `sol26-boot-ss20.cast` | `machines`: `sol26-disk-openbios-ss20` | `--max-idle 1 --speed 1` |
 | `netbsd-sparc64-pve.cast`, `alpine-aarch64-pve.cast` | `pve`: `netbsd-sparc64/1-netbsd-boot-cd`, `alpine-aarch64/1-alpine-boot-cd` | `--max-idle 1 --speed 1` |
 | `sol26-cg3-ss5.webm`, `.vtt`, `-poster.png` | `display`: `sol26-disk-openbios-cg3-1024x768` | its `fb.webm`, `fb.vtt` and `001-fb.png` |
+| `tribblix-m34-boot-sun4u.cast` | `install` (stored disk): `install-tribblix-m34-sun4u/1-boot-test-tribblix-m34-sun4u/check` | `--max-idle 1 --speed 2` |
+| `sol10-boot-sun4u.cast` | `install` (stored disk): `install-sol10-sun4u/1-boot-test-sol10-sun4u/check` | `--max-idle 1 --speed 1` |
+| `netbsd111-install-ss5.cast`, `netbsd111-boot-ss5.cast` | `install` (no stored disk): `install-netbsd111-sparc/1-install-netbsd111-sparc/install`, `.../check` | `--speed 2`, `--speed 1` |
+| `sunos413-install-ss5.cast`, `sunos413-boot-ss5.cast` | `install` (no stored disk): `install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/install`, `.../check` | `--max-idle 1 --speed 1` |
+| `freedos14-install.webm`, `freedos14-boot.webm` (`.vtt`, `-poster.png`) | `install` (no stored disk): `install-freedos14/1-install-freedos14/install`, `.../check` | their `fb.webm`, `fb.vtt` and `001-fb.png` |
+| `debian40-install-ss5.cast`, `debian40-boot-ss5.cast` | `lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5`: `install`, `check` | `--speed 4`, `--speed 1` |
+| `sol26-smp4-ss20.cast` | `pve_matrix.py recordings`: `sol26-ss20-smp4/1-solaris-boot-disk` | `--max-idle 1 --speed 1` |
+| `sol22-install-ss10.cast`, `sol22-boot-ss10.cast` | `pve_matrix.py recordings`: `sol22-install-ss10/1-solaris-install-serial`, `2-solaris-boot-disk` | `--speed 2`, `--speed 1` |
+
+The install-target rows come from runs in the PVE test container: `pve_matrix.py install` with the
+stored disks for the boot-tests and with an empty `--disks` directory for the installs (so it installs
+and exports there), `pve_matrix.py recordings` (cases only the gallery needs; Solaris 2.2 needs
+pve-qemu-kvm 11.1.3-2+wsh22 or later), and the Debian install by hand, because it needs a route out
+(`pve_matrix.py` passes no `--gateway`/`--dns`). All of them can write into one `--runs` directory;
+`publish_media.py` then picks them up in one go (its docstring lists the commands).
 
 To replace one by hand (the release exists; to create it once:
 `gh release create media --repo hwinther/wsh-pve --prerelease --latest=false --title "sparc lab media"
