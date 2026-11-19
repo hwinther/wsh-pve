@@ -29,11 +29,14 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol24-ss5` | Solaris 2.4 HW 3/95, End User | as `sol23-ss5` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
 | `sol24-ss20` | Solaris 2.4 HW 3/95, End User | as `sol23-ss20` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
 | `sol251-ss5` | Solaris 2.5.1 11/97, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
+| `sol251-ss20` | Solaris 2.5.1 11/97, End User | SS-20, OpenBIOS, 512 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~47 min |
 | `sol25-ss5` | Solaris 2.5 HW 1/96, End User | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol25-ss20` | Solaris 2.5 HW 1/96, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol25-ss5` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol26-ss10` | Solaris 2.6 5/98, End User | SS-10, OpenBIOS, 512 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~16 min |
 | `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol7-ss10` | Solaris 7 3/99, End User | as `sol26-ss10` | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
@@ -211,6 +214,12 @@ static address only (no DHCP client before 2.6). 2.4 shows a year after 1999 as 
 screen and refuses it; the install types the 4-digit year there. 2.4's auto-layout makes small
 slices (`/` 25 MB, `/usr` 108 MB, swap 130 MB, the rest of the disk `/export/home`), and it has no
 `hostname` command. 2.5.1's install ends with its Maintenance Update, which takes most of its time.
+On the SS-20 (`sol251-ss20`) 2.5.1 needs no Sun PROM: OpenBIOS boots its CD (as a disk) and the
+installed system.
+
+**The SS-10** has its own Solaris 2.6 and 7 targets (`sol26-ss10`, `sol7-ss10`): the SS-20's
+install unchanged, on QEMU's SS-10 with OpenBIOS, one CPU and 512 MB. Like the SS-5 and SS-20
+targets they take the 3G disk; a static address only (DHCP was tested on the SS-5 and SS-20 only).
 
 **Solaris 2.2, 2.3 and 2.5** need the same CD-as-disk drive. 2.3 Edition II (`sol23-ss5`,
 `sol23-ss20`, the first release for the SS-5; the SS-20 needs 2.3 or later) runs under OpenBIOS

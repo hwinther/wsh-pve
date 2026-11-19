@@ -666,7 +666,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-5 | OpenBIOS | default | 256 | installer; installed disk to login |
 | SS-5 | `ss5.bin` | default | 256 | SS-5 disk to login |
 | SS-5 | `ss5-170.bin` | default | 256 | installer |
-| SS-10 | OpenBIOS | default | 256, 512 | installer; scripted install (~8.5 min) boots to login |
+| SS-10 | OpenBIOS | default | 256, 512 | installer; scripted install (~8.5 min) boots to login; through PVE the install targets `sol26-ss10` and `sol7-ss10` (512 MB, 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh25: 15.6 and 12.3 min with `--check`, the stored disks boot-tested) |
 | SS-10 | `ss10_v2.25_rom` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
 | SS-10 | `ss10_v2.25_rom` | SuperSparc-40/50/60 | 64-512 | `Probing Memory Bank #4 Data Access Error`, `ok` |
 | SS-20 | `ss10_v2.25_rom` | SuperSparc-50 | 256 | installer |
@@ -707,7 +707,7 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 
 | Guest | Result |
 | --- | --- |
-| Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
+| Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50); under OpenBIOS End User installs with its Maintenance Update and boots to login: the install target `sol251-ss20` (through PVE, 512 MB, 46.6 min with `--check`, 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh25; the stored disk boot-tested). The SS-5 target keeps `ss5.bin` |
 | Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both, on the 3G or the 9G disk (`lab.py install sol7-ss5`/`sol7-ss20 [--disk-size 9G]`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
 | Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`); the same on SS-5 with 256 MB (lab, 2026-11-19) |
 | Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 (and SS-5, lab, 2026-11-19) Web Start installs End User and the installed 32-bit kernel boots to login (`sol9-ss20`); 9 is the last release for sun4m, Solaris 10 dropped it |

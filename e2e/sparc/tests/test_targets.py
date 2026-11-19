@@ -313,7 +313,8 @@ class VmParams(unittest.TestCase):
                                 ("sol23-ss20", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
                                 ("sol22-ss10", "Solaris_2.2.img", "openbios-sparc32"),
                                 ("sol25-ss5", "solaris2.5_sparc.iso", "openbios-sparc32"),
-                                ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32")):
+                                ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32"),
+                                ("sol251-ss20", "solaris_2.5.1_1197.iso", "openbios-sparc32")):
             a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
             p = install.vm_params(targets.TARGETS[name], a, {iso: f"local:iso/{iso}"}, None)
             self.assertEqual(p["scsi6"], f"local:iso/{iso},media=cdrom,cd_as_disk=1")
@@ -968,6 +969,35 @@ class OlderSun(unittest.TestCase):
                 self.assertGreater(t["minutes"], 0)
         med = targets.MEDIA["Solaris_2.2.img"]
         self.assertEqual((med["size"], med["lab"]), (388608000, "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"))
+
+    def test_matrix_holes(self):
+        # Solaris 2.5.1 on the SS-20 under OpenBIOS (the SS-5 target needs ss5.bin), 2.6 and 7 on the
+        # SS-10: one CPU, 512 MB, the SS-20's install unchanged, a static address only, the 3G disk
+        for name, machine, medium, as_disk in (
+                ("sol251-ss20", "SS-20", "solaris_2.5.1_1197.iso", True),
+                ("sol26-ss10", "SS-10", "solaris_2.6_598_sparc.iso", None),
+                ("sol7-ss10", "SS-10", "Sol7.399InstallationSparc.iso", None)):
+            with self.subTest(target=name):
+                t = targets.TARGETS[name]
+                p = t["profile"]
+                self.assertEqual(t["status"], "automated")
+                self.assertEqual((p["arch"], p["machine"], p["bios"], p["memory"]),
+                                 ("sparc", machine, "openbios-sparc32", 512))
+                self.assertNotIn("cores", p)
+                self.assertEqual(t["media"], [{"name": medium, "drive": "scsi6", **({"as_disk": True} if as_disk else {})}])
+                self.assertEqual(t["disk"]["sizes"], ["3G"])
+                self.assertEqual((t["boot"], t["hostname"]), ("scsi3", name))
+                self.assertEqual(t["net_modes"], ["static"])
+                self.assertEqual(t["install"]["scenario"], "solaris-install-serial.py")
+                self.assertIn(machine.replace("SS-", "SPARCstation "), t["title"])
+                self.assertIn("OpenBIOS", t["title"])
+                self.assertNotIn("matrix_skip", t)
+                self.assertGreater(t["minutes"], 0)
+                self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh25")
+                self.assertIn("--export", t["tested"]["with"])
+        # 2.5.1's Maintenance Update: the same long wait for the root shell as on the SS-5
+        self.assertEqual(targets.TARGETS["sol251-ss20"]["install"]["vars"],
+                         targets.TARGETS["sol251-ss5"]["install"]["vars"])
 
     def test_old_select(self):
         m = FakeScreen("Will this system be connected to a network?\n\n     ┌────┐\n     │>No │\n     │ Yes│\n"

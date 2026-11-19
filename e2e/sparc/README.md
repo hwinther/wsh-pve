@@ -890,6 +890,29 @@ defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the netwo
 than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
 (one passing run each so far).
 
+### Matrix holes: 2.5.1 on the SS-20, 2.6 and 7 on the SS-10
+
+`sol251-ss20` is `sol251-ss5` on an SS-20 under OpenBIOS (512 MB, one CPU): OpenBIOS boots the
+2.5.1 CD as a disk and the installed system, so the SS-20 needs no Sun PROM (the SS-20 PROM wasn't
+tried). The same `FINISH_TIMEOUT=6000` for the Maintenance Update. `sol26-ss10` and `sol7-ss10` are
+the SS-20 targets on QEMU's SS-10 (OpenBIOS, 512 MB, one CPU, the 3G disk); `solaris-install-serial.py`
+needed no change for any of them.
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh25, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4), 2026-11-19, each with
+`--check --export /mnt/os/disks` and then `boot-test` of the stored disk; up to five guests ran on
+the host at once (these three, a `sol9-sun4u` install and a boot test), so the times are upper bounds:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol251-ss20 --check --export` | passed; `SunOS sol251-ss20 5.5.1 Generic_103640-12 sun4m sparc SUNW,SPARCstation-20`; the marker; stored disk and sidecar | 46.6 min (install 2517 s, most of it the Maintenance Update; first boot 171 s, check 87 s) |
+| `install sol26-ss10 --check --export` | passed; `SunOS sol26-ss10 5.6`; the marker; stored disk and sidecar | 15.6 min (install 562 s, first boot 229 s, check 120 s) |
+| `install sol7-ss10 --check --export` | passed; `SunOS sol7-ss10 5.7 Generic_106541-02 sun4m sparc SUNW,SPARCstation-10`; the marker; stored disk and sidecar | 12.3 min (install 400 s, first boot 218 s, check 96 s) |
+| `boot-test` of each stored disk | `sol251-ss20` passed; `sol26-ss10` passed; `sol7-ss10` passed | 1.5 min; 2.1 min; 1.9 min |
+
+Not tried: DHCP, `--user`, the 9G disk, `--data-disk` and `--post-install` with these three; more
+than one CPU; a second run of each.
+
 ### Older Sun releases: Solaris 2.1-2.5, SunOS 4.1.2-4.1.3_U1B
 
 The sun4m floor by machine (Sun's documents): the SS-10 from SunOS 4.1.3 and Solaris 2.1, the SS-20

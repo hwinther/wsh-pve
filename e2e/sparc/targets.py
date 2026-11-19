@@ -102,6 +102,10 @@ PACKAGES_2026_11_19_WSH22 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+ws
 # from 0001-0025 mounted over the package's (0025 isn't in a package yet)
 PACKAGES_2026_11_19_WSH23 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23"}
 PACKAGES_2026_11_19_SUN4U89 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23 + openbios 0025"}
+# Solaris 2.5.1 on the SS-20, 2.6 and 7 on the SS-10: the published packages of the evening (pve-qemu-kvm
+# +wsh25 has openbios 0001-0025 and QEMU wsh/0001-0041)
+PACKAGES_2026_11_19_WSH25 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9.2.19+wsh2",
+                             "pve-manager": "9.2.31+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -463,6 +467,21 @@ TARGETS = {
         "minutes": 12,  # install 7, first boot 3, --check 2
         "tested": {"date": "2026-11-16", "packages": PACKAGES_2026_11_16, "with": "--check --user lab --template"},
     },
+    # The SS-10 (OpenBIOS) runs the same install as the SS-20; its disk boots only on an SS-10
+    "sol26-ss10": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.6 5/98 End User on a SPARCstation 10 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-10", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "sol26-ss10",
+        "net_modes": ["static"],  # DHCP tested on SS-5 and SS-20 only
+        # 15.6 min with four other guests on the host: install 9.4, first boot 3.8, --check 2
+        "minutes": 16,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH25, "with": "--check --export; boot-test"},
+    },
     # Its installer boots only from a CD that answers as a disk (scsi-hd): the CD-ROM gets qemu-server's
     # sparc32-only cd_as_disk=1 ("as_disk"). 2.5.1 boots under the Sun PROM (ss5.bin); its install
     # copies the packages, then the Maintenance Update.
@@ -480,6 +499,23 @@ TARGETS = {
         "net_modes": ["static"],  # 2.5.1 has no DHCP client (dhcpagent came with 2.6)
         "minutes": 44,  # install 39 (most of it the Maintenance Update), first boot 3, --check 1.6
         "tested": {"date": "2026-11-18", "packages": PACKAGES_2026_11_18_CD_AS_DISK, "with": "--check"},
+    },
+    # On the SS-20 OpenBIOS boots the 2.5.1 CD (as a disk) and the installed disk; no Sun PROM needed
+    "sol251-ss20": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.5.1 11/97 End User on a SPARCstation 20 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "install": {**SOLARIS_SCRIPTED["install"], "vars": {"FINISH_TIMEOUT": "6000"}, "timeout": 7200},
+        "profile": {**SPARC32, "machine": "SS-20", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "solaris_2.5.1_1197.iso", "drive": "scsi6", "as_disk": True}],
+        "boot": "scsi3",
+        "hostname": "sol251-ss20",
+        "net_modes": ["static"],  # no DHCP client before 2.6
+        # 46.6 min with up to four other guests on the host: install 42 (most of it the Maintenance
+        # Update), first boot 2.9, --check 1.5; boot-test of the stored disk 1.5 min
+        "minutes": 47,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH25, "with": "--check --export; boot-test"},
     },
     # Solaris 2.2-2.4 boot under OpenBIOS with openbios 0019-0022 (pve-qemu-kvm 11.1.3-2+wsh22 and later;
     # SPARC.md, "Older Sun releases on sun4m"); before, only under a Sun PROM (ss5.bin, ss20_v2.25_rom).
@@ -613,6 +649,21 @@ TARGETS = {
         "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 10,  # install 6, first boot 3, --check 1.5
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
+    },
+    "sol7-ss10": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 7 3/99 End User on a SPARCstation 10 (OpenBIOS, one CPU)",
+        "status": "automated",
+        "profile": {**SPARC32, "machine": "SS-10", "memory": 512},
+        "disk": sun_disk("3G"),
+        "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "scsi6"}],
+        "boot": "scsi3",
+        "hostname": "sol7-ss10",
+        "net_modes": ["static"],
+        # 12.3 min with four other guests on the host: install 6.7, first boot 3.6, --check 1.6;
+        # boot-test of the stored disk 1.9 min
+        "minutes": 12,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH25, "with": "--check --export; boot-test"},
     },
     # Web Start in command line mode (solaris-webstart-serial.py): the Installation CD copies a
     # mini-root to a swap slice and reboots into it; the two Software CDs go in when it asks
