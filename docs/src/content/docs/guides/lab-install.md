@@ -65,10 +65,10 @@ guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte
 
 `wsh-lab targets` also lists catalogue entries that don't install yet, each with what blocks it.
 `nextstep33-ss5` and `openstep42-ss5` (NeXTSTEP 3.3 and OPENSTEP 4.2 on an SS-5 with `ss5.bin` and the
-TCX) wait for packages with pve-qemu patch `wsh/0040` and qemu-server's `esp-irq-latency` machine
-option, which fix the ESP's interrupt timing (their profiles set `machine: SS-5,esp-irq-latency=500`):
-with the published packages their installers hang on the disk (see the [SPARC
-guide](/guides/sparc/#nextstep-33-and-openstep-42)).
+TCX) wait for framebuffer scenarios: their installs run on the TCX with the keyboard and mouse,
+not on the serial console. Their profiles set `machine: SS-5,esp-irq-latency=500` (the [SCSI
+interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qemu-kvm
+11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 and later); without it their installers hang on the disk.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),

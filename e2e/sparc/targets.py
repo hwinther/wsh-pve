@@ -1065,9 +1065,9 @@ _NEXT_BLOCKED = ("Without a delayed ESP interrupt the guest's SCSI driver deadlo
                  " that the code it interrupted holds) because QEMU's ESP raises its interrupt in the same"
                  " instruction that starts a command: each of 6 installs with the published packages (11.1.3-2+wsh21 and +wsh22) stopped that way"
                  " (while mounting root, preparing the disk or copying). pve-qemu patch wsh/0040 and the VM option"
-                 " machine: SS-5,esp-irq-latency=500 (qemu-server, set in the profile) fix it; the targets wait for"
-                 " published packages with them and for framebuffer scenarios (TCX, keyboard and mouse) and a Sun"
-                 " PROM boot with -v after the CD stage.")
+                 " machine: SS-5,esp-irq-latency=500 (qemu-server, set in the profile; published in pve-qemu-kvm"
+                 " 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2) fix it; the targets wait for framebuffer scenarios"
+                 " (TCX, keyboard and mouse) and a Sun PROM boot with -v after the CD stage.")
 _NEXT = {
     "status": "catalogue",
     "blocked": _NEXT_BLOCKED,

@@ -192,6 +192,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   gcc/binutils/make/gdb and the autotools, tar/findutils/grep/gawk, tcsh/zsh/emacs, perl, python,
   ntp, cvs/subversion). A second local-only CD and `--post-install` bundle, with dependencies in
   order and a bigger data disk. The owner will choose the set.
+- **Extra OS packages per install** (owner's request, later). A way to name packages from the OS
+  media that a target adds on top of its software group, for example Solaris's `SUNWaudmo` (audio
+  demo files) and `SUNWxwoft` (optional X fonts, which SimCity among others needs). Likely shape:
+  `wsh-lab install <target> --packages SUNWaudmo,SUNWxwoft` and/or a `packages` list in the target
+  or profile. For Solaris, `pkgadd` from the mounted media in the first boot or check step, or the
+  installer's Customize step where the scenario supports it; for other systems their own installer
+  sets or packages.
 - **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
@@ -227,8 +234,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   Workspace (CD stage under OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`;
   TCX, keyboard and mouse), also through PVE; the sparc32 regressions passed with the delay on every
   guest and with it off (results and disk numbers in `submodules/SPARC.md`, "NeXTSTEP 3.3 and
-  OPENSTEP 4.2"). The SS-20 has no firmware that boots the installed disk. Next: packages with 0040
-  and the qemu-server option, then framebuffer scenarios and the catalogue entries
+  OPENSTEP 4.2"). The SS-20 has no firmware that boots the installed disk. The packages have 0040
+  and the qemu-server option since pve-qemu-kvm 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 (the
+  option checked through PVE on those packages: `qm showcmd` passes `-global
+  sysbus-esp.irq-latency-us=500`, x86 refuses it). Next: framebuffer scenarios and the catalogue entries
   `nextstep33-ss5`/`openstep42-ss5` (their profiles set the option) made targets; OpenBIOS's failure on the
   installed disk (exception 0x21 in NeXT's boot program) is open.
 - **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
@@ -295,7 +304,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
-| NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. A 500 us ESP interrupt latency fixed it in the lab (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"); not in a package |
+| NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install unless the VM has `machine: SS-5,esp-irq-latency=500` | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. The opt-in delay (`wsh/0040`) is in pve-qemu-kvm 11.1.3-2+wsh24, qemu-server 9.2.19+wsh2 and pve-manager 9.2.31+wsh2 (the UI field); off by default, as it costs about 2 ms per disk command (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"; the sparc guide, "SCSI interrupt delay") |
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |

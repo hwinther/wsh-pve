@@ -257,6 +257,31 @@ prompt moves input to ttya as well.
   init-program". With that one, give the full path:
   `boot /iommu@0,10000000/sbus@0,10001000/espdma@5,8400000/esp@5,8800000/sd@3,0:a`
 
+### Firmware settings (NVRAM)
+
+A sparc VM starts with fresh firmware settings every time. QEMU builds the machine's NVRAM in
+memory when the VM starts, and PVE keeps no NVRAM file. So a `setenv` at the firmware prompt, an
+`eeprom` in Solaris or an `nvalias` is gone after the VM is stopped.
+
+- **OpenBIOS** (the default) starts with `auto-boot?` true and boots the first device of the VM's
+  boot order (Options → Boot Order), not an NVRAM `boot-device`. To boot something else, change the
+  boot order. A `setenv` at `0 >` doesn't even survive a reset: OpenBIOS boots the boot order
+  again. For the same reason it ignores the boot string of a guest's reboot (`reboot -- disk:b`).
+- **The Sun PROMs** (`ss5.bin`, `ss20_v2.25_rom`) find the NVRAM invalid at every start
+  ("Incorrect configuration checksum") and use their defaults, with `diag-switch?` true: they try
+  the network and stop at `ok`. Type `setenv diag-switch? false`, then `boot disk`. The setting
+  lasts until the VM is stopped (a reset keeps it).
+- **A variable for every start** goes into the VM's `args`, which only root can set:
+  `qm set <vmid> --args '-prom-env auto-boot?=false'`. OpenBIOS then stops at `0 >` on every start.
+  `qm set <vmid> --delete args` removes it.
+
+The [lab install targets](/guides/lab-install/) rely on this. They boot the disk through the boot
+order (`scsi3` on sparc32, `ide0` on sparc64), with the CD first only while the installer runs. The
+Solaris 8 and 9 targets, the SunOS 4 targets and `sol8-sun4u` have `args: -prom-env
+auto-boot?=false` during the install only, because their installers reboot into a mini-root with a
+boot string that OpenBIOS drops. The install then boots that slice by path at `0 >` and removes
+`args` at the end. A finished VM has no `args` and nothing set in NVRAM.
+
 ### Stop-A and the PROM prompt
 
 Stop-A (L1-A: hold Stop, press A) on the keyboard of a framebuffer console stops a running Solaris
@@ -376,22 +401,51 @@ with OpenBIOS (one CPU: OpenBSD/sparc has no multiprocessor kernel; more CPUs ar
 [Lab install targets](/guides/lab-install/) installs it unattended (`openbsd59-ss5`,
 `openbsd59-ss20`, about 10 minutes), with the sets CD made on the node from the release's files.
 
+## SCSI interrupt delay (ESP IRQ latency)
+
+QEMU's sun4m SCSI controller (the ESP) raises its interrupt in the same instruction that starts a
+command. A real controller needs some time for that. Almost every guest doesn't care. NeXTSTEP 3.3
+and OPENSTEP 4.2 do: their SCSI driver deadlocks, and the install hangs on the disk.
+
+The package can delay the ESP's interrupt (pve-qemu patch `wsh/0040`). Each interrupt then comes
+the given number of microseconds after the event that caused it.
+
+- **Off by default.** Leave it off unless a guest needs it.
+- **Only NeXTSTEP and OPENSTEP need it**, at 500 µs. No other tested guest does.
+- **It costs disk speed.** At 500 µs each disk command takes about 2 ms longer. Raw reads of the
+  disk in Solaris drop from about 70 MB/s to about 20 MB/s, and file system work gets slower too.
+- **sparc32 only** (SS-5, SS-10, SS-20). Other architectures refuse it.
+- **Takes effect at the next start** of the VM.
+
+To set it in the web UI: Hardware → Machine, tick **Advanced**, and enter 500 in **SCSI IRQ delay
+(µs)**. Empty means off. The field shows only on sparc32 VMs.
+
+To set it on the command line or in the VM's config, use the `esp-irq-latency` key of `machine`
+(0-100000 µs; unset or 0 is off):
+
+```sh
+qm set <vmid> --machine SS-5,esp-irq-latency=500
+# /etc/pve/qemu-server/<vmid>.conf:
+#   machine: SS-5,esp-irq-latency=500
+```
+
+Remove it with `qm set <vmid> --machine SS-5`. qemu-server passes it to QEMU as `-global
+sysbus-esp.irq-latency-us=500`. It needs pve-qemu-kvm 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2
+or later; the web UI field needs pve-manager 9.2.31+wsh2 or later.
+
 ## NeXTSTEP 3.3 and OPENSTEP 4.2
 
 NeXTSTEP 3.3 and OPENSTEP 4.2 for Mach (the OPENSTEP 4.2 "Intel" User CD also carries the SPARC
-version) **don't install with the published `pve-qemu-kvm`** (11.1.3-2+wsh22): the CD boots, but the
-install hangs while the kernel mounts its root, prepares the disk or copies files, the CPU spinning in the
-guest's SCSI driver. QEMU's ESP signals a finished command earlier than real hardware can, and NeXT's
-driver deadlocks on that. The fix, pve-qemu patch `wsh/0040`, can delay the ESP's interrupt; in the
-lab a QEMU built with it installs both on an SS-5 and boots them to the Workspace. It isn't in a
-package yet. Details: `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
+version) need the [SCSI interrupt delay](#scsi-interrupt-delay-esp-irq-latency) at 500 µs. Without
+it the CD boots, but the install hangs while the kernel mounts its root, prepares the disk or copies
+files, the CPU spinning in the guest's SCSI driver. QEMU's ESP signals a finished command earlier
+than real hardware can, and NeXT's driver deadlocks on that. With the delay, the lab installed both
+on an SS-5 and booted them to the Workspace, also through PVE. The delay is in pve-qemu-kvm
+11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 or later; the lab's installs ran on a build of the same
+patches. Details: `submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2".
 
-What works with that fix, for when it is published:
-
-- **Turn on the delay for these VMs only.** Hardware → Machine, tick Advanced, "SCSI IRQ delay (µs)": 500, or
-  `qm set <vmid> --machine SS-5,esp-irq-latency=500`. It is off by default: every disk access of the
-  VM gets slower (about 2 ms per SCSI command; Solaris reads its disk at about 20 MB/s instead of
-  70), and no other guest needs it. sparc32 VMs only; other architectures refuse the option.
+- **Turn on the delay for these VMs only.** Hardware → Machine, tick Advanced, "SCSI IRQ delay
+  (µs)": 500, or `qm set <vmid> --machine SS-5,esp-irq-latency=500`.
 
 - **SS-5 with `bios: ss5.bin` and `vga: tcx`.** NeXT has no cg3 driver; its TCX driver runs QEMU's
   8-bit TCX at 1024x768. OpenBIOS boots the CD but not the installed disk, so use the Sun PROM
@@ -560,8 +614,9 @@ on sun4u".
   firmware, or OpenBIOS.
 - Moving the mouse pointer in the Solaris desktop didn't work in the lab's tests (keyboard input
   does); not yet checked from a VNC console.
-- NeXTSTEP 3.3 and OPENSTEP 4.2 hang during their install with the published package (an ESP
-  interrupt timing problem; see [NeXTSTEP 3.3 and OPENSTEP 4.2](#nextstep-33-and-openstep-42)).
+- NeXTSTEP 3.3 and OPENSTEP 4.2 hang during their install unless the VM has the [SCSI interrupt
+  delay](#scsi-interrupt-delay-esp-irq-latency) on, and their installed disk boots only under
+  `ss5.bin` (see [NeXTSTEP 3.3 and OPENSTEP 4.2](#nextstep-33-and-openstep-42)).
 - OpenBSD 5.9 on sparc32 needs a serial display: with `cg3` or `tcx` its kernel panics ("crazy
   interrupts"; see [Installing OpenBSD 5.9](#installing-openbsd-59)).
 - The architecture can't be changed after the VM is created.

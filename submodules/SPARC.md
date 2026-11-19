@@ -1574,7 +1574,11 @@ list: SS-4, SS-5 85/110, SS-10, SS-20; no SMP, HyperSPARC or TurboSPARC). The QE
 (below). pve-qemu patch `wsh/0040` makes the sun4m ESP's interrupt come 500 us after the event; with
 the whole series (0001-0041) both install on an SS-5 and boot to the Workspace. Lab only (no PVE
 run: no package has 0040 yet), 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh21 and +wsh22 (a rebuild with
-the same patches) and local builds.
+the same patches) and local builds. 0040-0041 are published since pve-qemu-kvm 11.1.3-2+wsh24, with
+qemu-server 9.2.19+wsh2 (the `esp-irq-latency` key) and pve-manager 9.2.31+wsh2 (the UI field);
+on those packages `qm showcmd` of an SS-5 VM with the key passes `-global
+sysbus-esp.irq-latency-us=500` and an x86 VM refuses it (2026-11-19). No NeXT install was run on
+the published packages yet.
 
 Media (both carry a Sun label, so OpenBIOS and OBP boot them): `nextstep33_risc.iso`, the NeXTSTEP 3.3
 User CD for SPARC and PA-RISC (a SPARC + hppa kernel), and `Openstep-4.2-Intel-User.iso`, which
@@ -1773,7 +1777,7 @@ once (`retry_on`; nothing is on the disk yet).
 
 **Through PVE.** The profile exists (SS-5, `ss5.bin`, `vga: tcx`, 256 MB); the CD stage under
 `ss5.bin` ran in the lab, so one firmware suffices. The catalogue lists `nextstep33-ss5` and
-`openstep42-ss5` as blocked until a package carries `wsh/0040`; then they need framebuffer
+`openstep42-ss5` as blocked: a package carries `wsh/0040` now (11.1.3-2+wsh24), so what is left is framebuffer
 scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`). From the
 0001-0041 runs: tesseract can't read Configure's light grey panel (not even "Display"), so the
 scenario has to find Configure another way (a fixed wait after the kernel's network prompt worked,

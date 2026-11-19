@@ -1345,8 +1345,8 @@ class OpenBSD59(unittest.TestCase):
 
 
 class NeXT(unittest.TestCase):
-    """nextstep33-ss5 and openstep42-ss5: catalogue entries until a pve-qemu-kvm with the ESP interrupt
-    fix is published (SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
+    """nextstep33-ss5 and openstep42-ss5: catalogue entries until framebuffer scenarios drive their
+    installs (the ESP interrupt delay is published; SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
     names = {"nextstep33-ss5": "nextstep33_risc.iso", "openstep42-ss5": "Openstep-4.2-Intel-User.iso"}
 
     def test_catalogue_only(self):
