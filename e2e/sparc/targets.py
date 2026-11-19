@@ -853,7 +853,7 @@ TARGETS = {
     # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
     # support), End User. Both need openbios-sparc64 with patch 0024 (pp is NULL or free; pve-qemu-kvm
-    # 11.1.3-2+wsh23 and later), 9 also 0025 (no ebus floppy node: its first, reconfiguring boot
+    # 11.1.3-2+wsh23 and later), 9 also 0025 (pve-qemu-kvm 11.1.3-2+wsh25 and later; no ebus floppy node: its first, reconfiguring boot
     # panicked in the fd driver; 8 only warns). A reboot doesn't
     # come back on sun4u: the scenario stops the VM at `0 >` after the install (as sol10-sun4u), and
     # 8's reboot into the mini-root is a power cycle through PVE (lab.PveMachine.power_cycle()).
@@ -861,9 +861,6 @@ TARGETS = {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 9 9/05 End User on sun4u (OpenBIOS, IDE disk)",
         "status": "automated",
-        # remove once a published pve-qemu-kvm has openbios 0025
-        "matrix_skip": "needs openbios-sparc64 with patch 0025 (the ebus floppy node), which no published"
-                       " pve-qemu-kvm has yet: with the package's firmware the first boot panics in fd",
         "install": {"scenario": "solaris-webstart-serial.py",
                     "vars": {"TIMEZONE": "MET", "SOFTWARE": "4", "DISK": "c0t0d0", "PROMPT_TIMEOUT": "5400"},
                     "timeout": 9000, "root_password": True},
