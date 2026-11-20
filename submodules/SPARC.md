@@ -1608,31 +1608,33 @@ What it would take for the rest:
 - **Solaris 2.1 on SS-10 (OpenBIOS), diagnosis (2026-11-20):** a QEMU matter, neither the firmware
   nor the machine model. The trap comes in the first context flush the kernel does, for a new
   process's context (0x80a, then 0x809, ...). `srmmu_l1setup` gives the context a fresh level 1
-  table: it writes the table's address into the context table entry (`mmu_writeptp`), and only
-  then copies the kernel's 1 KB of level 1 entries (`kl1pt`) into it. `mmu_writeptp` sees that the
-  entry held a valid table before (`hat_kern_setup` points every context at the kernel's table) and
+  table: it writes the table's address into the context table entry (`mmu_writeptp`), and only then
+  copies the kernel's 1 KB of level 1 entries (`kl1pt`) into it. `mmu_writeptp` sees that the entry
+  held a valid table before (`hat_kern_setup` points every context at the kernel's table) and
   flushes the context: `srmmu_mmu_flushctx` disables traps, writes the context register, flushes
   (`sta %g0, [0x300] 3`) and writes the old context back, all in one page of kernel text. Stopped
   there with the gdb stub (QEMU monitor `xp` for the walk): the entry for context 0x80a is
-  `0x00ea5681`, a table at physical 0xea56800 whose entry for 0xf0000000 is still 0, while context
-  0 maps the same page to physical 0xef10000. QEMU flushes its whole TLB on the context write, the
+  `0x00ea5681`, a table at physical 0xea56800 whose entry for 0xf0000000 is still 0, while context 0
+  maps the same page to physical 0xef10000. QEMU flushes its whole TLB on the context write, the
   next fetch (`pc f0014768`) walks the new context and fails, and with traps disabled
-  `sparc_cpu_tlb_fill()` maps it to "neverland", whose fetch raises the instruction access error
-  in error state. Solaris 2.2 does the copy first (its `srmmu_l1setup` calls `bcopy` before
-  `mmu_writeptp`), so 2.2-2.4 never get there. The SuperSPARC runs this code (Sun shipped 2.1 for the
-  SS-10): it doesn't need a new translation for the instructions that follow in the same page.
+  `sparc_cpu_tlb_fill()` maps it to "neverland", whose fetch raises the instruction access error in
+  error state. Solaris 2.2 does the copy first (its `srmmu_l1setup` calls `bcopy` before
+  `mmu_writeptp`), so 2.2-2.4 never get there. The SuperSPARC runs this code (Sun shipped 2.1 for
+  the SS-10): it doesn't need a new translation for the instructions that follow in the same page.
   The QEMU change, as a standalone patch on 11.1.3 with wsh/0001-0041 (not in `pve-qemu.patch`):
   when the context register changes, remember how the old context translates the page of the
-  instruction that writes it; an instruction fetch in that page that fails to translate while
-  traps are disabled uses that translation (execute only) instead of neverland. Only a case that
-  used to stop QEMU changes. With it (lab, OpenBIOS 0001-0026, SS-10, 256 MB, CD as a disk) the
-  2.1 CD boots, `solaris-install-serial.py` installs it (2.1's own suninstall menus after
-  sysidtool: Standalone Quick Install, End-User Cluster; 5 min, 3 of them copying packages) and the disk boots to `login:`;
-  the held translation is used twice per new context (after the context write and after the
-  flush), 52 times in a boot to `login:`, a few commands and `init 5`. The installed 2.2, 2.3 (SS-5) and 2.4 (SS-20) target
-  disks boot the same with it, and never use it. Open: at boot 2.1 doesn't mount `/opt` and
-  `/export/home` (`mountall` checks them, `mount /opt` by hand works), most likely its clock (the
-  kernel warns about a "preposterous time" with QEMU's 2026 clock); not traced. Write-up:
+  instruction that writes it; an instruction fetch in that page that fails to translate while traps
+  are disabled uses that translation (execute only) instead of neverland. Only a case that used to
+  stop QEMU changes. With it (lab, OpenBIOS 0001-0026, SS-10, 256 MB, CD as a disk) the 2.1 CD
+  boots, `solaris-install-serial.py` installs it (2.1's own suninstall menus after sysidtool:
+  Standalone Quick Install, End-User Cluster; 5 min, 3 of them copying packages), and the target's
+  first-boot and check scenarios pass on the installed disk (`solaris-firstboot.py`,
+  `solaris-boot-disk.py`); the held translation is used twice per new context (after the context
+  write and after the flush), 52 times in a boot to `login:`, a few commands and `init 5`. The
+  installed 2.2, 2.3 (SS-5), 2.4 (SS-20) and 2.5.1 (SS-5, SS-20) target disks boot the same with it,
+  and never use it. Open: at boot 2.1 doesn't mount `/opt` and `/export/home` (`mountall` checks
+  them, `mount /opt` by hand works), most likely its clock (the kernel warns about a "preposterous
+  time" with QEMU's 2026 clock); not traced. Write-up:
   `upstream/qemu-sparc32-context-switch-ifetch.md`.
 - **SunOS 4.1.3 (original), diagnosis:** the `BAD TRAP: type=29` after `SUNW,fdtwo0` is a probe.
   The kernel arms its fault catcher and reads kernel VA 0xff009000 (`ld [%o5]` at `0xf00a0970`,
