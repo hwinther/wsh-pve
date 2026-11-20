@@ -1,8 +1,106 @@
+diff --git a/src/PVE/API2/Storage/Content.pm b/src/PVE/API2/Storage/Content.pm
+index a26bae8..5bed964 100644
+--- a/src/PVE/API2/Storage/Content.pm
++++ b/src/PVE/API2/Storage/Content.pm
+@@ -154,6 +154,13 @@ __PACKAGE__->register_method({
+                     type => 'boolean',
+                     optional => 1,
+                 },
++                unavailable => {
++                    description => "An ISO or floppy symlink whose target isn't reachable on"
++                        . " this node (a share not mounted here, a file that moved). Its size is 0."
++                        . " (wsh-pve)",
++                    type => 'boolean',
++                    optional => 1,
++                },
+             },
+         },
+         links => [{ rel => 'child', href => "{volid}" }],
+@@ -404,9 +411,10 @@ __PACKAGE__->register_method({
+     name => 'updateattributes',
+     path => '{volume}',
+     method => 'PUT',
+-    description => "Update volume attributes",
++    description => "Update volume attributes, or rename an ISO or floppy volume.",
+     permissions => {
+-        description => "You need read access for the volume.",
++        description => "You need read access for the volume. Renaming needs 'Datastore.Allocate'"
++            . " on the storage.",
+         user => 'all',
+     },
+     protected => 1,
+@@ -430,6 +438,15 @@ __PACKAGE__->register_method({
+                 type => 'boolean',
+                 optional => 1,
+             },
++            rename => {
++                description => "Rename an ISO or floppy volume in place: the new file name,"
++                    . " folders joined with '__' (e.g. 'Solaris__2.6__solaris.iso'). A symlink"
++                    . " is renamed, not its target. The volume ID changes: VM configs that use"
++                    . " the old one are not updated. Not with other attributes. (wsh-pve)",
++                type => 'string',
++                maxLength => 255,
++                optional => 1,
++            },
+         },
+     },
+     returns => { type => 'null' },
+@@ -443,6 +460,14 @@ __PACKAGE__->register_method({
+ 
+         my $cfg = PVE::Storage::config();
+ 
++        if (defined(my $new_name = $param->{rename})) {
++            raise_param_exc({ rename => "can't be combined with other attributes" })
++                if grep { exists $param->{$_} } qw(notes protected);
++            $rpcenv->check($authuser, "/storage/$storeid", ['Datastore.Allocate']);
++            PVE::Storage::rename_media_volume($cfg, $volid, $new_name);
++            return undef;
++        }
++
+         PVE::Storage::check_volume_access($rpcenv, $authuser, $cfg, undef, $volid);
+ 
+         for my $attr (qw(notes protected)) {
 diff --git a/src/PVE/API2/Storage/Status.pm b/src/PVE/API2/Storage/Status.pm
-index 57ab92b..c6aebb7 100644
+index 57ab92b..e1dad0b 100644
 --- a/src/PVE/API2/Storage/Status.pm
 +++ b/src/PVE/API2/Storage/Status.pm
-@@ -534,7 +534,7 @@ __PACKAGE__->register_method({
+@@ -312,6 +312,7 @@ __PACKAGE__->register_method({
+             { subdir => 'file-restore' },
+             { subdir => 'import-metadata' },
+             { subdir => 'identity' },
++            { subdir => 'link-volume' },
+             { subdir => 'oci-registry-pull' },
+             { subdir => 'prunebackups' },
+             { subdir => 'rrd' },
+@@ -391,6 +392,13 @@ __PACKAGE__->register_method({
+                 renderer => 'bytes',
+                 optional => 1,
+             },
++            'mirror-described' => {
++                description => "Set when `wsh-lab mirror` keeps this storage's links from a"
++                    . " description file: its ISO and floppy volumes are renamed and linked there,"
++                    . " not through the API. (wsh-pve)",
++                type => 'boolean',
++                optional => 1,
++            },
+         },
+     },
+     code => sub {
+@@ -405,6 +413,13 @@ __PACKAGE__->register_method({
+         raise_param_exc({ storage => "No such storage." })
+             if !defined($data);
+ 
++        my $scfg = PVE::Storage::storage_config($cfg, $param->{storage});
++        # only on an active storage: a hung network mount would block the stat
++        $data->{'mirror-described'} = 1
++            if $data->{active}
++            && (grep { $_ eq $scfg->{type} } @PVE::Storage::MEDIA_LINK_STORAGE_TYPES)
++            && PVE::Storage::mirror_description_file($scfg);
++
+         return $data;
+     },
+ });
+@@ -534,7 +549,7 @@ __PACKAGE__->register_method({
                  description => "Content type.",
                  type => 'string',
                  format => 'pve-storage-content',
@@ -11,7 +109,7 @@ index 57ab92b..c6aebb7 100644
              },
              filename => {
                  description =>
-@@ -599,6 +599,11 @@ __PACKAGE__->register_method({
+@@ -599,6 +614,11 @@ __PACKAGE__->register_method({
                  raise_param_exc({ filename => "wrong file extension" });
              }
              $path = PVE::Storage::get_iso_dir($cfg, $storage);
@@ -23,7 +121,7 @@ index 57ab92b..c6aebb7 100644
          } elsif ($content eq 'vztmpl') {
              if ($filename !~ m![^/]+$PVE::Storage::VZTMPL_EXT_RE_1$!) {
                  raise_param_exc({ filename => "wrong file extension" });
-@@ -688,7 +693,8 @@ __PACKAGE__->register_method({
+@@ -688,7 +708,8 @@ __PACKAGE__->register_method({
                      }
                  }
  
@@ -33,7 +131,7 @@ index 57ab92b..c6aebb7 100644
                      PVE::Storage::assert_iso_content($tmpfilename);
                  }
  
-@@ -767,7 +773,7 @@ __PACKAGE__->register_method({
+@@ -767,7 +788,7 @@ __PACKAGE__->register_method({
                  description => "Content type.", # TODO: could be optional & detected in most cases
                  type => 'string',
                  format => 'pve-storage-content',
@@ -42,7 +140,7 @@ index 57ab92b..c6aebb7 100644
              },
              filename => {
                  description =>
-@@ -836,6 +842,11 @@ __PACKAGE__->register_method({
+@@ -836,6 +857,11 @@ __PACKAGE__->register_method({
                  raise_param_exc({ filename => "wrong file extension" });
              }
              $path = PVE::Storage::get_iso_dir($cfg, $storage);
@@ -54,7 +152,7 @@ index 57ab92b..c6aebb7 100644
          } elsif ($content eq 'vztmpl') {
              if ($filename !~ m![^/]+$PVE::Storage::VZTMPL_EXT_RE_1$!) {
                  raise_param_exc({ filename => "wrong file extension" });
-@@ -880,7 +891,8 @@ __PACKAGE__->register_method({
+@@ -880,7 +906,8 @@ __PACKAGE__->register_method({
          $opts->{assert_file_validity} = sub {
              my ($tmp_path) = @_;
  
@@ -64,11 +162,110 @@ index 57ab92b..c6aebb7 100644
                  PVE::Storage::assert_iso_content($tmp_path);
              }
  
+@@ -909,6 +936,90 @@ __PACKAGE__->register_method({
+     },
+ });
+ 
++# wsh: a mirror storage's link to an ISO or floppy volume of another storage (reference/mirror).
++# Beside upload and download-url, the other ways a file gets into a storage's ISO and floppy
++# directories: the content/{volume} path takes the whole rest of the URL as the volume ID, so it
++# has no sub-paths for it.
++__PACKAGE__->register_method({
++    name => 'link_volume',
++    path => '{storage}/link-volume',
++    method => 'POST',
++    description => "Link an ISO or floppy volume of another storage into this storage under a"
++        . " name of its own (a symlink; folders in the name joined with '__'). (wsh-pve)",
++    proxyto => 'node',
++    permissions => {
++        description => "Requires 'Datastore.Allocate' on this storage and on the source volume's"
++            . " storage: the link makes the source volume usable by everyone who may use this"
++            . " storage.",
++        check => [
++            'and',
++            ['perm', '/storage/{storage}', ['Datastore.Allocate']],
++            ['perm', '/storage/{source-storage}', ['Datastore.Allocate']],
++        ],
++    },
++    protected => 1,
++    parameters => {
++        additionalProperties => 0,
++        properties => {
++            node => get_standard_option('pve-node'),
++            storage => get_standard_option(
++                'pve-storage-id',
++                {
++                    description => "The storage the link is created in.",
++                    completion => \&PVE::Storage::complete_storage_enabled,
++                },
++            ),
++            'source-storage' => get_standard_option(
++                'pve-storage-id',
++                {
++                    description => "The storage of the volume to link.",
++                    completion => \&PVE::Storage::complete_storage_enabled,
++                },
++            ),
++            volume => {
++                description => "The volume to link: its volume ID in the source storage"
++                    . " ('iso/name.iso' or 'source-storage:iso/name.iso').",
++                type => 'string',
++                maxLength => 512,
++            },
++            filename => {
++                description => "The link's name: one file name, folders joined with '__'"
++                    . " (e.g. 'Solaris__2.6__solaris.iso'), with an extension of the content type.",
++                type => 'string',
++                maxLength => 255,
++            },
++            content => {
++                description => "Content type of the link. Default: the source volume's.",
++                type => 'string',
++                enum => ['iso', 'floppy'],
++                optional => 1,
++            },
++        },
++    },
++    returns => {
++        description => "The new volume ID.",
++        type => 'string',
++    },
++    code => sub {
++        my ($param) = @_;
++
++        my $source_storeid = $param->{'source-storage'};
++        my $source_volid = $param->{volume};
++        if ($source_volid =~ m/^([^:]+):/) {
++            raise_param_exc({ volume => "volume isn't in storage '$source_storeid'" })
++                if $1 ne $source_storeid;
++        } else {
++            $source_volid = "$source_storeid:$source_volid";
++        }
++
++        my $cfg = PVE::Storage::config();
++
++        return PVE::Storage::link_media_volume(
++            $cfg, $source_volid, $param->{storage}, $param->{filename}, $param->{content},
++        );
++    },
++});
++
+ __PACKAGE__->register_method({
+     name => 'oci_registry_pull',
+     path => '{storage}/oci-registry-pull',
 diff --git a/src/PVE/Storage.pm b/src/PVE/Storage.pm
-index faf325f..7851aac 100755
+index faf325f..26fe368 100755
 --- a/src/PVE/Storage.pm
 +++ b/src/PVE/Storage.pm
-@@ -180,6 +180,8 @@ init_plugins($custom_plugins);
+@@ -11,6 +11,7 @@ use IPC::Open3;
+ use File::Basename;
+ use File::Path;
+ use Cwd 'abs_path';
++use File::Spec;
+ use Socket;
+ use Time::Local qw(timelocal);
+ 
+@@ -180,6 +181,8 @@ init_plugins($custom_plugins);
  
  our $ISO_EXT_RE_0 = qr/\.(?:iso|img)/i;
  
@@ -77,7 +274,7 @@ index faf325f..7851aac 100755
  our $VZTMPL_EXT_RE_1 = qr/\.(?|(tar)(?!\.)|tar\.(gz|xz|zst|bz2))/i;
  
  our $BACKUP_EXT_RE_2 = qr/\.(tgz|(?:tar|vma)(?:\.(${\PVE::Storage::Plugin::COMPRESSOR_RE}))?)/;
-@@ -629,6 +631,15 @@ sub get_import_dir {
+@@ -629,6 +632,15 @@ sub get_import_dir {
      return $plugin->get_subdir($scfg, 'import');
  }
  
@@ -93,7 +290,7 @@ index faf325f..7851aac 100755
  sub get_vztmpl_dir {
      my ($cfg, $storeid) = @_;
  
-@@ -698,7 +709,7 @@ sub check_volume_access {
+@@ -698,7 +710,7 @@ sub check_volume_access {
  
          return if $rpcenv->check($user, "/storage/$sid", ['Datastore.Allocate'], 1);
  
@@ -102,7 +299,7 @@ index faf325f..7851aac 100755
              # require at least read access to storage, (custom) templates/ISOs could be sensitive
              $rpcenv->check_any(
                  $user,
-@@ -793,6 +804,7 @@ sub path_to_volume_id {
+@@ -793,6 +805,7 @@ sub path_to_volume_id {
          my $plugin = PVE::Storage::Plugin->lookup($scfg->{type});
          my $imagedir = $plugin->get_subdir($scfg, 'images');
          my $isodir = $plugin->get_subdir($scfg, 'iso');
@@ -110,7 +307,7 @@ index faf325f..7851aac 100755
          my $tmpldir = $plugin->get_subdir($scfg, 'vztmpl');
          my $backupdir = $plugin->get_subdir($scfg, 'backup');
          my $snippetsdir = $plugin->get_subdir($scfg, 'snippets');
-@@ -814,6 +826,9 @@ sub path_to_volume_id {
+@@ -814,6 +827,9 @@ sub path_to_volume_id {
          } elsif ($path =~ m!^\Q$isodir\E/([^/]+$ISO_EXT_RE_0)$!) {
              my $name = $1;
              return ('iso', "$sid:iso/$name");
@@ -120,7 +317,7 @@ index faf325f..7851aac 100755
          } elsif ($path =~ m!^\Q$tmpldir\E/([^/]+$VZTMPL_EXT_RE_1)$!) {
              my $name = $1;
              return ('vztmpl', "$sid:vztmpl/$name");
-@@ -880,7 +895,8 @@ sub qemu_blockdev_options {
+@@ -880,7 +896,8 @@ sub qemu_blockdev_options {
      die "cannot use volume of type '$vtype' as a QEMU blockdevice\n"
          if !PVE::Storage::Common::vtype_matches($vtype, 'images')
          && $vtype ne 'iso'
@@ -130,7 +327,7 @@ index faf325f..7851aac 100755
  
      my $blockdev =
          $plugin->qemu_blockdev_options($scfg, $storeid, $volname, $machine_version, $options);
-@@ -1357,7 +1373,11 @@ sub template_list {
+@@ -1357,7 +1374,11 @@ sub template_list {
      my ($cfg, $storeid, $tt) = @_;
  
      die "unknown template type '$tt'\n"
@@ -143,7 +340,7 @@ index faf325f..7851aac 100755
  
      my $ids = $cfg->{ids};
  
-@@ -1385,7 +1405,7 @@ sub template_list {
+@@ -1385,7 +1406,7 @@ sub template_list {
  sub volume_list {
      my ($cfg, $storeid, $vmid, $content) = @_;
  
@@ -152,7 +349,7 @@ index faf325f..7851aac 100755
  
      # plugins list the volumes of guests by their generic content type
      my $vtype;
-@@ -2390,7 +2410,7 @@ sub complete_storage_enabled {
+@@ -2390,7 +2411,7 @@ sub complete_storage_enabled {
  sub complete_content_type {
      my ($cmdname, $pname, $cvalue) = @_;
  
@@ -161,6 +358,247 @@ index faf325f..7851aac 100755
  }
  
  sub complete_volume {
+@@ -2480,6 +2501,240 @@ sub rename_snapshot {
+     );
+ }
+ 
++# wsh: mirror storages (ISO and floppy images as files or symlinks, the folders in the name joined
++# with '__'): rename an iso or floppy volume in place, and link a volume of another storage into one
++# under a name of its own. Only storage types whose ISO and floppy directories are plain directories
++# that can hold symlinks; the same list as `wsh-lab mirror` (e2e/sparc/mirror.py, MIRROR_TYPES).
++our @MEDIA_LINK_STORAGE_TYPES = qw(dir btrfs nfs cephfs cifs);
++
++# Files at a storage's root that mean `wsh-lab mirror` keeps its links from a description file: the
++# file itself, and the state `apply` writes there even when the file is elsewhere (--config).
++our @MIRROR_DESCRIPTION_FILES = ('wsh-mirror.yaml', '.wsh-mirror-state.json');
++
++my $MEDIA_EXT_RE = {
++    iso => $ISO_EXT_RE_0,
++    floppy => $FLOPPY_EXT_RE_0,
++};
++
++# Dies unless $name is a good name for a new $vtype ('iso' or 'floppy') volume: one file name (no
++# '/'), only the characters an upload keeps (A-Z a-z 0-9 _ . -), not hidden, an extension of the
++# content type, and no empty part between '__' separators (the UI wouldn't show its folders).
++sub check_media_volume_name {
++    my ($name, $vtype) = @_;
++
++    my $ext_re = $MEDIA_EXT_RE->{$vtype} // die "'$vtype' isn't an iso or floppy content type\n";
++
++    die "no name given\n" if !defined($name) || $name eq '';
++    die "'$name': a volume name is one file name, without '/' (folders are joined with '__')\n"
++        if $name =~ m!/!;
++    die "'$name': only A-Z a-z 0-9 _ . - in a volume name\n" if $name !~ m/^[A-Za-z0-9_.-]+$/;
++    die "'$name': a volume name doesn't start with '.'\n" if $name =~ m/^\./;
++    my $exts = $vtype eq 'iso' ? '.iso or .img' : '.img, .ima or .vfd';
++    die "'$name': $vtype volumes end in $exts\n" if $name !~ m/^.+$ext_re$/;
++    die "'$name': an empty folder between '__' separators\n"
++        if grep { $_ eq '' } split(/__/, $name, -1);
++
++    return;
++}
++
++# The description file (or apply's state) at the root of a storage that `wsh-lab mirror` manages, or
++# undef.
++sub mirror_description_file {
++    my ($scfg) = @_;
++
++    my $root = $scfg->{path} // return undef;
++    for my $name (@MIRROR_DESCRIPTION_FILES) {
++        return "$root/$name" if -e "$root/$name";
++    }
++    return undef;
++}
++
++# The config of a storage that may get renamed or linked $vtype volumes; dies with the reason when it
++# can't.
++my sub media_link_storage {
++    my ($cfg, $storeid, $vtype) = @_;
++
++    my $scfg = storage_config($cfg, $storeid);
++
++    die "storage '$storeid' is of type '$scfg->{type}': volumes can be renamed and linked in "
++        . join(', ', @MEDIA_LINK_STORAGE_TYPES)
++        . " storages only\n"
++        if !grep { $_ eq $scfg->{type} } @MEDIA_LINK_STORAGE_TYPES;
++    die "storage '$storeid' has no '$vtype' content\n" if !$scfg->{content}->{$vtype};
++
++    if (my $file = mirror_description_file($scfg)) {
++        die "storage '$storeid' keeps its links in a description file ($file): edit its"
++            . " entries and run `wsh-lab mirror apply`, which would otherwise undo the change\n";
++    }
++
++    return $scfg;
++}
++
++# The topmost directory above $dir (a real path) on the same file system: its mount point, as
++# `wsh-lab mirror` finds it (a bind mount of the same file system doesn't count).
++my sub mount_point_of {
++    my ($dir) = @_;
++
++    my $dev = (stat($dir))[0];
++    while ($dir ne '/') {
++        my $parent = dirname($dir);
++        my $pdev = (stat($parent))[0];
++        last if !defined($pdev) || $pdev != $dev;
++        $dir = $parent;
++    }
++    return $dir;
++}
++
++# What a link in $link_dir to $target holds: relative when the target is on the link directory's
++# file system, inside its mount (an NFS export that holds both, so any mount path of the export
++# finds it), the absolute path otherwise. The rule of `wsh-lab mirror` with `links: auto`.
++sub media_link_text {
++    my ($target, $link_dir) = @_;
++
++    my $real_dir = abs_path($link_dir);
++    my $real_target_dir = abs_path(dirname($target));
++    return $target if !defined($real_dir) || !defined($real_target_dir);
++    my $real_target = ($real_target_dir eq '/' ? '' : $real_target_dir) . '/' . basename($target);
++
++    my $dir_dev = (stat($real_dir))[0];
++    my $target_dev = (stat($real_target_dir))[0];
++    return $target if !defined($dir_dev) || !defined($target_dev) || $dir_dev != $target_dev;
++
++    my $mount = mount_point_of($real_dir);
++    my $inside = $mount eq '/' ? 1 : index($real_target, "$mount/") == 0;
++    return $target if !$inside;
++
++    return File::Spec->abs2rel($real_target, $real_dir);
++}
++
++=head3 rename_media_volume
++
++    my $new_volid = PVE::Storage::rename_media_volume($cfg, $volid, $new_name);
++
++wsh: Renames the C<iso> or C<floppy> volume C<$volid> to C<$new_name> (a file name, folders joined
++with C<__>) in the same storage. A symlink is renamed itself, never its target. Refuses a name that
++exists (a dangling link included), a bad name (C<check_media_volume_name>), a storage type that
++isn't in C<@MEDIA_LINK_STORAGE_TYPES>, and a storage whose links C<wsh-lab mirror> keeps from a
++description file. Returns the new volume ID.
++
++=cut
++
++sub rename_media_volume {
++    my ($cfg, $volid, $new_name) = @_;
++
++    my ($storeid, $volname) = parse_volume_id($volid);
++    my $scfg = storage_config($cfg, $storeid);
++    my $plugin = PVE::Storage::Plugin->lookup($scfg->{type});
++    my ($vtype, $name) = $plugin->parse_volname($volname);
++
++    die "only iso and floppy volumes can be renamed here, not '$vtype'\n"
++        if $vtype ne 'iso' && $vtype ne 'floppy';
++    media_link_storage($cfg, $storeid, $vtype);
++    check_media_volume_name($new_name, $vtype);
++    die "volume '$volid' already has the name '$new_name'\n" if $new_name eq $name;
++
++    activate_storage($cfg, $storeid);
++
++    my $dir = $plugin->get_subdir($scfg, $vtype);
++    my $old_path = "$dir/$name";
++    my $new_path = "$dir/$new_name";
++    my $new_volid = "$storeid:$vtype/$new_name";
++
++    $plugin->cluster_lock_storage(
++        $storeid,
++        $scfg->{shared},
++        undef,
++        sub {
++            die "volume '$volid' does not exist\n" if !lstat($old_path);
++            die "'$old_path' is a directory, not a volume\n" if !-l $old_path && -d _;
++            # lstat: a dangling link of that name is taken too
++            die "volume '$new_volid' already exists\n" if lstat($new_path);
++            rename($old_path, $new_path)
++                || die "rename '$old_path' to '$new_path' failed - $!\n";
++        },
++    );
++
++    return $new_volid;
++}
++
++=head3 link_media_volume
++
++    my $volid = PVE::Storage::link_media_volume($cfg, $source_volid, $storeid, $name, $vtype);
++
++wsh: Creates C<$storeid:$vtype/$name>, a symlink to the C<iso> or C<floppy> volume C<$source_volid>
++of another storage (C<$vtype> defaults to the source's type). The link is relative when the source
++is on the target directory's file system inside its mount, absolute otherwise
++(C<media_link_text>). Refuses what C<rename_media_volume> refuses, a source in the same storage, a
++source that isn't a file on this node, and a link in a shared storage to a volume that not every
++node of that storage has (a source storage that isn't shared, or is restricted to fewer nodes).
++Returns the new volume ID.
++
++=cut
++
++sub link_media_volume {
++    my ($cfg, $source_volid, $storeid, $name, $vtype) = @_;
++
++    my ($source_storeid, $source_volname) = parse_volume_id($source_volid);
++    die "the source is in storage '$storeid' itself: rename the volume instead\n"
++        if $source_storeid eq $storeid;
++
++    my $source_scfg = storage_config($cfg, $source_storeid);
++    my $source_plugin = PVE::Storage::Plugin->lookup($source_scfg->{type});
++    my ($source_vtype) = $source_plugin->parse_volname($source_volname);
++    die "only iso and floppy volumes can be linked, not '$source_vtype'\n"
++        if $source_vtype ne 'iso' && $source_vtype ne 'floppy';
++    $vtype //= $source_vtype;
++
++    my $scfg = media_link_storage($cfg, $storeid, $vtype);
++    check_media_volume_name($name, $vtype);
++
++    # A link in a shared storage is seen by every node of that storage: it must lead to something
++    # every one of them has (PVE mounts a shared storage at the same path on each of its nodes).
++    if ($scfg->{shared}) {
++        die "storage '$storeid' is shared and '$source_storeid' isn't: the link would lead"
++            . " nowhere on the other nodes\n"
++            if !$source_scfg->{shared};
++        if (my $source_nodes = $source_scfg->{nodes}) {
++            my @missing =
++                $scfg->{nodes}
++                ? grep { !$source_nodes->{$_} } sort keys %{ $scfg->{nodes} }
++                : ('(all nodes)');
++            die "storage '$source_storeid' is restricted to fewer nodes than '$storeid' ("
++                . join(', ', @missing)
++                . "): the link would lead nowhere there\n"
++                if @missing;
++        }
++    }
++
++    activate_storage($cfg, $source_storeid);
++    activate_storage($cfg, $storeid);
++
++    my $source_path = path($cfg, $source_volid);
++    die "volume '$source_volid' isn't a file on this node ($source_path)\n" if !-f $source_path;
++
++    my $plugin = PVE::Storage::Plugin->lookup($scfg->{type});
++    my $dir = $plugin->get_subdir($scfg, $vtype);
++    File::Path::make_path($dir) if !-d $dir;
++    my $dest = "$dir/$name";
++    my $volid = "$storeid:$vtype/$name";
++    # the link's text comes from paths read from the file system (abs_path): untaint it for the API
++    # daemons, which run with -T
++    my ($text) = media_link_text($source_path, $dir) =~ m/^([^\0\n]+)$/
++        or die "unexpected link target for '$source_path'\n";
++
++    $plugin->cluster_lock_storage(
++        $storeid,
++        $scfg->{shared},
++        undef,
++        sub {
++            die "volume '$volid' already exists\n" if lstat($dest);
++            symlink($text, $dest) || die "symlink '$dest' -> '$text' failed - $!\n";
++        },
++    );
++
++    return $volid;
++}
++
+ sub volume_qemu_snapshot_method {
+     my ($cfg, $volid) = @_;
+ 
 diff --git a/src/PVE/Storage/BTRFSPlugin.pm b/src/PVE/Storage/BTRFSPlugin.pm
 index 72cb39b..211771c 100644
 --- a/src/PVE/Storage/BTRFSPlugin.pm
@@ -227,7 +665,7 @@ index fdc32c0..454261a 100644
                  snippets => 1,
                  import => 1,
 diff --git a/src/PVE/Storage/Plugin.pm b/src/PVE/Storage/Plugin.pm
-index 323b864..09f0b59 100644
+index 323b864..f07d255 100644
 --- a/src/PVE/Storage/Plugin.pm
 +++ b/src/PVE/Storage/Plugin.pm
 @@ -902,6 +902,8 @@ sub parse_volname {
@@ -247,7 +685,26 @@ index 323b864..09f0b59 100644
      vztmpl => 'template/cache',
      backup => 'dump',
      snippets => 'snippets',
-@@ -1895,6 +1898,11 @@ my $get_subdir_files = sub {
+@@ -1886,6 +1889,18 @@ my $get_subdir_files = sub {
+ 
+         my $st = File::stat::stat($fn);
+ 
++        # wsh: an ISO or floppy link whose target isn't reachable on this node (a mirror storage's
++        # link to a share that isn't mounted here, or a file that moved) is listed with size 0 and
++        # flagged 'unavailable', so it can be seen, renamed or removed
++        my $unavailable;
++        if (!$st && ($tt eq 'iso' || $tt eq 'floppy')) {
++            my $lst = File::stat::lstat($fn);
++            if ($lst && S_ISLNK($lst->mode)) {
++                $st = $lst;
++                $unavailable = 1;
++            }
++        }
++
+         next if (!$st || S_ISDIR($st->mode));
+ 
+         my $info;
+@@ -1895,6 +1910,11 @@ my $get_subdir_files = sub {
  
              $info = { volid => "$sid:iso/$1", format => 'iso' };
  
@@ -259,7 +716,18 @@ index 323b864..09f0b59 100644
          } elsif ($tt eq 'vztmpl') {
              next if $fn !~ m!/([^/]+$PVE::Storage::VZTMPL_EXT_RE_1)$!;
  
-@@ -1968,6 +1976,8 @@ sub list_volumes {
+@@ -1942,8 +1962,9 @@ my $get_subdir_files = sub {
+             $info = { volid => "$sid:import/$1", format => "$2" };
+         }
+ 
+-        $info->{size} = $st->size;
++        $info->{size} = $unavailable ? 0 : $st->size;
+         $info->{ctime} //= $st->ctime;
++        $info->{unavailable} = 1 if $unavailable;
+ 
+         push @$res, $info;
+     }
+@@ -1968,6 +1989,8 @@ sub list_volumes {
  
              if ($type eq 'iso' && !defined($vmid)) {
                  $data = $get_subdir_files->($storeid, $path, 'iso');
@@ -268,7 +736,7 @@ index 323b864..09f0b59 100644
              } elsif ($type eq 'vztmpl' && !defined($vmid)) {
                  $data = $get_subdir_files->($storeid, $path, 'vztmpl');
              } elsif ($type eq 'backup') {
-@@ -2450,7 +2460,7 @@ sub volume_export_formats {
+@@ -2450,7 +2473,7 @@ sub volume_export_formats {
          return ('tar+size') if $format eq 'subvol';
          return ('raw+size')
              if PVE::Storage::Common::is_guest_vtype($vtype)
@@ -277,7 +745,7 @@ index 323b864..09f0b59 100644
      }
      return ();
  }
-@@ -2536,7 +2546,7 @@ sub volume_import {
+@@ -2536,7 +2559,7 @@ sub volume_import {
              warn $@ if $@;
              die $err;
          }
@@ -286,7 +754,7 @@ index 323b864..09f0b59 100644
          eval {
              run_command(['dd', "of=$file", 'conv=excl', 'bs=64k'], input => '<&' . fileno($fh));
          };
-@@ -2566,7 +2576,7 @@ sub volume_import_formats {
+@@ -2566,7 +2589,7 @@ sub volume_import_formats {
          return ('tar+size') if $format eq 'subvol';
          return ('raw+size')
              if PVE::Storage::Common::is_guest_vtype($vtype)
@@ -295,6 +763,272 @@ index 323b864..09f0b59 100644
      }
      return ();
  }
+diff --git a/src/test/media_volume_test.pm b/src/test/media_volume_test.pm
+new file mode 100644
+index 0000000..eee6e25
+--- /dev/null
++++ b/src/test/media_volume_test.pm
+@@ -0,0 +1,260 @@
++package PVE::Storage::TestMediaVolume;
++
++# wsh: renaming iso/floppy volumes in place, linking a volume of another storage into a mirror
++# storage, and the listing of a link whose target isn't reachable (reference/mirror).
++
++use strict;
++use warnings;
++
++use lib qw(..);
++
++use File::Path qw(make_path);
++use File::Temp;
++use PVE::Storage;
++use PVE::Tools qw(file_set_contents);
++use Test::MockModule;
++use Test::More;
++
++my $base = File::Temp->newdir();
++my $mirror = "$base/mirror";
++my $nas = "$base/nas";
++my $plain = "$base/plain";
++my $described = "$base/described";
++make_path(
++    "$mirror/template/iso",
++    "$mirror/template/floppy",
++    "$nas/template/iso",
++    "$nas/template/floppy",
++    "$plain/template/iso",
++    "$described/template/iso",
++);
++
++my $cfg = {
++    ids => {
++        mirror => { type => 'dir', path => $mirror, content => { iso => 1, floppy => 1 } },
++        nas => { type => 'dir', path => $nas, content => { iso => 1, floppy => 1 } },
++        plain => { type => 'dir', path => $plain, content => { iso => 1 } },
++        described => { type => 'dir', path => $described, content => { iso => 1 } },
++        shared => {
++            type => 'dir',
++            path => "$base/shared",
++            shared => 1,
++            content => { iso => 1 },
++        },
++        lvm => { type => 'lvm', vgname => 'pve', content => { images => 1 } },
++    },
++};
++
++# no pmxcfs, no storage activation in a unit test
++my $mock_plugin = Test::MockModule->new('PVE::Storage::Plugin');
++$mock_plugin->redefine(cluster_lock_storage => sub { my ($class, $id, $shared, $t, $f) = @_; $f->() });
++my $mock_storage = Test::MockModule->new('PVE::Storage');
++$mock_storage->redefine(activate_storage => sub { });
++my $mock_cluster = Test::MockModule->new('PVE::Cluster');
++$mock_cluster->redefine(get_vmlist => sub { return { ids => {} } });
++
++sub put { file_set_contents($_[0], $_[1] // 'x') }
++
++sub dies_like {
++    my ($code, $re, $what) = @_;
++    eval { $code->() };
++    like($@ // '', $re, $what);
++}
++
++# names
++for my $ok (
++    ['Solaris__2.6__solaris_2.6_598_sparc.iso', 'iso'],
++    ['plain.ISO', 'iso'],
++    ['big.img', 'iso'],
++    ['DOS__6.22__disk1.img', 'floppy'],
++    ['a___b.vfd', 'floppy'],
++) {
++    eval { PVE::Storage::check_media_volume_name(@$ok) };
++    is($@, '', "name '$ok->[0]' is a good $ok->[1] name");
++}
++for my $bad (
++    ['Solaris/2.6/x.iso', 'iso', qr/without '\/'/],
++    ['with space.iso', 'iso', qr/only A-Z/],
++    ['comma,x.iso', 'iso', qr/only A-Z/],
++    ['.hidden.iso', 'iso', qr/doesn't start with '\.'/],
++    ['disk.ima', 'iso', qr/end in \.iso or \.img/],
++    ['cd.iso', 'floppy', qr/end in \.img, \.ima or \.vfd/],
++    ['.iso', 'iso', qr/doesn't start/],
++    ['__a.iso', 'iso', qr/empty folder/],
++    ['a____b.iso', 'iso', qr/empty folder/],
++    ['', 'iso', qr/no name/],
++) {
++    dies_like(sub { PVE::Storage::check_media_volume_name($bad->[0], $bad->[1]) },
++        $bad->[2], "name '$bad->[0]' is refused for $bad->[1]");
++}
++
++# rename: a regular file
++put("$plain/template/iso/old.iso");
++is(
++    PVE::Storage::rename_media_volume($cfg, 'plain:iso/old.iso', 'Folder__new.iso'),
++    'plain:iso/Folder__new.iso',
++    'rename returns the new volume ID',
++);
++ok(-f "$plain/template/iso/Folder__new.iso" && !-e "$plain/template/iso/old.iso",
++    'rename moved the file');
++
++# rename: a link is renamed, not its target
++put("$nas/template/iso/target.iso", 'target');
++symlink('/no/such/place/elsewhere.iso', "$mirror/template/iso/Dangling__x.iso");
++symlink("$nas/template/iso/target.iso", "$mirror/template/iso/link.iso");
++PVE::Storage::rename_media_volume($cfg, 'mirror:iso/link.iso', 'Sun__Solaris__link.iso');
++is(readlink("$mirror/template/iso/Sun__Solaris__link.iso"),
++    "$nas/template/iso/target.iso", 'the renamed link keeps its target');
++ok(-f "$nas/template/iso/target.iso", 'the target is still there');
++ok(!-l "$mirror/template/iso/link.iso", 'the old link name is gone');
++
++# rename: a dangling link can be renamed too
++PVE::Storage::rename_media_volume($cfg, 'mirror:iso/Dangling__x.iso', 'Gone__x.iso');
++ok(-l "$mirror/template/iso/Gone__x.iso", 'a dangling link can be renamed');
++
++# rename: floppy
++put("$mirror/template/floppy/disk1.img", 'f');
++is(PVE::Storage::rename_media_volume($cfg, 'mirror:floppy/disk1.img', 'DOS__disk1.img'),
++    'mirror:floppy/DOS__disk1.img', 'a floppy volume is renamed');
++
++# rename: refusals
++put("$mirror/template/iso/taken.iso");
++dies_like(
++    sub {
++        PVE::Storage::rename_media_volume($cfg, 'mirror:iso/Sun__Solaris__link.iso', 'taken.iso');
++    },
++    qr/already exists/,
++    'rename refuses a name that exists',
++);
++dies_like(
++    sub {
++        PVE::Storage::rename_media_volume($cfg, 'mirror:iso/Sun__Solaris__link.iso', 'Gone__x.iso');
++    },
++    qr/already exists/,
++    'rename refuses the name of a dangling link',
++);
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'mirror:iso/taken.iso', 'a/b.iso') },
++    qr/without '\/'/, 'rename refuses a name with a slash');
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'mirror:iso/taken.iso', 'taken.vfd') },
++    qr/end in \.iso or \.img/, 'rename refuses an extension of another content type');
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'mirror:iso/missing.iso', 'x.iso') },
++    qr/does not exist/, 'rename refuses a volume that does not exist');
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'mirror:iso/taken.iso', 'taken.iso') },
++    qr/already has the name/, 'rename refuses the same name');
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'lvm:vm-100-disk-0', 'x.iso') },
++    qr/only iso and floppy/, 'rename refuses other volume types');
++put("$described/wsh-mirror.yaml", "version: 1\n");
++put("$described/template/iso/d.iso");
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'described:iso/d.iso', 'e.iso') },
++    qr/description file .*wsh-mirror\.yaml.*wsh-lab mirror apply/,
++    'rename refuses a storage with a description file',
++);
++ok(-e "$described/template/iso/d.iso", '... and leaves the volume');
++unlink("$described/wsh-mirror.yaml");
++put("$described/.wsh-mirror-state.json", "{}\n");
++dies_like(
++    sub { PVE::Storage::rename_media_volume($cfg, 'described:iso/d.iso', 'e.iso') },
++    qr/description file .*\.wsh-mirror-state\.json/,
++    'rename refuses a storage whose links apply keeps (state file, description elsewhere)',
++);
++
++# link: relative on one file system, inside its mount
++is(
++    PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'mirror', 'NAS__target.iso'),
++    'mirror:iso/NAS__target.iso',
++    'link returns the new volume ID',
++);
++my $text = readlink("$mirror/template/iso/NAS__target.iso");
++unlike($text, qr{^/}, "a link on the same file system is relative ($text)");
++is(PVE::Tools::file_get_contents("$mirror/template/iso/NAS__target.iso"),
++    'target', 'the link leads to the source volume');
++
++# link: absolute to another file system
++is(PVE::Storage::media_link_text('/proc/version', "$mirror/template/iso"),
++    '/proc/version', 'a link to another file system is absolute');
++
++# link: content type of the link
++put("$nas/template/iso/boot.img", 'b');
++is(
++    PVE::Storage::link_media_volume(
++        $cfg, 'nas:iso/boot.img', 'mirror', 'Boot__boot.img', 'floppy',
++    ),
++    'mirror:floppy/Boot__boot.img',
++    'an .img ISO can be linked as a floppy',
++);
++ok(-l "$mirror/template/floppy/Boot__boot.img", '... in the floppy directory');
++
++# link: refusals
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'mirror', 'taken.iso') },
++    qr/already exists/, 'link refuses a name that exists');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'mirror', 'Sub/x.iso') },
++    qr/without '\/'/, 'link refuses a name with a slash');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'mirror', 'x.vfd') },
++    qr/end in \.iso or \.img/, 'link refuses an extension of another content type');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'mirror:iso/taken.iso', 'mirror', 'x.iso') },
++    qr/rename the volume instead/, 'link refuses a source in the same storage');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/missing.iso', 'mirror', 'x.iso') },
++    qr/isn't a file on this node/, 'link refuses a source that is not there');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'shared', 'x.iso') },
++    qr/shared and 'nas' isn't/, 'link refuses a link in a shared storage to a local volume');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'lvm', 'x.iso') },
++    qr/of type 'lvm'/, 'link refuses a storage type that cannot hold links');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'plain', 'x.img', 'floppy') },
++    qr/no 'floppy' content/, 'link refuses a content type the storage does not have');
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg, 'nas:iso/target.iso', 'described', 'x.iso') },
++    qr/description file/, 'link refuses a storage with a description file');
++
++# a shared source restricted to fewer nodes than the shared mirror
++my $cfg2 = {
++    ids => {
++        %{ $cfg->{ids} },
++        nas2 => {
++            type => 'dir',
++            path => $nas,
++            shared => 1,
++            nodes => { a => 1 },
++            content => { iso => 1 },
++        },
++        shared2 => {
++            type => 'dir',
++            path => "$base/shared2",
++            shared => 1,
++            nodes => { a => 1, b => 1 },
++            content => { iso => 1 },
++        },
++    },
++};
++dies_like(
++    sub { PVE::Storage::link_media_volume($cfg2, 'nas2:iso/target.iso', 'shared2', 'x.iso') },
++    qr/restricted to fewer nodes .*\(b\)/,
++    'link refuses a source storage on fewer nodes than the shared mirror',
++);
++
++# listing: a link whose target is gone is listed with size 0, flagged unavailable
++my $list = PVE::Storage::DirPlugin->list_volumes('mirror', $cfg->{ids}->{mirror}, undef, ['iso']);
++my ($gone) = grep { $_->{volid} eq 'mirror:iso/Gone__x.iso' } @$list;
++ok($gone, 'a dangling ISO link is listed');
++is($gone->{size}, 0, '... with size 0');
++ok($gone->{unavailable}, '... flagged unavailable');
++my ($fine) = grep { $_->{volid} eq 'mirror:iso/NAS__target.iso' } @$list;
++is($fine->{size}, 6, "a link that leads somewhere has its target's size");
++ok(!$fine->{unavailable}, '... and is not flagged');
++
++done_testing();
++
++1;
 diff --git a/src/test/parse_volname_test.pm b/src/test/parse_volname_test.pm
 index 5eb7f55..2771c93 100644
 --- a/src/test/parse_volname_test.pm
@@ -350,6 +1084,18 @@ index ff162b1..5ec2f25 100644
      {
          description => 'CT template, tar.gz',
          volname => "$storage_dir/template/cache/debian-10.0-standard_10.0-1_amd64.tar.gz",
+diff --git a/src/test/run_plugin_tests.pl b/src/test/run_plugin_tests.pl
+index da0d0de..06660b5 100755
+--- a/src/test/run_plugin_tests.pl
++++ b/src/test/run_plugin_tests.pl
+@@ -19,6 +19,7 @@ my $res = $harness->runtests(
+     "filesystem_path_test.pm",
+     "prune_backups_test.pm",
+     "free_image_test.pm",
++    "media_volume_test.pm",
+     "zfs_list_zvol_test.pm",
+     "content_types_test.pm",
+     "plugin_metadata_test.pm",
 diff --git a/src/test/run_volume_access_tests.pl b/src/test/run_volume_access_tests.pl
 index 12d5544..02f4f2b 100755
 --- a/src/test/run_volume_access_tests.pl

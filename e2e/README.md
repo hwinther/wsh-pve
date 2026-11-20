@@ -12,7 +12,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   architectures), and Hardware → Add → Floppy Drive.
 - `tests/mirror.spec.ts`: a mirror storage (a dir storage of symlinks to images in a NAS tree made in
   the container, folders in the names with `__`): the volumes with the targets' sizes, a dangling
-  link left out, removing a volume removes only the link, a VM keeps the volume ID; and pve-manager's
+  link left out (or, with step 3's libpve-storage-perl, listed as unavailable), removing a volume
+  removes only the link, a VM keeps the volume ID; step 3's rename and link calls (in place, relative
+  or absolute links, refusals, a user without `Datastore.Allocate`, a storage with a description file,
+  a link to the NFS storage's ISO) and their Rename / Add link windows; and pve-manager's
   folder view (the ISO and floppy tabs grouped by folder, search, remove, the CD/DVD and floppy
   selectors showing `Solaris / 2.6 / ...`), and the search field above the ISO and floppy selectors
   (focus on open, every word must match, Enter picks). The four ways to use it: plain `__` names in a

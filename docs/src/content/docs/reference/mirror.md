@@ -8,10 +8,13 @@ directories hold **symlinks** to ISO and floppy images that live somewhere else:
 folder tree, a VMware datastore being migrated, a folder of archive.org torrents that must stay as
 they are for seeding. Nothing is copied: the storage is an index of the files.
 
-It needs no backend change. PVE lists a storage's ISO and floppy directories with `stat()`, which
-follows symlinks, so a link shows up as a volume with its target's size, QEMU opens the target through
-the link, and removing the volume removes only the link. Links work in `dir`, `btrfs`, `nfs` and
-`cephfs` storages, and in `cifs` storages mounted with `mfsymlinks`.
+The links themselves need no backend change. PVE lists a storage's ISO and floppy directories with
+`stat()`, which follows symlinks, so a link shows up as a volume with its target's size, QEMU opens the
+target through the link, and removing the volume removes only the link. Links work in `dir`, `btrfs`,
+`nfs` and `cephfs` storages, and in `cifs` storages mounted with `mfsymlinks`. The WSH
+libpve-storage-perl adds a [rename and an "add link" call](#rename-and-link-from-the-web-ui-and-the-api)
+with buttons in the web UI, and lists a link whose target is gone as
+[unavailable](#a-link-whose-target-isnt-reachable) instead of hiding it.
 
 ## The folders are in the volume's name
 
@@ -59,8 +62,9 @@ None is forced: pick the simplest one that covers your media.
 ### 0. Plain files with `__` names
 
 Rename (or upload) the images in any ISO/floppy storage with their folders in the name:
-`Solaris__2.6__solaris_2.6_598_sparc.iso`. The UI shows the folders; there are no links and no tool.
-A rename changes the volume ID, so set the CD drive of VMs that use the image to the new name.
+`Solaris__2.6__solaris_2.6_598_sparc.iso`, with the storage's **Rename** button or by hand. The UI
+shows the folders; there are no links and no tool. A rename changes the volume ID, so set the CD drive
+of VMs that use the image to the new name.
 
 ### 1. One node: a local storage of links
 
@@ -186,7 +190,93 @@ What `apply` does with files that are gone or moved:
 
 **Renaming** a volume: edit its entry's `name` (or add an entry for a file a rule names) and run
 `apply`; the old link goes, the new one comes. Set the CD drive of VMs that use the old name to the
-new one.
+new one. The web UI's Rename and Add link buttons and their API calls refuse a storage with a
+description file (see [below](#a-storage-with-a-description-file)).
+
+## Rename and link from the web UI and the API
+
+In a `dir`, `btrfs`, `nfs`, `cephfs` or `cifs` storage, the **ISO Images** and **Floppy Images** tabs
+have two more buttons:
+
+- **Rename** renames the selected volume in place: a link is renamed itself (its target stays where
+  it is), a regular file is renamed. The window takes a **Folder** (`Solaris / 2.6`, empty for the top
+  level) and a **File name**, cleans them the way an upload's name is cleaned, and shows the resulting
+  volume ID. It lists the VMs (that you may see) whose config uses the volume: a rename changes the
+  volume ID and their drives keep the old one, so they don't start until the drive is set to the new
+  name.
+- **Add link from storage** links a volume of another storage in: pick the source with the same
+  search field, storage and image selectors as the CD/DVD editor (the storage itself isn't offered),
+  then the folder and file name of the link (prefilled from the source's name).
+
+The buttons show only where the call is allowed: a storage type that can hold links, `Datastore.Allocate`
+on the storage, and no description file.
+
+### The API
+
+| Call | Parameters | Permission |
+| --- | --- | --- |
+| `PUT /nodes/{node}/storage/{storage}/content/{volume}` | `rename`: the new file name, folders joined with `__` | `Datastore.Allocate` on the storage |
+| `POST /nodes/{node}/storage/{storage}/link-volume` | `source-storage`, `volume` (`iso/name.iso`, or the full volume ID), `filename` (the link's name), `content` (`iso`/`floppy`, default the source's) | `Datastore.Allocate` on the storage **and** on the source storage |
+
+```sh
+pvesh set /nodes/pve1/storage/mirror/content/mirror:iso/sol-2.6.iso --rename Solaris__2.6__sol-2.6.iso
+pvesh create /nodes/pve1/storage/mirror/link-volume --source-storage nas --volume iso/netbsd-9.3-sparc64.iso \
+    --filename NetBSD__9.3__netbsd-9.3-sparc64.iso
+```
+
+The rename is a parameter of the content update call (`PUT`, which also sets notes and protection;
+`rename` can't be combined with them): everything after `content/` in the URL is the volume ID, so the
+content path has no room for a sub-path. The link call sits next to `upload` and `download-url`, the
+other two ways a file gets into a storage's ISO and floppy directories. Both are synchronous; the link
+call returns the new volume ID.
+
+Both refuse:
+
+- a name that exists, a dangling link of that name included (nothing is overwritten);
+- a name with `/`, with characters other than `A-Z a-z 0-9 _ . -`, starting with `.`, with an empty
+  folder (`a____b.iso`), or whose extension isn't one of the content type's (`.iso`/`.img` for ISO
+  images; `.img`/`.ima`/`.vfd` for floppy images);
+- other volume types and storage types, and a storage without that content type.
+
+The link call also refuses a source in the same storage (rename it instead), a source that isn't a file
+on the node that runs the call, and in a **shared** storage a source that not every node of that
+storage has: a source storage that isn't shared, or is limited to fewer nodes (`nodes`).
+
+The link is **relative** when the source is on the link directory's file system, inside its mount (the
+rule of a description file's `links: auto`), and **absolute** otherwise: a link from an NFS storage's
+ISO into a local mirror points at `/mnt/pve/<nfs-storage>/template/iso/...`, the path PVE mounts that
+storage at on every node.
+
+**Why `Datastore.Allocate` on the source too:** a link makes the source volume usable by everyone who
+may use the mirror storage, also users who can't see the source storage. Only someone who could manage
+the source storage's content may publish it that way. `Datastore.Audit` on the source is not enough.
+
+### A storage with a description file
+
+When `wsh-mirror.yaml` (or `.wsh-mirror-state.json`, which `apply` writes at the storage's root even
+when the description file is elsewhere with `--config`) is at the storage's root, both calls are refused
+and the buttons are hidden: the description file is the source of truth, and the next `apply` would
+undo the change (a renamed link would come back under its old name, and the new one would be left as
+an unmanaged link). Edit the file's entries instead and run `wsh-lab mirror apply`. The storage's
+status (`GET /nodes/{node}/storage/{storage}/status`) has `mirror-described: 1` then.
+
+Writing the change into the file from the API was the alternative: the API is Perl, the file is YAML
+whose comments `wsh-lab mirror` keeps, and the edit would have to take the same lock as `apply` and
+agree with its rules and entries. Refusing is simpler and can't lose a comment or race with a timer's
+`apply`. A description file kept elsewhere with `--config` on a storage that `apply` hasn't run on yet
+isn't seen.
+
+### A link whose target isn't reachable
+
+A link whose target is gone on this node (a share that isn't mounted here, a file that moved) is listed
+with size 0 and `unavailable: 1`; before, PVE didn't list it at all. The ISO and floppy tabs show it
+with a warning sign and "(unavailable on this node)", where it can be renamed or removed. The CD/DVD
+and floppy selectors leave it out, and a VM whose drive uses it doesn't start on that node.
+
+In a **cluster** the listing is per node (the API call runs on the node in the URL): a link in a local
+storage exists on its node only; a link in a shared storage is seen by every node, and is unavailable
+on a node where its target isn't mounted. That is why the link call refuses a link in a shared storage
+to a volume of a storage that isn't on every node.
 
 ## A changing archive
 
@@ -255,9 +345,10 @@ description file; use `import` and `apply` there.
 - **Absolute links need the same mount path everywhere**: links in a local storage are plain files on
   one node, and their targets must be at the same path on every node that runs the VMs. Relative links
   on a shared export (way 2) don't have that problem.
-- **A dangling link hides the volume**: when the share isn't mounted or a file moved, PVE doesn't list
-  the volume, and a VM whose drive points at it doesn't start (the CD/DVD drive can be set to "no
-  media" first). `wsh-lab mirror list` shows dangling links.
+- **A dangling link**: when the share isn't mounted or a file moved, the volume is listed as
+  [unavailable](#a-link-whose-target-isnt-reachable) (with an older libpve-storage-perl it isn't listed
+  at all), and a VM whose drive points at it doesn't start (the CD/DVD drive can be set to "no media"
+  first). `wsh-lab mirror list` shows dangling links.
 - **Uploads are regular files**: an upload or download from URL into the mirror storage writes a real
   file in `template/iso` or `template/floppy`, not onto the NAS. The tool leaves such files alone.
 - **Write access**: floppy drives are writable by default, and a write goes through the link to the
