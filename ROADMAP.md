@@ -74,7 +74,7 @@ come after that, not before.
 | Install target `sol7-sun4u`: Solaris 7 3/99 End User on sun4u with suninstall (`solaris-install-serial.py`: the disk as `DISK=c0t0d0`, `halt` to `0 >` and the VM stopped there), the SUN2.9G label on the IDE disk, 2048 MB (with 1024 the kernel panicked twice as the package copy began: `segkp_badop`, a BAD TRAP in `pkginstall`; not diagnosed), F2 sent again after 180 s on an unchanged screen (`KEY_RETRY`; two runs sat on a screen after F2); installed through PVE with `--check --export` (24.5 min) and boot-tested from the stored disk (4.4 min), pve-qemu-kvm 11.1.3-2+wsh26 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
 | Mirror storage, step 3: libpve-storage-perl renames an `iso`/`floppy` volume in place (`PUT .../content/{volume}` with `rename`; a link is renamed, never its target) and links a volume of another storage in (`POST .../storage/{storage}/link-volume`; relative on one file system inside its mount, absolute otherwise). Both refuse a name that exists, a `/`, unsafe characters and an extension of the other content type; they need `Datastore.Allocate` on the storage, the link also on the source storage (a link republishes the source to everyone who may use the mirror); a storage with a description file is refused (its next `apply` would undo the change), and a link in a shared storage to a volume not every node has. A dangling link is listed with size 0 and `unavailable: 1` instead of hidden. pve-manager: Rename (folder, file name, the new volume ID, the VMs that use it) and Add link from storage (the CD editor's search-field selector) in the ISO and floppy tabs, shown only where allowed; unavailable links flagged in the tabs and left out of the selectors. Unit tests (`media_volume_test.pm`) and e2e (API, UI, permissions, description file, NFS) | in review | |
-| qemu-server `audio0: driver=wav`, for tests and recordings: QEMU's file recorder writes `/var/run/qemu-server/<vmid>-audio0.wav` (a fixed path, `server=` refused with it) for every device, `cs4231` included; not in the UI's list. `server=` is described as the PulseAudio server and its messages no longer print into `qm showcmd`. The audio matrix (#359) can then record through a real `qm start` instead of rewriting the showcmd line | in review | |
+| qemu-server `audio0: driver=wav`, for tests and recordings: QEMU's file recorder writes `/var/run/qemu-server/<vmid>-audio0.wav` (a fixed path, `server=` refused with it) for every device, `cs4231` included; not in the UI's list. `server=` is described as the PulseAudio server and its messages no longer print into `qm showcmd`. The audio matrix (#359) records through it with a real `qm start` instead of rewriting the showcmd line | in review | |
 | Idle on sun4u: no guest on QEMU's sun4u has a way to stop the CPU (Solaris/illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` only on CPUs with several strands), so pve-qemu `wsh/0042`-`0044` recognise the idle loops of NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9/10 and Tribblix m34 in the translator and halt there (`idle-halt`, on by default; qtest `sun4u-idle-test`): an idle guest at the shell takes 3-9% of a host core instead of 100% (Tribblix about 22%, and only with FMA's `fmd` off: its ZFS disk faults and `rcm_daemon` spins), with the clock, ten `sleep 1` and CPU-bound jobs as before (`submodules/SPARC.md`, "sparc64 (sun4u)", "Idle") | in review | |
 | Workflow tokens: `sync-from-upstream-trigger.yml` dispatches the five syncs with `GITHUB_TOKEN` (`actions: write`), and from a branch or with `dry_run` only says what it would start; `build-deb.yml` builds pve-qemu's 3dfx extra in its own job without `WORKFLOW_TOKEN` or stored credentials and hands the binary to the build job as an artifact; the optional-extras report's issue path is tested by `scripts/test-report-qemu-extras.sh` and dry-run against the open issues by `report-qemu-extras-test.yml` | in review | |
 
@@ -181,14 +181,14 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      records each device with QEMU's `wav` backend and checks the tones: SB16, AdLib, PC speaker
      and `sb16-adlib-pcspk` under FreeDOS with our own `AUDTEST.COM`; AC97, Intel HDA (ich6/ich9),
      ES1370, virtio-sound and USB audio under a Debian kernel + initramfs; every `audio0` value also
-     through qemu-server (`qm showcmd`, the same command with `wav`, `qm start`). All play. Found:
-     on q35 PVE's machine config adds a codec-less `ich9-intel-hda` at 00:1b.0, so `audio0` is the
-     guest's second card; qemu-server puts two codecs on one HDA controller; Linux starts AC97/HDA
-     muted; SB16 direct DAC isn't emulated. Table and the headless-node answer (`pa` with
-     `server=`, also for PipeWire desktops) in the
-     [audio reference](docs/src/content/docs/reference/audiodev.md). Next: a `driver=wav` in
-     qemu-server for tests (proposed, not done); GUS and CS4231A (needs a DOS test for each);
-     Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a real node over `pa`.
+     through qemu-server (`driver=wav`: `qm showcmd`, then a real `qm start` that records). All
+     play. Found: on q35 PVE's machine config adds a codec-less `ich9-intel-hda` at 00:1b.0, so
+     `audio0` is the guest's second card; qemu-server puts two codecs on one HDA controller; Linux
+     starts AC97/HDA muted; SB16 direct DAC isn't emulated; the wav header's sizes stay 0. Table and
+     the headless-node answer (`pa` with `server=`, also for PipeWire desktops) in the
+     [audio reference](docs/src/content/docs/reference/audiodev.md). Next: GUS and CS4231A (needs a
+     DOS test for each); Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a
+     real node over `pa`.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
      older Linux.
    - Streaming: 2D/3D video and audio in one connection (Moonlight to Sunshine or Wolf), without a
@@ -437,5 +437,7 @@ timeout, Stop-A powering the machine off, and the sparc64 fixes 0003-0011 and 00
 Not written up yet: the TTE page-size truncation, if it is not merged upstream.
 
 On hold until reproduced on plain QEMU without LEMU patches: the ESCC mouse rate and the ESCC break
-that never ends (seen with LEMU's ESCC patches), and the audio mixer's 6 dB on a mono output and the
-`wav` backend's empty header sizes (seen with LEMU's CS4231).
+that never ends (seen with LEMU's ESCC patches), and the audio mixer's 6 dB on a mono output (seen
+with LEMU's CS4231). The `wav` backend's empty header sizes are not CS4231's: the x86 audio matrix
+gets them from every x86 device on pve-qemu-kvm 11.1, whose wsh patches don't touch QEMU's audio
+code; still to check on plain QEMU before a report.

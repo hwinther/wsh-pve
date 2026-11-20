@@ -24,8 +24,8 @@ The following audio devices are defined in the UI, and the existing Intel device
 
 Tested on x86 with the published packages by the [audio matrix](#how-this-is-tested): each guest
 plays a known tone, QEMU's `wav` backend records it, and the recording must hold that tone. Every
-row passed directly on QEMU and through qemu-server (`qm showcmd`, then the same command with the
-`wav` backend, then a real `qm start` with `driver=none`).
+row passed directly on QEMU and through qemu-server (`driver=wav`: `qm showcmd`, then a real
+`qm start` whose recording holds the tone).
 
 | `audio0: device=` | QEMU device | Guest tested | Result | Notes |
 | --- | --- | --- | --- | --- |
@@ -70,8 +70,9 @@ The additional backend drivers support both local and remote audio output.
   - `/var/run` is a tmpfs, so the recording is in RAM: QEMU's default format (44.1 kHz, 16-bit
     stereo) is about 10 MB per minute of sound. The file grows only while the guest plays: an idle
     VM leaves it at its 44-byte header. Copy the file away and switch the driver back when done.
-  - The RIFF and data sizes in the header stay 0, even after a clean exit (guest power off,
-    `qm stop`; measured with pve-qemu-kvm 11.1). Tools that trust the header see an empty file:
+  - The RIFF and data sizes in the header stay 0 however QEMU ends: guest power off, `qm stop`,
+    QMP `quit` or SIGTERM (measured with pve-qemu-kvm 11.1.3-2+wsh30, also on QEMU directly
+    without qemu-server). Tools that trust the header see an empty file:
     read everything after the 44-byte header as the samples, or rewrite the header, for example
     with `sox --ignore-length <vmid>-audio0.wav fixed.wav`.
 - **alsa**: ALSA (local sound)
@@ -93,10 +94,9 @@ A Proxmox VE node usually has no speakers and nobody logged in, so the choice is
 - **`pa` without `server=`**, **`pipewire`**, **`alsa`**: the node's own sound server or card. On a
   headless node there usually is none; `pipewire` takes no `server=` (QEMU's PipeWire backend has
   no such option), so for a remote PipeWire desktop use `pa`.
-- **`wav`** (QEMU's file recorder): what the tests use. qemu-server doesn't offer it; to record a
-  VM, leave `audio0` out and add the device yourself, for example
-  `args: -audiodev wav,id=rec,path=/var/tmp/vm.wav -device sb16,audiodev=rec`. The file's header
-  gets its sizes only when QEMU closes it (guest power off, `qm stop`); a killed QEMU leaves them 0.
+- **`wav`** (QEMU's file recorder): what the tests use, `driver=wav` (see
+  [above](#backend-driver-audio-output)). It records to a file on the node, so it is for checking
+  that a guest makes sound, not for listening.
 
 ## Remote Audio Configuration
 
@@ -126,9 +126,11 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
 - **The check**: the wav file must hold the expected tones (zero-crossing frequency within 4 %, RMS
   above -50 dBFS, at least 0.15 s) and no tone of a device that isn't attached, so
   `sb16-adlib-pcspk` must give all three and `sb16` only the 1000 Hz one.
-- **Through Proxmox VE** (the e2e node in a container): a VM per `audio0` value, `qm showcmd` must
-  have the expected `-device`/`-machine`/`-audiodev` arguments, the same command with `none`
-  swapped for `wav` must play the tones, and `qm start` must run the guest to its power off.
+- **Through Proxmox VE** (the e2e node in a container): a VM per `audio0` value with
+  `driver=wav`. `qm showcmd` must have the expected `-device`/`-machine` arguments and the `wav`
+  audiodev with the fixed path, and a real `qm start` must run the guest to its power off with the
+  tones in `/var/run/qemu-server/<vmid>-audio0.wav`. One more VM checks that `driver=wav` with a
+  `server=` doesn't start.
 
 The results table is in the workflow's job summary; the recordings and logs are its artifact.
 
