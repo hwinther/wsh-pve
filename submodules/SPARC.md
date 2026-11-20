@@ -741,7 +741,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)` |
-| LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok` (not an LX PROM) |
+| LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
 | Voyager | `voyager.bin` | default | 256 | `qemu: fatal: Trap 0x02 (Illegal Instruction)` after `Power-ON Reset` |
 
 The Sun SS-20 PROM reaches `ok` and boots with `-cpu TI-SuperSparc-40`, `-50` or `-60` only.
@@ -1624,6 +1624,56 @@ What it would take for the rest:
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
   it doesn't run removed. SS-600MP has no profile (Solaris 2.6 refuses it, and 4.1.2 doesn't start).
+
+### SPARCstation LX with the Themis LXE+ PROM (lab only)
+
+QEMU's `-M LX` (microSPARC `TI,TMS390S10`) with `lx564.bin` from the lab's PROM archive, measured
+2026-11-20 in the lab with local QEMU builds (11.1.3 with wsh/0001-0041; not a package). The older
+`lx.bin` stops QEMU in its POST (firmware table under "SS-10 and SS-20"). `lx564.bin` is not a Sun LX
+PROM: it is the PROM of the Themis LXE+ (a VME board built around the LX), "ROM Rev. 2.14 4.4", root
+node `THEMIS,LXE+`, banner `SPARCstation LXE+`. It expects an SCV64 VME bridge that QEMU's LX
+doesn't have.
+
+**Stock QEMU.** POST runs (one `MMU Context Table Reg Test` error with QEMU's microSPARC, `Suspect
+Swift Module`; harmless), then `initializing VME mmuData Access Error` and `ok`. The PROM stopped
+before probing the SBus: `show-devs` has `/iommu@0,10000000/sbus@0,10001000` without children (no
+`espdma`, `esp`, `le`), so `probe-scsi` and `boot` find nothing and `banner` gives `Data Access
+Exception`. With `-d int` the fault is a physical store (`sta ... ASI 0x20`) to `0x7e0001e0`, the
+SCV64's registers; after that (below) one more to `0x71360001`, the LXE+'s LED register
+(`/obio/ledsmall@0,360000`).
+
+**Lab QEMU change** (two `empty_slot`s in `hw/sparc/sun4m.c` for the LX: `0x7d000000`-`0x7fffffff`
+for the VME bridge, `0x71360000` for the LED; reads 0, writes ignored; not in `pve-qemu.patch`). The
+PROM then prints `initializing VME mmuerror`, its VME ranges and `THEMIS LXE+ is not a System
+Controller`, probes SBus slot 4 (`espdma esp sd st SUNW,bpp ledma le`) and reaches its banner. The
+kernels list `THEMIS,LXE+` as the CPU (`cpu = THEMIS,LXE+` from SunOS 4) and print `Out of range
+register specification from device node <mcp>` (the VME node) at boot; nothing else differs.
+`probe-scsi` lists all 8 LUNs on each target (the PROM ignores QEMU's "no such LUN"); the kernels
+only use LUN 0. With `-vga none` the PROM reports a keyboard and takes input from it: `ttya io`
+first (as `prom_boot()` does), or `-nographic` (`NOGRAPHIC=1`) for a PROM that reads ttya, which
+SunOS 4's install needs (it reboots, and the PROM's input goes back to the keyboard).
+
+| System | Media | Result (LX, 64 MB, serial console) |
+| --- | --- | --- |
+| Solaris 2.6 5/98 | CD (`scsi-cd`) | installs (`solaris-install-serial.py` unchanged, 7.2 min), first boot (2.4 min) and check (1.7 min) pass: `SunOS sol26-lx 5.6 Generic_105181-05 sun4m sparc sun4m` |
+| Solaris 2.1 | CD as a disk | needs the context-switch change of `fix/sol21-trap21` too (a lab build with both): installs (2.1's suninstall, 4.9 min), first boot (1.9 min) and check (1.2 min) pass: `SunOS sol21-lx 5.1 Generic sun4m sparc`. `init 5` reboots instead of stopping (`rebooting...`, then `ok`) |
+| SunOS 4.1.3_U1B | CD (`scsi-cd`), `NOGRAPHIC=1` | installs (`sunos-install-serial.py` with Sun PROM support, Programmer, 2.1 min), first boot and check pass: `SunOS ... 4.1.3_U1 2 sun4m` |
+| Solaris 2.2, 2.3 Edition II, 2.4 HW 3/95, 2.5 HW 1/96, 2.5.1 11/97, 7 3/99 | CD as a disk (7: `scsi-cd`) | the CD boots to the installer's first question (`solaris-boot-cd.py`, 45-72 s); installs not run |
+| Solaris 2.4, 2.5.1 | CD (`scsi-cd`) | `Cannot mount root on .../sd@6,0:d` (2.5.1: `:b`), `panic: vfs_mountroot`, as on the other machines |
+| Stored disks `install-sol26-ss5`, `install-sol26-ss10`, `install-sol251-ss5` | a copy each | the kernel boots, then `mount: /dev/dsk/c0t3d0s6 no such device` and the system halts (`/usr/sbin/fsck not found`): the disk's `/dev/dsk` links name the SS-5's or SS-10's SBus path (the LX has the ESP in slot 4); `boot disk -r` the same. A disk installed on the LX boots |
+
+- **Memory:** QEMU's LX takes up to 256 MB; the PROM probes 8 banks of 32 MB. 64 and 128 MB boot
+  the installed 2.6; with 256 MB its kernel stops QEMU right after the banner (`qemu: fatal: Trap
+  0x21 (Instruction Access Error) while interrupts disabled` at `pc f005d2a8`; not traced). The
+  real LX takes at most 96 MB.
+- **For PVE** (not done): a pve-qemu patch with the two slots (better: an `LX` variant or machine
+  option for the LXE+, since a real LX PROM wouldn't want them), and in qemu-server the machine regex
+  (`SS-\d{1,2}` doesn't match `LX`), an `LX` profile (`lx564.bin`, one CPU, 128 MB, no audio) in
+  `$SPARC32_PROFILES` and pve-manager's `sparc32Profiles`, and `lx564.bin` in the `bios` list. The
+  PROM itself goes where `ss5.bin` does: the owner adds it to the private `submodules/sparc`, and the
+  `Makefile`'s PROM check and `scripts/check-qemu-extras.sh` list it, so the package puts it in
+  `/usr/share/kvm`; it never goes into this repository. A catalogue target (`sol26-lx`) would fail
+  `test_targets.py`'s profile check until qemu-server has the profile, so there is none yet.
 
 ### NeXTSTEP 3.3 and OPENSTEP 4.2 on sun4m
 
