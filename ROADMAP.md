@@ -69,6 +69,7 @@ come after that, not before.
 | Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
 | Install targets for the matrix holes: Solaris 2.5.1 on the SS-20 under OpenBIOS (`sol251-ss20`, the CD as a disk; the SS-5 target still needs `ss5.bin`), Solaris 2.6 and 7 on the SS-10 (`sol26-ss10`, `sol7-ss10`), each installed through PVE with `--check --export` (stored disk and sidecar in `/mnt/os/disks`) and boot-tested, pve-qemu-kvm 11.1.3-2+wsh25 | in review | |
 | Install target `sol8-ss5-prom`: Solaris 8 2/02 (Entire Group, Web Start, three CDs) on the SS-5 under the Sun PROM `ss5.bin`, no `args`: the PROM boots the mini-root from Web Start's boot string by itself and stops at `ok` after the install, where the tool stops the VM; installed through PVE with `--check --export` (47 min) and boot-tested from the stored disk (2.2 min), pve-qemu-kvm 11.1.3-2+wsh26 | in review | |
+| Install target `sol7-sun4u`: Solaris 7 3/99 End User on sun4u with suninstall (`solaris-install-serial.py`: the disk as `DISK=c0t0d0`, `halt` to `0 >` and the VM stopped there), the SUN2.9G label on the IDE disk, 2048 MB (with 1024 the kernel panicked twice as the package copy began: `segkp_badop`, a BAD TRAP in `pkginstall`; not diagnosed), F2 sent again after 180 s on an unchanged screen (`KEY_RETRY`; two runs sat on a screen after F2); installed through PVE with `--check --export` (24.5 min) and boot-tested from the stored disk (4.4 min), pve-qemu-kvm 11.1.3-2+wsh26 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
 
 ## In progress
@@ -105,7 +106,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      `sol9-sun4u` and `sol8-sun4u` do it through PVE (the floppy node: OpenBIOS 0025; the reboot:
      the tool stops the VM, and power-cycles it for 8's mini-root). 0025 is in pve-qemu-kvm
      11.1.3-2+wsh25 (`sol9-sun4u` installed and passed its check on it, ~74 min; no `matrix_skip`
-     any more). Open: the firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
+     any more). Solaris 7 3/99 installs too (`sol7-sun4u`, suninstall on a Sun-labelled IDE disk, 2048 MB: with 1024 its kernel panicked in the package copy). Open: the firmware reboot itself (0012), 2.5.1/2.6 boot-block
      exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
@@ -247,7 +248,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 - **Solaris releases not tried yet.** With media on the lab host: none left.
   (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done" and the item above; 2.5.1 on the SS-20
   under OpenBIOS and 2.6 and 7 on the SS-10 are install targets, "Done"; 8 2/02 and 9 9/05 install on the SS-5 and SS-20, and on sun4u with OpenBIOS
-  0024; 8 2/02 also under `ss5.bin` on the SS-5, `sol8-ss5-prom`.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
+  0024; 8 2/02 also under `ss5.bin` on the SS-5, `sol8-ss5-prom`; 7 3/99 on sun4u, `sol7-sun4u`.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
 - **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
   kernel boots since openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22) and `openbsd80-sun4u` installs it

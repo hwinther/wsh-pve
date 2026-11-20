@@ -860,10 +860,52 @@ mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boo
 the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
 passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
 boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
-min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
-it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
-set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
-`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
+min the first time, then a boot test of its stored disk). Solaris 7 is the next section.
+
+### Solaris 7 on sun4u
+
+`sol7-sun4u` (7 3/99, End User) runs suninstall, `solaris-install-serial.py`, on the sparc64 profile
+with 2048 MB, the CD on `ide2` and a 3 GiB disk on `ide0` with the SUN2.9G label (`sun_disk("3G",
+bus="ide0")`: suninstall lists only labelled disks, and Solaris's `dad` driver takes the template's
+label on the IDE disk as it is). The sun4m answers serve unchanged; what is new in the scenario:
+
+- **The disk** is `DISK` (`c0t0d0`; default `c0t3d0`), in `disks()` and the target's `device`.
+- **The end:** the installer ends at a root shell, as on sun4m; on sun4u `halt` returns to OpenBIOS's
+  `0 >` (no power-off for Solaris), and `halt_sun4u()` stops the VM there. No reboot happens during
+  the install, so no power cycle.
+- **2048 MB:** with 1024 MB the kernel panicked as the package copy began in both installs
+  (`panic[cpu0]/thread=70179200: segkp_badop`; `BAD TRAP: ... type=0x31 ... pkginstall`, an illegal
+  access to a user address in `unix`); with 2048 MB the two installs that got that far copied
+  the packages. Not diagnosed. A panic during the packages now fails the scenario at once (`PANIC`)
+  instead of after the 7200 s wait for the postinstall phase.
+- **F2 again (`KEY_RETRY=180`):** in two of the runs suninstall sat on a screen for 10 minutes after
+  F2 (`Preserve Data?`, `Mount Remote File Systems?`), the kernel alive (hme0's `Link Up` every
+  30 s). In the first, a second guest with the same address was on the bridge (`IP: Hardware address
+  ... trying to be our address`), the second had no such message. `press_on()` sends F2 once more
+  when the same screen is still up after 180 s (twice at most); the sun4m targets keep `KEY_RETRY=0`.
+  The passing runs didn't need it, so the repeat itself is tested only by the unit test.
+- **Slower CD boot:** IDE timeouts (`timeout: abort request ... reset bus`) and `Interrupt not seen
+  after set_features` while the CD boots, about 4 minutes from the kernel banner to `Select a
+  Language` (`FIRST_PROMPT_TIMEOUT=1200`). The installed system prints the same warning once.
+
+The installed system boots the 64-bit kernel (`SunOS Release 5.7 Version Generic_106541-02 64-bit`);
+the first boot and the check are `solaris-firstboot.py` and `solaris-boot-disk.py`, unchanged.
+
+Through PVE (the PVE test container, published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2,
+pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-sun4u`, 1024 MB | the screens answered, `c0t0d0` selected; `segkp_badop` panic at `Beginning Solaris software installation` | stopped at 7 min |
+| the same, 1024 MB, a second run | `BAD TRAP ... pkginstall`, `panic[cpu0]: trap` at the same point | 6.9 min |
+| install with 2048 MB for the install phase only, without `--check` | passed; the first boot (1024 MB) reached `console login:`, set the marker and network | 21.3 min (install 880 s, first boot 374 s) |
+| `install sol7-sun4u --check --export`, 2048 MB (another guest with 10.0.2.15 on the bridge) | failed: no reaction to F2 on `Preserve Data?` for 10 min | 17.2 min |
+| the same with `--ip 10.0.2.32`, alone on its address | failed: no reaction to F2 on `Mount Remote File Systems?` for 10 min | 16.9 min |
+| the same with `KEY_RETRY=180` (`--ip 10.0.2.32`) | passed, no F2 repeated; `SunOS sol7-sun4u 5.7 Generic_106541-02 sun4u`, the marker, `/` 125103 KB, `/usr` 412907 KB (73% used), `/export/home` 1904237 KB on `c0t0d0`, `hme0` 10.0.2.32/24; stored disk and sidecar | 24.5 min (install 814 s, first boot 380 s, check 254 s) |
+| `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
+
+Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
+and 2.6 or 2.5.1 on sun4u (their boot blocks stop in OpenBIOS: `submodules/SPARC.md`).
 
 ### Solaris 2.4 and 2.5.1
 
