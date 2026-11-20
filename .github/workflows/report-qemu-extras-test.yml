@@ -1,0 +1,88 @@
+name: Optional-extras report test
+
+# The issue path of build-deb.yml's report-optional-extras job (scripts/report-qemu-extras.sh) only
+# runs when a pve-qemu build lacks an extra, which is rare. This runs it without such a build:
+# - unit: scripts/test-report-qemu-extras.sh, offline cases for create, update, already reported,
+#   close, absent and a bad state
+# - dry-run: the script against this repository's real open issues, with the chosen extra
+#   simulated as missing; it prints the gh commands and the issue body it would write. The job's
+#   token can only read issues, so nothing is opened or changed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      missing:
+        description: "The optional extra to simulate as missing in the dry run"
+        required: false
+        default: "3dfx"
+        type: choice
+        options:
+          - 3dfx
+          - openbios
+          - openbios-sparc64
+          - sun-proms
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/report-qemu-extras.sh"
+      - "scripts/test-report-qemu-extras.sh"
+      - ".github/workflows/report-qemu-extras-test.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: scripts/test-report-qemu-extras.sh
+        run: scripts/test-report-qemu-extras.sh
+
+  dry-run:
+    name: Dry run against the open issues
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: read # gh issue list; --dry-run writes nothing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report with ${{ inputs.missing || '3dfx' }} missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MISSING: ${{ inputs.missing || '3dfx' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          dir="$RUNNER_TEMP/extras"
+          mkdir -p "$dir"
+          for name in 3dfx openbios openbios-sparc64 sun-proms; do
+            if [ "$name" = "$MISSING" ]; then
+              printf '%s\tmissing\tsimulated by %s\n' "$name" "$GITHUB_WORKFLOW"
+            else
+              printf '%s\tpresent\tsimulated\n' "$name"
+            fi
+          done > "$dir/result.tsv"
+          # the lines each extra's log excerpt starts from, then the warning
+          printf '%s\n' "INFO: Restoring sparc submodule" "INFO: Building openbios-sparc32, QEMU,cgthree.bin and openbios-sparc64" \
+            "INFO: Building pve-qemu with 3dfx support" \
+            "WARNING: optional extra $MISSING missing: simulated by $GITHUB_WORKFLOW (dry run, no build)" > "$dir/make.log"
+          scripts/report-qemu-extras.sh --dry-run --result "$dir/result.tsv" --log "$dir/make.log" \
+            --version "0.0.0-0+wsh0~dryrun" --commit "$GITHUB_SHA" --run-url "$RUN_URL" \
+            --assignee "$GITHUB_REPOSITORY_OWNER" | tee "$dir/out.txt"
+          grep -q "^$MISSING: missing" "$dir/out.txt"

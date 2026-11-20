@@ -160,8 +160,8 @@ label). The first boot sets root's password, writes the marker `/etc/wsh-lab-tar
 off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: with
 pve-qemu-kvm before `wsh/0034` every sparc64 VM has the same system MAC address (52:54:00:12:34:56,
 whatever `net0` says), so put only one of them on a network segment (with it, `net0`'s address);
-and NetBSD/sparc64 keeps a host core at 100% for as long as it
-runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
+and without pve-qemu `wsh/0042` NetBSD/sparc64 keeps a host core at 100% for as long as it
+runs (see the SPARC guide, "Idle on sun4u"). If a `halt -p` during the install never powers the VM off (seen once on
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
 
@@ -278,7 +278,7 @@ takes about 5 minutes (key generation, the library relink); every boot relinks t
 background, and a `halt -p` before that ends says `reorder_kernel: failed` (harmless: the old
 kernel stays). It needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later: with older OpenBIOS the installed
 kernel stops right after the loader (`Unhandled Exception 0x30`). Like the other sun4u targets, it
-keeps a host core busy while it runs.
+keeps a host core busy while it runs unless the package has the sun4u idle halt (pve-qemu `wsh/0042`).
 
 **OpenBSD 5.9** (`openbsd59-ss5`, `openbsd59-ss20`) boots `cd59.iso`'s installer and answers it the
 same way as 8.0 (5.9 words some questions differently): `le0` with the static address, root's
@@ -717,18 +717,22 @@ they stay out of the logs and recordings.
 ## How it is tested
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
-container with the published packages, and the `install` matrix (by hand from the `sparc lab`
-workflow) goes through every automated target: a target whose stored disk is missing is installed
-with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
-`reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
+container with the published packages, and the `install` matrix goes through every automated
+target: a target whose stored disk is missing is installed with `--check --export`, the others are
+boot-tested from their stored disks, and the workflow's `reinstall` input installs named targets
+(or `all`) again. The `sparc lab` workflow runs it weekly (Sunday 07:17 UTC, boot tests plus the
+missing installs) and monthly with `reinstall=all` (first Saturday, 07:17 UTC, with the 720-minute
+job limit; about 6 h), so every stored disk is rebuilt from its install CD once a month, and by hand
+from the workflow. Tribblix and the Debian targets are
 installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
 the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
-On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD/sparc64
-CD from cdn.netbsd.org (checked against its sha256) and runs the `netbsd111-sparc64` target's
-install, first boot and check with the lab's own QEMU on a GitHub-hosted runner, without PVE (about
-10 minutes on the lab host).
+On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD CDs
+(11.1 from cdn.netbsd.org, 9.3 from archive.netbsd.org, each checked against its pinned sha256 and
+the release's sha512) and runs the install, first boot and check of `netbsd111-sparc64`,
+`netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20` with the lab's own QEMU on
+GitHub-hosted runners, one job per target, without PVE (6 to 18 minutes each on the lab host).
 The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
 in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
 catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must
