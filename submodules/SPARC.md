@@ -73,6 +73,9 @@ maintains the patches.
 | `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
 | `0040-esp-let-the-interrupt-come-late-as-from-a-real-targe` | The ESP finishes a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `irq-latency-us`, 0 (off) on every machine: set, the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). Per VM through qemu-server's `machine: SS-5,esp-irq-latency=500` ("qemu-server"). At 500 every ESP interrupt comes 0.5 ms later, about 2 ms per disk command, so it stays off unless a guest needs it ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
 | `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): by default the interrupt comes at once; with `-global sysbus-esp.irq-latency-us=500`, after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt | ours | not in QEMU |
+| `0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-` | Every sun4u guest spun in its idle loop and kept a host core at 100% for as long as the VM ran: no kernel that runs on QEMU's sun4u can stop an UltraSPARC-IIi (Solaris and illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` is patched in only on CPUs with several strands). The translator recognises the call in the idle loop of NetBSD 9 and 11 (`cpu_idle()`), OpenBSD (`cpu_idle_cycle()`) and Solaris 9, 10 and illumos (`idle_cpu`, as Sun's compiler and as gcc lay it out) by the words around it, and halts the CPU there while the word that says there is work (`ci_want_resched`, `spc_whichqs`, `disp_nrunnable`) is 0, interrupts are enabled at level 0 and nothing is pending; the next interrupt wakes it ("sparc64 (sun4u)", "Idle"). `-trace sparc64_idle_match` shows the match | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0043-hw-sparc64-sun4u-add-the-idle-halt-option-on-by-defa` | `-M sun4u,idle-halt=on\|off` for 0042, on by default (sun4u has one CPU); not on `sun4v` | ours | not in QEMU |
+| `0044-tests-qtest-test-the-idle-halt-on-sun4u` | qtest `sun4u-idle-test` for 0042-0043: a boot PROM with each recognised loop layout (NetBSD, OpenBSD, Solaris 10, Tribblix) must stop counting when idle, and keep counting with `idle-halt=off`, with work, with interrupts disabled and at PIL 15; with a 1 ms tick each tick must wake it, run its handler, and the loop must run far fewer rounds than with `idle-halt=off` | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -169,11 +172,20 @@ passed when re-run with them). With 0001-0039 the `qtest-sparc` and `qtest-sparc
 and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-idprom-test` 5/5,
 `sun4u-softint-test` 1/1, `sun4u-cmd646-test` 3/3, every sun4m qtest above).
 
+0042-0044 apply on top of 0001-0041 with `patch -F0`. `sun4u-idle-test` passes 24/24 with them;
+against the binary built without them its first case, `netbsd/idle`, fails (the loop went on: 6.1
+million rounds in 300 ms), and against an earlier build of 0042 that took only `jmpl %rs1 + %g0, %o7`
+as the call through a register, `tribblix/idle` fails (gcc's `call %g1` there is `jmpl %g1 + 0`).
+With 0001-0044 the `qtest-sparc` and `qtest-sparc64` suites: 41 OK, 4 skipped, and the two
+`qmp-test` `oob` failures as before (`sun4m-solaris-idle-test` 5/5, `sun4m-solaris-smp-idle-test`
+4/4). Lab results under "sparc64 (sun4u)", "Idle".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
 `sun4m-fsr-rd-test`, `sun4m-cs4231-test` and `sun4m-esp-test` (sparc),
-`sun4u-cmd646-test`, `sun4u-idprom-test` and `sun4u-softint-test` (sparc64) and `am53c974-test` (i386).
+`sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
+`am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -3109,7 +3121,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
   `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
   `sun4m-cs4231-test` (0033), `sun4m-esp-test` (0039),
-  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037) and `am53c974-test` with 0007;
+  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037),
+  `sun4u-idle-test` (0044) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).

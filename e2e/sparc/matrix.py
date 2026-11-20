@@ -213,8 +213,14 @@ MATRICES["sparc64"] = [
      {"GUEST": "netbsd", "NIC": "virtio-net-pci", "CD_BUS": "virtio-blk", **NB_NET64,
       "COMMANDS": NB_NET64["COMMANDS"] + " ;; dd if=/dev/rld0c of=/dev/null bs=64k count=160 2>&1 | tail -1",
       "CHECK": NB_NET64["CHECK"] + " ;; bytes transferred"}),
-    # NetBSD/sparc64 spins in its idle loop on sun4u (nothing lets it stop the CPU): above 80% of a core
-    ("nb111-idle-sparc64", "sparc64-idle.py", NB111_64, None, {"GUEST": "netbsd", "CPU_ABOVE": "80"}),
+    # NetBSD/sparc64 spins in its idle loop on sun4u (nothing lets it stop the CPU); pve-qemu wsh/0042
+    # halts it there (idle-halt, on by default): below 10% of a core, the loop recognised; with
+    # idle-halt=off it spins, above 80%. Needs a package with wsh/0042-0044
+    ("nb111-idle-sparc64", "sparc64-idle.py", NB111_64, None,
+     {"GUEST": "netbsd", "WAIT": "pkill makemandb; sleep 2", "CPU_BELOW": "10", "TRACE": "sparc64_idle_match",
+      "TRACE_EXPECT": "NetBSD idle loop"}),
+    ("nb111-noidle-spins-sparc64", "sparc64-idle.py", NB111_64, None,
+     {"GUEST": "netbsd", "WAIT": "pkill makemandb; sleep 2", "MACHINE": "sun4u,idle-halt=off", "CPU_ABOVE": "80"}),
 ]
 
 # Solaris 10 on sun4u: NEEDS THE SUN DVD on the lab host (/mnt/os/iso/sol-10-u11-ga-sparc-dvd.iso,
