@@ -61,9 +61,10 @@ def at_prompt(m, timeout=120):
     return m.vga_expect(PROMPT, timeout=timeout, tail=1)
 
 
-def run(m, command, timeout=120):
+def run(m, command, timeout=120, prompt=PROMPT):
     """Type a command at the prompt, wait for the next prompt, return the lines it printed (what is
-    still on the screen: up to 23 lines; longer output belongs in a file)."""
+    still on the screen: up to 23 lines; longer output belongs in a file). `prompt`: the regex of the
+    prompt that follows (DOS's by default; DEBUG's `-`, for one)."""
     # Type the command, wait until it is on the screen, and only then press Enter: the screen before
     # Enter is never the screen after it, also when a command prints exactly what the previous one did
     # (the same TYPE twice on a full, scrolled screen ends on the same screen and cursor).
@@ -82,7 +83,7 @@ def run(m, command, timeout=120):
     while True:
         time.sleep(0.5)
         s = m.vga_screen()
-        if s.text_mode and re.search(PROMPT, s.cursor_line(), re.M) and (
+        if s.text_mode and re.search(prompt, s.cursor_line(), re.M) and (
                 s.text != before.text or s.cursor != before.cursor):
             row = s.cursor[1]
             # the command's own line: the last line that ends with what was typed
@@ -109,6 +110,31 @@ def write_file(m, path, lines):
     want = [x.rstrip() for x in lines]
     if got[-len(want):] != want and "".join(got).replace(" ", "") != "".join(want).replace(" ", ""):
         raise AssertionError(f"{path} reads back as {got!r}, expected {want!r}")
+
+
+DEBUG_PROMPT = r"^-$"
+
+
+def debug_write(m, path, data, debug="DEBUG"):
+    """Write a small binary file (a .COM program) from the DOS prompt with DEBUG, typed as a person
+    would: `E` lines of hex bytes from 0100, the length in CX, `N` and `W`. For files that ECHO can't
+    write (any byte value); up to 64K. Checks that DEBUG wrote the expected size and that DIR lists it."""
+    if not 0 < len(data) <= 0xFF00:
+        raise ValueError("DEBUG writes 1 byte to 65280 bytes from offset 0100")
+    run(m, debug, prompt=DEBUG_PROMPT)
+    for off in range(0, len(data), 16):
+        chunk = " ".join(f"{b:02X}" for b in data[off:off + 16])
+        run(m, f"E {0x100 + off:04X} {chunk}", prompt=DEBUG_PROMPT)
+    run(m, "RCX", prompt=r"^:$")
+    run(m, f"{len(data):X}", prompt=DEBUG_PROMPT)
+    run(m, f"N {path}", prompt=DEBUG_PROMPT)
+    out = run(m, "W", prompt=DEBUG_PROMPT)
+    if not re.search(rf"Writing 0*{len(data):X} bytes", out, re.I):
+        raise AssertionError(f"DEBUG W printed {out!r}, expected {len(data):X} bytes written")
+    run(m, "Q")
+    listing = run(m, f"DIR {path}")
+    if not re.search(rf"\b{len(data)}\b", listing.replace(",", "")):
+        raise AssertionError(f"DIR {path} doesn't list {len(data)} bytes:\n{listing}")
 
 
 def us_keyboard(m, layout):

@@ -3,12 +3,23 @@
 MS-DOS (FLAVOUR=msdos): replaces SETUP's CONFIG.SYS and AUTOEXEC.BAT with known ones (CONFIG below:
 "himem" = HIMEM.SYS and DOS=HIGH; "emm386" adds EMM386 NOEMS and DOS=HIGH,UMB) without SMARTDRV, so
 a VM that is stopped from outside loses nothing; KEYBOARD (us) other than us adds `KEYB <layout>`.
+IDLE picks the idle driver, so the VM doesn't keep a host core busy at the prompt: "wshidle"
+(default: WSHIDLE.COM from dos_tools.py, typed in with DEBUG as C:\\DOS\\WSHIDLE.COM and loaded by
+AUTOEXEC.BAT; HLT in INT 28h, busy programs keep their speed), "power" (MS-DOS's own POWER.EXE in
+CONFIG.SYS: idles as well, but programs that poll the keyboard run 2.5-10 times slower) or "none".
 FreeDOS (FLAVOUR=freedos) keeps its own FDCONFIG.SYS/FDAUTO.BAT. Both write the marker C:\\WSHLAB.TXT
 (MARKER: its lines, from install.Job.marker()) and end at the prompt; the lab then stops the VM.
 """
+import os
+import sys
+
 import _dos
 
-DEFAULTS = {"FLAVOUR": "msdos", "CONFIG": "himem", "KEYBOARD": "us", "MARKER": "target=manual", "TIMEOUT": "300"}
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import dos_tools  # noqa: E402
+
+DEFAULTS = {"FLAVOUR": "msdos", "CONFIG": "himem", "KEYBOARD": "us", "MARKER": "target=manual", "TIMEOUT": "300",
+            "IDLE": "wshidle"}
 
 CONFIGS = {
     "himem": ["DEVICE=C:\\DOS\\HIMEM.SYS", "DOS=HIGH", "FILES=30", "BUFFERS=20"],
@@ -17,14 +28,24 @@ CONFIGS = {
 }
 
 
+WSHIDLE = "C:\\DOS\\WSHIDLE.COM"
+POWER = "DEVICE=C:\\DOS\\POWER.EXE"
+
+
 def qemu_args(v, out):
     return _dos.qemu_args({**v, "BOOT": v.get("BOOT", "c")}, out)
+
+
+def config(v):
+    return CONFIGS[v["CONFIG"]] + ([POWER] if v["IDLE"] == "power" else [])
 
 
 def autoexec(v):
     lines = ["@ECHO OFF", "PROMPT $P$G", "PATH C:\\DOS", "SET TEMP=C:\\DOS"]
     if v["KEYBOARD"].lower() != "us":
         lines.append(f"KEYB {v['KEYBOARD'].upper()},,C:\\DOS\\KEYBOARD.SYS")
+    if v["IDLE"] == "wshidle":
+        lines.append(WSHIDLE)
     return lines
 
 
@@ -33,7 +54,12 @@ def run(m, v):
     m.vga_snap("first boot: the prompt")
     if v["FLAVOUR"] == "msdos":
         _dos.run(m, "CLS")
-        _dos.write_file(m, "C:\\CONFIG.SYS", CONFIGS[v["CONFIG"]])
+        if v["IDLE"] not in ("wshidle", "power", "none"):
+            raise ValueError(f"IDLE={v['IDLE']!r}: wshidle, power or none")
+        if v["IDLE"] == "wshidle":
+            _dos.debug_write(m, WSHIDLE, dos_tools.idle_tsr())
+            _dos.run(m, "CLS")
+        _dos.write_file(m, "C:\\CONFIG.SYS", config(v))
         _dos.write_file(m, "C:\\AUTOEXEC.BAT", autoexec(v))
     _dos.run(m, "CLS")
     _dos.write_file(m, "C:\\WSHLAB.TXT", v["MARKER"].splitlines())

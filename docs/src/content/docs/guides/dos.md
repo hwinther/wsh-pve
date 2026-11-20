@@ -15,7 +15,7 @@ memory between 640K and 1 MB.
 | --- | --- | --- |
 | Machine | `pc` (i440fx) | `isapc` would have no PCI and no option ROMs, but qemu-server doesn't accept it (`machine: isapc` fails the format check). |
 | CPU | `pentium` (`486` works too) | Period plausible for DOS 6.22 and enough for HIMEM.SYS and EMM386.EXE (they need a 386). |
-| KVM | off (`kvm: 0`) for the lab, on is fine | TCG gives the same timing every run; DOS doesn't need the speed. DOS busy-waits either way: idle the guest with a DOS idle driver if host CPU matters. |
+| KVM | off (`kvm: 0`) for the lab, on is fine | TCG gives the same timing every run; DOS doesn't need the speed. DOS busy-waits either way; the lab's installs add an idle driver ([Idle](#idle)). |
 | Memory | 32 MB, `balloon: 0` | HIMEM.SYS of DOS 6.22 handles up to 64 MB; DOS has no balloon driver. |
 | USB tablet | off (`tablet: 0`) | DOS has no USB mouse driver. qemu-server adds the UHCI controller anyway; it has no option ROM. |
 | Display | `vga: std` | `cirrus` and `vmware` measured the same for upper memory (each VGA BIOS takes C0000-C9FFF). |
@@ -48,16 +48,62 @@ boots from C:. Then `qm set 130 --boot order=ide0`. Under TCG the whole install 
 [Lab install targets](/guides/lab-install/) has the target `msdos622`: it checks the three floppies
 by sha256, creates the VM above through the API, drives SETUP on the VGA text screen (read exactly
 from the text buffer, not by OCR), swaps the disks when SETUP asks, writes a known `CONFIG.SYS` and
-`AUTOEXEC.BAT` (HIMEM, `DOS=HIGH`, no SMARTDRV) and the marker `C:\WSHLAB.TXT`, and with `--check`
-boots once more and checks `VER`, the marker and `MEM`:
+`AUTOEXEC.BAT` (HIMEM, `DOS=HIGH`, no SMARTDRV, the idle driver `C:\DOS\WSHIDLE.COM`, see
+[Idle](#idle)) and the marker `C:\WSHLAB.TXT`, and with `--check` boots once more and checks `VER`,
+the marker, `MEM` and that the VM idles at the prompt (below 25% of a host core):
 
 ```sh
-wsh-lab install msdos622 --vmid 130 --check                  # ~4 min
+wsh-lab install msdos622 --vmid 130 --check                  # ~7.5 min
 wsh-lab install msdos622 --vmid 131 --check --keyboard no    # adds KEYB NO to AUTOEXEC.BAT
 ```
 
 DOS has no login: the VM's notes say so instead of a password. `freedos14` is the same for FreeDOS 1.4
 from its Floppy Edition (seven disks), which is also what the CI test installs.
+
+## Idle
+
+DOS has no idle loop of its own: at the `C:\>` prompt it polls the keyboard and calls INT 28h ("DOS
+is idle") in between, so a DOS VM keeps one host core at 100% all the time, under TCG and KVM alike.
+An idle driver halts the CPU (`HLT`) while DOS waits; the timer and the keyboard interrupts wake it.
+
+- **MS-DOS 6.22: `WSHIDLE.COM`** (in the repository: `e2e/sparc/dos_tools.py com --name wshidle`,
+  142 bytes, 304 bytes resident). A TSR that does `STI; HLT` in INT 28h and in INT 2Fh AX=1680h
+  ("release the time slice", which Windows-aware DOS programs call while they wait), then goes on to
+  the previous handler. The `msdos622` target types it in with `DEBUG` on the first boot (no file
+  transfer needed) as `C:\DOS\WSHIDLE.COM` and loads it from `AUTOEXEC.BAT`. By hand: copy it onto
+  the disk, add `C:\DOS\WSHIDLE.COM` (or `LH C:\DOS\WSHIDLE.COM` with EMM386) to `AUTOEXEC.BAT`.
+  `MEM` still reports 621K of conventional memory free with it (HIMEM, `DOS=HIGH`).
+- **MS-DOS's own `POWER.EXE`** (`DEVICE=C:\DOS\POWER.EXE` in `CONFIG.SYS`) idles as well: it calls
+  the APM BIOS, which SeaBIOS has, and halts the CPU there. But it also takes keyboard polls
+  (INT 16h AH=01h) for idle time, so a program that polls the keyboard in its main loop, as many games
+  do, runs 2.5-10 times slower, with `ADV:MAX` (the default), `ADV:REG` and `ADV:MIN` alike.
+  `scenarios/dos-firstboot.py` takes it instead of WSHIDLE with `IDLE=power` (not a `wsh-lab install`
+  option).
+- **FreeDOS 1.4** idles out of the box: its installer writes `lh fdapm APMDOS` into `FDAUTO.BAT`
+  (boot menu entries 1-3, the default is 2). Nothing to add; the `freedos14` check verifies it.
+
+Measured through PVE (TCG, the `msdos622` and `freedos14` VMs, `scenarios/dos-idle.py`): host CPU of
+the VM at the prompt over 30-60 s, the BIOS timer (ticks per second at 0040:006C), a typed `ECHO`,
+and two busy programs that count loop iterations for five seconds (`BUSY.COM`, and `BUSYK.COM`, which
+also polls INT 16h AH=01h in every iteration; `dos_tools.py com`). The busy counts vary by about ±20%
+from run to run on the shared lab host; the ranges are over 6 runs (MS-DOS without and with
+WSHIDLE, three of them alternating) and 2-3 runs for the others.
+
+| Guest | Idle driver | Host CPU at the prompt | Timer | BUSY (millions / 5 s) | BUSYK (thousands / 5 s) |
+| --- | --- | --- | --- | --- | --- |
+| MS-DOS 6.22 | none | 100% | 18.1-18.4/s | 1043-1416 | 73-105 |
+| MS-DOS 6.22 | `WSHIDLE.COM` | **1.1-1.6%** | 18.1-18.2/s | 1005-1380 | 73-87 |
+| MS-DOS 6.22 | `POWER.EXE` (ADV:MAX) | 1.2-1.5% | 18.2-18.4/s | 1106-1337 | **9-20** |
+| MS-DOS 6.22 | `POWER.EXE ADV:REG` / `ADV:MIN` | 1.1-1.4% | 18.0-18.2/s | 880-1234 | **12-33** |
+| MS-DOS 6.22, EMM386 NOEMS | none | 100% | 18.2/s | 1719 | 86 |
+| MS-DOS 6.22, EMM386 NOEMS | `WSHIDLE.COM` | 1.5% | 18.2/s | 1429 | 74 |
+| MS-DOS 6.22, EMM386 NOEMS | `POWER.EXE` | 1.4% | 18.4/s | 1857 | 19 |
+| FreeDOS 1.4 (JEMMEX) | none (`fdapm` removed) | 100% | 18.2/s | 1622 | 80 |
+| FreeDOS 1.4 (JEMMEX) | `FDAPM APMDOS` (as installed) | **1.2%** | 18.2/s | 1887 | 97 |
+| FreeDOS 1.4 (JEMMEX) | `WSHIDLE.COM` instead | 1.3% | 18.2/s | 1504 | 94 |
+
+The keyboard answered in every run (the typed `ECHO` came back on the screen), and `HLT`
+works under EMM386 and JEMMEX (V86 mode) too. Under KVM the same drivers apply; that was not measured.
 
 ## The first megabyte
 
@@ -98,6 +144,7 @@ pve-qemu-kvm 11.1, TCG, 32 MB. SeaBIOS's debug log gave the ROM addresses and th
 | no NIC | VGA, vapic | 114K | 102K | 106K | no |
 | `-global ne2k_pci.romfile=` | VGA, vapic | 114K | 102K | 106K | yes |
 | no NIC, `-global apic-common.vapic=off` | VGA only | 124K | 114K | **118K** | yes |
+| `machine: pc,legacy-bios-layout=1` (ne2k_pci kept) | VGA only | 124K | 114K | **118K** | no |
 | dummy ROM 4K | + CD800 | 106K | 94K | 98K | yes |
 | dummy ROM 32K | + CD800 | 78K | 66K | 70K | yes |
 | dummy ROM 100K (valid) | + CD800 | 10K | 98K (EMM386 maps over it) | 102K | yes |
@@ -118,9 +165,8 @@ moved high; loading drivers high (`DEVICEHIGH`, `LOADHIGH`) is what the UMB is f
   ```
 
   for 106K in one block (102K without the `I=`). With a NIC the range starts at CE00 (102K).
-- More needs `args:` (root only): `-global apic-common.vapic=off` frees the 10K of QEMU's vapic ROM,
-  for 118K with `I=CA00-E8FF`. Under KVM the device is `kvm-apic`; that variant was measured under
-  TCG only.
+- The most with a PVE option: **Legacy BIOS memory layout** (below) drops the NIC's option ROM and
+  QEMU's vapic ROM (10K) and keeps the NIC: 114K in one block, 118K with `I=CA00-E8FF`.
 - The range to include is the free gap SeaBIOS reports: start one 4K page after the last ROM, end
   at E8FF. Never past E8FF: from E9000 on is SeaBIOS's data.
 
@@ -152,19 +198,41 @@ own data at the top of the E segment stays writable.
   no other area read only or more contiguous, and it doesn't protect SeaBIOS's writable data, which
   is above the gap.
 
-## A possible feature
+## Legacy BIOS memory layout
 
-The only gains beyond plain options come from dropping ROMs: the NIC's (4K) and QEMU's vapic ROM
-(10K). A per-VM choice such as "legacy BIOS memory layout" in qemu-server could add
-`-global <nic>.romfile=` and `vapic=off` without an `args:` line, and the UI could show the free gap
-SeaBIOS will leave. Not built; a fixed `ne2k_isa` (no ROM at all) would make the NIC part moot.
+The only gains beyond plain options come from dropping ROMs: the NICs' (4K for `ne2k_pci`) and QEMU's
+vapic ROM (10K). The WSH qemu-server does both for one VM with a key of `machine`:
+
+```sh
+qm set 130 --machine pc,legacy-bios-layout=1
+```
+
+In the web UI it is **Hardware > Machine > Advanced > Legacy BIOS memory layout** (x86 VMs only).
+qemu-server then adds `romfile=` (no option ROM) to every PCI NIC's `-device` and
+`-global apic-common.vapic=off` (the abstract APIC type, so it covers QEMU's `apic` under TCG and
+`kvm-apic` under KVM). An ISA NIC (`ne2k_isa`) has no ROM to drop. The rest of the VM stays as it was:
+the NIC still works for a DOS packet driver, it only can't network-boot (no iPXE). The API refuses the
+key on other architectures and with OVMF (`bios: ovmf`), where the option ROMs are UEFI drivers and
+there is no upper memory area to gain. No `args:` and no root rights are needed.
+
+Measured through PVE on the `msdos622` VM (TCG; EMM386 `NOEMS`, `DOS=HIGH,UMB`):
+
+| `machine` | SeaBIOS option ROMs | Free gap | UMB, default scan | UMB, `I=` the gap |
+| --- | --- | --- | --- | --- |
+| `pc` (stock, ne2k_pci) | VGA C0000, NIC CA000, vapic CB000 | 110K (CD800-E8FFF) | 98K from CF4A | 102K |
+| `pc,legacy-bios-layout=1` | VGA C0000 only | 124K (CA000-E8FFF) | 114K from CB4A | 118K (`I=CA00-E8FF`) |
+
+The same as removing the NIC and adding `-global apic-common.vapic=off` by hand (measured side by
+side). Under KVM the vapic ROM (`kvmvapic.bin` in `info roms`) is gone with the key as well; the UMB
+was measured under TCG only.
 
 ## Known issues
 
 - **`ne2k_isa` doesn't start.** qemu-server offers the model but puts the ISA card on the PCI bus:
   `Device 'ne2k_isa' can't go on PCI bus`. Until that is fixed, use `ne2k_pci` (4K of option ROM) or
   no NIC.
-- **No per-NIC ROM option in PVE.** Removing the NIC's option ROM needs
-  `args: -global ne2k_pci.romfile=` (root only); it gives the same 4K as removing the NIC.
+- **No per-NIC ROM option in PVE.** `machine: ...,legacy-bios-layout=1` drops the ROM of every NIC
+  of the VM (and the vapic ROM); removing only one NIC's ROM still needs
+  `args: -global ne2k_pci.romfile=` (root only).
 - **EMM386 must not include the top of the E segment.** `I=` up to EFFF lets DOS boot, then the
   keyboard is dead: SeaBIOS's data at E9000-EFFFF was handed out as UMB. Stay within the gap.

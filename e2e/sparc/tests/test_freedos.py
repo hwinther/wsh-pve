@@ -4,8 +4,9 @@ on the VGA text screen: the DOS install machinery without Microsoft media, for C
 Boots the Floppy Edition's boot disk, lets the installer partition the disk (it reboots), format it and
 copy the six package disks, which the scenario swaps in as the installer asks (QMP
 blockdev-change-medium), then boots the installed system and writes and checks the marker
-(scenarios/freedos-install.py, dos-firstboot.py, dos-boot-disk.py). The screens are read from the VGA
-text buffer (vgatext.py) the whole way; no OCR.
+(scenarios/freedos-install.py, dos-firstboot.py, dos-boot-disk.py), and that the installed system idles
+at its prompt (FDAPM from the installer's FDAUTO.BAT; QEMU below targets_dos.IDLE_BELOW % of a core).
+The screens are read from the VGA text buffer (vgatext.py) the whole way; no OCR.
 
     docker run --rm -e WSH_LAB_GUEST_TESTS=1 --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_freedos.py
 
@@ -102,7 +103,8 @@ class FreeDos(unittest.TestCase):
                                no_ocr=True)
         self.assertEqual(res["code"], 0, res["status"])
         res = lab.run_scenario(os.path.join(sc, "dos-boot-disk.py"), os.path.join(out, "check"),
-                               {**common, "VERSION": r"Free(DOS|Com)", "CHECK": r"(?m)^target=freedos14$"}, no_ocr=True)
+                               {**common, "VERSION": r"Free(DOS|Com)", "CHECK": r"(?m)^target=freedos14$",
+                                "IDLE_BELOW": targets_dos.IDLE_BELOW}, no_ocr=True)
         self.assertEqual(res["code"], 0, res["status"])
         print(f"\nFreeDOS install, first boot and check: {time.time() - t0:.0f}s; evidence in {out}", flush=True)
         if not os.environ.get("FREEDOS_OUT"):

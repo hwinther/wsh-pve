@@ -427,13 +427,22 @@ findings).
   lost. With `--keyboard no` the check switches to the US layout with Ctrl-Alt-F1 before typing.
 - **Phases:** `dos622-install.py` (SETUP: configure the unallocated space, restart, format,
   settings, `C:\DOS`, disks 2 and 3 through the swapper, remove the floppy, first boot to `C:\>`),
-  `dos-firstboot.py` (known `CONFIG.SYS`/`AUTOEXEC.BAT` without SMARTDRV, the marker `C:\WSHLAB.TXT`),
-  `dos-boot-disk.py` (`VER`, the marker, `MEM`). `freedos-install.py` answers FDI (partition and
-  reboot, format, six disk swaps, eject before the last reboot). All scenarios also run under the
+  `dos-firstboot.py` (known `CONFIG.SYS`/`AUTOEXEC.BAT` without SMARTDRV, the idle TSR
+  `C:\DOS\WSHIDLE.COM` typed in with `DEBUG` by `_dos.debug_write` and loaded by `AUTOEXEC.BAT`, the
+  marker `C:\WSHLAB.TXT`), `dos-boot-disk.py` (`VER`, the marker, `MEM`, and with `IDLE_BELOW` the
+  host CPU of the VM idling at the prompt: both targets check below 25% of a core).
+  `freedos-install.py` answers FDI (partition and reboot, format, six disk swaps, eject before the
+  last reboot). All scenarios also run under the
   lab's own QEMU (`_dos.qemu_args`: `FLOPPY`, `DISK`, `DISK2`, `OPTION_ROMS`, ...).
+- **Idle:** DOS keeps a host core at 100% at its prompt without an idle driver. MS-DOS gets
+  `WSHIDLE.COM` (`dos_tools.py com --name wshidle`: `STI; HLT` in INT 28h and INT 2Fh AX=1680h, 142
+  bytes, assembled in Python from hand-encoded instructions); FreeDOS's installer already loads
+  `FDAPM APMDOS`. `scenarios/dos-idle.py` measures it (host CPU at the prompt, the BIOS timer, a typed
+  `ECHO`, `BUSY`: programs that count loop iterations, `dos_tools.py com --name busy|busyk`); numbers
+  and the comparison with `POWER.EXE` in the DOS guide, "Idle".
 - **CI** (`.github/workflows/sparc-lab-dos.yml`, GitHub-hosted): the unit tests, then
   `tests/test_freedos.py` in the lab image: FreeDOS downloaded by sha256, installed from its seven
-  floppies, booted from the disk, marker checked. No Microsoft media.
+  floppies, booted from the disk, marker and idle checked. No Microsoft media.
 
 Tested in the PVE test container on the lab host (TCG, published packages pve-qemu-kvm
 11.1.3-2+wsh11, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17:
@@ -448,11 +457,22 @@ Tested in the PVE test container on the lab host (TCG, published packages pve-qe
 | `pve_matrix.py pve` and `matrix.py smoke` on the rebased branch | 5/5 and 3/3 passed | |
 | the MCP server (`tests/test_mcp_server.py`, and `screen_text` on a FreeDOS guest under `lab.py serve`) | 6 tests passed; `method: vga-text`, 6 ms per call | |
 
+With the idle driver (published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2, pve-manager
+9.2.31+wsh4), 2026-11-20:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install msdos622 --vmid 9302 --check --export /mnt/os/disks` | passed: `WSHIDLE.COM` typed in (142 bytes, `DIR` checked), `MEM` 621K free, idle 2.3% of a core; stored disk replaced | 7.4 min (install 79 s, first boot 281 s, check 44 s) |
+| `boot-test msdos622` / `boot-test freedos14` from the stored disks | passed, idle 2.5% / 1.8% | 0.9 / 1.3 min |
+| unit tests (`test_dos.py`, `test_targets.py`, `test_vgatext.py`, `test_stored_disks.py`, `test_freedos.py` skipped without `WSH_LAB_GUEST_TESTS`) | 169 passed, 2 skipped | 6 s |
+| `dos-boot-disk.py IDLE_BELOW=25` under the lab's own QEMU (TCG) on a copy of the stored FreeDOS disk, as `test_freedos.py` runs it | passed, idle 0.9% | 49 s |
+
 ### The first-megabyte matrix
 
 `dos_mem.py --vmid <installed msdos622> --runs DIR` measures what DOS gets of 640K-1M per VM variant
 (VGA model, NIC and its option ROM, dummy option ROMs of 4K/32K/100K, the owner's original dummy
-file, `apic-common.vapic=off`) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
+file, `apic-common.vapic=off`, and `legacy-layout`: qemu-server's `machine: pc,legacy-bios-layout=1`,
+which needs a qemu-server with it) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
 `I=` the free gap, `I=` into SeaBIOS's data). It adds the tools disk as D: (`dos_tools.py`: a FAT16
 image built with mtools from the owner's utility CD, never committed; a disk rather than a floppy
 or the CD because a CD needs MSCDEX, which would take the memory being measured), writes the ROMs to

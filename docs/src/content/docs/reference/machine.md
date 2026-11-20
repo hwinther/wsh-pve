@@ -47,6 +47,16 @@ interrupt of the SCSI controller (the ESP) by that many microseconds. It is off 
 NeXTSTEP 3.3 and OPENSTEP 4.2 need it (at 500), and it makes every disk command about 2 ms slower.
 Other architectures refuse it. See the [SPARC guide](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency).
 
+### Legacy BIOS memory layout (x86)
+
+On an x86 VM, the Machine editor has **Legacy BIOS memory layout** behind the **Advanced** checkbox.
+It writes the `legacy-bios-layout` key of `machine` (`machine: pc,legacy-bios-layout=1`): the NICs get
+no option ROM (`romfile=`, so they can't network-boot) and QEMU's APIC loads no vapic ROM
+(`-global apic-common.vapic=off`). The upper memory that SeaBIOS leaves free behind the VGA BIOS grows
+from 110K to 124K with one `ne2k_pci`, and EMM386 makes 114-118K of it one UMB instead of 98-102K.
+It is for DOS and other real-mode guests; other architectures and OVMF refuse it. See the
+[DOS guide](/guides/dos/#legacy-bios-memory-layout).
+
 ## Further reading
 
 - Read [about q35](https://wiki.qemu.org/Features/Q35) in the QEMU documentation
