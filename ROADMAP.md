@@ -259,10 +259,14 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   ntpd's clock slew in 5 of 6 boots; without ntpd it happens too, rarely (1 of 5 installs on
   the CD, one of several boots with a 1 GB `tar` of `/usr`), and the guest then sits in its idle
   loop with interrupts enabled, no I/O and no answer to the console or a break
-  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Find the lost interrupt in QEMU's
-  sun4u path (cmd646, sabre, interrupt vector; `wsh/0021`'s latch is a suspect), then drop the
-  target's install retry and let it keep ntpd on. Also not tried through the tool: DHCP
-  (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
+  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Cause found (2026-11-20): a PCI
+  interrupt (the NIC on pciB) replaced the sabre's outstanding IDE request, the CPU dropped it while
+  busy, and the guest's clear of the IDE request was ignored, so no OBIO interrupt got through
+  again; ntpd's part was its network traffic. Fixed in pve-qemu `wsh/0045` (qtest `wsh/0046`),
+  tested in the lab (SPARC.md, "Cause: the sabre lost a request"), not yet in a package. Still to
+  do once a package has it: install `openbsd80-sun4u` through PVE with ntpd on, then drop the
+  target's install retry (`retry_on`) and the `ntpd_flags=NO`. Also not tried through the tool:
+  DHCP (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install` (the
