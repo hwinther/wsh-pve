@@ -1082,6 +1082,7 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` (the unnamed node) |
 | Solaris 2.2 | the same with `PROM_NAME_UNNAMED=1` (QEMU 11.1.3 with wsh/0001-0041, no other change) | yes (55 s) | not tried | | 2026-11-20 |
 | SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root: a probe read of physical `0xd.0108_0000`, where QEMU has nothing (`submodules/SPARC.md`) |
+| SunOS 4.1.3 | SS-10, OpenBIOS, 64 MB (256 MB after the install), QEMU 11.1.3 with wsh/0001-0050 (`wsh/0049`: a bus error on a SuperSPARC load takes trap 0x09) | yes | yes (124-138 s) | yes (256 MB) | `SunOS sunos413 4.1.3 3 sun4m`, the 4.1.4 scenarios unchanged, four passes (2026-11-20); target `sunos413-ss10`, catalogue until a published package has the patch |
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | no | | | the kernel loads (`Boot: vmunix`), then `Unhandled Exception 0x00000029` before its banner |

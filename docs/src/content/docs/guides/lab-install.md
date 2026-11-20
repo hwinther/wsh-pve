@@ -78,6 +78,8 @@ TCX) wait for framebuffer scenarios: their installs run on the TCX with the keyb
 not on the serial console. Their profiles set `machine: SS-5,esp-irq-latency=500` (the [SCSI
 interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qemu-kvm
 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 and later); without it their installers hang on the disk.
+`sunos413-ss10` (SunOS 4.1.3 on the SS-10, the 4.1.4 install unchanged) waits for a published
+pve-qemu-kvm with pve-qemu patch `wsh/0049`; without it the CD's kernel panics in a device probe.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
