@@ -834,6 +834,40 @@ class WebStartSun4u(unittest.TestCase):
             lab.qm, lab.pve_config = orig
 
 
+class WebStartSunProm(unittest.TestCase):
+    """sol8-ss5-prom: sol8-ss5's Web Start install under the Sun PROM (ss5.bin), which boots the
+    mini-root from the reboot's boot string and stops at `ok` after the install."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-webstart-serial.py"))
+
+    def test_target(self):
+        t, base = targets.TARGETS["sol8-ss5-prom"], targets.TARGETS["sol8-ss5"]
+        self.assertEqual(t["profile"], {**base["profile"], "bios": "ss5.bin"})
+        self.assertEqual((t["media"], t["disk"], t["boot"]), (base["media"], base["disk"], base["boot"]))
+        self.assertNotIn("prom_env", t["install"])  # -prom-env is OpenBIOS's; the Sun PROM boots the slice
+        self.assertEqual({k: v for k, v in t["install"].items() if k != "prom_env"},
+                         {k: v for k, v in base["install"].items() if k != "prom_env"})
+        self.assertIn("ss5.bin", t["title"])
+
+    def test_sun_prom(self):
+        self.assertTrue(self.sc.sun_prom({"BIOS": "ss5.bin"}))
+        self.assertFalse(self.sc.sun_prom({"BIOS": "openbios-sparc32"}))
+        self.assertFalse(self.sc.sun_prom({"BIOS": "openbios-sparc64", "ARCH": "sparc64"}))
+
+    def test_mini_root_booted_by_the_prom(self):
+        m = ScriptedConsole("Enter a swap slice size between 384MB and 8000MB [?]\n"
+                            "Can the swap slice start at the beginning of the disk [y,n,?,q]\nIs this OK [y,n,?,q]\n"
+                            "Rebooting to continue the installation.\nsyncing file systems... done\nrebooting...\n"
+                            "Resetting ...\nSPARCstation 5, No Keyboard\n"
+                            "Boot device: /iommu/sbus/espdma@5,8400000/esp@5,8800000/sd@3,0:b   File and args:\n"
+                            "SunOS Release 5.8 Version Generic_108528-13 32-bit\n")
+        self.sc.mini_root(m, {**self.sc.DEFAULTS, "BIOS": "ss5.bin"})
+        self.assertEqual(m.cycles, 0)
+        self.assertNotIn("boot", m.sent[-1])  # nothing typed at a prompt: the PROM booted it
+
+
 class SunOS4(unittest.TestCase):
     """sunos414-ss5: the converted CD, the install-phase memory, the refused network options and the
     sys-config screens of the first boot."""

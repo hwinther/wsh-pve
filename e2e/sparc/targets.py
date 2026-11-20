@@ -107,6 +107,8 @@ PACKAGES_2026_11_19_WSH25 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9
                              "pve-manager": "9.2.31+wsh4"}
 # the NetBSD 9.3 targets (published packages)
 PACKAGES_2026_11_19_NB93 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9.2.19+wsh2", "pve-manager": "9.2.31+wsh4"}
+# Solaris 8 2/02 under ss5.bin (published packages)
+PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+wsh2", "pve-manager": "9.2.31+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -739,6 +741,27 @@ TARGETS = {
         "net_modes": ["static"],  # DHCP not tried yet (the first boot writes the same files as for 2.6)
         "minutes": 37,  # install 31.6, first boot 3.6, --check 1.6
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
+    },
+    # The same install under the Sun PROM (ss5.bin): the PROM takes the boot string of the reboot into
+    # the mini-root and boots its slice by itself (no prom_env), and the reboot at the end stops at
+    # `ok`, where the VM is stopped (solaris-webstart-serial.py, sun_prom())
+    "sol8-ss5-prom": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 8 2/02 Entire Group on a SPARCstation 5 (ss5.bin)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "2"},
+                    "timeout": 7200, "root_password": True},
+        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "disk": sun_disk("9G"),
+        "media": [{"name": "Sol8.0202.Sparc.iso", "drive": "scsi6"},
+                  {"name": "Sol8.0202.Sparc-Software_1of2.iso", "drive": "scsi6", "at": "scenario"},
+                  {"name": "Sol8.0202.Sparc-Software_2of2.iso", "drive": "scsi6", "at": "scenario"}],
+        "boot": "scsi3",
+        "hostname": "sol8-ss5-prom",
+        "net_modes": ["static"],
+        # 47.2 min with up to three other guests on the host: install 40.7, first boot 4, --check 1.9
+        "minutes": 47,
+        "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20, "with": "--check --export; boot-test"},
     },
     "sol9-ss5": {
         **SOLARIS_SCRIPTED,

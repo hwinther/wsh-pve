@@ -20,6 +20,11 @@ of sol8-ss20, sol9-ss20, sol8-ss5 and sol9-ss5 (attach mode, a PVE VM); the VM n
   3. At the end it asks for Return to reboot; the reboot stops at `0 >` and this scenario powers the
      VM off there (`power-off`). The first boot is solaris-firstboot.py's.
 
+Under the Sun PROM (sol8-ss5-prom: BIOS ss5.bin, no auto-boot? change) the PROM honours the reboot's
+boot string and boots the mini-root's slice by itself (mini_root() only waits for it), and the reboot
+at the end tries the network and stops at `ok`, where the VM is stopped (the SS-5 PROM has no
+power-off).
+
 On sun4u (sol8-sun4u, sol9-sun4u: ARCH sparc64 from the VM's config, the IDE disk c0t0d0 in DISK, the
 CD on the IDE) the same answers, with three differences:
 
@@ -57,6 +62,9 @@ DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15", "NE
             "PROMPT_TIMEOUT": "3600"}
 # Solaris's reboot on sun4u: the firmware's `boot` service returns, the kernel panics and exits to `0 >`
 REBOOT_RETURNED = r"reboot call returned"
+# A Sun PROM (ss5.bin) after a reboot with a boot string: it boots that device ("Boot device:
+# /iommu/.../sd@3,0:b  File and args:") instead of stopping at a prompt
+SUN_PROM_BOOT = r"Boot device: \S+"
 # The end of a line that waits for input: "... [y,n,?,q]", "[n]:", "(y/n):", "(y/n)", "[]", "-->",
 # "[?]", and on Solaris 9 the same followed by a key hint: "<Press ENTER to continue> {"!" exits}".
 # A closing parenthesis counts only after a choice like "(y/n)": the line the installer prints when
@@ -241,6 +249,11 @@ def sun4u(v):
     return v.get("ARCH") == "sparc64"
 
 
+def sun_prom(v):
+    """A Sun PROM on sun4m (BIOS ss5.bin): it honours the reboot's boot string and stops at `ok`."""
+    return not sun4u(v) and not v.get("BIOS", "openbios-sparc32").startswith("openbios")
+
+
 def mini_root(m, v):
     """The Solaris 8 Installation CD: the boot disk becomes a swap slice at cylinder 0 (the default
     512 MB) with a mini-root on it, and the reboot into it ends at the OpenBIOS prompt (auto-boot?
@@ -254,7 +267,13 @@ def mini_root(m, v):
         m.quiet(1, 60)
         answer(m, reply, title)
     m.expect(r"Rebooting to continue the installation", 1800)
-    if m.expect_any([r"0 >", REBOOT_RETURNED], 900) == 1:
+    seen = m.expect_any([r"0 >", REBOOT_RETURNED, SUN_PROM_BOOT], 900)
+    if seen == 2:
+        # a Sun PROM (ss5.bin) takes the reboot's boot string and boots the mini-root's slice itself
+        m.snap("the Sun PROM boots the mini-root")
+        m.expect(r"SunOS Release 5\.\d", 600)
+        return
+    if seen == 1:
         m.expect(r"0 >", 300)
         m.quiet(1, 30)
         m.snap("reboot returned to the OpenBIOS prompt")
@@ -310,6 +329,14 @@ def run(m, v):
             break
     if inst.swaps:
         raise RuntimeError(f"the installer never asked for {len(inst.swaps)} of the CDs in SWAPS")
+    if sun_prom(v):
+        # The Sun PROM resets, tries its boot device (the network under PVE: `Can't open boot device`)
+        # and stops at `ok`; it has no power-off on the SS-5: the VM is stopped there
+        m.expect(r"\nok ", 1800)
+        m.quiet(1, 30)
+        m.snap("Sun PROM prompt after the installation")
+        m.stop()
+        return
     # The reboot stops at the OpenBIOS prompt (auto-boot? false; sun4u: after the panic on the returned
     # reboot call, once Solaris has synced): power off there; the first boot is solaris-firstboot.py's
     returned = m.expect_any([r"0 >", REBOOT_RETURNED], 1800) == 1

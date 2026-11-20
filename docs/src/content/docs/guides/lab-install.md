@@ -40,6 +40,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
+| `sol8-ss5-prom` | Solaris 8 2/02, Entire Group, as `sol8-ss5` | SS-5, `ss5.bin` (Sun PROM), 256 MB, 9G disk, otherwise as `sol8-ss5` | as `sol8-ss5` | `root` / `wshlab` | ~47 min |
 | `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
@@ -83,7 +84,9 @@ Solaris 9 is the last release for sun4m (Solaris 10 dropped it); its installer a
 kernel run on the emulated SS-5 and SS-20. During the Solaris 8 and 9 installs the VM has
 `args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
 the install stops at the firmware prompt and boots the right slice itself); the install removes it
-again, the finished VM has no `args`.
+again, the finished VM has no `args`. `sol8-ss5-prom` is the same install under the Sun PROM
+(`bios: ss5.bin`), which needs no `args`: the PROM boots the mini-root from Web Start's boot string
+by itself, and after the install it stops at `ok`, where the tool stops the VM.
 
 All Solaris targets end with the host name of the target (`sol26-ss5`, `sol8-ss20`, ...), `le0` at 10.0.2.15/24
 (static; no name service, no default route) unless the network options say otherwise (see

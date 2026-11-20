@@ -775,9 +775,36 @@ Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-
 `pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
 the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). The same releases install on sun4u too: "Solaris 8
 and 9 on sun4u" below. Not tried: `--ip dhcp`, `--disk-size 3G` and the
-other network options with these two, `ss5.bin`
-for Solaris 8, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
+other network options with these two, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
 two runs and wasn't diagnosed.
+
+**Under the Sun PROM: `sol8-ss5-prom`.** The same 8 2/02 install on an SS-5 with `bios: ss5.bin`.
+The Installation CD boots from the plain `scsi-cd` (no `cd_as_disk`), and the VM needs no `args`:
+the Sun PROM honours the boot string that OpenBIOS drops. Two places in `solaris-webstart-serial.py`
+differ (`sun_prom()`: a sun4m VM whose `BIOS` isn't OpenBIOS):
+
+- After the mini-root copy the PROM resets and prints `Rebooting with command: .../sd@3,0:b` and
+  `Boot device: ...sd@3,0:b`, then boots the mini-root by itself; `mini_root()` waits for that
+  (`SUN_PROM_BOOT`) instead of a prompt and types nothing.
+- After the installer's last Return the PROM resets, tries its default boot device (the network:
+  `Boot device: /iommu/sbus/ledma@5,8400010/le@5,8c00000`, `Did not receive expected loopback
+  packet`) and stops at `ok`. The SS-5 PROM has no `power-off`, so the scenario stops the VM there
+  (`qm stop`), as after a sun4u install.
+
+The first boot and the check are `sol251-ss5`'s Sun PROM paths in `_sparc32` (`No Keyboard`, `boot
+disk`), unchanged. Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab,
+published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4; up to three
+other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol8-ss5-prom --check --export /mnt/os/disks` | passed; both Software CDs swapped in, `SunOS sol8-ss5-prom 5.8 Generic_108528-13 sun4m sparc SUNW,SPARCstation-5`, the marker, `/` 1237902 KB (713405 used) on `c0t3d0s0`, `/export/home` 5878709 KB, `le0` 10.0.2.15/24; stored disk and sidecar | 47.2 min (install 2439 s, first boot 240 s, check 115 s) |
+| `boot-test sol8-ss5-prom --disk /mnt/os/disks/install-sol8-ss5-prom.raw` | passed | 2.2 min |
+
+About ten minutes slower than `sol8-ss5` under OpenBIOS, most likely the busier host (one run each
+on different days). `pve_matrix.py install` installs it too (about 47 min the first time, then a
+boot test of its stored disk; the same 8 2/02 CDs in `--iso`). Not tried: a second run, Solaris 9 under `ss5.bin`, and the network options other than the
+default static address.
 
 ### Solaris 8 and 9 on sun4u
 

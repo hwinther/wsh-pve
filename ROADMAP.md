@@ -68,6 +68,7 @@ come after that, not before.
 | Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | merged | #345 |
 | Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
 | Install targets for the matrix holes: Solaris 2.5.1 on the SS-20 under OpenBIOS (`sol251-ss20`, the CD as a disk; the SS-5 target still needs `ss5.bin`), Solaris 2.6 and 7 on the SS-10 (`sol26-ss10`, `sol7-ss10`), each installed through PVE with `--check --export` (stored disk and sidecar in `/mnt/os/disks`) and boot-tested, pve-qemu-kvm 11.1.3-2+wsh25 | in review | |
+| Install target `sol8-ss5-prom`: Solaris 8 2/02 (Entire Group, Web Start, three CDs) on the SS-5 under the Sun PROM `ss5.bin`, no `args`: the PROM boots the mini-root from Web Start's boot string by itself and stops at `ok` after the install, where the tool stops the VM; installed through PVE with `--check --export` (47 min) and boot-tested from the stored disk (2.2 min), pve-qemu-kvm 11.1.3-2+wsh26 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
 
 ## In progress
@@ -243,10 +244,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   sysbus-esp.irq-latency-us=500`, x86 refuses it). Next: framebuffer scenarios and the catalogue entries
   `nextstep33-ss5`/`openstep42-ss5` (their profiles set the option) made targets; OpenBIOS's failure on the
   installed disk (exception 0x21 in NeXT's boot program) is open.
-- **Solaris releases not tried yet.** With media on the lab host: 8 with `ss5.bin` on the SS-5.
+- **Solaris releases not tried yet.** With media on the lab host: none left.
   (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done" and the item above; 2.5.1 on the SS-20
   under OpenBIOS and 2.6 and 7 on the SS-10 are install targets, "Done"; 8 2/02 and 9 9/05 install on the SS-5 and SS-20, and on sun4u with OpenBIOS
-  0024.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
+  0024; 8 2/02 also under `ss5.bin` on the SS-5, `sol8-ss5-prom`.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
 - **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
   kernel boots since openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22) and `openbsd80-sun4u` installs it
