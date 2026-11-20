@@ -164,11 +164,41 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
      older Linux.
-   - Streaming: QEMU on a virtual desktop in a container with Sunshine or Wolf, for 2D/3D video
-     and audio in one connection (Moonlight). Prefer `-display dbus` over SDL/GTK so the VM does not
-     die with the desktop; keep VNC beside it. 3dfx needs SDL and may stay the exception. The
-     existing `vga: …,server=` path drops VNC, uses `-vga` instead of a device, and sets no
-     `XAUTHORITY`. Prototype on the test node's GPU first.
+   - Streaming: 2D/3D video and audio in one connection (Moonlight to Sunshine or Wolf), without a
+     desktop the VM dies with; keep VNC beside it. The existing `vga: …,server=` path drops VNC,
+     uses `-vga` instead of a device, and sets no `XAUTHORITY`. 3dfx goes in stages, sizes are
+     estimates:
+     - **Stage 0: OpenGLide shipped, tests without Windows** (`packages/wsh-openglide`, `e2e/3dfx`).
+       qemu-3dfx's Glide device `dlopen()`s `libglide2x.so`/`libglide3x.so`, which no package had;
+       `wsh-openglide` builds OpenGLide from kjliew/qemu-xtra (pinned, X11/GLX). CI renders a
+       Glide 2 and a Glide 3 scene through the installed libraries under Xvfb (llvmpipe, softpipe)
+       and checks pixels, then boots a Linux guest in the published `qemu-system-x86_64-3dfx` whose
+       `/init` draws the same scene through qemu-3dfx's own Linux guest wrapper (`glidedso.c`,
+       i386, `/dev/mem`), reads it back through the pass-through and checks it and the SDL window
+       (about 10 s under TCG). Found on the way: QEMU dies with `BadMatch` when the X server offers
+       a 32-bit ARGB visual (Xvfb with Composite: OpenGLide's GLX config picks it, SDL's window
+       has 24 bits); SDL needs `libegl1`, which pve-qemu-kvm doesn't pull in; OpenGLide writes
+       `OpenGLid.ini`/`.log` into QEMU's working directory and `exit(0)`s QEMU when it can't; a
+       guest LFB read that drains queued calls comes back shifted by their data (glidept puts the
+       pixels after it, the wrappers read from the start). Next, small: pve-qemu-kvm
+       `Recommends: wsh-openglide, libegl1`; qemu-server runs the 3dfx binary in a writable
+       directory; Mesa pass-through has no Windows-free test yet (no Linux guest wrapper for it).
+     - **Stage 1: EGL offscreen (~2-3 weeks).** A new module (`fxdisp.c`, `mglcntx_egl.c`) plus an
+       EGL platform in OpenGLide: render into an offscreen surface and read it back into the QEMU
+       console's own surface, so noVNC shows 3dfx; no `exit(1)` on non-SDL displays. CI headless
+       with llvmpipe on EGL surfaceless.
+     - **Stage 2: dmabuf scanout (~2-3 weeks).** Zero copy: a `gbm_surface`,
+       `qemu_console_gl_scanout_dmabuf` from a main-loop BH, `gl_block` back-pressure; shown through
+       `egl-headless` and `-display dbus,gl=on`.
+     - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
+       container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
+       interfaces.
+     - D-Bus display, found so far: `-display dbus` is in the package already and works without GL
+       on VGA, cirrus, cg3 and TCX; its 30 ms refresh cap needs a small QEMU patch; the bus name
+       `org.qemu` is fixed, so one dbus-daemon per VM; a dmabuf streamer must run on the same
+       kernel (the host or an LXC). Quickest first step for remote sound from sparc32 guests:
+       qemu-rdp (Marc-André Lureau's qemu-display project: D-Bus to RDP, with rdpsnd audio). LEMU's
+       `-rdp` is the alternative without sound.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
      services (instant messaging first; later a Battle.net-compatible server and a period IRC
@@ -306,6 +336,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
 | `build-deb.yml` builds the 3dfx extra in a job that also holds the PAT | Should be split so the third-party build never sees the token |
 | The issue path of the optional-extras report | Has only run with nothing missing |
+| 3dfx Glide: QEMU dies with `BadMatch` on an X server with a 32-bit ARGB visual | OpenGLide's GLX config picks the 32-bit visual, SDL's window has the 24-bit default (seen on Xvfb with Composite and Mesa; real Xorg with a hardware GLX not checked). `e2e/3dfx` runs Xvfb with `-extension Composite` |
+| 3dfx Glide: OpenGLide writes `OpenGLid.ini`/`OpenGLid.log` into QEMU's working directory | And `exit(0)`s the process when it can't write there (its library constructor). Where qemu-server's QEMU runs from is not checked |
+| 3dfx Glide: a guest LFB read that drains queued calls comes back shifted | glidept puts the pixels after the drained calls' data, the guest wrappers (Linux, Windows, DJGPP) copy from the start; a read after a swap or a direct call is right. Upstream (qemu-3dfx) material; `e2e/3dfx` reports it without counting it |
 
 ## The lab host
 

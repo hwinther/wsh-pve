@@ -48,6 +48,13 @@ const PACKAGE_DEFS = [
     releaseName: "wsh-lab",
     patch: null,
   },
+  // Optional, built by wsh-openglide.yml (OpenGLide, the host Glide library of the 3dfx pass-through):
+  // its version comes from git too, its release tags are wsh-openglide-<version>.
+  {
+    name: "wsh-openglide",
+    releaseName: "wsh-openglide",
+    patch: null,
+  },
 ];
 
 function parsePackagesFile(filePath) {

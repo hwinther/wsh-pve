@@ -1,0 +1,2 @@
+usr/lib/${DEB_HOST_MULTIARCH}/libglide2x.so*
+usr/lib/${DEB_HOST_MULTIARCH}/libglide3x.so*

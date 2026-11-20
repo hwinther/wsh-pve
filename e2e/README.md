@@ -42,7 +42,11 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   build never fails on them, so this is where a published package without one turns red. The 3dfx
   VM commands (`mesa=1`, with and without `server`) are in `vm-config.spec.ts`; QEMU is started with
   `-display none`, or SDL's dummy video driver for the SDL display, so neither the X display nor the
-  pass-through itself is tested.
+  pass-through itself is tested here. The Glide pass-through itself is tested by `3dfx/test.sh`
+  (outside Playwright, in the `wsh-openglide package` workflow): a Linux guest whose `/init`
+  (`3dfx/glide-guest.c`) draws a scene through qemu-3dfx's Linux guest wrapper in the published
+  `qemu-system-x86_64-3dfx`, with an SDL display on Xvfb and `wsh-openglide` on the host; the guest
+  checks what it reads back and the host checks the VM's window.
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a

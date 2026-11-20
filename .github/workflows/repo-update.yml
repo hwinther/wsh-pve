@@ -38,24 +38,30 @@ jobs:
         with:
           persist-credentials: false
 
-      # The optional wsh-lab package (wsh-lab.yml) isn't built here: the .deb of the newest wsh-lab-*
-      # release goes into repo/incoming, which `make repo-update` includes along with the other
-      # packages' debs. Before the first wsh-lab release the repository is built without it.
-      - name: Fetch the newest wsh-lab package
+      # The optional packages wsh-lab (wsh-lab.yml) and wsh-openglide (wsh-openglide.yml) aren't
+      # built here: the .deb of the newest <package>-* release of each goes into repo/incoming, which
+      # `make repo-update` includes along with the other packages' debs. Before a package's first
+      # release the repository is built without it.
+      - name: Fetch the newest optional packages
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("wsh-lab-"))] | sort_by(.createdAt) | last | .tagName // empty')
-          if [ -z "$tag" ]; then
-            echo "::notice::No wsh-lab release yet: the apt repository is built without wsh-lab."
-            exit 0
-          fi
-          mkdir -p repo/incoming
-          gh release download "$tag" -R "$REPO" --pattern 'wsh-lab_*_all.deb' --dir repo/incoming
-          ls -l repo/incoming
+          releases=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt)
+          for spec in wsh-lab:all wsh-openglide:amd64; do
+            pkg=${spec%%:*}
+            arch=${spec#*:}
+            tag=$(jq -r --arg p "$pkg-" \
+              '[.[] | select(.tagName | startswith($p))] | sort_by(.createdAt) | last | .tagName // empty' <<< "$releases")
+            if [ -z "$tag" ]; then
+              echo "::notice::No $pkg release yet: the apt repository is built without $pkg."
+              continue
+            fi
+            mkdir -p repo/incoming
+            gh release download "$tag" -R "$REPO" --pattern "${pkg}_*_${arch}.deb" --dir repo/incoming
+          done
+          ls -l repo/incoming 2> /dev/null || true
 
       - name: Fetch most recent packages and prepare repo folder
         run: |

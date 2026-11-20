@@ -28,6 +28,22 @@ To find the matching pair:
 1. Set the guest **Architecture** to `x86_64` (see [Architecture](/reference/architecture/)).
 2. Enable the **3DFX/Mesa** option in the [Display](/reference/display/) panel. When selected, the guest is started with the passthrough-patched `qemu-system-x86_64-3dfx` binary instead of the standard one.
 
+## Glide on the host: wsh-openglide
+
+The Glide half of the pass-through renders with a host library: qemu-3dfx loads `libglide2x.so` (`libglide3x.so` for a Glide 3 guest) and hands it the guest's Glide calls. That library is OpenGLide, from [kjliew/qemu-xtra](https://github.com/kjliew/qemu-xtra), and the optional `wsh-openglide` package ships it:
+
+```bash
+apt install wsh-openglide
+```
+
+Without it a Glide guest gets no Glide device. The Mesa/OpenGL pass-through doesn't need it. The package is built with OpenGLide's X11/GLX platform, so like the rest of qemu-3dfx it needs the VM's SDL window on an X display.
+
+OpenGLide writes `OpenGLid.ini` and `OpenGLid.log` into the working directory of the process that loads it, and ends that process (exit status 0) when the directory isn't writable.
+
+The package's CI tests need no Windows and no game. `packages/wsh-openglide/test.sh` (in wsh-pve) renders a Glide 2 and a Glide 3 scene through the installed libraries under Xvfb with Mesa's software renderers and checks the pixels. `e2e/3dfx/test.sh` boots a small Linux guest in the published `qemu-system-x86_64-3dfx` with an SDL display on Xvfb. The guest draws the same scene through qemu-3dfx's Linux guest wrapper and reads it back through the pass-through, and the test checks those pixels and the VM's window.
+
+On a host whose X server offers a 32-bit ARGB visual (Xvfb with its Composite extension, for example), the first Glide frame can end QEMU with an X `BadMatch` error. OpenGLide picks that visual for its GLX context, while SDL's window uses the 24-bit default.
+
 ## How the host binary is built
 
 The 3dfx binary is built from the same QEMU tree as the rest of `pve-qemu-kvm` (Proxmox's patches and the WSH ones), plus qemu-3dfx's Glide and Mesa devices and a port of its QEMU patch (upstream's targets QEMU 9.2; the port is `submodules/pve-qemu-qemu-3dfx.patch` in wsh-pve). The host binary, the release notes and the `qemu-3dfx-drivers-<shortsha>` release of a build all name the commit the `qemu-3dfx` submodule is pinned to.
