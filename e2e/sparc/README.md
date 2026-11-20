@@ -796,9 +796,36 @@ Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-
 `pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
 the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). The same releases install on sun4u too: "Solaris 8
 and 9 on sun4u" below. Not tried: `--ip dhcp`, `--disk-size 3G` and the
-other network options with these two, `ss5.bin`
-for Solaris 8, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
+other network options with these two, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
 two runs and wasn't diagnosed.
+
+**Under the Sun PROM: `sol8-ss5-prom`.** The same 8 2/02 install on an SS-5 with `bios: ss5.bin`.
+The Installation CD boots from the plain `scsi-cd` (no `cd_as_disk`), and the VM needs no `args`:
+the Sun PROM honours the boot string that OpenBIOS drops. Two places in `solaris-webstart-serial.py`
+differ (`sun_prom()`: a sun4m VM whose `BIOS` isn't OpenBIOS):
+
+- After the mini-root copy the PROM resets and prints `Rebooting with command: .../sd@3,0:b` and
+  `Boot device: ...sd@3,0:b`, then boots the mini-root by itself; `mini_root()` waits for that
+  (`SUN_PROM_BOOT`) instead of a prompt and types nothing.
+- After the installer's last Return the PROM resets, tries its default boot device (the network:
+  `Boot device: /iommu/sbus/ledma@5,8400010/le@5,8c00000`, `Did not receive expected loopback
+  packet`) and stops at `ok`. The SS-5 PROM has no `power-off`, so the scenario stops the VM there
+  (`qm stop`), as after a sun4u install.
+
+The first boot and the check are `sol251-ss5`'s Sun PROM paths in `_sparc32` (`No Keyboard`, `boot
+disk`), unchanged. Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab,
+published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4; up to three
+other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol8-ss5-prom --check --export /mnt/os/disks` | passed; both Software CDs swapped in, `SunOS sol8-ss5-prom 5.8 Generic_108528-13 sun4m sparc SUNW,SPARCstation-5`, the marker, `/` 1237902 KB (713405 used) on `c0t3d0s0`, `/export/home` 5878709 KB, `le0` 10.0.2.15/24; stored disk and sidecar | 47.2 min (install 2439 s, first boot 240 s, check 115 s) |
+| `boot-test sol8-ss5-prom --disk /mnt/os/disks/install-sol8-ss5-prom.raw` | passed | 2.2 min |
+
+About ten minutes slower than `sol8-ss5` under OpenBIOS, most likely the busier host (one run each
+on different days). `pve_matrix.py install` installs it too (about 47 min the first time, then a
+boot test of its stored disk; the same 8 2/02 CDs in `--iso`). Not tried: a second run, Solaris 9 under `ss5.bin`, and the network options other than the
+default static address.
 
 ### Solaris 8 and 9 on sun4u
 
@@ -854,10 +881,52 @@ mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boo
 the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
 passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
 boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
-min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
-it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
-set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
-`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
+min the first time, then a boot test of its stored disk). Solaris 7 is the next section.
+
+### Solaris 7 on sun4u
+
+`sol7-sun4u` (7 3/99, End User) runs suninstall, `solaris-install-serial.py`, on the sparc64 profile
+with 2048 MB, the CD on `ide2` and a 3 GiB disk on `ide0` with the SUN2.9G label (`sun_disk("3G",
+bus="ide0")`: suninstall lists only labelled disks, and Solaris's `dad` driver takes the template's
+label on the IDE disk as it is). The sun4m answers serve unchanged; what is new in the scenario:
+
+- **The disk** is `DISK` (`c0t0d0`; default `c0t3d0`), in `disks()` and the target's `device`.
+- **The end:** the installer ends at a root shell, as on sun4m; on sun4u `halt` returns to OpenBIOS's
+  `0 >` (no power-off for Solaris), and `halt_sun4u()` stops the VM there. No reboot happens during
+  the install, so no power cycle.
+- **2048 MB:** with 1024 MB the kernel panicked as the package copy began in both installs
+  (`panic[cpu0]/thread=70179200: segkp_badop`; `BAD TRAP: ... type=0x31 ... pkginstall`, an illegal
+  access to a user address in `unix`); with 2048 MB the two installs that got that far copied
+  the packages. Not diagnosed. A panic during the packages now fails the scenario at once (`PANIC`)
+  instead of after the 7200 s wait for the postinstall phase.
+- **F2 again (`KEY_RETRY=180`):** in two of the runs suninstall sat on a screen for 10 minutes after
+  F2 (`Preserve Data?`, `Mount Remote File Systems?`), the kernel alive (hme0's `Link Up` every
+  30 s). In the first, a second guest with the same address was on the bridge (`IP: Hardware address
+  ... trying to be our address`), the second had no such message. `press_on()` sends F2 once more
+  when the same screen is still up after 180 s (twice at most); the sun4m targets keep `KEY_RETRY=0`.
+  The passing runs didn't need it, so the repeat itself is tested only by the unit test.
+- **Slower CD boot:** IDE timeouts (`timeout: abort request ... reset bus`) and `Interrupt not seen
+  after set_features` while the CD boots, about 4 minutes from the kernel banner to `Select a
+  Language` (`FIRST_PROMPT_TIMEOUT=1200`). The installed system prints the same warning once.
+
+The installed system boots the 64-bit kernel (`SunOS Release 5.7 Version Generic_106541-02 64-bit`);
+the first boot and the check are `solaris-firstboot.py` and `solaris-boot-disk.py`, unchanged.
+
+Through PVE (the PVE test container, published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2,
+pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-sun4u`, 1024 MB | the screens answered, `c0t0d0` selected; `segkp_badop` panic at `Beginning Solaris software installation` | stopped at 7 min |
+| the same, 1024 MB, a second run | `BAD TRAP ... pkginstall`, `panic[cpu0]: trap` at the same point | 6.9 min |
+| install with 2048 MB for the install phase only, without `--check` | passed; the first boot (1024 MB) reached `console login:`, set the marker and network | 21.3 min (install 880 s, first boot 374 s) |
+| `install sol7-sun4u --check --export`, 2048 MB (another guest with 10.0.2.15 on the bridge) | failed: no reaction to F2 on `Preserve Data?` for 10 min | 17.2 min |
+| the same with `--ip 10.0.2.32`, alone on its address | failed: no reaction to F2 on `Mount Remote File Systems?` for 10 min | 16.9 min |
+| the same with `KEY_RETRY=180` (`--ip 10.0.2.32`) | passed, no F2 repeated; `SunOS sol7-sun4u 5.7 Generic_106541-02 sun4u`, the marker, `/` 125103 KB, `/usr` 412907 KB (73% used), `/export/home` 1904237 KB on `c0t0d0`, `hme0` 10.0.2.32/24; stored disk and sidecar | 24.5 min (install 814 s, first boot 380 s, check 254 s) |
+| `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
+
+Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
+and 2.6 or 2.5.1 on sun4u (their boot blocks stop in OpenBIOS: `submodules/SPARC.md`).
 
 ### Solaris 2.4 and 2.5.1
 

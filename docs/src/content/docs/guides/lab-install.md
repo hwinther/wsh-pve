@@ -40,10 +40,12 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
+| `sol8-ss5-prom` | Solaris 8 2/02, Entire Group, as `sol8-ss5` | SS-5, `ss5.bin` (Sun PROM), 256 MB, 9G disk, otherwise as `sol8-ss5` | as `sol8-ss5` | `root` / `wshlab` | ~47 min |
 | `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
 | `sol8-sun4u` | Solaris 8 2/02, End User (64-bit), Web Start from the Installation CD and Software 1 of 2 (swapped by the install) | as `sol9-sun4u`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso` | `root` / `wshlab` | ~55 min |
+| `sol7-sun4u` | Solaris 7 3/99, End User (64-bit), suninstall from the Installation CD | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a Sun-labelled 3G disk on `ide0`, the CD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~25 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss5` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
@@ -83,7 +85,9 @@ Solaris 9 is the last release for sun4m (Solaris 10 dropped it); its installer a
 kernel run on the emulated SS-5 and SS-20. During the Solaris 8 and 9 installs the VM has
 `args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
 the install stops at the firmware prompt and boots the right slice itself); the install removes it
-again, the finished VM has no `args`.
+again, the finished VM has no `args`. `sol8-ss5-prom` is the same install under the Sun PROM
+(`bios: ss5.bin`), which needs no `args`: the PROM boots the mini-root from Web Start's boot string
+by itself, and after the install it stops at `ok`, where the tool stops the VM.
 
 All Solaris targets end with the host name of the target (`sol26-ss5`, `sol8-ss20`, ...), `le0` at 10.0.2.15/24
 (static; no name service, no default route) unless the network options say otherwise (see
@@ -115,6 +119,15 @@ only, as for the sun4m Solaris 8 targets). The first boot of an installed Solari
 floppy driver with an `openbios-sparc64` without patch 0025 (OpenBIOS's floppy node, which QEMU's
 sun4u can't back); `pve-qemu-kvm` 11.1.3-2+wsh25 and later have it. Don't use `reboot` or `init 6` in these guests: stop and start
 the VM.
+
+`sol7-sun4u` runs the interactive installer of Solaris 2.6 and 7 (suninstall) on sun4u with the
+sun4m targets' answers: a static address on `hme0`, no name service, time zone MET, End User with
+the 64-bit support it selects on sun4u, auto-layout on `c0t0d0`. suninstall lists only labelled disks, so
+the IDE disk gets the Sun label of the 3G template, as the sun4m targets' SCSI disks do. The VM has
+2048 MB: with 1024 the installer's kernel panicked twice as the package copy began. The CD's boot
+prints IDE timeouts and `Interrupt not seen after set_features` (the installed system once); they
+cost a few minutes and nothing else. At the end the tool halts the installer at the firmware prompt
+and stops the VM there, as for the other sun4u targets.
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
 so its login prompt takes 45-70 minutes), answers the keyboard question with US-English, logs in

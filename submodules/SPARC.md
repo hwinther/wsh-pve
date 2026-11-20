@@ -2688,10 +2688,20 @@ on the host at once, 2026-11-19):
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
 install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
 `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
-min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
-it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
-set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
-`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
+min the first time, then a boot test of its stored disk).
+
+**Solaris 7 install target on sun4u** (2026-11-20). `sol7-sun4u` (7 3/99, End User) runs suninstall
+(`solaris-install-serial.py`) on the sparc64 profile with 2048 MB, the SUN2.9G label on a 3 GiB IDE
+disk (`c0t0d0`; suninstall lists only labelled disks) and the CD on `ide2`; at the end `halt` returns
+to `0 >` and the VM is stopped there. With 1024 MB the installer's kernel panicked in both installs as
+the package copy began (`segkp_badop`; `BAD TRAP ... type=0x31` in `pkginstall`, an illegal access to
+a user address in `unix`); with 2048 MB the package copy went through twice. Not diagnosed: whether
+OpenBIOS's memory layout at 1 GB or the guest is at fault. The IDE timeouts and `Interrupt not seen
+after set_features` on the CD's boot cost about 4 minutes and break nothing; in two runs suninstall
+didn't react to F2 for 10 minutes (the kernel alive), which the scenario now answers with a second
+F2 after 180 s. Installed through PVE with pve-qemu-kvm 11.1.3-2+wsh26 in 24.5 min, the 64-bit
+kernel on the installed disk (`SunOS Release 5.7 Version Generic_106541-02 64-bit`); e2e/sparc/README.md,
+"Solaris 7 on sun4u"; the stored disk boot-tests in 4.4 min.
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not

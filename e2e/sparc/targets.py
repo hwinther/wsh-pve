@@ -107,6 +107,8 @@ PACKAGES_2026_11_19_WSH25 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9
                              "pve-manager": "9.2.31+wsh4"}
 # the NetBSD 9.3 targets (published packages)
 PACKAGES_2026_11_19_NB93 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9.2.19+wsh2", "pve-manager": "9.2.31+wsh4"}
+# Solaris 8 2/02 under ss5.bin and Solaris 7 on sun4u (published packages)
+PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+wsh2", "pve-manager": "9.2.31+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -748,6 +750,27 @@ TARGETS = {
         "minutes": 37,  # install 31.6, first boot 3.6, --check 1.6
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22, "with": "--check"},
     },
+    # The same install under the Sun PROM (ss5.bin): the PROM takes the boot string of the reboot into
+    # the mini-root and boots its slice by itself (no prom_env), and the reboot at the end stops at
+    # `ok`, where the VM is stopped (solaris-webstart-serial.py, sun_prom())
+    "sol8-ss5-prom": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 8 2/02 Entire Group on a SPARCstation 5 (ss5.bin)",
+        "status": "automated",
+        "install": {"scenario": "solaris-webstart-serial.py", "vars": {"TIMEZONE": "MET", "SOFTWARE": "2"},
+                    "timeout": 7200, "root_password": True},
+        "profile": {**SPARC32, "machine": "SS-5", "bios": "ss5.bin", "memory": 256},
+        "disk": sun_disk("9G"),
+        "media": [{"name": "Sol8.0202.Sparc.iso", "drive": "scsi6"},
+                  {"name": "Sol8.0202.Sparc-Software_1of2.iso", "drive": "scsi6", "at": "scenario"},
+                  {"name": "Sol8.0202.Sparc-Software_2of2.iso", "drive": "scsi6", "at": "scenario"}],
+        "boot": "scsi3",
+        "hostname": "sol8-ss5-prom",
+        "net_modes": ["static"],
+        # 47.2 min with up to three other guests on the host: install 40.7, first boot 4, --check 1.9
+        "minutes": 47,
+        "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20, "with": "--check --export; boot-test"},
+    },
     "sol9-ss5": {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 9 9/05 End User on a SPARCstation 5 (OpenBIOS)",
@@ -967,6 +990,34 @@ TARGETS = {
         "minutes": 55,
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH23,
                    "with": "--check (the published firmware); --check (openbios 0025)"},
+    },
+    # Solaris 7 3/99 on sun4u: suninstall (solaris-install-serial.py) as on sun4m, which lists only
+    # labelled disks: the SUN2.9G label on the IDE disk (c0t0d0, DISK). Its boot to the first prompt
+    # is slower than sun4m's (IDE timeouts on the way: FIRST_PROMPT_TIMEOUT); at the end `halt`
+    # returns to `0 >` and the VM is stopped there (halt_sun4u)
+    "sol7-sun4u": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 7 3/99 End User on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        "install": {**SOLARIS_SCRIPTED["install"], "vars": {"DISK": "c0t0d0", "FIRST_PROMPT_TIMEOUT": "1200",
+                                                             "KEY_RETRY": "180"},
+                    "timeout": 7200},
+        "firstboot": {**SOLARIS_SCRIPTED["firstboot"], "timeout": 3600},
+        "check": {**SOLARIS_SCRIPTED["check"], "timeout": 2400},
+        # 2048 MB: with 1024 the kernel panicked twice in two installs as the package copy began
+        # (`segkp_badop`; a BAD TRAP type 0x31 in pkginstall)
+        "profile": {**SUN4U_SOLARIS, "memory": 2048},
+        "disk": sun_disk("3G", bus="ide0"),
+        "device": "c0t0d0",
+        "media": [{"name": "Sol7.399InstallationSparc.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "sol7-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        # 24.5 min with up to two other guests on the host: install 13.6, first boot 6.3, --check 4.2
+        "minutes": 25,
+        "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20, "with": "--check --export; boot-test"},
     },
     # The live CD's own installer (live_install.sh -G: SMI label, ZFS root pool rpool, base overlay;
     # ROOT_FS=ufs in the install scenario uses ufs_install.sh) from a root shell on ttya; the first
