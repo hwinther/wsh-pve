@@ -50,10 +50,17 @@ def choose(m, screen, letter, title, timeout=300):
     time.sleep(2)
 
 
+AFTER_SETS = [r"Hit enter to continue", r"New password:", r"Finished configuring"]
+
+
 def sysinst(m, v):
     """sysinst from its language menu: the first disk with the default partition sizes, the sets
     v["SETS"] (a = full, b = without X11, c = minimal) from the CD-ROM, root without a password,
-    the configuration menu's defaults; ends at the shell after "Exit Install System"."""
+    the configuration menu's defaults; ends at the shell after "Exit Install System".
+
+    Where the releases differ, after the sets (AFTER_SETS): 11.1 asks for root's password and then
+    about entropy before its configuration menu; 9.3 goes straight to the configuration menu (root's
+    password is an item there, left empty)."""
     choose(m, r"Installation messages in English", "a", "language")
     choose(m, r"Install NetBSD to hard disk", "a", "main menu")
     choose(m, r"Shall we continue", "b", "continue")
@@ -65,15 +72,16 @@ def sysinst(m, v):
     choose(m, r"Install from", "a", "install from CD-ROM")
     # optional sets missing from the CD, then the extraction, then "complete": Return each time
     while True:
-        i = m.expect_any([r"Hit enter to continue", r"New password:"], 3600)
-        if i == 1:
+        i = m.expect_any(AFTER_SETS, 3600)
+        if i > 0:
             break
         m.quiet(2, 120)
         m.send("\r")
         time.sleep(2)
-    m.snap("root password")
-    m.send("\r")  # none
-    choose(m, r"Not now, continue", "x", "entropy")
+    if i == 1:  # 11.1
+        m.snap("root password")
+        m.send("\r")  # none
+        choose(m, r"Not now, continue", "x", "entropy")
     # the configuration menu (time zone, root shell, sshd, ...): keep the defaults
     if m.expect_any([r"Finished configuring", r"installation of NetBSD-[\d.]+ is now complete"], 600,
                     screen=True) == 0:

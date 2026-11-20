@@ -72,6 +72,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
 | `fb-display.py` | cg3 or TCX (`VGA`, `RES=1024x768x24` for TCX's 24-bit mode), console on the framebuffer: the banner, Solaris to its login prompt and, with `X=1`, dtlogin, a root login into CDE, the depth (`DEPTH`), the keyboard (`INPUT`), idle CPU (`IDLE`), a drawing benchmark (`BENCH`, `ACCEL` counts TCX's blitter writes) and a soak (`SOAK`); `EXPECT=console` checks why X doesn't start instead. Its checks run on a ttya shell, so the disk needs `PREPARE=1` (or `solaris-tcx-packages.py TTYA_LOGIN=1` first) | X: ~4-5 min; `BENCH=3`: ~8 min |
+| `fb-bell.py` | BEL on the cg3 console (keyboard and framebuffer): `7 emit` at the OpenBIOS prompt, then `GUEST` (`solaris`/`sunos4`: `boot disk:a -s`; `netbsd`: a root login) echoes a BEL in its shell, then three; the screenshots show whether the screen inverted and came back, OCR whether the shell answered. `EXPECT=hang` shows the hang of firmware without openbios 0026 (with `info registers`, `$tbr` and the firmware's tick count, `TICKS_SYM`); `LOOP=1` times the firmware's wait loop. Not in a matrix | ~2 min |
 | `solaris-tcx-packages.py` | adds the TCX packages (SUNWtcx.m, SUNWtcxow, SUNWtcxu) to an installed Solaris from its CD and touches `/reconfigure`; `TTYA_LOGIN=1` also gives root a login on ttya while the console is on the framebuffer | ~3-4 min |
 | `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time, times a CPU-bound command (`BUSY`), the echo of `true` and ten `sleep 1`; the numbers go to `result.json` (`metrics`) | ~3-4 min |
 | `niagara-boot.py` | `-M niagara` (sun4v) with an OpenSPARC T1 firmware set the user supplies (`FW`, never in the image): OpenBoot's `ok`, with `DISK` the T1 archive's `disk.s10hw2` to a root shell and `init 5`, with `ISO` a Solaris 10 DVD to the text installer (`WALK` walks on through its screens); skipped (exit 0, `status` "skipped: ...") when the firmware isn't there. See `submodules/SPARC.md`, "sparc64: niagara (sun4v)" | `ok`: 1 s; disk: ~2 min; installer: ~4-5 min |
@@ -1096,6 +1097,18 @@ official CDs (`NetBSD-11.1-sparc64.iso`, `NetBSD-11.1-sparc.iso`; their SHA512 m
 3. **Check** (`netbsd-boot-disk.py`, the target's `check` `commands`): logs in with the password,
    records `uname -a`, `hostname`, the marker, `df -k`, the disklabel, `ifconfig -a`, `netstat -rn
    -f inet` and `/etc/resolv.conf`, requires `target=<name>`, `halt -p`.
+
+**NetBSD 9.3** (`netbsd93-sparc64`, `netbsd93-sparc`, `netbsd93-sparc-ss20`): the same profiles,
+scenarios and answers with the 9.3 CDs (`NetBSD-9.3-sparc64.iso`, `NetBSD-9.3-sparc.iso` from
+archive.netbsd.org; their SHA512 matches the release's `images/SHA512`). The one difference in
+sysinst: after the sets 9.3 asks neither for root's password nor about entropy and shows its
+configuration menu at once (root's password is an item there, `***EMPTY***`), so `_netbsd.sysinst()`
+waits for any of `AFTER_SETS` and answers the password and entropy screens only when they come
+(`tests/test_targets.py`, `NetBSDSysinst`). Through PVE (packages of 2026-11-19, pve-qemu-kvm
+11.1.3-2+wsh25), one install each: `netbsd93-sparc64` 18.4 min (install 833 s, first boot 144 s,
+check 103 s; the install phase takes about twice as long as 11.1's, not looked into), `netbsd93-sparc` 6.8 min
+(190 s, 120 s, 72 s), `netbsd93-sparc-ss20` 6.1 min (169 s, 117 s, 53 s); boot tests of the stored
+disks 1.5, 1.3 and 1.2 min.
 
 Network, in NetBSD's own files: static = `/etc/ifconfig.<nic>` (`inet <ip> netmask <mask>`),
 `defaultroute=<gw>` in `/etc/rc.conf`, the address and host name in `/etc/hosts`; DHCP =
