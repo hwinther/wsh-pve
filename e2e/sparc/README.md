@@ -828,8 +828,12 @@ on the host at once, 2026-11-19):
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
-install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
-`sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
+install matrix ran on the same host at the time). 0025 is published in pve-qemu-kvm 11.1.3-2+wsh25
+(built after #350; its `openbios-sparc64` has no `fdthree` node), and on that package with no firmware
+mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boot 410 s, check 236 s;
+the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
+passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
+boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
 set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
@@ -891,6 +895,29 @@ qemu-server that lacks `cd_as_disk` both cases fail at VM creation (`cd_as_disk:
 defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the network options other
 than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
 (one passing run each so far).
+
+### Matrix holes: 2.5.1 on the SS-20, 2.6 and 7 on the SS-10
+
+`sol251-ss20` is `sol251-ss5` on an SS-20 under OpenBIOS (512 MB, one CPU): OpenBIOS boots the
+2.5.1 CD as a disk and the installed system, so the SS-20 needs no Sun PROM (the SS-20 PROM wasn't
+tried). The same `FINISH_TIMEOUT=6000` for the Maintenance Update. `sol26-ss10` and `sol7-ss10` are
+the SS-20 targets on QEMU's SS-10 (OpenBIOS, 512 MB, one CPU, the 3G disk); `solaris-install-serial.py`
+needed no change for any of them.
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh25, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4), 2026-11-19, each with
+`--check --export /mnt/os/disks` and then `boot-test` of the stored disk; up to five guests ran on
+the host at once (these three, a `sol9-sun4u` install and a boot test), so the times are upper bounds:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol251-ss20 --check --export` | passed; `SunOS sol251-ss20 5.5.1 Generic_103640-12 sun4m sparc SUNW,SPARCstation-20`; the marker; stored disk and sidecar | 46.6 min (install 2517 s, most of it the Maintenance Update; first boot 171 s, check 87 s) |
+| `install sol26-ss10 --check --export` | passed; `SunOS sol26-ss10 5.6`; the marker; stored disk and sidecar | 15.6 min (install 562 s, first boot 229 s, check 120 s) |
+| `install sol7-ss10 --check --export` | passed; `SunOS sol7-ss10 5.7 Generic_106541-02 sun4m sparc SUNW,SPARCstation-10`; the marker; stored disk and sidecar | 12.3 min (install 400 s, first boot 218 s, check 96 s) |
+| `boot-test` of each stored disk | `sol251-ss20` passed; `sol26-ss10` passed; `sol7-ss10` passed | 1.5 min; 2.1 min; 1.9 min |
+
+Not tried: DHCP, `--user`, the 9G disk, `--data-disk` and `--post-install` with these three; more
+than one CPU; a second run of each.
 
 ### Older Sun releases: Solaris 2.1-2.5, SunOS 4.1.2-4.1.3_U1B
 
