@@ -177,6 +177,25 @@ jobs:
         with:
           path: github-pages
 
+      # deploy-pages looks the artifact up once in the run's artifact list, and that list can lag the
+      # upload by a few seconds ("Found 2 artifact(s)" without github-pages, then "No artifacts
+      # named github-pages"); a rerun of the job then finds two. Wait until the list has it.
+      - name: Wait for the artifact to be listed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          for i in $(seq 1 24); do
+            n=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=github-pages" --jq '.total_count' || echo 0)
+            if [ "$n" -ge 1 ]; then
+              echo "github-pages is listed after $(( (i - 1) * 5 )) s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github-pages is still not listed after 2 minutes; deploying anyway"
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
