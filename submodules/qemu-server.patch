@@ -146,7 +146,7 @@ index cc8b8250..5feca3ca 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 148052cb..62f69e08 100644
+index 148052cb..02165c0a 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -179,7 +179,7 @@ index 148052cb..62f69e08 100644
  };
  
  my $ivshmem_fmt = {
-@@ -212,16 +226,31 @@ my $ivshmem_fmt = {
+@@ -212,15 +226,30 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
          type => 'string',
@@ -192,28 +192,28 @@ index 148052cb..62f69e08 100644
      driver => {
          type => 'string',
 -        enum => ['spice', 'none'],
-+        enum => ['spice', 'none', 'alsa', 'pa', 'pipewire'],
++        enum => ['spice', 'none', 'alsa', 'pa', 'pipewire', 'wav'],
          default => 'spice',
          optional => 1,
-         description => "Driver backend for the audio device.",
-     },
+-        description => "Driver backend for the audio device.",
++        description => "Driver backend for the audio device; 'wav' (testing) records to a file.",
++    },
 +	server =>  {
 +        type => 'string',
 +        pattern => '^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?',
 +        default => '',
 +        optional => 1,
-+        description => "Local or network address of the X server",
-+        format_description => 'uri://host:display'
++        description => "PulseAudio server for driver 'pa': a unix socket or a network address.",
++        format_description => 'unix:/path|tcp:host:port'
 +    },
 +    mesa => {
 +        type => 'boolean',
 +        optional => 1,
 +        default => '0',
 +        description =>  "Enable 3dfx/mesa passthrough. This is only useful for Windows 9X/XP guests.",
-+    },
+     },
  };
  
- my $spice_enhancements_fmt = {
 @@ -673,7 +702,7 @@ EODESCR
      bios => {
          optional => 1,
@@ -293,13 +293,19 @@ index 148052cb..62f69e08 100644
      my $tmpstr = "$device,mac=$net->{macaddr},netdev=$netid$pciaddr,id=$netid";
      if ($net->{queues} && $net->{queues} > 1 && $net->{model} eq 'virtio') {
          # Consider we have N queues, the number of vectors needed is 2 * N + 2, i.e., one per in
-@@ -2794,6 +2838,7 @@ sub conf_has_audio {
+@@ -2794,11 +2838,12 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
 +        server => $audioproperties->{server},
      };
  }
+ 
+ sub audio_devs {
+-    my ($audio, $audiopciaddr, $machine_version) = @_;
++    my ($audio, $audiopciaddr, $machine_version, $vmid) = @_;
+ 
+     my $devs = [];
  
 @@ -2810,6 +2855,23 @@ sub audio_devs {
  
@@ -330,18 +336,18 @@ index 148052cb..62f69e08 100644
      }
  
 -    push @$devs, '-audiodev', "$audio->{backend},id=$audio->{backend_id}";
-+	my $audioOptions = "";
-+	if (defined($audio->{server}) && $audio->{server} ne '') {
-+		if ($audio->{backend} eq 'pa') {
-+			print "-- Using audio backend $audio->{backend} with server $audio->{server}\n";
-+			$audioOptions = ",server=$audio->{server}";
-+		} else {
-+			print "Audio backend: $audio->{backend} not valid for server option\n";
-+		}
-+	} elsif ($audio->{backend} eq 'pa') {
-+		print "Audio backend $audio->{backend} without server value, will attempt to connect via XDG\n";
-+		$ENV{XDG_RUNTIME_DIR} = '/run/user/' . $<;
-+	}
++    my $audioOptions = "";
++    my $server = $audio->{server} // '';
++    if ($audio->{backend} eq 'wav') {
++        # testing and recording: a fixed path under the VM's runtime directory, no override
++        die "audio0: 'server' can't set the path of driver 'wav'\n" if $server ne '';
++        $audioOptions = ",path=/var/run/qemu-server/${vmid}-audio0.wav";
++    } elsif ($server ne '') {
++        log_warn("audio0: 'server' is for driver 'pa' only, ignored") if $audio->{backend} ne 'pa';
++        $audioOptions = ",server=$server" if $audio->{backend} eq 'pa';
++    } elsif ($audio->{backend} eq 'pa') { # no server: connect through the XDG runtime dir
++        $ENV{XDG_RUNTIME_DIR} = '/run/user/' . $<;
++    }
 +
 +    push @$devs, '-audiodev', "$audio->{backend},id=$audio->{backend_id}$audioOptions";
  
@@ -481,15 +487,17 @@ index 148052cb..62f69e08 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3361,7 +3468,7 @@ sub config_to_command {
+@@ -3361,8 +3468,8 @@ sub config_to_command {
      }
  
      if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
 -        my $audiopciaddr = print_pci_addr("audio0", $arch);
+-        my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version);
 +        my $audiopciaddr = $audio->{dev} eq 'cs4231' ? '' : print_pci_addr("audio0", $arch);
-         my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version);
++        my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version, $vmid);
          push @$devices, @$audio_devs;
      }
+ 
 @@ -3397,16 +3504,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
@@ -1790,6 +1798,211 @@ index 00000000..d07d100b
 +audio0: device=cs4231,driver=none
 +ostype: l26
 +smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
+diff --git a/src/test/cfg2cmd/audio-pa-server.conf b/src/test/cfg2cmd/audio-pa-server.conf
+new file mode 100644
+index 00000000..61d43345
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-pa-server.conf
+@@ -0,0 +1,5 @@
++# TEST: driver pa connects to the PulseAudio server given by 'server'
++audio0: device=AC97,driver=pa,server=unix:/tmp/pulse-server
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/audio-pa-server.conf.cmd b/src/test/cfg2cmd/audio-pa-server.conf.cmd
+new file mode 100644
+index 00000000..2224302e
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-pa-server.conf.cmd
+@@ -0,0 +1,31 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'usb-tablet,id=tablet,bus=uhci.0,port=1' \
++  -device 'AC97,id=audiodev0,bus=pci.2,addr=0xc,audiodev=pa-backend0' \
++  -audiodev 'pa,id=pa-backend0,server=unix:/tmp/pulse-server' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'hpet=off,type=pc+pve0'
+diff --git a/src/test/cfg2cmd/audio-server-ignored.conf b/src/test/cfg2cmd/audio-server-ignored.conf
+new file mode 100644
+index 00000000..f2aa8289
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-server-ignored.conf
+@@ -0,0 +1,5 @@
++# TEST: 'server' is for driver pa only: with alsa it is ignored (a warning, not an error, for old configs)
++audio0: device=AC97,driver=alsa,server=unix:/tmp/pulse-server
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/audio-server-ignored.conf.cmd b/src/test/cfg2cmd/audio-server-ignored.conf.cmd
+new file mode 100644
+index 00000000..469b21b6
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-server-ignored.conf.cmd
+@@ -0,0 +1,31 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'usb-tablet,id=tablet,bus=uhci.0,port=1' \
++  -device 'AC97,id=audiodev0,bus=pci.2,addr=0xc,audiodev=alsa-backend0' \
++  -audiodev 'alsa,id=alsa-backend0' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'hpet=off,type=pc+pve0'
+diff --git a/src/test/cfg2cmd/audio-wav-ac97.conf b/src/test/cfg2cmd/audio-wav-ac97.conf
+new file mode 100644
+index 00000000..1563d5cf
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-wav-ac97.conf
+@@ -0,0 +1,5 @@
++# TEST: driver wav records AC97's output to a fixed file in the VM's runtime directory
++audio0: device=AC97,driver=wav
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/audio-wav-ac97.conf.cmd b/src/test/cfg2cmd/audio-wav-ac97.conf.cmd
+new file mode 100644
+index 00000000..aa920b6c
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-wav-ac97.conf.cmd
+@@ -0,0 +1,31 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'usb-tablet,id=tablet,bus=uhci.0,port=1' \
++  -device 'AC97,id=audiodev0,bus=pci.2,addr=0xc,audiodev=wav-backend0' \
++  -audiodev 'wav,id=wav-backend0,path=/var/run/qemu-server/8006-audio0.wav' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'hpet=off,type=pc+pve0'
+diff --git a/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf b/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf
+new file mode 100644
+index 00000000..f9ff4af4
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf
+@@ -0,0 +1,6 @@
++# TEST: driver wav with Intel HD audio on q35: both codecs feed the wav backend
++audio0: device=ich9-intel-hda,driver=wav
++machine: q35
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf.cmd b/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf.cmd
+new file mode 100644
+index 00000000..e2cce19c
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-wav-ich9-intel-hda.conf.cmd
+@@ -0,0 +1,32 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name vm8006 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -global 'ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu kvm64,enforce,+kvm_pv_eoi,+kvm_pv_unhalt,+lahf_lm,+sep \
++  -m 512 \
++  -global 'ICH9-LPC.disable_s3=1' \
++  -global 'ICH9-LPC.disable_s4=1' \
++  -readconfig /usr/share/qemu-server/pve-q35-4.0.cfg \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'usb-tablet,id=tablet,bus=ehci.0,port=1' \
++  -device 'ich9-intel-hda,id=audiodev0,bus=pci.2,addr=0xc' \
++  -device 'hda-micro,id=audiodev0-codec0,bus=audiodev0.0,cad=0,audiodev=wav-backend0' \
++  -device 'hda-duplex,id=audiodev0-codec1,bus=audiodev0.0,cad=1,audiodev=wav-backend0' \
++  -audiodev 'wav,id=wav-backend0,path=/var/run/qemu-server/8006-audio0.wav' \
++  -device 'VGA,id=vga,bus=pcie.0,addr=0x1' \
++  -device 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x3,free-page-reporting=on' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'hpet=off,type=q35+pve0'
+diff --git a/src/test/cfg2cmd/audio-wav-server-error.conf b/src/test/cfg2cmd/audio-wav-server-error.conf
+new file mode 100644
+index 00000000..7e02823e
+--- /dev/null
++++ b/src/test/cfg2cmd/audio-wav-server-error.conf
+@@ -0,0 +1,5 @@
++# TEST: driver wav takes no path from 'server', the file is always /var/run/qemu-server/<vmid>-audio0.wav
++# EXPECT_ERROR: audio0: 'server' can't set the path of driver 'wav'
++audio0: device=AC97,driver=wav,server=/tmp/elsewhere.wav
++ostype: l26
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
 diff --git a/src/test/cfg2cmd/floppy.conf b/src/test/cfg2cmd/floppy.conf
 new file mode 100644
 index 00000000..d606dfbf
@@ -2555,6 +2768,45 @@ index 00000000..c597a880
 +arch: sparc
 +audio0: device=cs4231
 +memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf b/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf
+new file mode 100644
+index 00000000..7a171d46
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf
+@@ -0,0 +1,7 @@
++# TEST: sparc32 SS-5 recording the built-in CS4231 to a wav file
++arch: sparc
++audio0: device=cs4231,driver=wav
++memory: 256
++name: sparc32
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
+diff --git a/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf.cmd
+new file mode 100644
+index 00000000..02d0cbff
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-audio-wav.conf.cmd
+@@ -0,0 +1,20 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 256 \
++  -machine 'audiodev=wav-backend0' \
++  -audiodev 'wav,id=wav-backend0,path=/var/run/qemu-server/8006-audio0.wav' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-audio.conf b/src/test/cfg2cmd/sparc32-ss5-audio.conf
 new file mode 100644
 index 00000000..aec7128c

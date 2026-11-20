@@ -1,41 +1,22 @@
 diff --git a/debian/changelog b/debian/changelog
-index 6657dde6..70398701 100644
+index f305ba44..9f7c3194 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,36 @@
-+pve-manager (9.2.31+wsh4) trixie; urgency=medium
+@@ -1,10 +1,17 @@
++pve-manager (9.2.32+wsh1) trixie; urgency=medium
 +
 +  * feat(mirror): description file, four recipes, NFS e2e and an
 +    ISO/floppy search field (#349)
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 19 Nov 2026 22:44:04 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 20 Nov 2026 08:05:39 +0000
 +
-+pve-manager (9.2.31+wsh3) trixie; urgency=medium
-+
-+  * feat(storage): mirror storage of symlinks with a folder view (#345)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 19 Nov 2026 19:23:12 +0000
-+
-+pve-manager (9.2.31+wsh2) trixie; urgency=medium
-+
-+  * feat(sparc): opt-in ESP interrupt delay so NeXTSTEP and OPENSTEP
-+    install (#347)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 19 Nov 2026 19:07:16 +0000
-+
-+pve-manager (9.2.31+wsh1) trixie; urgency=medium
-+
-+  * feat(sparc32): sound on the SPARCstation 5's CS4231 (LEMU) (#317)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 22:48:31 +0000
-+
- pve-manager (9.2.31) trixie; urgency=medium
+ pve-manager (9.2.32) trixie; urgency=medium
  
-   * ui: user edit: show the 'Key IDs' field only for legacy values, and only
-     as read-only text. Second factors are configured in the TFA window.
+   * ui: storage: drop the technology preview hint of snapshots as volume
+     chain, as the feature is ready for production use.
  
-   * report: show the multipath status with the other block devices, instead
-     of in an extra section at the end of the report.
+   * ui: firewall options: drop the technology preview note of nftables, as the
+     nftables-based proxmox-firewall is not experimental anymore. It stays
+     opt-in, the option is still off by default.
  
-   * ui: token edit: keep the stored expiration date when editing other
-     settings of a token, like the comment. The date field resubmitted it
+   * ui: qemu agent: show options stored as 'yes' or 'on' as enabled, for

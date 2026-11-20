@@ -62,9 +62,33 @@ pvedaemon and pveproxy, a directory storage and an empty `vmbr0` bridge. No gues
 
 - `--build-arg PACKAGES=repo` (default): the packages published at debian.wshosting.no.
 - `--build-arg PACKAGES=local`: the `.deb` files in `pve/debs/` (the build-deb artifacts).
+- `--build-arg PACKAGES=mixed`: the published packages, with the `.deb` files in `pve/debs/`
+  installed over them (the boot job below: a pull request's qemu-server).
+
+## Booting a guest through PVE (`boot`)
+
+The suite never runs a guest, so a start-up bug that only shows once the firmware runs passes it
+(the three fixed in #248 did). On a pull request that changes `submodules/qemu-server.patch` (or
+`pve/boot-test.sh`, `pve/Dockerfile`, `e2e.yml`), e2e.yml's `boot` job builds that qemu-server
+(`make qemu-server`), builds the image with `PACKAGES=mixed` and runs `pve/boot-test.sh` in it:
+`qm create` and `qm start` of an Alpine `virt` CD on x86_64 (i440fx, SeaBIOS, KVM when the runner
+has it) and on aarch64 (virt, OVMF with an efidisk, TCG; skipped when the image has no
+`qemu-system-aarch64` or no `AAVMF_CODE.fd`), passing when the serial console shows the login
+prompt. The ISOs are pinned by URL and sha256 in e2e.yml and cached. `e2e-required` includes the
+job, so a failed boot blocks the merge.
+
+```bash
+docker exec -i wsh-pve-e2e sh -s -- x86_64 9001 local:iso/alpine-virt-x86_64.iso < e2e/pve/boot-test.sh
+```
 
 `sparc/pve.Dockerfile` adds the sparc lab to this image; there, guests do run (under TCG): VMs created
 through the API, started by PVE and driven by the lab (`sparc/README.md`, "Attach to a PVE VM").
+
+`audio/Dockerfile` adds the x86 audio matrix (`audio/audio_matrix.py`; workflow `audio-matrix.yml`):
+a FreeDOS floppy with our own `AUDTEST.COM` and a Debian kernel + initramfs that play known tones
+through each sound device, recorded with QEMU's `wav` backend and checked by `audio/wavcheck.py`,
+directly and through qemu-server (`qm showcmd`, `qm start`). The results are described in the
+[audio reference](../docs/src/content/docs/reference/audiodev.md).
 
 ## Running
 

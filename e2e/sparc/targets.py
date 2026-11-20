@@ -193,24 +193,32 @@ MEDIA = {
         "title": "NetBSD 11.1 sparc64 install CD (cdn.netbsd.org)", "content": "iso", "size": 694026240,
         "sha256": "a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e",
         "lab": "other-os/NetBSD-11.1-sparc64.iso",
-        # freely redistributable: tests/test_netbsd.py downloads it in CI (its SHA512 matches the
-        # release's images/SHA512)
+        # freely redistributable: tests/test_netbsd.py downloads it in CI and checks the size, the
+        # sha256 and the sha512, which is the release's own (images/SHA512)
+        "sha512": "d9be94e0148c75b17e6eccf7477ef4d6edfe3dbdabda74fdb180519ce7fe5d9ce"
+                  "7cce46fb2b7680822fb8ff554546b9f1e38731593c0cde2dc011bd0279b695e",
         "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc64.iso"},
     "NetBSD-11.1-sparc.iso": {
         "title": "NetBSD 11.1 sparc install CD (cdn.netbsd.org)", "content": "iso", "size": 367329280,
         "sha256": "4a8985ecf7d21dad66c34c184d1535a9f901ee4ccc4d962c37558545b63b4636",
         "lab": "other-os/NetBSD-11.1-sparc.iso",
+        "sha512": "14412ae66e29682e59b693ecc6bfcf1637ecec0c27f9d2e04ff0031c43ffb38d"
+                  "d5c3ff76553408e92e6813ca3af2e7e37a258eeeb2bb3f28007b12dc188d3cc8",
         "url": "https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/NetBSD-11.1-sparc.iso"},
     # NetBSD 9.3: the release moved to archive.netbsd.org (both SHA512s match its images/SHA512)
     "NetBSD-9.3-sparc64.iso": {
         "title": "NetBSD 9.3 sparc64 install CD (archive.netbsd.org)", "content": "iso", "size": 366673920,
         "sha256": "0db1b0bcde6c718d3f97fcade7d7dc31c030ab696d989ca45b431b8ac4d78a29",
         "lab": "other-os/NetBSD-9.3-sparc64.iso",
+        "sha512": "3eae3c099d12f911a1dbf148b82784880e73467d461fb282a8b48051803a8099"
+                  "5e9069ded72230fc51ea7fa86c24675ae9e1be99e8dfda64d15884c4268d5734",
         "url": "https://archive.netbsd.org/pub/NetBSD-archive/NetBSD-9.3/images/NetBSD-9.3-sparc64.iso"},
     "NetBSD-9.3-sparc.iso": {
         "title": "NetBSD 9.3 sparc install CD (archive.netbsd.org)", "content": "iso", "size": 270991360,
         "sha256": "cc60918c249c7382b418c7a7da8040298ccef201d65087de12f0ed49629fa91e",
         "lab": "other-os/NetBSD-9.3-sparc.iso",
+        "sha512": "d6b024e97910ed670c771ddc81b969a406a38f1df17b024901ca51400a3e3eb7"
+                  "514b62960c596d952b38f48d2f1df986eda9a1a6bc8889281a92fe07b41d3b4b",
         "url": "https://archive.netbsd.org/pub/NetBSD-archive/NetBSD-9.3/images/NetBSD-9.3-sparc.iso"},
     "install80.iso": {
         "title": "OpenBSD 8.0 sparc64 install CD (cdn.openbsd.org)", "content": "iso", "size": 467599360,
