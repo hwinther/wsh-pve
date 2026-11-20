@@ -618,7 +618,8 @@ elsewhere: apt fails to connect). Without a cache the matrix skips the Debian ta
 disk) and changes nothing on `vmbr0`. The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
 `reinstall` input (empty by default: boot-test what is stored, install what is missing); any
 `reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
-a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
+a new Tribblix disk on the runner. The workflow runs `install` weekly (Sunday 07:17 UTC) and with
+`reinstall=all` on the first Saturday of the month (07:17 UTC, 720 minutes). By hand on the node (or in the PVE test container):
 
 ```sh
 wsh-lab install tribblix-m34-sun4u --vmid 9401 --check --export /mnt/os/disks   # ~4.3 h, once

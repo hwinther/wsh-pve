@@ -708,10 +708,13 @@ they stay out of the logs and recordings.
 ## How it is tested
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
-container with the published packages, and the `install` matrix (by hand from the `sparc lab`
-workflow) goes through every automated target: a target whose stored disk is missing is installed
-with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
-`reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
+container with the published packages, and the `install` matrix goes through every automated
+target: a target whose stored disk is missing is installed with `--check --export`, the others are
+boot-tested from their stored disks, and the workflow's `reinstall` input installs named targets
+(or `all`) again. The `sparc lab` workflow runs it weekly (Sunday 07:17 UTC, boot tests plus the
+missing installs) and monthly with `reinstall=all` (first Saturday, 07:17 UTC, with the 720-minute
+job limit; about 6 h), so every stored disk is rebuilt from its install CD once a month, and by hand
+from the workflow. Tribblix and the Debian targets are
 installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
 the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
