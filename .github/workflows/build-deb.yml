@@ -34,7 +34,58 @@ on:
 permissions: {}
 
 jobs:
+  # pve-qemu's 3dfx extra (qemu-system-x86_64-3dfx) compiles third-party code (qemu-3dfx's hw/3dfx and
+  # hw/mesa), so it is built here, in a job with no WORKFLOW_TOKEN and no stored credentials, and the
+  # build job below takes the binary from its artifact. Like everything optional it never fails the
+  # build: whatever happens here, the build job runs, and without a binary it publishes without one.
+  build-3dfx:
+    name: Build the 3dfx extra
+    if: inputs.package == 'pve-qemu'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout (the build image on ghcr.io is public)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # history for the Makefile's git log (the changelog entry of the 3dfx build). No ref: the
+          # commit that started the run; the build job compares it with its own checkout.
+          fetch-depth: 0
+
+      - name: Build qemu-system-x86_64 with qemu-3dfx
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          sudo make pve-qemu-3dfx VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root' 2>&1 \
+            | tee "$RUNNER_TEMP/make-3dfx.log"
+
+      # commit: what the build job compares its own checkout with; make.log: the first part of the
+      # optional-extras report's build log (the "WARNING: optional extra 3dfx missing" line)
+      - name: Collect the output
+        if: ${{ !cancelled() }}
+        run: |
+          out="$RUNNER_TEMP/qemu-3dfx"
+          mkdir -p "$out"
+          git rev-parse HEAD > "$out/commit"
+          cp "$RUNNER_TEMP/make-3dfx.log" "$out/make.log" || echo "(no log from the 3dfx build)" > "$out/make.log"
+          if [ -s build/pve-qemu-3dfx/qemu-system-x86_64 ]; then
+            cp build/pve-qemu-3dfx/qemu-system-x86_64 "$out/"
+          fi
+          ls -la "$out"
+
+      - name: Upload the 3dfx build
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qemu-3dfx-pve-qemu
+          path: ${{ runner.temp }}/qemu-3dfx/
+          retention-days: 7
+
   build:
+    needs: [build-3dfx]
+    # build-3dfx is skipped for the other packages, and its failure must not stop pve-qemu
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # One build per package at a time. Two merges close together used to build the same package at
     # once: both read the same changelog, chose the same +wshN version and published different
@@ -56,9 +107,21 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           fetch-depth: 0
-          # The tip of the branch when the job starts, not the commit that triggered the run: a
-          # build that waited in the queue must see the changelog commit of the build before it.
-          ref: ${{ github.ref }}
+
+      # The tip of the branch when the job starts, not the commit that triggered the run: a build that
+      # waited in the queue must see the changelog commit of the build before it. Done here rather
+      # than with checkout's ref: an expression there makes poutine treat this workflow_call workflow
+      # as checking out a fork's code (untrusted_checkout_exec); its callers run on push to main,
+      # schedule and workflow_dispatch only, on this repository's own branches.
+      - name: Move to the branch tip
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/*) ;;
+            *) echo "::error::build-deb.yml builds a branch, not $GITHUB_REF"; exit 1 ;;
+          esac
+          git fetch origin "+$GITHUB_REF:refs/remotes/origin/$GITHUB_REF_NAME"
+          git checkout -B "$GITHUB_REF_NAME" --track "origin/$GITHUB_REF_NAME"
+          git log -1 --format='Building %h: %s'
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -66,6 +129,47 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the 3dfx build
+        if: inputs.package == 'pve-qemu'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qemu-3dfx-pve-qemu
+          path: ${{ runner.temp }}/qemu-3dfx
+
+      # The binary goes where debian/rules of pve-qemu looks for it (build/pve-qemu-3dfx) if it was
+      # built from the same 3dfx inputs as this checkout: a build that waited in the queue checks out a
+      # newer tip than build-3dfx did, which is fine when only changelogs or other packages changed.
+      # build-3dfx's log starts make.log, which the optional-extras report quotes.
+      - name: Take the 3dfx build
+        if: inputs.package == 'pve-qemu'
+        run: |
+          in="$RUNNER_TEMP/qemu-3dfx"
+          if [ -f "$in/make.log" ]; then cp "$in/make.log" "$RUNNER_TEMP/make.log"; else : > "$RUNNER_TEMP/make.log"; fi
+          reason=""
+          built=$(cat "$in/commit" 2>/dev/null || true)
+          if [ ! -s "$in/qemu-system-x86_64" ]; then
+            # build-3dfx's log already has its "optional extra 3dfx missing" line
+            [ -n "$built" ] || reason="the 3dfx build job left no output"
+          elif ! git cat-file -e "${built}^{commit}" 2>/dev/null; then
+            reason="the 3dfx build is of commit '$built', which this checkout doesn't have"
+          elif ! git diff --quiet "$built" HEAD -- Makefile scripts/refresh-qemu-3dfx-patch.sh \
+              submodules/pve-qemu submodules/pve-qemu.patch submodules/pve-qemu-qemu-3dfx.patch \
+              submodules/qemu-3dfx submodules/qemu-3dfx.patch; then
+            reason="the 3dfx build is of ${built:0:7}, whose pve-qemu or qemu-3dfx differs from this checkout's"
+          else
+            mkdir -p build/pve-qemu-3dfx
+            install -m 0755 "$in/qemu-system-x86_64" build/pve-qemu-3dfx/qemu-system-x86_64
+            echo "qemu-system-x86_64-3dfx from the 3dfx build of ${built:0:7}"
+          fi
+          if [ -n "$reason" ]; then
+            # the first line is the start of the report's log excerpt for 3dfx
+            printf '%s\n' "INFO: Building pve-qemu with 3dfx support: taking the build-3dfx job's binary" \
+              "WARNING: optional extra 3dfx missing: $reason, pve-qemu ships without qemu-system-x86_64-3dfx" \
+              | tee -a "$RUNNER_TEMP/make.log"
+            echo "::warning title=optional extra 3dfx missing::$reason"
+          fi
 
       - name: Build and push
         env:
@@ -137,12 +241,15 @@ jobs:
           tag_wsh_version=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:$WSH_VERSION
           tag_latest=ghcr.io/hwinther/wsh-pve/${{ inputs.package }}:latest
 
-          # The log is also the build log excerpt of the optional-extras report (pve-qemu)
+          # The log is also the build log excerpt of the optional-extras report (pve-qemu). For
+          # pve-qemu these are pve-qemu-bundle's targets except pve-qemu-3dfx, which build-3dfx ran
+          # (its binary is in build/pve-qemu-3dfx, its log at the start of make.log).
           set -o pipefail
-          MAKE_TARGET="$PACKAGE"
-          if [ "$PACKAGE" = pve-qemu ]; then MAKE_TARGET=pve-qemu-bundle; fi
-          sudo make "$MAKE_TARGET" VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root' 2>&1 \
-            | tee "$RUNNER_TEMP/make.log"
+          MAKE_TARGETS="$PACKAGE"
+          if [ "$PACKAGE" = pve-qemu ]; then MAKE_TARGETS="restore-sparc openbios-sparc32 pve-qemu"; fi
+          # shellcheck disable=SC2086 # one word per target
+          sudo make $MAKE_TARGETS VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root' 2>&1 \
+            | tee -a "$RUNNER_TEMP/make.log"
           set +o pipefail
 
           ls -la build/*
