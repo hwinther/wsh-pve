@@ -12,10 +12,6 @@ name: x86 audio matrix
 # breaks a device.
 
 on:
-  # TEMPORARY: run on the feature branch before a PR exists; removed in the next commit
-  push:
-    branches:
-      - feat/x86-audio-matrix
   workflow_dispatch:
   schedule:
     - cron: "37 5 * * 0"
