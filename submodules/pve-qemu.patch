@@ -12,14 +12,15 @@ index 2ead600..3ddd29a 100644
  	s390-ccw.img \
  	s390-netboot.img \
 diff --git a/debian/control b/debian/control
-index ea9871d..633dace 100644
+index ea9871d..5a1eb84 100644
 --- a/debian/control
 +++ b/debian/control
-@@ -55,6 +55,7 @@ Architecture: any
+@@ -55,6 +55,8 @@ Architecture: any
  Depends: ceph-common (>= 0.48),
           fuse3,
           iproute2,
 +         pve-edk2-firmware-aarch64,
++         ${wsh:Depends},
           ${misc:Depends},
           ${shlibs:Depends},
  Recommends: numactl,
@@ -9713,7 +9714,7 @@ index 6fb5116..799c744 100644
 +pve-qemu-kvm: statically-linked-binary [usr/share/kvm/openbios-sparc64]
  pve-qemu-kvm: unstripped-binary-or-object [usr/share/kvm/hppa-firmware.img]
 diff --git a/debian/rules b/debian/rules
-index a6b8745..3014654 100755
+index a6b8745..553c3be 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -13,6 +13,8 @@ flagfile := $(destdir)/usr/share/kvm/recognized-CPUID-flags-x86_64
@@ -9817,3 +9818,18 @@ index a6b8745..3014654 100755
  	dh_compress
  	dh_fixperms
  #	dh_perl
+@@ -179,6 +217,14 @@ binary-arch: build install
+ 	# Debian >= Buster has libglusterfs0 and lots of libgfFOO, upstream has the libs in glusterfs-common
+ 	# pass -x to dpkg-shlibdeps and specify dependencies in d/control instead
+ 	dh_shlibdeps -- -xlibglusterfs0 -xlibgfxdr0 -xlibgfrpc0 -xlibgfdb0 -xlibgfchangelog0 -xlibgfapi0
++	# qemu-system-x86_64-3dfx (an optional extra) dlopen()s OpenGLide's libglide2x.so/libglide3x.so
++	# (wsh-openglide) and its SDL window loads libEGL.so.1: without either the 3dfx VM stops, so
++	# both are dependencies whenever the binary is in the package
++	if [ -e $(destdir)/usr/bin/qemu-system-x86_64-3dfx ]; then \
++		echo 'wsh:Depends=wsh-openglide, libegl1' >> debian/$(PACKAGE).substvars; \
++	else \
++		echo 'wsh:Depends=' >> debian/$(PACKAGE).substvars; \
++	fi
+ 	dh_gencontrol
+ 	dh_md5sums
+ 	dh_builddeb

@@ -204,11 +204,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
        i386, `/dev/mem`), reads it back through the pass-through and checks it and the SDL window
        (about 10 s under TCG). Found on the way: QEMU dies with `BadMatch` when the X server offers
        a 32-bit ARGB visual (Xvfb with Composite: OpenGLide's GLX config picks it, SDL's window
-       has 24 bits); SDL needs `libegl1`, which pve-qemu-kvm doesn't pull in; OpenGLide writes
+       has 24 bits); SDL needs `libegl1`; OpenGLide writes
        `OpenGLid.ini`/`.log` into QEMU's working directory and `exit(0)`s QEMU when it can't; a
        guest LFB read that drains queued calls comes back shifted by their data (glidept puts the
-       pixels after it, the wrappers read from the start). Next, small: pve-qemu-kvm
-       `Recommends: wsh-openglide, libegl1`; qemu-server runs the 3dfx binary in a writable
+       pixels after it, the wrappers read from the start). pve-qemu-kvm depends on `wsh-openglide`
+       and `libegl1` whenever it ships the 3dfx binary (a dependency, not a recommendation: the 3dfx
+       VM stops without either, and the UI shouldn't have to check what is installed). Next, small:
+       qemu-server runs the 3dfx binary in a writable
        directory; Mesa pass-through has no Windows-free test yet (no Linux guest wrapper for it).
      - **Stage 1: EGL offscreen (~2-3 weeks).** A new module (`fxdisp.c`, `mglcntx_egl.c`) plus an
        EGL platform in OpenGLide: render into an offscreen surface and read it back into the QEMU
