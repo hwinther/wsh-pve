@@ -26,6 +26,20 @@ The additional backend drivers support both local and remote audio output.
 
 ![Audio driver menu](../../../assets/audiodriver.png)
 
+- **wav**: records to a file, for tests and recordings, not for listening. Not in the web UI's
+  list; set it with `qm set <vmid> --audio0 device=<device>,driver=wav`. It works with every
+  device above, the SS-5's `cs4231` included.
+  - The file is always `/var/run/qemu-server/<vmid>-audio0.wav`. The path is fixed: `server=` can't
+    change it, and a VM with `driver=wav` and a `server=` doesn't start. A fixed name in the VM's
+    runtime directory means a VM config can't make QEMU (which runs as root) write anywhere else.
+  - Each start overwrites the file. It stays after the VM stops, until the next start or the next
+    reboot of the node.
+  - `/var/run` is a tmpfs, so the recording is in RAM: QEMU's default format (44.1 kHz, 16-bit
+    stereo) is about 10 MB per minute of sound. Copy the file away and switch the driver back when
+    done.
+  - QEMU writes the sizes into the WAV header when it closes the file: when the guest powers off or
+    the VM is stopped with `qm stop`. A QEMU that is killed leaves them 0; most tools still read the
+    samples, others need the header fixed.
 - **alsa**: ALSA (local sound)
 - **pa**: PulseAudio (local sound)
 - **pipewire**: PipeWire (local sound)
@@ -36,7 +50,9 @@ The audio server option enables configuring unix sockets for a local audio pipel
 
 ![Audio menu](../../../assets/audio.png)
 
-- server (default value `unix:/tmp/pulse-server`)
+- server: the PulseAudio server, for driver `pa` only (default value `unix:/tmp/pulse-server`).
+  With another driver it is ignored, with a warning in the start task's log; with `wav` the VM
+  doesn't start.
 
 A unix socket must already be configured and allow the context pveproxy is running under to connect to it.
 
