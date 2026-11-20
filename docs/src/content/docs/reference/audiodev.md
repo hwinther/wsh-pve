@@ -35,11 +35,12 @@ The additional backend drivers support both local and remote audio output.
   - Each start overwrites the file. It stays after the VM stops, until the next start or the next
     reboot of the node.
   - `/var/run` is a tmpfs, so the recording is in RAM: QEMU's default format (44.1 kHz, 16-bit
-    stereo) is about 10 MB per minute of sound. Copy the file away and switch the driver back when
-    done.
-  - QEMU writes the sizes into the WAV header when it closes the file: when the guest powers off or
-    the VM is stopped with `qm stop`. A QEMU that is killed leaves them 0; most tools still read the
-    samples, others need the header fixed.
+    stereo) is about 10 MB per minute of sound. The file grows only while the guest plays: an idle
+    VM leaves it at its 44-byte header. Copy the file away and switch the driver back when done.
+  - The RIFF and data sizes in the header stay 0, even after a clean exit (guest power off,
+    `qm stop`; measured with pve-qemu-kvm 11.1). Tools that trust the header see an empty file:
+    read everything after the 44-byte header as the samples, or rewrite the header, for example
+    with `sox --ignore-length <vmid>-audio0.wav fixed.wav`.
 - **alsa**: ALSA (local sound)
 - **pa**: PulseAudio (local sound)
 - **pipewire**: PipeWire (local sound)
