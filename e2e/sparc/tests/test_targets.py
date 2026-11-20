@@ -1329,9 +1329,10 @@ class OpenBSD80(unittest.TestCase):
         self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"], t["nic"]), ("ide0", None, "ide0", "hme0"))
         self.assertEqual(t["media"], [{"name": "install80.iso", "drive": "ide2"}])
         self.assertTrue(t["install"]["root_password"])  # the installer asks for it
-        self.assertEqual(t["install"]["retry_on"], "IDE timeouts")  # _openbsd.installer()'s error
+        # no retry: an IDE timeout that leaves the guest silent fails the install (wsh/0045 fixed the cause)
+        self.assertNotIn("retry_on", t["install"])
         self.assertEqual(t["net_modes"], ["static"])
-        self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh22")  # openbios 0023
+        self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh30")  # openbios 0023, wsh/0045
         self.assertGreater(t["minutes"], 0)
         med = targets.MEDIA["install80.iso"]
         self.assertEqual((med["size"], med["lab"]), (467599360, "other-os/openbsd8.0/install80.iso"))
@@ -1412,6 +1413,51 @@ class OpenBSD80(unittest.TestCase):
             self.ob.silent = saved
         self.assertTrue(re.search(self.ob.IDE_TIMEOUT, "wd0(pciide0:0:0): timeout"))
         self.assertIsNone(re.search(self.ob.IDE_TIMEOUT, "wd0d: device timeout reading fsbn 64"))
+
+    def test_ntpd(self):
+        # on for sparc64 (the sabre's lost interrupt is fixed by wsh/0045), still off for sparc (sun4m)
+        self.assertTrue(self.ob.ntpd_on({"ARCH": "sparc64"}))
+        self.assertTrue(self.ob.ntpd_on({}))
+        self.assertFalse(self.ob.ntpd_on({"ARCH": "sparc"}))
+        self.assertFalse(self.ob.ntpd_on({"ARCH": "sparc64", "NTPD": "off"}))
+        self.assertTrue(self.ob.ntpd_on({"ARCH": "sparc", "NTPD": "on"}))
+        fb = lab.load_scenario(os.path.join(HERE, "scenarios", "openbsd-firstboot.py"))
+        cmd = "echo ntpd: flags=$(rcctl get ntpd flags) running=$(pgrep -x ntpd | wc -l | tr -d ' ')"
+        saved = fb.shell
+        try:
+            for arch, state, ok in [("sparc64", "flags= running=3", True), ("sparc64", "flags=NO running=0", False),
+                                    ("sparc64", "flags= running=0", False), ("sparc", "flags=NO running=0", True),
+                                    ("sparc", "flags= running=3", False)]:
+                sent = []
+                fb.shell = lambda m, c, timeout=300: sent.append(c) or f"# {cmd}\nntpd: {state}\n# "
+                saved_disable, self.ob.disable_ntpd = self.ob.disable_ntpd, lambda m, root="": sent.append("disable")
+                try:
+                    if ok:
+                        fb.check_ntpd(None, {"ARCH": arch})
+                    else:
+                        with self.assertRaises(AssertionError):
+                            fb.check_ntpd(None, {"ARCH": arch})
+                finally:
+                    self.ob.disable_ntpd = saved_disable
+                self.assertEqual("disable" in sent, arch == "sparc", (arch, state))
+        finally:
+            fb.shell = saved
+
+    def test_installer_answers_exit_after_congratulations(self):
+        # 8.0 prints CONGRATULATIONS before its "Exit to (S)hell" question: the question is still answered
+        m = InstallerConsole([
+            "(I)nstall, (U)pgrade, (A)utoinstall or (S)hell? ",
+            "What timezone are you in? ('?' for list) [Canada/Mountain] ",
+            "Saving configuration files... done.\nRelinking to create unique kernel... done.\n\n"
+            "CONGRATULATIONS! Your OpenBSD install has been successfully completed!\n\n"
+            "When you login to your new system the first time, please read your mail\nusing the 'mail' command.\n\n"
+            "Exit to (S)hell, (H)alt or (R)eboot? [halt] ",
+            "# ",
+        ])
+        asked = self.ob.installer(m, self.v(), 60)
+        self.assertEqual(m.sent, ["i\r", "UTC\r", "s\r"])
+        self.assertEqual(asked[-1], "Exit to (S)hell, (H)alt or (R)eboot? [halt]")
+        m.expect(self.ob.PROMPT)  # the scenario's next step
 
     def test_installer_stops_at_an_unknown_question(self):
         m = InstallerConsole(["Do you want to frobnicate? [no] "])
@@ -1586,6 +1632,7 @@ class OpenBSD59(unittest.TestCase):
         asked = self.ob.installer(m, self.v(), 60)
         self.assertEqual(m.sent, ["i\r", "cd0\r", "/\r", "done\r", "done\r"])
         self.assertEqual(len(asked), 5)
+        m.expect(self.ob.PROMPT)  # left for the scenario's next step
 
     def test_unknown_question_with_a_hint(self):
         # a question with a `(hint)` after its `?` is a question too: no rule, the install fails at once

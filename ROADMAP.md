@@ -78,6 +78,7 @@ come after that, not before.
 | Idle on sun4u: no guest on QEMU's sun4u has a way to stop the CPU (Solaris/illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` only on CPUs with several strands), so pve-qemu `wsh/0042`-`0044` recognise the idle loops of NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9/10 and Tribblix m34 in the translator and halt there (`idle-halt`, on by default; qtest `sun4u-idle-test`): an idle guest at the shell takes 3-9% of a host core instead of 100% (Tribblix about 22%, and only with FMA's `fmd` off: its ZFS disk faults and `rcm_daemon` spins), with the clock, ten `sleep 1` and CPU-bound jobs as before (`submodules/SPARC.md`, "sparc64 (sun4u)", "Idle") | merged | #364 |
 | Workflow tokens: `sync-from-upstream-trigger.yml` dispatches the five syncs with `GITHUB_TOKEN` (`actions: write`), and from a branch or with `dry_run` only says what it would start; `build-deb.yml` builds pve-qemu's 3dfx extra in its own job without `WORKFLOW_TOKEN` or stored credentials and hands the binary to the build job as an artifact; the optional-extras report's issue path is tested by `scripts/test-report-qemu-extras.sh` and dry-run against the open issues by `report-qemu-extras-test.yml` | merged | #360 |
 | Install target `sol21-ss10`: Solaris 2.1 End User on the SS-10 (OpenBIOS, one CPU, the CD as a disk), automated now that pve-qemu-kvm 11.1.3-2+wsh29 and later have `wsh/0047` (the sparc32 context-switch fetch); installed three times through PVE with `--check` on the published 11.1.3-2+wsh30, qemu-server 9.2.19+wsh4, pve-manager 9.2.32+wsh4 (3/3 passed, 9.7-10.1 min with three at once: install 5.3 min, first boot 2.9-3.3, check 1.2-1.3); `/opt` and `/export/home` still not mounted at boot | merged | #378 |
+| OpenBSD 8.0 on sun4u with ntpd on: the IDE timeouts (`wd0: timeout`, then a guest that takes no interrupt) were a lost interrupt in QEMU's sabre (a PCI interrupt replaced the outstanding IDE request), fixed by pve-qemu `wsh/0045` (qtest `wsh/0046`, pve-qemu-kvm 11.1.3-2+wsh30); `openbsd80-sun4u` keeps ntpd on and checks it runs, no install retry (the stuck detection stays): 4 of 4 installs through PVE with `--check` (two with a way out, ntpd synced), 3 of 3 boots under disk load with ntpd slewing, no IDE timeout, ~17 min; the installer's "Exit to (S)hell" after "CONGRATULATIONS!" is answered again (broken by the OpenBSD 5.9 targets) | in review | |
 
 ## In progress
 
@@ -270,20 +271,9 @@ merged; what is left of them is item 2 under "Next".
   under OpenBIOS and 2.6 and 7 on the SS-10 are install targets, "Done"; 8 2/02 and 9 9/05 install on the SS-5 and SS-20, and on sun4u with OpenBIOS
   0024; 8 2/02 also under `ss5.bin` on the SS-5, `sol8-ss5-prom`; 7 3/99 on sun4u, `sol7-sun4u`.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
-- **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
-  kernel boots since openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22) and `openbsd80-sun4u` installs it
-  through PVE with ntpd off ("Done"). Still open: with outside network access, `wd0: timeout` follows
-  ntpd's clock slew in 5 of 6 boots; without ntpd it happens too, rarely (1 of 5 installs on
-  the CD, one of several boots with a 1 GB `tar` of `/usr`), and the guest then sits in its idle
-  loop with interrupts enabled, no I/O and no answer to the console or a break
-  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Cause found (2026-11-20): a PCI
-  interrupt (the NIC on pciB) replaced the sabre's outstanding IDE request, the CPU dropped it while
-  busy, and the guest's clear of the IDE request was ignored, so no OBIO interrupt got through
-  again; ntpd's part was its network traffic. Fixed in pve-qemu `wsh/0045` (qtest `wsh/0046`),
-  tested in the lab (SPARC.md, "Cause: the sabre lost a request"), not yet in a package. Still to
-  do once a package has it: install `openbsd80-sun4u` through PVE with ntpd on, then drop the
-  target's install retry (`retry_on`) and the `ntpd_flags=NO`. Also not tried through the tool:
-  DHCP (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
+- **OpenBSD 8.0 on sun4u through the tool: DHCP.** `--ip dhcp` is refused for `openbsd80-sun4u`
+  (the lab's own runs got an address with `inet autoconf`). The IDE timeouts with ntpd on are fixed
+  ("Done": `wsh/0045`).
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install` (the

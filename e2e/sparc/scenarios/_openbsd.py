@@ -15,10 +15,12 @@ OpenBSD 5.9 (the last release with the sparc port) asks some questions in other 
 with "CONGRATULATIONS!" at the shell. The rules know both. SETS_CD and SETS_PATH say where the sets
 are (8.0: the install CD, cd0, the default path; 5.9 on sun4m: the sets CD on target 5, cd0, `/`).
 
-ntpd stays off in the installed system (`ntpd_flags=NO` in /etc/rc.conf.local, what `rcctl disable
-ntpd` writes, set from the installer's shell before the first boot): with a network that reaches NTP
-servers, ntpd's clock slew was followed by `wd0` read timeouts in 5 of 6 boots (submodules/SPARC.md,
-"sparc64", "Disk timeouts with a synced clock").
+ntpd: OpenBSD/sparc64 keeps it on, as the installer leaves it. The `wd0` read timeouts that followed
+ntpd's start on sun4u were a lost interrupt in QEMU's sabre host bridge (a NIC interrupt replaced the
+outstanding IDE request), fixed by pve-qemu `wsh/0045` (pve-qemu-kvm 11.1.3-2+wsh30; submodules/SPARC.md,
+"sparc64", "Cause: the sabre lost a request"). OpenBSD/sparc (sun4m) still turns it off (`ntpd_flags=NO`
+in /etc/rc.conf.local, what `rcctl disable ntpd` writes, set from the installer's shell before the
+first boot): not tried with ntpd on there. NTPD (on | off) overrides the choice by ARCH.
 """
 import re
 import time
@@ -145,7 +147,7 @@ def install_rules(v, state):
         (r"Set name\(s\)\? \(or 'abort' or 'done'\) \[done\] $", select_sets),
         (r"Continue without verification\? \[\w+\] $", "yes"),
         (r"Time appears wrong\. Set to .*\? \[\w+\] $", "yes"),
-        (r"Exit to \(S\)hell, \(H\)alt or \(R\)eboot\? \[\w+\] $", "s"),
+        (EXIT_QUESTION, "s"),
     ]
 
 
@@ -176,6 +178,7 @@ def which_question(rules, line):
 
 
 CONGRATULATIONS = r"CONGRATULATIONS! Your OpenBSD install has been successfully completed!"
+EXIT_QUESTION = r"Exit to \(S\)hell, \(H\)alt or \(R\)eboot\? \[\w+\] $"
 
 
 def installer(m, v, timeout):
@@ -188,8 +191,9 @@ def installer(m, v, timeout):
     question again, and answering both copies would answer the next question too.
 
     An IDE timeout on the console (`cd0(pciide0:1:0): timeout`) followed by STUCK_S seconds of silence
-    fails the install ("IDE timeouts"): once in five installs through PVE the CD stopped answering
-    while the sets were extracted, and the installer would have waited for the whole timeout."""
+    fails the install ("IDE timeouts"): before pve-qemu `wsh/0045` the CD stopped answering once in
+    five installs through PVE while the sets were extracted (the sabre's lost interrupt), and the
+    installer would have waited for the whole timeout. Kept so that a regression fails clearly."""
     state, asked = {}, []
     rules = install_rules(v, state)
     end = time.time() + timeout
@@ -197,6 +201,17 @@ def installer(m, v, timeout):
         seen = m.expect_any([QUESTION_END, IDE_TIMEOUT, CONGRATULATIONS], max(1, end - time.time()))
         if seen == 2:
             m.snap("install complete")
+            # 8.0 asks "Exit to (S)hell, ..." after it (answered with the shell); 5.9 is at its shell
+            with m.cond:
+                pos = m.pos
+            if m.expect_any([EXIT_QUESTION, PROMPT], 120) == 1:
+                with m.cond:
+                    m.pos = pos  # the caller waits for the prompt
+                return asked
+            m.quiet(1, 30)
+            asked.append(last_line(m).strip())
+            m.log(f"question: {asked[-1]!r} -> 's'")
+            m.send("s\r")
             return asked
         if seen == 1:
             m.metrics["ide_timeouts"] = m.metrics.get("ide_timeouts", 0) + 1
@@ -225,10 +240,15 @@ def installer(m, v, timeout):
         asked.append(question)
         m.log(f"question: {question!r} -> {'***' if SECRET.search(question) else repr(reply)}")
         m.send(f"{reply}\r")
-        if rx.startswith(r"Exit to"):
+        if rx == EXIT_QUESTION:
             return asked
         if rx.startswith(r"Set name") and reply == "done":
             m.snap("sets selected")
+
+
+def ntpd_on(v):
+    """Whether the installed system runs ntpd: NTPD (on | off), else on for sparc64 and off for sparc."""
+    return (v.get("NTPD") or ("on" if (v.get("ARCH") or "sparc64") == "sparc64" else "off")) == "on"
 
 
 def disable_ntpd(m, root=""):

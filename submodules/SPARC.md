@@ -2044,9 +2044,10 @@ to 10.0.2.2 every 50 ms during the reads (2300 `hme0` interrupts) and after step
 `date` (674 MB read by `tar` from `/usr`, no timeout). With `NET=user` and ntpd disabled
 (`rcctl disable ntpd`) 0 of 1, and `ftp` fetches over HTTP from the internet through `hme0`. So it
 follows ntpd's slew (a timing race in the kernel's timeouts or in QEMU's IDE/timer emulation), not
-the network interrupts; not followed further. The install target `openbsd80-sun4u` keeps ntpd off
-(`ntpd_flags=NO` in `/etc/rc.conf.local`, set from the installer's shell before the first boot) until
-it is understood.
+the network interrupts; not followed further. That conclusion was wrong: it was the network
+traffic after all ("Cause: the sabre lost a request" below). The install target `openbsd80-sun4u`
+kept ntpd off (`ntpd_flags=NO` in `/etc/rc.conf.local`, set from the installer's shell before the
+first boot) until pve-qemu-kvm 11.1.3-2+wsh30 had `wsh/0045`; since then ntpd stays on.
 
 **IDE timeouts without ntpd** (through PVE, pve-qemu-kvm 11.1.3-2+wsh22, 2026-11-19; `vmbr0` has no
 outside access, ntpd is off, other guests on the host, load average 4-13 on 14 cores; e2e/sparc/README.md,
@@ -2067,9 +2068,9 @@ the CPU any more, not even the console's: a lost or stuck interrupt in QEMU's su
 INTRQ through the sabre's interrupt mapping to the CPU's interrupt vector), which ntpd's slew makes
 more likely but doesn't cause. Next: `-d int` and the sabre/IVEC state at the hang, and whether
 `wsh/0021`'s latch (the cmd646 interrupt status bits stay set until written 1) leaves a level that
-the sabre no longer forwards. The install target fails an install that stays silent for 5 minutes
-after an IDE timeout and runs it once more (`retry_on`); a boot that hangs fails at the phase's
-timeout.
+the sabre no longer forwards. The install target failed an install that stays silent for 5 minutes
+after an IDE timeout and ran it once more (`retry_on`) until `wsh/0045` (below); the detection stays,
+the retry is gone.
 
 **Cause: the sabre lost a request** (2026-11-20; QEMU built from the pve-qemu 11.1.3-2 series with
 `wsh/0001`-`0044`, OpenBIOS 0001-0018 + 0023, the stored `install-openbsd80-sun4u` disk on a copy,
@@ -2110,6 +2111,15 @@ console and no end of the round within 5 minutes after it):
 `idle-halt` doesn't change the symptom: with it off the CPU spins in the idle loop instead of
 halting there, and nothing else differs. Solaris 10 (stored disk) boots on 0045 to `console login:`
 and powers off (`sparc64-boot-disk.py`, with a ping through `hme0`, 1 boot).
+
+Through PVE with the published pve-qemu-kvm 11.1.3-2+wsh30 (2026-11-20, ntpd on;
+e2e/sparc/README.md, "The OpenBSD 8.0 install target"): 4 of 4 complete `openbsd80-sun4u` installs
+with `--check` passed without an IDE timeout in any phase (16.0-17.9 min; two with a way out through
+`vmbr0`, where ntpd reached its servers), 3 of 3 boots with ntpd slewing the clock (offset ~395-449
+ms, 5/5 peers) and a `tar` of `/usr` plus a 200 MB write passed without a disk timeout, and so did
+a boot with `ping -f` during the `tar` (the load in the table above). Before the fix a similar load
+(ntpd slewing, `tar` of `/usr`) hung 5 of 6 boots. The target therefore keeps ntpd on and has no
+install retry.
 
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
