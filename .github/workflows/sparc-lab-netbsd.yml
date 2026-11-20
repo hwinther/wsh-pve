@@ -1,13 +1,24 @@
 name: sparc lab NetBSD
 
-# NetBSD 11.1/sparc64 installed from its official CD under the published pve-qemu-kvm (TCG, sun4u),
-# with the scenarios of the `netbsd111-sparc64` install target: sysinst on the serial console, the
-# first boot (root password, marker, host name, static address) and a check boot that logs in with
-# the password (e2e/sparc/tests/test_netbsd.py). The CD is downloaded from cdn.netbsd.org by the
-# test and checked against its pinned size and sha256 (targets.py); nothing from the lab host is used.
+# NetBSD 11.1 and 9.3 installed from their official CDs under the published pve-qemu-kvm (TCG), one
+# job per install target: 11.1 and 9.3 on sun4u, 9.3 on an SS-5 and an SS-20. Each runs the target's
+# scenarios with the lab's own QEMU: sysinst on the serial console, the first boot (root password,
+# marker, host name, static address) and a check boot that logs in with the password
+# (e2e/sparc/tests/test_netbsd.py, NETBSD_TARGET). The CDs come from cdn.netbsd.org (11.1) and
+# archive.netbsd.org (9.3), cached, and the test checks each against its pinned size, sha256 and
+# sha512 (targets.py); nothing from the lab host is used.
+#
+# When the installs run: on pull requests that change the files they use (the lab image, lab.py and
+# its modules, targets.py, the NetBSD scenarios and test; other lab changes run only the unit tests),
+# on dispatch, and daily once a pve-qemu-kvm version they haven't passed on is published at
+# debian.wshosting.no (a cache entry per passed version; GitHub evicts entries unused for 7 days, so
+# an unchanged package is also re-tested about weekly).
 
 on:
   workflow_dispatch:
+  schedule:
+    # After the nightly syncs and their package builds
+    - cron: "37 6 * * *"
   pull_request:
     branches:
       - main
@@ -22,10 +33,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  netbsd:
-    name: NetBSD/sparc64 install
+  # Whether the installs run: on a pull request when it touches their files, on the schedule when the
+  # published pve-qemu-kvm has no passed run yet, always on dispatch
+  gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Changed files
+        id: changed
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^e2e/sparc/Dockerfile(\.dockerignore)?$
+            ^e2e/sparc/(lab|install|mirror|recording|vgatext|targets|targets_dos)\.py$
+            ^e2e/sparc/lab-requirements\.txt$
+            ^e2e/sparc/scenarios/(_netbsd|_sparc32|_sparc64|netbsd-[a-z0-9-]+)\.py$
+            ^e2e/sparc/tests/test_netbsd\.py$
+            ^\.github/workflows/sparc-lab-netbsd\.yml$
+
+      - name: Published pve-qemu-kvm
+        id: version
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          version=$(curl -fsS --retry 3 https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages \
+            | awk '/^Package: pve-qemu-kvm$/ { p = 1 } p && /^Version:/ { print $2; p = 0 }' | sort -V | tail -n 1)
+          [ -n "$version" ] || { echo "::error::no pve-qemu-kvm in the repository"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Published pve-qemu-kvm: $version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Passed on this version before
+        id: passed
+        if: ${{ github.event_name == 'schedule' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-passed
+          key: netbsd-passed-pve-qemu-kvm-${{ steps.version.outputs.version }}
+          lookup-only: true
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          CHANGED: ${{ steps.changed.outputs.changed }}
+          PASSED: ${{ steps.passed.outputs.cache-hit }}
+        run: |
+          case "$EVENT" in
+            pull_request) run="$CHANGED" ;;
+            schedule) if [ "$PASSED" = "true" ]; then run=false; else run=true; fi ;;
+            *) run=true ;;
+          esac
+          echo "run=${run:-false}" >> "$GITHUB_OUTPUT"
+          echo "Run the NetBSD installs: ${run:-false}" >> "$GITHUB_STEP_SUMMARY"
+
+  unit:
+    name: Unit tests (install catalogue, stored disks)
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -34,26 +104,82 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Unit tests (install catalogue, stored disks)
+      - name: Unit tests
         working-directory: e2e/sparc
         run: python3 -m unittest -v tests/test_targets.py tests/test_stored_disks.py
+
+  netbsd:
+    name: NetBSD install (${{ matrix.target }})
+    needs: [gate]
+    if: ${{ needs.gate.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    # On the lab host: 11.1 sun4u 10-11 min, 9.3 sun4u 18 min (its sysinst is slower), 9.3 on the
+    # SS-5 and SS-20 6-7 min, plus the image build here; a runner under TCG is slower
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: netbsd111-sparc64, iso: NetBSD-11.1-sparc64.iso, timeout: 60 }
+          - { target: netbsd93-sparc64, iso: NetBSD-9.3-sparc64.iso, timeout: 90 }
+          - { target: netbsd93-sparc, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+          - { target: netbsd93-sparc-ss20, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The test checks the cached CD (size, sha256, sha512) and downloads it again when it isn't the
+      # pinned one, so a stale cache costs a download, never a wrong medium
+      - name: Cache the CD
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
 
       - name: Build the lab image
         run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
 
-      - name: Install NetBSD/sparc64 from its CD in the lab
+      - name: Install ${{ matrix.target }} from its CD in the lab
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          mkdir -p "$RUNNER_TEMP/netbsd"
-          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -e NETBSD_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
+          mkdir -p "$RUNNER_TEMP/netbsd" "$RUNNER_TEMP/netbsd-cd"
+          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -v "$RUNNER_TEMP/netbsd-cd:/cache" \
+            -e NETBSD_OUT=/out -e NETBSD_CACHE=/cache -e NETBSD_TARGET="$TARGET" -e WSH_LAB_GUEST_TESTS=1 \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
 
       - name: Keep the evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: netbsd-evidence
+          name: netbsd-evidence-${{ matrix.target }}
           path: |
             ${{ runner.temp }}/netbsd
             !${{ runner.temp }}/netbsd/**/*.raw
             !${{ runner.temp }}/netbsd/**/*.sock
           retention-days: 7
+
+  # Remembers that this pve-qemu-kvm version passed, so the daily check skips it
+  passed:
+    needs: [gate, netbsd]
+    if: ${{ github.event_name == 'schedule' && needs.netbsd.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Marker
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/netbsd-passed"
+          echo "$VERSION" > "$RUNNER_TEMP/netbsd-passed/version"
+
+      - name: Save
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-passed
+          key: netbsd-passed-pve-qemu-kvm-${{ needs.gate.outputs.version }}

@@ -834,6 +834,113 @@ class WebStartSun4u(unittest.TestCase):
             lab.qm, lab.pve_config = orig
 
 
+class WebStartSunProm(unittest.TestCase):
+    """sol8-ss5-prom: sol8-ss5's Web Start install under the Sun PROM (ss5.bin), which boots the
+    mini-root from the reboot's boot string and stops at `ok` after the install."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-webstart-serial.py"))
+
+    def test_target(self):
+        t, base = targets.TARGETS["sol8-ss5-prom"], targets.TARGETS["sol8-ss5"]
+        self.assertEqual(t["profile"], {**base["profile"], "bios": "ss5.bin"})
+        self.assertEqual((t["media"], t["disk"], t["boot"]), (base["media"], base["disk"], base["boot"]))
+        self.assertNotIn("prom_env", t["install"])  # -prom-env is OpenBIOS's; the Sun PROM boots the slice
+        self.assertEqual({k: v for k, v in t["install"].items() if k != "prom_env"},
+                         {k: v for k, v in base["install"].items() if k != "prom_env"})
+        self.assertIn("ss5.bin", t["title"])
+
+    def test_sun_prom(self):
+        self.assertTrue(self.sc.sun_prom({"BIOS": "ss5.bin"}))
+        self.assertFalse(self.sc.sun_prom({"BIOS": "openbios-sparc32"}))
+        self.assertFalse(self.sc.sun_prom({"BIOS": "openbios-sparc64", "ARCH": "sparc64"}))
+
+    def test_mini_root_booted_by_the_prom(self):
+        m = ScriptedConsole("Enter a swap slice size between 384MB and 8000MB [?]\n"
+                            "Can the swap slice start at the beginning of the disk [y,n,?,q]\nIs this OK [y,n,?,q]\n"
+                            "Rebooting to continue the installation.\nsyncing file systems... done\nrebooting...\n"
+                            "Resetting ...\nSPARCstation 5, No Keyboard\n"
+                            "Boot device: /iommu/sbus/espdma@5,8400000/esp@5,8800000/sd@3,0:b   File and args:\n"
+                            "SunOS Release 5.8 Version Generic_108528-13 32-bit\n")
+        self.sc.mini_root(m, {**self.sc.DEFAULTS, "BIOS": "ss5.bin"})
+        self.assertEqual(m.cycles, 0)
+        self.assertNotIn("boot", m.sent[-1])  # nothing typed at a prompt: the PROM booted it
+
+
+class Sol7Sun4u(unittest.TestCase):
+    """sol7-sun4u: suninstall (solaris-install-serial.py) on sun4u, on a Sun-labelled IDE disk (c0t0d0),
+    stopped at `0 >` after the install."""
+    t = targets.TARGETS["sol7-sun4u"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = lab.load_scenario(os.path.join(HERE, "scenarios", "solaris-install-serial.py"))
+
+    def test_target(self):
+        t = self.t
+        self.assertEqual(t["profile"], {**targets.SUN4U_SOLARIS, "memory": 2048})  # 1024: panics in pkgadd
+        self.assertNotIn("memory", t["install"])
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["disk"]["sizes"]), ("ide0", "sun", ["3G"]))
+        self.assertEqual((t["device"], t["boot"], t["nic"]), ("c0t0d0", "ide0", "hme0"))
+        self.assertEqual(t["install"]["vars"]["DISK"], "c0t0d0")
+        self.assertEqual(t["media"], [{"name": "Sol7.399InstallationSparc.iso", "drive": "ide2"}])
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9401", name=None, target="sol7-sun4u")
+        p = install.vm_params(t, a, {"Sol7.399InstallationSparc.iso": "local:iso/Sol7.399InstallationSparc.iso"},
+                              "/tmp/disk-label.raw")
+        self.assertEqual(p["ide0"], "local:0,import-from=/tmp/disk-label.raw,format=raw")
+        self.assertEqual(p["ide2"], "local:iso/Sol7.399InstallationSparc.iso,media=cdrom")
+        self.assertEqual(p["net0"], "sunhme,bridge=vmbr0")
+
+    def test_disk_selection(self):
+        class M(FakeScreen):
+            def expect(self, rx, timeout=60, screen=False):
+                if not re.search(rx, self.screen):
+                    raise lab.Timeout(rx)
+        m = M("─ Select Disks ────\n  [X] c0t0d0   2775 MB  (boot disk)\n")
+        self.sc.disks(m, {**self.sc.DEFAULTS, "DISK": "c0t0d0"})
+        self.assertEqual(m.typed, [])  # already selected
+        with self.assertRaises(lab.Timeout):  # sun4m's default disk isn't there
+            self.sc.disks(M("─ Select Disks ────\n  [X] c0t0d0   2775 MB\n"), dict(self.sc.DEFAULTS))
+
+    def test_f2_again_on_an_unchanged_screen(self):
+        self.assertEqual(self.t["install"]["vars"]["KEY_RETRY"], "180")
+        self.assertEqual(self.sc.DEFAULTS["KEY_RETRY"], "0")  # sun4m: as before
+        old = "─ Mount Remote File Systems? ────\n  Esc-2_Continue\n"
+        new = "─ Profile ────\n  Esc-2_Continue\n"
+        calls = []
+
+        def fake_next(m, prev, timeout=600):
+            calls.append(timeout)
+            if len(calls) < 2:
+                raise RuntimeError("the installer didn't move on")
+            return new
+
+        m = FakeScreen(old)
+        m.snap = lambda title: None
+        orig, self.sc.next_screen = self.sc.next_screen, fake_next
+        try:
+            self.assertEqual(self.sc.press_on(m, old, 180), new)
+            self.assertEqual((calls, m.typed), ([180, 180], ["f2"]))
+            calls.clear()
+            m.screen = new  # the screen did change: no second F2, the failure stands
+            with self.assertRaises(RuntimeError):
+                self.sc.press_on(m, old, 180)
+            calls[:] = [0]
+            self.assertEqual(self.sc.press_on(m, old, 0), new)  # KEY_RETRY 0: next_screen's own wait
+        finally:
+            self.sc.next_screen = orig
+
+    def test_panic_during_the_packages_fails_the_install(self):
+        self.assertTrue(re.search(self.sc.PANIC, "panic[cpu0]/thread=70179200: segkp_badop"))
+        self.assertFalse(re.search(self.sc.PANIC, "Executing JumpStart postinstall phase"))
+
+    def test_halt_stops_at_the_prompt(self):
+        m = ScriptedConsole("syncing file systems... done\nProgram terminated\n0 > ")
+        self.sc.halt_sun4u(m)
+        self.assertEqual((m.sent, m.stopped), (["sync; halt\r"], True))
+
+
 class SunOS4(unittest.TestCase):
     """sunos414-ss5: the converted CD, the install-phase memory, the refused network options and the
     sys-config screens of the first boot."""

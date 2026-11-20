@@ -16,6 +16,10 @@ redistributable and the CI test downloads it by sha256 (FREEDOS_ZIP).
 
 PACKAGES_2026_11_17 = {"pve-qemu-kvm": "11.1.3-2+wsh11", "qemu-server": "9.2.15+wsh6",
                        "pve-manager": "9.2.28+wsh4"}
+# the published packages of 2026-11-20 (qemu-server with the branch's legacy-bios-layout overlaid, which
+# the DOS profile doesn't use)
+PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+wsh2",
+                       "pve-manager": "9.2.31+wsh4"}
 
 X86_DOS = {"ostype": "other", "machine": "pc", "cpu": "pentium", "kvm": 0, "memory": 32, "balloon": 0,
            "tablet": 0, "vga": "std", "net0": "ne2k_pci", "boot": "order=floppy0;ide0"}
@@ -52,6 +56,11 @@ for _n, _sha in enumerate(["552f7cbb0625960c050a3e682a4d2121cc2ffdfa9dc9d592ccd4
         "content": "floppy", "size": 1474560, "sha256": _sha, "lab": f"freedos/14/{_src}",
         "zip": f"144m/{_src}"}
 
+# The check fails when the guest idling at the prompt uses this much of a host core or more: with its idle
+# driver DOS takes 1-2% (MS-DOS: WSHIDLE.COM, which the first boot puts in AUTOEXEC.BAT; FreeDOS: FDAPM
+# APMDOS, which its installer puts in FDAUTO.BAT), without one 100%.
+IDLE_BELOW = "25"
+
 DOS_LOGIN = {"user": None, "password": False, "console": "VGA (noVNC console of VM <vmid>); no serial port"}
 
 TARGETS = {
@@ -65,18 +74,20 @@ TARGETS = {
                   {"name": "msdos622-disk2.img", "drive": "floppy0", "at": r"Setup Disk #2"},
                   {"name": "msdos622-disk3.img", "drive": "floppy0", "at": r"Setup Disk #3"}],
         # SETUP partitions (reboots), formats, copies with two disk swaps, asks for the floppy to be
-        # removed and boots the disk; the first boot writes CONFIG.SYS, AUTOEXEC.BAT and the marker.
+        # removed and boots the disk; the first boot types in WSHIDLE.COM with DEBUG and writes CONFIG.SYS,
+        # AUTOEXEC.BAT (which loads it) and the marker.
         "install": {"scenario": "dos622-install.py", "vars": {}, "timeout": 1800},
         "firstboot": {"scenario": "dos-firstboot.py", "vars": {"FLAVOUR": "msdos"}, "timeout": 900},
-        "check": {"scenario": "dos-boot-disk.py", "vars": {"VERSION": r"MS-DOS Version 6\.22"}, "timeout": 600},
+        "check": {"scenario": "dos-boot-disk.py", "vars": {"VERSION": r"MS-DOS Version 6\.22",
+                                                           "IDLE_BELOW": IDLE_BELOW}, "timeout": 600},
         "boot": "ide0",
         "login": DOS_LOGIN,
         "marker": "C:\\WSHLAB.TXT",
         "hostname": "-",
         "network": "none: an ne2k_pci NIC (RTL8029) without a DOS driver loaded",
         "net_modes": ["none"],  # no network settings in the guest; --bridge and --vlan for the NIC
-        "minutes": 5,  # 4.1-4.7 min: install ~42 s, first boot ~165 s (longer marker since #283), --check ~18 s
-        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
+        "minutes": 8,  # 7.4 min: install ~79 s, first boot ~281 s (WSHIDLE.COM typed in), --check ~44 s (15 s idle)
+        "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20, "with": "--check"},
     },
     "freedos14": {
         "title": "FreeDOS 1.4 from the Floppy Edition (base install, i440fx, SeaBIOS, Pentium, std VGA)",
@@ -90,7 +101,8 @@ TARGETS = {
                  + [{"name": f"freedos14-disk{n}.img", "drive": "floppy0", "at": "scenario"} for n in range(1, 7)],
         "install": {"scenario": "freedos-install.py", "vars": {}, "timeout": 2400},
         "firstboot": {"scenario": "dos-firstboot.py", "vars": {"FLAVOUR": "freedos"}, "timeout": 900},
-        "check": {"scenario": "dos-boot-disk.py", "vars": {"VERSION": r"Free(DOS|Com)"}, "timeout": 600},
+        "check": {"scenario": "dos-boot-disk.py", "vars": {"VERSION": r"Free(DOS|Com)",
+                                                           "IDLE_BELOW": IDLE_BELOW}, "timeout": 600},
         "boot": "ide0",
         "login": DOS_LOGIN,
         "marker": "C:\\WSHLAB.TXT",

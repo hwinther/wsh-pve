@@ -145,7 +145,7 @@ docker run --rm -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro 
 | `display-x` | `fb-display.py X=1 INPUT=1 IDLE=60`: the 2.6 disks (TCX packages added by `PREPARE`) into the CDE desktop on TCX 8, TCX 24 and cg3 with SS-5 (OpenBIOS, `ss5.bin`: not TCX 24), SS-10 and SS-20 (OpenBIOS) | ~100 min |
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%), Solaris 2.6 on SS-20 with 2 and 4 CPUs and `solaris-smp-idle` (below 20%, `sparc_solaris_idle_mp_match` traced) and with 2 CPUs and `solaris-smp-idle=off` (above 150%) | ~45 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
-| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/os/disks` | ~25 min |
+| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle: halted in its idle loop (below 10% of a core, `sparc64_idle_match` traced) and with `idle-halt=off` (above 80%; both need a package with pve-qemu `wsh/0042`-`0044`); needs `--disks /mnt/os/disks` | ~30 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 | `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
@@ -427,13 +427,22 @@ findings).
   lost. With `--keyboard no` the check switches to the US layout with Ctrl-Alt-F1 before typing.
 - **Phases:** `dos622-install.py` (SETUP: configure the unallocated space, restart, format,
   settings, `C:\DOS`, disks 2 and 3 through the swapper, remove the floppy, first boot to `C:\>`),
-  `dos-firstboot.py` (known `CONFIG.SYS`/`AUTOEXEC.BAT` without SMARTDRV, the marker `C:\WSHLAB.TXT`),
-  `dos-boot-disk.py` (`VER`, the marker, `MEM`). `freedos-install.py` answers FDI (partition and
-  reboot, format, six disk swaps, eject before the last reboot). All scenarios also run under the
+  `dos-firstboot.py` (known `CONFIG.SYS`/`AUTOEXEC.BAT` without SMARTDRV, the idle TSR
+  `C:\DOS\WSHIDLE.COM` typed in with `DEBUG` by `_dos.debug_write` and loaded by `AUTOEXEC.BAT`, the
+  marker `C:\WSHLAB.TXT`), `dos-boot-disk.py` (`VER`, the marker, `MEM`, and with `IDLE_BELOW` the
+  host CPU of the VM idling at the prompt: both targets check below 25% of a core).
+  `freedos-install.py` answers FDI (partition and reboot, format, six disk swaps, eject before the
+  last reboot). All scenarios also run under the
   lab's own QEMU (`_dos.qemu_args`: `FLOPPY`, `DISK`, `DISK2`, `OPTION_ROMS`, ...).
+- **Idle:** DOS keeps a host core at 100% at its prompt without an idle driver. MS-DOS gets
+  `WSHIDLE.COM` (`dos_tools.py com --name wshidle`: `STI; HLT` in INT 28h and INT 2Fh AX=1680h, 142
+  bytes, assembled in Python from hand-encoded instructions); FreeDOS's installer already loads
+  `FDAPM APMDOS`. `scenarios/dos-idle.py` measures it (host CPU at the prompt, the BIOS timer, a typed
+  `ECHO`, `BUSY`: programs that count loop iterations, `dos_tools.py com --name busy|busyk`); numbers
+  and the comparison with `POWER.EXE` in the DOS guide, "Idle".
 - **CI** (`.github/workflows/sparc-lab-dos.yml`, GitHub-hosted): the unit tests, then
   `tests/test_freedos.py` in the lab image: FreeDOS downloaded by sha256, installed from its seven
-  floppies, booted from the disk, marker checked. No Microsoft media.
+  floppies, booted from the disk, marker and idle checked. No Microsoft media.
 
 Tested in the PVE test container on the lab host (TCG, published packages pve-qemu-kvm
 11.1.3-2+wsh11, qemu-server 9.2.15+wsh6, pve-manager 9.2.28+wsh4), 2026-11-17:
@@ -448,11 +457,22 @@ Tested in the PVE test container on the lab host (TCG, published packages pve-qe
 | `pve_matrix.py pve` and `matrix.py smoke` on the rebased branch | 5/5 and 3/3 passed | |
 | the MCP server (`tests/test_mcp_server.py`, and `screen_text` on a FreeDOS guest under `lab.py serve`) | 6 tests passed; `method: vga-text`, 6 ms per call | |
 
+With the idle driver (published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2, pve-manager
+9.2.31+wsh4), 2026-11-20:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install msdos622 --vmid 9302 --check --export /mnt/os/disks` | passed: `WSHIDLE.COM` typed in (142 bytes, `DIR` checked), `MEM` 621K free, idle 2.3% of a core; stored disk replaced | 7.4 min (install 79 s, first boot 281 s, check 44 s) |
+| `boot-test msdos622` / `boot-test freedos14` from the stored disks | passed, idle 2.5% / 1.8% | 0.9 / 1.3 min |
+| unit tests (`test_dos.py`, `test_targets.py`, `test_vgatext.py`, `test_stored_disks.py`, `test_freedos.py` skipped without `WSH_LAB_GUEST_TESTS`) | 169 passed, 2 skipped | 6 s |
+| `dos-boot-disk.py IDLE_BELOW=25` under the lab's own QEMU (TCG) on a copy of the stored FreeDOS disk, as `test_freedos.py` runs it | passed, idle 0.9% | 49 s |
+
 ### The first-megabyte matrix
 
 `dos_mem.py --vmid <installed msdos622> --runs DIR` measures what DOS gets of 640K-1M per VM variant
 (VGA model, NIC and its option ROM, dummy option ROMs of 4K/32K/100K, the owner's original dummy
-file, `apic-common.vapic=off`) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
+file, `apic-common.vapic=off`, and `legacy-layout`: qemu-server's `machine: pc,legacy-bios-layout=1`,
+which needs a qemu-server with it) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
 `I=` the free gap, `I=` into SeaBIOS's data). It adds the tools disk as D: (`dos_tools.py`: a FAT16
 image built with mtools from the owner's utility CD, never committed; a disk rather than a floppy
 or the CD because a CD needs MSCDEX, which would take the memory being measured), writes the ROMs to
@@ -618,7 +638,8 @@ elsewhere: apt fails to connect). Without a cache the matrix skips the Debian ta
 disk) and changes nothing on `vmbr0`. The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
 `reinstall` input (empty by default: boot-test what is stored, install what is missing); any
 `reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
-a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
+a new Tribblix disk on the runner. The workflow runs `install` weekly (Sunday 07:17 UTC) and with
+`reinstall=all` on the first Saturday of the month (07:17 UTC, 720 minutes). By hand on the node (or in the PVE test container):
 
 ```sh
 wsh-lab install tribblix-m34-sun4u --vmid 9401 --check --export /mnt/os/disks   # ~4.3 h, once
@@ -775,9 +796,36 @@ Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab, pve-
 `pve_matrix.py install` installs both too (about 67 min more for the `install` choice, which needs
 the 8 2/02 CDs and the 9 9/05 DVD in `--iso`). The same releases install on sun4u too: "Solaris 8
 and 9 on sun4u" below. Not tried: `--ip dhcp`, `--disk-size 3G` and the
-other network options with these two, `ss5.bin`
-for Solaris 8, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
+other network options with these two, and repeated runs of `sol9-ss5` (one PVE run, and one in the matrix). The SS-20 hang with 8 2/02 happened once in
 two runs and wasn't diagnosed.
+
+**Under the Sun PROM: `sol8-ss5-prom`.** The same 8 2/02 install on an SS-5 with `bios: ss5.bin`.
+The Installation CD boots from the plain `scsi-cd` (no `cd_as_disk`), and the VM needs no `args`:
+the Sun PROM honours the boot string that OpenBIOS drops. Two places in `solaris-webstart-serial.py`
+differ (`sun_prom()`: a sun4m VM whose `BIOS` isn't OpenBIOS):
+
+- After the mini-root copy the PROM resets and prints `Rebooting with command: .../sd@3,0:b` and
+  `Boot device: ...sd@3,0:b`, then boots the mini-root by itself; `mini_root()` waits for that
+  (`SUN_PROM_BOOT`) instead of a prompt and types nothing.
+- After the installer's last Return the PROM resets, tries its default boot device (the network:
+  `Boot device: /iommu/sbus/ledma@5,8400010/le@5,8c00000`, `Did not receive expected loopback
+  packet`) and stops at `ok`. The SS-5 PROM has no `power-off`, so the scenario stops the VM there
+  (`qm stop`), as after a sun4u install.
+
+The first boot and the check are `sol251-ss5`'s Sun PROM paths in `_sparc32` (`No Keyboard`, `boot
+disk`), unchanged. Through PVE (the PVE test container from `e2e/pve/Dockerfile` with the lab,
+published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4; up to three
+other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol8-ss5-prom --check --export /mnt/os/disks` | passed; both Software CDs swapped in, `SunOS sol8-ss5-prom 5.8 Generic_108528-13 sun4m sparc SUNW,SPARCstation-5`, the marker, `/` 1237902 KB (713405 used) on `c0t3d0s0`, `/export/home` 5878709 KB, `le0` 10.0.2.15/24; stored disk and sidecar | 47.2 min (install 2439 s, first boot 240 s, check 115 s) |
+| `boot-test sol8-ss5-prom --disk /mnt/os/disks/install-sol8-ss5-prom.raw` | passed | 2.2 min |
+
+About ten minutes slower than `sol8-ss5` under OpenBIOS, most likely the busier host (one run each
+on different days). `pve_matrix.py install` installs it too (about 47 min the first time, then a
+boot test of its stored disk; the same 8 2/02 CDs in `--iso`). Not tried: a second run, Solaris 9 under `ss5.bin`, and the network options other than the
+default static address.
 
 ### Solaris 8 and 9 on sun4u
 
@@ -833,10 +881,52 @@ mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boo
 the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
 passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
 boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
-min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
-it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
-set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
-`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
+min the first time, then a boot test of its stored disk). Solaris 7 is the next section.
+
+### Solaris 7 on sun4u
+
+`sol7-sun4u` (7 3/99, End User) runs suninstall, `solaris-install-serial.py`, on the sparc64 profile
+with 2048 MB, the CD on `ide2` and a 3 GiB disk on `ide0` with the SUN2.9G label (`sun_disk("3G",
+bus="ide0")`: suninstall lists only labelled disks, and Solaris's `dad` driver takes the template's
+label on the IDE disk as it is). The sun4m answers serve unchanged; what is new in the scenario:
+
+- **The disk** is `DISK` (`c0t0d0`; default `c0t3d0`), in `disks()` and the target's `device`.
+- **The end:** the installer ends at a root shell, as on sun4m; on sun4u `halt` returns to OpenBIOS's
+  `0 >` (no power-off for Solaris), and `halt_sun4u()` stops the VM there. No reboot happens during
+  the install, so no power cycle.
+- **2048 MB:** with 1024 MB the kernel panicked as the package copy began in both installs
+  (`panic[cpu0]/thread=70179200: segkp_badop`; `BAD TRAP: ... type=0x31 ... pkginstall`, an illegal
+  access to a user address in `unix`); with 2048 MB the two installs that got that far copied
+  the packages. Not diagnosed. A panic during the packages now fails the scenario at once (`PANIC`)
+  instead of after the 7200 s wait for the postinstall phase.
+- **F2 again (`KEY_RETRY=180`):** in two of the runs suninstall sat on a screen for 10 minutes after
+  F2 (`Preserve Data?`, `Mount Remote File Systems?`), the kernel alive (hme0's `Link Up` every
+  30 s). In the first, a second guest with the same address was on the bridge (`IP: Hardware address
+  ... trying to be our address`), the second had no such message. `press_on()` sends F2 once more
+  when the same screen is still up after 180 s (twice at most); the sun4m targets keep `KEY_RETRY=0`.
+  The passing runs didn't need it, so the repeat itself is tested only by the unit test.
+- **Slower CD boot:** IDE timeouts (`timeout: abort request ... reset bus`) and `Interrupt not seen
+  after set_features` while the CD boots, about 4 minutes from the kernel banner to `Select a
+  Language` (`FIRST_PROMPT_TIMEOUT=1200`). The installed system prints the same warning once.
+
+The installed system boots the 64-bit kernel (`SunOS Release 5.7 Version Generic_106541-02 64-bit`);
+the first boot and the check are `solaris-firstboot.py` and `solaris-boot-disk.py`, unchanged.
+
+Through PVE (the PVE test container, published pve-qemu-kvm 11.1.3-2+wsh26, qemu-server 9.2.19+wsh2,
+pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol7-sun4u`, 1024 MB | the screens answered, `c0t0d0` selected; `segkp_badop` panic at `Beginning Solaris software installation` | stopped at 7 min |
+| the same, 1024 MB, a second run | `BAD TRAP ... pkginstall`, `panic[cpu0]: trap` at the same point | 6.9 min |
+| install with 2048 MB for the install phase only, without `--check` | passed; the first boot (1024 MB) reached `console login:`, set the marker and network | 21.3 min (install 880 s, first boot 374 s) |
+| `install sol7-sun4u --check --export`, 2048 MB (another guest with 10.0.2.15 on the bridge) | failed: no reaction to F2 on `Preserve Data?` for 10 min | 17.2 min |
+| the same with `--ip 10.0.2.32`, alone on its address | failed: no reaction to F2 on `Mount Remote File Systems?` for 10 min | 16.9 min |
+| the same with `KEY_RETRY=180` (`--ip 10.0.2.32`) | passed, no F2 repeated; `SunOS sol7-sun4u 5.7 Generic_106541-02 sun4u`, the marker, `/` 125103 KB, `/usr` 412907 KB (73% used), `/export/home` 1904237 KB on `c0t0d0`, `hme0` 10.0.2.32/24; stored disk and sidecar | 24.5 min (install 814 s, first boot 380 s, check 254 s) |
+| `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
+
+Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
+and 2.6 or 2.5.1 on sun4u (their boot blocks stop in OpenBIOS: `submodules/SPARC.md`).
 
 ### Solaris 2.4 and 2.5.1
 
@@ -975,10 +1065,15 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | SunOS 4.1.3_U1B | SS-10, OpenBIOS, 64 MB | yes | yes (132 s) | not tried | |
 | Solaris 2.1 | SS-10, OpenBIOS | no | | | `Unhandled Exception 0x00000009` as 2.3 |
 | Solaris 2.1 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | kernel only | | | after device configuration `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` (also `-cpu TI-SuperSparc-40`) |
-| Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in a recursive walk early in the kernel, most likely over the device tree (`SunOS Release 5.1`) |
+| Solaris 2.1 | the same with a QEMU change (a local build of 11.1.3 with wsh/0001-0041; `submodules/SPARC.md`) | yes (52 s) | yes (5.0 min; 2.1's suninstall: Standalone Quick Install, End-User Cluster) | yes | `SunOS sol21-ss10 5.1 Generic sun4m sparc`; `/opt` and `/export/home` not mounted at boot (by hand they mount) |
+| Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in `get_neighbors` (from `impl_init_tree`): a strcmp on the name of the SBus node the PROM makes, without a name, for QEMU's DBRI stub in slot e. `ss10_v2.25_rom` on the SS-20 the same |
+| Solaris 2.1 | SS-20, `ss10_v2.25_rom` -50 ("SPARCstation 10BSX"), 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1` | kernel only | | | with the node named the kernel gets as far as under OpenBIOS: `Trap 0x21` at `pc f0014768`; the installed disk too |
+| Solaris 2.1 | the same with the QEMU change | yes | yes (4.9 min, `solaris-install-serial.py`) | yes (first boot 1.4 min, check 1.3 min) | `SunOS sol21-ss10 5.1 Generic sun4m sparc`; the OpenBIOS-installed disk boots there too, and `ss20_v2.25_rom` boots the PROM-installed one (2026-11-20) |
+| Solaris 2.1 | SS-10, OpenBIOS, 2 CPUs, the QEMU change | kernel only | | | the installed disk: `Trap 0x21` at `pc fbe78060`, called from `cpu_startup` (the second CPU's start); not traced |
 | Solaris 2.2 | SS-10, OpenBIOS, CD as a disk | no | | | `Unhandled Exception 0x00000009` |
 | Solaris 2.2 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (the 2.3 path) | yes | `SunOS solaris 5.2 Generic sun4m` |
-| Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` |
+| Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` (the unnamed node) |
+| Solaris 2.2 | the same with `PROM_NAME_UNNAMED=1` (QEMU 11.1.3 with wsh/0001-0041, no other change) | yes (55 s) | not tried | | 2026-11-20 |
 | SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root: a probe read of physical `0xd.0108_0000`, where QEMU has nothing (`submodules/SPARC.md`) |
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
@@ -1166,13 +1261,16 @@ memory, SS-10, and the sets other than these two.
 
 **In CI.** The NetBSD CDs are freely redistributable, so `sparc lab NetBSD`
 (`.github/workflows/sparc-lab-netbsd.yml`, on pull requests that change `e2e/sparc` and by hand)
-runs `tests/test_netbsd.py` in the lab image on a GitHub-hosted runner: it downloads
-`NetBSD-11.1-sparc64.iso` from `cdn.netbsd.org` (the URL in `targets.MEDIA`), checks its size and
-sha256, and runs the target's three scenarios with the lab's own QEMU (TCG, sun4u): install, first
-boot (password, marker, host name, a static address and router), check (logs in with the password,
-requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
-is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
-45). Not run on GitHub yet.
+runs `tests/test_netbsd.py` in the lab image on GitHub-hosted runners, one job per target:
+`netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20`
+(`NETBSD_TARGET`; without it the test runs `netbsd111-sparc64`). Each job downloads its CD from the
+URL in `targets.MEDIA` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for 9.3; cached between
+runs), checks its size, sha256 and sha512 (the release's `images/SHA512`), and runs the target's
+three scenarios with the lab's own QEMU (TCG; sun4u, or the SS-5/SS-20 with `_sparc32`'s machine):
+install, first boot (password, marker, host name, a static address and router), check (logs in
+with the password, requires the marker and `inet 10.0.2.15/24`). On the lab host the 11.1 sun4u
+run took 623 s; the jobs' limits are 60 min (11.1 sun4u), 90 min (9.3 sun4u, whose sysinst is
+twice as slow) and 45 min (9.3 on the SS-5 and SS-20).
 
 ### The OpenBSD 8.0 install target
 
@@ -2061,6 +2159,24 @@ Which guests stop spinning the host CPU when idle, and the results, are in `subm
 driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then lists `pmc (Power
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 
+On sun4u (`scenarios/sparc64-idle.py`) the guests idle through the `idle-halt` machine option (pve-qemu
+`wsh/0042`-`0044`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
+shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`). The stored install disks
+(`/mnt/os/disks/install-*-sun4u.raw`, `install-netbsd*-sparc64.raw`) take `PASSWORD=wshlab`; each guest
+does something for a while after boot, which `WAIT` ends or waits out before the measurement:
+
+| Guest | Variables |
+| --- | --- |
+| NetBSD 9.3, 11.1 | `GUEST=netbsd`, `WAIT=pkill makemandb; sleep 2` (the copied disk rebuilds its manual page index at every boot) |
+| OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
+| Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
+| Solaris 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
+| Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
+
+`LOAD` needs a POSIX shell, so it is for the BSDs only; on Solaris the scenario's `awk` job reads
+`/dev/null` (Solaris's old `awk` reads its input even with only a `BEGIN` rule, and swallowed the
+commands typed after it).
+
 `netbsd111-installed.raw` is NetBSD 11.1 from `NetBSD-11.1-sparc.iso` (`ISO=...`, `VGA=none`, by hand
 through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Return, `I`; sysinst: `a`
 (English), `a` (install), `b` (yes), `a` (sd0), `b` (default partition sizes), `x`, `b`, `c` (Minimal
@@ -2286,7 +2402,7 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
-| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
+| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
 defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`

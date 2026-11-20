@@ -73,6 +73,13 @@ maintains the patches.
 | `0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes` | qtest `sun4m-esp-test` for 0038: Select with ATN and Stop, an SDTR message and TEST UNIT READY byte by byte on the SS-5's ESP without DMA; the command phase lasts until the sixth byte, the command gets GOOD (after the reset's unit attention) | ours (in review) | not in QEMU |
 | `0040-esp-let-the-interrupt-come-late-as-from-a-real-targe` | The ESP finishes a command in the register write that started it and raised its interrupt in the same instruction. NeXTSTEP 3.3 and OPENSTEP 4.2 then saw the command end while the issuing thread held their SCSI driver's lock, ran the completion at PIL 4 and spun on that lock for good: every install hung on the disk. `sysbus-esp` gets `irq-latency-us`, 0 (off) on every machine: set, the interrupt, `STAT_INT` and the line together, comes from a timer that long after the event; the interrupt register and the bus phase are set at once (OpenBIOS polls the interrupt register); reading it, the chip's reset command and a device reset cancel a pending interrupt, and migration carries it (subsection `esp/irq_pending`). Per VM through qemu-server's `machine: SS-5,esp-irq-latency=500` ("qemu-server"). At 500 every ESP interrupt comes 0.5 ms later, about 2 ms per disk command, so it stays off unless a guest needs it ("NeXTSTEP 3.3 and OPENSTEP 4.2") | ours | not fixed; see `upstream/qemu-esp-irq-latency.md` (#2620, #2674) |
 | `0041-tests-qtest-test-the-ESP-interrupt-latency-on-sun4m` | qtest `sun4m-esp-test` for 0040, four more cases on the SS-5 (the line read through the ESP DMA's `DMA_INTR`): by default the interrupt comes at once; with `-global sysbus-esp.irq-latency-us=500`, after Select with ATN and Stop neither `STAT_INT` nor the line shows for 500 us, both do then; the interrupt register has its bits at once, and reading it, the chip's reset command and a system reset cancel the interrupt | ours | not in QEMU |
+| `0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-` | Every sun4u guest spun in its idle loop and kept a host core at 100% for as long as the VM ran: no kernel that runs on QEMU's sun4u can stop an UltraSPARC-IIi (Solaris and illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` is patched in only on CPUs with several strands). The translator recognises the call in the idle loop of NetBSD 9 and 11 (`cpu_idle()`), OpenBSD (`cpu_idle_cycle()`) and Solaris 9, 10 and illumos (`idle_cpu`, as Sun's compiler and as gcc lay it out) by the words around it, and halts the CPU there while the word that says there is work (`ci_want_resched`, `spc_whichqs`, `disp_nrunnable`) is 0, interrupts are enabled at level 0 and nothing is pending; the next interrupt wakes it ("sparc64 (sun4u)", "Idle"). `-trace sparc64_idle_match` shows the match | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0043-hw-sparc64-sun4u-add-the-idle-halt-option-on-by-defa` | `-M sun4u,idle-halt=on\|off` for 0042, on by default (sun4u has one CPU); not on `sun4v` | ours | not in QEMU |
+| `0044-tests-qtest-test-the-idle-halt-on-sun4u` | qtest `sun4u-idle-test` for 0042-0043: a boot PROM with each recognised loop layout (NetBSD, OpenBSD, Solaris 10, Tribblix) must stop counting when idle, and keep counting with `idle-halt=off`, with work, with interrupts disabled and at PIL 15; with a 1 ms tick each tick must wake it, run its handler, and the loop must run far fewer rounds than with `idle-halt=off` | ours | not in QEMU |
+| `0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request` | The sabre keeps one interrupt request to the CPU at a time and makes the next when the guest clears the current one; an OBIO interrupt waited for that, a PCI interrupt replaced the outstanding request. The CPU drops a vector sent while it is busy, so a PCI interrupt arriving between the first request and the guest's acknowledge was lost, the guest's clear of the first request was ignored (no longer `irq_request`), and every OBIO interrupt (IDE, serial console) stayed blocked: OpenBSD 8.0's `wd0: timeout`, then a guest that takes no interrupt, with the NIC on pciB ("sparc64 (sun4u)", "IDE timeouts without ntpd") | ours | not fixed; see `upstream/qemu-sabre-pci-interrupt-replaces-request.md` |
+| `0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s` | qtest `sun4u-sabre-irq-test` for 0045: the sabre's lines driven from the test, its requests intercepted; a PCI interrupt raised while the IDE request or another PCI request is outstanding waits until the guest clears it, and the serial console's interrupt gets through after both; fails without 0045 | ours | not in QEMU |
+| `0047-target-sparc-keep-fetching-from-the-current-page-acr` | Solaris 2.1 stopped QEMU after its device configuration: `Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`). Its kernel switches, with traps disabled, to a context whose level 1 table it hasn't filled yet, flushes it and switches back, all in one page of kernel text; QEMU's TLB flush on the context write made the next fetch walk the new context and fail. A context register change now keeps the old context's translation of the writing instruction's page, and an instruction fetch in that page that fails with traps disabled uses it (execute only); trace event `sparc_mmu_ifetch_hold` ("Older Sun releases on sun4m") | ours | not fixed; see `upstream/qemu-sparc32-context-switch-ifetch.md` |
+| `0048-tests-qtest-test-an-instruction-fetch-across-a-conte` | qtest `sun4m-mmu-ctx-ifetch-test` for 0047: a boot PROM switches with traps disabled to a context that maps other RAM and not the PROM, stores, flushes the context, stores and switches back; both stores must land in that context's RAM and the PROM must reach its end (SS-10, SS-5). With traps enabled the first fetch there must take an instruction access exception. The traps-off cases fail without 0047 (QEMU stops with the same `Trap 0x21`), also on plain QEMU 11.1.3 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -169,11 +176,37 @@ passed when re-run with them). With 0001-0039 the `qtest-sparc` and `qtest-sparc
 and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-idprom-test` 5/5,
 `sun4u-softint-test` 1/1, `sun4u-cmd646-test` 3/3, every sun4m qtest above).
 
+0042-0044 apply on top of 0001-0041 with `patch -F0`. `sun4u-idle-test` passes 24/24 with them;
+against the binary built without them its first case, `netbsd/idle`, fails (the loop went on: 6.1
+million rounds in 300 ms), and against an earlier build of 0042 that took a BPcc branch only on `%icc`,
+`tribblix/idle` fails (its loop ends with `ba,pt %xcc`, as Tribblix's gcc lays it out).
+With 0001-0044 the `qtest-sparc` and `qtest-sparc64` suites: 41 OK, 4 skipped, and the two
+`qmp-test` `oob` failures as before (`sun4m-solaris-idle-test` 5/5, `sun4m-solaris-smp-idle-test`
+4/4). Lab regression with the 0001-0044 `qemu-system-sparc64` (2026-11-20): `sparc64` 10/10 (with the
+new `nb111-idle-sparc64`, 2.7%, and `nb111-noidle-spins-sparc64`, 100.5%), `solaris10` 2/2, and
+`wsh-lab boot-test` through PVE (the binary bind-mounted into the test node, packages 11.1.3-2+wsh26) of
+the stored disks of `netbsd111-sparc64`, `netbsd93-sparc64`, `openbsd80-sun4u`, `sol9-sun4u`,
+`sol10-sun4u` and `tribblix-m34-sun4u`: 6/6 passed (Tribblix 33.7 min). Results under "sparc64 (sun4u)", "Idle".
+
+0047-0048 apply on top of 0001-0046 with `patch -F0`. `sun4m-mmu-ctx-ifetch-test` passes 4/4 with
+them; against the binary built from 0001-0046 its two `traps-off` cases stop QEMU with `Trap 0x21
+(Instruction Access Error) while interrupts disabled` at the first fetch in the new context (as
+Solaris 2.1 does), and the two `traps-on` cases pass. Plain QEMU 11.1.3 (no patch of ours or
+LEMU's) fails the same way. With 0001-0048 the `qtest-sparc` and `qtest-sparc64` suites: 43 OK, 4
+skipped, and the two `qmp-test` `oob` failures as before. Lab boots with the 0001-0048 binaries
+(2026-11-20, OpenBIOS 0001-0026, `solaris-boot-disk.py` on copies of the stored disks, trace event
+`sparc_mmu_ifetch_hold` on): the installed `sol21-ss10` disk's first boot passes (`SunOS
+sol21-ss10 5.1 Generic sun4m sparc`, 42 uses of the kept translation); `sol22-ss10`,
+`sol23-ss5`, `sol24-ss20` and `sol251-ss5` pass with no use; `netbsd93-sparc64` (sun4u,
+`netbsd-boot-disk.py`) passes with the same build's `qemu-system-sparc64`. The same 2.1 disk on
+plain QEMU 11.1.3 stops at `pc f0014768` 12 s after the kernel banner.
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
-`sun4m-fsr-rd-test`, `sun4m-cs4231-test` and `sun4m-esp-test` (sparc),
-`sun4u-cmd646-test`, `sun4u-idprom-test` and `sun4u-softint-test` (sparc64) and `am53c974-test` (i386).
+`sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test` and `sun4m-mmu-ctx-ifetch-test` (sparc),
+`sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
+`am53c974-test` (i386).
 
 ### QEMU 7.2
 
@@ -1549,8 +1582,8 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.5 HW 1/96 | SS-5 and SS-20, OpenBIOS, CD as a disk | installs (~5 min) and boots; targets `sol25-ss5`, `sol25-ss20` (~9 min). From a `scsi-cd` the kernel hangs after its banner |
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
-| Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx` in its symbol table); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root` |
-| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, while walking the device tree (64 and 256 MB) |
+| Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below, not in a package yet) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); catalogue entry `sol21-ss10` |
+| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
@@ -1599,17 +1632,66 @@ package, ours mounted over its `openbios-sparc32`/`openbios-sparc64`): `smoke` 3
 `sparc64` 9/9, `solaris10` 2/2, and OpenBSD 8.0's installed sun4u disk to `login:` (0023).
 
 What it would take for the rest:
-- **Solaris 2.1/2.2 on the SS-20 PROM:** they predate the SS-20 and its SuperSPARC/PROM 2.25 device
-  tree; the panic is a null pointer read in a recursive walk early in the kernel (`pc=0xf002b300`,
-  the traceback calls the same function five levels deep), most likely over the device tree.
-  Either a node their kernels can't handle (find it by removing nodes in QEMU's SS-20 or in the
-  PROM's tree with `nvramrc`) or SS-10 Sun PROM support in QEMU's SS-10 (`Cpu #0 Data Access
-  Error` at its memory probe, "SS-10 and SS-20").
-- **Solaris 2.1 on SS-10 (OpenBIOS):** with 0019-0022 it gets through device configuration, then
-  QEMU itself stops (`Trap 0x21 ... while interrupts disabled, Error state`) right after the
-  kernel's SRMMU context flush: an instruction fetch whose translation (or table walk) ends on a
-  physical address with nothing behind it. A QEMU SRMMU/SuperSPARC matter, not the firmware; next
-  step `-d mmu,int` around `srmmu_mmu_flushctx` to see the context table and the failing walk.
+- **Solaris 2.1/2.2 on the SS-20 PROM, diagnosis (2026-11-20):** the node is QEMU's. Its SS-20
+  puts an unimplemented device (reads 0) where the DBRI's FCode PROM would be (`sun-DBRI.prom`,
+  SBus slot e); the Sun SS-20 and SS-10 PROMs make an SBus node for it without a `name` (`ls` in
+  `/iommu/sbus`: `<Unnamed>`), and the 2.1/2.2 kernels strcmp its name: the traceback is
+  `get_neighbors` (`$nowalgnd` in strcmp, `pc=0xf002b300`), `di_dfs` three levels deep,
+  `impl_init_tree`, `startup`. Later releases don't mind. Named at the PROM prompt before `boot`
+  (the lab's `PROM_NAME_UNNAMED=1`: `<phandle> <setter> execute " SUNW,DBRIe" device-name
+  device-end`, with the setter that `see find-device` shows, since OBP 2.x has no word to select a
+  node by phandle), the 2.2 CD boots to its installer under `ss20_v2.25_rom` with QEMU 11.1.3 and wsh/0001-0041 alone,
+  and 2.1 gets as far as under OpenBIOS (below). Without the stub (a lab build that skips it) the
+  probe of slot e by `ss10_v2.25_rom` faults (`Data Access Error`, `ok`), so the PROM wants something there; a
+  QEMU fix would give the stub a minimal FCode header or name, not remove it.
+- **The Sun SS-10 PROM:** `ss10_v2.25_rom` doesn't get through POST on QEMU's SS-10 (`Cpu #0 Data
+  Access Error` with the default CPU; `Probing Memory Bank #4 Data Access Error` with
+  `-cpu TI-SuperSparc-50`, "SS-10 and SS-20"), but runs on QEMU's SS-20 with `-cpu
+  TI-SuperSparc-50`, where it calls the machine a "SPARCstation 10BSX". The 2.1 results under a
+  Sun PROM below are from that combination.
+- **Solaris 2.1 on SS-10 (OpenBIOS), diagnosis (2026-11-20):** a QEMU matter, neither the firmware
+  nor the machine model. The trap comes in the first context flush the kernel does, for a new
+  process's context (0x80a, then 0x809, ...). `srmmu_l1setup` gives the context a fresh level 1
+  table: it writes the table's address into the context table entry (`mmu_writeptp`), and only then
+  copies the kernel's 1 KB of level 1 entries (`kl1pt`) into it. `mmu_writeptp` sees that the entry
+  held a valid table before (`hat_kern_setup` points every context at the kernel's table) and
+  flushes the context: `srmmu_mmu_flushctx` disables traps, writes the context register, flushes
+  (`sta %g0, [0x300] 3`) and writes the old context back, all in one page of kernel text. Stopped
+  there with the gdb stub (QEMU monitor `xp` for the walk): the entry for context 0x80a is
+  `0x00ea5681`, a table at physical 0xea56800 whose entry for 0xf0000000 is still 0, while context 0
+  maps the same page to physical 0xef10000. QEMU flushes its whole TLB on the context write, the
+  next fetch (`pc f0014768`) walks the new context and fails, and with traps disabled
+  `sparc_cpu_tlb_fill()` maps it to "neverland", whose fetch raises the instruction access error in
+  error state. Solaris 2.2 does the copy first (its `srmmu_l1setup` calls `bcopy` before
+  `mmu_writeptp`), so 2.2-2.4 never get there. The SuperSPARC runs this code (Sun shipped 2.1 for
+  the SS-10): it doesn't need a new translation for the instructions that follow in the same page.
+  The QEMU change, pve-qemu `wsh/0047` (qtest `wsh/0048`; first tested as a standalone patch on
+  11.1.3 with wsh/0001-0041):
+  when the context register changes, remember how the old context translates the page of the
+  instruction that writes it; an instruction fetch in that page that fails to translate while traps
+  are disabled uses that translation (execute only) instead of neverland. Only a case that used to
+  stop QEMU changes. With it (lab, OpenBIOS 0001-0026, SS-10, 256 MB, CD as a disk) the 2.1 CD
+  boots, `solaris-install-serial.py` installs it (2.1's own suninstall menus after sysidtool:
+  Standalone Quick Install, End-User Cluster; 5 min, 3 of them copying packages), and the target's
+  first-boot and check scenarios pass on the installed disk (`solaris-firstboot.py`,
+  `solaris-boot-disk.py`); the held translation is used twice per new context (after the context
+  write and after the flush), 52 times in a boot to `login:`, a few commands and `init 5`. The
+  installed 2.2, 2.3 (SS-5), 2.4 (SS-20) and 2.5.1 (SS-5, SS-20) target disks boot the same with it,
+  and never use it. Open: at boot 2.1 doesn't mount `/opt` and `/export/home` (`mountall` checks
+  them, `mount /opt` by hand works), most likely its clock (the kernel warns about a "preposterous
+  time" with QEMU's 2026 clock); not traced. Write-up:
+  `upstream/qemu-sparc32-context-switch-ifetch.md`.
+- **Solaris 2.1 under the Sun PROMs (2026-11-20):** the trap is the kernel's own (its context
+  table), so the firmware makes no difference. QEMU's SS-20 with `ss10_v2.25_rom`, `-cpu
+  TI-SuperSparc-50`, 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1`: without the change the CD's kernel
+  and the installed disk stop QEMU with the same `Trap 0x21` at `pc f0014768`; with it
+  `solaris-install-serial.py` installs (4.9 min), and first boot (1.4 min) and the check (1.3 min)
+  pass (`SunOS sol21-ss10 5.1 Generic sun4m sparc`). The disk installed under OpenBIOS on the SS-10
+  boots there too, and `ss20_v2.25_rom` boots the PROM-installed disk. The SPARCstation LX (lab
+  QEMU, `feat/lab-lx564`) installs and boots 2.1 with the change as well.
+- **Solaris 2.1 with 2 CPUs (SS-10, OpenBIOS, the change):** the installed disk stops QEMU at the
+  second CPU's start: `Trap 0x21 ... while interrupts disabled` at `pc fbe78060`, `%o7` in
+  `cpu_exists`, `%i7` in `cpu_startup`; not traced.
 - **SunOS 4.1.3 (original), diagnosis:** the `BAD TRAP: type=29` after `SUNW,fdtwo0` is a probe.
   The kernel arms its fault catcher and reads kernel VA 0xff009000 (`ld [%o5]` at `0xf00a0970`,
   QEMU `-d in_asm`), which the QEMU monitor (`gva2gpa`, VM stopped at the trap) puts at physical
@@ -1936,6 +2018,46 @@ the sabre no longer forwards. The install target fails an install that stays sil
 after an IDE timeout and runs it once more (`retry_on`); a boot that hangs fails at the phase's
 timeout.
 
+**Cause: the sabre lost a request** (2026-11-20; QEMU built from the pve-qemu 11.1.3-2 series with
+`wsh/0001`-`0044`, OpenBIOS 0001-0018 + 0023, the stored `install-openbsd80-sun4u` disk on a copy,
+lab runs, not through PVE). The sabre keeps one interrupt request to the CPU at a time
+(`irq_request`) and makes the next one when the guest writes the current one's clear register. An
+OBIO interrupt (ino 0x20-0x3f: the cmd646 at 0x20, the serial console at 0x2b) that rises meanwhile
+waits for that; a PCI interrupt (ino 0x00-0x1f: the NIC, which `-device ...,bus=pciB` puts at ino
+0x10) did not, and replaced the outstanding request. The CPU takes one vector at a time and ignores
+one sent while its busy bit is set (`sparc64_cpu_set_ivec_irq()`), so a NIC interrupt between the
+IDE request and the guest's acknowledge was dropped there; the guest then cleared the IDE request,
+which was no longer `irq_request`, and the clear was ignored. From then on no OBIO interrupt reached
+the CPU (disk, console, break), and the NIC's line stayed up, so no new PCI edge either. A debug
+build that logs the sabre's and the CPU's interrupt events into a ring (read with `qom-get /machine
+irqdbg`) caught it in the first round of a `tar cf - /usr | cksum` with `ping -f 10.0.2.2` running
+(NIC traffic in place of ntpd's): IDE request 0x20 taken by the CPU, the NIC's interrupt 34 us later
+replaced it and was dropped (CPU busy), the guest's clear of 0x20 ignored, the next IDE interrupt
+never requested; at the hang `irq_request` 0x10 with the lines of 0x10 and 0x20 up and the CPU halted
+in the idle loop. `wsh/0021`'s latch has no part in it: the cmd646's line followed INTRQ throughout.
+ntpd made it likely through its network traffic, not its clock slew; the rare hang without ntpd,
+and the `cd0` timeouts during an install, presumably came from the little traffic the NIC still sees
+on `vmbr0` (not traced).
+
+`wsh/0045` makes a PCI interrupt wait for the outstanding request as an OBIO interrupt does (it is
+requested when the guest clears the current one); `wsh/0046` is the qtest (`sun4u-sabre-irq-test`,
+fails without 0045). Lab results (3 runs at a time on the lab host; a hang = a disk timeout on the
+console and no end of the round within 5 minutes after it):
+
+| Load | QEMU | Runs | Hung |
+| --- | --- | --- | --- |
+| `ping -f` + 3 rounds of `tar` (each 250-330 s) | wsh/0001-0044 | 2 (one `idle-halt=off`) | 2, in round 0 |
+| | 11.1.3 + only pve's patches and our 0001, 0007, 0021-0022, 0034-0037 (no LEMU code, no idle halt) | 2 | 2, in round 0 |
+| | wsh/0001-0045 | 4 (one `idle-halt=off`) | 0 (12 rounds) |
+| `NET=user`, default route and DNS, `rcctl -f start ntpd` (5/5 peers, clock unsynced, offset ~350 ms), then 3 rounds of `tar` (90-110 s) | wsh/0001-0044 | 2 | 2, both while ntpd started |
+| | wsh/0001-0045 | 3 | 0 (9 rounds) |
+| NetBSD 9.3 (stored disk), `ping -f` + `tar` | wsh/0001-0044 | 1 | 1 (`cmdide0:0:0: lost interrupt` every 10 s) |
+| NetBSD 9.3 and 11.1 (stored disks), `ping -f` + 2 rounds of `tar` | wsh/0001-0045 | 2 | 0 (4 rounds) |
+
+`idle-halt` doesn't change the symptom: with it off the CPU spins in the idle loop instead of
+halting there, and nothing else differs. Solaris 10 (stored disk) boots on 0045 to `console login:`
+and powers off (`sparc64-boot-disk.py`, with a ping through `hme0`, 1 boot).
+
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
 base system from the CD, which fails both times it was tried, on different packages:
@@ -2007,15 +2129,97 @@ the host had a load of 5-7 from other guests on its 14 cores):
 | NetBSD 11.1 sparc64 | sun4u, 512 MB | 101.1, 100.9, 101.3% | 60 s (drift 0.0-0.1 s) | 41.8, 33.2, 36.7 |
 | NetBSD 11.1 sparc32 | SS-20, 256 MB | 3.2, 2.8, 2.8% | 60 s | 9.7, 9.3, 6.7 |
 
-- NetBSD/sparc64 doesn't idle on sun4u: QEMU keeps a host core at 100% for as long as the VM runs.
-  The kernel spins in its idle loop: nothing on QEMU's sun4u lets the guest stop the CPU (no APC
-  like sun4m's; the `power` node isn't used, NetBSD: `power at ebus0 addr 7240-7243 ipl 1 not
-  configured`). Stopping that would take QEMU idle-loop detection like `sunos-idle`/`solaris-idle` on
-  sun4m (out of scope here). The sparc32 kernel idles through the sun4m APC.
+- Before pve-qemu `wsh/0042` NetBSD/sparc64 didn't idle on sun4u: QEMU kept a host core at 100% for
+  as long as the VM ran, and so did every other sun4u guest. See "Idle" below. The sparc32 kernel
+  idles through the sun4m APC.
 - The same user-space job runs about 4x slower on sparc64 than on sparc32 SS-20 (median 36.7 s vs
   9.3 s), so sparc64 is not a faster way to run NetBSD. Not analysed further.
 - Ten `sleep 1` take 10.3-10.4 s; the guest clock keeps time.
 - Boot to `login:` 46-68 s; `halt -p` to QEMU's exit 8.7-9.1 s.
+
+**Idle (pve-qemu `wsh/0042`-`0044`, in review, 2026-11-20).** Every sun4u guest spun in its idle loop:
+QEMU kept a host core at 100% for as long as the VM ran. No guest has a way to stop an UltraSPARC-IIi
+that QEMU could emulate instead, so the translator recognises their idle loops and halts there, like
+`sunos-idle`/`solaris-idle` on sun4m (and like those, built on LEMU's technique: not for QEMU). What
+each kernel does on sun4u (read in the open sources: NetBSD, OpenBSD, illumos, Linux; the loops
+disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
+
+| Guest | Idle loop | What the kernel could stop the CPU with on sun4u |
+| --- | --- | --- |
+| NetBSD 9.3, 11.1 | `idle_loop()` calls `cpu_idle()` while `sched_curcpu_runnable_p()` is false, then checks `ci_want_resched` | nothing: `cpu_idle()` calls `ci_idlespin`, which only sun4v sets (`hv_cpu_yield`); 9.3's `cpu_idle` is `retl; nop`. The ebus `power` node isn't attached (`power at ebus0 ... not configured`) |
+| OpenBSD 8.0 | `sched_idle()`: `while (spc_whichqs == 0) cpu_idle_cycle();` | nothing: `cpu_idle_cycle()` yields to the hypervisor on sun4v; on sun4u it is a `nop` that is patched to `sleep` (SPARC64-VI/VII) only on CPUs with several strands |
+| Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
+| Debian 12 (Linux) | `arch_cpu_idle()` | nothing: `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No installed disk (the install fails), not covered |
+
+None of them uses `sir` or an `%asr` write to idle. The clock-divider power management of the
+UltraSPARC-IIe/IIIi (Energy Star) slows the clock rather than stopping it, and QEMU emulates a IIi (not
+looked into further). sun4v's hypervisor `cpu_yield` is out of scope.
+
+0042 recognises one call in each loop by the words around it and takes from them where the loop keeps
+the word that says there is work:
+
+| Kernel | Call (address on the stored disk) | Word | Layout |
+| --- | --- | --- | --- |
+| NetBSD 11.1 | `call cpu_idle` (0x15b320c) | `ci_want_resched` (`[%i4 + 0x5a0]`) | `call runnable_p; nop; brnz %o0, out; nop` before; the same and `ld; cmp; be top; nop` after |
+| NetBSD 9.3 | `call cpu_idle` (0x15191e8) | `ci_want_resched` (`[%i3 + 0x3d0]`) | the same with `cmp %o0, 0; bne out; nop` |
+| OpenBSD 8.0 | `call cpu_idle_cycle` (0x1558134) | `spc_whichqs` (`[%i4]`) | `ld; cmp; bne out; nop; call; nop; b top; nop` |
+| Solaris 10 1/13 | `jmpl %o1, %o7` (0x10621d0) | `disp_nrunnable` (`[%o0 + 0x24]`, `%o0` = `cpu_disp`) | Sun's compiler: `ld; cmp; bne run; sethi %hi(idle_cpu); ldx; call; ...; b` |
+| Solaris 9 9/05 | `jmpl %l0, %o7` (0x104618c) | `disp_nrunnable` (`[%l2 + 0xb4]`, in the CPU structure) | the same |
+| Tribblix m34 | `jmpl %g1, %o7` (0x10621c8) | `disp_nrunnable`, 0x24 past the `cpu_disp` pointer at `[%l0 + 0xd0]` (gcc loads the pointer and the count into the same `%g1`, so the helper follows the pointer again) | gcc: `ldx; ld; cmp; bne,pt %icc run; nop; ldx [%l1]; call; nop; ba,pt %xcc top` |
+
+At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
+no interrupt, interrupt vector, `%softint` bit or `pil_in` line is pending, after spinning 100 us as on
+sun4m; the CPU goes on at the call after the next interrupt (the guest's `%tick`/`%stick` clock, 100 Hz
+at least, or a device). QEMU's sun4u has one CPU, so only an interrupt handler can give it work. A kernel
+compiled differently isn't recognised and spins as before; `-trace sparc64_idle_match` shows a match,
+`-trace sparc64_idle` each halt. `-M sun4u,idle-halt=off` turns it off; through Proxmox
+`args: -machine idle-halt=off` (QEMU merges the second `-machine`: checked with QEMU directly, not
+through `qm`).
+
+Found on the way: the first build only took a BPcc branch on `%icc` (it read the `cc1` bit as reserved)
+and missed Tribblix's `ba,pt %xcc`, which `sun4u-idle-test`'s Tribblix layout now has; and Solaris's old
+`/usr/bin/awk` reads its input even with only a `BEGIN` rule, so the job in `sparc64-idle.py` reads
+`/dev/null`.
+
+Measured with `scenarios/sparc64-idle.py` on copies of the stored install disks
+(`/mnt/os/disks/install-*`, one CPU, serial console, `sunhme` on a restricted user network): the package
+11.1.3-2+wsh25 ("before") and a `qemu-system-sparc64` built from 0001-0044 ("with"), started side by side
+on the lab host (14 cores, a load of 6-11 from other guests), each after `WAIT` had ended what the guest
+still does after boot (lab README, "Idle"). Host CPU over 60 s at the shell, the guest clock over those
+60 s, ten `sleep 1` and the awk job in host seconds, `LOAD=120` rounds (BSDs):
+
+| Guest | MEM | Host CPU before | with | Clock drift | 10 x `sleep 1` before / with | Job s before / with | Load rounds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NetBSD 11.1 | 512 | 100.8% | 3.5% | 0.0 s | 10.4 / 10.4 | 25.6 / 24.9 | 4 / 4 |
+| NetBSD 11.1, `idle-halt=off` | 512 | | 100.8% | 1.0 s | 10.4 | 25.3 | 5 |
+| NetBSD 9.3 | 512 | 100.9% | 3.5% | 0.0 s | 10.4 / 10.4 | 21.2 / 22.9 | 5 / 5 |
+| OpenBSD 8.0 | 512 | 100.3% | 8.6% | -0.1 s | 10.5 / 10.5 | 10.0 / 11.1 | 10 / 10 |
+| Solaris 10 1/13 | 1024 | 101.8% | 7.3% | 0.0 s | 10.4 / 10.5 | 8.5 / 11.4 | |
+| Solaris 9 9/05 | 1024 | 102.0% | 6.8% | 0.0-1.0 s | 10.5 / 10.6 | 10.1 / 10.4 | |
+| Tribblix m34, `fmd` off | 2048 | 102.4% (`idle-halt=off`) | 21.8% | -0.1 / -0.2 s | 11.7 / 11.7 | 19.2 / 18.6 | |
+| Tribblix m34, `fmd` on | 2048 | 107.9% | 104.0% | -0.2 / -0.8 s | 12.7 / 12.5 | 25.0 / 24.6 | |
+
+The guest clock reads whole seconds, so 1.0 s of drift is one tick of `date`. A single job varies by
+±15% from run to run on this host whichever binary runs, so the binary with 0042-0044 was also run with
+`idle-halt` on and off side by side, the job five times in a row:
+
+| Guest | Host CPU on / off | 5 jobs on / off | Load rounds on / off |
+| --- | --- | --- | --- |
+| NetBSD 11.1 (`LOAD=300`) | 3.9% / 100.7% | 101.0 / 102.9 s | 3 / 3 |
+| OpenBSD 8.0 (`LOAD=300`) | 5.4% / 101.2% | 40.5 / 41.9 s | 7 / 7 |
+| Solaris 10 1/13 | 4.8% / 100.5% | 40.0 / 40.0 s | |
+
+CPU-bound work takes as long as before, ten `sleep 1` take 10.4-10.6 s in every case and the clock keeps
+time. What is left (3-9% on the BSDs and Solaris) is the 100 us spin before each halt at every clock tick, the guests' own
+periodic work and QEMU's timers. Solaris 10 needs several minutes after the login prompt until SMF has
+started everything (`svc.configd`, `inetd`, `snmpd`, `fmd` at 30-40% of the guest CPU): measured too
+early it reads 100% with or without the halt. Tribblix's FMA marks its ZFS disk DEGRADED again within
+minutes (the known EIO ereports, "Tribblix on sun4u", also after `zpool clear`), and `rcm_daemon` then
+spins (67% of the guest CPU after 3.5 hours in one run): a guest that busy rarely reaches its idle loop,
+so with `fmd` running it reads 104-108% either way. With `fmd` disabled (`svcadm disable fmd`, which a
+real installation shouldn't do) it idles at 21.8% (258 111 halts traced in the run); the rest is
+Tribblix's own work under emulation, not analysed. Its ten `sleep 1` take 11.7 s with and without the
+halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
 
 **Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
 `halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,
@@ -2548,10 +2752,20 @@ on the host at once, 2026-11-19):
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
 install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
 `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
-min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
-it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
-set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
-`c0t0d0` in `solaris-install-serial.py` and the sun4u reboot/halt handling there; not tried.
+min the first time, then a boot test of its stored disk).
+
+**Solaris 7 install target on sun4u** (2026-11-20). `sol7-sun4u` (7 3/99, End User) runs suninstall
+(`solaris-install-serial.py`) on the sparc64 profile with 2048 MB, the SUN2.9G label on a 3 GiB IDE
+disk (`c0t0d0`; suninstall lists only labelled disks) and the CD on `ide2`; at the end `halt` returns
+to `0 >` and the VM is stopped there. With 1024 MB the installer's kernel panicked in both installs as
+the package copy began (`segkp_badop`; `BAD TRAP ... type=0x31` in `pkginstall`, an illegal access to
+a user address in `unix`); with 2048 MB the package copy went through twice. Not diagnosed: whether
+OpenBIOS's memory layout at 1 GB or the guest is at fault. The IDE timeouts and `Interrupt not seen
+after set_features` on the CD's boot cost about 4 minutes and break nothing; in two runs suninstall
+didn't react to F2 for 10 minutes (the kernel alive), which the scenario now answers with a second
+F2 after 180 s. Installed through PVE with pve-qemu-kvm 11.1.3-2+wsh26 in 24.5 min, the 64-bit
+kernel on the installed disk (`SunOS Release 5.7 Version Generic_106541-02 64-bit`); e2e/sparc/README.md,
+"Solaris 7 on sun4u"; the stored disk boot-tests in 4.4 min.
 
 **paulsheer/openbios + paulsheer/qemu** (2026-10-30, one commit each on top of the same
 OpenBIOS `e5ac46d`). They report Solaris 10 reaching the installer and mounting root, "not
@@ -2739,7 +2953,9 @@ valid is accepted.
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 8 GB,
-  `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
+  `sun4v`/`niagara`. Idle: with pve-qemu `wsh/0042`-`0044` an idle guest takes 3-9% of a host core
+  (NetBSD, OpenBSD, Solaris 9/10; Tribblix about 22% with `fmd` off; "Idle" above), before them 100%
+  for as long as the VM ran.
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
 
 ## sparc64: niagara (sun4v)
@@ -3109,13 +3325,15 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
   `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
   `sun4m-cs4231-test` (0033), `sun4m-esp-test` (0039),
-  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037) and `am53c974-test` with 0007;
+  `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037),
+  `sun4u-idle-test` (0044) and `am53c974-test` with 0007;
   they
   build in a QEMU tree with the series applied.
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 - cg3 and TCX: the TCX/cg3 banner and no-driver cases in `display`, the desktop cases in `display-x`
   (`scenarios/fb-display.py`, disks prepared by `solaris-tcx-packages.py`); results under "cg3 and TCX".
-- Idle: the lab's `idle` matrix (`scenarios/idle.py`).
+- Idle: the lab's `idle` matrix (`scenarios/idle.py`); on sun4u `scenarios/sparc64-idle.py`, the
+  `sparc64` matrix's two idle cases and the qtest `sun4u-idle-test` (0044).
 - Stop-A: the lab's `stopa` matrix (`scenarios/stop-a.py`); results under "Stop-A".
 - SMP: the lab's `smp` matrix (`scenarios/smp-soak.py`, the bench disk) and the qtest
   `sun4m-pil-delay-slot-test` (0020); results under "SMP".

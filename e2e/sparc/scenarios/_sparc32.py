@@ -30,6 +30,8 @@ Variables (lab.py run ... --var KEY=VALUE):
   TRACE     QEMU trace events, comma separated (e.g. cg3_write,esp_*), logged to <out>/trace.log
   PROM_ENV  OpenBIOS variables, space separated, each passed as -prom-env (auto-boot?=false for
             solaris-webstart-serial.py; through PVE, install.py puts them into the VM's `args`)  (none)
+  PROM_NAME_UNNAMED 1 = with a Sun PROM, name the SBus node QEMU's SS-20 leaves without a name
+            before `boot` (Solaris 2.1/2.2 panic on it; name_unnamed_sbus_nodes)  (none)
   AUDIO     wav: the SS-5's CS4231 plays into <out>/audio.wav (-audiodev wav, -machine audiodev),
             44.1 kHz stereo. The header's sizes stay 0 when the guest powers off: the
             samples are what follows its 44 bytes (SPARC.md, "Audio")  (none: no sound)
@@ -39,6 +41,7 @@ Variables (lab.py run ... --var KEY=VALUE):
             none (default): the lance NIC with nothing behind it
 """
 import os
+import re
 import shutil
 import subprocess
 
@@ -181,7 +184,32 @@ def prom_boot(m, v, target):
     if v["CONSOLE"] == "serial" and keyboard:
         m.fb_type("ttya io\r")
         m.expect(r"ok ", 30)
+    if v.get("PROM_NAME_UNNAMED") == "1":
+        name_unnamed_sbus_nodes(m)
     m.send(f"boot {target}\r")
+
+
+def name_unnamed_sbus_nodes(m, name="SUNW,DBRIe"):
+    """PROM_NAME_UNNAMED=1 (Sun PROMs on QEMU's SS-20, lab only): give a name to the SBus node the PROM
+    leaves without one. QEMU's SS-20 puts an unimplemented device (reads 0) where the DBRI's FCode PROM
+    would be (slot e); the Sun SS-10/SS-20 PROMs make a node for it without a `name` property, and
+    Solaris 2.1/2.2 panic on it (`BAD TRAP: type=9`, a strcmp on NULL in get_neighbors, from
+    impl_init_tree). Later releases don't mind. OBP 2.x has no word to select a node by phandle, so the
+    setter `find-device` uses (a headerless word) is taken from `see find-device`."""
+    m.send("see find-device\r")
+    setter = m.expect(r"r> \((\w{8})\) throw", 30).group(1)
+    m.expect(r"ok ", 30)
+    m.send("cd /iommu/sbus\r")
+    m.expect(r"ok ", 30)
+    m.send("ls\r")
+    listing = m.expect(r"ls\n((?:.*\n)*?)ok ", 30).group(1)
+    nodes = re.findall(r"^(\w{8}) <Unnamed>", listing, re.M)
+    for ph in dict.fromkeys(nodes):
+        m.send(f'{ph} {setter} execute " {name}" device-name device-end\r')
+        m.expect(r"ok ", 30)
+    m.send("device-end\r")
+    m.expect(r"ok ", 30)
+    m.snap(f"named {len(set(nodes))} unnamed SBus node(s)")
 
 
 def login(m, prompt=r"console login:", timeout=1800, password=""):

@@ -53,6 +53,8 @@ VARIANTS = {
     "dummy100k": {"_args": f"-option-rom {ROMDIR}/dummy100k.rom"},
     "owner-dummy": {"_args": f"-option-rom {ROMDIR}/owner-dummy.rom"},
     "no-nic-no-vapic": {"net0": None, "_args": "-global apic-common.vapic=off"},
+    # qemu-server's `machine: pc,legacy-bios-layout=1`: the NIC without option ROM, no vapic ROM
+    "legacy-layout": {"machine": "pc,legacy-bios-layout=1"},
 }
 FULL = ",".join(CONFIGS)
 BRIEF = "himem,emm-noems,emm-noems-gap"
@@ -198,7 +200,7 @@ def prepare(vmid, iso):
 
 def apply_variant(vmid, base, variant, sblog):
     opts = VARIANTS[variant]
-    for k in ("vga", "net0"):
+    for k in ("vga", "net0", "machine"):
         want = opts.get(k, base.get(k)) if k in opts else base.get(k)
         if want is None:
             sh("qm", "set", vmid, "--delete", k, check=False)

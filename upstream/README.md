@@ -29,8 +29,8 @@ say, per patch:
 - **LEMU origin: not for QEMU**: the patch is Antoni Sawicki's, from LEMU (`From:` and `Origin:`
   lines). Neither the patch nor a bug report about what it fixes goes to QEMU or OpenBIOS from here.
 - **built on LEMU: not for QEMU**: our own patch, but on top of LEMU code or built on a LEMU
-  technique (the Solaris idle halts follow LEMU's SunOS idle; the audio patches sit on LEMU's
-  CS4231; 0027 tests LEMU's 0026). Not sent either.
+  technique (the Solaris and sun4u idle halts follow LEMU's SunOS idle; the audio patches sit on
+  LEMU's CS4231; 0027 tests LEMU's 0026). Not sent either.
 - **may send**: our own fix of QEMU's or OpenBIOS's code, independent of LEMU. The owner may send it,
   as a bug report or as a patch written by hand: QEMU and OpenBIOS don't take AI-generated code, and
   the patches and write-ups here were written with an AI agent.
@@ -85,14 +85,23 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0036, 0037 | sparc64 `%softint` writes race the tick timers outside the BQL; a lost tick stops illumos's clock | wsh-pve | may send | none found | [qemu-sparc64-softint-race.md](qemu-sparc64-softint-race.md) |
 | 0038, 0039 | ESP counts the message out bytes as CDB bytes; a byte-by-byte CDB after SDTR (Linux 2.6.18) is dispatched too early | wsh-pve | may send | none found | [qemu-esp-cdb-ready-after-message-out.md](qemu-esp-cdb-ready-after-message-out.md) |
 | 0040, 0041 | ESP raises its interrupt in the instruction that starts a command; NeXTSTEP 3.3 and OPENSTEP 4.2 deadlock in their SCSI driver (reproduced on every install with 11.1.3-2+wsh21 and +wsh22). Our own fix to QEMU's ESP: `irq-latency-us` on `sysbus-esp`, off by default, 500 us for those guests (qemu-server's `esp-irq-latency` machine option) | wsh-pve | may send | [#2620](https://gitlab.com/qemu-project/qemu/-/issues/2620), [#2674](https://gitlab.com/qemu-project/qemu/-/issues/2674) (the freeze; no cause named; #2674's graphics glitches not seen on the 8-bit TCX) | [qemu-esp-irq-latency.md](qemu-esp-irq-latency.md) |
+| 0042-0044 | sun4u idle: no guest on QEMU's sun4u can stop the CPU (nothing to emulate: Solaris/illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` only on CPUs with several strands), so the translator recognises the idle loops of NetBSD 9/11, OpenBSD 8.0, Solaris 9/10 and Tribblix (illumos) and halts there (`idle-halt`), with a qtest | wsh-pve, after LEMU's SunOS idle (0012-0013) | built on LEMU: not for QEMU | a feature | |
+| 0045, 0046 | sun4u: a PCI interrupt replaces the sabre's outstanding interrupt request; the CPU drops it while busy, the guest's clear of the first request is ignored, and every OBIO interrupt (IDE, serial console) stays blocked (OpenBSD 8.0 `wd0: timeout`, then a dead guest) | wsh-pve | may send | not searched (added 2026-11-20) | [qemu-sabre-pci-interrupt-replaces-request.md](qemu-sabre-pci-interrupt-replaces-request.md) |
+| 0047, 0048 | sun4m: Solaris 2.1 flushes a context whose level 1 table it hasn't filled yet, with traps disabled and from one page of kernel text; QEMU's TLB flush on the context write makes the next fetch fail and QEMU stops (`Trap 0x21 ... while interrupts disabled`). The old context's translation of that page is kept for fetches with traps disabled; qtest `sun4m-mmu-ctx-ifetch-test`. Reproduced on plain QEMU 11.1.3 (the qtest and the 2.1 disk) | wsh-pve | may send | not searched (added 2026-11-20) | [qemu-sparc32-context-switch-ifetch.md](qemu-sparc32-context-switch-ifetch.md) |
 
-Counts: may send 17 (0001, 0007, 0011, 0017-0022, 0034-0041); LEMU origin 13 (0002-0006,
-0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 11 (0014-0016, 0023-0025, 0027, 0030-0033).
+Counts: may send 21 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0048); LEMU origin 13 (0002-0006,
+0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 14 (0014-0016, 0023-0025, 0027, 0030-0033,
+0042-0044).
 
 Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pages), needed for
 `niagara` above 1 GB; the patch is by the unix0.cc author
 ([unix0cc/qemu-experimental-patches](https://github.com/unix0cc/qemu-experimental-patches)).
 [qemu-sparc64-tte-page-size.md](qemu-sparc64-tte-page-size.md).
+
+Not carried, write-up only (wsh-pve, may send as a report): on the SS-20, the DBRI stub
+(`sun-DBRI.prom`) reads as zeros, Sun's SS-10/SS-20 PROMs make an SBus node without a name for it,
+and Solaris 2.1/2.2 panic on that node (`BAD TRAP: type=9` in `get_neighbors`); the lab names it at
+the PROM prompt. [qemu-sun4m-ss20-dbri-unnamed-node.md](qemu-sun4m-ss20-dbri-unnamed-node.md).
 
 ## OpenBIOS (`openbios/patches/`)
 

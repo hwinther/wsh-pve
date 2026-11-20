@@ -16,6 +16,10 @@ With no framebuffer (VGA=none, the default here) the installer runs in text mode
 starts the OpenWindows installer there instead. The disk must carry a Sun label: the installer lists
 only labelled disks (the SUN2.9G template shows up as c0t3d0, 2775 MB).
 
+On sun4u (sol7-sun4u: ARCH sparc64 from the VM's config) the same answers with the IDE disk as
+DISK=c0t0d0 (Sun-labelled too), F2 again on a screen that doesn't move on (KEY_RETRY), and at the end
+`halt` to OpenBIOS's `0 >`, where the VM is stopped (halt_sun4u).
+
 The installer is driven by screen title, not by a fixed sequence, because the releases ask different
 questions in a different order (2.5.1 has no language/locale prompt but asks for a system type).
 
@@ -35,10 +39,14 @@ DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15",
             "FINISH_TIMEOUT": "1800",  # s from the postinstall phase to the root shell
             # s from the kernel banner to the first prompt (35-55 s in the lab); a boot that hangs
             # there (QEMU's ESP deadlock: the CPU spins, no more disk I/O) fails with EARLY_HANG
-            "FIRST_PROMPT_TIMEOUT": "300"}
+            "FIRST_PROMPT_TIMEOUT": "300",
+            "DISK": "c0t3d0",  # the boot disk as Solaris names it (sun4u's IDE disk: c0t0d0)
+            "KEY_RETRY": "0"}  # s on an unchanged screen before F2 goes again (press_on); 0 = never
 # In the status of a boot that never reached the installer: nothing is on the disk yet, and
 # `lab.py install` boots once more (the targets' install "retry_on")
 EARLY_HANG = "before the installer"
+# A kernel panic while the packages are copied (sol7-sun4u: `panic[cpu0]/thread=...: segkp_badop`)
+PANIC = r"panic\[cpu\d+\]"
 
 
 def qemu_args(v, out):
@@ -65,9 +73,10 @@ def disks(m, v):
     # The installer selects the boot disk by itself when the PROM names it (OpenBIOS with a working
     # `disk` alias, "c0t3d0 ... boot disk"); otherwise mark the first entry. A CD that answers as a
     # disk is listed too (c0t6d0).
-    if not re.search(r"\[X\] c0t3d0", m.screen_text()):
+    disk = re.escape(v["DISK"])
+    if not re.search(rf"\[X\] {disk}", m.screen_text()):
         m.send("\r")
-    m.expect(r"\[X\] c0t3d0", 60, screen=True)
+    m.expect(rf"\[X\] {disk}", 60, screen=True)
 
 
 def date(m, v):
@@ -115,6 +124,26 @@ def next_screen(m, old, timeout=600):
         if time.time() > end:
             raise RuntimeError(f"the installer didn't move on from:\n{old}")
         time.sleep(1)
+
+
+def press_on(m, old, retry, tries=3):
+    """The next screen after F2 on `old`. With `retry` (KEY_RETRY, seconds; 0 = off) F2 goes again
+    when the same screen is still up after that long: on sun4u (sol7-sun4u) the installer sat on a
+    screen for 10 minutes after F2 in two of four runs (Preserve Data?, Mount Remote File Systems?),
+    the kernel still running (hme0's link messages every 30 s). No screen of the installer takes
+    minutes to follow, so a repeated F2 doesn't land on the next one."""
+    if not retry:
+        return next_screen(m, old)
+    title = re.search(TITLE, old, re.M).group(1)
+    for attempt in range(tries):
+        try:
+            return next_screen(m, old, retry)
+        except RuntimeError:
+            now = re.search(TITLE, m.screen_text(), re.M)
+            if attempt == tries - 1 or not now or now.group(1) != title:
+                raise
+            m.snap(f"{title}: no reaction to F2, again")
+            m.key("f2")
 
 
 # Solaris 2.3 (and older): sysidtool asks one question per screen, a sentence at the top, a box with a
@@ -177,11 +206,37 @@ def settled_change(m, old, timeout=600):
         time.sleep(1)
 
 
+def suninstall_21(m, screen):
+    """Solaris 2.1's suninstall after sysidtool: a lettered main menu, Standalone Quick Install (the
+    End-User Cluster, file systems laid out on c0t3d0 by itself), and a question whether to reboot."""
+    m.snap("Suninstall Main Menu")
+    m.send("a")  # [a] Standalone Quick Install
+    m.expect(r"Type \[a\] to cancel the quick install", 120, screen=True)
+    m.quiet(2, 60)
+    m.snap("Quick Install Standalone")
+    m.send("\r")
+    m.expect(r"Ready to quick install", 600, screen=True)
+    m.quiet(2, 60)
+    if "c0t3d0" not in m.screen_text():
+        raise RuntimeError(f"the quick install doesn't use c0t3d0:\n{m.screen_text()}")
+    m.snap("Ready to quick install")
+    m.send("\r")
+    m.expect(r"Reboot after installation\? \(y\|n\)", 600, screen=True)
+    m.snap("reboot after installation")
+    m.send("y\r")
+    m.expect(r"Installation of <SUNW\w+> was successful", 600)
+    m.snap("installing")
+
+
 def old_install(m, v, screen):
-    """sysidtool's questions, then Quick Install (End User, the boot disk, auto-layout)."""
+    """sysidtool's questions, then Quick Install (End User, the boot disk, auto-layout). 2.1's
+    suninstall has its own menus instead of the installer's screens (suninstall_21)."""
     if v["SOFTWARE_UP"] != "0":
-        raise ValueError("the Solaris 2.3 path installs End User System Support only (SOFTWARE_UP=0)")
+        raise ValueError("the Solaris 2.1-2.3 path installs End User System Support only (SOFTWARE_UP=0)")
     while "[ Solaris Installation ]" not in screen:
+        if "Suninstall Main Menu" in screen:
+            suninstall_21(m, screen)
+            return old_install_end(m)
         for rx, action in OLD_SCREENS:
             if re.search(rx, screen):
                 m.snap(rx.replace("\\", ""))
@@ -210,6 +265,10 @@ def old_install(m, v, screen):
     # 2.3 shows a progress screen; 2.2 clears the screen and makes the file systems first
     m.expect(r"Initial Installation of|making filesystem on", 600, screen=True)
     m.snap("installing")
+    old_install_end(m)
+
+
+def old_install_end(m):
     m.expect(r"Installation successful\.\.\.", 7200)
     m.snap("installation finished")
     # it reboots by itself ("Resetting" from a Sun PROM, "rebooting" under OpenBIOS); the Sun PROM
@@ -260,7 +319,7 @@ def run(m, v):
 
     screen = None
     while True:
-        screen = next_screen(m, screen)
+        screen = next_screen(m, screen) if screen is None else press_on(m, screen, int(v["KEY_RETRY"]))
         title = re.search(TITLE, screen, re.M).group(1)
         m.snap(title)
         for rx, action in SCREENS:
@@ -274,9 +333,26 @@ def run(m, v):
     m.expect(r"Solaris Initial Install|MBytes Installed", 600, screen=True)
     m.snap("installing")
     # Package copy, then (2.6) patches and the JumpStart finish scripts, then a root shell.
-    m.expect(r"Executing JumpStart postinstall phase|Customizing system files", 7200)
+    if m.expect_any([r"Executing JumpStart postinstall phase|Customizing system files", PANIC], 7200) == 1:
+        m.quiet(5, 600)
+        m.snap("kernel panic")
+        raise AssertionError("the kernel panicked during the package installation")
     # 2.5.1's Maintenance Update ("Building package data base") runs past 30 minutes
     m.expect(r"\n#\s*$", int(v["FINISH_TIMEOUT"]))
     m.quiet(5, 600)
     m.snap("installation finished")
-    power_off(m, "halt")
+    if v.get("ARCH") == "sparc64":
+        halt_sun4u(m)
+    else:
+        power_off(m, "halt")
+
+
+def halt_sun4u(m):
+    """sun4u (sol7-sun4u): `halt` returns to OpenBIOS's `0 >` once Solaris has synced (OpenBIOS has no
+    power-off for Solaris), and the VM is stopped there, as solaris-webstart-serial.py does after a
+    sun4u install."""
+    m.send("sync; halt\r")
+    m.expect(r"0 > ", 600)
+    m.quiet(1, 30)
+    m.snap("OpenBIOS prompt after the installation")
+    m.stop()

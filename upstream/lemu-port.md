@@ -12,7 +12,8 @@ Both are rebased onto LEMU's `master` at `b7d82d6857`. Their hashes change again
 rebased. Patches of LEMU origin are paired with their commit on LEMU's `master`.
 
 Compared against this repository at `3f3e5d8` (2026-11-18). Not covered yet: pve-qemu `wsh/0040`-`0041`
-(the ESP interrupt delay) and OpenBIOS 0019-0025, which came later.
+(the ESP interrupt delay), `wsh/0042`-`0044` (the sun4u idle halt) and OpenBIOS 0019-0025, which came
+later.
 
 **Columns:**
 - **class**: as in [README.md](README.md): *ours*, *LEMU origin* or *built on LEMU*.

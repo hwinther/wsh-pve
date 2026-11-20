@@ -40,15 +40,17 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
+| `sol8-ss5-prom` | Solaris 8 2/02, Entire Group, as `sol8-ss5` | SS-5, `ss5.bin` (Sun PROM), 256 MB, 9G disk, otherwise as `sol8-ss5` | as `sol8-ss5` | `root` / `wshlab` | ~47 min |
 | `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
 | `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
 | `sol8-sun4u` | Solaris 8 2/02, End User (64-bit), Web Start from the Installation CD and Software 1 of 2 (swapped by the install) | as `sol9-sun4u`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso` | `root` / `wshlab` | ~55 min |
+| `sol7-sun4u` | Solaris 7 3/99, End User (64-bit), suninstall from the Installation CD | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a Sun-labelled 3G disk on `ide0`, the CD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~25 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss5` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss20` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | SS-20, OpenBIOS, 512 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
-| `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~5 min |
+| `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order; idle driver `WSHIDLE.COM` | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~8 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 | `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
 | `openbsd59-ss5` | OpenBSD 5.9 (the last release for 32-bit sparc), all sets but X11 (base, comp, man, game), checked against the release's signature by the installer, ntpd off | SS-5, OpenBIOS, 256 MB, serial console (needed: with a framebuffer the kernel panics), 8 GiB blank disk on `scsi3`, the boot CD on `scsi6`, the sets CD on `scsi5`, lance (`le0`) | `cd59.iso`, `openbsd59-sparc-sets.iso` (made on the node, below) | `root` / `wshlab` | ~10 min |
@@ -83,7 +85,9 @@ Solaris 9 is the last release for sun4m (Solaris 10 dropped it); its installer a
 kernel run on the emulated SS-5 and SS-20. During the Solaris 8 and 9 installs the VM has
 `args: -prom-env auto-boot?=false` (Web Start reboots with a boot string that OpenBIOS ignores, so
 the install stops at the firmware prompt and boots the right slice itself); the install removes it
-again, the finished VM has no `args`.
+again, the finished VM has no `args`. `sol8-ss5-prom` is the same install under the Sun PROM
+(`bios: ss5.bin`), which needs no `args`: the PROM boots the mini-root from Web Start's boot string
+by itself, and after the install it stops at `ok`, where the tool stops the VM.
 
 All Solaris targets end with the host name of the target (`sol26-ss5`, `sol8-ss20`, ...), `le0` at 10.0.2.15/24
 (static; no name service, no default route) unless the network options say otherwise (see
@@ -115,6 +119,15 @@ only, as for the sun4m Solaris 8 targets). The first boot of an installed Solari
 floppy driver with an `openbios-sparc64` without patch 0025 (OpenBIOS's floppy node, which QEMU's
 sun4u can't back); `pve-qemu-kvm` 11.1.3-2+wsh25 and later have it. Don't use `reboot` or `init 6` in these guests: stop and start
 the VM.
+
+`sol7-sun4u` runs the interactive installer of Solaris 2.6 and 7 (suninstall) on sun4u with the
+sun4m targets' answers: a static address on `hme0`, no name service, time zone MET, End User with
+the 64-bit support it selects on sun4u, auto-layout on `c0t0d0`. suninstall lists only labelled disks, so
+the IDE disk gets the Sun label of the 3G template, as the sun4m targets' SCSI disks do. The VM has
+2048 MB: with 1024 the installer's kernel panicked twice as the package copy began. The CD's boot
+prints IDE timeouts and `Interrupt not seen after set_features` (the installed system once); they
+cost a few minutes and nothing else. At the end the tool halts the installer at the firmware prompt
+and stops the VM there, as for the other sun4u targets.
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
 so its login prompt takes 45-70 minutes), answers the keyboard question with US-English, logs in
@@ -160,8 +173,8 @@ label). The first boot sets root's password, writes the marker `/etc/wsh-lab-tar
 off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: with
 pve-qemu-kvm before `wsh/0034` every sparc64 VM has the same system MAC address (52:54:00:12:34:56,
 whatever `net0` says), so put only one of them on a network segment (with it, `net0`'s address);
-and NetBSD/sparc64 keeps a host core at 100% for as long as it
-runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
+and without pve-qemu `wsh/0042` NetBSD/sparc64 keeps a host core at 100% for as long as it
+runs (see the SPARC guide, "Idle on sun4u"). If a `halt -p` during the install never powers the VM off (seen once on
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
 
@@ -278,7 +291,7 @@ takes about 5 minutes (key generation, the library relink); every boot relinks t
 background, and a `halt -p` before that ends says `reorder_kernel: failed` (harmless: the old
 kernel stays). It needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later: with older OpenBIOS the installed
 kernel stops right after the loader (`Unhandled Exception 0x30`). Like the other sun4u targets, it
-keeps a host core busy while it runs.
+keeps a host core busy while it runs unless the package has the sun4u idle halt (pve-qemu `wsh/0042`).
 
 **OpenBSD 5.9** (`openbsd59-ss5`, `openbsd59-ss20`) boots `cd59.iso`'s installer and answers it the
 same way as 8.0 (5.9 words some questions differently): `le0` with the static address, root's
@@ -717,18 +730,22 @@ they stay out of the logs and recordings.
 ## How it is tested
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
-container with the published packages, and the `install` matrix (by hand from the `sparc lab`
-workflow) goes through every automated target: a target whose stored disk is missing is installed
-with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
-`reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
+container with the published packages, and the `install` matrix goes through every automated
+target: a target whose stored disk is missing is installed with `--check --export`, the others are
+boot-tested from their stored disks, and the workflow's `reinstall` input installs named targets
+(or `all`) again. The `sparc lab` workflow runs it weekly (Sunday 07:17 UTC, boot tests plus the
+missing installs) and monthly with `reinstall=all` (first Saturday, 07:17 UTC, with the 720-minute
+job limit; about 6 h), so every stored disk is rebuilt from its install CD once a month, and by hand
+from the workflow. Tribblix and the Debian targets are
 installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
 the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
-On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD/sparc64
-CD from cdn.netbsd.org (checked against its sha256) and runs the `netbsd111-sparc64` target's
-install, first boot and check with the lab's own QEMU on a GitHub-hosted runner, without PVE (about
-10 minutes on the lab host).
+On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD CDs
+(11.1 from cdn.netbsd.org, 9.3 from archive.netbsd.org, each checked against its pinned sha256 and
+the release's sha512) and runs the install, first boot and check of `netbsd111-sparc64`,
+`netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20` with the lab's own QEMU on
+GitHub-hosted runners, one job per target, without PVE (6 to 18 minutes each on the lab host).
 The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
 in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
 catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must

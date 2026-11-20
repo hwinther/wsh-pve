@@ -137,7 +137,7 @@ index b1e0b4f8..4b93f5c6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index e8e2bd0b..e34ff958 100644
+index e8e2bd0b..9b08bb3f 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -97,6 +97,7 @@ JSSRC= 							\
@@ -148,7 +148,15 @@ index e8e2bd0b..e34ff958 100644
  	grid/BackupView.js				\
  	grid/FirewallAliases.js				\
  	grid/FirewallOptions.js				\
-@@ -257,6 +258,7 @@ JSSRC= 							\
+@@ -141,6 +142,7 @@ JSSRC= 							\
+ 	window/StartupEdit.js				\
+ 	window/DownloadUrlToStorage.js			\
+ 	window/UploadToStorage.js 			\
++	window/MediaVolumeEdit.js			\
+ 	window/ScheduleSimulator.js			\
+ 	window/Wizard.js				\
+ 	window/GuestDiskReassign.js			\
+@@ -257,6 +259,7 @@ JSSRC= 							\
  	qemu/AudioEdit.js				\
  	qemu/BootOrderEdit.js				\
  	qemu/CDEdit.js					\
@@ -156,7 +164,7 @@ index e8e2bd0b..e34ff958 100644
  	qemu/CIDriveEdit.js				\
  	qemu/CloudInit.js				\
  	qemu/CmdMenu.js					\
-@@ -282,6 +284,7 @@ JSSRC= 							\
+@@ -282,6 +285,7 @@ JSSRC= 							\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -178,7 +186,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index c616ab9b..d3d8c318 100644
+index c616ab9b..326cf713 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -262,7 +270,7 @@ index c616ab9b..d3d8c318 100644
              rootdir: gettext('Container'),
              snippets: gettext('Snippets'),
              import: gettext('Import'),
-@@ -1130,6 +1143,105 @@ Ext.define('PVE.Utils', {
+@@ -1130,6 +1143,160 @@ Ext.define('PVE.Utils', {
              return Ext.String.htmlEncode(result);
          },
  
@@ -365,10 +373,65 @@ index c616ab9b..d3d8c318 100644
 +            return Ext.String.htmlEncode(parts[parts.length - 1]);
 +        },
 +
++        // Storage types whose ISO and floppy volumes can be renamed in place and get links to a
++        // volume of another storage (libpve-storage-perl's @MEDIA_LINK_STORAGE_TYPES)
++        mediaLinkStorageTypes: ['dir', 'btrfs', 'nfs', 'cephfs', 'cifs'],
++
++        mediaExtensions: {
++            iso: ['.iso', '.img'],
++            floppy: ['.img', '.ima', '.vfd'],
++        },
++
++        // A folder or file name as PVE cleans an upload's name (a run of other characters as one '_')
++        media_name_clean: function (part) {
++            return (part || '').trim().replace(/[^A-Za-z0-9_.-]+/g, '_');
++        },
++
++        // The volume name for a folder path ('Solaris / 2.6' or 'Solaris/2.6') and a file name, as
++        // { name, error }: the parts cleaned and joined with '__'; an error when the backend would
++        // refuse it or the folders wouldn't show the same (a part containing '__', a folder ending
++        // in '_'), or the extension isn't one of the content type's.
++        media_volume_name: function (folder, file, content) {
++            let folders = (folder || '')
++                .split('/')
++                .map((part) => PVE.Utils.media_name_clean(part))
++                .filter((part) => part !== '');
++            let parts = [...folders, PVE.Utils.media_name_clean(file)];
++            let name = parts.join(PVE.Utils.mirrorSeparator);
++            let error;
++            let extensions = PVE.Utils.mediaExtensions[content] || [];
++            if (parts[parts.length - 1] === '') {
++                error = gettext('No file name');
++            } else if (name.startsWith('.')) {
++                error = gettext("A name doesn't start with '.'");
++            } else if (name.split(PVE.Utils.mirrorSeparator).join('\n') !== parts.join('\n')) {
++                error = gettext("A folder or file name contains '__', or a folder ends in '_'");
++            } else if (!extensions.some((ext) => name.toLowerCase().endsWith(ext))) {
++                error = Ext.String.format(
++                    gettext('The file name must end in {0}'),
++                    extensions.join(', '),
++                );
++            }
++            return { name, error };
++        },
++
++        // The size column of an ISO or floppy volume: a link whose target isn't reachable on this
++        // node is flagged by libpve-storage-perl ('unavailable', size 0)
++        render_media_unavailable: function (metaData) {
++            if (metaData) {
++                metaData.tdAttr = `data-qtip="${Ext.String.htmlEncode(
++                    gettext(
++                        "The link's target isn't reachable on this node: a share that isn't mounted here, or a file that moved",
++                    ),
++                )}"`;
++            }
++            return '<i class="fa fa-exclamation-triangle warning"></i> -';
++        },
++
          render_serverity: function (value) {
              return PVE.Utils.log_severity_hash[value] || value;
          },
-@@ -1813,6 +1925,7 @@ Ext.define('PVE.Utils', {
+@@ -1813,6 +1980,7 @@ Ext.define('PVE.Utils', {
              rng: 1,
              tpmstate: 1,
              virtiofs: 10,
@@ -376,7 +439,7 @@ index c616ab9b..d3d8c318 100644
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1954,8 +2067,8 @@ Ext.define('PVE.Utils', {
+@@ -1954,8 +2122,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -445,10 +508,19 @@ index ceba1561..93d2a335 100644
              clist = PVE.Utils.sortByPreviousUsage(me.vmconfig, me.nodename);
          }
 diff --git a/www/manager6/form/FileSelector.js b/www/manager6/form/FileSelector.js
-index d42fd19a..bed5e640 100644
+index d42fd19a..e3fab0a5 100644
 --- a/www/manager6/form/FileSelector.js
 +++ b/www/manager6/form/FileSelector.js
-@@ -72,6 +72,9 @@ Ext.define('PVE.form.FileSelector', {
+@@ -65,18 +65,70 @@ Ext.define('PVE.form.FileSelector', {
+     applyFilters: function () {
+         var me = this;
+ 
+-        var filters = [];
++        // a mirror storage's link whose target isn't reachable on this node can't be used here
++        var filters = [(rec) => !rec.data.unavailable];
+         if (Ext.isFunction(me.filter)) {
+             filters.push(me.filter);
+         }
          if (me.archStoreFilter && !me.showForeignArch && Proxmox.NodeArch) {
              filters.push(me.archStoreFilter);
          }
@@ -457,11 +529,11 @@ index d42fd19a..bed5e640 100644
 +        }
  
          me.store.clearFilter();
-         if (filters.length) {
-@@ -79,6 +82,56 @@ Ext.define('PVE.form.FileSelector', {
-         }
-     },
- 
+-        if (filters.length) {
+-            me.store.addFilter(filters);
++        me.store.addFilter(filters);
++    },
++
 +    // The search field above the ISO and floppy selectors (PVE.form.IsoSelector, FloppySelector):
 +    // only volumes whose name contains every word of `text`, in any case, folder parts included.
 +    // `expand` opens the list with what is left.
@@ -506,16 +578,14 @@ index d42fd19a..bed5e640 100644
 +        let first = me.searchFilter ? me.store.getAt(0) : undefined;
 +        if (!first || me.getValue() === first.data.volid) {
 +            return false;
-+        }
+         }
 +        me.setValue(first.data.volid);
 +        me.collapse();
 +        return true;
-+    },
-+
-     setNodename: function (nodename) {
-         this.setStorage(undefined, nodename);
      },
-@@ -103,6 +156,9 @@ Ext.define('PVE.form.FileSelector', {
+ 
+     setNodename: function (nodename) {
+@@ -103,6 +155,9 @@ Ext.define('PVE.form.FileSelector', {
                  dataIndex: 'text',
                  hideable: false,
                  flex: 1,
@@ -1492,18 +1562,19 @@ index fdb1802c..1fed396c 100644
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index cd759703..d829526e 100644
+index cd759703..094a3892 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
-@@ -9,6 +9,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -9,6 +9,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
          },
          formulas: {
              q35: (get) => get('type') === 'q35',
 +            sparc32: (get) => get('arch') === 'sparc',
++            x86: (get) => !get('arch') || get('arch') === 'x86_64',
          },
      },
  
-@@ -51,7 +52,18 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -51,7 +53,18 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              if (defaultMachine === 'pc') {
                  defaultMachine = 'i440fx'; // the default in the backend is 'pc' which means 'i440fx' for the qemu machinetype
              }
@@ -1523,17 +1594,23 @@ index cd759703..d829526e 100644
              let store = me.lookup('version').getStore();
              store.clearFilter();
              store.addFilter((val) => val.data.id === 'latest' || val.data.type === type);
-@@ -72,7 +84,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -72,7 +85,14 @@ Ext.define('PVE.qemu.MachineInputPanel', {
          // arch is a hidden field used only for the machine-default lookup; do not submit it.
          let arch = values.arch;
          delete values.arch;
 -        if (values.delete === 'machine' && values.viommu) {
++        // a checkbox submits 0 when unchecked: leave the option out of the property string then
++        if (!values['legacy-bios-layout'] || arch !== 'x86_64') {
++            delete values['legacy-bios-layout'];
++        }
++        let hasOption =
++            values.viommu || values['esp-irq-latency'] || values['legacy-bios-layout'];
 +        // the default machine type with an option set needs the type written out
-+        if (values.delete === 'machine' && (values.viommu || values['esp-irq-latency'])) {
++        if (values.delete === 'machine' && hasOption) {
              delete values.delete;
              values.machine = PVE.qemu.Architecture.defaultMachines[arch];
          }
-@@ -80,8 +93,13 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -80,8 +100,13 @@ Ext.define('PVE.qemu.MachineInputPanel', {
              values.machine = values.version;
              delete values.delete;
          }
@@ -1544,11 +1621,11 @@ index cd759703..d829526e 100644
 +        }
          delete values.version;
 -        if (values.delete === 'machine' && !values.viommu) {
-+        if (values.delete === 'machine' && !values.viommu && !values['esp-irq-latency']) {
++        if (values.delete === 'machine' && !hasOption) {
              return values;
          }
          let ret = {};
-@@ -91,6 +109,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -91,6 +116,7 @@ Ext.define('PVE.qemu.MachineInputPanel', {
  
      setValues: function (values) {
          let me = this;
@@ -1556,11 +1633,15 @@ index cd759703..d829526e 100644
  
          let machineConf = PVE.Parser.parsePropertyString(values.machine, 'type');
          values.machine = machineConf.type;
-@@ -116,15 +135,38 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -116,15 +142,42 @@ Ext.define('PVE.qemu.MachineInputPanel', {
          }
  
          values.viommu = machineConf.viommu || '__default__';
 +        values['esp-irq-latency'] = machineConf['esp-irq-latency'] ?? '';
++        values['legacy-bios-layout'] = PVE.Parser.parseBoolean(machineConf['legacy-bios-layout']);
++        if (values['legacy-bios-layout']) {
++            me.setAdvancedVisible(true); // don't hide a set option
++        }
  
 -        if (values.machine !== '__default__' && values.machine !== 'q35') {
 +        // sparc32: SS-5 (the default), SS-10 or SS-20, without versions
@@ -1597,7 +1678,7 @@ index cd759703..d829526e 100644
          this.callParent(arguments);
          this.getController().setVersionFilter(values.machine);
          this.getController().setArch(values.arch);
-@@ -240,6 +282,31 @@ Ext.define('PVE.qemu.MachineInputPanel', {
+@@ -240,6 +293,54 @@ Ext.define('PVE.qemu.MachineInputPanel', {
                  disabled: '{q35}',
              },
          },
@@ -1624,6 +1705,29 @@ index cd759703..d829526e 100644
 +            ),
 +            bind: {
 +                hidden: '{!sparc32}',
++            },
++        },
++        {
++            // x86 with SeaBIOS only (the backend refuses the rest): NICs without option ROM and no
++            // vapic ROM, for more upper memory under DOS
++            xtype: 'proxmoxcheckbox',
++            name: 'legacy-bios-layout',
++            fieldLabel: gettext('Legacy BIOS memory layout'),
++            uncheckedValue: 0,
++            bind: {
++                hidden: '{!x86}',
++                disabled: '{!x86}',
++            },
++        },
++        {
++            xtype: 'displayfield',
++            userCls: 'pmx-hint',
++            value: gettext(
++                'For DOS: no NIC option ROMs (no network boot) and no vapic ROM,' +
++                    ' so EMM386 finds more upper memory.',
++            ),
++            bind: {
++                hidden: '{!x86}',
 +            },
 +        },
      ],
@@ -2064,14 +2168,15 @@ index 8d01c0c4..96d4c592 100644
          },
          {
 diff --git a/www/manager6/storage/Browser.js b/www/manager6/storage/Browser.js
-index b4c20992..5d719ff3 100644
+index b4c20992..4ef5b255 100644
 --- a/www/manager6/storage/Browser.js
 +++ b/www/manager6/storage/Browser.js
-@@ -102,6 +102,21 @@ Ext.define('PVE.storage.Browser', {
+@@ -102,6 +102,23 @@ Ext.define('PVE.storage.Browser', {
                      itemId: 'contentIso',
                      content: 'iso',
                      pluginType: plugin,
 +                    folderView: true,
++                    mediaEdit: PVE.Utils.mediaLinkStorageTypes.includes(plugin),
 +                    enableUploadButton: enableUpload,
 +                    enableDownloadUrlButton: enableDownloadUrl,
 +                    useUploadButton: true,
@@ -2086,6 +2191,7 @@ index b4c20992..5d719ff3 100644
 +                    content: 'floppy',
 +                    pluginType: plugin,
 +                    folderView: true,
++                    mediaEdit: PVE.Utils.mediaLinkStorageTypes.includes(plugin),
                      enableUploadButton: enableUpload,
                      enableDownloadUrlButton: enableDownloadUrl,
                      useUploadButton: true,
@@ -2103,7 +2209,7 @@ index db54df87..b6509b33 100644
                  name: 'content',
                  value: 'backup',
 diff --git a/www/manager6/storage/ContentView.js b/www/manager6/storage/ContentView.js
-index c604cbab..01a2dc68 100644
+index c604cbab..f0ab34f7 100644
 --- a/www/manager6/storage/ContentView.js
 +++ b/www/manager6/storage/ContentView.js
 @@ -60,6 +60,41 @@ Ext.define(
@@ -2148,18 +2254,88 @@ index c604cbab..01a2dc68 100644
              Proxmox.Utils.monStoreErrors(me, store);
  
              let tbar = me.tbar ? [...me.tbar] : [];
-@@ -119,7 +154,9 @@ Ext.define(
+@@ -96,6 +131,52 @@ Ext.define(
+                     '-',
+                 );
+             }
++            // A mirror storage's ISO and floppy tabs (reference/mirror): rename a volume in place
++            // and link one of another storage in. Shown where libpve-storage-perl allows it: a
++            // storage type that can hold links, Datastore.Allocate on it, and no description file
++            // (`wsh-lab mirror` keeps those links; a change here would be undone by its apply).
++            if (me.folderView && me.mediaEdit) {
++                let mediaButtons = [
++                    {
++                        xtype: 'proxmoxButton',
++                        text: gettext('Rename'),
++                        itemId: 'mediaRename',
++                        hidden: true,
++                        disabled: true,
++                        selModel: sm,
++                        handler: function () {
++                            let rec = sm.getSelection()[0];
++                            if (!rec) {
++                                return;
++                            }
++                            Ext.create('PVE.window.MediaRename', {
++                                nodename,
++                                storage,
++                                content,
++                                volid: rec.data.volid,
++                                autoShow: true,
++                                listeners: { destroy: () => reload() },
++                            });
++                        },
++                    },
++                    {
++                        xtype: 'button',
++                        text: gettext('Add link from storage'),
++                        itemId: 'mediaLink',
++                        hidden: true,
++                        handler: function () {
++                            Ext.create('PVE.window.MediaLink', {
++                                nodename,
++                                storage,
++                                content,
++                                autoShow: true,
++                                listeners: { destroy: () => reload() },
++                            });
++                        },
++                    },
++                ];
++                tbar.push(...mediaButtons);
++            }
+             if (!me.useCustomRemoveButton) {
+                 tbar.push({
+                     xtype: 'proxmoxStdRemoveButton',
+@@ -119,7 +200,14 @@ Ext.define(
                      header: gettext('Name'),
                      flex: 2,
                      sortable: true,
 -                    renderer: PVE.Utils.render_storage_content,
 +                    renderer: me.folderView
-+                        ? PVE.Utils.render_volume_file
++                        ? (value, meta, record) => {
++                              let text = PVE.Utils.render_volume_file(value, meta, record);
++                              return record.data.unavailable
++                                  ? `${text} <span class="pmx-hint">(${gettext('unavailable on this node')})</span>`
++                                  : text;
++                          }
 +                        : PVE.Utils.render_storage_content,
                      sorter: (a, b) =>
                          a.data.text
                              .toString()
-@@ -191,6 +228,7 @@ Ext.define(
+@@ -155,7 +243,10 @@ Ext.define(
+                     header: gettext('Size'),
+                     width: 100,
+                     dataIndex: 'size',
+-                    renderer: function (value, _meta, record) {
++                    renderer: function (value, meta, record) {
++                        if (record.data.unavailable) {
++                            return PVE.Utils.render_media_unavailable(meta);
++                        }
+                         if (value !== undefined) {
+                             return Proxmox.Utils.format_size(value);
+                         }
+@@ -191,14 +282,47 @@ Ext.define(
                  selModel: sm,
                  tbar,
                  columns,
@@ -2167,6 +2343,407 @@ index c604cbab..01a2dc68 100644
                  listeners: {
                      activate: reload,
                      itemdblclick: (view, record) => me.itemdblclick(view, record),
++                    ...(me.folderView && me.mediaEdit
++                        ? { afterrender: { fn: () => me.checkMediaEdit(), single: true } }
++                        : {}),
+                 },
+             });
+ 
+             me.callParent();
+         },
++
++        // Shows the Rename and Add link buttons when the user may use them on this storage.
++        checkMediaEdit: async function () {
++            let me = this;
++            let storagePath = `/storage/${me.storage}`;
++            try {
++                let [perms, status] = await Promise.all([
++                    Proxmox.Async.api2({
++                        url: '/access/permissions',
++                        method: 'GET',
++                        params: { path: storagePath },
++                    }),
++                    Proxmox.Async.api2({
++                        url: `/nodes/${me.nodename}/storage/${me.storage}/status`,
++                        method: 'GET',
++                    }),
++                ]);
++                if (me.destroyed) {
++                    return;
++                }
++                let privs = perms.result.data?.[storagePath] ?? {};
++                let allowed =
++                    !!privs['Datastore.Allocate'] && !status.result.data['mirror-described'];
++                me.down('#mediaRename').setHidden(!allowed);
++                me.down('#mediaLink').setHidden(!allowed);
++            } catch (_error) {
++                // leave them hidden: the API refuses what it doesn't allow anyway
++            }
++        },
+     },
+     function () {
+         Ext.define('pve-storage-content', {
+@@ -216,6 +340,7 @@ Ext.define(
+                 'lun',
+                 'notes',
+                 'verification',
++                'unavailable',
+                 {
+                     name: 'text',
+                     convert: function (value, record) {
+diff --git a/www/manager6/window/MediaVolumeEdit.js b/www/manager6/window/MediaVolumeEdit.js
+new file mode 100644
+index 00000000..95f53ff4
+--- /dev/null
++++ b/www/manager6/window/MediaVolumeEdit.js
+@@ -0,0 +1,347 @@
++// The ISO and floppy tabs of a mirror storage (reference/mirror): rename a volume in place (a link
++// or a file, never a link's target) and link a volume of another storage in under a folder name.
++// The folders are kept in the volume's name, joined with '__' (PVE.Utils.media_volume_name).
++
++// The folder and file name fields of both windows and the resulting volume name.
++Ext.define('PVE.panel.MediaVolumeName', {
++    extend: 'Ext.container.Container',
++    alias: 'widget.pveMediaVolumeName',
++
++    layout: 'anchor',
++    defaults: {
++        anchor: '100%',
++        labelWidth: 120,
++    },
++
++    // storage and content of the new volume, and its current name (rename) to refuse unchanged
++    storage: undefined,
++    content: 'iso',
++    currentName: undefined,
++
++    // the new volume's name, or undefined while the fields don't make a valid one
++    getName: function () {
++        let me = this;
++        let { name, error } = me.compute();
++        return error ? undefined : name;
++    },
++
++    compute: function () {
++        let me = this;
++        let result = PVE.Utils.media_volume_name(
++            me.down('[name=folder]').getValue(),
++            me.down('[name=file]').getValue(),
++            me.content,
++        );
++        if (!result.error && me.currentName !== undefined && result.name === me.currentName) {
++            result.error = gettext('That is the current name');
++        }
++        return result;
++    },
++
++    setNameParts: function (folder, file) {
++        let me = this;
++        me.down('[name=folder]').setValue(folder);
++        me.down('[name=file]').setValue(file);
++    },
++
++    update: function () {
++        let me = this;
++        let { name, error } = me.compute();
++        let volid = `${me.storage}:${me.content}/${name}`;
++        me.down('#volume').setValue(
++            error
++                ? `<span class="pmx-hint">${Ext.htmlEncode(error)}</span>`
++                : Ext.htmlEncode(volid),
++        );
++        me.down('[name=file]').validate();
++        me.fireEvent('namechange', me, error ? undefined : name);
++    },
++
++    initComponent: function () {
++        let me = this;
++        let changed = () => me.update();
++        me.items = [
++            {
++                xtype: 'textfield',
++                name: 'folder',
++                fieldLabel: gettext('Folder'),
++                emptyText: gettext('Top level, or e.g. Solaris / 2.6'),
++                listeners: { change: changed },
++            },
++            {
++                xtype: 'textfield',
++                name: 'file',
++                fieldLabel: gettext('File name'),
++                allowBlank: false,
++                validator: () => me.compute().error || true,
++                listeners: { change: changed },
++            },
++            {
++                xtype: 'displayfield',
++                itemId: 'volume',
++                htmlEncode: false,
++                fieldLabel: gettext('Volume'),
++                value: '',
++            },
++        ];
++        me.callParent();
++    },
++});
++
++Ext.define('PVE.window.MediaRename', {
++    extend: 'Proxmox.window.Edit',
++    alias: 'widget.pveMediaRename',
++
++    isCreate: true,
++    method: 'PUT',
++    title: gettext('Rename'),
++    submitText: gettext('Rename'),
++    width: 600,
++
++    // nodename, storage, content ('iso' or 'floppy') and the volid to rename
++    nodename: undefined,
++    storage: undefined,
++    content: 'iso',
++    volid: undefined,
++
++    getValues: function () {
++        return { rename: this.down('pveMediaVolumeName').getName() };
++    },
++
++    // The VMs (that this user may see) whose config uses the volume: a rename leaves them with
++    // the old volume ID.
++    findUsers: function () {
++        let me = this;
++        let hint = me.down('#usedBy');
++        Proxmox.Utils.API2Request({
++            url: '/cluster/resources',
++            params: { type: 'vm' },
++            method: 'GET',
++            failure: () => hint.setValue(gettext('Could not check which VMs use it.')),
++            success: function (response) {
++                let vms = (response.result.data || []).filter((vm) => vm.type === 'qemu');
++                if (vms.length > 200) {
++                    hint.setValue(gettext('Too many VMs to check which ones use it.'));
++                    return;
++                }
++                let users = [];
++                let pending = vms.length;
++                let done = () => {
++                    if (me.destroyed || --pending > 0) {
++                        return;
++                    }
++                    users.sort((a, b) => a.vmid - b.vmid);
++                    hint.setValue(
++                        users.length
++                            ? Ext.String.format(
++                                  gettext('Used by: {0}'),
++                                  users
++                                      .map((vm) =>
++                                          Ext.htmlEncode(
++                                              vm.name ? `${vm.vmid} (${vm.name})` : `${vm.vmid}`,
++                                          ),
++                                      )
++                                      .join(', '),
++                              )
++                            : gettext('No VM you can see uses it.'),
++                    );
++                    me.down('#usedByIcon').setHidden(!users.length);
++                };
++                if (!pending) {
++                    pending = 1;
++                    done();
++                    return;
++                }
++                for (const vm of vms) {
++                    Proxmox.Utils.API2Request({
++                        url: `/nodes/${vm.node}/qemu/${vm.vmid}/config`,
++                        method: 'GET',
++                        failure: done,
++                        success: function (res) {
++                            let config = res.result.data || {};
++                            let uses = Object.values(config).some(
++                                (value) =>
++                                    typeof value === 'string' && value.split(',')[0] === me.volid,
++                            );
++                            if (uses) {
++                                // the config's name: the resource list's can lag behind
++                                users.push({ vmid: vm.vmid, name: config.name });
++                            }
++                            done();
++                        },
++                    });
++                }
++            },
++        });
++    },
++
++    initComponent: function () {
++        let me = this;
++        if (!me.nodename || !me.storage || !me.volid) {
++            throw 'nodename, storage and volid are needed';
++        }
++        me.url = `/nodes/${me.nodename}/storage/${me.storage}/content/${me.volid}`;
++        let parts = PVE.Utils.volume_path_parts({ volid: me.volid, content: me.content });
++        let currentName = parts.join(PVE.Utils.mirrorSeparator);
++        let file = parts.pop();
++
++        me.items = [
++            {
++                xtype: 'displayfield',
++                fieldLabel: gettext('Current volume'),
++                labelWidth: 120,
++                htmlEncode: false,
++                value: Ext.htmlEncode(me.volid),
++            },
++            {
++                xtype: 'pveMediaVolumeName',
++                storage: me.storage,
++                content: me.content,
++                currentName,
++            },
++            {
++                xtype: 'container',
++                layout: 'hbox',
++                margin: '5 0 0 0',
++                items: [
++                    {
++                        xtype: 'box',
++                        itemId: 'usedByIcon',
++                        hidden: true,
++                        html: '<i class="fa fa-exclamation-triangle warning"></i>',
++                        margin: '0 5 0 0',
++                    },
++                    {
++                        xtype: 'displayfield',
++                        itemId: 'usedBy',
++                        htmlEncode: false,
++                        flex: 1,
++                        value: gettext('Checking which VMs use it...'),
++                    },
++                ],
++            },
++            {
++                xtype: 'displayfield',
++                userCls: 'pmx-hint',
++                value: gettext(
++                    'Renaming changes the volume ID. VMs whose CD/DVD or floppy drive uses it keep the old ID and fail to start until the drive is set to the new one.',
++                ),
++            },
++        ];
++
++        me.callParent();
++
++        let names = me.down('pveMediaVolumeName');
++        names.setNameParts(parts.join(' / '), file);
++        me.findUsers();
++    },
++});
++
++Ext.define('PVE.window.MediaLink', {
++    extend: 'Proxmox.window.Edit',
++    alias: 'widget.pveMediaLink',
++
++    isCreate: true,
++    method: 'POST',
++    title: gettext('Add link from storage'),
++    submitText: gettext('Add link'),
++    width: 640,
++
++    // nodename, storage (the one the link goes into) and content ('iso' or 'floppy')
++    nodename: undefined,
++    storage: undefined,
++    content: 'iso',
++
++    getValues: function () {
++        let me = this;
++        let volid = me.down('#source').getValue() || '';
++        let [, sourceStorage, volume] = volid.match(/^([^:]+):(.*)$/) || [];
++        return {
++            'source-storage': sourceStorage,
++            volume,
++            filename: me.down('pveMediaVolumeName').getName(),
++            content: me.content,
++        };
++    },
++
++    initComponent: function () {
++        let me = this;
++        if (!me.nodename || !me.storage) {
++            throw 'nodename and storage are needed';
++        }
++        me.url = `/nodes/${me.nodename}/storage/${me.storage}/link-volume`;
++
++        me.items = [
++            {
++                xtype: 'fieldset',
++                title: gettext('Source'),
++                items: [
++                    {
++                        // the selector of the CD/DVD and floppy editors, with its search field
++                        xtype: me.content === 'floppy' ? 'pveFloppySelector' : 'pveIsoSelector',
++                        itemId: 'source',
++                        nodename: me.nodename,
++                        labelWidth: 120,
++                        labelAlign: 'left',
++                        listeners: {
++                            change: (selector) => me.sourceChanged(selector.getValue()),
++                        },
++                    },
++                ],
++            },
++            {
++                xtype: 'fieldset',
++                title: Ext.String.format(gettext('Link in {0}'), me.storage),
++                items: [
++                    {
++                        xtype: 'pveMediaVolumeName',
++                        storage: me.storage,
++                        content: me.content,
++                    },
++                ],
++            },
++            {
++                xtype: 'displayfield',
++                userCls: 'pmx-hint',
++                value: gettext(
++                    'The link points at the volume, relative when both are on one file system. On a node where the source is not reachable the link is listed as unavailable.',
++                ),
++            },
++        ];
++
++        me.callParent();
++
++        // the source can't be in the storage the link goes into
++        let storageSelector = me.down('#source').lookup('storage');
++        storageSelector.getStore().addFilter({
++            id: 'pve-media-link-other-storage',
++            filterFn: (rec) => rec.data.storage !== me.storage,
++        });
++    },
++
++    // a new source: the link's folder and file name from the source's name, until edited
++    sourceChanged: function (volid) {
++        let me = this;
++        let names = me.down('pveMediaVolumeName');
++        if (!volid) {
++            return;
++        }
++        let parts = PVE.Utils.volume_path_parts({ volid, content: me.content });
++        let file = parts.pop();
++        if (!me.nameEdited) {
++            me.settingName = true;
++            names.setNameParts(parts.join(' / '), file);
++            me.settingName = false;
++        }
++    },
++
++    afterRender: function () {
++        let me = this;
++        me.callParent(arguments);
++        me.down('pveMediaVolumeName').on('namechange', () => {
++            if (!me.settingName) {
++                me.nameEdited = true;
++            }
++        });
++    },
++});
 diff --git a/www/manager6/window/UploadToStorage.js b/www/manager6/window/UploadToStorage.js
 index a5fa1773..09682ce4 100644
 --- a/www/manager6/window/UploadToStorage.js

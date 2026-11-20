@@ -25,10 +25,13 @@ export interface Refusal {
   message: string
 }
 
-/** An API client authenticated as root@pam (ticket cookie + CSRF header). */
-export async function pveApi(request: APIRequestContext): Promise<Pve> {
+/** An API client authenticated as root@pam, or another user (ticket cookie + CSRF header). */
+export async function pveApi(
+  request: APIRequestContext,
+  { password = PASSWORD, username = 'root@pam' }: { password?: string; username?: string } = {},
+): Promise<Pve> {
   const login = await request.post('/api2/json/access/ticket', {
-    form: { password: PASSWORD, username: 'root@pam' },
+    form: { password, username },
   })
   expect(login.ok(), await login.text()).toBe(true)
   const { data } = (await login.json()) as { data: { CSRFPreventionToken: string; ticket: string } }
@@ -95,6 +98,35 @@ export async function serviceLogs(service: string, tail = 200): Promise<string> 
     at += 8 + size
   }
   return lines.join('')
+}
+
+/**
+ * Whether the installed qemu-server has `machine: ...,legacy-bios-layout=1` (NICs without option ROM, no
+ * vapic ROM). TODO: remove with its test.fail() once a qemu-server with it is published.
+ */
+export async function hasLegacyBiosLayout(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Machine',
+    '-e',
+    `print defined(&PVE::QemuServer::Machine::legacy_bios_layout) ? 'legacy=yes' : 'legacy=no';`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^legacy=(yes|no)$/m)
+  return probe.output.includes('legacy=yes')
+}
+
+/**
+ * Whether the installed pve-manager has the "Legacy BIOS memory layout" checkbox in the Machine editor.
+ * TODO: remove with its test.fail() once a pve-manager with it is published.
+ */
+export async function hasLegacyBiosLayoutUi(): Promise<boolean> {
+  const probe = await pveExec([
+    'sh',
+    '-c',
+    'grep -q legacy-bios-layout /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
+  ])
+  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
+  return probe.output.includes('ui=yes')
 }
 
 /** The VM's config file as pmxcfs stores it. */
