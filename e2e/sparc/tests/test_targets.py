@@ -304,14 +304,15 @@ class VmParams(unittest.TestCase):
         self.assertEqual((p["name"], p["vmid"], p["tags"]), ("sol26-ss5", "120", "wsh-lab"))
 
     def test_cd_as_disk(self):
-        # Solaris 2.2-2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk); 2.5.1 under a Sun
-        # PROM, 2.2-2.5 under OpenBIOS (2.2-2.4 with openbios 0019-0022)
+        # Solaris 2.1-2.5.1: the CD-ROM answers as a disk (qemu-server's cd_as_disk); 2.5.1 under a Sun
+        # PROM, 2.1-2.5 under OpenBIOS (2.1-2.4 with openbios 0019-0022)
         for name, iso, bios in (("sol251-ss5", "solaris_2.5.1_1197.iso", "ss5.bin"),
                                 ("sol24-ss5", "solaris_2.4_sparc.iso", "openbios-sparc32"),
                                 ("sol24-ss20", "solaris_2.4_sparc.iso", "openbios-sparc32"),
                                 ("sol23-ss5", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
                                 ("sol23-ss20", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
                                 ("sol22-ss10", "Solaris_2.2.img", "openbios-sparc32"),
+                                ("sol21-ss10", "solaris2_1_sparc.iso", "openbios-sparc32"),
                                 ("sol25-ss5", "solaris2.5_sparc.iso", "openbios-sparc32"),
                                 ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32"),
                                 ("sol251-ss20", "solaris_2.5.1_1197.iso", "openbios-sparc32")):
@@ -1077,6 +1078,24 @@ class OlderSun(unittest.TestCase):
                 self.assertGreater(t["minutes"], 0)
         med = targets.MEDIA["Solaris_2.2.img"]
         self.assertEqual((med["size"], med["lab"]), (388608000, "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"))
+
+    def test_sol21_target(self):
+        # Solaris 2.1 needs pve-qemu wsh/0047 (pve-qemu-kvm 11.1.3-2+wsh29 and later): automated since a
+        # published package has it, SS-10 only, one CPU, the CD as a disk, static address only
+        t = targets.TARGETS["sol21-ss10"]
+        self.assertEqual(t["status"], "automated")
+        self.assertNotIn("blocked", t)
+        self.assertIn("sol21-ss10", targets.automated())
+        p = t["profile"]
+        self.assertEqual((p["machine"], p["bios"], p["memory"]), ("SS-10", "openbios-sparc32", 256))
+        self.assertNotIn("cores", p)
+        self.assertEqual([m.get("as_disk") for m in t["media"]], [True])
+        self.assertEqual(t["net_modes"], ["static"])
+        self.assertEqual(t["install"]["scenario"], "solaris-install-serial.py")
+        pkg = t["tested"]["packages"]["pve-qemu-kvm"]
+        self.assertTrue(pkg.startswith("11.1.3-2+wsh"))
+        self.assertGreaterEqual(int(pkg.rsplit("+wsh", 1)[1]), 29)
+        self.assertGreater(t["minutes"], 0)
 
     def test_matrix_holes(self):
         # Solaris 2.5.1 on the SS-20 under OpenBIOS (the SS-5 target needs ss5.bin), 2.6 and 7 on the

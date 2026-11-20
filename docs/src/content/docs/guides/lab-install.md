@@ -23,6 +23,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol21-ss10` | Solaris 2.1, End User Cluster (suninstall's Standalone Quick Install) | as `sol22-ss10`; needs `pve-qemu-kvm` 11.1.3-2+wsh29 or later | `solaris2_1_sparc.iso` | `root` / `wshlab` | ~10 min |
 | `sol22-ss10` | Solaris 2.2, End User (Quick Install) | SS-10, OpenBIOS, 256 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`); needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later | `Solaris_2.2.img` | `root` / `wshlab` | ~9 min |
 | `sol23-ss5` | Solaris 2.3 Edition II, End User (Quick Install) | SS-5, OpenBIOS, 256 MB, otherwise as `sol22-ss10` (also needs +wsh22) | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~10 min |
 | `sol23-ss20` | Solaris 2.3 Edition II, End User (Quick Install) | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol23-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~9 min |
@@ -256,7 +257,13 @@ starts again and boots the disk; stop the VM after `rebooting...`). **Solaris 2.
 runs only on the SS-10 of QEMU's machines (its only supported sun4m machine; under the SS-20 PROM
 its kernel panics) and installs exactly like 2.3 (the same one-question screens and Quick Install).
 Its CD image is `Solaris_2.2.img`, a plain 2048-byte-sector image with an `.img` name, which PVE's
-ISO storage accepts as it is. 2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
+ISO storage accepts as it is. **Solaris 2.1** (`sol21-ss10`), the first sun4m release, also runs
+only on the SS-10: the same sysidtool screens as 2.2, then 2.1's own suninstall menus (Standalone
+Quick Install, the End-User Cluster on `c0t3d0`), and it reboots by itself. It needs `pve-qemu-kvm`
+11.1.3-2+wsh29 or later: with an older package QEMU itself stops right after the kernel's device
+configuration (`Trap 0x21 (Instruction Access Error) while interrupts disabled`). At boot 2.1 leaves
+`/opt` and `/export/home` unmounted (`mount /opt` by hand works), and it has no `hostname` command.
+2.5 (HW 1/96; `sol25-ss5`, `sol25-ss20`) boots under OpenBIOS on both
 machines and installs like 2.6, without 2.5.1's Maintenance Update. Static address only for all of
 them. Now and then a CD boot of Solaris 2.2-2.6 hangs after the kernel banner, before the
 installer's first question (seen once, 2.3 on the SS-20; QEMU's emulated SCSI controller is the

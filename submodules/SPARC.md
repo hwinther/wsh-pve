@@ -1582,7 +1582,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.5 HW 1/96 | SS-5 and SS-20, OpenBIOS, CD as a disk | installs (~5 min) and boots; targets `sol25-ss5`, `sol25-ss20` (~9 min). From a `scsi-cd` the kernel hangs after its banner |
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
-| Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below, not in a package yet) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); catalogue entry `sol21-ss10` |
+| Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below; pve-qemu-kvm 11.1.3-2+wsh29 and later) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); target `sol21-ss10` (~10 min) |
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
@@ -1680,7 +1680,10 @@ What it would take for the rest:
   and never use it. Open: at boot 2.1 doesn't mount `/opt` and `/export/home` (`mountall` checks
   them, `mount /opt` by hand works), most likely its clock (the kernel warns about a "preposterous
   time" with QEMU's 2026 clock); not traced. Write-up:
-  `upstream/qemu-sparc32-context-switch-ifetch.md`.
+  `upstream/qemu-sparc32-context-switch-ifetch.md`. Through PVE on the published pve-qemu-kvm
+  11.1.3-2+wsh30 (qemu-server 9.2.19+wsh4, 2026-11-20): `lab.py install sol21-ss10 --check` passed
+  3/3 (three at once, 9.7-10.1 min: install 5.3 min, first boot 2.9-3.3, check 1.2-1.3), so
+  `sol21-ss10` is an automated target (e2e/sparc/README.md, "Older Sun releases").
 - **Solaris 2.1 under the Sun PROMs (2026-11-20):** the trap is the kernel's own (its context
   table), so the firmware makes no difference. QEMU's SS-20 with `ss10_v2.25_rom`, `-cpu
   TI-SuperSparc-50`, 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1`: without the change the CD's kernel

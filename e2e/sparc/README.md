@@ -1039,6 +1039,13 @@ then the ones that installed got targets:
 - **`sol25-ss5`, `sol25-ss20`** (Solaris 2.5 HW 1/96): OpenBIOS on both machines, the CD as a disk
   (from a `scsi-cd` the kernel hangs after its banner, as 2.5.1's did); the screens are 2.6's, and
   there is no Maintenance Update.
+- **`sol21-ss10`** (Solaris 2.1, the first sun4m release, SS-10 only): OpenBIOS with 0019-0022 and
+  the CD as a disk, as `sol22-ss10`. `solaris-install-serial.py` takes the 2.3 path through
+  sysidtool, then 2.1's own suninstall menus (`suninstall_21()`: Standalone Quick Install, the
+  End-User Cluster on `c0t3d0`, reboot after the install: yes). Its kernel needs the QEMU fix
+  `wsh/0047` (pve-qemu-kvm 11.1.3-2+wsh29 and later; without it QEMU stops after the device
+  configuration, `Trap 0x21`), so it was catalogue only until that package was published; results
+  through PVE below the OpenBIOS targets.
 - **`sunos413u1b-ss5`, `sunos413u1b-ss20`** (SunOS 4.1.3_U1B): the `sunos414-ss5` target with
   another CD and, for the SS-20, its profile: the same three scenarios unchanged, 64 MB during the
   install, OpenBIOS. The CD is a plain image with 2048-byte sectors (no `--convert`). Without patch
@@ -1166,6 +1173,26 @@ workflow now also needs the 2.3, 2.5 and 4.1.3_U1B CDs (`--iso` with the lab hos
 `sun_solaris/Solaris/2.3/SPARC/`, `sun_solaris/Solaris/2.5/SPARC/`,
 `sunos_202004/SunOS/SPARC/4.1.3U1B/`) and takes about 50 min longer. Not tried: `--user`,
 `--gateway`, `--data-disk`, the 9G disk and a second run of each (one passing run each so far).
+
+**`sol21-ss10` through PVE** (the PVE test container from `e2e/pve/Dockerfile` with the lab, built
+`--no-cache` from the published packages: pve-qemu-kvm 11.1.3-2+wsh30, qemu-server 9.2.19+wsh4,
+pve-manager 9.2.32+wsh4), three `lab.py install sol21-ss10 --check` at the same time on VMIDs of
+their own, 2026-11-20:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol21-ss10` (VM 1) | passed; `SunOS sol21-ss10 5.1 Generic sun4m sparc`; the marker; `le0 10.0.2.15 netmask ffffff00`; the finished VM `scsi6: none,media=cdrom`, `boot: order=scsi3` | 9.9 min (install 317 s, first boot 188 s, check 74 s) |
+| `install sol21-ss10` (VM 2) | passed | 9.7 min (315 s, 176 s, 79 s) |
+| `install sol21-ss10` (VM 3) | passed | 10.1 min (317 s, 198 s, 77 s) |
+| unit tests (`test_targets.py`) | passed | |
+
+The install itself: CD boot and sysidtool ~100 s, suninstall's package copy ~3 min, then 2.1 reboots
+by itself into OpenBIOS. The first boot spends ~80 s between the kernel banner and the root password
+question. As in the lab runs, `df -k` in the check lists `/` and `/usr` only: `/opt` and
+`/export/home` are not mounted at boot. 2.1 has no `hostname` command (the check's `hostname`
+prints "not found"; `uname -a` and the marker carry the name). `pve_matrix.py install` now also
+needs the 2.1 CD in `--iso` (`sun_solaris/Solaris/2.1/SPARC/`). Not tried: `--user`, `--gateway`,
+the 9G disk, a boot test of the stored disk, more than one CPU (traps, `submodules/SPARC.md`).
 
 ### NetBSD install targets
 
