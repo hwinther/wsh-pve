@@ -7,9 +7,18 @@ name: sparc lab NetBSD
 # (e2e/sparc/tests/test_netbsd.py, NETBSD_TARGET). The CDs come from cdn.netbsd.org (11.1) and
 # archive.netbsd.org (9.3), cached, and the test checks each against its pinned size, sha256 and
 # sha512 (targets.py); nothing from the lab host is used.
+#
+# When the installs run: on pull requests that change the files they use (the lab image, lab.py and
+# its modules, targets.py, the NetBSD scenarios and test; other lab changes run only the unit tests),
+# on dispatch, and daily once a pve-qemu-kvm version they haven't passed on is published at
+# debian.wshosting.no (a cache entry per passed version; GitHub evicts entries unused for 7 days, so
+# an unchanged package is also re-tested about weekly).
 
 on:
   workflow_dispatch:
+  schedule:
+    # After the nightly syncs and their package builds
+    - cron: "37 6 * * *"
   pull_request:
     branches:
       - main
@@ -24,8 +33,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether the installs run: on a pull request when it touches their files, on the schedule when the
+  # published pve-qemu-kvm has no passed run yet, always on dispatch
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Changed files
+        id: changed
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^e2e/sparc/Dockerfile(\.dockerignore)?$
+            ^e2e/sparc/(lab|install|mirror|recording|vgatext|targets|targets_dos)\.py$
+            ^e2e/sparc/lab-requirements\.txt$
+            ^e2e/sparc/scenarios/(_netbsd|_sparc32|_sparc64|netbsd-[a-z0-9-]+)\.py$
+            ^e2e/sparc/tests/test_netbsd\.py$
+            ^\.github/workflows/sparc-lab-netbsd\.yml$
+
+      - name: Published pve-qemu-kvm
+        id: version
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          version=$(curl -fsS --retry 3 https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages \
+            | awk '/^Package: pve-qemu-kvm$/ { p = 1 } p && /^Version:/ { print $2; p = 0 }' | sort -V | tail -n 1)
+          [ -n "$version" ] || { echo "::error::no pve-qemu-kvm in the repository"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Published pve-qemu-kvm: $version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Passed on this version before
+        id: passed
+        if: ${{ github.event_name == 'schedule' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-passed
+          key: netbsd-passed-pve-qemu-kvm-${{ steps.version.outputs.version }}
+          lookup-only: true
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          CHANGED: ${{ steps.changed.outputs.changed }}
+          PASSED: ${{ steps.passed.outputs.cache-hit }}
+        run: |
+          case "$EVENT" in
+            pull_request) run="$CHANGED" ;;
+            schedule) if [ "$PASSED" = "true" ]; then run=false; else run=true; fi ;;
+            *) run=true ;;
+          esac
+          echo "run=${run:-false}" >> "$GITHUB_OUTPUT"
+          echo "Run the NetBSD installs: ${run:-false}" >> "$GITHUB_STEP_SUMMARY"
+
   unit:
     name: Unit tests (install catalogue, stored disks)
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -42,6 +110,8 @@ jobs:
 
   netbsd:
     name: NetBSD install (${{ matrix.target }})
+    needs: [gate]
+    if: ${{ needs.gate.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     # On the lab host: 11.1 sun4u 10-11 min, 9.3 sun4u 18 min (its sysinst is slower), 9.3 on the
     # SS-5 and SS-20 6-7 min, plus the image build here; a runner under TCG is slower
@@ -92,3 +162,24 @@ jobs:
             !${{ runner.temp }}/netbsd/**/*.raw
             !${{ runner.temp }}/netbsd/**/*.sock
           retention-days: 7
+
+  # Remembers that this pve-qemu-kvm version passed, so the daily check skips it
+  passed:
+    needs: [gate, netbsd]
+    if: ${{ github.event_name == 'schedule' && needs.netbsd.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Marker
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/netbsd-passed"
+          echo "$VERSION" > "$RUNNER_TEMP/netbsd-passed/version"
+
+      - name: Save
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-passed
+          key: netbsd-passed-pve-qemu-kvm-${{ needs.gate.outputs.version }}
