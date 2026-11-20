@@ -177,11 +177,37 @@ def settled_change(m, old, timeout=600):
         time.sleep(1)
 
 
+def suninstall_21(m, screen):
+    """Solaris 2.1's suninstall after sysidtool: a lettered main menu, Standalone Quick Install (the
+    End-User Cluster, file systems laid out on c0t3d0 by itself), and a question whether to reboot."""
+    m.snap("Suninstall Main Menu")
+    m.send("a")  # [a] Standalone Quick Install
+    m.expect(r"Type \[a\] to cancel the quick install", 120, screen=True)
+    m.quiet(2, 60)
+    m.snap("Quick Install Standalone")
+    m.send("\r")
+    m.expect(r"Ready to quick install", 600, screen=True)
+    m.quiet(2, 60)
+    if "c0t3d0" not in m.screen_text():
+        raise RuntimeError(f"the quick install doesn't use c0t3d0:\n{m.screen_text()}")
+    m.snap("Ready to quick install")
+    m.send("\r")
+    m.expect(r"Reboot after installation\? \(y\|n\)", 600, screen=True)
+    m.snap("reboot after installation")
+    m.send("y\r")
+    m.expect(r"Installation of <SUNW\w+> was successful", 600)
+    m.snap("installing")
+
+
 def old_install(m, v, screen):
-    """sysidtool's questions, then Quick Install (End User, the boot disk, auto-layout)."""
+    """sysidtool's questions, then Quick Install (End User, the boot disk, auto-layout). 2.1's
+    suninstall has its own menus instead of the installer's screens (suninstall_21)."""
     if v["SOFTWARE_UP"] != "0":
-        raise ValueError("the Solaris 2.3 path installs End User System Support only (SOFTWARE_UP=0)")
+        raise ValueError("the Solaris 2.1-2.3 path installs End User System Support only (SOFTWARE_UP=0)")
     while "[ Solaris Installation ]" not in screen:
+        if "Suninstall Main Menu" in screen:
+            suninstall_21(m, screen)
+            return old_install_end(m)
         for rx, action in OLD_SCREENS:
             if re.search(rx, screen):
                 m.snap(rx.replace("\\", ""))
@@ -210,6 +236,10 @@ def old_install(m, v, screen):
     # 2.3 shows a progress screen; 2.2 clears the screen and makes the file systems first
     m.expect(r"Initial Installation of|making filesystem on", 600, screen=True)
     m.snap("installing")
+    old_install_end(m)
+
+
+def old_install_end(m):
     m.expect(r"Installation successful\.\.\.", 7200)
     m.snap("installation finished")
     # it reboots by itself ("Resetting" from a Sun PROM, "rebooting" under OpenBIOS); the Sun PROM

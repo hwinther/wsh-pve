@@ -975,6 +975,7 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | SunOS 4.1.3_U1B | SS-10, OpenBIOS, 64 MB | yes | yes (132 s) | not tried | |
 | Solaris 2.1 | SS-10, OpenBIOS | no | | | `Unhandled Exception 0x00000009` as 2.3 |
 | Solaris 2.1 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | kernel only | | | after device configuration `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` (also `-cpu TI-SuperSparc-40`) |
+| Solaris 2.1 | the same with a QEMU change (a local build of 11.1.3 with wsh/0001-0041; `submodules/SPARC.md`) | yes (52 s) | yes (5.0 min; 2.1's suninstall: Standalone Quick Install, End-User Cluster) | yes | `SunOS sol21-ss10 5.1 Generic sun4m sparc`; `/opt` and `/export/home` not mounted at boot (by hand they mount) |
 | Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in a recursive walk early in the kernel, most likely over the device tree (`SunOS Release 5.1`) |
 | Solaris 2.2 | SS-10, OpenBIOS, CD as a disk | no | | | `Unhandled Exception 0x00000009` |
 | Solaris 2.2 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (the 2.3 path) | yes | `SunOS solaris 5.2 Generic sun4m` |

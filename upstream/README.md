@@ -94,6 +94,12 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 ([unix0cc/qemu-experimental-patches](https://github.com/unix0cc/qemu-experimental-patches)).
 [qemu-sparc64-tte-page-size.md](qemu-sparc64-tte-page-size.md).
 
+Not carried yet, write-up and a tested patch outside the series (wsh-pve, may send): sun4m stops
+Solaris 2.1 when its kernel flushes a context whose level 1 table it hasn't filled yet (`Trap 0x21
+... while interrupts disabled`); an instruction fetch with traps disabled keeps the old translation
+of the page that was executing when the context changed.
+[qemu-sparc32-context-switch-ifetch.md](qemu-sparc32-context-switch-ifetch.md).
+
 ## OpenBIOS (`openbios/patches/`)
 
 | Patch | Fixes | Author / origin | OpenBIOS | Upstream tracker | Write-up |
