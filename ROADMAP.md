@@ -318,6 +318,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   audio; Solaris 10 has only USB audio), the CS4231 in an SBus slot of the SS-10/SS-20 as the MiSTer
   SS-20 core does (an FCode PROM and an OpenBIOS node), CS4231 capture, cg14 without SX (an old
   MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI and SX last.
+- **sparc installs before merge for QEMU and OpenBIOS changes.** `sparc-lab-netbsd.yml` runs the
+  NetBSD installs on the published pve-qemu-kvm (on lab changes, and daily once a new version is
+  published), so a `submodules/pve-qemu.patch` or `openbios/**` change is first checked there after
+  it is merged and built. Before merge it would need the PR's QEMU: not a full pve-qemu build, only
+  `qemu-system-sparc`/`qemu-system-sparc64` from the patched source
+  (`--target-list=sparc-softmmu,sparc64-softmmu`, about 10-15 minutes) and the OpenBIOS images,
+  copied into the lab image in place of the package's, then the same four NetBSD targets.
 - **Patch coverage (idea).** Measure how much of the code we own the tests run, not upstream's:
   `submodules/*.patch` gives our lines (the `+` side of each hunk matches the patched source the
   build uses), and a small script intersects them with lcov from each layer into "X of Y own lines
