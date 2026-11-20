@@ -1,47 +1,56 @@
 name: Updates master branches of local repos from upstream
 
+# Starts each sync-*.yml on main at once, the same runs their nightly schedules start. The dispatch
+# uses GITHUB_TOKEN with actions: write: a workflow_dispatch made with GITHUB_TOKEN starts a run
+# (unlike a push made with it), and the sync runs then push and build with their own WORKFLOW_TOKEN,
+# so they need nothing from the token that started them.
+#
+# From any ref other than main, or with dry_run, it only checks that each workflow is active and says
+# what it would start: the syncs always run on main and push there.
+
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list the sync workflows it would start (always on for a ref other than main)"
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
 jobs:
-  trigger-sync-pve-manager:
+  trigger:
+    name: Trigger ${{ matrix.workflow }}
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      actions: write # gh workflow run (GITHUB_TOKEN)
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow:
+          - sync-pve-manager.yml
+          - sync-qemu-server.yml
+          - sync-pve-storage.yml
+          - sync-qemu-3dfx.yml
+          - sync-pve-qemu.yml
     steps:
-      - name: Trigger sync-pve-manager
-        run: gh workflow run sync-pve-manager.yml --ref main
-
-  trigger-sync-qemu-server:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Trigger sync-qemu-server
-        run: gh workflow run sync-qemu-server.yml --ref main
-
-  trigger-sync-pve-storage:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Trigger sync-pve-storage
-        run: gh workflow run sync-pve-storage.yml --ref main
-
-  trigger-sync-qemu-3dfx:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Trigger sync-qemu-3dfx
-        run: gh workflow run sync-qemu-3dfx.yml --ref main
-
-  trigger-sync-pve-qemu:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Trigger sync-pve-qemu
-        run: gh workflow run sync-pve-qemu.yml --ref main
+      - name: Trigger ${{ matrix.workflow }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ matrix.workflow }}
+          DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
+        run: |
+          # Also proves the token can read the repository's workflows
+          state=$(gh api "repos/$GH_REPO/actions/workflows/$WORKFLOW" --jq .state)
+          if [ "$state" != active ]; then
+            echo "::error::$WORKFLOW is $state, not active"
+            exit 1
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run (ref $GITHUB_REF): would run 'gh workflow run $WORKFLOW --ref main'" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            gh workflow run "$WORKFLOW" --ref main
+            echo "Started $WORKFLOW on main" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
