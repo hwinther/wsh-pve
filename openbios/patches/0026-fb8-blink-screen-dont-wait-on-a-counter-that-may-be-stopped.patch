@@ -1,0 +1,76 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] fb8: don't wait on a counter that may be stopped to blink the screen
+
+The terminal emulator answers BEL with blink-screen, which on every fb8
+display (cgthree, tcx, vga) is fb8-blink-screen: invert the screen,
+"2000 ms", invert it back. ms polls get-msecs, which on sparc32 reads
+the obp-ticks variable that only the firmware's own level-14 timer
+interrupt handler (irq_entry14 in arch/sparc32/vectors.S) advances.
+
+A client that writes its console through the firmware, as Solaris 2.x
+and SunOS 4.1.4 do on a framebuffer console, has its own trap table by
+then (and with this series' 0022 the romvec calls run at PIL 15 as
+well). The firmware's handler never runs and obp-ticks stands still, so
+the wait never ends: on the first BEL (bash's completion bell, echo of a
+^G) the screen stays inverted and the console hangs. Solaris 2.6 on an
+SS-5 with a cg3, after "echo ^G" in a single-user shell: TBR 0xf0040050
+(the kernel's trap table), PSR PIL 15, the PC in the Forth inner
+interpreter (semis, dovar, enterforth), and obp-ticks 20970 both times
+it was read, 5 s apart.
+
+Wait at most 100 ms on the counter, and leave the loop after 20000 reads
+of it in any case (80 to 140 ms under TCG on the lab's host, where
+100000 reads took 400 to 680 ms), so the blink ends whatever the client
+has done to the trap table or the interrupt level. The 2000 was also a
+hex number: the blink at the firmware's own prompt took 0x2000 = 8192
+ms.
+
+sun4u's obp-ticks stays 0 in this tree (get-msecs falls back to counting
+its own calls), so the wait never hung there; the change keeps its blink
+short as before.
+
+While here, drop the flag execute-device-method leaves for the
+"ring-bell" method that /screen doesn't have: every BEL left one cell on
+the data stack ("0 > 7 emit ok" was followed by "1 >").
+---
+ forth/device/display.fs  | 12 +++++++++++-
+ forth/device/terminal.fs |  2 +-
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/forth/device/display.fs b/forth/device/display.fs
+index 010f9af..96432e3 100644
+--- a/forth/device/display.fs
++++ b/forth/device/display.fs
+@@ -257,8 +257,18 @@ defer fb8-invertrect
+   fb8-invertrect
+   ;
+ 
++\ The flash lasts up to 100 ms on the millisecond counter, and the wait
++\ also stops after a fixed number of reads of the counter: the counter is
++\ advanced by the firmware's own timer interrupt, which no longer runs once
++\ a client program has its own trap table (Solaris writes its console
++\ through the firmware), and a wait on the counter alone never ends there.
+ : fb8-blink-screen ( -- )
+-  fb8-invert-screen 2000 ms
++  fb8-invert-screen
++  get-msecs d# 100 +
++  d# 20000 0 do
++    dup get-msecs - 0< if leave then
++  loop
++  drop
+   fb8-invert-screen
+   ;
+   
+diff --git a/forth/device/terminal.fs b/forth/device/terminal.fs
+index 24b2d10..435ddf7 100644
+--- a/forth/device/terminal.fs
++++ b/forth/device/terminal.fs
+@@ -236,7 +236,7 @@
+   7 of \ BEL
+     blink-screen
+     s" /screen" s" ring-bell" 
+-    execute-device-method
++    execute-device-method drop
+   endof
+   8 of \ BS
+     column# 0<> if

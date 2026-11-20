@@ -205,6 +205,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0020-sparc32-keep-the-forth-heap-inside-the-firmwares-own-virtual-range` | The 128K Forth heap was mapped at 0xffce0000, below the 0xffd00000-0xfff00000 range a Sun PROM keeps to; the Solaris 2.3/2.4 kernelmap ends at 0xffd00000 and they panicked: `can't remove OBP hole`. Now above the I/O mappings, inside the firmware's reserved 2 MB | not fixed; same note |
 | `0021-sparc32-take-node-0-as-the-root-node-in-the-romvec-property-operations` | OBP 2.x takes node 0 for the root in `no_proplen`/`no_getprop`/`no_nextprop`; Solaris 2.3 asks for the root's `name` that way, got -1 and panicked (`BAD TRAP: type=9 ... addr=fffff000`) | not fixed; same note |
 | `0022-sparc32-run-the-romvec-calls-with-interrupts-masked` | The romvec handlers ran OpenBIOS at the client's PIL; Solaris 2.4 calls `prom_getproplen()` from its idle thread with interrupts on, and in 2 of 4 boots a second romvec call got into the (non-reentrant) Forth engine meanwhile: `BAD TRAP: type=9 ... addr=0` in OpenBIOS's `c@`. Now PIL 15 for the call, back to the caller's PIL after (sparc64's client interface does the same, 0016) | not fixed; same note |
+| `0026-fb8-blink-screen-dont-wait-on-a-counter-that-may-be-stopped` | Shared Forth code (built into both images; matters on sparc32): BEL on a framebuffer console (cg3, TCX) inverted the screen and then waited `2000 ms` on `obp-ticks`, which only OpenBIOS's own level-14 timer handler advances. Solaris 2.x and SunOS 4.1.4 write their framebuffer console through the romvec with their own trap table installed, so the counter stood still and the console hung with the screen inverted on the first BEL (bash's completion bell). The wait is now at most 100 ms on the counter and at most 20000 reads of it; `2000` was hex (8.2 s at the firmware prompt). Also drops the flag the BEL case left on the data stack ("BEL on the framebuffer console") | not fixed; see `upstream/openbios-fb8-blink-screen-hangs-client-console.md` |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -595,6 +596,65 @@ A fix would be in QEMU's ESCC: a break with an end (clear the bit after a charac
 NUL character a real break leaves in the receiver), so Solaris sees the transition and enters the
 prompt; a candidate for a `wsh/` patch and an upstream report.
 
+### BEL on the framebuffer console
+
+Reported from Solaris 2.6 on an SS-5 (under LEMU, whose OpenBIOS is the same code): on the cg3
+console, Tab in bash with no unique completion turned the white background black, and then the
+console hung. Reproduced in the lab with `scenarios/fb-bell.py` (cg3, console on the framebuffer
+and the Sun keyboard, `boot disk:a -s`, a BEL from `echo B | tr B '\007'` or bash's Tab), stored
+disks copied, `pve-qemu-kvm` 11.1.3-2+wsh25 (firmware 0001-0025):
+
+- The screen inverts and stays inverted; the shell never answers. While hung, `info registers`:
+  PSR `04400fe5` (PIL 15, from 0022), the PC in OpenBIOS's Forth inner interpreter (`semis`,
+  `dovar`, `enterforth`, `next`, `docon` in five samples; symbols from `openbios-builtin.elf.nostrip`
+  of the same sources, whose `.text` is byte-identical to the package's), `$tbr` `0xf0040050`
+  (Solaris's own trap table; SunOS 4.1.4: `0xfe022050`), and `obp_ticks` → `0xffd27cbc` read
+  20970 and again 20970 five seconds later.
+- **Cause:** `fb8-blink-screen` (`forth/device/display.fs`, shared by cg3, TCX and VGA) is
+  "invert, `2000 ms`, invert". `ms` polls `get-msecs`, which on sparc32 reads `obp-ticks`, and only
+  OpenBIOS's level-14 handler `irq_entry14` (`arch/sparc32/vectors.S`) advances it. With the
+  client's trap table installed that handler never runs (and 0022 masks interrupts during the
+  romvec call too), so the wait never ends: the first analysis's guess (the counter stops once the
+  client owns the traps) holds.
+- Two more bugs on the same path: `2000` is hex in that file (the blink at the firmware's own
+  prompt lasted 9-11 s in the screenshots, 0x2000 ms = 8.2 s), and the BEL case of `(term-emit)`
+  leaves `execute-device-method`'s flag for `/screen`'s missing `ring-bell` on the data stack
+  (`0 > 7 emit ok`, then `1 >`).
+- sun4u: `obp-ticks` stays 0 at the prompt (`get-msecs .d` twice, 10 s apart: 0, then 1: the
+  fallback that counts its own calls), so `ms` ends after that many calls and never hung there; the
+  stack leak was there too (`1 >`, `2 >` after two `7 emit`).
+
+**Fix (openbios 0026):** wait at most 100 ms on the counter and at most 20000 reads of it
+(100000 reads took 400-680 ms at the prompt on the lab host, so 80-140 ms when the counter stands
+still), `d#` numbers, and `drop` the flag. Making `ms` itself work under a client would mean
+reading the counter-timer (sparc32) or `%tick` (sparc64) directly; `ms` has no other caller in
+the tree, so the blink is bounded instead.
+
+Results (2026-11-20; "stock" = the package's firmware, "0026" = `openbios/Dockerfile` with
+0001-0026 bind-mounted over it; WAIT 30 s):
+
+| Guest (SS-5, cg3 console) | stock | 0026 |
+| --- | --- | --- |
+| firmware prompt, `7 emit` | inverted 9-11 s, prompt `1 >` | flash of 0-0.2 s, prompt `0 >` |
+| Solaris 2.6, `echo` of a BEL | hung, screen inverted (30 s) | answered; three BELs in a row answered |
+| Solaris 2.6 on TCX (`VGA=tcx`), `echo` of a BEL | not run | answered; three answered |
+| Solaris 9 9/05, `echo` of a BEL | hung | answered; three answered |
+| Solaris 9 9/05, bash 2.05, `echo /usr/s` + Tab | hung | answered (the flash caught in one screenshot, 0.1 s) |
+| SunOS 4.1.4, `echo` of a BEL | hung | answered; three answered |
+| NetBSD 11.1 (its own wscons console), `echo` of a BEL | answered | answered |
+| Solaris 2.6 on the serial console (`-vga none`), `echo` of a BEL | answered (the BEL went out on ttya) | not run |
+| sun4u prompt (`-vga std`), `7 emit` twice | flash 0.1 s, prompt `2 >` | prompt `0 >` |
+
+Regression with 0026 mounted: `matrix.py smoke` 3 of 3, `matrix.py solaris10` 2 of 2,
+`matrix.py sparc64` 9 of 9 (NetBSD 11.1 on `std` VGA with the console on the framebuffer
+included), and the stored disks `install-sol9-ss5`, `install-netbsd111-sparc`,
+`install-sunos414-ss5` booted to their check commands on a serial console (`solaris-boot-disk.py`,
+`netbsd-boot-disk.py`, `sunos-boot-disk.py`, `-nographic` as `vga: serial0`): all passed, each
+banner showing the 0026 build.
+
+Workaround for packages without 0026: `set bell-style none` in `~/.inputrc`, or a serial display or
+telnet/ssh (guide, "The bell on a framebuffer console").
+
 ### Audio
 
 The SS-5's CS4231 plays sound with pve-qemu 0028-0033 and openbios 0018: the APC DMA engine reads
@@ -666,7 +726,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-5 | OpenBIOS | default | 256 | installer; installed disk to login |
 | SS-5 | `ss5.bin` | default | 256 | SS-5 disk to login |
 | SS-5 | `ss5-170.bin` | default | 256 | installer |
-| SS-10 | OpenBIOS | default | 256, 512 | installer; scripted install (~8.5 min) boots to login |
+| SS-10 | OpenBIOS | default | 256, 512 | installer; scripted install (~8.5 min) boots to login; through PVE the install targets `sol26-ss10` and `sol7-ss10` (512 MB, 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh25: 15.6 and 12.3 min with `--check`, the stored disks boot-tested) |
 | SS-10 | `ss10_v2.25_rom` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
 | SS-10 | `ss10_v2.25_rom` | SuperSparc-40/50/60 | 64-512 | `Probing Memory Bank #4 Data Access Error`, `ok` |
 | SS-20 | `ss10_v2.25_rom` | SuperSparc-50 | 256 | installer |
@@ -707,7 +767,7 @@ Error)`), `TI-MicroSparc-II`, `-IIep` and `Fujitsu-MB86907` with `Trap 0x29 (Dat
 
 | Guest | Result |
 | --- | --- |
-| Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50) |
+| Solaris 2.5.1 CD (`CDROM_AS=hd`) | installer (terminal type question), OpenBIOS and `ss20_v2.25_rom` (-50); under OpenBIOS End User installs with its Maintenance Update and boots to login: the install target `sol251-ss20` (through PVE, 512 MB, 46.6 min with `--check`, 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh25; the stored disk boot-tested). The SS-5 target keeps `ss5.bin` |
 | Solaris 7 (3/99) CD | language question, SS-5 and SS-20; scripted End User install through PVE boots to login on both, on the 3G or the 9G disk (`lab.py install sol7-ss5`/`sol7-ss20 [--disk-size 9G]`, `e2e/sparc/README.md`, "Solaris 7, 8 and 9") |
 | Solaris 8 (1/01) Installation CD | Web Start's first question (`Do you want to format /dev/dsk/c0t3d0?`), SS-5 and SS-20; it needs a Sun-labelled disk, a blank one ends in `No Hard disks found on the system.` Its reboot into the mini-root (`reboot -- <slice>`) loses the boot string under OpenBIOS (below, "Known gaps"); with `auto-boot?=false` and the slice booted by path, Web Start (command line mode) installs the Entire Group from Software 1 and 2 of 2 on SS-20, and it boots to login (`sol8-ss20`); the same on SS-5 with 256 MB (lab, 2026-11-19) |
 | Solaris 9 DVD | language menu, SS-5 and SS-20; on SS-20 (and SS-5, lab, 2026-11-19) Web Start installs End User and the installed 32-bit kernel boots to login (`sol9-ss20`); 9 is the last release for sun4m, Solaris 10 dropped it |
@@ -1574,7 +1634,11 @@ list: SS-4, SS-5 85/110, SS-10, SS-20; no SMP, HyperSPARC or TurboSPARC). The QE
 (below). pve-qemu patch `wsh/0040` makes the sun4m ESP's interrupt come 500 us after the event; with
 the whole series (0001-0041) both install on an SS-5 and boot to the Workspace. Lab only (no PVE
 run: no package has 0040 yet), 2026-11-19, pve-qemu-kvm 11.1.3-2+wsh21 and +wsh22 (a rebuild with
-the same patches) and local builds.
+the same patches) and local builds. 0040-0041 are published since pve-qemu-kvm 11.1.3-2+wsh24, with
+qemu-server 9.2.19+wsh2 (the `esp-irq-latency` key) and pve-manager 9.2.31+wsh2 (the UI field);
+on those packages `qm showcmd` of an SS-5 VM with the key passes `-global
+sysbus-esp.irq-latency-us=500` and an x86 VM refuses it (2026-11-19). No NeXT install was run on
+the published packages yet.
 
 Media (both carry a Sun label, so OpenBIOS and OBP boot them): `nextstep33_risc.iso`, the NeXTSTEP 3.3
 User CD for SPARC and PA-RISC (a SPARC + hppa kernel), and `Openstep-4.2-Intel-User.iso`, which
@@ -1773,7 +1837,7 @@ once (`retry_on`; nothing is on the disk yet).
 
 **Through PVE.** The profile exists (SS-5, `ss5.bin`, `vga: tcx`, 256 MB); the CD stage under
 `ss5.bin` ran in the lab, so one firmware suffices. The catalogue lists `nextstep33-ss5` and
-`openstep42-ss5` as blocked until a package carries `wsh/0040`; then they need framebuffer
+`openstep42-ss5` as blocked: a package carries `wsh/0040` now (11.1.3-2+wsh24), so what is left is framebuffer
 scenarios (OCR of the text stage, the pointer for Configure's Save, `-v` at each `boot:`). From the
 0001-0041 runs: tesseract can't read Configure's light grey panel (not even "Display"), so the
 scenario has to find Configure another way (a fixed wait after the kernel's network prompt worked,

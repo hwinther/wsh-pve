@@ -313,7 +313,8 @@ class VmParams(unittest.TestCase):
                                 ("sol23-ss20", "Solaris2.3Edition-II.iso", "openbios-sparc32"),
                                 ("sol22-ss10", "Solaris_2.2.img", "openbios-sparc32"),
                                 ("sol25-ss5", "solaris2.5_sparc.iso", "openbios-sparc32"),
-                                ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32")):
+                                ("sol25-ss20", "solaris2.5_sparc.iso", "openbios-sparc32"),
+                                ("sol251-ss20", "solaris_2.5.1_1197.iso", "openbios-sparc32")):
             a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="1", name=None, target=name)
             p = install.vm_params(targets.TARGETS[name], a, {iso: f"local:iso/{iso}"}, None)
             self.assertEqual(p["scsi6"], f"local:iso/{iso},media=cdrom,cd_as_disk=1")
@@ -748,8 +749,9 @@ class WebStartSun4u(unittest.TestCase):
         # 9 runs Web Start from the DVD: no prom_env; 8 stops at `0 >` for its mini-root, and End User
         # takes Software 1 of 2 only
         self.assertNotIn("prom_env", targets.TARGETS["sol9-sun4u"]["install"])
-        # 9 needs openbios 0025, not in a published package yet: the weekly matrix doesn't install it
+        # 9 needs openbios 0025, published in pve-qemu-kvm 11.1.3-2+wsh25: the weekly matrix runs it
         self.assertNotIn("matrix_skip", targets.TARGETS["sol9-sun4u"])
+        self.assertEqual(targets.TARGETS["sol9-sun4u"]["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh25")
         self.assertNotIn("matrix_skip", targets.TARGETS["sol8-sun4u"])
         t8 = targets.TARGETS["sol8-sun4u"]
         self.assertEqual(t8["install"]["prom_env"], {"auto-boot?": "false"})
@@ -968,6 +970,35 @@ class OlderSun(unittest.TestCase):
                 self.assertGreater(t["minutes"], 0)
         med = targets.MEDIA["Solaris_2.2.img"]
         self.assertEqual((med["size"], med["lab"]), (388608000, "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"))
+
+    def test_matrix_holes(self):
+        # Solaris 2.5.1 on the SS-20 under OpenBIOS (the SS-5 target needs ss5.bin), 2.6 and 7 on the
+        # SS-10: one CPU, 512 MB, the SS-20's install unchanged, a static address only, the 3G disk
+        for name, machine, medium, as_disk in (
+                ("sol251-ss20", "SS-20", "solaris_2.5.1_1197.iso", True),
+                ("sol26-ss10", "SS-10", "solaris_2.6_598_sparc.iso", None),
+                ("sol7-ss10", "SS-10", "Sol7.399InstallationSparc.iso", None)):
+            with self.subTest(target=name):
+                t = targets.TARGETS[name]
+                p = t["profile"]
+                self.assertEqual(t["status"], "automated")
+                self.assertEqual((p["arch"], p["machine"], p["bios"], p["memory"]),
+                                 ("sparc", machine, "openbios-sparc32", 512))
+                self.assertNotIn("cores", p)
+                self.assertEqual(t["media"], [{"name": medium, "drive": "scsi6", **({"as_disk": True} if as_disk else {})}])
+                self.assertEqual(t["disk"]["sizes"], ["3G"])
+                self.assertEqual((t["boot"], t["hostname"]), ("scsi3", name))
+                self.assertEqual(t["net_modes"], ["static"])
+                self.assertEqual(t["install"]["scenario"], "solaris-install-serial.py")
+                self.assertIn(machine.replace("SS-", "SPARCstation "), t["title"])
+                self.assertIn("OpenBIOS", t["title"])
+                self.assertNotIn("matrix_skip", t)
+                self.assertGreater(t["minutes"], 0)
+                self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh25")
+                self.assertIn("--export", t["tested"]["with"])
+        # 2.5.1's Maintenance Update: the same long wait for the root shell as on the SS-5
+        self.assertEqual(targets.TARGETS["sol251-ss20"]["install"]["vars"],
+                         targets.TARGETS["sol251-ss5"]["install"]["vars"])
 
     def test_old_select(self):
         m = FakeScreen("Will this system be connected to a network?\n\n     ┌────┐\n     │>No │\n     │ Yes│\n"
@@ -1453,8 +1484,8 @@ class OpenBSD59(unittest.TestCase):
 
 
 class NeXT(unittest.TestCase):
-    """nextstep33-ss5 and openstep42-ss5: catalogue entries until a pve-qemu-kvm with the ESP interrupt
-    fix is published (SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
+    """nextstep33-ss5 and openstep42-ss5: catalogue entries until framebuffer scenarios drive their
+    installs (the ESP interrupt delay is published; SPARC.md, "NeXTSTEP 3.3 and OPENSTEP 4.2")."""
     names = {"nextstep33-ss5": "nextstep33_risc.iso", "openstep42-ss5": "Openstep-4.2-Intel-User.iso"}
 
     def test_catalogue_only(self):

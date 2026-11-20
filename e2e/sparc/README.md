@@ -72,6 +72,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `solaris-boot-cd.py` | boots an install CD to the installer's first question (language or terminal type) and stops; `IDLE` measures QEMU's host CPU use there | ~1 min |
 | `cg3-display.py` | the cg3 at the size `RES` gives, console on the framebuffer: the PROM banner and, with `DISK`, Solaris to `console login:` (first-boot questions answered by OCR), each screenshot checked for that size and for not being blank | banner: seconds; disk: ~4 min |
 | `fb-display.py` | cg3 or TCX (`VGA`, `RES=1024x768x24` for TCX's 24-bit mode), console on the framebuffer: the banner, Solaris to its login prompt and, with `X=1`, dtlogin, a root login into CDE, the depth (`DEPTH`), the keyboard (`INPUT`), idle CPU (`IDLE`), a drawing benchmark (`BENCH`, `ACCEL` counts TCX's blitter writes) and a soak (`SOAK`); `EXPECT=console` checks why X doesn't start instead. Its checks run on a ttya shell, so the disk needs `PREPARE=1` (or `solaris-tcx-packages.py TTYA_LOGIN=1` first) | X: ~4-5 min; `BENCH=3`: ~8 min |
+| `fb-bell.py` | BEL on the cg3 console (keyboard and framebuffer): `7 emit` at the OpenBIOS prompt, then `GUEST` (`solaris`/`sunos4`: `boot disk:a -s`; `netbsd`: a root login) echoes a BEL in its shell, then three; the screenshots show whether the screen inverted and came back, OCR whether the shell answered. `EXPECT=hang` shows the hang of firmware without openbios 0026 (with `info registers`, `$tbr` and the firmware's tick count, `TICKS_SYM`); `LOOP=1` times the firmware's wait loop. Not in a matrix | ~2 min |
 | `solaris-tcx-packages.py` | adds the TCX packages (SUNWtcx.m, SUNWtcxow, SUNWtcxu) to an installed Solaris from its CD and touches `/reconfigure`; `TTYA_LOGIN=1` also gives root a login on ttya while the console is on the framebuffer | ~3-4 min |
 | `idle.py` | boots an installed disk, logs in, then measures QEMU's host CPU use over `SECONDS` (`CPU_BELOW`/`CPU_ABOVE` set the limits), checks that the guest clock kept time, times a CPU-bound command (`BUSY`), the echo of `true` and ten `sleep 1`; the numbers go to `result.json` (`metrics`) | ~3-4 min |
 | `niagara-boot.py` | `-M niagara` (sun4v) with an OpenSPARC T1 firmware set the user supplies (`FW`, never in the image): OpenBoot's `ok`, with `DISK` the T1 archive's `disk.s10hw2` to a root shell and `init 5`, with `ISO` a Solaris 10 DVD to the text installer (`WALK` walks on through its screens); skipped (exit 0, `status` "skipped: ...") when the firmware isn't there. See `submodules/SPARC.md`, "sparc64: niagara (sun4v)" | `ok`: 1 s; disk: ~2 min; installer: ~4-5 min |
@@ -826,8 +827,12 @@ on the host at once, 2026-11-19):
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
-install matrix ran on the same host at the time). `sol9-sun4u` had `matrix_skip` until a published package had 0025 (pve-qemu-kvm 11.1.3-2+wsh25);
-`sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
+install matrix ran on the same host at the time). 0025 is published in pve-qemu-kvm 11.1.3-2+wsh25
+(built after #350; its `openbios-sparc64` has no `fdthree` node), and on that package with no firmware
+mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boot 410 s, check 236 s;
+the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
+passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
+boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
 set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name
@@ -889,6 +894,29 @@ qemu-server that lacks `cd_as_disk` both cases fail at VM creation (`cd_as_disk:
 defined in schema`). Not tried: a 9G disk, `--user`, `--data-disk` and the network options other
 than the default static address with 2.4 and 2.5.1; Solaris 2.4 on SS-20; a second run of each
 (one passing run each so far).
+
+### Matrix holes: 2.5.1 on the SS-20, 2.6 and 7 on the SS-10
+
+`sol251-ss20` is `sol251-ss5` on an SS-20 under OpenBIOS (512 MB, one CPU): OpenBIOS boots the
+2.5.1 CD as a disk and the installed system, so the SS-20 needs no Sun PROM (the SS-20 PROM wasn't
+tried). The same `FINISH_TIMEOUT=6000` for the Maintenance Update. `sol26-ss10` and `sol7-ss10` are
+the SS-20 targets on QEMU's SS-10 (OpenBIOS, 512 MB, one CPU, the 3G disk); `solaris-install-serial.py`
+needed no change for any of them.
+
+Tested in the PVE test container on the lab host with the published packages (pve-qemu-kvm
+11.1.3-2+wsh25, qemu-server 9.2.19+wsh2, pve-manager 9.2.31+wsh4), 2026-11-19, each with
+`--check --export /mnt/os/disks` and then `boot-test` of the stored disk; up to five guests ran on
+the host at once (these three, a `sol9-sun4u` install and a boot test), so the times are upper bounds:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol251-ss20 --check --export` | passed; `SunOS sol251-ss20 5.5.1 Generic_103640-12 sun4m sparc SUNW,SPARCstation-20`; the marker; stored disk and sidecar | 46.6 min (install 2517 s, most of it the Maintenance Update; first boot 171 s, check 87 s) |
+| `install sol26-ss10 --check --export` | passed; `SunOS sol26-ss10 5.6`; the marker; stored disk and sidecar | 15.6 min (install 562 s, first boot 229 s, check 120 s) |
+| `install sol7-ss10 --check --export` | passed; `SunOS sol7-ss10 5.7 Generic_106541-02 sun4m sparc SUNW,SPARCstation-10`; the marker; stored disk and sidecar | 12.3 min (install 400 s, first boot 218 s, check 96 s) |
+| `boot-test` of each stored disk | `sol251-ss20` passed; `sol26-ss10` passed; `sol7-ss10` passed | 1.5 min; 2.1 min; 1.9 min |
+
+Not tried: DHCP, `--user`, the 9G disk, `--data-disk` and `--post-install` with these three; more
+than one CPU; a second run of each.
 
 ### Older Sun releases: Solaris 2.1-2.5, SunOS 4.1.2-4.1.3_U1B
 
