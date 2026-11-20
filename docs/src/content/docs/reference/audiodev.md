@@ -26,6 +26,21 @@ The additional backend drivers support both local and remote audio output.
 
 ![Audio driver menu](../../../assets/audiodriver.png)
 
+- **wav**: records to a file, for tests and recordings, not for listening. Not in the web UI's
+  list; set it with `qm set <vmid> --audio0 device=<device>,driver=wav`. It works with every
+  device above, the SS-5's `cs4231` included.
+  - The file is always `/var/run/qemu-server/<vmid>-audio0.wav`. The path is fixed: `server=` can't
+    change it, and a VM with `driver=wav` and a `server=` doesn't start. A fixed name in the VM's
+    runtime directory means a VM config can't make QEMU (which runs as root) write anywhere else.
+  - Each start overwrites the file. It stays after the VM stops, until the next start or the next
+    reboot of the node.
+  - `/var/run` is a tmpfs, so the recording is in RAM: QEMU's default format (44.1 kHz, 16-bit
+    stereo) is about 10 MB per minute of sound. The file grows only while the guest plays: an idle
+    VM leaves it at its 44-byte header. Copy the file away and switch the driver back when done.
+  - The RIFF and data sizes in the header stay 0, even after a clean exit (guest power off,
+    `qm stop`; measured with pve-qemu-kvm 11.1). Tools that trust the header see an empty file:
+    read everything after the 44-byte header as the samples, or rewrite the header, for example
+    with `sox --ignore-length <vmid>-audio0.wav fixed.wav`.
 - **alsa**: ALSA (local sound)
 - **pa**: PulseAudio (local sound)
 - **pipewire**: PipeWire (local sound)
@@ -36,7 +51,9 @@ The audio server option enables configuring unix sockets for a local audio pipel
 
 ![Audio menu](../../../assets/audio.png)
 
-- server (default value `unix:/tmp/pulse-server`)
+- server: the PulseAudio server, for driver `pa` only (default value `unix:/tmp/pulse-server`).
+  With another driver it is ignored, with a warning in the start task's log; with `wav` the VM
+  doesn't start.
 
 A unix socket must already be configured and allow the context pveproxy is running under to connect to it.
 
