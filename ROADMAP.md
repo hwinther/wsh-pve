@@ -218,6 +218,20 @@ merged; what is left of them is item 2 under "Next".
   or profile. For Solaris, `pkgadd` from the mounted media in the first boot or check step, or the
   installer's Customize step where the scenario supports it; for other systems their own installer
   sets or packages.
+- **Browser SPARC (WebAssembly), researched 2026-11-21.** Run `qemu-system-sparc -M SS-5` on the
+  docs site with QEMU's upstream Emscripten host support: wasm64 with the TCI interpreter is in
+  11.1.3 (TCI is the only TCG backend there; the Wasm-emitting TCG backend is an out-of-tree series
+  by Kohei Tokunaga, not in 11.2.0-rc1). The SS-5's devices need no change and `-bios` loads from
+  Emscripten's file system, so OpenBIOS or a user's `ss5.bin` both work in principle; missing are a
+  display backend (serial only at first), an audio backend and networking (a WebSocket proxy). Step 1:
+  time a native `--enable-tcg-interpreter` build against the lab's SS-5 boots to estimate the speed.
+  Step 2: a serial-only page (xterm.js, OpenBIOS and a NetBSD/sparc disk, `-nographic -nic none
+  -audiodev none`, `coi-serviceworker` for the COOP/COEP headers GitHub Pages can't set, the disk
+  fetched in ranges, optionally a migrated snapshot for an instant start), plus a local-only picker
+  for `ss5.bin` and Sun disks, since Sun firmware and installed Sun systems are never published.
+  Later: a canvas display with the Sun keyboard and mouse, WebAudio for the CS4231, and the Wasm TCG
+  backend once it is upstream. Generic Wasm pieces (display and audio backends) are written against
+  plain upstream QEMU; LEMU-derived code stays in wsh-pve.
 - **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
