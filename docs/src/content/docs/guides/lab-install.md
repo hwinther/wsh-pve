@@ -29,17 +29,20 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol24-ss5` | Solaris 2.4 HW 3/95, End User | as `sol23-ss5` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
 | `sol24-ss20` | Solaris 2.4 HW 3/95, End User | as `sol23-ss20` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
 | `sol251-ss5` | Solaris 2.5.1 11/97, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
+| `sol251-ss20` | Solaris 2.5.1 11/97, End User | SS-20, OpenBIOS, 512 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~47 min |
 | `sol25-ss5` | Solaris 2.5 HW 1/96, End User | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol25-ss20` | Solaris 2.5 HW 1/96, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol25-ss5` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
+| `sol26-ss10` | Solaris 2.6 5/98, End User | SS-10, OpenBIOS, 512 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~16 min |
 | `sol7-ss5` | Solaris 7 3/99, End User | as `sol26-ss5` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~11 min |
 | `sol7-ss20` | Solaris 7 3/99, End User | as `sol26-ss20` (3G disk, or 9G with `--disk-size 9G`) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol7-ss10` | Solaris 7 3/99, End User | as `sol26-ss10` | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~12 min |
 | `sol8-ss20` | Solaris 8 1/01, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-20, OpenBIOS, 512 MB, one CPU, 9G disk | `sun-solaris-8-0101-installation-sparc.iso`, `sun-solaris-8-0101-software-cd1-sparc.iso`, `sun-solaris-8-0101-software-cd2-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol9-ss20` | Solaris 9, End User, Web Start from the DVD | as `sol8-ss20` | `SOL_9_SPARC_DVD.iso` | `root` / `wshlab` | ~27 min |
 | `sol8-ss5` | Solaris 8 2/02, Entire Group, installed by Web Start from three CDs (swapped by the install) | SS-5, OpenBIOS, 256 MB, 9G disk, otherwise as `sol26-ss5` | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso`, `Sol8.0202.Sparc-Software_2of2.iso` | `root` / `wshlab` | ~37 min |
 | `sol9-ss5` | Solaris 9 9/05, End User, Web Start from the DVD | as `sol8-ss5` | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~30 min |
 | `sol10-sun4u` | Solaris 10 1/13, the default software group | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 16 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh13 or later | `sol-10-u11-ga-sparc-dvd.iso` | `root` / `wshlab` | ~110 min |
-| `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
+| `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
 | `sol8-sun4u` | Solaris 8 2/02, End User (64-bit), Web Start from the Installation CD and Software 1 of 2 (swapped by the install) | as `sol9-sun4u`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso` | `root` / `wshlab` | ~55 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
@@ -68,10 +71,10 @@ guide](/guides/dos/) has the VM settings and what DOS gets of the first megabyte
 
 `wsh-lab targets` also lists catalogue entries that don't install yet, each with what blocks it.
 `nextstep33-ss5` and `openstep42-ss5` (NeXTSTEP 3.3 and OPENSTEP 4.2 on an SS-5 with `ss5.bin` and the
-TCX) wait for packages with pve-qemu patch `wsh/0040` and qemu-server's `esp-irq-latency` machine
-option, which fix the ESP's interrupt timing (their profiles set `machine: SS-5,esp-irq-latency=500`):
-with the published packages their installers hang on the disk (see the [SPARC
-guide](/guides/sparc/#nextstep-33-and-openstep-42)).
+TCX) wait for framebuffer scenarios: their installs run on the TCX with the keyboard and mouse,
+not on the serial console. Their profiles set `machine: SS-5,esp-irq-latency=500` (the [SCSI
+interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qemu-kvm
+11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 and later); without it their installers hang on the disk.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
@@ -110,7 +113,7 @@ copies a mini-root to the disk and reboots into it; there the tool stops the VM 
 and boots the mini-root's slice at the prompt (`args: -prom-env auto-boot?=false` during the install
 only, as for the sun4m Solaris 8 targets). The first boot of an installed Solaris 9 panics in the
 floppy driver with an `openbios-sparc64` without patch 0025 (OpenBIOS's floppy node, which QEMU's
-sun4u can't back); pve-qemu-kvm 11.1.3-2+wsh25 and later have it. Don't use `reboot` or `init 6` in these guests: stop and start
+sun4u can't back); `pve-qemu-kvm` 11.1.3-2+wsh25 and later have it. Don't use `reboot` or `init 6` in these guests: stop and start
 the VM.
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
@@ -218,6 +221,12 @@ static address only (no DHCP client before 2.6). 2.4 shows a year after 1999 as 
 screen and refuses it; the install types the 4-digit year there. 2.4's auto-layout makes small
 slices (`/` 25 MB, `/usr` 108 MB, swap 130 MB, the rest of the disk `/export/home`), and it has no
 `hostname` command. 2.5.1's install ends with its Maintenance Update, which takes most of its time.
+On the SS-20 (`sol251-ss20`) 2.5.1 needs no Sun PROM: OpenBIOS boots its CD (as a disk) and the
+installed system.
+
+**The SS-10** has its own Solaris 2.6 and 7 targets (`sol26-ss10`, `sol7-ss10`): the SS-20's
+install unchanged, on QEMU's SS-10 with OpenBIOS, one CPU and 512 MB. Like the SS-5 and SS-20
+targets they take the 3G disk; a static address only (DHCP was tested on the SS-5 and SS-20 only).
 
 **Solaris 2.2, 2.3 and 2.5** need the same CD-as-disk drive. 2.3 Edition II (`sol23-ss5`,
 `sol23-ss20`, the first release for the SS-5; the SS-20 needs 2.3 or later) runs under OpenBIOS
