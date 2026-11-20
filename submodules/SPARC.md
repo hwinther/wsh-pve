@@ -178,7 +178,11 @@ million rounds in 300 ms), and against an earlier build of 0042 that took a BPcc
 `tribblix/idle` fails (its loop ends with `ba,pt %xcc`, as Tribblix's gcc lays it out).
 With 0001-0044 the `qtest-sparc` and `qtest-sparc64` suites: 41 OK, 4 skipped, and the two
 `qmp-test` `oob` failures as before (`sun4m-solaris-idle-test` 5/5, `sun4m-solaris-smp-idle-test`
-4/4). Lab results under "sparc64 (sun4u)", "Idle".
+4/4). Lab regression with the 0001-0044 `qemu-system-sparc64` (2026-11-20): `sparc64` 10/10 (with the
+new `nb111-idle-sparc64`, 2.7%, and `nb111-noidle-spins-sparc64`, 100.5%), `solaris10` 2/2, and
+`wsh-lab boot-test` through PVE (the binary bind-mounted into the test node, packages 11.1.3-2+wsh26) of
+the stored disks of `netbsd111-sparc64`, `netbsd93-sparc64`, `openbsd80-sun4u`, `sol9-sun4u`,
+`sol10-sun4u` and `tribblix-m34-sun4u`: 6/6 passed (Tribblix 33.7 min). Results under "sparc64 (sun4u)", "Idle".
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
@@ -3206,7 +3210,8 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - cg3 sizes: the lab's `display` matrix (`scenarios/cg3-display.py`).
 - cg3 and TCX: the TCX/cg3 banner and no-driver cases in `display`, the desktop cases in `display-x`
   (`scenarios/fb-display.py`, disks prepared by `solaris-tcx-packages.py`); results under "cg3 and TCX".
-- Idle: the lab's `idle` matrix (`scenarios/idle.py`).
+- Idle: the lab's `idle` matrix (`scenarios/idle.py`); on sun4u `scenarios/sparc64-idle.py`, the
+  `sparc64` matrix's two idle cases and the qtest `sun4u-idle-test` (0044).
 - Stop-A: the lab's `stopa` matrix (`scenarios/stop-a.py`); results under "Stop-A".
 - SMP: the lab's `smp` matrix (`scenarios/smp-soak.py`, the bench disk) and the qtest
   `sun4m-pil-delay-slot-test` (0020); results under "SMP".
