@@ -194,6 +194,34 @@ class Tools(unittest.TestCase):
         self.assertEqual(int.from_bytes(e[12:16], "little"), n)
         self.assertEqual(e[1:4], bytes([1, 1, 0]))  # CHS 0/1/1: head 1, sector 1
 
+    def test_assembler(self):
+        code, labels = dos_tools.assemble(["top", b"\x90", ("rel8", 0xEB, "top"), ("rel16", 0xE8, "end"),
+                                           ("imm16", b"\xba", lambda lb: lb["end"]), ("dd",), "end"])
+        self.assertEqual(code, bytes.fromhex("90 ebfd e80700 ba0d01 00000000"))
+        self.assertEqual(labels, {"top": 0x100, "end": 0x10D})
+        self.assertRaises(ValueError, dos_tools.assemble, ["a", b"\x90" * 200, ("rel8", 0xEB, "a")])
+
+    def test_idle_tsr(self):
+        com = dos_tools.idle_tsr()
+        self.assertEqual(com[:3], b"\xe9\x1e\x00")  # jmp to the installer at 0x121
+        # INT 28h: sti, hlt, jmp far [cs:old28]; INT 2Fh 1680h: sti, hlt, AL=0, iret
+        self.assertEqual(com[3:8], b"\xfb\xf4\x2e\xff\x2e")
+        self.assertEqual(com[0x0A:0x14], bytes.fromhex("3d8016 7505 fb f4 30c0 cf"))
+        self.assertIn(bytes.fromhex("ba1300 b80031 cd21"), com)  # TSR with 19 paragraphs (to 0x121)
+        self.assertIn(bytes.fromhex("b82825 cd21"), com)
+        self.assertIn(bytes.fromhex("b82f25 cd21"), com)
+        self.assertTrue(com.endswith(b"\r\n$"))
+        self.assertLess(len(com), 256)
+
+    def test_busy(self):
+        busy, busyk = dos_tools.busy_com(), dos_tools.busy_com(poll=True)
+        self.assertEqual(len(busyk), len(busy) + 4)
+        self.assertNotIn(b"\xcd\x16", busy)
+        self.assertIn(bytes.fromhex("b401 cd16 83c601 83d700"), busyk)  # INT 16h AH=01h each iteration
+        self.assertIn(bytes.fromhex("83c35b"), busy)  # 91 ticks: five seconds
+        self.assertNotIn(b"\xf4", busy + busyk)  # never halts
+        self.assertEqual(sorted(dos_tools.COMS), ["busy", "busyk", "wshidle"])
+
     def test_tool_list(self):
         self.assertIn("UMASCAN.COM", dos_tools.TOOLS)
         for name in dos_tools.TOOLS:
@@ -201,7 +229,74 @@ class Tools(unittest.TestCase):
             self.assertTrue(len(base) <= 8 and len(ext) <= 3 and name == name.upper())
 
 
-SEABIOS_LOG = """SeaBIOS (version rel-1.17.0-0-gb52ca86e094d-prebuilt.qemu.org)
+class Idle(unittest.TestCase):
+    """The idle driver: what the first boot writes, DEBUG's typing, and the check's bound."""
+
+    @classmethod
+    def setUpClass(cls):
+        import lab
+
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        cls.fb = lab.load_scenario(os.path.join(HERE, "scenarios", "dos-firstboot.py"))
+        import _dos
+
+        cls.dos = _dos
+
+    def test_firstboot_loads_wshidle_by_default(self):
+        v = dict(self.fb.DEFAULTS)
+        self.assertEqual(v["IDLE"], "wshidle")
+        self.assertEqual(self.fb.autoexec(v)[-1], "C:\\DOS\\WSHIDLE.COM")
+        self.assertNotIn("DEVICE=C:\\DOS\\POWER.EXE", self.fb.config(v))
+        v["KEYBOARD"] = "no"  # KEYB first, the TSR last
+        self.assertEqual(self.fb.autoexec(v)[-2:], ["KEYB NO,,C:\\DOS\\KEYBOARD.SYS", "C:\\DOS\\WSHIDLE.COM"])
+
+    def test_firstboot_power_or_none(self):
+        v = {**self.fb.DEFAULTS, "IDLE": "power"}
+        self.assertEqual(self.fb.config(v)[-1], "DEVICE=C:\\DOS\\POWER.EXE")
+        self.assertNotIn("C:\\DOS\\WSHIDLE.COM", self.fb.autoexec(v))
+        v["IDLE"] = "none"
+        self.assertNotIn("C:\\DOS\\WSHIDLE.COM", self.fb.autoexec(v))
+        self.assertEqual(self.fb.config(v), self.fb.CONFIGS["himem"])
+
+    def test_debug_write(self):
+        typed = []
+        replies = {"W": "Writing 0008E bytes", "DIR C:\\DOS\\WSHIDLE.COM": "WSHIDLE  COM       142 11-20-26  1:40a"}
+
+        def run(m, command, timeout=120, prompt=self.dos.PROMPT):
+            typed.append((command, prompt))
+            return replies.get(command, "")
+
+        orig, self.dos.run = self.dos.run, run
+        try:
+            self.dos.debug_write(None, "C:\\DOS\\WSHIDLE.COM", dos_tools.idle_tsr())
+        finally:
+            self.dos.run = orig
+        cmds = [c for c, _ in typed]
+        self.assertEqual(cmds[0], "DEBUG")
+        es = [c for c in cmds if c.startswith("E ")]
+        self.assertEqual(len(es), 9)  # 142 bytes, 16 per line
+        self.assertEqual(es[0], "E 0100 E9 1E 00 FB F4 2E FF 2E 19 01 3D 80 16 75 05 FB")
+        self.assertTrue(all(len(c) < 100 for c in es))  # one line each
+        self.assertEqual(cmds[-6:], ["RCX", "8E", "N C:\\DOS\\WSHIDLE.COM", "W", "Q", "DIR C:\\DOS\\WSHIDLE.COM"])
+        self.assertEqual(dict(typed)["RCX"], r"^:$")
+        self.assertEqual(dict(typed)["Q"], self.dos.PROMPT)
+        written = bytes(int(x, 16) for c in es for x in c.split()[2:])
+        self.assertEqual(written, dos_tools.idle_tsr())
+
+        replies["W"] = "Writing 00000 bytes"
+        self.dos.run = run
+        try:
+            self.assertRaises(AssertionError, self.dos.debug_write, None, "C:\\X.COM", dos_tools.idle_tsr())
+        finally:
+            self.dos.run = orig
+
+    def test_checks_idle(self):
+        for name, t in targets_dos.TARGETS.items():
+            with self.subTest(target=name):
+                self.assertLess(float(t["check"]["vars"]["IDLE_BELOW"]), 50)
+
+
+SEABIOS_LOG ="""SeaBIOS (version rel-1.17.0-0-gb52ca86e094d-prebuilt.qemu.org)
 Running option rom at c000:0003
 Running option rom at ca00:0003
 Searching bootorder for: /rom@genroms/kvmvapic.bin
