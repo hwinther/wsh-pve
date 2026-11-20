@@ -784,8 +784,8 @@ two runs and wasn't diagnosed.
 run the same `solaris-webstart-serial.py` on the sparc64 profile of `sol10-sun4u` (1024 MB, `sunhme`,
 `vga: serial0`) with a blank 8 GiB disk on `ide0` and the media on `ide2`, End User. They need
 `openbios-sparc64` with patch 0024 (pve-qemu-kvm 11.1.3-2+wsh23 or later); `sol9-sun4u` also needs
-0025 (the ebus floppy node left out; without it 9's first boot panics in `fd`), which isn't in a
-package yet (`submodules/SPARC.md`, "Solaris 8 and 9 install targets on sun4u"). What the scenario
+0025 (the ebus floppy node left out; without it 9's first boot panics in `fd`), in pve-qemu-kvm
+11.1.3-2+wsh25 and later (`submodules/SPARC.md`, "Solaris 8 and 9 install targets on sun4u"). What the scenario
 does differently on sun4u (`ARCH` sparc64 from the VM's config, `DISK=c0t0d0`):
 
 - **Boot:** `_sparc32.prom_boot()` lets OpenBIOS boot by itself (`Trying cdrom:f...`/`disk:a`,
@@ -826,8 +826,12 @@ on the host at once, 2026-11-19):
 | unit tests (`test_targets.py` with `WebStartSun4u`, `test_stored_disks.py`, `test_dos.py`, `test_freedos.py`, `test_netbsd.py`, `test_vgatext.py`; Docker, `--network none`) | 149 passed, 2 skipped | 6 s |
 
 So 0025 breaks none of the sun4u guests the lab runs (the last four rows, all with 0025; the CI
-install matrix ran on the same host at the time). `sol9-sun4u` has `matrix_skip` until a published package has 0025;
-`sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
+install matrix ran on the same host at the time). 0025 is published in pve-qemu-kvm 11.1.3-2+wsh25
+(built after #350; its `openbios-sparc64` has no `fdthree` node), and on that package with no firmware
+mounted `install sol9-sun4u --check` passed (74.2 min: install 3778 s, first boot 410 s, check 236 s;
+the first boot reconfigured without a panic, no `fdthree` warning) and `boot-test` of the stored disk
+passed (4.1 min), 2026-11-19; so `sol9-sun4u` no longer has `matrix_skip`, and the weekly matrix
+boot-tests its stored disk. `sol8-sun4u` runs with the published packages and is installed by `pve_matrix.py install` (about 55
 min the first time, then a boot test of its stored disk). Solaris 7 3/99 on sun4u wasn't installed:
 it reaches its installer (`Select a Language`, with IDE timeouts and `Interrupt not seen after
 set_features` on the way); a target would need a Sun-labelled IDE disk for suninstall, the disk name

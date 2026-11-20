@@ -749,8 +749,9 @@ class WebStartSun4u(unittest.TestCase):
         # 9 runs Web Start from the DVD: no prom_env; 8 stops at `0 >` for its mini-root, and End User
         # takes Software 1 of 2 only
         self.assertNotIn("prom_env", targets.TARGETS["sol9-sun4u"]["install"])
-        # 9 needs openbios 0025, not in a published package yet: the weekly matrix doesn't install it
-        self.assertIn("0025", targets.TARGETS["sol9-sun4u"]["matrix_skip"])
+        # 9 needs openbios 0025, published in pve-qemu-kvm 11.1.3-2+wsh25: the weekly matrix runs it
+        self.assertNotIn("matrix_skip", targets.TARGETS["sol9-sun4u"])
+        self.assertEqual(targets.TARGETS["sol9-sun4u"]["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh25")
         self.assertNotIn("matrix_skip", targets.TARGETS["sol8-sun4u"])
         t8 = targets.TARGETS["sol8-sun4u"]
         self.assertEqual(t8["install"]["prom_env"], {"auto-boot?": "false"})

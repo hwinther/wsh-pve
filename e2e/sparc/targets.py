@@ -99,9 +99,8 @@ PACKAGES_2026_11_19 ={"pve-qemu-kvm": "11.1.3-2+wsh21", "qemu-server": "9.2.19+w
 # pve-qemu-kvm 11.1.3-2+wsh22 and later
 PACKAGES_2026_11_19_WSH22 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh22"}
 # Solaris 8/9 on sun4u: pve-qemu-kvm 11.1.3-2+wsh23 (openbios 0001-0024) with openbios-sparc64 built
-# from 0001-0025 mounted over the package's (0025 isn't in a package yet)
+# from 0001-0025 mounted over the package's (0025 wasn't in a package then; it is in +wsh25)
 PACKAGES_2026_11_19_WSH23 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23"}
-PACKAGES_2026_11_19_SUN4U89 = {**PACKAGES_2026_11_19, "pve-qemu-kvm": "11.1.3-2+wsh23 + openbios 0025"}
 # Solaris 2.5.1 on the SS-20, 2.6 and 7 on the SS-10: the published packages of the evening (pve-qemu-kvm
 # +wsh25 has openbios 0001-0025 and QEMU wsh/0001-0041)
 PACKAGES_2026_11_19_WSH25 = {"pve-qemu-kvm": "11.1.3-2+wsh25", "qemu-server": "9.2.19+wsh2",
@@ -892,16 +891,13 @@ TARGETS = {
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
     # support), End User. Both need openbios-sparc64 with patch 0024 (pp is NULL or free; pve-qemu-kvm
     # 11.1.3-2+wsh23 and later), 9 also 0025 (no ebus floppy node: its first, reconfiguring boot
-    # panicked in the fd driver; 8 only warns). A reboot doesn't
+    # panicked in the fd driver; 8 only warns; pve-qemu-kvm 11.1.3-2+wsh25 and later). A reboot doesn't
     # come back on sun4u: the scenario stops the VM at `0 >` after the install (as sol10-sun4u), and
     # 8's reboot into the mini-root is a power cycle through PVE (lab.PveMachine.power_cycle()).
     "sol9-sun4u": {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 9 9/05 End User on sun4u (OpenBIOS, IDE disk)",
         "status": "automated",
-        # remove once a published pve-qemu-kvm has openbios 0025
-        "matrix_skip": "needs openbios-sparc64 with patch 0025 (the ebus floppy node), which no published"
-                       " pve-qemu-kvm has yet: with the package's firmware the first boot panics in fd",
         "install": {"scenario": "solaris-webstart-serial.py",
                     "vars": {"TIMEZONE": "MET", "SOFTWARE": "4", "DISK": "c0t0d0", "PROMPT_TIMEOUT": "5400"},
                     "timeout": 9000, "root_password": True},
@@ -916,8 +912,11 @@ TARGETS = {
         "nic": "hme0",
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
         "net_modes": ["static"],
-        "minutes": 70,  # 70.0 min (install 59, first boot 6.7, --check 3.6), openbios 0025 mounted
-        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_SUN4U89, "with": "--check"},
+        # 70.0 min (install 59, first boot 6.7, --check 3.6) with openbios 0025 mounted; 74.2 min (63, 6.8,
+        # 3.9) with the published +wsh25 (0025 in the package) and up to four other guests on the host
+        "minutes": 70,
+        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH25,
+                   "with": "--check (openbios 0025 mounted on +wsh23); --check (+wsh25); boot-test of the stored disk (+wsh25)"},
     },
     # The Installation CD copies a mini-root to the swap slice (b) and reboots into it: on sun4u the
     # reboot returns to `0 >` (a panic), the VM is power-cycled and slice b booted at `0 >` (auto-boot?

@@ -100,9 +100,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      lab 7, 8 1/01, 8 2/02, 9 and 9 9/05 reach their installers with 1 and 2 GB; 8 2/02 and 9 9/05
      install to the IDE disk with 1 GB and boot to `console login:`; the install targets
      `sol9-sun4u` and `sol8-sun4u` do it through PVE (the floppy node: OpenBIOS 0025; the reboot:
-     the tool stops the VM, and power-cycles it for 8's mini-root). Open: a `pve-qemu-kvm` with
-     0025 (until then `sol9-sun4u` needs the firmware from `openbios/`; `matrix_skip` until then), the
-     firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
+     the tool stops the VM, and power-cycles it for 8's mini-root). 0025 is in pve-qemu-kvm
+     11.1.3-2+wsh25 (`sol9-sun4u` installed and passed its check on it, ~74 min; no `matrix_skip`
+     any more). Open: the firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
      exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
