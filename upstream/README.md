@@ -100,6 +100,11 @@ Solaris 2.1 when its kernel flushes a context whose level 1 table it hasn't fill
 of the page that was executing when the context changed.
 [qemu-sparc32-context-switch-ifetch.md](qemu-sparc32-context-switch-ifetch.md).
 
+Not carried, write-up only (wsh-pve, may send as a report): on the SS-20, the DBRI stub
+(`sun-DBRI.prom`) reads as zeros, Sun's SS-10/SS-20 PROMs make an SBus node without a name for it,
+and Solaris 2.1/2.2 panic on that node (`BAD TRAP: type=9` in `get_neighbors`); the lab names it at
+the PROM prompt. [qemu-sun4m-ss20-dbri-unnamed-node.md](qemu-sun4m-ss20-dbri-unnamed-node.md).
+
 ## OpenBIOS (`openbios/patches/`)
 
 | Patch | Fixes | Author / origin | OpenBIOS | Upstream tracker | Write-up |

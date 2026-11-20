@@ -77,6 +77,11 @@ qemu-system-sparc -M SS-10 -m 256 -nographic \
 # at the OpenBIOS prompt:  boot /iommu/sbus/espdma/esp/sd@6,0:d
 ```
 
+It doesn't depend on OpenBIOS: under Sun's own SS-10 PROM (2.25, run on `-M SS-20 -cpu
+TI-SuperSparc-50`, since it doesn't get through POST on QEMU's SS-10) the CD's kernel and an installed
+disk stop at the same `pc f0014768`, and with the change below they install and boot there too (one
+more step is needed first for that PROM: qemu-sun4m-ss20-dbri-unnamed-node.md). The same on `-M LX`.
+
 About a minute after the kernel banner, after "clock gained ... days", QEMU exits with the trap
 above.
 

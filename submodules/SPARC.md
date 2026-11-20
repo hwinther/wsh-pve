@@ -1550,7 +1550,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
 | Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With a QEMU change (below, not in a package yet) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); catalogue entry `sol21-ss10` |
-| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, while walking the device tree (64 and 256 MB) |
+| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
@@ -1599,12 +1599,23 @@ package, ours mounted over its `openbios-sparc32`/`openbios-sparc64`): `smoke` 3
 `sparc64` 9/9, `solaris10` 2/2, and OpenBSD 8.0's installed sun4u disk to `login:` (0023).
 
 What it would take for the rest:
-- **Solaris 2.1/2.2 on the SS-20 PROM:** they predate the SS-20 and its SuperSPARC/PROM 2.25 device
-  tree; the panic is a null pointer read in a recursive walk early in the kernel (`pc=0xf002b300`,
-  the traceback calls the same function five levels deep), most likely over the device tree.
-  Either a node their kernels can't handle (find it by removing nodes in QEMU's SS-20 or in the
-  PROM's tree with `nvramrc`) or SS-10 Sun PROM support in QEMU's SS-10 (`Cpu #0 Data Access
-  Error` at its memory probe, "SS-10 and SS-20").
+- **Solaris 2.1/2.2 on the SS-20 PROM, diagnosis (2026-11-20):** the node is QEMU's. Its SS-20
+  puts an unimplemented device (reads 0) where the DBRI's FCode PROM would be (`sun-DBRI.prom`,
+  SBus slot e); the Sun SS-20 and SS-10 PROMs make an SBus node for it without a `name` (`ls` in
+  `/iommu/sbus`: `<Unnamed>`), and the 2.1/2.2 kernels strcmp its name: the traceback is
+  `get_neighbors` (`$nowalgnd` in strcmp, `pc=0xf002b300`), `di_dfs` three levels deep,
+  `impl_init_tree`, `startup`. Later releases don't mind. Named at the PROM prompt before `boot`
+  (the lab's `PROM_NAME_UNNAMED=1`: `<phandle> <setter> execute " SUNW,DBRIe" device-name
+  device-end`, with the setter that `see find-device` shows, since OBP 2.x has no word to select a
+  node by phandle), the 2.2 CD boots to its installer under `ss20_v2.25_rom` with QEMU 11.1.3 and wsh/0001-0041 alone,
+  and 2.1 gets as far as under OpenBIOS (below). Without the stub (a lab build that skips it) the
+  probe of slot e by `ss10_v2.25_rom` faults (`Data Access Error`, `ok`), so the PROM wants something there; a
+  QEMU fix would give the stub a minimal FCode header or name, not remove it.
+- **The Sun SS-10 PROM:** `ss10_v2.25_rom` doesn't get through POST on QEMU's SS-10 (`Cpu #0 Data
+  Access Error` with the default CPU; `Probing Memory Bank #4 Data Access Error` with
+  `-cpu TI-SuperSparc-50`, "SS-10 and SS-20"), but runs on QEMU's SS-20 with `-cpu
+  TI-SuperSparc-50`, where it calls the machine a "SPARCstation 10BSX". The 2.1 results under a
+  Sun PROM below are from that combination.
 - **Solaris 2.1 on SS-10 (OpenBIOS), diagnosis (2026-11-20):** a QEMU matter, neither the firmware
   nor the machine model. The trap comes in the first context flush the kernel does, for a new
   process's context (0x80a, then 0x809, ...). `srmmu_l1setup` gives the context a fresh level 1
@@ -1636,6 +1647,17 @@ What it would take for the rest:
   them, `mount /opt` by hand works), most likely its clock (the kernel warns about a "preposterous
   time" with QEMU's 2026 clock); not traced. Write-up:
   `upstream/qemu-sparc32-context-switch-ifetch.md`.
+- **Solaris 2.1 under the Sun PROMs (2026-11-20):** the trap is the kernel's own (its context
+  table), so the firmware makes no difference. QEMU's SS-20 with `ss10_v2.25_rom`, `-cpu
+  TI-SuperSparc-50`, 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1`: without the change the CD's kernel
+  and the installed disk stop QEMU with the same `Trap 0x21` at `pc f0014768`; with it
+  `solaris-install-serial.py` installs (4.9 min), and first boot (1.4 min) and the check (1.3 min)
+  pass (`SunOS sol21-ss10 5.1 Generic sun4m sparc`). The disk installed under OpenBIOS on the SS-10
+  boots there too, and `ss20_v2.25_rom` boots the PROM-installed disk. The SPARCstation LX (lab
+  QEMU, `feat/lab-lx564`) installs and boots 2.1 with the change as well.
+- **Solaris 2.1 with 2 CPUs (SS-10, OpenBIOS, the change):** the installed disk stops QEMU at the
+  second CPU's start: `Trap 0x21 ... while interrupts disabled` at `pc fbe78060`, `%o7` in
+  `cpu_exists`, `%i7` in `cpu_startup`; not traced.
 - **SunOS 4.1.3 (original), diagnosis:** the `BAD TRAP: type=29` after `SUNW,fdtwo0` is a probe.
   The kernel arms its fault catcher and reads kernel VA 0xff009000 (`ld [%o5]` at `0xf00a0970`,
   QEMU `-d in_asm`), which the QEMU monitor (`gva2gpa`, VM stopped at the trap) puts at physical

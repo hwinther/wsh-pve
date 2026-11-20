@@ -976,10 +976,14 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | Solaris 2.1 | SS-10, OpenBIOS | no | | | `Unhandled Exception 0x00000009` as 2.3 |
 | Solaris 2.1 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | kernel only | | | after device configuration `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` (also `-cpu TI-SuperSparc-40`) |
 | Solaris 2.1 | the same with a QEMU change (a local build of 11.1.3 with wsh/0001-0041; `submodules/SPARC.md`) | yes (52 s) | yes (5.0 min; 2.1's suninstall: Standalone Quick Install, End-User Cluster) | yes | `SunOS sol21-ss10 5.1 Generic sun4m sparc`; `/opt` and `/export/home` not mounted at boot (by hand they mount) |
-| Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in a recursive walk early in the kernel, most likely over the device tree (`SunOS Release 5.1`) |
+| Solaris 2.1 | SS-20, `ss20_v2.25_rom` -50, CD as a disk, 256 or 64 MB | kernel only | | | `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault` in `get_neighbors` (from `impl_init_tree`): a strcmp on the name of the SBus node the PROM makes, without a name, for QEMU's DBRI stub in slot e. `ss10_v2.25_rom` on the SS-20 the same |
+| Solaris 2.1 | SS-20, `ss10_v2.25_rom` -50 ("SPARCstation 10BSX"), 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1` | kernel only | | | with the node named the kernel gets as far as under OpenBIOS: `Trap 0x21` at `pc f0014768`; the installed disk too |
+| Solaris 2.1 | the same with the QEMU change | yes | yes (4.9 min, `solaris-install-serial.py`) | yes (first boot 1.4 min, check 1.3 min) | `SunOS sol21-ss10 5.1 Generic sun4m sparc`; the OpenBIOS-installed disk boots there too, and `ss20_v2.25_rom` boots the PROM-installed one (2026-11-20) |
+| Solaris 2.1 | SS-10, OpenBIOS, 2 CPUs, the QEMU change | kernel only | | | the installed disk: `Trap 0x21` at `pc fbe78060`, called from `cpu_startup` (the second CPU's start); not traced |
 | Solaris 2.2 | SS-10, OpenBIOS, CD as a disk | no | | | `Unhandled Exception 0x00000009` |
 | Solaris 2.2 | SS-10, OpenBIOS with openbios 0019-0022, CD as a disk | yes | yes (the 2.3 path) | yes | `SunOS solaris 5.2 Generic sun4m` |
-| Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` |
+| Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` (the unnamed node) |
+| Solaris 2.2 | the same with `PROM_NAME_UNNAMED=1` (QEMU 11.1.3 with wsh/0001-0041, no other change) | yes (55 s) | not tried | | 2026-11-20 |
 | SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root: a probe read of physical `0xd.0108_0000`, where QEMU has nothing (`submodules/SPARC.md`) |
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
