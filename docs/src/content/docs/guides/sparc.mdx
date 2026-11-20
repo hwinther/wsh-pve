@@ -520,7 +520,7 @@ loop of these guests and halts the virtual CPU there until the next interrupt:
 | NetBSD 9.3 and 11.1 | 100% / 3.5% |
 | OpenBSD 8.0 | 100% / 5-9% |
 | Solaris 9 9/05 and 10 1/13 | 102% / 5-7% |
-| Tribblix m34 (illumos) | TRIB_GUIDE |
+| Tribblix m34 (illumos) | 102% / 22%, but only with FMA's `fmd` off: on QEMU's IDE its ZFS disk soon gets marked DEGRADED and `rcm_daemon` then keeps the guest busy (104-108% either way) |
 
 The guest clock, `sleep` and CPU-bound work behave as before (measured in the sparc lab, QEMU started
 directly). It is the machine option `idle-halt`, on by default; to turn it off for one VM add

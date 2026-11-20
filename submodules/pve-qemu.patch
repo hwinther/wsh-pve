@@ -7798,10 +7798,10 @@ index 0000000..f215e65
 + }
 diff --git a/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch b/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch
 new file mode 100644
-index 0000000..e507857
+index 0000000..11b2b67
 --- /dev/null
 +++ b/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,690 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: halt the CPU in the idle loop of sun4u guests
 +
@@ -7833,7 +7833,9 @@ index 0000000..e507857
 +shows whether a kernel was recognised.
 +
 +An idle guest at the shell then uses 3-9% of a host core instead of
-+100%: NetBSD 9.3 and 11.1, OpenBSD 8.0, Solaris 9 and 10, Tribblix m34.
++100%: NetBSD 9.3 and 11.1, OpenBSD 8.0, Solaris 9 and 10 (Tribblix m34
++about 22%, with FMA off: its ZFS disk faults on QEMU and rcm_daemon
++spins otherwise).
 +The guest clock keeps time, ten "sleep 1" take as long as before, and
 +CPU-bound work takes as long as before.
 +---

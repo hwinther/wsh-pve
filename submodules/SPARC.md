@@ -2090,7 +2090,8 @@ still does after boot (lab README, "Idle"). Host CPU over 60 s at the shell, the
 | OpenBSD 8.0 | 512 | 100.3% | 8.6% | -0.1 s | 10.5 / 10.5 | 10.0 / 11.1 | 10 / 10 |
 | Solaris 10 1/13 | 1024 | 101.8% | 7.3% | 0.0 s | 10.4 / 10.5 | 8.5 / 11.4 | |
 | Solaris 9 9/05 | 1024 | 102.0% | 6.8% | 0.0-1.0 s | 10.5 / 10.6 | 10.1 / 10.4 | |
-| Tribblix m34 | 2048 | TRIB_BEFORE | TRIB_WITH | TRIB_DRIFT | TRIB_SLEEP | TRIB_JOB | |
+| Tribblix m34, `fmd` off | 2048 | 102.4% (`idle-halt=off`) | 21.8% | -0.1 / -0.2 s | 11.7 / 11.7 | 19.2 / 18.6 | |
+| Tribblix m34, `fmd` on | 2048 | 107.9% | 104.0% | -0.2 / -0.8 s | 12.7 / 12.5 | 25.0 / 24.6 | |
 
 The guest clock reads whole seconds, so 1.0 s of drift is one tick of `date`. A single job varies by
 ±15% from run to run on this host whichever binary runs, so the binary with 0042-0044 was also run with
@@ -2103,12 +2104,16 @@ The guest clock reads whole seconds, so 1.0 s of drift is one tick of `date`. A 
 | Solaris 10 1/13 | 4.8% / 100.5% | 40.0 / 40.0 s | |
 
 CPU-bound work takes as long as before, ten `sleep 1` take 10.4-10.6 s in every case and the clock keeps
-time. What is left (3-9%) is the 100 us spin before each halt at every clock tick, the guests' own
+time. What is left (3-9% on the BSDs and Solaris) is the 100 us spin before each halt at every clock tick, the guests' own
 periodic work and QEMU's timers. Solaris 10 needs several minutes after the login prompt until SMF has
 started everything (`svc.configd`, `inetd`, `snmpd`, `fmd` at 30-40% of the guest CPU): measured too
-early it reads 100% with or without the halt. Tribblix's FMA marks its ZFS disk DEGRADED (the known EIO
-ereports, "Tribblix on sun4u") and `rcm_daemon` then spins: a guest that busy never reaches its idle
-loop, so the runs clear the pool and stop `rcm_daemon` first.
+early it reads 100% with or without the halt. Tribblix's FMA marks its ZFS disk DEGRADED again within
+minutes (the known EIO ereports, "Tribblix on sun4u", also after `zpool clear`), and `rcm_daemon` then
+spins (67% of the guest CPU after 3.5 hours in one run): a guest that busy rarely reaches its idle loop,
+so with `fmd` running it reads 104-108% either way. With `fmd` disabled (`svcadm disable fmd`, which a
+real installation shouldn't do) it idles at 21.8% (258 111 halts traced in the run); the rest is
+Tribblix's own work under emulation, not analysed. Its ten `sleep 1` take 11.7 s with and without the
+halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
 
 **Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
 `halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,
@@ -2833,7 +2838,8 @@ valid is accepted.
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 8 GB,
   `sun4v`/`niagara`. Idle: with pve-qemu `wsh/0042`-`0044` an idle guest takes 3-9% of a host core
-  (NetBSD, OpenBSD, Solaris 9/10, Tribblix; "Idle" above), before them 100% for as long as the VM ran.
+  (NetBSD, OpenBSD, Solaris 9/10; Tribblix about 22% with `fmd` off; "Idle" above), before them 100%
+  for as long as the VM ran.
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
 
 ## sparc64: niagara (sun4v)

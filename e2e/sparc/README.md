@@ -2073,7 +2073,7 @@ does something for a while after boot, which `WAIT` ends or waits out before the
 | OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
 | Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
 | Solaris 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
-| Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router) |
+| Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
 
 `LOAD` needs a POSIX shell, so it is for the BSDs only; on Solaris the scenario's `awk` job reads
 `/dev/null` (Solaris's old `awk` reads its input even with only a `BEGIN` rule, and swallowed the
