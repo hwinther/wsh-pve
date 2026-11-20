@@ -18,7 +18,7 @@ jobs:
       issues: write
       pages: write
       id-token: write
-    uses: ./.github/workflows/build-deb.yml
+    uses: $/.github/workflows/build-deb.yml
     secrets:
       WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
       GPG_KEY: ${{ secrets.GPG_KEY }}

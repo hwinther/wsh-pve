@@ -44,7 +44,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: ./.github/workflows/repo-update.yml
+    uses: $/.github/workflows/repo-update.yml
     secrets:
       GPG_KEY: ${{ secrets.GPG_KEY }}
       GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}

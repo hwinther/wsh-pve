@@ -86,7 +86,7 @@ jobs:
 
       - name: Create PR on patch failure
         if: failure() && steps.check.outputs.failed != ''
-        uses: ./.github/actions/create-deb-failure-pr
+        uses: $/.github/actions/create-deb-failure-pr
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           packages: ${{ steps.check.outputs.failed }}

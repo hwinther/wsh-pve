@@ -236,7 +236,7 @@ jobs:
       issues: write
       pages: write
       id-token: write
-    uses: ./.github/workflows/build-deb.yml
+    uses: $/.github/workflows/build-deb.yml
     needs: [update-submodule]
     if: ${{ needs.update-submodule.outputs.changed == 'true' && inputs.build_deb == true }}
     with:
@@ -261,7 +261,7 @@ jobs:
           persist-credentials: false
 
       - name: Create PR for manual fix
-        uses: ./.github/actions/create-deb-failure-pr
+        uses: $/.github/actions/create-deb-failure-pr
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           packages: ${{ needs.update-submodule.outputs.submodule }}
