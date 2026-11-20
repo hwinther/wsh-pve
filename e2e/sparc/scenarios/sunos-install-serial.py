@@ -10,6 +10,11 @@ Quick install keeps the label and newfs's a and g). OpenBIOS must stop at `0 >` 
 (auto-boot? false): the CD boots from slice d (the sun4m boot) and the miniroot from the disk's slice
 b, both typed by path, because OpenBIOS drops the boot string of the miniroot's reboot.
 
+Under a Sun PROM (BIOS not OpenBIOS; tested with the SPARCstation LX in the lab, submodules/SPARC.md,
+"SPARCstation LX") the CD boots with `boot cdrom` and the PROM boots the miniroot by itself. Run it
+with NOGRAPHIC=1: with a keyboard the PROM takes input from it again after each reset, and the
+miniroot's shell then never sees ttya.
+
   SOFTWARE  the standard installation on suninstall's menu      (Programmer)
             Typical_user, Programmer, Full_install, Mini_install; only Programmer is tested
             (Full_install stopped at the Versatec set in the hand install)
@@ -28,10 +33,27 @@ def qemu_args(v, out):
     return sparc32_args(v, out) + ["-prom-env", "auto-boot?=false"]
 
 
-def prom(m, path, timeout=300):
-    m.expect(r"0 >", timeout)
-    m.snap("OpenBIOS prompt")
-    m.send(f"boot {path}\r")
+# What a Sun PROM (BIOS other than OpenBIOS, e.g. the LX's) boots for the paths typed at OpenBIOS
+SUN_PROM_BOOT = {f"{ESP}/sd@6,0:d": "cdrom", f"{ESP}/sd@3,0:b -sw": "disk:b -sw"}
+
+
+def prom(m, v, path, timeout=300):
+    if v["BIOS"].startswith("openbios"):
+        m.expect(r"0 >", timeout)
+        m.snap("OpenBIOS prompt")
+        m.send(f"boot {path}\r")
+        return
+    # A Sun PROM ignores -prom-env (QEMU's NVRAM fails its checksum): at power-on it tries its default
+    # boot device and stops at `ok`, but the miniroot's reboot string it boots by itself. With a
+    # keyboard its input stays there (prom_boot).
+    keyboard = m.expect_any([r"Keyboard Present", r"No Keyboard"], timeout) == 0
+    if m.expect_any([r"\nok ", r"SunOS Release 4\.1"], timeout) == 1:
+        return
+    m.snap("PROM prompt")
+    if keyboard:
+        m.fb_type("ttya io\r")
+        m.expect(r"ok ", 30)
+    m.send(f"boot {SUN_PROM_BOOT[path]}\r")
 
 
 def answer(m, prompt, reply, timeout=300, title=None):
@@ -45,7 +67,7 @@ def answer(m, prompt, reply, timeout=300, title=None):
 def run(m, v):
     if v["SOFTWARE"] not in SOFTWARE:
         raise ValueError(f"SOFTWARE must be one of {SOFTWARE}")
-    prom(m, f"{ESP}/sd@6,0:d")  # the CD's slice d: the sun4m boot and munix
+    prom(m, v, f"{ESP}/sd@6,0:d")  # the CD's slice d: the sun4m boot and munix
     m.expect(r"SunOS Release 4\.1", 600)
     m.snap("CD kernel banner")
     answer(m, r"1 - install SunOS mini-root[\s\S]*Enter a 1 or 2:", "1\r", 600, "install the mini-root")
@@ -54,7 +76,7 @@ def run(m, v):
     m.expect(r"Mini-root installation complete", 1200)
     answer(m, r"1 - reboot using the just-installed miniroot[\s\S]*Enter a 1 or 2:", "1\r", 60, "reboot")
     # OpenBIOS drops the reboot's boot string: the miniroot on slice b, single user, writable root
-    prom(m, f"{ESP}/sd@3,0:b -sw")
+    prom(m, v, f"{ESP}/sd@3,0:b -sw")
     m.expect(r"root on sd0b", 600)
     m.expect(SHELL, 600)
     m.snap("miniroot shell")
@@ -82,6 +104,12 @@ def run(m, v):
         raise RuntimeError("suninstall reported a problem (the screen and /etc/install/suninstall.log)")
     answer(m, r"Reboot now\? \[Y/N\] :", "y\r", 300, "installation finished: reboot")
     # auto-boot? false: the reset stops at the prompt; power off there (the install phase ends)
+    if not v["BIOS"].startswith("openbios"):
+        # a Sun PROM: `ok` after its default boot device, or the installed system if it boots that
+        m.expect_any([r"\nok ", r"SunOS Release 4\.1"], 600)
+        m.snap("PROM prompt after the install")
+        m.stop()
+        return
     m.expect(r"0 >", 300)
     m.snap("OpenBIOS prompt after the install")
     m.send("power-off\r")
