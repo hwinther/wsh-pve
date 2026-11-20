@@ -69,6 +69,7 @@ come after that, not before.
 | Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
 | Install targets for the matrix holes: Solaris 2.5.1 on the SS-20 under OpenBIOS (`sol251-ss20`, the CD as a disk; the SS-5 target still needs `ss5.bin`), Solaris 2.6 and 7 on the SS-10 (`sol26-ss10`, `sol7-ss10`), each installed through PVE with `--check --export` (stored disk and sidecar in `/mnt/os/disks`) and boot-tested, pve-qemu-kvm 11.1.3-2+wsh25 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
+| Idle on sun4u: no guest on QEMU's sun4u has a way to stop the CPU (Solaris/illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` only on CPUs with several strands), so pve-qemu `wsh/0042`-`0044` recognise the idle loops of NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9/10 and Tribblix m34 in the translator and halt there (`idle-halt`, on by default; qtest `sun4u-idle-test`): an idle guest at the shell takes 3-9% of a host core instead of 100% (Tribblix about 22%, and only with FMA's `fmd` off: its ZFS disk faults and `rcm_daemon` spins), with the clock, ten `sleep 1` and CPU-bound jobs as before (`submodules/SPARC.md`, "sparc64 (sun4u)", "Idle") | in review | |
 | Workflow tokens: `sync-from-upstream-trigger.yml` dispatches the five syncs with `GITHUB_TOKEN` (`actions: write`), and from a branch or with `dry_run` only says what it would start; `build-deb.yml` builds pve-qemu's 3dfx extra in its own job without `WORKFLOW_TOKEN` or stored credentials and hands the binary to the build job as an artifact; the optional-extras report's issue path is tested by `scripts/test-report-qemu-extras.sh` and dry-run against the open issues by `report-qemu-extras-test.yml` | in review | |
 
 ## In progress
@@ -130,8 +131,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
-   the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
+1. **Idle on sparc64, what is left.** The guests with a stored disk idle (see Done: `wsh/0042`-`0044`).
+   Not covered: Linux on sun4u (Debian 12's install fails, so no disk; its `arch_cpu_idle()` does
+   nothing on sun4u either), Solaris 8 (no stored disk yet; its `idle()` is probably laid out like 9's,
+   not checked), other kernel builds than the ones in `SPARC.md`, and sun4v/`niagara` (hypervisor
+   `cpu_yield`). Each new guest: disassemble its idle loop and add a layout with a qtest case.
 2. **Solaris on sun4u**: see "In progress". Solaris 10 installs through `lab.py install`; next: a
    reboot that works from Solaris (0012 hangs).
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
@@ -311,6 +315,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
+| sun4u idle only for the kernel builds in `SPARC.md` (NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9 9/05 and 10 1/13, Tribblix m34) | A differently compiled idle loop is not recognised and spins as before (`-trace sparc64_idle_match` shows a match) |
 | A CD that answers as a disk (`cd_as_disk=1`) has no field in the web UI | Set it with `qm set` or the API; the CD/DVD editor keeps it when the medium changes |
 | Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |

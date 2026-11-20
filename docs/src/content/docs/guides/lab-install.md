@@ -160,8 +160,8 @@ label). The first boot sets root's password, writes the marker `/etc/wsh-lab-tar
 off and nothing listens on the network (sysinst's defaults). Two things to know about sparc64: with
 pve-qemu-kvm before `wsh/0034` every sparc64 VM has the same system MAC address (52:54:00:12:34:56,
 whatever `net0` says), so put only one of them on a network segment (with it, `net0`'s address);
-and NetBSD/sparc64 keeps a host core at 100% for as long as it
-runs (no idle on sun4u). If a `halt -p` during the install never powers the VM off (seen once on
+and without pve-qemu `wsh/0042` NetBSD/sparc64 keeps a host core at 100% for as long as it
+runs (see the SPARC guide, "Idle on sun4u"). If a `halt -p` during the install never powers the VM off (seen once on
 sparc64), the tool breaks into NetBSD's kernel debugger after 5 minutes, records its state in the
 evidence and powers off from there.
 
@@ -278,7 +278,7 @@ takes about 5 minutes (key generation, the library relink); every boot relinks t
 background, and a `halt -p` before that ends says `reorder_kernel: failed` (harmless: the old
 kernel stays). It needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later: with older OpenBIOS the installed
 kernel stops right after the loader (`Unhandled Exception 0x30`). Like the other sun4u targets, it
-keeps a host core busy while it runs.
+keeps a host core busy while it runs unless the package has the sun4u idle halt (pve-qemu `wsh/0042`).
 
 **OpenBSD 5.9** (`openbsd59-ss5`, `openbsd59-ss20`) boots `cd59.iso`'s installer and answers it the
 same way as 8.0 (5.9 words some questions differently): `le0` with the static address, root's
