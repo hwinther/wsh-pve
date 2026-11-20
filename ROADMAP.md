@@ -82,13 +82,7 @@ come after that, not before.
 
 Work that exists but is not merged. If this list is stale, check the open pull requests.
 
-1. **Patches after the upstream sync** (#289, draft). The nightly sync moved pve-storage,
-   qemu-server and pve-manager to upstream code that splits the volume types; the three patch files
-   are refreshed there. It waits for Proxmox to publish libpve-storage-perl 9.1.17, qemu-server
-   9.2.17 and pve-container 6.1.22, then the build image is rebuilt and #289 merged. Until then main
-   cannot build those three packages; the published ones are unaffected. #291 (`ne2k_isa` on the
-   ISA bus) is stacked on it.
-2. **Solaris 10 on sun4u (OpenBIOS).** pve-qemu-kvm 11.1.3-2+wsh13 ships the patched
+1. **Solaris 10 on sun4u (OpenBIOS).** pve-qemu-kvm 11.1.3-2+wsh13 ships the patched
    `openbios-sparc64` (patches 0003-0011: the virtual `available` list, the I-cache properties, the
    Forth state at client start, OBP's node names for the console, OBP's IDE tree) and the cmd646
    interrupt latch (`wsh/0021`). On that package Solaris 10 1/13 installs from its DVD to the IDE
@@ -115,7 +109,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      any more). Solaris 7 3/99 installs too (`sol7-sun4u`, suninstall on a Sun-labelled IDE disk, 2048 MB: with 1024 its kernel panicked in the package copy). Open: the firmware reboot itself (0012), 2.5.1/2.6 boot-block
      exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
-3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
+2. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
    release, needed two more OpenBIOS fixes: 0016 runs the client interface with interrupts off
    (illumos calls it with interrupts on; an interrupt while the firmware saved or restored the
    caller's register windows corrupted them on 4 of 7 live CD boots; also the cause of Solaris 10's
@@ -279,7 +273,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   `openbsd59-ss20`; the sets from a CD made on the node, a serial display: with QEMU's keyboard
   ESCC its kernel panics, which isn't narrowed down yet, `submodules/SPARC.md`, "OpenBSD 5.9 on
   sun4m"; 5.8's `install58.iso` wasn't needed and isn't tried);
-  the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. OpenBIOS 0019-0022 run the Solaris
+  the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. The SS-600MP needs a CPU model QEMU
+  lacks: Sun's own SS-600MP boot PROM expects the Ross module's RT625 cache controller and MMU, which
+  QEMU doesn't emulate, and under OpenBIOS Solaris 2.6 refuses the platform (`submodules/SPARC.md`).
+  A Ross RT625 model would be a larger QEMU piece; not planned. OpenBIOS 0019-0022 run the Solaris
   2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5 and SS-20) are install targets under OpenBIOS
   since pve-qemu-kvm 11.1.3-2+wsh22 (`sol22-ss10`, `sol23-ss5`, `sol23-ss20`, `sol24-ss5`,
   `sol24-ss20`; 2.3 and 2.4 on the SS-20 also run with 2 and 4 CPUs); 2.1 stops in QEMU after its
