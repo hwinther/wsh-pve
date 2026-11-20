@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import { hasLegacyBiosLayout, NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
 
 // VMs with the WSH options, created through the API: the stored config, the QEMU command qemu-server
 // builds from it (`qm showcmd`) and whether QEMU accepts that command. This is the layer the
@@ -72,6 +72,33 @@ test('x86: sb16 + adlib + pcspk combo device', async () => {
 
   const qemu = await qemuAccepts(vmid)
   expect(qemu.code, qemu.output).toBe(0)
+})
+
+// machine: legacy-bios-layout=1 (Machine > Advanced, "Legacy BIOS memory layout"): for DOS, the NICs
+// get no option ROM and the APIC no vapic ROM, so EMM386 finds 14K more upper memory (the DOS guide).
+test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => {
+  test.fail(!(await hasLegacyBiosLayout()), 'the installed qemu-server has no legacy-bios-layout yet')
+  const vmid = await createVm({
+    machine: 'pc,legacy-bios-layout=1',
+    memory: 32,
+    name: 'dos-legacy',
+    net0: 'ne2k_pci,bridge=vmbr0',
+    ostype: 'other',
+  })
+
+  expect(await vmConfFile(vmid)).toContain('machine: pc,legacy-bios-layout=1')
+  const cmd = await showcmd(vmid)
+  expect(cmd).toMatch(/-device 'ne2k_pci,mac=[\dA-F:]+,netdev=net0,[^']*,romfile='/)
+  expect(cmd).toContain("-global 'apic-common.vapic=off'")
+  expect(cmd).toContain("-machine 'type=pc+pve0'")
+
+  const qemu = await qemuAccepts(vmid)
+  expect(qemu.code, qemu.output).toBe(0)
+
+  const config = `/nodes/${NODE}/qemu/${vmid}/config`
+  expect((await pve.refused('PUT', config, { bios: 'ovmf' })).message).toContain(
+    "machine: 'legacy-bios-layout' needs SeaBIOS",
+  )
 })
 
 // 3dfx/Mesa pass-through (Display → "Enable 3DFX/Mesa", `mesa=1`): qemu-server starts the VM with

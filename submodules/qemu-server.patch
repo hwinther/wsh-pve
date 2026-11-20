@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index e0661738..c078cb6f 100644
+index e0661738..773c6d02 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -243,6 +243,8 @@ my $check_drive_param = sub {
@@ -78,7 +78,7 @@ index e0661738..c078cb6f 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1503,6 +1542,14 @@ __PACKAGE__->register_method({
+@@ -1503,6 +1542,15 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -89,11 +89,12 @@ index e0661738..c078cb6f 100644
 +        PVE::QemuServer::Machine::assert_cd_as_disk($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_audio_device($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_esp_irq_latency($param) if !$archive;
++        PVE::QemuServer::Machine::assert_legacy_bios_layout($param) if !$archive;
 +
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          # 'force' only covers the VM that the checks above saw, not one created in the meantime
-@@ -1653,6 +1700,7 @@ __PACKAGE__->register_method({
+@@ -1653,6 +1701,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -101,7 +102,7 @@ index e0661738..c078cb6f 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2386,6 +2434,17 @@ my $update_vm_api = sub {
+@@ -2386,6 +2435,18 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -115,6 +116,7 @@ index e0661738..c078cb6f 100644
 +        PVE::QemuServer::Machine::assert_cd_as_disk($new_conf);
 +        PVE::QemuServer::Machine::assert_audio_device($new_conf);
 +        PVE::QemuServer::Machine::assert_esp_irq_latency($new_conf);
++        PVE::QemuServer::Machine::assert_legacy_bios_layout($new_conf);
 +
          return $conf;
      };
@@ -146,7 +148,7 @@ index cc8b8250..5feca3ca 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 148052cb..62f69e08 100644
+index 148052cb..14029a14 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -293,7 +295,19 @@ index 148052cb..62f69e08 100644
      my $tmpstr = "$device,mac=$net->{macaddr},netdev=$netid$pciaddr,id=$netid";
      if ($net->{queues} && $net->{queues} > 1 && $net->{model} eq 'virtio') {
          # Consider we have N queues, the number of vectors needed is 2 * N + 2, i.e., one per in
-@@ -2794,6 +2838,7 @@ sub conf_has_audio {
+@@ -1383,7 +1427,10 @@ sub print_netdevice_full {
+         }
+     }
+ 
+-    if ($use_old_bios_files) {
++    if ($net->{model} ne 'ne2k_isa' && PVE::QemuServer::Machine::legacy_bios_layout($conf)) {
++        # machine: legacy-bios-layout: no iPXE ROM in the upper memory area (no network boot)
++        $tmpstr .= ",romfile=";
++    } elsif ($use_old_bios_files) {
+         my $romfile;
+         if ($device eq 'virtio-net-pci') {
+             $romfile = 'pxe-virtio.rom';
+@@ -2794,6 +2841,7 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -301,7 +315,7 @@ index 148052cb..62f69e08 100644
      };
  }
  
-@@ -2810,6 +2855,23 @@ sub audio_devs {
+@@ -2810,6 +2858,23 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -325,7 +339,7 @@ index 148052cb..62f69e08 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2818,7 +2880,20 @@ sub audio_devs {
+@@ -2818,7 +2883,20 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -347,7 +361,7 @@ index 148052cb..62f69e08 100644
  
      return $devs;
  }
-@@ -2978,7 +3053,7 @@ sub vga_conf_has_spice {
+@@ -2978,7 +3056,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -356,7 +370,7 @@ index 148052cb..62f69e08 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2987,7 +3062,7 @@ sub query_supported_cpu_flags {
+@@ -2987,7 +3065,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -365,7 +379,7 @@ index 148052cb..62f69e08 100644
      my $qemu_binary_version = kvm_user_version($qemu_cmd);
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
-@@ -3072,7 +3147,7 @@ sub query_supported_cpu_flags {
+@@ -3072,7 +3150,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -374,7 +388,7 @@ index 148052cb..62f69e08 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3091,6 +3166,8 @@ my sub get_vga_properties {
+@@ -3091,6 +3169,8 @@ my sub get_vga_properties {
      if (!$vga->{type}) {
          if ($arch eq 'aarch64') {
              $vga->{type} = 'virtio';
@@ -383,7 +397,7 @@ index 148052cb..62f69e08 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3144,7 +3221,12 @@ sub config_to_command {
+@@ -3144,7 +3224,13 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -393,11 +407,12 @@ index 148052cb..62f69e08 100644
 +    PVE::QemuServer::Machine::assert_cd_as_disk($conf);
 +    PVE::QemuServer::Machine::assert_audio_device($conf);
 +    PVE::QemuServer::Machine::assert_esp_irq_latency($conf);
++    PVE::QemuServer::Machine::assert_legacy_bios_layout($conf);
 +    my $kvm_binary = PVE::QemuServer::Helpers::get_command_for_arch($arch, parse_vga($conf->{vga}));
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3255,7 +3337,9 @@ sub config_to_command {
+@@ -3255,7 +3341,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -408,7 +423,7 @@ index 148052cb..62f69e08 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3275,6 +3359,10 @@ sub config_to_command {
+@@ -3275,6 +3363,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -419,7 +434,7 @@ index 148052cb..62f69e08 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3289,17 +3377,20 @@ sub config_to_command {
+@@ -3289,17 +3381,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -442,7 +457,7 @@ index 148052cb..62f69e08 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3310,6 +3401,7 @@ sub config_to_command {
+@@ -3310,6 +3405,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -450,7 +465,7 @@ index 148052cb..62f69e08 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3318,7 +3410,6 @@ sub config_to_command {
+@@ -3318,7 +3414,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -458,7 +473,7 @@ index 148052cb..62f69e08 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3331,6 +3422,22 @@ sub config_to_command {
+@@ -3331,6 +3426,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -481,7 +496,7 @@ index 148052cb..62f69e08 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3361,7 +3468,7 @@ sub config_to_command {
+@@ -3361,7 +3472,7 @@ sub config_to_command {
      }
  
      if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
@@ -490,7 +505,7 @@ index 148052cb..62f69e08 100644
          my $audio_devs = audio_devs($audio, $audiopciaddr, $machine_version);
          push @$devices, @$audio_devs;
      }
-@@ -3397,16 +3504,41 @@ sub config_to_command {
+@@ -3397,16 +3508,41 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -534,7 +549,14 @@ index 148052cb..62f69e08 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3425,6 +3557,14 @@ sub config_to_command {
+@@ -3422,9 +3558,21 @@ sub config_to_command {
+     my $cfg2cmd = PVE::QemuServer::Cfg2Cmd->new($conf, $defaults, $version_guard, $cfg2cmd_opts);
+     my $generated = $cfg2cmd->generate();
+     push $cmd->@*, '-global', $_ for ($generated->global_flags() // [])->@*;
++    # machine: legacy-bios-layout (x86, SeaBIOS): no kvmvapic.bin in the upper memory area. The
++    # abstract parent type covers both the TCG 'apic' and the KVM 'kvm-apic'.
++    push $cmd->@*, '-global', 'apic-common.vapic=off'
++        if PVE::QemuServer::Machine::legacy_bios_layout($conf);
      push $machineFlags->@*, ($generated->machine_flags() // [])->@*;
      push $rtcFlags->@*, ($generated->rtc_flags() // [])->@*;
  
@@ -549,7 +571,7 @@ index 148052cb..62f69e08 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3440,6 +3580,7 @@ sub config_to_command {
+@@ -3440,6 +3588,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -557,7 +579,7 @@ index 148052cb..62f69e08 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3543,8 +3684,9 @@ sub config_to_command {
+@@ -3543,8 +3692,9 @@ sub config_to_command {
          }
      }
  
@@ -569,7 +591,7 @@ index 148052cb..62f69e08 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3561,6 +3703,7 @@ sub config_to_command {
+@@ -3561,6 +3711,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -577,7 +599,7 @@ index 148052cb..62f69e08 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3580,7 +3723,8 @@ sub config_to_command {
+@@ -3580,7 +3731,8 @@ sub config_to_command {
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -587,7 +609,7 @@ index 148052cb..62f69e08 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3622,9 +3766,11 @@ sub config_to_command {
+@@ -3622,9 +3774,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -600,7 +622,7 @@ index 148052cb..62f69e08 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3636,6 +3782,17 @@ sub config_to_command {
+@@ -3636,6 +3790,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -618,7 +640,7 @@ index 148052cb..62f69e08 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3692,7 +3849,7 @@ sub config_to_command {
+@@ -3692,7 +3857,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -627,7 +649,7 @@ index 148052cb..62f69e08 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3710,7 +3867,18 @@ sub config_to_command {
+@@ -3710,7 +3875,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -647,7 +669,7 @@ index 148052cb..62f69e08 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3969,7 +4137,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4145,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -656,7 +678,7 @@ index 148052cb..62f69e08 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4553,13 +4721,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4729,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -674,7 +696,7 @@ index 148052cb..62f69e08 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4626,7 +4797,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4805,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -684,7 +706,7 @@ index 148052cb..62f69e08 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4978,6 +5150,9 @@ sub vmconfig_update_net {
+@@ -4978,6 +5158,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -694,7 +716,7 @@ index 148052cb..62f69e08 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5059,6 +5234,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5242,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -703,7 +725,7 @@ index 148052cb..62f69e08 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5109,8 +5286,10 @@ sub vmconfig_update_disk {
+@@ -5109,8 +5294,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -716,7 +738,7 @@ index 148052cb..62f69e08 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5194,6 +5373,11 @@ sub vmconfig_update_disk {
+@@ -5194,6 +5381,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -728,7 +750,7 @@ index 148052cb..62f69e08 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5210,7 +5394,7 @@ sub vmconfig_update_disk {
+@@ -5210,7 +5402,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -737,7 +759,7 @@ index 148052cb..62f69e08 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5713,6 +5897,9 @@ sub vm_start_nolock {
+@@ -5713,6 +5905,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -747,7 +769,7 @@ index 148052cb..62f69e08 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5918,7 +6105,11 @@ sub vm_start_nolock {
+@@ -5918,7 +6113,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -760,7 +782,7 @@ index 148052cb..62f69e08 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8172,7 +8363,12 @@ sub bootorder_from_legacy {
+@@ -8172,7 +8371,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -774,7 +796,7 @@ index 148052cb..62f69e08 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8210,9 +8406,14 @@ sub get_default_bootdevices {
+@@ -8210,9 +8414,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1150,7 +1172,7 @@ index 5efe7736..ffa38e03 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..b284ca27 100644
+index 960af5a9..8679fec2 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1176,7 +1198,7 @@ index 960af5a9..b284ca27 100644
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
-@@ -95,6 +99,20 @@ my $machine_fmt = {
+@@ -95,6 +99,31 @@ my $machine_fmt = {
              "Enables S4 power state. Defaults to false beginning with machine types 9.2+pve1, true before.",
          optional => 1,
      },
@@ -1194,10 +1216,21 @@ index 960af5a9..b284ca27 100644
 +        maximum => 100000,
 +        optional => 1,
 +    },
++    'legacy-bios-layout' => {
++        type => 'boolean',
++        description => "x86 with SeaBIOS only: no option ROMs on the NICs and no vapic ROM, so DOS"
++            . " gets more upper memory (UMB). The NICs can't network-boot.",
++        verbose_description =>
++            "x86 (SeaBIOS) only: a legacy BIOS memory layout for DOS and other real-mode guests."
++            . " The NICs get no option ROM (romfile=, so no network boot) and QEMU's APIC loads no"
++            . " vapic ROM (apic-common.vapic=off), so the free upper memory gap behind the VGA BIOS"
++            . " grows by the NIC ROMs (4K for ne2k_pci) and 10K, which EMM386 can give out as UMB.",
++        optional => 1,
++    },
  };
  
  PVE::JSONSchema::register_format('pve-qemu-machine-fmt', $machine_fmt);
-@@ -126,6 +144,8 @@ sub print_machine {
+@@ -126,6 +155,8 @@ sub print_machine {
  my $default_machines = {
      x86_64 => 'pc',
      aarch64 => 'virt',
@@ -1206,7 +1239,7 @@ index 960af5a9..b284ca27 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +155,380 @@ sub default_machine_for_arch {
+@@ -135,6 +166,420 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1445,6 +1478,46 @@ index 960af5a9..b284ca27 100644
 +    return;
 +}
 +
++=head3 assert_legacy_bios_layout
++
++    assert_legacy_bios_layout($conf);
++
++Dies if the C<machine> property of C<$conf> sets C<legacy-bios-layout> on anything but x86 with
++SeaBIOS: the option ROMs it drops (the NICs' iPXE ROMs and QEMU's C<kvmvapic.bin>) live in the
++upper memory area that only a legacy BIOS guest uses, and OVMF needs the NIC ROMs to network-boot.
++
++=cut
++
++sub assert_legacy_bios_layout {
++    my ($conf) = @_;
++
++    my $machine_conf = parse_machine($conf->{machine}) or return;
++    return if !$machine_conf->{'legacy-bios-layout'};
++    my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
++    die "machine: 'legacy-bios-layout' is only supported on x86_64, not on $arch\n"
++        if $arch ne 'x86_64';
++    die "machine: 'legacy-bios-layout' needs SeaBIOS, not '$conf->{bios}'\n"
++        if $conf->{bios} && $conf->{bios} ne 'seabios';
++
++    return;
++}
++
++=head3 legacy_bios_layout
++
++    my $legacy = legacy_bios_layout($conf); # 1 or 0
++
++Whether the C<machine> property of C<$conf> asks for the legacy BIOS memory layout: NICs without
++option ROM and the APIC without vapic ROM.
++
++=cut
++
++sub legacy_bios_layout {
++    my ($conf) = @_;
++
++    my $machine_conf = parse_machine($conf->{machine}) or return 0;
++    return $machine_conf->{'legacy-bios-layout'} ? 1 : 0;
++}
++
 +=head3 sparc32_esp_global
 +
 +    my $global = sparc32_esp_global($conf); # 'sysbus-esp.irq-latency-us=500' or undef
@@ -1587,7 +1660,7 @@ index 960af5a9..b284ca27 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +563,7 @@ my sub machine_base_type {
+@@ -169,6 +614,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1595,7 +1668,7 @@ index 960af5a9..b284ca27 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +700,44 @@ sub machine_version_cmp {
+@@ -305,11 +751,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1642,7 +1715,7 @@ index 960af5a9..b284ca27 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +747,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +798,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1665,7 +1738,7 @@ index 960af5a9..b284ca27 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +933,7 @@ sub get_power_state_flags {
+@@ -508,6 +984,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1673,7 +1746,7 @@ index 960af5a9..b284ca27 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +941,7 @@ sub get_power_state_flags {
+@@ -515,6 +992,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -1779,6 +1852,18 @@ index 00000000..5bb9c06f
 +ostype: l26
 +scsihw: virtio-scsi-pci
 +scsi2: local:iso/zero.iso,media=cdrom,cd_as_disk=1,size=112M
+diff --git a/src/test/cfg2cmd/aarch64-legacy-bios-layout-error.conf b/src/test/cfg2cmd/aarch64-legacy-bios-layout-error.conf
+new file mode 100644
+index 00000000..83db5453
+--- /dev/null
++++ b/src/test/cfg2cmd/aarch64-legacy-bios-layout-error.conf
+@@ -0,0 +1,6 @@
++# TEST: legacy-bios-layout is x86 only: refused on aarch64
++# EXPECT_ERROR: machine: 'legacy-bios-layout' is only supported on x86_64, not on aarch64
++arch: aarch64
++machine: virt,legacy-bios-layout=1
++memory: 1024
++ostype: l26
 diff --git a/src/test/cfg2cmd/audio-cs4231-x86-error.conf b/src/test/cfg2cmd/audio-cs4231-x86-error.conf
 new file mode 100644
 index 00000000..d07d100b
@@ -1853,6 +1938,84 @@ index 00000000..00658662
 +  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/floppy/drivers.img","node-name":"e36059ee1ed756644a414be453363b2","read-only":true},"node-name":"f36059ee1ed756644a414be453363b2","read-only":true},"node-name":"drive-floppy1","read-only":true,"throttle-group":"throttle-drive-floppy1"}' \
 +  -device 'floppy,unit=1,drive=drive-floppy1,id=floppy1' \
 +  -machine 'type=pc+pve0'
+diff --git a/src/test/cfg2cmd/legacy-bios-layout-ovmf-error.conf b/src/test/cfg2cmd/legacy-bios-layout-ovmf-error.conf
+new file mode 100644
+index 00000000..cddc3923
+--- /dev/null
++++ b/src/test/cfg2cmd/legacy-bios-layout-ovmf-error.conf
+@@ -0,0 +1,6 @@
++# TEST: legacy-bios-layout is for SeaBIOS: refused with OVMF
++# EXPECT_ERROR: machine: 'legacy-bios-layout' needs SeaBIOS, not 'ovmf'
++bios: ovmf
++machine: q35,legacy-bios-layout=1
++memory: 512
++ostype: other
+diff --git a/src/test/cfg2cmd/legacy-bios-layout.conf b/src/test/cfg2cmd/legacy-bios-layout.conf
+new file mode 100644
+index 00000000..6a3785ff
+--- /dev/null
++++ b/src/test/cfg2cmd/legacy-bios-layout.conf
+@@ -0,0 +1,17 @@
++# TEST: machine: legacy-bios-layout for DOS: the NICs without option ROM, the APIC without vapic ROM
++balloon: 0
++boot: order=floppy0;ide0
++cpu: pentium
++ide0: local:8006/vm-8006-disk-0.raw,size=1G
++kvm: 0
++machine: pc,legacy-bios-layout=1
++memory: 32
++name: msdos622
++net0: ne2k_pci=BC:24:11:9E:21:01,bridge=vmbr0
++net1: rtl8139=BC:24:11:9E:21:02,bridge=vmbr0
++net2: ne2k_isa=BC:24:11:9E:21:03,bridge=vmbr0
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++tablet: 0
++vga: std
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/legacy-bios-layout.conf.cmd b/src/test/cfg2cmd/legacy-bios-layout.conf.cmd
+new file mode 100644
+index 00000000..e8b53229
+--- /dev/null
++++ b/src/test/cfg2cmd/legacy-bios-layout.conf.cmd
+@@ -0,0 +1,37 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name msdos622 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -global 'apic-common.vapic=off' \
++  -cpu 'pentium,vendor=GenuineIntel' \
++  -m 32 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=101,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'ne2k_pci,mac=BC:24:11:9E:21:01,netdev=net0,bus=pci.0,addr=0x12,id=net0,romfile=' \
++  -netdev 'type=tap,id=net1,ifname=tap8006i1,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'rtl8139,mac=BC:24:11:9E:21:02,netdev=net1,bus=pci.0,addr=0x13,id=net1,romfile=' \
++  -netdev 'type=tap,id=net2,ifname=tap8006i2,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -device 'ne2k_isa,mac=BC:24:11:9E:21:03,netdev=net2,id=net2' \
++  -machine 'accel=tcg,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/netdev-ne2k-isa.conf b/src/test/cfg2cmd/netdev-ne2k-isa.conf
 new file mode 100644
 index 00000000..636d009c
@@ -2110,6 +2273,18 @@ index 00000000..74919bdb
 +arch: sparc
 +cpu: x86-64-v2-AES
 +memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-legacy-bios-layout-error.conf b/src/test/cfg2cmd/sparc32-legacy-bios-layout-error.conf
+new file mode 100644
+index 00000000..5b54aebe
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-legacy-bios-layout-error.conf
+@@ -0,0 +1,6 @@
++# TEST: legacy-bios-layout is x86 only: refused on sparc32
++# EXPECT_ERROR: machine: 'legacy-bios-layout' is only supported on x86_64, not on sparc
++arch: sparc
++machine: SS-5,legacy-bios-layout=1
++memory: 256
++ostype: other
 diff --git a/src/test/cfg2cmd/sparc32-machine-error.conf b/src/test/cfg2cmd/sparc32-machine-error.conf
 new file mode 100644
 index 00000000..899e563a

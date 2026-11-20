@@ -452,7 +452,8 @@ Tested in the PVE test container on the lab host (TCG, published packages pve-qe
 
 `dos_mem.py --vmid <installed msdos622> --runs DIR` measures what DOS gets of 640K-1M per VM variant
 (VGA model, NIC and its option ROM, dummy option ROMs of 4K/32K/100K, the owner's original dummy
-file, `apic-common.vapic=off`) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
+file, `apic-common.vapic=off`, and `legacy-layout`: qemu-server's `machine: pc,legacy-bios-layout=1`,
+which needs a qemu-server with it) and per `CONFIG.SYS` (none, HIMEM, EMM386 `NOEMS`/`RAM`/`HIGHSCAN`,
 `I=` the free gap, `I=` into SeaBIOS's data). It adds the tools disk as D: (`dos_tools.py`: a FAT16
 image built with mtools from the owner's utility CD, never committed; a disk rather than a floppy
 or the CD because a CD needs MSCDEX, which would take the memory being measured), writes the ROMs to

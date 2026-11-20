@@ -46,6 +46,7 @@ come after that, not before.
 | qemu-3dfx pin moves only through a promotion PR with a 3dfx-only build check | merged | #272 |
 | Solaris 10 on sun4u: patched `openbios-sparc64` in the package (OBP node names, IDE tree `ide@3/disk@0,0` and `cdrom@2,0`), cmd646 interrupt latch (`wsh/0021`) with a qtest; the DVD boots to the installer, ttya takes input, the disk attaches | published | #260, #277, #280, #287 |
 | DOS: `msdos622` and `freedos14` install targets from floppies, an exact VGA text reader over QMP, the first megabyte under SeaBIOS measured, a DOS guide; FreeDOS installs in CI | merged | #290 |
+| DOS: `machine: ...,legacy-bios-layout=1` in qemu-server and the UI (x86 with SeaBIOS only): NICs without option ROM, no vapic ROM; the `msdos622` VM's UMB grows from 98K to 114K (102K to 118K with `I=`) through PVE | in review | |
 | Install targets: SunOS 4.1.4 on SS-5 (`sunos414-ss5`): miniroot, `suninstall` Quick install and sys-config on the serial console through PVE, the CD made from its raw BIN by `lab.py media --convert`, 64 MB for the install phase only | in review | |
 | A CD that answers as a disk: `cd_as_disk=1` on a sparc32 SCSI CD-ROM (qemu-server: `scsi-hd`, read only, still a CD-ROM to PVE; refused elsewhere); install targets `sol24-ss5` (Solaris 2.4 HW 3/95, ~10 min) and `sol251-ss5` (2.5.1 11/97, ~45 min, most of it its Maintenance Update) on SS-5 with `ss5.bin` through PVE | in review | |
 | sparc32 `ld`/`st %fsr` with any rd (LEMU `0cdd14c1` by Antoni Sawicki, pve-qemu `wsh/0026`, qtest `wsh/0027`): old static SunOS 4 programs whose `_sigtramp` saves the FSR with rd 4 no longer die with SIGILL; a QEMU regression since 8.2, upstream note kept as a record only (LEMU origin, not for QEMU) | in review | |
@@ -152,10 +153,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      runner. The first megabyte is measured (`dos_mem.py`, the [DOS guide](docs/src/content/docs/guides/dos.md)):
      SeaBIOS 1.17 leaves 110K of read-only gap after the VGA, NIC and vapic ROMs, EMM386 makes
      98-102K of it one UMB, no NIC and no vapic ROM give 118K, a dummy option ROM never helps, and
-     an `I=` range into SeaBIOS's data at E9000 hangs DOS.
+     an `I=` range into SeaBIOS's data at E9000 hangs DOS. `machine: pc,legacy-bios-layout=1`
+     (qemu-server, Machine > Advanced in the UI) drops the NICs' and the vapic ROM without `args:`:
+     124K gap, 114K UMB, 118K with `I=`, measured through PVE.
    - Next for DOS: `ne2k_isa` on the ISA bus is #291 (an ISA NIC needs no option ROM; for most
-     guests `rtl8139` stays the better choice); maybe a per-VM "legacy BIOS memory layout" (NIC ROM and
-     vapic ROM off without `args:`); a DOS idle driver in the image so a DOS VM stops burning a host
+     guests `rtl8139` stays the better choice); a DOS idle driver in the image so a DOS VM stops burning a host
      core; Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
      screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
    - Driver and patch packs: the owner's curated DOS and Windows 9x drivers and patches (the VBE

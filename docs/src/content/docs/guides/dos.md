@@ -98,6 +98,7 @@ pve-qemu-kvm 11.1, TCG, 32 MB. SeaBIOS's debug log gave the ROM addresses and th
 | no NIC | VGA, vapic | 114K | 102K | 106K | no |
 | `-global ne2k_pci.romfile=` | VGA, vapic | 114K | 102K | 106K | yes |
 | no NIC, `-global apic-common.vapic=off` | VGA only | 124K | 114K | **118K** | yes |
+| `machine: pc,legacy-bios-layout=1` (ne2k_pci kept) | VGA only | 124K | 114K | **118K** | no |
 | dummy ROM 4K | + CD800 | 106K | 94K | 98K | yes |
 | dummy ROM 32K | + CD800 | 78K | 66K | 70K | yes |
 | dummy ROM 100K (valid) | + CD800 | 10K | 98K (EMM386 maps over it) | 102K | yes |
@@ -118,9 +119,8 @@ moved high; loading drivers high (`DEVICEHIGH`, `LOADHIGH`) is what the UMB is f
   ```
 
   for 106K in one block (102K without the `I=`). With a NIC the range starts at CE00 (102K).
-- More needs `args:` (root only): `-global apic-common.vapic=off` frees the 10K of QEMU's vapic ROM,
-  for 118K with `I=CA00-E8FF`. Under KVM the device is `kvm-apic`; that variant was measured under
-  TCG only.
+- The most with a PVE option: **Legacy BIOS memory layout** (below) drops the NIC's option ROM and
+  QEMU's vapic ROM (10K) and keeps the NIC: 114K in one block, 118K with `I=CA00-E8FF`.
 - The range to include is the free gap SeaBIOS reports: start one 4K page after the last ROM, end
   at E8FF. Never past E8FF: from E9000 on is SeaBIOS's data.
 
@@ -152,19 +152,41 @@ own data at the top of the E segment stays writable.
   no other area read only or more contiguous, and it doesn't protect SeaBIOS's writable data, which
   is above the gap.
 
-## A possible feature
+## Legacy BIOS memory layout
 
-The only gains beyond plain options come from dropping ROMs: the NIC's (4K) and QEMU's vapic ROM
-(10K). A per-VM choice such as "legacy BIOS memory layout" in qemu-server could add
-`-global <nic>.romfile=` and `vapic=off` without an `args:` line, and the UI could show the free gap
-SeaBIOS will leave. Not built; a fixed `ne2k_isa` (no ROM at all) would make the NIC part moot.
+The only gains beyond plain options come from dropping ROMs: the NICs' (4K for `ne2k_pci`) and QEMU's
+vapic ROM (10K). The WSH qemu-server does both for one VM with a key of `machine`:
+
+```sh
+qm set 130 --machine pc,legacy-bios-layout=1
+```
+
+In the web UI it is **Hardware > Machine > Advanced > Legacy BIOS memory layout** (x86 VMs only).
+qemu-server then adds `romfile=` (no option ROM) to every PCI NIC's `-device` and
+`-global apic-common.vapic=off` (the abstract APIC type, so it covers QEMU's `apic` under TCG and
+`kvm-apic` under KVM). An ISA NIC (`ne2k_isa`) has no ROM to drop. The rest of the VM stays as it was:
+the NIC still works for a DOS packet driver, it only can't network-boot (no iPXE). The API refuses the
+key on other architectures and with OVMF (`bios: ovmf`), where the option ROMs are UEFI drivers and
+there is no upper memory area to gain. No `args:` and no root rights are needed.
+
+Measured through PVE on the `msdos622` VM (TCG; EMM386 `NOEMS`, `DOS=HIGH,UMB`):
+
+| `machine` | SeaBIOS option ROMs | Free gap | UMB, default scan | UMB, `I=` the gap |
+| --- | --- | --- | --- | --- |
+| `pc` (stock, ne2k_pci) | VGA C0000, NIC CA000, vapic CB000 | 110K (CD800-E8FFF) | 98K from CF4A | 102K |
+| `pc,legacy-bios-layout=1` | VGA C0000 only | 124K (CA000-E8FFF) | 114K from CB4A | 118K (`I=CA00-E8FF`) |
+
+The same as removing the NIC and adding `-global apic-common.vapic=off` by hand (measured side by
+side). Under KVM the vapic ROM (`kvmvapic.bin` in `info roms`) is gone with the key as well; the UMB
+was measured under TCG only.
 
 ## Known issues
 
 - **`ne2k_isa` doesn't start.** qemu-server offers the model but puts the ISA card on the PCI bus:
   `Device 'ne2k_isa' can't go on PCI bus`. Until that is fixed, use `ne2k_pci` (4K of option ROM) or
   no NIC.
-- **No per-NIC ROM option in PVE.** Removing the NIC's option ROM needs
-  `args: -global ne2k_pci.romfile=` (root only); it gives the same 4K as removing the NIC.
+- **No per-NIC ROM option in PVE.** `machine: ...,legacy-bios-layout=1` drops the ROM of every NIC
+  of the VM (and the vapic ROM); removing only one NIC's ROM still needs
+  `args: -global ne2k_pci.romfile=` (root only).
 - **EMM386 must not include the top of the E segment.** `I=` up to EFFF lets DOS boot, then the
   keyboard is dead: SeaBIOS's data at E9000-EFFFF was handed out as UMB. Stay within the gap.

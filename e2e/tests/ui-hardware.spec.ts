@@ -1,6 +1,16 @@
 import { expect, type Page, test } from '@playwright/test'
 
-import { NODE, PASSWORD, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile } from './_pve'
+import {
+  hasLegacyBiosLayout,
+  hasLegacyBiosLayoutUi,
+  NODE,
+  PASSWORD,
+  type Pve,
+  pveApi,
+  qemuAccepts,
+  showcmd,
+  vmConfFile,
+} from './_pve'
 
 // The pve-manager additions, driven through the web UI: pick a WSH option in a VM's Hardware view,
 // then check what qemu-server stored and built from it. A UI change that sends the wrong value, or a
@@ -84,4 +94,36 @@ test('display: Enable 3DFX/Mesa', async ({ page }) => {
 
   // The command (the 3dfx binary) and whether QEMU takes it: vm-config.spec.ts.
   expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=1$/m)
+})
+
+test('machine: Legacy BIOS memory layout', async ({ page }) => {
+  test.fail(
+    !(await hasLegacyBiosLayout()) || !(await hasLegacyBiosLayoutUi()),
+    'the installed qemu-server or pve-manager has no legacy-bios-layout yet',
+  )
+  const machine = async () => {
+    await page.getByText(/^Machine$/).dblclick()
+    const win = page.locator('.x-window').filter({ has: page.getByText('Machine:', { exact: true }) })
+    await win.getByLabel('Advanced').check()
+    return win
+  }
+
+  let win = await machine()
+  // fails fast (not by the test timeout) where the field isn't there, as test.fail() expects
+  await expect(win.getByLabel('Legacy BIOS memory layout')).toBeVisible({ timeout: 5000 })
+  await win.getByLabel('Legacy BIOS memory layout').check()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  expect(await vmConfFile(VMID)).toMatch(/^machine: pc,legacy-bios-layout=1$/m)
+  const cmd = await showcmd(VMID)
+  expect(cmd).toContain("-global 'apic-common.vapic=off'")
+  expect(cmd).toMatch(/-device 'e1000,mac=[^']*,romfile='/)
+
+  // unchecked again: the key goes, and with it the whole machine line (the default type)
+  win = await machine()
+  await expect(win.getByLabel('Legacy BIOS memory layout')).toBeChecked()
+  await win.getByLabel('Legacy BIOS memory layout').uncheck()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  expect(await vmConfFile(VMID)).not.toMatch(/^machine:/m)
 })
