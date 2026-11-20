@@ -418,7 +418,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: ./.github/workflows/repo-update.yml
+    uses: $/.github/workflows/repo-update.yml
     needs: [build]
     if: ${{ github.event_name == 'workflow_dispatch' && needs.build.result == 'success' }}
     secrets:

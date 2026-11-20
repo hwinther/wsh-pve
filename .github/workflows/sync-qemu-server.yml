@@ -18,7 +18,7 @@ jobs:
       issues: write
       pages: write
       id-token: write
-    uses: ./.github/workflows/sync-from-upstream.yml
+    uses: $/.github/workflows/sync-from-upstream.yml
     with:
       repository: hwinther/qemu-server
     secrets:
@@ -31,7 +31,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    uses: ./.github/workflows/repo-update.yml
+    uses: $/.github/workflows/repo-update.yml
     needs: [sync]
     # build-deb.yml deploys the docs itself on workflow_dispatch; a second deploy in the same
     # run fails with "Multiple artifacts named github-pages".
