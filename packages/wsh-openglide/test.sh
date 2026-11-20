@@ -78,8 +78,8 @@ rm -r "$work"
 
 step "apt purge"
 apt-get purge --assume-yes wsh-openglide
-left=$(find / -xdev \( -path /proc -o -path /sys -o -path "$(dirname "$(realpath "$DEB")")" \) -prune -o \
-	\( -name 'libglide2x*' -o -name 'libglide3x*' -o -name '*wsh-openglide*' \) -print)
+# where a package's files go (not the mounted .deb, nor a checkout of this repository)
+left=$(find /usr /etc /var -xdev \( -name 'libglide2x*' -o -name 'libglide3x*' -o -name '*wsh-openglide*' \) -print)
 [ -z "$left" ] || fail "left after the purge: $left"
 echo "nothing left behind"
 
