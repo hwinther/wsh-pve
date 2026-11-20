@@ -76,6 +76,8 @@ maintains the patches.
 | `0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-` | Every sun4u guest spun in its idle loop and kept a host core at 100% for as long as the VM ran: no kernel that runs on QEMU's sun4u can stop an UltraSPARC-IIi (Solaris and illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` is patched in only on CPUs with several strands). The translator recognises the call in the idle loop of NetBSD 9 and 11 (`cpu_idle()`), OpenBSD (`cpu_idle_cycle()`) and Solaris 9, 10 and illumos (`idle_cpu`, as Sun's compiler and as gcc lay it out) by the words around it, and halts the CPU there while the word that says there is work (`ci_want_resched`, `spc_whichqs`, `disp_nrunnable`) is 0, interrupts are enabled at level 0 and nothing is pending; the next interrupt wakes it ("sparc64 (sun4u)", "Idle"). `-trace sparc64_idle_match` shows the match | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0043-hw-sparc64-sun4u-add-the-idle-halt-option-on-by-defa` | `-M sun4u,idle-halt=on\|off` for 0042, on by default (sun4u has one CPU); not on `sun4v` | ours | not in QEMU |
 | `0044-tests-qtest-test-the-idle-halt-on-sun4u` | qtest `sun4u-idle-test` for 0042-0043: a boot PROM with each recognised loop layout (NetBSD, OpenBSD, Solaris 10, Tribblix) must stop counting when idle, and keep counting with `idle-halt=off`, with work, with interrupts disabled and at PIL 15; with a 1 ms tick each tick must wake it, run its handler, and the loop must run far fewer rounds than with `idle-halt=off` | ours | not in QEMU |
+| `0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request` | The sabre keeps one interrupt request to the CPU at a time and makes the next when the guest clears the current one; an OBIO interrupt waited for that, a PCI interrupt replaced the outstanding request. The CPU drops a vector sent while it is busy, so a PCI interrupt arriving between the first request and the guest's acknowledge was lost, the guest's clear of the first request was ignored (no longer `irq_request`), and every OBIO interrupt (IDE, serial console) stayed blocked: OpenBSD 8.0's `wd0: timeout`, then a guest that takes no interrupt, with the NIC on pciB ("sparc64 (sun4u)", "IDE timeouts without ntpd") | ours | not fixed; see `upstream/qemu-sabre-pci-interrupt-replaces-request.md` |
+| `0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s` | qtest `sun4u-sabre-irq-test` for 0045: the sabre's lines driven from the test, its requests intercepted; a PCI interrupt raised while the IDE request or another PCI request is outstanding waits until the guest clears it, and the serial console's interrupt gets through after both; fails without 0045 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1951,6 +1953,46 @@ more likely but doesn't cause. Next: `-d int` and the sabre/IVEC state at the ha
 the sabre no longer forwards. The install target fails an install that stays silent for 5 minutes
 after an IDE timeout and runs it once more (`retry_on`); a boot that hangs fails at the phase's
 timeout.
+
+**Cause: the sabre lost a request** (2026-11-20; QEMU built from the pve-qemu 11.1.3-2 series with
+`wsh/0001`-`0044`, OpenBIOS 0001-0018 + 0023, the stored `install-openbsd80-sun4u` disk on a copy,
+lab runs, not through PVE). The sabre keeps one interrupt request to the CPU at a time
+(`irq_request`) and makes the next one when the guest writes the current one's clear register. An
+OBIO interrupt (ino 0x20-0x3f: the cmd646 at 0x20, the serial console at 0x2b) that rises meanwhile
+waits for that; a PCI interrupt (ino 0x00-0x1f: the NIC, which `-device ...,bus=pciB` puts at ino
+0x10) did not, and replaced the outstanding request. The CPU takes one vector at a time and ignores
+one sent while its busy bit is set (`sparc64_cpu_set_ivec_irq()`), so a NIC interrupt between the
+IDE request and the guest's acknowledge was dropped there; the guest then cleared the IDE request,
+which was no longer `irq_request`, and the clear was ignored. From then on no OBIO interrupt reached
+the CPU (disk, console, break), and the NIC's line stayed up, so no new PCI edge either. A debug
+build that logs the sabre's and the CPU's interrupt events into a ring (read with `qom-get /machine
+irqdbg`) caught it in the first round of a `tar cf - /usr | cksum` with `ping -f 10.0.2.2` running
+(NIC traffic in place of ntpd's): IDE request 0x20 taken by the CPU, the NIC's interrupt 34 us later
+replaced it and was dropped (CPU busy), the guest's clear of 0x20 ignored, the next IDE interrupt
+never requested; at the hang `irq_request` 0x10 with the lines of 0x10 and 0x20 up and the CPU halted
+in the idle loop. `wsh/0021`'s latch has no part in it: the cmd646's line followed INTRQ throughout.
+ntpd made it likely through its network traffic, not its clock slew; the rare hang without ntpd,
+and the `cd0` timeouts during an install, presumably came from the little traffic the NIC still sees
+on `vmbr0` (not traced).
+
+`wsh/0045` makes a PCI interrupt wait for the outstanding request as an OBIO interrupt does (it is
+requested when the guest clears the current one); `wsh/0046` is the qtest (`sun4u-sabre-irq-test`,
+fails without 0045). Lab results (3 runs at a time on the lab host; a hang = a disk timeout on the
+console and no end of the round within 5 minutes after it):
+
+| Load | QEMU | Runs | Hung |
+| --- | --- | --- | --- |
+| `ping -f` + 3 rounds of `tar` (each 250-330 s) | wsh/0001-0044 | 2 (one `idle-halt=off`) | 2, in round 0 |
+| | 11.1.3 + only pve's patches and our 0001, 0007, 0021-0022, 0034-0037 (no LEMU code, no idle halt) | 2 | 2, in round 0 |
+| | wsh/0001-0045 | 4 (one `idle-halt=off`) | 0 (12 rounds) |
+| `NET=user`, default route and DNS, `rcctl -f start ntpd` (5/5 peers, clock unsynced, offset ~350 ms), then 3 rounds of `tar` (90-110 s) | wsh/0001-0044 | 2 | 2, both while ntpd started |
+| | wsh/0001-0045 | 3 | 0 (9 rounds) |
+| NetBSD 9.3 (stored disk), `ping -f` + `tar` | wsh/0001-0044 | 1 | 1 (`cmdide0:0:0: lost interrupt` every 10 s) |
+| NetBSD 9.3 and 11.1 (stored disks), `ping -f` + 2 rounds of `tar` | wsh/0001-0045 | 2 | 0 (4 rounds) |
+
+`idle-halt` doesn't change the symptom: with it off the CPU spins in the idle loop instead of
+halting there, and nothing else differs. Solaris 10 (stored disk) boots on 0045 to `console login:`
+and powers off (`sparc64-boot-disk.py`, with a ping through `hme0`, 1 boot).
 
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the

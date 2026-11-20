@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..cedf77a 100644
+index 7b0cba5..f6344e4 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,47 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,49 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -120,6 +120,8 @@ index 7b0cba5..cedf77a 100644
 +wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch
 +wsh/0043-hw-sparc64-sun4u-add-the-idle-halt-option-on-by-defa.patch
 +wsh/0044-tests-qtest-test-the-idle-halt-on-sun4u.patch
++wsh/0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request.patch
++wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -8941,6 +8943,308 @@ index 0000000..22e9078
 ++            }
 ++        }
 ++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request.patch b/debian/patches/wsh/0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request.patch
+new file mode 100644
+index 0000000..047829e
+--- /dev/null
++++ b/debian/patches/wsh/0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request.patch
+@@ -0,0 +1,69 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/pci-host/sabre: keep PCI interrupts to one request at a time
++
++The sabre keeps one interrupt request to the CPU at a time (irq_request)
++and makes the next one when the guest clears the current one in its
++clear register (sabre_check_irqs()). An OBIO interrupt raised while a
++request is outstanding waits for that; a PCI interrupt didn't, and
++replaced the outstanding request. The CPU takes one interrupt vector at
++a time and ignores one sent while it is busy (sparc64_cpu_set_ivec_irq()),
++so when the PCI interrupt came between the first request and the guest
++clearing the CPU's busy bit, it was dropped there. The guest then
++cleared the first request, which no longer matched irq_request and was
++ignored, and the sabre waited for a clear of a request the guest never
++saw. Every OBIO interrupt stayed blocked from then on: the IDE
++controller (ino 0x20) and the serial console (0x2b); PCI interrupts only
++on a new rising edge, and the device whose interrupt was lost keeps its
++line up.
++
++OpenBSD 8.0 on sun4u hit this with the NIC on pciB (sunhme, ino 0x10,
++where qemu-server puts every NIC) and the disk on the built-in cmd646:
++"wd0(pciide0:0:0): timeout", "wd0d: device timeout reading ...,
++retrying", and then the guest sat in its idle loop with interrupts
++enabled, no I/O and no answer on the serial console, not even to a
++break. With an interrupt event log in a debug build, the hang was:
++
++  SET_REQ 0x20, CPU_RAISE 0x20          IDE request, the CPU takes it
++  PCI_SET_IRQ 0x10 1                    NIC interrupt 34 us later
++  SET_REQ 0x10 (replacing 0x20)
++  CPU_RAISE 0x10 while busy -> dropped
++  TRAP_IVEC 0x7e0, ASI_W 0              the guest takes the IDE vector
++  write to the clear register of 0x20   ignored: irq_request is 0x10
++  PCI_SET_IRQ 0x20 1                    next IDE interrupt: no request
++
++and at the end irq_request 0x10, the lines of 0x10 and 0x20 up, the CPU
++halted in the idle loop with no vector pending. ntpd's network traffic
++made it likely (5 of 6 boots with outside network access); a ping flood
++from the guest during a large tar of /usr hung it in the first round.
++
++NetBSD 9.3 hung the same way under the ping flood ("cmdide0:0:0: lost
++interrupt" every 10 s). In the lab, without this patch 7 of 7 runs hung
++(OpenBSD with the ping flood or ntpd, NetBSD with the ping flood); with
++it 0 of 9 did (7 OpenBSD, NetBSD 9.3 and 11.1), 25 rounds of the tar.
++
++Make the PCI branch wait for the outstanding request like the OBIO
++branch. The next patch adds a qtest.
++---
++ hw/pci-host/sabre.c | 9 ++++++++-
++ 1 file changed, 8 insertions(+), 1 deletion(-)
++
++diff --git a/hw/pci-host/sabre.c b/hw/pci-host/sabre.c
++index cd2328ad53..4296c87244 100644
++--- a/hw/pci-host/sabre.c
+++++ b/hw/pci-host/sabre.c
++@@ -308,7 +308,14 @@ static void pci_sabre_set_irq(void *opaque, int irq_num, int level)
++     if (irq_num < 32) {
++         if (level) {
++             s->pci_irq_in |= 1ULL << irq_num;
++-            if (s->pci_irq_map[irq_num >> 2] & PBM_PCI_IMR_ENABLED) {
+++            /*
+++             * One request at a time, as for the OBIO interrupts: replacing
+++             * a request the guest hasn't cleared yet loses one of the two.
+++             * A pending interrupt is requested when the guest clears the
+++             * current one (sabre_check_irqs()).
+++             */
+++            if ((s->irq_request == NO_IRQ_REQUEST)
+++                && (s->pci_irq_map[irq_num >> 2] & PBM_PCI_IMR_ENABLED)) {
++                 sabre_set_request(s, irq_num);
++             }
++         } else {
+diff --git a/debian/patches/wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch b/debian/patches/wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch
+new file mode 100644
+index 0000000..08dc8ee
+--- /dev/null
++++ b/debian/patches/wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch
+@@ -0,0 +1,221 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sabre's interrupt requests on sun4u
++
++sun4u-sabre-irq-test drives the sabre's interrupt lines and watches its
++requests to the CPU: a PCI interrupt (the NIC's slot on pciB) raised
++while the IDE controller's OBIO request is outstanding, or while another
++PCI request is, must wait until the guest clears that request, and the
++serial console's interrupt must get through once both are handled.
++Without the previous patch the PCI interrupt replaced the IDE request
++and the guest's clear of the IDE request was ignored.
++---
++ tests/qtest/meson.build            |   3 +-
++ tests/qtest/sun4u-sabre-irq-test.c | 185 +++++++++++++++++++++++++++++
++ 2 files changed, 187 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-sabre-irq-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index d16b5a4888..6a1426d2d9 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -213,7 +213,8 @@ qtests_sparc64 = \
++   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
++   qtests_filter + \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++-   'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test']
+++   'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test',
+++   'sun4u-sabre-irq-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-sabre-irq-test.c b/tests/qtest/sun4u-sabre-irq-test.c
++new file mode 100644
++index 0000000000..a28471f840
++--- /dev/null
+++++ b/tests/qtest/sun4u-sabre-irq-test.c
++@@ -0,0 +1,185 @@
+++/*
+++ * QTest: one interrupt request at a time from the sabre on sun4u
+++ *
+++ * The sabre turns an interrupt line into a request (an interrupt vector)
+++ * for the CPU and keeps one request at a time: the next one is made when
+++ * the guest clears the current one in its clear register. A PCI interrupt
+++ * raised while another request was outstanding replaced it, so the guest's
+++ * clear of the first request no longer matched and was ignored. The CPU
+++ * takes one vector at a time and drops one sent while it is busy, so the
+++ * replacing request could get lost too; the sabre then waited forever for
+++ * a clear and every other interrupt (IDE, serial console) stayed blocked.
+++ * OpenBSD 8.0 hung like that with wd0 timeouts, the network (sunhme on
+++ * pciB, a PCI interrupt) racing the IDE controller (an OBIO interrupt).
+++ *
+++ * The sabre's interrupt lines are driven from the test, and its requests
+++ * go to the test instead of the CPU.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qobject/qdict.h"
+++
+++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
+++#define IMR_ENABLED     0x80000000
+++
+++/* ino 0x20: the IDE controller, an OBIO interrupt */
+++#define INO_HDD         0x20
+++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004)
+++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804)
+++/* ino 0x2b: the serial console, an OBIO interrupt */
+++#define INO_SER         0x2b
+++#define OBIO_IMR_SER    (SABRE_CONFIG + 0x1000 + 0xb * 8 + 4)
+++#define OBIO_CLR_SER    (SABRE_CONFIG + 0x1800 + 0xb * 8 + 4)
+++/* ino 0x10: INTA of slot 0 of pciB (bus B, slot 0), where the NIC goes */
+++#define INO_NIC         0x10
+++#define PCI_IMR_SLOT4   (SABRE_CONFIG + 0xc00 + 4 * 8 + 4)
+++#define PCI_CLR_NIC     (SABRE_CONFIG + 0x1400 + INO_NIC * 8 + 4)
+++/* ino 0x14: INTA of slot 1 of pciB */
+++#define INO_PCI2        0x14
+++#define PCI_IMR_SLOT5   (SABRE_CONFIG + 0xc00 + 5 * 8 + 4)
+++#define PCI_CLR_PCI2    (SABRE_CONFIG + 0x1400 + INO_PCI2 * 8 + 4)
+++
+++static const char *find_sabre(QTestState *qts)
+++{
+++    static char path[64];
+++    int i;
+++
+++    for (i = 0; i < 64; i++) {
+++        QDict *rsp;
+++        bool found;
+++
+++        snprintf(path, sizeof(path), "/machine/unattached/device[%d]", i);
+++        rsp = qtest_qmp(qts, "{ 'execute': 'qom-get', 'arguments': "
+++                        "{ 'path': %s, 'property': 'type' } }", path);
+++        found = qdict_haskey(rsp, "return") &&
+++                !strcmp(qdict_get_str(rsp, "return"), "sabre");
+++        qobject_unref(rsp);
+++        if (found) {
+++            return path;
+++        }
+++    }
+++    g_assert_not_reached();
+++}
+++
+++static const char *sabre;
+++
+++static QTestState *setup(void)
+++{
+++    QTestState *qts = qtest_init("-machine sun4u -nodefaults");
+++
+++    sabre = find_sabre(qts);
+++    qtest_irq_intercept_out_named(qts, sabre, "ivec-irq");
+++    /* What the guest sets up: the interrupts mapped and enabled */
+++    qtest_writel(qts, OBIO_IMR_HDD, IMR_ENABLED);
+++    qtest_writel(qts, OBIO_IMR_SER, IMR_ENABLED);
+++    qtest_writel(qts, PCI_IMR_SLOT4, IMR_ENABLED);
+++    qtest_writel(qts, PCI_IMR_SLOT5, IMR_ENABLED);
+++    return qts;
+++}
+++
+++static void line(QTestState *qts, int ino, int level)
+++{
+++    qtest_set_irq_in(qts, sabre, "pbm-irq", ino, level);
+++}
+++
+++static bool requested(QTestState *qts, int ino)
+++{
+++    return qtest_get_irq(qts, ino);
+++}
+++
+++/*
+++ * The guest handles a request: the device drops its line (the driver reads
+++ * its status), then the guest clears the request.
+++ */
+++static void handle(QTestState *qts, int ino, uint64_t clr)
+++{
+++    line(qts, ino, 0);
+++    qtest_writel(qts, clr, 0);
+++    g_assert_false(requested(qts, ino));
+++}
+++
+++/* A PCI interrupt while an OBIO request is outstanding */
+++static void test_pci_waits_for_obio(void)
+++{
+++    QTestState *qts = setup();
+++
+++    line(qts, INO_HDD, 1);
+++    g_assert_true(requested(qts, INO_HDD));
+++
+++    /* The NIC's interrupt waits; the IDE request stays */
+++    line(qts, INO_NIC, 1);
+++    g_assert_false(requested(qts, INO_NIC));
+++    g_assert_true(requested(qts, INO_HDD));
+++
+++    /* Clearing the IDE request brings the NIC's */
+++    handle(qts, INO_HDD, OBIO_CLR_HDD);
+++    g_assert_true(requested(qts, INO_NIC));
+++
+++    /* and clearing that one lets the next IDE interrupt through */
+++    handle(qts, INO_NIC, PCI_CLR_NIC);
+++    line(qts, INO_HDD, 1);
+++    g_assert_true(requested(qts, INO_HDD));
+++    handle(qts, INO_HDD, OBIO_CLR_HDD);
+++
+++    qtest_quit(qts);
+++}
+++
+++/* A PCI interrupt while another PCI request is outstanding */
+++static void test_pci_waits_for_pci(void)
+++{
+++    QTestState *qts = setup();
+++
+++    line(qts, INO_PCI2, 1);
+++    g_assert_true(requested(qts, INO_PCI2));
+++    line(qts, INO_NIC, 1);
+++    g_assert_false(requested(qts, INO_NIC));
+++
+++    handle(qts, INO_PCI2, PCI_CLR_PCI2);
+++    g_assert_true(requested(qts, INO_NIC));
+++    handle(qts, INO_NIC, PCI_CLR_NIC);
+++
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * The hang: the IDE and the NIC both waiting for the guest, and the serial
+++ * console's interrupt still has to get through once they are handled.
+++ */
+++static void test_console_after_both(void)
+++{
+++    QTestState *qts = setup();
+++
+++    line(qts, INO_HDD, 1);
+++    line(qts, INO_NIC, 1);
+++    line(qts, INO_SER, 1);
+++    g_assert_true(requested(qts, INO_HDD));
+++    g_assert_false(requested(qts, INO_NIC));
+++    g_assert_false(requested(qts, INO_SER));
+++
+++    handle(qts, INO_HDD, OBIO_CLR_HDD);
+++    g_assert_true(requested(qts, INO_NIC));
+++    g_assert_false(requested(qts, INO_SER));
+++
+++    handle(qts, INO_NIC, PCI_CLR_NIC);
+++    g_assert_true(requested(qts, INO_SER));
+++    handle(qts, INO_SER, OBIO_CLR_SER);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-sabre-irq/pci-waits-for-obio",
+++                   test_pci_waits_for_obio);
+++    qtest_add_func("sun4u-sabre-irq/pci-waits-for-pci",
+++                   test_pci_waits_for_pci);
+++    qtest_add_func("sun4u-sabre-irq/console-after-both",
+++                   test_console_after_both);
 ++
 ++    return g_test_run();
 ++}
