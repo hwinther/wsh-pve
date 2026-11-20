@@ -9,6 +9,8 @@
 #
 #   PACKAGES=repo     install the WSH packages from the published apt repo (debian.wshosting.no)
 #   PACKAGES=local    install the .deb files in e2e/pve/debs/ instead (the build-deb artifacts)
+#   PACKAGES=mixed    the published apt repo, with the .deb files in e2e/pve/debs/ installed over it
+#                     (e2e.yml's boot job: a pull request's qemu-server with the published rest)
 FROM debian:13
 
 ARG PVE_COMPONENT=pve-no-subscription
@@ -28,7 +30,7 @@ RUN apt-get update \
     && gpg --dearmor < /tmp/wsh-pve.gpg.key > /usr/share/keyrings/wsh-pve.gpg \
     && printf 'Types: deb\nURIs: http://download.proxmox.com/debian/pve\nSuites: trixie\nComponents: %s\nSigned-By: /usr/share/keyrings/proxmox-archive-keyring.gpg\n' \
         "$PVE_COMPONENT" > /etc/apt/sources.list.d/proxmox.sources \
-    && if [ "$PACKAGES" = repo ]; then \
+    && if [ "$PACKAGES" = repo ] || [ "$PACKAGES" = mixed ]; then \
         printf 'Types: deb\nURIs: https://debian.wshosting.no/debian/\nSuites: trixie\nComponents: main\nSigned-By: /usr/share/keyrings/wsh-pve.gpg\n' \
             > /etc/apt/sources.list.d/wsh-pve.sources; \
         printf 'Package: pve-manager qemu-server pve-qemu-kvm libpve-storage-perl\nPin: origin debian.wshosting.no\nPin-Priority: 1001\n' \
@@ -37,11 +39,12 @@ RUN apt-get update \
 
 COPY e2e/pve/debs/ /tmp/debs/
 
-# The PVE stack without the kernel or proxmox-ve meta package. With PACKAGES=local, apt installs the
-# local .debs in the same transaction so their dependencies resolve from the Proxmox repo.
+# The PVE stack without the kernel or proxmox-ve meta package. With PACKAGES=local or mixed, apt installs
+# the local .debs in the same transaction so their dependencies resolve from the repos; a .deb named by
+# its path is installed as it is, whatever the pin above prefers.
 RUN apt-get update \
     && LOCAL_DEBS="" \
-    && if [ "$PACKAGES" = local ]; then LOCAL_DEBS="$(ls /tmp/debs/*.deb)"; fi \
+    && if [ "$PACKAGES" = local ] || [ "$PACKAGES" = mixed ]; then LOCAL_DEBS="$(ls /tmp/debs/*.deb)"; fi \
     && apt-get install --no-install-recommends --assume-yes \
         systemd systemd-sysv dbus iproute2 curl procps \
         pve-cluster pve-manager qemu-server pve-qemu-kvm libpve-storage-perl proxmox-widget-toolkit \

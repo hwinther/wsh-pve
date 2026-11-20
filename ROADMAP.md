@@ -13,7 +13,7 @@ come after that, not before.
 | Area | State | PRs |
 | --- | --- | --- |
 | Floppy drives (storage type, qemu-server, UI) | published | #183, #231 |
-| sparc lab in CI: guests booted and installed on a self-hosted runner, weekly and on demand | running | #230 |
+| sparc lab in CI: guests booted and installed on a self-hosted runner, weekly (plus a monthly `reinstall=all`) and on demand | running | #230 |
 | cg3 at any size (from LEMU), FCode ROM built in `openbios/` | published | #232, #236 |
 | Idle: SunOS 4.1.4 (from LEMU), Solaris 2.6 via `pmc` (16-byte APC), Solaris 2.5.1–9 on any sun4m machine | published | #233, #241 |
 | SS-10/SS-20, SMP and RAM measured; benchmark scenario | merged | #235 |
@@ -69,6 +69,8 @@ come after that, not before.
 | Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
 | Install targets for the matrix holes: Solaris 2.5.1 on the SS-20 under OpenBIOS (`sol251-ss20`, the CD as a disk; the SS-5 target still needs `ss5.bin`), Solaris 2.6 and 7 on the SS-10 (`sol26-ss10`, `sol7-ss10`), each installed through PVE with `--check --export` (stored disk and sidecar in `/mnt/os/disks`) and boot-tested, pve-qemu-kvm 11.1.3-2+wsh25 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
+| Idle on sun4u: no guest on QEMU's sun4u has a way to stop the CPU (Solaris/illumos halt only through the SPARC64-VI module, NetBSD and Linux only through the sun4v hypervisor, OpenBSD's `sleep` only on CPUs with several strands), so pve-qemu `wsh/0042`-`0044` recognise the idle loops of NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9/10 and Tribblix m34 in the translator and halt there (`idle-halt`, on by default; qtest `sun4u-idle-test`): an idle guest at the shell takes 3-9% of a host core instead of 100% (Tribblix about 22%, and only with FMA's `fmd` off: its ZFS disk faults and `rcm_daemon` spins), with the clock, ten `sleep 1` and CPU-bound jobs as before (`submodules/SPARC.md`, "sparc64 (sun4u)", "Idle") | in review | |
+| Workflow tokens: `sync-from-upstream-trigger.yml` dispatches the five syncs with `GITHUB_TOKEN` (`actions: write`), and from a branch or with `dry_run` only says what it would start; `build-deb.yml` builds pve-qemu's 3dfx extra in its own job without `WORKFLOW_TOKEN` or stored credentials and hands the binary to the build job as an artifact; the optional-extras report's issue path is tested by `scripts/test-report-qemu-extras.sh` and dry-run against the open issues by `report-qemu-extras-test.yml` | in review | |
 
 ## In progress
 
@@ -129,8 +131,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 
 ## Next, in this order
 
-1. **Idle on sparc64.** NetBSD on sun4u keeps a host core at 100% (nothing on QEMU's sun4u lets
-   the guest stop the CPU; `SPARC.md`, "sparc64"); Solaris on sun4u not measured.
+1. **Idle on sparc64, what is left.** The guests with a stored disk idle (see Done: `wsh/0042`-`0044`).
+   Not covered: Linux on sun4u (Debian 12's install fails, so no disk; its `arch_cpu_idle()` does
+   nothing on sun4u either), Solaris 8 (no stored disk yet; its `idle()` is probably laid out like 9's,
+   not checked), other kernel builds than the ones in `SPARC.md`, and sun4v/`niagara` (hypervisor
+   `cpu_yield`). Each new guest: disassemble its idle loop and add a layout with a qtest case.
 2. **Solaris on sun4u**: see "In progress". Solaris 10 installs through `lab.py install`; next: a
    reboot that works from Solaris (0012 hangs).
 3. **Solaris 10/11 on `niagara`: measured, parked as a demonstration.** Reproduced on the
@@ -254,10 +259,14 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   ntpd's clock slew in 5 of 6 boots; without ntpd it happens too, rarely (1 of 5 installs on
   the CD, one of several boots with a 1 GB `tar` of `/usr`), and the guest then sits in its idle
   loop with interrupts enabled, no I/O and no answer to the console or a break
-  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Find the lost interrupt in QEMU's
-  sun4u path (cmd646, sabre, interrupt vector; `wsh/0021`'s latch is a suspect), then drop the
-  target's install retry and let it keep ntpd on. Also not tried through the tool: DHCP
-  (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
+  (`submodules/SPARC.md`, "sparc64", "IDE timeouts without ntpd"). Cause found (2026-11-20): a PCI
+  interrupt (the NIC on pciB) replaced the sabre's outstanding IDE request, the CPU dropped it while
+  busy, and the guest's clear of the IDE request was ignored, so no OBIO interrupt got through
+  again; ntpd's part was its network traffic. Fixed in pve-qemu `wsh/0045` (qtest `wsh/0046`),
+  tested in the lab (SPARC.md, "Cause: the sabre lost a request"), not yet in a package. Still to
+  do once a package has it: install `openbsd80-sun4u` through PVE with ntpd on, then drop the
+  target's install retry (`retry_on`) and the `ntpd_flags=NO`. Also not tried through the tool:
+  DHCP (`--ip dhcp`, the lab's own runs got an address with `inet autoconf`).
 - **Scheduled reinstalls.** One install per supported profile, weekly or monthly, replacing the
   stored disk when it passes, so every disk the lab boots can be rebuilt. The machinery exists: the
   install targets (`e2e/sparc/targets.py`, `lab.py install`) and `pve_matrix.py install` (the
@@ -273,8 +282,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   node's `vmbr0` (10.0.2.2:3142, socat, no forwarding or NAT) and nothing else; without it they are
   skipped.
   The `install` choice runs weekly (Sunday 07:17 UTC, after `smoke` and `pve`): boot tests of the
-  stored disks, plus installs of targets that have none yet. Still to do: maybe a monthly
-  `reinstall=all` (about 6 h, needs the 720-minute limit on a schedule), and automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0
+  stored disks, plus installs of targets that have none yet. Done: the monthly `reinstall=all`
+  (first Saturday of the month, 07:17 UTC, 720-minute limit; about 6 h): every target without
+  `matrix_skip` installed again and its stored disk replaced when the check passes. Still to do:
+  automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0
   on sun4u, Tribblix, and Red Hat Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86
@@ -285,6 +296,17 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   audio; Solaris 10 has only USB audio), the CS4231 in an SBus slot of the SS-10/SS-20 as the MiSTer
   SS-20 core does (an FCode PROM and an OpenBIOS node), CS4231 capture, cg14 without SX (an old
   MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI and SX last.
+- **Patch coverage (idea).** Measure how much of the code we own the tests run, not upstream's:
+  `submodules/*.patch` gives our lines (the `+` side of each hunk matches the patched source the
+  build uses), and a small script intersects them with lcov from each layer into "X of Y own lines
+  run", per patch and, on a PR, for the hunks it changes. In order: (1) the web UI, with V8 coverage
+  from the existing Playwright run through monocart (`pvemanagerlib.js` is a concatenation, not
+  minified, so ranges map back to `www/manager6` files from the Makefile order); (2) the Perl side
+  with `Devel::Cover` on the cfg2cmd and unit tests (cheap), and maybe under e2e with
+  `PERL5OPT=-MDevel::Cover` on pvedaemon/pveproxy (slow, noisy); (3) a gcov build of pve-qemu for
+  the qtests and part of the lab matrix, as a manual or weekly report (which wsh patches no test
+  runs). OpenBIOS has no practical coverage. A report as an artifact or PR comment, never a
+  required check: coverage shows code ran, not that anything was asserted.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
 - **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
   expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and
@@ -310,12 +332,11 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |
+| sun4u idle only for the kernel builds in `SPARC.md` (NetBSD 9.3/11.1, OpenBSD 8.0, Solaris 9 9/05 and 10 1/13, Tribblix m34) | A differently compiled idle loop is not recognised and spins as before (`-trace sparc64_idle_match` shows a match) |
 | A CD that answers as a disk (`cd_as_disk=1`) has no field in the web UI | Set it with `qm set` or the API; the CD/DVD editor keeps it when the medium changes |
 | Live migration of a VM without `-cpu`; `qm suspend --todisk` | Not working or not tested |
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
-| `sync-from-upstream-trigger.yml` cannot work | Its `gh workflow run` steps have no token |
-| `build-deb.yml` builds the 3dfx extra in a job that also holds the PAT | Should be split so the third-party build never sees the token |
-| The issue path of the optional-extras report | Has only run with nothing missing |
+| `build-deb.yml`'s separate 3dfx job has not run in a package build yet | A branch dispatch would publish, so it was checked with actionlint and a local run of the hand-over step; the first pve-qemu build on main is its test (its run should show `qemu-system-x86_64-3dfx from the 3dfx build of ...` and the release no "Optional extras missing") |
 
 ## The lab host
 

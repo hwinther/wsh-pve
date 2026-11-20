@@ -145,7 +145,7 @@ docker run --rm -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro 
 | `display-x` | `fb-display.py X=1 INPUT=1 IDLE=60`: the 2.6 disks (TCX packages added by `PREPARE`) into the CDE desktop on TCX 8, TCX 24 and cg3 with SS-5 (OpenBIOS, `ss5.bin`: not TCX 24), SS-10 and SS-20 (OpenBIOS) | ~100 min |
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%), Solaris 2.6 on SS-20 with 2 and 4 CPUs and `solaris-smp-idle` (below 20%, `sparc_solaris_idle_mp_match` traced) and with 2 CPUs and `solaris-smp-idle=off` (above 150%) | ~45 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
-| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle; needs `--disks /mnt/os/disks` | ~25 min |
+| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle: halted in its idle loop (below 10% of a core, `sparc64_idle_match` traced) and with `idle-halt=off` (above 80%; both need a package with pve-qemu `wsh/0042`-`0044`); needs `--disks /mnt/os/disks` | ~30 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 | `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
@@ -618,7 +618,8 @@ elsewhere: apt fails to connect). Without a cache the matrix skips the Debian ta
 disk) and changes nothing on `vmbr0`. The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
 `reinstall` input (empty by default: boot-test what is stored, install what is missing); any
 `reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
-a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
+a new Tribblix disk on the runner. The workflow runs `install` weekly (Sunday 07:17 UTC) and with
+`reinstall=all` on the first Saturday of the month (07:17 UTC, 720 minutes). By hand on the node (or in the PVE test container):
 
 ```sh
 wsh-lab install tribblix-m34-sun4u --vmid 9401 --check --export /mnt/os/disks   # ~4.3 h, once
@@ -1171,13 +1172,16 @@ memory, SS-10, and the sets other than these two.
 
 **In CI.** The NetBSD CDs are freely redistributable, so `sparc lab NetBSD`
 (`.github/workflows/sparc-lab-netbsd.yml`, on pull requests that change `e2e/sparc` and by hand)
-runs `tests/test_netbsd.py` in the lab image on a GitHub-hosted runner: it downloads
-`NetBSD-11.1-sparc64.iso` from `cdn.netbsd.org` (the URL in `targets.MEDIA`), checks its size and
-sha256, and runs the target's three scenarios with the lab's own QEMU (TCG, sun4u): install, first
-boot (password, marker, host name, a static address and router), check (logs in with the password,
-requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
-is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
-45). Not run on GitHub yet.
+runs `tests/test_netbsd.py` in the lab image on GitHub-hosted runners, one job per target:
+`netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20`
+(`NETBSD_TARGET`; without it the test runs `netbsd111-sparc64`). Each job downloads its CD from the
+URL in `targets.MEDIA` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for 9.3; cached between
+runs), checks its size, sha256 and sha512 (the release's `images/SHA512`), and runs the target's
+three scenarios with the lab's own QEMU (TCG; sun4u, or the SS-5/SS-20 with `_sparc32`'s machine):
+install, first boot (password, marker, host name, a static address and router), check (logs in
+with the password, requires the marker and `inet 10.0.2.15/24`). On the lab host the 11.1 sun4u
+run took 623 s; the jobs' limits are 60 min (11.1 sun4u), 90 min (9.3 sun4u, whose sysinst is
+twice as slow) and 45 min (9.3 on the SS-5 and SS-20).
 
 ### The OpenBSD 8.0 install target
 
@@ -2066,6 +2070,24 @@ Which guests stop spinning the host CPU when idle, and the results, are in `subm
 driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then lists `pmc (Power
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 
+On sun4u (`scenarios/sparc64-idle.py`) the guests idle through the `idle-halt` machine option (pve-qemu
+`wsh/0042`-`0044`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
+shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`). The stored install disks
+(`/mnt/os/disks/install-*-sun4u.raw`, `install-netbsd*-sparc64.raw`) take `PASSWORD=wshlab`; each guest
+does something for a while after boot, which `WAIT` ends or waits out before the measurement:
+
+| Guest | Variables |
+| --- | --- |
+| NetBSD 9.3, 11.1 | `GUEST=netbsd`, `WAIT=pkill makemandb; sleep 2` (the copied disk rebuilds its manual page index at every boot) |
+| OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
+| Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
+| Solaris 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
+| Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
+
+`LOAD` needs a POSIX shell, so it is for the BSDs only; on Solaris the scenario's `awk` job reads
+`/dev/null` (Solaris's old `awk` reads its input even with only a `BEGIN` rule, and swallowed the
+commands typed after it).
+
 `netbsd111-installed.raw` is NetBSD 11.1 from `NetBSD-11.1-sparc.iso` (`ISO=...`, `VGA=none`, by hand
 through `serve`, ~10 min): microroot `1` (cdrom), Return twice, terminal type Return, `I`; sysinst: `a`
 (English), `a` (install), `b` (yes), `a` (sd0), `b` (default partition sizes), `x`, `b`, `c` (Minimal
@@ -2291,7 +2313,7 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
-| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load | ~4 min |
+| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
 defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`
