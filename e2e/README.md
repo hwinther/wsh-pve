@@ -81,6 +81,12 @@ docker exec -i wsh-pve-e2e sh -s -- x86_64 9001 local:iso/alpine-virt-x86_64.iso
 `sparc/pve.Dockerfile` adds the sparc lab to this image; there, guests do run (under TCG): VMs created
 through the API, started by PVE and driven by the lab (`sparc/README.md`, "Attach to a PVE VM").
 
+`audio/Dockerfile` adds the x86 audio matrix (`audio/audio_matrix.py`; workflow `audio-matrix.yml`):
+a FreeDOS floppy with our own `AUDTEST.COM` and a Debian kernel + initramfs that play known tones
+through each sound device, recorded with QEMU's `wav` backend and checked by `audio/wavcheck.py`,
+directly and through qemu-server (`qm showcmd`, `qm start`). The results are described in the
+[audio reference](../docs/src/content/docs/reference/audiodev.md).
+
 ## Running
 
 ```bash

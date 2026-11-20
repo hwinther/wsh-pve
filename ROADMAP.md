@@ -168,8 +168,18 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      display drivers among them) that the README and the guest operating systems guide mention. First
      sort out what may be published: much of it is proprietary, and what isn't gets a source and a
      licence next to it; the rest stays a list of what to get and where. Then a guide per pack.
-   - Audio: which devices work in which guests, and where the sound goes on a headless node
-     (SPICE, PulseAudio/PipeWire over the network). Testable with QEMU's `wav` audio backend.
+   - **Audio: matrix in CI.** `e2e/audio/` (workflow `audio-matrix.yml`, GitHub-hosted, weekly)
+     records each device with QEMU's `wav` backend and checks the tones: SB16, AdLib, PC speaker
+     and `sb16-adlib-pcspk` under FreeDOS with our own `AUDTEST.COM`; AC97, Intel HDA (ich6/ich9),
+     ES1370, virtio-sound and USB audio under a Debian kernel + initramfs; every `audio0` value also
+     through qemu-server (`qm showcmd`, the same command with `wav`, `qm start`). All play. Found:
+     on q35 PVE's machine config adds a codec-less `ich9-intel-hda` at 00:1b.0, so `audio0` is the
+     guest's second card; qemu-server puts two codecs on one HDA controller; Linux starts AC97/HDA
+     muted; SB16 direct DAC isn't emulated. Table and the headless-node answer (`pa` with
+     `server=`, also for PipeWire desktops) in the
+     [audio reference](docs/src/content/docs/reference/audiodev.md). Next: a `driver=wav` in
+     qemu-server for tests (proposed, not done); GUS and CS4231A (needs a DOS test for each);
+     Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a real node over `pa`.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
      older Linux.
    - Streaming: QEMU on a virtual desktop in a container with Sunshine or Wolf, for 2D/3D video
