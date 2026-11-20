@@ -10,7 +10,8 @@ then power off with `halt -p`. `lab.py install openbsd80-sun4u --check` and `lab
   COMMANDS_TIMEOUT  seconds COMMANDS may take                            (600)
 
 A `wd` timeout on the console (`wd0(pciide0:0:0): timeout`, `wd0d: device timeout ...`) fails the run:
-with ntpd slewing the clock they were seen after the first boots of OpenBSD 8.0 (_openbsd.py).
+OpenBSD 8.0 on sun4u had them, then hung, before pve-qemu `wsh/0045` (the sabre's lost interrupt,
+_openbsd.py).
 
 The scenario boots whatever the disk holds and changes it (logs): give it a copy outside PVE.
 """

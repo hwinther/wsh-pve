@@ -1278,7 +1278,8 @@ twice as slow) and 45 min (9.3 on the SS-5 and SS-20).
 CD on `ide2`, `sunhme`) installs OpenBSD 8.0 from `install80.iso` (467599360 bytes, its sha256 the
 one in the release's `SHA256`; freely redistributable, but not downloaded by any test). It needs
 openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22): before, the installed GENERIC kernel stops right after
-the loader (`submodules/SPARC.md`, "sparc64").
+the loader (`submodules/SPARC.md`, "sparc64"). ntpd stays on, which needs pve-qemu `wsh/0045`
+(pve-qemu-kvm 11.1.3-2+wsh30; "ntpd and the IDE timeouts" below).
 
 - **Install** (`openbsd-install-sparc64.py`, `_openbsd.py`): OpenBIOS boots the CD's `bsd.rd`; the
   installer's questions are one line each, ending in `?` and the default in brackets.
@@ -1294,27 +1295,51 @@ the loader (`submodules/SPARC.md`, "sparc64").
   route, the default DNS domain, no name servers, root's password (the target's `root_password`:
   the installer asks for it), sshd yes, no user, root ssh login no, `wd0`, no encryption, the auto
   layout, the sets from `cd0` with `-x*` (`SETS`: base, comp, man, game, `bsd`, `bsd.rd`), yes to the
-  missing `SHA256.sig` (the CD has none), time zone UTC, then **S**hell. From the installer's shell
-  it writes `ntpd_flags=NO` into the new system's `/etc/rc.conf.local` (what `rcctl disable ntpd`
-  writes), unmounts and halts; `bsd.rd`'s `halt -p` stops at "halted" without powering off, so the
-  scenario stops the VM.
+  missing `SHA256.sig` (the CD has none), time zone UTC, then **S**hell (8.0 asks that after
+  "CONGRATULATIONS!", 5.9 is at its shell then: `installer()` answers either). From the installer's
+  shell it unmounts and halts; ntpd stays on, as the installer leaves it (`NTPD=off` writes
+  `ntpd_flags=NO` into the new system's `/etc/rc.conf.local`, as for 5.9 on sun4m); `bsd.rd`'s `halt
+  -p` stops at "halted" without powering off, so the scenario stops the VM.
 - **First boot** (`openbsd-firstboot.py`): login as root with the installer's password, the marker,
   `/etc/myname` (`<host>.<domain>` with `--domain`), `/etc/hostname.hme0` (`inet <ip> <netmask>`),
   `/etc/mygate` (`--gateway`), `/etc/resolv.conf` (`--dns`, `--domain`), the address in
   `/etc/hosts`, the optional `--user` (`useradd -m -G wheel -s /bin/ksh`, `passwd`), a check that
-  ntpd is disabled and not running (`rcctl get ntpd flags` = `NO`, no `ntpd` process), `halt -p`.
+  ntpd is enabled and running (`rcctl get ntpd flags` not `NO`, `ntpd` processes), `halt -p`.
 - **Check** (`openbsd-boot-disk.py`): login, `uname -a`, the marker, `df -k`, the disklabel,
   `ifconfig hme0`, the routes, `resolv.conf`, `rcctl get ntpd flags`, `pgrep -lx ntpd` (one console
   line: OpenBSD's tty takes 255 characters, which `tests/test_targets.py` checks); a `wd` timeout
   anywhere on the console fails it.
 
-Why ntpd is off: with QEMU's user network with outside access, ntpd found the guest ~430 ms off and
-slewed the clock, and from then on `wd0` reads timed out in 5 of 6 boots (`submodules/SPARC.md`,
-"Disk timeouts with a synced clock"); with ntpd disabled it didn't happen. The cause isn't known
-(ROADMAP), so the target doesn't start ntpd; `rcctl enable ntpd` turns it on again.
+**ntpd and the IDE timeouts.** Until 2026-11-20 the target turned ntpd off and ran a hung install
+once more. With QEMU's user network with outside access, ntpd found the guest ~430 ms off and slewed
+the clock, and from then on `wd0` reads timed out in 5 of 6 boots (`submodules/SPARC.md`, "Disk
+timeouts with a synced clock"); without ntpd it happened too, rarely (the runs below). The cause was
+in QEMU's sun4u sabre host bridge: a PCI interrupt (the NIC on pciB) replaced the outstanding IDE
+interrupt request, the CPU dropped it while busy, the guest's clear of the IDE request was then
+ignored, and no disk or console interrupt reached the CPU again. ntpd's part was its network
+traffic, not the slew. pve-qemu `wsh/0045` (pve-qemu-kvm 11.1.3-2+wsh30) fixes it (`submodules/SPARC.md`,
+"Cause: the sabre lost a request"), so the target now keeps ntpd on, checks that it runs, and has no
+install retry; an IDE timeout followed by 5 minutes of silence still fails the install
+(`_openbsd.installer()`, `STUCK_S`), so a regression shows.
 
-Through PVE (the same container and packages as the OpenBIOS Solaris runs above, 2026-11-19; the
-test bridge `vmbr0` has no way out, so ntpd would find no server anyway):
+Through PVE with ntpd on (the PVE test container with the published pve-qemu-kvm 11.1.3-2+wsh30,
+qemu-server 9.2.19+wsh4, pve-manager 9.2.32+wsh4, 2026-11-20; other sparc32 guests running on the
+host at the same time, load average 2-5 on 14 cores). For the runs with a way out, the container
+routed `vmbr0` to the outside (NAT) with the router at 10.0.2.2:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install openbsd80-sun4u` (the first run with ntpd on) | failed after the install: the sets went in without an IDE timeout, but `installer()` stopped at "CONGRATULATIONS!" and never answered 8.0's "Exit to (S)hell" question, a break from the OpenBSD 5.9 targets (#343), fixed since (`EXIT_QUESTION`) | 10.1 min |
+| `install openbsd80-sun4u` | passed; `rcctl get ntpd flags` empty (enabled), three `ntpd` processes; no IDE timeout in any phase | 16.0 min (install 454 s, first boot 286 s, check 204 s) |
+| `install openbsd80-sun4u --ip 10.0.2.32 --gateway 10.0.2.2 --dns <a resolver> --domain lab.example --user lab` (a way out) | passed; `default 10.0.2.2`, the user, ntpd running; no IDE timeout | 16.8 min (459 s, 324 s, 209 s) |
+| three boots of that VM with disk load (`openbsd-boot-disk.py --pve` with `COMMANDS`: `sleep 90; ntpctl -s a`, `tar cf - /usr \| cksum`, a 200 MB `dd` write, `ntpctl -s s`) | 3 of 3 passed without a disk timeout; ntpd had 5/5 peers and was slewing the clock (`clock unsynced, clock offset is 394.891ms`, 448.652 ms in the third) while `tar` read `/usr`; one ended `clock synced` | 6.4-7.0 min each |
+| `install openbsd80-sun4u --export <scratch>` | passed; disk exported; no IDE timeout | 16.8 min (451 s, 294 s, 238 s) |
+| `install openbsd80-sun4u --ip 10.0.2.35 --gateway 10.0.2.2 --dns <a resolver> --domain lab.example` (a way out) | passed; ntpd running; no IDE timeout | 17.9 min (506 s, 334 s, 218 s) |
+| `boot-test openbsd80-sun4u` of the exported disk | passed; no disk timeout | 3.8 min |
+| a boot of the second VM (a way out) with `ping -f -c 300000 10.0.2.2` in the background during `tar cf - /usr \| cksum` (the load that hung 2 of 2 lab runs before `wsh/0045`) | passed; all 300 000 pings, `tar` 1 083 427 840 bytes, then `clock synced`; no disk timeout | 11.5 min |
+
+Earlier, through PVE with ntpd off (the same container and packages as the OpenBIOS Solaris runs
+above, pve-qemu-kvm 11.1.3-2+wsh22, 2026-11-19; the test bridge `vmbr0` had no way out):
 
 | Run | Result | Time |
 | --- | --- | --- |
@@ -1326,25 +1351,23 @@ test bridge `vmbr0` has no way out, so ntpd would find no server anyway):
 | `boot-test openbsd80-sun4u` of the exported disk | passed | 5.1 min |
 | six boots of that disk with disk load (`openbsd-boot-disk.py --pve` with `COMMANDS`: `tar cf - /usr \| cksum`, 1 083 463 680 bytes, and a 200 MB `dd` write; one or two other guests running) | 5 of 6 passed without a timeout (`tar` 2m24s-3m15s, `dd` 6-8 s); one stopped after `wd0(pciide0:0:0): timeout` and `wd0d: device timeout reading fsbn 3408952 ..., retrying` (below) | ~6-7 min each |
 
-**IDE timeouts without ntpd.** Two of these runs hit the IDE timeouts with ntpd off and no outside
-network: an install on the CD and a boot under disk load, at a host load average of 4-13 on 14
-cores. Both guests then stopped for good. The hung boot, inspected in the QEMU monitor before it was
+**IDE timeouts without ntpd** (before `wsh/0045`). Two of these runs hit the IDE timeouts with ntpd
+off and no outside network: an install on the CD and a boot under disk load, at a host load average
+of 4-13 on 14 cores. Both guests then stopped for good. The hung boot, inspected in the QEMU monitor before it was
 stopped: the CPU in OpenBSD's idle loop (`pc` 0x12d9cac, `pstate` 6: interrupts on, PIL 0), no I/O
 on the disk for 321 s (`info blockstats`, `idle_time_ns`), no IDE, BMDMA or cmd646 trace event in 40
 s, and no answer on the serial console to Return or a break (which enters ddb on a live system). So
 after the timeouts no interrupt reaches the CPU, not even the console's; the state is in the run's
-evidence (`hang-state.txt`). It looks like a lost or stuck interrupt in QEMU's sun4u path, which
-ntpd's slew makes more likely (`submodules/SPARC.md`, "IDE timeouts without ntpd"; ROADMAP). Until
-it is found, `openbsd-install-sparc64.py` fails an install that stays silent for 5 minutes after an
-IDE timeout (`_openbsd.installer()`, `STUCK_S`), and the target's `retry_on: "IDE timeouts"` runs the
-install once more (as Solaris 10's early panic); a hung first boot or check fails at its phase
-timeout.
+evidence (`hang-state.txt`). It was the sabre's lost interrupt request above (`submodules/SPARC.md`,
+"IDE timeouts without ntpd", "Cause: the sabre lost a request"). Until `wsh/0045` the target's
+`retry_on: "IDE timeouts"` ran such an install once more; that retry is gone, and a hung first boot
+or check fails at its phase timeout.
 
 Every `halt -p` after a boot printed `reorder_kernel: failed -- see /usr/share/relink/kernel/GENERIC/relink.log`:
 each boot relinks the kernel in the background (KARL), which takes longer than these short boots
 under TCG, and the halt stops it; the old kernel stays, and the next boot tries again. Not tried
 through the tool: DHCP (`--ip dhcp` is refused; the lab's own runs got an address with `inet
-autoconf`), more memory, the VGA console, a network with outside access.
+autoconf`), more memory, the VGA console.
 
 ### OpenBSD 5.9 on sun4m
 

@@ -843,10 +843,11 @@ TARGETS = {
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17_WSH15, "with": "--check"},
     },
     # The installer (bsd.rd) answered on ttya by what it asks (_openbsd.installer): hme0 static, root's
-    # password, the auto layout on wd0, the sets without X11; ntpd off before the first boot (with a
-    # network that reaches NTP servers, ntpd's clock slew was followed by wd0 read timeouts); the first
-    # boot writes the marker and the network files. The installed GENERIC kernel needs openbios 0023
-    # (pve-qemu-kvm 11.1.3-2+wsh22 and later). README.md, "The OpenBSD 8.0 install target"
+    # password, the auto layout on wd0, the sets without X11, ntpd left on; the first boot writes the
+    # marker and the network files and checks that ntpd runs. The installed GENERIC kernel needs
+    # openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later); ntpd on needs pve-qemu wsh/0045 (+wsh30:
+    # before, a NIC interrupt could cost the IDE disk its interrupts). README.md, "The OpenBSD 8.0
+    # install target"
     "openbsd80-sun4u": {
         "title": "OpenBSD 8.0 sparc64 without X11 (sun4u, OpenBIOS, IDE disk)",
         "status": "automated",
@@ -855,10 +856,10 @@ TARGETS = {
                     "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
         "disk": {"bus": "ide0", "size": 8, "label": None},  # the installer writes its disklabel
         "media": [{"name": "install80.iso", "drive": "ide2"}],
-        # once in five installs the CD stopped answering while the sets were extracted (`cd0(pciide0:1:0):
-        # timeout`, then silence): the scenario fails after 5 minutes of it and the install runs once more
+        # an IDE timeout followed by 5 minutes of silence fails the install (_openbsd.installer(): the
+        # sabre's lost interrupt before wsh/0045); no retry, so a regression shows
         "install": {"scenario": "openbsd-install-sparc64.py", "vars": {"SETS": "-x*"}, "timeout": 5400,
-                    "root_password": True, "retry_on": "IDE timeouts"},
+                    "root_password": True},
         "firstboot": {"scenario": "openbsd-firstboot.py", "vars": {}, "timeout": 2400},
         "check": {"scenario": "openbsd-boot-disk.py", "vars": {}, "timeout": 1800,
                   # one console line: OpenBSD's tty takes 255 characters (with --user's grep and the
@@ -874,8 +875,10 @@ TARGETS = {
         # netmask, /etc/mygate and /etc/resolv.conf (openbsd-firstboot.py)
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
         "net_modes": ["static"],
-        "minutes": 20,  # 18.0-22.4 min (4 runs): install 9-11.6 (the sets, the kernel relink), first boot 5.3-6.5, --check 3.5-3.9
-        "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH22,
+        "minutes": 17,  # 16.0-17.9 min (4 runs): install 7.5-8.4 (the sets, the kernel relink), first boot 4.8-5.6, --check 3.4-4.0
+        # ntpd on, wsh/0045 (pve-qemu-kvm +wsh30); two of the runs with a way out through vmbr0 (ntpd synced)
+        "tested": {"date": "2026-11-20",
+                   "packages": {"pve-qemu-kvm": "11.1.3-2+wsh30", "qemu-server": "9.2.19+wsh4", "pve-manager": "9.2.32+wsh4"},
                    "with": "--check; --check --export; --check --ip --gateway --dns --domain --user; boot-test"},
     },
     # OpenBSD 5.9, the last release of the sparc port, on sun4m: cd59.iso boots bsd.rd (by path at
