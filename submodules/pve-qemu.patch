@@ -69,10 +69,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..f6344e4 100644
+index 7b0cba5..9770ea1 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,49 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,51 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -122,6 +122,8 @@ index 7b0cba5..f6344e4 100644
 +wsh/0044-tests-qtest-test-the-idle-halt-on-sun4u.patch
 +wsh/0045-hw-pci-host-sabre-keep-PCI-interrupts-to-one-request.patch
 +wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch
++wsh/0047-target-sparc-keep-fetching-from-the-current-page-acr.patch
++wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -9245,6 +9247,450 @@ index 0000000..08dc8ee
 ++                   test_pci_waits_for_pci);
 ++    qtest_add_func("sun4u-sabre-irq/console-after-both",
 ++                   test_console_after_both);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0047-target-sparc-keep-fetching-from-the-current-page-acr.patch b/debian/patches/wsh/0047-target-sparc-keep-fetching-from-the-current-page-acr.patch
+new file mode 100644
+index 0000000..dfb4688
+--- /dev/null
++++ b/debian/patches/wsh/0047-target-sparc-keep-fetching-from-the-current-page-acr.patch
+@@ -0,0 +1,184 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: keep fetching from the current page across a context switch
++
++Solaris 2.1 (sun4m) stops QEMU right after its device configuration:
++"Trap 0x21 (Instruction Access Error) while interrupts disabled, Error
++state" at pc f0014768 (srmmu_mmu_flushctx). Its srmmu_l1setup writes a
++new level 1 table into a context table entry before it copies the
++kernel's entries into that table, and writing the entry flushes the
++context: with traps disabled srmmu_mmu_flushctx writes the context
++register, flushes and writes the old value back, all in one page of
++kernel text. The SuperSPARC executes those instructions (Sun shipped 2.1
++for the SS-10). QEMU flushes its whole TLB on the context change, the
++next instruction fetch walks the new context, which doesn't map the
++kernel yet, and with traps disabled sparc_cpu_tlb_fill() maps the fetch
++to neverland, whose fetch raises the trap in error state. Solaris 2.2
++copies first.
++
++When the context register changes, remember how the old context
++translates the page of the instruction that writes it. An instruction
++fetch in that page that fails to translate while traps are disabled
++uses that translation (execute only) instead of the neverland mapping.
++Only that case changes, and it used to stop QEMU; with traps enabled
++the fault is taken as before. A CPU reset forgets the translation. A
++new trace event, sparc_mmu_ifetch_hold, shows each use.
++
++Tested on SS-10 under OpenBIOS: the Solaris 2.1 CD installs and the
++installed disk's first boot gets to login: (SunOS 5.1 Generic sun4m),
++runs a few commands and shuts down; the kept translation is used twice
++per new context (after the context write and after the flush), 42
++times in that boot. Installed Solaris 2.2 (SS-10), 2.3 (SS-5), 2.4
++(SS-20) and 2.5.1 (SS-5) disks boot as before and never use it.
++---
++ target/sparc/cpu.c         |  1 +
++ target/sparc/cpu.h         | 13 +++++++++
++ target/sparc/ldst_helper.c |  3 ++
++ target/sparc/mmu_helper.c  | 58 ++++++++++++++++++++++++++++++++++++++
++ target/sparc/trace-events  |  1 +
++ 5 files changed, 76 insertions(+)
++
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 102ac45e91..dd77c2abdb 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -61,6 +61,7 @@ static void sparc_cpu_reset_hold(Object *obj, ResetType type)
++     env->psret = 0;
++     env->psrs = 1;
++     env->psrps = 1;
+++    env->ifetch_hold_valid = false;
++ #endif
++ #ifdef TARGET_SPARC64
++     env->pstate = PS_PRIV | PS_RED | PS_PEF;
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index d85002739b..1bc68001b5 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -512,6 +512,18 @@ struct CPUArchState {
++      * overridden. A change of MMU_NF flushes the TLB only while this is set.
++      */
++     bool mmu_nf_entries;
+++    /*
+++     * The translation of the page the CPU was executing from when it last
+++     * changed the context register, made in the old context: instruction
+++     * fetches that go on in that page with traps disabled use it if the
+++     * new context doesn't map the page (see sparc_cpu_tlb_fill).
+++     */
+++    bool ifetch_hold_valid;
+++    int ifetch_hold_mmu_idx;
+++    target_ulong ifetch_hold_vaddr;
+++    uint64_t ifetch_hold_paddr;
+++    int ifetch_hold_prot;
+++    uint8_t ifetch_hold_lg_page_size;
++     /* Halt in the idle loop of SunOS 4.1.4, see sunos_idle.c */
++     bool sunos_idle;
++     int64_t sunos_idle_since;   /* when the loop first found no work */
++@@ -631,6 +643,7 @@ target_ulong mmu_probe(CPUSPARCState *env, target_ulong address, int mmulev);
++ void dump_mmu(CPUSPARCState *env);
++ 
++ #if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++void sparc_hold_ifetch_page(CPUSPARCState *env);
++ int sparc_cpu_memory_rw_debug(CPUState *cpu, vaddr addr,
++                               uint8_t *buf, size_t len, bool is_write);
++ #endif
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 87b85eed3a..50511fbcf3 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -1028,6 +1028,9 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++                 env->mmuregs[reg] = val & env->def.mmu_ctpr_mask;
++                 break;
++             case 2: /* Context Register */
+++                if ((val & env->def.mmu_cxr_mask) != oldreg) {
+++                    sparc_hold_ifetch_page(env);
+++                }
++                 env->mmuregs[reg] = val & env->def.mmu_cxr_mask;
++                 if (oldreg != env->mmuregs[reg]) {
++                     /* we flush when the MMU context changes because
++diff --git a/target/sparc/mmu_helper.c b/target/sparc/mmu_helper.c
++index 455b36c9ef..a62a47026a 100644
++--- a/target/sparc/mmu_helper.c
+++++ b/target/sparc/mmu_helper.c
++@@ -210,6 +210,42 @@ static int get_physical_address(CPUSPARCState *env, CPUTLBEntryFull *full,
++     return error_code;
++ }
++ 
+++/*
+++ * Called before a write changes the context register: remember how the old
+++ * context translates the page of the instruction that writes it.
+++ *
+++ * A kernel can switch to another context for a moment with traps disabled,
+++ * to flush that context from the TLB, and back, all within one page of its
+++ * text, which every context maps. Solaris 2.1 (srmmu_l1setup) does so for
+++ * a context whose new level 1 table it hasn't filled yet: it writes the
+++ * context table entry first and copies the kernel's entries into the table
+++ * after the flush (2.2 copies first). On the SuperSPARC the instructions
+++ * that follow in the same page still execute. Here the context change
+++ * flushes the whole TLB, the next fetch walks the new context's tables,
+++ * finds nothing and, with traps disabled, stops the machine (trap 0x21 in
+++ * error state).
+++ */
+++void sparc_hold_ifetch_page(CPUSPARCState *env)
+++{
+++    CPUTLBEntryFull full = {};
+++    int access_index;
+++    int mmu_idx = cpu_mmu_index(env_cpu(env), true);
+++    target_ulong va = env->pc & TARGET_PAGE_MASK;
+++
+++    env->ifetch_hold_valid = false;
+++    if (mmu_idx == MMU_PHYS_IDX ||
+++        get_physical_address(env, &full, &access_index, va,
+++                             MMU_INST_FETCH, mmu_idx) != 0) {
+++        return;
+++    }
+++    env->ifetch_hold_valid = true;
+++    env->ifetch_hold_mmu_idx = mmu_idx;
+++    env->ifetch_hold_vaddr = va;
+++    env->ifetch_hold_paddr = full.phys_addr;
+++    env->ifetch_hold_prot = full.prot & PAGE_EXEC;
+++    env->ifetch_hold_lg_page_size = full.lg_page_size;
+++}
+++
++ /* Perform address translation */
++ bool sparc_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
++                         MMUAccessType access_type, int mmu_idx,
++@@ -241,6 +277,28 @@ bool sparc_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
++         return true;
++     }
++ 
+++    /*
+++     * An instruction fetch with traps disabled in the page that was being
+++     * executed when the context changed, which the new context doesn't
+++     * map: go on with the old translation (sparc_hold_ifetch_page). Without
+++     * it the fetch would go to neverland below and stop the machine.
+++     */
+++    if (access_type == MMU_INST_FETCH && env->psret == 0 &&
+++        env->ifetch_hold_valid && env->ifetch_hold_vaddr == address &&
+++        env->ifetch_hold_mmu_idx == mmu_idx) {
+++        full.phys_addr = env->ifetch_hold_paddr;
+++        full.prot = env->ifetch_hold_prot;
+++        full.lg_page_size = env->ifetch_hold_lg_page_size;
+++        qemu_log_mask(CPU_LOG_MMU,
+++                      "Translate at %" VADDR_PRIx " -> " HWADDR_FMT_plx
+++                      " held from the previous context\n",
+++                      address, full.phys_addr);
+++        trace_sparc_mmu_ifetch_hold(address, env->mmuregs[2],
+++                                    full.phys_addr);
+++        tlb_set_page_full(cs, mmu_idx, vaddr, &full);
+++        return true;
+++    }
+++
++     if (env->mmuregs[3]) { /* Fault status register */
++         env->mmuregs[3] = 1; /* overflow (not read before another fault) */
++     }
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index 5f204e0d56..e6b67760c1 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -8,6 +8,7 @@ mmu_helper_tfault(uint64_t address, uint64_t context) "TFAULT at 0x%"PRIx64" con
++ mmu_helper_tmiss(uint64_t address, uint64_t context) "TMISS at 0x%"PRIx64" context 0x%"PRIx64
++ mmu_helper_get_phys_addr_code(uint32_t tl, int mmu_idx, uint64_t prim_context, uint64_t sec_context, uint64_t address) "tl=%d mmu_idx=%d primary context=0x%"PRIx64" secondary context=0x%"PRIx64" address=0x%"PRIx64
++ mmu_helper_get_phys_addr_data(uint32_t tl, int mmu_idx, uint64_t prim_context, uint64_t sec_context, uint64_t address) "tl=%d mmu_idx=%d primary context=0x%"PRIx64" secondary context=0x%"PRIx64" address=0x%"PRIx64
+++sparc_mmu_ifetch_hold(uint32_t va, uint32_t ctx, uint64_t pa) "fetch 0x%x in context %u with the translation from before the context change, pa 0x%"PRIx64
++ mmu_helper_mmu_fault(uint64_t address, uint64_t paddr, int mmu_idx, uint32_t tl, uint64_t prim_context, uint64_t sec_context) "Translate at 0x%"PRIx64" -> 0x%"PRIx64", mmu_idx=%d tl=%d primary context=0x%"PRIx64" secondary context=0x%"PRIx64
++ 
++ # ldst_helper.c
+diff --git a/debian/patches/wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch b/debian/patches/wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch
+new file mode 100644
+index 0000000..635f11c
+--- /dev/null
++++ b/debian/patches/wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch
+@@ -0,0 +1,248 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test an instruction fetch across a context switch on sun4m
++
++A tiny boot PROM turns the SRMMU on in context 0, which maps the PROM
++and RAM, and with traps disabled switches to context 1, which maps only
++other RAM at the same virtual address and not the PROM. From the same
++page it stores a marker, flushes the context, stores another marker and
++switches back to context 0. Both markers must land in context 1's RAM
++and the PROM must get to its end. With traps enabled the first fetch in
++context 1 must take an instruction access exception instead. Run on
++SS-10 (SuperSPARC, where Solaris 2.1 hit this) and SS-5 (microSPARC-II).
++
++Without the previous patch the traps-off cases stop QEMU with "Trap 0x21
++(Instruction Access Error) while interrupts disabled, Error state"; the
++traps-on cases pass with and without it.
++---
++ tests/qtest/meson.build                 |   3 +-
++ tests/qtest/sun4m-mmu-ctx-ifetch-test.c | 207 ++++++++++++++++++++++++
++ 2 files changed, 209 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 6a1426d2d9..3b18c594ee 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -206,7 +206,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-solaris-smp-idle-test',
++                 'sun4m-fsr-rd-test',
++                 'sun4m-cs4231-test',
++-                'sun4m-esp-test'] + \
+++                'sun4m-esp-test',
+++                'sun4m-mmu-ctx-ifetch-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-mmu-ctx-ifetch-test.c b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++new file mode 100644
++index 0000000000..b4fcbd042c
++--- /dev/null
+++++ b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++@@ -0,0 +1,207 @@
+++/*
+++ * QTest: an instruction fetch across a context switch on sun4m
+++ *
+++ * Solaris 2.1 (srmmu_mmu_flushctx) switches the SRMMU context register to
+++ * a context whose level 1 table doesn't map the kernel yet, flushes that
+++ * context and switches back, with traps disabled and all in one page of
+++ * kernel text. The CPU goes on executing the instructions in that page.
+++ * QEMU flushes its TLB on the context change, and the next instruction
+++ * fetch walks the new context's tables. With traps disabled that fetch
+++ * used to go to an unassigned address and stop QEMU ("Trap 0x21 while
+++ * interrupts disabled, Error state").
+++ *
+++ * The page tables, two trap tables and the test code: context 0 maps the
+++ * boot PROM at virtual 0 and RAM from 0 at virtual 0x01000000; context 1
+++ * maps only RAM from 0x01000000 at virtual 0x01000000, so a store through
+++ * the same virtual address shows which context made it. The PROM turns
+++ * the MMU on in context 0, switches to context 1, stores a marker, flushes
+++ * the context, stores another, switches back to context 0 and enables
+++ * traps. With traps disabled it must run to the end and both markers must
+++ * land in context 1's RAM. With traps enabled the first fetch in context 1
+++ * must still take an instruction access exception.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define CTX1_RAM        0x01000000ULL   /* context 1's RAM (physical) */
+++#define VA_RAM          0x01000000u     /* virtual address of RAM, both */
+++#define CTX_TABLE       0x2000ULL
+++#define CTX0_L1         0x3000ULL
+++#define CTX1_L1         0x3400ULL
+++#define TRAP_TABLE      0x4000u         /* offset of the trap tables in RAM */
+++#define MARK_STAGE      0x1004u         /* offsets of the markers in RAM */
+++#define MARK_CTX1_A     0x1008u
+++#define MARK_CTX1_B     0x100cu
+++#define MARK_TRAP       0x1020u
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define TT_TFAULT       1               /* instruction access exception */
+++#define PSR_S_PIL15     0xf80
+++#define PSR_ET          0x20
+++
+++static char *write_prom(bool traps_on)
+++{
+++    const uint32_t psr = PSR_S_PIL15 | (traps_on ? PSR_ET : 0);
+++    const uint32_t code[] = {
+++        0x03004010,             /* sethi %hi(0x01004000), %g1 */
+++        0x81986000,             /* wr    %g1, 0, %tbr        trap table */
+++        0x90102100,             /* mov   0x100, %o0 */
+++        0x92102200,             /* mov   0x200, %o1 */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context table pointer */
+++        0x90102200,             /* mov   0x200, %o0 */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81902000,             /* wr    %g0, 0, %wim */
+++        0x81882000 | psr,       /* wr    %g0, psr, %psr      S, PIL 15, ET? */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x9412a001,             /* or    %o2, 1, %o2         MMU on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4 */
+++        0x07004004,             /* sethi %hi(0x01001000), %g3 */
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 1 */
+++        0x92102001,             /* mov   1, %o1 */
+++        0x8a102300,             /* mov   0x300, %g5          flush: context */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context 1 */
+++        0x88102002,             /* mov   2, %g4              fetched in context 1 */
+++        0xc820e008,             /* st    %g4, [%g3 + 8]      marker A */
+++        0xc0a14300,             /* sta   %g0, [%g5] 0x18     flush the context */
+++        0x88102003,             /* mov   3, %g4 */
+++        0xc820e00c,             /* st    %g4, [%g3 + 0xc]    marker B */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81882fa0,             /* wr    %g0, 0xfa0, %psr    traps on */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0x01000000,             /* nop */
+++        0x88102004,             /* mov   4, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 4: the end */
+++        0x10800000,             /* b     . */
+++        0x01000000,             /* nop */
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(0x01000000);
+++    /* Trap i before the trap table is set: store i at MARK_TRAP, stop */
+++    for (i = 1; i < CODE / 4; i++) {
+++        be[4 * i] = cpu_to_be32(0x03004004);         /* sethi %hi(0x01001000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-mmu-ctx-ifetch-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++/*
+++ * A trap table at TRAP_TABLE in both contexts' RAM: trap i stores i at
+++ * virtual VA_RAM + MARK_TRAP (in the RAM of the context it came in) and
+++ * stops.
+++ */
+++static void write_trap_table(QTestState *qts, uint64_t base)
+++{
+++    uint32_t be[256 * 4];
+++    int i;
+++
+++    for (i = 0; i < 256; i++) {
+++        be[4 * i] = cpu_to_be32(0x03004004);         /* sethi %hi(0x01001000), %g1 */
+++        be[4 * i + 1] = cpu_to_be32(0x84102000 | i); /* mov   i, %g2 */
+++        be[4 * i + 2] = cpu_to_be32(0xc4206020);     /* st    %g2, [%g1 + 0x20] */
+++        be[4 * i + 3] = cpu_to_be32(0x10800000);     /* b     . */
+++    }
+++    qtest_memwrite(qts, base + TRAP_TABLE, be, sizeof(be));
+++}
+++
+++static void write_tables(QTestState *qts, uint64_t prom_base)
+++{
+++    /* Context table: PTDs of the two level 1 tables */
+++    qtest_writel(qts, CTX_TABLE, (CTX0_L1 >> 4) | 1);
+++    qtest_writel(qts, CTX_TABLE + 4, (CTX1_L1 >> 4) | 1);
+++    /* Context 0: the PROM at 0 (16 MB, ACC 2 RX), RAM at 0x01000000 (RWX) */
+++    qtest_writel(qts, CTX0_L1, (uint32_t)(prom_base >> 4) | 0x0a);
+++    qtest_writel(qts, CTX0_L1 + 4, 0x0e);
+++    /* Context 1: no PROM, RAM from 0x01000000 at 0x01000000 */
+++    qtest_writel(qts, CTX1_L1, 0);
+++    qtest_writel(qts, CTX1_L1 + 4, (uint32_t)(CTX1_RAM >> 4) | 0x0e);
+++    write_trap_table(qts, 0);
+++    write_trap_table(qts, CTX1_RAM);
+++}
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    uint64_t prom_base;
+++    bool traps_on;
+++} TestCase;
+++
+++static void test_ctx_ifetch(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t->traps_on);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s -accel tcg -m 64 -bios %s -S",
+++                                  t->machine, prom);
+++
+++    write_tables(qts, t->prom_base);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'cont' }");
+++
+++    while (qtest_readl(qts, MARK_TRAP) == 0 &&
+++           qtest_readl(qts, CTX1_RAM + MARK_TRAP) == 0 &&
+++           qtest_readl(qts, MARK_STAGE) < 4) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    g_assert_cmpuint(qtest_readl(qts, MARK_TRAP), ==, 0);
+++    if (t->traps_on) {
+++        /* The first fetch in context 1 traps there */
+++        g_assert_cmpuint(qtest_readl(qts, CTX1_RAM + MARK_TRAP), ==, TT_TFAULT);
+++        g_assert_cmpuint(qtest_readl(qts, MARK_STAGE), ==, 1);
+++        g_assert_cmpuint(qtest_readl(qts, CTX1_RAM + MARK_CTX1_A), ==, 0);
+++    } else {
+++        /* It runs on in the page, in context 1, and back to the end */
+++        g_assert_cmpuint(qtest_readl(qts, CTX1_RAM + MARK_TRAP), ==, 0);
+++        g_assert_cmpuint(qtest_readl(qts, CTX1_RAM + MARK_CTX1_A), ==, 2);
+++        g_assert_cmpuint(qtest_readl(qts, CTX1_RAM + MARK_CTX1_B), ==, 3);
+++        g_assert_cmpuint(qtest_readl(qts, MARK_CTX1_A), ==, 0);
+++        g_assert_cmpuint(qtest_readl(qts, MARK_STAGE), ==, 4);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        { "ss10/traps-off", "SS-10", 0xff0000000ULL, false },
+++        { "ss10/traps-on", "SS-10", 0xff0000000ULL, true },
+++        { "ss5/traps-off", "SS-5", 0x70000000ULL, false },
+++        { "ss5/traps-on", "SS-5", 0x70000000ULL, true },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-mmu-ctx-ifetch/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_ctx_ifetch);
+++        }
+++    }
 ++
 ++    return g_test_run();
 ++}

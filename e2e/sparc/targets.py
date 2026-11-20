@@ -131,6 +131,10 @@ MEDIA = {
         "title": "Solaris 2.2 SPARC, Software CD (a raw CD image)", "content": "iso", "size": 388608000,
         "sha256": "276af9322e3f311b8bd8e4a567feb47ccc771cf9fd98a02aac61db749cbdafd8",
         "lab": "sun_solaris/Solaris/2.2/SPARC/Solaris_2.2.img"},
+    "solaris2_1_sparc.iso": {
+        "title": "Solaris 2.1 SPARC, Software CD", "content": "iso", "size": 298168320,
+        "sha256": "1a291b278ca84f219c4843c0aeaaf8c1042387ca8b17f26f78048491dde5ec0f",
+        "lab": "sun_solaris/Solaris/2.1/SPARC/solaris2_1_sparc.iso"},
     "solaris2.5_sparc.iso": {
         "title": "Solaris 2.5 HW 1/96 SPARC, Software CD", "content": "iso", "size": 378101760,
         "sha256": "33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259",
@@ -1224,6 +1228,31 @@ TARGETS["sunos413u1b-ss20"] = {
     "hostname": "sunos413",
     "minutes": 6,  # install 2.5, first boot 2.6, --check 1
     "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19, "with": "--check"},
+}
+
+# Solaris 2.1 (SunOS 5.1), the first sun4m release (SS-10 only of QEMU's machines): the 2.2 path of
+# solaris-install-serial.py up to sysidtool, then 2.1's own suninstall menus (Standalone Quick Install).
+# Its kernel switches into a context whose level 1 table it hasn't filled yet (srmmu_l1setup writes
+# the context table entry before it copies the kernel's entries) and QEMU stops with "Trap 0x21
+# (Instruction Access Error) while interrupts disabled" unless it keeps fetching from the current page
+# with the old translation, as the SuperSPARC does (submodules/SPARC.md, "Older Sun releases on sun4m").
+TARGETS["sol21-ss10"] = {
+    **SOLARIS_SCRIPTED,
+    "title": "Solaris 2.1 End User on a SPARCstation 10 (OpenBIOS, one CPU)",
+    "status": "catalogue",
+    "blocked": ("Needs pve-qemu patch wsh/0047, which no published pve-qemu-kvm has yet: with traps disabled, an instruction"
+                " fetch in the page that was executing when the context register changed keeps the old"
+                " translation (target/sparc, sparc_cpu_tlb_fill). Without it the kernel stops QEMU after device"
+                " configuration (Trap 0x21 at srmmu_mmu_flushctx). With it the lab's own QEMU runs the target's three"
+                " scenarios (install 5.0 min, first boot 2.1 min, check 1.1 min; 2026-11-20, a local build of 11.1.3"
+                " with wsh/0001-0041 and the change; the installed disk's first boot again with wsh/0001-0048);"
+                " not run through PVE."),
+    "profile": {**SPARC32, "machine": "SS-10", "memory": 256},
+    "disk": sun_disk("3G"),
+    "media": [{"name": "solaris2_1_sparc.iso", "drive": "scsi6", "as_disk": True}],
+    "boot": "scsi3",
+    "hostname": "sol21-ss10",
+    "net_modes": ["static"],
 }
 
 # NeXTSTEP 3.3 and OPENSTEP 4.2 (Mach) for SPARC: the CD's text stage (language, disk, copy the base
