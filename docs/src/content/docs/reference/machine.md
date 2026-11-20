@@ -39,6 +39,14 @@ In addition to `i440fx` and `q35` (x86_64), the WSH patches expose machine types
 
 The available machine types are filtered by the guest's [architecture](/reference/architecture/); selecting a non-default architecture switches the machine list accordingly.
 
+### SCSI IRQ delay (sparc32)
+
+On a sparc32 VM, the Machine editor has **SCSI IRQ delay (µs)** behind the **Advanced** checkbox. It
+writes the `esp-irq-latency` key of `machine` (`machine: SS-5,esp-irq-latency=500`). It delays the
+interrupt of the SCSI controller (the ESP) by that many microseconds. It is off by default, only
+NeXTSTEP 3.3 and OPENSTEP 4.2 need it (at 500), and it makes every disk command about 2 ms slower.
+Other architectures refuse it. See the [SPARC guide](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency).
+
 ## Further reading
 
 - Read [about q35](https://wiki.qemu.org/Features/Q35) in the QEMU documentation

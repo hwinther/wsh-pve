@@ -67,6 +67,7 @@ come after that, not before.
 | Install targets: Solaris 9 9/05 and 8 2/02 on sun4u (`sol9-sun4u`, `sol8-sun4u`, End User 64-bit, Web Start through PVE); OpenBIOS 0025 leaves out the ebus floppy node (a zero-sized `reg` for hardware QEMU's sun4u doesn't have; Solaris 9's first boot panicked in `fd`); the reboot that returns on sun4u is handled by the tool: the VM is stopped at `0 >` after the install, and 8's reboot into its mini-root is a power cycle through PVE (`PveMachine.power_cycle()`) | in review | |
 | Mirror storage, steps 1 and 2 of 3: ISO and floppy images on a NAS as symlinks in a `dir` storage, the folders in the link name with `__` (`Solaris__2.6__solaris_2.6_598_sparc.iso`). `wsh-lab mirror link`/`sync [--prune]`/`list` makes and checks the links (no backend change: PVE's listing follows symlinks); pve-manager groups the storage's ISO and floppy tabs by folder and shows `Solaris / 2.6 / ...` in the ISO and floppy selectors (volume IDs unchanged); `wsh-lab media`/`install` also find a medium by size and sha256 under another name. Step 3 is under "Later" | merged | #345 |
 | Mirror storage, step 2b: four ways to use it (plain `__` names in any ISO/floppy storage; a local storage of links; ISOs and links on one NFS/CephFS export with relative links; an externally managed tree stitched into one) as recipes in `reference/mirror.md`; a description file `wsh-mirror.yaml` (watch directories, rules, entries with `origin: manual|import`, `auto_import`, incomplete-file patterns and a minimum age) with `wsh-lab mirror init|plan|apply|import|tidy` (flock, moves found by size and sha256, a manual entry's link only flagged, nothing removed while a share is unreachable) and `mirror timer` (a systemd timer that runs `apply`); mirror storages may be dir, btrfs, nfs, cephfs or cifs. A search field above the ISO and floppy selectors (CD/DVD and floppy editors, the wizard's OS tab): focused on open, every word must be in the name, Enter picks the first match. e2e: an NFS export from NFS-Ganesha in the compose network | in review | |
+| Install targets for the matrix holes: Solaris 2.5.1 on the SS-20 under OpenBIOS (`sol251-ss20`, the CD as a disk; the SS-5 target still needs `ss5.bin`), Solaris 2.6 and 7 on the SS-10 (`sol26-ss10`, `sol7-ss10`), each installed through PVE with `--check --export` (stored disk and sidecar in `/mnt/os/disks`) and boot-tested, pve-qemu-kvm 11.1.3-2+wsh25 | in review | |
 | BEL on a sparc32 framebuffer console hung Solaris 2.x and SunOS 4.1.4 with the screen inverted (bash's completion bell): OpenBIOS 0026 bounds the blink's wait (the firmware's tick counter stops once the client has its own trap table), and drops the cell each BEL left on the Forth stack; the lab's `fb-bell.py`, an upstream note, a workaround in the guide for packages without it | in review | |
 
 ## In progress
@@ -101,8 +102,9 @@ Work that exists but is not merged. If this list is stale, check the open pull r
      lab 7, 8 1/01, 8 2/02, 9 and 9 9/05 reach their installers with 1 and 2 GB; 8 2/02 and 9 9/05
      install to the IDE disk with 1 GB and boot to `console login:`; the install targets
      `sol9-sun4u` and `sol8-sun4u` do it through PVE (the floppy node: OpenBIOS 0025; the reboot:
-     the tool stops the VM, and power-cycles it for 8's mini-root). 0025 is in pve-qemu-kvm 11.1.3-2+wsh25. Open: the
-     firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
+     the tool stops the VM, and power-cycles it for 8's mini-root). 0025 is in pve-qemu-kvm
+     11.1.3-2+wsh25 (`sol9-sun4u` installed and passed its check on it, ~74 min; no `matrix_skip`
+     any more). Open: the firmware reboot itself (0012), Solaris 7 on sun4u (reaches its installer; no target yet), 2.5.1/2.6 boot-block
      exceptions.
    Details: `submodules/SPARC.md`, "Solaris on sun4u".
 3. **Tribblix (illumos) on sun4u** (`feat/lab-tribblix-sun4u`). Tribblix m34, the newest SPARC
@@ -193,6 +195,13 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   gcc/binutils/make/gdb and the autotools, tar/findutils/grep/gawk, tcsh/zsh/emacs, perl, python,
   ntp, cvs/subversion). A second local-only CD and `--post-install` bundle, with dependencies in
   order and a bigger data disk. The owner will choose the set.
+- **Extra OS packages per install** (owner's request, later). A way to name packages from the OS
+  media that a target adds on top of its software group, for example Solaris's `SUNWaudmo` (audio
+  demo files) and `SUNWxwoft` (optional X fonts, which SimCity among others needs). Likely shape:
+  `wsh-lab install <target> --packages SUNWaudmo,SUNWxwoft` and/or a `packages` list in the target
+  or profile. For Solaris, `pkgadd` from the mounted media in the first boot or check step, or the
+  installer's Customize step where the scenario supports it; for other systems their own installer
+  sets or packages.
 - **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
@@ -205,7 +214,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   runs on the SS-10, 2.3 on the SS-20, and the SS-5 from 2.3 Edition II. The QEMU wiki lists
   NeXTSTEP 3.3 and OPENSTEP 4.2 as partly working on sun4m (hangs on disk access, perhaps the ESP;
   several ESP fixes are carried here since) and OpenBSD 5.8 as working with `-nographic`. Order: first what the lab
-  host has media for (SunOS 4.1.4, Solaris 2.5.1 on the SS-20; NetBSD 9.3 on sparc and
+  host has media for (SunOS 4.1.4; NetBSD 9.3 on sparc and
   sparc64; OPENSTEP 4.2, whose User CD, though named "Intel", also carries the SPARC and m68k
   versions and has a Sun disk label, so OpenBIOS or OBP can boot its installer),
   NeXTSTEP 3.3 for SPARC (the SPARC/PA-RISC User CD, Sun-labelled, a SPARC and hppa kernel) and
@@ -228,14 +237,15 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   Workspace (CD stage under OpenBIOS or `ss5.bin`, the installed disk only under `ss5.bin` with `-v`;
   TCX, keyboard and mouse), also through PVE; the sparc32 regressions passed with the delay on every
   guest and with it off (results and disk numbers in `submodules/SPARC.md`, "NeXTSTEP 3.3 and
-  OPENSTEP 4.2"). The SS-20 has no firmware that boots the installed disk. Next: packages with 0040
-  and the qemu-server option, then framebuffer scenarios and the catalogue entries
+  OPENSTEP 4.2"). The SS-20 has no firmware that boots the installed disk. The packages have 0040
+  and the qemu-server option since pve-qemu-kvm 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 (the
+  option checked through PVE on those packages: `qm showcmd` passes `-global
+  sysbus-esp.irq-latency-us=500`, x86 refuses it). Next: framebuffer scenarios and the catalogue entries
   `nextstep33-ss5`/`openstep42-ss5` (their profiles set the option) made targets; OpenBIOS's failure on the
   installed disk (exception 0x21 in NeXT's boot program) is open.
-- **Solaris releases not tried yet.** With media on the lab host: 2.5.1 on the SS-20 (only the
-  SS-5 with `ss5.bin` today; does OpenBIOS or the SS-20 PROM boot it), 2.6 and 7 on the SS-10
-  profile, 8 with `ss5.bin` on the SS-5. (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done"
-  and the item above; 8 2/02 and 9 9/05 install on the SS-5 and SS-20, and on sun4u with OpenBIOS
+- **Solaris releases not tried yet.** With media on the lab host: 8 with `ss5.bin` on the SS-5.
+  (2.2, 2.3, 2.4 on the SS-20, 2.5 and 2.1 are done: "Done" and the item above; 2.5.1 on the SS-20
+  under OpenBIOS and 2.6 and 7 on the SS-10 are install targets, "Done"; 8 2/02 and 9 9/05 install on the SS-5 and SS-20, and on sun4u with OpenBIOS
   0024.) Needing media: 8 2/04, and an earlier Solaris 10 update on sun4u. Out of reach: 2.0 and SunOS
   4.1.1 or older (sun4c only), Solaris 11 (no UltraSPARC IIi).
 - **OpenBSD 8.0 on sun4u: IDE timeouts, then a guest that takes no interrupt.** The installed
@@ -296,7 +306,7 @@ Work that exists but is not merged. If this list is stale, check the open pull r
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
-| NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. A 500 us ESP interrupt latency fixed it in the lab (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"); not in a package |
+| NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install unless the VM has `machine: SS-5,esp-irq-latency=500` | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. The opt-in delay (`wsh/0040`) is in pve-qemu-kvm 11.1.3-2+wsh24, qemu-server 9.2.19+wsh2 and pve-manager 9.2.31+wsh2 (the UI field); off by default, as it costs about 2 ms per disk command (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"; the sparc guide, "SCSI interrupt delay") |
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
 | A disk installed on SS-5 does not boot on SS-10/SS-20 | Device paths differ; needs a repair from the CD's miniroot, not written or tested |
 | Solaris 2.5.1 and 2.6 idle on SS-10/SS-20/SS-5 only for the kernel builds in `SPARC.md` | A differently compiled idle loop is not recognised and spins as before |

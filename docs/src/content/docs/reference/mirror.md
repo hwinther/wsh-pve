@@ -262,6 +262,12 @@ description file; use `import` and `apply` there.
   file in `template/iso` or `template/floppy`, not onto the NAS. The tool leaves such files alone.
 - **Write access**: floppy drives are writable by default, and a write goes through the link to the
   file. Add `ro=1` to the drive for reference media.
+- **NFS-Ganesha with NFS 4.1/4.2 breaks removing a directory tree** from a Linux 7.0 client. The
+  client asks for directory delegations (`GET_DIR_DELEGATION`, new in 4.1), NFS-Ganesha 6.5 answers
+  `NFS4ERR_OP_ILLEGAL`, and a recursive removal (`rm -r`) then fails with `EISDIR` or `EREMOTEIO`.
+  Mount such an export with `vers=4.0` (`--options vers=4.0` on `pvesm add nfs`). The Linux kernel
+  NFS server (knfsd), which most NAS boxes run, isn't affected. The e2e tests use 4.0 against their
+  Ganesha server for this reason (`e2e/tests/mirror.spec.ts`).
 - **Install targets** find a medium by name first, then by size and sha256 among the storage's
   volumes: `wsh-lab media` and `wsh-lab install --media-storage mirror` find
   `Solaris__2.6__solaris_2.6_598_sparc.iso` as `solaris_2.6_598_sparc.iso`
