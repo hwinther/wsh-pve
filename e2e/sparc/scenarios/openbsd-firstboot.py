@@ -1,6 +1,7 @@
 """The first boot of an OpenBSD/sparc64 that openbsd-install-sparc64.py installed, as `lab.py install`
 runs it: logs in as root (the installer set the password), writes the marker file, the host name and
-the network, optionally adds a user, checks that ntpd is off and powers off with `halt -p`.
+the network, optionally adds a user, checks ntpd (sparc64: enabled and running; sparc: off) and powers
+off with `halt -p`.
 
     lab.py run scenarios/openbsd-firstboot.py --pve 9210 --out /mnt/runs/first \
         --var ROOT_PASSWORD=wshlab --var MARKER="$(printf 'target=openbsd80-sun4u\\n...')"
@@ -14,14 +15,17 @@ the network, optionally adds a user, checks that ntpd is off and powers off with
   NET_IP, NET_NETMASK, NET_GATEWAY   /etc/hostname.<nic>, /etc/mygate
   NET_DNS        name servers, space separated; NET_DOMAIN their domain: /etc/resolv.conf  (none)
   NIC_NAME       the interface                                                      (hme0)
+  NTPD           on: ntpd enabled and running; off: turned off (_openbsd.ntpd_on)    (on for sparc64)
 
 The values are typed on the serial console with `echo`, so the marker must not contain single quotes.
 """
+import re
+
 import _openbsd
 
 DEFAULTS = {**_openbsd.DEFAULTS, "BOOT": "c", "NO_CD": "1", "ROOT_PASSWORD": "", "MARKER": "", "HOSTNAME": "", "USER": "",
             "USER_PASSWORD": "", "NET_MODE": "", "NET_IP": "", "NET_NETMASK": "", "NET_NETWORK": "",
-            "NET_GATEWAY": "", "NET_DNS": "", "NET_DOMAIN": ""}
+            "NET_GATEWAY": "", "NET_DNS": "", "NET_DOMAIN": "", "NTPD": ""}
 MARKER_FILE = "/etc/wsh-lab-target"
 
 
@@ -62,11 +66,24 @@ def run(m, v):
             _openbsd.passwd(m, user, v["USER_PASSWORD"])
         shell(m, f"grep '^{user}:' /etc/passwd; ls -ld /home/{user}")
         m.snap(f"user {user}")
-    _openbsd.disable_ntpd(m)  # the install did it; kept for a disk installed some other way
-    out = shell(m, "echo ntpd: flags=$(rcctl get ntpd flags) running=$(pgrep -x ntpd | wc -l | tr -d ' ')")
-    if "ntpd: flags=NO running=0" not in out:
-        raise AssertionError(f"ntpd is enabled or running: {out.strip()}")
+    check_ntpd(m, v)
     _openbsd.power_off(m, v)
+
+
+def check_ntpd(m, v):
+    """sparc64: ntpd enabled (`rcctl get ntpd flags` not NO) and running; sparc: turned off (the install
+    did it; kept for a disk installed some other way) and not running."""
+    on = _openbsd.ntpd_on(v)
+    if not on:
+        _openbsd.disable_ntpd(m)
+    out = shell(m, "echo ntpd: flags=$(rcctl get ntpd flags) running=$(pgrep -x ntpd | wc -l | tr -d ' ')")
+    mt = re.search(r"ntpd: flags=(\S*) running=(\d+)", out)
+    if not mt:
+        raise AssertionError(f"no ntpd state in {out.strip()!r}")
+    if on and (mt.group(1) == "NO" or mt.group(2) == "0"):
+        raise AssertionError(f"ntpd is disabled or not running: {mt.group(0)}")
+    if not on and mt.group(0) != "ntpd: flags=NO running=0":
+        raise AssertionError(f"ntpd is enabled or running: {mt.group(0)}")
 
 
 def network(m, v):

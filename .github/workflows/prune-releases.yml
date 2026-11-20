@@ -1,0 +1,99 @@
+name: Prune old releases
+
+# Keeps the newest KEEP releases of each package (pve-qemu, pve-manager, qemu-server, pve-storage,
+# wsh-lab, wsh-openglide, qemu-3dfx-drivers) and deletes the older ones with their assets. The git
+# tags stay (`gh release delete` without --cleanup-tag), so every published version can still be
+# traced to its commit. Never deleted: the release GitHub marks as latest, the qemu-3dfx-drivers
+# release that matches main's submodules/qemu-3dfx pin (the drivers are only rebuilt when the pin
+# moves, so that one is often old), and any release whose tag doesn't match one of the patterns
+# below (e.g. `media`, which holds the docs recordings).
+#
+# The apt repository doesn't need old releases: repo-update.yml takes the newest wsh-lab and
+# wsh-openglide release and the patched packages' newest builds. Run by hand only; dry_run (the
+# default) lists what would go in the job summary and deletes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Releases to keep per package (newest first)"
+        type: number
+        default: 10
+      dry_run:
+        description: "Only list what would be deleted"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: prune-releases
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # gh release delete (GITHUB_TOKEN)
+    steps:
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          case "$KEEP" in ''|*[!0-9]*) echo "::error::keep must be a whole number"; exit 1 ;; esac
+          [ "$KEEP" -ge 1 ] || { echo "::error::keep must be at least 1"; exit 1; }
+
+          releases=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt,isLatest)
+          pin=$(gh api "repos/$REPO/contents/submodules/qemu-3dfx?ref=main" --jq .sha)
+          drivers="qemu-3dfx-drivers-${pin:0:7}"
+
+          {
+            echo "## Releases to delete (keep $KEEP per package; dry run: $DRY_RUN)"
+            echo
+            echo "Kept regardless: the latest release, \`$drivers\` (main's qemu-3dfx pin)."
+            echo
+            echo "| Package | Releases | Kept | Deleted |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          deleted=0
+          for pattern in '^pve-qemu-[0-9]' '^pve-manager-[0-9]' '^qemu-server-[0-9]' '^pve-storage-[0-9]' \
+            '^wsh-lab-[0-9]' '^wsh-openglide-[0-9]' '^qemu-3dfx-drivers-[0-9a-f]+$'; do
+            # Newest first; the first KEEP stay, and so do the protected ones
+            mapfile -t tags < <(jq -r --arg re "$pattern" \
+              '[.[] | select(.tagName | test($re))] | sort_by(.createdAt) | reverse | .[].tagName' <<< "$releases")
+            latest=$(jq -r '.[] | select(.isLatest) | .tagName' <<< "$releases")
+            gone=()
+            for i in "${!tags[@]}"; do
+              tag=${tags[$i]}
+              if [ "$i" -lt "$KEEP" ] || [ "$tag" = "$drivers" ] || [ "$tag" = "$latest" ]; then
+                continue
+              fi
+              gone+=("$tag")
+            done
+            name=${pattern#^}; name=${name%%-\[*}
+            echo "| \`$name\` | ${#tags[@]} | $(( ${#tags[@]} - ${#gone[@]} )) | ${#gone[@]} |" >> "$GITHUB_STEP_SUMMARY"
+            for tag in "${gone[@]}"; do
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "would delete $tag"
+              else
+                gh release delete "$tag" -R "$REPO" --yes
+                echo "deleted $tag (the tag stays)"
+              fi
+              deleted=$((deleted + 1))
+            done
+          done
+
+          {
+            echo
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "Dry run: $deleted releases would be deleted (their tags would stay). The list is in the job log."
+            else
+              echo "Deleted $deleted releases; their tags stay."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
