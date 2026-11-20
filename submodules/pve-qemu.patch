@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..9770ea1 100644
+index 7b0cba5..e29933c 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,51 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,53 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -125,6 +125,8 @@ index 7b0cba5..9770ea1 100644
 +wsh/0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s.patch
 +wsh/0047-target-sparc-keep-fetching-from-the-current-page-acr.patch
 +wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch
++wsh/0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o.patch
++wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -9690,6 +9692,595 @@ index 0000000..635f11c
 ++            g_autofree char *name =
 ++                g_strdup_printf("sun4m-mmu-ctx-ifetch/%s", cases[i].name);
 ++            qtest_add_data_func(name, &cases[i], test_ctx_ifetch);
+++        }
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o.patch b/debian/patches/wsh/0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o.patch
+new file mode 100644
+index 0000000..2e9d93d
+--- /dev/null
++++ b/debian/patches/wsh/0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o.patch
+@@ -0,0 +1,259 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: take a bus error on a SuperSPARC load or fetch as an access exception
++
++SunOS 4.1.3 (sun4m) panics on the SS-10 right after "SUNW,fdtwo0" with
++"BAD TRAP: cpu=0 type=29". Its generic sun4m kernel probes for VME
++controllers, which the SS-10 doesn't have: with its fault catcher armed
++(nofault) it reads physical 0xd.0108_0000, where QEMU has nothing. QEMU
++raises the data access error (trap 0x29) for a bus error on every sparc32
++CPU, and 4.1.3's trap() hands only the data access exception (trap 0x09)
++to the catcher, so the probe panics. 4.1.3_U1 added cases for 0x21 and
++0x29 to trap(), which is why 4.1.3_U1B boots.
++
++On the SuperSPARC a bus error (a timeout or an error acknowledge) on a
++load is a data access exception, with the cause in the SFSR (FT=5,
++access bus error), and on an instruction fetch an instruction access
++exception. A test on a real SS-20 (SuperSPARC-II) posted to the
++OpenBIOS list in 2013 found "sbus timeout: read = Data Access Exception,
++write = Level 15 int", and 4.1.3's own nofault path expects trap 0x09.
++
++Add the CPU feature "buserr-access-exc", set on the TI-SuperSparc-*
++models only. With it a bus error on a load raises trap 0x09 and on an
++instruction fetch trap 0x01; the SFSR and SFAR are written as before.
++Stores keep trap 0x29 (the hardware reports a failed write later, as a
++level 15 interrupt, which this doesn't model), and so do accesses that
++bypass the MMU (ASI 0x20-0x2f, the MXCC stream registers) and those
++through unimplemented ASIs, until there is evidence for them. The
++microSPARC, TurboSPARC, LEON and other models are unchanged. The
++feature can be turned off (-cpu TI-SuperSparc-II,-buserr-access-exc). A
++new trace event, sparc_bus_error_access_exc, shows each such trap.
++
++Tested on SS-10 under OpenBIOS: the SunOS 4.1.3 CD installs (Programmer)
++and the installed disk boots to "SunOS sunos413 4.1.3 3 sun4m", four
++times; the CD's kernel takes the new trap 9 times before its installer
++(five VME controller reads at 0xd.0108_0000-0xd.0108_1000, four empty
++SBus slots). Plain QEMU 11.1.3 with its own OpenBIOS panics the same
++way; with that OpenBIOS, a build with this change gets to the installer.
++34 installed disks
++(Solaris 2.2-9, SunOS 4.1.3_U1B and 4.1.4, NetBSD 9.3 and 11.1, OpenBSD
++5.9, Debian 4.0, Red Hat 6.2) boot as before: 18 on SS-10/SS-20, which
++take the new trap only on the empty SBus slots and SunOS's probes
++(Solaris 2.6 also with 4 CPUs), and 16 on SS-5, which never take it.
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             | 15 +++++++-----
++ target/sparc/ldst_helper.c     | 45 ++++++++++++++++++++++++++++------
++ target/sparc/trace-events      |  1 +
++ 4 files changed, 49 insertions(+), 13 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index be81005237..f235739634 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -16,3 +16,4 @@ FEATURE(FMAF)
++ FEATURE(VIS3)
++ FEATURE(IMA)
++ FEATURE(VIS4)
+++FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index dd77c2abdb..5dad364be8 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -448,7 +448,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "TI-SuperSparc-50", /* STP1020PGA */
++@@ -461,7 +461,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "TI-SuperSparc-51",
++@@ -475,7 +475,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "TI-SuperSparc-60", /* STP1020APGA */
++@@ -488,7 +488,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "TI-SuperSparc-61",
++@@ -502,7 +502,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "TI-SuperSparc-II",
++@@ -516,7 +516,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
++     },
++     {
++         .name = "LEON2",
++@@ -566,6 +566,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_MUL] = "mul",
++     [CPU_FEATURE_BIT_DIV] = "div",
++     [CPU_FEATURE_BIT_FSMULD] = "fsmuld",
+++    [CPU_FEATURE_BIT_BUSERR_ACCESS_EXC] = "buserr-access-exc",
++ #endif
++ };
++ 
++@@ -992,6 +993,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_DIV, false),
++     DEFINE_PROP_BIT("fsmuld",   SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_FSMULD, false),
+++    DEFINE_PROP_BIT("buserr-access-exc", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_BUSERR_ACCESS_EXC, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 50511fbcf3..71932773e4 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -420,9 +420,16 @@ static void dump_asi(const char *txt, target_ulong addr, int asi, int size,
++ 
++ #ifndef CONFIG_USER_ONLY
++ #ifndef TARGET_SPARC64
+++/*
+++ * A failed physical access (a bus error: nothing at the address, or an error
+++ * acknowledge). is_asi is set for an access through an ASI the CPU doesn't
+++ * implement, is_bypass for a physical access that doesn't go through the
+++ * MMU: the MMU bypass ASIs 0x20-0x2f and the MXCC stream registers.
+++ */
++ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++                                   bool is_write, bool is_exec, int is_asi,
++-                                  unsigned size, uintptr_t retaddr)
+++                                  bool is_bypass, unsigned size,
+++                                  uintptr_t retaddr)
++ {
++     CPUSPARCState *env = cpu_env(cs);
++     int fault_type;
++@@ -469,6 +476,22 @@ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++ 
++     if ((env->mmuregs[0] & MMU_E) && !(env->mmuregs[0] & MMU_NF)) {
++         int tt = is_exec ? TT_CODE_ACCESS : TT_DATA_ACCESS;
+++
+++        /*
+++         * The SuperSPARC takes a bus error (a timeout or an error
+++         * acknowledge) on a load or an instruction fetch as a data or
+++         * instruction access exception (trap 0x09 or 0x01), with the cause
+++         * in the SFSR (FT=5) as above. SunOS 4.1.3's trap() sends only
+++         * trap 0x09 to its nofault handler: with trap 0x29 its generic
+++         * sun4m kernel panics ("BAD TRAP") when it probes for the VME
+++         * controllers an SS-10 doesn't have. Stores and physical accesses
+++         * that bypass the MMU keep trap 0x29.
+++         */
+++        if ((env->def.features & CPU_FEATURE_BUSERR_ACCESS_EXC) &&
+++            !is_write && !is_asi && !is_bypass) {
+++            tt = is_exec ? TT_TFAULT : TT_DFAULT;
+++            trace_sparc_bus_error_access_exc(addr, tt);
+++        }
++         cpu_raise_exception_ra(env, tt, retaddr);
++     }
++ 
++@@ -724,7 +747,7 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++ 
++         if (result != MEMTX_OK) {
++             sparc_raise_mmu_fault(cs, access_addr, false, false, false,
++-                                  size, GETPC());
+++                                  true, size, GETPC());
++         }
++         break;
++     }
++@@ -770,7 +793,8 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++         ret = env->mmubpaction;
++         break;
++     default:
++-        sparc_raise_mmu_fault(cs, addr, false, false, asi, size, GETPC());
+++        sparc_raise_mmu_fault(cs, addr, false, false, asi, false, size,
+++                              GETPC());
++         ret = 0;
++         break;
++ 
++@@ -886,7 +910,7 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++                 if (result != MEMTX_OK) {
++                     /* TODO: investigate whether this is the right behaviour */
++                     sparc_raise_mmu_fault(cs, access_addr, false, false,
++-                                          false, size, GETPC());
+++                                          false, true, size, GETPC());
++                 }
++             }
++             break;
++@@ -913,7 +937,7 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++                 if (result != MEMTX_OK) {
++                     /* TODO: investigate whether this is the right behaviour */
++                     sparc_raise_mmu_fault(cs, access_addr, true, false,
++-                                          false, size, GETPC());
+++                                          false, true, size, GETPC());
++                 }
++             }
++             break;
++@@ -1104,7 +1128,7 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++             }
++             if (result != MEMTX_OK) {
++                 sparc_raise_mmu_fault(cs, access_addr, true, false, false,
++-                                      size, GETPC());
+++                                      true, size, GETPC());
++             }
++         }
++         break;
++@@ -1153,7 +1177,8 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++     case ASI_USERTXT: /* User code access, XXX */
++     case ASI_KERNELTXT: /* Supervisor code access, XXX */
++     default:
++-        sparc_raise_mmu_fault(cs, addr, true, false, asi, size, GETPC());
+++        sparc_raise_mmu_fault(cs, addr, true, false, asi, false, size,
+++                              GETPC());
++         break;
++ 
++     case ASI_USERDATA: /* User data access */
++@@ -1982,7 +2007,13 @@ void sparc_cpu_do_transaction_failed(CPUState *cs, hwaddr physaddr,
++     bool is_exec = access_type == MMU_INST_FETCH;
++     bool is_asi = false;
++ 
+++#ifndef TARGET_SPARC64
+++    /* ASI 0x20 loads and stores are made inline in the physical MMU index */
+++    sparc_raise_mmu_fault(cs, physaddr, is_write, is_exec, is_asi,
+++                          mmu_idx == MMU_PHYS_IDX, size, retaddr);
+++#else
++     sparc_raise_mmu_fault(cs, physaddr, is_write, is_exec,
++                           is_asi, size, retaddr);
+++#endif
++ }
++ #endif
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index e6b67760c1..124fc05089 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -13,6 +13,7 @@ mmu_helper_mmu_fault(uint64_t address, uint64_t paddr, int mmu_idx, uint32_t tl,
++ 
++ # ldst_helper.c
++ sparc_mmu_ctrl_flush(uint32_t old, uint32_t val) "MMU control register 0x%08x -> 0x%08x: TLB flush"
+++sparc_bus_error_access_exc(uint64_t addr, int tt) "bus error at 0x%"PRIx64" taken as trap 0x%x"
++ 
++ # int32_helper.c
++ sun4m_cpu_interrupt(unsigned int level) "Set CPU IRQ %d"
+diff --git a/debian/patches/wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch b/debian/patches/wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch
+new file mode 100644
+index 0000000..423f91f
+--- /dev/null
++++ b/debian/patches/wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch
+@@ -0,0 +1,318 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the trap a bus error takes on sun4m
++
++A tiny boot PROM turns the SRMMU on in context 0, which maps the PROM,
++RAM and, at virtual 0x0d000000, a physical region where nothing answers,
++enables traps and makes one access there. A trap handler in RAM stores
++the trap type, the SFSR and the SFAR. On SS-10 (SuperSPARC) a load must
++take trap 0x09 and an instruction fetch trap 0x01; a store, a load
++through ASI 0x20 and through ASI 0x2d, and a load with the CPU feature
++turned off (-buserr-access-exc) must take trap 0x29. On SS-5
++(microSPARC-II) a load, a store and an ASI 0x20 load take trap 0x29 and
++a fetch trap 0x21. Every case checks FT=5 (access bus error) in the
++SFSR, and the data accesses the address in the SFAR.
++
++Without the previous patch, ss10/load and ss10/fetch fail (trap 0x29
++and 0x21), on plain QEMU 11.1.3 too; the other cases pass there (the
++feature-off case needs the feature).
++---
++ tests/qtest/meson.build                 |   3 +-
++ tests/qtest/sun4m-bus-error-trap-test.c | 275 ++++++++++++++++++++++++
++ 2 files changed, 277 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-bus-error-trap-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 3b18c594ee..9317f27271 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -207,7 +207,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-fsr-rd-test',
++                 'sun4m-cs4231-test',
++                 'sun4m-esp-test',
++-                'sun4m-mmu-ctx-ifetch-test'] + \
+++                'sun4m-mmu-ctx-ifetch-test',
+++                'sun4m-bus-error-trap-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-bus-error-trap-test.c b/tests/qtest/sun4m-bus-error-trap-test.c
++new file mode 100644
++index 0000000000..378a1c3091
++--- /dev/null
+++++ b/tests/qtest/sun4m-bus-error-trap-test.c
++@@ -0,0 +1,275 @@
+++/*
+++ * QTest: the trap a bus error takes on sun4m
+++ *
+++ * A load or an instruction fetch from a physical address where nothing
+++ * answers is a bus error. The SuperSPARC (SS-10, SS-20) takes it as a data
+++ * or instruction access exception (trap 0x09 or 0x01) with the cause in
+++ * the SFSR (FT=5, access bus error); SunOS 4.1.3 relies on trap 0x09 when
+++ * it probes for devices. Stores and loads through the MMU bypass ASIs keep
+++ * the access error trap (0x29), and so does the microSPARC (SS-5) for all
+++ * of them.
+++ *
+++ * A tiny boot PROM turns the SRMMU on in context 0, which maps the PROM at
+++ * virtual 0, RAM at virtual 0x01000000 and an unassigned physical region at
+++ * virtual 0x0d000000, enables traps and makes one access there. Every trap
+++ * goes to a handler in RAM that stores the trap type, the SFSR and the
+++ * SFAR and stops.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define VA_RAM          0x01000000u     /* virtual address of RAM */
+++#define VA_HOLE         0x0d000000u     /* virtual address of the hole */
+++#define FAULT_OFFSET    0x00080000u     /* the access, in the hole */
+++#define CTX_TABLE       0x2000ULL
+++#define CTX0_L1         0x3000ULL
+++#define TRAP_TABLE      0x4000u         /* offset of the trap table in RAM */
+++#define HANDLER         0x5000u         /* offset of the trap handler */
+++#define MARK_STAGE      0x1004u         /* offsets of the markers in RAM */
+++#define MARK_TRAP       0x1020u
+++#define MARK_SFSR       0x1024u
+++#define MARK_SFAR       0x1028u
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define NOP             0x01000000
+++
+++#define TT_TFAULT       0x01            /* instruction access exception */
+++#define TT_DFAULT       0x09            /* data access exception */
+++#define TT_CODE_ACCESS  0x21            /* instruction access error */
+++#define TT_DATA_ACCESS  0x29            /* data access error */
+++#define SFSR_FT(x)      (((x) >> 2) & 7)
+++#define FT_BUS_ERROR    5
+++
+++typedef enum {
+++    ACCESS_LOAD,        /* ld [VA_HOLE + FAULT_OFFSET] */
+++    ACCESS_STORE,       /* st [VA_HOLE + FAULT_OFFSET] */
+++    ACCESS_FETCH,       /* jmp VA_HOLE + FAULT_OFFSET */
+++    ACCESS_ASI_LOAD,    /* lda [addr] asi */
+++} AccessKind;
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    const char *cpu;            /* extra -cpu option, or NULL */
+++    uint64_t prom_base;
+++    uint64_t hole;              /* physical address mapped at VA_HOLE */
+++    AccessKind kind;
+++    uint8_t asi;                /* ACCESS_ASI_LOAD: the ASI */
+++    uint32_t addr;              /* ACCESS_ASI_LOAD: the address */
+++    uint32_t tt;                /* the trap expected */
+++} TestCase;
+++
+++static uint32_t sethi_o3(uint32_t addr)
+++{
+++    return 0x17000000 | (addr >> 10);           /* sethi %hi(addr), %o3 */
+++}
+++
+++static char *write_prom(const TestCase *t)
+++{
+++    uint32_t access[2];
+++    const uint32_t setup[] = {
+++        0x03004010,             /* sethi %hi(0x01004000), %g1 */
+++        0x81986000,             /* wr    %g1, 0, %tbr        trap table */
+++        0x90102100,             /* mov   0x100, %o0 */
+++        0x92102200,             /* mov   0x200, %o1 */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context table pointer */
+++        0x90102200,             /* mov   0x200, %o0 */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81902000,             /* wr    %g0, 0, %wim */
+++        0x81882f80,             /* wr    %g0, 0xf80, %psr    S, PIL 15 */
+++        NOP, NOP, NOP,
+++        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x9412a001,             /* or    %o2, 1, %o2         MMU on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4 */
+++        0x81882fa0,             /* wr    %g0, 0xfa0, %psr    traps on */
+++        NOP, NOP, NOP,
+++        0x07004004,             /* sethi %hi(0x01001000), %g3 */
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 1 */
+++    };
+++    const uint32_t end[] = {
+++        NOP,                    /* (delay slot) */
+++        0x88102002,             /* mov   2, %g4              no trap */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 2 */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i, n = CODE;
+++
+++    switch (t->kind) {
+++    case ACCESS_LOAD:
+++        access[0] = sethi_o3(VA_HOLE + FAULT_OFFSET);
+++        access[1] = 0xd802e000;                 /* ld    [%o3], %o4 */
+++        break;
+++    case ACCESS_STORE:
+++        access[0] = sethi_o3(VA_HOLE + FAULT_OFFSET);
+++        access[1] = 0xc022e000;                 /* st    %g0, [%o3] */
+++        break;
+++    case ACCESS_FETCH:
+++        access[0] = sethi_o3(VA_HOLE + FAULT_OFFSET);
+++        access[1] = 0x81c2e000;                 /* jmp   %o3 */
+++        break;
+++    case ACCESS_ASI_LOAD:
+++        access[0] = sethi_o3(t->addr);
+++        access[1] = 0xd882c000 | (t->asi << 5); /* lda   [%o3] asi, %o4 */
+++        break;
+++    default:
+++        g_assert_not_reached();
+++    }
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(NOP);
+++    for (i = 0; i < ARRAY_SIZE(setup); i++) {
+++        be[n++] = cpu_to_be32(setup[i]);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(access); i++) {
+++        be[n++] = cpu_to_be32(access[i]);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(end); i++) {
+++        be[n++] = cpu_to_be32(end[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-bus-error-trap-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++/*
+++ * The trap table at TRAP_TABLE branches to the handler at HANDLER, which
+++ * stores the SFSR, the SFAR and the trap type (last) and stops.
+++ */
+++static void write_trap_table(QTestState *qts)
+++{
+++    const uint32_t handler[] = {
+++        0x03004004,             /* sethi %hi(0x01001000), %g1 */
+++        0x85580000,             /* rd    %tbr, %g2 */
+++        0x8530a004,             /* srl   %g2, 4, %g2 */
+++        0x8408a0ff,             /* and   %g2, 0xff, %g2      trap type */
+++        0x86102300,             /* mov   0x300, %g3 */
+++        0xc880c080,             /* lda   [%g3] 4, %g4        SFSR */
+++        0x86102400,             /* mov   0x400, %g3 */
+++        0xca80c080,             /* lda   [%g3] 4, %g5        SFAR */
+++        0xc8206024,             /* st    %g4, [%g1 + 0x24] */
+++        0xca206028,             /* st    %g5, [%g1 + 0x28] */
+++        0xc4206020,             /* st    %g2, [%g1 + 0x20] */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[256 * 4] = { 0 };
+++    int i;
+++
+++    for (i = 0; i < 256; i++) {
+++        uint32_t disp = (HANDLER - (TRAP_TABLE + 16 * i)) / 4;
+++
+++        be[4 * i] = cpu_to_be32(0x10800000 | disp);  /* b     handler */
+++        be[4 * i + 1] = cpu_to_be32(NOP);
+++    }
+++    qtest_memwrite(qts, TRAP_TABLE, be, sizeof(be));
+++    for (i = 0; i < ARRAY_SIZE(handler); i++) {
+++        qtest_writel(qts, HANDLER + 4 * i, handler[i]);
+++    }
+++}
+++
+++static void write_tables(QTestState *qts, const TestCase *t)
+++{
+++    /* Context table: the PTD of context 0's level 1 table */
+++    qtest_writel(qts, CTX_TABLE, (CTX0_L1 >> 4) | 1);
+++    /* The PROM at 0 (16 MB, ACC 2 RX), RAM at VA_RAM (RWX) */
+++    qtest_writel(qts, CTX0_L1, (uint32_t)(t->prom_base >> 4) | 0x0a);
+++    qtest_writel(qts, CTX0_L1 + 4 * (VA_RAM >> 24), 0x0e);
+++    /* The hole at VA_HOLE (RWX) */
+++    qtest_writel(qts, CTX0_L1 + 4 * (VA_HOLE >> 24),
+++                 (uint32_t)(t->hole >> 4) | 0x0e);
+++    write_trap_table(qts);
+++}
+++
+++static void test_bus_error_trap(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t);
+++    g_autofree char *cpu = t->cpu ? g_strdup_printf("-cpu %s", t->cpu)
+++                                  : g_strdup("");
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s %s -accel tcg -m 64 "
+++                                  "-bios %s -S", t->machine, cpu, prom);
+++    uint32_t sfsr;
+++
+++    write_tables(qts, t);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'cont' }");
+++
+++    while (qtest_readl(qts, MARK_TRAP) == 0 &&
+++           qtest_readl(qts, MARK_STAGE) < 2) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    /* It got to the access, which trapped */
+++    g_assert_cmpuint(qtest_readl(qts, MARK_STAGE), ==, 1);
+++    g_assert_cmphex(qtest_readl(qts, MARK_TRAP), ==, t->tt);
+++    sfsr = qtest_readl(qts, MARK_SFSR);
+++    g_assert_cmpuint(SFSR_FT(sfsr), ==, FT_BUS_ERROR);
+++    if (t->kind != ACCESS_FETCH) {
+++        /* The SFAR holds the (low 32 bits of the) physical address */
+++        uint32_t pa = t->kind == ACCESS_ASI_LOAD
+++                      ? t->addr : (uint32_t)t->hole + FAULT_OFFSET;
+++        g_assert_cmphex(qtest_readl(qts, MARK_SFAR), ==, pa);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++#define SS10_PROM       0xff0000000ULL
+++#define SS10_HOLE       0xd0d000000ULL  /* nothing there on an SS-10 */
+++#define SS5_PROM        0x70000000ULL
+++#define SS5_HOLE        0x2d000000ULL   /* nothing there on an SS-5 */
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        /* SuperSPARC: loads and fetches take an access exception */
+++        { "ss10/load", "SS-10", NULL, SS10_PROM, SS10_HOLE,
+++          ACCESS_LOAD, 0, 0, TT_DFAULT },
+++        { "ss10/fetch", "SS-10", NULL, SS10_PROM, SS10_HOLE,
+++          ACCESS_FETCH, 0, 0, TT_TFAULT },
+++        /* Stores and the MMU bypass ASIs keep the access error */
+++        { "ss10/store", "SS-10", NULL, SS10_PROM, SS10_HOLE,
+++          ACCESS_STORE, 0, 0, TT_DATA_ACCESS },
+++        { "ss10/asi-0x20-load", "SS-10", NULL, SS10_PROM, SS10_HOLE,
+++          ACCESS_ASI_LOAD, 0x20, 0x0d080000, TT_DATA_ACCESS },
+++        { "ss10/asi-0x2d-load", "SS-10", NULL, SS10_PROM, SS10_HOLE,
+++          ACCESS_ASI_LOAD, 0x2d, 0x0d080000, TT_DATA_ACCESS },
+++        /* The CPU property turns it off */
+++        { "ss10/load-feature-off", "SS-10",
+++          "TI-SuperSparc-II,-buserr-access-exc", SS10_PROM, SS10_HOLE,
+++          ACCESS_LOAD, 0, 0, TT_DATA_ACCESS },
+++        /* microSPARC-II: the access error as before */
+++        { "ss5/load", "SS-5", NULL, SS5_PROM, SS5_HOLE,
+++          ACCESS_LOAD, 0, 0, TT_DATA_ACCESS },
+++        { "ss5/fetch", "SS-5", NULL, SS5_PROM, SS5_HOLE,
+++          ACCESS_FETCH, 0, 0, TT_CODE_ACCESS },
+++        { "ss5/store", "SS-5", NULL, SS5_PROM, SS5_HOLE,
+++          ACCESS_STORE, 0, 0, TT_DATA_ACCESS },
+++        { "ss5/asi-0x20-load", "SS-5", NULL, SS5_PROM, SS5_HOLE,
+++          ACCESS_ASI_LOAD, 0x20, 0x2d080000, TT_DATA_ACCESS },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-bus-error-trap/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_bus_error_trap);
 ++        }
 ++    }
 ++

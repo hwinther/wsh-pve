@@ -1054,8 +1054,33 @@ class OlderSun(unittest.TestCase):
             self.assertIn("4.1.3_U1B", t["net_refuse"]["dns"])
         self.assertIn("4.1.4", base["net_refuse"]["dns"])  # the copy didn't change the 4.1.4 target
 
+    def test_sunos413_target(self):
+        # SunOS 4.1.3 needs pve-qemu wsh/0049 (a bus error on a SuperSPARC load is trap 0x09): catalogue
+        # until a published package has it; the 4.1.4 install unchanged on the SS-10, from its own CD
+        base = targets.TARGETS["sunos414-ss5"]
+        t = targets.TARGETS["sunos413-ss10"]
+        self.assertEqual(t["status"], "catalogue")
+        self.assertIn("wsh/0049", t["blocked"])
+        self.assertNotIn("sunos413-ss10", targets.automated())
+        self.assertNotIn("tested", t)
+        p = t["profile"]
+        self.assertEqual((p["machine"], p["bios"], p["memory"]), ("SS-10", "openbios-sparc32", 256))
+        self.assertNotIn("cores", p)
+        self.assertEqual((t["install"], t["firstboot"], t["check"], t["disk"]),
+                         (base["install"], base["firstboot"], base["check"], base["disk"]))
+        self.assertEqual(t["install"]["memory"], 64)
+        self.assertEqual(t["media"], [{"name": "Solaris_1.1.img", "drive": "scsi6"}])
+        med = targets.MEDIA["Solaris_1.1.img"]
+        self.assertNotIn("from", med)  # 2048-byte sectors already
+        self.assertEqual((med["size"], med["lab"]), (325693440, "sunos_202004/SunOS/SPARC/4.1.3/Solaris_1.1.img"))
+        self.assertIn("SunOS 4.1.3 ", t["net_refuse"]["dns"])
+        self.assertNotIn("4.1.3_U1B", t["net_refuse"]["dns"])
+        self.assertIn("4.1.3_U1B", targets.TARGETS["sunos413u1b-ss5"]["net_refuse"]["dns"])
+        self.assertEqual(targets.problems(), [])
+
     def test_sun_media_have_no_url(self):
-        for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso", "Solaris_2.2.img"):
+        for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso", "Solaris_2.2.img",
+                     "Solaris_1.1.img"):
             self.assertNotIn("url", targets.MEDIA[name])
             self.assertFalse(targets.MEDIA[name]["lab"].startswith("/"))
 

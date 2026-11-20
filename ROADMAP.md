@@ -79,6 +79,7 @@ come after that, not before.
 | Workflow tokens: `sync-from-upstream-trigger.yml` dispatches the five syncs with `GITHUB_TOKEN` (`actions: write`), and from a branch or with `dry_run` only says what it would start; `build-deb.yml` builds pve-qemu's 3dfx extra in its own job without `WORKFLOW_TOKEN` or stored credentials and hands the binary to the build job as an artifact; the optional-extras report's issue path is tested by `scripts/test-report-qemu-extras.sh` and dry-run against the open issues by `report-qemu-extras-test.yml` | merged | #360 |
 | Install target `sol21-ss10`: Solaris 2.1 End User on the SS-10 (OpenBIOS, one CPU, the CD as a disk), automated now that pve-qemu-kvm 11.1.3-2+wsh29 and later have `wsh/0047` (the sparc32 context-switch fetch); installed three times through PVE with `--check` on the published 11.1.3-2+wsh30, qemu-server 9.2.19+wsh4, pve-manager 9.2.32+wsh4 (3/3 passed, 9.7-10.1 min with three at once: install 5.3 min, first boot 2.9-3.3, check 1.2-1.3); `/opt` and `/export/home` still not mounted at boot | merged | #378 |
 | OpenBSD 8.0 on sun4u with ntpd on: the IDE timeouts (`wd0: timeout`, then a guest that takes no interrupt) were a lost interrupt in QEMU's sabre (a PCI interrupt replaced the outstanding IDE request), fixed by pve-qemu `wsh/0045` (qtest `wsh/0046`, pve-qemu-kvm 11.1.3-2+wsh30); `openbsd80-sun4u` keeps ntpd on and checks it runs, no install retry (the stuck detection stays): 4 of 4 installs through PVE with `--check` (two with a way out, ntpd synced), 3 of 3 boots under disk load with ntpd slewing, no IDE timeout, ~17 min; the installer's "Exit to (S)hell" after "CONGRATULATIONS!" is answered again (broken by the OpenBSD 5.9 targets) | in review | |
+| SunOS 4.1.3 on the SS-10: a bus error on a SuperSPARC load or instruction fetch takes the data or instruction access exception (trap 0x09/0x01, SFSR FT=5) instead of the access error (0x29/0x21), pve-qemu `wsh/0049` (CPU feature `buserr-access-exc` on the `TI-SuperSparc-*` models only; stores, the MMU bypass ASIs and the microSPARC unchanged), qtest `wsh/0050`; 4.1.3's kernel panicked in its VME probe (`BAD TRAP: type=29`). In the lab the 4.1.3 CD installs, boots and passes the check with the 4.1.4 scenarios (4 passes of 4, ~4.5 min each), stored SS-10/SS-20 and SS-5 disks boot as before (34 of 34: 18 on SS-10/SS-20, Solaris 2.6 also with 4 CPUs, and 16 on the SS-5); reproduced on plain QEMU 11.1.3. Target `sunos413-ss10` (catalogue until a published pve-qemu-kvm has the patch), `upstream/qemu-sparc32-supersparc-bus-error-trap.md` | in review | |
 
 ## In progress
 
@@ -239,7 +240,15 @@ merged; what is left of them is item 2 under "Next".
   `openbsd59-ss20`; the sets from a CD made on the node, a serial display: with QEMU's keyboard
   ESCC its kernel panics, which isn't narrowed down yet, `submodules/SPARC.md`, "OpenBSD 5.9 on
   sun4m"; 5.8's `install58.iso` wasn't needed and isn't tried);
-  the original SunOS 4.1.3 and 4.1.2 (SS-600MP) don't boot. The SS-600MP needs a CPU model QEMU
+  the original SunOS 4.1.3 stopped early in a device probe: its generic sun4m kernel probes for VME
+  controllers the SS-10 doesn't have, and QEMU raised the data access error (trap 0x29) for the bus
+  error where the SuperSPARC takes a data access exception (0x09), the only trap 4.1.3's nofault
+  path handles. pve-qemu `wsh/0049` (qtest `wsh/0050`) does as the SuperSPARC for loads and
+  fetches, and 4.1.3 installs on the SS-10 in the lab; target `sunos413-ss10`, catalogue until a
+  published pve-qemu-kvm has the patch (in review, below). 4.1.2 (SS-600MP) is diagnosed and not
+  planned: besides that trap it needs the SS-600MP's VMEbus interface registers at
+  `0xf.df01_0000`, which QEMU's SS-600MP doesn't have, and its kernel knows the 4/600's
+  `dma`/`esp`/`le` node names, not OpenBIOS's `espdma`/`ledma`. The SS-600MP needs a CPU model QEMU
   lacks: Sun's own SS-600MP boot PROM expects the Ross module's RT625 cache controller and MMU, which
   QEMU doesn't emulate, and under OpenBIOS Solaris 2.6 refuses the platform (`submodules/SPARC.md`).
   A Ross RT625 model would be a larger QEMU piece; not planned. OpenBIOS 0019-0022 run the Solaris
@@ -385,7 +394,8 @@ Write-ups the owner may send (as bug reports, or patches written by hand; QEMU a
 AI-generated code): the ESP bus reset, the 1-byte APC region, the TLB flush on every change of the
 SRMMU no-fault bit, the interrupt not taken after a write to `%psr` in a delay slot (the Solaris SMP
 hang), the cmd646 interrupt latch, sun4u's IDPROM ignoring a NIC added with `-device`, the sparc64
-`%softint` race and the ESP CDB counted with the message out bytes (QEMU); the ESP selection
+`%softint` race, the ESP CDB counted with the message out bytes and the trap a bus error takes on a
+SuperSPARC load (SunOS 4.1.3, `upstream/qemu-sparc32-supersparc-bus-error-trap.md`) (QEMU); the ESP selection
 timeout, Stop-A powering the machine off, and the sparc64 fixes 0003-0011 and 0013-0017 (OpenBIOS).
 Not written up yet: the TTE page-size truncation, if it is not merged upstream.
 

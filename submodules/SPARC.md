@@ -80,6 +80,8 @@ maintains the patches.
 | `0046-tests-qtest-test-the-sabre-s-interrupt-requests-on-s` | qtest `sun4u-sabre-irq-test` for 0045: the sabre's lines driven from the test, its requests intercepted; a PCI interrupt raised while the IDE request or another PCI request is outstanding waits until the guest clears it, and the serial console's interrupt gets through after both; fails without 0045 | ours | not in QEMU |
 | `0047-target-sparc-keep-fetching-from-the-current-page-acr` | Solaris 2.1 stopped QEMU after its device configuration: `Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`). Its kernel switches, with traps disabled, to a context whose level 1 table it hasn't filled yet, flushes it and switches back, all in one page of kernel text; QEMU's TLB flush on the context write made the next fetch walk the new context and fail. A context register change now keeps the old context's translation of the writing instruction's page, and an instruction fetch in that page that fails with traps disabled uses it (execute only); trace event `sparc_mmu_ifetch_hold` ("Older Sun releases on sun4m") | ours | not fixed; see `upstream/qemu-sparc32-context-switch-ifetch.md` |
 | `0048-tests-qtest-test-an-instruction-fetch-across-a-conte` | qtest `sun4m-mmu-ctx-ifetch-test` for 0047: a boot PROM switches with traps disabled to a context that maps other RAM and not the PROM, stores, flushes the context, stores and switches back; both stores must land in that context's RAM and the PROM must reach its end (SS-10, SS-5). With traps enabled the first fetch there must take an instruction access exception. The traps-off cases fail without 0047 (QEMU stops with the same `Trap 0x21`), also on plain QEMU 11.1.3 | ours | not in QEMU |
+| `0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o` | SunOS 4.1.3 panicked on the SS-10 after `SUNW,fdtwo0` (`BAD TRAP: cpu=0 type=29`): its generic sun4m kernel probes for VME controllers with its fault catcher armed and reads physical `0xd.0108_0000`, where an SS-10 has nothing, and 4.1.3's `trap()` sends only trap 0x09 (data access exception) to the catcher. QEMU raised trap 0x29 (data access error) for a bus error on every sparc32 CPU; the SuperSPARC takes a bus error on a load as trap 0x09 and on an instruction fetch as trap 0x01, with FT=5 (access bus error) in the SFSR. New CPU feature `buserr-access-exc`, on the `TI-SuperSparc-*` models only (SS-10, SS-20, SS-600MP): loads and fetches take 0x09/0x01, the SFSR and SFAR as before. Stores, the MMU bypass ASIs 0x20-0x2f, the MXCC stream registers and unimplemented ASIs keep 0x29; microSPARC, TurboSPARC and LEON are unchanged; `-cpu TI-SuperSparc-II,-buserr-access-exc` turns it off; trace event `sparc_bus_error_access_exc` ("Older Sun releases on sun4m") | ours | not fixed; see `upstream/qemu-sparc32-supersparc-bus-error-trap.md` |
+| `0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m` | qtest `sun4m-bus-error-trap-test` for 0049: a boot PROM maps an unassigned physical region, enables traps and makes one access there; a handler in RAM stores the trap type, SFSR and SFAR. SS-10: a load takes 0x09, a fetch 0x01; a store, an ASI 0x20 and an ASI 0x2d load and a load with the feature off take 0x29. SS-5: load, store and ASI 0x20 load 0x29, fetch 0x21. FT=5 in every case, the address in the SFAR for data accesses. Without 0049 (and on plain QEMU 11.1.3) the two SS-10 load and fetch cases fail | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -201,10 +203,22 @@ sol21-ss10 5.1 Generic sun4m sparc`, 42 uses of the kept translation); `sol22-ss
 `netbsd-boot-disk.py`) passes with the same build's `qemu-system-sparc64`. The same 2.1 disk on
 plain QEMU 11.1.3 stops at `pc f0014768` 12 s after the kernel banner.
 
+0049-0050 apply on top of 0001-0048 (2026-11-20). `sun4m-bus-error-trap-test` passes 10/10 with
+them; against plain QEMU 11.1.3 its `ss10/load` and `ss10/fetch` cases fail (trap 0x29 and 0x21) and
+the other cases pass (the feature-off case needs the feature to exist). With 0001-0050 the
+`qtest-sparc` suite: 25 OK, 2 skipped, and the `qmp-test` `oob` failure as before (the sparc64
+target was only compiled: `target/sparc/ldst_helper.c` and `cpu.c` build). Lab, with the
+0001-0050 `qemu-system-sparc` (the `openbios-sparc32` of pve-qemu-kvm 11.1.3-2+wsh30, the check
+scenarios on copies of the stored disks, trace event `sparc_bus_error_access_exc` on): SunOS 4.1.3
+installs on the SS-10 and boots ("Older Sun releases on sun4m"), and 34 of 34 stored disks boot and
+pass their check as before: 18 on the SS-10 and SS-20 (Solaris 2.6 on the SS-20 also with 4 CPUs),
+16 on the SS-5 (two of them under `ss5.bin`); the list is under "Older Sun releases on sun4m".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
-`sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test` and `sun4m-mmu-ctx-ifetch-test` (sparc),
+`sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test`, `sun4m-mmu-ctx-ifetch-test` and
+`sun4m-bus-error-trap-test` (sparc),
 `sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
 `am53c974-test` (i386).
 
@@ -1584,7 +1598,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
 | Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below; pve-qemu-kvm 11.1.3-2+wsh29 and later) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); target `sol21-ss10` (~10 min) |
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
-| SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root |
+| SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (not in a published package yet) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (catalogue until a package has the patch) |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
 
@@ -1701,9 +1715,51 @@ What it would take for the rest:
   `0xd.0108_0000` on the SS-10. QEMU has nothing there and answers with a synchronous data access
   error (trap 0x29), which this kernel's catcher doesn't take. (`-d unimp` also shows 64-bit reads
   of the MXCC error register, ASI 2 `0x01c00e00`, which QEMU doesn't implement; they come from the
-  boot program and the trap path, not before the fault.) A fix would be a QEMU stub at that
-  address that answers as the hardware does; 4.1.3_U1B, which Sun supports on the same SS-10 and
-  the later machines, installs, so this is probably not worth it.
+  boot program and the trap path, not before the fault.) The address is a VME controller's: the
+  CD's kernel is the generic sun4m one, which also runs the SS-600MP, and `mbconfig` -> `doprobe`
+  -> `peekl` probes for VME controllers with `nofault` set. 4.1.3's `trap()` reaches the nofault
+  path (the longjmp back into `peekl`) only for trap 0x09, the data access exception; it has no
+  case for 0x29. 4.1.3_U1 added cases for 0x21 and 0x29, which is why 4.1.3_U1B boots. On the
+  SuperSPARC a bus error on a read is a data access exception, the cause in the SFSR (FT=5,
+  access bus error): a test on a real SS-20 (SuperSPARC-II) posted to the OpenBIOS list in 2013
+  found "sbus timeout: read = Data Access Exception, write = Level 15 int". QEMU's
+  `sparc_raise_mmu_fault()` (`target/sparc/ldst_helper.c`) sets FT=5 but raised trap 0x29 (or
+  0x21 for a fetch) on every sparc32 CPU. The fix, pve-qemu `wsh/0049` (qtest `wsh/0050`): a CPU
+  feature `buserr-access-exc` on the `TI-SuperSparc-*` models only, with which a bus error on a
+  load takes trap 0x09 and on an instruction fetch trap 0x01, the SFSR and SFAR as before. What
+  the hardware does for the rest isn't measured, so it stays as it was: stores keep trap 0x29 (no
+  level 15 interrupt modelled), and so do the MMU bypass ASIs 0x20-0x2f, the MXCC stream and
+  unimplemented ASIs; the microSPARC (SS-5, LX and the other microSPARC machines), TurboSPARC and
+  LEON keep trap 0x29 for everything. With it (lab, 2026-11-20, a local build of 11.1.3 with
+  wsh/0001-0050): the 4.1.3 CD (`Solaris_1.1.img`, 2048-byte sectors, as a `scsi-cd`) installs on
+  the SS-10 with the 4.1.4 scenarios unchanged (`sunos-install-serial.py` Programmer at 64 MB,
+  `sunos-firstboot.py`, `sunos-boot-disk.py` at 256 MB: `SunOS sunos413 4.1.3 3 sun4m`), 4 passes of
+  4: two with the lab image's `openbios-sparc32`, two with the one of pve-qemu-kvm 11.1.3-2+wsh30
+  (install 124-138 s, first boot 91-95 s, check 45-50 s). The CD's kernel takes the new trap 9 times before its installer (five reads
+  of the VME controller registers at `0xd.0108_0000`-`0xd.0108_1000`, four of the empty SBus slots
+  at `0xe.0000_0000`-`0xe.3000_0000`). The stock OpenBIOS of QEMU 11.1.3 boots the CD as well:
+  plain QEMU 11.1.3 panics there in the same place, and the build with the patch gets to the
+  installer's first question. Stored installed disks boot as before with it (their check scenarios
+  on copies, the openbios of +wsh30), 34 of 34: on the SS-10 and SS-20 `sunos413u1b-ss20`,
+  `sol22-ss10`, `sol23-ss20`, `sol24-ss20`, `sol25-ss20`, `sol251-ss20`, `sol26-ss10`,
+  `sol26-ss20` (also with 4 CPUs), `sol7-ss10`, `sol7-ss20`, `sol8-ss20`, `sol9-ss20`,
+  `netbsd93-sparc-ss20`, `netbsd111-sparc-ss20`, `openbsd59-ss20`, `debian40-ss20` and
+  `redhat62-ss20`, each taking the new trap 4-17 times (the four empty SBus slots at every boot,
+  and SunOS 4.1.3_U1B's VME probes); on the SS-5 `sunos414-ss5`, `sunos413u1b-ss5`, `sol23-ss5`,
+  `sol24-ss5`, `sol25-ss5`, `sol251-ss5` and `sol8-ss5-prom` (`ss5.bin`), `sol26-ss5`, `sol7-ss5`,
+  `sol8-ss5`, `sol9-ss5`, `netbsd93-sparc`, `netbsd111-sparc`, `openbsd59-ss5`, `debian40-ss5` and
+  `redhat62-ss5`, which never take it (microSPARC-II). Target
+  `sunos413-ss10`, catalogue until a published pve-qemu-kvm has the patch. Write-up:
+  `upstream/qemu-sparc32-supersparc-bus-error-trap.md`.
+- **SunOS 4.1.2 on SS-600MP, diagnosis (not planned):** the same generic kernel family, but the
+  SS-600MP also needs its VMEbus interface registers at `0xf.df01_0000` (control, AFSR, AFAR),
+  which QEMU's SS-600MP doesn't have, and the kernel knows the 4/600's `dma`/`esp`/`le` node names,
+  not OpenBIOS's `espdma`/`ledma`. With `wsh/0049` alone (lab, 2026-11-20, the +wsh30 OpenBIOS)
+  the CD's kernel still stops where it did, `Unhandled Exception 0x00000029` at `pc f80a6054`
+  before its banner. A lab prototype with an unimplemented-device stub over those registers on
+  top of the trap change got the CD to its installer menu, with no `esp` or `le` attached (no
+  disk, no network). Not planned: the SS-600MP's other gaps (the Ross CPU module, Solaris 2.6
+  refusing the platform) remain.
 - **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
