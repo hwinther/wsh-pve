@@ -235,6 +235,7 @@ jobs:
             echo "QEMU3DFX_NOTE<<Q3DFX_END" >> $GITHUB_ENV
             echo "$QEMU3DFX_NOTE" >> $GITHUB_ENV
             echo "Q3DFX_END" >> $GITHUB_ENV
+            echo "QEMU3DFX_SHORT=$QEMU3DFX_SHORT" >> $GITHUB_ENV
             PROXMOX_CHANGELOG_ONELINE=$(echo "${PROXMOX_CHANGELOG_ONELINE} | ${QEMU3DFX_NOTE}" | head -c 480)
           fi
 
@@ -325,10 +326,19 @@ jobs:
           WSH_VERSION: ${{ env.WSH_VERSION }}
           PROXMOX_CHANGELOG: ${{ env.PROXMOX_CHANGELOG }}
           QEMU3DFX_NOTE: ${{ env.QEMU3DFX_NOTE }}
+          QEMU3DFX_SHORT: ${{ env.QEMU3DFX_SHORT }}
           EXTRAS_MISSING: ${{ steps.extras.outputs.missing }}
         run: |
           case ",$EXTRAS_MISSING," in
             *,3dfx,*) QEMU3DFX_NOTE="This build has no 3dfx/Mesa pass-through: qemu-system-x86_64-3dfx failed to build, and VMs with 3DFX/Mesa enabled don't start." ;;
+            *)
+              # The driver release is far down the releases page by now: link it (the release
+              # notes only; the changelog line keeps the plain name)
+              if [ -n "$QEMU3DFX_SHORT" ]; then
+                drivers="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
+                QEMU3DFX_NOTE="${QEMU3DFX_NOTE/$drivers release/[$drivers](https://github.com/$GITHUB_REPOSITORY/releases/tag/$drivers) release}"
+              fi
+              ;;
           esac
 
           DEB_FILE=$(find build/repo -name "*.deb" -type f)
