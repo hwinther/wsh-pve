@@ -174,8 +174,8 @@ and the two `qmp-test` `oob` failures as before (`sun4m-esp-test` 1/1, `sun4u-id
 
 0042-0044 apply on top of 0001-0041 with `patch -F0`. `sun4u-idle-test` passes 24/24 with them;
 against the binary built without them its first case, `netbsd/idle`, fails (the loop went on: 6.1
-million rounds in 300 ms), and against an earlier build of 0042 that took only `jmpl %rs1 + %g0, %o7`
-as the call through a register, `tribblix/idle` fails (gcc's `call %g1` there is `jmpl %g1 + 0`).
+million rounds in 300 ms), and against an earlier build of 0042 that took a BPcc branch only on `%icc`,
+`tribblix/idle` fails (its loop ends with `ba,pt %xcc`, as Tribblix's gcc lays it out).
 With 0001-0044 the `qtest-sparc` and `qtest-sparc64` suites: 41 OK, 4 skipped, and the two
 `qmp-test` `oob` failures as before (`sun4m-solaris-idle-test` 5/5, `sun4m-solaris-smp-idle-test`
 4/4). Lab results under "sparc64 (sun4u)", "Idle".
@@ -2019,15 +2019,92 @@ the host had a load of 5-7 from other guests on its 14 cores):
 | NetBSD 11.1 sparc64 | sun4u, 512 MB | 101.1, 100.9, 101.3% | 60 s (drift 0.0-0.1 s) | 41.8, 33.2, 36.7 |
 | NetBSD 11.1 sparc32 | SS-20, 256 MB | 3.2, 2.8, 2.8% | 60 s | 9.7, 9.3, 6.7 |
 
-- NetBSD/sparc64 doesn't idle on sun4u: QEMU keeps a host core at 100% for as long as the VM runs.
-  The kernel spins in its idle loop: nothing on QEMU's sun4u lets the guest stop the CPU (no APC
-  like sun4m's; the `power` node isn't used, NetBSD: `power at ebus0 addr 7240-7243 ipl 1 not
-  configured`). Stopping that would take QEMU idle-loop detection like `sunos-idle`/`solaris-idle` on
-  sun4m (out of scope here). The sparc32 kernel idles through the sun4m APC.
+- Before pve-qemu `wsh/0042` NetBSD/sparc64 didn't idle on sun4u: QEMU kept a host core at 100% for
+  as long as the VM ran, and so did every other sun4u guest. See "Idle" below. The sparc32 kernel
+  idles through the sun4m APC.
 - The same user-space job runs about 4x slower on sparc64 than on sparc32 SS-20 (median 36.7 s vs
   9.3 s), so sparc64 is not a faster way to run NetBSD. Not analysed further.
 - Ten `sleep 1` take 10.3-10.4 s; the guest clock keeps time.
 - Boot to `login:` 46-68 s; `halt -p` to QEMU's exit 8.7-9.1 s.
+
+**Idle (pve-qemu `wsh/0042`-`0044`, in review, 2026-11-20).** Every sun4u guest spun in its idle loop:
+QEMU kept a host core at 100% for as long as the VM ran. No guest has a way to stop an UltraSPARC-IIi
+that QEMU could emulate instead, so the translator recognises their idle loops and halts there, like
+`sunos-idle`/`solaris-idle` on sun4m (and like those, built on LEMU's technique: not for QEMU). What
+each kernel does on sun4u (read in the open sources: NetBSD, OpenBSD, illumos, Linux; the loops
+disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
+
+| Guest | Idle loop | What the kernel could stop the CPU with on sun4u |
+| --- | --- | --- |
+| NetBSD 9.3, 11.1 | `idle_loop()` calls `cpu_idle()` while `sched_curcpu_runnable_p()` is false, then checks `ci_want_resched` | nothing: `cpu_idle()` calls `ci_idlespin`, which only sun4v sets (`hv_cpu_yield`); 9.3's `cpu_idle` is `retl; nop`. The ebus `power` node isn't attached (`power at ebus0 ... not configured`) |
+| OpenBSD 8.0 | `sched_idle()`: `while (spc_whichqs == 0) cpu_idle_cycle();` | nothing: `cpu_idle_cycle()` yields to the hypervisor on sun4v; on sun4u it is a `nop` that is patched to `sleep` (SPARC64-VI/VII) only on CPUs with several strands |
+| Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
+| Debian 12 (Linux) | `arch_cpu_idle()` | nothing: `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No installed disk (the install fails), not covered |
+
+None of them uses `sir` or an `%asr` write to idle. The clock-divider power management of the
+UltraSPARC-IIe/IIIi (Energy Star) slows the clock rather than stopping it, and QEMU emulates a IIi (not
+looked into further). sun4v's hypervisor `cpu_yield` is out of scope.
+
+0042 recognises one call in each loop by the words around it and takes from them where the loop keeps
+the word that says there is work:
+
+| Kernel | Call (address on the stored disk) | Word | Layout |
+| --- | --- | --- | --- |
+| NetBSD 11.1 | `call cpu_idle` (0x15b320c) | `ci_want_resched` (`[%i4 + 0x5a0]`) | `call runnable_p; nop; brnz %o0, out; nop` before; the same and `ld; cmp; be top; nop` after |
+| NetBSD 9.3 | `call cpu_idle` (0x15191e8) | `ci_want_resched` (`[%i3 + 0x3d0]`) | the same with `cmp %o0, 0; bne out; nop` |
+| OpenBSD 8.0 | `call cpu_idle_cycle` (0x1558134) | `spc_whichqs` (`[%i4]`) | `ld; cmp; bne out; nop; call; nop; b top; nop` |
+| Solaris 10 1/13 | `jmpl %o1, %o7` (0x10621d0) | `disp_nrunnable` (`[%o0 + 0x24]`, `%o0` = `cpu_disp`) | Sun's compiler: `ld; cmp; bne run; sethi %hi(idle_cpu); ldx; call; ...; b` |
+| Solaris 9 9/05 | `jmpl %l0, %o7` (0x104618c) | `disp_nrunnable` (`[%l2 + 0xb4]`, in the CPU structure) | the same |
+| Tribblix m34 | `jmpl %g1, %o7` (0x10621c8) | `disp_nrunnable`, 0x24 past the `cpu_disp` pointer at `[%l0 + 0xd0]` (gcc loads the pointer and the count into the same `%g1`, so the helper follows the pointer again) | gcc: `ldx; ld; cmp; bne,pt %icc run; nop; ldx [%l1]; call; nop; ba,pt %xcc top` |
+
+At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
+no interrupt, interrupt vector, `%softint` bit or `pil_in` line is pending, after spinning 100 us as on
+sun4m; the CPU goes on at the call after the next interrupt (the guest's `%tick`/`%stick` clock, 100 Hz
+at least, or a device). QEMU's sun4u has one CPU, so only an interrupt handler can give it work. A kernel
+compiled differently isn't recognised and spins as before; `-trace sparc64_idle_match` shows a match,
+`-trace sparc64_idle` each halt. `-M sun4u,idle-halt=off` turns it off; through Proxmox
+`args: -machine idle-halt=off` (QEMU merges the second `-machine`: checked with QEMU directly, not
+through `qm`).
+
+Found on the way: the first build only took a BPcc branch on `%icc` (it read the `cc1` bit as reserved)
+and missed Tribblix's `ba,pt %xcc`, which `sun4u-idle-test`'s Tribblix layout now has; and Solaris's old
+`/usr/bin/awk` reads its input even with only a `BEGIN` rule, so the job in `sparc64-idle.py` reads
+`/dev/null`.
+
+Measured with `scenarios/sparc64-idle.py` on copies of the stored install disks
+(`/mnt/os/disks/install-*`, one CPU, serial console, `sunhme` on a restricted user network): the package
+11.1.3-2+wsh25 ("before") and a `qemu-system-sparc64` built from 0001-0044 ("with"), started side by side
+on the lab host (14 cores, a load of 6-11 from other guests), each after `WAIT` had ended what the guest
+still does after boot (lab README, "Idle"). Host CPU over 60 s at the shell, the guest clock over those
+60 s, ten `sleep 1` and the awk job in host seconds, `LOAD=120` rounds (BSDs):
+
+| Guest | MEM | Host CPU before | with | Clock drift | 10 x `sleep 1` before / with | Job s before / with | Load rounds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NetBSD 11.1 | 512 | 100.8% | 3.5% | 0.0 s | 10.4 / 10.4 | 25.6 / 24.9 | 4 / 4 |
+| NetBSD 11.1, `idle-halt=off` | 512 | | 100.8% | 1.0 s | 10.4 | 25.3 | 5 |
+| NetBSD 9.3 | 512 | 100.9% | 3.5% | 0.0 s | 10.4 / 10.4 | 21.2 / 22.9 | 5 / 5 |
+| OpenBSD 8.0 | 512 | 100.3% | 8.6% | -0.1 s | 10.5 / 10.5 | 10.0 / 11.1 | 10 / 10 |
+| Solaris 10 1/13 | 1024 | 101.8% | 7.3% | 0.0 s | 10.4 / 10.5 | 8.5 / 11.4 | |
+| Solaris 9 9/05 | 1024 | 102.0% | 6.8% | 0.0-1.0 s | 10.5 / 10.6 | 10.1 / 10.4 | |
+| Tribblix m34 | 2048 | TRIB_BEFORE | TRIB_WITH | TRIB_DRIFT | TRIB_SLEEP | TRIB_JOB | |
+
+The guest clock reads whole seconds, so 1.0 s of drift is one tick of `date`. A single job varies by
+±15% from run to run on this host whichever binary runs, so the binary with 0042-0044 was also run with
+`idle-halt` on and off side by side, the job five times in a row:
+
+| Guest | Host CPU on / off | 5 jobs on / off | Load rounds on / off |
+| --- | --- | --- | --- |
+| NetBSD 11.1 (`LOAD=300`) | 3.9% / 100.7% | 101.0 / 102.9 s | 3 / 3 |
+| OpenBSD 8.0 (`LOAD=300`) | 5.4% / 101.2% | 40.5 / 41.9 s | 7 / 7 |
+| Solaris 10 1/13 | 4.8% / 100.5% | 40.0 / 40.0 s | |
+
+CPU-bound work takes as long as before, ten `sleep 1` take 10.4-10.6 s in every case and the clock keeps
+time. What is left (3-9%) is the 100 us spin before each halt at every clock tick, the guests' own
+periodic work and QEMU's timers. Solaris 10 needs several minutes after the login prompt until SMF has
+started everything (`svc.configd`, `inetd`, `snmpd`, `fmd` at 30-40% of the guest CPU): measured too
+early it reads 100% with or without the halt. Tribblix's FMA marks its ZFS disk DEGRADED (the known EIO
+ereports, "Tribblix on sun4u") and `rcm_daemon` then spins: a guest that busy never reaches its idle
+loop, so the runs clear the pool and stop `rcm_daemon` first.
 
 **Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
 `halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,
@@ -2751,7 +2828,8 @@ valid is accepted.
   takes input on ttya, and its IDE disk attaches; installing, rebooting and booting the installed
   disk don't work yet, see "Solaris on sun4u"), not sun4v/niagara.
 - Refuse: SCSI (LSI, virtio-scsi) and virtio-blk as the boot disk, `-smp` > 1, more than 8 GB,
-  `sun4v`/`niagara`. Expect a host core at 100% per running VM: NetBSD doesn't idle on sun4u (below).
+  `sun4v`/`niagara`. Idle: with pve-qemu `wsh/0042`-`0044` an idle guest takes 3-9% of a host core
+  (NetBSD, OpenBSD, Solaris 9/10, Tribblix; "Idle" above), before them 100% for as long as the VM ran.
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
 
 ## sparc64: niagara (sun4v)

@@ -7798,7 +7798,7 @@ index 0000000..f215e65
 + }
 diff --git a/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch b/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch
 new file mode 100644
-index 0000000..38cc66e
+index 0000000..e507857
 --- /dev/null
 +++ b/debian/patches/wsh/0042-target-sparc-halt-the-CPU-in-the-idle-loop-of-sun4u-.patch
 @@ -0,0 +1,688 @@
@@ -7832,7 +7832,7 @@ index 0000000..38cc66e
 +The board turns this on with env->idle_halt. -trace sparc64_idle_match
 +shows whether a kernel was recognised.
 +
-+An idle guest at the shell then uses 3-8% of a host core instead of
++An idle guest at the shell then uses 3-9% of a host core instead of
 +100%: NetBSD 9.3 and 11.1, OpenBSD 8.0, Solaris 9 and 10, Tribblix m34.
 +The guest clock keeps time, ten "sleep 1" take as long as before, and
 +CPU-bound work takes as long as before.
@@ -8070,7 +8070,7 @@ index 0000000..38cc66e
 + sparc_solaris_idle_match(const char *kernel, uint32_t pc, int reg, int off) "Solaris idle loop (%s): idle_cpu call at 0x%08x, disp_nrunnable at register %d offset %d"
 + sparc_sunos_idle_match(uint32_t pc, uint32_t top, uint32_t nrunnable, uint32_t whichqs, uint32_t qrunflag) "SunOS idle loop: branch at 0x%08x to 0x%08x, Nrunnable 0x%08x whichqs 0x%08x qrunflag 0x%08x"
 +diff --git a/target/sparc/translate.c b/target/sparc/translate.c
-+index 65bc139929..504468bbcd 100644
++index 65bc139929..65bd7a29b1 100644
 +--- a/target/sparc/translate.c
 ++++ b/target/sparc/translate.c
 +@@ -181,6 +181,7 @@ typedef struct DisasContext {
@@ -8133,7 +8133,7 @@ index 0000000..38cc66e
 ++        *t = pc + ((target_long)sextract32(w, 0, 22) << 2);
 ++        return true;
 ++    case 1:                                 /* BPcc */
-++        if (extract32(w, 21, 1)) {          /* %fcc or reserved */
+++        if (extract32(w, 20, 1)) {          /* only %icc (00) and %xcc (10) */
 ++            return false;
 ++        }
 ++        *t = pc + ((target_long)sextract32(w, 0, 19) << 2);
@@ -8555,10 +8555,10 @@ index 0000000..568f972
 + static const TypeInfo sun4u_type = {
 diff --git a/debian/patches/wsh/0044-tests-qtest-test-the-idle-halt-on-sun4u.patch b/debian/patches/wsh/0044-tests-qtest-test-the-idle-halt-on-sun4u.patch
 new file mode 100644
-index 0000000..1eec330
+index 0000000..22e9078
 --- /dev/null
 +++ b/debian/patches/wsh/0044-tests-qtest-test-the-idle-halt-on-sun4u.patch
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,383 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the idle halt on sun4u
 +
@@ -8571,8 +8571,8 @@ index 0000000..1eec330
 +fewer rounds than with idle-halt=off.
 +---
 + tests/qtest/meson.build       |   2 +-
-+ tests/qtest/sun4u-idle-test.c | 341 ++++++++++++++++++++++++++++++++++
-+ 2 files changed, 342 insertions(+), 1 deletion(-)
++ tests/qtest/sun4u-idle-test.c | 348 ++++++++++++++++++++++++++++++++++
++ 2 files changed, 349 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4u-idle-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -8590,10 +8590,10 @@ index 0000000..1eec330
 +   ['npcm7xx_adc-test',
 +diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
 +new file mode 100644
-+index 0000000000..3188eadbdb
++index 0000000000..b70f7db2f3
 +--- /dev/null
 ++++ b/tests/qtest/sun4u-idle-test.c
-+@@ -0,0 +1,341 @@
++@@ -0,0 +1,348 @@
 ++/*
 ++ * QTest: halting the CPU in the idle loop of a guest kernel on sun4u
 ++ *
@@ -8651,6 +8651,13 @@ index 0000000..1eec330
 ++static uint32_t bcc_to(int cond, int from, int to)
 ++{
 ++    return (cond << 25) | (2 << 22) | ((to - from) & 0x3fffff);
+++}
+++
+++/* BPcc on %xcc with cond, predicted taken */
+++static uint32_t bpcc_xcc_to(int cond, int from, int to)
+++{
+++    return (cond << 25) | (1 << 22) | (2 << 20) | (1 << 19) |
+++           ((to - from) & 0x7ffff);
 ++}
 ++
 ++/* brnz %o0 */
@@ -8743,9 +8750,9 @@ index 0000000..1eec330
 ++        p[n] = bcc_to(BNE, LOOP + n, LOOP + 10); n++;
 ++        p[n++] = NOP;
 ++        p[n++] = 0xc25c6000;            /* ldx [%l1], %g1 */
-++        p[n++] = 0x9fc06000;            /* call %g1 + 0 */
+++        p[n++] = 0x9fc06000;            /* call %g1 + 0 (the other form) */
 ++        p[n++] = NOP;
-++        p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++        p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP); n++;    /* ba,pt %xcc */
 ++        p[n++] = NOP;
 ++        break;
 ++    }
