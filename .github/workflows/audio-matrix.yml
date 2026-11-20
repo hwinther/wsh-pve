@@ -4,8 +4,8 @@ name: x86 audio matrix
 # published qemu-server's `audio0:` wires them up (e2e/audio/audio_matrix.py): a FreeDOS boot floppy
 # running our own AUDTEST.COM (SB16, AdLib, PC speaker) and a Debian kernel + initramfs playing a tone
 # with aplay (AC97, ES1370, Intel HDA, virtio-sound, USB audio), recorded with QEMU's `wav` backend
-# and checked for the expected tones. Directly on QEMU and through qemu-server (`qm showcmd`, the
-# same command with the wav backend, `qm start`) on the e2e PVE node. The results table goes to the
+# and checked for the expected tones. Directly on QEMU and through qemu-server (`audio0: driver=wav`:
+# `qm showcmd`, then a real `qm start`) on the e2e PVE node. The results table goes to the
 # job summary; the wav files and logs are the artifact.
 #
 # Not a required check, so the paths filter is fine. Weekly as well, to notice a package update that

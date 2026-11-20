@@ -1,6 +1,6 @@
 # The x86 audio matrix (audio_matrix.py): the PVE node of the e2e tests (e2e/pve/Dockerfile, the
 # published packages) with the matrix's guests and harness in it, so the same image runs QEMU
-# directly and through qemu-server (`qm showcmd`, `qm start`).
+# directly and through qemu-server (`audio0: driver=wav`, `qm showcmd`, `qm start`).
 #
 # Build the PVE image first; this one adds the guests to it (build context: e2e/audio):
 #   docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:local .

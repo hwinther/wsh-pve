@@ -1,4 +1,4 @@
-"""wavcheck.py on generated files: levels, tones, a header without sizes (a killed QEMU), and the
+"""wavcheck.py on generated files: levels, tones, a header without sizes (as QEMU writes it), and the
 check against expected and absent tones. Standard library only.
 
     python3 -m unittest -v test_wavcheck.py
@@ -92,6 +92,14 @@ class WavCheck(unittest.TestCase):
         r = self.wav(tone(660, 1.0), sizes=False)
         self.assertAlmostEqual(r["seconds"], 1.0, delta=0.01)
         self.assertAlmostEqual(r["tones"][0]["freq_hz"], 660, delta=6)
+        self.assertEqual((r["header"]["riff_size"], r["header"]["data_size"]), (0, 0))
+        self.assertEqual(r["header"]["data_bytes"], int(RATE * 1.0) * 4)
+        self.assertFalse(r["header"]["sizes_ok"])
+
+    def test_header_with_sizes(self):
+        r = self.wav(tone(660, 1.0))
+        self.assertTrue(r["header"]["sizes_ok"])
+        self.assertEqual(r["header"]["data_size"], r["header"]["data_bytes"])
 
     def test_mono(self):
         r = self.wav(tone(660, 0.5), channels=1)

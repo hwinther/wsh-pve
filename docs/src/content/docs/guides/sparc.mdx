@@ -201,10 +201,13 @@ custom type: data cylinders 16200, alternate 2, physical 16202, heads 16, sector
   2.3, `init 5` reboots (to the Sun PROM's `ok`, or OpenBIOS boots the disk again) instead of
   powering off: stop the VM there.
 - SunOS 4.1.3_U1B installs like 4.1.4 (OpenBIOS, 64 MB while the CD's kernel runs) on the SS-5,
-  SS-10 and SS-20; its CD image needs no conversion. The original SunOS 4.1.3 and Solaris 2.1
-  don't boot on any machine and firmware QEMU and the package offer (their only supported machine
-  is the SS-10, whose Sun PROM doesn't run on QEMU; 2.1 gets through its device configuration under
-  OpenBIOS, then QEMU stops); details in `submodules/SPARC.md`, "Older Sun releases on sun4m".
+  SS-10 and SS-20; its CD image needs no conversion. The original SunOS 4.1.3 doesn't boot on any
+  machine and firmware QEMU and the package offer (its only supported machine is the SS-10, whose
+  Sun PROM doesn't run on QEMU); details in `submodules/SPARC.md`, "Older Sun releases on sun4m".
+- Solaris 2.1 installs and boots on the SS-10 under OpenBIOS with the CD as a disk (`sol21-ss10`)
+  with `pve-qemu-kvm` 11.1.3-2+wsh29 or later; with an older package QEMU stops right after the
+  kernel's device configuration (`Trap 0x21`). One CPU only: with two, 2.1 stops QEMU the same way
+  when it starts the second CPU.
 
 ### Text install on the serial console
 
