@@ -1,9 +1,14 @@
 # QEMU: sun4m stops Solaris 2.1 when it flushes a context it hasn't filled yet
 
-Material for a bug report to upstream QEMU. The change is not carried in pve-qemu yet: it exists as
-a standalone patch on 11.1.3 with `debian/patches/wsh/0001-0041` (the context in `cpu.h` is
-wsh/0017's `mmu_nf_entries`), tested in the lab only (`submodules/SPARC.md`, "Older Sun releases on
-sun4m").
+Material for a bug report to upstream QEMU. Carried in pve-qemu as `debian/patches/wsh/0047` (the
+context in `cpu.h` is wsh/0017's `mmu_nf_entries`), with the qtest `wsh/0048`; not in a published
+package yet. Tested in the lab (`submodules/SPARC.md`, "Older Sun releases on sun4m").
+
+**Reproduced on plain QEMU** (2026-11-20): `qemu-system-sparc` built from the v11.1.3 tag with no
+patch of ours or LEMU's stops the same way, both on the qtest below (its traps-off cases) and on the
+installed Solaris 2.1 disk (`pc f0014768`, 12 s after the kernel banner; the firmware was our
+OpenBIOS, which 2.1 needs to boot at all). The bug was first seen on our patched build, which carries
+LEMU code; it doesn't depend on that code, so it may be reported.
 
 ## Summary
 
@@ -99,6 +104,7 @@ Model what the hardware does for the instructions that follow a context change i
 
 The next context write replaces what is kept (writing the old context back finds the page unmapped in
 the new context, so nothing is kept after it), and the flush that comes with it drops the TLB entry.
+A CPU reset clears what is kept.
 Only a fetch that would have stopped the machine is affected: with traps enabled the fault is taken
 as before, and data accesses are untouched. Cost: one table walk per context change. A trace event
 (`sparc_mmu_ifetch_hold`) shows each use.
@@ -106,5 +112,19 @@ as before, and data accesses are untouched. Cost: one table walk per context cha
 Tested in our lab with that change (11.1.3 and wsh/0001-0041, OpenBIOS with our patches): the 2.1 CD
 boots to its installer, installs, and the installed disk boots to `login:` (`SunOS 5.1 Generic
 sun4m`); the kept translation is used twice per new context, 52 times in a boot to `login:`, a few
-commands and `init 5`. Installed Solaris 2.2 (SS-10), 2.3 (SS-5) and 2.4 (SS-20) disks boot as
-before and never use it. No qtest yet.
+commands and `init 5` (42 in the first boot of the installed disk, with wsh/0001-0048).
+Installed Solaris 2.2 (SS-10), 2.3 (SS-5), 2.4 (SS-20) and 2.5.1 (SS-5) disks boot as before and
+never use it.
+
+## A test without Solaris
+
+`tests/qtest/sun4m-mmu-ctx-ifetch-test.c` (wsh/0048): the test writes two contexts' page tables and a
+trap table into RAM; a tiny boot PROM turns the MMU on in context 0 (the PROM at virtual 0, RAM at
+0x01000000), disables traps and writes context 1 into the context register; context 1 maps other RAM
+at 0x01000000 and not the PROM. From the same PROM page it stores a marker, flushes the context
+(`sta %g0, [0x300] 0x18`), stores another marker and switches back. Both markers must land in
+context 1's RAM and the PROM must reach its end. With traps enabled the first fetch in context 1 must
+take an instruction access exception (trap 1) instead. On SS-10 and SS-5. Without the change the
+traps-off cases stop QEMU with `Trap 0x21 (Instruction Access Error) while interrupts disabled, Error
+state` at the first fetch after the context write (`pc 00000454`); the traps-on cases pass with and
+without it.

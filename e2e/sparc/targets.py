@@ -1189,12 +1189,13 @@ TARGETS["sol21-ss10"] = {
     **SOLARIS_SCRIPTED,
     "title": "Solaris 2.1 End User on a SPARCstation 10 (OpenBIOS, one CPU)",
     "status": "catalogue",
-    "blocked": ("Needs a QEMU change that no published pve-qemu-kvm has: with traps disabled, an instruction"
+    "blocked": ("Needs pve-qemu patch wsh/0047, which no published pve-qemu-kvm has yet: with traps disabled, an instruction"
                 " fetch in the page that was executing when the context register changed keeps the old"
                 " translation (target/sparc, sparc_cpu_tlb_fill). Without it the kernel stops QEMU after device"
                 " configuration (Trap 0x21 at srmmu_mmu_flushctx). With it the lab's own QEMU runs the target's three"
                 " scenarios (install 5.0 min, first boot 2.1 min, check 1.1 min; 2026-11-20, a local build of 11.1.3"
-                " with wsh/0001-0041 and the change); not run through PVE."),
+                " with wsh/0001-0041 and the change; the installed disk's first boot again with wsh/0001-0048);"
+                " not run through PVE."),
     "profile": {**SPARC32, "machine": "SS-10", "memory": 256},
     "disk": sun_disk("3G"),
     "media": [{"name": "solaris2_1_sparc.iso", "drive": "scsi6", "as_disk": True}],
