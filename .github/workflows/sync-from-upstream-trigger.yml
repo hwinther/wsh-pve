@@ -5,7 +5,7 @@ name: Updates master branches of local repos from upstream
 # (unlike a push made with it), and the sync runs then push and build with their own WORKFLOW_TOKEN,
 # so they need nothing from the token that started them.
 #
-# From any ref other than main, or with dry_run, it only checks that each workflow exists and says
+# From any ref other than main, or with dry_run, it only checks that each workflow is active and says
 # what it would start: the syncs always run on main and push there.
 
 on:
@@ -42,7 +42,12 @@ jobs:
           WORKFLOW: ${{ matrix.workflow }}
           DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
         run: |
-          gh workflow view "$WORKFLOW" --ref main > /dev/null
+          # Also proves the token can read the repository's workflows
+          state=$(gh api "repos/$GH_REPO/actions/workflows/$WORKFLOW" --jq .state)
+          if [ "$state" != active ]; then
+            echo "::error::$WORKFLOW is $state, not active"
+            exit 1
+          fi
           if [ "$DRY_RUN" = true ]; then
             echo "Dry run (ref $GITHUB_REF): would run 'gh workflow run $WORKFLOW --ref main'" | tee -a "$GITHUB_STEP_SUMMARY"
           else
