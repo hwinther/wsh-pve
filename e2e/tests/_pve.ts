@@ -25,10 +25,13 @@ export interface Refusal {
   message: string
 }
 
-/** An API client authenticated as root@pam (ticket cookie + CSRF header). */
-export async function pveApi(request: APIRequestContext): Promise<Pve> {
+/** An API client authenticated as root@pam, or another user (ticket cookie + CSRF header). */
+export async function pveApi(
+  request: APIRequestContext,
+  { password = PASSWORD, username = 'root@pam' }: { password?: string; username?: string } = {},
+): Promise<Pve> {
   const login = await request.post('/api2/json/access/ticket', {
-    form: { password: PASSWORD, username: 'root@pam' },
+    form: { password, username },
   })
   expect(login.ok(), await login.text()).toBe(true)
   const { data } = (await login.json()) as { data: { CSRFPreventionToken: string; ticket: string } }

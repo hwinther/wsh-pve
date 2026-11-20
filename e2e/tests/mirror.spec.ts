@@ -9,6 +9,8 @@ import { NODE, PASSWORD, type Pve, pveApi, pveExec, serviceLogs, vmConfFile } fr
 // '__'. The backend part works with any libpve-storage-perl (stat() follows the link); the folder
 // view and the search field above the ISO/floppy selectors are pve-manager's. The UI tests probe the
 // installed pve-manager and are skipped on one without them (published packages before them).
+// Step 3, renaming a volume in place and linking a volume of another storage in (the API in
+// libpve-storage-perl, the Rename and Add link buttons in pve-manager), is probed the same way.
 //
 // The four ways to use it (reference/mirror), one test each: 0 plain files renamed with '__'
 // (PLAIN); 1 a local storage of links (STORAGE); 2 ISOs and links on one NFS export, relative links
@@ -31,6 +33,8 @@ const PLAIN_ISO = 'Plain__Folder__plain-a.iso'
 let pve: Pve
 let folderUi = false
 let searchUi = false
+let mediaApi = false
+let mediaUi = false
 
 test.beforeAll(async () => {
   // The NAS tree and the storage of links. Sizes differ so the listed size shows it's the target's.
@@ -61,6 +65,8 @@ pvesm add dir ${PLAIN} --path ${PLAIN_DIR} --content iso
   const lib = '/usr/share/pve-manager/js/pvemanagerlib.js'
   folderUi = (await pveExec(['grep', '-q', 'mirrorSeparator', lib])).code === 0
   searchUi = (await pveExec(['grep', '-q', 'isMediaSearch', lib])).code === 0
+  mediaApi = (await pveExec(['grep', '-q', 'sub link_media_volume', '/usr/share/perl5/PVE/Storage.pm'])).code === 0
+  mediaUi = mediaApi && (await pveExec(['grep', '-q', 'PVE.window.MediaRename', lib])).code === 0
 })
 
 test.beforeEach(async ({ request }) => {
@@ -79,6 +85,7 @@ test.afterAll(async () => {
 interface Volume {
   content: string
   size: number
+  unavailable?: number
   volid: string
 }
 
@@ -110,10 +117,32 @@ test("storage: symlinked ISO and floppy images are volumes with their names and 
   expect(output.trim()).toBe(`${MIRROR}/template/iso/${ISO}`)
 })
 
-test('storage: a dangling link is not listed', async () => {
+test('storage: a dangling link is not listed (a package without step 3)', async () => {
+  // eslint-disable-next-line playwright/no-skipped-test -- the published libpve-storage-perl until step 3
+  test.skip(mediaApi, 'the installed libpve-storage-perl lists it as unavailable')
   await pveExec(['ln', '-sf', `${NAS}/gone.iso`, `${MIRROR}/template/iso/Gone__gone.iso`])
   try {
     expect((await content('iso')).map((v) => v.volid)).not.toContain(`${STORAGE}:iso/Gone__gone.iso`)
+  } finally {
+    await pveExec(['rm', '-f', `${MIRROR}/template/iso/Gone__gone.iso`])
+  }
+})
+
+test('storage: a dangling link is listed with size 0 and flagged unavailable', async () => {
+  // eslint-disable-next-line playwright/no-skipped-test -- until the published libpve-storage-perl has step 3
+  test.skip(!mediaApi, 'the installed libpve-storage-perl leaves it out')
+  await pveExec(['ln', '-sf', `${NAS}/gone.iso`, `${MIRROR}/template/iso/Gone__gone.iso`])
+  try {
+    // a link whose target isn't reachable on this node, so it can be seen, renamed or removed
+    const isos = await content('iso')
+    expect(isos).toContainEqual(
+      expect.objectContaining({ size: 0, unavailable: 1, volid: `${STORAGE}:iso/Gone__gone.iso` }),
+    )
+    expect(isos.find((v) => v.volid === `${STORAGE}:iso/${ISO}`)?.unavailable).toBeUndefined()
+    // removing it removes the link
+    const gone = contentPath(`${STORAGE}:iso/Gone__gone.iso`)
+    await pve.delete(gone + '?delay=5')
+    expect((await pveExec(['test', '-L', `${MIRROR}/template/iso/Gone__gone.iso`])).code).not.toBe(0)
   } finally {
     await pveExec(['rm', '-f', `${MIRROR}/template/iso/Gone__gone.iso`])
   }
@@ -337,6 +366,271 @@ test.describe('web UI: the search field above the ISO and floppy selectors', () 
   })
 })
 
+// Step 3: PUT .../content/{volume} with `rename`, POST .../storage/{storage}/link-volume, the
+// permissions they need, and the refusal on a storage whose links a description file keeps.
+const LINK_USER = 'e2e-mirror-link@pve'
+const AUDIT_USER = 'e2e-mirror-audit@pve'
+const USER_PASSWORD = 'e2e-user-password'
+const LINK_PATH = `/nodes/${NODE}/storage/${STORAGE}/link-volume`
+
+function contentPath(volid: string, storage = STORAGE): string {
+  return `/nodes/${NODE}/storage/${storage}/content/${volid}`
+}
+
+async function readlink(path: string): Promise<string> {
+  const { code, output } = await pveExec(['readlink', path])
+  expect(code, output).toBe(0)
+  return output.trim()
+}
+
+test.describe('API: rename and link', () => {
+  test.beforeEach(() => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published libpve-storage-perl has the API
+    test.skip(!mediaApi, 'the installed libpve-storage-perl has no rename/link API')
+  })
+
+  test.afterAll(async () => {
+    await pveExec([
+      'sh',
+      '-c',
+      `pveum user delete ${LINK_USER}; pveum user delete ${AUDIT_USER}
+pveum role delete E2EMirrorAllocate; pveum role delete E2EMirrorAudit; rm -f ${MIRROR}/wsh-mirror.yaml`,
+    ])
+  })
+
+  test('rename: a link is renamed in place, its target stays, the volume ID changes', async () => {
+    const volid = `${STORAGE}:iso/Solaris__7__sol-7-sparc.iso`
+    const renamed = `${STORAGE}:iso/Sun__Solaris_7__sol-7-sparc.iso`
+    await pve.put(contentPath(volid), { rename: 'Sun__Solaris_7__sol-7-sparc.iso' })
+    try {
+      expect(await readlink(`${MIRROR}/template/iso/Sun__Solaris_7__sol-7-sparc.iso`)).toBe(
+        `${NAS}/Solaris/7/sol-7-sparc.iso`,
+      )
+      const ids = (await content('iso')).map((v) => v.volid)
+      expect(ids).toContain(renamed)
+      expect(ids).not.toContain(volid)
+      expect((await pveExec(['test', '-f', `${NAS}/Solaris/7/sol-7-sparc.iso`])).code).toBe(0)
+    } finally {
+      await pve.put(contentPath(renamed), { rename: 'Solaris__7__sol-7-sparc.iso' })
+    }
+  })
+
+  test('rename: a regular file and a floppy image', async () => {
+    await pve.put(contentPath(`${PLAIN}:iso/plain-b.iso`, PLAIN), { rename: 'Moved__plain-b.iso' })
+    expect((await pveExec(['test', '-f', `${PLAIN_DIR}/template/iso/Moved__plain-b.iso`])).code).toBe(0)
+    await pve.put(contentPath(`${PLAIN}:iso/Moved__plain-b.iso`, PLAIN), { rename: 'plain-b.iso' })
+    await pve.put(contentPath(`${STORAGE}:floppy/${FLOPPY}`), { rename: 'MS-DOS__disk1.img' })
+    expect(await content('floppy')).toContainEqual(
+      expect.objectContaining({ size: 1440 * 1024, volid: `${STORAGE}:floppy/MS-DOS__disk1.img` }),
+    )
+    await pve.put(contentPath(`${STORAGE}:floppy/MS-DOS__disk1.img`), { rename: FLOPPY })
+  })
+
+  test('rename: refuses a name that exists, a slash, another extension, and other attributes with it', async () => {
+    const path = contentPath(`${STORAGE}:iso/top-level.iso`)
+    expect((await pve.refused('PUT', path, { rename: ISO })).message).toContain('already exists')
+    expect((await pve.refused('PUT', path, { rename: 'Solaris/top.iso' })).message).toContain("without '/'")
+    expect((await pve.refused('PUT', path, { rename: 'top-level.vfd' })).message).toContain('end in .iso or .img')
+    expect((await pve.refused('PUT', path, { notes: 'x', rename: 'x.iso' })).message).toContain("can't be combined")
+    expect((await pveExec(['test', '-L', `${MIRROR}/template/iso/top-level.iso`])).code).toBe(0)
+  })
+
+  test('link: a volume of another storage, relative on one file system, listed with its size', async () => {
+    const volid = await pve.post<string>(LINK_PATH, {
+      filename: 'Linked__plain-b.iso',
+      'source-storage': PLAIN,
+      volume: 'iso/plain-b.iso',
+    })
+    try {
+      expect(volid).toBe(`${STORAGE}:iso/Linked__plain-b.iso`)
+      // both storages are on the container's file system: a relative link, as `wsh-lab mirror` makes
+      expect(await readlink(`${MIRROR}/template/iso/Linked__plain-b.iso`)).toBe(
+        '../../../e2e-plain/template/iso/plain-b.iso',
+      )
+      expect(await content('iso')).toContainEqual(expect.objectContaining({ size: 2 * 1024 * 1024, volid }))
+      // the source volume's full ID works too; a name that exists is refused
+      const again = await pve.refused('POST', LINK_PATH, {
+        filename: 'Linked__plain-b.iso',
+        'source-storage': PLAIN,
+        volume: `${PLAIN}:iso/plain-b.iso`,
+      })
+      expect(again.message).toContain('already exists')
+    } finally {
+      await pveExec(['rm', '-f', `${MIRROR}/template/iso/Linked__plain-b.iso`])
+    }
+  })
+
+  test('link: refuses a source in the same storage, a missing source and a bad name', async () => {
+    const same = await pve.refused('POST', LINK_PATH, {
+      filename: 'x.iso',
+      'source-storage': STORAGE,
+      volume: `iso/${ISO}`,
+    })
+    expect(same.message).toContain('rename the volume instead')
+    const missing = await pve.refused('POST', LINK_PATH, {
+      filename: 'x.iso',
+      'source-storage': PLAIN,
+      volume: 'iso/nope.iso',
+    })
+    expect(missing.message).toContain("isn't a file on this node")
+    const bad = await pve.refused('POST', LINK_PATH, {
+      filename: 'With space.iso',
+      'source-storage': PLAIN,
+      volume: 'iso/plain-b.iso',
+    })
+    expect(bad.message).toContain('only A-Z a-z 0-9')
+  })
+
+  test('permissions: rename needs Datastore.Allocate, link needs it on both storages', async ({ request }) => {
+    await sh(`pveum role add E2EMirrorAllocate --privs Datastore.Allocate,Datastore.Audit
+pveum role add E2EMirrorAudit --privs Datastore.Audit,Datastore.AllocateSpace
+pveum user add ${LINK_USER} --password ${USER_PASSWORD}
+pveum user add ${AUDIT_USER} --password ${USER_PASSWORD}
+pveum acl modify /storage/${STORAGE} --users ${LINK_USER} --roles E2EMirrorAllocate
+pveum acl modify /storage/${PLAIN} --users ${LINK_USER} --roles E2EMirrorAudit
+pveum acl modify /storage/${STORAGE} --users ${AUDIT_USER} --roles E2EMirrorAudit`)
+    const audit = await pveApi(request, { password: USER_PASSWORD, username: AUDIT_USER })
+    const byAudit = await audit.refused('PUT', contentPath(`${STORAGE}:iso/top-level.iso`), {
+      rename: 'Top__top-level.iso',
+    })
+    expect(byAudit.status).toBe(403)
+
+    const linker = await pveApi(request, { password: USER_PASSWORD, username: LINK_USER })
+    await linker.put(contentPath(`${STORAGE}:iso/top-level.iso`), { rename: 'Top__top-level.iso' })
+    await linker.put(contentPath(`${STORAGE}:iso/Top__top-level.iso`), { rename: 'top-level.iso' })
+    const link = { filename: 'Perm__plain-b.iso', 'source-storage': PLAIN, volume: 'iso/plain-b.iso' }
+    // Datastore.Audit on the source isn't enough: the link hands the volume to everyone who may use the mirror
+    expect((await linker.refused('POST', LINK_PATH, link)).status).toBe(403)
+    await sh(`pveum acl modify /storage/${PLAIN} --users ${LINK_USER} --roles E2EMirrorAllocate`)
+    expect(await linker.post<string>(LINK_PATH, link)).toBe(`${STORAGE}:iso/Perm__plain-b.iso`)
+    await pveExec(['rm', '-f', `${MIRROR}/template/iso/Perm__plain-b.iso`])
+  })
+
+  test('a storage with a description file: rename and link are refused, the status says why', async () => {
+    await sh(`printf 'version: 1\\nstorage: ${STORAGE}\\n' > ${MIRROR}/wsh-mirror.yaml`)
+    try {
+      const status = await pve.get<Record<string, unknown>>(`/nodes/${NODE}/storage/${STORAGE}/status`)
+      expect(status['mirror-described']).toBe(1)
+      const rename = await pve.refused('PUT', contentPath(`${STORAGE}:iso/top-level.iso`), { rename: 'x.iso' })
+      expect(rename.message).toContain('description file')
+      expect(rename.message).toContain('wsh-lab mirror apply')
+      const link = await pve.refused('POST', LINK_PATH, {
+        filename: 'x.iso',
+        'source-storage': PLAIN,
+        volume: 'iso/plain-b.iso',
+      })
+      expect(link.message).toContain('description file')
+    } finally {
+      await pveExec(['rm', '-f', `${MIRROR}/wsh-mirror.yaml`])
+    }
+    const status = await pve.get<Record<string, unknown>>(`/nodes/${NODE}/storage/${STORAGE}/status`)
+    expect(status['mirror-described']).toBeUndefined()
+  })
+})
+
+test.describe('web UI: rename and link', () => {
+  test.beforeEach(() => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published packages have step 3
+    test.skip(!mediaUi, 'the installed packages have no Rename / Add link in the ISO and floppy tabs')
+  })
+
+  test('Rename: folder and file name, the new volume ID, the VMs that use it', async ({ page }) => {
+    const volid = `${STORAGE}:iso/Solaris__7__sol-7-sparc.iso`
+    const vmid = await createVm({ ide2: `${volid},media=cdrom`, memory: 512, name: 'rename-user' })
+    await login(page)
+    const grid = await openContent(page, 'ISO Images')
+    await cell(grid, 'sol-7-sparc.iso').click()
+    await grid.getByRole('button', { name: 'Rename' }).click()
+    const win = page.locator('.x-window').filter({ hasText: 'Current volume' })
+    await expect(win.getByLabel('Folder')).toHaveValue('Solaris / 7')
+    await expect(win.getByLabel('File name')).toHaveValue('sol-7-sparc.iso')
+    await expect(win).toContainText(`Used by: ${vmid} (rename-user)`)
+    // an extension of another content type can't be submitted
+    await win.getByLabel('File name').fill('sol-7-sparc.vfd')
+    await expect(win).toContainText('The file name must end in .iso, .img')
+    await expect(win.getByRole('button', { name: 'Rename' })).toBeDisabled()
+    await win.getByLabel('File name').fill('sol-7-sparc.iso')
+    await win.getByLabel('Folder').fill('Sun / Solaris 7')
+    await expect(win).toContainText(`${STORAGE}:iso/Sun__Solaris_7__sol-7-sparc.iso`)
+    await win.getByRole('button', { name: 'Rename' }).click()
+    await expect(win).toBeHidden()
+    try {
+      await expect(groupHeader(grid, 'Sun / Solaris_7')).toBeVisible()
+      expect(await readlink(`${MIRROR}/template/iso/Sun__Solaris_7__sol-7-sparc.iso`)).toBe(
+        `${NAS}/Solaris/7/sol-7-sparc.iso`,
+      )
+      // the VM still names the old volume ID
+      expect(await vmConfFile(vmid)).toMatch(new RegExp(`^ide2: ${volid},media=cdrom`, 'm'))
+    } finally {
+      await pveExec([
+        'mv',
+        `${MIRROR}/template/iso/Sun__Solaris_7__sol-7-sparc.iso`,
+        `${MIRROR}/template/iso/Solaris__7__sol-7-sparc.iso`,
+      ])
+    }
+  })
+
+  test('Add link from storage: the search-field selector, then folder and name', async ({ page }) => {
+    await login(page)
+    const grid = await openContent(page, 'ISO Images')
+    await grid.getByRole('button', { name: 'Add link from storage' }).click()
+    const win = page.locator('.x-window').filter({ hasText: 'Add link from storage' })
+    await expect(win.getByLabel('Search')).toBeFocused()
+    // the storage the link goes into isn't offered as a source
+    const storages = page.locator('.x-layer.x-grid:visible .x-grid-cell-inner')
+    await expect(async () => {
+      if (!(await storages.first().isVisible())) await win.getByLabel('Storage').click()
+      await expect(storages.filter({ hasText: /^plainnames$/ })).toBeVisible({ timeout: 2_000 })
+    }).toPass({ timeout: 20_000 })
+    await expect(storages.filter({ hasText: /^local$/ })).toBeVisible()
+    await expect(storages.filter({ hasText: /^mirror$/ })).toBeHidden()
+    await storages.filter({ hasText: /^plainnames$/ }).click()
+    await expect(win.getByLabel('Storage')).toHaveValue(PLAIN)
+    await win.getByLabel('Search').fill('plain-b')
+    await expect(pickerRows(page)).toHaveCount(1)
+    await win.getByLabel('Search').press('Enter')
+    await expect(win.getByLabel('File name')).toHaveValue('plain-b.iso')
+    await win.getByLabel('Folder').fill('Linked')
+    await expect(win).toContainText(`${STORAGE}:iso/Linked__plain-b.iso`)
+    await win.getByRole('button', { name: 'Add link' }).click()
+    await expect(win).toBeHidden()
+    try {
+      await expect(groupHeader(grid, 'Linked')).toBeVisible()
+      expect(await readlink(`${MIRROR}/template/iso/Linked__plain-b.iso`)).toBe(
+        '../../../e2e-plain/template/iso/plain-b.iso',
+      )
+    } finally {
+      await pveExec(['rm', '-f', `${MIRROR}/template/iso/Linked__plain-b.iso`])
+    }
+  })
+
+  test('hidden on a storage with a description file; an unavailable link flagged, not offered', async ({ page }) => {
+    await sh(`printf 'version: 1\\n' > ${MIRROR}/wsh-mirror.yaml
+ln -sf ${NAS}/gone.iso ${MIRROR}/template/iso/Gone__gone.iso`)
+    // created before the login, so the web UI's resource list has it
+    const vmid = await createVm({ ide2: 'none,media=cdrom', memory: 512, name: 'unavailable-cd' })
+    try {
+      await login(page)
+      const grid = await openContent(page, 'ISO Images')
+      await expect(grid.locator('.x-grid-row', { hasText: 'gone.iso' })).toContainText('(unavailable on this node)')
+      await expect(grid.getByRole('button', { name: 'Upload' })).toBeVisible()
+      await expect(grid.getByRole('button', { name: 'Rename' })).toBeHidden()
+      await expect(grid.getByRole('button', { name: 'Add link from storage' })).toBeHidden()
+      // the selectors leave it out
+      await openHardware(page, vmid)
+      await page.getByText('CD/DVD Drive (ide2)').dblclick()
+      const win = page.locator('.x-window').filter({ hasText: 'Edit: CD/DVD Drive' })
+      await win.getByText('Use CD/DVD disc image file (iso)').click()
+      await pickCombo(page, win.getByLabel('Storage'), STORAGE)
+      await win.getByLabel('ISO image').click()
+      await expect(pickerRows(page).filter({ hasText: 'top-level.iso' })).toBeVisible()
+      await expect(pickerRows(page).filter({ hasText: 'gone.iso' })).toBeHidden()
+    } finally {
+      await pveExec(['rm', '-f', `${MIRROR}/wsh-mirror.yaml`, `${MIRROR}/template/iso/Gone__gone.iso`])
+    }
+  })
+})
+
 // Case 2: the ISOs and the mirror's links on one NFS export (from the nfs service, NFS-Ganesha in user
 // space), mounted by PVE as an NFS storage; links relative, so a second mount of the same export at
 // another path finds the files too. Without the nfs service, where the runner can't mount NFS, or where
@@ -509,6 +803,34 @@ systemctl start wsh-lab-mirror-${NFS}.service`)
     )
     await sh(`python3 ${MIRROR_PY} timer --storage ${NFS} --remove
 test ! -e /etc/systemd/system/wsh-lab-mirror-${NFS}.timer`)
+  })
+
+  test('step 3: no rename on the described export; its ISO linked into the local mirror', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published libpve-storage-perl has the API
+    test.skip(!mediaApi, 'the installed libpve-storage-perl has no rename/link API')
+    const refused = await pve.refused('PUT', contentPath(`${NFS}:iso/Solaris__2.6__sol26.iso`, NFS), {
+      rename: 'Other__sol26.iso',
+    })
+    expect(refused.message).toContain('description file')
+    // a volume of the NFS storage (itself a relative link on the export) linked into the local mirror
+    const volid = await pve.post<string>(LINK_PATH, {
+      filename: 'NFS__sol26.iso',
+      'source-storage': NFS,
+      volume: 'iso/Solaris__2.6__sol26.iso',
+    })
+    try {
+      expect(await content('iso')).toContainEqual(expect.objectContaining({ size: ISO_SIZE, volid }))
+      const text = await readlink(`${MIRROR}/template/iso/NFS__sol26.iso`)
+      // the NFS mount is another file system: absolute, the mount path PVE uses on every node; the
+      // fallback's dir storage is on the container's file system: relative
+      expect(text).toBe(
+        nfsNote
+          ? '../../../e2e-export/template/iso/Solaris__2.6__sol26.iso'
+          : `/mnt/pve/${NFS}/template/iso/Solaris__2.6__sol26.iso`,
+      )
+    } finally {
+      await pveExec(['rm', '-f', `${MIRROR}/template/iso/NFS__sol26.iso`])
+    }
   })
 })
 
