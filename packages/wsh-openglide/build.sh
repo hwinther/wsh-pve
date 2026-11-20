@@ -33,6 +33,28 @@ got=$(git -C "$work/qemu-xtra" rev-parse HEAD)
 tree="$work/wsh-openglide-$WSH_OPENGLIDE_VERSION"
 cp -r "$work/qemu-xtra/openglide" "$tree"
 cp "$work/qemu-xtra/LICENSE" "$tree/LICENSE"
+# The Glide 2 SDK headers still carry 3dfx's 1995 "unpublished proprietary" banner, although 3dfx
+# released the same headers with the Glide 2.x sources in 1999 under the 3DFX GLIDE General Public
+# License. Their banner is replaced with that release's notice (glide-gpl-notice.txt, from its
+# glide2x/sst1/glide/src/glide.h); the code and the rest of each comment stay as they are.
+for h in sdk2_3dfx.h sdk2_glide.h sdk2_glidesys.h sdk2_glideutl.h sdk2_sst1vid.h; do
+	f="$tree/$h"
+	if [ "$(head -n 1 "$f" | tr -d '\r')" != "/*" ] || ! grep -q 'UNPUBLISHED PROPRIETARY' "$f" ||
+		! grep -q 'rights reserved under the Copyright Laws of the United States\.' "$f"; then
+		echo "build.sh: $h doesn't start with the 1995 banner this script replaces" >&2
+		exit 1
+	fi
+	# The headers have CRLF line ends: the notice's lines get the same
+	awk -v notice="$PKG/glide-gpl-notice.txt" '
+		NR == 1 { eol = /\r$/ ? "\r" : ""; print; while ((getline line < notice) > 0) print line eol; skip = 1; next }
+		skip { if (/rights reserved under the Copyright Laws of the United States\./) skip = 0; next }
+		{ print }' "$f" > "$f.new"
+	mv "$f.new" "$f"
+done
+if grep -rl 'UNPUBLISHED PROPRIETARY' "$tree"; then
+	echo "build.sh: the files above still carry the 1995 banner" >&2
+	exit 1
+fi
 cp -r "$PKG/debian" "$PKG/tests" "$tree/"
 # debhelper runs an executable config file: only debian/rules is one
 find "$tree/debian" "$tree/tests" -type f -exec chmod 644 {} +

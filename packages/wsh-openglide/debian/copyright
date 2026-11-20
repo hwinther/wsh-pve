@@ -15,12 +15,15 @@ Comment: The source files say "OpenGLide is OpenSource under LGPL license" witho
  notice of their own too.
 
 Files: sdk2_3dfx.h sdk2_glide.h sdk2_glidesys.h sdk2_glideutl.h sdk2_sst1vid.h
-Copyright: 1995 3Dfx Interactive, Inc.
+Copyright: 1995, 1999 3Dfx Interactive, Inc.
 License: 3dfx-Glide-GPL
-Comment: The Glide 2 SDK headers (types and constants of the Glide API, compiled into the library).
- These copies keep the SDK's 1995 "unpublished proprietary" banner; 3Dfx Interactive released the
- Glide 2.x sources with these headers in 1999 under the 3DFX GLIDE Source Code General Public
- License below (the same headers in that release carry its notice).
+Comment: The Glide 2 SDK headers (types and constants of the Glide API, compiled into the library),
+ with OpenGLide's changes. 3Dfx Interactive released the Glide 2.x sources with these headers in
+ 1999 under the 3DFX GLIDE Source Code General Public License below (glide2x/sst1/glide/src/ and
+ glide2x/sst1/init/sst1vid.h, swlibs/fxmisc/3dfx.h in https://github.com/sezero/glide). The copies
+ in qemu-xtra still carry the SDK's 1995 "unpublished proprietary" banner; build.sh replaces it
+ with that release's notice (packages/wsh-openglide/glide-gpl-notice.txt) and leaves the code as
+ it is.
 
 Files: gsplash.cpp gbanner.cpp splash.dat banner.dat
 Copyright: 1999 3Dfx Interactive, Inc.
