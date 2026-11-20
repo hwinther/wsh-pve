@@ -49,9 +49,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # history for the Makefile's git log (the changelog entry of the 3dfx build)
+          # history for the Makefile's git log (the changelog entry of the 3dfx build). No ref: the
+          # commit that started the run; the build job compares it with its own checkout.
           fetch-depth: 0
-          ref: ${{ github.ref }}
 
       - name: Build qemu-system-x86_64 with qemu-3dfx
         continue-on-error: true
@@ -107,9 +107,21 @@ jobs:
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           fetch-depth: 0
-          # The tip of the branch when the job starts, not the commit that triggered the run: a
-          # build that waited in the queue must see the changelog commit of the build before it.
-          ref: ${{ github.ref }}
+
+      # The tip of the branch when the job starts, not the commit that triggered the run: a build that
+      # waited in the queue must see the changelog commit of the build before it. Done here rather
+      # than with checkout's ref: an expression there makes poutine treat this workflow_call workflow
+      # as checking out a fork's code (untrusted_checkout_exec); its callers run on push to main,
+      # schedule and workflow_dispatch only, on this repository's own branches.
+      - name: Move to the branch tip
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/*) ;;
+            *) echo "::error::build-deb.yml builds a branch, not $GITHUB_REF"; exit 1 ;;
+          esac
+          git fetch origin "+$GITHUB_REF:refs/remotes/origin/$GITHUB_REF_NAME"
+          git checkout -B "$GITHUB_REF_NAME" --track "origin/$GITHUB_REF_NAME"
+          git log -1 --format='Building %h: %s'
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
