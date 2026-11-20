@@ -9,8 +9,9 @@ a tone; tones shorter than 0.15 s are dropped. The test tones are pure (square w
 SB16 and the PC speaker, sines from the OPL2 and the Linux guest) and played one after the other, so
 zero crossings are enough and no FFT is needed.
 
-QEMU writes the RIFF and data sizes into the header only when the audiodev is closed: a QEMU that
-was killed leaves them 0. The reader takes everything after the data chunk's header as the data.
+QEMU 11.1's wav backend leaves the RIFF and data sizes in the header at 0, whether the guest powers
+off or QEMU gets `quit` or SIGTERM: the reader takes everything after the data chunk's header as the
+data, and reports the header's sizes against the file (`header` in the result).
 """
 import argparse
 import json
@@ -24,8 +25,10 @@ MIN_TONE_S = 0.15
 SAME_TONE = 0.03
 
 
-def read_wav(path):
-    """(rate, channels, mono samples as floats in -1..1). PCM 8, 16 or 32 bit."""
+def read_wav(path, header=None):
+    """(rate, channels, mono samples as floats in -1..1). PCM 8, 16 or 32 bit. A dict passed as
+    `header` gets the header's sizes and what the file holds (riff_size, data_size, data_bytes,
+    sizes_ok)."""
     with open(path, "rb") as f:
         d = f.read()
     if d[:4] != b"RIFF" or d[8:12] != b"WAVE":
@@ -37,9 +40,13 @@ def read_wav(path):
         if cid == b"fmt ":
             fmt = struct.unpack("<HHIIHH", d[body:body + 16])
         elif cid == b"data":
-            # an unclosed file has size 0 (or a size past the end): take the rest
+            # a header without sizes has 0 (or a size past the end): take the rest
             end = body + size if 0 < size <= len(d) - body else len(d)
             data = d[body:end]
+            if header is not None:
+                riff = struct.unpack("<I", d[4:8])[0]
+                header.update({"riff_size": riff, "data_size": size, "data_bytes": len(d) - body,
+                               "sizes_ok": riff == len(d) - 8 and size == len(d) - body})
             break
         pos = body + size + (size & 1)
     if fmt is None or data is None:
@@ -89,7 +96,8 @@ def window_freq(w, rate):
 
 
 def analyse(path):
-    rate, ch, s = read_wav(path)
+    header = {}
+    rate, ch, s = read_wav(path, header)
     wn = max(64, int(rate * WINDOW_S))
     windows = []
     for a in range(0, len(s) - wn + 1, wn):
@@ -120,7 +128,8 @@ def analyse(path):
                     "rms_dbfs": round(dbfs(math.sqrt(sum(r * r for r in tn["rms"]) / len(tn["rms"]))), 1)})
     loud = [w for w in windows if dbfs(w[1]) > LOUD_DBFS]
     return {"file": path, "rate": rate, "channels": ch, "seconds": round(len(s) / rate, 3) if rate else 0,
-            "rms_dbfs": round(dbfs(total_rms), 1), "loud_s": round(len(loud) * wn / rate, 3), "tones": out}
+            "rms_dbfs": round(dbfs(total_rms), 1), "loud_s": round(len(loud) * wn / rate, 3), "tones": out,
+            "header": header}
 
 
 def check(result, expect=(), absent=(), tol=0.04):
