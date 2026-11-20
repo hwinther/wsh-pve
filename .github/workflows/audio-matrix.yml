@@ -41,7 +41,8 @@ jobs:
     permissions:
       contents: read
     env:
-      RUN_DIR: ${{ runner.temp }}/audio
+      # (the runner context isn't available at job level)
+      RUN_DIR: /tmp/audio-matrix
       NAME: audio-matrix-${{ github.run_id }}
     steps:
       - name: Checkout
