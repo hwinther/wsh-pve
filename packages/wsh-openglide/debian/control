@@ -1,0 +1,34 @@
+Source: wsh-openglide
+Section: libs
+Priority: optional
+Maintainer: WsHosting ENK <debian@wsh.no>
+Build-Depends: debhelper-compat (= 13),
+               libgl-dev,
+               libglu1-mesa-dev,
+               libtool,
+               libx11-dev,
+               libxxf86vm-dev,
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/kjliew/qemu-xtra
+Vcs-Browser: https://github.com/hwinther/wsh-pve/tree/main/packages/wsh-openglide
+Vcs-Git: https://github.com/hwinther/wsh-pve.git
+
+Package: wsh-openglide
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Description: Glide 2/3 to OpenGL wrapper for the qemu-3dfx Glide pass-through
+ OpenGLide from kjliew/qemu-xtra, the fork kept in step with qemu-3dfx: the
+ host side of the 3dfx Glide pass-through of qemu-system-x86_64-3dfx in the
+ wsh-pve pve-qemu-kvm package. A Windows 9x or DOS guest's Glide calls arrive
+ in QEMU, which loads libglide2x.so (or libglide3x.so for a Glide 3 guest) and
+ renders them with OpenGL into its SDL window.
+ .
+ The libraries are installed under their unversioned names in the multiarch
+ library directory, where QEMU's dlopen() looks for them. Without this package
+ a guest's Glide driver finds no Glide device; the Mesa/OpenGL pass-through
+ doesn't need it.
+ .
+ Built with the X11/GLX platform (configure --disable-sdl), as qemu-3dfx
+ expects.

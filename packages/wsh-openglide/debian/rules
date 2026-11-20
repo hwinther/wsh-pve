@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+# The build tree is assembled by packages/wsh-openglide/build.sh: qemu-xtra's openglide/ at the
+# pinned commit (upstream.env), its LICENSE, this debian/ and a generated debian/changelog.
+# dh_autoreconf regenerates the autotools files (upstream ships only configure.ac/Makefile.am).
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# --disable-sdl: the X11/GLX platform, which renders into the window qemu-3dfx hands it (with SDL
+# the library would sign as SDL2 and expect an SDL window instead). LIBS=-lX11: the GLX platform
+# calls Xlib (XOpenDisplay, XCreateWindow, ...) but upstream links only libGL, libGLU and libXxf86vm,
+# so the library loads only into a process that has libX11 already; with it, dlopen() resolves
+# everything on its own.
+override_dh_auto_configure:
+	dh_auto_configure -- --disable-sdl --disable-static LIBS=-lX11
+
+# Into debian/tmp, so that debian/wsh-openglide.install picks the libraries (and debian/not-installed
+# names what is left out) even with a single binary package
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp

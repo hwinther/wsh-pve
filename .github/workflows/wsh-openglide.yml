@@ -1,0 +1,208 @@
+name: wsh-openglide package
+
+# The optional wsh-openglide package (packages/wsh-openglide): OpenGLide from kjliew/qemu-xtra, the
+# libglide2x.so/libglide3x.so that qemu-3dfx's Glide pass-through in pve-qemu-kvm dlopen()s. Built
+# from the pinned upstream commit (packages/wsh-openglide/upstream.env), so it needs no changelog
+# commit: its version comes from git (packages/wsh-openglide/version.sh, 0.<N>+git<date>.<sha7>),
+# and a commit that leaves the package alone builds the same version.
+#
+# Pull requests: build, lintian, and the test in a clean Debian 13 (test.sh: install, a Glide 2 and a
+# Glide 3 scene rendered through the installed libraries under Xvfb with Mesa's llvmpipe and softpipe,
+# pixels checked, purge), then the whole pass-through from a Linux guest in the published
+# qemu-system-x86_64-3dfx (e2e/3dfx/test.sh). Nothing is published. main (or by hand on main): the same, then a GitHub
+# release wsh-openglide-<version> with the .deb, unless one exists already, and the Pages deploy
+# (repo-update.yml), which adds the newest wsh-openglide release's .deb to the apt repository.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/wsh-openglide/**"
+      - "e2e/3dfx/**"
+      - ".github/workflows/wsh-openglide.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/wsh-openglide/**"
+      - "e2e/3dfx/**"
+      - ".github/workflows/wsh-openglide.yml"
+
+permissions: {}
+
+# A newer push to a pull request replaces its running build; on main nothing is cancelled (a
+# release job that is cut short would leave the version half-published).
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # version.sh counts commits
+
+      - name: Version
+        id: version
+        run: |
+          set -euo pipefail
+          eval "$(packages/wsh-openglide/version.sh)"
+          echo "version=$WSH_OPENGLIDE_VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build (and lintian)
+        run: make wsh-openglide DOCKER=docker
+
+      - name: Install, render and purge it in a clean Debian 13
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/shots"
+          docker run --rm \
+            -v "$PWD/build/wsh-openglide:/deb:ro" -v "$PWD/packages/wsh-openglide/test.sh:/test.sh:ro" \
+            -v "$RUNNER_TEMP/shots:/shots" \
+            debian:trixie sh /test.sh "/deb/wsh-openglide_${VERSION}_amd64.deb" /deb/glide-render /shots
+
+      - name: Upload the rendered frames
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsh-openglide-frames
+          path: ${{ runner.temp }}/shots/*.ppm
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsh-openglide-deb
+          path: build/wsh-openglide/wsh-openglide_*_amd64.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  # The whole Glide pass-through without Windows (e2e/3dfx/test.sh): the published pve-qemu-kvm's
+  # qemu-system-x86_64-3dfx boots a Linux guest whose /init draws the test scene through qemu-3dfx's
+  # Linux guest wrapper into this build's wsh-openglide, reads it back and checks it, and the VM's SDL
+  # window on Xvfb is checked too. Skipped (exit 77) when the published package has no 3dfx binary.
+  passthrough:
+    name: QEMU pass-through (Linux guest)
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The qemu-3dfx submodule (the guest wrapper's source)
+        id: qemu3dfx
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 submodules/qemu-3dfx
+          echo "rev=$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD)" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Download the package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wsh-openglide-deb
+          path: ${{ runner.temp }}/deb
+
+      - name: Boot the guest and check the frames
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          QEMU3DFX_REV: ${{ steps.qemu3dfx.outputs.rev }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/passthrough"
+          rc=0
+          docker run --rm -e QEMU3DFX_REV \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/deb:/deb:ro" -v "$RUNNER_TEMP/passthrough:/out" \
+            debian:trixie sh /src/e2e/3dfx/test.sh "/deb/wsh-openglide_${VERSION}_amd64.deb" /out || rc=$?
+          if [ "$rc" = 77 ]; then
+            echo "::notice title=3dfx pass-through not tested::the published pve-qemu-kvm has no qemu-system-x86_64-3dfx"
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Upload the logs and the window
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wsh-openglide-passthrough
+          path: ${{ runner.temp }}/passthrough
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    name: Release
+    # Not gated on the pass-through job: that one also tests the published pve-qemu-kvm, whose
+    # problems shouldn't hold back this package
+    needs: [build]
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One publisher at a time: two pushes close together must not both create the same release.
+    concurrency:
+      group: wsh-openglide-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write # gh release create (GITHUB_TOKEN)
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wsh-openglide-deb
+          path: ${{ runner.temp }}/deb
+
+      - name: Create the release (once per version)
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The tag as build-deb.yml forms it (the first + as -), and as generate-docs-packages.js expects
+          tag="wsh-openglide-${VERSION/+/-}"
+          deb="$RUNNER_TEMP/deb/wsh-openglide_${VERSION}_amd64.deb"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::notice::$tag exists already: wsh-openglide $VERSION is published, nothing to do"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "The optional wsh-openglide package (OpenGLide, the host Glide library of the qemu-3dfx" \
+            "pass-through), version $VERSION, built from $COMMIT. It reaches the apt repository with the next" \
+            "Pages deploy." "" \
+            "sha256: \`$(sha256sum "$deb" | cut -d ' ' -f 1)\`" > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" --target "$COMMIT" --title "wsh-openglide v$VERSION" --latest=false \
+            --notes-file "$RUNNER_TEMP/notes.md" "$deb"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+  update-pages:
+    name: Apt repository and Pages
+    needs: [publish]
+    if: ${{ needs.publish.outputs.published == 'true' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/repo-update.yml
+    secrets:
+      GPG_KEY: ${{ secrets.GPG_KEY }}
+      GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}

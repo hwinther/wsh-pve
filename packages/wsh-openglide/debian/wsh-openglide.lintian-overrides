@@ -1,0 +1,8 @@
+# qemu-3dfx loads the libraries with dlopen("libglide2x.so") / dlopen("libglide3x.so"): the
+# unversioned names are the runtime interface here, not development links, and nothing links
+# against them at build time (there is no -dev package).
+wsh-openglide: link-to-shared-library-in-wrong-package usr/lib/*/libglide2x.so.0.0.0 [usr/lib/*/libglide2x.so]
+wsh-openglide: link-to-shared-library-in-wrong-package usr/lib/*/libglide3x.so.0.0.0 [usr/lib/*/libglide3x.so]
+# One package for both libraries (built from the same sources), named after the project rather than
+# libglide2x0 + libglide3x0: QEMU needs both, and no program links against either.
+wsh-openglide: package-name-doesnt-match-sonames libglide2x0 libglide3x0

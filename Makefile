@@ -461,6 +461,21 @@ wsh-lab:
 		-e WSH_LAB_VERSION -e WSH_LAB_COMMIT -e WSH_LAB_EPOCH \
 		wsh-lab-build /src/packages/wsh-lab/build.sh /out
 
+# The optional wsh-openglide package (packages/wsh-openglide): OpenGLide from kjliew/qemu-xtra at the
+# pinned commit (packages/wsh-openglide/upstream.env), the libglide2x.so/libglide3x.so that
+# qemu-3dfx's Glide pass-through dlopen()s, built in a plain Debian 13 image into build/wsh-openglide/
+# with lintian at the end. Its version comes from git (packages/wsh-openglide/version.sh), so it
+# needs the full history and no changelog. packages/wsh-openglide/test.sh tests the result.
+.PHONY: wsh-openglide
+wsh-openglide:
+	$(Q)eval "$$(packages/wsh-openglide/version.sh | sed 's/^/export /')"; \
+	$(ECHO) "INFO: building wsh-openglide $$WSH_OPENGLIDE_VERSION"; \
+	$(DOCKER) build -f packages/wsh-openglide/build.Dockerfile -t wsh-openglide-build packages/wsh-openglide && \
+	mkdir -p build/wsh-openglide && \
+	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-openglide:/out" \
+		-e WSH_OPENGLIDE_VERSION -e WSH_OPENGLIDE_COMMIT -e WSH_OPENGLIDE_EPOCH \
+		wsh-openglide-build /src/packages/wsh-openglide/build.sh /out
+
 .PHONY: repo-update
 repo-update:
 	$(Q)if [ $$(id -u) -eq 0 ]; then \
@@ -517,6 +532,7 @@ help:
 	@echo "  update-patches:          Update patch files from submodule changes"
 	@echo "  repo-update:             Update local Debian repository with new packages"
 	@echo "  wsh-lab:                 Build the optional wsh-lab package (the sparc lab) into build/wsh-lab"
+	@echo "  wsh-openglide:           Build the optional wsh-openglide package (Glide host libraries for 3dfx) into build/wsh-openglide"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERBOSE:                 Set to 1 or 2 to enable verbose output"

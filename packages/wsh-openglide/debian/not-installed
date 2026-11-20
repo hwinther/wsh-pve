@@ -1,0 +1,5 @@
+# The Glide SDK headers and libtool archives: nothing builds against the package, QEMU dlopen()s it
+usr/include/glide.h
+usr/include/openglide/*
+usr/lib/${DEB_HOST_MULTIARCH}/libglide2x.la
+usr/lib/${DEB_HOST_MULTIARCH}/libglide3x.la
