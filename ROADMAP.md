@@ -290,6 +290,17 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   audio; Solaris 10 has only USB audio), the CS4231 in an SBus slot of the SS-10/SS-20 as the MiSTer
   SS-20 core does (an FCode PROM and an OpenBIOS node), CS4231 capture, cg14 without SX (an old
   MIT-licensed model exists for QEMU 0.14; OpenBIOS has no cg14 driver), DBRI and SX last.
+- **Patch coverage (idea).** Measure how much of the code we own the tests run, not upstream's:
+  `submodules/*.patch` gives our lines (the `+` side of each hunk matches the patched source the
+  build uses), and a small script intersects them with lcov from each layer into "X of Y own lines
+  run", per patch and, on a PR, for the hunks it changes. In order: (1) the web UI, with V8 coverage
+  from the existing Playwright run through monocart (`pvemanagerlib.js` is a concatenation, not
+  minified, so ranges map back to `www/manager6` files from the Makefile order); (2) the Perl side
+  with `Devel::Cover` on the cfg2cmd and unit tests (cheap), and maybe under e2e with
+  `PERL5OPT=-MDevel::Cover` on pvedaemon/pveproxy (slow, noisy); (3) a gcov build of pve-qemu for
+  the qtests and part of the lab matrix, as a manual or weekly report (which wsh patches no test
+  runs). OpenBIOS has no practical coverage. A report as an artifact or PR comment, never a
+  required check: coverage shows code ran, not that anything was asserted.
 - **Recordings from the weekly run** into the `media` release (`publish_media`, off by default).
 - **More than one CPU under the SS-20 Sun PROM.** OBP 2.25 doesn't read the CPU count from QEMU; it
   expects every CPU module to run from reset, find its MBus module ID in the MSI's MID register and
