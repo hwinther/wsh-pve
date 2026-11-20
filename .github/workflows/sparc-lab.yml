@@ -4,7 +4,7 @@ name: sparc lab
 # cases from e2e/sparc/matrix.py: installed Solaris disks and install CDs, each case on a fresh copy.
 #
 # Runs on a self-hosted runner that has the media, which a public repo must not hand to pull requests:
-# manual and weekly runs only, never pull_request or push. The runner needs Docker and three host
+# manual, weekly and monthly runs only, never pull_request or push. The runner needs Docker and three host
 # directories (inputs below; the schedule uses the defaults): the install CDs and the installed
 # disk images, both mounted read only (the install matrix writes its stored disks into the latter),
 # and a directory for run output; for benchdisk and smp also the bench
@@ -51,28 +51,61 @@ on:
       reinstall:
         description: "install: targets to install again instead of boot-testing their stored disks (all, or names separated by commas; empty: install only the missing ones). Sets the job limit to 720 min"
         default: ""
+  # Schedules have no inputs: the matrix job maps each cron string (exactly as written here) to
+  # MATRIX and REINSTALL, so a changed string has to change there too.
   schedule:
     - cron: "17 3 * * 0"
     - cron: "47 4 * * 0" # the pve matrix
     - cron: "17 7 * * 0" # the install matrix: boot-tests the stored disks, installs only missing ones
+    # The install matrix with reinstall=all (every target without matrix_skip installed again, about
+    # 6 h, 720-minute limit) on the first Saturday of the month: cron can't say "first Saturday" (a
+    # day of month and a day of week together match either), so this fires every Saturday and the
+    # `when` job lets only days 1-7 through. Done by 19:17 at the latest, 8 h before Sunday's runs.
+    - cron: "17 7 * * 6"
 
 permissions:
   contents: read
 
-concurrency:
-  group: "${{ github.workflow }}"
-  cancel-in-progress: false
-
 jobs:
+  # Whether this run goes ahead: false only for the Saturday schedule after the 7th of the month.
+  # On a GitHub-hosted runner, so the skipped Saturdays never touch the lab runner or its queue.
+  when:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      run: ${{ steps.when.outputs.run }}
+    steps:
+      - name: First Saturday?
+        id: when
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          day=$(date -u +%-d)
+          if [ "$SCHEDULE" = "17 7 * * 6" ] && [ "$day" -gt 7 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Saturday the ${day}th: the monthly reinstall runs on the first Saturday only." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   matrix:
+    needs: [when]
+    if: ${{ needs.when.outputs.run == 'true' }}
     runs-on: [self-hosted, Linux, X64, sparc-lab]
+    # One lab run at a time; a queued one waits (the lab runner is the only self-hosted runner, and
+    # this the only workflow that uses it). On the job, not the workflow, so the skipped Saturdays
+    # never enter the group: a group keeps one pending run and cancels the older pending one.
+    concurrency:
+      group: "${{ github.workflow }}"
+      cancel-in-progress: false
     # A reinstall may take hours (Tribblix ~4.3 h on its own); everything else fits in 240 minutes
-    timeout-minutes: ${{ inputs.reinstall != '' && inputs.matrix == 'install' && 720 || 240 }}
+    timeout-minutes: ${{ (github.event.schedule == '17 7 * * 6' || (inputs.reinstall != '' && inputs.matrix == 'install')) && 720 || 240 }}
     permissions:
       contents: read
     env:
-      REINSTALL: ${{ inputs.reinstall || '' }}
-      MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || (github.event.schedule == '17 7 * * 0' && 'install') || 'smoke' }}
+      REINSTALL: ${{ inputs.reinstall || (github.event.schedule == '17 7 * * 6' && 'all') || '' }}
+      MATRIX: ${{ inputs.matrix || (github.event.schedule == '47 4 * * 0' && 'pve') || (github.event.schedule == '17 7 * * 0' && 'install') || (github.event.schedule == '17 7 * * 6' && 'install') || 'smoke' }}
       ISO_DIR: ${{ inputs.iso_dir || '/mnt/os/iso' }}
       DISKS_DIR: ${{ inputs.disks_dir || '/mnt/os/disks' }}
       RUN_DIR: ${{ inputs.runs_dir || '/mnt/runs' }}/gh-${{ github.run_id }}-${{ github.run_attempt }}

@@ -717,18 +717,22 @@ they stay out of the logs and recordings.
 ## How it is tested
 
 The sparc lab's `pve` matrix runs `lab.py install sol26-ss5 --check` every week in a PVE node in a
-container with the published packages, and the `install` matrix (by hand from the `sparc lab`
-workflow) goes through every automated target: a target whose stored disk is missing is installed
-with `--check --export`, the others are boot-tested from their stored disks, and the workflow's
-`reinstall` input installs named targets (or `all`) again. Tribblix and the Debian targets are
+container with the published packages, and the `install` matrix goes through every automated
+target: a target whose stored disk is missing is installed with `--check --export`, the others are
+boot-tested from their stored disks, and the workflow's `reinstall` input installs named targets
+(or `all`) again. The `sparc lab` workflow runs it weekly (Sunday 07:17 UTC, boot tests plus the
+missing installs) and monthly with `reinstall=all` (first Saturday, 07:17 UTC, with the 720-minute
+job limit; about 6 h), so every stored disk is rebuilt from its install CD once a month, and by hand
+from the workflow. Tribblix and the Debian targets are
 installed only when `reinstall` names them. Installing `sol10-sun4u` needs the Solaris 10 DVD in
 the lab's media directory. `e2e/sparc/tests/test_targets.py` checks the catalogue: every
 target's profile against qemu-server's profile tables, unique names, the disk label. Details:
 [`e2e/sparc/README.md`](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#install-targets).
-On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD/sparc64
-CD from cdn.netbsd.org (checked against its sha256) and runs the `netbsd111-sparc64` target's
-install, first boot and check with the lab's own QEMU on a GitHub-hosted runner, without PVE (about
-10 minutes on the lab host).
+On pull requests that change the lab, the `sparc lab NetBSD` workflow downloads the NetBSD CDs
+(11.1 from cdn.netbsd.org, 9.3 from archive.netbsd.org, each checked against its pinned sha256 and
+the release's sha512) and runs the install, first boot and check of `netbsd111-sparc64`,
+`netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20` with the lab's own QEMU on
+GitHub-hosted runners, one job per target, without PVE (6 to 18 minutes each on the lab host).
 The `wsh-lab` package is built and tested on every pull request that changes the lab: lintian, then
 in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
 catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must

@@ -618,7 +618,8 @@ elsewhere: apt fails to connect). Without a cache the matrix skips the Debian ta
 disk) and changes nothing on `vmbr0`. The `sparc lab` workflow's `install` choice mounts `disks_dir` writable and has a
 `reinstall` input (empty by default: boot-test what is stored, install what is missing); any
 `reinstall` raises the job's limit from 240 to 720 minutes, so `reinstall=tribblix-m34-sun4u` makes
-a new Tribblix disk on the runner. By hand on the node (or in the PVE test container):
+a new Tribblix disk on the runner. The workflow runs `install` weekly (Sunday 07:17 UTC) and with
+`reinstall=all` on the first Saturday of the month (07:17 UTC, 720 minutes). By hand on the node (or in the PVE test container):
 
 ```sh
 wsh-lab install tribblix-m34-sun4u --vmid 9401 --check --export /mnt/os/disks   # ~4.3 h, once
@@ -1166,13 +1167,16 @@ memory, SS-10, and the sets other than these two.
 
 **In CI.** The NetBSD CDs are freely redistributable, so `sparc lab NetBSD`
 (`.github/workflows/sparc-lab-netbsd.yml`, on pull requests that change `e2e/sparc` and by hand)
-runs `tests/test_netbsd.py` in the lab image on a GitHub-hosted runner: it downloads
-`NetBSD-11.1-sparc64.iso` from `cdn.netbsd.org` (the URL in `targets.MEDIA`), checks its size and
-sha256, and runs the target's three scenarios with the lab's own QEMU (TCG, sun4u): install, first
-boot (password, marker, host name, a static address and router), check (logs in with the password,
-requires the marker and `inet 10.0.2.15/24`). On the lab host that took 623 s; how fast a runner
-is under TCG wasn't measured, so the job's limit is 60 min (FreeDOS's job, the same kind of run, has
-45). Not run on GitHub yet.
+runs `tests/test_netbsd.py` in the lab image on GitHub-hosted runners, one job per target:
+`netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20`
+(`NETBSD_TARGET`; without it the test runs `netbsd111-sparc64`). Each job downloads its CD from the
+URL in `targets.MEDIA` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for 9.3; cached between
+runs), checks its size, sha256 and sha512 (the release's `images/SHA512`), and runs the target's
+three scenarios with the lab's own QEMU (TCG; sun4u, or the SS-5/SS-20 with `_sparc32`'s machine):
+install, first boot (password, marker, host name, a static address and router), check (logs in
+with the password, requires the marker and `inet 10.0.2.15/24`). On the lab host the 11.1 sun4u
+run took 623 s; the jobs' limits are 60 min (11.1 sun4u), 90 min (9.3 sun4u, whose sysinst is
+twice as slow) and 45 min (9.3 on the SS-5 and SS-20).
 
 ### The OpenBSD 8.0 install target
 

@@ -32,13 +32,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Whether this PR touches the image or the suite. Always true on push and dispatch.
+  # Whether this PR touches the image or the suite (changed), and qemu-server or the boot test
+  # (boot). Both always true on push and dispatch.
   changes:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
       changed: ${{ steps.changed.outputs.changed }}
+      boot: ${{ steps.boot.outputs.changed }}
     steps:
       - name: Changed files
         id: changed
@@ -48,6 +50,16 @@ jobs:
             ^e2e/
             ^submodules/[^/]+\.patch$
             ^scripts/check-qemu-extras\.sh$
+            ^\.github/workflows/e2e\.yml$
+
+      - name: Changed files (boot)
+        id: boot
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^submodules/qemu-server\.patch$
+            ^e2e/pve/boot-test\.sh$
+            ^e2e/pve/Dockerfile$
             ^\.github/workflows/e2e\.yml$
 
   build:
@@ -100,6 +112,123 @@ jobs:
       playwright_env: |
         PVE_URL=https://localhost:8006
 
+  # A real boot through PVE with the pull request's qemu-server (e2e/README.md, "Booting a guest
+  # through PVE"): the suite only checks that QEMU accepts the command, and the start-up bugs fixed
+  # in #248 passed that. Builds qemu-server from submodules/qemu-server.patch, installs it over the
+  # published packages (PACKAGES=mixed) and boots an Alpine virt CD on x86_64 and aarch64 with
+  # qm create/qm start until the serial console shows the login prompt. Pull requests and dispatch
+  # only: on main, build-deb.yml builds and publishes the package itself.
+  boot:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.boot == 'true' && github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # Test media, pinned (dl-cdn.alpinelinux.org, v3.24 latest-releases.yaml)
+      ALPINE_X86_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.4-x86_64.iso
+      ALPINE_X86_SHA256: 157d353f8e54252cad2d9812a0d56bb7fa2231fc154a110e1d180d7480ef8b4f
+      ALPINE_ARM_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-virt-3.24.4-aarch64.iso
+      ALPINE_ARM_SHA256: cf88d8ba67389d20d9ed307366b52e487c15d7d3ee3233b62b95f709daa1d430
+      CONTAINER: wsh-pve-boot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache the ISOs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/iso
+          key: alpine-virt-iso-${{ env.ALPINE_X86_SHA256 }}-${{ env.ALPINE_ARM_SHA256 }}
+
+      - name: Download and check the ISOs
+        run: |
+          dir="$RUNNER_TEMP/iso"
+          mkdir -p "$dir"
+          get() {
+            if [ ! -f "$dir/$1" ] || ! echo "$3  $dir/$1" | sha256sum -c --quiet; then
+              curl -fsSL --retry 3 -o "$dir/$1" "$2"
+            fi
+            echo "$3  $dir/$1" | sha256sum -c
+          }
+          get alpine-virt-x86_64.iso "$ALPINE_X86_URL" "$ALPINE_X86_SHA256"
+          get alpine-virt-aarch64.iso "$ALPINE_ARM_URL" "$ALPINE_ARM_SHA256"
+
+      - name: Build qemu-server with the pull request's patch
+        run: |
+          # https instead of ssh: no ssh keys here (as in build-deb.yml)
+          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
+          git submodule update --init submodules/qemu-server
+          git checkout -- .gitmodules
+          sudo make qemu-server VERBOSE=2 DOCKER=docker DOCKER_ARG='--user root'
+          cp build/repo/qemu-server_*.deb e2e/pve/debs/
+          ls -l e2e/pve/debs/
+
+      - name: Build the PVE image with it
+        run: |
+          DOCKER_BUILDKIT=1 docker build -f e2e/pve/Dockerfile --build-arg PACKAGES=mixed -t wsh-pve-e2e:boot .
+          docker run --rm --entrypoint dpkg-query wsh-pve-e2e:boot -W qemu-server pve-qemu-kvm pve-edk2-firmware-aarch64 \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+          want=$(dpkg-deb -f e2e/pve/debs/qemu-server_*.deb Version)
+          have=$(docker run --rm --entrypoint dpkg-query wsh-pve-e2e:boot -W -f '${Version}' qemu-server)
+          if [ "$have" != "$want" ]; then
+            echo "::error::the image has qemu-server $have, not the one just built ($want)"
+            exit 1
+          fi
+
+      - name: Start the PVE node
+        run: |
+          # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
+          docker run -d --name "$CONTAINER" --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
+            -v "$RUNNER_TEMP/iso:/var/lib/vz/template/iso:ro" wsh-pve-e2e:boot
+          for _ in $(seq 1 60); do
+            if docker exec "$CONTAINER" test -f /run/pve-e2e-ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the PVE node did not come up"
+          docker logs "$CONTAINER" 2>&1 | tail -n 50
+          exit 1
+
+      - name: Boot Alpine on x86_64
+        run: |
+          set -o pipefail
+          docker exec -i "$CONTAINER" sh -s -- x86_64 9001 local:iso/alpine-virt-x86_64.iso 300 \
+            < e2e/pve/boot-test.sh | tee "$RUNNER_TEMP/boot-x86_64.txt"
+          { echo '### x86_64'; grep -E '^(seen|x86_64):' "$RUNNER_TEMP/boot-x86_64.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Boot Alpine on aarch64
+        run: |
+          set -o pipefail
+          if ! docker exec "$CONTAINER" sh -c 'test -x /usr/bin/qemu-system-aarch64 && test -f /usr/share/pve-edk2-firmware/AAVMF_CODE.fd'; then
+            echo "::notice::no qemu-system-aarch64 or AAVMF firmware in the image: aarch64 boot skipped"
+            echo '### aarch64: skipped (no qemu-system-aarch64 or AAVMF)' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker exec -i "$CONTAINER" sh -s -- aarch64 9002 local:iso/alpine-virt-aarch64.iso 600 \
+            < e2e/pve/boot-test.sh | tee "$RUNNER_TEMP/boot-aarch64.txt"
+          { echo '### aarch64'; grep -E '^(seen|aarch64):' "$RUNNER_TEMP/boot-aarch64.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the serial logs
+        if: ${{ failure() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/boot-logs"
+          docker cp "$CONTAINER:/tmp/." "$RUNNER_TEMP/boot-logs/" || true
+          docker exec "$CONTAINER" journalctl --no-pager -n 300 > "$RUNNER_TEMP/boot-logs/journal.txt" 2>&1 || true
+
+      - name: Upload the serial logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boot-logs
+          path: ${{ runner.temp }}/boot-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Pushes to main publish the e2e results as the signed OCI artifact
   # ghcr.io/hwinther/wsh-pve/quality:main and the quality-summary workflow artifact: the devops
   # report reads it, and pages-after-e2e.yml turns it into the e2e badge on debian.wshosting.no.
@@ -117,12 +246,12 @@ jobs:
         main
 
   # The required check (devops rulesets/e2e-required.json). Runs on every PR: passes when the e2e
-  # jobs passed or were skipped because nothing relevant changed, fails when one failed or was
-  # cancelled.
+  # and boot jobs passed or were skipped because nothing relevant changed, fails when one failed or
+  # was cancelled.
   e2e-required:
     name: e2e-required
     if: ${{ always() }}
-    needs: [changes, build, e2e]
+    needs: [changes, build, e2e, boot]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -132,6 +261,6 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           if echo "$RESULTS" | jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' > /dev/null; then
-            echo "::error::A job on the way to the e2e run failed or was cancelled."
+            echo "::error::A job on the way to the e2e run, or the boot test, failed or was cancelled."
             exit 1
           fi

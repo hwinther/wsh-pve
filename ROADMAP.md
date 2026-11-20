@@ -13,7 +13,7 @@ come after that, not before.
 | Area | State | PRs |
 | --- | --- | --- |
 | Floppy drives (storage type, qemu-server, UI) | published | #183, #231 |
-| sparc lab in CI: guests booted and installed on a self-hosted runner, weekly and on demand | running | #230 |
+| sparc lab in CI: guests booted and installed on a self-hosted runner, weekly (plus a monthly `reinstall=all`) and on demand | running | #230 |
 | cg3 at any size (from LEMU), FCode ROM built in `openbios/` | published | #232, #236 |
 | Idle: SunOS 4.1.4 (from LEMU), Solaris 2.6 via `pmc` (16-byte APC), Solaris 2.5.1–9 on any sun4m machine | published | #233, #241 |
 | SS-10/SS-20, SMP and RAM measured; benchmark scenario | merged | #235 |
@@ -282,8 +282,10 @@ Work that exists but is not merged. If this list is stale, check the open pull r
   node's `vmbr0` (10.0.2.2:3142, socat, no forwarding or NAT) and nothing else; without it they are
   skipped.
   The `install` choice runs weekly (Sunday 07:17 UTC, after `smoke` and `pve`): boot tests of the
-  stored disks, plus installs of targets that have none yet. Still to do: maybe a monthly
-  `reinstall=all` (about 6 h, needs the 720-minute limit on a schedule), and automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0
+  stored disks, plus installs of targets that have none yet. Done: the monthly `reinstall=all`
+  (first Saturday of the month, 07:17 UTC, 720-minute limit; about 6 h): every target without
+  `matrix_skip` installed again and its stored disk replaced when the check passes. Still to do:
+  automate more targets (Solaris 2.2-10, SunOS 4.1.3_U1B and 4.1.4, NetBSD 11.1 on sun4u, SS-5 and SS-20, OpenBSD 8.0
   on sun4u, Tribblix, and Red Hat Linux 6.2 and Debian 4.0 on SS-5 and SS-20 are automated). Today the weekly `pve` matrix reinstalls Solaris 2.6 on
   SS-5.
 - **A boot through PVE on every PR that changes `qemu-server.patch`.** Alpine on aarch64 and x86

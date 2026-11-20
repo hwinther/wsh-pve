@@ -1,10 +1,12 @@
 name: sparc lab NetBSD
 
-# NetBSD 11.1/sparc64 installed from its official CD under the published pve-qemu-kvm (TCG, sun4u),
-# with the scenarios of the `netbsd111-sparc64` install target: sysinst on the serial console, the
-# first boot (root password, marker, host name, static address) and a check boot that logs in with
-# the password (e2e/sparc/tests/test_netbsd.py). The CD is downloaded from cdn.netbsd.org by the
-# test and checked against its pinned size and sha256 (targets.py); nothing from the lab host is used.
+# NetBSD 11.1 and 9.3 installed from their official CDs under the published pve-qemu-kvm (TCG), one
+# job per install target: 11.1 and 9.3 on sun4u, 9.3 on an SS-5 and an SS-20. Each runs the target's
+# scenarios with the lab's own QEMU: sysinst on the serial console, the first boot (root password,
+# marker, host name, static address) and a check boot that logs in with the password
+# (e2e/sparc/tests/test_netbsd.py, NETBSD_TARGET). The CDs come from cdn.netbsd.org (11.1) and
+# archive.netbsd.org (9.3), cached, and the test checks each against its pinned size, sha256 and
+# sha512 (targets.py); nothing from the lab host is used.
 
 on:
   workflow_dispatch:
@@ -22,10 +24,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  netbsd:
-    name: NetBSD/sparc64 install
+  unit:
+    name: Unit tests (install catalogue, stored disks)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -34,24 +36,57 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Unit tests (install catalogue, stored disks)
+      - name: Unit tests
         working-directory: e2e/sparc
         run: python3 -m unittest -v tests/test_targets.py tests/test_stored_disks.py
+
+  netbsd:
+    name: NetBSD install (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # On the lab host: 11.1 sun4u 10-11 min, 9.3 sun4u 18 min (its sysinst is slower), 9.3 on the
+    # SS-5 and SS-20 6-7 min, plus the image build here; a runner under TCG is slower
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: netbsd111-sparc64, iso: NetBSD-11.1-sparc64.iso, timeout: 60 }
+          - { target: netbsd93-sparc64, iso: NetBSD-9.3-sparc64.iso, timeout: 90 }
+          - { target: netbsd93-sparc, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+          - { target: netbsd93-sparc-ss20, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The test checks the cached CD (size, sha256, sha512) and downloads it again when it isn't the
+      # pinned one, so a stale cache costs a download, never a wrong medium
+      - name: Cache the CD
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
 
       - name: Build the lab image
         run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
 
-      - name: Install NetBSD/sparc64 from its CD in the lab
+      - name: Install ${{ matrix.target }} from its CD in the lab
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          mkdir -p "$RUNNER_TEMP/netbsd"
-          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -e NETBSD_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
+          mkdir -p "$RUNNER_TEMP/netbsd" "$RUNNER_TEMP/netbsd-cd"
+          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -v "$RUNNER_TEMP/netbsd-cd:/cache" \
+            -e NETBSD_OUT=/out -e NETBSD_CACHE=/cache -e NETBSD_TARGET="$TARGET" -e WSH_LAB_GUEST_TESTS=1 \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_netbsd.py
 
       - name: Keep the evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: netbsd-evidence
+          name: netbsd-evidence-${{ matrix.target }}
           path: |
             ${{ runner.temp }}/netbsd
             !${{ runner.temp }}/netbsd/**/*.raw
