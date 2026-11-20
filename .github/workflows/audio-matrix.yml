@@ -1,0 +1,96 @@
+name: x86 audio matrix
+
+# Which sound devices of the published pve-qemu-kvm make sound in which guest, and whether the
+# published qemu-server's `audio0:` wires them up (e2e/audio/audio_matrix.py): a FreeDOS boot floppy
+# running our own AUDTEST.COM (SB16, AdLib, PC speaker) and a Debian kernel + initramfs playing a tone
+# with aplay (AC97, ES1370, Intel HDA, virtio-sound, USB audio), recorded with QEMU's `wav` backend
+# and checked for the expected tones. Directly on QEMU and through qemu-server (`qm showcmd`, the
+# same command with the wav backend, `qm start`) on the e2e PVE node. The results table goes to the
+# job summary; the wav files and logs are the artifact.
+#
+# Not a required check, so the paths filter is fine. Weekly as well, to notice a package update that
+# breaks a device.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 5 * * 0"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "e2e/audio/**"
+      - "e2e/pve/**"
+      - ".github/workflows/audio-matrix.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    name: Audio devices x guests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUN_DIR: ${{ runner.temp }}/audio
+      NAME: audio-matrix-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests (wav analysis)
+        working-directory: e2e/audio
+        run: python3 -m unittest -v test_wavcheck.py
+
+      - name: Build the images (published packages)
+        run: |
+          docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:audio .
+          docker build -f e2e/audio/Dockerfile --build-arg PVE_IMAGE=wsh-pve-e2e:audio -t wsh-audio e2e/audio
+          docker run --rm --entrypoint sh wsh-audio -c \
+            'dpkg-query -W pve-qemu-kvm qemu-server pve-manager; cat /audio/guests/versions.txt'
+
+      - name: Start the PVE node
+        run: |
+          mkdir -p "$RUN_DIR"
+          # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml; /dev/kvm (when the
+          # runner has it) comes with --privileged and speeds up the Linux guests
+          docker run -d --name "$NAME" --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
+            -v "$RUN_DIR:/runs" wsh-audio
+          for _ in $(seq 1 60); do
+            docker exec "$NAME" test -f /run/pve-e2e-ready && break
+            sleep 5
+          done
+          docker exec "$NAME" test -f /run/pve-e2e-ready
+
+      - name: Run the matrix
+        run: docker exec "$NAME" python3 audio_matrix.py all --out /runs
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: cat "$RUN_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY" || echo "no summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Make the results readable
+        if: ${{ !cancelled() }}
+        run: docker exec "$NAME" chmod -R a+rX /runs || true
+
+      - name: Upload the results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: audio-matrix
+          path: |
+            ${{ env.RUN_DIR }}
+            !${{ env.RUN_DIR }}/*.img
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Clean up
+        if: ${{ always() }}
+        run: docker rm -f "$NAME" || true
