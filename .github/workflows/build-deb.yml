@@ -152,7 +152,9 @@ jobs:
             echo "qemu-system-x86_64-3dfx from the 3dfx build of ${built:0:7}"
           fi
           if [ -n "$reason" ]; then
-            echo "WARNING: optional extra 3dfx missing: $reason, pve-qemu ships without qemu-system-x86_64-3dfx" \
+            # the first line is the start of the report's log excerpt for 3dfx
+            printf '%s\n' "INFO: Building pve-qemu with 3dfx support: taking the build-3dfx job's binary" \
+              "WARNING: optional extra 3dfx missing: $reason, pve-qemu ships without qemu-system-x86_64-3dfx" \
               | tee -a "$RUNNER_TEMP/make.log"
             echo "::warning title=optional extra 3dfx missing::$reason"
           fi
