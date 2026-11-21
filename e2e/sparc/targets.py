@@ -115,6 +115,9 @@ PACKAGES_2026_11_20_WSH30 = {"pve-qemu-kvm": "11.1.3-2+wsh30", "qemu-server": "9
 # SunOS 4.1.3 on the SS-10 (published packages; pve-qemu-kvm +wsh31 and later have wsh/0049)
 PACKAGES_2026_11_21_WSH31 = {"pve-qemu-kvm": "11.1.3-2+wsh31", "qemu-server": "9.2.19+wsh4",
                              "pve-manager": "9.2.32+wsh4"}
+# OpenBSD 8.0 on sun4u with ntpd on, again on the Proxmox 11.1.3-3 base (published packages)
+PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9.2.20+wsh3",
+                              "pve-manager": "9.2.32+wsh6"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -856,9 +859,9 @@ TARGETS = {
     # The installer (bsd.rd) answered on ttya by what it asks (_openbsd.installer): hme0 static, root's
     # password, the auto layout on wd0, the sets without X11, ntpd left on; the first boot writes the
     # marker and the network files and checks that ntpd runs. The installed GENERIC kernel needs
-    # openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later); ntpd on needs pve-qemu wsh/0045 (+wsh30:
-    # before, a NIC interrupt could cost the IDE disk its interrupts). README.md, "The OpenBSD 8.0
-    # install target"
+    # openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later); ntpd on needs pve-qemu wsh/0045 (+wsh30 and
+    # later, last tested on 11.1.3-3+wsh6: before, a NIC interrupt could cost the IDE disk its
+    # interrupts). README.md, "The OpenBSD 8.0 install target"
     "openbsd80-sun4u": {
         "title": "OpenBSD 8.0 sparc64 without X11 (sun4u, OpenBIOS, IDE disk)",
         "status": "automated",
@@ -886,11 +889,13 @@ TARGETS = {
         # netmask, /etc/mygate and /etc/resolv.conf (openbsd-firstboot.py)
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
         "net_modes": ["static"],
-        "minutes": 17,  # 16.0-17.9 min (4 runs): install 7.5-8.4 (the sets, the kernel relink), first boot 4.8-5.6, --check 3.4-4.0
-        # ntpd on, wsh/0045 (pve-qemu-kvm +wsh30); two of the runs with a way out through vmbr0 (ntpd synced)
-        "tested": {"date": "2026-11-20",
-                   "packages": {"pve-qemu-kvm": "11.1.3-2+wsh30", "qemu-server": "9.2.19+wsh4", "pve-manager": "9.2.32+wsh4"},
-                   "with": "--check; --check --export; --check --ip --gateway --dns --domain --user; boot-test"},
+        # 16.0-17.9 min (5 runs at a host load average of 1-5): install 7.5-8.4 (the sets, the kernel
+        # relink), first boot 4.8-5.6, --check 3.3-4.0; ~25 min at a load average of 8-20
+        "minutes": 17,
+        # ntpd on, wsh/0045 (+wsh30 and later); on 11.1.3-3+wsh6: 3 of 3 installs, one with a way out
+        # through vmbr0 (ntpd synced to its servers), and a boot-test of the stored disk
+        "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_3_WSH6,
+                   "with": "--check; --check --export; --check --ip --gateway --dns --domain; boot-test"},
     },
     # OpenBSD 5.9, the last release of the sparc port, on sun4m: cd59.iso boots bsd.rd (by path at
     # OpenBIOS's `0 >`), the sets come from the sets CD made on the node (`lab.py media <target>

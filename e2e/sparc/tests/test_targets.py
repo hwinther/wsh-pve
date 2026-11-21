@@ -1362,7 +1362,7 @@ class OpenBSD80(unittest.TestCase):
         # no retry: an IDE timeout that leaves the guest silent fails the install (wsh/0045 fixed the cause)
         self.assertNotIn("retry_on", t["install"])
         self.assertEqual(t["net_modes"], ["static"])
-        self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-2+wsh30")  # openbios 0023, wsh/0045
+        self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-3+wsh6")  # openbios 0023, wsh/0045
         self.assertGreater(t["minutes"], 0)
         med = targets.MEDIA["install80.iso"]
         self.assertEqual((med["size"], med["lab"]), (467599360, "other-os/openbsd8.0/install80.iso"))

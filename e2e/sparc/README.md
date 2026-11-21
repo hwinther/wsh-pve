@@ -1378,7 +1378,8 @@ CD on `ide2`, `sunhme`) installs OpenBSD 8.0 from `install80.iso` (467599360 byt
 one in the release's `SHA256`; freely redistributable, but not downloaded by any test). It needs
 openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22): before, the installed GENERIC kernel stops right after
 the loader (`submodules/SPARC.md`, "sparc64"). ntpd stays on, which needs pve-qemu `wsh/0045`
-(pve-qemu-kvm 11.1.3-2+wsh30; "ntpd and the IDE timeouts" below).
+(pve-qemu-kvm 11.1.3-2+wsh30 and later, last tested on 11.1.3-3+wsh6; "ntpd and the IDE timeouts"
+below).
 
 - **Install** (`openbsd-install-sparc64.py`, `_openbsd.py`): OpenBIOS boots the CD's `bsd.rd`; the
   installer's questions are one line each, ending in `?` and the default in brackets.
@@ -1436,6 +1437,35 @@ routed `vmbr0` to the outside (NAT) with the router at 10.0.2.2:
 | `install openbsd80-sun4u --ip 10.0.2.35 --gateway 10.0.2.2 --dns <a resolver> --domain lab.example` (a way out) | passed; ntpd running; no IDE timeout | 17.9 min (506 s, 334 s, 218 s) |
 | `boot-test openbsd80-sun4u` of the exported disk | passed; no disk timeout | 3.8 min |
 | a boot of the second VM (a way out) with `ping -f -c 300000 10.0.2.2` in the background during `tar cf - /usr \| cksum` (the load that hung 2 of 2 lab runs before `wsh/0045`) | passed; all 300 000 pings, `tar` 1 083 427 840 bytes, then `clock synced`; no disk timeout | 11.5 min |
+
+Again on the Proxmox 11.1.3-3 base (the PVE test container with the published pve-qemu-kvm
+11.1.3-3+wsh6, qemu-server 9.2.20+wsh3, pve-manager 9.2.32+wsh6, 2026-11-21; the same target, ntpd
+on, no retry). The first two installs ran side by side while other agents built QEMU on the host
+(load average 8-20 on 14 cores), the third at 1-2. For the runs with a way out the container routed
+`vmbr0` to the outside (NAT) with the router at 10.0.2.2:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install openbsd80-sun4u --check --export <scratch>` | passed; `rcctl get ntpd flags` empty, three `ntpd` processes; no IDE timeout in any phase; disk exported | 24.9 min (install 730 s, first boot 418 s, check 316 s) |
+| `install openbsd80-sun4u --check --ip 10.0.2.32 --gateway 10.0.2.2 --dns <a resolver> --domain lab.example` (a way out, at the same time) | passed; `default 10.0.2.2`, ntpd running; no IDE timeout | 25.3 min (739 s, 466 s, 289 s) |
+| `install openbsd80-sun4u --check --ip 10.0.2.34` | passed; no IDE timeout | 16.1 min (466 s, 286 s, 198 s) |
+| `boot-test openbsd80-sun4u` of the stored disk (installed on +wsh30) | passed; no disk timeout | 4.4 min |
+| three boots of the second VM (a way out) of 20-35 min each with ntpd running (`openbsd-boot-disk.py --pve` with `COMMANDS`: `ntpctl -s s` every 3 minutes, a `tar cf - /usr \| cksum` in one) | 3 of 3 passed without a disk timeout; ntpd synced in all three (below) | 20-36 min each |
+
+ntpd on sun4u, measured in the third of those boots (the guest's `sysctl kern.timecounter`: `tick`,
+the only choice: `%tick` of the 100 MHz UltraSPARC IIi, which QEMU counts from the host's clock).
+ntpd started ~1 min after the kernel, had 5/5 peers 23 s later, slewed the clock once by 0.193 s
+(the boot reads the `mk48t59` clock in whole seconds), said `clock is now synced` 4.5 min after it
+started and stayed synced for the remaining 26 minutes (stratum 2-3), with a frequency correction
+of 0.18 ppm (`adjusting clock frequency by 0.181219 to 0.181219ppm`): the guest's clock runs at the
+host's rate, and nothing to fix in the lab or QEMU. The HTTPS constraints read -0.3 to -1.8 s (their
+`Date:` header has whole seconds). The other two boots behaved worse on the network side, not the
+clock's: in one ntpd never resolved its servers (`not resolved from pool pool.ntp.org`, 0/5 peers for
+17 min) and in the other it synced, lost all five peers for ~15 minutes and then synced again (sub-ms
+offsets at the end); a short boot after the first, with `host pool.ntp.org` and pings through the
+NAT, found the outside reachable and ntpd with 5/5 peers, and a packet count on the VM's tap during the third boot showed NTP every
+minute in both directions without a gap. Not traced further (no capture ran during the two bad
+boots, and other containers on the host were being started then); neither had a disk timeout.
 
 Earlier, through PVE with ntpd off (the same container and packages as the OpenBIOS Solaris runs
 above, pve-qemu-kvm 11.1.3-2+wsh22, 2026-11-19; the test bridge `vmbr0` had no way out):
@@ -2531,7 +2561,7 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `netbsd-install-sparc64.py` | NetBSD/sparc64 install with sysinst on the serial console (`SETS=b`: without X11), root without a password, ends powered off | ~8 min |
 | `netbsd-install-sparc.py` | the same for NetBSD/sparc on sun4m (SS-5, `MACHINE=SS-20`): the CD's microroot, then the same sysinst answers (`SETS=c`: Minimal); the microroot powers off after Exit | ~3.5 min |
 | `netbsd-firstboot.py`, `netbsd-boot-disk.py` | either architecture (`ARCH`; from the VM with `--pve`): the install targets' first boot (root password, marker, host name, network, user) and check boot ("NetBSD install targets") | ~2 min each |
-| `openbsd-install-sparc64.py` | OpenBSD/sparc64 install from `install80.iso` on the serial console, the questions answered by what they ask (`_openbsd.py`), ntpd off, halted ("The OpenBSD 8.0 install target") | ~9-12 min |
+| `openbsd-install-sparc64.py` | OpenBSD/sparc64 install from `install80.iso` on the serial console, the questions answered by what they ask (`_openbsd.py`), ntpd left on, halted ("The OpenBSD 8.0 install target") | ~9-12 min |
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
