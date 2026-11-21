@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..7e1a76a 100644
+index 7b0cba5..967d0f9 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,63 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,66 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -137,6 +137,9 @@ index 7b0cba5..7e1a76a 100644
 +wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
 +wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
 +wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
++wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
++wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
++wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -12480,6 +12483,584 @@ index 0000000..a8d99d3
 ++    qtest_add_func("sun4m-nvram/larger-image", test_larger_image);
 ++    qtest_add_func("sun4m-nvram/blockdev", test_blockdev);
 ++    qtest_add_func("sun4m-nvram/read-only", test_read_only);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch b/debian/patches/wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
+new file mode 100644
+index 0000000..e505bf4
+--- /dev/null
++++ b/debian/patches/wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
+@@ -0,0 +1,61 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: map the SPARCserver 600MP's VMEbus interface
++ registers
++
++SunOS 4.1.2 on -M SS-600MP stops before its banner ("Unhandled
++Exception 0x00000029" in OpenBIOS's trap handler, pc 0xf80a6054): the
++kernel's early setup for the 600MP clears the memory controller's and
++the SBus's fault registers and then sets up the VMEbus interface,
++reading and writing its registers at physical 0xf.df01_0000 (offsets
++0, 4 and 8: control, AFSR and AFAR) through the MMU bypass ASI 0x2f.
++QEMU has nothing there, and a bypass load that hits nothing takes the
++data access error (trap 0x29), which the kernel hasn't caught yet.
++
++Map an unimplemented device (reads 0, writes ignored) over that page on
++the SS-600MP only. There is no VMEbus model: the VMEbus spaces stay
++empty, so the kernel's probes for VME devices (with its fault catcher
++armed) find none, as on a machine with nothing in its VME slots. With
++it the 4.1.2 CD's kernel prints its banner and gets to its installer
++menu; the other sun4m machines are unchanged.
++---
++ hw/sparc/sun4m.c | 13 +++++++++++++
++ 1 file changed, 13 insertions(+)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index faa372c..769ce73 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -101,6 +101,7 @@ struct sun4m_hwdef {
++     hwaddr afx_base, idreg_base, dma_base, esp_base, le_base;
++     hwaddr tcx_base, cs_base, apc_base, aux1_base, aux2_base;
++     hwaddr bpp_base, dbri_base, sx_base, cg6_base;
+++    hwaddr vme_base;
++     struct {
++         hwaddr reg_base, vram_base;
++     } vsimm[MAX_VSIMMS];
++@@ -1225,6 +1226,17 @@ static void sun4m_hw_init(MachineState *machine)
++         create_unimplemented_device("sun-cgsix", hwdef->cg6_base, 0x1000000);
++     }
++ 
+++    if (hwdef->vme_base) {
+++        /*
+++         * The SPARCserver 600MP's VMEbus interface registers (control,
+++         * AFSR, AFAR), which SunOS 4.1.2 sets up through the MMU bypass
+++         * before its banner. No VMEbus model: reads 0, writes ignored, and
+++         * the VMEbus spaces themselves stay empty, so the kernel's probes
+++         * for VME devices find none.
+++         */
+++        create_unimplemented_device("sun-vme", hwdef->vme_base, 0x1000);
+++    }
+++
++     if (hwdef->bpp_base) {
++         /* parallel port */
++         create_unimplemented_device("sun-bpp", hwdef->bpp_base, 0x20);
++@@ -1417,6 +1429,7 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .aux2_base    = 0xff1a01000ULL, /* XXX should not exist */
++         .ecc_base     = 0xf00000000ULL,
++         .ecc_version  = 0x00000000, /* version 0, implementation 0 */
+++        .vme_base     = 0xfdf010000ULL,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
++         .iommu_version = 0x01000000,
+diff --git a/debian/patches/wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch b/debian/patches/wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
+new file mode 100644
+index 0000000..9301a26
+--- /dev/null
++++ b/debian/patches/wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
+@@ -0,0 +1,287 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: give the SPARCserver 600MP's lance its own
++ buffer memory
++
++The SPARCserver 600MP's lance doesn't use a DMA engine: it works in a
++buffer memory of its own below its registers, the "lebuffer" in SBus
++slot f at offset 0x40000 (128 KB, up to the lance at 0x60000), in which
++its 24-bit addresses are offsets, and it interrupts by itself. QEMU
++gave the SS-600MP the SS-10's arrangement, an "ledma" DMA engine and
++DVMA through the IOMMU. SunOS 4.1.2, the first release for the 600MP,
++knows the lebuffer and no ledma: with the lance under "ledma" it finds
++no network interface, and a lance directly on the SBus it refuses
++("le0: not used - unsupported SBus card for this architecture!").
++
++Add a property "lebuffer-size" to the sparc32 DMA device. When it is
++set, the lance's reads and writes go to a RAM region of that size (the
++address taken modulo the size) in an address space of its own, and its
++interrupt goes straight to the board instead of through the ledma's
++interrupt enable. The board maps the region, as MMIO region 1 of the
++device, through an alias (a region that roots an address space and is
++also mapped elsewhere would be seen at its offset there). The ledma's
++registers stay where they were and do nothing for the lance.
++
++The SS-600MP sets it, with the buffer at 0xe.f004_0000. OpenBIOS makes
++the node "lebuffer" for the machine (openbios patch 0028). SunOS 4.1.2
++then attaches "lebuffer0 at SBus slot f 0x40000" and "le0 at SBus slot
++f 0x60000", and an installed system answers ping over user networking.
++The other sun4m machines keep the ledma and DVMA.
++---
++ hw/dma/sparc32_dma.c           | 74 +++++++++++++++++++++++++++++-----
++ hw/sparc/sun4m.c               | 16 ++++++--
++ include/hw/sparc/sparc32_dma.h | 10 +++++
++ 3 files changed, 86 insertions(+), 14 deletions(-)
++
++diff --git a/hw/dma/sparc32_dma.c b/hw/dma/sparc32_dma.c
++index a5dc35e..f3132d9 100644
++--- a/hw/dma/sparc32_dma.c
+++++ b/hw/dma/sparc32_dma.c
++@@ -35,6 +35,7 @@
++ #include "system/dma.h"
++ #include "qapi/error.h"
++ #include "qemu/module.h"
+++#include "qemu/host-utils.h"
++ #include "trace.h"
++ 
++ /*
++@@ -71,21 +72,37 @@ enum {
++ };
++ 
++ /* Note: on sparc, the lance 16 bit bus is swapped */
+++/*
+++ * Where the lance's 24-bit address goes: the lebuffer, when there is one,
+++ * or DVMA through the IOMMU, with the upper byte from the DMA engine.
+++ */
+++static AddressSpace *ledma_target(DMADeviceState *s, hwaddr *addr)
+++{
+++    LEDMADeviceState *ls = SPARC32_LEDMA_DEVICE(s);
+++    IOMMUState *is = (IOMMUState *)s->iommu;
+++
+++    if (ls->lebuffer_size) {
+++        *addr &= ls->lebuffer_size - 1;
+++        return &ls->lebuffer_as;
+++    }
+++    *addr |= s->dmaregs[3];
+++    return &is->iommu_as;
+++}
+++
++ void ledma_memory_read(void *opaque, hwaddr addr,
++                        uint8_t *buf, int len, int do_bswap)
++ {
++     DMADeviceState *s = opaque;
++-    IOMMUState *is = (IOMMUState *)s->iommu;
+++    AddressSpace *as = ledma_target(s, &addr);
++     int i;
++ 
++-    addr |= s->dmaregs[3];
++     trace_ledma_memory_read(addr, len);
++     if (do_bswap) {
++-        dma_memory_read(&is->iommu_as, addr, buf, len, MEMTXATTRS_UNSPECIFIED);
+++        dma_memory_read(as, addr, buf, len, MEMTXATTRS_UNSPECIFIED);
++     } else {
++         addr &= ~1;
++         len &= ~1;
++-        dma_memory_read(&is->iommu_as, addr, buf, len, MEMTXATTRS_UNSPECIFIED);
+++        dma_memory_read(as, addr, buf, len, MEMTXATTRS_UNSPECIFIED);
++         for(i = 0; i < len; i += 2) {
++             bswap16s((uint16_t *)(buf + i));
++         }
++@@ -96,15 +113,13 @@ void ledma_memory_write(void *opaque, hwaddr addr,
++                         uint8_t *buf, int len, int do_bswap)
++ {
++     DMADeviceState *s = opaque;
++-    IOMMUState *is = (IOMMUState *)s->iommu;
+++    AddressSpace *as = ledma_target(s, &addr);
++     int l, i;
++     uint16_t tmp_buf[32];
++ 
++-    addr |= s->dmaregs[3];
++     trace_ledma_memory_write(addr, len);
++     if (do_bswap) {
++-        dma_memory_write(&is->iommu_as, addr, buf, len,
++-                         MEMTXATTRS_UNSPECIFIED);
+++        dma_memory_write(as, addr, buf, len, MEMTXATTRS_UNSPECIFIED);
++     } else {
++         addr &= ~1;
++         len &= ~1;
++@@ -115,8 +130,7 @@ void ledma_memory_write(void *opaque, hwaddr addr,
++             for(i = 0; i < l; i += 2) {
++                 tmp_buf[i >> 1] = bswap16(*(uint16_t *)(buf + i));
++             }
++-            dma_memory_write(&is->iommu_as, addr, tmp_buf, l,
++-                             MEMTXATTRS_UNSPECIFIED);
+++            dma_memory_write(as, addr, tmp_buf, l, MEMTXATTRS_UNSPECIFIED);
++             len -= l;
++             buf += l;
++             addr += l;
++@@ -127,6 +141,14 @@ void ledma_memory_write(void *opaque, hwaddr addr,
++ static void dma_set_irq(void *opaque, int irq, int level)
++ {
++     DMADeviceState *s = opaque;
+++    LEDMADeviceState *ls = (LEDMADeviceState *)
+++        object_dynamic_cast(OBJECT(s), TYPE_SPARC32_LEDMA_DEVICE);
+++
+++    if (ls && ls->lebuffer_size) {
+++        /* no DMA engine in the way: the lance interrupts by itself */
+++        qemu_set_irq(s->irq, level);
+++        return;
+++    }
++     if (level) {
++         s->dmaregs[0] |= DMA_INTR;
++         if (s->dmaregs[0] & DMA_INTREN) {
++@@ -348,6 +370,23 @@ static void sparc32_ledma_device_realize(DeviceState *dev, Error **errp)
++     LEDMADeviceState *s = SPARC32_LEDMA_DEVICE(dev);
++     SysBusPCNetState *lance = SYSBUS_PCNET(&s->lance);
++ 
+++    if (s->lebuffer_size) {
+++        if (!is_power_of_2(s->lebuffer_size) ||
+++            s->lebuffer_size > 0x1000000) {
+++            error_setg(errp, "lebuffer-size must be a power of 2 up to 16 MB");
+++            return;
+++        }
+++        if (!memory_region_init_ram(&s->lebuffer, OBJECT(dev), "lebuffer",
+++                                    s->lebuffer_size, errp)) {
+++            return;
+++        }
+++        address_space_init(&s->lebuffer_as, &s->lebuffer, "lebuffer");
+++        /* the CPU's view of it: an alias, as the region roots that space */
+++        memory_region_init_alias(&s->lebuffer_alias, OBJECT(dev),
+++                                 "lebuffer-alias", &s->lebuffer, 0,
+++                                 s->lebuffer_size);
+++    }
+++
++     object_property_set_link(OBJECT(lance), "dma", OBJECT(dev), &error_abort);
++     sysbus_realize(SYS_BUS_DEVICE(lance), &error_fatal);
++ }
++@@ -397,7 +436,10 @@ static void sparc32_dma_realize(DeviceState *dev, Error **errp)
++ 
++     ledma = DEVICE(&s->ledma);
++     object_property_set_link(OBJECT(ledma), "iommu", iommu, &error_abort);
++-    sysbus_realize(SYS_BUS_DEVICE(ledma), &error_fatal);
+++    s->ledma.lebuffer_size = s->lebuffer_size;
+++    if (!sysbus_realize(SYS_BUS_DEVICE(ledma), errp)) {
+++        return;
+++    }
++ 
++     lance = DEVICE(object_resolve_path_component(OBJECT(ledma), "lance"));
++     sbd = SYS_BUS_DEVICE(lance);
++@@ -407,6 +449,10 @@ static void sparc32_dma_realize(DeviceState *dev, Error **errp)
++     sbd = SYS_BUS_DEVICE(ledma);
++     memory_region_add_subregion(&s->dmamem, 0x10,
++                                 sysbus_mmio_get_region(sbd, 0));
+++    if (s->ledma.lebuffer_size) {
+++        /* the lebuffer: MMIO region 1, for the board to map */
+++        sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->ledma.lebuffer_alias);
+++    }
++ 
++     /* Add ledma alias to handle SunOS 5.7 - Solaris 9 invalid access bug */
++     memory_region_init_alias(&s->ledma_alias, OBJECT(dev), "ledma-alias",
++@@ -428,11 +474,17 @@ static void sparc32_dma_init(Object *obj)
++                             TYPE_SPARC32_LEDMA_DEVICE);
++ }
++ 
+++static const Property sparc32_dma_properties[] = {
+++    /* the size of the lance's buffer memory (lebuffer); 0: none, DVMA */
+++    DEFINE_PROP_UINT32("lebuffer-size", SPARC32DMAState, lebuffer_size, 0),
+++};
+++
++ static void sparc32_dma_class_init(ObjectClass *klass, const void *data)
++ {
++     DeviceClass *dc = DEVICE_CLASS(klass);
++ 
++     dc->realize = sparc32_dma_realize;
+++    device_class_set_props(dc, sparc32_dma_properties);
++ }
++ 
++ static const TypeInfo sparc32_dma_info = {
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 769ce73..0b619b1 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -87,6 +87,8 @@
++ #define MAX_CPUS 16
++ #define MAX_PILS 16
++ #define MAX_VSIMMS 4
+++/* the SPARCserver 600MP's on-board lance buffer: 128 KB below the lance */
+++#define SUN4M_LEBUFFER_SIZE 0x20000
++ 
++ /* A real cg3 has 1 MB of video RAM; its SBus slot has room for 8 MB */
++ #define CG3_VRAM_SIZE        (1 * MiB)
++@@ -101,7 +103,7 @@ struct sun4m_hwdef {
++     hwaddr afx_base, idreg_base, dma_base, esp_base, le_base;
++     hwaddr tcx_base, cs_base, apc_base, aux1_base, aux2_base;
++     hwaddr bpp_base, dbri_base, sx_base, cg6_base;
++-    hwaddr vme_base;
+++    hwaddr vme_base, lebuffer_base;
++     struct {
++         hwaddr reg_base, vram_base;
++     } vsimm[MAX_VSIMMS];
++@@ -313,7 +315,7 @@ static void *iommu_init(hwaddr addr, uint32_t version, qemu_irq irq)
++ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr esp_base, qemu_irq espdma_irq,
++                               hwaddr le_base, qemu_irq ledma_irq,
++-                              MACAddr *mac)
+++                              hwaddr lebuffer_base, MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -342,7 +344,13 @@ static void *sparc32_dma_init(hwaddr dma_base,
++         qdev_prop_set_macaddr(DEVICE(lance), "mac", mac->a);
++     }
++ 
+++    if (lebuffer_base) {
+++        qdev_prop_set_uint32(dma, "lebuffer-size", SUN4M_LEBUFFER_SIZE);
+++    }
++     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
+++    if (lebuffer_base) {
+++        sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
+++    }
++ 
++     sysbus_connect_irq(SYS_BUS_DEVICE(espdma), 0, espdma_irq);
++ 
++@@ -1032,7 +1040,8 @@ static void sun4m_hw_init(MachineState *machine)
++ 
++     sparc32_dma_init(hwdef->dma_base,
++                      hwdef->esp_base, slavio_irq[18],
++-                     hwdef->le_base, slavio_irq[16], &hostid);
+++                     hwdef->le_base, slavio_irq[16],
+++                     hwdef->lebuffer_base, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1430,6 +1439,7 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .ecc_base     = 0xf00000000ULL,
++         .ecc_version  = 0x00000000, /* version 0, implementation 0 */
++         .vme_base     = 0xfdf010000ULL,
+++        .lebuffer_base = 0xef0040000ULL,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
++         .iommu_version = 0x01000000,
++diff --git a/include/hw/sparc/sparc32_dma.h b/include/hw/sparc/sparc32_dma.h
++index 3181c17..ccf2c74 100644
++--- a/include/hw/sparc/sparc32_dma.h
+++++ b/include/hw/sparc/sparc32_dma.h
++@@ -38,6 +38,15 @@ struct LEDMADeviceState {
++     DMADeviceState parent_obj;
++ 
++     SysBusPCNetState lance;
+++    /*
+++     * lebuffer_size > 0: the lance works in a buffer memory of its own (an
+++     * "lebuffer", as on the SPARCserver 600MP), not through the DMA engine
+++     * and the IOMMU.
+++     */
+++    uint32_t lebuffer_size;
+++    MemoryRegion lebuffer;
+++    MemoryRegion lebuffer_alias;    /* what the board maps */
+++    AddressSpace lebuffer_as;
++ };
++ 
++ #define TYPE_SPARC32_DMA "sparc32-dma"
++@@ -50,6 +59,7 @@ struct SPARC32DMAState {
++     MemoryRegion ledma_alias;
++     ESPDMADeviceState espdma;
++     LEDMADeviceState ledma;
+++    uint32_t lebuffer_size;
++ };
++ 
++ /* sparc32_dma.c */
+diff --git a/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
+new file mode 100644
+index 0000000..7956762
+--- /dev/null
++++ b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
+@@ -0,0 +1,212 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SPARCserver 600MP's VMEbus registers
++ and lebuffer
++
++qtest sun4m-ss600mp-test for the two patches before: on -M SS-600MP the
++VMEbus interface registers are an unimplemented device at the low
++priority that reads 0; the lebuffer is 128 KB of RAM at 0xe.f004_0000,
++in the lance's own address space; the lance initializes from an init
++block in the buffer (its station address comes from there), sends a
++frame from a descriptor there, gives the descriptor back in the buffer
++and raises its interrupt without the ledma's interrupt enable. The
++SS-10 has neither and keeps its ledma.
++---
++ tests/qtest/meson.build          |   3 +-
++ tests/qtest/sun4m-ss600mp-test.c | 174 +++++++++++++++++++++++++++++++
++ 2 files changed, 176 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-ss600mp-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 054b26b..ea13663 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -212,7 +212,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++-                'sun4m-nvram-test'] + \
+++                'sun4m-nvram-test',
+++                'sun4m-ss600mp-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++new file mode 100644
++index 0000000..d68cc8d
++--- /dev/null
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -0,0 +1,174 @@
+++/*
+++ * QTest: the SPARCserver 600MP's VMEbus interface registers and lebuffer
+++ *
+++ * SunOS 4.1.2's kernel sets up the 600MP's VMEbus interface at physical
+++ * 0xf.df01_0000 (control, AFSR, AFAR) through the MMU bypass ASI before
+++ * its banner; the machine has them as an unimplemented device (reads 0,
+++ * writes ignored).
+++ *
+++ * The 600MP's lance works in a 128 KB buffer memory of its own below its
+++ * registers (the "lebuffer" node, SBus slot f offset 0x40000), not through
+++ * a DMA engine: its 24-bit addresses are offsets in that buffer, and it
+++ * interrupts by itself. The test initializes the lance from an init
+++ * block in the buffer, lets it send a frame from a descriptor there and
+++ * checks that it hands the descriptor back and raises its interrupt.
+++ * The SS-10 has neither.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++#define VME_REGS        0xfdf010000ULL
+++#define LEBUFFER        0xef0040000ULL
+++#define LEBUFFER_SIZE   0x20000
+++#define LE_RDP          0xef0060000ULL
+++#define LE_RAP          0xef0060002ULL
+++/* the system interrupt pending register of the slavio interrupt controller */
+++#define INTCTL_PENDING  0xff1410000ULL
+++#define IRQ_LE          (1u << 16)
+++
+++#define CSR0_INIT       0x0001
+++#define CSR0_STRT       0x0002
+++#define CSR0_TDMD       0x0008
+++#define CSR0_INEA       0x0040
+++#define CSR0_IDON       0x0100
+++#define CSR0_TINT       0x0200
+++
+++#define TMD1_OWN        0x8000
+++#define TMD1_STP        0x0200
+++#define TMD1_ENP        0x0100
+++
+++/* "info mtree" has a line "<range> (<prio>, <kind>): <name>" */
+++static bool has_region(const char *mtree, const char *line)
+++{
+++    g_auto(GStrv) lines = g_strsplit(mtree, "\n", -1);
+++    int i;
+++
+++    for (i = 0; lines[i]; i++) {
+++        if (!strcmp(g_strstrip(lines[i]), line)) {
+++            return true;
+++        }
+++    }
+++    return false;
+++}
+++
+++static void csr_write(QTestState *qts, int csr, uint16_t val)
+++{
+++    qtest_writew(qts, LE_RAP, csr);
+++    qtest_writew(qts, LE_RDP, val);
+++}
+++
+++static uint16_t csr_read(QTestState *qts, int csr)
+++{
+++    qtest_writew(qts, LE_RAP, csr);
+++    return qtest_readw(qts, LE_RDP);
+++}
+++
+++static void test_vme_regs(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    g_assert_true(has_region(mtree, "0000000fdf010000-0000000fdf010fff "
+++                             "(prio -1000, i/o): sun-vme"));
+++    qtest_writel(qts, VME_REGS, 0x40000000);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS + 4), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS + 8), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++static void test_lebuffer_memory(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    /* the lance's own address space, and the CPU's view of it in slot f */
+++    g_assert_true(has_region(mtree, "address-space: lebuffer"));
+++    g_assert_true(has_region(mtree, "0000000ef0040000-0000000ef005ffff "
+++                             "(prio 0, ram): alias lebuffer-alias @lebuffer "
+++                             "0000000000000000-000000000001ffff"));
+++    qtest_writel(qts, LEBUFFER, 0x12345678);
+++    qtest_writel(qts, LEBUFFER + LEBUFFER_SIZE - 4, 0x9abcdef0);
+++    g_assert_cmphex(qtest_readl(qts, LEBUFFER), ==, 0x12345678);
+++    g_assert_cmphex(qtest_readl(qts, LEBUFFER + LEBUFFER_SIZE - 4), ==,
+++                    0x9abcdef0);
+++    qtest_quit(qts);
+++}
+++
+++static void test_lance_in_lebuffer(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    int i;
+++
+++    /* the init block at 0x100: mode, padr, ladrf, rdra/rlen, tdra/tlen */
+++    qtest_writew(qts, LEBUFFER + 0x100, 0x0000);
+++    qtest_writew(qts, LEBUFFER + 0x102, 0x5254);
+++    qtest_writew(qts, LEBUFFER + 0x104, 0x0012);
+++    qtest_writew(qts, LEBUFFER + 0x106, 0x3456);
+++    for (i = 0; i < 4; i++) {
+++        qtest_writew(qts, LEBUFFER + 0x108 + 2 * i, 0);
+++    }
+++    qtest_writew(qts, LEBUFFER + 0x110, 0x0300);   /* one receive descriptor */
+++    qtest_writew(qts, LEBUFFER + 0x112, 0x0000);
+++    qtest_writew(qts, LEBUFFER + 0x114, 0x0200);   /* one transmit descriptor */
+++    qtest_writew(qts, LEBUFFER + 0x116, 0x0000);
+++
+++    /* the transmit descriptor: a 64-byte frame at 0x400 */
+++    qtest_writew(qts, LEBUFFER + 0x200, 0x0400);
+++    qtest_writew(qts, LEBUFFER + 0x202, TMD1_OWN | TMD1_STP | TMD1_ENP);
+++    qtest_writew(qts, LEBUFFER + 0x204, 0xf000 | (-64 & 0x0fff));
+++    qtest_writew(qts, LEBUFFER + 0x206, 0);
+++    for (i = 0; i < 64; i += 4) {
+++        qtest_writel(qts, LEBUFFER + 0x400 + i, 0xffffffff);
+++    }
+++
+++    csr_write(qts, 0, 0x0004);                     /* stop */
+++    csr_write(qts, 1, 0x0100);                     /* the init block's address */
+++    csr_write(qts, 2, 0x0000);
+++    csr_write(qts, 0, CSR0_INIT);
+++    g_assert_cmphex(csr_read(qts, 0) & CSR0_IDON, ==, CSR0_IDON);
+++    /* the station address came from the buffer */
+++    g_assert_cmphex(csr_read(qts, 12), ==, 0x5254);
+++    g_assert_cmphex(csr_read(qts, 13), ==, 0x0012);
+++    g_assert_cmphex(csr_read(qts, 14), ==, 0x3456);
+++
+++    /* clear IDON, start, send */
+++    csr_write(qts, 0, CSR0_IDON);
+++    g_assert_cmphex(qtest_readl(qts, INTCTL_PENDING) & IRQ_LE, ==, 0);
+++    csr_write(qts, 0, CSR0_INEA | CSR0_STRT | CSR0_TDMD);
+++    for (i = 0; i < 100 && (qtest_readw(qts, LEBUFFER + 0x202) & TMD1_OWN); i++) {
+++        qtest_clock_step(qts, 1000000);
+++    }
+++    /* the lance gave the descriptor back, in the buffer, and interrupts */
+++    g_assert_cmphex(qtest_readw(qts, LEBUFFER + 0x202) & TMD1_OWN, ==, 0);
+++    g_assert_cmphex(csr_read(qts, 0) & CSR0_TINT, ==, CSR0_TINT);
+++    g_assert_cmphex(qtest_readl(qts, INTCTL_PENDING) & IRQ_LE, ==, IRQ_LE);
+++    qtest_quit(qts);
+++}
+++
+++static void test_ss10_unchanged(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-10 -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    g_assert_null(strstr(mtree, "sun-vme"));
+++    g_assert_null(strstr(mtree, "lebuffer"));
+++    /* the ledma is still there, below the espdma */
+++    g_assert_nonnull(strstr(mtree, "ledma-mmio"));
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-ss600mp/vme-regs", test_vme_regs);
+++    qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
+++    qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
+++    qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 ++
 ++    return g_test_run();
 ++}
