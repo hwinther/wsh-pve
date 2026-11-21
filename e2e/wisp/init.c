@@ -1,12 +1,12 @@
 /*
- * PID 1 of the tiny test system: built static against the kernel's nolibc
+ * PID 1 of wisp, the tiny test system: built static against the kernel's nolibc
  * (tools/include/nolibc), no C library, no other file in the initramfs.
  *
  * It prints a banner, a few checks (uname, CPU count, memory, a compute loop
  * with its time) and one result line, then powers the machine off:
  *
- *   TINY-BANNER wsh-pve tiny v1
- *   TINY-RESULT v=1 arch=... machine=... release=... cpus=N mem_kb=N
+ *   WISP-BANNER wsh-pve wisp v1
+ *   WISP-RESULT v=1 arch=... machine=... release=... cpus=N mem_kb=N
  *               uptime_ms=N loops=N crc=0x........ loop_ms=N status=ok
  *
  * (one line). run.py parses it. The CRC is the same on every architecture
@@ -25,8 +25,8 @@
 #include <linux/reboot.h>
 #include <linux/sysinfo.h>
 
-#ifndef TINY_ARCH
-#define TINY_ARCH "unknown"
+#ifndef WISP_ARCH
+#define WISP_ARCH "unknown"
 #endif
 
 #define DEFAULT_LOOPS 4096
@@ -139,30 +139,30 @@ int main(int argc, char **argv, char **envp)
 	(void)argc;
 	(void)argv;
 	up = clock_ms(CLOCK_BOOTTIME);
-	printf("TINY-BANNER wsh-pve tiny v1\n");
+	printf("WISP-BANNER wsh-pve wisp v1\n");
 
 	memset(&u, 0, sizeof(u));
 	uname(&u);
 	cpus = count_cpus();
 	loops = parse_loops(envp);
-	printf("TINY-INFO uname: %s %s %s\n", u.sysname, u.release, u.machine);
-	printf("TINY-INFO cpus: %d memory: %lu kB pid: %d\n", cpus, mem_kb(), getpid());
+	printf("WISP-INFO uname: %s %s %s\n", u.sysname, u.release, u.machine);
+	printf("WISP-INFO cpus: %d memory: %lu kB pid: %d\n", cpus, mem_kb(), getpid());
 
 	crc_init();
 	t0 = clock_ms(CLOCK_MONOTONIC);
 	crc = compute(loops);
 	t1 = clock_ms(CLOCK_MONOTONIC);
 
-	printf("TINY-RESULT v=1 arch=%s machine=%s release=%s cpus=%d mem_kb=%lu uptime_ms=%lu "
+	printf("WISP-RESULT v=1 arch=%s machine=%s release=%s cpus=%d mem_kb=%lu uptime_ms=%lu "
 	       "loops=%u crc=0x%08x loop_ms=%lu status=%s\n",
-	       TINY_ARCH, u.machine, u.release, cpus, mem_kb(), up, loops, crc, t1 - t0,
+	       WISP_ARCH, u.machine, u.release, cpus, mem_kb(), up, loops, crc, t1 - t0,
 	       getpid() == 1 ? "ok" : "notpid1");
 
 	if (getpid() != 1)
 		return 0;
 	reboot(LINUX_REBOOT_CMD_POWER_OFF);
 	/* still here: power-off is not wired up on this machine */
-	printf("TINY-POWEROFF-FAILED\n");
+	printf("WISP-POWEROFF-FAILED\n");
 	for (;;)
 		sleep(3600);
 }

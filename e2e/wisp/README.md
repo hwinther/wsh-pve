@@ -1,4 +1,4 @@
-# The tiny test system
+# wisp, the tiny test system
 
 A minimal, distroless Linux for every architecture the lab emulates: a kernel and a built-in
 initramfs that holds one file, `/init`, a static program built with the kernel's own nolibc
@@ -17,10 +17,10 @@ interpreter) without a disk, a firmware install or a guest OS in the way.
 ## What PID 1 prints
 
 ```
-TINY-BANNER wsh-pve tiny v1
-TINY-INFO uname: Linux 7.3.4 sparc
-TINY-INFO cpus: 1 memory: 109024 kB pid: 1
-TINY-RESULT v=1 arch=sparc32 machine=sparc release=7.3.4 cpus=1 mem_kb=109024 uptime_ms=332 loops=4096 crc=0x35a46014 loop_ms=368 status=ok
+WISP-BANNER wsh-pve wisp v1
+WISP-INFO uname: Linux 7.3.4 sparc
+WISP-INFO cpus: 1 memory: 109024 kB pid: 1
+WISP-RESULT v=1 arch=sparc32 machine=sparc release=7.3.4 cpus=1 mem_kb=109024 uptime_ms=332 loops=4096 crc=0x35a46014 loop_ms=368 status=ok
 reboot: Power down
 ```
 
@@ -34,13 +34,13 @@ reboot: Power down
 - Power-off with `reboot(LINUX_REBOOT_CMD_POWER_OFF)`: ACPI on the PC, the sun4m power register on
   the sun4m machines and the firmware's power-off on sun4u. QEMU runs with `-no-reboot` and the kernel
   with `panic=-1`, so a panic ends QEMU as well; if power-off returns, PID 1 prints
-  `TINY-POWEROFF-FAILED`.
+  `WISP-POWEROFF-FAILED`.
 
 ## Build
 
 ```sh
-docker build -f e2e/tiny/Dockerfile -t wsh-tiny .
-docker run --rm -v "$PWD/e2e/tiny:/tiny" wsh-tiny ./build.sh all     # or x86_64 i386 sparc32 sparc64
+docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all     # or x86_64 i386 sparc32 sparc64
 ```
 
 The image is Debian 13 with Debian's cross compilers (`gcc-sparc64-linux-gnu`, `gcc-i686-linux-gnu`),
@@ -63,8 +63,8 @@ SMP has no futex, and a single static init has no use for a second CPU.
 ## Run
 
 ```sh
-docker run --rm -v "$PWD/e2e/tiny:/tiny" wsh-tiny ./run.py --arch all --label tcg --repeat 2
-docker run --rm -v "$PWD/e2e/tiny:/tiny" wsh-tiny ./run.py --arch sparc32 --machine SS-20
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --label tcg --repeat 2
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc32 --machine SS-20
 ./run.py --arch all --qemu-dir /path/to/tci-build --label tci --timeout 900 --json results.jsonl
 ```
 
@@ -76,24 +76,24 @@ QEMU to the kernel's `Linux version` line, to PID 1's banner, to the result line
 PID 1's uptime and loop time, the CRC check, and QEMU's peak RSS and CPU time from `wait4`.
 `--log-dir` keeps each run's console log with its timestamps.
 
-Unit tests (parsing, the CRC model, the QEMU command line): `python3 -m unittest discover -s e2e/tiny/tests`.
+Unit tests (parsing, the CRC model, the QEMU command line): `python3 -m unittest discover -s e2e/wisp/tests`.
 
 ### A TCI build
 
 `qemu-tci.sh <qemu source> <build dir> [targets]` configures and builds QEMU with
-`--enable-tcg-interpreter` for the four targets inside the tiny image (pve-qemu's `qemu` tree with its
+`--enable-tcg-interpreter` for the four targets inside the wisp image (pve-qemu's `qemu` tree with its
 `debian/patches` applied, or upstream QEMU 11.1). `MODE=tcg` builds the same tree without the
 interpreter, for a comparison where only the backend differs. Point `run.py --qemu-dir` at the build
-directory and pass `--firmware /usr/share/kvm` (the image sets `TINY_FIRMWARE` to it) so it finds
+directory and pass `--firmware /usr/share/kvm` (the image sets `WISP_FIRMWARE` to it) so it finds
 OpenBIOS and SeaBIOS.
 
 ## CI
 
-`.github/workflows/tiny-boot.yml` boots all four architectures, plus sparc32 on the SS-20, on a
+`.github/workflows/wisp-boot.yml` boots all four architectures, plus sparc32 on the SS-20, on a
 GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
-filter, so its `tiny-boot-required` check always reports; a `changes` job skips the boot when the pull
-request touches neither `e2e/tiny/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
-main that change `e2e/tiny/` and by hand.
+filter, so its `wisp-boot-required` check always reports; a `changes` job skips the boot when the pull
+request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
+main that change `e2e/wisp/` and by hand.
 
 - Which QEMU: a pull request that changes `submodules/pve-qemu.patch`, the pve-qemu pin,
   `qemu-tci.sh` or the workflow gets QEMU built from its own tree: pve-qemu with `pve-qemu.patch`, its
@@ -104,7 +104,7 @@ main that change `e2e/tiny/` and by hand.
   here instead of the whole package. With 4 jobs on the lab host that took 4 minutes, the kernels 7.
 - The kernels (`out/`) are cached, keyed on the files that make them: `Dockerfile`, `build.sh`,
   `init.c` and `config/`. A change to `run.py`, the tests or the docs reuses them.
-- The unit tests run first. The job summary has `run.py`'s tables. The artifact `tiny-boot-<pr|published>`
+- The unit tests run first. The job summary has `run.py`'s tables. The artifact `wisp-boot-<pr|published>`
   has `results.jsonl` and the console logs.
 
 ## Results
@@ -187,5 +187,5 @@ built):
   for `-L` and `-kernel`, the serial console wired to a terminal in the page (`-serial` on a chardev
   the page reads), threads through SharedArrayBuffer (so the page needs cross-origin isolation
   headers), and no guest network without further work.
-- The tiny system fits that well: no disk, a 2.4 MB kernel, output on the serial console only, and a
+- wisp fits that well: no disk, a 2.4 MB kernel, output on the serial console only, and a
   result line a page can parse.

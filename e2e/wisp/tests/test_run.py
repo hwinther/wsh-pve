@@ -1,4 +1,4 @@
-"""Unit tests for run.py (no QEMU needed): python3 -m unittest discover -s e2e/tiny/tests"""
+"""Unit tests for run.py (no QEMU needed): python3 -m unittest discover -s e2e/wisp/tests"""
 
 import os
 import sys
@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import run  # noqa: E402
 
-GOOD = ("TINY-RESULT v=1 arch=sparc32 machine=sparc release=7.3.4 cpus=1 mem_kb=109024 "
+GOOD = ("WISP-RESULT v=1 arch=sparc32 machine=sparc release=7.3.4 cpus=1 mem_kb=109024 "
         "uptime_ms=433 loops=4096 crc=0x35a46014 loop_ms=96 status=ok")
 
 
@@ -29,7 +29,7 @@ class ParseResult(unittest.TestCase):
 
     def test_not_a_result(self):
         with self.assertRaises(ValueError):
-            run.parse_result("TINY-BANNER wsh-pve tiny v1")
+            run.parse_result("WISP-BANNER wsh-pve wisp v1")
 
     def test_missing_field(self):
         with self.assertRaisesRegex(ValueError, "missing fields: crc"):
@@ -82,7 +82,7 @@ class Evaluate(unittest.TestCase):
 
     def test_ok_run(self):
         console = lines("OpenBIOS", "Linux version 7.3.4 (x)", "Run /init as init process",
-                        "TINY-BANNER wsh-pve tiny v1", GOOD, "reboot: Power down")
+                        "WISP-BANNER wsh-pve wisp v1", GOOD, "reboot: Power down")
         rec = run.evaluate("sparc32", self.raw(console), None)
         self.assertTrue(rec["ok"], rec["problems"])
         self.assertEqual(rec["t_kernel"], 0.5)
@@ -92,7 +92,7 @@ class Evaluate(unittest.TestCase):
         self.assertTrue(rec["crc_checked"])
 
     def test_wrong_crc(self):
-        console = lines("TINY-BANNER x", GOOD.replace("0x35a46014", "0xdeadbeef"))
+        console = lines("WISP-BANNER x", GOOD.replace("0x35a46014", "0xdeadbeef"))
         rec = run.evaluate("sparc32", self.raw(console), None)
         self.assertFalse(rec["ok"])
         self.assertIn("crc 0xdeadbeef != 0x35a46014", rec["problems"])
@@ -102,7 +102,7 @@ class Evaluate(unittest.TestCase):
         self.assertIn("arch sparc32 != sparc64", rec["problems"])
 
     def test_poweroff_failed_and_timeout(self):
-        console = lines(GOOD, "TINY-POWEROFF-FAILED")
+        console = lines(GOOD, "WISP-POWEROFF-FAILED")
         rec = run.evaluate("sparc32", self.raw(console, exit_code=-9, timed_out=True), None)
         self.assertEqual(rec["problems"], ["power-off failed", "timed out"])
 
@@ -142,7 +142,7 @@ class Command(unittest.TestCase):
 
 class Table(unittest.TestCase):
     def test_table_has_a_row_per_record(self):
-        console = lines("Linux version", "TINY-BANNER x", GOOD)
+        console = lines("Linux version", "WISP-BANNER x", GOOD)
         rec = run.evaluate("sparc32", {"load1": 1.0, "load5": 2.0, "exit_code": 0,
                                        "timed_out": False, "max_rss_kb": 51200, "user_s": 1,
                                        "sys_s": 0, "t_exit": 3.0, "lines": console}, None)

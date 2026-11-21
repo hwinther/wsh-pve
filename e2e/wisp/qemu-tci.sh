@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds QEMU with the TCG interpreter (TCI) for the tiny test system's targets, inside the tiny
+# Builds QEMU with the TCG interpreter (TCI) for wisp's targets, inside the wisp
 # image (its apt sources include the Proxmox repository for libproxmox-backup-qemu0-dev):
 #   ./qemu-tci.sh <qemu source tree> <build dir> [targets]
 # The source tree is pve-qemu's `qemu` with its debian/patches applied (quilt push -a), or plain
@@ -25,7 +25,7 @@ mkdir -p "$BUILD"
 cd "$BUILD"
 [ -f build.ninja ] || nice -n 10 "$SRC/configure" --target-list="$TARGETS" \
 	--disable-docs --disable-werror --disable-gtk --disable-sdl --disable-vnc --disable-opengl \
-	--disable-capstone --enable-png --enable-slirp --with-pkgversion="tiny-$MODE" $extra
+	--disable-capstone --enable-png --enable-slirp --with-pkgversion="wisp-$MODE" $extra
 bins=
 for t in $(echo "$TARGETS" | tr , ' '); do
 	bins="$bins qemu-system-${t%-softmmu}"
