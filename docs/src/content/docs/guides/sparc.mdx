@@ -60,6 +60,43 @@ network device, `lance`. The LX takes a serial console on `serial0` (its default
   limit). A disk installed on another SPARCstation doesn't boot on the LX (its SCSI controller is in
   another SBus slot): install on the LX.
 
+### Installing Sun boot PROMs with wsh-sun-proms
+
+`wsh-sun-proms`, in the `wsh-lab` package (`apt install wsh-lab`), installs Sun boot PROM images
+you are entitled to use, from a source you provide, into `/usr/share/kvm` on the node. That is where
+QEMU loads firmware from, so the BIOS selector and the profiles above find them by name (`ss5.bin`,
+`ss20_v2.25_rom`, `lx.bin`). The tool has no images and no default source. It checks every file
+against a manifest of known images (file name, size, SHA-256 and the machine that runs it) and
+refuses an unknown or differing file unless you add `--force`.
+
+```sh
+wsh-sun-proms install --source <your PROM source>   # as root on the node
+wsh-sun-proms status                                # which PROMs are there, and from where
+wsh-sun-proms verify --all                          # exit 1 unless all four are there and match
+```
+
+The source can be:
+
+- a directory (subdirectories are searched too) or a tar or zip archive;
+- a git repository: `ssh://...`, `git@host:path`, an `https://...` URL that ends in `.git`, or any
+  URL with `--type git`. It is cloned into a temporary directory with your own git credentials (an
+  SSH key or a credential helper), so a private repository works. The clone is deleted afterwards
+  and no token is stored (needs `git`);
+- an HTTPS URL of an archive, or a base URL with the files under their names (`<URL>/ss5.bin`).
+
+A file is found by its name, or by its SHA-256 under any other name. Installed files are mode 0644,
+owned by root. Running `install` again changes nothing. Name files to install only some:
+`wsh-sun-proms install --source <your PROM source> lx.bin`. `wsh-sun-proms remove` deletes what
+the tool installed. It keeps files that changed since then, files the tool didn't install (unless
+you add `--force`) and files that belong to a package.
+
+The tool records what it installed in `/var/lib/wsh-sun-proms/installed.tsv`: the file, its SHA-256
+and the source, with any credentials taken out of the URL. `status` uses it to show where each PROM
+came from: a package (from dpkg), `wsh-sun-proms` (with source and date), or "not recorded" for a
+copy made by hand. A PROM that a package already has with the right content counts as installed
+and is left to dpkg. If a package upgrade removes a file it owned, run `install` again. See
+`man wsh-sun-proms`.
+
 ## The sparc64 profile
 
 A sparc64 VM has one layout, the one that was tested to boot; the API refuses anything else (on
