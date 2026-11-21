@@ -8,8 +8,9 @@ name: wsh-openglide package
 #
 # Pull requests: build, lintian, and the test in a clean Debian 13 (test.sh: install, a Glide 2 and a
 # Glide 3 scene rendered through the installed libraries under Xvfb with Mesa's llvmpipe and softpipe,
-# pixels checked, purge), then the whole pass-through from a Linux guest in the published
-# qemu-system-x86_64-3dfx (e2e/3dfx/test.sh). Nothing is published. main (or by hand on main): the
+# pixels checked, the same offscreen through the EGL platform with no X server, purge), then the whole
+# pass-through from a Linux guest in the published qemu-system-x86_64-3dfx (e2e/3dfx/test.sh), with
+# an SDL window and headless with VNC. Nothing is published. main (or by hand on main): the
 # same, then a GitHub release wsh-openglide-<version> with the .deb, tagged on the tip of main,
 # unless one exists already, and the Pages deploy
 # (repo-update.yml), which adds the newest wsh-openglide release's .deb to the apt repository.
@@ -95,7 +96,10 @@ jobs:
   # The whole Glide pass-through without Windows (e2e/3dfx/test.sh): the published pve-qemu-kvm's
   # qemu-system-x86_64-3dfx boots a Linux guest whose /init draws the test scene through qemu-3dfx's
   # Linux guest wrapper into this build's wsh-openglide, reads it back and checks it, and the VM's SDL
-  # window on Xvfb is checked too. Skipped (exit 77) when the published package has no 3dfx binary.
+  # window on Xvfb is checked too; then the same headless (-display none, VNC, no X server), where the
+  # frame is checked in QEMU's screendump of the console. Skipped (exit 77) when the published package
+  # has no 3dfx binary, the headless run also while its binary has no offscreen display (qemu-3dfx-check.yml
+  # tests that with a binary built from the branch).
   passthrough:
     name: QEMU pass-through (Linux guest)
     needs: [build]
@@ -134,6 +138,22 @@ jobs:
             debian:trixie sh /src/e2e/3dfx/test.sh "/deb/wsh-openglide_${VERSION}_amd64.deb" /out || rc=$?
           if [ "$rc" = 77 ]; then
             echo "::notice title=3dfx pass-through not tested::the published pve-qemu-kvm has no qemu-system-x86_64-3dfx"
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Boot the guest headless (VNC, no X server) and check the console
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          QEMU3DFX_REV: ${{ steps.qemu3dfx.outputs.rev }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/passthrough/vnc"
+          rc=0
+          docker run --rm -e QEMU3DFX_REV -e GLIDE_DISPLAY=vnc \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/deb:/deb:ro" -v "$RUNNER_TEMP/passthrough/vnc:/out" \
+            debian:trixie sh /src/e2e/3dfx/test.sh "/deb/wsh-openglide_${VERSION}_amd64.deb" /out || rc=$?
+          if [ "$rc" = 77 ]; then
+            echo "::notice title=3dfx headless not tested::the published qemu-system-x86_64-3dfx can't render offscreen yet (or is missing)"
             exit 0
           fi
           exit "$rc"
