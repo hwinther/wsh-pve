@@ -119,6 +119,37 @@ export async function hasQemu3dfxDir(): Promise<boolean> {
   return probe.output.includes('dir=yes')
 }
 
+/** Whether the file in the container contains the text (a probe of an installed package). */
+async function installedHas(file: string, text: string): Promise<boolean> {
+  return (await pveExec(['grep', '-qF', '--', text, file])).code === 0
+}
+
+/**
+ * Whether the installed qemu-server refuses efidisk0 and tpmstate0 on sparc32 (up to 9.2.20+wsh3 it
+ * took a tpmstate0, and the VM then failed to start: qemu-system-sparc has no tpm-tis).
+ * TODO: remove with its test.fail() once a qemu-server with it is published.
+ */
+export async function qemuServerRefusesSparcFwDisks(): Promise<boolean> {
+  return installedHas('/usr/share/perl5/PVE/QemuServer/Machine.pm', 'sun4m has no UEFI firmware and no TPM')
+}
+
+/**
+ * Whether the installed qemu-server prints nothing but the command in `qm showcmd` for a VM with a
+ * vga `server` (up to 9.2.20+wsh3 it printed "-- Using <display> display ..." first).
+ * TODO: remove with its test.fail() once a qemu-server with it is published.
+ */
+export async function qemuServerShowcmdClean(): Promise<boolean> {
+  return !(await installedHas('/usr/share/perl5/PVE/QemuServer.pm', '-- Using $displayType display'))
+}
+
+/**
+ * Whether the installed pve-manager hides EFI Disk and TPM State on sparc (Hardware → Add and the
+ * create wizard's Add TPM). TODO: remove with its test.fail() once a pve-manager with it is published.
+ */
+export async function pveManagerHidesSparcFwDisks(): Promise<boolean> {
+  return installedHas('/usr/share/pve-manager/js/pvemanagerlib.js', 'efidisk_menuitem.setHidden(isSparc)')
+}
+
 /** The VM's config file as pmxcfs stores it. */
 export async function vmConfFile(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['cat', `/etc/pve/qemu-server/${vmid}.conf`])

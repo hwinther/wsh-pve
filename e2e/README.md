@@ -65,6 +65,15 @@ command a real start would reject fails without running a guest.
 
 Known bugs are marked `test.fail()`. They run, and turn red once fixed, so the marker gets removed.
 
+## The tiny test system (`tiny/`)
+
+A kernel plus a one-program initramfs (PID 1 built with the kernel's nolibc) for x86_64, i386, sparc32
+(SS-5, SS-20) and sparc64 (sun4u), booted with `-kernel` on a serial console: banner, `uname`, CPU count,
+memory, a compute loop with a checksum and its time, one result line, power-off. `tiny/build.sh` builds
+it in the `tiny/Dockerfile` image, `tiny/run.py` boots it under a given QEMU binary (TCG or a TCI build
+from `tiny/qemu-tci.sh`) and reports times to PID 1 and power-off, the loop time and QEMU's peak RSS. See
+`tiny/README.md` and the [Tiny test system](../docs/src/content/docs/guides/tiny.md) guide.
+
 ## The PVE container
 
 `pve/Dockerfile` (build context: the repository root) installs `pve-manager`, `qemu-server`,

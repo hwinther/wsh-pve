@@ -7,7 +7,9 @@ import {
   type Pve,
   pveApi,
   pveExec,
+  pveManagerHidesSparcFwDisks,
   qemuAccepts,
+  qemuServerRefusesSparcFwDisks,
   showcmd,
   vmConfFile,
   writeConfFile,
@@ -307,6 +309,21 @@ test.describe('refused combinations', () => {
       expect(code, 'no config is left behind').not.toBe(0)
     })
   }
+
+  test('create: an EFI disk or a TPM state volume (no UEFI firmware or TPM on sun4m)', async () => {
+    test.fail(!(await qemuServerRefusesSparcFwDisks()), 'the installed qemu-server takes them')
+    for (const [key, volume] of [
+      ['efidisk0', 'local:1'],
+      ['tpmstate0', 'local:1,version=v2.0'],
+    ]) {
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const params = { arch: 'sparc', memory: 256, vmid, [key]: volume }
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, params)
+      expect(refused.message).toContain(`sparc: ${key} can't be used, sun4m has no UEFI firmware and no TPM`)
+      const { code } = await pveExec(['test', '-e', `/var/lib/vz/images/${vmid}`])
+      expect(code, 'no volume is allocated').not.toBe(0)
+    }
+  })
 
   test('update: the result must still match a profile', async () => {
     const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-update' })
@@ -1100,11 +1117,14 @@ test.describe('web UI', () => {
   /** The sparc32 machines the installed pve-manager offers (the LX since its profile). */
   let machinesOffered = ['Default (SS-5)', 'SS-10', 'SS-20']
   let uiHasLx = false
+  /** Whether the installed pve-manager hides EFI Disk and TPM State on sparc. */
+  let uiHidesFwDisks = false
 
   test.beforeAll(async () => {
     const js = '/usr/share/pve-manager/js/pvemanagerlib.js'
     uiHasLx = (await pveExec(['grep', '-q', 'SPARCstation LX PROM', js])).code === 0
     if (uiHasLx) machinesOffered = [...machinesOffered, 'LX']
+    uiHidesFwDisks = await pveManagerHidesSparcFwDisks()
   })
 
   test.beforeEach(async ({ page }) => {
@@ -1130,6 +1150,8 @@ test.describe('web UI', () => {
       await pickCombo(page, wizard, 'Machine', p.machine)
       expect(await comboOptions(page, wizard, 'BIOS')).toEqual(p.firmwareOffered)
       await pickCombo(page, wizard, 'BIOS', p.firmwarePick)
+      // no TPM on sun4m (and no OVMF among the firmware, so no EFI disk either)
+      if (uiHidesFwDisks) await expect(wizard.getByLabel(fieldLabel('Add TPM'))).toBeHidden()
       await next(wizard)
 
       // Disks: the first disk on SCSI target 3.
@@ -1292,6 +1314,26 @@ test.describe('web UI', () => {
     await expect(page.getByRole('button', { name: 'Edit' })).toBeDisabled()
     await page.getByRole('button', { name: 'Add' }).click()
     await expect(page.getByRole('menuitem', { name: 'Architecture' })).toHaveCount(0)
+  })
+
+  test('Hardware: Add offers no EFI Disk or TPM State on sparc32, but does on x86_64', async ({ page }) => {
+    test.fail(!uiHidesFwDisks, 'the installed pve-manager offers them on sparc')
+    const sparc = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-add-menu' })
+    const x86 = await createVm({ memory: 256, name: 'x86-add-menu' })
+    await page.goto(`/#v1:0:=qemu%2F${sparc}:4:=hardware`)
+    await page.reload() // the resource tree learns about VMs created after login only on a reload
+    await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+    await page.getByRole('button', { name: 'Add' }).click()
+    await expect(page.getByRole('menuitem', { name: 'Hard Disk', exact: true })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: 'TPM State' })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    await page.goto(`/#v1:0:=qemu%2F${x86}:4:=hardware`)
+    await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+    await page.getByRole('button', { name: 'Add' }).click()
+    await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'TPM State' })).toBeVisible()
   })
 })
 

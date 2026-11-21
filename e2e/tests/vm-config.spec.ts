@@ -7,6 +7,7 @@ import {
   pveApi,
   pveExec,
   qemuAccepts,
+  qemuServerShowcmdClean,
   showcmd,
   vmConfFile,
   writeConfFile,
@@ -178,7 +179,9 @@ test.describe('x86: 3dfx/Mesa pass-through', () => {
     const vmid = await createVm({ memory: 512, name: 'x86-3dfx-sdl', vga: 'std,mesa=1,server=:0' })
 
     const cmd = await showcmd(vmid)
-    expect(cmd).toContain('-- Using sdl display with std driver and host :0')
+    // the command alone: up to qemu-server 9.2.20+wsh3 a "-- Using sdl display ..." line came first
+    if (await qemuServerShowcmdClean()) expect(cmd).not.toContain('-- Using')
+    else expect(cmd).toContain('-- Using sdl display with std driver and host :0')
     expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-x86_64-3dfx \\$/m)
     expect(cmd).toContain('-vga std')
     expect(cmd).toContain('-display sdl')
