@@ -165,7 +165,10 @@ per-VM volume in qemu-server; `submodules/SPARC.md`, "SPARCstation LX with its o
      through qemu-server (`driver=wav`: `qm showcmd`, then a real `qm start` that records). All
      play. Found: on q35 PVE's machine config adds a codec-less `ich9-intel-hda` at 00:1b.0, so
      `audio0` is the guest's second card; qemu-server puts two codecs on one HDA controller; Linux
-     starts AC97/HDA muted; SB16 direct DAC isn't emulated; the wav header's sizes stay 0. Table and
+     starts AC97/HDA muted; SB16 direct DAC isn't emulated; the wav header's sizes stay 0 however
+     QEMU ends, a QEMU 11 bug (the voices' references keep the backend from being finalized; also
+     in plain 11.1.3; [write-up](upstream/qemu-audio-wav-header-sizes.md)); the matrix checks the
+     header's format on every recording and ends QEMU by `quit`, SIGTERM, SIGKILL and `qm stop`. Table and
      the headless-node answer (`pa` with `server=`, also for PipeWire desktops) in the
      [audio reference](docs/src/content/docs/reference/audiodev.md). Next: GUS and CS4231A (needs a
      DOS test for each); Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a
