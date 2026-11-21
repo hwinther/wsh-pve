@@ -234,5 +234,13 @@ was measured under TCG only.
 - **No per-NIC ROM option in PVE.** `machine: ...,legacy-bios-layout=1` drops the ROM of every NIC
   of the VM (and the vapic ROM); removing only one NIC's ROM still needs
   `args: -global ne2k_pci.romfile=` (root only).
+- **The Incredible Machine 1 and 2 show a black screen while their music plays.** QEMU's VGA read
+  the attribute controller's address register (port 3C0h) as 0 when its flip-flop was in the data
+  state; the games save the address that way while loading the palette and write it back, which
+  turns the display off (the palette address source bit) for as long as they run. Every `vga`
+  model QEMU offers has the same code, so changing it doesn't help. pve-qemu patch `wsh/0051`
+  returns the address in both states, as the VGA does; it is not in a published pve-qemu-kvm yet.
+  The Incredible Machine 2 also needs 256K of EMS (EMM386 with `RAM`); without it, it stops with
+  "You do not have enough memory to run this program".
 - **EMM386 must not include the top of the E segment.** `I=` up to EFFF lets DOS boot, then the
   keyboard is dead: SeaBIOS's data at E9000-EFFFF was handed out as UMB. Stay within the gap.
