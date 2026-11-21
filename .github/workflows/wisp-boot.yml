@@ -5,9 +5,16 @@ name: Wisp boot
 # then SS-20, SS-10, SS-4, SPARCClassic, SPARCbook, LX and Voyager) and sparc64 (sun4u) under TCG,
 # and run.py checks the result line, the CRC and the power-off. About 3 s per boot. The LX and the
 # Voyager need OpenBIOS patch 0027 (in the published pve-qemu-kvm since 11.1.3-3+wsh9); the
-# firmware is the published package's in both QEMU modes below. run.py --shell then boots the four architectures once more with
-# wisp=shell and drives the interactive shell over the serial console (help, info, bench, crc,
-# mandel, poweroff).
+# firmware is the published package's in both QEMU modes below. run.py --shell then boots the
+# four architectures once more with wisp=shell and drives the interactive shell over the serial
+# console (help, info, bench, crc, mandel, poweroff).
+#
+# Tier 2 (run.py --tier2, kernel-t2): every machine again with a raw disk image on each of its
+# disk controllers (pc: IDE and virtio-blk; sun4m: ESP SCSI; sun4u: cmd646 IDE and virtio-blk), a
+# NIC on QEMU's user-mode network (pc: e1000 and virtio-net; sun4m: lance; sun4u: hme) and, on pc,
+# SS-10 and SS-20, 2 and 4 CPUs: a pattern written and read back on each disk (and checked in the
+# image afterwards), ARP and ICMP echo with 10.0.2.2, and the compute loop on every CPU. Then the
+# shell once more per architecture with its disk, net and smp commands.
 #
 # Which QEMU: on a pull request that changes the pve-qemu build (submodules/pve-qemu.patch, the
 # pve-qemu pin, e2e/wisp/qemu-tci.sh or this workflow), qemu-system-{x86_64,i386,sparc,sparc64}
@@ -151,6 +158,12 @@ jobs:
             2> "$RUNNER_TEMP/wisp/table-sparc32.md" || rc=1
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-shell.md" || rc=1
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --tier2 "${args[@]}" \
+            2> "$RUNNER_TEMP/wisp/table-tier2.md" || rc=1
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 "${sparc32[@]}" --tier2 \
+            "${args[@]}" 2> "$RUNNER_TEMP/wisp/table-tier2-sparc32.md" || rc=1
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell --tier2 "${args[@]}" \
+            2> "$RUNNER_TEMP/wisp/table-tier2-shell.md" || rc=1
           exit "$rc"
 
       - name: Summary
@@ -170,6 +183,16 @@ jobs:
             echo "### Interactive shell (wisp=shell)"
             echo
             cat "$RUNNER_TEMP/wisp/table-shell.md" 2>/dev/null || echo "(no table)"
+            echo
+            echo "### Tier 2: disk, network, SMP"
+            echo
+            cat "$RUNNER_TEMP/wisp/table-tier2.md" 2>/dev/null || echo "(no table)"
+            echo
+            cat "$RUNNER_TEMP/wisp/table-tier2-sparc32.md" 2>/dev/null || echo "(no table)"
+            echo
+            echo "### Tier 2 in the shell (disk, net, smp)"
+            echo
+            cat "$RUNNER_TEMP/wisp/table-tier2-shell.md" 2>/dev/null || echo "(no table)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the results

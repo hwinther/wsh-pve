@@ -90,8 +90,9 @@ come after that, not before.
 | DOS memory profiles, follow-up: the MS-DOS EMS profile gives EMM386 `RAM` without a size, so its EMS and VCPI pool is all free XMS (`RAM 4096` capped VCPI at 4 MB and Duke Nukem 3D, DOS/4GW, stopped for lack of memory); with it one boot runs all nine games of the matrix (Wolfenstein 3D with `retrace=precise`). A profile can bring its own `SHELL` line (also in a startup-menu block); MS-DOS 6.22's `MEM` line for a large EMS pool (no K, no closing parenthesis) is parsed. Wolfenstein 3D's black screen on plain `std` pinned down in the lab: its CRTC routine waits for several reads of "blanked, not in vertical retrace" on 3DAh, which `dumb` never gives (bits 0 and 3 flip together), and its timer-based timeout can't fire because the counter isn't running yet (sampled under TCG and KVM); no `CONFIG.SYS` changes it. DOS guide and display reference updated | in review | |
 | 3dfx in a real Windows 98 SE guest (`e2e/3dfx/win98-test.sh`, workflow `3dfx in Windows 98`, by hand and weekly on the lab runner): the operator's own installed disk (never in the repository; path from an input or `WSH_WIN98_TEMPLATE`) is copied, the binary's `qemu-3dfx-drivers` release and our own test programs (mingw-w64, no C runtime: `glidetst.exe` for Glide 2 and 3, `gltest.exe` for OpenGL, `w3drun.exe` in StartUp, which powers Windows off) are written onto the copy with mtools, QEMU gets PVE's device set at PVE's PCI addresses (no new-hardware wizard); the programs report on COM1, the harness checks the frame in the console's screendump and the desktop after it; screendumps stay on the runner, the artifact has only logs and probe values. Published 11.1.3-3+wsh5: Glide 2 and 3 pass headless (KVM and TCG), OpenGL ends QEMU (SIGSEGV on loading `OPENGL32.DLL`); a binary from #407: all three pass (KVM 50-70 s a run, TCG 83 s; 1400-1700 Glide and 1900-2500 OpenGL frames/s). Found: the release's guest drivers need SSE2-SSE4.2/POPCNT, so `cpu: pentium3` without KVM faults ("illegal operation"); booting at the host's time can stop Windows 98 at a daylight-saving dialog | in review | |
 | 3dfx guest drivers for a Pentium-class guest: `submodules/qemu-3dfx-drivers.patch` builds every compiled part with `-march=pentium` (MinGW DLLs/EXEs and the DJGPP DXEs) or `-5s` (Watcom OVL) instead of upstream's `-march=x86-64-v2`; `scripts/check-3dfx-drivers-isa.sh` disassembles the result in `make 3dfx-drivers` and fails on MMX/SSE or later (CMOV from Debian's i686 MinGW runtime is allowed); `VERSION.txt` says "built for i586" and the Windows 98 harness's `--cpu auto` adds the SSE extensions under TCG only for older zips. Windows 98 test with published 11.1.3-3+wsh6: Glide 2, Glide 3 and OpenGL pass with `cpu: pentium3` under TCG and KVM. Also: the 3dfx binary's `--version` always said `+wsh1`, as `make pve-qemu-3dfx` versioned a fresh pve-qemu without `submodules/pve-qemu.changelog.patch`; it now applies it before `dch` like the pve-qemu target, and `build-deb.yml` warns when the banner and the package version differ (a build that waited in the queue) | in review | |
-| wisp, the tiny test system, tier 1 (`e2e/wisp/`, guide "wisp"): a kernel (Linux 7.3.4 from Debian's `linux-source-7.3`, `tinyconfig` plus a fragment per architecture, uniprocessor) with a built-in initramfs whose only file is a static PID 1 built with the kernel's nolibc (no C library; sparc32 as V8 with `-m32 -mcpu=v8`), for x86_64 and i386 (`pc`), sparc32 (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager`) and sparc64 (`sun4u`). It boots with `-kernel` on the serial console, prints a banner, `uname`, CPU count, memory, a compute loop (xorshift32 + CRC-32, the same checksum on every architecture) with its time and one result line, and powers off; `run.py` (stdlib, unit tests) boots it under a given QEMU and reports times to PID 1 and power-off, loop time and peak RSS; `qemu-tci.sh` builds a TCI QEMU. Kernels 1.1-1.3 MB (x86 bzImage) and 2.4/3.1 MB (sparc32/sparc64 ELF), PID 1 5-13 KB. Lab, load 4-6 on 14 threads, two passes, all 24 runs pass: to power-off 1.6-3.2 s under TCG (published 11.1.3-3+wsh6), 22-28 s under TCI; the loop 15-21 times slower under TCI, and 9-15 s of a TCI boot pass before the kernel's first line (firmware, plus XZ decompression on x86). `-M LX` (and `-M Voyager`) with OpenBIOS stopped Linux 7.3 at its first idle: OpenBIOS gave them the SS-5's APC node, which QEMU (and a real LX) doesn't have there, Linux's `apc_swift_idle()` took a data access error on it and the nested faults overwrote the kernel text (`Trap 0x07` in `tsetup_patch2`); OpenBIOS patch 0027 makes the APC node only on the SS-5, SS-4, SPARCClassic and SPARCbook, and the LX and the Voyager pass (`e2e/wisp/README.md`, "The LX and the Voyager"). CI: `wisp-boot.yml` boots the eleven machines (the four architectures, then sparc32 on the seven other machines; the LX and the Voyager since the published 11.1.3-3+wsh9 carries OpenBIOS patch 0027, verified on the lab with the package's QEMU and with QEMU built from the tree: 15 boots in 36 s, all pass) on a GitHub-hosted runner for pull requests that touch `e2e/wisp/`, `pve-qemu.patch` or the pve-qemu pin (for the latter two with qemu-system-{x86_64,i386,sparc,sparc64} built from the pull request's patched tree), and on main with the published package; kernels cached, `wisp-boot-required` gate | in review | |
-| wisp interactive mode (`e2e/wisp/`, README "Interactive mode"): `wisp=shell` on the kernel command line starts a small shell in PID 1 on the serial console instead of the batch run (the default is unchanged): `help`, `info`/`uname`, `bench`, `crc <n>`, `mandel` (ASCII Mandelbrot, 78 x 20, 4.12 fixed point in 32-bit integers), `banner`, `clear`, `poweroff`, `reboot` (not on sun4u, where OpenBIOS doesn't restart). Canonical TTY mode: the line discipline does the echo and Backspace, Ctrl-U, Ctrl-W, Ctrl-C; an 80 x 24 layout with a few ANSI colours, for the Browser SPARC demo. `run.py --shell` drives it over the console on all four architectures and checks every answer (Mandelbrot character by character against a Python model and `tests/mandel.txt`); unit tests also build `init.c` against the host's glibc and drive it there; CI runs `--shell` after the batch boots. PID 1 grows by about 3.5 KB on sparc (5.2 to 8.7 KB sparc32, 5.4 to 8.9 KB sparc64) and 4 KB on x86. Found on the way: nolibc's sparc `_start` gets a `save` prologue from gcc and read `argc`/`envp` 96 bytes too low, so `loops=` never reached PID 1 on sparc; `init.c` now has its own `_start` there (an upstream nolibc fix candidate) | in review | |
+| wisp, the tiny test system, tier 1 (`e2e/wisp/`, guide "wisp"): a kernel (Linux 7.3.4 from Debian's `linux-source-7.3`, `tinyconfig` plus a fragment per architecture, uniprocessor) with a built-in initramfs whose only file is a static PID 1 built with the kernel's nolibc (no C library; sparc32 as V8 with `-m32 -mcpu=v8`), for x86_64 and i386 (`pc`), sparc32 (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager`) and sparc64 (`sun4u`). It boots with `-kernel` on the serial console, prints a banner, `uname`, CPU count, memory, a compute loop (xorshift32 + CRC-32, the same checksum on every architecture) with its time and one result line, and powers off; `run.py` (stdlib, unit tests) boots it under a given QEMU and reports times to PID 1 and power-off, loop time and peak RSS; `qemu-tci.sh` builds a TCI QEMU. Kernels 1.1-1.3 MB (x86 bzImage) and 2.4/3.1 MB (sparc32/sparc64 ELF), PID 1 5-13 KB. Lab, load 4-6 on 14 threads, two passes, all 24 runs pass: to power-off 1.6-3.2 s under TCG (published 11.1.3-3+wsh6), 22-28 s under TCI; the loop 15-21 times slower under TCI, and 9-15 s of a TCI boot pass before the kernel's first line (firmware, plus XZ decompression on x86). `-M LX` (and `-M Voyager`) with OpenBIOS stopped Linux 7.3 at its first idle: OpenBIOS gave them the SS-5's APC node, which QEMU (and a real LX) doesn't have there, Linux's `apc_swift_idle()` took a data access error on it and the nested faults overwrote the kernel text (`Trap 0x07` in `tsetup_patch2`); OpenBIOS patch 0027 makes the APC node only on the SS-5, SS-4, SPARCClassic and SPARCbook, and the LX and the Voyager pass (`e2e/wisp/README.md`, "The LX and the Voyager"). CI: `wisp-boot.yml` boots the eleven machines (the four architectures, then sparc32 on the seven other machines; the LX and the Voyager since the published 11.1.3-3+wsh9 carries OpenBIOS patch 0027, verified on the lab with the package's QEMU and with QEMU built from the tree: 15 boots in 36 s, all pass) on a GitHub-hosted runner for pull requests that touch `e2e/wisp/`, `pve-qemu.patch` or the pve-qemu pin (for the latter two with qemu-system-{x86_64,i386,sparc,sparc64} built from the pull request's patched tree), and on main with the published package; kernels cached, `wisp-boot-required` gate | merged | #417, #422, #427 |
+| wisp interactive mode (`e2e/wisp/`, README "Interactive mode"): `wisp=shell` on the kernel command line starts a small shell in PID 1 on the serial console instead of the batch run (the default is unchanged): `help`, `info`/`uname`, `bench`, `crc <n>`, `mandel` (ASCII Mandelbrot, 78 x 20, 4.12 fixed point in 32-bit integers), `banner`, `clear`, `poweroff`, `reboot` (not on sun4u, where OpenBIOS doesn't restart). Canonical TTY mode: the line discipline does the echo and Backspace, Ctrl-U, Ctrl-W, Ctrl-C; an 80 x 24 layout with a few ANSI colours, for the Browser SPARC demo. `run.py --shell` drives it over the console on all four architectures and checks every answer (Mandelbrot character by character against a Python model and `tests/mandel.txt`); unit tests also build `init.c` against the host's glibc and drive it there; CI runs `--shell` after the batch boots. PID 1 grows by about 3.5 KB on sparc (5.2 to 8.7 KB sparc32, 5.4 to 8.9 KB sparc64) and 4 KB on x86. Found on the way: nolibc's sparc `_start` gets a `save` prologue from gcc and read `argc`/`envp` 96 bytes too low, so `loops=` never reached PID 1 on sparc; `init.c` now has its own `_start` there (an upstream nolibc fix candidate) | merged | #428 |
+| wisp tier 2: disk, network, SMP (`e2e/wisp/`, README "Tier 2"): a second kernel per architecture, `kernel-t2` (`config/tier2/`), with the block layer, devtmpfs, each machine's disk and NIC drivers, packet sockets and SMP where QEMU's machine has more than one CPU; the tier-1 kernel and its output are unchanged. `run.py --tier2` boots every machine once per profile: a 4 MiB raw image per disk controller (pc: PIIX3 IDE and virtio-blk; sun4m: ESP SCSI; sun4u: cmd646 IDE and virtio-blk on its PCI bus), PID 1 reads and checks it, writes 1 MiB, syncs, drops the page cache and reads it back, and run.py checks the image afterwards; a NIC on QEMU's user-mode network (pc: e1000 and virtio-net; sun4m: lance; sun4u: hme) with ARP and 8 ICMP echoes of 1,400 bytes to slirp's 10.0.2.2, frames built by PID 1 on a packet socket (no IP stack in the kernel: 385 KB less on sparc32; no host network or DNS involved); the compute loop on every CPU with `sched_setaffinity` on pc and on the SS-10 and SS-20 (`-smp 2` and `4`; the sparc32 SMP kernel drops futex, which wisp doesn't use, and boots the uniprocessor sun4m machines too; sun4u has one CPU in QEMU). The shell has `disk`, `net` and `smp` (`run.py --shell --tier2`). `kernel-t2` is 0.55 MB larger on x86 (bzImage), 0.86 MB on sparc32 and 1.0 MB on sparc64 (ELF); PID 1 has 6.6-8.3 KB more code. Lab: all 32 tier-2 boots (21 batch, 11 shell) pass with the published 11.1.3-3+wsh9 and with QEMU built from the tree, and tier 1 still passes; `run.py` fixes the sparc32 delay-loop calibration (`lpj=`), which a descheduled QEMU could leave at 8191 so that the second CPU was given up as stuck. CI runs tier 2 after the shell boots | in review | |
 | Sun PROMs' NVRAM kept across starts: pve-qemu `wsh/0059` gives the sun4m M48T08 a `drive` (written through per byte; a blank image gets QEMU's contents once, any other is left alone except the IDPROM from `-M` and the MAC, and OpenBIOS's partitions when `-prom-env` is given), qtest `wsh/0060`; qemu-server `nvram0` (sparc32 only, 4 MiB like the TPM state, `-blockdev` + `-global sysbus-m48t08.drive`, in backup/restore/clone/move like a disk; cfg2cmd and hotplug tests) and Hardware → Add → NVRAM in pve-manager (no wizard default). In PVE (lab): after one `setenv diag-switch? false` the LX PROM (Solaris 2.6) and the SS-5 PROM (Solaris 8) boot to `login:` on every start without input, also a clone with a new MAC; OpenBIOS SS-5/SS-20 with and without the volume as before; qtest-sparc 28 OK. The SS-20 PROM's own auto-boot stopped QEMU in Solaris 2.6 (`Trap 0x29`, also without the volume): fixed by `wsh/0061`, next row. `submodules/SPARC.md`, "The NVRAM kept in a volume"; sparc guide, "Making a Sun PROM VM boot by itself"; `upstream/qemu-sun4m-nvram-backend.md` | in review | |
 | SS-20 PROM boots Solaris 2.6 by itself: the ledma's upper-address register (`E_BASE_ADDR`, the top 8 bits of the lance's 24-bit DVMA addresses) reset to 0 in QEMU; the DMA2 description says it defaults to `0xff`. Solaris 2.6's `le` never writes it and the SS-20 PROM sets it only when it probes with `diag-switch?` true, so with `diag-switch?` false (auto-boot, or a typed `boot disk` after such a start) the lance read its init block from `0x0040f000` instead of `0xff40f000`, the 64 MB IOMMU faulted at level 15 and the kernel recursed in its level-15 handler until QEMU stopped (`Trap 0x29`). pve-qemu `wsh/0061` resets it to `0xff000000` (ledma only), qtest `wsh/0062` `sun4m-ledma-test` (fails without 0061). Lab, plain QEMU 0001-0062: the stored `sol26-ss20` disk on the SS-20 PROM with an NVRAM image boots to `login:` by itself on three starts in a row; OpenBIOS SS-20, the SS-5 PROM (Solaris 8) and the LX PROM (Solaris 2.6) as before; qtest-sparc 29 OK. Not yet through PVE. `submodules/SPARC.md`, "SS-20 PROM: auto-boot and the lance DMA" | in review | |
 | sparc: no EFI Disk or TPM State. pve-manager hides both in Hardware → Add for sparc32 and sparc64 (as NVRAM is shown for sparc32 only) and the wizard's Add TPM (OVMF was already not offered); qemu-server refuses `efidisk0`/`tpmstate0` on sparc32 at create, update and start (a `tpmstate0` was taken and the start then failed: `qemu-system-sparc` has no `tpm-tis`; sparc64 already refused both). `qm showcmd` prints only the command again: two debug prints are gone (`-- Using <display> display ...` for a `vga` with `server=`, and `sparc/sparc64 does not support PCI devices, ignoring: ...` on every sparc VM); the cfg2cmd runner gets `EXPECT_NO_STDOUT`. cfg2cmd tests, e2e with `test.fail` probes until the packages have it | in review | |
@@ -280,7 +281,7 @@ on reconfiguration boots under the SS-20 PROM".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (first slice in review: Glide; the rest ~1-2 weeks).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide done, MESA GL in review; the rest ~1 week).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -296,9 +297,9 @@ on reconfiguration boots under the SS-20 PROM".
        that touches the console's GL state runs on the main loop (the vCPU thread has OpenGLide's
        context current), including giving the console back to the VGA: a GL scanout has no surface,
        and `vga_update_display()` dereferences it (QEMU crashed at the first close until the hand-back
-       set a surface first). Readback stays for everything else: no GL display (PVE today: VNC with
-       `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
-       ramp set (the copy applies none), and all of MESA GL. Instead of the `gbm_surface` planned,
+       set a surface first). Readback stays for everything else: no GL display (PVE's default: VNC
+       with `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
+       ramp set (the copy applies none), and (in the first slice) all of MESA GL. Instead of the `gbm_surface` planned,
        the renderer exports its own buffer: the frames are rendered in OpenGLide's context, and the
        display imports from it, so nothing has to be imported into OpenGLide. QEMU side (in
        `submodules/pve-qemu-qemu-3dfx.patch`, the 3dfx binary only): without a render node
@@ -332,18 +333,83 @@ on reconfiguration boots under the SS-20 PROM".
        With egl-headless the frame still goes through system memory for VNC (egl-headless reads it
        on the main loop, under the BQL), which costs more than the readback with Mesa's software
        renderer; the dmabuf way pays off where the consumer takes the dmabuf itself (D-Bus, stage 3)
-       or on a GPU, where `glReadPixels` stalls the pipeline. Left: MESA GL as a dmabuf (the
-       guest's pbuffer is its window: a second context current on the same pbuffer could blit
-       framebuffer 0 into an exported buffer without touching the guest's state); gamma in the copy
-       (a shader pass) so ramp frames stay dmabufs; a real GPU render node (modifiers other than
+       or on a GPU, where `glReadPixels` stalls the pipeline.
+       Second slice (in review): MESA GL as a dmabuf (`hw/mesa/mglcntx_egl.c`, `egl_export` and
+       `egl_scanout`, registered through the same `fxdisp_dmabuf`, so the bottom half, the
+       back-pressure and the readback fallback are #425's). The copy runs in a GL context of
+       mesapt's own, created on the guest's config without sharing, and made current on the
+       guest's window pbuffer only for the copy: it reads framebuffer 0 directly, so no object of
+       ours lands in the guest's namespace (a legacy GL guest may bind names it never got from
+       `glGen*`) and none of the guest's state (scissor, read buffer, framebuffer bindings,
+       `GL_FRAMEBUFFER_SRGB`, pack state) has to be saved and put back; it costs two
+       `eglMakeCurrent` (0.03 ms) and a `glFinish` in the guest's context, as another context
+       reads the frame. Per frame: a blit of the back buffer (the front one when single-buffered)
+       into a renderbuffer exported once through `EGL_MESA_image_dma_buf_export`, unscaled and
+       unflipped (rows bottom up, `y0_top` as for Glide), then `glFinish`. With a gamma ramp the
+       copy is two passes, the frame into a texture and a draw through a 256x1 lookup texture (a
+       12-line GLSL 1.20 shader, the same lookup the readback applies), so ramp frames stay
+       dmabufs. A pbuffer has no swap, and the guest draws its next frame into the same back
+       buffer, so a frame held while a D-Bus client is busy would be half overwritten by the time
+       the stale timer takes it: fxdisp gains a hold callback (`fxdisp_hold`, called at a swap
+       whose frame is held), with which mesapt copies the frame into a second renderbuffer, and
+       the scanout that follows copies from there. Readback stays for MESA GL with no GL display,
+       `QEMU_3DFX_DMABUF=0`, an EGL display without the export, a multisampled window (a
+       resolving blit needs identical formats; llvmpipe never gets one, `egl_msaa_works`, so it
+       is untested), and ramp frames if the shader can't be built. Tested (lab, KVM, llvmpipe,
+       `/dev/udmabuf`): `e2e/3dfx` `egl`, `dbus` and `dbus` with `DBUS_DELAY_MS=2`: the Mesa
+       guest's probes match as VNC serves them and as the D-Bus listener maps them, its gamma
+       phase arrives as a dmabuf with the ramp (`#0000b5`), every frame went as a dmabuf, the
+       VGA comes back after; `egl` with `QEMU_3DFX_DMABUF=0` reads both guests back (the test now
+       checks that); `vnc` and `sdl` unchanged; Glide unchanged. Windows 98 SE (`win98-test.sh
+       --display egl --openglide`, KVM): OpenGL passes as a dmabuf (0.87-1.09 ms a copy, 600-770
+       frames/s against 2200 read back with `--display vnc`), Glide 2 and 3 still pass as dmabufs;
+       the harness's summary now says per window how many frames went as a dmabuf. Measured (640x480, the test
+       scene, KVM, a lab under other load; the bench without a gamma ramp unless noted):
+
+       | Display | Mesa guest | vCPU thread per frame | main loop per frame |
+       | --- | --- | --- | --- |
+       | VNC, `-display none` (readback) | 357 frames/s (359 with a ramp) | 0.65 ms `glReadPixels` (0.45 with a ramp) | copy, 0.03-0.04 ms to the console |
+       | egl-headless + VNC, `QEMU_3DFX_DMABUF=0` | 448 frames/s (395 with a ramp) | 0.39 ms (0.36) | as above, plus egl-headless's upload |
+       | egl-headless + VNC (dmabuf) | 326 frames/s (253-310 with a ramp) | 0.81-0.98 ms (1.19-1.55 with a ramp) | 0.75-0.98 ms |
+       | dbus,gl=on (dmabuf), listener replies at once | 326 frames/s (364 with a ramp) | 1.11 ms (1.23) | 0.05-0.08 ms; 5-8 frames held |
+       | dbus,gl=on, listener replies 2 ms late, with a ramp | 405 frames/s | 1.21 ms | 0.06 ms; 157 of 302 held |
+
+       The copy costs more than the readback on llvmpipe. Instrumented (egl-headless, no ramp):
+       0.35 ms waiting for the guest's frame (`glFinish`; the readback waits as long), 0.03 ms
+       for the two context switches, 0.6 ms for the blit and its `glFinish`: llvmpipe converts
+       the pbuffer's pixel format into the `GL_RGBA8` renderbuffer by drawing (no renderbuffer
+       format gave its memcpy path, and desktop GL has no BGRA8 one), where Glide's
+       renderbuffer-to-renderbuffer blit is a 0.06 ms memcpy. On a GPU it is a GPU blit.
+       Left: a real GPU render node (modifiers other than
        linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
-       no D-Bus client yet) and a real game over time; qemu-server: which display a 3dfx VM gets (VNC needs pixels, so
-       egl-headless gains nothing there today; dbus,gl=on with the stage 3 client), and
-       `/dev/udmabuf` access for QEMU on a node without a GPU; double buffering instead of holding
-       frames while a D-Bus client reads; the D-Bus listener's 30 ms refresh cap; whether GitHub's
+       no D-Bus client yet) and a real game over time; double buffering instead of holding
+       frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
+       wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
+       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms refresh cap; whether GitHub's
        runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
        `3dfx in Windows 98` workflow has an `egl` display now but installs the published
        wsh-openglide, so until one with the exports is published its Glide frames are read back.
+       - **PVE: the display of a 3dfx VM (in review).** qemu-server: `vga: ...,mesa=1,mesa-display=`
+         `none|egl-headless` (default `none`: no `-display`, frames read back, as before);
+         `egl-headless` adds `-display egl-headless` next to PVE's `-vnc`, so noVNC keeps working.
+         Refused at create and update without the 3dfx binary (`mesa=1` on the host's
+         architecture), with a `server` (SDL) or without a VNC console (`none`, `serial*`); refused at
+         start on a node with neither a render node nor `/dev/udmabuf`, where QEMU would stop anyway
+         (Mesa then has no `EGL_MESA_image_dma_buf_export`: "egl: render node init failed").
+         QEMU runs as root in its systemd scope, with no device policy, so `/dev/udmabuf` (root:kvm
+         0660) needs no udev rule; Ubuntu kernels build it in (`CONFIG_UDMABUF=y`). `dbus,gl=on` is
+         not offered: QEMU refuses VNC next to it ("Display vnc is incompatible with the GL
+         context"), so PVE's console would go, and nothing in PVE consumes the D-Bus display until
+         stage 3. pve-manager: **3DFX/Mesa display** in the Display dialog, under **Enable
+         3DFX/Mesa** and only while it's checked. Tested (lab PVE container, no GPU, `/dev/udmabuf`,
+         TCG): cfg2cmd and unit tests, the e2e Playwright tests (`qm showcmd`, refusals, the
+         dialog) and `e2e/tests/3dfx-gl-display.spec.ts`, which boots the Glide guest of
+         `e2e/3dfx/test.sh` through `qm start` (`e2e/3dfx/pve-guest-setup.sh` puts it in the
+         container) and checks the frame in the noVNC console, read back and with egl-headless (4
+         open dmabufs against 1); QEMU, run with PVE's command line in the foreground, said "frames
+         to the graphic console as a dmabuf" (944 frames/s). Left: CI runs the frame spec only
+         where the guest was set up (no workflow does that yet), a GPU node, Windows 98 through
+         PVE with egl-headless, the PVE kernel's `CONFIG_UDMABUF` (checked on Ubuntu's only).
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.
@@ -557,7 +623,7 @@ on reconfiguration boots under the SS-20 PROM".
   9. *A living museum*: a page to pick a machine and OS (SunOS, Solaris 2.x, NetBSD, OpenBSD,
      Debian 4, Red Hat 6.2) and watch its install and first boot from the existing recordings.
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
-     wisp's tier 2 (Buildroot with uClibc-ng) for a libc.
+     a libc under wisp (Buildroot with uClibc-ng).
 
 ## Known and not fixed
 

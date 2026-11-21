@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..e8d8f9e7 100644
+index f305ba44..ff813a56 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,70 @@
+@@ -1,10 +1,77 @@
++pve-manager (9.2.32+wsh10) trixie; urgency=medium
++
++  * feat(3dfx): choose the display of a 3dfx VM in PVE (egl-headless
++    next to VNC) (#431)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 22:06:29 +0000
++
 +pve-manager (9.2.32+wsh9) trixie; urgency=medium
 +
 +  * fix(sparc): hide EFI disk and TPM state, keep qm showcmd output

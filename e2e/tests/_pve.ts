@@ -150,6 +150,31 @@ export async function pveManagerHidesSparcFwDisks(): Promise<boolean> {
   return installedHas('/usr/share/pve-manager/js/pvemanagerlib.js', 'efidisk_menuitem.setHidden(isSparc)')
 }
 
+/**
+ * Whether the installed qemu-server has the GL display of a 3dfx VM (`vga: ...,mesa-display=...`).
+ * TODO: remove with the skips once a qemu-server with it is published.
+ */
+export async function qemuServerHasMesaDisplay(): Promise<boolean> {
+  return installedHas('/usr/share/perl5/PVE/QemuServer.pm', "'mesa-display' => {")
+}
+
+/**
+ * Whether the installed pve-manager has the "3DFX/Mesa display" field in the Display dialog.
+ * TODO: remove with the skips once a pve-manager with it is published.
+ */
+export async function pveManagerHasMesaDisplay(): Promise<boolean> {
+  return installedHas('/usr/share/pve-manager/js/pvemanagerlib.js', "name: 'mesa-display'")
+}
+
+/**
+ * Whether the installed 3dfx binary hands Glide frames to a GL display as a dmabuf and starts
+ * egl-headless without a render node (Mesa's surfaceless platform): pve-qemu-kvm with stage 2 of the
+ * 3dfx ROADMAP entry. TODO: remove with the skips once a pve-qemu-kvm with it is published.
+ */
+export async function qemu3dfxHasGlDisplay(): Promise<boolean> {
+  return installedHas('/usr/bin/qemu-system-x86_64-3dfx', "using Mesa's surfaceless EGL platform")
+}
+
 /** The VM's config file as pmxcfs stores it. */
 export async function vmConfFile(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['cat', `/etc/pve/qemu-server/${vmid}.conf`])

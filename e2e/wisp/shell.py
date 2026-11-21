@@ -3,8 +3,9 @@
 QEMU's serial console is on stdin and stdout. The driver waits for each prompt, sends the next
 command and keeps what came back; at the end it checks the answers: the line editing (a mistyped
 "help" fixed with two Backspaces), the info lines, the CRC of bench and of "crc 64" against the
-model in run.py, every row of mandel against mandel_rows() below, and the power-off.
-Python standard library only.
+model in run.py, every row of mandel against mandel_rows() below, and the power-off. With a
+tier-2 profile (run.py --shell --tier2), the script also has disk, net and smp (tier2_script()),
+and run.py checks their lines with tier2.py. Python standard library only.
 """
 
 import os
@@ -22,6 +23,21 @@ LOOP = re.compile(r"crc32 0x([0-9a-f]{8}) after (\d+) rounds \(\d+ KiB\) in (\d+
 # "hepl" and two Backspaces (DEL, what a terminal sends) and "lp": the kernel's line discipline
 # makes it "help".
 SCRIPT = ("hepl\x7f\x7flp", "info", "bench", "crc 64", "mandel", "poweroff")
+
+
+def tier2_script(profile):
+    """SCRIPT with the tier-2 commands for a profile's devices (tier2.py) before the poweroff:
+    disk and net take their devices from the kernel command line, smp runs with more than one
+    CPU."""
+    extra = []
+    if profile["disks"]:
+        extra.append("disk")
+    if profile.get("nic"):
+        extra.append("net")
+    if profile.get("smp", 1) > 1:
+        extra.append("smp")
+    return SCRIPT[:-1] + tuple(extra) + SCRIPT[-1:]
+
 
 # init.c's Mandelbrot: 4.12 fixed point, 78 x 20 characters, 32 iterations.
 MANDEL_COLS, MANDEL_ROWS, MANDEL_ITER = 78, 20, 32

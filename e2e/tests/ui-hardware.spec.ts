@@ -5,7 +5,9 @@ import {
   PASSWORD,
   type Pve,
   pveApi,
+  pveManagerHasMesaDisplay,
   qemuAccepts,
+  qemuServerHasMesaDisplay,
   showcmd,
   vmConfFile,
 } from './_pve'
@@ -92,6 +94,40 @@ test('display: Enable 3DFX/Mesa', async ({ page }) => {
 
   // The command (the 3dfx binary) and whether QEMU takes it: vm-config.spec.ts.
   expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=1$/m)
+})
+
+test('display: 3DFX/Mesa display egl-headless', async ({ page }) => {
+  test.skip(!(await pveManagerHasMesaDisplay()), 'the installed pve-manager has no 3DFX/Mesa display field yet')
+  test.skip(!(await qemuServerHasMesaDisplay()), 'the installed qemu-server has no mesa-display yet')
+  const display = async () => {
+    await page.getByText(/^Display$/).dblclick()
+    return page.locator('.x-window').filter({ has: page.getByText('Graphic card:', { exact: true }) })
+  }
+
+  let win = await display()
+  await win.getByLabel('Graphic card').click()
+  await page.locator('.x-boundlist:visible li', { hasText: 'Standard VGA' }).click()
+  // only with 3DFX/Mesa enabled
+  await expect(win.getByLabel('3DFX/Mesa display')).toBeHidden()
+  await win.getByLabel('Enable 3DFX/Mesa').check()
+  await expect(win.getByLabel('3DFX/Mesa display')).toBeVisible()
+  await win.getByLabel('3DFX/Mesa display').click()
+  await page.locator('.x-boundlist:visible li', { hasText: 'egl-headless' }).click()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  // the dialog sorts the keys
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa-display=egl-headless,mesa=1$/m)
+  expect(await showcmd(VMID)).toMatch(/^ {2}-display egl-headless \\$/m)
+
+  // reopened: the field shows it; 3DFX/Mesa off again takes the field (and the key) away
+  win = await display()
+  await expect(win.getByLabel('3DFX/Mesa display')).toHaveValue(/egl-headless/)
+  await win.getByLabel('Enable 3DFX/Mesa').uncheck()
+  await expect(win.getByLabel('3DFX/Mesa display')).toBeHidden()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=0$/m)
+  expect(await showcmd(VMID)).not.toContain('-display')
 })
 
 test('display: VGA retrace Precise (DOS games)', async ({ page }) => {
