@@ -1,5 +1,5 @@
 diff --git a/src/PVE/API2/Qemu.pm b/src/PVE/API2/Qemu.pm
-index e0661738..e605abd0 100644
+index e0661738..81303e75 100644
 --- a/src/PVE/API2/Qemu.pm
 +++ b/src/PVE/API2/Qemu.pm
 @@ -243,6 +243,8 @@ my $check_drive_param = sub {
@@ -64,7 +64,25 @@ index e0661738..e605abd0 100644
  my sub prohibit_tpm_version_change {
      my ($old, $new) = @_;
  
-@@ -799,8 +835,11 @@ my sub create_disks : prototype($$$$$$$$$$$) {
+@@ -777,6 +813,17 @@ my sub create_disks : prototype($$$$$$$$$$$) {
+                     $size = PVE::Tools::convert_size(
+                         get_tpmstate_size($volid, $storecfg), 'b' => 'kb',
+                     );
++                } elsif ($ds eq 'nvram0') {
++                    # a fixed size, which the storage may round up; QEMU uses the first 8 KiB,
++                    # blank, so it writes its default NVRAM contents at the first start
++                    my $target_size = PVE::Tools::convert_size(
++                        PVE::QemuServer::Drive::NVRAM_DISK_SIZE, 'b' => 'kb',
++                    );
++                    $volid = PVE::Storage::vdisk_alloc(
++                        $storecfg, $storeid, $vmid, $fmt, undef, $target_size,
++                    );
++                    my $nvram_size = PVE::Storage::volume_size_info($storecfg, $volid, 3);
++                    $size = PVE::Tools::convert_size($nvram_size, 'b' => 'kb');
+                 } else {
+                     $volid =
+                         PVE::Storage::vdisk_alloc($storecfg, $storeid, $vmid, $fmt, undef, $size);
+@@ -799,8 +846,11 @@ my sub create_disks : prototype($$$$$$$$$$$) {
              if ($storeid) {
                  my ($vtype, $volume_format) = (checked_parse_volname($storecfg, $volid))[0, 6];
  
@@ -78,7 +96,7 @@ index e0661738..e605abd0 100644
  
                  # TODO PVE 9 - consider disallowing setting an explicit format for managed volumes.
                  if ($disk->{format} && $disk->{format} ne $volume_format) {
-@@ -1503,6 +1542,16 @@ __PACKAGE__->register_method({
+@@ -1503,6 +1553,17 @@ __PACKAGE__->register_method({
              PVE::QemuServer::Network::add_random_macs($param);
          }
  
@@ -87,6 +105,7 @@ index e0661738..e605abd0 100644
 +        PVE::QemuServer::Machine::assert_sparc64_profile($param)
 +            if !$archive && PVE::QemuServer::Helpers::get_vm_arch($param) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($param) if !$archive;
++        PVE::QemuServer::Machine::assert_nvram($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_audio_device($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_esp_irq_latency($param) if !$archive;
 +        PVE::QemuServer::Machine::assert_legacy_bios_layout($param) if !$archive;
@@ -95,7 +114,7 @@ index e0661738..e605abd0 100644
          my $emsg = $is_restore ? "unable to restore VM $vmid -" : "unable to create VM $vmid -";
  
          # 'force' only covers the VM that the checks above saw, not one created in the meantime
-@@ -1653,6 +1702,7 @@ __PACKAGE__->register_method({
+@@ -1653,6 +1714,7 @@ __PACKAGE__->register_method({
                      if (
                          (!defined($conf->{vmgenid}) || $conf->{vmgenid} eq '1')
                          && $arch ne 'aarch64'
@@ -103,7 +122,7 @@ index e0661738..e605abd0 100644
                      ) {
                          $conf->{vmgenid} = PVE::QemuServer::generate_uuid();
                      }
-@@ -2386,6 +2436,19 @@ my $update_vm_api = sub {
+@@ -2386,6 +2448,20 @@ my $update_vm_api = sub {
                  if $balloon && $balloon > $maxmem;
          }
  
@@ -115,6 +134,7 @@ index e0661738..e605abd0 100644
 +        PVE::QemuServer::Machine::assert_sparc64_profile($new_conf)
 +            if PVE::QemuServer::Helpers::get_vm_arch($new_conf) eq 'sparc64';
 +        PVE::QemuServer::Machine::assert_cd_as_disk($new_conf);
++        PVE::QemuServer::Machine::assert_nvram($new_conf);
 +        PVE::QemuServer::Machine::assert_audio_device($new_conf);
 +        PVE::QemuServer::Machine::assert_esp_irq_latency($new_conf);
 +        PVE::QemuServer::Machine::assert_legacy_bios_layout($new_conf);
@@ -150,7 +170,7 @@ index 6656c137..6c5e98b1 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 148052cb..1a381a5b 100644
+index 148052cb..3b01aaa2 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -240,6 +260,15 @@ index 148052cb..1a381a5b 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
+@@ -1002,7 +1044,7 @@ PVE::JSONSchema::register_format('pve-qm-bootdev', \&verify_bootdev);
+ sub verify_bootdev {
+     my ($dev, $noerr) = @_;
+ 
+-    my $special = $dev =~ m/^efidisk/ || $dev =~ m/^tpmstate/;
++    my $special = $dev =~ m/^efidisk/ || $dev =~ m/^tpmstate/ || $dev =~ m/^nvram/;
+     return $dev if PVE::QemuServer::Drive::is_valid_drivename($dev) && !$special;
+ 
+     my $check = sub {
 @@ -1089,6 +1131,8 @@ sub verify_media_type {
          $etype = 'images';
      } elsif ($media eq 'cdrom') {
@@ -453,7 +482,7 @@ index 148052cb..1a381a5b 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3144,7 +3265,14 @@ sub config_to_command {
+@@ -3144,7 +3265,15 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -461,6 +490,7 @@ index 148052cb..1a381a5b 100644
 +    PVE::QemuServer::Machine::assert_sparc32_profile($conf) if $arch eq 'sparc';
 +    PVE::QemuServer::Machine::assert_sparc64_profile($conf) if $arch eq 'sparc64';
 +    PVE::QemuServer::Machine::assert_cd_as_disk($conf);
++    PVE::QemuServer::Machine::assert_nvram($conf);
 +    PVE::QemuServer::Machine::assert_audio_device($conf);
 +    PVE::QemuServer::Machine::assert_esp_irq_latency($conf);
 +    PVE::QemuServer::Machine::assert_legacy_bios_layout($conf);
@@ -469,7 +499,7 @@ index 148052cb..1a381a5b 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3255,7 +3383,9 @@ sub config_to_command {
+@@ -3255,7 +3384,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -480,7 +510,7 @@ index 148052cb..1a381a5b 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3275,6 +3405,10 @@ sub config_to_command {
+@@ -3275,6 +3406,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -491,7 +521,7 @@ index 148052cb..1a381a5b 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3289,17 +3423,20 @@ sub config_to_command {
+@@ -3289,17 +3424,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -514,7 +544,7 @@ index 148052cb..1a381a5b 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3310,6 +3447,7 @@ sub config_to_command {
+@@ -3310,6 +3448,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -522,7 +552,7 @@ index 148052cb..1a381a5b 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3318,7 +3456,6 @@ sub config_to_command {
+@@ -3318,7 +3457,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -530,7 +560,7 @@ index 148052cb..1a381a5b 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3331,6 +3468,22 @@ sub config_to_command {
+@@ -3331,6 +3469,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -553,7 +583,7 @@ index 148052cb..1a381a5b 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3361,8 +3514,8 @@ sub config_to_command {
+@@ -3361,8 +3515,8 @@ sub config_to_command {
      }
  
      if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
@@ -564,7 +594,7 @@ index 148052cb..1a381a5b 100644
          push @$devices, @$audio_devs;
      }
  
-@@ -3397,16 +3550,44 @@ sub config_to_command {
+@@ -3397,16 +3551,44 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -611,7 +641,7 @@ index 148052cb..1a381a5b 100644
  
          push @$cmd, '-display', 'egl-headless,gl=core' if $vga->{type} eq 'virtio-gl'; # VIRGL
  
-@@ -3422,9 +3603,21 @@ sub config_to_command {
+@@ -3422,9 +3604,21 @@ sub config_to_command {
      my $cfg2cmd = PVE::QemuServer::Cfg2Cmd->new($conf, $defaults, $version_guard, $cfg2cmd_opts);
      my $generated = $cfg2cmd->generate();
      push $cmd->@*, '-global', $_ for ($generated->global_flags() // [])->@*;
@@ -633,7 +663,7 @@ index 148052cb..1a381a5b 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3440,6 +3633,7 @@ sub config_to_command {
+@@ -3440,6 +3634,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -641,7 +671,7 @@ index 148052cb..1a381a5b 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3543,8 +3737,9 @@ sub config_to_command {
+@@ -3543,8 +3738,9 @@ sub config_to_command {
          }
      }
  
@@ -653,7 +683,7 @@ index 148052cb..1a381a5b 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3561,6 +3756,7 @@ sub config_to_command {
+@@ -3561,6 +3757,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -661,7 +691,12 @@ index 148052cb..1a381a5b 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3580,7 +3776,8 @@ sub config_to_command {
+@@ -3577,10 +3774,13 @@ sub config_to_command {
+             return if $drive->{interface} eq 'efidisk';
+             # similar for TPM
+             return if $drive->{interface} eq 'tpmstate';
++            # and the sparc32 NVRAM, a backend of the machine's M48T08 (below)
++            return if $drive->{interface} eq 'nvram';
  
              $use_virtio = 1 if $ds =~ m/^virtio/;
  
@@ -671,7 +706,7 @@ index 148052cb..1a381a5b 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3622,9 +3819,11 @@ sub config_to_command {
+@@ -3622,9 +3822,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -684,7 +719,7 @@ index 148052cb..1a381a5b 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3636,6 +3835,17 @@ sub config_to_command {
+@@ -3636,6 +3838,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -702,7 +737,32 @@ index 148052cb..1a381a5b 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3692,7 +3902,7 @@ sub config_to_command {
+@@ -3680,6 +3893,24 @@ sub config_to_command {
+         },
+     );
+ 
++    # sparc32: the NVRAM volume backs the M48T08 of the sun4m machine, which has no -device of its
++    # own (pve-qemu wsh/0059); QEMU fills a blank volume once, then leaves it to the firmware
++    if (defined($conf->{nvram0})) {
++        my $drive = parse_drive('nvram0', $conf->{nvram0})
++            or die "nvram0: unable to parse '$conf->{nvram0}'\n";
++        # the firmware writes single bytes: QEMU's 'writeback', as for the EFI vars (bug #3329)
++        $drive->{cache} = 'writeback' if !$drive->{cache};
++        my $throttle_group = PVE::QemuServer::Blockdev::generate_throttle_group($drive);
++        push @$cmd, '-object', to_json($throttle_group, { canonical => 1 });
++        my $extra_blockdev_options = {};
++        $extra_blockdev_options->{'read-only'} = 1 if $is_template;
++        my $blockdev = PVE::QemuServer::Blockdev::generate_drive_blockdev(
++            $storecfg, $drive, $machine_version, $extra_blockdev_options,
++        );
++        push @$devices, '-blockdev', to_json($blockdev, { canonical => 1 });
++        push @$devices, '-global', 'sysbus-m48t08.drive=' . $blockdev->{'node-name'};
++    }
++
+     my $nets_host_mtu =
+         { map { split('=', $_) } PVE::Tools::split_list($options->{'nets-host-mtu'}) };
+     for (my $i = 0; $i < $MAX_NETS; $i++) {
+@@ -3692,7 +3923,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -711,7 +771,7 @@ index 148052cb..1a381a5b 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3710,7 +3920,18 @@ sub config_to_command {
+@@ -3710,7 +3941,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -731,7 +791,7 @@ index 148052cb..1a381a5b 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3969,7 +4190,7 @@ sub vm_deviceplug {
+@@ -3969,7 +4211,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -740,7 +800,7 @@ index 148052cb..1a381a5b 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4553,13 +4774,16 @@ sub vmconfig_hotplug_pending {
+@@ -4553,13 +4795,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -758,17 +818,26 @@ index 148052cb..1a381a5b 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4626,7 +4850,8 @@ sub vmconfig_hotplug_pending {
+@@ -4626,7 +4871,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
 -                    if !$hotplug_features->{disk} || $opt =~ m/(efidisk|ide|sata|tpmstate)(\d+)/;
 +                    if !$hotplug_features->{disk}
-+                    || $opt =~ m/(efidisk|ide|sata|tpmstate|floppy)(\d+)/;
++                    || $opt =~ m/(efidisk|ide|sata|tpmstate|floppy|nvram)(\d+)/;
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4978,6 +5203,9 @@ sub vmconfig_update_net {
+@@ -4718,7 +4964,7 @@ sub vmconfig_hotplug_pending {
+                     $machine_type->(),
+                 );
+             } elsif (is_valid_drivename($opt)) {
+-                die "skip\n" if $opt eq 'efidisk0' || $opt eq 'tpmstate0';
++                die "skip\n" if $opt eq 'efidisk0' || $opt eq 'tpmstate0' || $opt eq 'nvram0';
+                 # some changes can be done without hotplug
+                 my $drive = parse_drive($opt, $value);
+                 if (drive_is_cloudinit($drive)) {
+@@ -4978,6 +5224,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -778,7 +847,7 @@ index 148052cb..1a381a5b 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5059,6 +5287,8 @@ sub vmconfig_update_net {
+@@ -5059,6 +5308,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -787,7 +856,7 @@ index 148052cb..1a381a5b 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5109,8 +5339,10 @@ sub vmconfig_update_disk {
+@@ -5109,8 +5360,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -800,7 +869,7 @@ index 148052cb..1a381a5b 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5194,6 +5426,11 @@ sub vmconfig_update_disk {
+@@ -5194,6 +5447,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -812,7 +881,7 @@ index 148052cb..1a381a5b 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5210,7 +5447,7 @@ sub vmconfig_update_disk {
+@@ -5210,7 +5468,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -821,7 +890,7 @@ index 148052cb..1a381a5b 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5599,6 +5836,15 @@ sub vm_start_nolock {
+@@ -5599,6 +5857,15 @@ sub vm_start_nolock {
          }
  
          push @$cmd, '-uuid', $uuid if defined($uuid);
@@ -837,7 +906,7 @@ index 148052cb..1a381a5b 100644
      };
      if (my $err = $@) {
          eval { PVE::Storage::deactivate_volumes($storecfg, $vollist); };
-@@ -5713,6 +5959,9 @@ sub vm_start_nolock {
+@@ -5713,6 +5980,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -847,7 +916,7 @@ index 148052cb..1a381a5b 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5918,7 +6167,11 @@ sub vm_start_nolock {
+@@ -5918,7 +6188,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -860,7 +929,57 @@ index 148052cb..1a381a5b 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8172,7 +8425,12 @@ sub bootorder_from_legacy {
+@@ -6665,7 +6939,7 @@ sub restore_update_config_line {
+         $net->{macaddr} = PVE::Tools::random_ether_addr($dc->{mac_prefix}) if $net->{macaddr};
+         $netstr = PVE::QemuServer::Network::print_net($net);
+         $res .= "$id: $netstr\n";
+-    } elsif ($line =~ m/^((ide|scsi|virtio|sata|efidisk|tpmstate)\d+):\s*(\S+)\s*$/) {
++    } elsif ($line =~ m/^((ide|scsi|virtio|sata|efidisk|tpmstate|nvram)\d+):\s*(\S+)\s*$/) {
+         my $virtdev = $1;
+         my $value = $3;
+         my $di = parse_drive($virtdev, $value);
+@@ -7008,8 +7282,12 @@ sub restore_proxmox_backup_archive {
+             my $volid = $d->{volid};
+             my $path = PVE::Storage::path($storecfg, $volid);
+ 
+-            # for live-restore we only want to preload the efidisk and TPM state
+-            next if $options->{live} && $virtdev ne 'efidisk0' && $virtdev ne 'tpmstate0';
++            # for live-restore we only want to preload the efidisk, TPM state and sparc32 NVRAM
++            next
++                if $options->{live}
++                && $virtdev ne 'efidisk0'
++                && $virtdev ne 'tpmstate0'
++                && $virtdev ne 'nvram0';
+ 
+             my @ns_arg;
+             if (defined(my $ns = $scfg->{namespace})) {
+@@ -7093,6 +7371,7 @@ sub restore_proxmox_backup_archive {
+         # these special drives are already restored before start
+         delete $devinfo->{'drive-efidisk0'};
+         delete $devinfo->{'drive-tpmstate0-backup'};
++        delete $devinfo->{'drive-nvram0'};
+ 
+         my $pbs_opts = {
+             repo => $repo,
+@@ -7376,7 +7655,7 @@ sub live_import_from_files {
+     my $sources_to_remove = [];
+     for my $dev (keys %$mapping) {
+         die "disk not support for live-restoring: '$dev'\n"
+-            if !is_valid_drivename($dev) || $dev =~ /^(?:efidisk|tpmstate)/;
++            if !is_valid_drivename($dev) || $dev =~ /^(?:efidisk|tpmstate|nvram)/;
+ 
+         die "mapping contains disk '$dev' which does not exist in the config\n"
+             if !exists($conf->{$dev});
+@@ -7961,6 +8240,8 @@ sub clone_disk {
+             if $src_drivename eq 'efidisk0' || $dst_drivename eq 'efidisk0';
+         die "cloning from/to TPM state requires TPM state\n"
+             if $src_drivename eq 'tpmstate0' || $dst_drivename eq 'tpmstate0';
++        die "cloning from/to the NVRAM volume requires the NVRAM volume\n"
++            if $src_drivename eq 'nvram0' || $dst_drivename eq 'nvram0';
+ 
+         # This would lead to two device nodes in QEMU pointing to the same backing image!
+         die "cannot change drive name when cloning disk from/to the same VM\n"
+@@ -8172,7 +8453,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -874,7 +993,7 @@ index 148052cb..1a381a5b 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8210,9 +8468,14 @@ sub get_default_bootdevices {
+@@ -8210,9 +8496,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -892,10 +1011,19 @@ index 148052cb..1a381a5b 100644
      # network
      for (my $i = 0; $i < $MAX_NETS; $i++) {
 diff --git a/src/PVE/QemuServer/Blockdev.pm b/src/PVE/QemuServer/Blockdev.pm
-index c2989a37..dcdf83f9 100644
+index c2989a37..d4bb1f59 100644
 --- a/src/PVE/QemuServer/Blockdev.pm
 +++ b/src/PVE/QemuServer/Blockdev.pm
-@@ -202,6 +202,10 @@ sub get_node_name_below_throttle {
+@@ -76,6 +76,8 @@ sub qdev_id_to_drive_id {
+         return 'pflash0';
+     } elsif ($qdev_id =~ m{^/machine/(?:system|virt)\.flash1$}) {
+         return 'efidisk0';
++    } elsif ($qdev_id eq '/machine/nvram') { # sparc32: the sun4m M48T08 (pve-qemu wsh/0059)
++        return 'nvram0';
+     }
+ 
+     return $qdev_id; # for SCSI/SATA/IDE it's the same
+@@ -202,6 +204,10 @@ sub get_node_name_below_throttle {
  my sub read_only_json_option {
      my ($drive, $options) = @_;
  
@@ -906,7 +1034,7 @@ index c2989a37..dcdf83f9 100644
      return json_bool($drive->{ro} || drive_is_cdrom($drive) || $options->{'read-only'});
  }
  
-@@ -307,7 +311,10 @@ sub generate_file_blockdev {
+@@ -307,7 +313,10 @@ sub generate_file_blockdev {
          my $st = File::stat::stat($path) or die "stat for '$path' failed - $!\n";
          my $driver = 'file';
          if (S_ISCHR($st->mode) || S_ISBLK($st->mode)) {
@@ -918,7 +1046,7 @@ index c2989a37..dcdf83f9 100644
          }
          $blockdev = { driver => "$driver", filename => "$path" };
      } else {
-@@ -317,6 +324,10 @@ sub generate_file_blockdev {
+@@ -317,6 +326,10 @@ sub generate_file_blockdev {
          my $vtype = (PVE::Storage::parse_volname($storecfg, $drive->{file}))[0];
          die "$drive_id: explicit media parameter is required for iso images\n"
              if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
@@ -966,7 +1094,7 @@ index 0d3206b2..ea6b4c44 100644
      my $descriptions = flag_descriptions($arch);
      my $base =
 diff --git a/src/PVE/QemuServer/Drive.pm b/src/PVE/QemuServer/Drive.pm
-index f974dfc9..9db90c60 100644
+index f974dfc9..69b5ae08 100644
 --- a/src/PVE/QemuServer/Drive.pm
 +++ b/src/PVE/QemuServer/Drive.pm
 @@ -26,6 +26,7 @@ our @EXPORT_OK = qw(
@@ -1014,7 +1142,7 @@ index f974dfc9..9db90c60 100644
      %iothread_fmt,
      %product_fmt,
      %queues_fmt,
-@@ -612,8 +629,44 @@ my $tpmstate_desc = {
+@@ -612,8 +629,78 @@ my $tpmstate_desc = {
  };
  use constant TPMSTATE_DISK_SIZE => 4 * 1024 * 1024;
  
@@ -1053,16 +1181,62 @@ index f974dfc9..9db90c60 100644
 +};
 +PVE::JSONSchema::register_standard_option("pve-qm-floppy", $floppydesc);
 +
++# sparc32 only (Machine.pm, assert_sparc32_profile): the NVRAM (M48T08) of the sun4m machine kept
++# in a volume, so that what a Sun boot PROM stores there ('setenv diag-switch? false', 'auto-boot?',
++# 'boot-device') lasts across starts. QEMU writes its default contents into a blank volume once and
++# then leaves it to the firmware, except for the IDPROM (machine type, MAC address of net0).
++my $nvram_fmt = {
++    volume => { alias => 'file' },
++    file => {
++        type => 'string',
++        format => 'pve-volume-id-or-qm-path',
++        default_key => 1,
++        format_description => 'volume',
++        description => "The drive's backing volume.",
++    },
++    format => get_standard_option('pve-qm-image-format'),
++    size => {
++        type => 'string',
++        format => 'disk-size',
++        format_description => 'DiskSize',
++        description => "Disk size. This is purely informational and has no effect.",
++        optional => 1,
++    },
++};
++my $nvram_desc = {
++    optional => 1,
++    type => 'string',
++    format => $nvram_fmt,
++    description => "sparc32 only: a volume that keeps the machine's NVRAM across starts, so the"
++        . " settings of a Sun boot PROM ('setenv') last. Without it the NVRAM is new on every"
++        . " start.",
++};
++PVE::JSONSchema::register_standard_option("pve-qm-nvram", $nvram_desc);
++# QEMU uses the first 8 KiB; 4 MiB as for the TPM state, a size every storage can allocate
++use constant NVRAM_DISK_SIZE => 4 * 1024 * 1024;
++
  my $alldrive_fmt = {
      %drivedesc_base,
 +    %cd_as_disk_fmt,
      %iothread_fmt,
      %model_fmt,
      %product_fmt,
-@@ -719,6 +772,12 @@ $drivedesc_hash_with_alloc->{efidisk0} = $desc_with_alloc->('efidisk', $efidisk_
+@@ -679,7 +766,7 @@ my $desc_with_alloc = sub {
+         $extra_note =
+             " Note that SIZE_IN_GiB is ignored here and that the default EFI vars are "
+             . "copied to the volume instead.";
+-    } elsif ($type eq 'tpmstate') {
++    } elsif ($type eq 'tpmstate' || $type eq 'nvram') {
+         $extra_note = " Note that SIZE_IN_GiB is ignored here and 4 MiB will be used instead.";
+     }
+ 
+@@ -719,13 +806,22 @@ $drivedesc_hash_with_alloc->{efidisk0} = $desc_with_alloc->('efidisk', $efidisk_
  $drivedesc_hash->{tpmstate0} = $tpmstate_desc;
  $drivedesc_hash_with_alloc->{tpmstate0} = $desc_with_alloc->('tpmstate', $tpmstate_desc);
  
++$drivedesc_hash->{nvram0} = $nvram_desc;
++$drivedesc_hash_with_alloc->{nvram0} = $desc_with_alloc->('nvram', $nvram_desc);
++
 +for (my $i = 0; $i < $MAX_FLOPPY_DRIVES; $i++) {
 +    # floppies only reference existing volumes, so there is no allocation variant
 +    $drivedesc_hash->{"floppy$i"} = $floppydesc;
@@ -1072,15 +1246,24 @@ index f974dfc9..9db90c60 100644
  for (my $i = 0; $i < $MAX_UNUSED_DISKS; $i++) {
      $drivedesc_hash->{"unused$i"} = $unuseddesc;
      $drivedesc_hash_with_alloc->{"unused$i"} = $desc_with_alloc->('unused', $unuseddesc);
-@@ -737,6 +796,7 @@ sub valid_drive_names {
+ }
+ 
+ sub valid_drive_names_for_boot {
+-    return grep { $_ ne 'efidisk0' && $_ ne 'tpmstate0' } valid_drive_names();
++    return grep { $_ ne 'efidisk0' && $_ ne 'tpmstate0' && $_ ne 'nvram0' } valid_drive_names();
+ }
+ 
+ sub valid_drive_names {
+@@ -737,6 +833,8 @@ sub valid_drive_names {
          (map { "sata$_" } (0 .. ($MAX_SATA_DISKS - 1))),
          'efidisk0',
          'tpmstate0',
++        'nvram0',
 +        (map { "floppy$_" } (0 .. ($MAX_FLOPPY_DRIVES - 1))),
      );
  }
  
-@@ -819,14 +879,46 @@ sub drive_is_cloudinit {
+@@ -819,14 +917,46 @@ sub drive_is_cloudinit {
      return $drive->{file} =~ m@[:/](?:vm-\d+-)?cloudinit(?:\.$QEMU_FORMAT_RE)?$@;
  }
  
@@ -1127,7 +1310,7 @@ index f974dfc9..9db90c60 100644
  sub drive_has_absolute_path {
      my ($drive) = @_;
      return classify_drive_file($drive->{file}) eq "absolute";
-@@ -972,7 +1064,13 @@ sub parse_drive {
+@@ -972,7 +1102,13 @@ sub parse_drive {
  
      if ($res->{media} && ($res->{media} eq 'cdrom')) {
          return if $res->{snapshot} || $res->{format};
@@ -1142,7 +1325,7 @@ index f974dfc9..9db90c60 100644
      }
  
      if (my $size = $res->{size}) {
-@@ -1183,7 +1281,9 @@ sub get_scsi_device_type {
+@@ -1183,7 +1319,9 @@ sub get_scsi_device_type {
  
      my $devicetype = 'hd';
      my $path = '';
@@ -1295,7 +1478,7 @@ index 5efe7736..940d5e25 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..8ba6338b 100644
+index 960af5a9..7272dcd7 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1362,7 +1545,7 @@ index 960af5a9..8ba6338b 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +166,462 @@ sub default_machine_for_arch {
+@@ -135,6 +166,483 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1621,6 +1804,27 @@ index 960af5a9..8ba6338b 100644
 +    return;
 +}
 +
++=head3 assert_nvram
++
++    assert_nvram($conf);
++
++Dies if C<$conf> has an C<nvram0> volume on anything but sparc32: it backs the NVRAM (M48T08) of
++the sun4m machines, so that a Sun boot PROM's settings last across starts (wsh-pve
++submodules/SPARC.md, "The NVRAM kept in a volume"). sun4u's NVRAM stays as it is.
++
++=cut
++
++sub assert_nvram {
++    my ($conf) = @_;
++
++    return if !defined($conf->{nvram0});
++    my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
++    die "nvram0: an NVRAM volume is only supported on sparc32 (arch sparc), not on $arch\n"
++        if $arch ne 'sparc';
++
++    return;
++}
++
 +=head3 assert_esp_irq_latency
 +
 +    assert_esp_irq_latency($conf);
@@ -1825,7 +2029,7 @@ index 960af5a9..8ba6338b 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +656,7 @@ my sub machine_base_type {
+@@ -169,6 +677,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -1833,7 +2037,7 @@ index 960af5a9..8ba6338b 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +793,44 @@ sub machine_version_cmp {
+@@ -305,11 +814,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -1880,7 +2084,7 @@ index 960af5a9..8ba6338b 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +840,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +861,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -1903,7 +2107,7 @@ index 960af5a9..8ba6338b 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +1026,7 @@ sub get_power_state_flags {
+@@ -508,6 +1047,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -1911,7 +2115,7 @@ index 960af5a9..8ba6338b 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +1034,7 @@ sub get_power_state_flags {
+@@ -515,6 +1055,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -2781,6 +2985,59 @@ index 00000000..60a144a4
 +machine: LX
 +memory: 128
 +sockets: 2
+diff --git a/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf b/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf
+new file mode 100644
+index 00000000..f868a462
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf
+@@ -0,0 +1,13 @@
++# TEST: sparc32 SPARCstation LX with its own PROM and its NVRAM kept in a volume (raw), attached to the machine's M48T08
++arch: sparc
++bios: lx.bin
++boot: order=scsi3
++machine: LX
++memory: 128
++name: solaris26-lx
++net0: lance=BC:24:11:B2:46:07,bridge=vmbr0
++nvram0: local:8006/vm-8006-disk-1.raw,size=4M
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++serial0: socket
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf.cmd b/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf.cmd
+new file mode 100644
+index 00000000..49935dca
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-lx-sun-prom-nvram.conf.cmd
+@@ -0,0 +1,28 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name solaris26-lx \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -bios lx.bin \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 128 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-nvram0","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-1.raw","node-name":"ebc335e62147a829f0f08282c85c1a9","read-only":false},"node-name":"fbc335e62147a829f0f08282c85c1a9","read-only":false},"node-name":"drive-nvram0","read-only":false,"throttle-group":"throttle-drive-nvram0"}' \
++  -global 'sysbus-m48t08.drive=drive-nvram0' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:07,netdev=net0' \
++  -machine 'accel=tcg,type=LX+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-lx-sun-prom.conf b/src/test/cfg2cmd/sparc32-lx-sun-prom.conf
 new file mode 100644
 index 00000000..83e3e256
@@ -3534,6 +3791,55 @@ index 00000000..27442665
 +# EXPECT_ERROR: sparc: SS-5 takes at most 256 MB of memory, not 512
 +arch: sparc
 +machine: SS-5
+diff --git a/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf b/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf
+new file mode 100644
+index 00000000..69dcef36
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf
+@@ -0,0 +1,11 @@
++# TEST: sparc32 SS-5 with OpenBIOS and an NVRAM volume (qcow2): the same command as without it, plus the volume on the M48T08
++arch: sparc
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++nvram0: local:8006/vm-8006-disk-1.qcow2,size=4M
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
+diff --git a/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf.cmd b/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf.cmd
+new file mode 100644
+index 00000000..21184b2f
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss5-openbios-nvram.conf.cmd
+@@ -0,0 +1,26 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vga cg3 \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-nvram0","limits":{},"qom-type":"throttle-group"}' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"qcow2","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-1.qcow2","node-name":"edb866ca709da988d021ebc5fe59e5e","read-only":false},"node-name":"fdb866ca709da988d021ebc5fe59e5e","read-only":false},"node-name":"drive-nvram0","read-only":false,"throttle-group":"throttle-drive-nvram0"}' \
++  -global 'sysbus-m48t08.drive=drive-nvram0' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:02,netdev=net0' \
++  -machine 'accel=tcg,type=SS-5+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss5-smp-error.conf b/src/test/cfg2cmd/sparc32-ss5-smp-error.conf
 new file mode 100644
 index 00000000..af54c1f4
@@ -3789,6 +4095,17 @@ index 00000000..93a24f66
 +arch: sparc64
 +memory: 512
 +net0: pcnet=BC:24:11:B2:46:03,bridge=vmbr0
+diff --git a/src/test/cfg2cmd/sparc64-nvram-error.conf b/src/test/cfg2cmd/sparc64-nvram-error.conf
+new file mode 100644
+index 00000000..bda85118
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc64-nvram-error.conf
+@@ -0,0 +1,5 @@
++# TEST: the NVRAM volume is sparc32 only: refused on sparc64
++# EXPECT_ERROR: nvram0: an NVRAM volume is only supported on sparc32 (arch sparc), not on sparc64
++arch: sparc64
++memory: 1024
++nvram0: local:8006/vm-8006-disk-1.raw,size=4M
 diff --git a/src/test/cfg2cmd/sparc64-scsi-disk-error.conf b/src/test/cfg2cmd/sparc64-scsi-disk-error.conf
 new file mode 100644
 index 00000000..814de1f1
@@ -4194,6 +4511,16 @@ index 00000000..4390317e
 +machine: pc,esp-irq-latency=500
 +memory: 512
 +ostype: l26
+diff --git a/src/test/cfg2cmd/x86-nvram-error.conf b/src/test/cfg2cmd/x86-nvram-error.conf
+new file mode 100644
+index 00000000..a689b0d1
+--- /dev/null
++++ b/src/test/cfg2cmd/x86-nvram-error.conf
+@@ -0,0 +1,4 @@
++# TEST: the NVRAM volume is sparc32 only: refused on x86_64
++# EXPECT_ERROR: nvram0: an NVRAM volume is only supported on sparc32 (arch sparc), not on x86_64
++memory: 512
++nvram0: local:8006/vm-8006-disk-1.raw,size=4M
 diff --git a/src/test/hotplug/sparc32-cd-as-disk-change.conf b/src/test/hotplug/sparc32-cd-as-disk-change.conf
 new file mode 100644
 index 00000000..d0b32826
@@ -4534,6 +4861,53 @@ index 00000000..9bb98495
 +++ b/src/test/hotplug/sparc32-net-link-down.conf.expected
 @@ -0,0 +1 @@
 +qmp set_link {"name":"net0","up":false}
+diff --git a/src/test/hotplug/sparc32-nvram-add.conf b/src/test/hotplug/sparc32-nvram-add.conf
+new file mode 100644
+index 00000000..41ed99ea
+--- /dev/null
++++ b/src/test/hotplug/sparc32-nvram-add.conf
+@@ -0,0 +1,14 @@
++# TEST: an NVRAM volume added to a running sparc32 VM stays pending (QEMU reads it at start only)
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++nvram0: local:8006/vm-8006-disk-1.raw,size=4M
+diff --git a/src/test/hotplug/sparc32-nvram-add.conf.expected b/src/test/hotplug/sparc32-nvram-add.conf.expected
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/test/hotplug/sparc32-nvram-remove.conf b/src/test/hotplug/sparc32-nvram-remove.conf
+new file mode 100644
+index 00000000..ab63cf37
+--- /dev/null
++++ b/src/test/hotplug/sparc32-nvram-remove.conf
+@@ -0,0 +1,15 @@
++# TEST: removing the NVRAM volume of a running sparc32 VM stays pending
++# QEMU_VERSION: 10.1
++# STAYS_PENDING: 1
++arch: sparc
++bios: ss5.bin
++boot: order=scsi3
++memory: 256
++name: sparc32
++net0: lance=BC:24:11:B2:46:02,bridge=vmbr0
++nvram0: local:8006/vm-8006-disk-1.raw,size=4M
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++
++[PENDING]
++delete: nvram0
+diff --git a/src/test/hotplug/sparc32-nvram-remove.conf.expected b/src/test/hotplug/sparc32-nvram-remove.conf.expected
+new file mode 100644
+index 00000000..e69de29b
 diff --git a/src/test/hotplug/sparc64-cdrom-change.conf b/src/test/hotplug/sparc64-cdrom-change.conf
 new file mode 100644
 index 00000000..fe05b3cf

@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..ff0389b 100644
+index 7b0cba5..7e1a76a 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,61 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,63 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -135,6 +135,8 @@ index 7b0cba5..ff0389b 100644
 +wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch
 +wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch
 +wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
++wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
++wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -11804,6 +11806,680 @@ index 0000000..85e2603
 ++                        test_dbri_fcode);
 ++    qtest_add_data_func("sun4m-onboard-sbus/ss20/dbri-fcode", &ss20,
 ++                        test_dbri_fcode);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch b/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
+new file mode 100644
+index 0000000..c84c040
+--- /dev/null
++++ b/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
+@@ -0,0 +1,277 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/rtc/m48t59: keep the NVRAM in a drive, and leave it on sun4m
++
++The sun4m machines write OpenBIOS's NVRAM layout (a CHRP system
++partition with the -prom-env variables, a free partition and the Sun
++IDPROM) into the M48T08 at every start. Sun's own boot PROMs (the SS-5,
++SS-20 and LX PROMs) keep their configuration in the same bytes, find
++the checksum wrong, write their defaults, set diag-switch? and so boot
++diag-device (net) and stop at "ok" on every power-on; a real machine
++keeps what "setenv diag-switch? false" or "setenv auto-boot? true"
++stored.
++
++Give the sysbus M48Txx a "drive" property for its NVRAM bytes (not
++the clock registers): the image is read at realize, and every byte the
++guest changes is written through. The image must hold at least the
++NVRAM; its first bytes are used, the rest is left alone. A read-only
++image is loaded and not written. A blank (all-zero) image leaves the
++NVRAM as before, so the board writes its default contents, which then
++go to the image; any other image is the NVRAM as the guest left it.
++
++On sun4m, nvram_init() then leaves such a restored NVRAM alone and
++writes only the IDPROM, which is the machine's identity and comes from
++the command line (machine type, the NIC's MAC address) on every start;
++the Sun PROMs' configuration checksum does not cover it. With
++-prom-env the OpenBIOS partitions are written on every start as
++before, so -prom-env applies as without an image. The M48T08 gets the
++fixed QOM path /machine/nvram, by which query-block names the device
++of its drive. Without a drive nothing changes.
++
++    -drive if=none,id=nvram0,format=raw,file=nvram.raw
++    -global sysbus-m48t08.drive=nvram0
++
++With an 8 KB blank image and the LX PROM, "setenv diag-switch? false"
++at the first start makes the next start boot the disk by itself
++(Solaris 2.6 to its login prompt), also with another MAC address.
++---
++ hw/rtc/m48t59-internal.h |   5 ++
++ hw/rtc/m48t59.c          | 101 +++++++++++++++++++++++++++++++++++++--
++ hw/sparc/sun4m.c         |  19 +++++++-
++ include/hw/rtc/m48t59.h  |   7 +++
++ 4 files changed, 125 insertions(+), 7 deletions(-)
++
++diff --git a/hw/rtc/m48t59-internal.h b/hw/rtc/m48t59-internal.h
++index cd64824..65799e4 100644
++--- a/hw/rtc/m48t59-internal.h
+++++ b/hw/rtc/m48t59-internal.h
++@@ -58,6 +58,11 @@ typedef struct M48t59State {
++     /* NVRAM storage */
++     uint16_t addr;
++     uint8_t  lock;
+++    /* Backing store of the NVRAM bytes (not the clock registers) */
+++    BlockBackend *blk;
+++    bool blk_ro;
+++    /* The NVRAM bytes came from a backing store that wasn't blank */
+++    bool restored;
++ } M48t59State;
++ 
++ uint32_t m48t59_read(M48t59State *NVRAM, uint32_t addr);
++diff --git a/hw/rtc/m48t59.c b/hw/rtc/m48t59.c
++index be4196b..6730479 100644
++--- a/hw/rtc/m48t59.c
+++++ b/hw/rtc/m48t59.c
++@@ -26,7 +26,10 @@
++ #include "qemu/osdep.h"
++ #include "hw/core/irq.h"
++ #include "hw/core/qdev-properties.h"
+++#include "hw/core/qdev-properties-system.h"
++ #include "hw/rtc/m48t59.h"
+++#include "system/block-backend.h"
+++#include "qemu/error-report.h"
++ #include "qemu/timer.h"
++ #include "system/runstate.h"
++ #include "system/rtc.h"
++@@ -186,6 +189,31 @@ static void set_up_watchdog(M48t59State *NVRAM, uint8_t value)
++     }
++ }
++ 
+++/* The number of NVRAM bytes below the clock registers */
+++static uint32_t m48t59_nvram_bytes(M48t59State *NVRAM)
+++{
+++    switch (NVRAM->model) {
+++    case 2:
+++        return 0x7f8;
+++    case 8:
+++        return 0x1ff8;
+++    default:
+++        return 0x1ff0;
+++    }
+++}
+++
+++/* Write one changed NVRAM byte through to the backing store */
+++static void m48t59_store(M48t59State *NVRAM, uint32_t addr)
+++{
+++    if (!NVRAM->blk || NVRAM->blk_ro) {
+++        return;
+++    }
+++    if (blk_pwrite(NVRAM->blk, addr, 1, &NVRAM->buffer[addr], 0) < 0) {
+++        error_report("%s: write of NVRAM data to backing store failed",
+++                     blk_name(NVRAM->blk));
+++    }
+++}
+++
++ /* Direct access to NVRAM */
++ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++ {
++@@ -195,10 +223,12 @@ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++     trace_m48txx_nvram_mem_write(addr, val);
++ 
++     /* check for NVRAM access */
++-    if ((NVRAM->model == 2 && addr < 0x7f8) ||
++-        (NVRAM->model == 8 && addr < 0x1ff8) ||
++-        (NVRAM->model == 59 && addr < 0x1ff0)) {
++-        goto do_write;
+++    if (addr < m48t59_nvram_bytes(NVRAM)) {
+++        if (NVRAM->buffer[addr] != (val & 0xFF)) {
+++            NVRAM->buffer[addr] = val & 0xFF;
+++            m48t59_store(NVRAM, addr);
+++        }
+++        return;
++     }
++ 
++     /* TOD access */
++@@ -343,7 +373,6 @@ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++             break;
++         if (addr >= 0x30 && addr <= 0x3F && (NVRAM->lock & 2))
++             break;
++-    do_write:
++         if (addr < NVRAM->size) {
++             NVRAM->buffer[addr] = val & 0xFF;
++         }
++@@ -573,6 +602,66 @@ void m48t59_realize_common(M48t59State *s, Error **errp)
++     qemu_get_timedate(&s->alarm, 0);
++ }
++ 
+++/*
+++ * Load the NVRAM bytes from the backing store, if there is one. The
+++ * image must hold at least the NVRAM; its first bytes are used. A blank
+++ * (all-zero) image leaves the NVRAM as QEMU starts it, and the board then
+++ * writes its default contents, which go through to the image; any other
+++ * image is the NVRAM as the guest left it (s->restored). The clock
+++ * registers at the end are never loaded or stored. A read-only image is
+++ * loaded but not written.
+++ */
+++static void m48t59_load_backing_store(M48t59State *s, Error **errp)
+++{
+++    uint32_t len = m48t59_nvram_bytes(s);
+++    int64_t blk_len;
+++    uint32_t i;
+++
+++    if (!s->blk) {
+++        return;
+++    }
+++
+++    s->blk_ro = !blk_supports_write_perm(s->blk);
+++    if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ |
+++                     (s->blk_ro ? 0 : BLK_PERM_WRITE),
+++                     BLK_PERM_ALL, errp) < 0) {
+++        return;
+++    }
+++
+++    blk_len = blk_getlength(s->blk);
+++    if (blk_len < 0) {
+++        error_setg_errno(errp, -blk_len,
+++                         "could not get the length of the NVRAM image");
+++        return;
+++    }
+++    if (blk_len < s->size) {
+++        error_setg(errp, "the NVRAM image has %" PRId64 " bytes, the "
+++                   "NVRAM needs %" PRIu32, blk_len, s->size);
+++        return;
+++    }
+++    if (blk_pread(s->blk, 0, len, s->buffer, 0) < 0) {
+++        error_setg(errp, "could not read the NVRAM image");
+++        return;
+++    }
+++
+++    for (i = 0; i < len; i++) {
+++        if (s->buffer[i]) {
+++            s->restored = true;
+++            break;
+++        }
+++    }
+++}
+++
+++bool m48t59_nvram_restored(Nvram *nvram)
+++{
+++    Object *obj = OBJECT(nvram);
+++
+++    if (!object_dynamic_cast(obj, TYPE_M48TXX_SYS_BUS)) {
+++        return false;
+++    }
+++    return M48TXX_SYS_BUS(obj)->state.restored;
+++}
+++
++ static void m48t59_init1(Object *obj)
++ {
++     M48txxSysBusDeviceClass *u = M48TXX_SYS_BUS_GET_CLASS(obj);
++@@ -598,6 +687,7 @@ static void m48t59_realize(DeviceState *dev, Error **errp)
++     sysbus_init_mmio(sbd, &s->iomem);
++     sysbus_init_mmio(sbd, &d->io);
++     m48t59_realize_common(s, errp);
+++    m48t59_load_backing_store(s, errp);
++ }
++ 
++ static uint32_t m48txx_sysbus_read(Nvram *obj, uint32_t addr)
++@@ -620,6 +710,7 @@ static void m48txx_sysbus_toggle_lock(Nvram *obj, int lock)
++ 
++ static const Property m48t59_sysbus_properties[] = {
++     DEFINE_PROP_INT32("base-year", M48txxSysBusState, state.base_year, 0),
+++    DEFINE_PROP_DRIVE("drive", M48txxSysBusState, state.blk),
++ };
++ 
++ static void m48txx_sysbus_class_init(ObjectClass *klass, const void *data)
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 4c9e49f..faa372c 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -155,11 +155,24 @@ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
++                        int width, int height, int depth,
++                        int nvram_machine_id, const char *arch)
++ {
++-    unsigned int i;
+++    unsigned int i, start;
++     int sysp_end;
++     uint8_t image[0x1ff0];
++     NvramClass *k = NVRAM_GET_CLASS(nvram);
++ 
+++    /*
+++     * An NVRAM kept in an image (the M48T08's "drive") that isn't blank
+++     * holds what the firmware left there: a Sun PROM's own configuration,
+++     * or OpenBIOS's variables. Leave it, and write only the IDPROM, the
+++     * machine's identity, which comes from the command line (machine type,
+++     * MAC address) on every start. With -prom-env the OpenBIOS partitions
+++     * are written on every start too, as without an image.
+++     */
+++    start = 0;
+++    if (m48t59_nvram_restored(nvram) && nb_prom_envs == 0) {
+++        start = 0x1fd8;
+++    }
+++
++     memset(image, '\0', sizeof(image));
++ 
++     /* OpenBIOS nvram variables partition */
++@@ -171,7 +184,7 @@ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
++     Sun_init_header((struct Sun_nvram *)&image[0x1fd8], macaddr,
++                     nvram_machine_id);
++ 
++-    for (i = 0; i < sizeof(image); i++) {
+++    for (i = start; i < sizeof(image); i++) {
++         (k->write)(nvram, i, image[i]);
++     }
++ }
++@@ -1096,6 +1109,8 @@ static void sun4m_hw_init(MachineState *machine)
++ 
++     dev = qdev_new("sysbus-m48t08");
++     qdev_prop_set_int32(dev, "base-year", 1968);
+++    /* a fixed path, by which query-block names the device of its drive */
+++    object_property_add_child(OBJECT(machine), "nvram", OBJECT(dev));
++     s = SYS_BUS_DEVICE(dev);
++     sysbus_realize_and_unref(s, &error_fatal);
++     sysbus_connect_irq(s, 0, slavio_irq[0]);
++diff --git a/include/hw/rtc/m48t59.h b/include/hw/rtc/m48t59.h
++index c149374..9955d0f 100644
++--- a/include/hw/rtc/m48t59.h
+++++ b/include/hw/rtc/m48t59.h
++@@ -47,4 +47,11 @@ struct NvramClass {
++     void (*toggle_lock)(Nvram *obj, int lock);
++ };
++ 
+++/*
+++ * True if the NVRAM of a sysbus M48Txx was loaded from a backing store
+++ * (its "drive" property) that wasn't blank: the board must not write its
+++ * default contents over it.
+++ */
+++bool m48t59_nvram_restored(Nvram *nvram);
+++
++ #endif /* HW_RTC_M48T59_H */
+diff --git a/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch b/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
+new file mode 100644
+index 0000000..a8d99d3
+--- /dev/null
++++ b/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
+@@ -0,0 +1,385 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sun4m NVRAM kept in a drive
++
++qtest sun4m-nvram-test for the patch before, on the SS-5: without a
++drive the NVRAM gets OpenBIOS's layout and the IDPROM as before; a
++blank image gets the same contents and keeps them; an image with other
++contents is left alone across two starts, the guest's writes reach it,
++the clock registers are not stored and the IDPROM follows the NIC's
++MAC address; -prom-env writes OpenBIOS's partitions over it; a larger
++image keeps the bytes past the NVRAM; the drive attached with -blockdev
++by node name works and query-block names the device /machine/nvram;
++a read-only image is loaded and not written.
++---
++ tests/qtest/meson.build        |   3 +-
++ tests/qtest/sun4m-nvram-test.c | 347 +++++++++++++++++++++++++++++++++
++ 2 files changed, 349 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-nvram-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 874f4bd..054b26b 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -211,7 +211,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-mmu-ctx-ifetch-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++-                'sun4m-onboard-sbus-test'] + \
+++                'sun4m-onboard-sbus-test',
+++                'sun4m-nvram-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-nvram-test.c b/tests/qtest/sun4m-nvram-test.c
++new file mode 100644
++index 0000000..070d57a
++--- /dev/null
+++++ b/tests/qtest/sun4m-nvram-test.c
++@@ -0,0 +1,347 @@
+++/*
+++ * QTest: the sun4m NVRAM kept in an image
+++ *
+++ * The M48T08 of the sun4m machines takes a "drive" for its NVRAM. A blank
+++ * image gets the contents QEMU writes without one (OpenBIOS's partitions
+++ * and the IDPROM); an image that isn't blank is the NVRAM as the guest
+++ * left it, which QEMU doesn't overwrite, except the IDPROM, which comes
+++ * from the command line on every start, and OpenBIOS's partitions when
+++ * -prom-env is given. The guest's writes go through to the image; the
+++ * clock registers at the end are never stored.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/cutils.h"
+++#include "qobject/qdict.h"
+++#include "qobject/qlist.h"
+++
+++#define NVRAM_BASE      0x71200000ULL   /* SS-5 */
+++#define NVRAM_SIZE      0x2000
+++#define CLOCK_REGS      0x1ff8          /* M48T08: clock from here on */
+++#define IDPROM          0x1fd8
+++#define IDPROM_LEN      16
+++#define MAC_A           "08:00:20:12:34:56"
+++#define MAC_B           "bc:24:11:00:00:07"
+++
+++/* Bytes a Sun PROM could leave in the NVRAM: no OpenBIOS partition */
+++#define SUN_CHECKSUM    0x5a
+++#define SUN_DIAG        0x1
+++#define SUN_AUTO_BOOT   0x2a7
+++#define SUN_BOOT_DEVICE 0x2a8
+++
+++static char *make_image(size_t size, const uint8_t *data)
+++{
+++    char *path;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-nvram-XXXXXX.raw", &path, NULL);
+++    g_assert(fd >= 0);
+++    if (data) {
+++        g_assert_cmpint(write(fd, data, size), ==, size);
+++    } else {
+++        g_assert_cmpint(ftruncate(fd, size), ==, 0);
+++    }
+++    close(fd);
+++    return path;
+++}
+++
+++static void read_image(const char *path, uint8_t *buf)
+++{
+++    gchar *contents;
+++    gsize len;
+++
+++    g_assert(g_file_get_contents(path, &contents, &len, NULL));
+++    g_assert_cmpuint(len, ==, NVRAM_SIZE);
+++    memcpy(buf, contents, NVRAM_SIZE);
+++    g_free(contents);
+++}
+++
+++static QTestState *start(const char *path, const char *mac, const char *extra)
+++{
+++    return qtest_initf("-M SS-5 -nodefaults -net nic,model=lance,macaddr=%s "
+++                       "-drive if=none,id=nvram0,format=raw,file=%s "
+++                       "-global sysbus-m48t08.drive=nvram0 %s",
+++                       mac, path, extra ? extra : "");
+++}
+++
+++static void read_nvram(QTestState *qts, uint8_t *buf, int start, int len)
+++{
+++    int i;
+++
+++    for (i = 0; i < len; i++) {
+++        buf[i] = qtest_readb(qts, NVRAM_BASE + start + i);
+++    }
+++}
+++
+++/* The IDPROM at `idprom` is valid and carries `mac` */
+++static void check_idprom(const uint8_t *idprom, const char *mac)
+++{
+++    uint8_t sum = 0;
+++    char got[18];
+++    int i;
+++
+++    snprintf(got, sizeof(got), "%02x:%02x:%02x:%02x:%02x:%02x",
+++             idprom[2], idprom[3], idprom[4], idprom[5], idprom[6], idprom[7]);
+++    g_assert_cmpstr(got, ==, mac);
+++    g_assert_cmphex(idprom[0], ==, 0x01);               /* format */
+++    g_assert_cmphex(idprom[1], ==, 0x80);               /* SS-5 */
+++    g_assert_cmpmem(&idprom[12], 3, &idprom[5], 3);     /* host id serial */
+++    for (i = 0; i < IDPROM_LEN - 1; i++) {
+++        sum ^= idprom[i];
+++    }
+++    g_assert_cmphex(idprom[15], ==, sum);
+++}
+++
+++/* OpenBIOS's system partition with `var` (or none) at the start of `buf` */
+++static void check_openbios_layout(const uint8_t *buf, const char *var)
+++{
+++    g_assert_cmphex(buf[0], ==, 0x70);
+++    g_assert_cmpstr((const char *)&buf[4], ==, "system");
+++    if (var) {
+++        g_assert_cmpstr((const char *)&buf[16], ==, var);
+++    } else {
+++        g_assert_cmphex(buf[16], ==, 0);
+++    }
+++}
+++
+++/* What a Sun PROM's configuration looks like after `setenv`s */
+++static void sun_contents(uint8_t *buf)
+++{
+++    memset(buf, 0, NVRAM_SIZE);
+++    buf[0] = SUN_CHECKSUM;
+++    buf[SUN_DIAG] = 0x00;
+++    buf[SUN_AUTO_BOOT] = 0xff;
+++    buf[SUN_BOOT_DEVICE] = 4;
+++    memcpy(&buf[SUN_BOOT_DEVICE + 1], "disk", 4);
+++}
+++
+++/* A blank image gets QEMU's contents, as without one, and keeps them */
+++static void test_blank(void)
+++{
+++    uint8_t live[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path = make_image(NVRAM_SIZE, NULL);
+++    QTestState *qts;
+++
+++    qts = start(path, MAC_A, NULL);
+++    read_nvram(qts, live, 0, CLOCK_REGS);
+++    qtest_quit(qts);
+++
+++    check_openbios_layout(live, NULL);
+++    check_idprom(&live[IDPROM], MAC_A);
+++
+++    read_image(path, file);
+++    g_assert_cmpmem(file, CLOCK_REGS, live, CLOCK_REGS);
+++    g_assert_true(buffer_is_zero(&file[CLOCK_REGS], NVRAM_SIZE - CLOCK_REGS));
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
+++/*
+++ * What the guest wrote is there at the next start, QEMU doesn't write its
+++ * contents over it, and the IDPROM follows the NIC's MAC address.
+++ */
+++static void test_persist(void)
+++{
+++    uint8_t sun[NVRAM_SIZE], live[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path;
+++    QTestState *qts;
+++
+++    sun_contents(sun);
+++    path = make_image(NVRAM_SIZE, sun);
+++
+++    /* first start: the Sun bytes stay, the guest changes one */
+++    qts = start(path, MAC_A, NULL);
+++    read_nvram(qts, live, 0, IDPROM);
+++    g_assert_cmpmem(live, IDPROM, sun, IDPROM);
+++    read_nvram(qts, live, IDPROM, IDPROM_LEN);
+++    check_idprom(live, MAC_A);
+++    qtest_writeb(qts, NVRAM_BASE + SUN_DIAG, 0xff);
+++    qtest_writeb(qts, NVRAM_BASE + 0x1ff9, 0x80);       /* clock: stop */
+++    qtest_quit(qts);
+++
+++    read_image(path, file);
+++    g_assert_cmphex(file[SUN_DIAG], ==, 0xff);
+++    check_idprom(&file[IDPROM], MAC_A);
+++    g_assert_true(buffer_is_zero(&file[CLOCK_REGS], NVRAM_SIZE - CLOCK_REGS));
+++
+++    /* second start, another MAC address: only the IDPROM changes */
+++    qts = start(path, MAC_B, NULL);
+++    read_nvram(qts, live, 0, IDPROM);
+++    sun[SUN_DIAG] = 0xff;
+++    g_assert_cmpmem(live, IDPROM, sun, IDPROM);
+++    read_nvram(qts, live, IDPROM, IDPROM_LEN);
+++    check_idprom(live, MAC_B);
+++    qtest_quit(qts);
+++
+++    read_image(path, file);
+++    g_assert_cmpmem(file, IDPROM, sun, IDPROM);
+++    check_idprom(&file[IDPROM], MAC_B);
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
+++/* -prom-env writes OpenBIOS's partitions on every start, image or not */
+++static void test_prom_env(void)
+++{
+++    uint8_t sun[NVRAM_SIZE], live[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path;
+++    QTestState *qts;
+++
+++    sun_contents(sun);
+++    path = make_image(NVRAM_SIZE, sun);
+++
+++    qts = start(path, MAC_A, "-prom-env auto-boot?=false");
+++    read_nvram(qts, live, 0, CLOCK_REGS);
+++    qtest_quit(qts);
+++
+++    check_openbios_layout(live, "auto-boot?=false");
+++    check_idprom(&live[IDPROM], MAC_A);
+++    read_image(path, file);
+++    g_assert_cmpmem(file, CLOCK_REGS, live, CLOCK_REGS);
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
+++/* A larger image: its first 8 KB are the NVRAM, the rest is left alone */
+++static void test_larger_image(void)
+++{
+++    uint8_t *big = g_malloc0(2 * NVRAM_SIZE);
+++    uint8_t live[NVRAM_SIZE];
+++    gchar *contents;
+++    gsize len;
+++    char *path;
+++    QTestState *qts;
+++
+++    sun_contents(big);
+++    memset(&big[NVRAM_SIZE], 0xa5, NVRAM_SIZE);
+++    path = make_image(2 * NVRAM_SIZE, big);
+++
+++    qts = start(path, MAC_A, NULL);
+++    read_nvram(qts, live, 0, IDPROM);
+++    g_assert_cmpmem(live, IDPROM, big, IDPROM);
+++    qtest_writeb(qts, NVRAM_BASE + SUN_DIAG, 0xff);
+++    qtest_quit(qts);
+++
+++    g_assert(g_file_get_contents(path, &contents, &len, NULL));
+++    g_assert_cmpuint(len, ==, 2 * NVRAM_SIZE);
+++    g_assert_cmphex((uint8_t)contents[SUN_DIAG], ==, 0xff);
+++    g_assert_cmpmem(&contents[NVRAM_SIZE], NVRAM_SIZE,
+++                    &big[NVRAM_SIZE], NVRAM_SIZE);
+++    g_free(contents);
+++
+++    unlink(path);
+++    g_free(path);
+++    g_free(big);
+++}
+++
+++/*
+++ * Attached with -blockdev by node name (as Proxmox VE does): the guest's
+++ * writes reach the image, and query-block names the device by a fixed
+++ * path.
+++ */
+++static void test_blockdev(void)
+++{
+++    uint8_t sun[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path;
+++    QTestState *qts;
+++    QDict *resp;
+++    QList *list;
+++    QListEntry *e;
+++    bool found = false;
+++
+++    sun_contents(sun);
+++    path = make_image(NVRAM_SIZE, sun);
+++
+++    qts = qtest_initf("-M SS-5 -nodefaults -net nic,model=lance,macaddr=%s "
+++                      "-blockdev driver=raw,node-name=drive-nvram0,"
+++                      "file.driver=file,file.filename=%s "
+++                      "-global sysbus-m48t08.drive=drive-nvram0", MAC_A, path);
+++    resp = qtest_qmp(qts, "{ 'execute': 'query-block' }");
+++    g_assert(qdict_haskey(resp, "return"));
+++    list = qdict_get_qlist(resp, "return");
+++    QLIST_FOREACH_ENTRY(list, e) {
+++        QDict *info = qobject_to(QDict, qlist_entry_obj(e));
+++
+++        if (!g_strcmp0(qdict_get_try_str(info, "qdev"), "/machine/nvram")) {
+++            QDict *inserted = qdict_get_qdict(info, "inserted");
+++
+++            g_assert(inserted);
+++            g_assert_cmpstr(qdict_get_str(inserted, "node-name"), ==,
+++                            "drive-nvram0");
+++            found = true;
+++        }
+++    }
+++    qobject_unref(resp);
+++    g_assert_true(found);
+++
+++    qtest_writeb(qts, NVRAM_BASE + SUN_DIAG, 0xff);
+++    qtest_quit(qts);
+++
+++    read_image(path, file);
+++    g_assert_cmphex(file[SUN_DIAG], ==, 0xff);
+++    g_assert_cmphex(file[0], ==, SUN_CHECKSUM);
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
+++/* A read-only image is loaded, and the guest's writes stay in memory */
+++static void test_read_only(void)
+++{
+++    uint8_t sun[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path;
+++    QTestState *qts;
+++
+++    sun_contents(sun);
+++    path = make_image(NVRAM_SIZE, sun);
+++
+++    qts = qtest_initf("-M SS-5 -nodefaults -net nic,model=lance,macaddr=%s "
+++                      "-drive if=none,id=nvram0,format=raw,readonly=on,file=%s "
+++                      "-global sysbus-m48t08.drive=nvram0", MAC_B, path);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM_BASE + SUN_AUTO_BOOT), ==, 0xff);
+++    qtest_writeb(qts, NVRAM_BASE + SUN_DIAG, 0xff);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM_BASE + SUN_DIAG), ==, 0xff);
+++    qtest_quit(qts);
+++
+++    read_image(path, file);
+++    g_assert_cmpmem(file, NVRAM_SIZE, sun, NVRAM_SIZE);
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
+++/* Without an image nothing changes: QEMU's contents on every start */
+++static void test_no_image(void)
+++{
+++    uint8_t live[NVRAM_SIZE];
+++    QTestState *qts;
+++
+++    qts = qtest_initf("-M SS-5 -nodefaults -net nic,model=lance,macaddr="
+++                      MAC_A);
+++    read_nvram(qts, live, 0, CLOCK_REGS);
+++    qtest_quit(qts);
+++
+++    check_openbios_layout(live, NULL);
+++    check_idprom(&live[IDPROM], MAC_A);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-nvram/no-image", test_no_image);
+++    qtest_add_func("sun4m-nvram/blank", test_blank);
+++    qtest_add_func("sun4m-nvram/persist", test_persist);
+++    qtest_add_func("sun4m-nvram/prom-env", test_prom_env);
+++    qtest_add_func("sun4m-nvram/larger-image", test_larger_image);
+++    qtest_add_func("sun4m-nvram/blockdev", test_blockdev);
+++    qtest_add_func("sun4m-nvram/read-only", test_read_only);
 ++
 ++    return g_test_run();
 ++}
