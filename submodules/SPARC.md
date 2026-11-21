@@ -3582,6 +3582,124 @@ unix0.cc QEMU stack (vpci, CMD646 for sun4v, strand halt) is published or reache
 firmware can be built in CI from `sun4v-qemu-kit` and the remaining work is mostly packaging and
 qemu-server.
 
+## TCI (QEMU's TCG interpreter)
+
+QEMU's TCG interpreter (`configure --enable-tcg-interpreter`) runs translated guest code as bytecode
+in a C loop instead of emitting host machine code. It is the only TCG backend on hosts without a
+native one, and the one QEMU's Emscripten (WebAssembly) build uses in 11.1.3, so these numbers are
+step 1 of the "Browser SPARC" item in `ROADMAP.md`: how much slower the sparc guests get when the
+native x86-64 backend is replaced by the interpreter.
+
+**Setup (2026-11-21).** Two `qemu-system-sparc`/`qemu-system-sparc64` builds from the same tree:
+QEMU 11.1.3 with pve-qemu 11.1.3-3's patch series and `submodules/pve-qemu.patch` (the wsh patches)
+as of wsh-pve `d35fabb`, built on Debian 13 (gcc 14.2) with
+
+```sh
+configure --target-list=sparc-softmmu,sparc64-softmmu --disable-docs --disable-werror --disable-gtk \
+  --disable-sdl --disable-vnc --disable-opengl --disable-capstone --enable-png --enable-slirp \
+  [--enable-tcg-interpreter]
+```
+
+(meson then reports "TCG backend: TCI (TCG with bytecode interpreter, slow)"). Both were mounted over
+`/usr/local/bin/qemu-system-sparc{,64}` in the lab image (`docker run ... -v
+<build>/qemu-system-sparc:/usr/local/bin/qemu-system-sparc:ro wsh-sparc-lab ...`; firmware from the
+published package). One guest at a time on the 14-vCPU lab host (a VM on an i9-9900K), each case on a
+fresh copy of the stored disk, in the order TCG, TCI, TCG, TCI (two runs each):
+
+```sh
+# Solaris 2.6 End User, SS-5, OpenBIOS, 256 MB (boot, idle, dd)
+lab.py run scenarios/idle.py --out <out> --var DISK=<copy of sol26-enduser-installed.raw> --var ROUNDS=3
+# NetBSD 9.3 sparc, SS-5, OpenBIOS, 256 MB
+lab.py run scenarios/idle.py --out <out> --var DISK=<copy of install-netbsd93-sparc.raw> \
+    --var PROMPT=login: --var PASSWORD=wshlab --var ROUNDS=3 --var "CHECK=pkill makemandb; sleep 2"
+# NetBSD 9.3 sparc64, sun4u, OpenBIOS, 512 MB
+lab.py run scenarios/sparc64-idle.py --out <out> --var DISK=<copy of install-netbsd93-sparc64.raw> \
+    --var GUEST=netbsd --var PASSWORD=wshlab --var TIMEOUT=3600 --var "WAIT=pkill makemandb; sleep 2"
+# the bench disk on Solaris 2.6, SS-5, OpenBIOS (the benchdisk-sol26-openbios-ss5 case, no NIC tests)
+lab.py run scenarios/bench-disk.py --out <out> --var DISK=<copy of sol26-enduser-installed.raw> \
+    --var DISK2=<bench-sol26.raw> --var NET=none --var RUN_TIMEOUT=14400
+```
+
+Other agents' guests and builds shared the host during the first round of the boot and idle cases
+(1-minute load 7-14) and less during the second (2-3); the bench runs had it nearly to themselves
+(0.7-1.6). The first round's CPU-bound numbers are the slower ones in both builds, so the ratios
+below are of the means of the two runs.
+
+**Boot and idle** (boot = QEMU start to the shell after login, Solaris's first-boot questions
+included; host CPU = QEMU's use of one host core over 60 s at the shell; both runs):
+
+| Guest | Boot TCG | Boot TCI | Ratio | Idle host CPU TCG | TCI | CPU-bound command TCG | TCI | Ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Solaris 2.6, SS-5 | 121, 116 s | 222, 188 s | 1.7x | 4.7, 3.1% | 7.0, 4.0% | `dd`, 200000 blocks: 2.5, 1.9 s | 39.8, 23.5 s | 14x |
+| Solaris 2.6, SS-5 (bench runs) | 114, 115 s | 181, 181 s | 1.6x | | | | | |
+| NetBSD 9.3, SS-5 | 43, 27 s | 162, 121 s | 4.0x | 102.6, 101.8% | 102.9, 101.9% | `dd`, 200000 blocks: 10.2, 7.2 s | 62.8, 47.4 s | 6.3x |
+| NetBSD 9.3, sun4u | 74, 60 s | 386, 455 s | 6.3x | 3.2, 2.6% | 3.3, 3.1% | awk job: 21.5, 14.2 s | 83.0, 67.5 s | 4.2x |
+
+The guest clock kept time in every run (drift 0.0-0.2 s, once 0.9 s with TCI on sun4u: one tick of
+`date`); ten `sleep 1` took 10.0-10.4 s with TCG and 10.4-11.7 s with TCI, the echo of a trivial
+command 50 ms with TCG (the lab's polling step) and 50-89 ms with TCI.
+
+- **Idle doesn't depend on the backend.** A guest whose idle loop halts the CPU (Solaris through
+  `solaris-idle`, NetBSD on sun4u through `idle-halt`: both recognise the loop in the translator, so
+  they work the same with TCI) costs 3-7% of a host core either way. NetBSD 9.3 on sun4m has no way
+  to halt ("Idle") and spins at 100% with both; with TCI its idle loop just runs fewer times a second.
+- **Boot suffers less than compiled code.** Solaris's boot spends much of its time waiting (device
+  probes, timeouts, the first-boot form), so it takes 1.6-1.7x as long; NetBSD's boot is mostly guest
+  code and takes 4-6x. OpenBIOS from reset to `bootpath:` took 2.5 s with TCG and 25.7 s with TCI.
+
+**The bench disk** (Solaris 2.6, SS-5, OpenBIOS; mean of the 2 runs, which are within 4% of each
+other in the CPU-bound rows; TCI/TCG = how many times slower TCI is: the time ratio, or the rate
+ratio inverted):
+
+| Benchmark | Unit | TCG | TCI | TCI/TCG |
+| --- | --- | --- | --- | --- |
+| Dhrystone 2.1 | VAX MIPS | 946 | 48.8 | 19.4x |
+| Whetstone | MWIPS | 423 | 41.6 | 10.2x |
+| Hanoi, 10 disks | towers/s | 20198 | 1641 | 12.3x |
+| `nawk` loop | s | 4.9 | 60.3 | 12.3x |
+| nbench integer index | K6/233 = 1 | 4.15 | 0.240 | 17.3x |
+| nbench FP index | K6/233 = 1 | 1.70 | 0.217 | 7.8x |
+| nbench memory index | K6/233 = 1 | 4.39 | 0.167 | 26.3x |
+| lmbench null syscall | us | 0.40 | 4.03 | 10.1x |
+| read / write | us | 1.60 / 1.38 | 20.3 / 16.7 | 12.7x / 12.0x |
+| stat | us | 4.24 | 76.6 | 18.1x |
+| open/close | us | 9.3 | 102.7 | 11.0x |
+| signal install / catch | us | 1.07 / 13.4 | 20.1 / 140.3 | 18.8x / 10.4x |
+| protection fault | us | 2.96 | 26.4 | 8.9x |
+| pipe latency | us | 78 | 244 | 3.1x |
+| fork+exit | us | 1372 | 6429 | 4.7x |
+| fork+execve | us | 2452 | 10041 | 4.1x |
+| fork+/bin/sh -c | us | 13320 | 60447 | 4.5x |
+| page fault | us | 198 | 471 | 2.4x |
+| mmap 8 MB | us | 1084 | 9252 | 8.5x |
+| file reread 8 MB | MB/s | 987 | 39.8 | 24.8x |
+| memory read 4 MB | MB/s | 15047 | 427 | 35x |
+| bcopy 4 MB | MB/s | 1165 | 38.1 | 30.6x |
+| memory latency 8 MB | ns | 7.97 | 33.5 | 4.2x |
+| file create / delete (0k) | files/s | 1068 / 2018 | 465 / 910 | 2.3x / 2.2x |
+| TCP latency / bandwidth over lo0 | us / MB/s | 216 / 308 | 650 / 22.9 | 3.0x / 13.4x |
+
+Memory write (4 MB) spread too much under TCG (9015 and 16355 MB/s) for a ratio; TCI 484-497 MB/s.
+`run.sh` took 380-383 s with TCG and 508-514 s with TCI (its CPU benchmarks scale their counts to 20 s
+each, so the run hardly grows). One quirk: `/usr/bin/time` prints minutes from 60 s on, so TCI's
+`nawk` loop came out as `BENCH nawk_s 1:00.3 s` in `bench.txt` and `bench-disk.py` didn't take it
+into `result.json` (60.3 s in both runs, read by hand).
+
+- **Where TCI hurts most**: tight loops over memory (bcopy, memory read, file reread: 25-35x) and
+  integer code (Dhrystone, nbench integer: 17-19x). Floating point less (Whetstone 10x, nbench FP 8x):
+  both builds call the same soft-float helpers, and only the code around them is interpreted. Kernel
+  paths that mostly wait or run in the device models (fork, exec, pipes, page faults, file creation,
+  memory latency) are 2-5x.
+
+**Conclusion.** On a host with a native TCG backend (x86-64, aarch64 and the others QEMU has) TCI is
+not worth using for these guests: compiled code runs 8-35x slower (Dhrystone 19x), a boot takes
+1.6-6x as long, and idle costs the same. Its only use here is a host without a native backend, which
+in practice means QEMU's WebAssembly build. There a Solaris 2.6 SS-5 reaches its login in about
+3 minutes of interpreter time before WebAssembly's own overhead, and a guest that halts when idle
+doesn't keep the CPU busy: enough for a serial-console demonstration in the browser (ROADMAP,
+"Browser SPARC"), not for real work. sun4u is hit harder at boot (NetBSD 9.3: 7 minutes against 1),
+so a browser demonstration should start with sparc32, or with a migrated snapshot taken after boot.
+
 ## Supported profiles
 
 The contract for sparc32 (`arch: sparc`, always TCG), from the measurements under "SS-10 and

@@ -7,6 +7,7 @@ use over SECONDS, whether the guest clock kept time meanwhile, and how long a CP
 The disk is changed (first boot, logs): give it a copy. Only meaningful on an otherwise idle host.
 
   PROMPT      the login prompt (regex)                          (console login:)
+  PASSWORD    root's password (the stored NetBSD disks: wshlab)  (none)
   CHECK       a command run after login; CHECK_EXPECT (regex) must be in its output  (none)
   SETTLE      seconds after login before measuring               (30)
   SECONDS     seconds to measure over                            (60)
@@ -18,8 +19,9 @@ The disk is changed (first boot, logs): give it a copy. Only meaningful on an ot
   ROUNDS      times `true` is run for the echo latency (0: no latency checks)  (10)
   TRACE_EXPECT a regex that must be in trace.log at the end (with TRACE)  (none)
 
-The metrics (cpu_pct, clock_drift_s, busy_s, echo_ms: median host time from Return to the end of
-`true`, sleep10_s: host time of ten `sleep 1`) go to result.json. Machine options can go with the
+The metrics (boot_s: QEMU start to the shell after login, cpu_pct, clock_drift_s, busy_s, echo_ms:
+median host time from Return to the end of `true`, sleep10_s: host time of ten `sleep 1`) go to
+result.json. Machine options can go with the
 machine type, e.g. MACHINE=SS-5,sunos-idle=off.
 """
 import os
@@ -28,9 +30,9 @@ import time
 
 from _sparc32 import DEFAULTS as BASE, login, prom_boot, qemu_args as sparc32_args
 
-DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1", "PROMPT": "console login:", "CHECK": "",
-            "CHECK_EXPECT": "", "SETTLE": "30", "SECONDS": "60", "CPU_BELOW": "", "CPU_ABOVE": "",
-            "CLOCK_SLACK": "3", "BUSY": "dd if=/dev/zero of=/dev/null count=200000", "BUSY_BELOW": "",
+DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "NO_CD": "1", "PROMPT": "console login:", "PASSWORD": "",
+            "CHECK": "", "CHECK_EXPECT": "", "SETTLE": "30", "SECONDS": "60", "CPU_BELOW": "",
+            "CPU_ABOVE": "", "CLOCK_SLACK": "3", "BUSY": "dd if=/dev/zero of=/dev/null count=200000", "BUSY_BELOW": "",
             "ROUNDS": "10", "TRACE_EXPECT": ""}
 
 
@@ -56,7 +58,8 @@ def guest_clock(m):
 
 def run(m, v):
     prom_boot(m, v, "disk")
-    login(m, v["PROMPT"])
+    login(m, v["PROMPT"], password=v["PASSWORD"])
+    m.metrics["boot_s"] = round(m.elapsed(), 1)
     if v["CHECK"]:
         out, _ = run_timed(m, v["CHECK"])
         m.snap(f"check: {v['CHECK']}")
