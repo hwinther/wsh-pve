@@ -1245,7 +1245,7 @@ index 5eb784c4..43bb720b 100644
          },
          formulas: {
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 3f583adb..33fe72da 100644
+index 3f583adb..bd42d2d6 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
 @@ -4,6 +4,12 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
@@ -1261,15 +1261,16 @@ index 3f583adb..33fe72da 100644
          let ret = PVE.Parser.printPropertyString(values, 'type');
          if (ret === '') {
              return { delete: 'vga' };
-@@ -15,6 +21,7 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -15,6 +21,8 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
          data: {
              type: '__default__',
              clipboard: '__default__',
 +            arch: undefined,
++            mesa: false,
          },
          formulas: {
              matchNonGUIOption: function (get) {
-@@ -35,6 +42,10 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -35,6 +43,16 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
                      return Proxmox.Utils.defaultText;
                  }
              },
@@ -1277,10 +1278,16 @@ index 3f583adb..33fe72da 100644
 +            retraceSupported: (get) =>
 +                (!get('arch') || get('arch') === 'x86_64') &&
 +                !!get('type').match(/^(__default__|std|cirrus|vmware|qxl\d?|virtio|virtio-gl)$/),
++            // the 3dfx binary's display next to VNC (vga: mesa-display): x86 with 3DFX/Mesa enabled
++            // and a graphic card, so a VNC console
++            mesaDisplaySupported: (get) =>
++                !!get('mesa') &&
++                (!get('arch') || get('arch') === 'x86_64') &&
++                !get('matchNonGUIOption'),
              isVNC: (get) => get('clipboard') === 'vnc',
              hideDefaultHint: (get) => get('isVNC') || get('matchNonGUIOption'),
              hideVNCHint: (get) => !get('isVNC') || get('matchNonGUIOption'),
-@@ -44,13 +55,15 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -44,13 +62,15 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
      items: [
          {
              name: 'type',
@@ -1298,7 +1305,7 @@ index 3f583adb..33fe72da 100644
  
                  if (v.match(/^serial\d+$/) && (!cfg[v] || cfg[v] !== 'socket')) {
                      let fmt = gettext("Serial interface '{0}' is not correctly configured.");
-@@ -74,6 +87,38 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -74,6 +94,63 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
                  emptyText: '{memoryEmptyText}',
                  disabled: '{matchNonGUIOption}',
              },
@@ -1316,6 +1323,31 @@ index 3f583adb..33fe72da 100644
 +            fieldLabel: gettext('Enable 3DFX/Mesa'),
 +            name: 'mesa',
 +            uncheckedValue: 0,
++            bind: {
++                value: '{mesa}',
++            },
++        }, {
++            xtype: 'proxmoxKVComboBox',
++            name: 'mesa-display',
++            deleteEmpty: false,
++            value: '__default__',
++            fieldLabel: gettext('3DFX/Mesa display'),
++            comboItems: [
++                ['__default__', `${Proxmox.Utils.defaultText} (${gettext('read back')})`],
++                ['egl-headless', 'egl-headless (dmabuf)'],
++            ],
++            autoEl: {
++                tag: 'div',
++                'data-qtip': gettext(
++                    'egl-headless gives QEMU a display with OpenGL next to the VNC console. It pays' +
++                        ' off with a GPU; with software rendering (no GPU, needs /dev/udmabuf) the' +
++                        ' default is faster.',
++                ),
++            },
++            bind: {
++                hidden: '{!mesaDisplaySupported}',
++                disabled: '{!mesaDisplaySupported}',
++            },
 +        }, {
 +            xtype: 'proxmoxcheckbox',
 +            fieldLabel: gettext('VGA retrace'),
@@ -1337,7 +1369,7 @@ index 3f583adb..33fe72da 100644
          },
      ],
  
-@@ -157,8 +202,25 @@ Ext.define('PVE.qemu.DisplayEdit', {
+@@ -157,8 +234,29 @@ Ext.define('PVE.qemu.DisplayEdit', {
          me.load({
              success: function (response) {
                  me.vmconfig = response.result.data;
@@ -1361,6 +1393,10 @@ index 3f583adb..33fe72da 100644
 +                    (allowed && !allowed.includes('__default__') ? allowed[0] : '__default__');
 +                let values = PVE.Parser.parsePropertyString(vga, 'type');
 +                values.retrace = values.retrace === 'precise' ? 1 : 0;
++                // 'none' is the default: no -display next to VNC
++                if (!values['mesa-display'] || values['mesa-display'] === 'none') {
++                    values['mesa-display'] = '__default__';
++                }
 +                me.setValues(values);
              },
          });

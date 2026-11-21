@@ -28,6 +28,19 @@ Without a server, the Glide and OpenGL frames show in the VM's console (noVNC), 
 
 See the [3DFX / Mesa passthrough guide](/guides/3dfx/) for how the host QEMU build and the guest drivers are paired by revision, and where to download the matching driver release.
 
+## 3DFX/Mesa display
+
+`mesa-display` picks the QEMU display a VM with 3DFX/Mesa enabled gets next to its VNC console:
+
+- `none` (the default, **Default (read back)**): no `-display`; the Glide and OpenGL frames are read back into the console.
+- `egl-headless` (**egl-headless (dmabuf)**): `-display egl-headless`, a display with GL that takes the Glide frames as a dmabuf and reads them into the console for VNC. It needs a GPU's render node or `/dev/udmabuf` on the node, and is slower than the default with Mesa's software renderer.
+
+```sh
+qm set 120 --vga std,mesa=1,mesa-display=egl-headless
+```
+
+In the web UI it is **Hardware > Display > 3DFX/Mesa display**, shown for x86 VMs while **Enable 3DFX/Mesa** is checked and the graphic card has a VNC console. Refused without `mesa=1`, with a `server` and with `none` or `serial*`; refused at start on a node with neither a render node nor `/dev/udmabuf`. When to use which and what the node needs: [Choosing the display](/guides/3dfx/#choosing-the-display-3dfxmesa-display).
+
 ## VGA retrace
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input
