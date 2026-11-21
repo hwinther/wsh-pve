@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..e29933c 100644
+index 7b0cba5..6a9bfbd 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,53 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,55 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -127,6 +127,8 @@ index 7b0cba5..e29933c 100644
 +wsh/0048-tests-qtest-test-an-instruction-fetch-across-a-conte.patch
 +wsh/0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o.patch
 +wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch
++wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i.patch
++wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -10282,6 +10284,274 @@ index 0000000..423f91f
 ++                g_strdup_printf("sun4m-bus-error-trap/%s", cases[i].name);
 ++            qtest_add_data_func(name, &cases[i], test_bus_error_trap);
 ++        }
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i.patch b/debian/patches/wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i.patch
+new file mode 100644
+index 0000000..19124e9
+--- /dev/null
++++ b/debian/patches/wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i.patch
+@@ -0,0 +1,62 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/display/vga: read the attribute address at 0x3c0 in the data state too
++
++On the VGA the attribute address register, with its palette address
++source bit (0x20, the display enable), reads back at port 0x3c0 in
++either state of the address/data flip-flop, and the read leaves the
++flip-flop alone. QEMU returns it only in the address state and 0 in the
++data state, in vga.c and in the copy of that code in cirrus_vga.c.
++
++The Incredible Machine writes index 0x20 to 0x3c0, reads 0x3c0 to save
++it (the flip-flop is in the data state then), loads palette registers
++15 to 1 and writes the saved value back as the index. Reading 0 clears
++the palette address source bit, and QEMU draws a black screen for as
++long as the game runs; The Incredible Machine 2 shows the same. With
++the address returned in both states both games show their screens.
++Reads of 0x3c1 and the flip-flop handling stay as they are.
++---
++ hw/display/cirrus_vga.c |  7 ++-----
++ hw/display/vga.c        | 12 +++++++-----
++ 2 files changed, 9 insertions(+), 10 deletions(-)
++
++diff --git a/hw/display/cirrus_vga.c b/hw/display/cirrus_vga.c
++index 0a8c74e137..efea47a2aa 100644
++--- a/hw/display/cirrus_vga.c
+++++ b/hw/display/cirrus_vga.c
++@@ -2511,11 +2511,8 @@ static uint64_t cirrus_vga_ioport_read(void *opaque, hwaddr addr,
++     } else {
++         switch (addr) {
++         case 0x3c0:
++-            if (s->ar_flip_flop == 0) {
++-                val = s->ar_index;
++-            } else {
++-                val = 0;
++-            }
+++            /* the attribute address register, as in vga_ioport_read() */
+++            val = s->ar_index;
++             break;
++         case 0x3c1:
++             index = s->ar_index & 0x1f;
++diff --git a/hw/display/vga.c b/hw/display/vga.c
++index b9b8c52941..2974366be9 100644
++--- a/hw/display/vga.c
+++++ b/hw/display/vga.c
++@@ -338,11 +338,13 @@ uint32_t vga_ioport_read(void *opaque, uint32_t addr)
++     } else {
++         switch(addr) {
++         case VGA_ATT_W:
++-            if (s->ar_flip_flop == 0) {
++-                val = s->ar_index;
++-            } else {
++-                val = 0;
++-            }
+++            /*
+++             * The attribute address register, palette address source bit
+++             * included, reads back at 0x3c0 in either state of the
+++             * address/data flip-flop, and the read leaves the flip-flop
+++             * alone.
+++             */
+++            val = s->ar_index;
++             break;
++         case VGA_ATT_R:
++             index = s->ar_index & 0x1f;
+diff --git a/debian/patches/wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a.patch b/debian/patches/wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a.patch
+new file mode 100644
+index 0000000..a9b18a8
+--- /dev/null
++++ b/debian/patches/wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a.patch
+@@ -0,0 +1,194 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test reading the VGA attribute address at 0x3c0
++
++Port I/O on the std VGA, isa-vga, cirrus-vga and vmware-svga (each when
++built in): after a read of 0x3da resets the flip-flop and an index with
++the palette address source bit is written, 0x3c0 must return that index
++in the data state, twice (the read must not toggle the flip-flop), the
++next write must land in the data register (checked through 0x3c1), and
++0x3c0 must return the index again in the address state; the same without
++the palette address source bit. A second case follows the palette load
++of The Incredible Machine: save the address in the data state, load the
++palette registers, write the saved value back; the palette address
++source bit must still be set and the palette registers hold the values.
++
++Without the previous patch every read case and every palette-load case
++fails, on plain QEMU 11.1.3 too.
++---
++ tests/qtest/meson.build         |   1 +
++ tests/qtest/vga-ar-index-test.c | 154 ++++++++++++++++++++++++++++++++
++ 2 files changed, 155 insertions(+)
++ create mode 100644 tests/qtest/vga-ar-index-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 9317f27271..1b42c9aae0 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -79,6 +79,7 @@ qtests_i386 = \
++   (config_all_devices.has_key('CONFIG_IOH3420') ? ['ioh3420-test'] : []) +                  \
++   (config_all_devices.has_key('CONFIG_LPC_ICH9') ? ['lpc-ich9-test'] : []) +              \
++   (config_all_devices.has_key('CONFIG_MC146818RTC') ? ['rtc-test'] : []) +                  \
+++  (config_all_devices.has_key('CONFIG_VGA') ? ['vga-ar-index-test'] : []) +                \
++   (config_all_devices.has_key('CONFIG_USB_UHCI') ? ['usb-hcd-uhci-test'] : []) +            \
++   (config_all_devices.has_key('CONFIG_USB_UHCI') and                                        \
++    config_all_devices.has_key('CONFIG_USB_EHCI') ? ['usb-hcd-ehci-test'] : []) +            \
++diff --git a/tests/qtest/vga-ar-index-test.c b/tests/qtest/vga-ar-index-test.c
++new file mode 100644
++index 0000000000..cd6b050e78
++--- /dev/null
+++++ b/tests/qtest/vga-ar-index-test.c
++@@ -0,0 +1,154 @@
+++/*
+++ * QTest: reading the VGA attribute address register at 0x3c0
+++ *
+++ * The attribute controller has one port for its address and its data
+++ * writes (0x3c0), steered by a flip-flop that a read of input status 1
+++ * (0x3da) resets to the address state. The address register, with the
+++ * palette address source bit (0x20) that turns the display on, reads back
+++ * at 0x3c0 whatever the state of the flip-flop, and the read does not
+++ * toggle it. The Incredible Machine saves the address that way right
+++ * after writing an index, in the data state, and writes the saved value
+++ * back when it has loaded the palette: a read of 0 there blanks the
+++ * screen for good.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++#define VGA_ATT_W       0x3c0   /* attribute address/data write */
+++#define VGA_ATT_R       0x3c1   /* attribute data read */
+++#define VGA_MIS_W       0x3c2   /* miscellaneous output write */
+++#define VGA_IS1_RC      0x3da   /* input status 1, colour */
+++
+++#define AR_PAS          0x20    /* palette address source */
+++#define AR_MODE         0x10    /* attribute mode control register */
+++#define AR_OVERSCAN     0x11    /* overscan colour register */
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    const char *device;
+++} VgaCase;
+++
+++static const VgaCase cases[] = {
+++    { "std", "pc", "VGA" },
+++    { "isa", "pc", "isa-vga" },
+++    { "cirrus", "pc", "cirrus-vga" },
+++    { "vmware", "pc", "vmware-svga" },
+++};
+++
+++static QTestState *start(const VgaCase *c)
+++{
+++    QTestState *qts = qtest_initf("-machine %s -vga none -device %s",
+++                                  c->machine, c->device);
+++
+++    /* colour mode: input status 1 at 0x3da (no BIOS runs under qtest) */
+++    qtest_outb(qts, VGA_MIS_W, 0x67);
+++    return qts;
+++}
+++
+++/* Reset the flip-flop to the address state. */
+++static void reset_flip_flop(QTestState *qts)
+++{
+++    qtest_inb(qts, VGA_IS1_RC);
+++}
+++
+++/*
+++ * 0x3c0 returns the index with the palette address source bit in both
+++ * flip-flop states, and a read of it leaves the flip-flop where it was.
+++ */
+++static void test_read_index(const void *data)
+++{
+++    const VgaCase *c = data;
+++    QTestState *qts = start(c);
+++
+++    reset_flip_flop(qts);
+++    qtest_outb(qts, VGA_ATT_W, AR_PAS | AR_OVERSCAN);       /* now data */
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, AR_PAS | AR_OVERSCAN);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, AR_PAS | AR_OVERSCAN);
+++
+++    /* still in the data state: this write is the overscan colour */
+++    qtest_outb(qts, VGA_ATT_W, 0x5a);                        /* now address */
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_R), ==, 0x5a);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, AR_PAS | AR_OVERSCAN);
+++
+++    /* and in the address state this write is an index */
+++    qtest_outb(qts, VGA_ATT_W, AR_PAS | AR_MODE);           /* now data */
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, AR_PAS | AR_MODE);
+++
+++    /* without the palette address source bit */
+++    reset_flip_flop(qts);
+++    qtest_outb(qts, VGA_ATT_W, 0x05);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, 0x05);
+++    qtest_outb(qts, VGA_ATT_W, 0x15);                        /* palette 5 */
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_R), ==, 0x15);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W), ==, 0x05);
+++
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * The Incredible Machine's palette load: save the address after writing
+++ * an index (in the data state), load the palette registers (the game
+++ * loads 15 to 1, here all 16), write the saved address back. The palette
+++ * address source bit must survive.
+++ */
+++static void test_palette_load(const void *data)
+++{
+++    const VgaCase *c = data;
+++    QTestState *qts = start(c);
+++    uint8_t saved;
+++    int i;
+++
+++    reset_flip_flop(qts);
+++    qtest_outb(qts, VGA_ATT_W, AR_PAS);                     /* display on */
+++    saved = qtest_inb(qts, VGA_ATT_W);                      /* data state */
+++    g_assert_cmphex(saved, ==, AR_PAS);
+++
+++    for (i = 0; i < 16; i++) {
+++        reset_flip_flop(qts);
+++        qtest_outb(qts, VGA_ATT_W, i);
+++        qtest_outb(qts, VGA_ATT_W, 0x3f - i);
+++    }
+++
+++    reset_flip_flop(qts);
+++    qtest_outb(qts, VGA_ATT_W, saved);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W) & AR_PAS, ==, AR_PAS);
+++    reset_flip_flop(qts);
+++    g_assert_cmphex(qtest_inb(qts, VGA_ATT_W) & AR_PAS, ==, AR_PAS);
+++
+++    /* the palette registers took the values (read with PAS clear) */
+++    for (i = 0; i < 16; i++) {
+++        reset_flip_flop(qts);
+++        qtest_outb(qts, VGA_ATT_W, i);
+++        g_assert_cmphex(qtest_inb(qts, VGA_ATT_R), ==, 0x3f - i);
+++    }
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    size_t i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++        g_autofree char *read_name = NULL;
+++        g_autofree char *load_name = NULL;
+++
+++        if (!qtest_has_machine(cases[i].machine) ||
+++            !qtest_has_device(cases[i].device)) {
+++            continue;
+++        }
+++        read_name = g_strdup_printf("vga-ar-index/%s/read", cases[i].name);
+++        load_name = g_strdup_printf("vga-ar-index/%s/palette-load",
+++                                    cases[i].name);
+++        qtest_add_data_func(read_name, &cases[i], test_read_index);
+++        qtest_add_data_func(load_name, &cases[i], test_palette_load);
 ++    }
 ++
 ++    return g_test_run();

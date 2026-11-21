@@ -82,7 +82,7 @@ the first boot, login, the target's commands, power off).
 
 ### SunOS 4.1.3_U1B on SS-5
 
-The oldest SunOS the lab runs. The install copies the CD's miniroot to the swap slice, boots it and
+SunOS 4.1.3_U1B (Solaris 1.1.1B), the first SunOS 4 for the SS-5 and SS-20. The install copies the CD's miniroot to the swap slice, boots it and
 runs suninstall's Quick install (Programmer); the check boots the disk, logs in, records the system
 state and halts. SS-5, OpenBIOS, 64 MB for the install (the CD's kernel stops with more), 256 MB
 after.
@@ -99,9 +99,53 @@ after.
   poster="npt:0:10"
 />
 
+### SunOS 4.1.3 on SS-10
+
+The oldest SunOS the lab runs: SunOS 4.1.3 (Solaris 1.1, kernel built July 1992), the first SunOS 4
+for the SS-10, from its own CD. Its generic sun4m kernel probes for VME controllers that the SS-10
+doesn't have and expects the SuperSPARC's trap for that bus error, which pve-qemu patch wsh/0049
+gives it (pve-qemu-kvm 11.1.3-2+wsh31). The same install as 4.1.3_U1B: the mini-root on the swap
+slice, suninstall's Quick install, then the check boot (login, the system state, `halt`). SS-10,
+OpenBIOS, 64 MB for the install, 256 MB after. Recorded 2026-11-21 with pve-qemu-kvm 11.1.3-2+wsh31
+(install 2.4 min, check 0.9 min).
+
+<LabCast
+  src="/recordings/sunos413-install-ss10.cast"
+  caption="SunOS 4.1.3 install from CD, SS-10 with OpenBIOS under PVE, serial console"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos413-boot-ss10.cast"
+  caption="SunOS 4.1.3 booting the installed disk, SS-10 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.1 on SS-10
+
+The oldest Solaris the lab runs: Solaris 2.1 (SunOS 5.1), the first release for sun4m, made possible
+by pve-qemu patch wsh/0047 (pve-qemu-kvm 11.1.3-2+wsh29). The CD (as a disk on target 6) boots the
+installer, which asks the system identification questions as 2.2 does and then runs 2.1's own
+suninstall menus (Standalone, Quick Install, End User). The second recording is the check boot after
+the first boot: login, `uname`, the marker, `df`, `prtvtoc`, `ifconfig` and `netstat -rn`, then
+`init 5`, after which 2.1 reboots to the OpenBIOS prompt. SS-10, OpenBIOS, 256 MB. Recorded 2026-11-20 with
+pve-qemu-kvm 11.1.3-2+wsh30 (install 5.3 min, check 1.2 min).
+
+<LabCast
+  src="/recordings/sol21-install-ss10.cast"
+  caption="Solaris 2.1 install, SS-10 with OpenBIOS under PVE, serial console (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol21-boot-ss10.cast"
+  caption="Solaris 2.1 booting the installed disk, SS-10 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
 ### Solaris 2.2 on SS-10
 
-The oldest Solaris the lab runs, made possible by OpenBIOS patches 0019-0023 (pve-qemu-kvm
+Made possible by OpenBIOS patches 0019-0023 (pve-qemu-kvm
 11.1.3-2+wsh22). The CD (as a disk on target 6) boots the installer, which asks one system
 identification question per screen as 2.3 does; then Quick Install, End User, the file systems and the
 packages. The second recording is the first boot of the installed disk: the root password on its own
@@ -149,6 +193,49 @@ the disk, the Minimal set, root without a password and power off. The check boot
   poster="npt:0:10"
 />
 
+### OpenBSD 8.0 on sun4u
+
+The OpenBSD 8.0 sparc64 install CD on sun4u: the installer on ttya with a static address on `hme0`,
+root's password, the auto layout on the IDE disk, all the sets except X11, ntpd on; then the sets and
+the kernel relink. The check boots the disk, logs in and records `uname`, the marker, `df`, the
+disklabel, `ifconfig`, the routes and the running ntpd (on since pve-qemu patch wsh/0045, the sabre's
+lost IDE interrupt). sun4u, OpenBIOS, 512 MB, IDE disk. Recorded 2026-11-20 with pve-qemu-kvm
+11.1.3-2+wsh30, the run that made the stored disk (install 7.5 min, check 4 min).
+
+<LabCast
+  src="/recordings/openbsd80-install-sun4u.cast"
+  caption="OpenBSD 8.0 sparc64 install, sun4u with OpenBIOS under PVE, serial console (3x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/openbsd80-boot-sun4u.cast"
+  caption="OpenBSD 8.0 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+### OpenBSD 5.9 on SS-5
+
+OpenBSD 5.9, the last release of the sparc port: `cd59.iso` boots `bsd.rd` from the OpenBIOS prompt,
+and the sets come from a second CD the lab makes from the release's directory (the installer's
+`cd0`). The installer on ttya: `le0` with a static address, root's password, the auto layout on `sd0`,
+all the sets except X11, checked against `SHA256.sig`. The check boots the disk, logs in and records
+`uname`, the marker, `df`, the disklabel, `ifconfig` and the routes. SS-5, OpenBIOS, 256 MB, no
+framebuffer (5.9's kernel panics with the keyboard that QEMU adds with a display). Recorded
+2026-11-21 with pve-qemu-kvm 11.1.3-2+wsh31 (install 3.4 min, check 0.8 min).
+
+<LabCast
+  src="/recordings/openbsd59-install-ss5.cast"
+  caption="OpenBSD 5.9 sparc install, SS-5 with OpenBIOS under PVE, serial console (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/openbsd59-boot-ss5.cast"
+  caption="OpenBSD 5.9 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
 ### Debian GNU/Linux 4.0 on SS-5
 
 The netinst CD with a preseed file: one line typed at SILO's `boot:` loads the lab's answers from a
@@ -165,6 +252,42 @@ in on `ttyS0` and records the system state. SS-5, OpenBIOS, 256 MB.
 <LabCast
   src="/recordings/debian40-boot-ss5.cast"
   caption="Debian 4.0 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Red Hat Linux 6.2 on SS-5
+
+The Red Hat Linux 6.2 sparc CD with a kickstart file from a second CD made on the node: one line at
+SILO's `boot:` prompt starts the installer (Linux 2.2.14), which runs unattended in text mode on ttya
+apart from the three boot loader screens the lab answers; then the Base packages and the reboot.
+The check boots the installed disk through SILO, logs in
+and records `uname`, the host name, the marker, `df`, `fdisk -l`, `ifconfig` and the routes. SS-5,
+OpenBIOS, 256 MB. Recorded 2026-11-21 with pve-qemu-kvm 11.1.3-2+wsh31 (install 1.7 min, check
+1.1 min).
+
+<LabCast
+  src="/recordings/redhat62-install-ss5.cast"
+  caption="Red Hat Linux 6.2 kickstart install, SS-5 with OpenBIOS under PVE, serial console"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/redhat62-boot-ss5.cast"
+  caption="Red Hat Linux 6.2 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 9 on sun4u
+
+A boot of the stored Solaris 9 9/05 disk (its Web Start install takes about 70 minutes; installed
+2026-11-19 with pve-qemu-kvm 11.1.3-2+wsh23 and OpenBIOS patches 0024-0025): OpenBIOS for sparc64,
+the kernel, the services, login, `uname`, the marker, `df`, `prtvtoc`, `ifconfig`, `netstat -rn` and
+`init 5`. sun4u, OpenBIOS, 1024 MB, IDE disk. Booted 2026-11-21 with pve-qemu-kvm 11.1.3-2+wsh31
+(3.5 min).
+
+<LabCast
+  src="/recordings/sol9-boot-sun4u.cast"
+  caption="Solaris 9 9/05 booting an installed disk, sun4u with OpenBIOS under PVE"
   poster="npt:0:10"
 />
 

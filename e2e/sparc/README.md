@@ -2203,13 +2203,24 @@ assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't nee
 | `debian40-install-ss5.cast`, `debian40-boot-ss5.cast` | `lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5`: `install`, `check` | `--speed 4`, `--speed 1` |
 | `sol26-smp4-ss20.cast` | `pve_matrix.py recordings`: `sol26-ss20-smp4/1-solaris-boot-disk` | `--max-idle 1 --speed 1` |
 | `sol22-install-ss10.cast`, `sol22-boot-ss10.cast` | `pve_matrix.py recordings`: `sol22-install-ss10/1-solaris-install-serial`, `2-solaris-boot-disk` | `--speed 2`, `--speed 1` |
+| `sunos413-install-ss10.cast`, `sunos413-boot-ss10.cast` | `lab.py install sunos413-ss10 --check --out <runs>/install-sunos413-ss10/1-install-sunos413-ss10`: `install`, `check` | `--max-idle 1 --speed 1` |
+| `sol21-install-ss10.cast`, `sol21-boot-ss10.cast` | `lab.py install sol21-ss10 --check --out <runs>/install-sol21-ss10/1-install-sol21-ss10`: `install`, `check` | `--speed 2`, `--speed 1` |
+| `openbsd80-install-sun4u.cast`, `openbsd80-boot-sun4u.cast` | `lab.py install openbsd80-sun4u --check --export <dir> --out <runs>/install-openbsd80-sun4u/1-install-openbsd80-sun4u`: `install`, `check` | `--speed 3`, `--speed 2` |
+| `openbsd59-install-ss5.cast`, `openbsd59-boot-ss5.cast` | `install` (no stored disk): `install-openbsd59-ss5/1-install-openbsd59-ss5/install`, `.../check` | `--speed 2`, `--speed 1` |
+| `redhat62-install-ss5.cast`, `redhat62-boot-ss5.cast` | `install` (no stored disk): `install-redhat62-ss5/1-install-redhat62-ss5/install`, `.../check` | `--speed 1`, `--speed 1` |
+| `sol9-boot-sun4u.cast` | `install` (stored disk): `install-sol9-sun4u/1-boot-test-sol9-sun4u/check` | `--max-idle 1 --speed 1` |
 
 The install-target rows come from runs in the PVE test container: `pve_matrix.py install` with the
 stored disks for the boot-tests and with an empty `--disks` directory for the installs (so it installs
 and exports there), `pve_matrix.py recordings` (cases only the gallery needs; Solaris 2.2 needs
 pve-qemu-kvm 11.1.3-2+wsh22 or later), and the Debian install by hand, because it needs a route out
-(`pve_matrix.py` passes no `--gateway`/`--dns`). All of them can write into one `--runs` directory;
-`publish_media.py` then picks them up in one go (its docstring lists the commands).
+(`pve_matrix.py` passes no `--gateway`/`--dns`). Solaris 2.1, OpenBSD 8.0 and SunOS 4.1.3 on SS-10
+are `lab.py install <target> --check` runs into the install matrix's case layout (the targets' own
+test runs, the OpenBSD one the run that stored the disk; 2026-11-20 with pve-qemu-kvm 11.1.3-2+wsh30
+for the first two, 2026-11-21 with +wsh31 for SunOS, as OpenBSD 5.9, Red Hat 6.2 and the Solaris 9
+boot). The SunOS 4.1.3_U1B SS-5 recordings keep their `sunos413-*-ss5` names; the original 4.1.3 on
+SS-10 is `sunos413-*-ss10`. All of them can write into one `--runs` directory; `publish_media.py`
+then picks them up in one go (its docstring lists the commands).
 
 To replace one by hand (the release exists; to create it once:
 `gh release create media --repo hwinther/wsh-pve --prerelease --latest=false --title "sparc lab media"
