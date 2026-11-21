@@ -441,6 +441,39 @@ per-VM volume in qemu-server; `submodules/SPARC.md`, "SPARCstation LX with its o
   MiSTer-devel/SunSparcStation20_MiSTer (`docs/rom-disassembly/ss20-obp-2.25/`), read but not
   verified on QEMU; it would mean changes to QEMU's sun4m and isn't small (`submodules/SPARC.md`,
   "SMP").
+- **WRP in retronet** (owner's request, 2026-11-21). Look into tenox7's Web Rendering Proxy (WRP),
+  which renders modern pages as images (ISMAP/GIF) for old browsers, as a service next to the
+  retronet gateway and vintagehive, so the Solaris/Netscape, Windows 9x and DOS guests can read
+  today's web.
+- **Demo ideas to show and post** (collected 2026-11-21; the owner drops what isn't wanted). Public
+  demos use OpenBIOS and our own software only: no Sun PROMs, MS-DOS, Windows or NeXT material.
+  1. *A SPARCstation 5 boots Linux in your browser*: the Browser SPARC item above with the tiny
+     nolibc kernel+initramfs (`e2e/tiny/`) instead of a NetBSD disk, booting in seconds; optionally
+     three terminals side by side (SS-5, sun4u, PC) running the same `init.c`, big- and little-endian
+     in the banner.
+  2. *A GitHub Action for big-endian testing*: build a C program for sparc32 v8 (nolibc or
+     uClibc-ng), boot it in the tiny kernel under QEMU, return pass/fail in seconds; useful to other
+     projects for endianness and alignment bugs.
+  3. *The emulation ladder*: one compute loop native, under KVM, TCG, TCI and TCI-in-Wasm, and nested
+     (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab.
+  4. *ASCII Mandelbrot or a ray tracer on the serial console* of all three architectures at once,
+     recorded with asciinema and timed.
+  5. *An AI drives a SPARCstation*: a recording of an agent using `sparc-lab-mcp` to log in to
+     Solaris 2.6 or SunOS 4.1.4, compile a program with the period compiler and run it.
+  6. *3dfx in the browser*: a Glide demo in Windows 98 rendered offscreen and shown in PVE's noVNC
+     without a GPU or X server (a clip; the Windows desktop stays out of published material, so a
+     self-made Glide scene or a freely distributable demo); stronger once stage 2 (dmabuf,
+     Moonlight) is done.
+  7. *Retronet*: an SS-20 with Netscape, a Windows 9x and a DOS machine on retronet reading today's
+     web through WRP and talking over IRC/BBS through the dial-up setup ("three machines from 1996
+     read Hacker News").
+  8. *The fastest SPARCstation that ever existed*: the emulated SS-20 (4 CPUs) and SS-5 against
+     published 1995 figures for real machines (Dhrystone, nbench from the lab's bench), with the LX
+     on its own PROM as a curiosity (results only, no PROM).
+  9. *A living museum*: a page to pick a machine and OS (SunOS, Solaris 2.x, NetBSD, OpenBSD,
+     Debian 4, Red Hat 6.2) and watch its install and first boot from the existing recordings.
+  10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
+     tiny system's tier 2 (Buildroot with uClibc-ng) for a libc.
 
 ## Known and not fixed
 
