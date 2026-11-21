@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..7a12683 100644
+index 7b0cba5..ff0389b 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,58 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,61 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -132,6 +132,9 @@ index 7b0cba5..7a12683 100644
 +wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
 +wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s.patch
 +wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic.patch
++wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch
++wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch
++wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -11412,6 +11415,398 @@ index 0000000..7ec6479
 +     };
 + 
 +     mc->desc = "Sun4m platform, SPARCbook";
+diff --git a/debian/patches/wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch b/debian/patches/wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch
+new file mode 100644
+index 0000000..2589149
+--- /dev/null
++++ b/debian/patches/wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch
+@@ -0,0 +1,74 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: map the SPARCstation LX's on-board SBus devices
++
++The SPARCstation LX has a cgsix (GX) frame buffer in SBus slot 3, the
++DBRI audio chip in slot 2 and a parallel port (bpp) in slot 4, all on
++the board, and its boot PROM (OBP 2.10) carries the FCode for slots 2-4
++and probes them on every boot. -M LX has none of them, so the LX PROM
++stops at "ok" without its banner: with -vga none its slot 2 FCode takes
++a data access error loading the DBRI's FCode PROM (slot 2 offset
++0x1000), and with the default TCX in slot 2 the cgsix probe takes one
++(slot 3, the THC at offset 0x301094: "cgsix Data Access Error"). Past
++those it takes another one after the banner when it resets the DBRI (a
++write to slot 2 offset 0x10000), and NetBSD 9.3 panics in bppattach()
++reading the bpp's DMA CSR at 0x7c800000.
++
++Map them as the SS-20 has its DBRI and bpp: the DBRI at 0x50000000
++(slot 2, with the SS-20's layout: its PROM window at offset 0x1000, its
++registers at 0x10000), the bpp at 0x7c800000 (slot 4 offset 0xc800000),
++and, in a new cg6_base, the cgsix's 16 MB at 0x60000000 (slot 3, the
++size its FCode's "reg" gives), all unimplemented devices. They read as
++zero and ignore writes at the low priority of unimplemented devices, so
++the TCX or cg3 that -M LX puts in slot 2 keeps its addresses. The other
++machines are unchanged.
++
++With this the LX PROM probes every slot, prints its banner and boots
++over ttya with -nographic: Solaris 2.6 and NetBSD 9.3 to a login
++prompt. The cgsix node is there but unused: NetBSD 9.3 attaches cgsix0
++as a second display (rev 0, 1 MB), Solaris 2.6's cgsix driver fails to
++attach, and neither hangs. The DBRI's node has no name yet (the next
++patch). OpenBIOS on -M LX boots as before.
++---
++ hw/sparc/sun4m.c | 15 ++++++++++++++-
++ 1 file changed, 14 insertions(+), 1 deletion(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 4e6b368..a518ffa 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -99,7 +99,7 @@ struct sun4m_hwdef {
++     hwaddr serial_base, fd_base;
++     hwaddr afx_base, idreg_base, dma_base, esp_base, le_base;
++     hwaddr tcx_base, cs_base, apc_base, aux1_base, aux2_base;
++-    hwaddr bpp_base, dbri_base, sx_base;
+++    hwaddr bpp_base, dbri_base, sx_base, cg6_base;
++     struct {
++         hwaddr reg_base, vram_base;
++     } vsimm[MAX_VSIMMS];
++@@ -1130,6 +1130,16 @@ static void sun4m_hw_init(MachineState *machine)
++                                     hwdef->dbri_base + 0x10000, 0x100);
++     }
++ 
+++    if (hwdef->cg6_base) {
+++        /*
+++         * The on-board cgsix (GX) of the SPARCstation LX, which has no model
+++         * here: its registers and frame buffer, the 16 MB its "reg" gives.
+++         * The boot PROM carries its FCode and probes it in every
+++         * configuration, and stops at a bus error there.
+++         */
+++        create_unimplemented_device("sun-cgsix", hwdef->cg6_base, 0x1000000);
+++    }
+++
++     if (hwdef->bpp_base) {
++         /* parallel port */
++         create_unimplemented_device("sun-bpp", hwdef->bpp_base, 0x20);
++@@ -1439,6 +1449,9 @@ static void ss_lx_class_init(ObjectClass *oc, const void *data)
++         .le_base      = 0x78c00000,
++         .aux1_base    = 0x71900000,
++         .aux2_base    = 0x71910000,
+++        .bpp_base     = 0x7c800000, /* SBus slot 4 */
+++        .dbri_base    = 0x50000000, /* on-board, SBus slot 2 */
+++        .cg6_base     = 0x60000000, /* on-board, SBus slot 3 */
++         .nvram_machine_id = 0x80,
++         .machine_id = lx_id,
++         .iommu_version = 0x04000000,
+diff --git a/debian/patches/wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch b/debian/patches/wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch
+new file mode 100644
+index 0000000..f480f1a
+--- /dev/null
++++ b/debian/patches/wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch
+@@ -0,0 +1,131 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: give the DBRI an FCode PROM that makes its node
++
++The DBRI has an FCode PROM of its own at offset 0x1000 of its slot, and
++the boot PROMs of the SPARCstation LX, SS-10 and SS-20 load it when they
++probe the slot (the LX's FCode for slot 2 maps 0x40 bytes at that offset
++and byte-loads them). QEMU has an unimplemented device there that reads
++0, so the PROMs make the DBRI's node without a "name" ("<Unnamed>" in
++"ls") or "reg", and kernels that walk all nodes panic on it: SunOS
++4.1.4 on the LX ("BAD TRAP: cpu=0 type=9 ... kernel read fault at
++addr=0x0" in its autoconfiguration), and Solaris 2.1 and 2.2 on the
++SS-20 with its Sun PROM. With only a name, SunOS 4.1.4's GENERIC kernel
++still panics the same way in its dbri driver.
++
++Answer that window with a small FCode program that makes the node a DBRI
++has: name "SUNW,DBRIe", "reg" at offset 0x10000 of the slot (the
++register stub, 0x100 bytes), and its interrupt at SBus level 5 (the PROM
++turns that into "intr" 0x39, processor level 9). There is still no DBRI
++behind the registers: the drivers read zeros and go without sound
++(SunOS 4.1.4: "dbri: DBRI Reg8 bad!", "Audio: no Audio device found").
++The window is 0x40 bytes (it was 0x30), the size the LX PROM maps, and
++it lies below a frame buffer that -vga puts in the same slot (the LX's
++TCX or cg3, whose ROM covers offset 0x1000), like the unimplemented
++devices.
++
++With this the LX PROM prints "SUNW,DBRIe mmcodec" for slot 2, as a real
++LX does, SunOS 4.1.4 installs on the LX and boots, and Solaris 2.2's CD
++reaches its installer on the SS-20 under its Sun PROM.
++---
++ hw/sparc/sun4m.c | 74 ++++++++++++++++++++++++++++++++++++++++++++++--
++ 1 file changed, 72 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index a518ffa..4c9e49f 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -49,6 +49,7 @@
++ #include "hw/char/escc.h"
++ #include "hw/misc/empty_slot.h"
++ #include "hw/misc/unimp.h"
+++#include "system/address-spaces.h"
++ #include "hw/core/irq.h"
++ #include "hw/core/or-irq.h"
++ #include "hw/core/loader.h"
++@@ -845,6 +846,69 @@ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++     return cpudev;
++ }
++ 
+++/*
+++ * The DBRI's own FCode PROM, which the boot PROMs of the SS-10, SS-20 and
+++ * LX load from offset 0x1000 of its slot. Without FCode there they make
+++ * the DBRI's SBus node without a "name", and SunOS 4 and Solaris 2.1 and
+++ * 2.2 panic on it. This FCode makes the node a DBRI has: its name, its
+++ * registers at offset 0x10000 and its interrupt at SBus level 5. With no
+++ * DBRI behind the registers the drivers find no codec and go without
+++ * sound.
+++ */
+++static const uint8_t dbri_fcode[] = {
+++    0xf1, 0x08,                     /* start1, format */
+++    0x06, 0x28,                     /* checksum of the bytes after the header */
+++    0x00, 0x00, 0x00, 0x38,         /* length, with the header */
+++    /* " SUNW,DBRIe" encode-string " name" property */
+++    0x12, 0x0a, 'S', 'U', 'N', 'W', ',', 'D', 'B', 'R', 'I', 'e',
+++    0x01, 0x14,
+++    0x12, 0x04, 'n', 'a', 'm', 'e',
+++    0x01, 0x10,
+++    /* my-address 10000 + my-space 100 reg */
+++    0x01, 0x02,
+++    0x10, 0x00, 0x01, 0x00, 0x00,
+++    0x1e,
+++    0x01, 0x03,
+++    0x10, 0x00, 0x00, 0x01, 0x00,
+++    0x01, 0x16,
+++    /* 5 0 intr */
+++    0x10, 0x00, 0x00, 0x00, 0x05,
+++    0xa5,
+++    0x01, 0x17,
+++    0x00,                           /* end0 */
+++};
+++
+++#define DBRI_PROM_SIZE 0x40
+++
+++static uint64_t dbri_prom_read(void *opaque, hwaddr addr, unsigned size)
+++{
+++    uint64_t val = 0;
+++    unsigned i;
+++
+++    for (i = 0; i < size; i++) {
+++        val <<= 8;
+++        if (addr + i < sizeof(dbri_fcode)) {
+++            val |= dbri_fcode[addr + i];
+++        }
+++    }
+++    return val;
+++}
+++
+++static void dbri_prom_write(void *opaque, hwaddr addr, uint64_t val,
+++                            unsigned size)
+++{
+++}
+++
+++static const MemoryRegionOps dbri_prom_ops = {
+++    .read = dbri_prom_read,
+++    .write = dbri_prom_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 1,
+++        .max_access_size = 4,
+++    },
+++};
+++
++ static void dummy_fdc_tc(void *opaque, int irq, int level)
++ {
++ }
++@@ -1123,8 +1187,14 @@ static void sun4m_hw_init(MachineState *machine)
++     if (hwdef->dbri_base) {
++         /* ISDN chip with attached CS4215 audio codec */
++         /* prom space */
++-        create_unimplemented_device("sun-DBRI.prom",
++-                                    hwdef->dbri_base + 0x1000, 0x30);
+++        MemoryRegion *dbri_prom = g_new(MemoryRegion, 1);
+++
+++        memory_region_init_io(dbri_prom, NULL, &dbri_prom_ops, NULL,
+++                              "sun-DBRI.prom", DBRI_PROM_SIZE);
+++        /* below a frame buffer that -vga puts in the same slot (LX) */
+++        memory_region_add_subregion_overlap(get_system_memory(),
+++                                            hwdef->dbri_base + 0x1000,
+++                                            dbri_prom, -1000);
++         /* reg space */
++         create_unimplemented_device("sun-DBRI",
++                                     hwdef->dbri_base + 0x10000, 0x100);
+diff --git a/debian/patches/wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch b/debian/patches/wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
+new file mode 100644
+index 0000000..85e2603
+--- /dev/null
++++ b/debian/patches/wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
+@@ -0,0 +1,169 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the on-board SBus devices of sun4m
++
++qtest sun4m-onboard-sbus-test for the two patches before: on -M LX the
++cgsix, DBRI and bpp regions are where the LX's slots 2-4 have them, at
++the low priority, and the default TCX's ROM stays above them; the SS-5
++has none of them; the DBRI's FCode PROM on the LX and the SS-20 has a
++valid FCode header, checksum and length, the name and no "reg", reads
++0 past its end and big-endian in wider reads.
++---
++ tests/qtest/meson.build               |   3 +-
++ tests/qtest/sun4m-onboard-sbus-test.c | 134 ++++++++++++++++++++++++++
++ 2 files changed, 136 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-onboard-sbus-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 8c1485b..874f4bd 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -210,7 +210,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-esp-test',
++                 'sun4m-mmu-ctx-ifetch-test',
++                 'sun4m-bus-error-trap-test',
++-                'sun4m-fp-deferred-trap-test'] + \
+++                'sun4m-fp-deferred-trap-test',
+++                'sun4m-onboard-sbus-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-onboard-sbus-test.c b/tests/qtest/sun4m-onboard-sbus-test.c
++new file mode 100644
++index 0000000..e265f35
++--- /dev/null
+++++ b/tests/qtest/sun4m-onboard-sbus-test.c
++@@ -0,0 +1,134 @@
+++/*
+++ * QTest: the on-board SBus devices of sun4m machines without a model
+++ *
+++ * The SPARCstation LX has a cgsix in SBus slot 3, the DBRI in slot 2 and
+++ * a parallel port (bpp) in slot 4, all on the board; its boot PROM
+++ * carries their FCode and probes them on every boot. They are
+++ * unimplemented devices (reads 0, writes ignored) at a low priority, so
+++ * that a frame buffer that -vga puts in slot 2 keeps its addresses.
+++ *
+++ * The DBRI (LX, SS-10, SS-20) has its own FCode PROM at offset 0x1000 of
+++ * its slot, which the Sun boot PROMs load: an FCode program that gives
+++ * the node its name, its registers at offset 0x10000 of the slot and its
+++ * interrupt at SBus level 5. The test checks its header, checksum, length
+++ * and program, and that the rest of the window reads 0.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define DBRI_PROM_SIZE  0x40
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t dbri_prom;
+++} DbriCase;
+++
+++static const DbriCase lx = { "LX", 0x50001000ULL };
+++static const DbriCase ss20 = { "SS-20", 0xee0001000ULL };
+++
+++/* "info mtree" has a line "<range> (<prio>, <kind>): <name>" */
+++static bool has_region(const char *mtree, const char *range, const char *prio,
+++                       const char *name)
+++{
+++    g_autofree char *want = g_strdup_printf("%s (%s): %s", range, prio, name);
+++    g_auto(GStrv) lines = g_strsplit(mtree, "\n", -1);
+++    int i;
+++
+++    for (i = 0; lines[i]; i++) {
+++        if (!strcmp(g_strstrip(lines[i]), want)) {
+++            return true;
+++        }
+++    }
+++    return false;
+++}
+++
+++static void check_line(const char *mtree, const char *range, const char *name)
+++{
+++    g_assert_true(has_region(mtree, range, "prio -1000, i/o", name));
+++}
+++
+++static void test_lx_regions(void)
+++{
+++    QTestState *qts = qtest_init("-machine LX -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    check_line(mtree, "0000000060000000-0000000060ffffff", "sun-cgsix");
+++    check_line(mtree, "0000000050010000-00000000500100ff", "sun-DBRI");
+++    check_line(mtree, "0000000050001000-000000005000103f", "sun-DBRI.prom");
+++    check_line(mtree, "000000007c800000-000000007c80001f", "sun-bpp");
+++    /* the TCX that -M LX has by default stays in slot 2, above them */
+++    g_assert_true(has_region(mtree, "0000000050000000-000000005000ffff",
+++                             "prio 0, rom", "tcx.prom"));
+++    g_assert_cmphex(qtest_readl(qts, 0x60301818ULL), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++static void test_ss5_unchanged(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-5 -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    g_assert_null(strstr(mtree, "sun-cgsix"));
+++    g_assert_null(strstr(mtree, "sun-DBRI"));
+++    g_assert_null(strstr(mtree, "sun-bpp"));
+++    qtest_quit(qts);
+++}
+++
+++static void test_dbri_fcode(const void *data)
+++{
+++    const DbriCase *c = data;
+++    QTestState *qts = qtest_initf("-machine %s -m 64 -vga none", c->machine);
+++    uint8_t prom[DBRI_PROM_SIZE];
+++    uint32_t len, sum = 0, i;
+++    /*
+++     * " SUNW,DBRIe" encode-string " name" property
+++     * my-address 10000 + my-space 100 reg   5 0 intr   end0
+++     */
+++    static const uint8_t fcode[] = {
+++        0x12, 0x0a, 'S', 'U', 'N', 'W', ',', 'D', 'B', 'R', 'I', 'e',
+++        0x01, 0x14, 0x12, 0x04, 'n', 'a', 'm', 'e', 0x01, 0x10,
+++        0x01, 0x02, 0x10, 0x00, 0x01, 0x00, 0x00, 0x1e,
+++        0x01, 0x03, 0x10, 0x00, 0x00, 0x01, 0x00, 0x01, 0x16,
+++        0x10, 0x00, 0x00, 0x00, 0x05, 0xa5, 0x01, 0x17,
+++        0x00,
+++    };
+++
+++    for (i = 0; i < DBRI_PROM_SIZE; i++) {
+++        prom[i] = qtest_readb(qts, c->dbri_prom + i);
+++    }
+++    /* FCode header: start1, format, checksum, length */
+++    g_assert_cmphex(prom[0], ==, 0xf1);
+++    g_assert_cmphex(prom[1], ==, 0x08);
+++    len = (uint32_t)ldl_be_p(&prom[4]);
+++    g_assert_cmpuint(len, ==, 8 + sizeof(fcode));
+++    for (i = 8; i < len; i++) {
+++        sum += prom[i];
+++    }
+++    g_assert_cmphex(sum & 0xffff, ==, lduw_be_p(&prom[2]));
+++    g_assert_cmpmem(&prom[8], len - 8, fcode, sizeof(fcode));
+++    for (i = len; i < DBRI_PROM_SIZE; i++) {
+++        g_assert_cmphex(prom[i], ==, 0);
+++    }
+++    /* wider reads are big-endian */
+++    g_assert_cmphex(qtest_readl(qts, c->dbri_prom), ==,
+++                    (uint32_t)ldl_be_p(prom));
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-onboard-sbus/lx/regions", test_lx_regions);
+++    qtest_add_func("sun4m-onboard-sbus/ss5/unchanged", test_ss5_unchanged);
+++    qtest_add_data_func("sun4m-onboard-sbus/lx/dbri-fcode", &lx,
+++                        test_dbri_fcode);
+++    qtest_add_data_func("sun4m-onboard-sbus/ss20/dbri-fcode", &ss20,
+++                        test_dbri_fcode);
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

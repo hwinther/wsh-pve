@@ -93,8 +93,10 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0051, 0052 | x86 VGA: a read of the attribute address register (port 0x3c0) returns 0 while the address/data flip-flop is in the data state; the VGA returns the index with its palette address source bit in both states. The Incredible Machine 1 and 2 save the address that way and restore it after loading the palette, which turns the display off: a black screen while the music plays (std, cirrus and every other `-vga`). `vga.c` and the copy in `cirrus_vga.c` return `ar_index` in both states; qtest `vga-ar-index-test` (std, isa-vga, cirrus, vmware). Reproduced on plain QEMU 11.1.3 (a boot sector, both games and the qtest) | wsh-pve | may send | none found by a web search; the tracker itself not searched (added 2026-11-21) | [qemu-vga-ar-index-read.md](qemu-vga-ar-index-read.md) |
 | 0053, 0054 | sparc32: an FPop's enabled IEEE 754 exception raises fp_exception on the FPop itself; the sparc32 FPUs defer it to the next FP instruction (fp_exception_pending), and a higher-priority trap of that instruction wins. The SPARCstation LX boot PROM's POST stops (`FPU SP Trap Priority <` wants trap 7 on a misaligned FP store after an `fdivs` by zero, then trap 8). fp_exception_pending modelled for every sparc32 CPU in system emulation; qtest `sun4m-fp-deferred-trap-test`. Reproduced on plain QEMU 11.1.3 (the LX PROM and the qtest) | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sparc32-deferred-fp-exception.md](qemu-sparc32-deferred-fp-exception.md) |
 | 0055 | sun4m: `-M LX`, `SPARCClassic` and `SPARCbook` (microSPARC-I) take `-m 256`, and OpenBIOS stops with `Trap 0x21`; the chip takes 128 MB and its context table pointer holds bits 26:8 (TMS390S10 reference guide). A `max_ram` of 128 MB for those machines. Reproduced on plain QEMU 11.1.3 | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sparc32-deferred-fp-exception.md](qemu-sparc32-deferred-fp-exception.md) ("Also") |
+| 0056, 0058 | sun4m: `-M LX` lacks the LX's on-board cgsix (slot 3), DBRI (slot 2) and bpp (slot 4), which the LX boot PROM probes on every boot; it stops at `ok` on the first bus error (`at 2,0  Data Access Error` with `-vga none`, `cgsix Data Access Error` with the default TCX), and NetBSD 9.3 panics in `bppattach()`. Unimplemented devices for the three (a new `cg6_base` for the cgsix's 16 MB), as the SS-20 has its DBRI and bpp; qtest `sun4m-onboard-sbus-test`. Seen on our series only (plain 11.1.3's POST stops earlier, 0053); the missing regions show in `info mtree` on plain QEMU | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-lx-onboard-sbus.md](qemu-sun4m-lx-onboard-sbus.md) |
+| 0057, 0058 | sun4m: the DBRI's FCode PROM window reads 0, so the Sun PROMs of the SS-10/SS-20 and the LX make its node without a `name` or `reg`; Solaris 2.1/2.2 (SS-20 PROM) and SunOS 4.1.4 (LX) panic on it. The window holds an FCode program of ours that makes a DBRI's node (`name`, `reg`, SBus level 5 interrupt); the drivers find no codec behind the register stub. qtest `sun4m-onboard-sbus-test`. The SS-20 case on QEMU 11.1.3 with our series, nothing of which touches the code | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-ss20-dbri-unnamed-node.md](qemu-sun4m-ss20-dbri-unnamed-node.md) |
 
-Counts: may send 28 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0055); LEMU origin 13 (0002-0006,
+Counts: may send 31 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0058); LEMU origin 13 (0002-0006,
 0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 14 (0014-0016, 0023-0025, 0027, 0030-0033,
 0042-0044).
 
@@ -102,11 +104,6 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 `niagara` above 1 GB; the patch is by the unix0.cc author
 ([unix0cc/qemu-experimental-patches](https://github.com/unix0cc/qemu-experimental-patches)).
 [qemu-sparc64-tte-page-size.md](qemu-sparc64-tte-page-size.md).
-
-Not carried, write-up only (wsh-pve, may send as a report): on the SS-20, the DBRI stub
-(`sun-DBRI.prom`) reads as zeros, Sun's SS-10/SS-20 PROMs make an SBus node without a name for it,
-and Solaris 2.1/2.2 panic on that node (`BAD TRAP: type=9` in `get_neighbors`); the lab names it at
-the PROM prompt. [qemu-sun4m-ss20-dbri-unnamed-node.md](qemu-sun4m-ss20-dbri-unnamed-node.md).
 
 ## OpenBIOS (`openbios/patches/`)
 
