@@ -88,7 +88,7 @@ The package has QEMU's prebuilt `openbios-sparc64` instead of the one from `open
 EOF
             ;;
         sun-proms) cat <<'EOF'
-`ss5.bin`, `ss10_v2.25_rom` or `ss20_v2.25_rom` is not in `/usr/share/kvm`. The UI and API still offer them as firmware (`bios`), and VMs that use one don't start because QEMU can't load the PROM. VMs with OpenBIOS are not affected.
+`ss5.bin`, `ss10_v2.25_rom`, `ss20_v2.25_rom` or `lx.bin` is not in `/usr/share/kvm`. The UI and API still offer them as firmware (`bios`), and VMs that use one don't start because QEMU can't load the PROM. VMs with OpenBIOS are not affected.
 EOF
             ;;
     esac

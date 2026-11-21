@@ -1936,9 +1936,8 @@ tests `sparc32-lx-*.conf` and `sparc32-ss5-lx-prom-error.conf`; the wizard sets 
 `/usr/share/kvm` by hand): `qm start` of the `sol26-lx` disk (64 MB), `boot disk` at `ok`, login
 prompt after 81 s; the wizard's VM gets `bios: lx.bin`, `vga: serial0`, `serial0: socket`, 128 MB.
 
-**The PROM file is not delivered.** No package carries `lx.bin`. An LX VM needs it placed in
-`/usr/share/kvm` on the node by its owner; without it QEMU stops at start (`could not load prom
-'lx.bin'`).
+**The PROM file** goes into `pve-qemu-kvm` like the other Sun PROMs (`restore-sparc`, the
+`sun-proms` extra). Without it QEMU stops at start (`could not load prom 'lx.bin'`).
 
 **Auto-boot: the PROM's NVRAM (not fixed).** QEMU's `nvram_init()` (`hw/sparc/sun4m.c`) writes
 OpenBIOS's layout into the M48T08: a CHRP system partition with the `-prom-env` variables from offset

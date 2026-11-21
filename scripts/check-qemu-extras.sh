@@ -5,7 +5,7 @@
 #   3dfx              /usr/bin/qemu-system-x86_64-3dfx, QEMU with qemu-3dfx (its "featuring qemu-3dfx@" banner)
 #   openbios          openbios-sparc32 and QEMU,cgthree.bin built from openbios/, not QEMU's prebuilt images
 #   openbios-sparc64  openbios-sparc64 built from openbios/ (Solaris 10 on sun4u), not QEMU's prebuilt image
-#   sun-proms         ss5.bin, ss10_v2.25_rom and ss20_v2.25_rom from the private submodules/sparc
+#   sun-proms         ss5.bin, ss10_v2.25_rom, ss20_v2.25_rom and lx.bin from the private submodules/sparc
 #
 #   scripts/check-qemu-extras.sh --deb build/repo/pve-qemu-kvm_<version>_amd64.deb [options]
 #   scripts/check-qemu-extras.sh --root /          (the installed package)
@@ -34,7 +34,8 @@ set -euo pipefail
 ALL_EXTRAS="3dfx,openbios,openbios-sparc64,sun-proms"
 # QEMU,cgthree.bin as QEMU ships it (850 bytes; QEMU 11.1)
 STOCK_CG3_SHA256="a99f3a06fdac5cf5d72bd0fd24647d897302c3ff8e918add65168185f8cbdf4d"
-PROMS="ss5.bin ss10_v2.25_rom ss20_v2.25_rom"
+# SUN_PROMS overrides the list (the e2e test checks packages from before lx.bin with the older three)
+PROMS="${SUN_PROMS:-ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin}"
 # A Forth word that only openbios/patches/0009-sparc64-name-upa-and-ebus-children-like-obp defines
 SPARC64_MARKER="upa-portid>bustype"
 
