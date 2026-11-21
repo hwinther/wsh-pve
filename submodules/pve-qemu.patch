@@ -13132,10 +13132,10 @@ index 0000000..9301a26
 + /* sparc32_dma.c */
 diff --git a/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
 new file mode 100644
-index 0000000..febf1d2
+index 0000000..e6741d1
 --- /dev/null
 +++ b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,212 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the SPARCserver 600MP's VMEbus registers
 + and lebuffer
@@ -13158,8 +13158,7 @@ index 0000000..febf1d2
 +index 054b26b..ea13663 100644
 +--- a/tests/qtest/meson.build
 ++++ b/tests/qtest/meson.build
-+@@ -212,8 +212,9 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
-+                 'sun4m-bus-error-trap-test',
++@@ -213,7 +213,8 @@
 +                 'sun4m-fp-deferred-trap-test',
 +                 'sun4m-onboard-sbus-test',
 +                 'sun4m-nvram-test',
