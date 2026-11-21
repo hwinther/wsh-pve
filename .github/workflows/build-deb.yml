@@ -49,9 +49,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # history for the Makefile's git log (the changelog entry of the 3dfx build). No ref: the
-          # commit that started the run; the build job compares it with its own checkout.
+          # history for the Makefile's git log (the changelog entry of the 3dfx build)
           fetch-depth: 0
+
+      # The branch tip, as in the build job below: in a sync run the commit that started the run is
+      # the one before update-submodule's bump, so a build of it never matched the build job's
+      # checkout and the package went out without qemu-system-x86_64-3dfx (pve-qemu-kvm
+      # 11.1.3-3+wsh1, issue #398). The build job still compares the commit this job records with
+      # its own checkout. Done in a step for the same poutine reason as there.
+      - name: Move to the branch tip
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/*) ;;
+            *) echo "::error::build-deb.yml builds a branch, not $GITHUB_REF"; exit 1 ;;
+          esac
+          git fetch origin "+$GITHUB_REF:refs/remotes/origin/$GITHUB_REF_NAME"
+          git checkout -B "$GITHUB_REF_NAME" --track "origin/$GITHUB_REF_NAME"
+          git log -1 --format='Building the 3dfx extra of %h: %s'
 
       - name: Build qemu-system-x86_64 with qemu-3dfx
         continue-on-error: true
