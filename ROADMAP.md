@@ -183,10 +183,34 @@ merged; what is left of them is item 2 under "Next".
        VM stops without either, and the UI shouldn't have to check what is installed). Next, small:
        qemu-server runs the 3dfx binary in a writable
        directory; Mesa pass-through has no Windows-free test yet (no Linux guest wrapper for it).
-     - **Stage 1: EGL offscreen (~2-3 weeks).** A new module (`fxdisp.c`, `mglcntx_egl.c`) plus an
-       EGL platform in OpenGLide: render into an offscreen surface and read it back into the QEMU
-       console's own surface, so noVNC shows 3dfx; no `exit(1)` on non-SDL displays. CI headless
-       with llvmpipe on EGL surfaceless.
+     - **Stage 1: EGL offscreen, Glide (in review).** Without an SDL window (PVE's VNC console,
+       `-display none`, egl-headless, dbus, gtk, `sdl,gl=on`) qemu-3dfx's Glide device no longer
+       ends QEMU: it has OpenGLide render offscreen and copies each frame into the first graphic
+       console, which VNC and screendump show in place of the VGA; the VGA comes back when the
+       Glide window closes. OpenGLide got an EGL platform
+       (`packages/wsh-openglide/patches/20-egl-offscreen.patch`: a desktop GL compatibility context
+       on Mesa's surfaceless EGL, else an EGL device or the default display; a framebuffer object
+       whose two colour attachments are Glide's back and front buffers; `getOffscreenSize`/
+       `getOffscreenFrame` exports), chosen by a new `setConfig` flag, so the same library serves
+       the SDL/GLX path unchanged. qemu-3dfx side (`submodules/qemu-3dfx.patch`, new
+       `hw/3dfx/fxdisp.c`): the choice per Glide window (offscreen unless the display is SDL
+       without GL; `QEMU_3DFX_OFFSCREEN=1` forces it), the window opened and closed synchronously,
+       `glReadPixels` after each swap on the vCPU thread (and after any call once the last read is
+       50 ms old, for front-buffer drawing), a main-loop bottom half that copies the frame into a
+       console surface of its own (`ui/console.c`'s pass-through flag keeps the VGA out); a library
+       without the EGL platform, or an EGL failure, makes `grSstWinOpen` fail cleanly. No change to
+       pve-qemu's own patch or to qemu-server: `vga: std,mesa=1` without `server=` already gets
+       the 3dfx binary and VNC. Tested: the package test renders Glide 2 and 3 offscreen with no X
+       server (llvmpipe and softpipe; the front-buffer read counts with both, unlike GLX on
+       llvmpipe); `e2e/3dfx` with `GLIDE_DISPLAY=vnc` boots the Linux guest headless (no X server
+       installed) and checks the frame in QEMU's screendump and the VGA's 720x400 afterwards;
+       `qemu-3dfx-check.yml` runs it and the SDL run with the binary it builds (about 2 min each).
+       Measured (TCG, llvmpipe, 640x480, the test scene): a read 0.2 ms, the console updated
+       0.03 ms after it, the guest draws ~1100 frames/s offscreen against ~2100 with the SDL
+       window. Left for Stage 1: Glide gamma and MSAA offscreen; the Mesa pass-through on EGL
+       (`mglcntx_egl.c`: it still needs the SDL window and ends QEMU without one); the last frame
+       of front-buffer drawing waits for the next Glide call; a check through a PVE node (`qm
+       start` with `mesa=1`, the noVNC console).
      - **Stage 2: dmabuf scanout (~2-3 weeks).** Zero copy: a `gbm_surface`,
        `qemu_console_gl_scanout_dmabuf` from a main-loop BH, `gl_block` back-pressure; shown through
        `egl-headless` and `-display dbus,gl=on`.
@@ -385,6 +409,7 @@ merged; what is left of them is item 2 under "Next".
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `build-deb.yml`'s separate 3dfx job has not run in a package build yet | A branch dispatch would publish, so it was checked with actionlint and a local run of the hand-over step; the first pve-qemu build on main is its test (its run should show `qemu-system-x86_64-3dfx from the 3dfx build of ...` and the release no "Optional extras missing") |
 | 3dfx Glide: QEMU dies with `BadMatch` on an X server with a 32-bit ARGB visual | OpenGLide's GLX config picks the 32-bit visual, SDL's window has the 24-bit default (seen on Xvfb with Composite and Mesa; real Xorg with a hardware GLX not checked). `e2e/3dfx` runs Xvfb with `-extension Composite` |
+| 3dfx offscreen (VNC console): no Glide gamma, no MSAA; Mesa pass-through still needs the SDL window | Gamma ramps went to the X server (XF86VidMode) and MSAA to the GLX visual; neither has an offscreen counterpart yet. A Mesa guest without an SDL window still ends QEMU (`sdl_display_valid`). Stage 1 leftovers in the Streaming item |
 | 3dfx Glide: OpenGLide writes `OpenGLid.ini`/`OpenGLid.log` into QEMU's working directory | And `exit(0)`s the process when it can't write there (its library constructor). Where qemu-server's QEMU runs from is not checked |
 | 3dfx Glide: a guest LFB read that drains queued calls comes back shifted | glidept puts the pixels after the drained calls' data, the guest wrappers (Linux, Windows, DJGPP) copy from the start; a read after a swap or a direct call is right. Upstream (qemu-3dfx) material; `e2e/3dfx` reports it without counting it |
 

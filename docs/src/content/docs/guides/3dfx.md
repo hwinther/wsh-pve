@@ -36,11 +36,22 @@ The Glide half of the pass-through renders with a host library: qemu-3dfx loads 
 apt install wsh-openglide
 ```
 
-Without it a Glide guest gets no Glide device. The Mesa/OpenGL pass-through doesn't need it. The package is built with OpenGLide's X11/GLX platform, so like the rest of qemu-3dfx it needs the VM's SDL window on an X display.
+Without it a Glide guest gets no Glide device. The Mesa/OpenGL pass-through doesn't need it. The package has two platforms: OpenGLide's X11/GLX one, for the VM's SDL window on an X display, and an EGL offscreen one added by wsh-pve, for a VM without a local window (see below).
+
+## Where the Glide frames show
+
+- **In the VM's console (VNC, noVNC), with no X server.** This is what a VM with 3DFX/Mesa enabled gets in PVE by default: the console is VNC, there is no SDL window. qemu-3dfx then has the Glide library render offscreen (EGL, on Mesa's surfaceless platform: a GPU's render node, or Mesa's software renderer without one) and copies every frame into the VM's console, where the PVE console, a screenshot (`screendump`) or any other display shows it in place of the VGA picture. When the game closes its Glide window, the console shows the VGA again. The same happens with `-display none`, `egl-headless`, `dbus` or `gtk`.
+- **In an SDL window on an X display** (the `server=` option of the display, which uses `-display sdl` instead of VNC): OpenGLide renders into that window with GLX, as before.
+
+`QEMU_3DFX_OFFSCREEN=1` in QEMU's environment renders offscreen even with an SDL window (the frames then show in it as the console's picture). Offscreen needs a `wsh-openglide` with the EGL platform (its libraries export `getOffscreenFrame`); with an older one, or when EGL can't give a desktop OpenGL context, the guest's `grSstWinOpen()` fails and QEMU says why on its standard error, but keeps running.
+
+Not done offscreen yet: Glide gamma (`grGammaCorrectionValue`, gamma tables; GLX sets it on the X server) and multisampling (`ContextMSAA` in `glide.cfg`). A game that draws into the front buffer without swapping is shown at most 50 ms late, and its last frame only once it makes another Glide call. The Mesa/OpenGL pass-through still needs the SDL window: without one, QEMU ends when a Mesa guest starts.
+
+Each frame costs one read of the window's pixels (`glReadPixels`) on the vCPU thread and a copy on QEMU's main loop. Measured in CI's setup (TCG, Mesa llvmpipe, 640x480, the test scene): a read takes about 0.2 ms, the console has the frame about 0.03 ms after it, and the guest still draws over 1000 frames per second of the test scene (about 2000 with the SDL window).
 
 OpenGLide writes `OpenGLid.ini` and `OpenGLid.log` into the working directory of the process that loads it, and ends that process (exit status 0) when the directory isn't writable.
 
-The package's CI tests need no Windows and no game. `packages/wsh-openglide/test.sh` (in wsh-pve) renders a Glide 2 and a Glide 3 scene through the installed libraries under Xvfb with Mesa's software renderers and checks the pixels. `e2e/3dfx/test.sh` boots a small Linux guest in the published `qemu-system-x86_64-3dfx` with an SDL display on Xvfb. The guest draws the same scene through qemu-3dfx's Linux guest wrapper and reads it back through the pass-through, and the test checks those pixels and the VM's window.
+The package's CI tests need no Windows and no game. `packages/wsh-openglide/test.sh` (in wsh-pve) renders a Glide 2 and a Glide 3 scene through the installed libraries under Xvfb with Mesa's software renderers and checks the pixels, then renders them again offscreen with no X server. `e2e/3dfx/test.sh` boots a small Linux guest in `qemu-system-x86_64-3dfx` with an SDL display on Xvfb. The guest draws the same scene through qemu-3dfx's Linux guest wrapper and reads it back through the pass-through, and the test checks those pixels and the VM's window. With `GLIDE_DISPLAY=vnc` the same guest runs headless (`-display none` and VNC, no X server installed), and the test checks the frame in QEMU's screendump of the console and that the console goes back to the VGA afterwards. A pull request that changes the qemu-3dfx code, the port or the package runs both against a binary built from it (`qemu-3dfx-check.yml`).
 
 On a host whose X server offers a 32-bit ARGB visual (Xvfb with its Composite extension, for example), the first Glide frame can end QEMU with an X `BadMatch` error. OpenGLide picks that visual for its GLX context, while SDL's window uses the 24-bit default.
 
