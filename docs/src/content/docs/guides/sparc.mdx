@@ -33,7 +33,7 @@ config change and on start) with a message naming the allowed values, and the wi
 | SS-10 | OpenBIOS | the machine's | 1 (default) to 4 | up to 512 MB |
 | SS-20 | OpenBIOS | the machine's | 1 (default) to 4 | up to 512 MB |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | 1 | up to 512 MB |
-| LX | `lx.bin` only (not shipped, see [The SPARCstation LX](#the-sparcstation-lx)) | the machine's | 1 | up to 128 MB |
+| LX | `lx.bin` only (see [The SPARCstation LX](#the-sparcstation-lx)) | the machine's | 1 | up to 128 MB |
 
 CPUs are sockets × cores (any split; Solaris sees each as a CPU module of its own, see
 [More than one CPU](#more-than-one-cpu)). Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
@@ -45,14 +45,17 @@ network device, `lance`. The LX takes a serial console on `serial0` (its default
 `pve-qemu-kvm` 11.1.3-3+wsh4 or later and a qemu-server and pve-manager with the LX profile. Solaris
 2.6, NetBSD 9.3, SunOS 4.1.4 and 4.1.3_U1B boot on it (64 or 128 MB).
 
-- **The PROM file is not in any package.** Copy your own `lx.bin` to `/usr/share/kvm/` on the node;
-  without it the VM doesn't start (`could not load prom 'lx.bin'`).
+- **The PROM file** comes with `pve-qemu-kvm` like the other Sun PROMs, in packages built after the
+  LX profile was added. With an older package, copy your own `lx.bin` to `/usr/share/kvm/` on the
+  node; without it the VM doesn't start (`could not load prom 'lx.bin'`).
 - **Serial console only:** the LX's built-in cgsix framebuffer isn't emulated, so Display is
   `serial0` (with `serial0: socket`) or none, and `qm terminal <vmid>` is the console. The wizard sets
   both, and the PROM, when you pick the LX.
-- **It doesn't boot by itself:** like the SS-5 and SS-20 PROMs it finds the NVRAM invalid, tries the
-  network and stops at `ok`. Type `boot disk` (or `boot cdrom`), or `setenv diag-switch? false` once
-  per start, after which a reset boots the disk (see [Firmware settings](#firmware-settings-nvram)).
+- **It doesn't boot by itself without an NVRAM volume:** like the SS-5 and SS-20 PROMs it finds the
+  NVRAM invalid, tries the network and stops at `ok`. Add an NVRAM volume and type `setenv
+  diag-switch? false` once: from then on every start boots the disk (see [Making a Sun PROM VM boot
+  by itself](#making-a-sun-prom-vm-boot-by-itself)). Without the volume, type `boot disk` (or `boot
+  cdrom`) at every start.
 - No OpenBIOS, no sound (its DBRI isn't emulated), one CPU, at most 128 MB (the microSPARC-I's
   limit). A disk installed on another SPARCstation doesn't boot on the LX (its SCSI controller is in
   another SBus slot): install on the LX.
@@ -284,8 +287,8 @@ prompt moves input to ttya as well.
 
 ### Firmware settings (NVRAM)
 
-A sparc VM starts with fresh firmware settings every time. QEMU builds the machine's NVRAM in
-memory when the VM starts, and PVE keeps no NVRAM file. So a `setenv` at the firmware prompt, an
+Without an NVRAM volume (below) a sparc VM starts with fresh firmware settings every time. QEMU
+builds the machine's NVRAM in memory when the VM starts. So a `setenv` at the firmware prompt, an
 `eeprom` in Solaris or an `nvalias` is gone after the VM is stopped.
 
 - **OpenBIOS** (the default) starts with `auto-boot?` true and boots the first device of the VM's
@@ -294,8 +297,8 @@ memory when the VM starts, and PVE keeps no NVRAM file. So a `setenv` at the fir
   again. For the same reason it ignores the boot string of a guest's reboot (`reboot -- disk:b`).
 - **The Sun PROMs** (`ss5.bin`, `ss20_v2.25_rom`, `lx.bin`) find the NVRAM invalid at every start
   ("Incorrect configuration checksum") and use their defaults, with `diag-switch?` true: they try
-  the network and stop at `ok`. Type `setenv diag-switch? false`, then `boot disk`. The setting
-  lasts until the VM is stopped (a reset keeps it).
+  the network and stop at `ok`. Type `setenv diag-switch? false`, then `boot disk`. Without an NVRAM
+  volume the setting lasts until the VM is stopped (a reset keeps it); with one it lasts for good.
 - **A variable for every start** goes into the VM's `args`, which only root can set:
   `qm set <vmid> --args '-prom-env auto-boot?=false'`. OpenBIOS then stops at `0 >` on every start.
   `qm set <vmid> --delete args` removes it.
@@ -306,6 +309,51 @@ Solaris 8 and 9 targets, the SunOS 4 targets and `sol8-sun4u` have `args: -prom-
 auto-boot?=false` during the install only, because their installers reboot into a mini-root with a
 boot string that OpenBIOS drops. The install then boots that slice by path at `0 >` and removes
 `args` at the end. A finished VM has no `args` and nothing set in NVRAM.
+
+### Making a Sun PROM VM boot by itself
+
+An NVRAM volume (`nvram0`, sparc32 only) keeps the machine's NVRAM across starts, as the battery
+backed NVRAM chip of a real SPARCstation does. With it, what a Sun PROM stores with `setenv` lasts,
+so the PROM boots the disk on every start without anyone typing `boot disk`. It needs a
+`pve-qemu-kvm` newer than 11.1.3-3+wsh6 (with `wsh/0059`) and a qemu-server and pve-manager with
+`nvram0`; with an older `pve-qemu-kvm` a VM that has the volume doesn't start (QEMU doesn't know
+the `drive` property of `sysbus-m48t08`).
+
+1. Add the volume: Hardware → Add → NVRAM, pick a storage (the entry is there on sparc32 VMs only),
+   or `qm set <vmid> --nvram0 <storage>:1`. It is a 4 MiB volume (QEMU uses its first 8 KiB) and
+   starts blank.
+2. Start the VM and open its console (`qm terminal <vmid>` with a serial console). The PROM still
+   finds the new NVRAM invalid this once, tries the network and stops at `ok`.
+3. Type `setenv diag-switch? false`. The PROM writes it to the NVRAM, and the volume keeps it.
+   `boot disk` boots now; a `reset`, or stopping and starting the VM, boots the disk by itself
+   from now on. `setenv boot-device disk` and `setenv auto-boot? true` are the PROM's defaults; set
+   them too if you changed them, they last the same way.
+
+Tested in the lab with Solaris 2.6 on the LX (`lx.bin`) and Solaris 8 on the SS-5 (`ss5.bin`):
+after the one `setenv`, every start reaches the login prompt by itself (about 90 s on the LX, 45 s
+on the SS-5).
+
+- **Not yet on the SS-20 PROM** (`ss20_v2.25_rom`): the PROM boots the disk by itself, but when it
+  does, Solaris 2.6 stops QEMU at `configuring network interfaces:` (`Trap 0x29`). That also
+  happens without the volume after `setenv diag-switch? false` and `reset`; a `boot disk` typed at
+  `ok` works. On the SS-20 PROM leave `diag-switch?` true and type `boot disk`, or use OpenBIOS.
+
+- **The MAC address and the machine type** (the IDPROM at the end of the NVRAM) come from the VM's
+  configuration at every start, as without the volume. Changing net0's MAC keeps the PROM's
+  settings.
+- **OpenBIOS** works with and without the volume as before: QEMU writes its layout into a blank
+  volume at the first start, and OpenBIOS boots the VM's boot order. `-prom-env` in `args` still
+  applies at every start (it replaces OpenBIOS's part of the NVRAM each time).
+- **The volume is a disk of the VM:** backup and restore, clone and Move Storage copy it (checked
+  with a stopped VM), migration treats it like the other disks (not tested), and it is deleted with
+  the VM. Removing it in the Hardware panel leaves it as an unused disk, as for the EFI disk. Adding
+  or removing it on a running VM waits for the next start.
+- **To start over** with the PROM's defaults, type `set-defaults` at `ok`, or remove the volume and
+  add a new one.
+- **Switching firmware:** a volume written by a Sun PROM looks invalid to OpenBIOS, which then uses
+  its defaults (it still boots the boot order), and the other way round the PROM resets it to its
+  defaults once. Remove and re-add the volume to give the other firmware a blank one.
+- The create wizard doesn't add the volume; add it in the Hardware panel after the VM is created.
 
 ### Stop-A and the PROM prompt
 
@@ -671,7 +719,7 @@ on sun4u".
   themselves); 256 MB on SS-5,
   512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5), `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) and
-  `lx.bin` (LX, serial console only, not shipped) are supported; the SS-10 PROM doesn't run on QEMU's
+  `lx.bin` (LX, serial console only) are supported; the SS-10 PROM doesn't run on QEMU's
   SS-10.
 - With `pve-qemu-kvm` up to 11.1.3-2+wsh25, a BEL on a cg3/TCX console with OpenBIOS hangs Solaris and SunOS with
   the screen inverted (bash's completion bell); see [The bell on a framebuffer

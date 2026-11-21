@@ -1123,8 +1123,10 @@ class OlderSun(unittest.TestCase):
         self.assertEqual(t["net_modes"], ["static"])
         self.assertEqual(t["install"]["scenario"], "solaris-install-serial.py")
         pkg = t["tested"]["packages"]["pve-qemu-kvm"]
-        self.assertTrue(pkg.startswith("11.1.3-2+wsh"))
-        self.assertGreaterEqual(int(pkg.rsplit("+wsh", 1)[1]), 29)
+        # 11.1.3-2+wsh29 and later, and every 11.1.3-3 build (wsh/0047 carried over)
+        self.assertTrue(pkg.startswith(("11.1.3-2+wsh", "11.1.3-3+wsh")))
+        if pkg.startswith("11.1.3-2+wsh"):
+            self.assertGreaterEqual(int(pkg.rsplit("+wsh", 1)[1]), 29)
         self.assertGreater(t["minutes"], 0)
 
     def test_matrix_holes(self):

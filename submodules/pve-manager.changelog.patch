@@ -1,8 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..6de194c8 100644
+index f305ba44..bafb56ba 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,50 @@
+@@ -1,10 +1,63 @@
++pve-manager (9.2.32+wsh8) trixie; urgency=medium
++
++  * feat(sparc): keep the Sun PROMs' NVRAM in a per-VM volume, so they
++    boot by themselves (#418)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 17:42:42 +0000
++
++pve-manager (9.2.32+wsh7) trixie; urgency=medium
++
++  * Refresh patches: pve-manager
++
++ -- hwinther <hwinther@users.noreply.github.com>  Sat, 21 Nov 2026 15:55:52 +0000
++
 +pve-manager (9.2.32+wsh6) trixie; urgency=medium
 +
 +  * feat(sparc): SPARCstation LX profile with its own PROM in qemu-

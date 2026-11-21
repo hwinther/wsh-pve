@@ -95,8 +95,9 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0055 | sun4m: `-M LX`, `SPARCClassic` and `SPARCbook` (microSPARC-I) take `-m 256`, and OpenBIOS stops with `Trap 0x21`; the chip takes 128 MB and its context table pointer holds bits 26:8 (TMS390S10 reference guide). A `max_ram` of 128 MB for those machines. Reproduced on plain QEMU 11.1.3 | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sparc32-deferred-fp-exception.md](qemu-sparc32-deferred-fp-exception.md) ("Also") |
 | 0056, 0058 | sun4m: `-M LX` lacks the LX's on-board cgsix (slot 3), DBRI (slot 2) and bpp (slot 4), which the LX boot PROM probes on every boot; it stops at `ok` on the first bus error (`at 2,0  Data Access Error` with `-vga none`, `cgsix Data Access Error` with the default TCX), and NetBSD 9.3 panics in `bppattach()`. Unimplemented devices for the three (a new `cg6_base` for the cgsix's 16 MB), as the SS-20 has its DBRI and bpp; qtest `sun4m-onboard-sbus-test`. Seen on our series only (plain 11.1.3's POST stops earlier, 0053); the missing regions show in `info mtree` on plain QEMU | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-lx-onboard-sbus.md](qemu-sun4m-lx-onboard-sbus.md) |
 | 0057, 0058 | sun4m: the DBRI's FCode PROM window reads 0, so the Sun PROMs of the SS-10/SS-20 and the LX make its node without a `name` or `reg`; Solaris 2.1/2.2 (SS-20 PROM) and SunOS 4.1.4 (LX) panic on it. The window holds an FCode program of ours that makes a DBRI's node (`name`, `reg`, SBus level 5 interrupt); the drivers find no codec behind the register stub. qtest `sun4m-onboard-sbus-test`. The SS-20 case on QEMU 11.1.3 with our series, nothing of which touches the code | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-ss20-dbri-unnamed-node.md](qemu-sun4m-ss20-dbri-unnamed-node.md) |
+| 0059, 0060 | sun4m: `nvram_init()` writes OpenBIOS's NVRAM layout into the M48T08 at every start and nothing keeps the NVRAM across runs, so Sun's boot PROMs (SS-5, SS-20, LX) find their configuration checksum wrong, set `diag-switch?`, try `net` and stop at `ok` on every power-on. A `drive` property for the sysbus M48Txx's NVRAM bytes (written through per byte, clock registers left out); on sun4m a blank image gets QEMU's contents once, any other is left alone except the IDPROM (from `-M` and the MAC on every start) and, with `-prom-env`, OpenBIOS's partitions; the M48T08 at `/machine/nvram`. qtest `sun4m-nvram-test`. A missing feature on plain QEMU 11.1.3, not a regression | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-nvram-backend.md](qemu-sun4m-nvram-backend.md) |
 
-Counts: may send 31 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0058); LEMU origin 13 (0002-0006,
+Counts: may send 33 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0060); LEMU origin 13 (0002-0006,
 0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 14 (0014-0016, 0023-0025, 0027, 0030-0033,
 0042-0044).
 
@@ -104,6 +105,11 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 `niagara` above 1 GB; the patch is by the unix0.cc author
 ([unix0cc/qemu-experimental-patches](https://github.com/unix0cc/qemu-experimental-patches)).
 [qemu-sparc64-tte-page-size.md](qemu-sparc64-tte-page-size.md).
+
+Not carried, write-up only (may send): the `wav` audiodev never writes its header's RIFF and data
+sizes, however QEMU ends, because the voices' references keep the backend from being finalized at
+exit (since v11.0.0). First seen with LEMU's CS4231 (it was under "Hold"); reproduced on plain
+v11.1.3 with the SB16. [qemu-audio-wav-header-sizes.md](qemu-audio-wav-header-sizes.md).
 
 ## OpenBIOS (`openbios/patches/`)
 
@@ -139,7 +145,6 @@ Reportable only after they have been reproduced on plain QEMU, without any LEMU 
 | What | Seen with | Notes |
 | --- | --- | --- |
 | QEMU's audio mixer doubles a mono voice played into a mono output (it adds left and right): a `wav` audiodev with `out.channels=1` is 6 dB too loud | LEMU's CS4231 (0028-0029) | `submodules/SPARC.md` "Audio"; needs a device without LEMU code that plays a mono voice |
-| The `wav` audio backend leaves the header's sizes at 0 when the guest powers the machine off | LEMU's CS4231 (0028-0029) | the same |
 | A serial BREAK on ttya hangs Solaris: QEMU's ESCC sets RR0's break bit and never clears it | ESCC with LEMU's 0002-0006 | `submodules/SPARC.md` "Stop-A"; the code read is QEMU's own `serial_receive_break()`, but the lab binary had LEMU's ESCC patches |
 | `zs3: ring buffer overflow` under load: mouse data arrives faster than a 1200 baud mouse sends it | ESCC with LEMU's 0002-0006 | `ROADMAP.md` known issues; harmless |
 

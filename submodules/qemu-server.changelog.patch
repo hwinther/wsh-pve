@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index a6b9c65d..ffc5d5b6 100644
+index a6b9c65d..6a6227e5 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,30 @@
+@@ -1,10 +1,37 @@
++qemu-server (9.2.20+wsh4) trixie; urgency=medium
++
++  * feat(sparc): keep the Sun PROMs' NVRAM in a per-VM volume, so they
++    boot by themselves (#418)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 17:42:38 +0000
++
 +qemu-server (9.2.20+wsh3) trixie; urgency=medium
 +
 +  * feat(sparc): SPARCstation LX profile with its own PROM in qemu-

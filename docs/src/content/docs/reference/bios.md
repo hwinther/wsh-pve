@@ -17,7 +17,7 @@ However nothing scratches that nostalgic itch quite like seeing the splash logo 
 
 The supported PROM files are `ss5.bin` (machine SS-5), `ss20_v2.25_rom` (machine SS-20, which
 also gets the `TI-SuperSparc-50` CPU it needs) and `lx.bin` (machine LX, the only firmware it takes;
-not shipped with the package, so place your own copy in `/usr/share/kvm/` on the node);
+older packages don't have it, then place your own copy in `/usr/share/kvm/` on the node);
 `ss10_v2.25_rom` doesn't run on QEMU's SS-10 and isn't offered. The BIOS selector only lists the firmware the chosen machine runs, see the
 [SPARC guide](/guides/sparc/#supported-sparc32-profiles).
 
