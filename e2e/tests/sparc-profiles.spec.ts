@@ -604,7 +604,7 @@ test.describe('sound on the SS-5 (audio0: device=cs4231)', () => {
 // The SPARCstation LX with Sun's own PROM (submodules/SPARC.md, "SPARCstation LX with its own PROM"):
 // `bios: lx.bin`, at most 128 MB, one CPU, a serial console (there is no cgsix model) or none. CI runs
 // against the published packages: the profile needs a qemu-server that has it (probed once, skipped
-// otherwise). The PROM itself isn't in any package, so QEMU is only
+// otherwise). Packages built before lx.bin was added don't have the PROM, so QEMU is only
 // started where the node has /usr/share/kvm/lx.bin.
 test.describe('the SPARCstation LX (its own PROM, serial console)', () => {
   let hasLx = false

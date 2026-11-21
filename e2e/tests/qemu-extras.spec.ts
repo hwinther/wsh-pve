@@ -27,7 +27,7 @@ test('openbios-sparc64: built from openbios/', async () => {
   expect(check.code, check.output).toBe(0)
 })
 
-test('sun-proms: ss5.bin, ss10_v2.25_rom and ss20_v2.25_rom', async () => {
+test('sun-proms: ss5.bin, ss10_v2.25_rom, ss20_v2.25_rom and lx.bin', async () => {
   const check = await checkQemuExtra('sun-proms')
   expect(check.code, check.output).toBe(0)
 })
