@@ -176,14 +176,22 @@ merged; what is left of them is item 2 under "Next".
        i386, `/dev/mem`), reads it back through the pass-through and checks it and the SDL window
        (about 10 s under TCG). Found on the way: QEMU dies with `BadMatch` when the X server offers
        a 32-bit ARGB visual (Xvfb with Composite: OpenGLide's GLX config picks it, SDL's window
-       has 24 bits); SDL needs `libegl1`; OpenGLide writes
-       `OpenGLid.ini`/`.log` into QEMU's working directory and `exit(0)`s QEMU when it can't; a
-       guest LFB read that drains queued calls comes back shifted by their data (glidept puts the
-       pixels after it, the wrappers read from the start). pve-qemu-kvm depends on `wsh-openglide`
-       and `libegl1` whenever it ships the 3dfx binary (a dependency, not a recommendation: the 3dfx
-       VM stops without either, and the UI shouldn't have to check what is installed). Next, small:
-       qemu-server runs the 3dfx binary in a writable
-       directory; Mesa pass-through has no Windows-free test yet (no Linux guest wrapper for it).
+       has 24 bits); SDL needs `libegl1`; a guest LFB read that drains queued calls comes back
+       shifted by their data (glidept puts the pixels after it, the wrappers read from the start).
+       pve-qemu-kvm depends on `wsh-openglide` and `libegl1` whenever it ships the 3dfx binary (a
+       dependency, not a recommendation: the 3dfx VM stops without either, and the UI shouldn't
+       have to check what is installed). Finished (in review): OpenGLide wrote
+       `OpenGLid.ini`/`.log` into QEMU's working directory and `exit(0)`ed QEMU when it couldn't;
+       under PVE QEMU always daemonizes and then runs in `/`, so the files landed in `/` of the
+       node, and a different working directory from qemu-server couldn't help. `wsh-openglide`
+       now takes the directory from `OPENGLIDE_DIR` and never exits (a patch in
+       `packages/wsh-openglide/patches/`), and qemu-server sets `OPENGLIDE_DIR` for the 3dfx
+       binary to `/run/qemu-server/<vmid>-3dfx` (root, 0700). The Mesa pass-through has a
+       Windows-free test too: there is no Linux guest wrapper for it upstream, so the second
+       guest of `e2e/3dfx` (`mesa-guest.c`) speaks the mesapt device's protocol itself (the
+       revision handshake, the wgl calls, single GL calls, glReadPixels through the frame memory)
+       and draws the same scene; both guests also pass when PVE starts them (`qm start` of a
+       `mesa=1,server=` VM with `args: -kernel ...`, checked by hand).
      - **Stage 1: EGL offscreen (~2-3 weeks).** A new module (`fxdisp.c`, `mglcntx_egl.c`) plus an
        EGL platform in OpenGLide: render into an offscreen surface and read it back into the QEMU
        console's own surface, so noVNC shows 3dfx; no `exit(1)` on non-SDL displays. CI headless

@@ -11,7 +11,9 @@
 # and checks its pixels: Glide 2 into a window it hands over (what qemu-3dfx does with the SDL
 # window), Glide 2 into the library's own window, and Glide 3 through the wrap3x_ entry points, with
 # llvmpipe and with softpipe (llvmpipe doesn't return a front buffer after a swap, softpipe does: the
-# front-buffer read counts only with softpipe). With OUTDIR, the window of each run is saved there as
+# front-buffer read counts only with softpipe). Then glide-render runs in a working directory it can't
+# write to: it must still render (no exit from the library), and with OPENGLIDE_DIR the library's
+# OpenGLid.ini and OpenGLid.log go there. With OUTDIR, the window of each run is saved there as
 # a PPM. Then `apt purge` must leave nothing of the package behind. Exit 0 when everything passed.
 set -eu
 DEB=${1:?usage: test.sh /path/to/wsh-openglide_VERSION_ARCH.deb /path/to/glide-render [OUTDIR]}
@@ -49,8 +51,8 @@ done
 nm -D --defined-only "$libdir/libglide3x.so" | grep -q ' T wrap3x_grDrawTriangle$' \
 	|| fail "libglide3x.so doesn't export wrap3x_grDrawTriangle"
 
-# OpenGLide writes OpenGLid.ini and OpenGLid.log into the working directory when it is loaded (and
-# exits the process if it can't): run it in a directory of its own.
+# OpenGLide writes OpenGLid.ini and OpenGLid.log into the working directory when it is loaded (or
+# into OPENGLIDE_DIR, checked below): run it in a directory of its own.
 work=$(mktemp -d)
 cd "$work"
 # -extension Composite: without it Xvfb offers a 32-bit ARGB visual, which OpenGLide's GLX config
@@ -72,6 +74,25 @@ for driver in llvmpipe softpipe; do
 	done
 done
 [ -s OpenGLid.log ] || fail "the library wrote no OpenGLid.log into the working directory"
+
+# Where the files go (patches/0001-openglide-dir-no-exit.patch). Up to 0.1 the library's
+# constructor ended the process with status 0 when it couldn't create OpenGLid.log, before main():
+# glide-render's "all probes match" line shows it got that far. /proc: a working directory that not
+# even root can create files in.
+step "glide-render in a working directory it can't write to, with and without OPENGLIDE_DIR"
+for dir in "" "$work/ogl"; do
+	mkdir -p "$work/ogl"
+	out=$(cd /proc && OPENGLIDE_DIR=$dir LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+		xvfb-run -a -s "$XVFB_ARGS" "$RENDER" --no-front 2>&1) || { echo "$out"; failed="$failed unwritable-cwd${dir:+/OPENGLIDE_DIR}"; continue; }
+	echo "$out" | tail -n 1
+	echo "$out" | grep -q '^glide2x: all probes match' \
+		|| { echo "$out"; failed="$failed unwritable-cwd${dir:+/OPENGLIDE_DIR}"; continue; }
+	if [ -n "$dir" ]; then
+		[ -s "$dir/OpenGLid.log" ] && [ -s "$dir/OpenGLid.ini" ] \
+			|| { ls -la "$dir"; failed="$failed OPENGLIDE_DIR-files"; }
+		echo "ok OPENGLIDE_DIR=$dir: $(cd "$dir" && echo OpenGLid.*)"
+	fi
+done
 cd /
 rm -r "$work"
 [ -z "$failed" ] || fail "rendering:$failed"

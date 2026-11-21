@@ -8,8 +8,8 @@ name: wsh-openglide package
 #
 # Pull requests: build, lintian, and the test in a clean Debian 13 (test.sh: install, a Glide 2 and a
 # Glide 3 scene rendered through the installed libraries under Xvfb with Mesa's llvmpipe and softpipe,
-# pixels checked, purge), then the whole pass-through from a Linux guest in the published
-# qemu-system-x86_64-3dfx (e2e/3dfx/test.sh). Nothing is published. main (or by hand on main): the
+# pixels checked, purge), then the whole Glide and MESA GL pass-through from Linux guests in the
+# published qemu-system-x86_64-3dfx (e2e/3dfx/test.sh). Nothing is published. main (or by hand on main): the
 # same, then a GitHub release wsh-openglide-<version> with the .deb, tagged on the tip of main,
 # unless one exists already, and the Pages deploy
 # (repo-update.yml), which adds the newest wsh-openglide release's .deb to the apt repository.
@@ -92,10 +92,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The whole Glide pass-through without Windows (e2e/3dfx/test.sh): the published pve-qemu-kvm's
-  # qemu-system-x86_64-3dfx boots a Linux guest whose /init draws the test scene through qemu-3dfx's
-  # Linux guest wrapper into this build's wsh-openglide, reads it back and checks it, and the VM's SDL
-  # window on Xvfb is checked too. Skipped (exit 77) when the published package has no 3dfx binary.
+  # The whole Glide and MESA GL pass-through without Windows (e2e/3dfx/test.sh): the published
+  # pve-qemu-kvm's qemu-system-x86_64-3dfx boots a Linux guest whose /init draws the test scene
+  # through qemu-3dfx's Linux guest wrapper into this build's wsh-openglide (QEMU daemonized, as
+  # qemu-server starts it, with OPENGLIDE_DIR: OpenGLide's files must land there), then one whose
+  # /init draws it through the mesapt device into the host's libGL; each reads it back and checks
+  # it, and the VM's SDL window on Xvfb is checked too. Skipped (exit 77) when the published package
+  # has no 3dfx binary.
   passthrough:
     name: QEMU pass-through (Linux guest)
     needs: [build]
