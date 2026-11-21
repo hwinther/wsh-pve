@@ -84,9 +84,12 @@ PROFILES = {
                  "for": "DOS/4GW and other protected-mode games (Doom, Duke Nukem 3D), most programs",
                  "memory": [_MS_HIMEM, "DEVICE=C:\\DOS\\EMM386.EXE NOEMS I=CD00-E8FF", "DOS=HIGH,UMB"],
                  "load": "high"},
+        # RAM without a size: EMM386's EMS and VCPI pool is all free XMS (taken as needed), so DOS/4GW
+        # games run here too; `RAM 4096` caps VCPI at 4 MB and Duke Nukem 3D stops for lack of memory.
         "ems": {"title": "EMS page frame at D800 and UMB",
-                "for": "games that want expanded memory (The Incredible Machine 2, Dune, King's Quest VII)",
-                "memory": [_MS_HIMEM, "DEVICE=C:\\DOS\\EMM386.EXE RAM 4096 FRAME=D800 I=CD00-D7FF I=E800-E8FF",
+                "for": "games that want expanded memory (The Incredible Machine 2, Dune, King's Quest VII), "
+                       "and DOS/4GW games through VCPI",
+                "memory": [_MS_HIMEM, "DEVICE=C:\\DOS\\EMM386.EXE RAM FRAME=D800 I=CD00-D7FF I=E800-E8FF",
                            "DOS=HIGH,UMB"],
                 "load": "high", "expect": {"ems": True}},
         "maxconv": {"title": "Maximum conventional memory: HIMEM only, nothing else loaded",
@@ -149,7 +152,7 @@ def config_lines(flavour, prof, extra=None):
     f = flavour_data(flavour, extra)
     how = prof.get("load", "low")
     drivers = f["drivers"]["config"] if how in ("high", "low") else []
-    shell = f["shell"].format(shell="SHELLHIGH" if how == "high" else "SHELL")
+    shell = prof.get("shell", f["shell"]).format(shell="SHELLHIGH" if how == "high" else "SHELL")
     return list(prof["memory"]) + f["common"] + _load(drivers, "config", how) + list(prof.get("config", [])) + [shell]
 
 
@@ -326,8 +329,10 @@ def parse_mem(text):
     r = row(r"Extended \(XMS\)")
     if r:
         out["xms_free"] = r[2]
-    for key, label in (("ems_total", "Total"), ("ems_free", "Free")):  # "4,480K (...)" or "31M (...)"
-        m = re.search(rf"{label} Expanded \(EMS\)\S*\s+{N}[KM]\s*\(\s*{N} bytes\)", text, re.I)
+    # "4,480K (4,587,520 bytes)", FreeDOS's "31M (...)", and MS-DOS 6.22 with a large pool, whose
+    # wider numbers push the K and the ")" past its field: "31,936 (32,702,464 bytes"
+    for key, label in (("ems_total", "Total"), ("ems_free", "Free")):
+        m = re.search(rf"{label} Expanded \(EMS\)\S*\s+{N}[KM]?\s*\(\s*{N} bytes", text, re.I)
         out[key] = _k(m.group(2)) // 1024 if m else None
     if out["ems_total"] is None:  # FreeDOS: a row of the table
         r = row(r"Expanded \(EMS\)")
