@@ -72,7 +72,9 @@ A kernel plus a one-program initramfs (PID 1 built with the kernel's nolibc) for
 memory, a compute loop with a checksum and its time, one result line, power-off. `tiny/build.sh` builds
 it in the `tiny/Dockerfile` image, `tiny/run.py` boots it under a given QEMU binary (TCG or a TCI build
 from `tiny/qemu-tci.sh`) and reports times to PID 1 and power-off, the loop time and QEMU's peak RSS. See
-`tiny/README.md` and the [Tiny test system](../docs/src/content/docs/guides/tiny.md) guide.
+`tiny/README.md` and the [Tiny test system](../docs/src/content/docs/guides/tiny.md) guide. The `Tiny boot`
+workflow boots it on pull requests that change `tiny/` or the pve-qemu build, with the pull request's own
+QEMU when `pve-qemu.patch` or the pin changes (`tiny/README.md`, "CI").
 
 ## The PVE container
 

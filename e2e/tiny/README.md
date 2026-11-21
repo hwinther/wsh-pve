@@ -87,6 +87,26 @@ interpreter, for a comparison where only the backend differs. Point `run.py --qe
 directory and pass `--firmware /usr/share/kvm` (the image sets `TINY_FIRMWARE` to it) so it finds
 OpenBIOS and SeaBIOS.
 
+## CI
+
+`.github/workflows/tiny-boot.yml` boots all four architectures, plus sparc32 on the SS-20, on a
+GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
+filter, so its `tiny-boot-required` check always reports; a `changes` job skips the boot when the pull
+request touches neither `e2e/tiny/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
+main that change `e2e/tiny/` and by hand.
+
+- Which QEMU: a pull request that changes `submodules/pve-qemu.patch`, the pve-qemu pin,
+  `qemu-tci.sh` or the workflow gets QEMU built from its own tree: pve-qemu with `pve-qemu.patch`, its
+  `qemu` submodule and `debian/patches/series` applied with `quilt push -a --fuzz=0` (what
+  dpkg-source does), then `MODE=tcg ./qemu-tci.sh` for the four targets, and `run.py --qemu-dir`. The
+  firmware stays the published package's. Every other run boots the published `pve-qemu-kvm` in the
+  image. No workflow builds a pve-qemu-kvm package on a pull request, so the four binaries are built
+  here instead of the whole package. With 4 jobs on the lab host that took 4 minutes, the kernels 7.
+- The kernels (`out/`) are cached, keyed on the files that make them: `Dockerfile`, `build.sh`,
+  `init.c` and `config/`. A change to `run.py`, the tests or the docs reuses them.
+- The unit tests run first. The job summary has `run.py`'s tables. The artifact `tiny-boot-<pr|published>`
+  has `results.jsonl` and the console logs.
+
 ## Results
 
 Measured 2026-11-21 on the lab host (14 threads, shared with other jobs; 1-minute load average 4.2
@@ -129,7 +149,8 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
 - No network, disk or SMP checks: tier 1 is boot, CPU, memory and power-off only.
 - Not in the table: SS-10 (passes under TCG), the LX (fails, see above) and the Sun PROMs (`ss5.bin`
   and the SS-20 PROM boot from a disk, not from `-kernel`).
-- No CI job; the unit tests run anywhere with Python 3.
+- CI boots the published package or a pull request's QEMU binaries (see "CI"); a pull request that
+  changes `openbios/**` is not checked with its own firmware, and TCI is not run in CI.
 
 ## Notes: a WebAssembly build of qemu-system-sparc (not tried)
 
