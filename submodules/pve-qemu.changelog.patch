@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index e9c6f68..eb8e88f 100644
+index e9c6f68..933ffda 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,24 @@
+@@ -1,10 +1,31 @@
++pve-qemu-kvm (11.1.3-3+wsh3) trixie; urgency=medium
++
++  * fix(qemu): defer the sparc32 fp_exception to the next FP instruction
++    (SPARCstation LX PROM POST) (#399)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 04:49:59 +0000
++
 +pve-qemu-kvm (11.1.3-3+wsh2) trixie; urgency=medium
 +
 +  * fix(qemu): read the VGA attribute address at 3C0h in the data state
