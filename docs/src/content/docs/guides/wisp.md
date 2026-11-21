@@ -1,6 +1,6 @@
 ---
 title: wisp, the tiny test system
-description: A one-program Linux for x86, sparc32 and sparc64 that checks a QEMU build boots and measures TCG against TCI
+description: A one-program Linux for x86, sparc32 and sparc64 that checks a QEMU build boots, exercises its disks, NICs and CPUs, and measures TCG against TCI
 ---
 
 wisp, the tiny test system, is the smallest Linux the lab can boot on each emulated architecture: a
@@ -13,17 +13,18 @@ prints a banner, the kernel's `uname`, the CPU count and memory, runs a fixed co
 time and a checksum, prints one result line and powers the machine off. A run under TCG takes 2 to
 3 seconds.
 
-| Architecture | QEMU machine | Kernel image | PID 1 |
-| --- | --- | --- | --- |
-| x86_64 | `pc` | 1,287,168 bytes | 17,072 bytes |
-| i386 | `pc` | 1,126,912 bytes | 14,160 bytes |
-| sparc32 | `SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | 2,441,336 bytes | 8,716 bytes |
-| sparc64 | `sun4u` | 3,092,744 bytes | 8,904 bytes |
+| Architecture | QEMU machine | Kernel image | Tier-2 kernel | PID 1 |
+| --- | --- | --- | --- | --- |
+| x86_64 | `pc` | 1,291,264 bytes | 1,836,032 bytes | 21,168 bytes |
+| i386 | `pc` | 1,131,008 bytes | 1,675,776 bytes | 19,236 bytes |
+| sparc32 | `SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | 2,449,528 bytes | 3,311,560 bytes | 16,908 bytes |
+| sparc64 | `sun4u` | 3,100,936 bytes | 4,117,384 bytes | 17,096 bytes |
 
 The x86 images are compressed `bzImage`s; the sparc images are the stripped, uncompressed ELF the
-OpenBIOS loader takes. PID 1 includes the interactive shell below (before it: 12,976, 8,908, 5,236
-and 5,440 bytes). CI (`.github/workflows/wisp-boot.yml`) boots every architecture and machine in
-the table on pull requests that touch wisp or the QEMU build, and on main; the `LX` and the
+OpenBIOS loader takes. PID 1 includes the interactive shell and the tier-2 checks below (before
+the shell: 12,976, 8,908, 5,236 and 5,440 bytes; before tier 2: 17,072, 14,160, 8,716 and 8,904).
+CI (`.github/workflows/wisp-boot.yml`) boots every architecture and machine in the table, tier 1
+and tier 2, on pull requests that touch wisp or the QEMU build, and on main; the `LX` and the
 `Voyager` need OpenBIOS patch 0027, in the published `pve-qemu-kvm` since 11.1.3-3+wsh9.
 
 ## What it is for
@@ -34,6 +35,8 @@ the table on pull requests that touch wisp or the QEMU build, and on main; the `
 - **Comparing backends.** TCG (the JIT) against TCI (the TCG interpreter, the only backend QEMU
   has where it can't generate host code, such as a WebAssembly build), without a guest OS's own
   start-up time in the numbers.
+- **The devices the QEMU patches touch** (tier 2): a raw disk on each disk controller, a NIC on
+  QEMU's user-mode network and more than one CPU, each with its own result line.
 
 ## Interactive mode
 
@@ -53,6 +56,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `bench` | the batch run's compute loop with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds |
 | `mandel` | an ASCII Mandelbrot set (78 x 20) in fixed-point 32-bit integer math |
+| `disk`, `net`, `smp` | the tier-2 checks below, on the devices QEMU was started with |
 | `banner` | the logo |
 | `clear` | clears the screen |
 | `poweroff`, `reboot` | power off or restart (`reboot` not on sun4u, where OpenBIOS doesn't restart) |
@@ -63,6 +67,41 @@ all four architectures and checks every answer, down to each character of the Ma
 runs it after the batch boots. On sparc, `init.c` brings its own `_start`: nolibc's lost the
 kernel's arguments and environment there, so until now `loops=` never reached PID 1 on sparc.
 
+## Tier 2: disk, network, SMP
+
+A second kernel per architecture, `kernel-t2`, adds the block layer, SCSI disks, devtmpfs, each
+machine's disk and network drivers, packet sockets and, where the machine has more than one CPU,
+SMP (`config/tier2/`). `run.py --tier2` boots every machine once per profile, with the devices on
+the QEMU command line and a switch per check on the kernel's (`wisp_disk=sda,vda`, `wisp_net=eth0`,
+`wisp_smp=1`, which reach PID 1 as environment variables). PID 1 prints a `WISP-DISK`, `WISP-NET`
+or `WISP-SMP` line after its result line; the batch output without them is unchanged.
+
+| Machine | Disks | NIC | CPUs |
+| --- | --- | --- | --- |
+| `pc` (x86_64, i386) | PIIX3 IDE (`ata_piix`), virtio-blk | e1000; virtio-net in a second boot | 1, 2, 4 |
+| `SS-10`, `SS-20` | ESP SCSI (`sun_esp`) | lance (`sunlance`) | 1, 2, 4 |
+| `SS-5`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | ESP SCSI | lance | 1 |
+| `sun4u` | cmd646 IDE (`pata_cmd64x`), virtio-blk | hme (`sunhme`) | 1 |
+
+- **Disk**: a 4 MiB raw image per disk, created for the run and filled with a pattern by `run.py`.
+  PID 1 opens the raw device (no file system), reads and compares all of it, writes 1 MiB of its
+  own pattern at 1 MiB, syncs, drops the page cache and reads it back from the device. `run.py`
+  checks both CRCs and, after QEMU has exited, that the image has the guest's pattern at 1 MiB and
+  is unchanged elsewhere.
+- **Network**: ARP and 8 ICMP echoes (1,400 bytes of payload each) with QEMU's user-mode network
+  at 10.0.2.2, which slirp answers itself: no host network or DNS involved, no DHCP (the guest is
+  10.0.2.15). The kernel has no IP stack; PID 1 builds and checks the Ethernet frames on a packet
+  socket, which keeps 385 KB of IPv4 out of the sparc32 kernel. The line has the ARP time and the
+  round trips.
+- **SMP**: one child per CPU, pinned with `sched_setaffinity`, runs the compute loop; every CPU must
+  return the same CRC. SMP is in `kernel-t2` on x86 (`-smp 2` and `4`) and on sparc32 (`SS-10` and
+  `SS-20` with OpenBIOS, `-smp 2` and `4`; the kernel drops futex, which nothing in wisp uses, and
+  the same kernel boots the uniprocessor sun4m machines). sparc64 stays uniprocessor: QEMU's
+  `sun4u` takes one CPU.
+
+`run.py --shell --tier2` runs the shell with the first profile and adds `disk`, `net` and `smp` to
+its script. The README in `e2e/wisp/` has the details, the sizes and the results.
+
 ## Building and running
 
 Everything is in `e2e/wisp/` (see its README):
@@ -72,6 +111,7 @@ docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --repeat 2
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --shell
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --tier2
 ```
 
 The image has Debian 13's cross compilers, `linux-source-7.3` from trixie-backports and the
