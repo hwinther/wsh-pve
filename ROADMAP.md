@@ -313,9 +313,14 @@ per-VM volume in qemu-server; `submodules/SPARC.md`, "SPARCstation LX with its o
   11.1.3 (TCI is the only TCG backend there; the Wasm-emitting TCG backend is an out-of-tree series
   by Kohei Tokunaga, not in 11.2.0-rc1). The SS-5's devices need no change and `-bios` loads from
   Emscripten's file system, so OpenBIOS or a user's `ss5.bin` both work in principle; missing are a
-  display backend (serial only at first), an audio backend and networking (a WebSocket proxy). Step 1:
-  time a native `--enable-tcg-interpreter` build against the lab's SS-5 boots to estimate the speed.
-  Step 2: a serial-only page (xterm.js, OpenBIOS and a NetBSD/sparc disk, `-nographic -nic none
+  display backend (serial only at first), an audio backend and networking (a WebSocket proxy). Step 1
+  (done 2026-11-21, `submodules/SPARC.md`, "TCI (QEMU's TCG interpreter)"): a native `--enable-tcg-interpreter` build against
+  the same tree with the x86-64 backend, on the lab host: Solaris 2.6 on SS-5 boots to login in 1.6-1.7x
+  the time (about 3 minutes), NetBSD 9.3 in 4x (SS-5) and 6x (sun4u, 7 minutes); compiled code runs
+  8-35x slower (Dhrystone 946 against 49 VAX MIPS, 19x; Whetstone 10x; nbench integer 17x, memory
+  26x); a guest that halts when idle costs 3-7% of a host core with either. Native TCI has no use on
+  a host with a TCG backend; for the browser it is enough for a serial demonstration, starting with
+  sparc32. Step 2: a serial-only page (xterm.js, OpenBIOS and a NetBSD/sparc disk, `-nographic -nic none
   -audiodev none`, `coi-serviceworker` for the COOP/COEP headers GitHub Pages can't set, the disk
   fetched in ranges, optionally a migrated snapshot for an instant start), plus a local-only picker
   for `ss5.bin` and Sun disks, since Sun firmware and installed Sun systems are never published.
