@@ -104,7 +104,9 @@ echo "host binary: ${QEMU_BIN:-$QEMU}, qemu-3dfx $rev; guest wrapper source: ${s
 
 step "the guests: glide-guest and mesa-guest as /init, i386, static"
 work=$(mktemp -d)
-trap 'kill $(jobs -p) 2> /dev/null || true; [ ! -s "$work/qemu.pid" ] || kill "$(cat "$work/qemu.pid")" 2> /dev/null || true; rm -rf "$work"' EXIT
+# QEMU writes screendumps with mode 0600 and the container runs as root: make OUT readable for the
+# host (the CI artifact upload runs as the runner user)
+trap 'kill $(jobs -p) 2> /dev/null || true; [ ! -s "$work/qemu.pid" ] || kill "$(cat "$work/qemu.pid")" 2> /dev/null || true; rm -rf "$work"; chmod -R a+rX "$OUT" 2> /dev/null || true' EXIT
 Q3=$SRC/submodules/qemu-3dfx
 TESTS=$SRC/packages/wsh-openglide/tests
 mkdir -p "$work/glide" "$work/mesa"
