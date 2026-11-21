@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index a6b9c65d..583d260c 100644
+index a6b9c65d..ffc5d5b6 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,30 @@
++qemu-server (9.2.20+wsh3) trixie; urgency=medium
++
++  * feat(sparc): SPARCstation LX profile with its own PROM in qemu-
++    server and pve-manager (#408)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 15:19:54 +0000
++
 +qemu-server (9.2.20+wsh2) trixie; urgency=medium
 +
 +  * fix(3dfx): OpenGLide's files in a directory of the VM's, and a
