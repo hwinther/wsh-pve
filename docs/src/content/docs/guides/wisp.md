@@ -1,9 +1,9 @@
 ---
-title: Tiny test system
+title: wisp, the tiny test system
 description: A one-program Linux for x86, sparc32 and sparc64 that checks a QEMU build boots and measures TCG against TCI
 ---
 
-The tiny test system is the smallest Linux the lab can boot on each emulated architecture: a
+wisp, the tiny test system, is the smallest Linux the lab can boot on each emulated architecture: a
 kernel (`make tinyconfig` plus a few options) with a built-in initramfs that holds a single static
 program as PID 1, built with the kernel's own nolibc instead of a C library. glibc and musl don't
 support 32-bit SPARC V8; nolibc does (since Linux 6.16), so the same `init.c` runs on all four.
@@ -34,12 +34,12 @@ OpenBIOS loader takes.
 
 ## Building and running
 
-Everything is in `e2e/tiny/` (see its README):
+Everything is in `e2e/wisp/` (see its README):
 
 ```sh
-docker build -f e2e/tiny/Dockerfile -t wsh-tiny .
-docker run --rm -v "$PWD/e2e/tiny:/tiny" wsh-tiny ./build.sh all
-docker run --rm -v "$PWD/e2e/tiny:/tiny" wsh-tiny ./run.py --arch all --repeat 2
+docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --repeat 2
 ```
 
 The image has Debian 13's cross compilers, `linux-source-7.3` from trixie-backports and the

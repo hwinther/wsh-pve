@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the tiny test system under a QEMU binary and report what it measured.
+"""Boot wisp (the tiny test system) under a QEMU binary and report what it measured.
 
     ./run.py --arch sparc32 [--arch sparc64 ...|--arch all] [--qemu-dir DIR] [--label tcg]
              [--repeat 2] [--loops N] [--machine SS-20] [--json results.jsonl] [--log-dir logs]
@@ -38,7 +38,7 @@ ARCHES = {
     "sparc64": ("qemu-system-sparc64", ["-M", "sun4u"], 256, "console=ttyS0"),
 }
 
-RESULT_PREFIX = "TINY-RESULT "
+RESULT_PREFIX = "WISP-RESULT "
 RESULT_INTS = ("v", "cpus", "mem_kb", "uptime_ms", "loops", "loop_ms")
 RESULT_REQUIRED = ("v", "arch", "machine", "release", "cpus", "mem_kb", "uptime_ms", "loops",
                    "crc", "loop_ms", "status")
@@ -46,13 +46,13 @@ RESULT_REQUIRED = ("v", "arch", "machine", "release", "cpus", "mem_kb", "uptime_
 # Console markers, in boot order, and the name of the time they set.
 MARKERS = (
     ("t_kernel", re.compile(r"Linux version ")),
-    ("t_banner", re.compile(r"^TINY-BANNER ")),
-    ("t_result", re.compile(r"^TINY-RESULT ")),
+    ("t_banner", re.compile(r"^WISP-BANNER ")),
+    ("t_result", re.compile(r"^WISP-RESULT ")),
 )
 
 
 def parse_result(line):
-    """Parse a TINY-RESULT line into a dict (numbers as int, crc as int). Raises ValueError."""
+    """Parse a WISP-RESULT line into a dict (numbers as int, crc as int). Raises ValueError."""
     line = line.strip()
     pos = line.find(RESULT_PREFIX)
     if pos < 0:
@@ -142,7 +142,7 @@ def scan_console(lines):
                 result = parse_result(text)
             except ValueError as exc:
                 times["result_error"] = str(exc)
-        if text.startswith("TINY-POWEROFF-FAILED"):
+        if text.startswith("WISP-POWEROFF-FAILED"):
             poweroff_failed = True
     return times, result, poweroff_failed
 
@@ -255,8 +255,8 @@ def main(argv=None):
     ap.add_argument("--loops", type=int, help=f"compute loops (init's default: {DEFAULT_LOOPS})")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--timeout", type=float, default=300)
-    ap.add_argument("--firmware", default=os.environ.get("TINY_FIRMWARE"),
-                    help="QEMU -L directory (default: $TINY_FIRMWARE)")
+    ap.add_argument("--firmware", default=os.environ.get("WISP_FIRMWARE"),
+                    help="QEMU -L directory (default: $WISP_FIRMWARE)")
     ap.add_argument("--out", default=os.path.join(HERE, "out"), help="build output directory")
     ap.add_argument("--json", help="append one JSON object per run to this file")
     ap.add_argument("--log-dir", help="write each run's timestamped console log here")

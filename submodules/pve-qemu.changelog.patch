@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index e9c6f68..40caeaa 100644
+index e9c6f68..3814ebf 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,66 @@
+@@ -1,10 +1,73 @@
++pve-qemu-kvm (11.1.3-3+wsh9) trixie; urgency=medium
++
++  * feat(sparc): keep the Sun PROMs' NVRAM in a per-VM volume, so they
++    boot by themselves (#418)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 19:42:05 +0000
++
 +pve-qemu-kvm (11.1.3-3+wsh8) trixie; urgency=medium
 +
 +  * feat(sparc): keep the Sun PROMs' NVRAM in a per-VM volume, so they
