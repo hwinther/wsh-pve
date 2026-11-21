@@ -23,7 +23,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | Target | What | Profile | Media (on `local:iso/`) | Login | Time |
 | --- | --- | --- | --- | --- | --- |
 | `sol26-ss5` | Solaris 2.6 5/98, End User | SS-5, OpenBIOS, 256 MB, serial console (`serial0`), Sun-labelled disk on `scsi3` (3G, or 9G with `--disk-size 9G`), lance | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
-| `sol21-ss10` | Solaris 2.1, End User Cluster (suninstall's Standalone Quick Install) | as `sol22-ss10`; needs `pve-qemu-kvm` 11.1.3-2+wsh29 or later | `solaris2_1_sparc.iso` | `root` / `wshlab` | ~10 min |
+| `sol21-ss10` | Solaris 2.1, End User Cluster (suninstall's Standalone Quick Install) | as `sol22-ss10`; needs `pve-qemu-kvm` 11.1.3-2+wsh29 or later | `solaris2_1_sparc.iso` | `root` / `wshlab` | ~11 min |
 | `sol22-ss10` | Solaris 2.2, End User (Quick Install) | SS-10, OpenBIOS, 256 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`); needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later | `Solaris_2.2.img` | `root` / `wshlab` | ~9 min |
 | `sol23-ss5` | Solaris 2.3 Edition II, End User (Quick Install) | SS-5, OpenBIOS, 256 MB, otherwise as `sol22-ss10` (also needs +wsh22) | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~10 min |
 | `sol23-ss20` | Solaris 2.3 Edition II, End User (Quick Install) | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol23-ss5` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~9 min |
