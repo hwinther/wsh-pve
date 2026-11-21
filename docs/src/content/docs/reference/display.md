@@ -24,6 +24,8 @@ Unset by default, if it is set to an X display value such as :0 (or 192.168.0.10
 
 Experimental feature - it must be used in conjunction with the 3DFX/MESA drivers in Windows 9x/2000/ME.
 
+Without a server, the Glide and OpenGL frames show in the VM's console (noVNC), rendered offscreen on the node; with a server they show in an SDL window on that X display.
+
 See the [3DFX / Mesa passthrough guide](/guides/3dfx/) for how the host QEMU build and the guest drivers are paired by revision, and where to download the matching driver release.
 
 ## VGA retrace
