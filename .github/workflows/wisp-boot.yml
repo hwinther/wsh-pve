@@ -1,24 +1,28 @@
-name: Tiny boot
+name: Wisp boot
 
-# A boot smoke test for QEMU changes with the tiny test system (e2e/tiny/README.md): a Linux 7.3
-# tinyconfig kernel with a nolibc PID 1 boots with -kernel on x86_64 and i386 (pc), sparc32 (SS-5
-# and SS-20) and sparc64 (sun4u) under TCG, and run.py checks the result line, the CRC and the
-# power-off. About 3 s per boot.
+# A boot smoke test for QEMU changes with wisp, the tiny test system (e2e/wisp/README.md): a Linux 7.3
+# tinyconfig kernel with a nolibc PID 1 boots with -kernel on x86_64 and i386 (pc), sparc32 (SS-5,
+# then SS-20, SS-10, SS-4, SPARCClassic, SPARCbook, LX and Voyager) and sparc64 (sun4u) under TCG,
+# and run.py checks the result line, the CRC and the power-off. About 3 s per boot. The LX and the
+# Voyager need OpenBIOS patch 0027 (in the published pve-qemu-kvm since 11.1.3-3+wsh9); the
+# firmware is the published package's in both QEMU modes below. run.py --shell then boots the four architectures once more with
+# wisp=shell and drives the interactive shell over the serial console (help, info, bench, crc,
+# mandel, poweroff).
 #
 # Which QEMU: on a pull request that changes the pve-qemu build (submodules/pve-qemu.patch, the
-# pve-qemu pin, e2e/tiny/qemu-tci.sh or this workflow), qemu-system-{x86_64,i386,sparc,sparc64}
-# built from that pull request's patched pve-qemu tree (e2e/tiny/qemu-tci.sh with MODE=tcg: the
+# pve-qemu pin, e2e/wisp/qemu-tci.sh or this workflow), qemu-system-{x86_64,i386,sparc,sparc64}
+# built from that pull request's patched pve-qemu tree (e2e/wisp/qemu-tci.sh with MODE=tcg: the
 # tree dpkg-source would build, only the four targets: 4 minutes with -j4 on the lab host) instead of a
 # full package build (no workflow builds pve-qemu-kvm on a pull request);
 # the firmware (SeaBIOS, OpenBIOS) is the published package's. Otherwise, and on push and dispatch,
-# the published pve-qemu-kvm from the tiny image.
+# the published pve-qemu-kvm from the wisp image.
 #
 # On a GitHub-hosted runner: the kernels are cached, and a cold kernel build plus the QEMU build fit
 # in its time limit; the sparc-lab runner never runs pull request code.
 
 on:
   workflow_dispatch:
-  # Every pull request, without a paths filter, so the tiny-boot-required check always reports;
+  # Every pull request, without a paths filter, so the wisp-boot-required check always reports;
   # the changes job skips the boot job when the PR touches none of its paths.
   pull_request:
     branches:
@@ -29,8 +33,8 @@ on:
     branches:
       - main
     paths:
-      - 'e2e/tiny/**'
-      - '.github/workflows/tiny-boot.yml'
+      - 'e2e/wisp/**'
+      - '.github/workflows/wisp-boot.yml'
 
 permissions: {}
 
@@ -39,7 +43,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Whether this PR touches the tiny system or QEMU (tiny), and whether it changes the QEMU build
+  # Whether this PR touches wisp or QEMU (wisp), and whether it changes the QEMU build
   # (qemu). Both always true on push and dispatch, where the boot job uses the published package.
   changes:
     runs-on: ubuntu-latest
@@ -47,18 +51,18 @@ jobs:
     permissions:
       pull-requests: read # the changed-files action reads the PR file list
     outputs:
-      tiny: ${{ steps.tiny.outputs.changed }}
+      wisp: ${{ steps.wisp.outputs.changed }}
       qemu: ${{ steps.qemu.outputs.changed }}
     steps:
       - name: Changed files
-        id: tiny
+        id: wisp
         uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
         with:
           patterns: |
-            ^e2e/tiny/
+            ^e2e/wisp/
             ^submodules/pve-qemu\.patch$
             ^submodules/pve-qemu$
-            ^\.github/workflows/tiny-boot\.yml$
+            ^\.github/workflows/wisp-boot\.yml$
 
       - name: Changed files (QEMU build)
         id: qemu
@@ -67,18 +71,18 @@ jobs:
           patterns: |
             ^submodules/pve-qemu\.patch$
             ^submodules/pve-qemu$
-            ^e2e/tiny/qemu-tci\.sh$
-            ^\.github/workflows/tiny-boot\.yml$
+            ^e2e/wisp/qemu-tci\.sh$
+            ^\.github/workflows/wisp-boot\.yml$
 
   boot:
     needs: [changes]
-    if: ${{ needs.changes.outputs.tiny == 'true' }}
+    if: ${{ needs.changes.outputs.wisp == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read # checkout
     env:
-      IMAGE: wsh-tiny:ci
+      IMAGE: wsh-wisp:ci
       # pr: QEMU built from this pull request; published: the package in the image
       QEMU_FROM: ${{ github.event_name == 'pull_request' && needs.changes.outputs.qemu == 'true' && 'pr' || 'published' }}
     steps:
@@ -88,27 +92,27 @@ jobs:
           persist-credentials: false
 
       - name: Unit tests
-        run: python3 -m unittest discover -s e2e/tiny/tests -v
+        run: python3 -m unittest discover -s e2e/wisp/tests -v
 
       # Only what goes into the kernels and PID 1: run.py, the tests and the docs don't change them
       - name: Cache the kernels
         id: kernels
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: e2e/tiny/out
-          key: tiny-kernels-${{ hashFiles('e2e/tiny/Dockerfile', 'e2e/tiny/build.sh', 'e2e/tiny/init.c', 'e2e/tiny/config/**') }}
+          path: e2e/wisp/out
+          key: wisp-kernels-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
 
-      - name: Build the tiny image
+      - name: Build the wisp image
         run: |
-          docker build --pull -f e2e/tiny/Dockerfile -t "$IMAGE" .
+          docker build --pull -f e2e/wisp/Dockerfile -t "$IMAGE" .
           echo "Published package in the image: $(docker run --rm "$IMAGE" dpkg-query -W -f '${Version}' pve-qemu-kvm)" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build the kernels
         if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
         run: |
-          docker run --rm -e JOBS="$(nproc)" -v "$PWD/e2e/tiny:/tiny" "$IMAGE" ./build.sh all
-          cat e2e/tiny/out/*/sizes
+          docker run --rm -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" ./build.sh all
+          cat e2e/wisp/out/*/sizes
 
       # The tree dpkg-source builds: pve-qemu at the pull request's pin with pve-qemu.patch, its qemu
       # submodule, and every patch of debian/patches/series applied without fuzz
@@ -118,62 +122,70 @@ jobs:
           git submodule update --init submodules/pve-qemu
           patch -d submodules/pve-qemu -p1 -s -i ../pve-qemu.patch
           git -C submodules/pve-qemu submodule update --init qemu
-          docker run --rm -e MODE=tcg -e JOBS="$(nproc)" -v "$PWD:/src" -w /src/e2e/tiny "$IMAGE" sh -euc '
+          docker run --rm -e MODE=tcg -e JOBS="$(nproc)" -v "$PWD:/src" -w /src/e2e/wisp "$IMAGE" sh -euc '
             apt-get update -qq
             # quilt for the series, git for the meson wraps configure downloads (keycodemapdb, ...)
             apt-get install -y -qq --no-install-recommends quilt git >/dev/null
             git config --global --add safe.directory "*"
             (cd /src/submodules/pve-qemu/qemu && QUILT_PATCHES=../debian/patches quilt push -a -q --fuzz=0)
-            ./qemu-tci.sh /src/submodules/pve-qemu/qemu /src/build/tiny-qemu
-            /src/build/tiny-qemu/qemu-system-sparc --version'
+            ./qemu-tci.sh /src/submodules/pve-qemu/qemu /src/build/wisp-qemu
+            /src/build/wisp-qemu/qemu-system-sparc --version'
 
       - name: Boot
         run: |
-          mkdir -p "$RUNNER_TEMP/tiny"
+          mkdir -p "$RUNNER_TEMP/wisp"
           args=(--label "$QEMU_FROM" --timeout 120 --json /results/results.jsonl --log-dir /results/logs)
-          mounts=(-v "$PWD/e2e/tiny:/tiny" -v "$RUNNER_TEMP/tiny:/results")
+          mounts=(-v "$PWD/e2e/wisp:/wisp" -v "$RUNNER_TEMP/wisp:/results")
           if [ "$QEMU_FROM" = pr ]; then
             # the image's libraries and the deps qemu-tci.sh installed for the build are the same
             # runtime libraries, so the binaries run in a fresh container
             args+=(--qemu-dir /qemu)
-            mounts+=(-v "$PWD/build/tiny-qemu:/qemu:ro")
+            mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
           rc=0
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all "${args[@]}" \
-            2> "$RUNNER_TEMP/tiny/table-all.md" || rc=1
-          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 --machine SS-20 "${args[@]}" \
-            2> "$RUNNER_TEMP/tiny/table-ss20.md" || rc=1
+            2> "$RUNNER_TEMP/wisp/table-all.md" || rc=1
+          sparc32=(--machine SS-20 --machine SS-10 --machine SS-4 --machine SPARCClassic
+            --machine SPARCbook --machine LX --machine Voyager)
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 "${sparc32[@]}" "${args[@]}" \
+            2> "$RUNNER_TEMP/wisp/table-sparc32.md" || rc=1
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell "${args[@]}" \
+            2> "$RUNNER_TEMP/wisp/table-shell.md" || rc=1
           exit "$rc"
 
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
           {
-            echo "## Tiny boot ($QEMU_FROM QEMU)"
+            echo "## Wisp boot ($QEMU_FROM QEMU)"
             echo
             echo "### x86_64, i386 (pc), sparc32 (SS-5), sparc64 (sun4u)"
             echo
-            cat "$RUNNER_TEMP/tiny/table-all.md" 2>/dev/null || echo "(no table)"
+            cat "$RUNNER_TEMP/wisp/table-all.md" 2>/dev/null || echo "(no table)"
             echo
-            echo "### sparc32 (SS-20)"
+            echo "### sparc32 machines"
             echo
-            cat "$RUNNER_TEMP/tiny/table-ss20.md" 2>/dev/null || echo "(no table)"
+            cat "$RUNNER_TEMP/wisp/table-sparc32.md" 2>/dev/null || echo "(no table)"
+            echo
+            echo "### Interactive shell (wisp=shell)"
+            echo
+            cat "$RUNNER_TEMP/wisp/table-shell.md" 2>/dev/null || echo "(no table)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tiny-boot-${{ env.QEMU_FROM }}
-          path: ${{ runner.temp }}/tiny
+          name: wisp-boot-${{ env.QEMU_FROM }}
+          path: ${{ runner.temp }}/wisp
           retention-days: 14
           if-no-files-found: warn
 
   # The required check, if the owner adds it to the rulesets. Runs on every PR: passes when the boot
   # job passed or was skipped because nothing relevant changed, fails when a job failed or was
   # cancelled.
-  tiny-boot-required:
-    name: tiny-boot-required
+  wisp-boot-required:
+    name: wisp-boot-required
     if: ${{ always() }}
     needs: [changes, boot]
     runs-on: ubuntu-latest
@@ -186,6 +198,6 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           if echo "$RESULTS" | jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' > /dev/null; then
-            echo "::error::The changes job or the tiny boot failed or was cancelled."
+            echo "::error::The changes job or the wisp boot failed or was cancelled."
             exit 1
           fi

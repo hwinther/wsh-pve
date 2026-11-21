@@ -1324,7 +1324,8 @@ test.describe('web UI', () => {
     await page.reload() // the resource tree learns about VMs created after login only on a reload
     await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
     await page.getByRole('button', { name: 'Add' }).click()
-    await expect(page.getByRole('menuitem', { name: 'Hard Disk', exact: true })).toBeVisible()
+    // a menu item's accessible name ends with its Font Awesome glyph, so `exact: true` never matches
+    await expect(page.getByRole('menuitem', { name: /^Hard Disk/ })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toHaveCount(0)
     await expect(page.getByRole('menuitem', { name: 'TPM State' })).toHaveCount(0)
     await page.keyboard.press('Escape')

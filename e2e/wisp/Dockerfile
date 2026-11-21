@@ -1,10 +1,10 @@
-# The tiny test system: a kernel and a one-program initramfs (PID 1 built with the kernel's nolibc)
+# wisp, the tiny test system: a kernel and a one-program initramfs (PID 1 built with the kernel's nolibc)
 # for x86_64, i386, sparc32 and sparc64, and the published pve-qemu-kvm to boot them.
 #
 # Build context: the repository root (for the keyrings).
-#   docker build -f e2e/tiny/Dockerfile -t wsh-tiny .
-#   docker run --rm -v "$PWD/out:/tiny/out" wsh-tiny ./build.sh all
-#   docker run --rm -v "$PWD/out:/tiny/out" wsh-tiny ./run.py --arch sparc32
+#   docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
+#   docker run --rm -v "$PWD/out:/wisp/out" wsh-wisp ./build.sh all
+#   docker run --rm -v "$PWD/out:/wisp/out" wsh-wisp ./run.py --arch sparc32
 #
 # The kernel source is Debian's linux-source from trixie-backports: nolibc gained sparc in 6.16,
 # trixie itself has 6.12.
@@ -29,7 +29,7 @@ RUN gpg --dearmor < /tmp/wsh-pve.gpg.key > /usr/share/keyrings/wsh-pve.gpg \
     && apt-get install --no-install-recommends --assume-yes pve-qemu-kvm \
     && rm -rf /var/lib/apt/lists/*
 # The firmware directory: openbios-sparc32/64 and SeaBIOS.
-ENV TINY_FIRMWARE=/usr/share/kvm
+ENV WISP_FIRMWARE=/usr/share/kvm
 
-COPY e2e/tiny/ /tiny/
-WORKDIR /tiny
+COPY e2e/wisp/ /wisp/
+WORKDIR /wisp

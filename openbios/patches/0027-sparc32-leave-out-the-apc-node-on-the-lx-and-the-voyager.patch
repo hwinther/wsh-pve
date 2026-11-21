@@ -1,0 +1,94 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: leave out the APC node on the LX and the Voyager
+
+ob_sbus_init_ss5() serves every machine ID from 32 to 63 and gives each
+a "power-management" node, the APC (Aurora Personality Chip) of the
+SPARCstation 4 and 5, at SBus slot 4 offset 0x0a000000 (0x6a000000).
+QEMU has an APC there on the SS-4, SS-5, SPARCClassic and SPARCbook,
+but not on the SPARCstation LX (machine ID 34, no APC at all; a real LX
+has none either) or the Voyager (33, whose power controller QEMU puts
+at 0x71300000).
+
+Linux's apc driver binds to that node and makes apc_swift_idle() its
+idle routine, which reads and writes the APC's idle register. On -M LX
+and -M Voyager the read takes a data access error the first time the
+CPU goes idle, which is right after the console moves to the zs port.
+The kernel finds no exception table entry for the faulting load, and
+do_sparc_fault() then dereferences the NULL result of
+search_exception_tables(): the nested faults run the kernel stack down
+through the kernel's own text until QEMU stops in the overwritten trap
+entry code ("Trap 0x07 ... while interrupts disabled" in tsetup_patch2
+on the LX, "Trap 0x02" on the Voyager).
+
+Make the APC node only on the machines that have one there. Linux 7.3
+with OpenBIOS then boots to its init and powers off on -M LX and -M
+Voyager; the SS-4, SS-5, SPARCClassic and SPARCbook keep the node.
+---
+ drivers/sbus.c | 25 ++++++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/sbus.c b/drivers/sbus.c
+index 475cb15..66af97a 100644
+--- a/drivers/sbus.c
++++ b/drivers/sbus.c
+@@ -292,8 +292,20 @@ sbus_probe_sucess(void)
+     return POP();
+ }
+ 
++/*
++ * The machines with QEMU machine IDs 32-63 that have the APC (Aurora
++ * Personality Chip) at SBus slot 4 offset 0x0a000000: not the SPARCstation
++ * LX (34) or the Voyager (33). An APC node there sends Linux's idle loop to
++ * registers that answer with a data access error.
++ */
++static int
++sbus_ss5_has_apc(int machine_id)
++{
++    return machine_id != 33 && machine_id != 34;
++}
++
+ static void
+-sbus_probe_slot_ss5(unsigned int slot, uint64_t base)
++sbus_probe_slot_ss5(unsigned int slot, uint64_t base, int machine_id)
+ {
+     /* Probe the slot */
+     sbus_probe_self(slot, 0);
+@@ -314,7 +326,9 @@ sbus_probe_slot_ss5(unsigned int slot, uint64_t base)
+         // SUNW,CS4231
+         ob_cs4231_init(slot);
+         // Power management (APC)
+-        ob_apc_init(slot, APC_OFFSET);
++        if (sbus_ss5_has_apc(machine_id)) {
++            ob_apc_init(slot, APC_OFFSET);
++        }
+         break;
+     case 5: // MACIO: le, esp, bpp
+         ob_macio_init(slot, base, 0x08000000);
+@@ -434,7 +448,7 @@ ob_add_sbus_range(const struct sbus_offset *range, int notfirst)
+ }
+ 
+ static int
+-ob_sbus_init_ss5(void)
++ob_sbus_init_ss5(int machine_id)
+ {
+     unsigned int slot;
+     int notfirst = 0;
+@@ -448,7 +462,8 @@ ob_sbus_init_ss5(void)
+ 
+     for (slot = 0; slot < SBUS_SLOTS; slot++) {
+         if (sbus_offsets_ss5[slot].size > 0)
+-            sbus_probe_slot_ss5(slot, sbus_offsets_ss5[slot].base);
++            sbus_probe_slot_ss5(slot, sbus_offsets_ss5[slot].base,
++                                machine_id);
+     }
+ 
+     return 0;
+@@ -506,7 +521,7 @@ int ob_sbus_init(uint64_t base, int machine_id)
+     case 64 ... 65:
+         return ob_sbus_init_ss10();
+     case 32 ... 63:
+-        return ob_sbus_init_ss5();
++        return ob_sbus_init_ss5(machine_id);
+     default:
+         return -1;
+     }
