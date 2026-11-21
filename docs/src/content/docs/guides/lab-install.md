@@ -79,6 +79,9 @@ TCX) wait for framebuffer scenarios: their installs run on the TCX with the keyb
 not on the serial console. Their profiles set `machine: SS-5,esp-irq-latency=500` (the [SCSI
 interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qemu-kvm
 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 and later); without it their installers hang on the disk.
+`sunos412-ss600mp` (SunOS 4.1.2 on the SPARCserver 600MP, one CPU) installs and boots in the lab's
+own QEMU with pve-qemu `wsh/0063`-`0065` and openbios 0028; it waits for a package with them and an
+SS-600MP profile in qemu-server.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),

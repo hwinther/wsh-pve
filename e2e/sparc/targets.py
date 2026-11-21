@@ -210,6 +210,11 @@ MEDIA = {
         "title": "SunOS 4.1.3 (Solaris 1.1) install CD", "content": "iso", "size": 325693440,
         "sha256": "66e076811d8a72554363f3a8831bbd648e0853272f9baab04912d0c30f41c5f1",
         "lab": "sunos_202004/SunOS/SPARC/4.1.3/Solaris_1.1.img"},
+    # SunOS 4.1.2 (Solaris 1.0.1): a plain image with 2048-byte sectors (no conversion)
+    "sunos_4.1.2.iso": {
+        "title": "SunOS 4.1.2 (Solaris 1.0.1) install CD", "content": "iso", "size": 281128960,
+        "sha256": "8190a3b937151b3ee244189082feff068563d122d152ce8ff33dfccb4ca34b2d",
+        "lab": "sunos_202004/SunOS/SPARC/4.1.2/sunos_4.1.2.iso"},
     "NetBSD-11.1-sparc64.iso": {
         "title": "NetBSD 11.1 sparc64 install CD (cdn.netbsd.org)", "content": "iso", "size": 694026240,
         "sha256": "a782b26be57325c8419fdb02030ea4e686a6ccf097baad2dae0a1a0c39e96f4e",
@@ -1267,6 +1272,31 @@ TARGETS["sunos413-ss10"] = {
     "hostname": "sunos413",
     "minutes": 6,  # 5.9-6.1 min: install 2.2-2.4, first boot 2.5, --check 0.9 (10.5 min on a loaded host)
     "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_WSH31, "with": "--check"},
+}
+
+# SunOS 4.1.2 (Solaris 1.0.1), the first SunOS for the SPARCserver 600MP, the first sun4m machine: the
+# 4.1.4 install unchanged, from its own CD, with the ESP under "dma" (the scenarios' esp()). It needs
+# pve-qemu wsh/0063-0065 (the 600MP's VMEbus interface registers, which its kernel sets up before the
+# banner, and the lance's own buffer memory, the "lebuffer") and openbios 0028 (the "dma" and
+# "lebuffer" nodes it knows), and SERIAL_7BIT: its getty sends even parity in bit 7 on the console.
+# One CPU only: its multiprocessor start checks the module ID in the MMU control register of the
+# 600MP's Ross modules, which QEMU doesn't model (submodules/SPARC.md, "Older Sun releases on sun4m").
+_SUNOS412_VARS = {"SERIAL_7BIT": "1"}
+TARGETS["sunos412-ss600mp"] = {
+    **_SUNOS4,
+    "title": "SunOS 4.1.2 Programmer install on a SPARCserver 600MP (OpenBIOS, one CPU)",
+    "status": "catalogue",
+    "blocked": ("Needs pve-qemu wsh/0063-0065 and openbios 0028 in a published pve-qemu-kvm, and an SS-600MP"
+                " profile in qemu-server's $SPARC32_PROFILES (and pve-manager's sparc32Profiles): installed and"
+                " booted in the lab's own QEMU so far (2026-11-21)."),
+    "install": {**_SUNOS4["install"], "vars": {**_SUNOS4["install"]["vars"], **_SUNOS412_VARS}},
+    "firstboot": {**_SUNOS4["firstboot"], "vars": {**_SUNOS4["firstboot"]["vars"], **_SUNOS412_VARS}},
+    "check": {**_SUNOS4["check"], "vars": {**_SUNOS4["check"]["vars"], **_SUNOS412_VARS}},
+    "profile": {**SPARC32, "machine": "SS-600MP", "memory": 256, "ostype": "other"},
+    "media": [{"name": "sunos_4.1.2.iso", "drive": "scsi6"}],
+    "net_refuse": {k: v.replace("4.1.4", "4.1.2") for k, v in TARGETS["sunos414-ss5"]["net_refuse"].items()},
+    "hostname": "sunos412",
+    "minutes": 5,  # lab (three passes): install 1.8-2.8, first boot 0.9-1.5, check 0.7-0.9
 }
 
 # Solaris 2.1 (SunOS 5.1), the first sun4m release (SS-10 only of QEMU's machines): the 2.2 path of

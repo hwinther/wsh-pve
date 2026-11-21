@@ -22,7 +22,7 @@ miniroot's shell then never sees ttya.
 """
 import re
 
-from _sparc32 import DEFAULTS as BASE, ESP, qemu_args as sparc32_args
+from _sparc32 import DEFAULTS as BASE, esp, qemu_args as sparc32_args
 from _sunos4 import SHELL
 
 DEFAULTS = {**BASE, "VGA": "none", "BOOT": "c", "MEM": "64", "SOFTWARE": "Programmer"}
@@ -34,14 +34,15 @@ def qemu_args(v, out):
 
 
 # What a Sun PROM (BIOS other than OpenBIOS, e.g. the LX's) boots for the paths typed at OpenBIOS
-SUN_PROM_BOOT = {f"{ESP}/sd@6,0:d": "cdrom", f"{ESP}/sd@3,0:b -sw": "disk:b -sw"}
+SUN_PROM_BOOT = {"/sd@6,0:d": "cdrom", "/sd@3,0:b -sw": "disk:b -sw"}
 
 
 def prom(m, v, path, timeout=300):
+    """Boot `path`, below the ESP (`/sd@6,0:d`), at the PROM prompt."""
     if v["BIOS"].startswith("openbios"):
         m.expect(r"0 >", timeout)
         m.snap("OpenBIOS prompt")
-        m.send(f"boot {path}\r")
+        m.send(f"boot {esp(v)}{path}\r")
         return
     # A Sun PROM ignores -prom-env (QEMU's NVRAM fails its checksum): at power-on it tries its default
     # boot device and stops at `ok`, but the miniroot's reboot string it boots by itself. With a
@@ -67,7 +68,7 @@ def answer(m, prompt, reply, timeout=300, title=None):
 def run(m, v):
     if v["SOFTWARE"] not in SOFTWARE:
         raise ValueError(f"SOFTWARE must be one of {SOFTWARE}")
-    prom(m, v, f"{ESP}/sd@6,0:d")  # the CD's slice d: the sun4m boot and munix
+    prom(m, v, "/sd@6,0:d")  # the CD's slice d: the sun4m boot and munix
     m.expect(r"SunOS Release 4\.1", 600)
     m.snap("CD kernel banner")
     answer(m, r"1 - install SunOS mini-root[\s\S]*Enter a 1 or 2:", "1\r", 600, "install the mini-root")
@@ -76,7 +77,7 @@ def run(m, v):
     m.expect(r"Mini-root installation complete", 1200)
     answer(m, r"1 - reboot using the just-installed miniroot[\s\S]*Enter a 1 or 2:", "1\r", 60, "reboot")
     # OpenBIOS drops the reboot's boot string: the miniroot on slice b, single user, writable root
-    prom(m, v, f"{ESP}/sd@3,0:b -sw")
+    prom(m, v, "/sd@3,0:b -sw")
     m.expect(r"root on sd0b", 600)
     m.expect(SHELL, 600)
     m.snap("miniroot shell")

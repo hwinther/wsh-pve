@@ -195,6 +195,8 @@ class Machine:
         """One read from the serial socket (self.cond held): serial.raw, the cast, the terminal, the text."""
         self.raw.write(data)
         self.raw.flush()
+        if getattr(self, "seven_bit", False):
+            data = bytes(b & 0x7F for b in data)  # SERIAL_7BIT: the guest sends parity in bit 7
         self.cast.output(data)
         self.stream.feed(data)
         self.text += ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
@@ -1035,6 +1037,8 @@ def run_scenario(scenario, out, variables=None, pve=None, no_ocr=False, keep_run
     os.makedirs(out, exist_ok=True)
     a = argparse.Namespace(out=out, pve=pve, no_ocr=no_ocr, keep_running=keep_running)
     m = attach(a, v) if pve else Machine(out, sc.qemu_args(v, out), ocr=not no_ocr)
+    # SERIAL_7BIT=1: 7-bit console (SunOS 4.1.2's getty sends even parity in bit 7); serial.raw keeps it
+    m.seven_bit = v.get("SERIAL_7BIT") == "1"
     if on_machine:
         on_machine(m)
     m.refresh(float(v.get("REFRESH") or 0))
