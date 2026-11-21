@@ -1323,6 +1323,8 @@ test.describe('web UI', () => {
     await page.goto(`/#v1:0:=qemu%2F${sparc}:4:=hardware`)
     await page.reload() // the resource tree learns about VMs created after login only on a reload
     await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+    // the Add menu doesn't open before the VM's hardware has loaded: select a row first
+    await page.getByText(/^Memory$/).click()
     await page.getByRole('button', { name: 'Add' }).click()
     await expect(page.getByRole('menuitem', { name: 'Hard Disk', exact: true })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toHaveCount(0)
@@ -1331,6 +1333,7 @@ test.describe('web UI', () => {
 
     await page.goto(`/#v1:0:=qemu%2F${x86}:4:=hardware`)
     await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+    await page.getByText(/^Memory$/).click()
     await page.getByRole('button', { name: 'Add' }).click()
     await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'TPM State' })).toBeVisible()
