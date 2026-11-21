@@ -46,7 +46,7 @@
 /* qemu-3dfx glidewnd.c */
 #define WRAPPER_FLAG_WINDOWED 0x01
 #define WRAPPER_FLAG_QEMU 0x80
-#define WRAPPER_FLAG_OFFSCREEN 0x100 /* packages/wsh-openglide/patches/20-egl-offscreen.patch */
+#define WRAPPER_FLAG_OFFSCREEN 0x100 /* packages/wsh-openglide/patches/0002-egl-offscreen.patch */
 
 /* A Glide 3 vertex of our own layout (grVertexLayout): position, then colour */
 typedef struct {

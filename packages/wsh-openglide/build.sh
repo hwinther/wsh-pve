@@ -2,7 +2,8 @@
 # Build the wsh-openglide package inside the build image (packages/wsh-openglide/build.Dockerfile)
 # from the repository at /src (read only) into OUT, then run lintian on it. The upstream source,
 # qemu-xtra's openglide/, is fetched with git at the commit pinned in upstream.env (network access
-# once); the version comes from git on the host (version.sh), passed in the environment:
+# once), and our patches (patches/*.patch) are applied to it; the version comes from git on the host
+# (version.sh), passed in the environment:
 #
 #   eval "$(packages/wsh-openglide/version.sh)"
 #   docker build -f packages/wsh-openglide/build.Dockerfile -t wsh-openglide-build packages/wsh-openglide
@@ -29,6 +30,12 @@ git -C "$work/qemu-xtra" fetch -q --depth 1 "$url" "$upstream"
 git -C "$work/qemu-xtra" -c advice.detachedHead=false checkout -q FETCH_HEAD
 got=$(git -C "$work/qemu-xtra" rev-parse HEAD)
 [ "$got" = "$upstream" ] || { echo "build.sh: fetched $got, not the pinned $upstream" >&2; exit 1; }
+# Our changes to OpenGLide (patches/*.patch, in order; each says what it changes and why)
+for p in "$PKG"/patches/*.patch; do
+	[ -e "$p" ] || continue
+	echo "build.sh: applying $(basename "$p")"
+	git -C "$work/qemu-xtra" apply "$p"
+done
 
 tree="$work/wsh-openglide-$WSH_OPENGLIDE_VERSION"
 cp -r "$work/qemu-xtra/openglide" "$tree"
@@ -55,12 +62,6 @@ if grep -rl 'UNPUBLISHED PROPRIETARY' "$tree"; then
 	echo "build.sh: the files above still carry the 1995 banner" >&2
 	exit 1
 fi
-# Our changes to OpenGLide, in name order: patches/*.patch (each says what it does at its top)
-for p in "$PKG"/patches/*.patch; do
-	[ -e "$p" ] || continue
-	echo "build.sh: applying ${p#"$SRC"/}"
-	patch -d "$tree" -p1 -t -N --no-backup-if-mismatch -i "$p"
-done
 cp -r "$PKG/debian" "$PKG/tests" "$tree/"
 # debhelper runs an executable config file: only debian/rules is one
 find "$tree/debian" "$tree/tests" -type f -exec chmod 644 {} +

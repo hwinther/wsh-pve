@@ -101,61 +101,18 @@ export async function serviceLogs(service: string, tail = 200): Promise<string> 
 }
 
 /**
- * Whether the installed qemu-server has `machine: ...,legacy-bios-layout=1` (NICs without option ROM, no
- * vapic ROM). TODO: remove with its test.fail() once a qemu-server with it is published.
+ * Whether the installed qemu-server gives the 3dfx binary OPENGLIDE_DIR, a directory of the VM's for
+ * OpenGLide's files. TODO: remove with its test.fail() once a qemu-server with it is published.
  */
-export async function hasLegacyBiosLayout(): Promise<boolean> {
+export async function hasQemu3dfxDir(): Promise<boolean> {
   const probe = await pveExec([
     'perl',
-    '-MPVE::QemuServer::Machine',
+    '-MPVE::QemuServer::Helpers',
     '-e',
-    `print defined(&PVE::QemuServer::Machine::legacy_bios_layout) ? 'legacy=yes' : 'legacy=no';`,
+    `print defined(&PVE::QemuServer::Helpers::prepare_qemu_3dfx_env) ? 'dir=yes' : 'dir=no';`,
   ])
-  expect(probe.output, probe.output).toMatch(/^legacy=(yes|no)$/m)
-  return probe.output.includes('legacy=yes')
-}
-
-/**
- * Whether the installed pve-manager has the "Legacy BIOS memory layout" checkbox in the Machine editor.
- * TODO: remove with its test.fail() once a pve-manager with it is published.
- */
-export async function hasLegacyBiosLayoutUi(): Promise<boolean> {
-  const probe = await pveExec([
-    'sh',
-    '-c',
-    'grep -q legacy-bios-layout /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
-  ])
-  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
-  return probe.output.includes('ui=yes')
-}
-
-/**
- * Whether the installed qemu-server has `vga: ...,retrace=precise` (QEMU's precise VGA retrace emulation).
- * TODO: remove with its test.fail() once a qemu-server with it is published.
- */
-export async function hasVgaRetrace(): Promise<boolean> {
-  const probe = await pveExec([
-    'perl',
-    '-MPVE::QemuServer',
-    '-e',
-    `print defined(&PVE::QemuServer::assert_vga_retrace) ? 'retrace=yes' : 'retrace=no';`,
-  ])
-  expect(probe.output, probe.output).toMatch(/^retrace=(yes|no)$/m)
-  return probe.output.includes('retrace=yes')
-}
-
-/**
- * Whether the installed pve-manager has the "VGA retrace" checkbox in the Display editor.
- * TODO: remove with its test.fail() once a pve-manager with it is published.
- */
-export async function hasVgaRetraceUi(): Promise<boolean> {
-  const probe = await pveExec([
-    'sh',
-    '-c',
-    'grep -q retraceSupported /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
-  ])
-  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
-  return probe.output.includes('ui=yes')
+  expect(probe.output, probe.output).toMatch(/^dir=(yes|no)$/m)
+  return probe.output.includes('dir=yes')
 }
 
 /** The VM's config file as pmxcfs stores it. */

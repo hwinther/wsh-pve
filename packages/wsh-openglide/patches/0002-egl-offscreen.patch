@@ -7,12 +7,16 @@ object whose colour attachments 0 and 1 are Glide's back and front buffers (OGLB
 GL_BACK/GL_FRONT at the four places that select a buffer). grBufferSwap() copies back to front.
 The host program reads the front buffer with the new exports getOffscreenSize() and
 getOffscreenFrame() (BGRX, rows bottom up). Without the flag nothing changes (X11/GLX).
-Gamma ramps and MSAA are not applied offscreen yet. Applied by build.sh to qemu-xtra's openglide/.
-diff --git a/GLutil.cpp b/GLutil.cpp
-index 09b9a4f..9f6cd5f 100644
---- a/GLutil.cpp
-+++ b/GLutil.cpp
-@@ -518,6 +518,7 @@ FX_ENTRY void FX_CALL setConfig(FxU32 flags, void *magic)
+Gamma ramps and MSAA are not applied offscreen yet.
+
+For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins,
+after 0001-openglide-dir-no-exit.patch.
+---
+diff --git a/openglide/GLutil.cpp b/openglide/GLutil.cpp
+index f4bfa5f..ddc064f 100644
+--- a/openglide/GLutil.cpp
++++ b/openglide/GLutil.cpp
+@@ -549,6 +549,7 @@ FX_ENTRY void FX_CALL setConfig(FxU32 flags, void *magic)
          ((flags & WRAPPER_FLAG_ANNOTATE) != 0):UserConfig.Annotate;
      UserConfig.VsyncOff = ((flags & WRAPPER_FLAG_VSYNCOFF) != 0);
      UserConfig.QEmu = ((flags & WRAPPER_FLAG_QEMU) != 0);
@@ -20,10 +24,10 @@ index 09b9a4f..9f6cd5f 100644
      UserConfig.InitFullScreen = (flags & WRAPPER_FLAG_WINDOWED)? false:true;
  }
  
-diff --git a/GlOgl.h b/GlOgl.h
-index ee1f7c8..96e0e58 100644
---- a/GlOgl.h
-+++ b/GlOgl.h
+diff --git a/openglide/GlOgl.h b/openglide/GlOgl.h
+index 1f6eb7e..3b6fead 100644
+--- a/openglide/GlOgl.h
++++ b/openglide/GlOgl.h
 @@ -289,6 +289,7 @@ struct ConfigStruct
      bool    Annotate;
      bool    VsyncOff;
@@ -32,10 +36,10 @@ index ee1f7c8..96e0e58 100644
  };
  
  // Extern variables
-diff --git a/grguBuffer.cpp b/grguBuffer.cpp
-index ec4c5b5..fb58683 100644
---- a/grguBuffer.cpp
-+++ b/grguBuffer.cpp
+diff --git a/openglide/grguBuffer.cpp b/openglide/grguBuffer.cpp
+index 08b7a73..9748865 100644
+--- a/openglide/grguBuffer.cpp
++++ b/openglide/grguBuffer.cpp
 @@ -159,7 +159,7 @@ grRenderBuffer( GrBuffer_t dwBuffer )
      // Valid parameters are only FRONT and BACK ( 0x0 and 0x1 )
      OpenGL.RenderBuffer = GL_FRONT + dwBuffer;
@@ -45,10 +49,10 @@ index ec4c5b5..fb58683 100644
  
  #ifdef OPENGL_DEBUG
      GLErro( "grRenderBuffer" );
-diff --git a/grguLfb.cpp b/grguLfb.cpp
-index d67fb4e..5c04e02 100644
---- a/grguLfb.cpp
-+++ b/grguLfb.cpp
+diff --git a/openglide/grguLfb.cpp b/openglide/grguLfb.cpp
+index eb359c6..1cd51b6 100644
+--- a/openglide/grguLfb.cpp
++++ b/openglide/grguLfb.cpp
 @@ -55,8 +55,8 @@ grLfbLock( GrLock_t dwType,
      {
          FxU32 j;
@@ -80,10 +84,10 @@ index d67fb4e..5c04e02 100644
  
              if ( Glide.DstBuffer.Buffer != GR_BUFFER_BACKBUFFER )
              {
-diff --git a/platform/linux/Makefile.am b/platform/linux/Makefile.am
-index 3f2b09e..77860a4 100644
---- a/platform/linux/Makefile.am
-+++ b/platform/linux/Makefile.am
+diff --git a/openglide/platform/linux/Makefile.am b/openglide/platform/linux/Makefile.am
+index 1606fa3..830f9bc 100644
+--- a/openglide/platform/linux/Makefile.am
++++ b/openglide/platform/linux/Makefile.am
 @@ -8,9 +8,11 @@ error.cpp \
  openglext.cpp \
  library.cpp \
@@ -97,11 +101,11 @@ index 3f2b09e..77860a4 100644
 -platform/linux/platform.h
 +platform/linux/platform.h \
 +platform/linux/egl.h
-diff --git a/platform/linux/egl.cpp b/platform/linux/egl.cpp
+diff --git a/openglide/platform/linux/egl.cpp b/openglide/platform/linux/egl.cpp
 new file mode 100644
 index 0000000..f6622f1
 --- /dev/null
-+++ b/platform/linux/egl.cpp
++++ b/openglide/platform/linux/egl.cpp
 @@ -0,0 +1,311 @@
 +//**************************************************************
 +//*            OpenGLide - Glide to OpenGL Wrapper
@@ -414,11 +418,11 @@ index 0000000..f6622f1
 +}
 +
 +#endif // !C_USE_SDL && !WIN32
-diff --git a/platform/linux/egl.h b/platform/linux/egl.h
+diff --git a/openglide/platform/linux/egl.h b/openglide/platform/linux/egl.h
 new file mode 100644
 index 0000000..d4ab1d3
 --- /dev/null
-+++ b/platform/linux/egl.h
++++ b/openglide/platform/linux/egl.h
 @@ -0,0 +1,19 @@
 +//**************************************************************
 +//*            OpenGLide - Glide to OpenGL Wrapper
@@ -439,10 +443,10 @@ index 0000000..d4ab1d3
 +ExtFn EGLGetProcAddress(const char *name);
 +
 +#endif
-diff --git a/platform/linux/openglext.cpp b/platform/linux/openglext.cpp
-index da4538e..618154c 100644
---- a/platform/linux/openglext.cpp
-+++ b/platform/linux/openglext.cpp
+diff --git a/openglide/platform/linux/openglext.cpp b/openglide/platform/linux/openglext.cpp
+index 92522d6..45d5694 100644
+--- a/openglide/platform/linux/openglext.cpp
++++ b/openglide/platform/linux/openglext.cpp
 @@ -18,10 +18,14 @@
  
  #include <GL/glx.h>
@@ -458,10 +462,10 @@ index da4538e..618154c 100644
  #ifdef GLX_ARB_get_proc_address
      return glXGetProcAddressARB((const GLubyte *) x);
  #else
-diff --git a/platform/linux/window.cpp b/platform/linux/window.cpp
-index 02c27ce..044e18c 100644
---- a/platform/linux/window.cpp
-+++ b/platform/linux/window.cpp
+diff --git a/openglide/platform/linux/window.cpp b/openglide/platform/linux/window.cpp
+index f51dcce..4858284 100644
+--- a/openglide/platform/linux/window.cpp
++++ b/openglide/platform/linux/window.cpp
 @@ -26,6 +26,7 @@
  
  #include "platform/openglext.h"
@@ -521,10 +525,10 @@ index 02c27ce..044e18c 100644
      if (buffer_method == bmExchange)
      {
          glXSwapBuffers( dpy, win );
-diff --git a/platform/window.h b/platform/window.h
-index 3b6e622..6ca350c 100644
---- a/platform/window.h
-+++ b/platform/window.h
+diff --git a/openglide/platform/window.h b/openglide/platform/window.h
+index 8d7ce6a..0346357 100644
+--- a/openglide/platform/window.h
++++ b/openglide/platform/window.h
 @@ -50,4 +50,12 @@ void ResetScreenMode();
  void SetSwapInterval(const int);
  void SwapBuffers();
@@ -538,10 +542,10 @@ index 3b6e622..6ca350c 100644
 +#endif
 +
  #endif
-diff --git a/wrapper_config.h b/wrapper_config.h
-index 85d0193..624bf3e 100644
---- a/wrapper_config.h
-+++ b/wrapper_config.h
+diff --git a/openglide/wrapper_config.h b/openglide/wrapper_config.h
+index 0142dc2..ce7e185 100644
+--- a/openglide/wrapper_config.h
++++ b/openglide/wrapper_config.h
 @@ -10,6 +10,7 @@
  #define WRAPPER_FLAG_FRAMEBUFFER_SRGB       (0x20)
  #define WRAPPER_FLAG_VSYNCOFF               (0x40)

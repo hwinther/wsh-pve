@@ -11,7 +11,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # the library would sign as SDL2 and expect an SDL window instead). LIBS=-lX11: the GLX platform
 # calls Xlib (XOpenDisplay, XCreateWindow, ...) but upstream links only libGL, libGLU and libXxf86vm,
 # so the library loads only into a process that has libX11 already; with it, dlopen() resolves
-# everything on its own. -lEGL: the EGL offscreen platform (patches/20-egl-offscreen.patch), which
+# everything on its own. -lEGL: the EGL offscreen platform (patches/0002-egl-offscreen.patch), which
 # renders without an X server when qemu-3dfx asks for it.
 override_dh_auto_configure:
 	dh_auto_configure -- --disable-sdl --disable-static "LIBS=-lX11 -lEGL"

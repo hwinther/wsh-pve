@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..6a9bfbd 100644
+index 7b0cba5..7a12683 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,55 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,58 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -129,6 +129,9 @@ index 7b0cba5..6a9bfbd 100644
 +wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m.patch
 +wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i.patch
 +wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a.patch
++wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
++wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s.patch
++wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..b4571f3
@@ -10556,6 +10559,859 @@ index 0000000..a9b18a8
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch b/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
+new file mode 100644
+index 0000000..63436b4
+--- /dev/null
++++ b/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
+@@ -0,0 +1,411 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: defer the fp_exception of an IEEE 754 exception on sparc32
++
++The boot PROM of the SPARCstation LX (microSPARC-I, TMS390S10) stops in
++its POST at "FPU SP Trap Priority < Test" with "Unexpected Synchronous
++Trap Taken, Trap Type = 00000008", and QEMU then aborts on a trap with
++traps disabled. The test divides by zero with all IEEE traps enabled
++(TEM = 0x1f) and follows the fdivs with a misaligned single-precision
++store from an FP register. It expects mem_address_not_aligned (trap 7)
++on that store, and the fp_exception (trap 8) on a later FP instruction,
++with the fdivs in the floating-point queue. QEMU raises trap 8 on the
++fdivs itself; its comments say "we do not model the fp_exception_pending
++state". Plain QEMU 11.1.3 stops the same way.
++
++The sparc32 FPUs defer fp_exception. The SPARC V8 manual (section 7.3)
++allows an fp_exception to be deferred, even past a precise trap, and an
++outstanding one "is provoked into causing an fp_exception trap by
++execution of any FPop, load or store floating-point (including STFSR),
++or FBfcc instruction". Its appendix L models the FPUs of the
++implementations it covers with three states, fp_execute,
++fp_exception_pending and fp_exception: the FPU moves to fp_exception, loads
++the FQ and traps "when the IU attempts to execute any floating-point
++instruction". The TMS390S10 (microSPARC-I) reference guide and the
++microSPARC-IIep user's manual describe the same model for the microSPARC
++(any floating-point instruction, FBfcc included), and the SuperSPARC
++(TMS390Z50) documentation says "fp_exception is a deferred trap and is
++always reported to the next FPOP or FPEV (ldf or stf)". So this applies to
++every sparc32 CPU model in system emulation; linux-user and sparc64 are
++unchanged.
++
++Model fp_exception_pending for IEEE 754 exceptions:
++
++- An FPop that raises an exception enabled in TEM sets cexc and ftt as
++  before and writes neither its destination nor fcc. It records its
++  address and opcode for the FQ (qne stays 0) and enters
++  fp_exception_pending; execution goes on with the next instruction.
++- The next FPop, FBfcc, FP load (LDF, LDDF, LDFSR) or FP store (STF,
++  STDF, STFSR, STDFQ) takes trap 8 itself (new TB flag
++  TB_FLAG_FP_PENDING): the trap's pc is that instruction, qne is 1 and
++  the FQ holds the FPop.
++- A misaligned FP load or store takes its mem_address_not_aligned
++  (priority 10 against 11) and the exception stays pending for the next
++  FP instruction, which is what the LX PROM expects (the microSPARC-IIep
++  manual: lower-priority traps are ignored as they "persist, recur, or
++  are meaningless"). That check uses the V8 alignment, 8 bytes for LDDF,
++  STDF and STDFQ, although QEMU's own FP accesses check only 4
++  (MO_ALIGN_4); the PROM's double-precision test needs it. Traps that
++  come before the FPU sees the instruction (fp_disabled, a privileged
++  STDFQ in user mode) leave the state as it is.
++- The state migrates in a new subsection, cpu/fp_pending, with the FQ
++  entry.
++
++unimplemented_FPop, invalid_fp_register and sequence_error keep QEMU's
++handling (the trap at once, with pc advanced past the instruction), and
++so does fp_exception state (qne set).
++
++Tested with 11.1.3 and this series: the LX PROM's POST passes all its
++FPU tests (SP and DP Invalid, Overflow, Divide-by-0 and Inexact CEXC,
++Trap Priority > and <) and goes on to its "ok" prompt as far as QEMU's
++LX allows; the SS-5 PROM's POST prints the same as without the change.
++Solaris 2.6 on the SS-20 and the SS-5 delivers SIGFPE with FPE_FLTDIV
++and si_addr at the fdivs, also when system calls and a sleep come
++between the fdivs and the next FP instruction (the kernel then takes
++the trap), 504 of 504 times, and keeps running; FP results of C, nawk
++and bc are unchanged. 34 stored sparc32 disks boot and pass their checks
++as before.
++---
++ target/sparc/cpu.c          |  3 ++
++ target/sparc/cpu.h          |  9 ++++++
++ target/sparc/fop_helper.c   | 53 +++++++++++++++++++++++++++++++++
++ target/sparc/helper.h       |  3 ++
++ target/sparc/int32_helper.c | 17 ++++++++---
++ target/sparc/machine.c      | 21 +++++++++++++
++ target/sparc/translate.c    | 59 ++++++++++++++++++++++++++++++-------
++ 7 files changed, 150 insertions(+), 15 deletions(-)
++
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 5dad364..919b518 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -752,6 +752,9 @@ static TCGTBCPUState sparc_get_tb_cpu_state(CPUState *cs)
++     if (env->fsr_qne) {
++         flags |= TB_FLAG_FSR_QNE;
++     }
+++    if (env->fp_pending) {
+++        flags |= TB_FLAG_FP_PENDING;
+++    }
++ #endif /* !CONFIG_USER_ONLY */
++ #endif /* TARGET_SPARC64 */
++ 
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 1bc6800..269efc5 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -446,6 +446,14 @@ struct CPUArchState {
++      * packaged into the double-word with which it is stored.
++      */
++     uint32_t fsr_qne;                /* qne */
+++    /*
+++     * fp_exception_pending state: an FPop raised an enabled IEEE 754
+++     * exception.  fq already holds it; the next floating-point
+++     * instruction takes the fp_exception trap.
+++     */
+++    uint32_t fp_pending;
+++    /* The fp_exception being raised is that deferred trap. */
+++    uint32_t fp_deferred_trap;
++     union {
++         uint64_t d;
++         struct {
++@@ -786,6 +794,7 @@ trap_state* cpu_tsptr(CPUSPARCState* env);
++ #define TB_FLAG_SUPER        (1 << 6)
++ #define TB_FLAG_HYPER        (1 << 7)
++ #define TB_FLAG_FSR_QNE      (1 << 8)
+++#define TB_FLAG_FP_PENDING   (1 << 9)
++ #define TB_FLAG_ASI_SHIFT    24
++ 
++ static inline bool tb_fpu_enabled(int tb_flags)
++diff --git a/target/sparc/fop_helper.c b/target/sparc/fop_helper.c
++index 29fd166..e975758 100644
++--- a/target/sparc/fop_helper.c
+++++ b/target/sparc/fop_helper.c
++@@ -21,6 +21,10 @@
++ #include "cpu.h"
++ #include "exec/helper-proto.h"
++ #include "fpu/softfloat.h"
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++#include "accel/tcg/cpu-loop.h"
+++#include "accel/tcg/cpu-ldst.h"
+++#endif
++ 
++ static inline float128 f128_in(Int128 i)
++ {
++@@ -44,6 +48,52 @@ static inline Int128 f128_ret(float128 f)
++     return u.i;
++ }
++ 
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++/*
+++ * The sparc32 FPUs defer fp_exception: the FPop that raises an enabled
+++ * IEEE 754 exception moves the FPU to fp_exception_pending, and the trap
+++ * is taken by the next floating-point instruction (SPARC V8 manual,
+++ * section 7.3 and appendix L; microSPARC and SuperSPARC manuals).
+++ * The FPop does not write its destination; it goes into the FQ, and
+++ * the integer unit carries on with the instruction after it.
+++ */
+++static G_NORETURN void fp_exception_pending(CPUSPARCState *env,
+++                                            uintptr_t ra)
+++{
+++    CPUState *cs = env_cpu(env);
+++    MemOpIdx oi = make_memop_idx(MO_BEUL, cpu_mmu_index(cs, true));
+++
+++    cpu_restore_state(cs, ra);
+++    env->fq.s.addr = env->pc;
+++    env->fq.s.insn = cpu_ldl_code_mmu(env, env->pc, oi, 0);
+++    env->fp_pending = 1;
+++    env->pc = env->npc;
+++    env->npc = env->npc + 4;
+++    cpu_loop_exit(cs);
+++}
+++
+++/*
+++ * A floating-point instruction in fp_exception_pending state: the FPU
+++ * moves to fp_exception (qne = 1) and the instruction takes the trap,
+++ * unless it has a higher-priority trap of its own.  For an FP load or
+++ * store that is mem_address_not_aligned (priority 10, fp_exception is
+++ * 11); the exception then stays pending for the next FP instruction,
+++ * as the boot PROM of the SPARCstation LX expects.  align is the V8
+++ * alignment mask of the access; 0 for an FPop or FBfcc.
+++ */
+++void helper_fp_deferred_trap(CPUSPARCState *env, target_ulong addr,
+++                             uint32_t align)
+++{
+++    if (addr & align) {
+++        cpu_raise_exception_ra(env, TT_UNALIGNED, GETPC());
+++    }
+++    env->fp_pending = 0;
+++    env->fsr_qne = FSR_QNE;
+++    env->fp_deferred_trap = 1;
+++    cpu_raise_exception_ra(env, TT_FP_EXCP, GETPC());
+++}
+++#endif
+++
++ static void check_ieee_exceptions(CPUSPARCState *env, uintptr_t ra)
++ {
++     target_ulong status = get_float_exception_flags(&env->fp_status);
++@@ -73,6 +123,9 @@ static void check_ieee_exceptions(CPUSPARCState *env, uintptr_t ra)
++         if (cexc & (env->fsr >> FSR_TEM_SHIFT)) {
++             /* Unmasked exception, generate an IEEE trap. */
++             env->fsr_cexc_ftt = cexc | FSR_FTT_IEEE_EXCP;
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++            fp_exception_pending(env, ra);
+++#endif
++             cpu_raise_exception_ra(env, TT_FP_EXCP, ra);
++         }
++ 
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 58bd9e1..130259e 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -101,6 +101,9 @@ DEF_HELPER_FLAGS_2(fxtoq, TCG_CALL_NO_WG, i128, env, s64)
++ DEF_HELPER_FLAGS_2(fdtos, TCG_CALL_NO_WG, f32, env, f64)
++ DEF_HELPER_FLAGS_2(fstod, TCG_CALL_NO_WG, f64, env, f32)
++ DEF_HELPER_FLAGS_2(fqtos, TCG_CALL_NO_WG, f32, env, i128)
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++DEF_HELPER_FLAGS_3(fp_deferred_trap, TCG_CALL_NO_WG, noreturn, env, tl, i32)
+++#endif
++ DEF_HELPER_FLAGS_2(fstoq, TCG_CALL_NO_WG, i128, env, f32)
++ DEF_HELPER_FLAGS_2(fqtod, TCG_CALL_NO_WG, f64, env, i128)
++ DEF_HELPER_FLAGS_2(fdtoq, TCG_CALL_NO_WG, i128, env, f64)
++diff --git a/target/sparc/int32_helper.c b/target/sparc/int32_helper.c
++index d6bb3fa..1f79dbf 100644
++--- a/target/sparc/int32_helper.c
+++++ b/target/sparc/int32_helper.c
++@@ -133,7 +133,14 @@ void sparc_cpu_do_interrupt(CPUState *cs)
++         }
++         return;
++     }
++-    if (intno == TT_FP_EXCP) {
+++    if (intno == TT_FP_EXCP && env->fp_deferred_trap) {
+++        /*
+++         * The trap deferred from an IEEE 754 exception, taken by the
+++         * next floating-point instruction (helper_fp_deferred_trap).
+++         * The FQ holds the FPop; pc is the trapping instruction.
+++         */
+++        env->fp_deferred_trap = 0;
+++    } else if (intno == TT_FP_EXCP) {
++         /*
++          * The sparc32 fpu has three states related to exception handling.
++          * The FPop that signals an exception transitions from fp_execute
++@@ -144,9 +151,11 @@ void sparc_cpu_do_interrupt(CPUState *cs)
++          * illegal FPop while in fp_exception state.  Here we are to
++          * re-enter fp_exception_pending state without queuing the insn.
++          *
++-         * We do not model the fp_exception_pending state, but instead
++-         * skip directly to fp_exception state.  We advance pc/npc to
++-         * mimic delayed trap delivery as if by the subsequent insn.
+++         * IEEE 754 exceptions go through fp_exception_pending (above).
+++         * For the other FPop exceptions (unimplemented_FPop,
+++         * invalid_fp_register) and sequence_error we skip directly to
+++         * fp_exception state.  We advance pc/npc to mimic delayed trap
+++         * delivery as if by the subsequent insn.
++          */
++         if (!env->fsr_qne) {
++             MemOpIdx oi = make_memop_idx(MO_BEUL, cpu_mmu_index(cs, true));
++diff --git a/target/sparc/machine.c b/target/sparc/machine.c
++index 8b6d9db..bbb5980 100644
++--- a/target/sparc/machine.c
+++++ b/target/sparc/machine.c
++@@ -201,6 +201,26 @@ static const VMStateDescription vmstate_fq = {
++     },
++ };
++ 
+++static bool fp_pending_needed(void *opaque)
+++{
+++    SPARCCPU *cpu = opaque;
+++    return cpu->env.fp_pending;
+++}
+++
+++/* fp_exception_pending: the FQ is filled while qne is still 0. */
+++static const VMStateDescription vmstate_fp_pending = {
+++    .name = "cpu/fp_pending",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = fp_pending_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT32(env.fp_pending, SPARCCPU),
+++        VMSTATE_UINT32(env.fq.s.addr, SPARCCPU),
+++        VMSTATE_UINT32(env.fq.s.insn, SPARCCPU),
+++        VMSTATE_END_OF_LIST()
+++    },
+++};
+++
++ /*
++  * A CPU halted in the multiprocessor idle loop of Solaris waits for a kick
++  * or a timer that the destination doesn't have: wake it there, it looks
++@@ -364,6 +384,7 @@ const VMStateDescription vmstate_sparc_cpu = {
++ #ifndef TARGET_SPARC64
++     .subsections = (const VMStateDescription * const []) {
++         &vmstate_fq,
+++        &vmstate_fp_pending,
++         &vmstate_solaris_idle_mp,
++         NULL
++     },
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 65bd7a2..72ed920 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -184,6 +184,7 @@ typedef struct DisasContext {
++     bool idle_halt;
++ #else
++     bool fsr_qne;
+++    bool fp_pending;
++     bool sunos_idle;
++     bool solaris_idle;
++     bool solaris_idle_mp;
++@@ -1491,8 +1492,35 @@ static bool gen_trap_ifnofpu(DisasContext *dc)
++     return false;
++ }
++ 
+++/*
+++ * In fp_exception_pending state, any floating-point instruction (FPop,
+++ * FBfcc, floating-point load or store including STFSR and STDFQ) takes
+++ * the deferred fp_exception trap.  addr and align are for the alignment
+++ * check of a load or store, which has the higher trap priority.  That
+++ * check follows V8: a doubleword access must be 8-byte aligned (the
+++ * accesses themselves only check 4 bytes, MO_ALIGN_4).
+++ */
+++static bool gen_trap_iffppending(DisasContext *dc, TCGv addr, int align)
+++{
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++    if (dc->fp_pending) {
+++        finishing_insn(dc);
+++        save_state(dc);
+++        gen_helper_fp_deferred_trap(tcg_env,
+++                                    addr ? addr : tcg_constant_tl(0),
+++                                    tcg_constant_i32(align));
+++        dc->base.is_jmp = DISAS_NORETURN;
+++        return true;
+++    }
+++#endif
+++    return false;
+++}
+++
++ static bool gen_trap_iffpexception(DisasContext *dc)
++ {
+++    if (gen_trap_iffppending(dc, NULL, 0)) {
+++        return true;
+++    }
++ #if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
++     /*
++      * There are 3 states for the sparc32 fpu:
++@@ -1506,10 +1534,10 @@ static bool gen_trap_iffpexception(DisasContext *dc)
++      * return to fp_exception_pending state, set FSR.FTT to sequence_error,
++      * and the insn will not be entered into the FQ.
++      *
++-     * In QEMU, we do not model the fp_exception_pending state and
++-     * instead populate FQ and raise the exception immediately.
++-     * But we can still honor fp_exception state by noticing when
++-     * the FQ is not empty.
+++     * In QEMU, an IEEE 754 exception enters fp_exception_pending
+++     * (gen_trap_iffppending above).  Other exceptions populate FQ and
+++     * raise the exception immediately.  fp_exception state is noticed
+++     * by the FQ not being empty.
++      */
++     if (dc->fsr_qne) {
++         gen_op_fpexception_im(dc, FSR_FTT_SEQ_ERROR);
++@@ -4573,7 +4601,9 @@ static bool do_ld_fpr(DisasContext *dc, arg_r_r_ri_asi *a, MemOp sz)
++     if (addr == NULL) {
++         return false;
++     }
++-    if (gen_trap_if_nofpu_fpexception(dc)) {
+++    if (gen_trap_ifnofpu(dc) ||
+++        gen_trap_iffppending(dc, addr, memop_size(sz) - 1) ||
+++        gen_trap_iffpexception(dc)) {
++         return true;
++     }
++     if (sz == MO_128 && gen_trap_float128(dc)) {
++@@ -4601,8 +4631,12 @@ static bool do_st_fpr(DisasContext *dc, arg_r_r_ri_asi *a, MemOp sz)
++     if (addr == NULL) {
++         return false;
++     }
++-    /* Store insns are ok in fp_exception_pending state. */
++-    if (gen_trap_ifnofpu(dc)) {
+++    /*
+++     * Store insns are ok in fp_exception state, but take the trap in
+++     * fp_exception_pending.
+++     */
+++    if (gen_trap_ifnofpu(dc) ||
+++        gen_trap_iffppending(dc, addr, memop_size(sz) - 1)) {
++         return true;
++     }
++     if (sz == MO_128 && gen_trap_float128(dc)) {
++@@ -4636,7 +4670,7 @@ static bool trans_STDFQ(DisasContext *dc, arg_STDFQ *a)
++         return raise_priv(dc);
++     }
++ #if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
++-    if (gen_trap_ifnofpu(dc)) {
+++    if (gen_trap_ifnofpu(dc) || gen_trap_iffppending(dc, addr, 7)) {
++         return true;
++     }
++     if (!dc->fsr_qne) {
++@@ -4683,7 +4717,8 @@ static bool trans_LDFSR(DisasContext *dc, arg_r_r_ri *a)
++     if (addr == NULL) {
++         return false;
++     }
++-    if (gen_trap_if_nofpu_fpexception(dc)) {
+++    if (gen_trap_ifnofpu(dc) || gen_trap_iffppending(dc, addr, 3) ||
+++        gen_trap_iffpexception(dc)) {
++         return true;
++     }
++ 
++@@ -4744,8 +4779,9 @@ static bool do_stfsr(DisasContext *dc, arg_r_r_ri *a, MemOp mop)
++     if (addr == NULL) {
++         return false;
++     }
++-    /* Store insns are ok in fp_exception_pending state. */
++-    if (gen_trap_ifnofpu(dc)) {
+++    /* Ok in fp_exception state, but takes the trap in _pending. */
+++    if (gen_trap_ifnofpu(dc) ||
+++        gen_trap_iffppending(dc, addr, memop_size(mop) - 1)) {
++         return true;
++     }
++ 
++@@ -5737,6 +5773,7 @@ static void sparc_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
++                     !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
++ # else
++     dc->fsr_qne = (dc->base.tb->flags & TB_FLAG_FSR_QNE) != 0;
+++    dc->fp_pending = (dc->base.tb->flags & TB_FLAG_FP_PENDING) != 0;
++     dc->sunos_idle = cpu_env(cs)->sunos_idle && dc->supervisor &&
++                      !(tb_cflags(dc->base.tb) & CF_SINGLE_STEP);
++     dc->solaris_idle = cpu_env(cs)->solaris_idle && dc->supervisor &&
+diff --git a/debian/patches/wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s.patch b/debian/patches/wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s.patch
+new file mode 100644
+index 0000000..700d980
+--- /dev/null
++++ b/debian/patches/wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s.patch
+@@ -0,0 +1,343 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the deferred fp_exception trap on sun4m
++
++A boot PROM enables the FPU and traps, loads 1.0, 0.0 and 3.0 into %f1,
++%f2 and %f3 and an FSR with TEM set, and runs an FPop into %f3, two
++integer instructions, the FP instruction under test and an STFSR. The
++trap handler notes a mem_address_not_aligned trap and returns past the
++instruction; for any other trap it stores the trap type, %l1, %l2 and
++the FSR, drains the FQ with STDFQ when qne is set, stores the FSR again
++and %f3, and stops.
++
++With fdivs 1/0 and all traps enabled: an FPop (fadds, fmovs), an
++aligned st and ld of an FP register, an STFSR and an FBfcc after it take
++trap 8 themselves, after the integer instructions ran, with %l1 at that
++instruction, ftt IEEE, cexc dz, qne set, the FQ entry the fdivs (address
++and opcode), qne clear after STDFQ and %f3 unchanged. A misaligned st,
++ld and a 4-byte aligned std take trap 7 at that instruction, and the
++STFSR after them takes trap 8 with the same state. With fdivs 1/1, with
++the traps masked (+inf, cexc and aexc dz) and a misaligned store with no
++exception pending, nothing changes: no FP trap, ftt 0, qne clear. Each
++on SS-5, SS-10 and LX (36 cases). On plain QEMU 11.1.3 the 27 trap
++cases fail (trap 8 at the fdivs) and the 9 others pass.
++---
++ tests/qtest/meson.build                   |   3 +-
++ tests/qtest/sun4m-fp-deferred-trap-test.c | 295 ++++++++++++++++++++++
++ 2 files changed, 297 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-fp-deferred-trap-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 1b42c9a..8c1485b 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -209,7 +209,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-cs4231-test',
++                 'sun4m-esp-test',
++                 'sun4m-mmu-ctx-ifetch-test',
++-                'sun4m-bus-error-trap-test'] + \
+++                'sun4m-bus-error-trap-test',
+++                'sun4m-fp-deferred-trap-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-fp-deferred-trap-test.c b/tests/qtest/sun4m-fp-deferred-trap-test.c
++new file mode 100644
++index 0000000..83fc80f
++--- /dev/null
+++++ b/tests/qtest/sun4m-fp-deferred-trap-test.c
++@@ -0,0 +1,295 @@
+++/*
+++ * QTest: the deferred fp_exception trap on sun4m
+++ *
+++ * The sparc32 FPUs defer fp_exception. An FPop that raises an IEEE 754
+++ * exception enabled in FSR.TEM does not write its destination and moves
+++ * the FPU to fp_exception_pending; the integer unit carries on, and the
+++ * next floating-point instruction (FPop, FBfcc, FP load or store, STFSR)
+++ * takes the trap, with the FPop in the floating-point queue. If that
+++ * instruction has a trap of higher priority, it takes that one instead:
+++ * a misaligned FP store takes mem_address_not_aligned, and the exception
+++ * stays pending for the FP instruction after it. The boot PROM of the
+++ * SPARCstation LX tests exactly that in its POST.
+++ *
+++ * A boot PROM enables the FPU and the traps, loads 1.0, 0.0 and 3.0 into
+++ * %f1, %f2 and %f3 and TEM into the FSR, runs an FPop into %f3, two
+++ * integer instructions, the FP instruction under test and an STFSR. The
+++ * trap handler notes a mem_address_not_aligned trap and returns past the
+++ * instruction. For any other trap it stores the trap type, %l1 and %l2,
+++ * the FSR, drains the queue with STDFQ if qne is set, stores the FSR
+++ * again and %f3, and stops.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++/* RAM: markers and data (the PROM runs with the MMU off) */
+++#define RAM_STAGE       0x1004ULL
+++#define RAM_TRAP        0x1020ULL       /* trap type, stored last */
+++#define RAM_PC          0x1024ULL       /* %l1 */
+++#define RAM_NPC         0x1028ULL       /* %l2 */
+++#define RAM_FSR         0x102cULL       /* FSR at the trap (or at the end) */
+++#define RAM_FQ_ADDR     0x1030ULL       /* the entry STDFQ stores */
+++#define RAM_FQ_INSN     0x1034ULL
+++#define RAM_FSR2        0x1038ULL       /* FSR after STDFQ */
+++#define RAM_F3          0x103cULL       /* %f3 */
+++#define RAM_ALIGN_TRAP  0x1060ULL       /* a mem_address_not_aligned trap */
+++#define RAM_ALIGN_PC    0x1064ULL
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define HANDLER         0x180           /* word index of the trap handler */
+++#define NOP             0x01000000
+++
+++/* The words of the code */
+++#define FPOP            25              /* the FPop */
+++#define NEXT            28              /* the instruction under test */
+++#define SECOND          30              /* the STFSR after it */
+++
+++#define FDIVS_1_2_3     0x87a049a2      /* fdivs %f1, %f2, %f3 (1 / 0) */
+++#define FDIVS_1_1_3     0x87a049a1      /* fdivs %f1, %f1, %f3 (1 / 1) */
+++#define TEM_ALL         0x0f800000      /* NVM OFM UFM DZM NXM */
+++
+++#define TT_UNALIGNED    0x07
+++#define TT_FP_EXCP      0x08
+++#define FSR_FTT(x)      (((x) >> 14) & 7)
+++#define FTT_IEEE        1
+++#define FSR_QNE         (1u << 13)
+++#define FSR_CEXC(x)     ((x) & 0x1f)
+++#define FSR_AEXC(x)     (((x) >> 5) & 0x1f)
+++#define EXC_DZ          0x02
+++
+++typedef struct TestCase {
+++    const char *name;
+++    uint32_t fpop;
+++    uint32_t tem;
+++    uint32_t next;
+++    uint32_t tt;                /* the trap taken, 0: none */
+++    bool unaligned;             /* NEXT is misaligned */
+++} TestCase;
+++
+++static const TestCase cases[] = {
+++    /*
+++     * A misaligned FP store or load: its own trap wins, and the STFSR
+++     * after it takes the fp_exception
+++     */
+++    { "misaligned-st", FDIVS_1_2_3, TEM_ALL,
+++      0xc7206041, TT_FP_EXCP, true },   /* st    %f3, [%g1 + 0x41] */
+++    { "misaligned-ld", FDIVS_1_2_3, TEM_ALL,
+++      0xcb006041, TT_FP_EXCP, true },   /* ld    [%g1 + 0x41], %f5 */
+++    /* V8 wants doubleword alignment for STDF */
+++    { "misaligned-std", FDIVS_1_2_3, TEM_ALL,
+++      0xc5386044, TT_FP_EXCP, true },   /* std   %f2, [%g1 + 0x44] */
+++    /* Any other FP instruction takes the deferred fp_exception */
+++    { "aligned-st", FDIVS_1_2_3, TEM_ALL,
+++      0xc7206058, TT_FP_EXCP },     /* st    %f3, [%g1 + 0x58] */
+++    { "fpop", FDIVS_1_2_3, TEM_ALL,
+++      0x89a04821, TT_FP_EXCP },     /* fadds %f1, %f1, %f4 */
+++    { "fmovs", FDIVS_1_2_3, TEM_ALL,
+++      0x89a00021, TT_FP_EXCP },     /* fmovs %f1, %f4 */
+++    { "ld", FDIVS_1_2_3, TEM_ALL,
+++      0xcb006040, TT_FP_EXCP },     /* ld    [%g1 + 0x40], %f5 */
+++    { "stfsr", FDIVS_1_2_3, TEM_ALL,
+++      0xc128605c, TT_FP_EXCP },     /* st    %fsr, [%g1 + 0x5c] */
+++    { "fbfcc", FDIVS_1_2_3, TEM_ALL,
+++      0x11800002, TT_FP_EXCP },     /* fba   .+8 */
+++    /* No exception, or a masked one: no trap, as before */
+++    { "no-exception", FDIVS_1_1_3, TEM_ALL,
+++      0xc7206058, 0 },
+++    { "masked", FDIVS_1_2_3, 0,
+++      0xc7206058, 0 },
+++    { "misaligned-no-exception", FDIVS_1_1_3, TEM_ALL,
+++      0xc7206041, 0, true },
+++};
+++
+++static const char *const machines[] = { "SS-5", "SS-10", "LX" };
+++
+++static char *write_prom(const TestCase *t)
+++{
+++    const uint32_t code[] = {
+++        0x05000004,             /*  0 sethi %hi(0x1000), %g2 */
+++        0x8410afa0,             /*  1 or    %g2, 0xfa0, %g2 */
+++        0x8188a000,             /*  2 wr    %g2, %psr   EF, PIL 15, S, ET */
+++        0x81902000,             /*  3 wr    %g0, 0, %wim         for rett */
+++        NOP, NOP,               /*  4 */
+++        0x03000004,             /*  6 sethi %hi(0x1000), %g1 */
+++        0x050fe000,             /*  7 sethi %hi(0x3f800000), %g2   1.0 */
+++        0xc4206040,             /*  8 st    %g2, [%g1 + 0x40] */
+++        0xc0206044,             /*  9 st    %g0, [%g1 + 0x44] */
+++        0x07101000,             /* 10 sethi %hi(0x40400000), %g3   3.0 */
+++        0xc6206048,             /* 11 st    %g3, [%g1 + 0x48] */
+++        0x09000000 | (t->tem >> 10), /* 12 sethi %hi(tem), %g4 */
+++        0xc820604c,             /* 13 st    %g4, [%g1 + 0x4c] */
+++        0xc3006040,             /* 14 ld    [%g1 + 0x40], %f1 */
+++        0xc5006044,             /* 15 ld    [%g1 + 0x44], %f2 */
+++        0xc7006048,             /* 16 ld    [%g1 + 0x48], %f3 */
+++        0xc108604c,             /* 17 ld    [%g1 + 0x4c], %fsr */
+++        NOP, NOP, NOP,          /* 18 */
+++        0x8a102001,             /* 21 mov   1, %g5 */
+++        0xca206004,             /* 22 st    %g5, [%g1 + 4]      stage 1 */
+++        NOP, NOP,               /* 23 */
+++        t->fpop,                /* 25 FPOP */
+++        0x8a102002,             /* 26 mov   2, %g5 */
+++        0xca206004,             /* 27 st    %g5, [%g1 + 4]      stage 2 */
+++        t->next,                /* 28 NEXT */
+++        NOP,                    /* 29 (delay slot of fba) */
+++        0xc128605c,             /* 30 st    %fsr, [%g1 + 0x5c]  SECOND */
+++        0x8a102003,             /* 31 mov   3, %g5 */
+++        0xca206004,             /* 32 st    %g5, [%g1 + 4]      stage 3 */
+++        0xc720603c,             /* 33 st    %f3, [%g1 + 0x3c] */
+++        0xc128602c,             /* 34 st    %fsr, [%g1 + 0x2c] */
+++        0x10800000,             /* 35 b     . */
+++        NOP,
+++    };
+++    const uint32_t handler[] = {
+++        0x03000004,             /* sethi %hi(0x1000), %g1 */
+++        0xa734e004,             /* srl   %l3, 4, %l3 */
+++        0xa60ce0ff,             /* and   %l3, 0xff, %l3      trap type */
+++        0x80a4e007,             /* cmp   %l3, 7 */
+++        0x12800006,             /* bne   1f */
+++        NOP,
+++        0xe2206064,             /* st    %l1, [%g1 + 0x64] */
+++        0xe6206060,             /* st    %l3, [%g1 + 0x60] */
+++        0x81c4a000,             /* jmp   %l2                 skip it */
+++        0x81cca004,             /* rett  %l2 + 4 */
+++        0xe2206024,             /* 1: st %l1, [%g1 + 0x24] */
+++        0xe4206028,             /* st    %l2, [%g1 + 0x28] */
+++        0xc128602c,             /* st    %fsr, [%g1 + 0x2c] */
+++        0xc400602c,             /* ld    [%g1 + 0x2c], %g2 */
+++        0x07000008,             /* sethi %hi(0x2000), %g3    qne */
+++        0x80888003,             /* andcc %g2, %g3, %g0 */
+++        0x02800004,             /* be    2f */
+++        NOP,
+++        0xc1306030,             /* std   %fq, [%g1 + 0x30] */
+++        0xc1286038,             /* st    %fsr, [%g1 + 0x38] */
+++        0xc720603c,             /* 2: st %f3, [%g1 + 0x3c] */
+++        0xe6206020,             /* st    %l3, [%g1 + 0x20] */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    G_STATIC_ASSERT(ARRAY_SIZE(code) <= HANDLER - CODE);
+++    g_assert(code[FPOP] == t->fpop && code[NEXT] == t->next &&
+++             code[SECOND] == 0xc128605c);
+++
+++    /* Reset (trap 0): b CODE */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(NOP);
+++    /* Trap i: rd %tbr, %l3; b HANDLER */
+++    for (i = 1; i < CODE / 4; i++) {
+++        be[4 * i] = cpu_to_be32(0xa7580000);
+++        be[4 * i + 1] = cpu_to_be32(0x10800000 | (HANDLER - (4 * i + 1)));
+++        be[4 * i + 2] = cpu_to_be32(NOP);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(handler); i++) {
+++        be[HANDLER + i] = cpu_to_be32(handler[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-fp-deferred-trap-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++typedef struct TestData {
+++    const char *machine;
+++    const TestCase *t;
+++} TestData;
+++
+++static void test_fp_deferred_trap(const void *data)
+++{
+++    const TestData *d = data;
+++    const TestCase *t = d->t;
+++    g_autofree char *prom = write_prom(t);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s -accel tcg -m 64 -bios %s",
+++                                  d->machine, prom);
+++    uint32_t fsr, trap_pc;
+++
+++    while (qtest_readl(qts, RAM_TRAP) == 0 &&
+++           qtest_readl(qts, RAM_STAGE) < 3) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    g_assert_cmphex(qtest_readl(qts, RAM_TRAP), ==, t->tt);
+++    fsr = qtest_readl(qts, RAM_FSR);
+++    if (t->unaligned) {
+++        /* The misaligned access took mem_address_not_aligned */
+++        g_assert_cmphex(qtest_readl(qts, RAM_ALIGN_TRAP), ==, TT_UNALIGNED);
+++        g_assert_cmphex(qtest_readl(qts, RAM_ALIGN_PC), ==, 0x400 + 4 * NEXT);
+++    } else {
+++        g_assert_cmphex(qtest_readl(qts, RAM_ALIGN_TRAP), ==, 0);
+++    }
+++
+++    if (t->tt == 0) {
+++        g_assert_cmpuint(qtest_readl(qts, RAM_STAGE), ==, 3);
+++        g_assert_cmpuint(FSR_FTT(fsr), ==, 0);
+++        g_assert_cmphex(fsr & FSR_QNE, ==, 0);
+++        if (t->tem) {
+++            /* 1.0 / 1.0 */
+++            g_assert_cmphex(qtest_readl(qts, RAM_F3), ==, 0x3f800000);
+++            g_assert_cmphex(FSR_CEXC(fsr), ==, 0);
+++        } else {
+++            /* Masked division by zero: +inf, cexc and aexc dz */
+++            g_assert_cmphex(qtest_readl(qts, RAM_F3), ==, 0x7f800000);
+++            g_assert_cmphex(FSR_CEXC(fsr), ==, EXC_DZ);
+++            g_assert_cmphex(FSR_AEXC(fsr), ==, EXC_DZ);
+++        }
+++    } else {
+++        /* The integer instructions after the FPop ran */
+++        g_assert_cmpuint(qtest_readl(qts, RAM_STAGE), ==, 2);
+++        /*
+++         * The trap is taken on the next FP instruction, or on the one
+++         * after a misaligned access
+++         */
+++        trap_pc = 0x400 + 4 * (t->unaligned ? SECOND : NEXT);
+++        g_assert_cmphex(qtest_readl(qts, RAM_PC), ==, trap_pc);
+++        g_assert_cmphex(qtest_readl(qts, RAM_NPC), ==, trap_pc + 4);
+++        /* IEEE exception, division by zero, the FQ not empty */
+++        g_assert_cmpuint(FSR_FTT(fsr), ==, FTT_IEEE);
+++        g_assert_cmphex(FSR_CEXC(fsr), ==, EXC_DZ);
+++        g_assert_cmphex(FSR_AEXC(fsr), ==, 0);
+++        g_assert_cmphex(fsr & FSR_QNE, ==, FSR_QNE);
+++        /* The FQ holds the FPop; STDFQ empties it */
+++        g_assert_cmphex(qtest_readl(qts, RAM_FQ_ADDR), ==, 0x400 + 4 * FPOP);
+++        g_assert_cmphex(qtest_readl(qts, RAM_FQ_INSN), ==, t->fpop);
+++        g_assert_cmphex(qtest_readl(qts, RAM_FSR2) & FSR_QNE, ==, 0);
+++        /* The FPop did not write its destination */
+++        g_assert_cmphex(qtest_readl(qts, RAM_F3), ==, 0x40400000);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static TestData data[ARRAY_SIZE(machines) * ARRAY_SIZE(cases)];
+++    int i, j, n = 0;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(machines); i++) {
+++            for (j = 0; j < ARRAY_SIZE(cases); j++) {
+++                g_autofree char *name =
+++                    g_strdup_printf("sun4m-fp-deferred-trap/%s/%s",
+++                                    machines[i], cases[j].name);
+++
+++                data[n].machine = machines[i];
+++                data[n].t = &cases[j];
+++                qtest_add_data_func(name, &data[n], test_fp_deferred_trap);
+++                n++;
+++            }
+++        }
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic.patch b/debian/patches/wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic.patch
+new file mode 100644
+index 0000000..7ec6479
+--- /dev/null
++++ b/debian/patches/wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic.patch
+@@ -0,0 +1,81 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: take at most 128 MB of RAM on the microSPARC-I machines
++
++-M LX, SPARCClassic and SPARCbook (TI-MicroSparc-I) accept up to 256 MB,
++but with 256 MB OpenBIOS stops with "Trap 0x21": it puts the context
++table near the top of RAM, and QEMU's microSPARC-I keeps only bits 26:8
++of the context table pointer (mmu_ctpr_mask 0x007ffff0), so the MMU
++reads the table from 128 MB lower.
++
++The mask is right. The TMS390S10 (microSPARC-I) reference guide gives
++the context table pointer as "Context Table Pointer [26:08]", 19 bits,
++and says that the memory interface uses 27 bits of the 256 MB memory
++space, "limiting the maximum memory for a microSPARC-based system to
++128MB" (four banks of 32 MB), with the upper 128 MB mirroring the lower.
++
++Add max_ram to the sun4m hwdef, the RAM the machine takes when it is
++less than its memory space (max_mem), and set it to 128 MB for the three
++microSPARC-I machines. The memory space stays 256 MB, so the empty slot
++above RAM and everything the PROMs probe there is as before. -m 256 on
++those machines is now refused ("Too much memory for this machine: 256,
++maximum 128"); 128 MB and less work as before. The other machines are
++unchanged.
++
++Tested: -m 256 refused on LX, SPARCClassic and SPARCbook, and the SS-5
++still takes 256; with 128 MB OpenBIOS reaches its prompt on all three,
++and the LX PROM's POST reports four banks of 32 MB.
++---
++ hw/sparc/sun4m.c | 9 +++++++--
++ 1 file changed, 7 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 44e1009..4e6b368 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -105,6 +105,7 @@ struct sun4m_hwdef {
++     } vsimm[MAX_VSIMMS];
++     hwaddr ecc_base;
++     uint64_t max_mem;
+++    uint64_t max_ram;   /* if set: the RAM the memory controller takes */
++     uint32_t ecc_version;
++     uint32_t iommu_version;
++     uint16_t machine_id;
++@@ -869,11 +870,12 @@ static void sun4m_hw_init(MachineState *machine)
++     unsigned int max_cpus = machine->smp.max_cpus;
++     HostMemoryBackend *ram_memdev = machine->memdev;
++     MACAddr hostid;
+++    uint64_t max_ram = hwdef->max_ram ? hwdef->max_ram : hwdef->max_mem;
++ 
++-    if (machine->ram_size > hwdef->max_mem) {
+++    if (machine->ram_size > max_ram) {
++         error_report("Too much memory for this machine: %" PRId64 ","
++                      " maximum %" PRId64,
++-                     machine->ram_size / MiB, hwdef->max_mem / MiB);
+++                     machine->ram_size / MiB, max_ram / MiB);
++         exit(1);
++     }
++ 
++@@ -1441,6 +1443,7 @@ static void ss_lx_class_init(ObjectClass *oc, const void *data)
++         .machine_id = lx_id,
++         .iommu_version = 0x04000000,
++         .max_mem = 0x10000000,
+++        .max_ram = 0x08000000, /* microSPARC-I: 128 MB */
++     };
++ 
++     mc->desc = "Sun4m platform, SPARCstation LX";
++@@ -1506,6 +1509,7 @@ static void scls_class_init(ObjectClass *oc, const void *data)
++         .machine_id = scls_id,
++         .iommu_version = 0x05000000,
++         .max_mem = 0x10000000,
+++        .max_ram = 0x08000000, /* microSPARC-I: 128 MB */
++     };
++ 
++     mc->desc = "Sun4m platform, SPARCClassic";
++@@ -1538,6 +1542,7 @@ static void sbook_class_init(ObjectClass *oc, const void *data)
++         .machine_id = sbook_id,
++         .iommu_version = 0x05000000,
++         .max_mem = 0x10000000,
+++        .max_ram = 0x08000000, /* microSPARC-I: 128 MB */
++     };
++ 
++     mc->desc = "Sun4m platform, SPARCbook";
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

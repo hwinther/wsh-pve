@@ -14,7 +14,9 @@
 # front-buffer read counts only with softpipe). The same scenes again offscreen (glide-render --egl:
 # the EGL platform qemu-3dfx asks for when the VM has no SDL window), with no X server and DISPLAY
 # unset, on Mesa's surfaceless EGL platform; there the front buffer counts with both drivers and the
-# frame is also read the way qemu-3dfx reads it (getOffscreenFrame). With OUTDIR, the window or
+# frame is also read the way qemu-3dfx reads it (getOffscreenFrame). Then glide-render runs in a
+# working directory it can't write to: it must still render (no exit from the library), and with
+# OPENGLIDE_DIR the library's OpenGLid.ini and OpenGLid.log go there. With OUTDIR, the window or
 # offscreen frame of each run is saved there as a PPM. Then `apt purge` must leave nothing of the
 # package behind. Exit 0 when everything passed.
 set -eu
@@ -54,8 +56,8 @@ done
 nm -D --defined-only "$libdir/libglide3x.so" | grep -q ' T wrap3x_grDrawTriangle$' \
 	|| fail "libglide3x.so doesn't export wrap3x_grDrawTriangle"
 
-# OpenGLide writes OpenGLid.ini and OpenGLid.log into the working directory when it is loaded (and
-# exits the process if it can't): run it in a directory of its own.
+# OpenGLide writes OpenGLid.ini and OpenGLid.log into the working directory when it is loaded (or
+# into OPENGLIDE_DIR, checked below): run it in a directory of its own.
 work=$(mktemp -d)
 cd "$work"
 # -extension Composite: without it Xvfb offers a 32-bit ARGB visual, which OpenGLide's GLX config
@@ -91,6 +93,25 @@ for driver in llvmpipe softpipe; do
 	done
 done
 [ -s OpenGLid.log ] || fail "the library wrote no OpenGLid.log into the working directory"
+
+# Where the files go (patches/0001-openglide-dir-no-exit.patch). Up to 0.1 the library's
+# constructor ended the process with status 0 when it couldn't create OpenGLid.log, before main():
+# glide-render's "all probes match" line shows it got that far. /proc: a working directory that not
+# even root can create files in.
+step "glide-render in a working directory it can't write to, with and without OPENGLIDE_DIR"
+for dir in "" "$work/ogl"; do
+	mkdir -p "$work/ogl"
+	out=$(cd /proc && OPENGLIDE_DIR=$dir LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+		xvfb-run -a -s "$XVFB_ARGS" "$RENDER" --no-front 2>&1) || { echo "$out"; failed="$failed unwritable-cwd${dir:+/OPENGLIDE_DIR}"; continue; }
+	echo "$out" | tail -n 1
+	echo "$out" | grep -q '^glide2x: all probes match' \
+		|| { echo "$out"; failed="$failed unwritable-cwd${dir:+/OPENGLIDE_DIR}"; continue; }
+	if [ -n "$dir" ]; then
+		[ -s "$dir/OpenGLid.log" ] && [ -s "$dir/OpenGLid.ini" ] \
+			|| { ls -la "$dir"; failed="$failed OPENGLIDE_DIR-files"; }
+		echo "ok OPENGLIDE_DIR=$dir: $(cd "$dir" && echo OpenGLid.*)"
+	fi
+done
 cd /
 rm -r "$work"
 [ -z "$failed" ] || fail "rendering:$failed"

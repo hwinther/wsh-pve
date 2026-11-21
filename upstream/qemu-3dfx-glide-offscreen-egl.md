@@ -3,7 +3,7 @@
 Material for the owner, who decides whether and how to offer it to kjliew (qemu-3dfx and qemu-xtra
 are his projects; nothing has been sent or posted, and the code was written with an AI assistant,
 which he may not want). Carried here as `submodules/qemu-3dfx.patch` (qemu-3dfx side) and
-`packages/wsh-openglide/patches/20-egl-offscreen.patch` (OpenGLide side); ROADMAP.md, Streaming,
+`packages/wsh-openglide/patches/0002-egl-offscreen.patch` (OpenGLide side); ROADMAP.md, Streaming,
 "Stage 1".
 
 ## What it does

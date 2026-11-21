@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 import {
-  hasLegacyBiosLayout,
-  hasVgaRetrace,
+  hasQemu3dfxDir,
   NODE,
   type Pve,
   pveApi,
+  pveExec,
   qemuAccepts,
   showcmd,
   vmConfFile,
@@ -87,7 +87,6 @@ test('x86: sb16 + adlib + pcspk combo device', async () => {
 // machine: legacy-bios-layout=1 (Machine > Advanced, "Legacy BIOS memory layout"): for DOS, the NICs
 // get no option ROM and the APIC no vapic ROM, so EMM386 finds 14K more upper memory (the DOS guide).
 test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => {
-  test.fail(!(await hasLegacyBiosLayout()), 'the installed qemu-server has no legacy-bios-layout yet')
   const vmid = await createVm({
     machine: 'pc,legacy-bios-layout=1',
     memory: 32,
@@ -116,7 +115,6 @@ test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => 
 // device of its own. Wolfenstein 3D hangs on a black screen without it (the DOS guide).
 test.describe('x86: vga retrace=precise', () => {
   test('std and cirrus get -vga none,retrace=precise next to their device', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     for (const [vga, device] of [
       ['std', 'VGA'],
       ['cirrus', 'cirrus-vga'],
@@ -139,14 +137,12 @@ test.describe('x86: vga retrace=precise', () => {
   })
 
   test('retrace=dumb, QEMU default, adds no -vga', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     const vmid = await createVm({ memory: 32, name: 'dos-retrace-dumb', ostype: 'other', vga: 'std,retrace=dumb' })
     expect(await vmConfFile(vmid)).toContain('vga: std,retrace=dumb')
     expect(await showcmd(vmid)).not.toMatch(/^ {2}-vga /m)
   })
 
   test('refused without a VGA core and off x86', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     const vmid = await createVm({ memory: 32, name: 'dos-retrace-refused', ostype: 'other', serial0: 'socket' })
     const config = `/nodes/${NODE}/qemu/${vmid}/config`
     expect((await pve.refused('PUT', config, { vga: 'serial0,retrace=precise' })).message).toContain(
@@ -190,6 +186,45 @@ test.describe('x86: 3dfx/Mesa pass-through', () => {
     // With SDL's dummy video driver: no X server here, so this doesn't show that the display works.
     const qemu = await qemuAccepts(vmid, { keepDisplay: true })
     expect(qemu.code, qemu.output).toBe(0)
+  })
+
+  // OpenGLide (wsh-openglide), which the Glide device loads, keeps OpenGLid.ini and its logs in the
+  // directory OPENGLIDE_DIR names, else in QEMU's working directory: / once QEMU daemonizes, which
+  // it always does under PVE (OpenGLide wrote into / of the node up to qemu-server 9.2.20+wsh1).
+  // qemu-server sets OPENGLIDE_DIR for the 3dfx binary to /run/qemu-server/<vmid>-3dfx (root, 0700),
+  // kept after the VM stops. A real start (TCG, no guest OS, the VNC display); a VM without mesa is
+  // the control. The files themselves: 3dfx/test.sh (a Glide guest, QEMU daemonized with the variable).
+  test('a started 3dfx VM gets OPENGLIDE_DIR, a directory of its own', async () => {
+    test.fail(!(await hasQemu3dfxDir()), 'the installed qemu-server sets no OPENGLIDE_DIR yet')
+    const vmid = await createVm({ kvm: 0, memory: 256, name: 'x86-3dfx-run', vga: 'std,mesa=1' })
+    const control = await createVm({ kvm: 0, memory: 256, name: 'x86-3dfx-control' })
+    const script = `
+for vmid in ${vmid} ${control}; do
+  rm -rf /run/qemu-server/$vmid-3dfx
+  qm start $vmid > /dev/null || exit 1
+  pid=$(cat /run/qemu-server/$vmid.pid)
+  echo "$vmid exe=$(readlink /proc/$pid/exe) cwd=$(readlink /proc/$pid/cwd)"
+  echo "$vmid env=$(tr '\\0' '\\n' < /proc/$pid/environ | grep '^OPENGLIDE_DIR=' || echo none)"
+  echo "$vmid dir=$(stat -c '%a %U:%G %F' /run/qemu-server/$vmid-3dfx 2> /dev/null || echo none)"
+  qm stop $vmid
+  echo "$vmid after-stop=$(stat -c '%F' /run/qemu-server/$vmid-3dfx 2> /dev/null || echo none)"
+done
+`
+    const { code, output } = await pveExec(['sh', '-c', script])
+    expect(code, output).toBe(0)
+    const lines = output.split('\n').map((line) => line.trim())
+    for (const line of [
+      `${vmid} exe=/usr/bin/qemu-system-x86_64-3dfx cwd=/`,
+      `${vmid} env=OPENGLIDE_DIR=/run/qemu-server/${vmid}-3dfx`,
+      `${vmid} dir=700 root:root directory`,
+      `${vmid} after-stop=directory`,
+      // /usr/bin/kvm is a link to it
+      `${control} exe=/usr/bin/qemu-system-x86_64 cwd=/`,
+      `${control} env=none`,
+      `${control} dir=none`,
+    ]) {
+      expect(lines, output).toContain(line)
+    }
   })
 })
 

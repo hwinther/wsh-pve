@@ -1,10 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 
 import {
-  hasLegacyBiosLayout,
-  hasLegacyBiosLayoutUi,
-  hasVgaRetrace,
-  hasVgaRetraceUi,
   NODE,
   PASSWORD,
   type Pve,
@@ -99,10 +95,6 @@ test('display: Enable 3DFX/Mesa', async ({ page }) => {
 })
 
 test('display: VGA retrace Precise (DOS games)', async ({ page }) => {
-  test.fail(
-    !(await hasVgaRetrace()) || !(await hasVgaRetraceUi()),
-    'the installed qemu-server or pve-manager has no vga retrace yet',
-  )
   const display = async () => {
     await page.getByText(/^Display$/).dblclick()
     return page.locator('.x-window').filter({ has: page.getByText('Graphic card:', { exact: true }) })
@@ -113,7 +105,6 @@ test('display: VGA retrace Precise (DOS games)', async ({ page }) => {
   }
 
   let win = await display()
-  // fails fast (not by the test timeout) where the field isn't there, as test.fail() expects
   await expect(win.getByLabel('VGA retrace')).toBeVisible({ timeout: 5000 })
   // only for display types with a VGA core
   await pick(win, 'Serial terminal 0')
@@ -137,10 +128,6 @@ test('display: VGA retrace Precise (DOS games)', async ({ page }) => {
 })
 
 test('machine: Legacy BIOS memory layout', async ({ page }) => {
-  test.fail(
-    !(await hasLegacyBiosLayout()) || !(await hasLegacyBiosLayoutUi()),
-    'the installed qemu-server or pve-manager has no legacy-bios-layout yet',
-  )
   const machine = async () => {
     await page.getByText(/^Machine$/).dblclick()
     const win = page.locator('.x-window').filter({ has: page.getByText('Machine:', { exact: true }) })
@@ -149,7 +136,6 @@ test('machine: Legacy BIOS memory layout', async ({ page }) => {
   }
 
   let win = await machine()
-  // fails fast (not by the test timeout) where the field isn't there, as test.fail() expects
   await expect(win.getByLabel('Legacy BIOS memory layout')).toBeVisible({ timeout: 5000 })
   await win.getByLabel('Legacy BIOS memory layout').check()
   await win.getByRole('button', { name: 'OK' }).click()
