@@ -137,7 +137,7 @@ index b1e0b4f8..4b93f5c6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index e8e2bd0b..9b08bb3f 100644
+index e8e2bd0b..4af94b09 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
 @@ -97,6 +97,7 @@ JSSRC= 							\
@@ -164,7 +164,14 @@ index e8e2bd0b..9b08bb3f 100644
  	qemu/CIDriveEdit.js				\
  	qemu/CloudInit.js				\
  	qemu/CmdMenu.js					\
-@@ -282,6 +285,7 @@ JSSRC= 							\
+@@ -276,12 +279,14 @@ JSSRC= 							\
+ 	qemu/Monitor.js					\
+ 	qemu/MultiHDEdit.js				\
+ 	qemu/NetworkEdit.js				\
++	qemu/NvramEdit.js				\
+ 	qemu/OSDefaults.js				\
+ 	qemu/OSTypeEdit.js				\
+ 	qemu/OSPanel.js					\
  	qemu/Options.js					\
  	qemu/PCIEdit.js					\
  	qemu/ProcessorEdit.js				\
@@ -186,7 +193,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index c616ab9b..6d94e566 100644
+index c616ab9b..3b064560 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -433,15 +440,17 @@ index c616ab9b..6d94e566 100644
          render_serverity: function (value) {
              return PVE.Utils.log_severity_hash[value] || value;
          },
-@@ -1813,6 +1982,7 @@ Ext.define('PVE.Utils', {
+@@ -1812,7 +1981,9 @@ Ext.define('PVE.Utils', {
+             serial: 4,
              rng: 1,
              tpmstate: 1,
++            nvram: 1,
              virtiofs: 10,
 +            floppy: 2,
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1954,8 +2124,8 @@ Ext.define('PVE.Utils', {
+@@ -1954,8 +2125,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
@@ -1557,7 +1566,7 @@ index 00000000..39eb1788
 +    },
 +});
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index fdb1802c..1fed396c 100644
+index fdb1802c..f0bf8f47 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -65,6 +65,10 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -1589,10 +1598,20 @@ index fdb1802c..1fed396c 100644
                  group: 7,
                  never_delete: true,
                  defaultValue: '',
-@@ -323,6 +327,18 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -323,6 +327,28 @@ Ext.define('PVE.qemu.HardwareView', {
              header: gettext('TPM State'),
              renderer: Ext.htmlEncode,
          };
++        // sparc32 only: the volume that keeps the NVRAM across starts
++        rows.nvram0 = {
++            group: 22,
++            order: 1,
++            iconCls: 'hdd-o',
++            editor: null,
++            never_delete: !caps.vms['VM.Config.Disk'],
++            header: gettext('NVRAM'),
++            renderer: Ext.htmlEncode,
++        };
 +        for (let i = 0; i < PVE.Utils.hardware_counts.floppy; i++) {
 +            let confid = 'floppy' + i.toString();
 +            rows[confid] = {
@@ -1608,7 +1627,7 @@ index fdb1802c..1fed396c 100644
          for (let i = 0; i < PVE.Utils.hardware_counts.usb; i++) {
              let confid = 'usb' + i.toString();
              rows[confid] = {
-@@ -744,7 +760,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -744,14 +770,24 @@ Ext.define('PVE.qemu.HardwareView', {
              me.down('#addPci').setDisabled(noVMConfigHWTypePerm || isAtLimit('hostpci'));
              me.down('#addAudio').setDisabled(noVMConfigHWTypePerm || isAtLimit('audio'));
              me.down('#addSerial').setDisabled(noVMConfigHWTypePerm || isAtLimit('serial'));
@@ -1623,7 +1642,10 @@ index fdb1802c..1fed396c 100644
              me.down('#addRng').setDisabled(noVMConfigHWTypePerm || isAtLimit('rng'));
              efidisk_menuitem.setDisabled(noVMConfigDiskPerm || isAtLimit('efidisk'));
              me.down('#addTpmState').setDisabled(noVMConfigDiskPerm || isAtLimit('tpmstate'));
-@@ -752,6 +774,7 @@ Ext.define('PVE.qemu.HardwareView', {
++            // the NVRAM volume backs the sun4m machines' M48T08: sparc32 only
++            me.down('#addNvram').setHidden(guestArch() !== 'sparc');
++            me.down('#addNvram').setDisabled(noVMConfigDiskPerm || isAtLimit('nvram'));
+             me.down('#addVirtiofs').setDisabled(noVMConfigOptionsPerm || isAtLimit('virtiofs'));
              me.down('#addCloudinitDrive').setDisabled(
                  noVMConfigCDROMPerm || noVMConfigCloudinitPerm || hasCloudInit,
              );
@@ -1631,7 +1653,15 @@ index fdb1802c..1fed396c 100644
  
              if (!rec) {
                  remove_btn.disable();
-@@ -800,10 +823,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -775,6 +811,7 @@ Ext.define('PVE.qemu.HardwareView', {
+             const isDisk = isUnusedDisk || isUsedDisk;
+             const isEfi = key === 'efidisk0';
+             const tpmMoveable = key === 'tpmstate0' && !isRunning;
++            const nvramMoveable = key === 'nvram0' && !isRunning;
+ 
+             let cannotDelete = deleted || row.never_delete;
+             cannotDelete ||= isCDRom && !cdromCap;
+@@ -800,10 +837,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -1646,7 +1676,22 @@ index fdb1802c..1fed396c 100644
              );
  
              edit_btn.setText(
-@@ -864,6 +887,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -811,9 +848,12 @@ Ext.define('PVE.qemu.HardwareView', {
+             );
+ 
+             diskaction_btn.setDisabled(
+-                pending || !diskCap || isCloudInit || !(isDisk || isEfi || tpmMoveable),
++                pending ||
++                    !diskCap ||
++                    isCloudInit ||
++                    !(isDisk || isEfi || tpmMoveable || nvramMoveable),
+             );
+-            reassign_menuitem.setDisabled(pending || isEfi || tpmMoveable);
++            reassign_menuitem.setDisabled(pending || isEfi || tpmMoveable || nvramMoveable);
+             resize_menuitem.setDisabled(pending || !isUsedDisk);
+ 
+             revert_btn.setDisabled(!pending);
+@@ -864,6 +904,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.vms['VM.Config.CDROM'],
                                  handler: editorFactory('CDEdit'),
                              },
@@ -1660,6 +1705,21 @@ index fdb1802c..1fed396c 100644
                              {
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
+@@ -885,6 +932,14 @@ Ext.define('PVE.qemu.HardwareView', {
+                                         ),
+                                     })(),
+                             },
++                            {
++                                text: gettext('NVRAM'),
++                                itemId: 'addNvram',
++                                iconCls: 'fa fa-fw fa-hdd-o black',
++                                hidden: true,
++                                disabled: !caps.vms['VM.Config.Disk'],
++                                handler: editorFactory('NvramEdit'),
++                            },
+                             {
+                                 text: gettext('USB Device'),
+                                 itemId: 'addUsb',
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
 index cd759703..44acdd1a 100644
 --- a/www/manager6/qemu/MachineEdit.js
@@ -1958,6 +2018,92 @@ index 9f992d1d..f875498e 100644
                  if (!me.isCreate) {
                      let value = me.vmconfig[me.confid];
                      let network = PVE.Parser.parseQemuNetwork(me.confid, value);
+diff --git a/www/manager6/qemu/NvramEdit.js b/www/manager6/qemu/NvramEdit.js
+new file mode 100644
+index 00000000..547000bb
+--- /dev/null
++++ b/www/manager6/qemu/NvramEdit.js
+@@ -0,0 +1,80 @@
++// sparc32 only: a volume that keeps the machine's NVRAM (the sun4m M48T08) across starts, so the
++// settings of a Sun boot PROM (setenv diag-switch? false, auto-boot?, boot-device) last
++Ext.define('PVE.qemu.NvramInputPanel', {
++    extend: 'Proxmox.panel.InputPanel',
++    alias: 'widget.pveNvramInputPanel',
++
++    onGetValues: function (values) {
++        let drive = {};
++        if (values.hdimage) {
++            drive.file = values.hdimage;
++        } else {
++            // the size is fixed (qemu-server allocates 4 MiB), so just use 1
++            drive.file = values.hdstorage + ':1';
++        }
++        drive.format = values.diskformat;
++
++        return { nvram0: PVE.Parser.printQemuDrive(drive) };
++    },
++
++    setNodename: function (nodename) {
++        let me = this;
++        me.down('#hdstorage').setNodename(nodename);
++        me.down('#hdimage').setStorage(undefined, nodename);
++    },
++
++    initComponent: function () {
++        let me = this;
++
++        me.items = [
++            {
++                xtype: 'pveDiskStorageSelector',
++                name: 'nvram0',
++                storageLabel: gettext('Storage'),
++                storageContent: 'images',
++                nodename: me.nodename,
++                hideSize: true,
++                autoSelect: true,
++            },
++            {
++                xtype: 'displayfield',
++                userCls: 'pmx-hint',
++                value: gettext(
++                    'Keeps the NVRAM across starts, so what a Sun boot PROM stores with setenv' +
++                        ' (diag-switch?, auto-boot?, boot-device) lasts. Takes effect at the next' +
++                        ' start.',
++                ),
++            },
++        ];
++
++        me.callParent();
++    },
++});
++
++Ext.define('PVE.qemu.NvramEdit', {
++    extend: 'Proxmox.window.Edit',
++
++    isAdd: true,
++    isCreate: true,
++    subject: gettext('NVRAM'),
++
++    width: 450,
++    initComponent: function () {
++        let me = this;
++
++        let nodename = me.pveSelNode.data.node;
++        if (!nodename) {
++            throw 'no node name specified';
++        }
++
++        me.items = [
++            {
++                xtype: 'pveNvramInputPanel',
++                nodename: nodename,
++                isCreate: true,
++            },
++        ];
++
++        me.callParent();
++    },
++});
 diff --git a/www/manager6/qemu/OSDefaults.js b/www/manager6/qemu/OSDefaults.js
 index df5ad8aa..b645da27 100644
 --- a/www/manager6/qemu/OSDefaults.js
