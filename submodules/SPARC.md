@@ -1745,7 +1745,9 @@ What it would take for the rest:
   `upstream/qemu-sparc32-context-switch-ifetch.md`. Through PVE on the published pve-qemu-kvm
   11.1.3-2+wsh30 (qemu-server 9.2.19+wsh4, 2026-11-20): `lab.py install sol21-ss10 --check` passed
   3/3 (three at once, 9.7-10.1 min: install 5.3 min, first boot 2.9-3.3, check 1.2-1.3), so
-  `sol21-ss10` is an automated target (e2e/sparc/README.md, "Older Sun releases").
+  `sol21-ss10` is an automated target (e2e/sparc/README.md, "Older Sun releases"). Again on the
+  11.1.3-3 series (pve-qemu-kvm 11.1.3-3+wsh6, qemu-server 9.2.20+wsh3, 2026-11-21): 2/2 passed (two
+  at once on a busy host, 11.2-11.7 min), so `wsh/0047` came over to the new base intact.
 - **Solaris 2.1 under the Sun PROMs (2026-11-20):** the trap is the kernel's own (its context
   table), so the firmware makes no difference. QEMU's SS-20 with `ss10_v2.25_rom`, `-cpu
   TI-SuperSparc-50`, 256 MB, CD as a disk, `PROM_NAME_UNNAMED=1`: without the change the CD's kernel

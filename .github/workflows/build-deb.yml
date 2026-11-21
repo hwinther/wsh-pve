@@ -267,6 +267,19 @@ jobs:
             | tee -a "$RUNNER_TEMP/make.log"
           set +o pipefail
 
+          # build-3dfx versioned its tree the way the pve-qemu target does (changelog patch, dch), so
+          # the 3dfx binary's --version names this package's version, unless a build pushed its
+          # changelog commit between build-3dfx's checkout and this job's (a queued build)
+          if [ "$PACKAGE" = pve-qemu ] && [ -s build/pve-qemu-3dfx/qemu-system-x86_64 ]; then
+            want="pve-qemu-kvm_$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' submodules/pve-qemu/debian/changelog)"
+            got=$(grep -aoE 'pve-qemu-kvm_[0-9A-Za-z.+~:-]+' build/pve-qemu-3dfx/qemu-system-x86_64 | head -n 1 || true)
+            if [ "$got" = "$want" ]; then
+              echo "qemu-system-x86_64-3dfx --version names $want"
+            else
+              echo "::warning title=3dfx version banner::qemu-system-x86_64-3dfx --version names '${got:-nothing}', not $want (build-3dfx saw another changelog)"
+            fi
+          fi
+
           ls -la build/*
           buildPath=$(realpath build)
           echo "Building and pushing with org.opencontainers.image.description from upstream changelog"

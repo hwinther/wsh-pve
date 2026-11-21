@@ -1243,6 +1243,21 @@ prints "not found"; `uname -a` and the marker carry the name). `pve_matrix.py in
 needs the 2.1 CD in `--iso` (`sun_solaris/Solaris/2.1/SPARC/`). Not tried: `--user`, `--gateway`,
 the 9G disk, a boot test of the stored disk, more than one CPU (traps, `submodules/SPARC.md`).
 
+Again on the 11.1.3-3 series (the same container, built `--no-cache` from the published packages:
+pve-qemu-kvm 11.1.3-3+wsh6, qemu-server 9.2.20+wsh3, pve-manager 9.2.32+wsh6, libpve-storage-perl
+9.1.18+wsh2), two `lab.py install sol21-ss10 --check` at the same time while other agents' builds
+and guests kept the host busy (load 8-18 of 14 cores), 2026-11-21. VM 1 wrote into the install
+matrix's case layout and is the source of the gallery's recordings:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol21-ss10` (VM 1) | passed; `SunOS sol21-ss10 5.1 Generic sun4m sparc`; the marker; `le0` with `inet 10.0.2.15 netmask ffffff00`; the finished VM `scsi6: none,media=cdrom`, `boot: order=scsi3` | 11.7 min (install 385 s, first boot 204 s, check 93 s) |
+| `install sol21-ss10` (VM 2) | passed; the same | 11.2 min (388 s, 177 s, 88 s) |
+| unit tests (`test_targets.py`) | passed | |
+
+Both guests had the same static address on one bridge and neither minded (SunOS 4.1.3 does, below).
+The longer install and check against the +wsh30 runs are the busy host, not the packages.
+
 **`sunos413-ss10` through PVE** (the PVE test container from `e2e/pve/Dockerfile` with the lab, built
 `--no-cache` from the published packages: pve-qemu-kvm 11.1.3-2+wsh31, qemu-server 9.2.19+wsh4,
 pve-manager 9.2.32+wsh4, libpve-storage-perl 9.1.18+wsh2), `lab.py install sunos413-ss10 --check`
@@ -2259,7 +2274,7 @@ pve-qemu-kvm 11.1.3-2+wsh22 or later), and the Debian install by hand, because i
 (`pve_matrix.py` passes no `--gateway`/`--dns`). Solaris 2.1, OpenBSD 8.0 and SunOS 4.1.3 on SS-10
 are `lab.py install <target> --check` runs into the install matrix's case layout (the targets' own
 test runs, the OpenBSD one the run that stored the disk; 2026-11-20 with pve-qemu-kvm 11.1.3-2+wsh30
-for the first two, 2026-11-21 with +wsh31 for SunOS, as OpenBSD 5.9, Red Hat 6.2 and the Solaris 9
+for OpenBSD, 2026-11-21 with 11.1.3-3+wsh6 for Solaris 2.1 and with 11.1.3-2+wsh31 for SunOS, as OpenBSD 5.9, Red Hat 6.2 and the Solaris 9
 boot). The SunOS 4.1.3_U1B SS-5 recordings keep their `sunos413-*-ss5` names; the original 4.1.3 on
 SS-10 is `sunos413-*-ss10`. All of them can write into one `--runs` directory; `publish_media.py`
 then picks them up in one go (its docstring lists the commands).
