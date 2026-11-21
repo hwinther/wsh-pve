@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test'
 
-import { hasLegacyBiosLayout, NODE, type Pve, pveApi, qemuAccepts, showcmd, vmConfFile, writeConfFile } from './_pve'
+import {
+  hasLegacyBiosLayout,
+  hasVgaRetrace,
+  NODE,
+  type Pve,
+  pveApi,
+  qemuAccepts,
+  showcmd,
+  vmConfFile,
+  writeConfFile,
+} from './_pve'
 
 // VMs with the WSH options, created through the API: the stored config, the QEMU command qemu-server
 // builds from it (`qm showcmd`) and whether QEMU accepts that command. This is the layer the
@@ -99,6 +109,56 @@ test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => 
   expect((await pve.refused('PUT', config, { bios: 'ovmf' })).message).toContain(
     "machine: 'legacy-bios-layout' needs SeaBIOS",
   )
+})
+
+// vga: retrace=precise (Display, "VGA retrace: Precise (DOS games)"): QEMU's precise VGA retrace
+// emulation, which QEMU takes only as a -vga option and applies to every VGA device; `-vga none` adds no
+// device of its own. Wolfenstein 3D hangs on a black screen without it (the DOS guide).
+test.describe('x86: vga retrace=precise', () => {
+  test('std and cirrus get -vga none,retrace=precise next to their device', async () => {
+    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
+    for (const [vga, device] of [
+      ['std', 'VGA'],
+      ['cirrus', 'cirrus-vga'],
+    ]) {
+      const vmid = await createVm({
+        memory: 32,
+        name: `dos-retrace-${vga}`,
+        ostype: 'other',
+        vga: `${vga},retrace=precise`,
+      })
+      expect(await vmConfFile(vmid)).toContain(`vga: ${vga},retrace=precise`)
+
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain("-vga 'none,retrace=precise'")
+      expect(cmd).toContain(`-device '${device},id=vga,bus=pci.0,addr=0x2'`)
+
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    }
+  })
+
+  test('retrace=dumb, QEMU default, adds no -vga', async () => {
+    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
+    const vmid = await createVm({ memory: 32, name: 'dos-retrace-dumb', ostype: 'other', vga: 'std,retrace=dumb' })
+    expect(await vmConfFile(vmid)).toContain('vga: std,retrace=dumb')
+    expect(await showcmd(vmid)).not.toMatch(/^ {2}-vga /m)
+  })
+
+  test('refused without a VGA core and off x86', async () => {
+    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
+    const vmid = await createVm({ memory: 32, name: 'dos-retrace-refused', ostype: 'other', serial0: 'socket' })
+    const config = `/nodes/${NODE}/qemu/${vmid}/config`
+    expect((await pve.refused('PUT', config, { vga: 'serial0,retrace=precise' })).message).toContain(
+      "vga: 'retrace' needs a VGA-compatible type (std, cirrus, vmware, qxl, virtio), not 'serial0'",
+    )
+
+    const sparc = { arch: 'sparc', memory: 256, name: 'sparc32-retrace', vga: 'tcx,retrace=precise' }
+    const nextid = Number(await pve.get<string>('/cluster/nextid'))
+    expect((await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid: nextid, ...sparc })).message).toContain(
+      "vga: 'retrace' is only supported on x86_64, not on sparc",
+    )
+  })
 })
 
 // 3dfx/Mesa pass-through (Display → "Enable 3DFX/Mesa", `mesa=1`): qemu-server starts the VM with

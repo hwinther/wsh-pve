@@ -26,6 +26,30 @@ Experimental feature - it must be used in conjunction with the 3DFX/MESA drivers
 
 See the [3DFX / Mesa passthrough guide](/guides/3dfx/) for how the host QEMU build and the guest drivers are paired by revision, and where to download the matching driver release.
 
+## VGA retrace
+
+`retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input
+status register (port 3DAh) reports display enable and vertical retrace with the timing of a real
+CRT. QEMU's default, `dumb`, flips both bits on every read, so a program that waits for "display
+enabled and not in retrace" never sees it. Wolfenstein 3D (and likely other id and Apogee games of its
+time) then stays on a black mode-13h screen; see the [DOS guide](/guides/dos/#vga-retrace-games).
+
+```sh
+qm set 130 --vga std,retrace=precise
+```
+
+In the web UI it is **Hardware > Display > VGA retrace: Precise (DOS games)**, shown for x86 VMs with a
+display type that has it.
+
+- QEMU has no device property for it, only the `-vga` option, and it applies to every VGA device of
+  the VM. qemu-server adds `-vga none,retrace=precise` (`none` adds no device) next to the usual
+  `-device` (with a `server`, the `-vga` it already passes gets `,retrace=precise`).
+- Accepted for the types whose QEMU device is built on QEMU's VGA core: `std` (`VGA`), `cirrus`
+  (`cirrus-vga`), `vmware` (`vmware-svga`), `qxl*` (`qxl-vga`), `virtio` and `virtio-gl`
+  (`virtio-vga`, `virtio-vga-gl`). Refused at create, update and start with `none`, `serial*`, the
+  sparc `tcx` and `cg3`, and on other architectures.
+- `retrace=dumb` is QEMU's default and adds nothing to the command line.
+
 ## Further reading
 
 - Read [about SPARC platform graphics combinations](https://wiki.qemu.org/Documentation/Platforms/SPARC) in QEMU documentation
