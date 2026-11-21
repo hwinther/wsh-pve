@@ -18,7 +18,7 @@ memory between 640K and 1 MB.
 | KVM | off (`kvm: 0`) for the lab, on is fine | TCG gives the same timing every run; DOS doesn't need the speed. DOS busy-waits either way; the lab's installs add an idle driver ([Idle](#idle)). |
 | Memory | 32 MB, `balloon: 0` | HIMEM.SYS of DOS 6.22 handles up to 64 MB; DOS has no balloon driver. |
 | USB tablet | off (`tablet: 0`) | DOS has no USB mouse driver. qemu-server adds the UHCI controller anyway; it has no option ROM. |
-| Display | `vga: std` | `cirrus` and `vmware` measured the same for upper memory (each VGA BIOS takes C0000-C9FFF). |
+| Display | `vga: std` (`std,retrace=precise` for games) | `cirrus` and `vmware` measured the same for upper memory (each VGA BIOS takes C0000-C9FFF). Some games need the precise retrace, see [VGA retrace](#vga-retrace-games). |
 | Disk | IDE, 1 GiB, raw | One FAT16 partition; SeaBIOS translates the geometry for disks above 504 MB. |
 | Floppy | `floppy0` with Disk 1, `ro=1` | Read only: the images are shared reference media, and a written image no longer matches its checksum. |
 | Boot order | `order=floppy0;ide0` | The floppy first while installing; SETUP's restart boots Disk 1 again. |
@@ -225,6 +225,32 @@ Measured through PVE on the `msdos622` VM (TCG; EMM386 `NOEMS`, `DOS=HIGH,UMB`):
 The same as removing the NIC and adding `-global apic-common.vapic=off` by hand (measured side by
 side). Under KVM the vapic ROM (`kvmvapic.bin` in `info roms`) is gone with the key as well; the UMB
 was measured under TCG only.
+
+## VGA retrace (games)
+
+Wolfenstein 3D starts, switches to mode 13h and stays on a black screen. It waits on the VGA input
+status register (port 3DAh) for "display enabled, not in vertical retrace". QEMU's default retrace
+emulation (`dumb`) flips both bits on every read, so the two never come together. QEMU's precise
+emulation reports them with a real CRT's timing. The WSH qemu-server sets it per VM:
+
+```sh
+qm set 130 --vga std,retrace=precise
+```
+
+In the web UI: **Hardware > Display > VGA retrace: Precise (DOS games)**. qemu-server accepts it with
+`std`, `cirrus`, `vmware`, `qxl` and `virtio` (the [display reference](/reference/display/#vga-retrace)),
+on x86 only; it was tried with `std` here. No `args:` and no root rights are needed.
+
+Measured through PVE (TCG, an MS-DOS 6.22 VM with the game on D:, sb16-adlib-pcspk):
+
+| `vga` | QEMU command | After `WOLF3D` (60 s, keys pressed at 15, 22, 30 and 40 s) |
+| --- | --- | --- |
+| `std` | `-device VGA` | mode 13h, black for the whole minute: 2 distinct screens (the prompt and black) |
+| `std,retrace=precise` | `-vga none,retrace=precise -device VGA` | the title and menu screens: 12 distinct screens, the last change at 57 s |
+
+In the same lab study on plain QEMU, DOOM, DOOM II, Duke Nukem 3D, Dune, Dune II, Commander Keen 1
+and 4 and Leisure Suit Larry 1 ran with the default retrace as well as with the precise one. The
+Incredible Machine 1 and 2 stayed on their first screen with both: a different problem.
 
 ## Known issues
 

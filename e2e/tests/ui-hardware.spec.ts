@@ -3,6 +3,8 @@ import { expect, type Page, test } from '@playwright/test'
 import {
   hasLegacyBiosLayout,
   hasLegacyBiosLayoutUi,
+  hasVgaRetrace,
+  hasVgaRetraceUi,
   NODE,
   PASSWORD,
   type Pve,
@@ -94,6 +96,44 @@ test('display: Enable 3DFX/Mesa', async ({ page }) => {
 
   // The command (the 3dfx binary) and whether QEMU takes it: vm-config.spec.ts.
   expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=1$/m)
+})
+
+test('display: VGA retrace Precise (DOS games)', async ({ page }) => {
+  test.fail(
+    !(await hasVgaRetrace()) || !(await hasVgaRetraceUi()),
+    'the installed qemu-server or pve-manager has no vga retrace yet',
+  )
+  const display = async () => {
+    await page.getByText(/^Display$/).dblclick()
+    return page.locator('.x-window').filter({ has: page.getByText('Graphic card:', { exact: true }) })
+  }
+  const pick = async (win: Awaited<ReturnType<typeof display>>, option: string) => {
+    await win.getByLabel('Graphic card').click()
+    await page.locator('.x-boundlist:visible li', { hasText: option }).click()
+  }
+
+  let win = await display()
+  // fails fast (not by the test timeout) where the field isn't there, as test.fail() expects
+  await expect(win.getByLabel('VGA retrace')).toBeVisible({ timeout: 5000 })
+  // only for display types with a VGA core
+  await pick(win, 'Serial terminal 0')
+  await expect(win.getByLabel('VGA retrace')).toBeHidden()
+  await pick(win, 'Standard VGA')
+  await win.getByLabel('VGA retrace').check()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=0,retrace=precise$/m)
+  expect(await showcmd(VMID)).toContain("-vga 'none,retrace=precise'")
+  const qemu = await qemuAccepts(VMID)
+  expect(qemu.code, qemu.output).toBe(0)
+
+  // unchecked again: the key goes
+  win = await display()
+  await expect(win.getByLabel('VGA retrace')).toBeChecked()
+  await win.getByLabel('VGA retrace').uncheck()
+  await win.getByRole('button', { name: 'OK' }).click()
+  await expect(win).toBeHidden()
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,mesa=0$/m)
 })
 
 test('machine: Legacy BIOS memory layout', async ({ page }) => {

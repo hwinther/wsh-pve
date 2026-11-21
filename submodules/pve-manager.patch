@@ -1203,10 +1203,42 @@ index 5eb784c4..43bb720b 100644
          },
          formulas: {
 diff --git a/www/manager6/qemu/DisplayEdit.js b/www/manager6/qemu/DisplayEdit.js
-index 3f583adb..20df0d34 100644
+index 3f583adb..e01c1280 100644
 --- a/www/manager6/qemu/DisplayEdit.js
 +++ b/www/manager6/qemu/DisplayEdit.js
-@@ -44,13 +44,15 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -4,6 +4,12 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+     onlineHelp: 'qm_display',
+ 
+     onGetValues: function (values) {
++        // a checkbox submits 1/0: write retrace=precise when checked, nothing (QEMU's 'dumb') if not
++        if (values.retrace && this.getViewModel().get('retraceSupported')) {
++            values.retrace = 'precise';
++        } else {
++            delete values.retrace;
++        }
+         let ret = PVE.Parser.printPropertyString(values, 'type');
+         if (ret === '') {
+             return { delete: 'vga' };
+@@ -15,6 +21,7 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+         data: {
+             type: '__default__',
+             clipboard: '__default__',
++            arch: undefined,
+         },
+         formulas: {
+             matchNonGUIOption: function (get) {
+@@ -35,6 +42,10 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+                     return Proxmox.Utils.defaultText;
+                 }
+             },
++            // x86 with a display whose QEMU device has the VGA core (the default is std or cirrus)
++            retraceSupported: (get) =>
++                (!get('arch') || get('arch') === 'x86_64') &&
++                !!get('type').match(/^(__default__|std|cirrus|vmware|qxl\d?|virtio|virtio-gl)$/),
+             isVNC: (get) => get('clipboard') === 'vnc',
+             hideDefaultHint: (get) => get('isVNC') || get('matchNonGUIOption'),
+             hideVNCHint: (get) => !get('isVNC') || get('matchNonGUIOption'),
+@@ -44,13 +55,15 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
      items: [
          {
              name: 'type',
@@ -1224,7 +1256,7 @@ index 3f583adb..20df0d34 100644
  
                  if (v.match(/^serial\d+$/) && (!cfg[v] || cfg[v] !== 'socket')) {
                      let fmt = gettext("Serial interface '{0}' is not correctly configured.");
-@@ -74,6 +76,20 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
+@@ -74,6 +87,38 @@ Ext.define('PVE.qemu.DisplayInputPanel', {
                  emptyText: '{memoryEmptyText}',
                  disabled: '{matchNonGUIOption}',
              },
@@ -1242,10 +1274,28 @@ index 3f583adb..20df0d34 100644
 +            fieldLabel: gettext('Enable 3DFX/Mesa'),
 +            name: 'mesa',
 +            uncheckedValue: 0,
++        }, {
++            xtype: 'proxmoxcheckbox',
++            fieldLabel: gettext('VGA retrace'),
++            boxLabel: gettext('Precise (DOS games)'),
++            name: 'retrace',
++            uncheckedValue: 0,
++            autoEl: {
++                tag: 'div',
++                'data-qtip': gettext(
++                    'Emulate the display-enable and vertical-retrace timing of a real VGA card.' +
++                        ' Some DOS games (Wolfenstein 3D) wait for it and hang on a black screen' +
++                        ' without it.',
++                ),
++            },
++            bind: {
++                hidden: '{!retraceSupported}',
++                disabled: '{!retraceSupported}',
++            },
          },
      ],
  
-@@ -157,6 +173,11 @@ Ext.define('PVE.qemu.DisplayEdit', {
+@@ -157,8 +202,16 @@ Ext.define('PVE.qemu.DisplayEdit', {
          me.load({
              success: function (response) {
                  me.vmconfig = response.result.data;
@@ -1254,9 +1304,15 @@ index 3f583adb..20df0d34 100644
 +                    me.pveSelNode?.data.node,
 +                );
 +                me.down('field[name=type]').setCategory(arch);
++                me.down('pveDisplayInputPanel').getViewModel().set('arch', arch);
                  let vga = me.vmconfig.vga || '__default__';
-                 me.setValues(PVE.Parser.parsePropertyString(vga, 'type'));
+-                me.setValues(PVE.Parser.parsePropertyString(vga, 'type'));
++                let values = PVE.Parser.parsePropertyString(vga, 'type');
++                values.retrace = values.retrace === 'precise' ? 1 : 0;
++                me.setValues(values);
              },
+         });
+     },
 diff --git a/www/manager6/qemu/FloppyEdit.js b/www/manager6/qemu/FloppyEdit.js
 new file mode 100644
 index 00000000..39eb1788
