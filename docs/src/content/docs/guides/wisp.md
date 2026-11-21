@@ -176,3 +176,10 @@ chip there (SS-5, SS-4, SPARCClassic, SPARCbook). The published `pve-qemu-kvm` c
 11.1.3-3+wsh9: with that package, wisp boots on the LX and the Voyager, batch and shell; with
 11.1.3-3+wsh8 both still stop as above (`Trap 0x07` on the LX, `Trap 0x02` on the Voyager). With an
 older package, pass a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
+
+OpenBIOS patch 0029 leaves out the SS-5's CS4231 node (`0x6c000000`) where QEMU has no codec: on
+the Voyager, the LX, the SPARCClassic and the SPARCbook (NetBSD 9.3 panicked on it on the LX;
+`submodules/SPARC.md`, "SPARCstation LX with its own PROM"). wisp's kernels have no sound driver and
+never saw the node. With OpenBIOS 0001-0029 given with `--firmware` and QEMU built from the pve-qemu
+tree, all eight sparc32 machines passed batch, `--shell`, `--tier2` and `--shell --tier2` on the lab
+host (36 boots, 2026-11-21).

@@ -315,6 +315,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0026-fb8-blink-screen-dont-wait-on-a-counter-that-may-be-stopped` | Shared Forth code (built into both images; matters on sparc32): BEL on a framebuffer console (cg3, TCX) inverted the screen and then waited `2000 ms` on `obp-ticks`, which only OpenBIOS's own level-14 timer handler advances. Solaris 2.x and SunOS 4.1.4 write their framebuffer console through the romvec with their own trap table installed, so the counter stood still and the console hung with the screen inverted on the first BEL (bash's completion bell). The wait is now at most 100 ms on the counter and at most 20000 reads of it; `2000` was hex (8.2 s at the firmware prompt). Also drops the flag the BEL case left on the data stack ("BEL on the framebuffer console") | not fixed; see `upstream/openbios-fb8-blink-screen-hangs-client-console.md` |
 | `0027-sparc32-leave-out-the-apc-node-on-the-lx-and-the-voyager` | Every machine ID from 32 to 63 got the SS-5's APC node (`power-management` at SBus slot 4 offset `0x0a000000`, `0x6a000000`). QEMU has no APC there on `-M LX` (a real LX has none) or `-M Voyager` (its power controller is at `0x71300000`), and Linux's `apc` driver makes `apc_swift_idle()` its idle routine: the first idle took a data access error on the APC register, `do_sparc_fault()` followed the NULL from `search_exception_tables()`, and the nested faults ran the kernel stack down through the kernel text until QEMU stopped in the overwritten trap entry (`Trap 0x07` in `tsetup_patch2` on the LX, `Trap 0x02` on the Voyager; `e2e/wisp/README.md`, "The LX and the Voyager"). The node is now made only on the SS-5, SS-4, SPARCClassic and SPARCbook | not reported |
 | `0028-sparc32-name-the-ss600mp-dma-and-lebuffer-nodes-as-sunos-4.1.2-knows-them` | SunOS 4.1.2, the first release for the SS-600MP (machine ID 66), finds the on-board SCSI and Ethernet by node name: the ESP under a DMA controller named `dma` (as on the SPARCstation 1 and 2), the lance under an `lebuffer`. OpenBIOS gave the machine the SS-10's `espdma` and `ledma`, and the kernel attached no disk and no network interface. On machine ID 66 the DMA node is `dma` (`ob_esp_init()` takes the DMA node's path, so the esp and sd nodes and the disk and cdrom aliases are under `/iommu/sbus/dma/esp`) and the lance's parent `lebuffer`, `reg` slot f `0x40000` size `0x20000` (pve-qemu 0064), without the ledma's register setup ("Older Sun releases on sun4m") | not reported |
+| `0029-sparc32-leave-out-the-cs4231-node-where-qemu-has-no-codec` | Every machine ID from 32 to 63 got the SS-5's `SUNW,CS4231` node (SBus slot 4 offset `0x0c000000`, `0x6c000000`). QEMU has the codec only on the SS-5 and the SS-4, and at no other address on the Voyager, the LX, the SPARCClassic or the SPARCbook (the LX's audio is the DBRI in slot 2, `wsh/0056`). The stored `netbsd93-sparc` disk on `-M LX` panicked in autoconfiguration: `audiocs0 at sbus0 slot 4 offset 0xc000000`, then `trap 0x29` (data fault) at `0x6c000000`. 0027's APC helper is now a table of what QEMU has in slot 4 per machine ID: codec and APC on the SS-5 (32) and SS-4 (35), the APC only on the SPARCClassic (36) and SPARCbook (37), neither on the Voyager (33) or the LX (34) nor on IDs QEMU doesn't have. The disk then boots to `login:` on the LX ("SPARCstation LX with its own PROM") | not reported |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -2008,16 +2009,26 @@ OpenBIOS on `-M LX` probes the same slots: with 0056-0058 the `sol26-ss5` disk b
 its check (OpenBIOS puts the ESP in slot 5 as on the SS-5) and the 2.6 CD reaches the installer's
 first question, as with 0001-0055; the only change in its output is one more `Invalid FCode start
 byte` (for slot 4 in its numbering, at `0x60000000`, which read as a bus error before). The stored
-`netbsd93-sparc` disk panics there with and without 0056-0058 (`audiocs0` at `0x6c000000`: OpenBIOS
-gives the LX the SS-5's CS4231 node, which the LX doesn't have; the install CD's kernel leaves it
+`netbsd93-sparc` disk panicked there with and without 0056-0058 (`audiocs0` at `0x6c000000`: OpenBIOS
+gave the LX the SS-5's CS4231 node, which the LX doesn't have; the install CD's kernel leaves it
 unconfigured). Linux 7.3 (wisp, the tiny test system, `e2e/wisp/`) stopped on `-M LX` at its first idle
 on the APC node OpenBIOS gave it at `0x6a000000`; OpenBIOS 0027 leaves that node out on the LX
-and the Voyager. The CS4231 node is still there (open: leave it out on the LX as well, then check
-the `netbsd93-sparc` disk).
+and the Voyager, and 0029 the CS4231 node on every machine where QEMU has no codec (all but the
+SS-5 and the SS-4). Measured 2026-11-21 on the lab host with `qemu-system-sparc` built from
+pve-qemu 0001-0065 and OpenBIOS 0001-0029, on a copy of the stored `netbsd93-sparc` disk, `-M LX -m 64
+-nographic`: with 0001-0028 the kernel panics 7 s in (`audiocs0 at sbus0 slot 4 offset 0xc000000 level 5
+(ipl 9)`, `trap 0x29: pc=0xf002ab80 sfsr=0xb6 sfva=0x6c000000`, `panic:`); with 0029 nothing attaches in
+slot 4, the disk boots to `login:` in 47 s, root logs in and `halt -p` ends it. The same disk on `-M SS-5`
+with 0029 still attaches `audiocs0 ... : CS4231A` and `audio0`, and so does `-M SS-4`; `-M SPARCClassic`
+has only the `power-management` node in slot 4 and `-M Voyager` nothing there, and both reach `login:`.
+Solaris 2.6 on a copy of the stored `sol26-ss5` disk (`-M SS-5`, `-machine audiodev=` a `wav` backend)
+attaches `audiocs` (`prtconf -D`) and 2 s of u-law written with `dd` to `/dev/audio` reach the wav file,
+byte for byte the same file as with 0001-0028. With either firmware that `dd` had not returned 45 s
+later (not looked into; the measurements under "Audio" used `audioplay`).
 
 **In PVE (qemu-server and pve-manager, `feat/sparc-lx-pve-profile`).** `machine: LX` is a
-sparc32 profile ("Supported profiles"): `bios: lx.bin` only (no OpenBIOS: it gives the LX the
-SS-5's CS4231, on which the NetBSD disk panics), at most 128 MB, one CPU, `vga: serial0` (the
+sparc32 profile ("Supported profiles"): `bios: lx.bin` only (no OpenBIOS: it gave the LX the
+SS-5's CS4231, on which the NetBSD disk panicked; OpenBIOS 0029 leaves the node out, the profile is unchanged), at most 128 MB, one CPU, `vga: serial0` (the
 default when no display is set) or `none`, the built-in ESP and lance, no audio (DBRI). cfg2cmd
 tests `sparc32-lx-*.conf` and `sparc32-ss5-lx-prom-error.conf`; the wizard sets the PROM and
 `serial0` (with its socket) when LX is picked. Measured 2026-11-21 in the lab's PVE container

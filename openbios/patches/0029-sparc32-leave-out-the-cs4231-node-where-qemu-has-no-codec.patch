@@ -1,0 +1,94 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: leave out the CS4231 node where QEMU has no codec
+
+ob_sbus_init_ss5() serves every machine ID from 32 to 63 and gives each
+the SS-5's "SUNW,CS4231" node at SBus slot 4 offset 0x0c000000
+(0x6c000000). QEMU has the codec there on the SPARCstation 5 (32) and
+the SPARCstation 4 (35) only. The Voyager (33), the SPARCstation LX
+(34), the SPARCClassic (36) and the SPARCbook (37) have no CS4231 at
+any address; the LX's audio is a DBRI in on-board SBus slot 2, as on a
+real LX.
+
+NetBSD 9.3 attaches its audiocs driver to the node, and on -M LX the
+first access to the absent registers panics the kernel during
+autoconfiguration:
+
+  audiocs0 at sbus0 slot 4 offset 0xc000000 level 5 (ipl 9)system[0]:
+    trap 0x29: pc=0xf002ab80 sfsr=0xb6 sfva=0x6c000000
+  cpu0: data fault: pc=0xf002ab80 addr=0x6c000000 ...
+  panic:
+
+Replace the APC helper of the previous patch with a small table of
+what QEMU has in slot 4 per machine ID: the codec and the APC on the
+SS-5 and the SS-4, the APC alone on the SPARCClassic and the SPARCbook,
+nothing on the Voyager and the LX. Other IDs get neither node, as QEMU
+has no such machines. The SS-5 and the SS-4 keep both nodes, so
+Solaris and SunOS still find their audio device there.
+
+NetBSD 9.3 then boots to login: on -M LX and attaches nothing in slot
+4; on -M SS-5 and -M SS-4 it still attaches audiocs0 (CS4231A), and
+Solaris 2.6 on -M SS-5 still attaches its audiocs driver. Linux 7.3
+still boots on the six machines that take this path.
+---
+ drivers/sbus.c | 37 +++++++++++++++++++++++++++++--------
+ 1 file changed, 29 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/sbus.c b/drivers/sbus.c
+index 06204ce..81a22bf 100644
+--- a/drivers/sbus.c
++++ b/drivers/sbus.c
+@@ -332,15 +332,34 @@ sbus_probe_sucess(void)
+ }
+ 
+ /*
+- * The machines with QEMU machine IDs 32-63 that have the APC (Aurora
+- * Personality Chip) at SBus slot 4 offset 0x0a000000: not the SPARCstation
+- * LX (34) or the Voyager (33). An APC node there sends Linux's idle loop to
+- * registers that answer with a data access error.
++ * The devices QEMU has in SBus slot 4 on each machine ID from 32 to 63 (all
++ * laid out as the SS-5): the CS4231 codec at offset 0x0c000000 and the APC
++ * (Aurora Personality Chip) at 0x0a000000. A node for a device that isn't
++ * there sends the client's driver to registers that answer with a data
++ * access error: Linux's apc idle routine on the LX and the Voyager, NetBSD's
++ * audiocs on the LX.
+  */
++#define SS5_SLOT4_CS4231    0x1
++#define SS5_SLOT4_APC       0x2
++
+ static int
+-sbus_ss5_has_apc(int machine_id)
++sbus_ss5_slot4_devices(int machine_id)
+ {
+-    return machine_id != 33 && machine_id != 34;
++    switch (machine_id) {
++    case 32: /* SPARCstation 5 */
++    case 35: /* SPARCstation 4 */
++        return SS5_SLOT4_CS4231 | SS5_SLOT4_APC;
++    case 36: /* SPARCClassic */
++    case 37: /* SPARCbook */
++        return SS5_SLOT4_APC;
++    default:
++        /*
++         * 33, the Voyager: no codec, and its power controller is at
++         * 0x71300000. 34, the SPARCstation LX: DBRI audio in slot 2 and
++         * no APC.
++         */
++        return 0;
++    }
+ }
+ 
+ static void
+@@ -363,9 +382,11 @@ sbus_probe_slot_ss5(unsigned int slot, uint64_t base, int machine_id)
+ #endif
+     case 4:
+         // SUNW,CS4231
+-        ob_cs4231_init(slot);
++        if (sbus_ss5_slot4_devices(machine_id) & SS5_SLOT4_CS4231) {
++            ob_cs4231_init(slot);
++        }
+         // Power management (APC)
+-        if (sbus_ss5_has_apc(machine_id)) {
++        if (sbus_ss5_slot4_devices(machine_id) & SS5_SLOT4_APC) {
+             ob_apc_init(slot, APC_OFFSET);
+         }
+         break;
