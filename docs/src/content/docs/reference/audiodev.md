@@ -70,14 +70,39 @@ The additional backend drivers support both local and remote audio output.
   - `/var/run` is a tmpfs, so the recording is in RAM: QEMU's default format (44.1 kHz, 16-bit
     stereo) is about 10 MB per minute of sound. The file grows only while the guest plays: an idle
     VM leaves it at its 44-byte header. Copy the file away and switch the driver back when done.
-  - The RIFF and data sizes in the header stay 0 however QEMU ends: guest power off, `qm stop`,
-    QMP `quit` or SIGTERM (measured with pve-qemu-kvm 11.1.3-2+wsh30, also on QEMU directly
-    without qemu-server). Tools that trust the header see an empty file:
-    read everything after the 44-byte header as the samples, or rewrite the header, for example
-    with `sox --ignore-length <vmid>-audio0.wav fixed.wav`.
+  - The header's two sizes stay 0, so tools that trust the header see an empty file. See
+    [The wav file](#the-wav-file) for what is in it and how to read it.
 - **alsa**: ALSA (local sound)
 - **pa**: PulseAudio (local sound)
 - **pipewire**: PipeWire (local sound)
+
+### The wav file
+
+What `driver=wav` writes, measured with pve-qemu-kvm 11.1.3-3+wsh6 and qemu-server 9.2.20+wsh3
+(through `qm start`) and on QEMU directly:
+
+- **Format:** a 44-byte RIFF/WAVE header, then the samples. PCM (format tag 1), 2 channels,
+  44100 Hz, 16-bit signed little-endian: 176400 bytes per second, 4 bytes per frame. These are
+  QEMU's defaults for the `wav` audiodev; qemu-server doesn't set any, whatever the device plays
+  (the SB16's 8-bit mono and the 22 kHz of a DOS game are converted to this).
+- **Size:** about 10 MB per minute of sound. The file grows only while a device plays, so an idle
+  guest leaves it at the 44-byte header.
+- **The header's sizes are always 0.** QEMU fills in the RIFF size (offset 4) and the data size
+  (offset 40) when the audio backend is shut down, and QEMU 11 never shuts it down at exit. The
+  samples themselves are complete, however the VM ends:
+
+| How the VM ends | QEMU's exit | RIFF / data size | Samples |
+| --- | --- | --- | --- |
+| The guest powers off | 0 | 0 / 0 | all |
+| `qm stop` (QMP `quit`) | 0 | 0 / 0 | all up to the stop |
+| SIGTERM | 0 | 0 / 0 | all up to the signal |
+| SIGKILL | killed | 0 / 0 | up to the last 4 KB written (the rest was in QEMU's buffer) |
+
+To read the file, take everything after byte 44 as 16-bit stereo samples at 44.1 kHz, or let a
+tool ignore the header's length and write a fixed copy, for example
+`sox --ignore-length <vmid>-audio0.wav fixed.wav`. The cause is QEMU's (since QEMU 11.0, also in
+plain QEMU 11.1.3); it is written up for upstream in the repository's
+`upstream/qemu-audio-wav-header-sizes.md`.
 
 ### Where the sound goes on a headless node
 
@@ -131,6 +156,11 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
   audiodev with the fixed path, and a real `qm start` must run the guest to its power off with the
   tones in `/var/run/qemu-server/<vmid>-audio0.wav`. One more VM checks that `driver=wav` with a
   `server=` doesn't start.
+- **The wav header:** every recording must be in the [format above](#the-wav-file) with a
+  consistent fmt chunk and whole frames, and its sizes must be right or 0. Four more cases end QEMU
+  while the DOS guest plays: QMP `quit`, SIGTERM and SIGKILL on QEMU directly, and `qm stop`
+  through Proxmox VE; each must leave a readable recording. When QEMU starts writing the sizes,
+  the summary says "header sizes set" instead of "header sizes zero".
 
 The results table is in the workflow's job summary; the recordings and logs are its artifact.
 
