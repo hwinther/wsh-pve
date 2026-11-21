@@ -45,11 +45,15 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   build never fails on them, so this is where a published package without one turns red. The 3dfx
   VM commands (`mesa=1`, with and without `server`) are in `vm-config.spec.ts`; QEMU is started with
   `-display none`, or SDL's dummy video driver for the SDL display, so neither the X display nor the
-  pass-through itself is tested here. The Glide pass-through itself is tested by `3dfx/test.sh`
-  (outside Playwright, in the `wsh-openglide package` workflow): a Linux guest whose `/init`
-  (`3dfx/glide-guest.c`) draws a scene through qemu-3dfx's Linux guest wrapper in the published
-  `qemu-system-x86_64-3dfx`, with an SDL display on Xvfb and `wsh-openglide` on the host; the guest
-  checks what it reads back and the host checks the VM's window.
+  pass-through itself is tested here. The pass-through itself is tested by `3dfx/test.sh`
+  (outside Playwright, in the `wsh-openglide package` workflow), with two Linux guests in the
+  published `qemu-system-x86_64-3dfx` and an SDL display on Xvfb. Glide: `/init`
+  (`3dfx/glide-guest.c`) draws a scene through qemu-3dfx's Linux guest wrapper into `wsh-openglide`
+  on the host, with QEMU daemonized as qemu-server starts it and `OPENGLIDE_DIR` set (OpenGLide's
+  files must land there, not in `/`). Mesa: `/init` (`3dfx/mesa-guest.c`, which speaks the mesapt
+  device's protocol itself, as there is no Linux guest wrapper for it upstream) draws the same scene
+  through the MESA GL pass-through into the host's libGL. Each guest checks what it reads back and
+  the host checks the VM's window.
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
