@@ -6,5 +6,5 @@ FROM debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a47
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes build-essential debhelper dpkg-dev \
-       libgl-dev libglu1-mesa-dev libtool libx11-dev libxxf86vm-dev git ca-certificates lintian \
+       libegl-dev libgl-dev libglu1-mesa-dev libtool libx11-dev libxxf86vm-dev git ca-certificates lintian \
     && rm -rf /var/lib/apt/lists/*

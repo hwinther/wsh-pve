@@ -3,8 +3,10 @@ name: qemu-3dfx build check
 # For a PR that changes what goes into pve-qemu-kvm's 3dfx binary (the qemu-3dfx pin, our port of
 # its QEMU patch, pve-qemu or pve-qemu.patch, or the scripts that check them): does the port still
 # apply, and does qemu-system-x86_64 with qemu-3dfx build (scripts/check-qemu-3dfx-build.sh, a few
-# minutes instead of the full package build). The promotion PR from promote-qemu-3dfx.yml gets the
-# same check as a hand-made one. This check is the PR's; the package build itself never fails on
+# minutes instead of the full package build), and does the Glide pass-through work with that binary
+# (e2e/3dfx/test.sh with this checkout's wsh-openglide: headless with VNC and no X server, where
+# qemu-3dfx renders offscreen into the VM's console, and with an SDL window on Xvfb). The promotion
+# PR from promote-qemu-3dfx.yml gets the same check as a hand-made one. This check is the PR's; the package build itself never fails on
 # 3dfx (it publishes without the binary and build-deb.yml opens the optional-extras issue).
 
 on:
@@ -22,6 +24,8 @@ on:
       - "scripts/refresh-qemu-3dfx-patch.sh"
       - "scripts/qemu-3dfx-promotion.sh"
       - "scripts/check-qemu-extras.sh"
+      - "packages/wsh-openglide/**"
+      - "e2e/3dfx/**"
       - ".github/workflows/qemu-3dfx-check.yml"
       - ".github/workflows/promote-qemu-3dfx.yml"
 
@@ -43,8 +47,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # the merge commit and its first parent (main), for the pin before this PR
-          fetch-depth: 2
+          # the whole history: the merge commit's first parent (main) for the pin before this PR, and
+          # packages/wsh-openglide/version.sh counts commits
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Submodules
@@ -74,7 +79,42 @@ jobs:
         id: build
         run: |
           set -o pipefail
-          scripts/check-qemu-3dfx-build.sh --jobs "$(nproc)" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          scripts/check-qemu-3dfx-build.sh --jobs "$(nproc)" --out "$RUNNER_TEMP/qemu-3dfx-bin" 2>&1 \
+            | tee "$RUNNER_TEMP/build.log"
+
+      # The pass-through with the binary just built and this checkout's wsh-openglide (its EGL
+      # offscreen platform is what the headless run needs); the published pve-qemu-kvm provides the
+      # binary's libraries and firmware
+      - name: wsh-openglide from this checkout
+        id: openglide
+        run: |
+          set -euo pipefail
+          make wsh-openglide DOCKER=docker
+          eval "$(packages/wsh-openglide/version.sh)"
+          echo "deb=wsh-openglide_${WSH_OPENGLIDE_VERSION}_amd64.deb" | tee -a "$GITHUB_OUTPUT"
+          echo "rev=$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD)" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Pass-through, headless (VNC, no X server)
+        env:
+          DEB: ${{ steps.openglide.outputs.deb }}
+          QEMU3DFX_REV: ${{ steps.openglide.outputs.rev }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e-vnc"
+          docker run --rm -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx -e GLIDE_DISPLAY=vnc \
+            -e GLIDE_GUEST_BENCH=300 -v "$PWD:/src:ro" -v "$PWD/build/wsh-openglide:/deb:ro" \
+            -v "$RUNNER_TEMP/qemu-3dfx-bin:/qbin:ro" -v "$RUNNER_TEMP/e2e-vnc:/out" \
+            debian:trixie sh /src/e2e/3dfx/test.sh "/deb/$DEB" /out
+
+      - name: Pass-through, SDL window on Xvfb
+        env:
+          DEB: ${{ steps.openglide.outputs.deb }}
+          QEMU3DFX_REV: ${{ steps.openglide.outputs.rev }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e-sdl"
+          docker run --rm -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx -e GLIDE_DISPLAY=sdl \
+            -v "$PWD:/src:ro" -v "$PWD/build/wsh-openglide:/deb:ro" \
+            -v "$RUNNER_TEMP/qemu-3dfx-bin:/qbin:ro" -v "$RUNNER_TEMP/e2e-sdl:/out" \
+            debian:trixie sh /src/e2e/3dfx/test.sh "/deb/$DEB" /out
 
       - name: Summary
         if: ${{ !cancelled() }}
@@ -107,6 +147,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: qemu-3dfx-build-check
-          path: ${{ runner.temp }}/build.log
+          path: |
+            ${{ runner.temp }}/build.log
+            ${{ runner.temp }}/e2e-vnc
+            ${{ runner.temp }}/e2e-sdl
           if-no-files-found: ignore
           retention-days: 7

@@ -3,7 +3,8 @@
  * Windows and no game. It is linked statically (i386) with qemu-3dfx's own Linux guest wrapper
  * (wrappers/3dfx/dso/glidedso.c, the libglide.so.2 of a Linux guest), which maps the glidept MMIO
  * page and the shared FIFO through /dev/mem and forwards every Glide call to QEMU. QEMU hands the
- * calls to the host's libglide2x.so (wsh-openglide), which renders them into the VM's SDL window.
+ * calls to the host's libglide2x.so (wsh-openglide), which renders them into the VM's SDL window, or
+ * offscreen into the VM's console when it has no SDL window (VNC).
  *
  * It draws the scene of packages/wsh-openglide/tests/scene.h twice, reads the second frame back
  * through the pass-through (grLfbReadRegion of the back buffer before the swap and of the front
@@ -14,8 +15,13 @@
  *
  * then holds the frame for a few seconds (for a capture of the window on the host) and powers the
  * VM off. The front-buffer read counts only with GLIDE_GUEST_FRONT=1 on the kernel command line
- * (Mesa's llvmpipe returns black for it, softpipe the frame; see glide-render.c). Copyright 2026
- * WsHosting ENK, GPL-3.
+ * (Mesa's llvmpipe returns black for it, softpipe the frame; see glide-render.c). With
+ * GLIDE_GUEST_BENCH=<n>, after the hold it draws the scene <n> more times, a swap each, and prints
+ *
+ *   GLIDE-GUEST: BENCH <n> frames in <s> s, <fps> fps
+ *
+ * (the whole round trip: guest wrapper, glidept, the host library and, offscreen, the read of each
+ * frame into the console). Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <errno.h>
 #include <stdint.h>
@@ -25,6 +31,7 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "scene.h"
@@ -87,10 +94,13 @@ static void finish(const char *verdict, int hold)
 int main(void)
 {
 	char verdict[64];
-	int front = 0;
+	int front = 0, bench = 0;
 	const char *env = getenv("GLIDE_GUEST_FRONT"); /* the kernel passes unknown key=value as env */
 	if (env && !strcmp(env, "1"))
 		front = 1;
+	env = getenv("GLIDE_GUEST_BENCH");
+	if (env)
+		bench = atoi(env);
 
 	mkdir("/dev", 0755);
 	if (mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) && errno != EBUSY)
@@ -154,6 +164,20 @@ int main(void)
 	/* the frame stays in the window until the window closes: the host captures it now */
 	printf("GLIDE-GUEST: FRAME\n");
 	sleep(5);
+	if (bench > 0) {
+		struct timespec t0, t1;
+		clock_gettime(CLOCK_MONOTONIC, &t0);
+		for (int frame = 0; frame < bench; frame++) {
+			grBufferClear(SCENE_CLEAR, 0xff, 0xffff);
+			triangle(red_tri, red_rgb);
+			triangle(green_tri, green_rgb);
+			triangle(gouraud_tri, gouraud_rgb);
+			grBufferSwap(0);
+		}
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		double secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+		printf("GLIDE-GUEST: BENCH %d frames in %.2f s, %.1f fps\n", bench, secs, secs > 0 ? bench / secs : 0);
+	}
 	grSstWinClose();
 	grGlideShutdown();
 	if (failed)

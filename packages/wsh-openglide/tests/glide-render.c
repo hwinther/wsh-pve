@@ -2,8 +2,9 @@
  * glide-render: render a known Glide scene through the host Glide library that qemu-3dfx loads
  * (libglide2x.so / libglide3x.so from wsh-openglide) and check its pixels. No guest, no QEMU.
  *
- *   glide-render [--glide3] [--own-window] [--no-front] [--ppm FILE]
+ *   glide-render [--glide3] [--own-window | --egl] [--no-front] [--ppm FILE]
  *   glide-render --check-window WINDOW-ID [--ppm FILE]
+ *   glide-render --check-ppm FILE
  *
  * The library is opened the way qemu-3dfx's init_glide2x() opens it: dlopen() of the unversioned
  * name ("libglide2x.so", or "libglide3x.so" for a Glide 3 guest), and every entry point looked up
@@ -22,10 +23,18 @@
  * buffer read after a swap of a double-buffered window (softpipe returns the frame), a driver
  * matter rather than the library's.
  *
- * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
- * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx).
+ * --egl renders offscreen, with no X server: setConfig() gets the offscreen flag as well (what
+ * qemu-3dfx passes when the VM has no SDL window), grSstWinOpen() no window, and the frame is read
+ * a third way, with getOffscreenFrame() (what qemu-3dfx copies into the VM's console). The front
+ * buffer is a framebuffer object's attachment there, so its read counts with every driver.
  *
- * Needs an X server (Xvfb with Mesa's llvmpipe in CI). Copyright 2026 WsHosting ENK, GPL-3.
+ * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
+ * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx). --check-ppm
+ * checks them in a binary PPM (P6) of at least 640x480, such as QEMU's screendump of a VM's console
+ * (e2e/3dfx with a VNC display), from its top left corner.
+ *
+ * Needs an X server (Xvfb with Mesa's llvmpipe in CI), except with --egl and --check-ppm.
+ * Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <dlfcn.h>
 #include <stddef.h>
@@ -37,6 +46,7 @@
 /* qemu-3dfx glidewnd.c */
 #define WRAPPER_FLAG_WINDOWED 0x01
 #define WRAPPER_FLAG_QEMU 0x80
+#define WRAPPER_FLAG_OFFSCREEN 0x100 /* packages/wsh-openglide/patches/0002-egl-offscreen.patch */
 
 /* A Glide 3 vertex of our own layout (grVertexLayout): position, then colour */
 typedef struct {
@@ -59,6 +69,8 @@ static struct {
 	void (*GlideShutdown)(void);
 	void (*setConfig)(uint32_t, void *);
 	void (*setConfigRes)(int, void *);
+	int (*getOffscreenSize)(int *, int *);
+	int (*getOffscreenFrame)(void *, int, int, int);
 } gr;
 
 static void *lib;
@@ -86,6 +98,59 @@ static uint16_t lfb_back[W * H], lfb_front[W * H], *lfb;
 static uint8_t lfb_px(int x, int y, int c)
 {
 	return rgb565_channel(lfb[y * W + x], c);
+}
+
+/* An RGB image of W x H or more, rows top down: a getOffscreenFrame() read (flipped) or a PPM */
+static uint8_t *rgb_img;
+static int rgb_w;
+static uint8_t rgb_px(int x, int y, int c)
+{
+	return rgb_img[((size_t)y * rgb_w + x) * 3 + c];
+}
+
+static void write_rgb_ppm(const char *path)
+{
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+		perror(path);
+		return;
+	}
+	fprintf(f, "P6\n%d %d\n255\n", W, H);
+	for (int y = 0; y < H; y++)
+		fwrite(rgb_img + (size_t)y * rgb_w * 3, 1, W * 3, f);
+	fclose(f);
+}
+
+/* --check-ppm: the probes in a P6 image (QEMU's screendump writes P6, maxval 255) */
+static int check_ppm(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	int w, h, maxval;
+	if (!f) {
+		perror(path);
+		return 2;
+	}
+	if (fscanf(f, "P6 %d %d %d", &w, &h, &maxval) != 3 || maxval != 255 || fgetc(f) == EOF) {
+		fprintf(stderr, "FAIL: %s is not a binary PPM with maxval 255\n", path);
+		fclose(f);
+		return 2;
+	}
+	if (w < W || h < H) {
+		fprintf(stderr, "FAIL: %s is %dx%d, smaller than %dx%d\n", path, w, h, W, H);
+		fclose(f);
+		return 1;
+	}
+	rgb_w = w;
+	rgb_img = malloc((size_t)w * h * 3);
+	if (!rgb_img || fread(rgb_img, 3, (size_t)w * h, f) != (size_t)w * h) {
+		fprintf(stderr, "FAIL: %s is truncated\n", path);
+		fclose(f);
+		return 2;
+	}
+	fclose(f);
+	int failed = scene_check("screendump", rgb_px, 1);
+	printf("%s (%dx%d): %s\n", path, w, h, failed ? "FAILED" : "all probes match");
+	return failed ? 1 : 0;
 }
 
 static XImage *ximg;
@@ -162,13 +227,17 @@ static int check_window(const char *id, const char *ppm)
 
 int main(int argc, char **argv)
 {
-	int own_window = 0, no_front = 0;
-	const char *ppm = NULL, *window_id = NULL;
+	int own_window = 0, no_front = 0, egl = 0;
+	const char *ppm = NULL, *window_id = NULL, *check = NULL;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--glide3"))
 			glide3 = 1;
 		else if (!strcmp(argv[i], "--own-window"))
 			own_window = 1;
+		else if (!strcmp(argv[i], "--egl"))
+			egl = 1;
+		else if (!strcmp(argv[i], "--check-ppm") && i + 1 < argc)
+			check = argv[++i];
 		else if (!strcmp(argv[i], "--no-front"))
 			no_front = 1;
 		else if (!strcmp(argv[i], "--ppm") && i + 1 < argc)
@@ -177,14 +246,21 @@ int main(int argc, char **argv)
 			window_id = argv[++i];
 		else {
 			fprintf(stderr,
-				"usage: %s [--glide3] [--own-window] [--no-front] [--ppm FILE]\n"
-				"       %s --check-window WINDOW-ID [--ppm FILE]\n",
-				argv[0], argv[0]);
+				"usage: %s [--glide3] [--own-window | --egl] [--no-front] [--ppm FILE]\n"
+				"       %s --check-window WINDOW-ID [--ppm FILE]\n"
+				"       %s --check-ppm FILE\n",
+				argv[0], argv[0], argv[0]);
 			return 2;
 		}
 	}
 	if (window_id)
 		return check_window(window_id, ppm);
+	if (check)
+		return check_ppm(check);
+	if (egl && own_window) {
+		fprintf(stderr, "--egl and --own-window exclude each other\n");
+		return 2;
+	}
 	const char *soname = glide3 ? "libglide3x.so" : "libglide2x.so";
 	lib = dlopen(soname, RTLD_NOW);
 	if (!lib) {
@@ -203,6 +279,10 @@ int main(int argc, char **argv)
 	gr.GlideShutdown = sym("grGlideShutdown", 1);
 	gr.setConfig = sym("setConfig", 1);
 	gr.setConfigRes = sym("setConfigRes", 1);
+	if (egl) {
+		gr.getOffscreenSize = sym("getOffscreenSize", 1);
+		gr.getOffscreenFrame = sym("getOffscreenFrame", 1);
+	}
 	if (glide3) {
 		gr.VertexLayout = sym("grVertexLayout", 1);
 		gr.SstWinClose3 = sym("grSstWinClose", 1);
@@ -210,14 +290,17 @@ int main(int argc, char **argv)
 		gr.SstWinClose2 = sym("grSstWinClose", 1);
 	}
 
-	Display *dpy = XOpenDisplay(NULL);
-	if (!dpy) {
-		fprintf(stderr, "FAIL: no X display (DISPLAY=%s)\n", getenv("DISPLAY") ? getenv("DISPLAY") : "");
-		return 2;
+	Display *dpy = NULL;
+	if (!egl) {
+		dpy = XOpenDisplay(NULL);
+		if (!dpy) {
+			fprintf(stderr, "FAIL: no X display (DISPLAY=%s)\n", getenv("DISPLAY") ? getenv("DISPLAY") : "");
+			return 2;
+		}
 	}
 
 	Window win = 0;
-	if (!own_window) {
+	if (!own_window && !egl) {
 		/* the stand-in for QEMU's SDL window */
 		win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), 0, 0, W, H, 0, 0, 0);
 		XSelectInput(dpy, win, StructureNotifyMask);
@@ -233,7 +316,7 @@ int main(int argc, char **argv)
 	gr.SstSelect(0);
 	if (!own_window) {
 		uint32_t sign = 0x58326724; /* '$g2X': qemu-3dfx's conf_glide2x() */
-		gr.setConfig(WRAPPER_FLAG_QEMU | WRAPPER_FLAG_WINDOWED, &sign);
+		gr.setConfig(WRAPPER_FLAG_QEMU | WRAPPER_FLAG_WINDOWED | (egl ? WRAPPER_FLAG_OFFSCREEN : 0), &sign);
 		gr.setConfigRes(0, NULL);
 		if (sign == 0x324c4453)
 			printf("note: the library signs as SDL2 (built with SDL): qemu-3dfx would hand it the SDL window\n");
@@ -244,7 +327,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "FAIL: grSstWinOpen\n");
 		return 1;
 	}
-	printf("grSstWinOpen: ok (%s window)\n", own_window ? "the library's" : "our");
+	printf("grSstWinOpen: ok (%s)\n", egl ? "offscreen" : own_window ? "the library's window" : "our window");
 
 	if (glide3) {
 		gr.VertexLayout(GR_PARAM_XY, (int32_t)offsetof(Vertex3, x), GR_PARAM_ENABLE);
@@ -280,7 +363,28 @@ int main(int argc, char **argv)
 		failed += scene_check("LFB front", lfb_px, !no_front);
 	}
 
-	if (!own_window) {
+	if (egl) {
+		int w = 0, h = 0;
+		static uint8_t bgrx[W * H * 4];
+		if (!gr.getOffscreenSize(&w, &h) || w != W || h != H) {
+			fprintf(stderr, "FAIL: getOffscreenSize: %dx%d, not %dx%d\n", w, h, W, H);
+			failed++;
+		} else if (!gr.getOffscreenFrame(bgrx, W, H, W * 4)) {
+			fprintf(stderr, "FAIL: getOffscreenFrame\n");
+			failed++;
+		} else {
+			/* B G R X, rows bottom up */
+			rgb_w = W;
+			rgb_img = malloc(W * H * 3);
+			for (int y = 0; y < H; y++)
+				for (int x = 0; x < W; x++)
+					for (int c = 0; c < 3; c++)
+						rgb_img[(y * W + x) * 3 + c] = bgrx[((H - 1 - y) * W + x) * 4 + 2 - c];
+			failed += scene_check("offscreen frame", rgb_px, 1);
+			if (ppm)
+				write_rgb_ppm(ppm);
+		}
+	} else if (!own_window) {
 		XSync(dpy, False);
 		ximg = XGetImage(dpy, win, 0, 0, W, H, AllPlanes, ZPixmap);
 		if (!ximg) {

@@ -18,6 +18,8 @@
 #   --image IMAGE  build image (default: the Makefile's DOCKER_BUILD_IMAGE)
 #   --docker CMD   docker or podman (default: docker)
 #   --keep         leave the tree (and the build directory in it) when done
+#   --out DIR      copy the built binary there as qemu-system-x86_64-3dfx (for e2e/3dfx/test.sh's
+#                  QEMU_BIN)
 #
 # Needs submodules/pve-qemu with its qemu submodule, and submodules/qemu-3dfx, checked out; docker,
 # git and patch on the host; network for `meson subprojects download`. The container runs as the
@@ -29,7 +31,7 @@ set -euo pipefail
 top=$(cd "$(dirname "$0")/.." && pwd)
 pve="$top/submodules/pve-qemu"
 q3="$top/submodules/qemu-3dfx"
-work="$top/build/qemu-3dfx-build" jobs="" image="" docker=docker keep=0
+work="$top/build/qemu-3dfx-build" jobs="" image="" docker=docker keep=0 out=""
 
 usage() {
     sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0" >&2
@@ -43,6 +45,7 @@ while [ $# -gt 0 ]; do
         --image) image="${2:?}"; shift 2 ;;
         --docker) docker="${2:?}"; shift 2 ;;
         --keep) keep=1; shift ;;
+        --out) out="${2:?}"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "check-qemu-3dfx-build: unknown option '$1'" >&2; usage ;;
     esac
@@ -60,6 +63,10 @@ fail() {
 [ -d "$q3/qemu-0/hw/3dfx" ] && [ -d "$q3/qemu-1/hw/mesa" ] \
     || die "submodules/qemu-3dfx is not checked out (git submodule update --init submodules/qemu-3dfx)"
 case "$work" in /*) ;; *) work="$PWD/$work" ;; esac
+if [ -n "$out" ]; then
+    mkdir -p "$out"
+    out=$(cd "$out" && pwd)
+fi
 
 qemu="$work/qemu"
 cleanup() {
@@ -106,8 +113,8 @@ rm -f "$qemu/.git"
 echo "check-qemu-3dfx-build: building qemu-system-x86_64 with qemu-3dfx ${rev:0:7} in $image (-j$jobs)"
 rc=0
 # shellcheck disable=SC2016 # expanded by the shell in the container
-"$docker" run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e JOBS="$jobs" \
-    -v "$qemu:/work/qemu" -v "$top/scripts:/work/scripts:ro" -w /work/qemu \
+"$docker" run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e JOBS="$jobs" -e OUT="${out:+/out}" \
+    -v "$qemu:/work/qemu" -v "$top/scripts:/work/scripts:ro" ${out:+-v "$out:/out"} -w /work/qemu \
     "$image" bash -euo pipefail -c '
         echo "::group::meson subprojects download"
         meson subprojects download --sourcedir . >/dev/null
@@ -119,6 +126,7 @@ rc=0
         mkdir -p /tmp/root/usr/bin
         cp build/qemu-system-x86_64 /tmp/root/usr/bin/qemu-system-x86_64-3dfx
         /work/scripts/check-qemu-extras.sh --root /tmp/root --only 3dfx --expect 3dfx || exit 5
+        [ -z "$OUT" ] || cp build/qemu-system-x86_64 "$OUT/qemu-system-x86_64-3dfx"
     ' || rc=$?
 took=$(( $(date +%s) - start ))
 case "$rc" in

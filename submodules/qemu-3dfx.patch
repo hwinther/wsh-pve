@@ -1,8 +1,532 @@
+diff --git a/qemu-0/hw/3dfx/fxdisp.c b/qemu-0/hw/3dfx/fxdisp.c
+new file mode 100644
+index 0000000..1a36205
+--- /dev/null
++++ b/qemu-0/hw/3dfx/fxdisp.c
+@@ -0,0 +1,191 @@
++/*
++ * QEMU 3Dfx Glide Pass-Through: offscreen display
++ *
++ *  Copyright (c) 2026 WsHosting ENK
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this library;
++ * if not, see <http://www.gnu.org/licenses/>.
++ */
++
++/*
++ * Without an SDL window (-display vnc, none, egl-headless, dbus, gtk, or sdl,gl=on), the Glide
++ * library renders offscreen (wsh-openglide's EGL platform: setConfig(WRAPPER_FLAG_OFFSCREEN)) and
++ * every frame is read back into the first graphic console's own surface, which VNC (PVE's noVNC
++ * console), screendump and any other display then show like the VGA's output. While the Glide
++ * window is open and 3D output is selected, the console is in pass-through (the VGA's updates are
++ * skipped, ui/console.c); when it closes, the VGA redraws.
++ *
++ * The frame is read on the thread that drives the Glide library (the vCPU's, in the glidept MMIO
++ * handler, with the BQL held): after every grBufferSwap, and after any other Glide call when no
++ * frame was read for FXDISP_STALE_MS (front-buffer rendering, LFB writes). A bottom half on the
++ * main loop copies it into the console surface (flipping it: OpenGL's rows are bottom up) and
++ * marks the console updated. QEMU_3DFX_OFFSCREEN=1 in the environment renders offscreen even with
++ * an SDL window (the frames then show in it as the console's 2D surface).
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/main-loop.h"
++#include "qemu/timer.h"
++#include "qapi/qapi-commands-ui.h"
++#include "ui/console.h"
++
++#include "glide2x_impl.h"
++#include "fxdisp.h"
++
++#define FXDISP_STALE_MS 50
++
++static struct {
++    int offscreen;          /* chosen for the open (or last) Glide window */
++    int open;               /* an offscreen Glide window is open */
++    int shown;              /* 3D output selected (grSstControl, GR_PASSTHRU) */
++    int ready;              /* a frame in pix waits for the bottom half */
++    int w, h;
++    uint8_t *pix;           /* w x h, 4 bytes per pixel (x8r8g8b8), rows bottom up */
++    QemuConsole *con;
++    DisplaySurface *surface; /* ours, while the console has it */
++    QEMUBH *bh;
++    int64_t last_read, opened, scheduled;
++    uint64_t swaps, reads, read_ns, shown_frames, bh_ns;
++} fx;
++
++int fxdisp_offscreen(void)
++{
++    return fx.offscreen;
++}
++
++/* Offscreen unless the display is SDL without GL (the window qemu-3dfx's SDL code renders into,
++ * where anything else would end QEMU in sdl_display_valid()) */
++int fxdisp_choose(void)
++{
++    const char *env = g_getenv("QEMU_3DFX_OFFSCREEN");
++    DisplayOptions *o = qmp_query_display_options(NULL);
++    int sdl = o && (o->type == DISPLAY_TYPE_SDL) &&
++        (!o->has_gl || (o->gl == DISPLAY_GL_MODE_OFF));
++
++    qapi_free_DisplayOptions(o);
++    fx.offscreen = (!sdl || (env && !strcmp(env, "1")))? 1:0;
++    return fx.offscreen;
++}
++
++static void fxdisp_bh(void *opaque)
++{
++    DisplaySurface *ds;
++    int stride;
++
++    if (!fx.open || !fx.ready || !fx.shown || !fx.con)
++        return;
++    fx.ready = 0;
++    fx.bh_ns += get_clock() - fx.scheduled;
++    /* A surface of our own: the VGA's may be its video memory */
++    if (!fx.surface || (qemu_console_surface(fx.con) != fx.surface)) {
++        fx.surface = qemu_create_displaysurface(fx.w, fx.h);
++        qemu_console_set_surface(fx.con, fx.surface);
++    }
++    ds = fx.surface;
++    stride = surface_stride(ds);
++    for (int y = 0; y < fx.h; y++)
++        memcpy((uint8_t *)surface_data(ds) + (size_t)y * stride,
++            fx.pix + (size_t)(fx.h - 1 - y) * fx.w * 4, fx.w * 4);
++    qemu_console_update(fx.con, 0, 0, fx.w, fx.h);
++    fx.shown_frames++;
++}
++
++void fxdisp_open(int w, int h)
++{
++    QemuConsole *con = qemu_console_lookup_by_index(0);
++
++    fx.w = w;
++    fx.h = h;
++    g_free(fx.pix);
++    fx.pix = g_malloc0((size_t)w * h * 4);
++    fx.con = (con && qemu_console_is_graphic(con))? con:NULL;
++    fx.surface = NULL;
++    if (!fx.bh)
++        fx.bh = qemu_bh_new(fxdisp_bh, NULL);
++    fx.open = 1;
++    fx.shown = 1;
++    fx.ready = 0;
++    fx.swaps = fx.reads = fx.read_ns = fx.shown_frames = fx.bh_ns = 0;
++    fx.opened = fx.last_read = get_clock();
++    if (fx.con)
++        graphic_hw_passthrough(fx.con, true);
++    fprintf(stderr, "glidept: offscreen %dx%d, frames to %s\n", w, h,
++        (fx.con)? "the graphic console":"nowhere (no graphic console)");
++}
++
++/* After each Glide call (vCPU thread, BQL held): read the frame after a swap, or when the
++ * last read is older than FXDISP_STALE_MS */
++void fxdisp_frame(int swap)
++{
++    int64_t now, t;
++
++    if (!fx.open)
++        return;
++    now = get_clock();
++    if (swap)
++        fx.swaps++;
++    else if ((now - fx.last_read) < (FXDISP_STALE_MS * SCALE_MS))
++        return;
++    fx.last_read = now;
++    if (!fx.con || !fx.shown || !glide_offscreen_frame)
++        return;
++    t = get_clock();
++    if (glide_offscreen_frame(fx.pix, fx.w, fx.h, fx.w * 4)) {
++        fx.ready = 1;
++        fx.scheduled = get_clock();
++        qemu_bh_schedule(fx.bh);
++    }
++    fx.read_ns += get_clock() - t;
++    fx.reads++;
++}
++
++/* 3D output on (the Glide frames) or off (the VGA's), as SDL's glide_renderer_stat() */
++void fxdisp_renderer(int activate)
++{
++    if (!fx.open || !fx.con || (fx.shown == !!activate))
++        return;
++    fx.shown = !!activate;
++    graphic_hw_passthrough(fx.con, fx.shown);
++    if (fx.shown)
++        fx.last_read = 0;
++    else
++        qemu_console_hw_invalidate(fx.con);
++}
++
++void fxdisp_close(void)
++{
++    double secs;
++
++    if (!fx.open)
++        return;
++    secs = (get_clock() - fx.opened) / 1e9;
++    fprintf(stderr, "glidept: offscreen closed after %.1f s: %" PRIu64 " swaps (%.1f per s), "
++        "%" PRIu64 " reads of %.2f ms average, %" PRIu64 " frames to the console, "
++        "%.2f ms after their read on average\n",
++        secs, fx.swaps, (secs > 0)? fx.swaps / secs:0, fx.reads,
++        (fx.reads)? (fx.read_ns / 1e6) / fx.reads:0, fx.shown_frames,
++        (fx.shown_frames)? (fx.bh_ns / 1e6) / fx.shown_frames:0);
++    fx.open = 0;
++    fx.ready = 0;
++    qemu_bh_cancel(fx.bh);
++    if (fx.con) {
++        graphic_hw_passthrough(fx.con, false);
++        /* the VGA replaces (and frees) our surface on its next update */
++        qemu_console_hw_invalidate(fx.con);
++    }
++    fx.surface = NULL;
++    fx.con = NULL;
++    g_free(fx.pix);
++    fx.pix = NULL;
++}
+diff --git a/qemu-0/hw/3dfx/fxdisp.h b/qemu-0/hw/3dfx/fxdisp.h
+new file mode 100644
+index 0000000..d92a4eb
+--- /dev/null
++++ b/qemu-0/hw/3dfx/fxdisp.h
+@@ -0,0 +1,31 @@
++/*
++ * QEMU 3Dfx Glide Pass-Through: offscreen display (fxdisp.c)
++ *
++ *  Copyright (c) 2026 WsHosting ENK
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this library;
++ * if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef FXDISP_H
++#define FXDISP_H
++
++int fxdisp_choose(void);
++int fxdisp_offscreen(void);
++void fxdisp_open(int, int);
++void fxdisp_frame(int);
++void fxdisp_renderer(int);
++void fxdisp_close(void);
++
++#endif // FXDISP_H
+diff --git a/qemu-0/hw/3dfx/glide2x_impl.c b/qemu-0/hw/3dfx/glide2x_impl.c
+index b5d656c..492075f 100644
+--- a/qemu-0/hw/3dfx/glide2x_impl.c
++++ b/qemu-0/hw/3dfx/glide2x_impl.c
+@@ -776,6 +776,8 @@ static void *hDll = 0;
+ #endif
+ void __stdcall (*setConfig)(const uint32_t flags, void *magic);
+ void __stdcall (*setConfigRes)(const int res, void *swap12);
++int (*glide_offscreen_size)(int *, int *);
++int (*glide_offscreen_frame)(void *, int, int, int);
+ static int SDLSignValid(const uint32_t sign)
+ {
+     static uint32_t SDLSign;
+@@ -845,6 +847,8 @@ void fini_glide2x(void)
+ #endif
+     }
+     hDll = 0;
++    glide_offscreen_size = 0;
++    glide_offscreen_frame = 0;
+     for (int i = 0; i < FEnum_zzG2xFuncEnum_max; i++) {
+         tblGlide2x[i].impl = 0;
+ 	tblGlide2x[i].ptr = 0;
+@@ -892,6 +896,8 @@ int init_glide2x(const char *dllname)
+     }
+     setConfig = (void (*)(const uint32_t, void *))dlsym(hDll, "setConfig");
+     setConfigRes = (void (*)(const int, void *))dlsym(hDll, "setConfigRes");
++    glide_offscreen_size = (hDll)? (int (*)(int *, int *))dlsym(hDll, "getOffscreenSize"):0;
++    glide_offscreen_frame = (hDll)? (int (*)(void *, int, int, int))dlsym(hDll, "getOffscreenFrame"):0;
+ #endif
+     
+     if (!hDll) {
+diff --git a/qemu-0/hw/3dfx/glide2x_impl.h b/qemu-0/hw/3dfx/glide2x_impl.h
+index edd5ff1..61aebf1 100644
+--- a/qemu-0/hw/3dfx/glide2x_impl.h
++++ b/qemu-0/hw/3dfx/glide2x_impl.h
+@@ -132,6 +132,9 @@ void glide_renderer_stat(const int);
+ #endif //CONSOLE_H
+ void doGlideFunc(int, uint32_t *, uintptr_t *, uintptr_t *, int);
+ void conf_glide2x(const uint32_t, const int);
++/* wsh-openglide's EGL offscreen platform (NULL with a library without it) */
++extern int (*glide_offscreen_size)(int *, int *);
++extern int (*glide_offscreen_frame)(void *, int, int, int);
+ void cwnd_glide2x(void *, void *, void *);
+ int init_glide2x(const char *);
+ void fini_glide2x(void);
+diff --git a/qemu-0/hw/3dfx/glidept_mm.c b/qemu-0/hw/3dfx/glidept_mm.c
+index 23bdc7d..8f8428f 100644
+--- a/qemu-0/hw/3dfx/glidept_mm.c
++++ b/qemu-0/hw/3dfx/glidept_mm.c
+@@ -26,6 +26,7 @@
+ #include "glide2x_impl.h"
+ #include "gllstbuf.h"
+ #include "vertex3x.h"
++#include "fxdisp.h"
+ 
+ #define DEBUG_GLIDEPT
+ 
+@@ -560,7 +561,7 @@ static void processArgs(GlidePTState *s)
+                 s->FEnum = FEnum_grSstControl;
+             }
+             else
+-                glide_renderer_stat(s->arg[0]);
++                glide_renderer(s->arg[0]);
+             break;
+ 
+         case FEnum_grLoadGammaTable:
+@@ -629,17 +630,18 @@ static void processFRet(GlidePTState *s)
+         case FEnum_grDisable:
+         case FEnum_grEnable:
+             if (s->arg[0] == GR_PASSTHRU)
+-                glide_renderer_stat((s->FEnum == FEnum_grEnable)? 1:0);
++                glide_renderer((s->FEnum == FEnum_grEnable)? 1:0);
+             break;
+         case FEnum_grSstControl:
+         case FEnum_grSstPassthruMode:
+             if (s->disp_cb.activate)
+-                glide_renderer_stat(s->arg[0] & 0x01U);
++                glide_renderer(s->arg[0] & 0x01U);
+             break;
+ 	case FEnum_grSstOpen:
+             s->disp_cb.arg = s->arg;
+             s->disp_cb.FEnum = s->FEnum;
+-            init_window(s->arg[0], s->version, &s->disp_cb);
++            if (init_window(s->arg[0], s->version, &s->disp_cb))
++                s->FRet = 0;
+             s->lfbDev->guestLfb = s->arg[6];
+ 	    break;
+ 	case FEnum_grSstWinOpen:
+@@ -652,7 +654,11 @@ static void processFRet(GlidePTState *s)
+             }
+             else {
+                 char strFpsLimit[sizeof(", FpsLimit [ ... FPS ]")];
+-                init_window(s->arg[1], s->version, &s->disp_cb);
++                if (init_window(s->arg[1], s->version, &s->disp_cb)) {
++                    s->FRet = 0;
++                    DPRINTF("grSstWinOpen failed, no Glide window");
++                    break;
++                }
+                 snprintf(strFpsLimit, sizeof(strFpsLimit), ", FpsLimit [ %d FPS ]", glide_fpslimit());
+ 		s->lfbDev->origin = s->arg[4];
+ 		s->lfbDev->guestLfb = (s->FEnum == FEnum_grSstWinOpenExt)? s->arg[8]:s->arg[7];
+@@ -901,6 +907,8 @@ static void processFifo(GlidePTState *s)
+             processArgs(s);
+             doGlideFunc(s->FEnum, s->arg, s->parg, &s->FRet, s->lfbDev->emu211);
+             processFRet(s);
++            if (s->FEnum == FEnum_grBufferSwap)
++                fxdisp_frame(1);
+             numData = (s->datacb & 0x03)? ((s->datacb >> 2) + 1):(s->datacb >> 2);
+             i += numArgs;
+             j += numData;
+@@ -998,6 +1006,7 @@ static void glidept_write(void *opaque, hwaddr addr, uint64_t val, unsigned size
+             processArgs(s);
+             doGlideFunc(s->FEnum, s->arg, s->parg, &s->FRet, s->lfbDev->emu211);
+             processFRet(s);
++            fxdisp_frame(s->FEnum == FEnum_grBufferSwap);
+             do {
+                 uint32_t *dataptr = (uint32_t *)(s->fifo_ptr + (MAX_FIFO << 2));
+                 uint32_t numData = (s->datacb & 0x03)? ((s->datacb >> 2) + 1):(s->datacb >> 2);
+diff --git a/qemu-0/hw/3dfx/glidewnd.c b/qemu-0/hw/3dfx/glidewnd.c
+index 0c0f143..36b74b2 100644
+--- a/qemu-0/hw/3dfx/glidewnd.c
++++ b/qemu-0/hw/3dfx/glidewnd.c
+@@ -23,6 +23,7 @@
+ #include "ui/console.h"
+ 
+ #include "glide2x_impl.h"
++#include "fxdisp.h"
+ 
+ #define DPRINTF(fmt, ...) \
+     do { fprintf(stderr, " " fmt "\n", ## __VA_ARGS__); } while(0)
+@@ -69,6 +70,7 @@ static int cfg_Annotate;
+ static int cfg_MipMaps;
+ static int cfg_traceFifo;
+ static int cfg_traceFunc;
++static int cfg_offscreen;
+ static void *hwnd;
+ 
+ #ifdef CONFIG_DARWIN
+@@ -196,6 +198,9 @@ int stat_window(const int res, void *opaque)
+ {
+     int stat, sel, glide_fullscreen;
+     window_cb *disp_cb = opaque;
++    /* Offscreen, the window is opened and closed synchronously (init_window, fini_window) */
++    if (cfg_offscreen)
++        return 0;
+     sel = (cfg_scaleX)? scaledRes(cfg_scaleX, ((float)tblRes[res].h) / tblRes[res].w):res;
+     stat = 1;
+     glide_fullscreen = glide_gui_fullscreen(0, 0);
+@@ -220,6 +225,17 @@ void fini_window(void *opaque)
+ {
+     window_cb *disp_cb = opaque;
+     disp_cb->activate = 0;
++    if (cfg_offscreen) {
++        if (hwnd) {
++            fxdisp_close();
++            if ((disp_cb->FEnum == FEnum_grSstWinClose) || (disp_cb->FEnum == FEnum_grSstWinClose3x))
++                cwnd_glide2x(0, 0, disp_cb);
++        }
++        hwnd = 0;
++        cfg_traceFifo = 0;
++        cfg_traceFunc = 0;
++        return;
++    }
+ #ifdef CONFIG_WIN32
+     if (cfg_createWnd)
+         DestroyWindow(hwnd);
+@@ -235,10 +251,22 @@ void fini_window(void *opaque)
+     cfg_traceFunc = 0;
+ }
+ 
+-void init_window(const int res, const char *wndTitle, void *opaque)
++void glide_renderer(const int activate)
++{
++    if (cfg_offscreen)
++        fxdisp_renderer(activate);
++    else
++        glide_renderer_stat(activate);
++}
++
++/* Returns 0, or -1 when the Glide window can't be opened (offscreen only: the SDL window's
++ * readiness is polled through stat_window) */
++int init_window(const int res, const char *wndTitle, void *opaque)
+ {
+     window_cb *disp_cb = opaque;
+ 
++    cfg_offscreen = fxdisp_choose();
++
+     cfg_scaleGuiOff = 0;
+     cfg_scaleX = 0;
+     cfg_cntxMSAA = 0;
+@@ -294,7 +322,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+         fclose(fp);
+     }
+ 
+-    int gui_height, glide_fullscreen = glide_gui_fullscreen(0, &gui_height);
++    int gui_height = 0, glide_fullscreen = (cfg_offscreen)? 0:glide_gui_fullscreen(0, &gui_height);
+     cfg_scaleGuiOff = (glide_fullscreen || cfg_scaleX)? 1:cfg_scaleGuiOff;
+     cfg_scaleX = (!cfg_scaleGuiOff && (gui_height > 480) && (gui_height > tblRes[res].h))?
+         (int)((1.f * tblRes[res].w * gui_height) / tblRes[res].h):cfg_scaleX;
+@@ -305,6 +333,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+ #define WRAPPER_FLAG_FRAMEBUFFER_SRGB   0x20
+ #define WRAPPER_FLAG_VSYNCOFF           0x40
+ #define WRAPPER_FLAG_QEMU               0x80
++#define WRAPPER_FLAG_OFFSCREEN          0x100
+     uint32_t flags = (glide_fullscreen)? WRAPPER_FLAG_QEMU:
+         (WRAPPER_FLAG_QEMU | WRAPPER_FLAG_WINDOWED);
+     flags |= (cfg_MipMaps)? WRAPPER_FLAG_MIPMAPS:0;
+@@ -312,6 +341,17 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+     flags |= (cfg_cntxVsyncOff)? WRAPPER_FLAG_VSYNCOFF:0;
+     flags |= (cfg_cntxSRGB)? WRAPPER_FLAG_FRAMEBUFFER_SRGB:0;
+     flags |= cfg_cntxMSAA;
++    if (cfg_offscreen) {
++        if (!glide_offscreen_frame || !glide_offscreen_size) {
++            fprintf(stderr, "glidept: no SDL window, and the Glide library can't render offscreen "
++                "(no getOffscreenFrame: wsh-openglide with the EGL platform is needed); "
++                "Glide window not opened\n");
++            disp_cb->activate = 0;
++            hwnd = 0;
++            return -1;
++        }
++        flags |= WRAPPER_FLAG_OFFSCREEN;
++    }
+ 
+     int sel = res;
+     if (cfg_scaleX) {
+@@ -323,6 +363,21 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+ 
+     disp_cb->activate = 1;
+     hwnd = (void *)(uintptr_t)(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w);
++    if (cfg_offscreen) {
++        int w = 0, h = 0;
++        disp_cb->GrContext = 0;
++        cwnd_glide2x(0, 0, disp_cb);
++        if (!disp_cb->GrContext || !glide_offscreen_size(&w, &h)) {
++            fprintf(stderr, "glidept: the Glide library couldn't open its offscreen window "
++                "(its EGL errors above); Glide window not opened\n");
++            disp_cb->activate = 0;
++            hwnd = 0;
++            return -1;
++        }
++        DPRINTF("    offscreen %ux%u %s", w, h, (cfg_scaleX)? "(scaled)":"");
++        fxdisp_open(w, h);
++        return 0;
++    }
+ #ifdef CONFIG_WIN32
+     if (cfg_createWnd)
+         hwnd = CreateGlideWindow(wndTitle, tblRes[sel].w, tblRes[sel].h);
+@@ -333,6 +388,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+     glide_prepare_window(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w,
+             (cfg_cntxMSAA > 8)? 16:cfg_cntxMSAA, disp_cb, &cwnd_glide2x);
+ #endif	
++    return 0;
+ }
+ 
+ typedef struct {
+@@ -376,7 +432,7 @@ static void profile_stat(void)
+     if (p->last == 0) {
+ 	p->fcount = 0;
+ 	p->ftime = 0;
+-	p->last = (glide_gui_fullscreen(0, 0))? 0:get_clock();
++	p->last = (!cfg_offscreen && glide_gui_fullscreen(0, 0))? 0:get_clock();
+ 	return;
+     }
+ 
+diff --git a/qemu-0/hw/3dfx/glidewnd.h b/qemu-0/hw/3dfx/glidewnd.h
+index c0922f8..019ce6c 100644
+--- a/qemu-0/hw/3dfx/glidewnd.h
++++ b/qemu-0/hw/3dfx/glidewnd.h
+@@ -31,8 +31,9 @@ int glide_lfbnoaux(void);
+ int glide_lfbmode(void);
+ void glide_winres(const int, int *, int *);
+ int stat_window(const int, void *);
+-void init_window(const int, const char *, void *);
++int init_window(const int, const char *, void *);
+ void fini_window(void *);
++void glide_renderer(const int);
+ 
+ typedef struct {
+     int activate;
+diff --git a/qemu-0/hw/3dfx/meson.build b/qemu-0/hw/3dfx/meson.build
+index 6364ee6..c849d73 100644
+--- a/qemu-0/hw/3dfx/meson.build
++++ b/qemu-0/hw/3dfx/meson.build
+@@ -2,5 +2,6 @@ i386_system_ss.add(files(
+   'glide2x_impl.c',
+   'glidept_mm.c',
+   'glidewnd.c',
++  'fxdisp.c',
+   'gllstbuf.c',
+ ))
 diff --git a/qemu-1/hw/mesa/mglcntx_linux.c b/qemu-1/hw/mesa/mglcntx_linux.c
-index 45984c3..32a8168 100644
+index c8c6a78..2260805 100644
 --- a/qemu-1/hw/mesa/mglcntx_linux.c
 +++ b/qemu-1/hw/mesa/mglcntx_linux.c
-@@ -676,7 +676,7 @@ void MGLFuncHandler(const char *name)
+@@ -688,7 +688,7 @@ void MGLFuncHandler(const char *name)
      }
      FUNCP_HANDLER("wglGetSwapIntervalEXT") {
          if (!xglFuncs.SwapIntervalEXT && xglFuncs.has_mesa_exts) {
@@ -11,7 +535,7 @@ index 45984c3..32a8168 100644
              int (*GetSwapIntervalMESA)(void) =
                  (int (*)(void)) MesaGLGetProc("glXGetSwapIntervalMESA");
              if (GetSwapIntervalMESA) {
-@@ -692,7 +692,7 @@ void MGLFuncHandler(const char *name)
+@@ -704,7 +704,7 @@ void MGLFuncHandler(const char *name)
                  argsp[0] = 1;
                  return;
              }
