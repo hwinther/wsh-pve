@@ -29,6 +29,7 @@ export default defineConfig({
             { label: "DOS", slug: "guides/dos" },
             { label: "Dial-up modem", slug: "guides/dialup" },
             { label: "Retro net", slug: "guides/retronet" },
+            { label: "Tiny test system", slug: "guides/tiny" },
           ],
         },
         {
