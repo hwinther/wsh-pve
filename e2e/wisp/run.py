@@ -3,7 +3,7 @@
 
     ./run.py --arch sparc32 [--arch sparc64 ...|--arch all] [--qemu-dir DIR] [--label tcg]
              [--repeat 2] [--loops N] [--machine SS-20 ...] [--json results.jsonl] [--log-dir logs]
-             [--shell]
+             [--shell] [--tier2]
 
 Each run starts QEMU with -kernel out/<arch>/kernel on a serial console, reads the console with
 timestamps, and stops at power-off (or at --timeout). One JSON object per run goes to stdout (and
@@ -17,20 +17,29 @@ against the value every architecture must produce for that loop count.
 With --shell, the kernel gets wisp=shell and PID 1 starts its interactive shell instead: run.py
 answers the prompts with a fixed script (help typed with a Backspace, info, bench, crc 64,
 mandel, poweroff; shell.py) and checks the answers, including every row of the Mandelbrot set.
+
+With --tier2, each machine boots kernel-t2 once per tier-2 profile (tier2.py): raw disk images on
+the machine's disk controllers, a NIC on QEMU's user-mode network, or more than one CPU. Besides
+the result line, the WISP-DISK, WISP-NET and WISP-SMP lines are checked, and after QEMU exits the
+images too. With --shell --tier2, the shell gets the first profile and the disk, net and smp
+commands.
 """
 
 import argparse
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zlib
 
 import shell
+import tier2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -116,7 +125,7 @@ def crc_for(loops, compute_limit=256):
 
 
 def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, loops=None,
-                 firmware=None, extra=(), interactive=False):
+                 firmware=None, extra=(), interactive=False, append_extra=()):
     """The QEMU command line for one boot."""
     binary, machine_args, default_mem, console = ARCHES[arch]
     if qemu_dir:
@@ -128,6 +137,8 @@ def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, lo
         append += f" loops={loops}"
     if interactive:
         append += " wisp=shell"
+    for item in append_extra:
+        append += f" {item}"
     cmd = [binary, *machine_args, "-m", str(memory or default_mem), "-display", "none",
            "-serial", "stdio", "-monitor", "none", "-no-reboot", "-nodefaults"]
     if firmware:
@@ -239,12 +250,20 @@ def evaluate(arch, raw, loops):
     return rec
 
 
-def evaluate_shell(arch, raw, loops, script=shell.SCRIPT):
-    """The reported record of a --shell run; 'ok' only if every answer checks out."""
+def evaluate_shell(arch, raw, loops, script=shell.SCRIPT, profile=None, images=None):
+    """The reported record of a --shell run; 'ok' only if every answer checks out. With a tier-2
+    profile, the disk, net and smp answers and the images are checked too."""
     answers = shell.split_transcript(raw["text"])
     problems, numbers = shell.check_answers(arch, script, answers, crc_for,
                                             loops or DEFAULT_LOOPS)
     rec = {"arch": arch, "mode": "shell"}
+    if profile:
+        text = "\n".join("\n".join(lines) for _, lines in answers)
+        t2_problems, t2_numbers = tier2.check(text, profile, crc_for, loops or DEFAULT_LOOPS)
+        problems += t2_problems
+        if images is not None:
+            problems += images.check()
+        rec.update(t2_numbers, profile=profile["name"])
     for key in ("load1", "load5", "exit_code", "timed_out", "max_rss_kb", "user_s", "sys_s",
                 "t_prompt", "prompt_s"):
         rec[key] = raw[key]
@@ -259,6 +278,32 @@ def evaluate_shell(arch, raw, loops, script=shell.SCRIPT):
     rec["ok"] = not problems
     rec["problems"] = problems
     return rec
+
+
+def evaluate_tier2(arch, raw, loops, profile, images):
+    """A --tier2 batch run: the result line as in evaluate(), the tier-2 lines and the images."""
+    rec = evaluate(arch, raw, loops)
+    text = "\n".join(t for _, t in raw["lines"])
+    problems, numbers = tier2.check(text, profile, crc_for, loops or DEFAULT_LOOPS)
+    if images is not None:
+        problems += images.check()
+    rec.update(numbers, mode="tier2", profile=profile["name"])
+    rec["problems"] += problems
+    rec["ok"] = not rec["problems"]
+    return rec
+
+
+def tier2_table(records):
+    """Markdown table of --tier2 runs (batch or shell)."""
+    head = ("| arch | machine | label | profile | disk read/write/verify ms | net ARP ms / RTT us "
+            "| SMP CPUs x loop ms / wall ms | to exit s | ok |")
+    rows = [head, "|" + " --- |" * 9]
+    for r in records:
+        disk, net, smp = tier2.summary(r)
+        rows.append(f"| {r['arch']} | {machine_of(r)} | {r.get('label', '')} | {r.get('profile')} "
+                    f"| {disk} | {net} | {smp} | {r['t_exit']:.2f} "
+                    f"| {'yes' if r['ok'] else 'NO'} |")
+    return "\n".join(rows)
 
 
 def shell_table(records):
@@ -315,40 +360,83 @@ def main(argv=None):
     ap.add_argument("--log-dir", help="write each run's timestamped console log here")
     ap.add_argument("--shell", action="store_true",
                     help="boot with wisp=shell and drive the interactive shell (shell.py)")
+    ap.add_argument("--tier2", action="store_true",
+                    help="boot kernel-t2 with each machine's disks, NIC and CPUs (tier2.py)")
+    ap.add_argument("--image-dir", default=None,
+                    help="where --tier2 puts its disk images (default: a temporary directory)")
     args = ap.parse_args(argv)
 
     arches = list(ARCHES) if "all" in args.arch else args.arch
     records = []
-    runs = [(arch, machine) for arch in arches for machine in (args.machine or [None])]
-    for arch, machine in runs:
-        kernel = os.path.join(args.out, arch, "kernel")
-        cmd = qemu_command(arch, args.qemu_dir, kernel, machine, args.memory, args.loops,
-                           args.firmware, interactive=args.shell)
-        for n in range(1, args.repeat + 1):
-            log_path = None
-            if args.log_dir:
-                os.makedirs(args.log_dir, exist_ok=True)
-                tag = "-".join(x for x in (arch, args.label, machine,
-                                           "shell" if args.shell else "", str(n)) if x)
-                log_path = os.path.join(args.log_dir, f"{tag}.log")
-            if args.shell:
-                raw = shell.drive(cmd, shell.SCRIPT, args.timeout)
-                if log_path:
-                    with open(log_path, "w", encoding="utf-8") as fh:
-                        fh.write(raw["text"])
-                rec = evaluate_shell(arch, raw, args.loops)
+    runs = []
+    for arch in arches:
+        for machine in args.machine or [None]:
+            m = machine or ARCHES[arch][1][1]
+            if not args.tier2:
+                runs.append((arch, machine, None))
+            elif args.shell:
+                runs.append((arch, machine, tier2.shell_profile(arch, m)))
             else:
-                raw = boot(cmd, args.timeout, log_path)
-                rec = evaluate(arch, raw, args.loops)
-            rec.update(label=args.label, run=n, machine_arg=machine, qemu=cmd[0])
-            records.append(rec)
-            line = json.dumps(rec, sort_keys=True)
-            print(line, flush=True)
-            if args.json:
-                with open(args.json, "a", encoding="utf-8") as fh:
-                    fh.write(line + "\n")
-    print((shell_table if args.shell else table)(records), file=sys.stderr)
+                runs += [(arch, machine, p) for p in tier2.profiles(arch, m)]
+    image_root = args.image_dir or tempfile.mkdtemp(prefix="wisp-images-")
+    try:
+        for arch, machine, profile in runs:
+            records += run_one(args, arch, machine, profile, image_root)
+    finally:
+        if not args.image_dir:
+            shutil.rmtree(image_root, ignore_errors=True)
+    if args.tier2:
+        out = tier2_table(records)
+    else:
+        out = (shell_table if args.shell else table)(records)
+    print(out, file=sys.stderr)
     return 0 if all(r["ok"] for r in records) else 1
+
+
+def run_one(args, arch, machine, profile, image_root):
+    """The --repeat runs of one machine (and tier-2 profile); returns their records."""
+    records = []
+    kernel = os.path.join(args.out, arch, "kernel-t2" if profile else "kernel")
+    for n in range(1, args.repeat + 1):
+        images = None
+        extra, append_extra, script = (), (), shell.SCRIPT
+        if profile:
+            images = tier2.Images(os.path.join(image_root, f"{arch}-{machine}-{n}"), profile)
+            extra = tier2.qemu_args(profile, images.paths)
+            append_extra = tier2.kernel_args(profile, arch)
+            script = shell.tier2_script(profile)
+        cmd = qemu_command(arch, args.qemu_dir, kernel, machine, args.memory, args.loops,
+                           args.firmware, extra=extra, interactive=args.shell,
+                           append_extra=append_extra)
+        log_path = None
+        if args.log_dir:
+            os.makedirs(args.log_dir, exist_ok=True)
+            tag = "-".join(x for x in (arch, args.label, machine,
+                                       profile["name"] if profile else "",
+                                       "shell" if args.shell else "", str(n)) if x)
+            log_path = os.path.join(args.log_dir, f"{tag}.log")
+        if args.shell:
+            raw = shell.drive(cmd, script, args.timeout)
+            if log_path:
+                with open(log_path, "w", encoding="utf-8") as fh:
+                    fh.write(raw["text"])
+            rec = evaluate_shell(arch, raw, args.loops, script, profile, images)
+        elif profile:
+            raw = boot(cmd, args.timeout, log_path)
+            rec = evaluate_tier2(arch, raw, args.loops, profile, images)
+        else:
+            raw = boot(cmd, args.timeout, log_path)
+            rec = evaluate(arch, raw, args.loops)
+        if images is not None:
+            images.remove()
+        rec.update(label=args.label, run=n, machine_arg=machine, qemu=cmd[0])
+        records.append(rec)
+        line = json.dumps(rec, sort_keys=True)
+        print(line, flush=True)
+        if args.json:
+            with open(args.json, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    return records
 
 
 if __name__ == "__main__":

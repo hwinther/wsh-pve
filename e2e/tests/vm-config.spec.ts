@@ -6,7 +6,9 @@ import {
   type Pve,
   pveApi,
   pveExec,
+  qemu3dfxHasGlDisplay,
   qemuAccepts,
+  qemuServerHasMesaDisplay,
   qemuServerShowcmdClean,
   showcmd,
   vmConfFile,
@@ -189,6 +191,63 @@ test.describe('x86: 3dfx/Mesa pass-through', () => {
     // With SDL's dummy video driver: no X server here, so this doesn't show that the display works.
     const qemu = await qemuAccepts(vmid, { keepDisplay: true })
     expect(qemu.code, qemu.output).toBe(0)
+  })
+
+  // vga: mesa-display (Display → "3DFX/Mesa display"): the QEMU display next to the VNC console.
+  // egl-headless has GL, so the Glide frames reach it as a dmabuf; 'none' (the default) adds no
+  // -display. The frame itself, through PVE's noVNC console: 3dfx-gl-display.spec.ts.
+  test('mesa-display=egl-headless adds -display egl-headless next to VNC', async () => {
+    test.skip(!(await qemuServerHasMesaDisplay()), 'the installed qemu-server has no mesa-display yet')
+    const vmid = await createVm({ memory: 512, name: 'x86-3dfx-egl', vga: 'std,mesa=1,mesa-display=egl-headless' })
+    expect(await vmConfFile(vmid)).toContain('vga: std,mesa=1,mesa-display=egl-headless')
+
+    const cmd = await showcmd(vmid)
+    expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-x86_64-3dfx \\$/m)
+    expect(cmd).toMatch(/^ {2}-display egl-headless \\$/m)
+    expect(cmd).toContain(`-vnc 'unix:/var/run/qemu-server/${vmid}.vnc,password=on'`)
+    expect(cmd).toContain("-device 'VGA,id=vga,bus=pci.0,addr=0x2'")
+
+    // With its own display: egl-headless on the node's render node, or Mesa's surfaceless platform
+    // without one (the 3dfx binary since stage 2; an older one stops: "no drm render node")
+    if (await qemu3dfxHasGlDisplay()) {
+      const qemu = await qemuAccepts(vmid, { keepDisplay: true })
+      expect(qemu.code, qemu.output).toBe(0)
+    } else {
+      test.info().annotations.push({ description: 'the installed 3dfx binary has no surfaceless EGL', type: 'skip' })
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    }
+  })
+
+  test('mesa-display=none is the default: no -display', async () => {
+    test.skip(!(await qemuServerHasMesaDisplay()), 'the installed qemu-server has no mesa-display yet')
+    const vmid = await createVm({ memory: 512, name: 'x86-3dfx-none', vga: 'std,mesa=1,mesa-display=none' })
+    const cmd = await showcmd(vmid)
+    expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-x86_64-3dfx \\$/m)
+    expect(cmd).not.toContain('-display')
+    expect(cmd).toContain(`-vnc 'unix:/var/run/qemu-server/${vmid}.vnc,password=on'`)
+  })
+
+  test('mesa-display=egl-headless is refused without the 3dfx binary, with a server or a serial console', async () => {
+    test.skip(!(await qemuServerHasMesaDisplay()), 'the installed qemu-server has no mesa-display yet')
+    const create = `/nodes/${NODE}/qemu`
+    const refusal = async (vga: string, extra: Record<string, string> = {}) =>
+      (await pve.refused('POST', create, { memory: 512, name: 'x86-3dfx-refused', vga, vmid: 9399, ...extra })).message
+    expect(await refusal('std,mesa=0,mesa-display=egl-headless')).toContain(
+      "vga: 'mesa-display=egl-headless' needs 'mesa=1' on a VM of the host's architecture",
+    )
+    expect(await refusal('std,mesa=1,mesa-display=egl-headless,server=:0')).toContain(
+      "vga: 'mesa-display=egl-headless' can't be used with 'server' (the SDL display)",
+    )
+    expect(await refusal('serial0,mesa=1,mesa-display=egl-headless', { serial0: 'socket' })).toContain(
+      "vga: 'mesa-display=egl-headless' needs a graphic card with a VNC console, not 'serial0'",
+    )
+    // and on an existing VM: mesa switched off, the GL display left
+    const vmid = await createVm({ memory: 512, name: 'x86-3dfx-edit', vga: 'std,mesa=1,mesa-display=egl-headless' })
+    expect(
+      (await pve.refused('PUT', `/nodes/${NODE}/qemu/${vmid}/config`, { vga: 'std,mesa-display=egl-headless' }))
+        .message,
+    ).toContain("vga: 'mesa-display=egl-headless' needs 'mesa=1' on a VM of the host's architecture")
   })
 
   // OpenGLide (wsh-openglide), which the Glide device loads, keeps OpenGLid.ini and its logs in the

@@ -21,6 +21,15 @@
  * line discipline echoes and edits the line (Backspace, Ctrl-U, Ctrl-W), and
  * the shell also drops ^H and arrow-key escape sequences from what it reads.
  *
+ * Tier 2, each part optional and set on the kernel command line (it reaches
+ * PID 1 as environment variables, like loops=): wisp_disk=sda,vda writes a
+ * pattern to raw block devices and reads it back, wisp_net=eth0 gives the
+ * interface 10.0.2.15 and sends ICMP echoes to QEMU's user-mode network at
+ * 10.0.2.2, wisp_smp=1 runs the compute loop on every CPU. Each prints a line
+ * after the result line (WISP-DISK, WISP-NET, WISP-SMP) that run.py --tier2
+ * checks; the shell has them as disk, net and smp. Without them the output
+ * is unchanged.
+ *
  * The same file builds against glibc on the host ("cc -o init-host init.c"),
  * where it is not PID 1: tests/test_shell.py drives that build.
  */
@@ -28,14 +37,20 @@
 /* nolibc's _start out of the way, see below */
 #define _start wisp_nolibc_start
 #endif
+#include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
+#include <linux/ioctl.h>
 #include <linux/reboot.h>
 #include <linux/sysinfo.h>
 
@@ -199,6 +214,580 @@ static void power(int cmd)
 		sleep(3600);
 }
 
+/* Tier 2: disk, network, SMP ------------------------------------------------------------------ */
+
+/* Microseconds of CLOCK_MONOTONIC; wraps after 71 minutes on 32-bit, fine for differences. */
+static unsigned long clock_us(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts))
+		return 0;
+	return (unsigned long)ts.tv_sec * 1000000UL + (unsigned long)ts.tv_nsec / 1000UL;
+}
+
+/* The next word of a xorshift32 stream (the compute loop's generator). */
+static unsigned int xorshift(unsigned int *x)
+{
+	*x ^= *x << 13;
+	*x ^= *x >> 17;
+	*x ^= *x << 5;
+	return *x;
+}
+
+static void put_le32(unsigned char *p, unsigned int w)
+{
+	p[0] = w;
+	p[1] = w >> 8;
+	p[2] = w >> 16;
+	p[3] = w >> 24;
+}
+
+static unsigned int get_le32(const unsigned char *p)
+{
+	return p[0] | p[1] << 8 | p[2] << 16 | (unsigned int)p[3] << 24;
+}
+
+static unsigned int crc_bytes(unsigned int crc, const unsigned char *p, unsigned long n)
+{
+	while (n--)
+		crc = crc_table[(crc ^ *p++) & 0xff] ^ (crc >> 8);
+	return crc;
+}
+
+/*
+ * The disk check, on a raw block device (no file system). run.py fills the
+ * image with the host pattern (a xorshift32 stream from DISK_HOST_SEED plus
+ * the disk's index, stored little-endian) before the boot. PID 1 reads up to
+ * DISK_READ bytes and compares them with that stream, writes DISK_SPAN bytes
+ * of its own pattern (DISK_GUEST_SEED plus the index) at offset DISK_SPAN,
+ * fsyncs, drops the device's page cache (BLKFLSBUF, then close and open
+ * again), reads them back and compares. After QEMU exits, run.py checks the
+ * whole image: the guest pattern at DISK_SPAN, the host pattern elsewhere.
+ */
+#define DISK_HOST_SEED 0x686f7374u  /* "host" */
+#define DISK_GUEST_SEED 0x67756573u /* "gues" */
+#define DISK_SPAN (1024UL * 1024UL)
+#define DISK_READ (4UL * DISK_SPAN)
+#define DISK_CHUNK (BUF_WORDS * 4UL)
+#define WISP_BLKGETSIZE64 _IOR(0x12, 114, size_t)
+#define WISP_BLKFLSBUF _IO(0x12, 97)
+
+static char **wisp_envp;
+
+/* Reads (or with wr set, writes) len bytes at off in chunks through buf[], checking (or
+ * generating) the xorshift32 stream from seed; returns the words that differed (-1 on an I/O
+ * error) and the CRC-32 of what was read or written in *crc. */
+static long disk_pass(int fd, unsigned long off, unsigned long len, unsigned int seed, int wr,
+		      unsigned int *crc)
+{
+	unsigned char *p = (unsigned char *)buf;
+	unsigned long done, i;
+	unsigned int x = seed, c = 0xffffffffu;
+	long bad = 0;
+
+	if (lseek(fd, off, SEEK_SET) < 0)
+		return -1;
+	for (done = 0; done < len; done += DISK_CHUNK) {
+		if (wr) {
+			for (i = 0; i < DISK_CHUNK; i += 4)
+				put_le32(p + i, xorshift(&x));
+			if (write(fd, p, DISK_CHUNK) != (ssize_t)DISK_CHUNK)
+				return -1;
+		} else {
+			if (read(fd, p, DISK_CHUNK) != (ssize_t)DISK_CHUNK)
+				return -1;
+			for (i = 0; i < DISK_CHUNK; i += 4)
+				bad += get_le32(p + i) != xorshift(&x);
+		}
+		c = crc_bytes(c, p, DISK_CHUNK);
+	}
+	*crc = ~c;
+	return bad;
+}
+
+/* Waits up to 10 s for a device node to appear (a disk is scanned asynchronously). */
+static int open_wait(const char *path, int flags)
+{
+	int fd, i;
+
+	for (i = 0; i < 200; i++) {
+		fd = open(path, flags);
+		if (fd >= 0 || getpid() != 1)
+			return fd;
+		usleep(50000);
+	}
+	return -1;
+}
+
+static void mount_dev(void)
+{
+	static int done;
+
+	/* devtmpfs over the initramfs's /dev (/dev/console is in it too) */
+	if (!done && getpid() == 1)
+		mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
+	done = 1;
+}
+
+/* One disk: "sda" is /dev/sda, a name with a '/' is a path (a file, on the host). */
+static int disk_check(const char *name, unsigned int index, const char *prefix)
+{
+	char path[64];
+	unsigned long long size = 0;
+	unsigned long t0, t1, t2, t3, rlen;
+	unsigned int rcrc = 0, wcrc = 0, vcrc = 0;
+	long rbad = -1, vbad = -1;
+	const char *status = "ok";
+	int fd;
+
+	mount_dev();
+	if (strchr(name, '/'))
+		snprintf(path, sizeof(path), "%s", name);
+	else
+		snprintf(path, sizeof(path), "/dev/%s", name);
+	t0 = t1 = t2 = t3 = clock_ms(CLOCK_MONOTONIC);
+	fd = open_wait(path, O_RDWR);
+	if (fd < 0) {
+		status = "no-device";
+		goto out;
+	}
+	if (ioctl(fd, WISP_BLKGETSIZE64, &size) != 0)
+		size = (unsigned long long)lseek(fd, 0, SEEK_END); /* a file */
+	if (size < 2 * DISK_SPAN) {
+		status = "too-small";
+		goto out_close;
+	}
+	rlen = size < DISK_READ ? DISK_SPAN * 2 : DISK_READ;
+	t0 = clock_ms(CLOCK_MONOTONIC);
+	rbad = disk_pass(fd, 0, rlen, DISK_HOST_SEED + index, 0, &rcrc);
+	t1 = clock_ms(CLOCK_MONOTONIC);
+	if (rbad < 0) {
+		status = "read-error";
+		goto out_close;
+	}
+	if (disk_pass(fd, DISK_SPAN, DISK_SPAN, DISK_GUEST_SEED + index, 1, &wcrc) < 0 ||
+	    fsync(fd) != 0) {
+		status = "write-error";
+		goto out_close;
+	}
+	/* from the device, not from the page cache */
+	ioctl(fd, WISP_BLKFLSBUF, 0);
+	close(fd);
+	t2 = clock_ms(CLOCK_MONOTONIC);
+	fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		status = "reopen-failed";
+		goto out;
+	}
+	vbad = disk_pass(fd, DISK_SPAN, DISK_SPAN, DISK_GUEST_SEED + index, 0, &vcrc);
+	t3 = clock_ms(CLOCK_MONOTONIC);
+	if (vbad < 0)
+		status = "verify-error";
+	else if (rbad)
+		status = "read-mismatch";
+	else if (vbad)
+		status = "verify-mismatch";
+out_close:
+	close(fd);
+out:
+	printf("%sWISP-DISK v=1 dev=%s index=%u size_kb=%lu read_kb=%lu read_crc=0x%08x read_bad=%ld "
+	       "read_ms=%lu write_kb=%lu write_crc=0x%08x write_ms=%lu verify_crc=0x%08x "
+	       "verify_bad=%ld verify_ms=%lu status=%s\n",
+	       prefix, name, index, (unsigned long)(size >> 10), rbad < 0 ? 0 : rlen >> 10, rcrc,
+	       rbad, t1 - t0, DISK_SPAN >> 10, wcrc, t2 - t1, vcrc, vbad, t3 - t2, status);
+	return strcmp(status, "ok") == 0;
+}
+
+/* Each comma- or space-separated name of list in turn. */
+static void disks(const char *list, const char *prefix)
+{
+	char name[32];
+	unsigned int index = 0, n;
+
+	while (*list) {
+		for (n = 0; *list && *list != ',' && *list != ' '; list++)
+			if (n < sizeof(name) - 1)
+				name[n++] = *list;
+		name[n] = '\0';
+		if (*list)
+			list++;
+		if (n)
+			disk_check(name, index++, prefix);
+	}
+}
+
+/*
+ * The network check, on QEMU's user-mode network (slirp), which answers
+ * ARP and ICMP echo requests for its gateway address 10.0.2.2 itself,
+ * without the host's network or a DNS server. The kernel has no IP stack
+ * (packet sockets only, which keeps it smaller): PID 1 brings the interface
+ * up and builds the frames itself, as 10.0.2.15 (no DHCP). An ARP request
+ * for 10.0.2.2 goes out every 200 ms until slirp answers (the link may come
+ * up late); then NET_ECHOES ICMP echo requests with a NET_PAYLOAD-byte
+ * pattern measure the round trip, and each reply must carry the payload
+ * sent, with good IP and ICMP checksums. ARP requests for 10.0.2.15 are
+ * answered on the way.
+ */
+#define NET_PAYLOAD 1400
+#define NET_ECHOES 8
+#define NET_TRIES 50
+#define NET_ID 0x5749 /* "WI" */
+#define WISP_AF_PACKET 17
+#define WISP_SOCK_RAW 3
+#define WISP_ETH_P_ALL 0x0003
+#define WISP_SIOCGIFFLAGS 0x8913
+#define WISP_SIOCSIFFLAGS 0x8914
+#define WISP_SIOCGIFHWADDR 0x8927
+#define WISP_SIOCGIFINDEX 0x8933
+#define WISP_IFF_UP 0x1
+
+/* struct ifreq: the name, then a union of at most 24 bytes */
+struct wisp_ifreq {
+	char name[16];
+	union {
+		struct {
+			unsigned short family;
+			unsigned char data[14];
+		} hw;
+		short flags;
+		int index;
+		char pad[24];
+	} u;
+};
+
+struct wisp_sockaddr_ll {
+	unsigned short family;
+	unsigned short protocol; /* network byte order */
+	int ifindex;
+	unsigned short hatype;
+	unsigned char pkttype, halen, addr[8];
+};
+
+static const unsigned char net_me[4] = { 10, 0, 2, 15 }, net_gw[4] = { 10, 0, 2, 2 };
+static const unsigned char net_bcast[6] = { 255, 255, 255, 255, 255, 255 };
+
+static unsigned short htons16(unsigned short v)
+{
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	return v;
+#else
+	return (unsigned short)(v << 8 | v >> 8);
+#endif
+}
+
+static void put_be16(unsigned char *p, unsigned int v)
+{
+	p[0] = v >> 8;
+	p[1] = v;
+}
+
+static unsigned int get_be16(const unsigned char *p)
+{
+	return p[0] << 8 | p[1];
+}
+
+static unsigned int ip_checksum(const unsigned char *p, int n)
+{
+	unsigned int sum = 0;
+	int i;
+
+	for (i = 0; i + 1 < n; i += 2)
+		sum += p[i] << 8 | p[i + 1];
+	if (n & 1)
+		sum += p[n - 1] << 8;
+	while (sum >> 16)
+		sum = (sum & 0xffff) + (sum >> 16);
+	return ~sum & 0xffff;
+}
+
+/* An ARP frame (op 1 request, 2 reply) from us to tha/tpa. */
+static int arp_frame(unsigned char *f, const unsigned char *mac, int op, const unsigned char *tha,
+		     const unsigned char *tpa)
+{
+	memset(f, 0, 60);
+	memcpy(f, op == 1 ? net_bcast : tha, 6);
+	memcpy(f + 6, mac, 6);
+	put_be16(f + 12, 0x0806);
+	put_be16(f + 14, 1);      /* Ethernet */
+	put_be16(f + 16, 0x0800); /* IPv4 */
+	f[18] = 6;
+	f[19] = 4;
+	put_be16(f + 20, op);
+	memcpy(f + 22, mac, 6);
+	memcpy(f + 28, net_me, 4);
+	if (op == 2)
+		memcpy(f + 32, tha, 6);
+	memcpy(f + 38, tpa, 4);
+	return 60; /* padded to the Ethernet minimum */
+}
+
+/* An ICMP echo request frame with sequence seq to gw. */
+static int echo_frame(unsigned char *f, const unsigned char *mac, const unsigned char *gw,
+		      unsigned int seq)
+{
+	unsigned char *ip = f + 14, *icmp = ip + 20;
+	unsigned int x = DISK_GUEST_SEED + seq, i;
+
+	memcpy(f, gw, 6);
+	memcpy(f + 6, mac, 6);
+	put_be16(f + 12, 0x0800);
+	memset(ip, 0, 28);
+	ip[0] = 0x45;
+	put_be16(ip + 2, 20 + 8 + NET_PAYLOAD);
+	put_be16(ip + 4, seq);
+	ip[8] = 64; /* TTL */
+	ip[9] = 1;  /* ICMP */
+	memcpy(ip + 12, net_me, 4);
+	memcpy(ip + 16, net_gw, 4);
+	put_be16(ip + 10, ip_checksum(ip, 20));
+	icmp[0] = 8; /* echo request */
+	put_be16(icmp + 4, NET_ID);
+	put_be16(icmp + 6, seq);
+	for (i = 0; i < NET_PAYLOAD; i += 4)
+		put_le32(icmp + 8 + i, xorshift(&x));
+	put_be16(icmp + 2, ip_checksum(icmp, 8 + NET_PAYLOAD));
+	return 14 + 20 + 8 + NET_PAYLOAD;
+}
+
+/*
+ * Sends frame f (len bytes), then reads frames for up to wait_ms: answers ARP
+ * requests for 10.0.2.15, and returns 1 when the reply it waits for came (an
+ * ARP reply from 10.0.2.2, its MAC into gw; or with seq, that echo reply),
+ * -1 on an echo reply with a bad payload or checksum, 0 on none. *us is the
+ * time from sending to the reply.
+ */
+static int net_exchange(int fd, const unsigned char *mac, unsigned char *gw, unsigned char *f,
+			int len, unsigned int seq, int wait_ms, unsigned long *us)
+{
+	unsigned char *in = (unsigned char *)buf + 4096, *ip = in + 14, *icmp;
+	unsigned char reply[60];
+	struct pollfd pfd;
+	unsigned long t0, left;
+	long n;
+	int hl;
+
+	t0 = clock_us();
+	if (write(fd, f, len) != len)
+		return 0;
+	for (;;) {
+		left = (unsigned long)wait_ms * 1000UL - (clock_us() - t0);
+		if ((long)left <= 0)
+			return 0;
+		pfd.fd = fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, (int)(left / 1000UL) + 1) <= 0)
+			return 0;
+		n = read(fd, in, 4096);
+		if (n < 42 || memcmp(in + 6, mac, 6) == 0) /* short, or one of ours going out */
+			continue;
+		if (get_be16(in + 12) == 0x0806 && memcmp(in + 38, net_me, 4) == 0) {
+			if (get_be16(in + 20) == 1) { /* who has 10.0.2.15: we do */
+				if (write(fd, reply, arp_frame(reply, mac, 2, in + 22, in + 28)) < 0)
+					return 0;
+			} else if (!seq && get_be16(in + 20) == 2 &&
+				   memcmp(in + 28, net_gw, 4) == 0) {
+				memcpy(gw, in + 22, 6);
+				*us = clock_us() - t0;
+				return 1;
+			}
+			continue;
+		}
+		if (!seq || get_be16(in + 12) != 0x0800 || memcmp(in, mac, 6) != 0 ||
+		    (ip[0] >> 4) != 4 || ip[9] != 1 || memcmp(ip + 12, net_gw, 4) != 0)
+			continue;
+		hl = (ip[0] & 0xf) * 4;
+		icmp = ip + hl;
+		if (n < 14 + hl + 8 || icmp[0] != 0 || get_be16(icmp + 4) != NET_ID ||
+		    get_be16(icmp + 6) != seq)
+			continue;
+		*us = clock_us() - t0;
+		if (get_be16(ip + 2) != (unsigned int)(hl + 8 + NET_PAYLOAD) ||
+		    n < 14 + hl + 8 + NET_PAYLOAD || ip_checksum(ip, hl) != 0 ||
+		    ip_checksum(icmp, 8 + NET_PAYLOAD) != 0 ||
+		    memcmp(icmp + 8, f + 14 + 20 + 8, NET_PAYLOAD) != 0)
+			return -1;
+		return 1;
+	}
+}
+
+static int net_check(const char *ifname, const char *prefix)
+{
+	struct wisp_sockaddr_ll ll;
+	struct wisp_ifreq ifr;
+	unsigned char *f = (unsigned char *)buf, mac[6], gw[6];
+	unsigned long t0, arp_ms = 0, us = 0, rmin = 0, rmax = 0, rsum = 0;
+	unsigned int seq, tries = 0, echoes = 0, bad = 0;
+	const char *status = "ok";
+	char macs[18] = "-", gws[18] = "-";
+	int fd, r = 0;
+
+	t0 = clock_ms(CLOCK_MONOTONIC);
+	fd = (int)syscall(__NR_socket, WISP_AF_PACKET, WISP_SOCK_RAW, htons16(WISP_ETH_P_ALL));
+	if (fd < 0) {
+		status = "no-socket";
+		goto out;
+	}
+	memset(&ifr, 0, sizeof(ifr));
+	snprintf(ifr.name, sizeof(ifr.name), "%s", ifname);
+	if (ioctl(fd, WISP_SIOCGIFHWADDR, &ifr) != 0) {
+		status = "no-interface";
+		goto out;
+	}
+	memcpy(mac, ifr.u.hw.data, 6);
+	snprintf(macs, sizeof(macs), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2],
+		 mac[3], mac[4], mac[5]);
+	if (ioctl(fd, WISP_SIOCGIFFLAGS, &ifr) == 0) {
+		ifr.u.flags |= WISP_IFF_UP;
+		ioctl(fd, WISP_SIOCSIFFLAGS, &ifr);
+	}
+	memset(&ll, 0, sizeof(ll));
+	if (ioctl(fd, WISP_SIOCGIFINDEX, &ifr) == 0)
+		ll.ifindex = ifr.u.index;
+	ll.family = WISP_AF_PACKET;
+	ll.protocol = htons16(WISP_ETH_P_ALL);
+	if (syscall(__NR_bind, fd, &ll, sizeof(ll)) != 0) {
+		status = "bind-failed";
+		goto out;
+	}
+	while (tries < NET_TRIES && r <= 0) {
+		tries++;
+		r = net_exchange(fd, mac, gw, f, arp_frame(f, mac, 1, net_bcast, net_gw), 0, 200,
+				 &us);
+	}
+	arp_ms = clock_ms(CLOCK_MONOTONIC) - t0;
+	if (r <= 0) {
+		status = "no-arp-reply";
+		goto out;
+	}
+	snprintf(gws, sizeof(gws), "%02x:%02x:%02x:%02x:%02x:%02x", gw[0], gw[1], gw[2], gw[3],
+		 gw[4], gw[5]);
+	for (seq = 1; seq <= NET_ECHOES; seq++) {
+		r = net_exchange(fd, mac, gw, f, echo_frame(f, mac, gw, seq), seq, 2000, &us);
+		if (r == 0) {
+			status = "lost";
+			break;
+		}
+		if (r < 0)
+			bad++;
+		if (!echoes || us < rmin)
+			rmin = us;
+		if (us > rmax)
+			rmax = us;
+		rsum += us;
+		echoes++;
+	}
+	if (bad)
+		status = "bad-reply";
+out:
+	if (fd >= 0)
+		close(fd);
+	printf("%sWISP-NET v=1 if=%s mac=%s addr=10.0.2.15 peer=10.0.2.2 peer_mac=%s arp_tries=%u "
+	       "arp_ms=%lu payload=%d echoes=%u rtt_min_us=%lu rtt_avg_us=%lu rtt_max_us=%lu "
+	       "status=%s\n",
+	       prefix, ifname, macs, gws, tries, arp_ms, NET_PAYLOAD, echoes, rmin,
+	       echoes ? rsum / echoes : 0, rmax, status);
+	return strcmp(status, "ok") == 0;
+}
+
+/*
+ * The SMP check: one child per CPU in PID 1's affinity mask, each pinned to
+ * its CPU with sched_setaffinity (and checked with getcpu where there is
+ * one), runs the compute loop and sends its CRC and time through a pipe.
+ * All children run at once; every CRC must be the same (run.py also checks
+ * it against the model). fork is clone without CLONE_VM, so no futex is
+ * needed (sparc32 SMP kernels have none).
+ */
+#define SMP_MAX 64
+#define LONG_BITS (8 * (int)sizeof(unsigned long))
+
+struct smp_result {
+	int cpu, ran_on;
+	unsigned int crc;
+	unsigned long ms;
+};
+
+static int smp_check(unsigned int loops, const char *prefix)
+{
+	/* the kernel's CPU masks are arrays of unsigned long (bit 0 of word 0 is CPU 0) */
+	unsigned long mask[1024 / LONG_BITS], one[1024 / LONG_BITS];
+	int cpus[SMP_MAX], fds[SMP_MAX], n = 0, i, ok = 1, pinned = 1;
+	struct smp_result res[SMP_MAX];
+	unsigned long t0, t1;
+	char list[SMP_MAX * 24], *l = list;
+	int p[2];
+
+	memset(mask, 0, sizeof(mask));
+	if (syscall(__NR_sched_getaffinity, 0, sizeof(mask), mask) <= 0)
+		return 0;
+	for (i = 0; i < SMP_MAX; i++)
+		if (mask[i / LONG_BITS] & (1UL << (i % LONG_BITS)))
+			cpus[n++] = i;
+	fflush(stdout);
+	t0 = clock_ms(CLOCK_MONOTONIC);
+	for (i = 0; i < n; i++) {
+		fds[i] = -1;
+		if (pipe(p) != 0)
+			continue;
+		if (fork() == 0) {
+			struct smp_result r;
+			unsigned long c0;
+
+			close(p[0]);
+			memset(&r, 0, sizeof(r));
+			memset(one, 0, sizeof(one));
+			one[cpus[i] / LONG_BITS] = 1UL << (cpus[i] % LONG_BITS);
+			r.cpu = cpus[i];
+			r.ran_on = -1;
+			if (syscall(__NR_sched_setaffinity, 0, sizeof(one), one) == 0) {
+#ifdef __NR_getcpu
+				unsigned int cpu = ~0u;
+
+				if (syscall(__NR_getcpu, &cpu, NULL, NULL) == 0)
+					r.ran_on = (int)cpu;
+#else
+				r.ran_on = cpus[i];
+#endif
+			}
+			c0 = clock_ms(CLOCK_MONOTONIC);
+			r.crc = compute(loops);
+			r.ms = clock_ms(CLOCK_MONOTONIC) - c0;
+			if (write(p[1], &r, sizeof(r)) != (ssize_t)sizeof(r))
+				_exit(1);
+			_exit(0);
+		}
+		close(p[1]);
+		fds[i] = p[0];
+	}
+	for (i = 0; i < n; i++) {
+		memset(&res[i], 0, sizeof(res[i]));
+		res[i].cpu = cpus[i];
+		res[i].ran_on = -2;
+		if (fds[i] < 0 || read(fds[i], &res[i], sizeof(res[i])) != (ssize_t)sizeof(res[i]))
+			ok = 0;
+		if (fds[i] >= 0)
+			close(fds[i]);
+	}
+	while (wait(NULL) > 0)
+		;
+	t1 = clock_ms(CLOCK_MONOTONIC);
+	*l = '\0';
+	for (i = 0; i < n; i++) {
+		if (res[i].crc != res[0].crc)
+			ok = 0;
+		if (res[i].ran_on != res[i].cpu)
+			pinned = 0;
+		l += snprintf(l, list + sizeof(list) - l, "%s%d:0x%08x:%lu", i ? "," : "", res[i].cpu,
+			      res[i].crc, res[i].ms);
+	}
+	printf("%sWISP-SMP v=1 cpus=%d loops=%u crc=0x%08x wall_ms=%lu pinned=%s percpu=%s "
+	       "status=%s\n",
+	       prefix, n, loops, n ? res[0].crc : 0, t1 - t0, pinned ? "yes" : "no", list,
+	       !ok ? "crc-mismatch" : !pinned ? "not-pinned" : "ok");
+	return ok && pinned;
+}
+
 /* The interactive shell ----------------------------------------------------------------------- */
 
 /*
@@ -263,6 +852,9 @@ static void cmd_help(const char *arg)
 	       "  bench           the CRC-32 compute loop (%u rounds) with its time\n"
 	       "  crc <n>         the loop's checksum after n rounds\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
+	       "  disk [dev..]    write, sync and read back a pattern on a raw disk\n"
+	       "  net [if]        ARP and ICMP echo to QEMU's user network at 10.0.2.2\n"
+	       "  smp             the compute loop on every CPU at once\n"
 	       "  banner          the logo\n"
 	       "  clear           clear the screen\n"
 	       "  poweroff        power the machine off\n"
@@ -338,6 +930,27 @@ static void cmd_mandel(const char *arg)
 	       clock_ms(CLOCK_MONOTONIC) - t0);
 }
 
+/* disk, net, smp: the tier-2 checks, with the kernel command line's devices by default */
+static void cmd_disk(const char *arg)
+{
+	const char *list = *arg ? arg : env(wisp_envp, "wisp_disk");
+
+	disks(list ? list : "sda", "  ");
+}
+
+static void cmd_net(const char *arg)
+{
+	const char *ifname = *arg ? arg : env(wisp_envp, "wisp_net");
+
+	net_check(ifname ? ifname : "eth0", "  ");
+}
+
+static void cmd_smp(const char *arg)
+{
+	(void)arg;
+	smp_check(sh_loops, "  ");
+}
+
 static void cmd_clear(const char *arg)
 {
 	(void)arg;
@@ -376,7 +989,7 @@ static void cmd_reboot(const char *arg)
  * (sparc64) page size of the target.
  */
 static const char command_names[] =
-	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0";
+	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -398,6 +1011,9 @@ static void run_command(const char *cmd, const char *arg)
 	case 7: cmd_clear(arg); break;
 	case 8: cmd_poweroff(arg); break;
 	case 9: cmd_reboot(arg); break;
+	case 10: cmd_disk(arg); break;
+	case 11: cmd_net(arg); break;
+	case 12: cmd_smp(arg); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }
@@ -488,11 +1104,12 @@ int main(int argc, char **argv, char **envp)
 	struct utsname u;
 	unsigned long up, t0, t1;
 	unsigned int loops, crc;
-	const char *mode;
+	const char *mode, *t2;
 	int cpus;
 
 	(void)argc;
 	(void)argv;
+	wisp_envp = envp;
 	up = clock_ms(CLOCK_BOOTTIME);
 	printf("WISP-BANNER wsh-pve wisp v1\n");
 
@@ -519,6 +1136,17 @@ int main(int argc, char **argv, char **envp)
 	       "loops=%u crc=0x%08x loop_ms=%lu status=%s\n",
 	       WISP_ARCH, u.machine, u.release, cpus, mem_kb(0), up, loops, crc, t1 - t0,
 	       getpid() == 1 ? "ok" : "notpid1");
+
+	/* tier 2, after the result line, each only when asked for */
+	t2 = env(envp, "wisp_disk");
+	if (t2)
+		disks(t2, "");
+	t2 = env(envp, "wisp_net");
+	if (t2)
+		net_check(t2, "");
+	t2 = env(envp, "wisp_smp");
+	if (t2 && parse_uint(t2))
+		smp_check(loops, "");
 
 	if (getpid() != 1)
 		return 0;

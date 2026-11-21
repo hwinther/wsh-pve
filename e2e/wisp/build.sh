@@ -1,20 +1,26 @@
 #!/bin/sh
 # Builds wisp, the tiny test system, for one or more architectures:
 #   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
-# Output per architecture in out/<arch>/: kernel (initramfs built in), init (PID 1), config, sizes.
+# Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, init (PID 1),
+# config, config-t2, sizes.
 #
 # Kernel: `make tinyconfig` plus config/common.config and config/<arch>.config, with the initramfs
-# (an uncompressed cpio of /init and /dev/console) linked into the image. PID 1: init.c, built static
-# against the kernel's own nolibc (tools/include/nolibc) and the kernel's UAPI headers.
+# (an uncompressed cpio of /init and /dev/console) linked into the image. kernel-t2, for the tier-2
+# checks (run.py --tier2), adds config/tier2/common.config and config/tier2/<arch>.config: disk and
+# network drivers, devtmpfs, packet sockets, and SMP where the machines have more than one CPU. Both
+# kernels have the same PID 1: init.c, built static against the kernel's own nolibc
+# (tools/include/nolibc) and the kernel's UAPI headers.
 #
 # Environment: KSRC (an unpacked kernel tree; default: unpack /usr/src/linux-source-*.tar.xz into
-# build/), BUILD (default build/), OUT (default out/), JOBS (default 4).
+# build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 builds
+# only the tier-1 kernel).
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 BUILD=${BUILD:-$HERE/build}
 OUT=${OUT:-$HERE/out}
 JOBS=${JOBS:-4}
+TIER2=${TIER2:-1}
 ALL="x86_64 i386 sparc32 sparc64"
 
 log() { printf '%s\n' "wisp: $*" >&2; }
@@ -66,6 +72,7 @@ build_one() {
 	SYSROOT=$B/sysroot
 	O=$OUT/$arch
 	mkdir -p "$KB" "$SYSROOT" "$O"
+	rm -f "$O/kernel-t2" "$O/config-t2"
 
 	log "$arch: headers"
 	kmake headers_install INSTALL_HDR_PATH="$SYSROOT"
@@ -86,42 +93,58 @@ nod /dev/console 0600 0 0 c 5 1
 file /init $B/init 0755 0 0
 EOF
 
-	log "$arch: kernel config"
-	kmake tinyconfig >/dev/null
-	"$KSRC/scripts/kconfig/merge_config.sh" -m -O "$KB" "$KB/.config" \
-		"$HERE/config/common.config" "$HERE/config/$arch.config" >/dev/null
-	"$KSRC/scripts/config" --file "$KB/.config" --set-str INITRAMFS_SOURCE "$B/initramfs.list"
-	kmake olddefconfig >/dev/null
-	check_config "$KB/.config" "$HERE/config/common.config" "$HERE/config/$arch.config"
-
-	log "$arch: kernel ($TARGET, -j$JOBS)"
-	kmake -j"$JOBS" "$TARGET"
-
-	cp "$KB/$IMAGE" "$O/kernel"
+	c1=$HERE/config/common.config c2=$HERE/config/$arch.config
+	build_kernel "$KB" kernel config "$c1" "$c2"
 	cp "$B/init" "$O/init"
-	cp "$KB/.config" "$O/config"
+	t2_size=-
+	if [ "$TIER2" = 1 ]; then
+		build_kernel "$B/kbuild-t2" kernel-t2 config-t2 "$c1" "$c2" \
+			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config"
+		t2_size=$(wc -c < "$O/kernel-t2")
+	fi
 	kernel_size=$(wc -c < "$O/kernel")
 	init_size=$(wc -c < "$O/init")
-	release=$(cat "$KB/include/config/kernel.release")
-	printf 'arch=%s release=%s kernel_bytes=%s init_bytes=%s\n' \
-		"$arch" "$release" "$kernel_size" "$init_size" | tee "$O/sizes"
+	release=$(cat "$B/kbuild/include/config/kernel.release")
+	printf 'arch=%s release=%s kernel_bytes=%s kernel_t2_bytes=%s init_bytes=%s\n' \
+		"$arch" "$release" "$kernel_size" "$t2_size" "$init_size" | tee "$O/sizes"
 }
 
-# Every line of the fragments must have survived olddefconfig (a missing dependency drops it silently).
+# build_kernel <kbuild dir> <image name> <config name> <fragments...>: tinyconfig plus the fragments
+# (a later fragment wins over an earlier one), the initramfs, the image into $O.
+build_kernel() {
+	KB=$1 name=$2 cfgname=$3
+	shift 3
+	mkdir -p "$KB"
+	log "$arch: $name config"
+	kmake tinyconfig >/dev/null
+	"$KSRC/scripts/kconfig/merge_config.sh" -m -O "$KB" "$KB/.config" "$@" >/dev/null
+	"$KSRC/scripts/config" --file "$KB/.config" --set-str INITRAMFS_SOURCE "$B/initramfs.list"
+	kmake olddefconfig >/dev/null
+	check_config "$KB/.config" "$@"
+
+	log "$arch: $name ($TARGET, -j$JOBS)"
+	kmake -j"$JOBS" "$TARGET"
+	cp "$KB/$IMAGE" "$O/$name"
+	cp "$KB/.config" "$O/$cfgname"
+}
+
+# Every line of the fragments must have survived olddefconfig (a missing dependency drops it
+# silently); where fragments set the same symbol, the last one counts.
 check_config() {
 	cfg=$1
 	shift
 	bad=0
-	for frag in "$@"; do
-		grep -E '^(CONFIG_[A-Z0-9_]+=.*|# CONFIG_[A-Z0-9_]+ is not set)$' "$frag" | while IFS= read -r line; do
-			case "$line" in
-			"# "*)
-				sym=${line#\# }; sym=${sym%% *}
-				if grep -q "^$sym=" "$cfg"; then log "wanted unset, is set: $sym"; echo bad; fi ;;
-			*)
-				if ! grep -qxF "$line" "$cfg"; then log "not in .config: $line"; echo bad; fi ;;
-			esac
-		done
+	awk '/^CONFIG_[A-Z0-9_]+=/ { s = $0; sub(/=.*/, "", s); want[s] = $0; order[++n] = s }
+		/^# CONFIG_[A-Z0-9_]+ is not set$/ { s = $2; want[s] = $0; order[++n] = s }
+		END { for (i = 1; i <= n; i++) if (!(order[i] in seen)) { seen[order[i]] = 1; print want[order[i]] } }' \
+		"$@" | while IFS= read -r line; do
+		case "$line" in
+		"# "*)
+			sym=${line#\# }; sym=${sym%% *}
+			if grep -q "^$sym=" "$cfg"; then log "wanted unset, is set: $sym"; echo bad; fi ;;
+		*)
+			if ! grep -qxF "$line" "$cfg"; then log "not in .config: $line"; echo bad; fi ;;
+		esac
 	done | grep -q bad && bad=1
 	[ "$bad" = 0 ] || { log "config fragment not applied (see above)"; exit 1; }
 }
