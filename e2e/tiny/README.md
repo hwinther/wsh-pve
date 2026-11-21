@@ -11,7 +11,7 @@ interpreter) without a disk, a firmware install or a guest OS in the way.
 | --- | --- | --- | --- |
 | `x86_64` | `qemu-system-x86_64` | `pc` | 8250, `ttyS0` |
 | `i386` | `qemu-system-i386` | `pc` | 8250, `ttyS0` |
-| `sparc32` | `qemu-system-sparc` | `SS-5` (also `SS-20` with `--machine`) | ESCC (zs), `ttyS0` |
+| `sparc32` | `qemu-system-sparc` | `SS-5` (also `SS-10`, `SS-20` and `LX` with `--machine`; `LX` needs OpenBIOS patch 0027) | ESCC (zs), `ttyS0` |
 | `sparc64` | `qemu-system-sparc64` | `sun4u` | 16550 "su" on the EBus, `ttyS0` |
 
 ## What PID 1 prints
@@ -32,7 +32,7 @@ reboot: Power down
   PID 1 as an environment variable); the default is 4096.
 - CPU count from `sched_getaffinity`, memory from `sysinfo`: no `/proc` in the image.
 - Power-off with `reboot(LINUX_REBOOT_CMD_POWER_OFF)`: ACPI on the PC, the sun4m power register on
-  the SS-5/SS-20 and the firmware's power-off on sun4u. QEMU runs with `-no-reboot` and the kernel
+  the sun4m machines and the firmware's power-off on sun4u. QEMU runs with `-no-reboot` and the kernel
   with `panic=-1`, so a panic ends QEMU as well; if power-off returns, PID 1 prints
   `TINY-POWEROFF-FAILED`.
 
@@ -87,6 +87,26 @@ interpreter, for a comparison where only the backend differs. Point `run.py --qe
 directory and pass `--firmware /usr/share/kvm` (the image sets `TINY_FIRMWARE` to it) so it finds
 OpenBIOS and SeaBIOS.
 
+## CI
+
+`.github/workflows/tiny-boot.yml` boots all four architectures, plus sparc32 on the SS-20, on a
+GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
+filter, so its `tiny-boot-required` check always reports; a `changes` job skips the boot when the pull
+request touches neither `e2e/tiny/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
+main that change `e2e/tiny/` and by hand.
+
+- Which QEMU: a pull request that changes `submodules/pve-qemu.patch`, the pve-qemu pin,
+  `qemu-tci.sh` or the workflow gets QEMU built from its own tree: pve-qemu with `pve-qemu.patch`, its
+  `qemu` submodule and `debian/patches/series` applied with `quilt push -a --fuzz=0` (what
+  dpkg-source does), then `MODE=tcg ./qemu-tci.sh` for the four targets, and `run.py --qemu-dir`. The
+  firmware stays the published package's. Every other run boots the published `pve-qemu-kvm` in the
+  image. No workflow builds a pve-qemu-kvm package on a pull request, so the four binaries are built
+  here instead of the whole package. With 4 jobs on the lab host that took 4 minutes, the kernels 7.
+- The kernels (`out/`) are cached, keyed on the files that make them: `Dockerfile`, `build.sh`,
+  `init.c` and `config/`. A change to `run.py`, the tests or the docs reuses them.
+- The unit tests run first. The job summary has `run.py`'s tables. The artifact `tiny-boot-<pr|published>`
+  has `results.jsonl` and the console logs.
+
 ## Results
 
 Measured 2026-11-21 on the lab host (14 threads, shared with other jobs; 1-minute load average 4.2
@@ -119,17 +139,33 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
   TCG/TCI difference there is the backend alone (x86 has no same-tree TCG build in the table).
 - Peak RSS is lower under TCI on x86 (64-74 against 106-112 MiB); on sparc it is about the same
   (sparc32 180-187 MiB with `-m 128`, sparc64 88-96 MiB with `-m 256`).
-- `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` with OpenBIOS does not: the kernel stops
-  right after switching to the zs console with `qemu: fatal: Trap 0x07 (Unaligned Memory Access)
-  while interrupts disabled` at `tsetup_patch2`, three of three times, also with
-  `-m 64`; not looked into.
+- `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` passes with OpenBIOS patch 0027 (see
+  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stops at the console switch.
+
+### The LX and the Voyager
+
+With the published 11.1.3-3+wsh6, `-M LX` stopped the kernel right after it switched to the zs
+console: `qemu: fatal: Trap 0x07 (Unaligned Memory Access) while interrupts disabled` at
+`tsetup_patch2` (three of three runs, also with `-m 64`); `-M Voyager` stopped the same way with
+`Trap 0x02`. The PC was only where the damage ended. OpenBIOS gives every machine ID from 32 to 63
+the SS-5's SBus devices, including the APC (`power-management` at `0x6a000000`), and Linux's
+`apc` driver makes `apc_swift_idle()` the idle routine. QEMU has no APC there on the LX (a real
+LX has none) or the Voyager, so the first idle (right after the console switch) read its register
+with a data access error (trap 0x29 at `apc_swift_idle`). The load has no exception table entry,
+and `do_sparc_fault()` dereferences the NULL that `search_exception_tables()` returns: each nested
+fault takes a stack frame until the kernel stack has run down through the kernel's own text,
+`do_sparc_fault` and `trap_setup` included, and QEMU stops in the overwritten trap entry code.
+OpenBIOS patch 0027 (`openbios/patches/`) makes the APC node only on the machines that have the
+chip there (SS-5, SS-4, SPARCClassic, SPARCbook). Until a `pve-qemu-kvm` with it is installed, pass
+a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
 
 ## Not done
 
 - No network, disk or SMP checks: tier 1 is boot, CPU, memory and power-off only.
-- Not in the table: SS-10 (passes under TCG), the LX (fails, see above) and the Sun PROMs (`ss5.bin`
+- Not in the table: SS-10 and LX (pass under TCG, see above) and the Sun PROMs (`ss5.bin`
   and the SS-20 PROM boot from a disk, not from `-kernel`).
-- No CI job; the unit tests run anywhere with Python 3.
+- CI boots the published package or a pull request's QEMU binaries (see "CI"); a pull request that
+  changes `openbios/**` is not checked with its own firmware, and TCI is not run in CI.
 
 ## Notes: a WebAssembly build of qemu-system-sparc (not tried)
 

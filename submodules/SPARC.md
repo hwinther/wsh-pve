@@ -310,6 +310,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0021-sparc32-take-node-0-as-the-root-node-in-the-romvec-property-operations` | OBP 2.x takes node 0 for the root in `no_proplen`/`no_getprop`/`no_nextprop`; Solaris 2.3 asks for the root's `name` that way, got -1 and panicked (`BAD TRAP: type=9 ... addr=fffff000`) | not fixed; same note |
 | `0022-sparc32-run-the-romvec-calls-with-interrupts-masked` | The romvec handlers ran OpenBIOS at the client's PIL; Solaris 2.4 calls `prom_getproplen()` from its idle thread with interrupts on, and in 2 of 4 boots a second romvec call got into the (non-reentrant) Forth engine meanwhile: `BAD TRAP: type=9 ... addr=0` in OpenBIOS's `c@`. Now PIL 15 for the call, back to the caller's PIL after (sparc64's client interface does the same, 0016) | not fixed; same note |
 | `0026-fb8-blink-screen-dont-wait-on-a-counter-that-may-be-stopped` | Shared Forth code (built into both images; matters on sparc32): BEL on a framebuffer console (cg3, TCX) inverted the screen and then waited `2000 ms` on `obp-ticks`, which only OpenBIOS's own level-14 timer handler advances. Solaris 2.x and SunOS 4.1.4 write their framebuffer console through the romvec with their own trap table installed, so the counter stood still and the console hung with the screen inverted on the first BEL (bash's completion bell). The wait is now at most 100 ms on the counter and at most 20000 reads of it; `2000` was hex (8.2 s at the firmware prompt). Also drops the flag the BEL case left on the data stack ("BEL on the framebuffer console") | not fixed; see `upstream/openbios-fb8-blink-screen-hangs-client-console.md` |
+| `0027-sparc32-leave-out-the-apc-node-on-the-lx-and-the-voyager` | Every machine ID from 32 to 63 got the SS-5's APC node (`power-management` at SBus slot 4 offset `0x0a000000`, `0x6a000000`). QEMU has no APC there on `-M LX` (a real LX has none) or `-M Voyager` (its power controller is at `0x71300000`), and Linux's `apc` driver makes `apc_swift_idle()` its idle routine: the first idle took a data access error on the APC register, `do_sparc_fault()` followed the NULL from `search_exception_tables()`, and the nested faults ran the kernel stack down through the kernel text until QEMU stopped in the overwritten trap entry (`Trap 0x07` in `tsetup_patch2` on the LX, `Trap 0x02` on the Voyager; `e2e/tiny/README.md`, "The LX and the Voyager"). The node is now made only on the SS-5, SS-4, SPARCClassic and SPARCbook | not reported |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -1937,7 +1938,10 @@ first question, as with 0001-0055; the only change in its output is one more `In
 byte` (for slot 4 in its numbering, at `0x60000000`, which read as a bus error before). The stored
 `netbsd93-sparc` disk panics there with and without 0056-0058 (`audiocs0` at `0x6c000000`: OpenBIOS
 gives the LX the SS-5's CS4231 node, which the LX doesn't have; the install CD's kernel leaves it
-unconfigured).
+unconfigured). Linux 7.3 (the tiny test system, `e2e/tiny/`) stopped on `-M LX` at its first idle
+on the APC node OpenBIOS gave it at `0x6a000000`; OpenBIOS 0027 leaves that node out on the LX
+and the Voyager. The CS4231 node is still there (open: leave it out on the LX as well, then check
+the `netbsd93-sparc` disk).
 
 **In PVE (qemu-server and pve-manager, `feat/sparc-lx-pve-profile`).** `machine: LX` is a
 sparc32 profile ("Supported profiles"): `bios: lx.bin` only (no OpenBIOS: it gives the LX the

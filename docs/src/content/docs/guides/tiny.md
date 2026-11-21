@@ -17,7 +17,7 @@ time and a checksum, prints one result line and powers the machine off. A run un
 | --- | --- | --- | --- |
 | x86_64 | `pc` | 1,283,072 bytes | 12,976 bytes |
 | i386 | `pc` | 1,126,912 bytes | 8,908 bytes |
-| sparc32 | `SS-5`, `SS-20` | 2,437,240 bytes | 5,236 bytes |
+| sparc32 | `SS-5`, `SS-10`, `SS-20`, `LX` | 2,437,240 bytes | 5,236 bytes |
 | sparc64 | `sun4u` | 3,092,744 bytes | 5,440 bytes |
 
 The x86 images are compressed `bzImage`s; the sparc images are the stripped, uncompressed ELF the
@@ -80,7 +80,22 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
   TCG/TCI difference there is the backend alone (x86 has no same-tree TCG build in the table).
 - Peak RSS is lower under TCI on x86 (64-74 against 106-112 MiB); on sparc it is about the same
   (sparc32 180-187 MiB with `-m 128`, sparc64 88-96 MiB with `-m 256`).
-- `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` with OpenBIOS does not: the kernel stops
-  right after switching to the zs console with `qemu: fatal: Trap 0x07 (Unaligned Memory Access)
-  while interrupts disabled` at `tsetup_patch2`, three of three times, also with
-  `-m 64`; not looked into.
+- `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` passes with OpenBIOS patch 0027 (see
+  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stops at the console switch.
+
+## The LX and the Voyager
+
+With the published 11.1.3-3+wsh6, `-M LX` stopped the kernel right after it switched to the zs
+console: `qemu: fatal: Trap 0x07 (Unaligned Memory Access) while interrupts disabled` at
+`tsetup_patch2` (three of three runs, also with `-m 64`); `-M Voyager` stopped the same way with
+`Trap 0x02`. The PC was only where the damage ended. OpenBIOS gives every machine ID from 32 to 63
+the SS-5's SBus devices, including the APC (`power-management` at `0x6a000000`), and Linux's
+`apc` driver makes `apc_swift_idle()` the idle routine. QEMU has no APC there on the LX (a real
+LX has none) or the Voyager, so the first idle (right after the console switch) read its register
+with a data access error (trap 0x29 at `apc_swift_idle`). The load has no exception table entry,
+and `do_sparc_fault()` dereferences the NULL that `search_exception_tables()` returns: each nested
+fault takes a stack frame until the kernel stack has run down through the kernel's own text,
+`do_sparc_fault` and `trap_setup` included, and QEMU stops in the overwritten trap entry code.
+OpenBIOS patch 0027 (`openbios/patches/`) makes the APC node only on the machines that have the
+chip there (SS-5, SS-4, SPARCClassic, SPARCbook). Until a `pve-qemu-kvm` with it is installed, pass
+a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
