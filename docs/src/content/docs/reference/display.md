@@ -30,8 +30,9 @@ See the [3DFX / Mesa passthrough guide](/guides/3dfx/) for how the host QEMU bui
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input
 status register (port 3DAh) reports display enable and vertical retrace with the timing of a real
-CRT. QEMU's default, `dumb`, flips both bits on every read, so a program that waits for "display
-enabled and not in retrace" never sees it. Wolfenstein 3D (and likely other id and Apogee games of its
+CRT. QEMU's default, `dumb`, flips both bits together on every read, so a program that waits for
+several reads in a row of "display blanked, not in vertical retrace" (a horizontal blank) never sees
+it. Wolfenstein 3D (and likely other id and Apogee games of its
 time) then stays on a black mode-13h screen; see the [DOS guide](/guides/dos/#vga-retrace-games).
 
 ```sh

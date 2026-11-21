@@ -123,6 +123,19 @@ class Rendering(unittest.TestCase):
         self.assertTrue(any(x.startswith("2?DEVICE=C:\\FREEDOS\\BIN\\JEMMEX.EXE FRAME=D800") for x in cfg), cfg)
         self.assertIn(":3", auto)
 
+    def test_ems_pool_and_profile_shell(self):
+        # the EMS profile leaves EMM386's pool unbounded: `RAM 4096` capped VCPI and DOS/4GW games failed
+        emm = [x for x in dp.PROFILES["msdos"]["ems"]["memory"] if "EMM386" in x][0]
+        self.assertRegex(emm, r"\bRAM FRAME=D800\b")
+        # a profile may bring its own SHELL line (a menu block too); the others keep the flavour's
+        extra = {"profiles": {"own": {"title": "own shell", "memory": ["DOS=HIGH"], "load": "idle",
+                                      "shell": "SHELL=C:\\X\\SHELLX.COM C:\\COMMAND.COM C:\\ /P"}}}
+        own = dp.profiles("msdos", extra)["own"]
+        self.assertEqual(dp.config_lines("msdos", own, extra)[-1], "SHELL=C:\\X\\SHELLX.COM C:\\COMMAND.COM C:\\ /P")
+        cfg, _ = dp.menu_lines("msdos", ["full", "own"], extra)
+        self.assertEqual(cfg[-1], "SHELL=C:\\X\\SHELLX.COM C:\\COMMAND.COM C:\\ /P")
+        self.assertIn(dp.FLAVOURS["msdos"]["shell"], cfg)
+
     def test_measure_and_run(self):
         m = dp.measure_lines("msdos")
         self.assertIn("C:\\WSHPROF\\SNDCHK.COM >C:\\WSHPROF\\OUT\\SNDCHK.TXT", m)
@@ -153,6 +166,13 @@ class Parsers(unittest.TestCase):
         text = text.replace("613K (628,016 bytes)", "612K (626 960 bytes)").replace("4,480K (4,587,520", "4 480K (4 587 520")
         m = dp.parse_mem(text)
         self.assertEqual((m["conv_free"], m["xms_free"], m["largest_exe"], m["ems_total"]), (613, 21491, 626960, 4480))
+
+    def test_large_ems_pool(self):
+        # EMM386 RAM without a size: MS-DOS 6.22's MEM loses the K and the ")" of the wider numbers
+        text = MSDOS_MEM.replace("4,480K (4,587,520 bytes)", "31,936 (32,702,464 bytes")
+        text = text.replace("4,096K (4,194,304 bytes)", "31,280 (32,030,720 bytes")
+        m = dp.parse_mem(text)
+        self.assertEqual((m["ems_total"], m["ems_free"]), (31936, 31280))
 
     def test_no_ems(self):
         m = dp.parse_mem("Conventional 640K 20K 620K\nLargest executable program size 620K (634,000 bytes)\n")
