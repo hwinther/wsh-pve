@@ -85,6 +85,9 @@ maintains the patches.
 | `0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e` | The SPARCstation LX's own PROM (`lx.bin`) stopped in its POST at `FPU SP Trap Priority <  Test` (`Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03`): it divides by zero with all IEEE traps enabled, follows that with a misaligned FP store and expects trap 7 on the store, then trap 8 on a later FP instruction with the `fdivs` in the FQ. QEMU raised trap 8 on the `fdivs` itself ("we do not model the fp_exception_pending state"). The sparc32 FPUs defer it (V8 manual 7.3 and appendix L, the microSPARC-I and -IIep manuals, the SuperSPARC documentation): an FPop with an IEEE exception enabled in TEM now writes no result, goes into the FQ and enters fp_exception_pending; the next FPop, FBfcc, FP load or FP store (STFSR and STDFQ too) takes trap 8, with its own pc, qne 1 and the FPop in the FQ. A misaligned FP load or store takes trap 7 first and the exception stays pending (alignment as in V8: 8 bytes for LDDF/STDF/STDFQ). All sparc32 CPU models, system emulation only (linux-user and sparc64 unchanged); unimplemented_FPop and sequence_error as before; migrated in subsection `cpu/fp_pending` | ours | not fixed; see `upstream/qemu-sparc32-deferred-fp-exception.md` |
 | `0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s` | qtest `sun4m-fp-deferred-trap-test` for 0053: a boot PROM runs `fdivs` 1/0 with TEM set, two integer instructions and the FP instruction under test; the handler stores the trap type, `%l1`/`%l2`, the FSR, drains the FQ with STDFQ and stores `%f3`. An FPop (`fadds`, `fmovs`), an aligned `st`/`ld` of an FP register, STFSR and FBfcc take trap 8 there (ftt IEEE, cexc dz, qne 1, the FQ entry the `fdivs`, `%f3` unchanged, qne 0 after STDFQ); a misaligned `st`, `ld` and a 4-byte aligned `std` take trap 7, the STFSR after them trap 8; no exception, masked traps and a misaligned store with nothing pending as before. SS-5, SS-10 and LX, 36 cases; on plain QEMU 11.1.3 the 27 trap cases fail | ours | not in QEMU |
 | `0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic` | `-M LX`, `SPARCClassic` and `SPARCbook` (microSPARC-I) took `-m 256`, and OpenBIOS then stopped with `Trap 0x21`: the microSPARC-I's context table pointer holds physical bits 26:8 only (QEMU's mask is right), and its memory interface takes 128 MB (TMS390S10 reference guide: 27 address bits, four banks of 32 MB). New hwdef field `max_ram` (128 MB on those three; the 256 MB memory space and the empty slot above RAM unchanged): more is refused with "Too much memory for this machine" | ours | not reported; see `upstream/qemu-sparc32-deferred-fp-exception.md` ("Also") |
+| `0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB` | The SPARCstation LX has a cgsix (GX) in SBus slot 3, the DBRI in slot 2 and a parallel port (bpp) in slot 4 on the board, and its PROM (`lx.bin`) carries their FCode and probes them on every boot. `-M LX` had none: the PROM took a data access error in the cgsix probe (THC, slot 3 offset `0x301094`) and stopped at `ok` without its banner, then another one resetting the DBRI (slot 2 offset `0x10000`); NetBSD 9.3 panicked in `bppattach()` (DMA CSR at `0x7c800000`). Unimplemented devices for the three on `-M LX`, as the SS-20 has its DBRI and bpp: the DBRI at `0x50000000` (the SS-20's layout), the bpp at `0x7c800000`, and a new hwdef field `cg6_base` for the cgsix's 16 MB at `0x60000000`; read 0, writes ignored, at the low priority of unimplemented devices (the TCX or cg3 that `-vga` puts in slot 2 keeps its addresses); the other machines unchanged | ours | not reported; see `upstream/qemu-sun4m-lx-onboard-sbus.md` |
+| `0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make` | The DBRI's own FCode PROM, at offset `0x1000` of its slot, which the LX, SS-10 and SS-20 PROMs load, read 0, so they made its node without a `name` or `reg`: SunOS 4.1.4 on the LX panicked in its autoconfiguration (`BAD TRAP: cpu=0 type=9 ... kernel read fault at addr=0x0`), as did Solaris 2.1/2.2 on the SS-20 PROM ("Older Sun releases on sun4m"); with a name only, SunOS 4.1.4's GENERIC kernel still panicked in its `dbri` driver. The window (0x40 bytes, below a frame buffer in the same slot) now holds a small FCode program of ours that makes the node a DBRI has: `name` `SUNW,DBRIe`, `reg` at slot offset `0x10000` (the register stub) and its interrupt at SBus level 5 (`intr` 0x39). The drivers find no codec behind the stub and go without sound (SunOS 4.1.4 `dbri: DBRI Reg8 bad!`, Solaris 2.6 `WARNING: dbri: DBRI Reg8 bad!`, NetBSD 9.3 `dbri0: no codec detected, aborting`) | ours | not reported; see `upstream/qemu-sun4m-ss20-dbri-unnamed-node.md` |
+| `0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m` | qtest `sun4m-onboard-sbus-test` for 0056-0057: the LX's cgsix, DBRI and bpp regions at their addresses and priority with the default TCX's ROM above them, none on the SS-5, and the DBRI's FCode (header, checksum, length, program, zeros after it, big-endian wide reads) on the LX and the SS-20 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -240,11 +243,26 @@ CPUs), 16 on the SS-5 (two of them under `ss5.bin`); the same list as for 0049-0
 (built 2026-11-18) `sol22-ss10` stops in OpenBIOS before its kernel, with and without 0053; the
 wsh30 OpenBIOS boots it.
 
+0056-0058 apply on top of 0001-0055 (2026-11-21, lab builds of 11.1.3; not in a package yet).
+`sun4m-onboard-sbus-test` passes 4/4 with them; against the 0001-0055 build its LX region and both
+DBRI FCode cases fail and the SS-5 case passes. With 0001-0058 the `qtest-sparc` and
+`qtest-sparc64` suites: 46 OK, 4 skipped, and the two `qmp-test` `oob` failures as before. The LX
+PROM boots Solaris 2.6, NetBSD 9.3, SunOS 4.1.4 and 4.1.3_U1B ("SPARCstation LX with its own
+PROM"). Regression with the 0001-0058 `qemu-system-sparc` (the wsh30 `openbios-sparc32`, check
+scenarios on copies of the stored disks): 12 of 12 boot and pass their check: `sol26-ss20` (also
+with 4 CPUs), `sol7-ss20`, `netbsd93-sparc-ss20`, `openbsd59-ss20`, `sol26-ss10`, `sol22-ss10`,
+`sol7-ss10`, `sol26-ss5`, `netbsd93-sparc`, `openbsd59-ss5` and `sol8-ss5-prom` (`ss5.bin`).
+Under the SS-20's Sun PROM (`ss20_v2.25_rom`, `-cpu TI-SuperSparc-50`), the `sol26-ss20` disk boots
+and passes with and without 0057 (with it `prtconf -D` lists `SUNW,DBRIe` with the `dbri` driver
+and no `/dev/audio`), and the Solaris 2.2 CD reaches its installer without `PROM_NAME_UNNAMED`
+(without 0057: `BAD TRAP: type=9`, `panic: Data fault`). OpenBIOS on `-M LX` as before (the LX
+section).
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
 `sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test`, `sun4m-mmu-ctx-ifetch-test` and
-`sun4m-bus-error-trap-test` and `sun4m-fp-deferred-trap-test` (sparc),
+`sun4m-bus-error-trap-test`, `sun4m-fp-deferred-trap-test` and `sun4m-onboard-sbus-test` (sparc),
 `sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
 `am53c974-test` (i386).
 
@@ -813,7 +831,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
-| LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error` ("SPARCstation LX" below) |
+| LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
 | Voyager | `voyager.bin` | default | 256 | `qemu: fatal: Trap 0x02 (Illegal Instruction)` after `Power-ON Reset` |
 
@@ -1623,7 +1641,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | SunOS 4.1.3_U1B | SS-5, SS-20 (and SS-10), OpenBIOS, 64 MB for the install | installs with the 4.1.4 scenarios unchanged (~2.5 min) and boots; on the SS-5 without patch 101508; targets `sunos413u1b-ss5`, `sunos413u1b-ss20` (~6 min) |
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
 | Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below; pve-qemu-kvm 11.1.3-2+wsh29 and later) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); target `sol21-ss10` (~10 min) |
-| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
+| Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots. With pve-qemu `wsh/0057` (lab, in review) the node has its name, and the 2.2 CD reaches its installer without `PROM_NAME_UNNAMED` |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (below; pve-qemu-kvm 11.1.3-2+wsh31 and later) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (~6 min) |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
@@ -1683,7 +1701,11 @@ What it would take for the rest:
   node by phandle), the 2.2 CD boots to its installer under `ss20_v2.25_rom` with QEMU 11.1.3 and wsh/0001-0041 alone,
   and 2.1 gets as far as under OpenBIOS (below). Without the stub (a lab build that skips it) the
   probe of slot e by `ss10_v2.25_rom` faults (`Data Access Error`, `ok`), so the PROM wants something there; a
-  QEMU fix would give the stub a minimal FCode header or name, not remove it.
+  QEMU fix would give the stub a minimal FCode header or name, not remove it. pve-qemu `wsh/0057`
+  (in review) does that: the window holds an FCode program that makes the node a DBRI has (`name`
+  `SUNW,DBRIe`, `reg`, interrupt; found on the LX, where SunOS 4.1.4 panics on the same node), and
+  the 2.2 CD reaches its installer under `ss20_v2.25_rom` without `PROM_NAME_UNNAMED` (2026-11-21;
+  2.1 not retried); Solaris 2.6 binds its `dbri` driver to the node and runs as before.
 - **The Sun SS-10 PROM:** `ss10_v2.25_rom` doesn't get through POST on QEMU's SS-10 (`Cpu #0 Data
   Access Error` with the default CPU; `Probing Memory Bank #4 Data Access Error` with
   `-cpu TI-SuperSparc-50`, "SS-10 and SS-20"), but runs on QEMU's SS-20 with `-cpu
@@ -1814,10 +1836,99 @@ in slot 3. POST errors that stay, as with the earlier QEMU: the MMU TLB/CAM and 
 pattern tests (QEMU has no diagnostic access to those arrays) and `PROC0 Counter/Timer Test`. The
 SS-5 PROM's POST (`ss5.bin`) prints the same with and without 0053.
 
-Still missing before it boots anything (found in the lab on 2026-11-20, not taken further): stubs
-for the LX's built-in SBus devices that the PROM probes (the `mmcodec` audio and the `cgsix` in slot
-3 that QEMU's LX doesn't have), `-nographic` (`NOGRAPHIC=1`) for a PROM that reads ttya, and SunOS
-4.1.3_U1B, which panics in its autoconfiguration on this PROM. The Themis LXE+ PROM below boots.
+**The on-board SBus devices (pve-qemu `wsh/0056`-`0058`, in review).** The LX has a cgsix (GX) in
+SBus slot 3, the DBRI audio chip in slot 2 and a parallel port in slot 4, all on the board; the PROM
+carries their FCode (the PROM map and the detokenized cgsix FCode are in
+[mdehling/sslx-vesa-mod](https://github.com/mdehling/sslx-vesa-mod), a reference for the layout;
+nothing from it is in this repository) and probes the three slots on every boot, whatever the
+console. With 0001-0055 (lab, 2026-11-21, `-d unimp` and a lab log of failed bus accesses):
+
+- with `-vga none` (what the scenarios' `-nodefaults` with `NOGRAPHIC=1` gives) the slot 2 probe
+  faults first: its FCode byte-loads the DBRI's own FCode PROM at slot offset `0x1000`, where QEMU
+  had nothing, and the PROM prints `Probing ... at 2,0  Data Access Error` and goes straight to
+  `ok`. That ends its start-up: no banner, no auto-boot, and `boot disk` from that `ok` gets
+  `Data Access Exception` after the memory test. It isn't `auto-boot?` or the diag switch;
+- with QEMU's default TCX in slot 2 the TCX's ROM answers there (an unnamed node with an `mmcodec`
+  child), and the cgsix probe's first write (THC, slot 3 offset `0x301094`) faults instead:
+  `cgsix Data Access Error`, `ok`, the result above;
+- past both (with lab stubs) the PROM prints its banner and then takes another data access error
+  writing the DBRI's reset bit (slot 2 offset `0x10000`);
+- slots 0 and 1 (`0x30000000`, `0x40000000`) take the same error on their first byte, which the
+  PROM expects of an empty slot (`Nothing there`).
+
+0056 maps the three as unimplemented devices on `-M LX` (the cgsix's 16 MB at `0x60000000`, the
+DBRI at `0x50000000` as on the SS-20, the bpp at `0x7c800000`, which NetBSD reads at attach), below
+whatever `-vga` puts in slot 2. The cgsix node is then made from zeros (rev 0, 1 MB, 1152x900) but
+nothing draws on it with `-nographic`: NetBSD 9.3 attaches `cgsix0` as a second display, Solaris
+2.6's cgsix driver fails to attach (`drvconfig: Driver (cgsix) failed to attach`), SunOS 4.1.4
+attaches `cgsix0` with no console on it, and none of them hangs. The DBRI's node was then still
+made without a `name` or `reg`: the PROM byte-loads the DBRI's own FCode PROM at slot offset
+`0x1000`, where QEMU read 0, and SunOS 4.1.4 panics on such a node (`BAD TRAP: cpu=0 type=9 ...
+kernel read fault at addr=0x0` in its autoconfiguration; the CD's kernel too, and very likely the
+4.1.3_U1B panic noted earlier). Named by hand at `ok`, the CD kernel got to its installer but the
+installed GENERIC kernel still panicked in its `dbri` driver; with `reg` and `intr` added by hand it
+booted. 0057 makes that window an FCode program of ours that gives the node what a DBRI's has
+(`name` `SUNW,DBRIe`, `reg` slot offset `0x10000`, interrupt at SBus level 5): the PROM prints
+`SUNW,DBRIe mmcodec` for slot 2, as a real LX does, and the drivers find no codec and do without
+sound (SunOS 4.1.4 `dbri: DBRI Reg8 bad!`, `Audio: no Audio device found`; Solaris 2.6 `WARNING:
+dbri: DBRI Reg8 bad!`; NetBSD 9.3 `dbri0: chip never acked WAIT`, `no codec detected, aborting`,
+about 3 s at boot). It changes the SS-10/SS-20 PROMs' DBRI node the same way (below, "Older Sun
+releases on sun4m"). qtest `wsh/0058`.
+
+The PROM's NVRAM checksum fails on QEMU's NVRAM (`Incorrect configuration checksum`, `Setting
+diag-switch? NVRAM parameter to true`), so at power-on it tests memory, tries `net`, fails (`Can't
+open boot device`) and stops at `ok`, as `ss5.bin` does; `prom_boot()` types `boot disk` or `boot
+cdrom` there. The scenarios need `NOGRAPHIC=1` (no keyboard, so the PROM reads ttya). POST errors as
+above. Results with the 0001-0058 `qemu-system-sparc` (lab build of 11.1.3, 2026-11-21, `lx.bin`,
+`-nographic`, one CPU):
+
+| System | Media | Result |
+| --- | --- | --- |
+| Solaris 2.6 5/98 | CD (`scsi-cd`) | installs (`solaris-install-serial.py`, End User, 7.6 min) and passes its first boot (2.7 min), both with 0056 alone (before 0057); with 0001-0058 the disk boots and passes its check with 64 and 128 MB (1.9-2.2 min): `SunOS sol26-lx 5.6 Generic_105181-05 sun4m sparc SUNW,SPARCstation-LX`. `drvconfig` attaches `dbri` (no codec) and `bpp`, and the system keeps running |
+| Solaris 2.6 | stored `install-sol26-ss5` (a copy) | the kernel boots, then `mount: /dev/dsk/c0t3d0s6 no such device` and it halts, as under the Themis PROM: the disk's `/dev/dsk` links name the SS-5's ESP path (slot 5 in OpenBIOS's numbering), the LX's is in slot 4 |
+| NetBSD 9.3 | stored `install-netbsd93-sparc` (a copy) | boots to `login:` and passes `netbsd-boot-disk.py` with 64 and 128 MB (1.2 min); `cgsix0`, `bpp0` and `dbri0` (no codec) attach |
+| SunOS 4.1.4 | CD (`sunos414-cd.iso`) | installs (`sunos-install-serial.py`, Programmer, 3.4 min), first boot (1.7 min) and check (1.3 min) pass with 64 MB, and the disk boots and passes with 128 MB: `SunOS ... 4.1.4 2 sun4m` |
+| SunOS 4.1.3_U1B | CD (`sunos_4.1.3U1B.iso`) | installs with the 4.1.4 scenario (Programmer, 3.4 min), first boot (1.7 min) and check (1.4 min) pass with 64 MB: `SunOS ... 4.1.3_U1 2 sun4m`; the autoconfiguration panic seen before (without 0056-0057) was very likely the same DBRI node |
+
+The lab commands (copies of the stored disks; `<lx.bin>` from the lab's PROM archive):
+
+```sh
+lab.py run scenarios/solaris-install-serial.py --out runs/s26-lx --var MACHINE=LX --var MEM=64 \
+    --var BIOS=<lx.bin> --var NOGRAPHIC=1 --var ISO=<solaris_2.6_598_sparc.iso> \
+    --var TEMPLATE=<sparc-SUN2.9G.raw.template.xz> --var HOSTNAME=sol26-lx
+lab.py run scenarios/solaris-firstboot.py --out runs/s26-lx-fb --var MACHINE=LX --var MEM=64 \
+    --var BIOS=<lx.bin> --var NOGRAPHIC=1 --var DISK=<the installed disk> --var ROOT_PASSWORD=wshlab
+lab.py run scenarios/netbsd-boot-disk.py --out runs/nb93-lx --var ARCH=sparc --var MACHINE=LX \
+    --var MEM=64 --var BIOS=<lx.bin> --var NOGRAPHIC=1 --var DISK=<copy of install-netbsd93-sparc.raw> \
+    --var ROOT_PASSWORD=wshlab
+lab.py run scenarios/sunos-install-serial.py --out runs/s414-lx --var MACHINE=LX --var MEM=64 \
+    --var BIOS=<lx.bin> --var NOGRAPHIC=1 --var ISO=<sunos414-cd.iso> --var DISK=<a SUN29G_SUNOS4 disk>
+```
+
+`solaris-boot-disk.py` and `sunos-firstboot.py`/`sunos-boot-disk.py` the same way. `DISK` in
+`solaris-install-serial.py` is the Solaris disk name (`c0t3d0`), so run outside PVE the image is
+created as a file of that name in the working directory. QEMU underneath (`_sparc32.qemu_args`):
+
+```sh
+qemu-system-sparc -nodefaults -M LX -m 64 -bios lx.bin -boot c -nographic \
+  -drive file=disk.raw,if=none,id=hd,format=raw -device scsi-hd,scsi-id=3,drive=hd \
+  -drive file=cd.iso,if=none,id=cd,format=raw,readonly=on,media=cdrom \
+  -device scsi-cd,scsi-id=6,drive=cd,physical_block_size=512 -net nic,model=lance
+```
+
+OpenBIOS on `-M LX` probes the same slots: with 0056-0058 the `sol26-ss5` disk boots and passes
+its check (OpenBIOS puts the ESP in slot 5 as on the SS-5) and the 2.6 CD reaches the installer's
+first question, as with 0001-0055; the only change in its output is one more `Invalid FCode start
+byte` (for slot 4 in its numbering, at `0x60000000`, which read as a bus error before). The stored
+`netbsd93-sparc` disk panics there with and without 0056-0058 (`audiocs0` at `0x6c000000`: OpenBIOS
+gives the LX the SS-5's CS4231 node, which the LX doesn't have; the install CD's kernel leaves it
+unconfigured).
+
+Still missing: the LX in qemu-server (machine regex, an `LX` profile with `lx.bin`, 128 MB at
+most, one CPU, `vga: serial0`) and pve-manager, and `lx.bin` in the private PROM submodule, as for
+the Themis PROM below; a real cgsix model for a graphical console; the PROM's NVRAM layout (QEMU
+writes OpenBIOS's, so the Sun PROM falls back to its defaults and doesn't boot by itself); network
+on SunOS 4.1.4 after the first boot (`le0` stays down in the check) not looked into.
 
 - **Memory:** the microSPARC-I's memory interface takes 128 MB (TMS390S10 reference guide: 27
   address bits, four banks of 32 MB) and its context table pointer holds physical bits 26:8, so
