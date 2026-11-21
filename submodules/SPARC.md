@@ -1924,11 +1924,58 @@ byte` (for slot 4 in its numbering, at `0x60000000`, which read as a bus error b
 gives the LX the SS-5's CS4231 node, which the LX doesn't have; the install CD's kernel leaves it
 unconfigured).
 
-Still missing: the LX in qemu-server (machine regex, an `LX` profile with `lx.bin`, 128 MB at
-most, one CPU, `vga: serial0`) and pve-manager, and `lx.bin` in the private PROM submodule, as for
-the Themis PROM below; a real cgsix model for a graphical console; the PROM's NVRAM layout (QEMU
-writes OpenBIOS's, so the Sun PROM falls back to its defaults and doesn't boot by itself); network
-on SunOS 4.1.4 after the first boot (`le0` stays down in the check) not looked into.
+**In PVE (qemu-server and pve-manager, `feat/sparc-lx-pve-profile`).** `machine: LX` is a
+sparc32 profile ("Supported profiles"): `bios: lx.bin` only (no OpenBIOS: it gives the LX the
+SS-5's CS4231, on which the NetBSD disk panics), at most 128 MB, one CPU, `vga: serial0` (the
+default when no display is set) or `none`, the built-in ESP and lance, no audio (DBRI). cfg2cmd
+tests `sparc32-lx-*.conf` and `sparc32-ss5-lx-prom-error.conf`; the wizard sets the PROM and
+`serial0` (with its socket) when LX is picked. Measured 2026-11-21 in the lab's PVE container
+(qemu-server and pve-manager of the branch, pve-qemu-kvm 11.1.3-3+wsh4, `lx.bin` copied into
+`/usr/share/kvm` by hand): `qm start` of the `sol26-lx` disk (64 MB), `boot disk` at `ok`, login
+prompt after 81 s; the wizard's VM gets `bios: lx.bin`, `vga: serial0`, `serial0: socket`, 128 MB.
+
+**The PROM file is not delivered.** No package carries `lx.bin`. An LX VM needs it placed in
+`/usr/share/kvm` on the node by its owner; without it QEMU stops at start (`could not load prom
+'lx.bin'`).
+
+**Auto-boot: the PROM's NVRAM (not fixed).** QEMU's `nvram_init()` (`hw/sparc/sun4m.c`) writes
+OpenBIOS's layout into the M48T08: a CHRP system partition with the `-prom-env` variables from offset
+0, a free partition after it, and the Sun IDPROM (machine type, MAC, host ID) at `0x1fd8`. The LX
+PROM reads its own configuration from the same bytes, finds the checksum wrong (`Incorrect
+configuration checksum`), writes its defaults, sets `diag-switch?` and so boots `diag-device`
+(`net`), which fails, and stops at `ok`; the SS-5 and SS-20 PROMs do the same (`docs`: "Firmware
+settings (NVRAM)"). Black-box dumps of the NVRAM (`pmemsave` at `0x71200000`) at QEMU's start, at
+the first `ok` and after single `setenv`s (lab, 2026-11-21): byte 0 is an XOR checksum (each
+`setenv` changes it by the XOR of the old and new value byte), byte 1 is `diag-switch?` (`0xff`
+true, `0x00` false) and outside the checksum, the other variables sit at fixed offsets from `0x29e`
+(`scsi-initiator-id`; `selftest-#megs` `0x2a2`; `auto-boot?` `0x2a7`; `boot-device` as a counted
+string at `0x2a8`; `diag-device` `0x32c`; ttya/ttyb modes, `sbus-probe-list`, `input-device`,
+`output-device` up to `0x5ad`). The range the checksum covers was not pinned down: bytes QEMU leaves
+in the gaps between the variables change it, and two dumps fit no single contiguous range. After
+`setenv diag-switch? false` and `reset` (the NVRAM survives a reset) the PROM boots the disk by
+itself (Solaris 2.6 to its login prompt). So what auto-boot needs is a configuration with a correct
+checksum, and two ways were weighed:
+
+- QEMU writes a Sun-format configuration when `-bios` is a Sun PROM: needs each PROM's layout and
+  checksum range (OBP 2.10 here, others on the SS-5 and SS-20), which are undocumented and would have
+  to come from probing every PROM version; brittle, not done.
+- The NVRAM kept across starts, as on a real machine: a block backend for the M48T59 (a machine or
+  device property), and in qemu-server a small per-VM volume for it, like `efidisk0`/`tpmstate0`
+  (allocation, migration, backup). PROM-independent, so the owner's `setenv diag-switch? false` (or
+  `auto-boot?`, `boot-device`) would last; a feature of its own across pve-qemu and qemu-server, not
+  done here (ROADMAP, "Next").
+
+Until then, as for the SS-5 and SS-20 PROMs: `boot disk` at `ok`, or `setenv diag-switch? false`
+once per start (a reset keeps it).
+
+**SunOS 4.1.4's `le0` after the first boot.** Not an LX or lance problem: the lab install ran without
+`NET_IP` (`sunos-firstboot.py` writes the network files only with it), so the system has no
+`/etc/hostname.le0`, `rc.boot` tries RARP (`le0: RARP timed out.`) and leaves `le0` configured but
+down (`flags=40<RUNNING>`). `ifconfig le0 192.0.2.10 netmask 255.255.255.0 up` brings it up
+(`flags=43<UP,BROADCAST,RUNNING>`) on the LX in PVE; that frames reach the bridge was not checked
+(no peer on the lab container's bridge).
+
+Still missing: a real cgsix model for a graphical console; the NVRAM above.
 
 - **Memory:** the microSPARC-I's memory interface takes 128 MB (TMS390S10 reference guide: 27
   address bits, four banks of 32 MB) and its context table pointer holds physical bits 26:8, so
@@ -3434,9 +3481,11 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 | SS-10 | `openbios-sparc32` | none | 512 MB | 1-4 |
 | SS-20 | `openbios-sparc32` | none | 512 MB | 1-4 |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
+| LX | `lx.bin` (only; not in any package, see "SPARCstation LX with its own PROM") | none | 128 MB | 1 |
 
 - Display: `cg3` (default), `tcx`, `none`, `serial0`/`serial1` (ttya/ttyb). No resolution option
-  (`-g`): qemu-server passes none, so cg3 runs at QEMU's 1024x768.
+  (`-g`): qemu-server passes none, so cg3 runs at QEMU's 1024x768. The LX takes `serial0` (its
+  default: QEMU has no cgsix model) or `none` (both give `-nographic`; the profile's `displays`).
 - Disk on the built-in ESP at SCSI target 3, CD-ROM at target 6 (`physical_block_size=512`), the
   built-in lance with `net0`'s MAC, at most one NIC.
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
@@ -3460,7 +3509,8 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   return empty lists for sparc.
 - **Binaries:** `sparc` → `/usr/bin/qemu-system-sparc`, `sparc64` → `/usr/bin/qemu-system-sparc64`.
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
-  `SS-\d{1,2}` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type `sun`.
+  `SS-\d{1,2}`, `LX` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type
+  `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
   sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC and `audio0` (SS-5 only, `device=cs4231`, no SPICE).
   It runs on create (before the config exists), on every config update against the config as it
