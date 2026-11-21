@@ -2,6 +2,6 @@
 *
 !proxmox-archive-keyring-trixie.gpg
 !repo/conf/wsh-pve.gpg.key
-!e2e/tiny/
-e2e/tiny/out/
-e2e/tiny/build/
+!e2e/wisp/
+e2e/wisp/out/
+e2e/wisp/build/

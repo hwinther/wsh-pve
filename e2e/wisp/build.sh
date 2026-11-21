@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the tiny test system for one or more architectures:
+# Builds wisp, the tiny test system, for one or more architectures:
 #   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
 # Output per architecture in out/<arch>/: kernel (initramfs built in), init (PID 1), config, sizes.
 #
@@ -17,7 +17,7 @@ OUT=${OUT:-$HERE/out}
 JOBS=${JOBS:-4}
 ALL="x86_64 i386 sparc32 sparc64"
 
-log() { printf '%s\n' "tiny: $*" >&2; }
+log() { printf '%s\n' "wisp: $*" >&2; }
 
 kernel_source() {
 	if [ -n "${KSRC:-}" ]; then
@@ -79,7 +79,7 @@ build_one() {
 	# shellcheck disable=SC2086
 	nice -n 10 $UCC $UCFLAGS -Os -static -nostdlib -nostdinc -s -fno-asynchronous-unwind-tables \
 		-fno-ident -fno-stack-protector -Wall -Wextra -I"$SYSROOT/include" \
-		-DTINY_ARCH="\"$arch\"" -o "$B/init" "$HERE/init.c" $libgcc
+		-DWISP_ARCH="\"$arch\"" -o "$B/init" "$HERE/init.c" $libgcc
 	cat > "$B/initramfs.list" <<EOF
 dir /dev 0755 0 0
 nod /dev/console 0600 0 0 c 5 1
