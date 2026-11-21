@@ -75,7 +75,8 @@ still writes its contents at every start; it isn't wired up there.
 - The same through Proxmox VE for the LX and SS-5 PROMs, and OpenBIOS with and without the drive
   (`submodules/SPARC.md`). The SS-20 PROM boots the disk by itself too, but Solaris 2.6 then stops
   QEMU (`Trap 0x29 ... while interrupts disabled`); that happens without the drive as well when the
-  PROM boots by itself after `setenv diag-switch? false` and `reset`, so it is a separate problem.
+  PROM boots by itself after `setenv diag-switch? false` and `reset`, so it is a separate problem:
+  the ledma's reset value ([qemu-sun4m-ledma-base-address-reset.md](qemu-sun4m-ledma-base-address-reset.md)).
 
 ## Open questions for upstream
 
