@@ -371,6 +371,9 @@ REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*
 # scripts/refresh-qemu-3dfx-patch.sh) and qemu-3dfx's hw/3dfx and hw/mesa, stamped with its revision
 # the way its scripts/sign_commit does (whose other edits are for older QEMUs). Never fails: without
 # the binary, pve-qemu ships without it. pve-qemu starts over from a fresh submodules/pve-qemu.
+# debian/changelog gets submodules/pve-qemu.changelog.patch and `dch -l +wsh` as in the pve-qemu target,
+# so the binary's --version (QEMU's pkgversion, from the changelog) names the +wshN of the package it
+# ships in; without the patch every build said +wsh1.
 pve-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
 	$(MAKE) restore-pve-qemu; \
@@ -396,6 +399,9 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 		patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
 		sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
+		if [ -f submodules/pve-qemu.changelog.patch ] && ! patch -d submodules/pve-qemu -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch; then \
+			git -C submodules/pve-qemu checkout debian/changelog; \
+		fi; \
 		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 			-w /src/submodules/pve-qemu \
