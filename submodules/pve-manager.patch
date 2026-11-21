@@ -522,7 +522,7 @@ diff --git a/www/manager6/form/FileSelector.js b/www/manager6/form/FileSelector.
 index d42fd19a..e3fab0a5 100644
 --- a/www/manager6/form/FileSelector.js
 +++ b/www/manager6/form/FileSelector.js
-@@ -65,18 +65,70 @@ Ext.define('PVE.form.FileSelector', {
+@@ -65,20 +65,72 @@ Ext.define('PVE.form.FileSelector', {
      applyFilters: function () {
          var me = this;
  
@@ -560,9 +560,9 @@ index d42fd19a..e3fab0a5 100644
 +        me.applyFilters();
 +        if (expand && words.length && !me.isDisabled()) {
 +            me.expand();
-+        }
-+    },
-+
+         }
+     },
+ 
 +    // While a search hides entries the selected volume may be one of them: look it up among all of
 +    // the storage's volumes too, so the selection and its display stay (ComboBox drops a value it
 +    // can't find when the store's filters change, or when the field loses the focus).
@@ -589,13 +589,15 @@ index d42fd19a..e3fab0a5 100644
 +        let first = me.searchFilter ? me.store.getAt(0) : undefined;
 +        if (!first || me.getValue() === first.data.volid) {
 +            return false;
-         }
++        }
 +        me.setValue(first.data.volid);
 +        me.collapse();
 +        return true;
-     },
- 
++    },
++
      setNodename: function (nodename) {
+         this.setStorage(undefined, nodename);
+     },
 @@ -103,6 +155,9 @@ Ext.define('PVE.form.FileSelector', {
                  dataIndex: 'text',
                  hideable: false,
@@ -1564,7 +1566,7 @@ index 00000000..39eb1788
 +    },
 +});
 diff --git a/www/manager6/qemu/HardwareView.js b/www/manager6/qemu/HardwareView.js
-index fdb1802c..f0bf8f47 100644
+index fdb1802c..1e043785 100644
 --- a/www/manager6/qemu/HardwareView.js
 +++ b/www/manager6/qemu/HardwareView.js
 @@ -65,6 +65,10 @@ Ext.define('PVE.qemu.HardwareView', {
@@ -1625,7 +1627,7 @@ index fdb1802c..f0bf8f47 100644
          for (let i = 0; i < PVE.Utils.hardware_counts.usb; i++) {
              let confid = 'usb' + i.toString();
              rows[confid] = {
-@@ -744,14 +770,24 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -744,14 +770,28 @@ Ext.define('PVE.qemu.HardwareView', {
              me.down('#addPci').setDisabled(noVMConfigHWTypePerm || isAtLimit('hostpci'));
              me.down('#addAudio').setDisabled(noVMConfigHWTypePerm || isAtLimit('audio'));
              me.down('#addSerial').setDisabled(noVMConfigHWTypePerm || isAtLimit('serial'));
@@ -1638,7 +1640,11 @@ index fdb1802c..f0bf8f47 100644
 +                noVMConfigNetPerm || isAtLimit('net') || atSparc64NicLimit,
 +            );
              me.down('#addRng').setDisabled(noVMConfigHWTypePerm || isAtLimit('rng'));
++            // OpenBIOS and the Sun PROMs are no UEFI, and sun4m/sun4u have no TPM: x86 and arm only
++            let isSparc = !!guestArch()?.startsWith('sparc');
++            efidisk_menuitem.setHidden(isSparc);
              efidisk_menuitem.setDisabled(noVMConfigDiskPerm || isAtLimit('efidisk'));
++            me.down('#addTpmState').setHidden(isSparc);
              me.down('#addTpmState').setDisabled(noVMConfigDiskPerm || isAtLimit('tpmstate'));
 +            // the NVRAM volume backs the sun4m machines' M48T08: sparc32 only
 +            me.down('#addNvram').setHidden(guestArch() !== 'sparc');
@@ -1651,7 +1657,7 @@ index fdb1802c..f0bf8f47 100644
  
              if (!rec) {
                  remove_btn.disable();
-@@ -775,6 +811,7 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -775,6 +815,7 @@ Ext.define('PVE.qemu.HardwareView', {
              const isDisk = isUnusedDisk || isUsedDisk;
              const isEfi = key === 'efidisk0';
              const tpmMoveable = key === 'tpmstate0' && !isRunning;
@@ -1659,7 +1665,7 @@ index fdb1802c..f0bf8f47 100644
  
              let cannotDelete = deleted || row.never_delete;
              cannotDelete ||= isCDRom && !cdromCap;
-@@ -800,10 +837,10 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -800,10 +841,10 @@ Ext.define('PVE.qemu.HardwareView', {
  
              edit_btn.setDisabled(
                  deleted ||
@@ -1674,7 +1680,7 @@ index fdb1802c..f0bf8f47 100644
              );
  
              edit_btn.setText(
-@@ -811,9 +848,12 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -811,9 +852,12 @@ Ext.define('PVE.qemu.HardwareView', {
              );
  
              diskaction_btn.setDisabled(
@@ -1689,7 +1695,7 @@ index fdb1802c..f0bf8f47 100644
              resize_menuitem.setDisabled(pending || !isUsedDisk);
  
              revert_btn.setDisabled(!pending);
-@@ -864,6 +904,13 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -864,6 +908,13 @@ Ext.define('PVE.qemu.HardwareView', {
                                  disabled: !caps.vms['VM.Config.CDROM'],
                                  handler: editorFactory('CDEdit'),
                              },
@@ -1703,7 +1709,7 @@ index fdb1802c..f0bf8f47 100644
                              {
                                  text: gettext('Network Device'),
                                  itemId: 'addNet',
-@@ -885,6 +932,14 @@ Ext.define('PVE.qemu.HardwareView', {
+@@ -885,6 +936,14 @@ Ext.define('PVE.qemu.HardwareView', {
                                          ),
                                      })(),
                              },
@@ -2337,13 +2343,16 @@ index bc8e4723..1b4aa5a8 100644
                  ipanel.setKvm(data.kvm);
              },
 diff --git a/www/manager6/qemu/SystemEdit.js b/www/manager6/qemu/SystemEdit.js
-index 8d01c0c4..1456a732 100644
+index 8d01c0c4..293de418 100644
 --- a/www/manager6/qemu/SystemEdit.js
 +++ b/www/manager6/qemu/SystemEdit.js
-@@ -14,6 +14,18 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -14,6 +14,21 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              efidisk: function (get) {
                  return get('efi') && get('addefi');
              },
++            // sun4m and sun4u have no TPM (and no UEFI: their firmware list has no OVMF)
++            tpmSupported: (get) => !(get('current.architecture') ?? '').startsWith('sparc'),
++            tpm: (get) => get('addtpm') && get('tpmSupported'),
 +            // sparc32 machines each run their own firmware and take their own displays
 +            // (PVE.qemu.Architecture.sparc32Profiles)
 +            firmwareCategory: (get) =>
@@ -2359,7 +2368,7 @@ index 8d01c0c4..1456a732 100644
          },
      },
  
-@@ -42,10 +54,38 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -42,10 +57,38 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              }
          },
  
@@ -2398,7 +2407,7 @@ index 8d01c0c4..1456a732 100644
              }
          },
  
-@@ -56,6 +96,9 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -56,6 +99,9 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              pveQemuBiosSelector: {
                  change: 'biosChange',
              },
@@ -2408,7 +2417,7 @@ index 8d01c0c4..1456a732 100644
              '#': {
                  afterrender: 'setDefaults',
              },
-@@ -80,12 +123,18 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -80,12 +126,18 @@ Ext.define('PVE.qemu.SystemInputPanel', {
  
      column1: [
          {
@@ -2428,7 +2437,7 @@ index 8d01c0c4..1456a732 100644
          },
          {
              xtype: 'pveQemuMachineSelector',
-@@ -108,7 +157,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+@@ -108,7 +160,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
              value: '__default__',
              fieldLabel: 'BIOS',
              bind: {
@@ -2437,6 +2446,25 @@ index 8d01c0c4..1456a732 100644
              },
          },
          {
+@@ -170,6 +222,7 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             reference: 'addtpmbox',
+             bind: {
+                 value: '{addtpm}',
++                hidden: '{!tpmSupported}',
+             },
+             submitValue: false,
+             fieldLabel: gettext('Add TPM'),
+@@ -181,8 +234,8 @@ Ext.define('PVE.qemu.SystemInputPanel', {
+             bind: {
+                 nodename: '{nodename}',
+                 arch: '{current.architecture}',
+-                hidden: '{!addtpm}',
+-                disabled: '{!addtpm}',
++                hidden: '{!tpm}',
++                disabled: '{!tpm}',
+             },
+             disabled: true,
+             hidden: true,
 diff --git a/www/manager6/storage/Browser.js b/www/manager6/storage/Browser.js
 index b4c20992..4ef5b255 100644
 --- a/www/manager6/storage/Browser.js
