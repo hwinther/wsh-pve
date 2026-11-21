@@ -30,7 +30,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
@@ -196,6 +196,20 @@ jobs:
           done
           echo "::warning::github-pages is still not listed after 2 minutes; deploying anyway"
 
+      # The wait above uses the filtered artifacts endpoint; deploy-pages lists the run's artifacts
+      # through another API, which can still lag ("Found 3 artifact(s)", then "Fetching artifact
+      # metadata failed" and "No artifacts named github-pages"). A rerun of the job uploads a second
+      # github-pages artifact and fails on that, so retry within the job instead.
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      - name: Wait before retrying the deployment
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (retry)
+        id: deployment-retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
