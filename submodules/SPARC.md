@@ -2380,7 +2380,7 @@ serial console unless stated.
 | --- | --- | --- | --- | --- |
 | NetBSD 11.1 | yes, sysinst in 46 s | yes: sysinst on the screen in 54 s (no terminal question there); `b` Return on the PS/2 keyboard switches it to German | yes: sysinst "without X11", ~7.5 min | yes: `login:` in 48-58 s; `halt -p` ends QEMU (exit 0) |
 | NetBSD 9.3 | yes | not tried | not tried | |
-| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts while ntpd slews the clock (below), so the target keeps ntpd off |
+| OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts once ntpd ran (below) until pve-qemu `wsh/0045`; the target keeps ntpd on since |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
 
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
@@ -2506,6 +2506,15 @@ ms, 5/5 peers) and a `tar` of `/usr` plus a 200 MB write passed without a disk t
 a boot with `ping -f` during the `tar` (the load in the table above). Before the fix a similar load
 (ntpd slewing, `tar` of `/usr`) hung 5 of 6 boots. The target therefore keeps ntpd on and has no
 install retry.
+
+Again with the published pve-qemu-kvm 11.1.3-3+wsh6 (2026-11-21): 3 of 3 installs with `--check`, a
+boot-test of the stored disk and three 20-36 minute boots with ntpd running passed without a disk
+timeout. The guest's timecounter is `tick` (`%tick` at the 100 MHz the firmware reports, counted by
+QEMU from the host clock): ntpd synced 4.5 minutes after it started, after one 0.193 s slew (the
+`mk48t59` gives the boot whole seconds), stayed synced (stratum 2-3), and corrected the frequency by
+0.18 ppm, so the clock runs at the host's rate. Two of those boots lost ntpd's servers for 15-17
+minutes (names not resolved, or all peers invalid) without a disk timeout; a network matter of the
+test setup as far as checked, not traced (e2e/sparc/README.md, "The OpenBSD 8.0 install target").
 
 The Debian installer (kernel 6.1.0-9-sparc64, 1024 MB, disk on IDE, `sunhme`, user-mode network) gets
 the network by DHCP, partitions the disk (Sun label, ext2 `/boot`, ext4 `/`, swap) and installs the
