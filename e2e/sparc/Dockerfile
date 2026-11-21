@@ -22,8 +22,9 @@ FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg python3 python3-pil \
-        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils vpx-tools genisoimage libtirpc3t64 iproute2 \
+        python3-pyte tesseract-ocr fonts-dejavu-core xz-utils vpx-tools genisoimage libtirpc3t64 iproute2 mtools \
     && rm -rf /var/lib/apt/lists/*
+# mtools: dos_profiles.py writes CONFIG.SYS, AUTOEXEC.BAT and its test programs onto DOS disk copies.
 # Recordings (recording.py): vpxenc (vpx-tools, ~5 MB) encodes the framebuffer video, and the
 # asciinema player (pinned version, hash checked) goes next to each run's index.html.
 COPY e2e/sparc/recording.py /tmp/recording.py

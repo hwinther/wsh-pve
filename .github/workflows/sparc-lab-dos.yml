@@ -3,7 +3,9 @@ name: sparc lab DOS
 # The lab's x86 retro machinery without Microsoft media: the VGA text reader and the DOS parsers
 # (e2e/sparc/tests/test_vgatext.py, test_dos.py, standard library only), then FreeDOS 1.4 installed
 # from its seven floppies under the published pve-qemu-kvm (TCG), driven on the VGA text screen with
-# the disk swaps, booted from the disk and checked (tests/test_freedos.py). The FreeDOS zip is
+# the disk swaps, booted from the disk and checked (tests/test_freedos.py), then the memory profiles
+# booted from copies of that disk and measured with our own test programs (tests/test_dos_profiles.py:
+# MEM, EMS frame, VGA retrace, the 3C0h read, Sound Blaster and audio). The FreeDOS zip is
 # downloaded by the test and checked against its pinned sha256; nothing from the lab host is used.
 
 on:
@@ -36,7 +38,7 @@ jobs:
 
       - name: Unit tests (VGA text reader, DOS catalogue and parsers)
         working-directory: e2e/sparc
-        run: python3 -m unittest -v tests/test_vgatext.py tests/test_dos.py tests/test_targets.py
+        run: python3 -m unittest -v tests/test_vgatext.py tests/test_dos.py tests/test_targets.py tests/test_dos_profiles.py
 
       - name: Build the lab image
         run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
@@ -47,6 +49,12 @@ jobs:
           docker run --rm -v "$RUNNER_TEMP/freedos:/out" -e FREEDOS_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_freedos.py
 
+      - name: FreeDOS memory profiles on copies of the installed disk
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/freedos:/out" -e FREEDOS_DISK=/out/c.raw -e WSH_LAB_GUEST_TESTS=1 \
+            --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_dos_profiles.py
+          cat "$RUNNER_TEMP/freedos/dosprof/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -56,4 +64,5 @@ jobs:
             ${{ runner.temp }}/freedos
             !${{ runner.temp }}/freedos/**/*.raw
             !${{ runner.temp }}/freedos/**/*.sock
+            !${{ runner.temp }}/freedos/**/*.wav
           retention-days: 7

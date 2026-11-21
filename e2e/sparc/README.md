@@ -482,6 +482,48 @@ the VGA screen, `MEM /D` and `EMM386` into `D:\OUT`; a config that hangs DOS is 
 with F5) and reads the files back with mtools. It prints the table into `summary.md`; the results
 are in the DOS guide.
 
+### Memory profiles
+
+`dos_profiles.py` keeps DOS memory profiles as data (per flavour, `msdos` and `freedos`: `full`
+everything high without EMS, `ems` with the page frame at D800, `maxconv` HIMEM only, `noemm` HIMEM
+with the drivers low, `installed` the disk's own files) and tries them without a PVE node and
+without typing: for each profile it copies an installed disk (sparse), writes the profile's
+`CONFIG.SYS` (`FDCONFIG.SYS`) and `AUTOEXEC.BAT` onto the copy with mtools, together with our own
+test programs (`dos_tools.py com`, hand-assembled, a few hundred bytes each) and `MEASURE.BAT`,
+boots it in the lab's own QEMU (`scenarios/dos-profile.py`, sb16 + adlib + PC speaker into a WAV
+file, `-d guest_errors,unimp`) and reads the guest's results back from the copy:
+
+| Measure | From |
+| --- | --- |
+| free conventional, largest program, upper, XMS, EMS | `MEM` (both DOSes' summary), `MEM /C` as evidence |
+| EMS pages and page frame | `EMSCHK.COM` (EMMXXXX0, INT 67h AH=42h/41h) |
+| VGA retrace | `VGARTRC.COM`: eight reads of 3DAh in a row with display enable, within a second (`dumb` never gives two) |
+| 3C0h in the data state | `VGAAR.COM`: reads the attribute address after writing 20h, restores PAS; `FAIL` before pve-qemu `wsh/0051` |
+| Sound Blaster, audio | `SNDCHK.COM` (DSP reset and version at 220h, an AdLib tone, a PC speaker beep) and the WAV (seconds with sound) |
+| display, QEMU's complaints | a last screendump (share of lit pixels), the lines of `qemu-d.log` |
+
+`--games-disk D.raw --games FILE` adds a game per run (`RUN.BAT` after the measurements; the scenario
+presses the keys and samples the screen: distinct frames, last change, back at the prompt), and
+`--menu` writes the profiles as one multi-configuration `CONFIG.SYS` (MS-DOS `[MENU]` blocks, FreeDOS
+`n?` lines) and picks each entry at the startup menu. `--extra local.json` adds a disk's own drivers
+(CD-ROM, mouse, KEYB, an idle TSR) for lab runs; that file stays on the lab host.
+
+```sh
+python3 dos_profiles.py show --flavour msdos            # the CONFIG.SYS and AUTOEXEC.BAT of each profile
+python3 dos_profiles.py run --flavour freedos --disk c.raw --out /work/prof --vga std,retrace=precise
+```
+
+CI (`sparc-lab-dos.yml`) runs `tests/test_dos_profiles.py` on the disk `test_freedos.py` just
+installed: the five FreeDOS profiles under `-vga std,retrace=precise`, `full` once more under `std`
+(VGARTRC must time out there) and the four menu entries, each checked (MEM read, EMS frame only in
+`ems`, VGARTRC, VGAAR, SB DSP 4.05, sound in the WAV, the screen lit). The lab's MS-DOS runs and
+their results are in the DOS guide ("Memory profiles").
+
+| Check (2026-11-21, lab image with pve-qemu-kvm 11.1.3-3+wsh2, TCG) | Result | Time |
+| --- | --- | --- |
+| `tests/test_dos_profiles.py` (19 tests; the guest part on a copy of the stored FreeDOS disk, two other guests running) | 19 passed | 73 s |
+| `VGAAR.COM` under pve-qemu-kvm 11.1.3-2+wsh16 (without `wsh/0051`) | `2000 FAIL`, screen lit | 7 s |
+
 ### The Solaris 10 install target
 
 `sol10-sun4u` installs Solaris 10 1/13 from its DVD on the sparc64 profile (sun4u, OpenBIOS, a blank

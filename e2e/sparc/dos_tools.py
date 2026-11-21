@@ -5,7 +5,7 @@
     dos_tools.py rom --kb 100 --out dummy100k.rom          # a valid, checksummed dummy option ROM
     dos_tools.py rom --owner --out owner-dummy.rom          # what the owner's Python 3 line writes
     dos_tools.py ls --iso ...                               # what the ISO has
-    dos_tools.py com --name wshidle --out WSHIDLE.COM        # the HLT idle TSR (or busy, busyk)
+    dos_tools.py com --name wshidle --out WSHIDLE.COM        # the HLT idle TSR (or busy, busyk, vgartrc, vgaar, sndchk, emschk)
 
 `disk` builds a small hard disk image (MBR, one FAT16 primary partition, 16 heads x 63 sectors like
 SeaBIOS's geometry for a small IDE disk) that DOS sees as D: when it is the second IDE disk, with the
@@ -23,8 +23,11 @@ writes text: Python 3 encodes "\\xaa" as UTF-8 (C2 AA), so the file is 102403 by
 55 C2 AA C3 88 C3 8B 6E, has no 55 AA signature, and SeaBIOS ignores it. `--owner` writes exactly those
 bytes for the measurement.
 
-`com` writes one of three small DOS programs, assembled here from hand-encoded 8086 instructions (a
-few dozen bytes each, so no assembler is needed and every byte sits next to its instruction):
+`com` writes one of the small DOS programs, assembled here from hand-encoded 8086 instructions (a
+few hundred bytes at most, so no assembler is needed and every byte sits next to its instruction).
+The memory-profile tests (dos_profiles.py) use VGARTRC.COM (VGA retrace), VGAAR.COM (the 3C0h read),
+SNDCHK.COM (Sound Blaster DSP, AdLib, PC speaker) and EMSCHK.COM (EMS pages and page frame); see
+their functions below. The others:
 WSHIDLE.COM, an idle TSR that halts the CPU in DOS's idle call (INT 28h) and in "release the time
 slice" (INT 2Fh AX=1680h), the HLT alternative to POWER.EXE that the DOS guide compares; BUSY.COM and
 BUSYK.COM, which count loop iterations during five seconds of BIOS ticks and print the count in hex
@@ -346,7 +349,274 @@ def busy_com(poll=False):
     return code
 
 
-COMS = {"wshidle": idle_tsr, "busy": busy_com, "busyk": lambda: busy_com(poll=True)}
+TICK = b"\x1e\x6c\x04"                         # ModRM + disp16 for [046Ch], the BIOS tick count
+
+
+def _print(label):
+    """Print the $-terminated string at `label` (INT 21h AH=09h)."""
+    return [("imm16", b"\xba", _at(label)), b"\xb4\x09", b"\xcd\x21"]   # mov dx,label / mov ah,9 / int 21h
+
+
+def _exit(code):
+    return [b"\xb8" + bytes([code, 0x4c]), b"\xcd\x21"]                  # mov ax,4C00h+code / int 21h
+
+
+def _hex_ax():
+    """The subroutine `hex`: AX as four hex digits (BUSY.COM's, as a callable block)."""
+    return [
+        "hex",
+        b"\xb9\x04\x00",                      # mov cx,4
+        "hex_digit",
+        b"\x51", b"\xb1\x04", b"\xd3\xc0", b"\x59",  # push cx / mov cl,4 / rol ax,cl / pop cx
+        b"\x50",                              # push ax
+        b"\x24\x0f", b"\x04\x30", b"\x3c\x39",  # and al,0Fh / add al,'0' / cmp al,'9'
+        ("rel8", 0x76, "hex_print"),          # jbe hex_print
+        b"\x04\x07",                          # add al,7
+        "hex_print",
+        b"\x88\xc2", b"\xb4\x02", b"\xcd\x21",  # mov dl,al / mov ah,2 / int 21h
+        b"\x58",                              # pop ax
+        ("rel8", 0xE2, "hex_digit"),          # loop hex_digit
+        b"\xc3",                              # ret
+    ]
+
+
+def _wait_ticks():
+    """The subroutine `wait_ticks`: wait CX BIOS ticks (55 ms each); keeps ES."""
+    return [
+        "wait_ticks",
+        b"\x06", b"\x31\xc0", b"\x8e\xc0",    # push es / xor ax,ax / mov es,ax
+        "wait_next",
+        b"\x26\x8b" + TICK,                   # mov bx,[es:046Ch]
+        "wait_same",
+        b"\x26\x3b" + TICK,                   # cmp bx,[es:046Ch]
+        ("rel8", 0x74, "wait_same"),          # je wait_same
+        ("rel8", 0xE2, "wait_next"),          # loop wait_next
+        b"\x07", b"\xc3",                     # pop es / ret
+    ]
+
+
+RETRACE_RUN = 8
+
+
+def retrace_com():
+    """VGARTRC.COM: does the VGA ever report "display enabled" (input status 1, port 3DAh, bit 0 clear)
+    on several reads in a row? A real VGA does for most of every scan line; QEMU's default retrace
+    emulation (`dumb`) flips bits 0 and 3 on every read, so no two reads in a row agree, and a game that
+    waits for a stretch of display enable (Wolfenstein 3D) waits for ever. QEMU's precise emulation
+    (`-vga std,retrace=precise`, qemu-server `vga: std,retrace=precise`) reports a CRT's timing.
+
+    Polls for RETRACE_RUN reads in a row with bit 0 clear, for at most one second (18 ticks); prints
+    "VGARTRC OK" or "VGARTRC TIMEOUT", then the longest run seen in hex, and exits with errorlevel 0
+    or 1."""
+    code, _ = assemble([
+        b"\x31\xc0", b"\x8e\xc0",             # xor ax,ax / mov es,ax
+        b"\x26\x8b" + TICK,                   # mov bx,[es:046Ch]
+        b"\x83\xc3\x12",                      # add bx,18        ; the deadline: one second
+        b"\xba\xda\x03",                      # mov dx,3DAh
+        b"\x31\xf6",                          # xor si,si        ; the longest run so far
+        "restart",
+        b"\x31\xc9",                          # xor cx,cx        ; this run
+        "next",
+        b"\x26\x3b" + TICK,                   # cmp bx,[es:046Ch]
+        ("rel8", 0x74, "timeout"),            # je timeout
+        b"\xec",                              # in al,dx
+        b"\xa8\x01",                          # test al,1        ; 1: blanking (retrace)
+        ("rel8", 0x75, "restart"),            # jnz restart
+        b"\x41",                              # inc cx
+        b"\x39\xf1",                          # cmp cx,si
+        ("rel8", 0x76, "shorter"),            # jbe shorter
+        b"\x89\xce",                          # mov si,cx
+        "shorter",
+        b"\x83\xf9" + bytes([RETRACE_RUN]),   # cmp cx,RETRACE_RUN
+        ("rel8", 0x72, "next"),               # jb next
+        *_print("ok"),
+        b"\x89\xf0", ("rel16", 0xE8, "hex"),  # mov ax,si / call hex
+        *_print("crlf"),
+        *_exit(0),
+        "timeout",
+        *_print("to"),
+        b"\x89\xf0", ("rel16", 0xE8, "hex"),  # mov ax,si / call hex
+        *_print("crlf"),
+        *_exit(1),
+        *_hex_ax(),
+        "ok", b"VGARTRC OK display enable run $",
+        "to", b"VGARTRC TIMEOUT longest display enable run $",
+        "crlf", b"\r\n$",
+    ])
+    return code
+
+
+def attr_com():
+    """VGAAR.COM: does a read of the attribute controller's address register (port 3C0h) return the
+    address in the flip-flop's data state? A VGA (and DOSBox) does; QEMU before pve-qemu wsh/0051
+    returned 0 there, and The Incredible Machine, which saves the address that way while it loads the
+    palette and writes it back, turned the display off (the palette address source bit, 20h).
+
+    Reads 3DAh (flip-flop to the address state), writes 20h (index 0 with PAS) to 3C0h, reads 3C0h (data
+    state), reads 3DAh and 3C0h again (address state), writes 20h back and leaves the flip-flop in the
+    address state, so the display stays on whatever the result. Prints "VGAAR 3C0h address/data state
+    XXYY OK" (XX the address state's value, YY the data state's; both 20 on a VGA) or "... FAIL", and
+    exits with errorlevel 0 or 1."""
+    code, _ = assemble([
+        b"\xba\xda\x03", b"\xec",             # mov dx,3DAh / in al,dx
+        b"\xb2\xc0",                          # mov dl,0C0h      ; DX = 3C0h
+        b"\xb0\x20", b"\xee",                 # mov al,20h / out dx,al ; now in the data state
+        b"\xec", b"\x88\xc3",                 # in al,dx / mov bl,al
+        b"\xb2\xda", b"\xec",                 # mov dl,0DAh / in al,dx ; the address state
+        b"\xb2\xc0", b"\xec", b"\x88\xc7",    # mov dl,0C0h / in al,dx / mov bh,al
+        b"\xb0\x20", b"\xee",                 # mov al,20h / out dx,al ; PAS on, index 0
+        b"\xb2\xda", b"\xec",                 # mov dl,0DAh / in al,dx ; leave it in the address state
+        *_print("msg"),
+        b"\x89\xd8", ("rel16", 0xE8, "hex"),  # mov ax,bx / call hex
+        b"\x80\xfb\x20",                      # cmp bl,20h
+        ("rel8", 0x75, "fail"),               # jne fail
+        *_print("ok"),
+        *_exit(0),
+        "fail",
+        *_print("bad"),
+        *_exit(1),
+        *_hex_ax(),
+        "msg", b"VGAAR 3C0h address/data state $",
+        "ok", b" OK\r\n$",
+        "bad", b" FAIL\r\n$",
+    ])
+    return code
+
+
+def ems_com():
+    """EMSCHK.COM: is there an expanded memory manager (the EMMXXXX0 device), how many 16K pages does
+    it have and where is its page frame (INT 67h AH=42h and AH=41h)? A game that wants EMS needs the
+    frame; JEMM386/JEMMEX with NOEMS still have pages (for VCPI) but no frame, and EMM386 given `I=`
+    over the frame's area has neither. Prints "EMSCHK pages TTTT free FFFF frame SSSS" (hex; "frame
+    none" without one) or "EMSCHK none" and exits with errorlevel 0 or 1."""
+    code, _ = assemble([
+        b"\xb8\x00\x3d",                      # mov ax,3D00h
+        ("imm16", b"\xba", _at("dev")),       # mov dx,dev
+        b"\xcd\x21",                          # int 21h          ; open EMMXXXX0
+        ("rel8", 0x72, "none"),               # jc none
+        b"\x89\xc3", b"\xb4\x3e", b"\xcd\x21",  # mov bx,ax / mov ah,3Eh / int 21h ; close
+        b"\xb4\x42", b"\xcd\x67",             # mov ah,42h / int 67h ; BX free, DX total pages
+        b"\x08\xe4",                          # or ah,ah
+        ("rel8", 0x75, "none"),               # jnz none
+        b"\x89\xd6", b"\x89\xdf",             # mov si,dx / mov di,bx
+        *_print("pages"),
+        b"\x89\xf0", ("rel16", 0xE8, "hex"),  # mov ax,si / call hex
+        *_print("free"),
+        b"\x89\xf8", ("rel16", 0xE8, "hex"),  # mov ax,di / call hex
+        b"\xb4\x41", b"\xcd\x67",             # mov ah,41h / int 67h ; BX = the frame's segment
+        b"\x08\xe4",                          # or ah,ah
+        ("rel8", 0x75, "noframe"),            # jnz noframe
+        b"\x53",                              # push bx
+        *_print("frame"),
+        b"\x58", ("rel16", 0xE8, "hex"),      # pop ax / call hex
+        *_print("crlf"),
+        *_exit(0),
+        "noframe",
+        *_print("noframe_msg"),
+        *_exit(0),
+        "none",
+        *_print("none_msg"),
+        *_exit(1),
+        *_hex_ax(),
+        "dev", b"EMMXXXX0\x00",
+        "pages", b"EMSCHK pages $",
+        "free", b" free $",
+        "frame", b" frame $",
+        "noframe_msg", b" frame none\r\n$",
+        "none_msg", b"EMSCHK none\r\n$",
+        "crlf", b"\r\n$",
+    ])
+    return code
+
+
+# AdLib (OPL2) channel 0: modulator (operator 0) and carrier (operator 3), about 440 Hz; then key off.
+OPL_TONE = [(0x20, 0x01), (0x40, 0x10), (0x60, 0xF0), (0x80, 0x77), (0xA0, 0x98),
+            (0x23, 0x01), (0x43, 0x00), (0x63, 0xF0), (0x83, 0x77), (0xB0, 0x31)]
+OPL_OFF = [(0xB0, 0x11)]
+
+
+def sound_com():
+    """SNDCHK.COM: the sound devices a DOS game finds. Resets the Sound Blaster DSP at 220h (226h, then
+    AAh at 22Ah), asks for its version (E1h: 4.05 for QEMU's SB16) and prints "SNDCHK SB DSP 0405" or
+    "SNDCHK SB DSP none"; plays a tone on the AdLib (OPL2 at 388h) for half a second and a 1 kHz beep on
+    the PC speaker (PIT channel 2, port 61h) for a third of a second, which a host-side recording
+    (QEMU's wav audiodev) picks up. Only fixed ports (220h, 388h), no BLASTER parsing."""
+    def table(pairs):
+        return b"".join(bytes(p) for p in pairs) + b"\xff"
+
+    code, _ = assemble([
+        b"\xfc",                              # cld              ; LODSB forwards
+        b"\xba\x26\x02",                      # mov dx,226h
+        b"\xb0\x01", b"\xee",                 # mov al,1 / out dx,al
+        b"\xb9\x20\x00",                      # mov cx,32
+        "rst_wait", b"\xec", ("rel8", 0xE2, "rst_wait"),  # in al,dx / loop
+        b"\x30\xc0", b"\xee",                 # xor al,al / out dx,al
+        ("rel16", 0xE8, "dsp_read"),          # call dsp_read
+        b"\x3c\xaa",                          # cmp al,0AAh
+        ("rel8", 0x75, "nosb"),               # jne nosb
+        b"\xb2\x2c",                          # mov dl,2Ch       ; 22Ch, the write port
+        b"\xb9\xff\xff",                      # mov cx,0FFFFh
+        "wr_wait", b"\xec", b"\xa8\x80",      # in al,dx / test al,80h
+        ("rel8", 0xE0, "wr_wait"),            # loopnz wr_wait   ; until ready (bit 7 clear)
+        b"\xb0\xe1", b"\xee",                 # mov al,0E1h / out dx,al ; DSP version
+        ("rel16", 0xE8, "dsp_read"), b"\x88\xc7",   # call dsp_read / mov bh,al
+        ("rel16", 0xE8, "dsp_read"), b"\x88\xc3",   # call dsp_read / mov bl,al
+        *_print("sb"),
+        b"\x89\xd8", ("rel16", 0xE8, "hex"),  # mov ax,bx / call hex
+        *_print("crlf"),
+        ("rel8", 0xEB, "adlib"),              # jmp short adlib
+        "nosb",
+        *_print("none"),
+        "adlib",
+        ("imm16", b"\xbe", _at("tone")),      # mov si,tone
+        ("rel16", 0xE8, "opl"),               # call opl
+        b"\xb9\x09\x00",                      # mov cx,9         ; half a second
+        ("rel16", 0xE8, "wait_ticks"),
+        ("imm16", b"\xbe", _at("off")),       # mov si,off
+        ("rel16", 0xE8, "opl"),
+        b"\xb0\xb6", b"\xe6\x43",             # mov al,0B6h / out 43h,al ; PIT channel 2, square wave
+        b"\xb8\xa9\x04",                      # mov ax,1193      ; 1193182 Hz / 1193 = 1 kHz
+        b"\xe6\x42", b"\x88\xe0", b"\xe6\x42",  # out 42h,al / mov al,ah / out 42h,al
+        b"\xe4\x61", b"\x0c\x03", b"\xe6\x61",  # in al,61h / or al,3 / out 61h,al ; speaker on
+        b"\xb9\x06\x00",                      # mov cx,6
+        ("rel16", 0xE8, "wait_ticks"),
+        b"\xe4\x61", b"\x24\xfc", b"\xe6\x61",  # in al,61h / and al,0FCh / out 61h,al ; off
+        *_print("played"),
+        *_exit(0),
+        "dsp_read",                           # AL = the next byte from the DSP (22Eh bit 7, then 22Ah)
+        b"\xba\x2e\x02",                      # mov dx,22Eh
+        b"\xb9\xff\xff",                      # mov cx,0FFFFh
+        "rd_wait", b"\xec", b"\xa8\x80",      # in al,dx / test al,80h
+        ("rel8", 0xE1, "rd_wait"),            # loopz rd_wait    ; until a byte is there (bit 7 set)
+        b"\xb2\x2a", b"\xec", b"\xc3",        # mov dl,2Ah / in al,dx / ret
+        "opl",                                # write the (register, value) pairs at SI, up to FFh
+        b"\xac",                              # lodsb
+        b"\x3c\xff",                          # cmp al,0FFh
+        ("rel8", 0x74, "opl_done"),           # je opl_done
+        b"\xba\x88\x03", b"\xee",             # mov dx,388h / out dx,al
+        ("rel16", 0xE8, "opl_delay"),
+        b"\xac", b"\x42", b"\xee",            # lodsb / inc dx / out dx,al
+        ("rel16", 0xE8, "opl_delay"),
+        ("rel8", 0xEB, "opl"),                # jmp short opl
+        "opl_done", b"\xc3",
+        "opl_delay",                          # 36 status reads, as the AdLib wants between writes
+        b"\x51", b"\xb9\x24\x00",             # push cx / mov cx,36
+        "opl_d", b"\xec", ("rel8", 0xE2, "opl_d"),  # in al,dx / loop
+        b"\x59", b"\xc3",                     # pop cx / ret
+        *_wait_ticks(),
+        *_hex_ax(),
+        "tone", table(OPL_TONE),
+        "off", table(OPL_OFF),
+        "sb", b"SNDCHK SB DSP $",
+        "none", b"SNDCHK SB DSP none\r\n$",
+        "played", b"SNDCHK AdLib tone and PC speaker beep played\r\n$",
+        "crlf", b"\r\n$",
+    ])
+    return code
+
+
+COMS = {"wshidle": idle_tsr, "busy": busy_com, "busyk": lambda: busy_com(poll=True),
+        "vgartrc": retrace_com, "vgaar": attr_com, "sndchk": sound_com, "emschk": ems_com}
 
 
 def main():
