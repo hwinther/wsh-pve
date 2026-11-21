@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index e9c6f68..09c65d8 100644
+index e9c6f68..a137ac4 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,94 @@
+@@ -1,10 +1,101 @@
++pve-qemu-kvm (11.1.3-3+wsh13) trixie; urgency=medium
++
++  * feat(sparc): SunOS 4.1.2 installs and boots on the SPARCserver 600MP
++    (#430)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 22:41:22 +0000
++
 +pve-qemu-kvm (11.1.3-3+wsh12) trixie; urgency=medium
 +
 +  * chore(pve-qemu): take LEMU's reviewed cs4231 patches and track LEMU
