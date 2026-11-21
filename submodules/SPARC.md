@@ -90,6 +90,9 @@ maintains the patches.
 | `0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m` | qtest `sun4m-onboard-sbus-test` for 0056-0057: the LX's cgsix, DBRI and bpp regions at their addresses and priority with the default TCX's ROM above them, none on the SS-5, and the DBRI's FCode (header, checksum, length, program, zeros after it, big-endian wide reads) on the LX and the SS-20 | ours | not in QEMU |
 | `0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it` | QEMU wrote OpenBIOS's NVRAM layout into the sun4m M48T08 at every start and kept nothing across runs, so the Sun PROMs (SS-5, SS-20, LX) found their checksum wrong, set `diag-switch?` and stopped at `ok` on every power-on. A `drive` property for the sysbus M48Txx's NVRAM bytes (written through per byte, clock registers left out); on sun4m a blank image gets QEMU's contents once, any other image is left alone except the IDPROM (from `-M` and the MAC) and, with `-prom-env`, OpenBIOS's partitions; the M48T08 at `/machine/nvram` ("The NVRAM kept in a volume") | ours | not in QEMU |
 | `0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive` | qtest `sun4m-nvram-test` for 0059: no image, a blank image, persistence across two runs (guest writes stored, clock registers not, the IDPROM following the MAC), `-prom-env`, a larger image, `-blockdev` and `query-block`'s path, a read-only image | ours | not in QEMU |
+| `0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in` | SunOS 4.1.2 on `-M SS-600MP` stopped before its banner (`Unhandled Exception 0x00000029`, `pc f80a6054`): its early setup for the 600MP reads and writes the VMEbus interface registers at physical `0xf.df01_0000` (offsets 0, 4 and 8: control, AFSR, AFAR) through the MMU bypass ASI 0x2f, where QEMU had nothing (a bypass load keeps trap 0x29 with 0049). An unimplemented device over that page (reads 0, writes ignored), on the SS-600MP only; no VMEbus model, so the VME spaces stay empty and the kernel's VME probes find nothing ("Older Sun releases on sun4m") | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
+| `0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it` | The 600MP's lance works in a buffer memory of its own, the `lebuffer` at SBus slot f offset `0x40000` (128 KB, up to the lance at `0x60000`), not through a DMA engine; QEMU gave the machine the SS-10's `ledma` and DVMA, and SunOS 4.1.2 knows only the lebuffer (a lance directly on the SBus it refuses: `le0: not used - unsupported SBus card for this architecture!`). A `lebuffer-size` property on the sparc32 DMA device: the lance's addresses (modulo the size) go to a RAM region in an address space of its own, which the board maps through an alias at `0xe.f004_0000`, and its interrupt goes straight to the board, past the ledma's interrupt enable; set on the SS-600MP only (with openbios 0028's `lebuffer` node) | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
+| `0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi` | qtest `sun4m-ss600mp-test` for 0063-0064: the VME registers' unimplemented device (reads 0), the lebuffer's RAM and address space, the lance initialized from an init block in it (station address), sending from a descriptor there, handing it back and interrupting without the ledma's enable; the SS-10 unchanged | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -305,6 +308,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0022-sparc32-run-the-romvec-calls-with-interrupts-masked` | The romvec handlers ran OpenBIOS at the client's PIL; Solaris 2.4 calls `prom_getproplen()` from its idle thread with interrupts on, and in 2 of 4 boots a second romvec call got into the (non-reentrant) Forth engine meanwhile: `BAD TRAP: type=9 ... addr=0` in OpenBIOS's `c@`. Now PIL 15 for the call, back to the caller's PIL after (sparc64's client interface does the same, 0016) | not fixed; same note |
 | `0026-fb8-blink-screen-dont-wait-on-a-counter-that-may-be-stopped` | Shared Forth code (built into both images; matters on sparc32): BEL on a framebuffer console (cg3, TCX) inverted the screen and then waited `2000 ms` on `obp-ticks`, which only OpenBIOS's own level-14 timer handler advances. Solaris 2.x and SunOS 4.1.4 write their framebuffer console through the romvec with their own trap table installed, so the counter stood still and the console hung with the screen inverted on the first BEL (bash's completion bell). The wait is now at most 100 ms on the counter and at most 20000 reads of it; `2000` was hex (8.2 s at the firmware prompt). Also drops the flag the BEL case left on the data stack ("BEL on the framebuffer console") | not fixed; see `upstream/openbios-fb8-blink-screen-hangs-client-console.md` |
 | `0027-sparc32-leave-out-the-apc-node-on-the-lx-and-the-voyager` | Every machine ID from 32 to 63 got the SS-5's APC node (`power-management` at SBus slot 4 offset `0x0a000000`, `0x6a000000`). QEMU has no APC there on `-M LX` (a real LX has none) or `-M Voyager` (its power controller is at `0x71300000`), and Linux's `apc` driver makes `apc_swift_idle()` its idle routine: the first idle took a data access error on the APC register, `do_sparc_fault()` followed the NULL from `search_exception_tables()`, and the nested faults ran the kernel stack down through the kernel text until QEMU stopped in the overwritten trap entry (`Trap 0x07` in `tsetup_patch2` on the LX, `Trap 0x02` on the Voyager; `e2e/wisp/README.md`, "The LX and the Voyager"). The node is now made only on the SS-5, SS-4, SPARCClassic and SPARCbook | not reported |
+| `0028-sparc32-name-the-ss600mp-dma-and-lebuffer-nodes-as-sunos-4.1.2-knows-them` | SunOS 4.1.2, the first release for the SS-600MP (machine ID 66), finds the on-board SCSI and Ethernet by node name: the ESP under a DMA controller named `dma` (as on the SPARCstation 1 and 2), the lance under an `lebuffer`. OpenBIOS gave the machine the SS-10's `espdma` and `ledma`, and the kernel attached no disk and no network interface. On machine ID 66 the DMA node is `dma` (`ob_esp_init()` takes the DMA node's path, so the esp and sd nodes and the disk and cdrom aliases are under `/iommu/sbus/dma/esp`) and the lance's parent `lebuffer`, `reg` slot f `0x40000` size `0x20000` (pve-qemu 0064), without the ledma's register setup ("Older Sun releases on sun4m") | not reported |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -1652,7 +1656,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots. With pve-qemu `wsh/0057` (lab, in review) the node has its name, and the 2.2 CD reaches its installer without `PROM_NAME_UNNAMED` |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (below; pve-qemu-kvm 11.1.3-2+wsh31 and later) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (~6 min) |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
-| SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
+| SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner. With pve-qemu `wsh/0063`-`0065` and openbios 0028 (lab, 2026-11-21): installs with the 4.1.4 scenarios (`SERIAL_7BIT=1`, 64 MB, ~2.5 min) and boots (`SunOS sunos412 4.1.2 1 sun4m`, 256 MB), `le0` answers ping; one CPU only (below). Catalogue target `sunos412-ss600mp` |
 
 **Solaris 2.1-2.4 under OpenBIOS (openbios 0019-0022).** Four gaps, one behind the other, each
 found by booting the 2.3 CD (lab, pve-qemu-kvm 11.1.3-2+wsh21 with the patched `openbios-sparc32`
@@ -1813,20 +1817,69 @@ What it would take for the rest:
   0.9; 10.5 min on a busy host); the other stopped in its first boot on a `duplicate IP address`
   console message from a second guest with the same address (the test setup, not the guest). So
   `sunos413-ss10` is an automated target (e2e/sparc/README.md, "Older Sun releases").
-- **SunOS 4.1.2 on SS-600MP, diagnosis (not planned):** the same generic kernel family, but the
-  SS-600MP also needs its VMEbus interface registers at `0xf.df01_0000` (control, AFSR, AFAR),
-  which QEMU's SS-600MP doesn't have, and the kernel knows the 4/600's `dma`/`esp`/`le` node names,
-  not OpenBIOS's `espdma`/`ledma`. With `wsh/0049` alone (lab, 2026-11-20, the +wsh30 OpenBIOS)
-  the CD's kernel still stops where it did, `Unhandled Exception 0x00000029` at `pc f80a6054`
-  before its banner. A lab prototype with an unimplemented-device stub over those registers on
-  top of the trap change got the CD to its installer menu, with no `esp` or `le` attached (no
-  disk, no network). Not planned: the SS-600MP's other gaps (the Ross CPU module, Solaris 2.6
-  refusing the platform) remain.
+- **SunOS 4.1.2 on SS-600MP (2026-11-21, lab):** installs and boots on one CPU under OpenBIOS
+  with pve-qemu `wsh/0063`-`0065` and openbios 0028; three gaps, one behind the other, found by
+  booting the CD (a local build of 11.1.3 with wsh/0001-0060 and the new patches, `-M SS-600MP`,
+  the default `TI-SuperSparc-II`, serial console):
+  1. **Before the banner** (`Unhandled Exception 0x00000029`, `pc f80a6054`, OpenBIOS's trap
+     handler: the kernel hasn't installed its own yet). `-d in_asm`: for machine type 0x71 the
+     kernel reads and clears the SBus AFSR/AFAR (`0xf.e000_1000`), the ECC memory controller's
+     fault registers (`0xf.0000_0008`-`0014`), sets its enable bit, then reads, changes (sets bit
+     30, clears 31 and 28) and writes back the VMEbus interface's control register at
+     `0xf.df01_0000` (and touches `+4`, `+8`), all with `lda`/`sta` in the MMU bypass ASI 0x2f.
+     QEMU has nothing at `0xf.df01_0000`, and a bypass load that hits nothing keeps trap 0x29
+     (`wsh/0049` changes only normal loads and fetches on the SuperSPARC). `wsh/0063`: an
+     unimplemented device over that page on the SS-600MP. The banner follows (`SunOS Release 4.1.2
+     (MUNIX) #1`, `cpu = SUNW,SPARCsystem-600TI,TMS390Z55`) and the installer's menu, but with no
+     disk (`swap on ns0b`) or network: nothing under `espdma`/`ledma` attached.
+  2. **No disk:** the kernel walks the tree by node names and knows the ESP's DMA controller as
+     `dma`. Renamed at the OpenBIOS prompt (`" /iommu/sbus/espdma" find-device " dma" device-name`),
+     it attaches `dma0 at SBus slot f 0x81000`, `esp0`, `sd0` and `sr0`. Openbios 0028 does that on
+     machine ID 66, with the esp and sd nodes and the aliases under `/iommu/sbus/dma/esp`; the
+     scenarios boot by path through `_sparc32.esp(v)`.
+  3. **No network:** an `le` node directly on the SBus (made at the prompt) attaches, but
+     `ifconfig le0` says `le0: not used - unsupported SBus card for this architecture!`. The 600MP's
+     lance works in a buffer memory of its own (`lebuffer`, slot f `0x40000`, the old
+     `SS600MP_LEBUFFER` note in OpenBIOS's `sbus.c`), and 4.1.2's `le` driver wants that on sun4m.
+     `wsh/0064` gives the SS-600MP's lance 128 KB of RAM there as its own address space (its 24-bit
+     addresses are offsets in it) and its interrupt without the ledma's enable bit; openbios 0028
+     names the node `lebuffer`. `lebuffer0 at SBus slot f 0x40000`, `le0 at SBus slot f 0x60000 pri
+     6`, and `ping 10.0.2.2` over user networking answers.
+
+  Then `sunos-install-serial.py` installs it (Programmer, 64 MB, the 4.1.4 scenarios unchanged
+  apart from the ESP path; 109-166 s), and `sunos-firstboot.py` and `sunos-boot-disk.py` at 256 MB
+  pass (`SunOS sunos412 4.1.2 1 sun4m`). One more difference from 4.1.4: its `getty` sends the
+  console in 7 bits with even parity in bit 7 (`sunos412 login:` arrives as `\363\365\356o...`), so
+  the scenarios run with `SERIAL_7BIT=1`, which masks bit 7 before the terminal (`serial.raw`
+  keeps it). The CD's kernel and the installed GENERIC take no VME device and no floppy (QEMU's
+  SS-600MP has none). Three passes from an empty disk; the last with the regenerated `pve-qemu.patch`
+  built from scratch and the OpenBIOS `openbios/Dockerfile` builds from 0001-0028: install 109 s,
+  first boot 91 s, check 44 s, and `ping 10.0.2.2` answered with `NET=user`.
+  Regression (the same builds): `make check-qtest-sparc` 29 passed, 2 skipped, 1 failed (`qmp-test`'s
+  `/sparc/qmp/oob`, which fails the same way without the three patches and failed before them in the
+  lab), with the new `sun4m-ss600mp-test` 4/4; wisp on SS-5, SS-10, SS-20 and LX 4/4 (`status=ok`, the
+  CRC checked); the stored `sol26-ss5` disk (Solaris 2.6, SS-5) and `sunos413u1b-ss20` disk (SunOS
+  4.1.3_U1B, SS-20, the ledma path) boot to a root shell and `ping 10.0.2.2` answers on both.
+  **More than one CPU:** with `-smp 2` the kernel sees `mod1 = TI,TMS390Z55 (mid = 9)` and starts
+  it (`cpu1 at Mbus 0x9`), and CPU 1 panics in `check_cpuid` at once (QEMU then stops: `Trap 0xc8
+  ... while interrupts disabled`, the halt after the panic, in error state). `-d exec,cpu` with
+  `-dfilter` on that function: the per-CPU ID (1), the cached and TLB-flushed reads of it and the
+  CPU number in `%tbr` agree; the last check, the module ID in bits 15-16 of the MMU control
+  register (`lda [0] 4`, `>> 15 & 3`), reads 0 (`cpuid mid err`). The kernel expects the module ID
+  there, as on the 600MP's Ross modules (it skips the checks when those bits are all ones); on the
+  SuperSPARC they are other control bits, and QEMU has no Ross CPU model. So SMP needs the Ross
+  module (the RT625 model that Sun's own 600MP PROM needs too): not done. The target
+  `sunos412-ss600mp` (`e2e/sparc/targets.py`) is catalogue only: it needs a published package with
+  the patches and an SS-600MP profile in qemu-server (below).
 - **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
-  it doesn't run removed. SS-600MP has no profile (Solaris 2.6 refuses it, and 4.1.2 doesn't start).
+  it doesn't run removed. SS-600MP has no profile yet (Solaris 2.6 refuses it). For
+  `sunos412-ss600mp` it would need `'SS-600MP' => { 'max-memory' => 256, firmware => {
+  'openbios-sparc32' => { 'max-cpus' => 1 } } }` (one CPU: SunOS 4.1.2's multiprocessor start
+  needs the Ross module), the same in pve-manager, and a published pve-qemu-kvm with `wsh/0063`-`0065`
+  and openbios 0028.
 
 ### SPARCstation LX with its own PROM (lab only)
 
