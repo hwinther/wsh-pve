@@ -293,7 +293,13 @@ for guest in $GUESTS; do
 		phases="" append=""
 		if [ "$MODE" = vnc ]; then
 			append="GLIDE_GUEST_EXTRA=1"
-			phases="FRONTDRAW:006000"
+			# The front-buffer timer came with the OpenGL offscreen code (stage 1b); an older binary
+			# (the published one, in wsh-openglide.yml) shows such a frame only at the next call
+			if strings "$QEMU" | grep -q 'rendering offscreen, EGL'; then
+				phases="FRONTDRAW:006000"
+			else
+				echo "info: this qemu-3dfx shows front-buffer drawing only at the next call (not checked)"
+			fi
 			if strings "$libglide" | grep -q EGLSetGamma; then
 				phases="$phases GAMMA:0000b5"
 			else
