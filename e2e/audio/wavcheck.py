@@ -9,9 +9,11 @@ a tone; tones shorter than 0.15 s are dropped. The test tones are pure (square w
 SB16 and the PC speaker, sines from the OPL2 and the Linux guest) and played one after the other, so
 zero crossings are enough and no FFT is needed.
 
-QEMU 11.1's wav backend leaves the RIFF and data sizes in the header at 0, whether the guest powers
-off or QEMU gets `quit` or SIGTERM: the reader takes everything after the data chunk's header as the
-data, and reports the header's sizes against the file (`header` in the result).
+QEMU 11's wav backend leaves the RIFF and data sizes in the header at 0, whether the guest powers
+off or QEMU gets `quit`, SIGTERM or SIGKILL (upstream/qemu-audio-wav-header-sizes.md): the reader
+takes everything after the data chunk's header as the data, and reports the header against the file
+(`header` in the result: the fmt fields, the sizes and `sizes`, see sizes_state). header_problems()
+checks a header against the expected format.
 """
 import argparse
 import json
@@ -25,10 +27,51 @@ MIN_TONE_S = 0.15
 SAME_TONE = 0.03
 
 
+FMT_FIELDS = ("format_tag", "channels", "rate", "byte_rate", "block_align", "bits")
+
+
+def sizes_state(riff, data, file_size, data_offset):
+    """What the header's sizes say about the file: "set" (both match the file), "zero" (both 0, the
+    header as the backend writes it before it knows the length), "short" (they match an earlier,
+    shorter file: written, then more data appended) or "wrong"."""
+    if riff == file_size - 8 and data == file_size - data_offset:
+        return "set"
+    if riff == 0 and data == 0:
+        return "zero"
+    if riff == data + data_offset - 8 and data < file_size - data_offset:
+        return "short"
+    return "wrong"
+
+
+def header_problems(header, rate=None, channels=None, bits=None, sizes=("set",)):
+    """What is wrong with a header from read_wav(): its fmt chunk against itself (block align and
+    byte rate) and against the expected rate/channels/bits, a data length that isn't whole frames,
+    and sizes that aren't one of `sizes` (see sizes_state). An empty list when all is well."""
+    p = []
+    if header.get("format_tag") != 1:
+        p.append(f"format tag {header.get('format_tag')}, not 1 (PCM)")
+    want = {"rate": rate, "channels": channels, "bits": bits}
+    for k, v in want.items():
+        if v is not None and header.get(k) != v:
+            p.append(f"{k} {header.get(k)}, not {v}")
+    ch, b, r = header.get("channels") or 0, header.get("bits") or 0, header.get("rate") or 0
+    align = ch * b // 8
+    if header.get("block_align") != align:
+        p.append(f"block align {header.get('block_align')}, not {align} ({ch} x {b} bit)")
+    if header.get("byte_rate") != r * align:
+        p.append(f"byte rate {header.get('byte_rate')}, not {r * align}")
+    if align and header.get("data_bytes", 0) % align:
+        p.append(f"{header.get('data_bytes')} data bytes aren't whole {align}-byte frames")
+    if header.get("sizes") not in sizes:
+        p.append(f"header sizes {header.get('sizes')} (RIFF {header.get('riff_size')}, data "
+                 f"{header.get('data_size')} for {header.get('data_bytes')} data bytes), not {'/'.join(sizes)}")
+    return p
+
+
 def read_wav(path, header=None):
     """(rate, channels, mono samples as floats in -1..1). PCM 8, 16 or 32 bit. A dict passed as
     `header` gets the header's sizes and what the file holds (riff_size, data_size, data_bytes,
-    sizes_ok)."""
+    data_offset, sizes_ok, sizes: see sizes_state) and the fmt chunk's fields (FMT_FIELDS)."""
     with open(path, "rb") as f:
         d = f.read()
     if d[:4] != b"RIFF" or d[8:12] != b"WAVE":
@@ -46,7 +89,11 @@ def read_wav(path, header=None):
             if header is not None:
                 riff = struct.unpack("<I", d[4:8])[0]
                 header.update({"riff_size": riff, "data_size": size, "data_bytes": len(d) - body,
-                               "sizes_ok": riff == len(d) - 8 and size == len(d) - body})
+                               "data_offset": body,
+                               "sizes_ok": riff == len(d) - 8 and size == len(d) - body,
+                               "sizes": sizes_state(riff, size, len(d), body)})
+                if fmt is not None:
+                    header.update(dict(zip(FMT_FIELDS, fmt)))
             break
         pos = body + size + (size & 1)
     if fmt is None or data is None:

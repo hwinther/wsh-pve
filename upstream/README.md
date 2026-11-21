@@ -105,6 +105,11 @@ Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pag
 ([unix0cc/qemu-experimental-patches](https://github.com/unix0cc/qemu-experimental-patches)).
 [qemu-sparc64-tte-page-size.md](qemu-sparc64-tte-page-size.md).
 
+Not carried, write-up only (may send): the `wav` audiodev never writes its header's RIFF and data
+sizes, however QEMU ends, because the voices' references keep the backend from being finalized at
+exit (since v11.0.0). First seen with LEMU's CS4231 (it was under "Hold"); reproduced on plain
+v11.1.3 with the SB16. [qemu-audio-wav-header-sizes.md](qemu-audio-wav-header-sizes.md).
+
 ## OpenBIOS (`openbios/patches/`)
 
 | Patch | Fixes | Author / origin | OpenBIOS | Upstream tracker | Write-up |
@@ -139,7 +144,6 @@ Reportable only after they have been reproduced on plain QEMU, without any LEMU 
 | What | Seen with | Notes |
 | --- | --- | --- |
 | QEMU's audio mixer doubles a mono voice played into a mono output (it adds left and right): a `wav` audiodev with `out.channels=1` is 6 dB too loud | LEMU's CS4231 (0028-0029) | `submodules/SPARC.md` "Audio"; needs a device without LEMU code that plays a mono voice |
-| The `wav` audio backend leaves the header's sizes at 0 when the guest powers the machine off | LEMU's CS4231 (0028-0029) | the same |
 | A serial BREAK on ttya hangs Solaris: QEMU's ESCC sets RR0's break bit and never clears it | ESCC with LEMU's 0002-0006 | `submodules/SPARC.md` "Stop-A"; the code read is QEMU's own `serial_receive_break()`, but the lab binary had LEMU's ESCC patches |
 | `zs3: ring buffer overflow` under load: mouse data arrives faster than a 1200 baud mouse sends it | ESCC with LEMU's 0002-0006 | `ROADMAP.md` known issues; harmless |
 

@@ -8,7 +8,8 @@ Runs inside the image of e2e/audio/Dockerfile (the e2e PVE node plus the guests)
     python3 audio_matrix.py pve --out /runs/audio            # through qemu-server (needs the PVE node up)
     python3 audio_matrix.py all --out /runs/audio            # the three, then summary.md
 
-  --only ID[,ID]   run only these cases (see CASES / PVE_CASES / PVE_WAV_SERVER)
+  --only ID[,ID]   run only these cases (see CASES / END_CASES / PVE_CASES / PVE_WAV_SERVER /
+                   PVE_WAV_STOP)
   FREEDOS_CACHE    where the FreeDOS zip is kept (default /var/cache/audio-freedos)
 
 Guests (built by build-guests.sh, nothing installed):
@@ -28,6 +29,14 @@ set with `driver=wav`: `qm showcmd` must have the expected -device/-machine argu
 runs the guest to its power off and that file must hold the tones. One more PVE case checks that
 `driver=wav` with a `server=` doesn't start.
 
+The wav header: every recording must be PCM, 44.1 kHz, 16-bit stereo (QEMU's defaults, which
+qemu-server doesn't change) with a consistent fmt chunk and whole frames of data, and its RIFF/data
+sizes must match the file or be 0 (wavcheck.header_problems). QEMU 11 leaves them 0 however it
+ends (upstream/qemu-audio-wav-header-sizes.md); a file whose sizes are set shows as "header sizes
+set" in the summary, the sign that QEMU fixed it and the docs need updating. END_CASES end QEMU in
+the middle of the playback on purpose, by QMP `quit`, SIGTERM and SIGKILL, and PVE_WAV_STOP does
+the same with `qm stop`: each must leave a readable recording (after SIGKILL the sizes can only be 0).
+
 Results: <out>/results.json and <out>/summary.md (a Markdown table for the job summary); each case's
 wav, serial log and QEMU log (through PVE: showcmd.txt) in <out>/<case>/. Exit status 1 when a case
 that should pass fails.
@@ -40,6 +49,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -121,6 +131,24 @@ PVE_CASES = [
     {"id": "pve-sb16-adlib-pcspk", "audio": "sb16-adlib-pcspk", "guest": "dos", "expect": DOS_TONES,
      "showcmd": [r"-machine '?pcspk-audiodev=B'?", r"-device '?sb16,audiodev=B'?", r"-device '?adlib,audiodev=B'?"]},
 ]
+
+# What every recording must be (wavcheck.header_problems): QEMU's wav defaults. The header's sizes
+# may be 0 (QEMU 11 never writes them, upstream/qemu-audio-wav-header-sizes.md) or right; after
+# SIGKILL only 0 is possible.
+WAV_FORMAT = {"rate": 44100, "channels": 2, "bits": 16}
+SIZES_CLEAN = ("set", "zero")
+SIZES_KILLED = ("zero",)
+
+# QEMU ended while the guest plays: once the recording has END_AT_BYTES (about 1.1 s of sound, the
+# SB16 tone is the first), by QMP quit, SIGTERM or SIGKILL. The guest is the DOS one with all three
+# ISA devices; only the header and that the data is there are checked, not the tones.
+END_AT_BYTES = 200000
+END_CASES = [
+    {"id": "wav-end-quit", "end": "quit", "sizes": SIZES_CLEAN, "exit": 0},
+    {"id": "wav-end-sigterm", "end": "sigterm", "sizes": SIZES_CLEAN, "exit": 0},
+    {"id": "wav-end-sigkill", "end": "sigkill", "sizes": SIZES_KILLED, "exit": -9},
+]
+PVE_WAV_STOP = "pve-wav-qm-stop"
 
 FDCONFIG = "SWITCHES=/N /F\r\nLASTDRIVE=Z\r\nFILES=20\r\nSHELL=\\FREEDOS\\BIN\\COMMAND.COM \\FREEDOS\\BIN /E:1024 /P=\\AUDIO.BAT\r\n"
 AUDIO_BAT = "@ECHO OFF\r\nSET BLASTER=A220 I5 D1 H5 T6\r\nAUDTEST SAP\r\n"
@@ -288,6 +316,10 @@ def judge(case, wav, serial, run):
     res["wav"] = a
     res["tones_found"] = [t["freq_hz"] for t in a["tones"]] if a else []
     res["notes"] += reasons
+    if a:
+        hp = wavcheck.header_problems(a["header"], sizes=case.get("sizes", SIZES_CLEAN), **WAV_FORMAT)
+        res["notes"] += hp
+        ok = ok and not hp
     text = read_text(serial)
     res["serial_tail"] = text[-1500:]
     if case["guest"] == "linux":
@@ -343,6 +375,113 @@ def run_direct(cases, out):
     return results
 
 
+def wait_for_bytes(path, n, timeout, alive):
+    """Wait until the file at path has n bytes; False when alive() turns false or on timeout."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if os.path.exists(path) and os.path.getsize(path) >= n:
+            return True
+        if not alive():
+            return False
+        time.sleep(0.2)
+    return False
+
+
+def qmp_command(sock, command):
+    """One QMP command on a unix socket. Returns what QEMU's first line after it says: "return",
+    the name of an event (quit answers with SHUTDOWN first), or the line itself."""
+    with socket.socket(socket.AF_UNIX) as s:
+        s.settimeout(10)
+        s.connect(sock)
+        f = s.makefile("rw")
+        f.readline()
+        reply = ""
+        for cmd in ("qmp_capabilities", command):
+            f.write(json.dumps({"execute": cmd}) + "\n")
+            f.flush()
+            reply = f.readline()
+    try:
+        msg = json.loads(reply)
+    except ValueError:
+        return reply.strip()[:120]
+    return "return" if "return" in msg else msg.get("event") or reply.strip()[:120]
+
+
+def judge_ending(case, wav, run):
+    """A recording QEMU was ended in: there, in WAV_FORMAT, at least END_AT_BYTES of data in whole
+    frames, and header sizes this ending allows (case["sizes"]). The tones aren't checked."""
+    res = {"run": run, "notes": [], "tones_found": []}
+    try:
+        a = wavcheck.analyse(wav)
+    except (OSError, ValueError) as e:
+        res.update({"wav": None, "ok": False})
+        res["notes"].append(f"no wav: {e}")
+        return res
+    res["wav"] = a
+    res["tones_found"] = [t["freq_hz"] for t in a["tones"]]
+    res["notes"] += wavcheck.header_problems(a["header"], sizes=case["sizes"], **WAV_FORMAT)
+    if a["header"]["data_bytes"] < END_AT_BYTES:
+        res["notes"].append(f"only {a['header']['data_bytes']} data bytes")
+    res["ok"] = not res["notes"]
+    return res
+
+
+def run_endings(cases, out):
+    """END_CASES: QEMU directly, ended by QMP quit, SIGTERM or SIGKILL while the DOS guest plays."""
+    results = []
+    floppy = make_dos_floppy(os.path.join(out, "audtest-floppy.img")) if cases else None
+    for case in cases:
+        d = os.path.join(out, case["id"])
+        os.makedirs(d, exist_ok=True)
+        wav, serial, sock = (os.path.join(d, n) for n in ("out.wav", "serial.log", "qmp.sock"))
+        for p in (wav, serial, sock):
+            if os.path.exists(p):
+                os.unlink(p)
+        argv = [QEMU, "-machine", "pc,accel=tcg,pcspk-audiodev=snd0", "-nodefaults", "-display", "none",
+                "-no-reboot", "-audiodev", f"wav,id=snd0,path={wav}",
+                "-qmp", f"unix:{sock},server=on,wait=off",
+                "-device", "sb16,audiodev=snd0", "-device", "adlib,audiodev=snd0"]
+        argv += guest_args({"guest": "dos"}, d, floppy, serial)
+        log(f"== {case['id']}")
+        t0 = time.time()
+        reply = ""
+        with open(os.path.join(d, "qemu.log"), "w") as lf:
+            lf.write(" ".join(shlex.quote(a) for a in argv) + "\n\n")
+            lf.flush()
+            p = subprocess.Popen(argv, stdout=lf, stderr=subprocess.STDOUT)
+            playing = wait_for_bytes(wav, END_AT_BYTES, 120, lambda: p.poll() is None)
+            at = os.path.getsize(wav) if os.path.exists(wav) else 0
+            if p.poll() is None:
+                if case["end"] == "quit":
+                    try:
+                        reply = qmp_command(sock, "quit")
+                    except OSError as e:
+                        reply = f"QMP: {e}"
+                elif case["end"] == "sigterm":
+                    p.send_signal(signal.SIGTERM)
+                else:
+                    p.kill()
+            try:
+                code = p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                code = p.wait()
+        run = {"exit": code, "timed_out": False, "seconds": round(time.time() - t0, 1)}
+        r = judge_ending(case, wav, run)
+        r["notes"].insert(0, f"{case['end']} at {at} bytes" + (f" ({reply[:120]})" if reply else ""))
+        if not playing:
+            r["ok"] = False
+            r["notes"].append(f"QEMU ended or no sound before {END_AT_BYTES} bytes")
+        if code != case["exit"]:
+            r["ok"] = False
+            r["notes"].append(f"exit {code}, not {case['exit']}")
+        r.update({"id": case["id"], "path": "qemu", "guest": "dos", "device": "sb16+adlib+pcspk",
+                  "expect": [], "accel": "tcg"})
+        log(f"   {'ok ' if r['ok'] else 'FAIL'} {'; '.join(r['notes'])}")
+        results.append(r)
+    return results
+
+
 # ---------------------------------------------------------------------------------------------
 # through qemu-server
 
@@ -359,16 +498,38 @@ def qm_wait_stopped(vmid, timeout):
     return None
 
 
-def run_pve(cases, out):
+PVE_FLOPPY_DIR = "/var/lib/vz/template/floppy"
+
+
+def pve_prepare():
+    """The PVE node is up and storage `local` takes floppy images."""
     if not os.path.exists("/run/pve-e2e-ready"):
         raise RuntimeError("the PVE node isn't up (/run/pve-e2e-ready missing)")
-    kvm = kvm_usable()
-    floppy_dir = "/var/lib/vz/template/floppy"
-    os.makedirs(floppy_dir, exist_ok=True)
+    os.makedirs(PVE_FLOPPY_DIR, exist_ok=True)
     cfg = sh("pvesh", "get", "/storage/local", "--output-format", "json")
     types = set(json.loads(cfg).get("content", "").split(","))
     if "floppy" not in types:
         sh("pvesm", "set", "local", "--content", ",".join(sorted((types - {""}) | {"floppy"})))
+
+
+def pve_vm_opts(case, d, serial, use_kvm):
+    """`qm create` options for a PVE_CASES entry: audio0 with driver=wav, and the guest."""
+    opts = ["--name", f"audio-{case['audio'].lower()}", "--ostype", "other",
+            "--machine", case.get("machine", "pc"), "--kvm", "1" if use_kvm else "0",
+            "--audio0", f"device={case['audio']},driver=wav", "--tablet", "0", "--balloon", "0"]
+    if case["guest"] == "dos":
+        opts += ["--memory", "32", "--cpu", "pentium", "--vga", "std",
+                 "--floppy0", "local:floppy/audtest.img", "--boot", "order=floppy0",
+                 "--args", f"-serial file:{serial}"]
+    else:
+        g = guest_args(case, d, None, serial)
+        opts += ["--memory", "256", "--vga", "std", "--args", " ".join(shlex.quote(x) for x in g[2:])]
+    return opts
+
+
+def run_pve(cases, out):
+    pve_prepare()
+    kvm = kvm_usable()
     floppy = None
     results = []
     for n, case in enumerate(cases):
@@ -376,7 +537,7 @@ def run_pve(cases, out):
         d = os.path.join(out, case["id"])
         os.makedirs(d, exist_ok=True)
         if case["guest"] == "dos" and floppy is None:
-            floppy = make_dos_floppy(os.path.join(floppy_dir, "audtest.img"))
+            floppy = make_dos_floppy(os.path.join(PVE_FLOPPY_DIR, "audtest.img"))
         serial, wav = os.path.join(d, "serial.log"), os.path.join(d, "out.wav")
         recording = PVE_WAV.format(vmid=vmid)
         for p in (serial, wav, recording):
@@ -384,16 +545,7 @@ def run_pve(cases, out):
                 os.unlink(p)
         qm("destroy", str(vmid), "--purge", check=False)
         use_kvm = kvm and case["guest"] == "linux"
-        opts = ["--name", f"audio-{case['audio'].lower()}", "--ostype", "other",
-                "--machine", case.get("machine", "pc"), "--kvm", "1" if use_kvm else "0",
-                "--audio0", f"device={case['audio']},driver=wav", "--tablet", "0", "--balloon", "0"]
-        if case["guest"] == "dos":
-            opts += ["--memory", "32", "--cpu", "pentium", "--vga", "std",
-                     "--floppy0", "local:floppy/audtest.img", "--boot", "order=floppy0",
-                     "--args", f"-serial file:{serial}"]
-        else:
-            g = guest_args(case, d, None, serial)
-            opts += ["--memory", "256", "--vga", "std", "--args", " ".join(shlex.quote(x) for x in g[2:])]
+        opts = pve_vm_opts(case, d, serial, use_kvm)
         log(f"== {case['id']} (VM {vmid})")
         r = {"id": case["id"], "path": "pve", "guest": case["guest"], "device": f"audio0: device={case['audio']}",
              "expect": case["expect"], "accel": "kvm" if use_kvm else "tcg", "notes": []}
@@ -469,6 +621,56 @@ def run_pve_wav_server(out):
     return r
 
 
+def run_pve_wav_stop(out):
+    """`qm stop` while the DOS guest plays (audio0: sb16-adlib-pcspk, driver=wav): the recording
+    must stay readable, its sizes set or 0 (qm stop ends QEMU with QMP quit)."""
+    pve_prepare()
+    vmid = 9100 + len(PVE_CASES) + 1
+    case = dict(next(c for c in PVE_CASES if c["audio"] == "sb16-adlib-pcspk"), id=PVE_WAV_STOP,
+                sizes=SIZES_CLEAN)
+    d = os.path.join(out, PVE_WAV_STOP)
+    os.makedirs(d, exist_ok=True)
+    make_dos_floppy(os.path.join(PVE_FLOPPY_DIR, "audtest.img"))
+    serial, wav = os.path.join(d, "serial.log"), os.path.join(d, "out.wav")
+    recording = PVE_WAV.format(vmid=vmid)
+    for p in (serial, wav, recording):
+        if os.path.exists(p):
+            os.unlink(p)
+    log(f"== {PVE_WAV_STOP} (VM {vmid})")
+    r = {"id": PVE_WAV_STOP, "path": "pve", "guest": "dos", "accel": "tcg", "expect": [],
+         "device": "audio0: device=sb16-adlib-pcspk,driver=wav; qm stop", "notes": []}
+    qm("destroy", str(vmid), "--purge", check=False)
+    try:
+        qm("create", str(vmid), *pve_vm_opts(case, d, serial, False))
+        t0 = time.time()
+        qm("start", str(vmid), timeout=180)
+        playing = wait_for_bytes(recording, END_AT_BYTES, 120,
+                                 lambda: "status: running" in qm("status", str(vmid), check=False))
+        at = os.path.getsize(recording) if os.path.exists(recording) else 0
+        p = subprocess.run(["qm", "stop", str(vmid)], capture_output=True, text=True, timeout=120)
+        took = qm_wait_stopped(vmid, 60)
+        run = {"exit": p.returncode, "timed_out": took is None, "seconds": round(time.time() - t0, 1)}
+        if os.path.exists(recording):
+            shutil.copyfile(recording, wav)
+        j = judge_ending(case, wav, run)
+        r.update({k: v for k, v in j.items() if k != "notes"})
+        r["notes"] = [f"qm stop at {at} bytes: exit {p.returncode}"] + j["notes"]
+        if not playing:
+            r["ok"] = False
+            r["notes"].append(f"VM stopped or no sound before {END_AT_BYTES} bytes")
+        if p.returncode != 0 or took is None:
+            r["ok"] = False
+            r["notes"].append((p.stderr or p.stdout).strip()[-200:] if p.returncode else "not stopped")
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        r["ok"] = False
+        r["notes"].append(str(e)[:500])
+    finally:
+        qm("stop", str(vmid), check=False)
+        qm("destroy", str(vmid), "--purge", check=False)
+    log(f"   {'ok ' if r['ok'] else 'FAIL'} {'; '.join(r['notes'])}")
+    return r
+
+
 # ---------------------------------------------------------------------------------------------
 # summary
 
@@ -504,8 +706,9 @@ def summary(inv, results):
                 note = ", ".join(bits) + (f"; {note}" if note else "")
             h = (r.get("wav") or {}).get("header")
             if h:
-                note += ("; " if note else "") + ("header sizes set" if h["sizes_ok"] else
-                         f"header sizes {h['riff_size']}/{h['data_size']} for {h['data_bytes']} data bytes")
+                note += ("; " if note else "") + ("header sizes set" if h.get("sizes") == "set" else
+                         f"header sizes {h.get('sizes')} ({h['riff_size']}/{h['data_size']} for "
+                         f"{h['data_bytes']} data bytes)")
             secs = (r.get("run") or {}).get("seconds")
             lines.append(f"| {r['id']} | {r['path']} ({r['accel']}) | {r['guest']} | {r['device']} | {exp} | "
                          f"{fmt_tones(r)} | {'-' if secs is None else secs} | {'pass' if r['ok'] else 'FAIL'} | "
@@ -534,10 +737,13 @@ def main(argv=None):
     new = []
     if a.what in ("qemu", "all"):
         new += run_direct(pick(CASES), a.out)
+        new += run_endings(pick(END_CASES), a.out)
     if a.what in ("pve", "all"):
         new += run_pve(pick(PVE_CASES), a.out)
         if not only or PVE_WAV_SERVER in only:
             new.append(run_pve_wav_server(a.out))
+        if not only or PVE_WAV_STOP in only:
+            new.append(run_pve_wav_stop(a.out))
     ids = {r["id"] for r in new}
     data["results"] = [r for r in data["results"] if r["id"] not in ids] + new
     with open(path, "w") as f:
