@@ -388,7 +388,7 @@ started was still running at the end.
 | Doom | 54, 56 s | 55, 54 s | 55, 52 s | 55, 54 s | 55, 55 s |
 | Duke Nukem 3D | 62, 70 s | 64, 69 s | **stops: not enough memory** | 62, 69 s | 62, 69 s |
 | Wolfenstein 3D | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s |
-| Commander Keen 4 | not measured | 16, none | 18, none | not measured | 15, none |
+| Commander Keen 4 | 17, none | 16, none | 18, none | not measured | 15, none |
 | Leisure Suit Larry 1 | not measured | 11, 11 s | 11, 11 s | not measured | 11, 11 s |
 | The Incredible Machine | 17, 2 s | 17, 2 s | 17, 2 s | 19, 2 s | 17, 2 s |
 | The Incredible Machine 2 | **needs EMS** | **needs EMS** | 21, 42 s | **needs EMS** | **needs EMS** |
@@ -398,6 +398,10 @@ started was still running at the end.
 - **Duke Nukem 3D under the EMS profile** stops at once ("requires 2607200 more bytes"): DOS/4GW
   gets its memory through VCPI from EMM386's EMS pool, which `RAM 4096` limits to 4 MB. Use Full for
   DOS/4GW games, or give EMM386 a larger pool.
+- **Wolfenstein 3D needs `retrace=precise`**: the same run under the Full profile with plain
+  `-vga std` showed 2 distinct screens (the prompt and black) and no sound in 60 s, and VGARTRC
+  timed out (longest run of display enable: 1 read); with `retrace=precise`, 12 screens and 46 s of
+  sound.
 - **The Incredible Machine 2** needs 256K of EMS and says so without it; only the EMS profile runs
   it (with the 3C0h fix it shows its screens).
 - Keen 4 and Dune made no sound in the sampled time with any profile; Doom, Duke Nukem 3D,
