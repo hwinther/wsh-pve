@@ -220,7 +220,7 @@ class Tools(unittest.TestCase):
         self.assertIn(bytes.fromhex("b401 cd16 83c601 83d700"), busyk)  # INT 16h AH=01h each iteration
         self.assertIn(bytes.fromhex("83c35b"), busy)  # 91 ticks: five seconds
         self.assertNotIn(b"\xf4", busy + busyk)  # never halts
-        self.assertEqual(sorted(dos_tools.COMS), ["busy", "busyk", "wshidle"])
+        self.assertEqual(sorted(dos_tools.COMS), ["busy", "busyk", "emschk", "sndchk", "vgaar", "vgartrc", "wshidle"])
 
     def test_tool_list(self):
         self.assertIn("UMASCAN.COM", dos_tools.TOOLS)

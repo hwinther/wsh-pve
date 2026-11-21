@@ -252,6 +252,162 @@ In the same lab study on plain QEMU, DOOM, DOOM II, Duke Nukem 3D, Dune, Dune II
 and 4 and Leisure Suit Larry 1 ran with the default retrace as well as with the precise one. The
 Incredible Machine 1 and 2 stayed on their first screen with both: a different problem.
 
+## Memory profiles
+
+No single `CONFIG.SYS` suits every DOS program: protected-mode games want XMS and no EMS frame in
+the way, older ones want EMS, real-mode ones want every K of conventional memory, and a few DOS
+extenders refuse to start under EMM386 at all. Four profiles cover them. The text below is for a VM
+without a NIC (the free gap starts at CD800; with `ne2k_pci` start the ranges at CE00) and with
+QEMU's Sound Blaster 16 (`audio0` or `args: -device sb16`), and assumes `WSHIDLE.COM` in `C:\DOS`
+([Idle](#idle)).
+
+**Full** (XMS and upper memory, no EMS): DOS/4GW and other protected-mode games such as Doom and
+Duke Nukem 3D, and most programs.
+
+```text
+DEVICE=C:\DOS\HIMEM.SYS /TESTMEM:OFF
+DEVICE=C:\DOS\EMM386.EXE NOEMS I=CD00-E8FF
+DOS=HIGH,UMB
+FILES=40
+BUFFERS=20
+STACKS=9,256
+LASTDRIVE=Z
+SHELL=C:\COMMAND.COM C:\ /E:1024 /P
+```
+
+```text
+@ECHO OFF
+PROMPT $P$G
+PATH C:\DOS
+SET BLASTER=A220 I5 D1 H5 T6
+LH C:\DOS\WSHIDLE.COM
+```
+
+Load CD-ROM, mouse and keyboard drivers with `DEVICEHIGH=` and `LH` as well.
+
+**EMS** (a page frame at D800 and upper memory around it): games that want expanded memory (The
+Incredible Machine 2, Dune, King's Quest VII). The same as Full except the EMM386 line:
+
+```text
+DEVICE=C:\DOS\EMM386.EXE RAM 4096 FRAME=D800 I=CD00-D7FF I=E800-E8FF
+```
+
+Set the frame and the `I=` ranges around it explicitly. With `I=` over the whole gap, EMM386 finds
+no room for a frame and quietly has no EMS at all: `MEM` shows no expanded memory, and a game that
+needs it says it hasn't enough memory.
+
+**Maximum conventional** (HIMEM only, nothing else loaded): real-mode games that need the most
+conventional memory (Commander Keen, Leisure Suit Larry, Dune II):
+
+```text
+DEVICE=C:\DOS\HIMEM.SYS /TESTMEM:OFF
+DOS=HIGH
+```
+
+with the same `FILES`/`BUFFERS`/`SHELL` lines, and only `SET BLASTER` and `C:\DOS\WSHIDLE.COM` in
+`AUTOEXEC.BAT`.
+
+**No EMM386** (HIMEM, drivers low): DOS extenders that refuse V86 mode. Like Maximum conventional,
+with the drivers loaded low (`DEVICE=`, no `LH`).
+
+`BLASTER=A220 I5 D1 H5 T6` is QEMU's SB16: port 220h, IRQ 5, 8-bit DMA 1, 16-bit DMA 5, type 6. QEMU
+has no MPU-401, so no `P330`. MS-DOS 6's startup menu can hold all four in one `CONFIG.SYS`
+(`[MENU]`, one block per profile, `GOTO %CONFIG%` in `AUTOEXEC.BAT`);
+`e2e/sparc/dos_profiles.py show --flavour msdos --menu` prints one. FreeDOS 1.4's own startup menu
+already has entries like Full (1), a compatible JEMMEX (2) and EMS with JEMM386 (3);
+`dos_profiles.py show --flavour freedos` prints the four profiles for FreeDOS (JEMMEX `NOEMS`,
+JEMMEX `FRAME=D800`, HIMEMX only, HIMEMX with the drivers low).
+
+### Trying profiles with the lab
+
+`e2e/sparc/dos_profiles.py` keeps the profiles as data and tries them on an installed disk without
+touching it: for each profile it copies the disk, writes the profile's `CONFIG.SYS` and
+`AUTOEXEC.BAT` and small test programs of ours onto the copy with mtools, boots the copy in the
+lab's own QEMU and reads the results back from the copy. It measures `MEM`; `EMSCHK.COM` (EMS pages
+and frame); `VGARTRC.COM` (does the VGA report display enable on eight reads of port 3DAh in a row,
+as Wolfenstein 3D waits for: never with QEMU's default retrace, always with
+`retrace=precise`); `VGAAR.COM` (does port 3C0h read back the attribute address in the data
+state, what The Incredible Machine needs: `FAIL` before pve-qemu `wsh/0051`); `SNDCHK.COM` (the Sound
+Blaster DSP's version, and an AdLib tone and a PC speaker beep that QEMU records into a WAV file);
+whether the screen is lit at the end; and QEMU's guest-error log. With a games disk it starts one
+game per run, presses its keys and samples the screen and the sound.
+
+```sh
+cd e2e/sparc
+python3 dos_profiles.py show --flavour msdos                    # the profiles' CONFIG.SYS and AUTOEXEC.BAT
+python3 dos_profiles.py run --flavour freedos --disk c.raw --out /work/prof --vga std,retrace=precise
+python3 dos_profiles.py run --flavour msdos --disk c.raw --out /work/prof --menu        # the startup menu
+python3 dos_profiles.py run --flavour msdos --disk c.raw --games-disk d.raw --games games.txt --out ...
+```
+
+It runs in the lab image (`e2e/sparc/Dockerfile`, which has mtools). CI runs it on FreeDOS after
+installing FreeDOS from its floppies (`sparc-lab-dos.yml`, `tests/test_dos_profiles.py`): the
+FreeDOS profiles, the startup menu and plain `-vga std`, with our own programs only.
+
+### Measured
+
+Lab image with pve-qemu-kvm 11.1.3-3+wsh2, the lab's own QEMU (TCG, Pentium, 32 MB, std VGA with
+`retrace=precise`, no NIC, sb16 + adlib + PC speaker), 2026-11-21. In every run below VGARTRC
+reported display enable, VGAAR read 20h in both states, `SNDCHK` found DSP 4.05 and its tone and
+beep were in the recording, and the screen was lit at the end. Under plain `-vga std` VGARTRC never
+saw two reads in a row with display enable; under pve-qemu-kvm 11.1.3-2+wsh16 (without `wsh/0051`)
+VGAAR read `00` in the data state.
+
+| Disk | Profile | Conventional free | Largest program | Upper free | EMS (frame) | XMS free |
+| --- | --- | --- | --- | --- | --- | --- |
+| MS-DOS 6.22 (the lab's `msdos622` install) | as installed (HIMEM, `DOS=HIGH`, WSHIDLE) | 621K | 620K | - | none | 31,552K |
+| | Full | 614K | 613K | 107K | none | 31,240K |
+| | EMS | 614K | 613K | 42K | 4,480K (D800) | 31,072K |
+| | Maximum conventional / No EMM386 | 616K | 616K | - | none | 31,552K |
+| MS-DOS 6.22 with a CD-ROM driver, mouse, `KEYB` and an idle TSR | its own `CONFIG.SYS` and `AUTOEXEC.BAT` | 613K | 612K | 63K | none | 20,815K |
+| | Full | 613K | 613K | 86K | none | 31,240K |
+| | EMS | 613K | 613K | 22K | 4,480K (D800) | 31,072K |
+| | Maximum conventional (idle TSR only) | 616K | 616K | - | none | 31,552K |
+| | No EMM386 (all of them low) | 595K | 595K | - | none | 31,552K |
+| FreeDOS 1.4 (the `freedos14` install) | as installed (menu entry 2: JEMMEX `NOEMS`) | 628K | 628K | 86K | none | 31,073K |
+| | Full (JEMMEX `NOEMS`, FDAPM and CTMOUSE high) | 628K | 628K | 94K | none | 31,201K |
+| | EMS (JEMMEX `FRAME=D800`) | 626K | 626K | 32K | 31,760K (D800) | 31,249K |
+| | Maximum conventional (HIMEMX, FDAPM) | 616K | 615K | - | none | 31,457K |
+| | No JEMM (HIMEMX, FDAPM and CTMOUSE low) | 613K | 612K | - | none | 31,457K |
+
+Booted from the MS-DOS 6 startup menu (one `CONFIG.SYS` with the four profiles, the entry picked at
+the menu) and from FreeDOS's menu, each entry measured the same as its profile on its own. FreeDOS's
+`MEM` also lists 8,592K of EMS under JEMMEX `NOEMS`: JEMM keeps a pool for VCPI, without a frame
+(`EMSCHK` finds no EMS device). That disk's own `CONFIG.SYS` loads the Sound Blaster's CSP driver,
+which sends commands QEMU's SB16 doesn't know (32 lines in the guest-error log, harmless); no other
+run logged any.
+
+**Games per profile** (the MS-DOS 6.22 disk with the drivers above, the games on a second disk,
+`retrace=precise`; each game started after the measurements, keys pressed at fixed times, the screen
+sampled once a second for 45-75 s). Cells: distinct screens, seconds with sound in the recording.
+"Own files" is that disk's own `CONFIG.SYS`/`AUTOEXEC.BAT` (no `BLASTER` set). Every game that
+started was still running at the end.
+
+| Game | Own files | Full | EMS | Maximum conventional | No EMM386 |
+| --- | --- | --- | --- | --- | --- |
+| Doom | 54, 56 s | 55, 54 s | 55, 52 s | 55, 54 s | 55, 55 s |
+| Duke Nukem 3D | 62, 70 s | 64, 69 s | **stops: not enough memory** | 62, 69 s | 62, 69 s |
+| Wolfenstein 3D | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s |
+| Commander Keen 4 | 17, none | 16, none | 18, none | 18, none | 15, none |
+| Leisure Suit Larry 1 | 11, 11 s | 11, 11 s | 11, 11 s | 12, 11 s | 11, 11 s |
+| The Incredible Machine | 17, 2 s | 17, 2 s | 17, 2 s | 19, 2 s | 17, 2 s |
+| The Incredible Machine 2 | **needs EMS** | **needs EMS** | 21, 42 s | **needs EMS** | **needs EMS** |
+| Dune | 40, none | 41, none | 40, none | 19, none | 41, none |
+| Dune II | 16, 37 s | 17, 37 s | 18, 38 s | 17, 37 s | 16, 37 s |
+
+- **Duke Nukem 3D under the EMS profile** stops at once ("requires 2607200 more bytes"): DOS/4GW
+  gets its memory through VCPI from EMM386's EMS pool, which `RAM 4096` limits to 4 MB. Use Full for
+  DOS/4GW games, or give EMM386 a larger pool.
+- **Wolfenstein 3D needs `retrace=precise`**: the same run under the Full profile with plain
+  `-vga std` showed 2 distinct screens (the prompt and black) and no sound in 60 s, and VGARTRC
+  timed out (longest run of display enable: 1 read); with `retrace=precise`, 12 screens and 46 s of
+  sound. Doom on plain `std` ran as with the precise retrace (54 screens, 54 s of sound).
+- **The Incredible Machine 2** needs 256K of EMS and says so without it; only the EMS profile runs
+  it (with the 3C0h fix it shows its screens).
+- Keen 4 and Dune made no sound in the sampled time with any profile; Doom, Duke Nukem 3D,
+  Wolfenstein 3D and Dune II played sound with every profile that ran them, also with the disk's own
+  files without `BLASTER` (they keep their own sound settings).
+
 ## Known issues
 
 - **`ne2k_isa` doesn't start.** qemu-server offers the model but puts the ISA card on the PCI bus:
@@ -265,7 +421,8 @@ Incredible Machine 1 and 2 stayed on their first screen with both: a different p
   state; the games save the address that way while loading the palette and write it back, which
   turns the display off (the palette address source bit) for as long as they run. Every `vga`
   model QEMU offers has the same code, so changing it doesn't help. pve-qemu patch `wsh/0051`
-  returns the address in both states, as the VGA does; it is not in a published pve-qemu-kvm yet.
+  returns the address in both states, as the VGA does; pve-qemu-kvm 11.1.3-3+wsh2 and later have it
+  (`VGAAR.COM` in [Memory profiles](#trying-profiles-with-the-lab) checks it).
   The Incredible Machine 2 also needs 256K of EMS (EMM386 with `RAM`); without it, it stops with
   "You do not have enough memory to run this program".
 - **EMM386 must not include the top of the E segment.** `I=` up to EFFF lets DOS boot, then the
