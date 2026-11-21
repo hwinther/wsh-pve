@@ -2,7 +2,7 @@
 """The Glide and OpenGL pass-through of qemu-3dfx in a real Windows 98 SE guest, end to end.
 
     win98_test.py --template WIN98SE.raw --drivers qemu-3dfx-drivers-<rev>.zip --out OUT --private PRIV \\
-        [--tests glide2,glide3,opengl] [--display vnc|sdl] [--accel auto|tcg|kvm] [--bench N]
+        [--tests glide2,glide3,opengl] [--display vnc|egl|sdl] [--accel auto|tcg|kvm] [--bench N]
 
 The operator's own installed Windows 98 SE disk (--template, raw, one FAT32 partition; never
 modified, never in the repository) is copied into PRIV, and onto the copy go, with mtools:
@@ -18,7 +18,10 @@ modified, never in the repository) is copied into PRIV, and onto the copy go, wi
 QEMU (qemu-system-x86_64-3dfx, --qemu) boots the copy with the devices of the PVE VM the disk was
 installed in (an identical device set keeps Windows' new-hardware wizard away; see qemu_command()):
 headless as PVE runs a VM with `vga: std,mesa=1` (no display, a VNC server, the HMP monitor on a
-socket) or with an SDL window on an X display (--display sdl, Xvfb). The test programs print to COM1
+socket), the same with QEMU's egl-headless display (--display egl: the console has GL, so qemu-3dfx
+hands the Glide frames to it as a dmabuf; the captures then come from the VNC server, as QEMU's
+screendump has no surface to read while the console scans a dmabuf out; needs /dev/udmabuf or a
+render node), or with an SDL window on an X display (--display sdl, Xvfb). The test programs print to COM1
 (QEMU writes it to a file); on "<TAG>: FRAME" the harness takes a screendump of the console
 (headless: where qemu-3dfx shows the frame) or a capture of the SDL window and checks the probes of
 packages/wsh-openglide/tests/scene.h, the scene every 3dfx test draws; on "<TAG>: CLOSED" it
@@ -521,6 +524,8 @@ def qemu_command(args, raw, serial, mon, vnc):
            "-monitor", f"unix:{mon},server=on,wait=off"]
     if args.display == "sdl":
         cmd += ["-display", "sdl"]
+    elif args.display == "egl":
+        cmd += ["-display", "egl-headless", "-vnc", f"unix:{vnc}"]
     else:
         cmd += ["-display", "none", "-vnc", f"unix:{vnc}"]
     return cmd, accel
@@ -557,6 +562,64 @@ class Monitor:
         return os.path.exists(path)
 
 
+def vnc_grab(path):
+    """The console's picture as the VNC server at path sends it, as (width, height, rgb) or None (RFB
+    3.8, no authentication, raw encoding). For --display egl: while qemu-3dfx's dmabuf is scanned
+    out, egl-headless reads it into a surface of its own for VNC, and QEMU's screendump has none."""
+    def recv(s, n):
+        b = b""
+        while len(b) < n:
+            c = s.recv(n - len(b))
+            if not c:
+                raise EOFError
+            b += c
+        return b
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(5)
+            s.connect(path)
+            recv(s, 12)
+            s.sendall(b"RFB 003.008\n")
+            if 1 not in recv(s, recv(s, 1)[0]):
+                return None
+            s.sendall(b"\x01")
+            if struct.unpack(">I", recv(s, 4))[0] != 0:
+                return None
+            s.sendall(b"\x01")
+            w, h = struct.unpack(">HH", recv(s, 4))
+            recv(s, 16)
+            recv(s, struct.unpack(">I", recv(s, 4))[0])
+            s.sendall(struct.pack(">BxxxBBBBHHHBBBxxx", 0, 32, 24, 0, 1, 255, 255, 255, 16, 8, 0))
+            s.sendall(struct.pack(">BxHi", 2, 1, 0))
+            s.sendall(struct.pack(">BBHHHH", 3, 0, 0, 0, w, h))
+            fb = bytearray(w * h * 3)
+            while True:
+                t = recv(s, 1)[0]
+                if t == 2:
+                    continue
+                if t == 3:
+                    recv(s, 3)
+                    recv(s, struct.unpack(">I", recv(s, 4))[0])
+                    continue
+                if t != 0:
+                    return None
+                recv(s, 1)
+                for _ in range(struct.unpack(">H", recv(s, 2))[0]):
+                    x, y, rw, rh, enc = struct.unpack(">HHHHi", recv(s, 12))
+                    if enc != 0:
+                        return None
+                    px = recv(s, rw * rh * 4)
+                    for r in range(rh):
+                        o = ((y + r) * w + x) * 3
+                        row = px[r * rw * 4:(r + 1) * rw * 4]
+                        fb[o:o + rw * 3:3] = row[2::4]
+                        fb[o + 1:o + rw * 3:3] = row[1::4]
+                        fb[o + 2:o + rw * 3:3] = row[0::4]
+                return w, h, bytes(fb)
+    except (OSError, EOFError):
+        return None
+
+
 def write_ppm(path, w, h, pix):
     with open(path, "wb") as f:
         f.write(b"P6\n%d %d\n255\n" % (w, h) + pix)
@@ -564,7 +627,13 @@ def write_ppm(path, w, h, pix):
 
 def capture(args, mon, path):
     """What the VM shows, as (width, height, rgb) or None, also written to path (PPM): headless,
-    QEMU's screendump of the console; with SDL, the QEMU window on the X display (xwd)."""
+    QEMU's screendump of the console (egl: the VNC server's picture); with SDL, the QEMU window on
+    the X display (xwd)."""
+    if args.display == "egl":
+        r = vnc_grab(os.path.join(args.private, "vnc.sock"))
+        if r:
+            write_ppm(path, *r)
+        return r
     if args.display != "sdl":
         return read_ppm(path) if mon.screendump(path) else None
     tree = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True).stdout
@@ -767,7 +836,7 @@ def main(argv=None):
     ap.add_argument("--private", required=True, help="the disk copy and the screendumps (stay on this host)")
     ap.add_argument("--tests", default="auto", help="glide2, glide3, opengl, separated by commas; auto: those the "
                     "binary can show headless (opengl needs the Mesa offscreen display) or all with --display sdl")
-    ap.add_argument("--display", choices=("vnc", "sdl"), default="vnc")
+    ap.add_argument("--display", choices=("vnc", "egl", "sdl"), default="vnc")
     ap.add_argument("--accel", choices=("auto", "tcg", "kvm"), default="auto")
     ap.add_argument("--cpu", default="auto", help="QEMU -cpu; auto: pentium3, under TCG with SSE2-SSE4.2 and POPCNT "
                     "when the drivers don't say they were built for i586 (the older, x86-64-v2 releases)")

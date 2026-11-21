@@ -319,6 +319,107 @@ index a8a2a247d8..c9993de913 100644
          qemu_console_hw_update_done(con);
      }
  }
+diff --git a/ui/egl-headless.c b/ui/egl-headless.c
+index ba27efcf4c..679db0d5ff 100644
+--- a/ui/egl-headless.c
++++ b/ui/egl-headless.c
+@@ -97,8 +97,13 @@ static void egl_scanout_dmabuf(DisplayChangeListener *dcl,
+     width = qemu_dmabuf_get_width(dmabuf);
+     height = qemu_dmabuf_get_height(dmabuf);
+ 
+-    egl_scanout_texture(dcl, texture, false, width, height, 0, 0,
+-                        width, height, NULL);
++    /*
++     * wsh-pve (qemu-3dfx): the dmabuf's own row order, as for a texture
++     * (qemu-3dfx's frames are rendered by OpenGL, bottom up); it was always
++     * taken as top down, which drew such a buffer upside down
++     */
++    egl_scanout_texture(dcl, texture, qemu_dmabuf_get_y0_top(dmabuf),
++                        width, height, 0, 0, width, height, NULL);
+ }
+ 
+ static void egl_cursor_dmabuf(DisplayChangeListener *dcl,
+diff --git a/ui/egl-helpers.c b/ui/egl-helpers.c
+index d689f187c4..dfb2980440 100644
+--- a/ui/egl-helpers.c
++++ b/ui/egl-helpers.c
+@@ -25,6 +25,10 @@
+ #include "trace.h"
+ #include "standard-headers/drm/drm_fourcc.h"
+ 
++#ifndef EGL_PLATFORM_SURFACELESS_MESA
++#define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
++#endif
++
+ EGLDisplay *qemu_egl_display;
+ EGLConfig qemu_egl_config;
+ DisplayGLMode qemu_egl_mode;
+@@ -230,12 +234,31 @@ EGLContext qemu_egl_rn_ctx;
+ int qemu_egl_rn_fd;
+ struct gbm_device *qemu_egl_rn_gbm_dev;
+ 
++static int qemu_egl_init_dpy(EGLNativeDisplayType dpy, EGLenum platform,
++                             DisplayGLMode mode);
++
+ int egl_rendernode_init(const char *rendernode, DisplayGLMode mode)
+ {
+     qemu_egl_rn_fd = -1;
+     int rc;
+ 
+     qemu_egl_rn_fd = qemu_drm_rendernode_open(rendernode);
++    if (qemu_egl_rn_fd == -1 && !rendernode) {
++        /*
++         * wsh-pve (qemu-3dfx): no render node, as on a host without a GPU.
++         * Mesa's surfaceless platform needs none: llvmpipe renders, and
++         * exports and imports dmabufs through /dev/udmabuf, so
++         * egl-headless and dbus,gl=on can take qemu-3dfx's frames as dmabufs.
++         */
++        warn_report("egl: no drm render node, using Mesa's surfaceless EGL "
++                    "platform (software rendering; dmabufs need /dev/udmabuf)");
++        rc = qemu_egl_init_dpy(EGL_DEFAULT_DISPLAY,
++                               EGL_PLATFORM_SURFACELESS_MESA, mode);
++        if (rc != 0) {
++            goto err;
++        }
++        goto extensions;
++    }
+     if (qemu_egl_rn_fd == -1) {
+         error_report("egl: no drm render node available");
+         goto err;
+@@ -254,6 +277,8 @@ int egl_rendernode_init(const char *rendernode, DisplayGLMode mode)
+         goto err;
+     }
+ 
++extensions:
++
+     if (!epoxy_has_egl_extension(qemu_egl_display,
+                                  "EGL_KHR_surfaceless_context")) {
+         error_report("egl: EGL_KHR_surfaceless_context not supported");
+@@ -565,6 +590,14 @@ static int qemu_egl_init_dpy(EGLNativeDisplayType dpy,
+     EGLBoolean b;
+     EGLint n;
+     bool gles = (mode == DISPLAY_GL_MODE_ES);
++    EGLint conf_att[G_N_ELEMENTS(conf_att_core)];
++
++    QEMU_BUILD_BUG_ON(sizeof(conf_att_core) != sizeof(conf_att_gles));
++    memcpy(conf_att, gles ? conf_att_gles : conf_att_core, sizeof(conf_att));
++    /* wsh-pve (qemu-3dfx): Mesa's surfaceless platform has no window configs */
++    if (platform == EGL_PLATFORM_SURFACELESS_MESA) {
++        conf_att[1] = EGL_PBUFFER_BIT;
++    }
+ 
+     qemu_egl_display = qemu_egl_get_display(dpy, platform);
+     if (qemu_egl_display == EGL_NO_DISPLAY) {
+@@ -585,8 +618,7 @@ static int qemu_egl_init_dpy(EGLNativeDisplayType dpy,
+         return -1;
+     }
+ 
+-    b = eglChooseConfig(qemu_egl_display,
+-                        gles ? conf_att_gles : conf_att_core,
++    b = eglChooseConfig(qemu_egl_display, conf_att,
+                         &qemu_egl_config, 1, &n);
+     if (b == EGL_FALSE || n != 1) {
+         error_report("egl: eglChooseConfig failed (%s mode): %s",
 diff --git a/ui/sdl2.c b/ui/sdl2.c
 index 1c97d23a47..ace92203ed 100644
 --- a/ui/sdl2.c

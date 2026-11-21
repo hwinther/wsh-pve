@@ -279,9 +279,70 @@ on reconfiguration boots under the SS-20 PROM".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (~2-3 weeks).** Zero copy: a `gbm_surface`,
-       `qemu_console_gl_scanout_dmabuf` from a main-loop BH, `gl_block` back-pressure; shown through
-       `egl-headless` and `-display dbus,gl=on`.
+     - **Stage 2: dmabuf scanout (first slice in review: Glide; the rest ~1-2 weeks).** When QEMU's
+       display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
+       console as a dmabuf instead of being read back. wsh-openglide (new
+       `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
+       window's size, exported once through `EGL_MESA_image_dma_buf_export` (`getOffscreenDmabuf`),
+       and per frame a blit of the front buffer into it plus `glFinish` (`getOffscreenScanout`;
+       unscaled and unflipped, which llvmpipe does as a memory copy, so the rows stay bottom up and
+       the dmabuf says `y0_top`). A buffer of its own rather than the front buffer, so the next swap
+       can't change a frame the display still reads. qemu-3dfx (`fxdisp.c`): the dmabuf way is chosen
+       when the window opens, if the console has GL and the export works; the vCPU thread copies the
+       frame unless the console is gl-blocked (a D-Bus client still reads the last one; the newest
+       frame then follows 50 ms later through the existing stale timer), and a main-loop bottom half
+       calls `qemu_console_gl_scanout_dmabuf` once and `qemu_console_gl_update` per frame. Everything
+       that touches the console's GL state runs on the main loop (the vCPU thread has OpenGLide's
+       context current), including giving the console back to the VGA: a GL scanout has no surface,
+       and `vga_update_display()` dereferences it (QEMU crashed at the first close until the hand-back
+       set a surface first). Readback stays for everything else: no GL display (PVE today: VNC with
+       `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
+       ramp set (the copy applies none), and all of MESA GL. Instead of the `gbm_surface` planned,
+       the renderer exports its own buffer: the frames are rendered in OpenGLide's context, and the
+       display imports from it, so nothing has to be imported into OpenGLide. QEMU side (in
+       `submodules/pve-qemu-qemu-3dfx.patch`, the 3dfx binary only): without a render node
+       `egl_rendernode_init()` falls back to Mesa's surfaceless EGL platform (llvmpipe exports and
+       imports dmabufs through `/dev/udmabuf`), so both GL displays start on a node without a GPU;
+       egl-headless honours a dmabuf's `y0_top` (it took every dmabuf as top down). Found on the way:
+       an EGL platform display is one handle per process, so OpenGLide's and the MESA GL
+       pass-through's `eglTerminate` at close destroyed QEMU's own display context (QEMU ended in
+       libepoxy, "Couldn't find current GLX or EGL context"); neither terminates now, which also
+       fixes Glide closing while a GL context is open. QEMU's `screendump` has no surface during a
+       GL scanout ("Error: no surface"), so the tests read what VNC serves, or what the D-Bus client
+       got. Tested (lab, TCG, llvmpipe, no render node, `/dev/udmabuf` passed to the container):
+       `e2e/3dfx` with the new `GLIDE_DISPLAY=egl` (egl-headless, the frame checked as VNC serves it)
+       and `GLIDE_DISPLAY=dbus` (dbus,gl=on with the test's own listener,
+       `e2e/3dfx/dbus-listener.py`, which maps each dmabuf and writes the frame for the probes;
+       `DBUS_DELAY_MS` delays its replies): the Glide guest's frame, front-buffer drawing (through
+       the dmabuf) and gamma (read back), the VGA back after; the Mesa guest read back with both;
+       `vnc` and `sdl` unchanged. Windows 98 SE (`win98-test.sh` with the new `--display egl` and
+       `--openglide`, KVM, `cpu: pentium3`): Glide 2 and Glide 3 pass as dmabufs (the frame as VNC
+       serves it, the desktop back at 1024x768; 0.07 ms a copy, 0.5-0.6 ms egl-headless's update;
+       960-970 frames/s against 1540-1700 read back in the same run with `--display vnc`), OpenGL
+       passes read back. Measured (640x480, the test scene, a lab under other load):
+
+       | Display | Glide guest | vCPU thread per frame | main loop per frame |
+       | --- | --- | --- | --- |
+       | VNC, `-display none` (readback) | 1440-1790 frames/s | 0.14-0.16 ms `glReadPixels` | 0.02-0.03 ms copy |
+       | egl-headless + VNC (dmabuf) | 830-1070 frames/s | 0.07 ms copy and `glFinish` | 0.57-0.78 ms (egl-headless imports, blits and reads the frame for VNC) |
+       | dbus,gl=on (dmabuf), listener replies at once | 2140 frames/s | 0.07 ms | 0.04 ms; 152 of 306 frames held while the client read |
+       | dbus,gl=on, listener replies 2 ms late | 2630 frames/s | 0.08 ms | 0.04 ms; 256 held |
+
+       With egl-headless the frame still goes through system memory for VNC (egl-headless reads it
+       on the main loop, under the BQL), which costs more than the readback with Mesa's software
+       renderer; the dmabuf way pays off where the consumer takes the dmabuf itself (D-Bus, stage 3)
+       or on a GPU, where `glReadPixels` stalls the pipeline. Left: MESA GL as a dmabuf (the
+       guest's pbuffer is its window: a second context current on the same pbuffer could blit
+       framebuffer 0 into an exported buffer without touching the guest's state); gamma in the copy
+       (a shader pass) so ramp frames stay dmabufs; a real GPU render node (modifiers other than
+       linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
+       no D-Bus client yet) and a real game over time; qemu-server: which display a 3dfx VM gets (VNC needs pixels, so
+       egl-headless gains nothing there today; dbus,gl=on with the stage 3 client), and
+       `/dev/udmabuf` access for QEMU on a node without a GPU; double buffering instead of holding
+       frames while a D-Bus client reads; the D-Bus listener's 30 ms refresh cap; whether GitHub's
+       runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
+       `3dfx in Windows 98` workflow has an `egl` display now but installs the published
+       wsh-openglide, so until one with the exports is published its Glide frames are read back.
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.
