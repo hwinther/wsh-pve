@@ -1,0 +1,7 @@
+# Build context is the repository root (submodules included), so send only what the image uses.
+*
+!proxmox-archive-keyring-trixie.gpg
+!repo/conf/wsh-pve.gpg.key
+!e2e/tiny/
+e2e/tiny/out/
+e2e/tiny/build/
