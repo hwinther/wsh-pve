@@ -62,7 +62,7 @@ maintains the patches.
 | `0028-hw-audio-cs4231-play-sound-through-the-apc-dma-engin` | The SS-5's CS4231 was a register stub: its APC DMA kept what was written and never interrupted, so every program that waited for the end of a sound on `/dev/audio` hung (SunOS 4.1.4). The APC now plays its playback buffers, read through the IOMMU, into the machine's audiodev at the codec's rate (u-law, A-law, 8-bit, 16-bit LE and BE; ADPCM plays silence), with PI, PD, PM and PMI and the DAC volume. Capture is not done: the capture pipe reads as empty ("Audio") | [LEMU `2938ff88`](https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c) by Antoni Sawicki | not in QEMU |
 | `0029-hw-sparc-sun4m-give-the-cs4231-its-interrupt-level-i` | The machine side of 0028: `-machine audiodev=` on sun4m, the codec's IOMMU link, and its interrupt on bit 9 (processor level 5, OpenBIOS's `intr` 5; 0030 moves it) | [LEMU `42d32575`](https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6) by Antoni Sawicki | not in QEMU |
 | `0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level` | The real SS-5 has the codec at SBus level 5, processor level 9 (`ss5.bin` 2.15 gives the node `intr 0x39`). On bit 9, Solaris, which takes OpenBIOS's `interrupts 5`, never got its interrupt: audioplay stopped after the first second with `processor level 3 SBus interrupt not serviced`. Now SBus level 5 (bit 11), through an OR gate with the cg3 or TCX, which use that level too. Needs openbios patch 0018 for SunOS 4 | ours | not in QEMU (upstream wires the stub to bit 5, processor level 11) |
-| `0031-hw-audio-cs4231-no-sound-without-an-audiodev` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio driver, and with none available didn't start (`no default audio driver available`). Without an audiodev the codec now opens no voice and keeps its registers only, as before (the PC speaker does the same) | ours | — |
+| `0031-hw-audio-cs4231-start-without-sound-when-there-is-no` | With 0028 an SS-5 without `-machine audiodev` asked for QEMU's default audio backend, and with none available didn't start (`no default audio driver available`). It still takes the default backend (LEMU's SunOS kit plays through it), but without one it now starts with a warning (`cs4231: no sound: no default audio driver available`), opens no voice and keeps its registers only. The version reviewed in LEMU ([lemu-port.md](../upstream/lemu-port.md)); the first one here opened no voice without an audiodev | ours | — |
 | `0032-hw-audio-cs4231-play-out-the-last-samples-when-playb` | The APC takes its samples up to 50 ms ahead of the codec's clock; turning the voice off when the pipe ran empty or the driver stopped the DMA dropped what the mixer still held, so every sound lost its last 50 ms. The voice stays on for 200 ms after playback stops | ours | — |
 | `0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA` | qtest `sun4m-cs4231-test` for 0028-0032: two u-law buffers behind IOMMU mappings, PEN, PI/PD/PM/PMI at SBus level 5 (processor level 9) in real time, every sample decoded in a `wav` audiodev; DMA off and the reset bit | ours | not in QEMU |
 | `0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-` | sun4u wrote QEMU's default MAC `52:54:00:12:34:56` into the IDPROM unless the NIC was the onboard `-nic`; a NIC added with `-device` (as qemu-server adds `sunhme`) didn't exist yet. OpenBIOS gives the guest that address as the system MAC and NetBSD and Solaris use it for `hme0` (NetBSD's `wm` too), so every guest had the same MAC and host id whatever `net0` said. Without an onboard NIC the IDPROM is now written again when the machine is complete: from the first `sunhme`, else the first NIC of any model ("The sun4u system MAC") | ours (in review) | not fixed; see `upstream/qemu-sun4u-idprom-mac.md` |
@@ -769,6 +769,17 @@ the machine, so there is no `-device`. Without an audiodev (no `audio0`) the chi
 register stub: no sound and no interrupts, and a program that waits for the end of a sound hangs,
 as before (SunOS 4.1.4, LEMU's report). `driver=none` gives a working chip that nobody hears.
 
+Without an audiodev the codec asks for QEMU's default backend (0031). qemu-server always passes
+`-nodefaults`, which leaves no default, so QEMU prints one line at the start,
+`warning: cs4231: no sound: no default audio driver available` (in `qm start`'s output and the
+task log, which still ends `TASK OK`), and opens no host sound device; a reset prints nothing more.
+Checked on 2026-11-21 with an SS-5 VM without `audio0` in the e2e PVE image and a
+`qemu-system-sparc` built from 0001-0062. QEMU run by hand without `-nodefaults` takes the first
+backend that loads, in the order `dbus` and `spice` (only with those displays), `pa`, `pipewire`,
+`alsa`, `none`; in a container without sound `alsa` loads, and every voice open (start and each
+reset) prints ALSA errors and `Could not create a backend for voice 'cs4231'`. The SS-4 has the
+same codec and behaves the same.
+
 Measured in the lab (2026-11-18) with a `qemu-system-sparc` built from 0001-0033 and the patched
 `openbios-sparc32`, `-audiodev wav` (44.1 kHz stereo; the lab variable `AUDIO=wav` does the same).
 The sound is a 3-second 400 Hz square wave of u-law bytes made in the guest with `nawk`: none of
@@ -797,7 +808,8 @@ fixed:
   sun4m. 0030 raises SBus level 5 and openbios 0018 makes `intr` 9; then all of the above play.
 - Each sound lost its last 50 ms when the driver stopped the DMA as soon as the pipe ran empty
   (0032).
-- An SS-5 without an audiodev didn't start (0031).
+- An SS-5 without an audiodev didn't start (0031). The first fix opened no voice without an
+  audiodev; LEMU's review kept the default backend, with a warning when there is none.
 
 Not done or not tested: capture (the capture pipe reads as empty, so a recording program gets no
 data); ADPCM (plays silence); Solaris 7 and later and NetBSD (not run); Sun's demo `.au` files and

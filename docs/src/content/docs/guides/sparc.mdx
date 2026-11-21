@@ -146,8 +146,10 @@ Where the sound goes:
   none. The web console (noVNC) has no sound either.
 
 Without `audio0` the chip stays as it was: silent, and SunOS programs that wait for a sound to
-end hang. Recording isn't done (a recording program gets no data). SS-10 and SS-20 have a
-different chip (DBRI) that QEMU doesn't emulate, so `audio0` is refused there and on sparc64.
+end hang. The start log then has `warning: cs4231: no sound: no default audio driver available`;
+that is expected and harmless. Recording isn't done (a recording program gets no data). SS-10 and
+SS-20 have a different chip (DBRI) that QEMU doesn't emulate, so `audio0` is refused there and on
+sparc64.
 Details: `submodules/SPARC.md`, "Audio".
 
 ## Changes to a running VM
