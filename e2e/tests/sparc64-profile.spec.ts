@@ -6,6 +6,7 @@ import {
   type Pve,
   pveApi,
   pveExec,
+  pveManagerHidesSparcFwDisks,
   qemuAccepts,
   showcmd,
   vmConfFile,
@@ -293,6 +294,13 @@ test.describe('refused combinations', () => {
 })
 
 test.describe('web UI', () => {
+  /** Whether the installed pve-manager hides EFI Disk and TPM State on sparc. */
+  let uiHidesFwDisks = false
+
+  test.beforeAll(async () => {
+    uiHidesFwDisks = await pveManagerHidesSparcFwDisks()
+  })
+
   test.beforeEach(async ({ page }) => {
     await login(page)
   })
@@ -318,6 +326,8 @@ test.describe('web UI', () => {
       'Serial terminal 0',
       'none',
     ])
+    // no TPM on sun4u (and no OVMF among the firmware, so no EFI disk either)
+    if (uiHidesFwDisks) await expect(wizard.getByLabel(fieldLabel('Add TPM'))).toBeHidden()
     await next(wizard)
 
     // Disks: the first disk on the IDE's primary master.
@@ -403,6 +413,11 @@ test.describe('web UI', () => {
     // four NICs fill PCI bus B
     await page.getByRole('button', { name: 'Add' }).click()
     await expect(page.getByRole('menuitem', { name: 'Network Device' })).toBeDisabled()
+    // no UEFI firmware or TPM on sun4u
+    if (uiHidesFwDisks) {
+      await expect(page.getByRole('menuitem', { name: 'EFI Disk' })).toHaveCount(0)
+      await expect(page.getByRole('menuitem', { name: 'TPM State' })).toHaveCount(0)
+    }
   })
 })
 
