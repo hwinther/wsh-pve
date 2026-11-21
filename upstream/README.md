@@ -79,7 +79,7 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0028 | CS4231: play sound through the APC DMA engine (the SS-5's codec was a register stub) | Antoni Sawicki, [LEMU `2938ff88`](https://github.com/tenox7/lemu/commit/2938ff887a938b396b44588927bd14f90faa8e0c) | LEMU origin: not for QEMU | none found | none |
 | 0029 | sun4m: `audiodev=`, the codec's IOMMU link and interrupt | Antoni Sawicki, [LEMU `42d32575`](https://github.com/tenox7/lemu/commit/42d325754c976b2eda0c7113c42f321a65373af6) | LEMU origin: not for QEMU | | none |
 | 0030 | The SS-5's CS4231 at SBus level 5, as on the real machine (Solaris got no interrupt) | wsh-pve, on 0028-0029 | built on LEMU: not for QEMU | | none |
-| 0031 | CS4231: no start failure without an audiodev | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
+| 0031 | CS4231: no start failure without an audio backend (a warning instead; LEMU's reviewed version, [lemu-port.md](lemu-port.md)) | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
 | 0032 | CS4231: the last 50 ms of each sound were dropped | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
 | 0033 | qtest `sun4m-cs4231-test` for 0028-0032 | wsh-pve | built on LEMU: not for QEMU | | none |
 | 0034, 0035 | sun4u writes QEMU's default MAC into the IDPROM when the NIC is added with `-device`, so every guest has the same MAC and host id | wsh-pve | may send | none found | [qemu-sun4u-idprom-mac.md](qemu-sun4u-idprom-mac.md) |
