@@ -55,7 +55,9 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   files must land there, not in `/`). Mesa: `/init` (`3dfx/mesa-guest.c`, which speaks the mesapt
   device's protocol itself, as there is no Linux guest wrapper for it upstream) draws the same scene
   through the MESA GL pass-through into the host's libGL. Each guest checks what it reads back and
-  the host checks the VM's window.
+  the host checks the VM's window. `3dfx/win98-test.sh` does the same in a real Windows 98 SE
+  guest, from the operator's own disk, through qemu-3dfx's Windows wrappers (Glide 2, Glide 3,
+  OpenGL), on the self-hosted lab runner only (the `3dfx in Windows 98` workflow; see the 3dfx guide).
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
