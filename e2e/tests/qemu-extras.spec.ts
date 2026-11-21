@@ -28,6 +28,10 @@ test('openbios-sparc64: built from openbios/', async () => {
 })
 
 test('sun-proms: ss5.bin, ss10_v2.25_rom, ss20_v2.25_rom and lx.bin', async () => {
-  const check = await checkQemuExtra('sun-proms')
+  // Packages built before lx.bin was added (up to pve-qemu-kvm 11.1.3-3+wsh6) have the other three;
+  // the build's own check on the .deb always expects all four
+  const hasLx = (await pveExec(['test', '-e', '/usr/share/kvm/lx.bin'])).code === 0
+  if (!hasLx) test.info().annotations.push({ description: 'no lx.bin: package from before it was added', type: 'note' })
+  const check = await checkQemuExtra('sun-proms', hasLx ? {} : { SUN_PROMS: 'ss5.bin ss10_v2.25_rom ss20_v2.25_rom' })
   expect(check.code, check.output).toBe(0)
 })

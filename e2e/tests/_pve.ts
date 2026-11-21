@@ -63,8 +63,12 @@ const CHECK_QEMU_EXTRAS = readFileSync(new URL('../../scripts/check-qemu-extras.
  * scripts/check-qemu-extras.sh for one optional extra of the installed pve-qemu-kvm (3dfx, openbios,
  * openbios-sparc64, sun-proms): exit code 0 when it's there, 1 when it isn't.
  */
-export async function checkQemuExtra(name: string): Promise<{ code: number; output: string }> {
-  return pveExec(['bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
+export async function checkQemuExtra(
+  name: string,
+  env: Record<string, string> = {},
+): Promise<{ code: number; output: string }> {
+  const vars = Object.entries(env).map(([k, v]) => `${k}=${v}`)
+  return pveExec(['env', ...vars, 'bash', '-c', CHECK_QEMU_EXTRAS, 'check-qemu-extras', '--root', '/', '--only', name])
 }
 
 /** Runs a command in the PVE container and returns its combined output and exit code. */

@@ -34,7 +34,8 @@ set -euo pipefail
 ALL_EXTRAS="3dfx,openbios,openbios-sparc64,sun-proms"
 # QEMU,cgthree.bin as QEMU ships it (850 bytes; QEMU 11.1)
 STOCK_CG3_SHA256="a99f3a06fdac5cf5d72bd0fd24647d897302c3ff8e918add65168185f8cbdf4d"
-PROMS="ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin"
+# SUN_PROMS overrides the list (the e2e test checks packages from before lx.bin with the older three)
+PROMS="${SUN_PROMS:-ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin}"
 # A Forth word that only openbios/patches/0009-sparc64-name-upa-and-ebus-children-like-obp defines
 SPARC64_MARKER="upa-portid>bustype"
 
