@@ -513,7 +513,7 @@ diff --git a/www/manager6/form/FileSelector.js b/www/manager6/form/FileSelector.
 index d42fd19a..e3fab0a5 100644
 --- a/www/manager6/form/FileSelector.js
 +++ b/www/manager6/form/FileSelector.js
-@@ -65,20 +65,72 @@ Ext.define('PVE.form.FileSelector', {
+@@ -65,18 +65,70 @@ Ext.define('PVE.form.FileSelector', {
      applyFilters: function () {
          var me = this;
  
@@ -551,9 +551,9 @@ index d42fd19a..e3fab0a5 100644
 +        me.applyFilters();
 +        if (expand && words.length && !me.isDisabled()) {
 +            me.expand();
-         }
-     },
- 
++        }
++    },
++
 +    // While a search hides entries the selected volume may be one of them: look it up among all of
 +    // the storage's volumes too, so the selection and its display stay (ComboBox drops a value it
 +    // can't find when the store's filters change, or when the field loses the focus).
@@ -580,15 +580,13 @@ index d42fd19a..e3fab0a5 100644
 +        let first = me.searchFilter ? me.store.getAt(0) : undefined;
 +        if (!first || me.getValue() === first.data.volid) {
 +            return false;
-+        }
+         }
 +        me.setValue(first.data.volid);
 +        me.collapse();
 +        return true;
-+    },
-+
-     setNodename: function (nodename) {
-         this.setStorage(undefined, nodename);
      },
+ 
+     setNodename: function (nodename) {
 @@ -103,6 +155,9 @@ Ext.define('PVE.form.FileSelector', {
                  dataIndex: 'text',
                  hideable: false,
