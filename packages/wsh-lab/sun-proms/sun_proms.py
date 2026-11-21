@@ -304,7 +304,9 @@ def git_clone(url, ref, dest):
     git = shutil.which("git")
     if not git:
         raise Error("a git source needs git: apt install git")
-    if url.lower().startswith("git+"):
+    if os.path.isdir(url):
+        url = "file://" + os.path.abspath(url)  # a local repository: --depth only applies to a URL
+    elif url.lower().startswith("git+"):
         url = url[4:]
     cmd = [git, "clone", "--quiet", "--depth", "1", "--no-tags"]
     if ref:
@@ -626,7 +628,7 @@ def print_rows(rows, d, as_json):
     say(f"Sun boot PROMs in {d}:")
     for r in rows:
         mark = {"ok": "ok", "mismatch": "MISMATCH", "missing": "missing", "unknown": "unknown"}[r.state]
-        say(f"  {r.name:<16} {r.machine:<6} {mark:<9}{(' ' + r.source) if r.source else ''}")
+        say(f"  {r.name:<16} {r.machine:<6} {mark:<9}{(' ' + r.source) if r.source else ''}".rstrip())
         if r.state in ("mismatch", "unknown"):
             say(f"  {'':<16} {'':<6} {'':<9} sha256 {r.sha256}, {r.size} bytes")
 
