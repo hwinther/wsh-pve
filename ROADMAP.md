@@ -295,8 +295,8 @@ on reconfiguration boots under the SS-20 PROM".
        that touches the console's GL state runs on the main loop (the vCPU thread has OpenGLide's
        context current), including giving the console back to the VGA: a GL scanout has no surface,
        and `vga_update_display()` dereferences it (QEMU crashed at the first close until the hand-back
-       set a surface first). Readback stays for everything else: no GL display (PVE today: VNC with
-       `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
+       set a surface first). Readback stays for everything else: no GL display (PVE's default: VNC
+       with `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
        ramp set (the copy applies none), and all of MESA GL. Instead of the `gbm_surface` planned,
        the renderer exports its own buffer: the frames are rendered in OpenGLide's context, and the
        display imports from it, so nothing has to be imported into OpenGLide. QEMU side (in
@@ -336,13 +336,32 @@ on reconfiguration boots under the SS-20 PROM".
        framebuffer 0 into an exported buffer without touching the guest's state); gamma in the copy
        (a shader pass) so ramp frames stay dmabufs; a real GPU render node (modifiers other than
        linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
-       no D-Bus client yet) and a real game over time; qemu-server: which display a 3dfx VM gets (VNC needs pixels, so
-       egl-headless gains nothing there today; dbus,gl=on with the stage 3 client), and
-       `/dev/udmabuf` access for QEMU on a node without a GPU; double buffering instead of holding
+       no D-Bus client yet) and a real game over time; double buffering instead of holding
        frames while a D-Bus client reads; the D-Bus listener's 30 ms refresh cap; whether GitHub's
        runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
        `3dfx in Windows 98` workflow has an `egl` display now but installs the published
        wsh-openglide, so until one with the exports is published its Glide frames are read back.
+       - **PVE: the display of a 3dfx VM (in review).** qemu-server: `vga: ...,mesa=1,mesa-display=`
+         `none|egl-headless` (default `none`: no `-display`, frames read back, as before);
+         `egl-headless` adds `-display egl-headless` next to PVE's `-vnc`, so noVNC keeps working.
+         Refused at create and update without the 3dfx binary (`mesa=1` on the host's
+         architecture), with a `server` (SDL) or without a VNC console (`none`, `serial*`); refused at
+         start on a node with neither a render node nor `/dev/udmabuf`, where QEMU would stop anyway
+         (Mesa then has no `EGL_MESA_image_dma_buf_export`: "egl: render node init failed").
+         QEMU runs as root in its systemd scope, with no device policy, so `/dev/udmabuf` (root:kvm
+         0660) needs no udev rule; Ubuntu kernels build it in (`CONFIG_UDMABUF=y`). `dbus,gl=on` is
+         not offered: QEMU refuses VNC next to it ("Display vnc is incompatible with the GL
+         context"), so PVE's console would go, and nothing in PVE consumes the D-Bus display until
+         stage 3. pve-manager: **3DFX/Mesa display** in the Display dialog, under **Enable
+         3DFX/Mesa** and only while it's checked. Tested (lab PVE container, no GPU, `/dev/udmabuf`,
+         TCG): cfg2cmd and unit tests, the e2e Playwright tests (`qm showcmd`, refusals, the
+         dialog) and `e2e/tests/3dfx-gl-display.spec.ts`, which boots the Glide guest of
+         `e2e/3dfx/test.sh` through `qm start` (`e2e/3dfx/pve-guest-setup.sh` puts it in the
+         container) and checks the frame in the noVNC console, read back and with egl-headless (4
+         open dmabufs against 1); QEMU, run with PVE's command line in the foreground, said "frames
+         to the graphic console as a dmabuf" (944 frames/s). Left: CI runs the frame spec only
+         where the guest was set up (no workflow does that yet), a GPU node, Windows 98 through
+         PVE with egl-headless, the PVE kernel's `CONFIG_UDMABUF` (checked on Ubuntu's only).
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.

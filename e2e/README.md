@@ -58,6 +58,17 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   the host checks the VM's window. `3dfx/win98-test.sh` does the same in a real Windows 98 SE
   guest, from the operator's own disk, through qemu-3dfx's Windows wrappers (Glide 2, Glide 3,
   OpenGL), on the self-hosted lab runner only (the `3dfx in Windows 98` workflow; see the 3dfx guide).
+  `vm-config.spec.ts` also checks `mesa-display=egl-headless` (`-display egl-headless` next to the VNC
+  server, and its refusals), and `ui-hardware.spec.ts` the Display dialog's **3DFX/Mesa display**; both
+  are skipped with packages that predate it.
+- `tests/3dfx-gl-display.spec.ts`: a 3dfx VM started by PVE (`qm start`, TCG) with the Glide guest of
+  `3dfx/test.sh` (Debian's kernel and the guest through the VM's `args`), once with the default display
+  and once with `mesa-display=egl-headless`: the test scene in PVE's noVNC console (pixels of the
+  console canvas), and more open dmabufs in QEMU with egl-headless (wsh-openglide's export and
+  egl-headless' import). On a node with neither a render node nor `/dev/udmabuf` it checks that the
+  egl-headless VM is refused at the start instead. Skipped unless the guest is in the container:
+  `3dfx/pve-guest-setup.sh [container]` builds it there (apt, gcc, Debian's kernel), for the revision of
+  the container's 3dfx binary. No workflow runs that yet.
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
