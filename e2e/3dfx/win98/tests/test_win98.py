@@ -274,6 +274,20 @@ class QemuLog(unittest.TestCase):
         self.assertEqual(w.guest_cpu("kvm"), "pentium3")
         self.assertTrue(w.guest_cpu("tcg").startswith("pentium3,+sse2,"))
         self.assertIn("+sse4.2", w.guest_cpu("tcg"))
+        # drivers built for the Pentium: the plain pentium3 under TCG too
+        self.assertEqual(w.guest_cpu("tcg", "i586"), "pentium3")
+        self.assertEqual(w.guest_cpu("kvm", "i586"), "pentium3")
+
+    def test_drivers_baseline(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(w.drivers_baseline(d))
+            with open(os.path.join(d, "version.txt"), "w") as f:
+                f.write("qemu-3dfx guest drivers\n\nsubmodule commit: b94d988698766872e39d15bea07da92efdf7c112\n"
+                        "revision (__REV__): b94d988-\n")
+            self.assertIsNone(w.drivers_baseline(d))
+            with open(os.path.join(d, "version.txt"), "a") as f:
+                f.write("built for i586 (-march=pentium, x87 math; no MMX, SSE or later)\n")
+            self.assertEqual(w.drivers_baseline(d), "i586")
 
 
 class Verdicts(unittest.TestCase):

@@ -115,6 +115,9 @@ PACKAGES_2026_11_20_WSH30 = {"pve-qemu-kvm": "11.1.3-2+wsh30", "qemu-server": "9
 # SunOS 4.1.3 on the SS-10 (published packages; pve-qemu-kvm +wsh31 and later have wsh/0049)
 PACKAGES_2026_11_21_WSH31 = {"pve-qemu-kvm": "11.1.3-2+wsh31", "qemu-server": "9.2.19+wsh4",
                              "pve-manager": "9.2.32+wsh4"}
+# Solaris 2.1 on the SS-10 again on the 11.1.3-3 series (published packages; wsh/0047 carried over)
+PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9.2.20+wsh3",
+                              "pve-manager": "9.2.32+wsh6", "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -1281,8 +1284,10 @@ TARGETS["sol21-ss10"] = {
     "boot": "scsi3",
     "hostname": "sol21-ss10",
     "net_modes": ["static"],
-    "minutes": 10,  # 9.7-10.1 min (three at once): install 5.3, first boot 2.9-3.3, --check 1.2-1.3
-    "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20_WSH30, "with": "--check"},
+    # 9.7-10.1 min (three at once on 11.1.3-2+wsh30); 11.2-11.7 min (two at once on 11.1.3-3+wsh6, a busy
+    # host): install 6.4, first boot 2.9-3.4, --check 1.5
+    "minutes": 11,
+    "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_3_WSH6, "with": "--check"},
 }
 
 # NeXTSTEP 3.3 and OPENSTEP 4.2 (Mach) for SPARC: the CD's text stage (language, disk, copy the base
