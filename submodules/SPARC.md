@@ -3752,7 +3752,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   `SS-\d{1,2}`, `LX` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type
   `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
-  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC and `audio0` (SS-5 only, `device=cs4231`, no SPICE).
+  sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC, `audio0` (SS-5 only, `device=cs4231`, no SPICE) and no `efidisk0` or `tpmstate0` (no UEFI firmware, no TPM).
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
   vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
