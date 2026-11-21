@@ -3,6 +3,7 @@ Section: libs
 Priority: optional
 Maintainer: WsHosting ENK <debian@wsh.no>
 Build-Depends: debhelper-compat (= 13),
+               libegl-dev,
                libgl-dev,
                libglu1-mesa-dev,
                libtool,
@@ -31,4 +32,6 @@ Description: Glide 2/3 to OpenGL wrapper for the qemu-3dfx Glide pass-through
  doesn't need it.
  .
  Built with the X11/GLX platform (configure --disable-sdl), as qemu-3dfx
- expects.
+ expects for its SDL window, and an EGL offscreen platform for a VM without
+ a local window (VNC or no display): there the frames are read back into the
+ VM's console, with no X server.

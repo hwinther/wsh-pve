@@ -1,0 +1,552 @@
+EGL offscreen platform for OpenGLide (wsh-pve, LGPL-2.1 like OpenGLide)
+
+With setConfig(WRAPPER_FLAG_OFFSCREEN) (0x100), grSstWinOpen() opens no X display: it creates a
+desktop OpenGL compatibility context on an EGL display without a window (Mesa's surfaceless
+platform, else the first EGL device, else the default display) and renders into a framebuffer
+object whose colour attachments 0 and 1 are Glide's back and front buffers (OGLBuffer() maps
+GL_BACK/GL_FRONT at the four places that select a buffer). grBufferSwap() copies back to front.
+The host program reads the front buffer with the new exports getOffscreenSize() and
+getOffscreenFrame() (BGRX, rows bottom up). Without the flag nothing changes (X11/GLX).
+Gamma ramps and MSAA are not applied offscreen yet. Applied by build.sh to qemu-xtra's openglide/.
+diff --git a/GLutil.cpp b/GLutil.cpp
+index 09b9a4f..9f6cd5f 100644
+--- a/GLutil.cpp
++++ b/GLutil.cpp
+@@ -518,6 +518,7 @@ FX_ENTRY void FX_CALL setConfig(FxU32 flags, void *magic)
+         ((flags & WRAPPER_FLAG_ANNOTATE) != 0):UserConfig.Annotate;
+     UserConfig.VsyncOff = ((flags & WRAPPER_FLAG_VSYNCOFF) != 0);
+     UserConfig.QEmu = ((flags & WRAPPER_FLAG_QEMU) != 0);
++    UserConfig.Offscreen = ((flags & WRAPPER_FLAG_OFFSCREEN) != 0);
+     UserConfig.InitFullScreen = (flags & WRAPPER_FLAG_WINDOWED)? false:true;
+ }
+ 
+diff --git a/GlOgl.h b/GlOgl.h
+index ee1f7c8..96e0e58 100644
+--- a/GlOgl.h
++++ b/GlOgl.h
+@@ -289,6 +289,7 @@ struct ConfigStruct
+     bool    Annotate;
+     bool    VsyncOff;
+     bool    QEmu;
++    bool    Offscreen;
+ };
+ 
+ // Extern variables
+diff --git a/grguBuffer.cpp b/grguBuffer.cpp
+index ec4c5b5..fb58683 100644
+--- a/grguBuffer.cpp
++++ b/grguBuffer.cpp
+@@ -159,7 +159,7 @@ grRenderBuffer( GrBuffer_t dwBuffer )
+     // Valid parameters are only FRONT and BACK ( 0x0 and 0x1 )
+     OpenGL.RenderBuffer = GL_FRONT + dwBuffer;
+ 
+-    glDrawBuffer( OpenGL.RenderBuffer );
++    glDrawBuffer( OGLBuffer( OpenGL.RenderBuffer ) );
+ 
+ #ifdef OPENGL_DEBUG
+     GLErro( "grRenderBuffer" );
+diff --git a/grguLfb.cpp b/grguLfb.cpp
+index d67fb4e..5c04e02 100644
+--- a/grguLfb.cpp
++++ b/grguLfb.cpp
+@@ -55,8 +55,8 @@ grLfbLock( GrLock_t dwType,
+     {
+         FxU32 j;
+ 
+-        glReadBuffer( dwBuffer == GR_BUFFER_BACKBUFFER
+-                      ? GL_BACK : GL_FRONT );
++        glReadBuffer( OGLBuffer( dwBuffer == GR_BUFFER_BACKBUFFER
++                      ? GL_BACK : GL_FRONT ) );
+ 
+         if ((dwBuffer & 0xFEU) == 0)
+         {   /* FRONT/BACK read-back */
+@@ -337,8 +337,8 @@ grLfbUnlock( GrLock_t dwType, GrBuffer_t dwBuffer )
+ 
+             glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+             glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+-            glDrawBuffer( Glide.DstBuffer.Buffer == GR_BUFFER_BACKBUFFER
+-                        ? GL_BACK : GL_FRONT );
++            glDrawBuffer( OGLBuffer( Glide.DstBuffer.Buffer == GR_BUFFER_BACKBUFFER
++                        ? GL_BACK : GL_FRONT ) );
+ 
+             glBegin( GL_QUADS );
+                 glColor3f( 1.0f, 1.0f, 1.0f );
+@@ -357,7 +357,7 @@ grLfbUnlock( GrLock_t dwType, GrBuffer_t dwBuffer )
+             glEnd( );
+ 
+             glPopAttrib( );
+-            glDrawBuffer( OpenGL.RenderBuffer );
++            glDrawBuffer( OGLBuffer( OpenGL.RenderBuffer ) );
+ 
+             if ( Glide.DstBuffer.Buffer != GR_BUFFER_BACKBUFFER )
+             {
+diff --git a/platform/linux/Makefile.am b/platform/linux/Makefile.am
+index 3f2b09e..77860a4 100644
+--- a/platform/linux/Makefile.am
++++ b/platform/linux/Makefile.am
+@@ -8,9 +8,11 @@ error.cpp \
+ openglext.cpp \
+ library.cpp \
+ window.cpp \
++egl.cpp \
+ \
+ platform/clock.h \
+ platform/error.h \
+ platform/openglext.h \
+ platform/window.h \
+-platform/linux/platform.h
++platform/linux/platform.h \
++platform/linux/egl.h
+diff --git a/platform/linux/egl.cpp b/platform/linux/egl.cpp
+new file mode 100644
+index 0000000..f6622f1
+--- /dev/null
++++ b/platform/linux/egl.cpp
+@@ -0,0 +1,311 @@
++//**************************************************************
++//*            OpenGLide - Glide to OpenGL Wrapper
++//*
++//*   Offscreen rendering through EGL, for a host without an X
++//*   server: a desktop OpenGL context on an EGL display with no
++//*   window (Mesa's surfaceless platform, an EGL device, or the
++//*   default display), rendering into a framebuffer object whose
++//*   two colour attachments stand in for Glide's back and front
++//*   buffers. The host program (qemu-3dfx) asks for it with
++//*   setConfig(WRAPPER_FLAG_OFFSCREEN) and reads each frame with
++//*   getOffscreenFrame().
++//*
++//*         OpenGLide is OpenSource under LGPL license
++//*      EGL offscreen platform: Copyright 2026 WsHosting ENK
++//**************************************************************
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#if !defined C_USE_SDL && !defined WIN32
++
++#include <stdio.h>
++#include <string.h>
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++
++#include "GlOgl.h"
++#include "GLRender.h"
++
++#include "platform/openglext.h"
++#include "platform/window.h"
++#include "platform/linux/egl.h"
++
++#ifndef EGL_PLATFORM_SURFACELESS_MESA
++#define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
++#endif
++
++/* GL 3.0 / ARB_framebuffer_object entry points, looked up at run time (libGL's headers declare
++ * them only with GL_GLEXT_PROTOTYPES, and the library must not need a newer libGL to load) */
++#define FBO_FUNCS(X) \
++    X(void, GenFramebuffers, (GLsizei, GLuint *)) \
++    X(void, DeleteFramebuffers, (GLsizei, const GLuint *)) \
++    X(void, BindFramebuffer, (GLenum, GLuint)) \
++    X(void, GenRenderbuffers, (GLsizei, GLuint *)) \
++    X(void, DeleteRenderbuffers, (GLsizei, const GLuint *)) \
++    X(void, BindRenderbuffer, (GLenum, GLuint)) \
++    X(void, RenderbufferStorage, (GLenum, GLenum, GLsizei, GLsizei)) \
++    X(void, FramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint)) \
++    X(GLenum, CheckFramebufferStatus, (GLenum)) \
++    X(void, BlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum))
++#define FBO_DECL(ret, name, args) static ret (*p##name) args;
++FBO_FUNCS(FBO_DECL)
++
++#define E_FRAMEBUFFER          0x8D40
++#define E_RENDERBUFFER         0x8D41
++#define E_READ_FRAMEBUFFER     0x8CA8
++#define E_DRAW_FRAMEBUFFER     0x8CA9
++#define E_COLOR_ATTACHMENT0    0x8CE0
++#define E_COLOR_ATTACHMENT1    0x8CE1
++#define E_DEPTH_STENCIL_ATTACHMENT 0x821A
++#define E_DEPTH24_STENCIL8     0x88F0
++#define E_FRAMEBUFFER_COMPLETE 0x8CD5
++#ifndef GL_BGRA
++#define GL_BGRA                0x80E1
++#endif
++#ifndef GL_UNSIGNED_INT_8_8_8_8_REV
++#define GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
++#endif
++
++/* The back buffer is attachment 0, the front buffer attachment 1 */
++#define FBO_BACK  E_COLOR_ATTACHMENT0
++#define FBO_FRONT E_COLOR_ATTACHMENT1
++
++static EGLDisplay egl_dpy = EGL_NO_DISPLAY;
++static EGLContext egl_ctx = EGL_NO_CONTEXT;
++static EGLSurface egl_pbuf = EGL_NO_SURFACE;
++static GLuint fbo, rb_color[2], rb_depth;
++static int fbo_w, fbo_h;
++
++static bool has_ext(const char *list, const char *ext)
++{
++    size_t n = strlen(ext);
++    for (const char *p = list; p && (p = strstr(p, ext)); p += n)
++        if ((p == list || p[-1] == ' ') && (p[n] == ' ' || p[n] == '\0'))
++            return true;
++    return false;
++}
++
++/* The EGL display: Mesa's surfaceless platform when the client library has it (it needs no
++ * window system: a render node, or llvmpipe), else the first EGL device, else the default */
++static EGLDisplay open_display(const char **which)
++{
++    const char *cext = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
++    PFNEGLGETPLATFORMDISPLAYEXTPROC getPlatformDisplay = NULL;
++    EGLDisplay d = EGL_NO_DISPLAY;
++
++    if (has_ext(cext, "EGL_EXT_platform_base"))
++        getPlatformDisplay = (PFNEGLGETPLATFORMDISPLAYEXTPROC) eglGetProcAddress("eglGetPlatformDisplayEXT");
++    if (getPlatformDisplay && has_ext(cext, "EGL_MESA_platform_surfaceless")) {
++        d = getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
++        *which = "surfaceless";
++    }
++    if (d == EGL_NO_DISPLAY && getPlatformDisplay && has_ext(cext, "EGL_EXT_platform_device")) {
++        PFNEGLQUERYDEVICESEXTPROC queryDevices =
++            (PFNEGLQUERYDEVICESEXTPROC) eglGetProcAddress("eglQueryDevicesEXT");
++        EGLDeviceEXT dev;
++        EGLint n = 0;
++        if (queryDevices && queryDevices(1, &dev, &n) && n > 0) {
++            d = getPlatformDisplay(EGL_PLATFORM_DEVICE_EXT, dev, NULL);
++            *which = "device";
++        }
++    }
++    if (d == EGL_NO_DISPLAY) {
++        d = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++        *which = "default";
++    }
++    return d;
++}
++
++static bool create_fbo(int width, int height)
++{
++#define FBO_LOAD(ret, name, args) \
++    p##name = (ret (*) args) eglGetProcAddress("gl" #name); \
++    if (!p##name) { fprintf(stderr, "Error: EGL offscreen: no gl%s\n", #name); return false; }
++    FBO_FUNCS(FBO_LOAD)
++
++    fbo_w = width;
++    fbo_h = height;
++    pGenFramebuffers(1, &fbo);
++    pBindFramebuffer(E_FRAMEBUFFER, fbo);
++    pGenRenderbuffers(2, rb_color);
++    pGenRenderbuffers(1, &rb_depth);
++    for (int i = 0; i < 2; i++) {
++        pBindRenderbuffer(E_RENDERBUFFER, rb_color[i]);
++        pRenderbufferStorage(E_RENDERBUFFER, GL_RGBA8, width, height);
++        pFramebufferRenderbuffer(E_FRAMEBUFFER, E_COLOR_ATTACHMENT0 + i, E_RENDERBUFFER, rb_color[i]);
++    }
++    pBindRenderbuffer(E_RENDERBUFFER, rb_depth);
++    pRenderbufferStorage(E_RENDERBUFFER, E_DEPTH24_STENCIL8, width, height);
++    pFramebufferRenderbuffer(E_FRAMEBUFFER, E_DEPTH_STENCIL_ATTACHMENT, E_RENDERBUFFER, rb_depth);
++    pBindRenderbuffer(E_RENDERBUFFER, 0);
++
++    GLenum status = pCheckFramebufferStatus(E_FRAMEBUFFER);
++    if (status != E_FRAMEBUFFER_COMPLETE) {
++        fprintf(stderr, "Error: EGL offscreen: framebuffer incomplete (0x%04x)\n", status);
++        return false;
++    }
++    /* both buffers start black, as a fresh window does */
++    glDrawBuffer(FBO_FRONT);
++    glClearColor(0, 0, 0, 0);
++    glClear(GL_COLOR_BUFFER_BIT);
++    glDrawBuffer(FBO_BACK);
++    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
++    glReadBuffer(FBO_BACK);
++    return true;
++}
++
++bool EGLInitialiseWindow(int width, int height)
++{
++    const char *which = "";
++    EGLint major, minor, n = 0;
++    EGLConfig cfg;
++    static const EGLint cfg_attr[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
++        EGL_NONE
++    };
++
++    egl_dpy = open_display(&which);
++    if (egl_dpy == EGL_NO_DISPLAY || !eglInitialize(egl_dpy, &major, &minor)) {
++        fprintf(stderr, "Error: EGL offscreen: no EGL display (%s, 0x%04x)\n", which, eglGetError());
++        egl_dpy = EGL_NO_DISPLAY;
++        return false;
++    }
++    if (!eglBindAPI(EGL_OPENGL_API) || !eglChooseConfig(egl_dpy, cfg_attr, &cfg, 1, &n) || n < 1) {
++        fprintf(stderr, "Error: EGL offscreen: no desktop OpenGL config on the %s display\n", which);
++        EGLFinaliseWindow();
++        return false;
++    }
++    /* No version or profile asked for: a compatibility context, which OpenGLide's fixed-function
++     * rendering needs */
++    egl_ctx = eglCreateContext(egl_dpy, cfg, EGL_NO_CONTEXT, NULL);
++    if (egl_ctx == EGL_NO_CONTEXT) {
++        fprintf(stderr, "Error: EGL offscreen: eglCreateContext 0x%04x\n", eglGetError());
++        EGLFinaliseWindow();
++        return false;
++    }
++    /* Without EGL_KHR_surfaceless_context, a 1x1 pbuffer to make the context current on; the
++     * rendering goes into the framebuffer object either way */
++    if (!has_ext(eglQueryString(egl_dpy, EGL_EXTENSIONS), "EGL_KHR_surfaceless_context")) {
++        static const EGLint pb_attr[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
++        egl_pbuf = eglCreatePbufferSurface(egl_dpy, cfg, pb_attr);
++    }
++    if (!eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, egl_ctx)) {
++        fprintf(stderr, "Error: EGL offscreen: eglMakeCurrent 0x%04x\n", eglGetError());
++        EGLFinaliseWindow();
++        return false;
++    }
++    if (!create_fbo(width, height)) {
++        EGLFinaliseWindow();
++        return false;
++    }
++    fprintf(stderr, "Info: EGL offscreen %dx%d, EGL %d.%d on the %s display, %s\n",
++        width, height, major, minor, which, (const char *) glGetString(GL_RENDERER));
++    UserConfig.PrecisionFix = false;
++    return true;
++}
++
++void EGLFinaliseWindow(void)
++{
++    if (egl_dpy == EGL_NO_DISPLAY)
++        return;
++    if (egl_ctx != EGL_NO_CONTEXT && eglGetCurrentContext() == egl_ctx) {
++        if (fbo) {
++            pBindFramebuffer(E_FRAMEBUFFER, 0);
++            pDeleteFramebuffers(1, &fbo);
++            pDeleteRenderbuffers(2, rb_color);
++            pDeleteRenderbuffers(1, &rb_depth);
++        }
++        eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    }
++    if (egl_ctx != EGL_NO_CONTEXT)
++        eglDestroyContext(egl_dpy, egl_ctx);
++    if (egl_pbuf != EGL_NO_SURFACE)
++        eglDestroySurface(egl_dpy, egl_pbuf);
++    eglTerminate(egl_dpy);
++    egl_dpy = EGL_NO_DISPLAY;
++    egl_ctx = EGL_NO_CONTEXT;
++    egl_pbuf = EGL_NO_SURFACE;
++    fbo = rb_color[0] = rb_color[1] = rb_depth = 0;
++    fbo_w = fbo_h = 0;
++}
++
++/* GL_BACK and GL_FRONT name the framebuffer object's attachments */
++GLenum EGLBuffer(GLenum buffer)
++{
++    switch (buffer) {
++    case GL_BACK:
++        return FBO_BACK;
++    case GL_FRONT:
++        return FBO_FRONT;
++    default:
++        return buffer;
++    }
++}
++
++/* Glide's swap: the back buffer is copied to the front (the back keeps its contents, as with
++ * OpenGLide's GLX copy method) */
++void EGLSwapBuffers(void)
++{
++    GLint read_buf, draw_buf;
++    GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
++
++    if (!fbo)
++        return;
++    glGetIntegerv(GL_READ_BUFFER, &read_buf);
++    glGetIntegerv(GL_DRAW_BUFFER, &draw_buf);
++    if (scissor)
++        glDisable(GL_SCISSOR_TEST);
++    glReadBuffer(FBO_BACK);
++    glDrawBuffer(FBO_FRONT);
++    pBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    glReadBuffer(read_buf);
++    glDrawBuffer(draw_buf);
++    if (scissor)
++        glEnable(GL_SCISSOR_TEST);
++}
++
++ExtFn EGLGetProcAddress(const char *name)
++{
++    return (ExtFn) eglGetProcAddress(name);
++}
++
++//*************************************************
++//* The host program's read of the front buffer (what a window would show): width x height
++//* pixels, 4 bytes each, B G R X in memory (pixman's x8r8g8b8 on a little-endian host), rows
++//* bottom up (OpenGL's order) with stride bytes from one row to the next. Called on the thread
++//* that opened the Glide window. Returns 0 when there is no offscreen window or the size differs
++//* from the window's (the caller asks getOffscreenSize() first), else 1.
++//*************************************************
++extern "C" int getOffscreenSize(int *width, int *height)
++{
++    if (!fbo)
++        return 0;
++    *width = fbo_w;
++    *height = fbo_h;
++    return 1;
++}
++
++extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
++{
++    GLint read_buf, pack_row, pack_align;
++
++    if (!fbo || width != fbo_w || height != fbo_h || (stride & 3) || stride < width * 4)
++        return 0;
++    RenderDrawTriangles();
++    glGetIntegerv(GL_READ_BUFFER, &read_buf);
++    glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row);
++    glGetIntegerv(GL_PACK_ALIGNMENT, &pack_align);
++    glReadBuffer(FBO_FRONT);
++    glPixelStorei(GL_PACK_ROW_LENGTH, stride / 4);
++    glPixelStorei(GL_PACK_ALIGNMENT, 4);
++    glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, dst);
++    glPixelStorei(GL_PACK_ROW_LENGTH, pack_row);
++    glPixelStorei(GL_PACK_ALIGNMENT, pack_align);
++    glReadBuffer(read_buf);
++    return 1;
++}
++
++#endif // !C_USE_SDL && !WIN32
+diff --git a/platform/linux/egl.h b/platform/linux/egl.h
+new file mode 100644
+index 0000000..d4ab1d3
+--- /dev/null
++++ b/platform/linux/egl.h
+@@ -0,0 +1,19 @@
++//**************************************************************
++//*            OpenGLide - Glide to OpenGL Wrapper
++//*
++//*   EGL offscreen platform (egl.cpp): used instead of the GLX
++//*   window when the host program sets WRAPPER_FLAG_OFFSCREEN
++//*
++//*         OpenGLide is OpenSource under LGPL license
++//*      EGL offscreen platform: Copyright 2026 WsHosting ENK
++//**************************************************************
++#ifndef __PLATFORM_LINUX_EGL_H__
++#define __PLATFORM_LINUX_EGL_H__
++
++bool EGLInitialiseWindow(int width, int height);
++void EGLFinaliseWindow(void);
++GLenum EGLBuffer(GLenum buffer);
++void EGLSwapBuffers(void);
++ExtFn EGLGetProcAddress(const char *name);
++
++#endif
+diff --git a/platform/linux/openglext.cpp b/platform/linux/openglext.cpp
+index da4538e..618154c 100644
+--- a/platform/linux/openglext.cpp
++++ b/platform/linux/openglext.cpp
+@@ -18,10 +18,14 @@
+ 
+ #include <GL/glx.h>
+ 
++#include "GlOgl.h"
+ #include "platform/openglext.h"
++#include "platform/linux/egl.h"
+ 
+ ExtFn OGLGetProcAddress(const char *x)
+ {
++    if (UserConfig.Offscreen)
++        return EGLGetProcAddress(x);
+ #ifdef GLX_ARB_get_proc_address
+     return glXGetProcAddressARB((const GLubyte *) x);
+ #else
+diff --git a/platform/linux/window.cpp b/platform/linux/window.cpp
+index 02c27ce..044e18c 100644
+--- a/platform/linux/window.cpp
++++ b/platform/linux/window.cpp
+@@ -26,6 +26,7 @@
+ 
+ #include "platform/openglext.h"
+ #include "platform/window.h"
++#include "platform/linux/egl.h"
+ 
+ #define _strtime(s) {time_t t = time(0); strftime(s, 99, "%H:%M:%S", localtime (&t));}
+ #define _strdate(s) {time_t t = time(0); strftime(s, 99, "%d %b %Y", localtime (&t));}
+@@ -131,6 +132,9 @@ bool InitialiseOpenGLWindow(FxU wnd, int x, int y, int width, int height)
+     unsigned long mask;
+     int has_sRGB;
+ 
++    if (UserConfig.Offscreen)
++        return EGLInitialiseWindow(width, height);
++
+     if (!(dpy = XOpenDisplay(NULL)))
+     {
+         fprintf(stderr, "Error couldn't open the X display\n");
+@@ -373,6 +377,7 @@ bool InitialiseOpenGLWindow(FxU wnd, int x, int y, int width, int height)
+ 
+ void FinaliseOpenGLWindow(void)
+ {
++    EGLFinaliseWindow();
+     if (dpy)
+     {
+         int has_sRGB = UserConfig.FramebufferSRGB;
+@@ -395,6 +400,11 @@ void FinaliseOpenGLWindow(void)
+     xcolors.clear ();
+ }
+ 
++GLenum OGLBuffer(GLenum buffer)
++{
++    return (UserConfig.Offscreen)? EGLBuffer(buffer):buffer;
++}
++
+ void SetGamma(float value)
+ {
+     double gamma = value;
+@@ -626,6 +636,8 @@ void SetSwapInterval(const int i)
+         void (*MesaProc)(int);
+     } SwapIntervalEXT;
+ 
++    if (UserConfig.Offscreen)
++        return;
+     if (last_i != i) {
+         last_i = i;
+         if (find_xstr(xstr, "GLX_MESA_swap_control")) {
+@@ -647,6 +659,11 @@ void SetSwapInterval(const int i)
+ 
+ void SwapBuffers()
+ {
++    if (UserConfig.Offscreen)
++    {
++        EGLSwapBuffers();
++        return;
++    }
+     if (buffer_method == bmExchange)
+     {
+         glXSwapBuffers( dpy, win );
+diff --git a/platform/window.h b/platform/window.h
+index 3b6e622..6ca350c 100644
+--- a/platform/window.h
++++ b/platform/window.h
+@@ -50,4 +50,12 @@ void ResetScreenMode();
+ void SetSwapInterval(const int);
+ void SwapBuffers();
+ 
++// The GL buffer for Glide's back (GL_BACK) or front (GL_FRONT) buffer: itself with a window,
++// a framebuffer object's attachment when rendering offscreen (platform/linux/egl.cpp)
++#if !defined C_USE_SDL && !defined WIN32
++GLenum OGLBuffer(GLenum buffer);
++#else
++static inline GLenum OGLBuffer(GLenum buffer) { return buffer; }
++#endif
++
+ #endif
+diff --git a/wrapper_config.h b/wrapper_config.h
+index 85d0193..624bf3e 100644
+--- a/wrapper_config.h
++++ b/wrapper_config.h
+@@ -10,6 +10,7 @@
+ #define WRAPPER_FLAG_FRAMEBUFFER_SRGB       (0x20)
+ #define WRAPPER_FLAG_VSYNCOFF               (0x40)
+ #define WRAPPER_FLAG_QEMU                   (0x80)
++#define WRAPPER_FLAG_OFFSCREEN              (0x100)
+ 
+ #ifdef __cplusplus
+ extern "C" {

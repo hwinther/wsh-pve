@@ -55,6 +55,12 @@ if grep -rl 'UNPUBLISHED PROPRIETARY' "$tree"; then
 	echo "build.sh: the files above still carry the 1995 banner" >&2
 	exit 1
 fi
+# Our changes to OpenGLide, in name order: patches/*.patch (each says what it does at its top)
+for p in "$PKG"/patches/*.patch; do
+	[ -e "$p" ] || continue
+	echo "build.sh: applying ${p#"$SRC"/}"
+	patch -d "$tree" -p1 -t -N --no-backup-if-mismatch -i "$p"
+done
 cp -r "$PKG/debian" "$PKG/tests" "$tree/"
 # debhelper runs an executable config file: only debian/rules is one
 find "$tree/debian" "$tree/tests" -type f -exec chmod 644 {} +

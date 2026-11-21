@@ -14,6 +14,12 @@ Comment: The source files say "OpenGLide is OpenSource under LGPL license" witho
  qemu-xtra's LICENSE file is the GNU LGPL version 2.1, taken here to cover the files without a
  notice of their own too.
 
+Files: platform/linux/egl.cpp platform/linux/egl.h
+Copyright: 2026 WsHosting ENK
+License: LGPL-2.1
+Comment: The EGL offscreen platform, added by wsh-pve (packages/wsh-openglide/patches/), under
+ OpenGLide's license.
+
 Files: sdk2_3dfx.h sdk2_glide.h sdk2_glidesys.h sdk2_glideutl.h sdk2_sst1vid.h
 Copyright: 1995, 1999 3Dfx Interactive, Inc.
 License: 3dfx-Glide-GPL

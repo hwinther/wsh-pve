@@ -11,8 +11,12 @@
 # and checks its pixels: Glide 2 into a window it hands over (what qemu-3dfx does with the SDL
 # window), Glide 2 into the library's own window, and Glide 3 through the wrap3x_ entry points, with
 # llvmpipe and with softpipe (llvmpipe doesn't return a front buffer after a swap, softpipe does: the
-# front-buffer read counts only with softpipe). With OUTDIR, the window of each run is saved there as
-# a PPM. Then `apt purge` must leave nothing of the package behind. Exit 0 when everything passed.
+# front-buffer read counts only with softpipe). The same scenes again offscreen (glide-render --egl:
+# the EGL platform qemu-3dfx asks for when the VM has no SDL window), with no X server and DISPLAY
+# unset, on Mesa's surfaceless EGL platform; there the front buffer counts with both drivers and the
+# frame is also read the way qemu-3dfx reads it (getOffscreenFrame). With OUTDIR, the window or
+# offscreen frame of each run is saved there as a PPM. Then `apt purge` must leave nothing of the
+# package behind. Exit 0 when everything passed.
 set -eu
 DEB=${1:?usage: test.sh /path/to/wsh-openglide_VERSION_ARCH.deb /path/to/glide-render [OUTDIR]}
 RENDER=${2:?usage: test.sh DEB glide-render [OUTDIR]}
@@ -21,9 +25,9 @@ export DEBIAN_FRONTEND=noninteractive
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-step "the test's tools: Xvfb, Mesa (llvmpipe, softpipe)"
+step "the test's tools: Xvfb, Mesa (llvmpipe, softpipe; GLX and EGL)"
 apt-get update -qq
-apt-get install --no-install-recommends --assume-yes -qq xvfb xauth libgl1-mesa-dri binutils > /dev/null
+apt-get install --no-install-recommends --assume-yes -qq xvfb xauth libgl1-mesa-dri libegl-mesa0 binutils > /dev/null
 
 step "apt install $DEB"
 apt-get install --no-install-recommends --assume-yes "$DEB"
@@ -41,7 +45,8 @@ for lib in libglide2x.so libglide3x.so; do
 		fail "$lib has unresolved libraries or symbols"
 	fi
 	# the entry points qemu-3dfx looks up (glide2x_impl.c init_glide2x(), conf_glide2x())
-	for s in grGlideInit grSstWinOpen grDrawTriangle grBufferSwap grLfbReadRegion setConfig setConfigRes; do
+	for s in grGlideInit grSstWinOpen grDrawTriangle grBufferSwap grLfbReadRegion setConfig setConfigRes \
+		getOffscreenSize getOffscreenFrame; do
 		nm -D --defined-only "$path" | grep -q " T $s\$" || fail "$lib doesn't export $s"
 	done
 	echo "ok $path"
@@ -67,6 +72,20 @@ for driver in llvmpipe softpipe; do
 		step "glide-render $name with $driver"
 		# shellcheck disable=SC2086 # args and ppm are lists of words
 		if ! LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=$driver xvfb-run -a -s "$XVFB_ARGS" "$RENDER" $args $ppm; then
+			failed="$failed $name/$driver"
+		fi
+	done
+done
+# Offscreen: no X server at all (DISPLAY unset, Xvfb not running), Mesa's surfaceless EGL platform
+for driver in llvmpipe softpipe; do
+	for mode in "glide2x-egl:--egl" "glide3x-egl:--egl --glide3"; do
+		name=${mode%%:*}
+		args=${mode#*:}
+		ppm=""
+		[ -z "$OUT" ] || ppm="--ppm $OUT/$name-$driver.ppm"
+		step "glide-render $name with $driver, no X server"
+		# shellcheck disable=SC2086 # args and ppm are lists of words
+		if ! env -u DISPLAY LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=$driver "$RENDER" $args $ppm; then
 			failed="$failed $name/$driver"
 		fi
 	done
