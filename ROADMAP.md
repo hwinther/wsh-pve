@@ -80,6 +80,7 @@ come after that, not before.
 | Install target `sol21-ss10`: Solaris 2.1 End User on the SS-10 (OpenBIOS, one CPU, the CD as a disk), automated now that pve-qemu-kvm 11.1.3-2+wsh29 and later have `wsh/0047` (the sparc32 context-switch fetch); installed three times through PVE with `--check` on the published 11.1.3-2+wsh30, qemu-server 9.2.19+wsh4, pve-manager 9.2.32+wsh4 (3/3 passed, 9.7-10.1 min with three at once: install 5.3 min, first boot 2.9-3.3, check 1.2-1.3); `/opt` and `/export/home` still not mounted at boot | merged | #378 |
 | OpenBSD 8.0 on sun4u with ntpd on: the IDE timeouts (`wd0: timeout`, then a guest that takes no interrupt) were a lost interrupt in QEMU's sabre (a PCI interrupt replaced the outstanding IDE request), fixed by pve-qemu `wsh/0045` (qtest `wsh/0046`, pve-qemu-kvm 11.1.3-2+wsh30); `openbsd80-sun4u` keeps ntpd on and checks it runs, no install retry (the stuck detection stays): 4 of 4 installs through PVE with `--check` (two with a way out, ntpd synced), 3 of 3 boots under disk load with ntpd slewing, no IDE timeout, ~17 min; the installer's "Exit to (S)hell" after "CONGRATULATIONS!" is answered again (broken by the OpenBSD 5.9 targets) | in review | |
 | SunOS 4.1.3 on the SS-10: a bus error on a SuperSPARC load or instruction fetch takes the data or instruction access exception (trap 0x09/0x01, SFSR FT=5) instead of the access error (0x29/0x21), pve-qemu `wsh/0049` (CPU feature `buserr-access-exc` on the `TI-SuperSparc-*` models only; stores, the MMU bypass ASIs and the microSPARC unchanged), qtest `wsh/0050`; 4.1.3's kernel panicked in its VME probe (`BAD TRAP: type=29`). In the lab the 4.1.3 CD installs, boots and passes the check with the 4.1.4 scenarios (4 passes of 4, ~4.5 min each), stored SS-10/SS-20 and SS-5 disks boot as before (34 of 34: 18 on SS-10/SS-20, Solaris 2.6 also with 4 CPUs, and 16 on the SS-5); reproduced on plain QEMU 11.1.3. Target `sunos413-ss10` (catalogue until a published pve-qemu-kvm has the patch), `upstream/qemu-sparc32-supersparc-bus-error-trap.md` | in review | |
+| The Incredible Machine 1 and 2 (DOS) black on std and cirrus (every VGA model has the code): a read of the attribute address register (3C0h) returned 0 in the flip-flop's data state, the games restore what they read there after loading the palette, which clears the palette address source bit. pve-qemu `wsh/0051` returns the address in both states in `vga.c` and `cirrus_vga.c` (as the VGA and DOSBox do; 3C1h and the flip-flop unchanged), qtest `wsh/0052` (std, isa-vga, cirrus, vmware: 8 cases, all fail on plain QEMU 11.1.3). In the lab (11.1.3 with wsh/0001-0052, MS-DOS 6.22 with the owner's games) both games show their screens on std and cirrus (black without the patch; reproduced on plain 11.1.3 with the games, a 512-byte boot sector and the qtest); Doom, Doom II, Duke Nukem 3D, Wolfenstein 3D (`retrace=precise`), Keen 1 and 4, Larry 1, Dune and Dune II end on the same screen as without the patch (the same screendump, or the same running demo); the stored `msdos622` and `freedos14` disks pass their checks on std and cirrus; qtest-sparc unchanged. `upstream/qemu-vga-ar-index-read.md` | in review | |
 | DOS games: `vga: ...,retrace=precise` in qemu-server and the UI (Hardware > Display, "VGA retrace: Precise (DOS games)"; x86 with a display on QEMU's VGA core: std, cirrus, vmware, qxl, virtio). QEMU takes its precise VGA retrace emulation only as a `-vga` option (no device property), so qemu-server adds `-vga none,retrace=precise` next to the `-device`; refused with `none`, `serial*`, `tcx`, `cg3` and off x86 at create, update and start. Wolfenstein 3D waits for display enable without vertical retrace on port 3DAh, which QEMU's default `dumb` emulation never reports: through PVE (TCG, the owner's MS-DOS 6.22 disks, the local qemu-server) it stays black in mode 13h for a minute with `vga: std` and shows its title and menu screens with `std,retrace=precise` (12 distinct screens in 60 s against 2). cfg2cmd tests, e2e (API, `qm showcmd`, QEMU accepts it, refusals, the UI field) with `test.fail` probes until a package has it | in review | |
 
 ## In progress
@@ -134,6 +135,11 @@ merged; what is left of them is item 2 under "Next".
      `POWER.EXE` idles too but slows keyboard-polling programs 2.5-10 times. Games: Wolfenstein 3D
      hangs on a black screen under QEMU's default VGA retrace emulation and runs with the precise one,
      `vga: std,retrace=precise` (Hardware > Display in the UI, the DOS guide's "VGA retrace").
+     The Incredible Machine 1 and 2 stayed black on every `vga` model while they ran: QEMU
+     read the VGA attribute address register (3C0h) as 0 in the flip-flop's data state, and the
+     games restore the address they read there after loading the palette, which turns the display
+     off. pve-qemu `wsh/0051` (qtest `wsh/0052`, in review) returns the address in both states, as
+     the VGA does; reproduced on plain QEMU 11.1.3, `upstream/qemu-vga-ar-index-read.md`.
    - Next for DOS (`ne2k_isa` is on the ISA bus since #304: an ISA NIC needs no option ROM; for most
      guests `rtl8139` stays the better choice): Windows 3.1 on top of `msdos622` (its SETUP has a graphical part, so OCR or the
      screendump for those screens); other DOS versions (5.0, 6.0, PC DOS 7) as targets.
@@ -412,8 +418,10 @@ AI-generated code): the ESP bus reset, the 1-byte APC region, the TLB flush on e
 SRMMU no-fault bit, the interrupt not taken after a write to `%psr` in a delay slot (the Solaris SMP
 hang), the cmd646 interrupt latch, sun4u's IDPROM ignoring a NIC added with `-device`, the sparc64
 `%softint` race, the ESP CDB counted with the message out bytes and the trap a bus error takes on a
-SuperSPARC load (SunOS 4.1.3, `upstream/qemu-sparc32-supersparc-bus-error-trap.md`) (QEMU); the ESP selection
-timeout, Stop-A powering the machine off, and the sparc64 fixes 0003-0011 and 0013-0017 (OpenBIOS).
+SuperSPARC load (SunOS 4.1.3, `upstream/qemu-sparc32-supersparc-bus-error-trap.md`) and the VGA
+attribute address read as 0 in the data state (The Incredible Machine,
+`upstream/qemu-vga-ar-index-read.md`) (QEMU); the ESP selection timeout, Stop-A powering the machine
+off, and the sparc64 fixes 0003-0011 and 0013-0017 (OpenBIOS).
 Not written up yet: the TTE page-size truncation, if it is not merged upstream.
 
 On hold until reproduced on plain QEMU without LEMU patches: the ESCC mouse rate and the ESCC break
