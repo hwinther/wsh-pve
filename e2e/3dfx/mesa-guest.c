@@ -11,7 +11,7 @@
  *   - wglChoosePixelFormat (0xFEC, waits for the window: 0xFB8), wglSetPixelFormat (0xFE4),
  *     wglCreateContext (0xFFC) and wglMakeCurrent (0xFF8), each a write of MESAGL_MAGIC with its
  *     arguments in the last page of the shared memory: QEMU makes a GLX context on the VM's SDL
- *     window;
+ *     window, or without one an EGL context on an offscreen pbuffer (hw/mesa/mglcntx_egl.c);
  *   - GL calls one at a time: the arguments in mfifo[2...], the function's number (mglfunci.h) to
  *     0xFC0, the return value read back from 0xFC0 (no batching in the FIFO);
  *   - glReadPixels with no pack buffer: QEMU reads into the frame memory, the guest copies from it;
@@ -25,12 +25,24 @@
  *
  *   MESA-GUEST: PASS | MESA-GUEST: FAIL <n> | MESA-GUEST: ERROR <what>
  *
- * then holds the frame for a few seconds (for a capture of the window on the host) and powers the
- * VM off. i386, static (the protocol passes 32-bit guest addresses). Copyright 2026 WsHosting ENK,
- * GPL-3.
+ * then holds the frame for a few seconds (for a capture of the window, or headless of the console,
+ * on the host) and powers the VM off. Kernel command line options (the kernel passes them to /init
+ * as environment variables): MESA_GUEST_MSAA=<n> asks for a multisampled pixel format (the wrapper's
+ * ContextMSAA); MESA_GUEST_GAMMA=1, after the hold, sets a gamma ramp of 2.0
+ * (wglSetDeviceGammaRamp3DFX), draws and swaps the scene again and prints
+ *
+ *   MESA-GUEST: GAMMA
+ *
+ * (the host checks the console's clear colour then); GLIDE_GUEST_BENCH=<n> draws the scene <n> more
+ * times, a swap each, and prints
+ *
+ *   MESA-GUEST: BENCH <n> frames in <s> s, <fps> fps
+ *
+ * i386, static (the protocol passes 32-bit guest addresses). Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +52,7 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "mglfuncs.h" /* qemu-3dfx qemu-1/hw/mesa: addresses, sizes, MESAGL_MAGIC, FEnum_gl* */
@@ -157,9 +170,64 @@ static void triangle(const float pos[3][2], const float rgb[3][3])
 	GL(glEnd);
 }
 
+/* The scene, as glide-render.c and glide-guest.c draw it */
+static void draw_scene(void)
+{
+	GL(glViewport, 0, 0, W, H);
+	GL(glClearColor, f2u(0), f2u(0), f2u(128.0f / 255), f2u(1));
+	GL(glClear, 0x4000 /* GL_COLOR_BUFFER_BIT */);
+	triangle(red_tri, red_rgb);
+	triangle(green_tri, green_rgb);
+	triangle(gouraud_tri, gouraud_rgb);
+}
+
+/* wglSwapBuffers; returns what QEMU put in its first word */
+static uint32_t swap_buffers(void)
+{
+	uint32_t *swap = &mfifo[(MGLSHM_SIZE - ALIGNED(1)) >> 2];
+	swap[0] = 0;
+	swap[1] = 0;
+	mmio_write(0xFF0, MESAGL_MAGIC);
+	return swap[0];
+}
+
+/* A wgl extension call (MGLFuncHandler): its name in the last page of the shared memory, its
+ * arguments after it; returns the arguments (argsp[0] is the result) */
+static uint32_t *wgl_func_args(const char *name)
+{
+	char *f = (char *)wgl_args();
+	size_t n = strlen(name) + 1;
+	memset(f, 0, 64);
+	strcpy(f, name);
+	return (uint32_t *)(f + ALIGNED(n));
+}
+
+/* wglSetDeviceGammaRamp3DFX with a gamma of 2.0 (what SetDeviceGammaRamp reaches through the
+ * wrapper's hook): 16 bits per entry, 256 entries per channel */
+static uint32_t set_gamma_2(void)
+{
+	uint16_t *ramp = (uint16_t *)wgl_func_args("wglSetDeviceGammaRamp3DFX");
+	for (int i = 0; i < 256; i++) {
+		int v = (int)(255.0 * sqrt(i / 255.0) + 0.5);
+		ramp[i] = ramp[256 + i] = ramp[512 + i] = (uint16_t)((v << 8) | v);
+	}
+	mmio_write(0xFDC, MESAGL_MAGIC);
+	return *(uint32_t *)ramp;
+}
+
 int main(void)
 {
 	char verdict[128];
+	int msaa = 0, gamma = 0, bench = 0;
+	const char *env = getenv("MESA_GUEST_MSAA"); /* the kernel passes unknown key=value as env */
+	if (env)
+		msaa = atoi(env);
+	env = getenv("MESA_GUEST_GAMMA");
+	if (env && !strcmp(env, "1"))
+		gamma = 1;
+	env = getenv("GLIDE_GUEST_BENCH");
+	if (env)
+		bench = atoi(env);
 
 	mkdir("/dev", 0755);
 	if (mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) && errno != EBUSY)
@@ -194,9 +262,13 @@ int main(void)
 	}
 	printf("init: ok (%#x)\n", ver);
 
-	/* wglChoosePixelFormat: display timer off (xppfd[1] = 0), a zero PIXELFORMATDESCRIPTOR */
+	/* wglChoosePixelFormat: the wrapper's options in xppfd[0] (ContextMSAA 4x, 8x, 16x as 0x04,
+	 * 0x08, 0x0c), display timer off (xppfd[1] = 0), a zero PIXELFORMATDESCRIPTOR */
 	uint32_t *a = wgl_args();
 	memset(a, 0, 64);
+	a[0] = (msaa >= 16) ? 0x0c : (msaa >= 8) ? 0x08 : (msaa > 0) ? 0x04 : 0;
+	if (msaa)
+		printf("ContextMSAA: %d (%#x)\n", msaa, a[0]);
 	mmio_write(0xFEC, MESAGL_MAGIC);
 	for (int i = 0; !ptm[0xFB8 >> 2]; i++) { /* the window is made on QEMU's main loop */
 		if (i == 10000000)
@@ -226,13 +298,7 @@ int main(void)
 	mmio_write(0xFF8, MESAGL_MAGIC);
 	printf("wglCreateContext, wglMakeCurrent: done\n");
 
-	/* The scene, as glide-render.c and glide-guest.c draw it */
-	GL(glViewport, 0, 0, W, H);
-	GL(glClearColor, f2u(0), f2u(0), f2u(128.0f / 255), f2u(1));
-	GL(glClear, 0x4000 /* GL_COLOR_BUFFER_BIT */);
-	triangle(red_tri, red_rgb);
-	triangle(green_tri, green_rgb);
-	triangle(gouraud_tri, gouraud_rgb);
+	draw_scene();
 	GL(glFinish);
 	GL(glReadPixels, 0, 0, W, H, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, 0);
 	memcpy(pixels, fbtm, sizeof(pixels));
@@ -246,13 +312,31 @@ int main(void)
 	}
 
 	/* wglSwapBuffers: the frame goes to the window, the host captures it now */
-	uint32_t *swap = &mfifo[(MGLSHM_SIZE - ALIGNED(1)) >> 2];
-	swap[0] = 0;
-	swap[1] = 0;
-	mmio_write(0xFF0, MESAGL_MAGIC);
-	printf("wglSwapBuffers: %#x\n", swap[0]);
+	printf("wglSwapBuffers: %#x\n", swap_buffers());
 	printf("MESA-GUEST: FRAME\n");
 	sleep(5);
+
+	/* The scene again with a gamma ramp of 2.0: the host checks the clear colour in the console
+	 * (the guest's own read shows the frame without it, as on a real card) */
+	if (gamma) {
+		printf("wglSetDeviceGammaRamp3DFX: %u\n", set_gamma_2());
+		draw_scene();
+		swap_buffers();
+		printf("MESA-GUEST: GAMMA\n");
+		sleep(3);
+	}
+	if (bench > 0) {
+		struct timespec t0, t1;
+		clock_gettime(CLOCK_MONOTONIC, &t0);
+		for (int frame = 0; frame < bench; frame++) {
+			draw_scene();
+			swap_buffers();
+		}
+		GL(glFinish);
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		double secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+		printf("MESA-GUEST: BENCH %d frames in %.2f s, %.1f fps\n", bench, secs, secs > 0 ? bench / secs : 0);
+	}
 
 	/* wglMakeCurrent(0), wglDeleteContext, DLL detach */
 	a[0] = 0;

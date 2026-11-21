@@ -84,9 +84,11 @@ come after that, not before.
 | The Incredible Machine 1 and 2 (DOS) black on std and cirrus (every VGA model has the code): a read of the attribute address register (3C0h) returned 0 in the flip-flop's data state, the games restore what they read there after loading the palette, which clears the palette address source bit. pve-qemu `wsh/0051` returns the address in both states in `vga.c` and `cirrus_vga.c` (as the VGA and DOSBox do; 3C1h and the flip-flop unchanged), qtest `wsh/0052` (std, isa-vga, cirrus, vmware: 8 cases, all fail on plain QEMU 11.1.3). In the lab (11.1.3 with wsh/0001-0052, MS-DOS 6.22 with the owner's games) both games show their screens on std and cirrus (black without the patch; reproduced on plain 11.1.3 with the games, a 512-byte boot sector and the qtest); Doom, Doom II, Duke Nukem 3D, Wolfenstein 3D (`retrace=precise`), Keen 1 and 4, Larry 1, Dune and Dune II end on the same screen as without the patch (the same screendump, or the same running demo); the stored `msdos622` and `freedos14` disks pass their checks on std and cirrus; qtest-sparc unchanged. `upstream/qemu-vga-ar-index-read.md` | in review | |
 | SPARCstation LX boot PROM (`lx.bin`, lab only): its POST stopped at `FPU SP Trap Priority <` because QEMU raised fp_exception on the excepting FPop; the sparc32 FPUs defer it to the next FP instruction, and a misaligned FP store after it takes its alignment trap first. pve-qemu `wsh/0053` models fp_exception_pending for IEEE 754 exceptions on every sparc32 CPU (system emulation; linux-user and sparc64 unchanged; V8 manual 7.3 and appendix L, the microSPARC and SuperSPARC manuals), qtest `wsh/0054` (36 cases on SS-5, SS-10 and LX; the 27 trap cases fail on plain QEMU 11.1.3), and `wsh/0055` caps the microSPARC-I machines (LX, SPARCClassic, SPARCbook) at the chip's 128 MB (OpenBIOS stopped with `Trap 0x21` at 256). In the lab the LX PROM passes all its FPU tests and reaches `ok` (still missing: stubs for its built-in SBus devices, then SunOS); Solaris 2.6 on SS-20 and SS-5 gets SIGFPE (`FPE_FLTDIV`, `si_addr` at the `fdivs`) 504 of 504 times and keeps running; 34 of 34 stored sparc32 disks boot and pass their checks as before (SS-5, SS-10, SS-20, Solaris 2.6 also with 4 CPUs); reproduced on plain QEMU 11.1.3. `upstream/qemu-sparc32-deferred-fp-exception.md` | in review | |
 | SPARCstation LX with its own PROM (`lx.bin`, lab only) boots to a login prompt over ttya (`-nographic`): the PROM probes its on-board cgsix (slot 3), DBRI (slot 2) and bpp (slot 4) on every boot and stopped at `ok` on the first bus error. pve-qemu `wsh/0056` maps the three as unimplemented devices on `-M LX` (below a `-vga` frame buffer), `wsh/0057` answers the DBRI's FCode PROM window with an FCode program of ours that makes the node a DBRI has (name, `reg`, interrupt; SunOS 4.1.4 panicked on the node without it, as Solaris 2.1/2.2 do on the SS-20 PROM), qtest `wsh/0058`. In the lab: Solaris 2.6 installs from CD and boots (64 and 128 MB), NetBSD 9.3's stored disk boots (64, 128 MB), SunOS 4.1.4 and 4.1.3_U1B install and boot; the drivers find no codec behind the DBRI stub, the cgsix node stays unused; the Solaris 2.2 CD reaches its installer under the SS-20 PROM without the lab's node naming; 12 of 12 stored sparc32 disks boot as before, OpenBIOS on `-M LX` as before; qtest-sparc/sparc64 46 OK. `upstream/qemu-sun4m-lx-onboard-sbus.md`, `upstream/qemu-sun4m-ss20-dbri-unnamed-node.md` | in review | |
+| SPARCstation LX in PVE: `machine: LX` with `bios: lx.bin` as a sparc32 profile in qemu-server and pve-manager (at most 128 MB, one CPU, `vga: serial0` by default or `none`, no OpenBIOS, no audio), cfg2cmd tests `sparc32-lx-*`, e2e in `sparc-profiles.spec.ts` (skipped against packages without the profile; QEMU started only where the node has `lx.bin`). In the lab's PVE container `qm start` boots the Solaris 2.6 LX disk to its login prompt (`boot disk` at `ok`). `lx.bin` is not packaged; the owner places it on the node (`submodules/SPARC.md`, "SPARCstation LX with its own PROM") | in review | |
 | DOS games: `vga: ...,retrace=precise` in qemu-server and the UI (Hardware > Display, "VGA retrace: Precise (DOS games)"; x86 with a display on QEMU's VGA core: std, cirrus, vmware, qxl, virtio). QEMU takes its precise VGA retrace emulation only as a `-vga` option (no device property), so qemu-server adds `-vga none,retrace=precise` next to the `-device`; refused with `none`, `serial*`, `tcx`, `cg3` and off x86 at create, update and start. Wolfenstein 3D waits for display enable without vertical retrace on port 3DAh, which QEMU's default `dumb` emulation never reports: through PVE (TCG, the owner's MS-DOS 6.22 disks, the local qemu-server) it stays black in mode 13h for a minute with `vga: std` and shows its title and menu screens with `std,retrace=precise` (12 distinct screens in 60 s against 2). cfg2cmd tests, e2e (API, `qm showcmd`, QEMU accepts it, refusals, the UI field) with `test.fail` probes until a package has it | in review | |
 | DOS memory profiles as data (`e2e/sparc/dos_profiles.py`, `scenarios/dos-profile.py`): Full (XMS + UMB, no EMS), EMS (frame at D800, set explicitly), Maximum conventional, No EMM386 and the disk's own files, for MS-DOS 6.22 and FreeDOS 1.4, also as one startup-menu `CONFIG.SYS`. Each profile is written onto a sparse copy of an installed disk with mtools (now in the lab image) and booted in the lab's QEMU; measured with `MEM` and four hand-assembled programs of ours (`dos_tools.py`: `EMSCHK` pages and frame, `VGARTRC` display enable on 3DAh, `VGAAR` the 3C0h data-state read, `SNDCHK` SB DSP + AdLib + PC speaker into the WAV), the screen and QEMU's guest-error log, and optionally a game per run (frames, last change, sound). CI: `tests/test_dos_profiles.py` in `sparc-lab-dos.yml` on the FreeDOS disk the job just installed (five profiles, the menu, plain `std` where VGARTRC must time out). VGAAR fails under pve-qemu-kvm 11.1.3-2+wsh16 and passes on 11.1.3-3+wsh2. Lab run on 11.1.3-3+wsh2 with the owner's MS-DOS 6.22 disks: the five profiles and a game matrix per profile; recommended profiles and results in the DOS guide ("Memory profiles") | in review | |
 | DOS memory profiles, follow-up: the MS-DOS EMS profile gives EMM386 `RAM` without a size, so its EMS and VCPI pool is all free XMS (`RAM 4096` capped VCPI at 4 MB and Duke Nukem 3D, DOS/4GW, stopped for lack of memory); with it one boot runs all nine games of the matrix (Wolfenstein 3D with `retrace=precise`). A profile can bring its own `SHELL` line (also in a startup-menu block); MS-DOS 6.22's `MEM` line for a large EMS pool (no K, no closing parenthesis) is parsed. Wolfenstein 3D's black screen on plain `std` pinned down in the lab: its CRTC routine waits for several reads of "blanked, not in vertical retrace" on 3DAh, which `dumb` never gives (bits 0 and 3 flip together), and its timer-based timeout can't fire because the counter isn't running yet (sampled under TCG and KVM); no `CONFIG.SYS` changes it. DOS guide and display reference updated | in review | |
+| 3dfx in a real Windows 98 SE guest (`e2e/3dfx/win98-test.sh`, workflow `3dfx in Windows 98`, by hand and weekly on the lab runner): the operator's own installed disk (never in the repository; path from an input or `WSH_WIN98_TEMPLATE`) is copied, the binary's `qemu-3dfx-drivers` release and our own test programs (mingw-w64, no C runtime: `glidetst.exe` for Glide 2 and 3, `gltest.exe` for OpenGL, `w3drun.exe` in StartUp, which powers Windows off) are written onto the copy with mtools, QEMU gets PVE's device set at PVE's PCI addresses (no new-hardware wizard); the programs report on COM1, the harness checks the frame in the console's screendump and the desktop after it; screendumps stay on the runner, the artifact has only logs and probe values. Published 11.1.3-3+wsh5: Glide 2 and 3 pass headless (KVM and TCG), OpenGL ends QEMU (SIGSEGV on loading `OPENGL32.DLL`); a binary from #407: all three pass (KVM 50-70 s a run, TCG 83 s; 1400-1700 Glide and 1900-2500 OpenGL frames/s). Found: the release's guest drivers need SSE2-SSE4.2/POPCNT, so `cpu: pentium3` without KVM faults ("illegal operation"); booting at the host's time can stop Windows 98 at a daylight-saving dialog | in review | |
 
 ## In progress
 
@@ -94,6 +96,10 @@ Nothing outside the open pull requests. Solaris 10 on sun4u (#294, #298) and Tri
 merged; what is left of them is item 2 under "Next".
 
 ## Next, in this order
+
+**First, the Sun PROMs' NVRAM kept across starts,** so a Sun PROM's `setenv diag-switch? false`
+lasts and it boots by itself (an M48T59 block backend plus a
+per-VM volume in qemu-server; `submodules/SPARC.md`, "SPARCstation LX with its own PROM").
 
 1. **Idle on sparc64, what is left.** The guests with a stored disk idle (see Done: `wsh/0042`-`0044`).
    Not covered: Linux on sun4u (Debian 12's install fails, so no disk; its `arch_cpu_idle()` does
@@ -195,7 +201,7 @@ merged; what is left of them is item 2 under "Next".
        revision handshake, the wgl calls, single GL calls, glReadPixels through the frame memory)
        and draws the same scene; both guests also pass when PVE starts them (`qm start` of a
        `mesa=1,server=` VM with `args: -kernel ...`, checked by hand).
-     - **Stage 1: EGL offscreen, Glide (in review).** Without an SDL window (PVE's VNC console,
+     - **Stage 1: EGL offscreen, Glide (merged, #404).** Without an SDL window (PVE's VNC console,
        `-display none`, egl-headless, dbus, gtk, `sdl,gl=on`) qemu-3dfx's Glide device no longer
        ends QEMU: it has OpenGLide render offscreen and copies each frame into the first graphic
        console, which VNC and screendump show in place of the VGA; the VGA comes back when the
@@ -219,10 +225,47 @@ merged; what is left of them is item 2 under "Next".
        `qemu-3dfx-check.yml` runs it and the SDL run with the binary it builds (about 2 min each).
        Measured (TCG, llvmpipe, 640x480, the test scene): a read 0.14-0.2 ms, the console updated
        0.02-0.03 ms after it, the guest draws 1100-1750 frames/s offscreen against ~2100 with the
-       SDL window. Left for Stage 1: Glide gamma and MSAA offscreen; the Mesa pass-through on EGL
-       (`mglcntx_egl.c`: it still needs the SDL window and ends QEMU without one); the last frame
-       of front-buffer drawing waits for the next Glide call; a check through a PVE node (`qm
-       start` with `mesa=1`, the noVNC console).
+       SDL window. Left then: Glide gamma and MSAA offscreen; the Mesa pass-through on EGL; the
+       last frame of front-buffer drawing waited for the next Glide call; a check through a PVE
+       node (`qm start` with `mesa=1`, the noVNC console). Stage 1b took all but Glide MSAA and the
+       node check.
+     - **Stage 1b: EGL offscreen, Mesa/OpenGL (in review).** Without an SDL window the Mesa
+       pass-through no longer ends QEMU at the guest's first `wglChoosePixelFormat`: a new
+       `hw/mesa/mglcntx_egl.c` (in `submodules/qemu-3dfx.patch`) takes over `mglcntx_linux.c`'s
+       entry points from the guest's DLL attach to its detach (one hook line each; the SDL/GLX path
+       is unchanged) and renders on a desktop GL context of Mesa's surfaceless EGL (libEGL
+       `dlopen()`ed), current on an EGL pbuffer the size of the guest's display. The pbuffer is the
+       window, so the guest's framebuffer 0, `GL_BACK` and default viewport need no rewriting (an
+       FBO would need `glBindFramebuffer(0)`, draw/read buffer and framebuffer queries
+       intercepted). At each `wglSwapBuffers` the frame is read (`glReadPixels`, the guest's read
+       and pack state put back) into `fxdisp`, now one instance per device with a read callback;
+       `mesa_renderer_stat`/`mesa_gui_fullscreen` go through wrappers that switch the console's
+       pass-through instead, so the VGA comes back when the guest deactivates its window or ends
+       its context. `wglCreateContextAttribsARB`, ARB pbuffers, `wglUseFontBitmapsA` (built-in
+       font) work offscreen; no libEGL, display or context fails `wglChoosePixelFormat`/
+       `wglCreateContext` with a message, QEMU keeps running. Contained extras: gamma offscreen for
+       both (OpenGL: `wglSetDeviceGammaRamp3DFX` kept and applied in fxdisp's copy; Glide:
+       wsh-openglide's EGL platform keeps `grGammaCorrectionValue`/`grLoadGammaTable` and applies
+       them in `getOffscreenFrame`, a change to `0002-egl-offscreen.patch`); the last frame of
+       Glide front-buffer drawing is read 50 ms after the last call on that call's vCPU thread
+       (`async_run_on_cpu` from a main-loop timer); OpenGL MSAA where a test pbuffer of the
+       multisampled config gives its frame back (not llvmpipe: `glReadPixels` fails with
+       `GL_INVALID_OPERATION` and a resolving blit returns black; softpipe has no such config;
+       both then render without, with a message). No change to qemu-server: `mesa=1` without
+       `server=` already gets the 3dfx binary and VNC, and the Mesa side needs no environment of
+       its own. Tested (`e2e/3dfx`, `GLIDE_DISPLAY=vnc`, TCG, no X server, llvmpipe and softpipe):
+       the Mesa guest's frame in the screendump, the gamma ramp's colour, the VGA back after; the
+       Mesa guest again with a 4x pixel format, and with no EGL driver (its OpenGL fails, QEMU
+       stays up); the Glide guest's front-buffer drawing reaching the console with no further call,
+       and Glide gamma; the SDL runs unchanged. Measured (TCG, llvmpipe, 640x480): an OpenGL frame
+       read 0.32-0.52 ms (it waits for the frame to finish rendering; 4-9 ms with softpipe), the
+       console updated 0.03 ms after it, the Mesa guest draws 760-1840 frames/s offscreen
+       (the lower end with a gamma ramp set; ~1800 with the SDL window); Glide unchanged (a read
+       0.17-0.18 ms, 1100-1350 frames/s; ~2400 with the SDL window). Left:
+       Glide MSAA offscreen; OpenGL MSAA on drivers without multisampled pbuffer reads; OpenGL
+       front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
+       guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
+       PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
      - **Stage 2: dmabuf scanout (~2-3 weeks).** Zero copy: a `gbm_surface`,
        `qemu_console_gl_scanout_dmabuf` from a main-loop BH, `gl_block` back-pressure; shown through
        `egl-headless` and `-display dbus,gl=on`.
@@ -421,9 +464,11 @@ merged; what is left of them is item 2 under "Next".
 | `floppy.spec.ts` "Hardware: Add -> Floppy Drive" times out on a fresh container | Passes on rerun; a cold-start flake |
 | `build-deb.yml`'s separate 3dfx job has not run in a package build yet | A branch dispatch would publish, so it was checked with actionlint and a local run of the hand-over step; the first pve-qemu build on main is its test (its run should show `qemu-system-x86_64-3dfx from the 3dfx build of ...` and the release no "Optional extras missing") |
 | 3dfx Glide: QEMU dies with `BadMatch` on an X server with a 32-bit ARGB visual | OpenGLide's GLX config picks the 32-bit visual, SDL's window has the 24-bit default (seen on Xvfb with Composite and Mesa; real Xorg with a hardware GLX not checked). `e2e/3dfx` runs Xvfb with `-extension Composite` |
-| 3dfx offscreen (VNC console): no Glide gamma, no MSAA; Mesa pass-through still needs the SDL window | Gamma ramps went to the X server (XF86VidMode) and MSAA to the GLX visual; neither has an offscreen counterpart yet. A Mesa guest without an SDL window still ends QEMU (`sdl_display_valid`). Stage 1 leftovers in the Streaming item |
+| 3dfx offscreen (VNC console): no Glide MSAA; OpenGL MSAA only where the EGL driver reads a multisampled pbuffer back | Glide's framebuffer object is single-sampled (multisampled buffers would need a resolve before every LFB read and swap). OpenGL checks a test pbuffer when the window is made and renders without MSAA otherwise; Mesa's llvmpipe and softpipe can't. Stage 1b leftovers in the Streaming item |
 | 3dfx Glide: OpenGLide writes `OpenGLid.ini`/`OpenGLid.log` into QEMU's working directory | And `exit(0)`s the process when it can't write there (its library constructor). Where qemu-server's QEMU runs from is not checked |
 | 3dfx Glide: a guest LFB read that drains queued calls comes back shifted | glidept puts the pixels after the drained calls' data, the guest wrappers (Linux, Windows, DJGPP) copy from the start; a read after a swap or a direct call is right. Upstream (qemu-3dfx) material; `e2e/3dfx` reports it without counting it |
+| 3dfx guest drivers need x86-64-v2 | The `qemu-3dfx-drivers` releases are built with `-march=x86-64-v2` (upstream's makefiles): a `cpu: pentium3` guest runs them under KVM only; under TCG it needs `+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt`. A build for i686 without SSE2 would let real Pentium III-era CPU models work everywhere; not tried |
+| 3dfx with an SDL window: the second or third 3D window in one VM ends QEMU with an X error | Seen in the Windows 98 test on Xvfb (`BadRequest` when Glide 3 followed Glide 2, `BadLength` when OpenGL followed both); each test alone passes. Headless (offscreen) not affected |
 
 ## The lab host
 

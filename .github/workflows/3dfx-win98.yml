@@ -1,0 +1,163 @@
+name: 3dfx in Windows 98
+
+# The qemu-3dfx pass-through in a real Windows 98 SE guest (e2e/3dfx/win98-test.sh): our own test
+# programs draw the 3dfx test scene through Glide 2, Glide 3 and OpenGL (qemu-3dfx's guest wrappers,
+# the qemu-3dfx-drivers release of the binary's revision), and the harness checks the frame in the
+# VM's console (headless, as PVE runs a `vga: std,mesa=1` VM) and that Windows comes back after it.
+#
+# Runs on the self-hosted lab runner, which has the operator's own installed Windows 98 SE disk: a
+# public repository must not hand that to pull requests, so manual and weekly runs only, never
+# pull_request or push. The disk's path is the template input or the WSH_WIN98_TEMPLATE variable
+# (nothing in the repository names it); without either the run is skipped. The disk is only read and
+# copied. The uploaded artifact has only our own text (logs, verdicts, probe values, frame rates): the
+# disk copy is deleted and the screendumps, which show Windows, stay on the runner only when
+# keep_evidence is set (otherwise they are deleted with the run directory).
+
+on:
+  workflow_dispatch:
+    inputs:
+      binary:
+        description: "published: the newest pve-qemu-kvm's qemu-system-x86_64-3dfx; build: one built from this ref (scripts/check-qemu-3dfx-build.sh)"
+        type: choice
+        options:
+          - published
+          - build
+        default: published
+      tests:
+        description: "glide2, glide3, opengl separated by commas; auto: those the binary can show headless"
+        default: auto
+      display:
+        description: "vnc: headless (PVE's console); sdl: an SDL window on Xvfb"
+        type: choice
+        options:
+          - vnc
+          - sdl
+        default: vnc
+      accel:
+        description: "auto: KVM when the runner has /dev/kvm"
+        type: choice
+        options:
+          - auto
+          - kvm
+          - tcg
+        default: auto
+      template:
+        description: "The installed Windows 98 SE disk on the runner (raw; empty: the WSH_WIN98_TEMPLATE variable)"
+        default: ""
+      runs_dir:
+        description: "Run directory on the runner (a per-run subdirectory, removed afterwards; empty: WSH_LAB_RUNS_DIR, else the runner's temp)"
+        default: ""
+      keep_evidence:
+        description: "Keep the screendumps on the runner (in the run directory, which is then left in place)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "37 5 * * 0"
+
+permissions: {}
+
+jobs:
+  win98:
+    name: Windows 98 SE
+    runs-on: [self-hosted, Linux, X64, sparc-lab]
+    timeout-minutes: 60
+    # One at a time on the lab runner; a queued run waits
+    concurrency:
+      group: "${{ github.workflow }}"
+      cancel-in-progress: false
+    permissions:
+      contents: read # checkout, gh release download
+      packages: read # binary=build: docker pull of the build image from ghcr.io
+    env:
+      BINARY: ${{ inputs.binary || 'published' }}
+      TESTS: ${{ inputs.tests || 'auto' }}
+      DISPLAY_MODE: ${{ inputs.display || 'vnc' }}
+      ACCEL: ${{ inputs.accel || 'auto' }}
+      TEMPLATE: ${{ inputs.template || vars.WSH_WIN98_TEMPLATE }}
+      RUNS: ${{ inputs.runs_dir || vars.WSH_LAB_RUNS_DIR }}
+      KEEP: ${{ inputs.keep_evidence && '1' || '' }}
+      IMAGE: wsh-3dfx-win98:gh-${{ github.run_id }}
+    steps:
+      - name: The template
+        id: template
+        run: |
+          if [ -z "$TEMPLATE" ]; then
+            echo "::notice::No Windows 98 SE disk (template input or WSH_WIN98_TEMPLATE variable): skipped"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ ! -f "$TEMPLATE" ]; then
+            echo "::error::No template file at that path on this runner"
+            exit 1
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+          dir="${RUNS:-$RUNNER_TEMP}/win98-3dfx-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "RUN_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        if: ${{ steps.template.outputs.run == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests (the harness's parsers)
+        if: ${{ steps.template.outputs.run == 'true' }}
+        run: python3 -m unittest discover -s e2e/3dfx/win98/tests -v
+
+      - name: Login to GitHub Container Registry (the build image)
+        if: ${{ steps.template.outputs.run == 'true' && env.BINARY == 'build' }}
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build the 3dfx binary from this ref
+        if: ${{ steps.template.outputs.run == 'true' && env.BINARY == 'build' }}
+        run: |
+          git submodule update --init submodules/pve-qemu submodules/qemu-3dfx
+          git -C submodules/pve-qemu submodule update --init qemu
+          scripts/check-qemu-3dfx-build.sh --jobs "$(nproc)" --out "$RUN_DIR/qbin"
+
+      - name: Windows 98 SE run
+        if: ${{ steps.template.outputs.run == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }} # gh release download of the qemu-3dfx-drivers release
+        run: |
+          qbin=()
+          if [ "$BINARY" = build ]; then
+            qbin=(--qemu-bin "$RUN_DIR/qbin/qemu-system-x86_64-3dfx")
+          fi
+          mkdir -p "$RUN_DIR/out" "$RUN_DIR/private"
+          e2e/3dfx/win98-test.sh --template "$TEMPLATE" --out "$RUN_DIR/out" --private "$RUN_DIR/private" \
+            --image "$IMAGE" "${qbin[@]}" -- --tests "$TESTS" --display "$DISPLAY_MODE" --accel "$ACCEL"
+
+      - name: Summary
+        if: ${{ !cancelled() && steps.template.outputs.run == 'true' }}
+        run: cat "$RUN_DIR/out/summary.md" >> "$GITHUB_STEP_SUMMARY" || echo "no summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # Our own text only: no disk, no screendump (those are in private/, which is never uploaded)
+      - name: Upload the logs
+        if: ${{ !cancelled() && steps.template.outputs.run == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: 3dfx-win98-${{ env.BINARY }}-${{ env.DISPLAY_MODE }}
+          path: |
+            ${{ env.RUN_DIR }}/out
+            !${{ env.RUN_DIR }}/out/**/*.ppm
+            !${{ env.RUN_DIR }}/out/**/*.raw
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Clean up
+        if: ${{ always() && steps.template.outputs.run == 'true' }}
+        run: |
+          # root-owned files from the container: removed from a container
+          if [ -d "$RUN_DIR" ]; then
+            if [ -n "$KEEP" ]; then
+              docker run --rm -v "$RUN_DIR:/r" --entrypoint sh "$IMAGE" -c 'rm -rf /r/private/disk.raw /r/qbin' || true
+              echo "::notice::The screendumps stay on the runner in the run directory"
+            else
+              docker run --rm -v "$(dirname "$RUN_DIR"):/runs" --entrypoint rm "$IMAGE" -rf "/runs/$(basename "$RUN_DIR")" || true
+            fi
+          fi
+          docker image rm "$IMAGE" || true

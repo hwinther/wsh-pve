@@ -38,24 +38,71 @@ apt install wsh-openglide
 
 Without it a Glide guest gets no Glide device. The Mesa/OpenGL pass-through doesn't need it. The package has two platforms: OpenGLide's X11/GLX one, for the VM's SDL window on an X display, and an EGL offscreen one added by wsh-pve, for a VM without a local window (see below).
 
-## Where the Glide frames show
+## Where the Glide and OpenGL frames show
 
-- **In the VM's console (VNC, noVNC), with no X server.** This is what a VM with 3DFX/Mesa enabled gets in PVE by default: the console is VNC, there is no SDL window. qemu-3dfx then has the Glide library render offscreen (EGL, on Mesa's surfaceless platform: a GPU's render node, or Mesa's software renderer without one) and copies every frame into the VM's console, where the PVE console, a screenshot (`screendump`) or any other display shows it in place of the VGA picture. When the game closes its Glide window, the console shows the VGA again. The same happens with `-display none`, `egl-headless`, `dbus` or `gtk`.
-- **In an SDL window on an X display** (the `server=` option of the display, which uses `-display sdl` instead of VNC): OpenGLide renders into that window with GLX, as before.
+- **In the VM's console (VNC, noVNC), with no X server.** This is what a VM with 3DFX/Mesa enabled gets in PVE by default: the console is VNC, there is no SDL window. qemu-3dfx then renders offscreen, on EGL with Mesa's surfaceless platform (a GPU's render node, or Mesa's software renderer without one), and copies every frame into the VM's console, where the PVE console, a screenshot (`screendump`) or any other display shows it in place of the VGA picture. Glide goes through the Glide library's EGL platform; OpenGL (the Mesa pass-through) is rendered by QEMU itself on an EGL pbuffer the size of the guest's display, which stands in for the game's window, and each frame is read when the game swaps its buffers. When the game closes its Glide window, or deactivates its OpenGL window or ends its OpenGL context, the console shows the VGA again. The same happens with `-display none`, `egl-headless`, `dbus` or `gtk`.
+- **In an SDL window on an X display** (the `server=` option of the display, which uses `-display sdl` instead of VNC): OpenGLide and the OpenGL pass-through render into that window with GLX, as before.
 
-`QEMU_3DFX_OFFSCREEN=1` in QEMU's environment renders offscreen even with an SDL window (the frames then show in it as the console's picture). Offscreen needs a `wsh-openglide` with the EGL platform (its libraries export `getOffscreenFrame`); with an older one, or when EGL can't give a desktop OpenGL context, the guest's `grSstWinOpen()` fails and QEMU says why on its standard error, but keeps running.
+`QEMU_3DFX_OFFSCREEN=1` in QEMU's environment renders offscreen even with an SDL window (the frames then show in it as the console's picture). Glide offscreen needs a `wsh-openglide` with the EGL platform (its libraries export `getOffscreenFrame`); with an older one, or when EGL can't give a desktop OpenGL context, the guest's `grSstWinOpen()` fails and QEMU says why on its standard error, but keeps running. OpenGL offscreen needs `libEGL.so.1` (pve-qemu-kvm depends on `libegl1`) and Mesa's EGL; without them, or without an EGL display or context, the guest's `wglChoosePixelFormat()` and `wglCreateContext()` fail, QEMU says why (lines starting with `mesapt:`) and keeps running. Earlier builds ended QEMU when an OpenGL game started without an SDL window.
 
-Not done offscreen yet: Glide gamma (`grGammaCorrectionValue`, gamma tables; GLX sets it on the X server) and multisampling (`ContextMSAA` in `glide.cfg`). A game that draws into the front buffer without swapping is shown at most 50 ms late, and its last frame only once it makes another Glide call. The Mesa/OpenGL pass-through still needs the SDL window: without one, QEMU ends when a Mesa guest starts.
+The game's gamma is applied offscreen too, when each frame is copied into the console: for Glide `grGammaCorrectionValue` and gamma tables (wsh-openglide keeps them, with no X server to set them on), for OpenGL `wglSetDeviceGammaRamp3DFX`, which the guest's `OPENGL32.DLL` also routes `SetDeviceGammaRamp` to. A game that draws into the Glide front buffer without swapping is shown at most 50 ms late, its last frame included: 50 ms after its last call QEMU reads it on the thread that drives the game's GL context.
 
-Each frame costs one read of the window's pixels (`glReadPixels`) on the vCPU thread and a copy on QEMU's main loop. Measured in CI's setup (TCG, Mesa llvmpipe, 640x480, the test scene): a read takes 0.14 to 0.2 ms, the console has the frame about 0.03 ms after it, and the guest still draws 1100 to 1750 frames per second of the test scene (about 2100 with the SDL window).
+Not done offscreen yet:
+
+- Glide multisampling (`ContextMSAA` in `glide.cfg`): the frame renders without it.
+- OpenGL multisampling (the wrapper's `ContextMSAA`) only where the EGL driver gives a multisampled pbuffer's frame back. QEMU checks that when the game's window is made; Mesa's software renderers don't (llvmpipe fails the read, softpipe has no such config), so with them the game renders without multisampling and QEMU says so.
+- OpenGL drawn into the front buffer without a swap (`glDrawBuffer(GL_FRONT)` and `glFlush`) shows only at the next swap.
+- A display mode change while OpenGL frames are shown takes effect at the game's next `wglMakeCurrent` after the frames stopped (the SDL window has the same limit).
+- The guest's OpenGL cursor (`wglSetDeviceCursor3DFX`) and mouse warps go to the SDL window only and are dropped offscreen (not checked with a game).
+- A Glide window opened while an OpenGL window is active (Glide drawn through the OpenGL window with SDL) and an OpenGL window opened in a Glide game share the console: the last frame read wins.
+
+Each frame costs one read of the window's pixels (`glReadPixels`) on the vCPU thread and a copy on QEMU's main loop. Measured in CI's setup (TCG, Mesa llvmpipe, 640x480, the test scene): a Glide read takes 0.14 to 0.2 ms, the console has the frame about 0.03 ms after it, and the guest still draws 1100 to 1750 frames per second of the test scene (about 2100 to 2400 with the SDL window). An OpenGL read takes 0.3 to 0.5 ms (it waits for the frame to finish rendering; 4 to 9 ms with softpipe), and the test's OpenGL guest draws 760 to 1840 frames per second offscreen, the lower figures with a gamma ramp set (about 1800 with the SDL window).
 
 OpenGLide keeps its settings in `OpenGLid.ini` and writes a log, `OpenGLid.log` (and `OpenGLid.err` after an error). For a VM with 3DFX/Mesa enabled they are in `/run/qemu-server/<vmid>-3dfx/` on the node: qemu-server creates that directory (owned by root, mode 0700) when it starts the VM and passes it to OpenGLide in the `OPENGLIDE_DIR` environment variable. The directory stays after the VM stops, so the log of the last run can be read, and goes with the next reboot of the node. To change a setting, edit `OpenGLid.ini` there while the VM is stopped; after a reboot the file comes back with the defaults. Up to `wsh-openglide` 0.1 and qemu-server `9.2.20+wsh1` the files were written into `/` of the node, QEMU's working directory once it has started in the background, and OpenGLide ended QEMU (exit status 0, so the VM just stopped) when it couldn't write there. It no longer does: without a writable directory it runs with its defaults and no log.
 
 qemu-3dfx itself reads `glide.cfg` and `mesagl.cfg` from QEMU's working directory, which is `/` under PVE, so they don't apply to VMs PVE starts.
 
-The package's CI tests need no Windows and no game. `packages/wsh-openglide/test.sh` (in wsh-pve) renders a Glide 2 and a Glide 3 scene through the installed libraries under Xvfb with Mesa's software renderers and checks the pixels, also from a working directory it can't write to, then renders them again offscreen with no X server. `e2e/3dfx/test.sh` boots two small Linux guests in `qemu-system-x86_64-3dfx` with an SDL display on Xvfb. The first draws the same scene through qemu-3dfx's Linux guest wrapper for Glide, with QEMU started the way PVE starts it, and the test checks that OpenGLide's files land in `OPENGLIDE_DIR`. The second draws it through the Mesa/OpenGL pass-through: qemu-3dfx has no Linux guest wrapper for Mesa, so the test's guest program talks to the pass-through device directly, the way the Windows `OPENGL32.DLL` does. Each guest reads its frame back through the pass-through, and the test checks those pixels and the VM's window. With `GLIDE_DISPLAY=vnc` the Glide guest runs headless (`-display none` and VNC, no X server installed), and the test checks the frame in QEMU's screendump of the console and that the console goes back to the VGA afterwards. A pull request that changes the qemu-3dfx code, the port or the package runs the headless and the SDL run against a binary built from it (`qemu-3dfx-check.yml`).
+The package's CI tests need no Windows and no game. `packages/wsh-openglide/test.sh` (in wsh-pve) renders a Glide 2 and a Glide 3 scene through the installed libraries under Xvfb with Mesa's software renderers and checks the pixels, also from a working directory it can't write to, then renders them again offscreen with no X server. `e2e/3dfx/test.sh` boots two small Linux guests in `qemu-system-x86_64-3dfx` with an SDL display on Xvfb. The first draws the same scene through qemu-3dfx's Linux guest wrapper for Glide, with QEMU started the way PVE starts it, and the test checks that OpenGLide's files land in `OPENGLIDE_DIR`. The second draws it through the Mesa/OpenGL pass-through: qemu-3dfx has no Linux guest wrapper for Mesa, so the test's guest program talks to the pass-through device directly, the way the Windows `OPENGL32.DLL` does. Each guest reads its frame back through the pass-through, and the test checks those pixels and the VM's window. With `GLIDE_DISPLAY=vnc` both guests run headless (`-display none` and VNC, no X server installed), the Mesa guest a second time with a 4x multisampled pixel format, and the test checks the frame in QEMU's screendump of the console and that the console goes back to the VGA afterwards; there the Glide guest also draws into its front buffer without a swap and sets a gamma, the Mesa guest sets a gamma ramp, and the test checks the console's colour after each. A pull request that changes the qemu-3dfx code, the port or the package runs the headless and the SDL run against a binary built from it (`qemu-3dfx-check.yml`).
 
 On a host whose X server offers a 32-bit ARGB visual (Xvfb with its Composite extension, for example), the first Glide frame can end QEMU with an X `BadMatch` error. OpenGLide picks that visual for its GLX context, while SDL's window uses the 24-bit default.
+
+## Testing in a Windows 98 guest
+
+The tests above need no Windows. `e2e/3dfx/win98-test.sh` (in wsh-pve) goes one step further: it boots a real Windows 98 SE in `qemu-system-x86_64-3dfx` and has our own programs draw the same test scene through qemu-3dfx's Windows guest wrappers, Glide 2 (`GLIDE2X.DLL`), Glide 3 (`GLIDE3X.DLL`) and OpenGL (`OPENGL32.DLL` next to the program), as a game would.
+
+Windows is not part of wsh-pve and never will be: the operator brings an installed Windows 98 SE disk of their own. It has to be a raw image with one FAT32 partition, installed in a PVE VM with `cpu: pentium3`, 512 MB, `scsihw: lsi` with the disk on `scsi0`, `vga: std,mesa=1`, an `rtl8139` NIC, AC97 audio and the tablet (the defaults), and log on to the desktop without a password prompt. The test starts QEMU with exactly that device set, at PVE's PCI addresses: Windows 98 identifies a PCI device by its slot, and a device it hasn't seen there starts the new-hardware wizard, which waits for someone to answer it. The disk is only read. Each run works on a copy, onto which mtools writes:
+
+- the guest drivers of the binary under test (the `qemu-3dfx-drivers-<shortsha>` release, the revision `--version` names, downloaded with `gh release download`): `FXMEMMAP.VXD`, `GLIDE.DLL`, `GLIDE2X.DLL` and `GLIDE3X.DLL` into `C:\WINDOWS\SYSTEM`, `GLIDE2X.OVL` into `C:\WINDOWS`, `OPENGL32.DLL` into `C:\WIN3DFX`;
+- the test programs, built with Debian's mingw-w64 without its C runtime (Windows 98's `MSVCRT.DLL` is too old for it): `glidetst.exe` (Glide 2, or Glide 3 with `glide3`), `gltest.exe` (OpenGL: it switches the display to 640x480 and makes a WGL context, as a full-screen game does) and `w3drun.exe`, which goes into the Start menu's StartUp folder, runs the programs from a list once the desktop is up and powers Windows off at the end;
+- the FAT's clean-shutdown flag, so that a disk taken from a VM that was still running doesn't start ScanDisk.
+
+The guest's clock starts an hour after the registry files' time (when Windows last ran), not at the host's time: across a change to or from daylight saving time Windows 98 stops at a "New clock settings" dialog.
+
+Each program draws the scene, reads it back through the pass-through and checks it, and reports on COM1, which QEMU writes to a file. When a frame is up, the harness checks the probes in QEMU's screendump of the console (headless, `-display none` and VNC, as PVE runs the VM), and after the program closes its 3D window, that the console shows the Windows desktop again. A test passes when all three hold. The screendumps show Windows, so they stay on the machine that ran the test; the output directory, which a CI run uploads, has only our own text: the summary (verdicts, probe values, frame rates and qemu-3dfx's read-back times), the serial log, QEMU's and OpenGLide's logs.
+
+```bash
+e2e/3dfx/win98-test.sh --template win98se.raw --out out --private private        # the published binary
+e2e/3dfx/win98-test.sh --template win98se.raw --out out --private private \
+  --qemu-bin build/qemu-3dfx-bin/qemu-system-x86_64-3dfx                          # one built by check-qemu-3dfx-build.sh --out
+e2e/3dfx/win98-test.sh ... -- --display sdl --tests glide2,opengl --accel tcg      # harness options after --
+```
+
+By default it runs the tests the binary can show headless (Glide with the stage 1 offscreen display, OpenGL too once the binary has the Mesa offscreen display). The `3dfx in Windows 98` workflow runs it by hand and weekly on the self-hosted lab runner, never for a pull request; the disk's path is its `template` input or the `WSH_WIN98_TEMPLATE` repository variable, and the run is skipped without one.
+
+What it found (November 2026, KVM unless noted, llvmpipe, 640x480, 2000 frames of the test scene):
+
+| Binary | Glide 2 | Glide 3 | OpenGL |
+| --- | --- | --- | --- |
+| pve-qemu-kvm 11.1.3-3+wsh5 (published, stage 1) | passes, 1400-1650 frames/s | passes, 1480-1690 frames/s | QEMU ends (a segmentation fault, no message) as soon as the guest loads `OPENGL32.DLL` without an SDL window |
+| built with the Mesa offscreen display (stage 1b) | passes | passes | passes, 1890-2540 frames/s |
+
+Windows reaches its desktop in 13-17 s under KVM and 26 s under TCG; the whole run with all three tests takes 50-70 s (KVM) or 83 s (TCG). qemu-3dfx reads a Glide frame back in 0.14 ms and an OpenGL frame in 0.3-0.4 ms, and the console has it 0.02 ms later; the desktop is back 0.6 s after the 3D window closes.
+
+:::caution
+The guest drivers of the `qemu-3dfx-drivers` releases are built for x86-64-v2 (`-march=x86-64-v2`): `GLIDE2X.DLL`, `GLIDE3X.DLL` and `OPENGL32.DLL` use SSE2 to SSE4.2, SSSE3 and POPCNT. Under KVM that doesn't matter (the host's CPU runs them whatever the guest's CPU model says), but without KVM (TCG) a `cpu: pentium3` guest stops at the first Glide call with "This program has performed an illegal operation". There the guest CPU needs those extensions, e.g. `pentium3,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt` (Windows 98 doesn't notice); the test adds them itself under TCG.
+:::
+
+With an SDL window on Xvfb (`--display sdl`) the frame is scaled into the window, which keeps the desktop's size (1024x768); Xvfb's screen has to be larger than that, or SDL makes the window smaller and crops the frame. There each test passed on its own, but in one VM the second or third 3D window ended QEMU with an X error (`BadRequest`, `BadLength`); not looked into further.
 
 ## How the host binary is built
 
@@ -93,6 +140,8 @@ Transfer the files into the guest and install the ones for your Windows version:
 - Copy `GLIDE.DLL`, `GLIDE2X.DLL`, and `GLIDE3X.DLL` to `%SystemRoot%\system32`
 - Run `INSTDRV.EXE` (requires Administrator privileges)
 - Copy `OPENGL32.DLL` into each game's installation folder
+
+The wrappers need a CPU with SSE2 to SSE4.2 and POPCNT. With KVM (the default) the host's CPU provides them; a VM without KVM needs them in its CPU model (see the caution under [Testing in a Windows 98 guest](#testing-in-a-windows-98-guest)).
 
 ## Further reading
 

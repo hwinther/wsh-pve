@@ -38,8 +38,17 @@ qemu-3dfx's `glidedso.c`, QEMU with `-display none -vnc`, no X server installed;
 QEMU's screendump (8 probes, 640x480) and the console back at the VGA's 720x400 afterwards. TCG,
 Mesa llvmpipe: a frame read takes about 0.2 ms at 640x480.
 
+## Later additions
+
+With the MESA GL pass-through's offscreen path ([qemu-3dfx-mesa-offscreen-egl.md](qemu-3dfx-mesa-offscreen-egl.md)),
+`fxdisp.c` got one instance per device with a read callback; Glide gamma offscreen (OpenGLide's EGL
+platform keeps the ramp of `grGammaCorrectionValue`/`grLoadGammaTable` and applies it in
+`getOffscreenFrame()`); and front-buffer drawing whose last call is followed by no other is read
+50 ms later on the vCPU thread that made it (`async_run_on_cpu()` from a main-loop timer), where it
+used to wait for the next Glide call.
+
 ## Not done
 
-Gamma (OpenGLide sets it on the X server with XF86VidMode) and MSAA offscreen; the Mesa pass-through
-(`mglcntx_linux.c` still needs the SDL window); Windows and macOS (only OpenGLide's Linux platform
-has the EGL path).
+MSAA offscreen (`ContextMSAA`: the framebuffer object's buffers are single-sampled; multisampled
+ones would need a resolve before every LFB read and swap); Windows and macOS (only OpenGLide's
+Linux platform has the EGL path).

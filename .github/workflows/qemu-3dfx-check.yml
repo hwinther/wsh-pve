@@ -3,11 +3,12 @@ name: qemu-3dfx build check
 # For a PR that changes what goes into pve-qemu-kvm's 3dfx binary (the qemu-3dfx pin, our port of
 # its QEMU patch, pve-qemu or pve-qemu.patch, or the scripts that check them): does the port still
 # apply, and does qemu-system-x86_64 with qemu-3dfx build (scripts/check-qemu-3dfx-build.sh, a few
-# minutes instead of the full package build), and does the Glide pass-through work with that binary
-# (e2e/3dfx/test.sh with this checkout's wsh-openglide: headless with VNC and no X server, where
-# qemu-3dfx renders offscreen into the VM's console, and with an SDL window on Xvfb). The promotion
-# PR from promote-qemu-3dfx.yml gets the same check as a hand-made one. This check is the PR's; the package build itself never fails on
-# 3dfx (it publishes without the binary and build-deb.yml opens the optional-extras issue).
+# minutes instead of the full package build), and do the Glide and MESA GL pass-through work with
+# that binary (e2e/3dfx/test.sh with this checkout's wsh-openglide: headless with VNC and no X
+# server, where qemu-3dfx renders both offscreen into the VM's console, and with an SDL window on
+# Xvfb). The promotion PR from promote-qemu-3dfx.yml gets the same check as a hand-made one. This
+# check is the PR's; the package build itself never fails on 3dfx (it publishes without the binary
+# and build-deb.yml opens the optional-extras issue).
 
 on:
   workflow_dispatch:
@@ -94,13 +95,16 @@ jobs:
           echo "deb=wsh-openglide_${WSH_OPENGLIDE_VERSION}_amd64.deb" | tee -a "$GITHUB_OUTPUT"
           echo "rev=$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD)" | tee -a "$GITHUB_OUTPUT"
 
+      # Glide, MESA GL and MESA GL with a multisampled pixel format, each rendered offscreen into the
+      # console and checked in its screendump (with the guests' front-buffer and gamma phases)
       - name: Pass-through, headless (VNC, no X server)
         env:
           DEB: ${{ steps.openglide.outputs.deb }}
           QEMU3DFX_REV: ${{ steps.openglide.outputs.rev }}
+          GUESTS: glide mesa mesa-msaa mesa-noegl
         run: |
           mkdir -p "$RUNNER_TEMP/e2e-vnc"
-          docker run --rm -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx -e GLIDE_DISPLAY=vnc \
+          docker run --rm -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx -e GLIDE_DISPLAY=vnc -e GUESTS \
             -e GLIDE_GUEST_BENCH=300 -v "$PWD:/src:ro" -v "$PWD/build/wsh-openglide:/deb:ro" \
             -v "$RUNNER_TEMP/qemu-3dfx-bin:/qbin:ro" -v "$RUNNER_TEMP/e2e-vnc:/out" \
             debian:trixie sh /src/e2e/3dfx/test.sh "/deb/$DEB" /out
