@@ -1,0 +1,164 @@
+OpenGLide's files in OPENGLIDE_DIR, and no exit when they can't be written
+
+OpenGLide keeps OpenGLid.ini, OpenGLid.log and OpenGLid.err in the working directory of the
+process that loads it, and the library's constructor called exit(0) when the log couldn't be
+created there. Loaded by qemu-3dfx, that process is QEMU: a daemonized QEMU (as Proxmox VE starts
+it) runs in /, and in a directory it can't write to the VM ended at the guest's first Glide call.
+
+- OPENGLIDE_DIR, when set, names the directory for the three files (default: as before).
+- No exit(0) when the log can't be created: logging is skipped, the defaults are used.
+- GetOptions()/FindConfig() no longer use a NULL FILE * for an ini that can't be created or read,
+  and an ini of another version that can't be removed no longer recurses forever.
+
+For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins.
+---
+diff --git a/openglide/GLutil.cpp b/openglide/GLutil.cpp
+index 8cef475..f4bfa5f 100644
+--- a/openglide/GLutil.cpp
++++ b/openglide/GLutil.cpp
+@@ -34,12 +34,30 @@ extern unsigned long    NumberOfErrors;
+ 
+ // Functions
+ 
++// The path of one of OpenGLide's files (INIFILE, GLIDEFILE, ERRORFILE): in the directory that
++// OPENGLIDE_DIR names, or in the working directory (the name alone) when it isn't set. A process
++// that loads the library, like QEMU, may run in a directory it can't or shouldn't write to.
++const char * OGLFilePath( const char *name )
++{
++    static char Paths[ 4 ][ 512 ];
++    static int Next;
++    const char *Dir = getenv( "OPENGLIDE_DIR" );
++
++    if ( !Dir || !*Dir )
++    {
++        return name;
++    }
++    char *Path = Paths[ Next++ % 4 ];
++    snprintf( Path, sizeof( Paths[ 0 ] ), "%s/%s", Dir, name );
++    return Path;
++}
++
+ VARARGDECL(void) GlideMsg( const char *szString, ... )
+ {
+     va_list( Arg );
+     va_start( Arg, szString );
+ 
+-    FILE *fHandle = fopen( GLIDEFILE, "at" );
++    FILE *fHandle = fopen( OGLFilePath( GLIDEFILE ), "at" );
+     if ( !fHandle )
+     {
+         return;
+@@ -61,7 +79,7 @@ VARARGDECL(void) Error( const char *szString, ... )
+         GenerateErrorFile( );
+     }
+ 
+-    FILE *fHandle = fopen( ERRORFILE, "at" );
++    FILE *fHandle = fopen( OGLFilePath( ERRORFILE ), "at" );
+     if ( ! fHandle )
+     {
+         return;
+@@ -232,6 +250,10 @@ static char * FindConfig( const char *IniFile, const char *IniConfig )
+ 
+     Find = NULL;
+     file = fopen( IniFile, "r" );
++    if ( !file )
++    {
++        return NULL;
++    }
+ 
+     while ( fgets( Buffer1, 255, file ) != NULL )
+     {
+@@ -258,7 +280,7 @@ void GetOptions( void )
+ {
+     FILE        * IniFile;
+     char        * Pointer;
+-    char        Path[ 256 ];
++    char        Path[ 512 ];
+ 
+     UserConfig.FogEnable                    = true;
+     UserConfig.InitFullScreen               = false;
+@@ -290,13 +312,19 @@ void GetOptions( void )
+     UserConfig.NoSplash                     = true;
+     UserConfig.ShamelessPlug                = false;
+ 
+-    strcpy( Path, INIFILE );
++    snprintf( Path, sizeof( Path ), "%s", OGLFilePath( INIFILE ) );
+ 
+     GlideMsg( "Configuration file is %s\n", Path );
+     
+     if ( access( Path, 0 ) == -1 )
+     {
+         IniFile = fopen( Path, "w" );
++        if ( !IniFile )
++        {
++            // Not writable: the defaults above stay in use
++            GlideMsg( "Cannot create %s, using the defaults\n", Path );
++            return;
++        }
+         fprintf( IniFile, "Configuration File for OpenGLide\n\n" );
+         fprintf( IniFile, "Info:\n" );
+         fprintf( IniFile, "Priority goes from 0(HIGH) to 5(IDLE)\n" );
+@@ -372,8 +400,11 @@ void GetOptions( void )
+         }
+         else
+         {
+-            remove( Path );
+-            GetOptions( );
++            // Another version's file: replace it, unless it can't be removed (no endless recursion)
++            if ( remove( Path ) == 0 )
++            {
++                GetOptions( );
++            }
+         }
+     }
+ }
+@@ -532,8 +563,8 @@ bool ClearAndGenerateLogFile( void )
+     FILE    * GlideFile;
+     char    tmpbuf[ 128 ];
+ 
+-    remove( ERRORFILE );
+-    GlideFile = fopen( GLIDEFILE, "w" );
++    remove( OGLFilePath( ERRORFILE ) );
++    GlideFile = fopen( OGLFilePath( GLIDEFILE ), "w" );
+     if ( ! GlideFile )
+     {
+         return false;
+@@ -579,7 +610,7 @@ bool GenerateErrorFile( void )
+     char    tmpbuf[ 128 ];
+     FILE    * ErrorFile;
+ 
+-    ErrorFile = fopen( ERRORFILE, "w");
++    ErrorFile = fopen( OGLFilePath( ERRORFILE ), "w");
+     if( !ErrorFile )
+     {
+         return false;
+diff --git a/openglide/GlOgl.h b/openglide/GlOgl.h
+index 1185a91..1f6eb7e 100644
+--- a/openglide/GlOgl.h
++++ b/openglide/GlOgl.h
+@@ -323,6 +323,7 @@ void CloseLogFile( void );
+ bool InitWindow( FxU hWnd );
+ void InitOpenGL( void );
+ void GetOptions( void );
++const char * OGLFilePath( const char *name );
+ void InitMainVariables( void );
+ 
+ void annotate_last(void);
+diff --git a/openglide/platform/linux/library.cpp b/openglide/platform/linux/library.cpp
+index ea02e63..d2dd746 100644
+--- a/openglide/platform/linux/library.cpp
++++ b/openglide/platform/linux/library.cpp
+@@ -19,10 +19,9 @@ class InitLibrary
+ public:
+     InitLibrary( )
+     {
+-        if ( !ClearAndGenerateLogFile( ) )
+-        {
+-            exit( 0 );
+-        }
++        // Without a writable log the library still works (GlideMsg() and Error() skip a file they
++        // can't open). Ending the process here ended QEMU, and the VM with it, with status 0.
++        ClearAndGenerateLogFile( );
+         InitMainVariables( );            
+     }
+     ~InitLibrary( )
