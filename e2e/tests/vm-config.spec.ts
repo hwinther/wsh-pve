@@ -1,8 +1,6 @@
 import { expect, test } from '@playwright/test'
 
 import {
-  hasLegacyBiosLayout,
-  hasVgaRetrace,
   NODE,
   type Pve,
   pveApi,
@@ -87,7 +85,6 @@ test('x86: sb16 + adlib + pcspk combo device', async () => {
 // machine: legacy-bios-layout=1 (Machine > Advanced, "Legacy BIOS memory layout"): for DOS, the NICs
 // get no option ROM and the APIC no vapic ROM, so EMM386 finds 14K more upper memory (the DOS guide).
 test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => {
-  test.fail(!(await hasLegacyBiosLayout()), 'the installed qemu-server has no legacy-bios-layout yet')
   const vmid = await createVm({
     machine: 'pc,legacy-bios-layout=1',
     memory: 32,
@@ -116,7 +113,6 @@ test('x86: legacy-bios-layout drops the NIC and vapic option ROMs', async () => 
 // device of its own. Wolfenstein 3D hangs on a black screen without it (the DOS guide).
 test.describe('x86: vga retrace=precise', () => {
   test('std and cirrus get -vga none,retrace=precise next to their device', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     for (const [vga, device] of [
       ['std', 'VGA'],
       ['cirrus', 'cirrus-vga'],
@@ -139,14 +135,12 @@ test.describe('x86: vga retrace=precise', () => {
   })
 
   test('retrace=dumb, QEMU default, adds no -vga', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     const vmid = await createVm({ memory: 32, name: 'dos-retrace-dumb', ostype: 'other', vga: 'std,retrace=dumb' })
     expect(await vmConfFile(vmid)).toContain('vga: std,retrace=dumb')
     expect(await showcmd(vmid)).not.toMatch(/^ {2}-vga /m)
   })
 
   test('refused without a VGA core and off x86', async () => {
-    test.fail(!(await hasVgaRetrace()), 'the installed qemu-server has no vga retrace yet')
     const vmid = await createVm({ memory: 32, name: 'dos-retrace-refused', ostype: 'other', serial0: 'socket' })
     const config = `/nodes/${NODE}/qemu/${vmid}/config`
     expect((await pve.refused('PUT', config, { vga: 'serial0,retrace=precise' })).message).toContain(
