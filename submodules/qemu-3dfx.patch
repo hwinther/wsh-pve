@@ -1,11 +1,11 @@
 diff --git a/qemu-0/hw/3dfx/fxdisp.c b/qemu-0/hw/3dfx/fxdisp.c
 new file mode 100644
-index 0000000..1a36205
+index 0000000..93f1193
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.c
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,312 @@
 +/*
-+ * QEMU 3Dfx Glide Pass-Through: offscreen display
++ * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display
 + *
 + *  Copyright (c) 2026 WsHosting ENK
 + *
@@ -26,49 +26,57 @@ index 0000000..1a36205
 +
 +/*
 + * Without an SDL window (-display vnc, none, egl-headless, dbus, gtk, or sdl,gl=on), the Glide
-+ * library renders offscreen (wsh-openglide's EGL platform: setConfig(WRAPPER_FLAG_OFFSCREEN)) and
-+ * every frame is read back into the first graphic console's own surface, which VNC (PVE's noVNC
-+ * console), screendump and any other display then show like the VGA's output. While the Glide
-+ * window is open and 3D output is selected, the console is in pass-through (the VGA's updates are
-+ * skipped, ui/console.c); when it closes, the VGA redraws.
++ * library (wsh-openglide's EGL platform: setConfig(WRAPPER_FLAG_OFFSCREEN)) and the MESA GL
++ * pass-through (hw/mesa/mglcntx_egl.c) render offscreen, and every frame is read back into the
++ * first graphic console's own surface, which VNC (PVE's noVNC console), screendump and any other
++ * display then show like the VGA's output. While a Glide window or a GL context is open and its 3D
++ * output is selected, the console is in pass-through (the VGA's updates are skipped,
++ * ui/console.c); when it closes or its 3D output is switched off, the VGA redraws.
 + *
-+ * The frame is read on the thread that drives the Glide library (the vCPU's, in the glidept MMIO
-+ * handler, with the BQL held): after every grBufferSwap, and after any other Glide call when no
-+ * frame was read for FXDISP_STALE_MS (front-buffer rendering, LFB writes). A bottom half on the
-+ * main loop copies it into the console surface (flipping it: OpenGL's rows are bottom up) and
-+ * marks the console updated. QEMU_3DFX_OFFSCREEN=1 in the environment renders offscreen even with
-+ * an SDL window (the frames then show in it as the console's 2D surface).
++ * Each user (Glide, MESA GL) has an FxDisp with a read function. The frame is read on the thread
++ * that drives the GL context (the vCPU's, in the pass-through's MMIO handler, with the BQL held):
++ * after every swap, and, where the user asks for it (Glide's front-buffer rendering and LFB
++ * writes), after any other call when no frame was read for FXDISP_STALE_MS. A frame drawn without
++ * a swap and followed by no further call is read FXDISP_STALE_MS later on the same vCPU thread
++ * (async_run_on_cpu from a main-loop timer). A bottom half on the main loop copies the frame into
++ * the console surface (flipping it, OpenGL's rows are bottom up, and applying the guest's gamma
++ * ramp when it set one) and marks the console updated. QEMU_3DFX_OFFSCREEN=1 in the environment
++ * renders offscreen even with an SDL window (the frames then show in it as the console's 2D
++ * surface).
 + */
 +
 +#include "qemu/osdep.h"
 +#include "qemu/main-loop.h"
 +#include "qemu/timer.h"
 +#include "qapi/qapi-commands-ui.h"
++#include "hw/core/cpu.h"
 +#include "ui/console.h"
 +
-+#include "glide2x_impl.h"
 +#include "fxdisp.h"
 +
 +#define FXDISP_STALE_MS 50
 +
-+static struct {
-+    int offscreen;          /* chosen for the open (or last) Glide window */
-+    int open;               /* an offscreen Glide window is open */
-+    int shown;              /* 3D output selected (grSstControl, GR_PASSTHRU) */
++struct FxDisp {
++    const char *tag;        /* "glidept", "mesapt": QEMU's messages */
++    FxDispRead read;
++    void *opaque;
++    int open;               /* an offscreen window (Glide) or context (MESA GL) is open */
++    int shown;              /* 3D output selected */
 +    int ready;              /* a frame in pix waits for the bottom half */
++    int dirty;              /* calls since the last read, none of them a swap */
++    int stale_armed;        /* the stale timer is pending */
++    int gamma;              /* lut is not the identity */
 +    int w, h;
 +    uint8_t *pix;           /* w x h, 4 bytes per pixel (x8r8g8b8), rows bottom up */
++    uint8_t lut[3][256];    /* r, g, b */
 +    QemuConsole *con;
 +    DisplaySurface *surface; /* ours, while the console has it */
 +    QEMUBH *bh;
++    QEMUTimer *stale;
++    CPUState *cpu;          /* the vCPU whose thread made the last call */
 +    int64_t last_read, opened, scheduled;
-+    uint64_t swaps, reads, read_ns, shown_frames, bh_ns;
-+} fx;
-+
-+int fxdisp_offscreen(void)
-+{
-+    return fx.offscreen;
-+}
++    uint64_t swaps, reads, read_ns, shown_frames, bh_ns, stale_reads;
++};
 +
 +/* Offscreen unless the display is SDL without GL (the window qemu-3dfx's SDL code renders into,
 + * where anything else would end QEMU in sdl_display_valid()) */
@@ -80,129 +88,242 @@ index 0000000..1a36205
 +        (!o->has_gl || (o->gl == DISPLAY_GL_MODE_OFF));
 +
 +    qapi_free_DisplayOptions(o);
-+    fx.offscreen = (!sdl || (env && !strcmp(env, "1")))? 1:0;
-+    return fx.offscreen;
++    return (!sdl || (env && !strcmp(env, "1")))? 1:0;
 +}
 +
 +static void fxdisp_bh(void *opaque)
 +{
++    FxDisp *fx = opaque;
 +    DisplaySurface *ds;
 +    int stride;
 +
-+    if (!fx.open || !fx.ready || !fx.shown || !fx.con)
++    if (!fx->open || !fx->ready || !fx->shown || !fx->con)
 +        return;
-+    fx.ready = 0;
-+    fx.bh_ns += get_clock() - fx.scheduled;
++    fx->ready = 0;
++    fx->bh_ns += get_clock() - fx->scheduled;
 +    /* A surface of our own: the VGA's may be its video memory */
-+    if (!fx.surface || (qemu_console_surface(fx.con) != fx.surface)) {
-+        fx.surface = qemu_create_displaysurface(fx.w, fx.h);
-+        qemu_console_set_surface(fx.con, fx.surface);
++    if (!fx->surface || (qemu_console_surface(fx->con) != fx->surface)) {
++        fx->surface = qemu_create_displaysurface(fx->w, fx->h);
++        qemu_console_set_surface(fx->con, fx->surface);
 +    }
-+    ds = fx.surface;
++    ds = fx->surface;
 +    stride = surface_stride(ds);
-+    for (int y = 0; y < fx.h; y++)
-+        memcpy((uint8_t *)surface_data(ds) + (size_t)y * stride,
-+            fx.pix + (size_t)(fx.h - 1 - y) * fx.w * 4, fx.w * 4);
-+    qemu_console_update(fx.con, 0, 0, fx.w, fx.h);
-+    fx.shown_frames++;
++    for (int y = 0; y < fx->h; y++) {
++        const uint8_t *src = fx->pix + (size_t)(fx->h - 1 - y) * fx->w * 4;
++        uint8_t *dst = (uint8_t *)surface_data(ds) + (size_t)y * stride;
++        if (!fx->gamma) {
++            memcpy(dst, src, fx->w * 4);
++            continue;
++        }
++        /* x8r8g8b8 in host order: B G R X in memory on a little-endian host */
++        for (int x = 0; x < fx->w * 4; x += 4) {
++            dst[x] = fx->lut[2][src[x]];
++            dst[x + 1] = fx->lut[1][src[x + 1]];
++            dst[x + 2] = fx->lut[0][src[x + 2]];
++            dst[x + 3] = src[x + 3];
++        }
++    }
++    qemu_console_update(fx->con, 0, 0, fx->w, fx->h);
++    fx->shown_frames++;
 +}
 +
-+void fxdisp_open(int w, int h)
++static void fxdisp_read(FxDisp *fx)
++{
++    int64_t t;
++
++    fx->dirty = 0;
++    fx->last_read = get_clock();
++    if (!fx->con || !fx->shown)
++        return;
++    t = get_clock();
++    if (fx->read(fx->opaque, fx->pix, fx->w, fx->h, fx->w * 4)) {
++        fx->ready = 1;
++        fx->scheduled = get_clock();
++        qemu_bh_schedule(fx->bh);
++    }
++    fx->read_ns += get_clock() - t;
++    fx->reads++;
++}
++
++/* On the vCPU thread that made the last call (its GL context is current there), BQL held */
++static void fxdisp_stale_work(CPUState *cpu, run_on_cpu_data data)
++{
++    FxDisp *fx = data.host_ptr;
++
++    if (fx->open && fx->dirty && (fx->cpu == cpu)) {
++        fx->stale_reads++;
++        fxdisp_read(fx);
++    }
++}
++
++/* Main loop: a frame drawn without a swap, and no call since that read it */
++static void fxdisp_stale_timer(void *opaque)
++{
++    FxDisp *fx = opaque;
++
++    fx->stale_armed = 0;
++    if (fx->open && fx->dirty && fx->cpu)
++        async_run_on_cpu(fx->cpu, fxdisp_stale_work, RUN_ON_CPU_HOST_PTR(fx));
++}
++
++FxDisp *fxdisp_new(const char *tag, FxDispRead read, void *opaque)
++{
++    FxDisp *fx = g_new0(FxDisp, 1);
++
++    fx->tag = tag;
++    fx->read = read;
++    fx->opaque = opaque;
++    fx->bh = qemu_bh_new(fxdisp_bh, fx);
++    fx->stale = timer_new_ms(QEMU_CLOCK_REALTIME, fxdisp_stale_timer, fx);
++    fxdisp_gamma(fx, NULL, NULL, NULL);
++    return fx;
++}
++
++int fxdisp_is_open(FxDisp *fx)
++{
++    return fx && fx->open;
++}
++
++int fxdisp_shown(FxDisp *fx)
++{
++    return fx && fx->open && fx->shown;
++}
++
++/* An offscreen window w x h; shown: its frames replace the VGA's at once, else from
++ * fxdisp_renderer(fx, 1) on */
++void fxdisp_open(FxDisp *fx, int w, int h, int shown)
 +{
 +    QemuConsole *con = qemu_console_lookup_by_index(0);
 +
-+    fx.w = w;
-+    fx.h = h;
-+    g_free(fx.pix);
-+    fx.pix = g_malloc0((size_t)w * h * 4);
-+    fx.con = (con && qemu_console_is_graphic(con))? con:NULL;
-+    fx.surface = NULL;
-+    if (!fx.bh)
-+        fx.bh = qemu_bh_new(fxdisp_bh, NULL);
-+    fx.open = 1;
-+    fx.shown = 1;
-+    fx.ready = 0;
-+    fx.swaps = fx.reads = fx.read_ns = fx.shown_frames = fx.bh_ns = 0;
-+    fx.opened = fx.last_read = get_clock();
-+    if (fx.con)
-+        graphic_hw_passthrough(fx.con, true);
-+    fprintf(stderr, "glidept: offscreen %dx%d, frames to %s\n", w, h,
-+        (fx.con)? "the graphic console":"nowhere (no graphic console)");
++    fx->w = w;
++    fx->h = h;
++    g_free(fx->pix);
++    fx->pix = g_malloc0((size_t)w * h * 4);
++    fx->con = (con && qemu_console_is_graphic(con))? con:NULL;
++    fx->surface = NULL;
++    fx->open = 1;
++    fx->shown = !!shown;
++    fx->ready = 0;
++    fx->dirty = 0;
++    fx->cpu = NULL;
++    fx->swaps = fx->reads = fx->read_ns = fx->shown_frames = fx->bh_ns = fx->stale_reads = 0;
++    fx->opened = fx->last_read = get_clock();
++    if (fx->con && fx->shown)
++        graphic_hw_passthrough(fx->con, true);
++    fprintf(stderr, "%s: offscreen %dx%d, frames to %s\n", fx->tag, w, h,
++        (fx->con)? "the graphic console":"nowhere (no graphic console)");
 +}
 +
-+/* After each Glide call (vCPU thread, BQL held): read the frame after a swap, or when the
-+ * last read is older than FXDISP_STALE_MS */
-+void fxdisp_frame(int swap)
++/* A new size for an open window, e.g. a resized pbuffer (the next frame shows it) */
++void fxdisp_resize(FxDisp *fx, int w, int h)
 +{
-+    int64_t now, t;
++    if (!fx->open || ((fx->w == w) && (fx->h == h)))
++        return;
++    fx->w = w;
++    fx->h = h;
++    fx->ready = 0;
++    g_free(fx->pix);
++    fx->pix = g_malloc0((size_t)w * h * 4);
++    fx->surface = NULL;
++    fprintf(stderr, "%s: offscreen now %dx%d\n", fx->tag, w, h);
++}
 +
-+    if (!fx.open)
++/* After a call (vCPU thread, BQL held): read the frame after a swap; with stale set, also when the
++ * last read is older than FXDISP_STALE_MS, and FXDISP_STALE_MS after the last call otherwise */
++void fxdisp_frame(FxDisp *fx, int swap, int stale)
++{
++    int64_t now;
++
++    if (!fx || !fx->open)
++        return;
++    fx->cpu = current_cpu;
++    if (swap) {
++        fx->swaps++;
++        fxdisp_read(fx);
++        return;
++    }
++    if (!stale)
 +        return;
 +    now = get_clock();
-+    if (swap)
-+        fx.swaps++;
-+    else if ((now - fx.last_read) < (FXDISP_STALE_MS * SCALE_MS))
++    if ((now - fx->last_read) >= (FXDISP_STALE_MS * SCALE_MS)) {
++        fxdisp_read(fx);
 +        return;
-+    fx.last_read = now;
-+    if (!fx.con || !fx.shown || !glide_offscreen_frame)
-+        return;
-+    t = get_clock();
-+    if (glide_offscreen_frame(fx.pix, fx.w, fx.h, fx.w * 4)) {
-+        fx.ready = 1;
-+        fx.scheduled = get_clock();
-+        qemu_bh_schedule(fx.bh);
 +    }
-+    fx.read_ns += get_clock() - t;
-+    fx.reads++;
++    fx->dirty = 1;
++    if (!fx->stale_armed) {
++        fx->stale_armed = 1;
++        timer_mod(fx->stale, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + FXDISP_STALE_MS);
++    }
 +}
 +
-+/* 3D output on (the Glide frames) or off (the VGA's), as SDL's glide_renderer_stat() */
-+void fxdisp_renderer(int activate)
++/* 3D output on (the frames) or off (the VGA's), as SDL's glide_renderer_stat() */
++void fxdisp_renderer(FxDisp *fx, int activate)
 +{
-+    if (!fx.open || !fx.con || (fx.shown == !!activate))
++    if (!fx || !fx->open || !fx->con || (fx->shown == !!activate))
 +        return;
-+    fx.shown = !!activate;
-+    graphic_hw_passthrough(fx.con, fx.shown);
-+    if (fx.shown)
-+        fx.last_read = 0;
-+    else
-+        qemu_console_hw_invalidate(fx.con);
++    fx->shown = !!activate;
++    graphic_hw_passthrough(fx->con, fx->shown);
++    if (fx->shown)
++        fx->last_read = 0;
++    else {
++        fx->ready = 0;
++        qemu_console_hw_invalidate(fx->con);
++    }
 +}
 +
-+void fxdisp_close(void)
++/* The guest's gamma ramp (16 bits per entry, as WGL's and Glide's), applied when a frame is
++ * copied into the console; NULL for the identity */
++void fxdisp_gamma(FxDisp *fx, const uint16_t *r, const uint16_t *g, const uint16_t *b)
++{
++    const uint16_t *ramp[3] = { r, g, b };
++
++    fx->gamma = 0;
++    for (int c = 0; c < 3; c++) {
++        for (int i = 0; i < 256; i++) {
++            fx->lut[c][i] = (ramp[c])? (ramp[c][i] >> 8):i;
++            fx->gamma |= (fx->lut[c][i] != i);
++        }
++    }
++}
++
++void fxdisp_close(FxDisp *fx)
 +{
 +    double secs;
 +
-+    if (!fx.open)
++    if (!fx || !fx->open)
 +        return;
-+    secs = (get_clock() - fx.opened) / 1e9;
-+    fprintf(stderr, "glidept: offscreen closed after %.1f s: %" PRIu64 " swaps (%.1f per s), "
-+        "%" PRIu64 " reads of %.2f ms average, %" PRIu64 " frames to the console, "
-+        "%.2f ms after their read on average\n",
-+        secs, fx.swaps, (secs > 0)? fx.swaps / secs:0, fx.reads,
-+        (fx.reads)? (fx.read_ns / 1e6) / fx.reads:0, fx.shown_frames,
-+        (fx.shown_frames)? (fx.bh_ns / 1e6) / fx.shown_frames:0);
-+    fx.open = 0;
-+    fx.ready = 0;
-+    qemu_bh_cancel(fx.bh);
-+    if (fx.con) {
-+        graphic_hw_passthrough(fx.con, false);
++    secs = (get_clock() - fx->opened) / 1e9;
++    fprintf(stderr, "%s: offscreen closed after %.1f s: %" PRIu64 " swaps (%.1f per s), "
++        "%" PRIu64 " reads of %.2f ms average (%" PRIu64 " after the last call), "
++        "%" PRIu64 " frames to the console, %.2f ms after their read on average\n",
++        fx->tag, secs, fx->swaps, (secs > 0)? fx->swaps / secs:0, fx->reads,
++        (fx->reads)? (fx->read_ns / 1e6) / fx->reads:0, fx->stale_reads, fx->shown_frames,
++        (fx->shown_frames)? (fx->bh_ns / 1e6) / fx->shown_frames:0);
++    fx->open = 0;
++    fx->ready = 0;
++    fx->dirty = 0;
++    fx->stale_armed = 0;
++    timer_del(fx->stale);
++    qemu_bh_cancel(fx->bh);
++    if (fx->con) {
++        graphic_hw_passthrough(fx->con, false);
 +        /* the VGA replaces (and frees) our surface on its next update */
-+        qemu_console_hw_invalidate(fx.con);
++        qemu_console_hw_invalidate(fx->con);
 +    }
-+    fx.surface = NULL;
-+    fx.con = NULL;
-+    g_free(fx.pix);
-+    fx.pix = NULL;
++    fx->surface = NULL;
++    fx->con = NULL;
++    fx->cpu = NULL;
++    g_free(fx->pix);
++    fx->pix = NULL;
 +}
 diff --git a/qemu-0/hw/3dfx/fxdisp.h b/qemu-0/hw/3dfx/fxdisp.h
 new file mode 100644
-index 0000000..d92a4eb
+index 0000000..22d499b
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,40 @@
 +/*
-+ * QEMU 3Dfx Glide Pass-Through: offscreen display (fxdisp.c)
++ * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display (fxdisp.c)
 + *
 + *  Copyright (c) 2026 WsHosting ENK
 + *
@@ -224,12 +345,21 @@ index 0000000..d92a4eb
 +#ifndef FXDISP_H
 +#define FXDISP_H
 +
++typedef struct FxDisp FxDisp;
++/* Reads the frame on the thread whose GL context renders it: w x h pixels, 4 bytes each (B G R X
++ * in memory), rows bottom up, stride bytes apart; returns 0 when there is nothing to show */
++typedef int (*FxDispRead)(void *opaque, void *pix, int w, int h, int stride);
++
 +int fxdisp_choose(void);
-+int fxdisp_offscreen(void);
-+void fxdisp_open(int, int);
-+void fxdisp_frame(int);
-+void fxdisp_renderer(int);
-+void fxdisp_close(void);
++FxDisp *fxdisp_new(const char *, FxDispRead, void *);
++int fxdisp_is_open(FxDisp *);
++void fxdisp_open(FxDisp *, int, int, int);
++int fxdisp_shown(FxDisp *);
++void fxdisp_resize(FxDisp *, int, int);
++void fxdisp_frame(FxDisp *, int, int);
++void fxdisp_renderer(FxDisp *, int);
++void fxdisp_gamma(FxDisp *, const uint16_t *, const uint16_t *, const uint16_t *);
++void fxdisp_close(FxDisp *);
 +
 +#endif // FXDISP_H
 diff --git a/qemu-0/hw/3dfx/glide2x_impl.c b/qemu-0/hw/3dfx/glide2x_impl.c
@@ -278,18 +408,10 @@ index edd5ff1..61aebf1 100644
  int init_glide2x(const char *);
  void fini_glide2x(void);
 diff --git a/qemu-0/hw/3dfx/glidept_mm.c b/qemu-0/hw/3dfx/glidept_mm.c
-index 23bdc7d..8f8428f 100644
+index 23bdc7d..2978c1f 100644
 --- a/qemu-0/hw/3dfx/glidept_mm.c
 +++ b/qemu-0/hw/3dfx/glidept_mm.c
-@@ -26,6 +26,7 @@
- #include "glide2x_impl.h"
- #include "gllstbuf.h"
- #include "vertex3x.h"
-+#include "fxdisp.h"
- 
- #define DEBUG_GLIDEPT
- 
-@@ -560,7 +561,7 @@ static void processArgs(GlidePTState *s)
+@@ -560,7 +560,7 @@ static void processArgs(GlidePTState *s)
                  s->FEnum = FEnum_grSstControl;
              }
              else
@@ -298,7 +420,7 @@ index 23bdc7d..8f8428f 100644
              break;
  
          case FEnum_grLoadGammaTable:
-@@ -629,17 +630,18 @@ static void processFRet(GlidePTState *s)
+@@ -629,17 +629,18 @@ static void processFRet(GlidePTState *s)
          case FEnum_grDisable:
          case FEnum_grEnable:
              if (s->arg[0] == GR_PASSTHRU)
@@ -320,7 +442,7 @@ index 23bdc7d..8f8428f 100644
              s->lfbDev->guestLfb = s->arg[6];
  	    break;
  	case FEnum_grSstWinOpen:
-@@ -652,7 +654,11 @@ static void processFRet(GlidePTState *s)
+@@ -652,7 +653,11 @@ static void processFRet(GlidePTState *s)
              }
              else {
                  char strFpsLimit[sizeof(", FpsLimit [ ... FPS ]")];
@@ -333,25 +455,25 @@ index 23bdc7d..8f8428f 100644
                  snprintf(strFpsLimit, sizeof(strFpsLimit), ", FpsLimit [ %d FPS ]", glide_fpslimit());
  		s->lfbDev->origin = s->arg[4];
  		s->lfbDev->guestLfb = (s->FEnum == FEnum_grSstWinOpenExt)? s->arg[8]:s->arg[7];
-@@ -901,6 +907,8 @@ static void processFifo(GlidePTState *s)
+@@ -901,6 +906,8 @@ static void processFifo(GlidePTState *s)
              processArgs(s);
              doGlideFunc(s->FEnum, s->arg, s->parg, &s->FRet, s->lfbDev->emu211);
              processFRet(s);
 +            if (s->FEnum == FEnum_grBufferSwap)
-+                fxdisp_frame(1);
++                glide_frame(1);
              numData = (s->datacb & 0x03)? ((s->datacb >> 2) + 1):(s->datacb >> 2);
              i += numArgs;
              j += numData;
-@@ -998,6 +1006,7 @@ static void glidept_write(void *opaque, hwaddr addr, uint64_t val, unsigned size
+@@ -998,6 +1005,7 @@ static void glidept_write(void *opaque, hwaddr addr, uint64_t val, unsigned size
              processArgs(s);
              doGlideFunc(s->FEnum, s->arg, s->parg, &s->FRet, s->lfbDev->emu211);
              processFRet(s);
-+            fxdisp_frame(s->FEnum == FEnum_grBufferSwap);
++            glide_frame(s->FEnum == FEnum_grBufferSwap);
              do {
                  uint32_t *dataptr = (uint32_t *)(s->fifo_ptr + (MAX_FIFO << 2));
                  uint32_t numData = (s->datacb & 0x03)? ((s->datacb >> 2) + 1):(s->datacb >> 2);
 diff --git a/qemu-0/hw/3dfx/glidewnd.c b/qemu-0/hw/3dfx/glidewnd.c
-index 0c0f143..36b74b2 100644
+index 0c0f143..ffa1cb1 100644
 --- a/qemu-0/hw/3dfx/glidewnd.c
 +++ b/qemu-0/hw/3dfx/glidewnd.c
 @@ -23,6 +23,7 @@
@@ -362,15 +484,21 @@ index 0c0f143..36b74b2 100644
  
  #define DPRINTF(fmt, ...) \
      do { fprintf(stderr, " " fmt "\n", ## __VA_ARGS__); } while(0)
-@@ -69,6 +70,7 @@ static int cfg_Annotate;
+@@ -69,6 +70,13 @@ static int cfg_Annotate;
  static int cfg_MipMaps;
  static int cfg_traceFifo;
  static int cfg_traceFunc;
 +static int cfg_offscreen;
++static FxDisp *glide_fx;
++
++static int glide_fxdisp_read(void *opaque, void *pix, int w, int h, int stride)
++{
++    return (glide_offscreen_frame)? glide_offscreen_frame(pix, w, h, stride):0;
++}
  static void *hwnd;
  
  #ifdef CONFIG_DARWIN
-@@ -196,6 +198,9 @@ int stat_window(const int res, void *opaque)
+@@ -196,6 +204,9 @@ int stat_window(const int res, void *opaque)
  {
      int stat, sel, glide_fullscreen;
      window_cb *disp_cb = opaque;
@@ -380,13 +508,13 @@ index 0c0f143..36b74b2 100644
      sel = (cfg_scaleX)? scaledRes(cfg_scaleX, ((float)tblRes[res].h) / tblRes[res].w):res;
      stat = 1;
      glide_fullscreen = glide_gui_fullscreen(0, 0);
-@@ -220,6 +225,17 @@ void fini_window(void *opaque)
+@@ -220,6 +231,17 @@ void fini_window(void *opaque)
  {
      window_cb *disp_cb = opaque;
      disp_cb->activate = 0;
 +    if (cfg_offscreen) {
 +        if (hwnd) {
-+            fxdisp_close();
++            fxdisp_close(glide_fx);
 +            if ((disp_cb->FEnum == FEnum_grSstWinClose) || (disp_cb->FEnum == FEnum_grSstWinClose3x))
 +                cwnd_glide2x(0, 0, disp_cb);
 +        }
@@ -398,7 +526,7 @@ index 0c0f143..36b74b2 100644
  #ifdef CONFIG_WIN32
      if (cfg_createWnd)
          DestroyWindow(hwnd);
-@@ -235,10 +251,22 @@ void fini_window(void *opaque)
+@@ -235,10 +257,30 @@ void fini_window(void *opaque)
      cfg_traceFunc = 0;
  }
  
@@ -406,9 +534,17 @@ index 0c0f143..36b74b2 100644
 +void glide_renderer(const int activate)
 +{
 +    if (cfg_offscreen)
-+        fxdisp_renderer(activate);
++        fxdisp_renderer(glide_fx, activate);
 +    else
 +        glide_renderer_stat(activate);
++}
++
++/* After each Glide call (vCPU thread): the offscreen frame after a swap, and front-buffer drawing
++ * and LFB writes without one (fxdisp.c) */
++void glide_frame(const int swap)
++{
++    if (cfg_offscreen)
++        fxdisp_frame(glide_fx, swap, 1);
 +}
 +
 +/* Returns 0, or -1 when the Glide window can't be opened (offscreen only: the SDL window's
@@ -422,7 +558,7 @@ index 0c0f143..36b74b2 100644
      cfg_scaleGuiOff = 0;
      cfg_scaleX = 0;
      cfg_cntxMSAA = 0;
-@@ -294,7 +322,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -294,7 +336,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
          fclose(fp);
      }
  
@@ -431,7 +567,7 @@ index 0c0f143..36b74b2 100644
      cfg_scaleGuiOff = (glide_fullscreen || cfg_scaleX)? 1:cfg_scaleGuiOff;
      cfg_scaleX = (!cfg_scaleGuiOff && (gui_height > 480) && (gui_height > tblRes[res].h))?
          (int)((1.f * tblRes[res].w * gui_height) / tblRes[res].h):cfg_scaleX;
-@@ -305,6 +333,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -305,6 +347,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
  #define WRAPPER_FLAG_FRAMEBUFFER_SRGB   0x20
  #define WRAPPER_FLAG_VSYNCOFF           0x40
  #define WRAPPER_FLAG_QEMU               0x80
@@ -439,7 +575,7 @@ index 0c0f143..36b74b2 100644
      uint32_t flags = (glide_fullscreen)? WRAPPER_FLAG_QEMU:
          (WRAPPER_FLAG_QEMU | WRAPPER_FLAG_WINDOWED);
      flags |= (cfg_MipMaps)? WRAPPER_FLAG_MIPMAPS:0;
-@@ -312,6 +341,17 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -312,6 +355,17 @@ void init_window(const int res, const char *wndTitle, void *opaque)
      flags |= (cfg_cntxVsyncOff)? WRAPPER_FLAG_VSYNCOFF:0;
      flags |= (cfg_cntxSRGB)? WRAPPER_FLAG_FRAMEBUFFER_SRGB:0;
      flags |= cfg_cntxMSAA;
@@ -457,7 +593,7 @@ index 0c0f143..36b74b2 100644
  
      int sel = res;
      if (cfg_scaleX) {
-@@ -323,6 +363,21 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -323,6 +377,23 @@ void init_window(const int res, const char *wndTitle, void *opaque)
  
      disp_cb->activate = 1;
      hwnd = (void *)(uintptr_t)(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w);
@@ -473,13 +609,15 @@ index 0c0f143..36b74b2 100644
 +            return -1;
 +        }
 +        DPRINTF("    offscreen %ux%u %s", w, h, (cfg_scaleX)? "(scaled)":"");
-+        fxdisp_open(w, h);
++        if (!glide_fx)
++            glide_fx = fxdisp_new("glidept", glide_fxdisp_read, NULL);
++        fxdisp_open(glide_fx, w, h, 1);
 +        return 0;
 +    }
  #ifdef CONFIG_WIN32
      if (cfg_createWnd)
          hwnd = CreateGlideWindow(wndTitle, tblRes[sel].w, tblRes[sel].h);
-@@ -333,6 +388,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -333,6 +404,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
      glide_prepare_window(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w,
              (cfg_cntxMSAA > 8)? 16:cfg_cntxMSAA, disp_cb, &cwnd_glide2x);
  #endif	
@@ -487,7 +625,7 @@ index 0c0f143..36b74b2 100644
  }
  
  typedef struct {
-@@ -376,7 +432,7 @@ static void profile_stat(void)
+@@ -376,7 +448,7 @@ static void profile_stat(void)
      if (p->last == 0) {
  	p->fcount = 0;
  	p->ftime = 0;
@@ -497,10 +635,10 @@ index 0c0f143..36b74b2 100644
      }
  
 diff --git a/qemu-0/hw/3dfx/glidewnd.h b/qemu-0/hw/3dfx/glidewnd.h
-index c0922f8..019ce6c 100644
+index c0922f8..87df812 100644
 --- a/qemu-0/hw/3dfx/glidewnd.h
 +++ b/qemu-0/hw/3dfx/glidewnd.h
-@@ -31,8 +31,9 @@ int glide_lfbnoaux(void);
+@@ -31,8 +31,10 @@ int glide_lfbnoaux(void);
  int glide_lfbmode(void);
  void glide_winres(const int, int *, int *);
  int stat_window(const int, void *);
@@ -508,6 +646,7 @@ index c0922f8..019ce6c 100644
 +int init_window(const int, const char *, void *);
  void fini_window(void *);
 +void glide_renderer(const int);
++void glide_frame(const int);
  
  typedef struct {
      int activate;
@@ -522,11 +661,1291 @@ index 6364ee6..c849d73 100644
 +  'fxdisp.c',
    'gllstbuf.c',
  ))
+diff --git a/qemu-1/hw/mesa/mesagl_blit.c b/qemu-1/hw/mesa/mesagl_blit.c
+index 107ae69..0f00b95 100644
+--- a/qemu-1/hw/mesa/mesagl_blit.c
++++ b/qemu-1/hw/mesa/mesagl_blit.c
+@@ -22,7 +22,6 @@
+ 
+ #include "mesagl_impl.h"
+ 
+-int mesa_gui_fullscreen(const void *);
+ 
+ void MesaContextAttest(const char *div, int *out)
+ {
+@@ -243,7 +242,7 @@ void MesaBlitScale(void)
+     MESA_PFN(PFNGLVERTEXATTRIBPOINTERPROC,      glVertexAttribPointer);
+     MESA_PFN(PFNGLVIEWPORTPROC,                 glViewport);
+ 
+-    int v[4], fullscreen = mesa_gui_fullscreen(v);
++    int v[4], fullscreen = MGLGuiFullscreen(v);
+     blit.has_swap = 1;
+ 
+     if (blit.adj) {
+@@ -323,7 +322,7 @@ void MesaBlitScale(void)
+ void MesaRenderScaler(const uint32_t FEnum, void *args)
+ {
+     MESA_PFN(PFNGLGETINTEGERVPROC, glGetIntegerv);
+-    int v[4], fullscreen = mesa_gui_fullscreen(v), framebuffer_binding, blit_adj = 0;
++    int v[4], fullscreen = MGLGuiFullscreen(v), framebuffer_binding, blit_adj = 0;
+     uint32_t *box;
+ 
+     PFN_CALL(glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer_binding));
+diff --git a/qemu-1/hw/mesa/meson.build b/qemu-1/hw/mesa/meson.build
+index ce8339d..a726ae3 100644
+--- a/qemu-1/hw/mesa/meson.build
++++ b/qemu-1/hw/mesa/meson.build
+@@ -4,6 +4,7 @@ i386_system_ss.add(files(
+   'mesagl_impl.c',
+   'mesapt_mm.c',
+   'mglcntx_linux.c',
++  'mglcntx_egl.c',
+   'mglcntx_mingw.c',
+   'mglmapbo.c',
+   'mglvarry.c',
+diff --git a/qemu-1/hw/mesa/mglcntx.h b/qemu-1/hw/mesa/mglcntx.h
+index 051c953..2c64a33 100644
+--- a/qemu-1/hw/mesa/mglcntx.h
++++ b/qemu-1/hw/mesa/mglcntx.h
+@@ -49,6 +49,10 @@ void deactivateCancel(void);
+ void deactivateSched(const int);
+ void deactivateGuiRefSched(void);
+ int find_xstr(const char *, const char *);
++/* EGL offscreen, without an SDL window (mglcntx_egl.c); the SDL window's functions otherwise */
++int MGLEglActive(void);
++int MGLGuiFullscreen(int *);
++void MGLRendererStat(const int);
+ 
+ typedef struct _perfstat {
+     void (*stat)(void);
+diff --git a/qemu-1/hw/mesa/mglcntx_egl.c b/qemu-1/hw/mesa/mglcntx_egl.c
+new file mode 100644
+index 0000000..9665a08
+--- /dev/null
++++ b/qemu-1/hw/mesa/mglcntx_egl.c
+@@ -0,0 +1,1014 @@
++/*
++ * QEMU MESA GL Pass-Through: EGL offscreen context
++ *
++ *  Copyright (c) 2026 WsHosting ENK
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this library;
++ * if not, see <http://www.gnu.org/licenses/>.
++ */
++
++/*
++ * Without an SDL window (-display vnc, none, egl-headless, dbus, gtk, or sdl,gl=on; the same choice
++ * as the Glide device's, hw/3dfx/fxdisp.c) the guest's GL renders offscreen instead of into a GLX
++ * context on the SDL window: a desktop OpenGL context on an EGL display that needs no window
++ * system (Mesa's surfaceless platform: a GPU's render node or llvmpipe; else the first EGL device,
++ * else the default display), current on an EGL pbuffer the size of the guest's display. The
++ * pbuffer is the "window": the guest's framebuffer 0, GL_BACK and its default viewport are the
++ * pbuffer's, so no GL call needs rewriting. At every wglSwapBuffers the frame is read
++ * (glReadPixels of framebuffer 0, which also resolves a multisampled pbuffer) and handed to
++ * fxdisp, which shows it in the first graphic console (VNC, screendump) in place of the VGA while
++ * the context's 3D output is active (MGLActivateHandler), with the guest's gamma ramp
++ * (wglSetDeviceGammaRamp3DFX) applied. The VGA comes back when the guest deactivates its window or
++ * the GL context ends.
++ *
++ * libEGL.so.1 is opened at run time, so the binary links nothing new; when it, the display or a
++ * context can't be had, the guest's wglChoosePixelFormat/wglCreateContext fail and QEMU keeps
++ * running. mglcntx_linux.c hands its MGL* entry points over here while MGLEglActive(); the
++ * SDL/GLX path is unchanged. The WGL constants and tables below repeat mglcntx_linux.c's, whose
++ * copies are private to it.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/timer.h"
++#include "ui/console.h"
++
++#include "mesagl_impl.h"
++#include "../3dfx/fxdisp.h"
++
++#define DPRINTF(fmt, ...) \
++    do { fprintf(stderr, "mesapt: " fmt "\n" , ## __VA_ARGS__); } while(0)
++
++#if defined(CONFIG_LINUX)
++#include <dlfcn.h>
++#define EGL_NO_X11
++#define MESA_EGL_NO_X11_HEADERS
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++
++#include "mglcntx_egl.h"
++
++#ifndef EGL_PLATFORM_SURFACELESS_MESA
++#define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
++#endif
++#ifndef GL_DOUBLEBUFFER
++#define GL_DOUBLEBUFFER 0x0C32
++#endif
++
++#define WGL_NUMBER_PIXEL_FORMATS_ARB            0x2000
++#define WGL_DRAW_TO_WINDOW_ARB                  0x2001
++#define WGL_ACCELERATION_ARB                    0x2003
++#define WGL_SWAP_METHOD_ARB                     0x2007
++#define WGL_SUPPORT_OPENGL_ARB                  0x2010
++#define WGL_DOUBLE_BUFFER_ARB                   0x2011
++#define WGL_PIXEL_TYPE_ARB                      0x2013
++#define WGL_COLOR_BITS_ARB                      0x2014
++#define WGL_RED_BITS_ARB                        0x2015
++#define WGL_RED_SHIFT_ARB                       0x2016
++#define WGL_GREEN_BITS_ARB                      0x2017
++#define WGL_GREEN_SHIFT_ARB                     0x2018
++#define WGL_BLUE_BITS_ARB                       0x2019
++#define WGL_BLUE_SHIFT_ARB                      0x201A
++#define WGL_ALPHA_BITS_ARB                      0x201B
++#define WGL_ALPHA_SHIFT_ARB                     0x201C
++#define WGL_DEPTH_BITS_ARB                      0x2022
++#define WGL_STENCIL_BITS_ARB                    0x2023
++#define WGL_AUX_BUFFERS_ARB                     0x2024
++#define WGL_FULL_ACCELERATION_ARB               0x2027
++#define WGL_SWAP_EXCHANGE_ARB                   0x2028
++#define WGL_TYPE_RGBA_ARB                       0x202B
++#define WGL_DRAW_TO_PBUFFER_ARB                 0x202D
++#define WGL_PBUFFER_WIDTH_ARB                   0x2034
++#define WGL_PBUFFER_HEIGHT_ARB                  0x2035
++#define WGL_SAMPLE_BUFFERS_ARB                  0x2041
++#define WGL_SAMPLES_ARB                         0x2042
++#define WGL_TEXTURE_FORMAT_ARB                  0x2072
++#define WGL_TEXTURE_TARGET_ARB                  0x2073
++#define WGL_TEXTURE_RGB_ARB                     0x2075
++#define WGL_TEXTURE_RGBA_ARB                    0x2076
++#define WGL_TEXTURE_2D_ARB                      0x207A
++#define WGL_MIPMAP_LEVEL_ARB                    0x207B
++#define WGL_TEXTURE_RECTANGLE_NV                0x20A2
++#define WGL_CONTEXT_MAJOR_VERSION_ARB           0x2091
++#define WGL_CONTEXT_MINOR_VERSION_ARB           0x2092
++#define WGL_CONTEXT_FLAGS_ARB                   0x2094
++#define WGL_CONTEXT_PROFILE_MASK_ARB            0x9126
++
++typedef struct {
++    uint16_t nSize, nVersion;
++    uint32_t dwFlags;
++    uint8_t iPixelType, cColorBits, cRedBits, cRedShift, cGreenBits, cGreenShift,
++            cBlueBits, cBlueShift, cAlphaBits, cAlphaShift, cAccumBits, cAccumRedBits,
++            cAccumGreenBits, cAccumBlueBits, cAccumAlphaBits, cDepthBits, cStencilBits,
++            cAuxBuffers, iLayerType, bReserved;
++    uint32_t dwLayerMask, dwVisibleMask, dwDamageMask;
++} PFD;
++
++static const PFD pfd = {
++    .nSize = sizeof(PFD),
++    .nVersion = 1,
++    .dwFlags = 0x225,
++    .cColorBits = 32,
++    .cRedBits = 8, .cGreenBits = 8, .cBlueBits = 8, .cAlphaBits = 8,
++    .cRedShift = 16, .cGreenShift = 8, .cBlueShift = 0, .cAlphaShift = 24,
++    .cDepthBits = 24,
++    .cStencilBits = 8,
++    .cAuxBuffers = 0,
++};
++static const int iAttribs[] = {
++    WGL_NUMBER_PIXEL_FORMATS_ARB, 1,
++    WGL_DRAW_TO_WINDOW_ARB, 1,
++    WGL_ACCELERATION_ARB, WGL_FULL_ACCELERATION_ARB,
++    WGL_SWAP_METHOD_ARB, WGL_SWAP_EXCHANGE_ARB,
++    WGL_SUPPORT_OPENGL_ARB, 1,
++    WGL_DOUBLE_BUFFER_ARB, 1,
++    WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
++    WGL_COLOR_BITS_ARB, 32,
++    WGL_RED_BITS_ARB, 8,
++    WGL_RED_SHIFT_ARB, 16,
++    WGL_GREEN_BITS_ARB, 8,
++    WGL_GREEN_SHIFT_ARB, 8,
++    WGL_BLUE_BITS_ARB, 8,
++    WGL_BLUE_SHIFT_ARB, 0,
++    WGL_ALPHA_BITS_ARB, 8,
++    WGL_ALPHA_SHIFT_ARB, 24,
++    WGL_DEPTH_BITS_ARB, 24,
++    WGL_STENCIL_BITS_ARB, 8,
++    WGL_AUX_BUFFERS_ARB, 0,
++    WGL_SAMPLE_BUFFERS_ARB, 0,
++    WGL_SAMPLES_ARB, 0,
++    0,0
++};
++
++/* libEGL.so.1, opened at run time */
++#define EGL_FUNCS(X) \
++    X(EGLDisplay, GetDisplay, (EGLNativeDisplayType)) \
++    X(EGLBoolean, Initialize, (EGLDisplay, EGLint *, EGLint *)) \
++    X(EGLBoolean, Terminate, (EGLDisplay)) \
++    X(const char *, QueryString, (EGLDisplay, EGLint)) \
++    X(__eglMustCastToProperFunctionPointerType, GetProcAddress, (const char *)) \
++    X(EGLBoolean, BindAPI, (EGLenum)) \
++    X(EGLBoolean, ChooseConfig, (EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *)) \
++    X(EGLBoolean, GetConfigAttrib, (EGLDisplay, EGLConfig, EGLint, EGLint *)) \
++    X(EGLContext, CreateContext, (EGLDisplay, EGLConfig, EGLContext, const EGLint *)) \
++    X(EGLBoolean, DestroyContext, (EGLDisplay, EGLContext)) \
++    X(EGLSurface, CreatePbufferSurface, (EGLDisplay, EGLConfig, const EGLint *)) \
++    X(EGLBoolean, DestroySurface, (EGLDisplay, EGLSurface)) \
++    X(EGLBoolean, MakeCurrent, (EGLDisplay, EGLSurface, EGLSurface, EGLContext)) \
++    X(EGLContext, GetCurrentContext, (void)) \
++    X(EGLSurface, GetCurrentSurface, (EGLint)) \
++    X(EGLint, GetError, (void))
++#define EGL_DECL(ret, name, args) ret (*name) args;
++static struct {
++    void *lib;
++    EGL_FUNCS(EGL_DECL)
++} egl;
++
++typedef struct {
++    int width, height;
++    int target, format, level;
++} PbufferARB;
++
++struct wgamma {
++    uint16_t r[0x100];
++    uint16_t g[0x100];
++    uint16_t b[0x100];
++};
++
++static struct {
++    int active;             /* chosen at the guest's DLL attach, until its detach */
++    int failed;             /* no EGL: the guest's pixel format and contexts fail */
++    int cfg_ok;             /* the "window" (pbuffer) exists */
++    int wnd_ready;
++    EGLDisplay dpy;
++    EGLConfig cfg, pbcfg;
++    EGLSurface surf;        /* the guest's window */
++    int w, h;
++    EGLContext ctx[MAX_LVLCNTX];
++    EGLSurface PBDC[MAX_PBUFFER];
++    EGLContext PBRC[MAX_PBUFFER];
++    PbufferARB hPbuffer[MAX_PBUFFER];
++    int cAlphaBits, cDepthBits, cStencilBits, cAuxBuffers, cSampleBuf[2];
++    struct wgamma ramp;
++    FxDisp *fx;
++} e;
++
++int MGLEglActive(void) { return e.active; }
++int MGLEglWndReady(void) { return qatomic_read(&e.wnd_ready); }
++void *MGLEglGetProc(const char *proc)
++{
++    return (egl.GetProcAddress)? (void *)egl.GetProcAddress(proc):NULL;
++}
++
++static int has_ext(const char *list, const char *ext)
++{
++    size_t n = strlen(ext);
++    for (const char *p = list; p && (p = strstr(p, ext)); p += n)
++        if (((p == list) || (p[-1] == ' ')) && ((p[n] == ' ') || (p[n] == '\0')))
++            return 1;
++    return 0;
++}
++
++static int egl_load(void)
++{
++    if (egl.lib)
++        return 1;
++    egl.lib = dlopen("libEGL.so.1", RTLD_NOW | RTLD_GLOBAL);
++    if (!egl.lib) {
++        DPRINTF("no SDL window, and no libEGL.so.1 to render offscreen (%s)", dlerror());
++        return 0;
++    }
++#define EGL_LOAD(ret, name, args) \
++    egl.name = (ret (*) args) dlsym(egl.lib, "egl" #name); \
++    if (!egl.name) { DPRINTF("libEGL.so.1 has no egl%s", #name); dlclose(egl.lib); egl.lib = 0; return 0; }
++    EGL_FUNCS(EGL_LOAD)
++    return 1;
++}
++
++static EGLDisplay egl_display(const char **which)
++{
++    const char *cext = egl.QueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
++    PFNEGLGETPLATFORMDISPLAYEXTPROC getPlatformDisplay = NULL;
++    EGLDisplay d = EGL_NO_DISPLAY;
++
++    if (has_ext(cext, "EGL_EXT_platform_base"))
++        getPlatformDisplay = (PFNEGLGETPLATFORMDISPLAYEXTPROC)
++            egl.GetProcAddress("eglGetPlatformDisplayEXT");
++    if (getPlatformDisplay && has_ext(cext, "EGL_MESA_platform_surfaceless")) {
++        d = getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
++        *which = "surfaceless";
++    }
++    if ((d == EGL_NO_DISPLAY) && getPlatformDisplay && has_ext(cext, "EGL_EXT_platform_device")) {
++        PFNEGLQUERYDEVICESEXTPROC queryDevices =
++            (PFNEGLQUERYDEVICESEXTPROC) egl.GetProcAddress("eglQueryDevicesEXT");
++        EGLDeviceEXT dev;
++        EGLint n = 0;
++        if (queryDevices && queryDevices(1, &dev, &n) && (n > 0)) {
++            d = getPlatformDisplay(EGL_PLATFORM_DEVICE_EXT, dev, NULL);
++            *which = "device";
++        }
++    }
++    if (d == EGL_NO_DISPLAY) {
++        d = egl.GetDisplay(EGL_DEFAULT_DISPLAY);
++        *which = "default";
++    }
++    return d;
++}
++
++static void egl_reset_ramp(void)
++{
++    for (int i = 0; i < 0x100; i++) {
++        e.ramp.r[i] = (uint16_t)((i << 8) | i);
++        e.ramp.g[i] = (uint16_t)((i << 8) | i);
++        e.ramp.b[i] = (uint16_t)((i << 8) | i);
++    }
++    if (e.fx)
++        fxdisp_gamma(e.fx, NULL, NULL, NULL);
++}
++
++/* The frame, on the vCPU thread with the guest's context current: framebuffer 0 of the window's
++ * pbuffer (its back buffer, or the front one when it is single-buffered); a multisampled pbuffer
++ * is resolved by the read. The guest's read and pack state is put back afterwards. */
++static int egl_read(void *opaque, void *pix, int w, int h, int stride)
++{
++    MESA_PFN(PFNGLBINDBUFFERPROC,      glBindBuffer);
++    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer);
++    MESA_PFN(PFNGLGETBOOLEANVPROC,     glGetBooleanv);
++    MESA_PFN(PFNGLGETINTEGERVPROC,     glGetIntegerv);
++    MESA_PFN(PFNGLPIXELSTOREIPROC,     glPixelStorei);
++    MESA_PFN(PFNGLREADBUFFERPROC,      glReadBuffer);
++    MESA_PFN(PFNGLREADPIXELSPROC,      glReadPixels);
++    static const GLenum pack[] = {
++        GL_PACK_SWAP_BYTES, GL_PACK_LSB_FIRST, GL_PACK_ROW_LENGTH, GL_PACK_IMAGE_HEIGHT,
++        GL_PACK_SKIP_ROWS, GL_PACK_SKIP_PIXELS, GL_PACK_SKIP_IMAGES, GL_PACK_ALIGNMENT,
++    };
++    GLint saved[ARRAY_SIZE(pack)], read_fb = 0, pack_buf = 0, read_buf;
++    GLboolean dbl = GL_TRUE;
++
++    if (!e.surf || (w != e.w) || (h != e.h) || !p_glReadPixels || !p_glGetIntegerv ||
++        (egl.GetCurrentSurface(EGL_DRAW) != e.surf))
++        return 0;
++    if (p_glBindFramebuffer) {
++        p_glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
++        if (read_fb)
++            p_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    }
++    if (p_glBindBuffer) {
++        p_glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buf);
++        if (pack_buf)
++            p_glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++    }
++    for (int i = 0; i < ARRAY_SIZE(pack); i++) {
++        p_glGetIntegerv(pack[i], &saved[i]);
++        p_glPixelStorei(pack[i], (pack[i] == GL_PACK_ALIGNMENT)? 4:
++            ((pack[i] == GL_PACK_ROW_LENGTH)? (stride / 4):0));
++    }
++    p_glGetIntegerv(GL_READ_BUFFER, &read_buf);
++    if (p_glGetBooleanv)
++        p_glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
++    p_glReadBuffer((dbl)? GL_BACK:GL_FRONT);
++    p_glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pix);
++    p_glReadBuffer(read_buf);
++    for (int i = 0; i < ARRAY_SIZE(pack); i++)
++        p_glPixelStorei(pack[i], saved[i]);
++    if (pack_buf)
++        p_glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buf);
++    if (read_fb)
++        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
++    return 1;
++}
++
++/* The guest's display mode: the first graphic console's size, brought up to date (the VGA isn't
++ * redrawn while the console shows frames of ours) */
++static void egl_display_size(int *w, int *h)
++{
++    QemuConsole *con = qemu_console_lookup_by_index(0);
++    DisplaySurface *ds;
++
++    *w = 640;
++    *h = 480;
++    if (!con || !qemu_console_is_graphic(con))
++        return;
++    qemu_console_hw_update(con);
++    ds = qemu_console_surface(con);
++    if (ds && (surface_width(ds) > 0) && (surface_height(ds) > 0)) {
++        *w = surface_width(ds);
++        *h = surface_height(ds);
++    }
++}
++
++static EGLSurface egl_pbuffer(EGLConfig cfg, int w, int h)
++{
++    const EGLint attr[] = { EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE };
++    return egl.CreatePbufferSurface(e.dpy, cfg, attr);
++}
++
++/* DLL attach: offscreen unless the display is SDL without GL. Returns 1 when this backend takes
++ * the guest (even when EGL fails: its GL then fails), 0 for GLX on the SDL window. */
++int MGLEglAttach(void)
++{
++    const char *which = "";
++    EGLint major, minor;
++
++    if (e.active)
++        MGLEglWndRelease();
++    e.active = fxdisp_choose();
++    if (!e.active)
++        return 0;
++    e.failed = 1;
++    e.cfg_ok = 0;
++    if (!egl_load())
++        return 1;
++    e.dpy = egl_display(&which);
++    if ((e.dpy == EGL_NO_DISPLAY) || !egl.Initialize(e.dpy, &major, &minor)) {
++        DPRINTF("no SDL window, and no EGL display to render offscreen (%s, 0x%04x); "
++            "the guest's OpenGL fails", which, egl.GetError());
++        e.dpy = EGL_NO_DISPLAY;
++        return 1;
++    }
++    if (!egl.BindAPI(EGL_OPENGL_API)) {
++        DPRINTF("the %s EGL display has no desktop OpenGL; the guest's OpenGL fails", which);
++        egl.Terminate(e.dpy);
++        e.dpy = EGL_NO_DISPLAY;
++        return 1;
++    }
++    e.failed = 0;
++    if (!e.fx)
++        e.fx = fxdisp_new("mesapt", egl_read, NULL);
++    egl_reset_ramp();
++    DPRINTF("no SDL window: rendering offscreen, EGL %d.%d on the %s display (%s)", major, minor,
++        which, egl.QueryString(e.dpy, EGL_VENDOR));
++    return 1;
++}
++
++static int egl_choose(EGLConfig *cfg, int msaa, int alpha)
++{
++    const EGLint attr[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, (alpha)? 8:0,
++        EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
++        EGL_SAMPLE_BUFFERS, (msaa)? 1:0, EGL_SAMPLES, msaa,
++        EGL_NONE
++    };
++    EGLint n = 0;
++    return egl.ChooseConfig(e.dpy, attr, cfg, 1, &n) && (n > 0);
++}
++
++/* Does a pbuffer of this multisampled config give its frame back to egl_read? Mesa's llvmpipe
++ * doesn't (glReadPixels fails with GL_INVALID_OPERATION, a resolving blit returns black): a clear
++ * on a small one, read back the way egl_read reads, on a context of its own (the guest's current
++ * context, if any, is put back) */
++static int egl_msaa_works(EGLConfig cfg)
++{
++    MESA_PFN(PFNGLCLEARCOLORPROC,   glClearColor);
++    MESA_PFN(PFNGLCLEARPROC,        glClear);
++    MESA_PFN(PFNGLFINISHPROC,       glFinish);
++    MESA_PFN(PFNGLGETBOOLEANVPROC,  glGetBooleanv);
++    MESA_PFN(PFNGLGETERRORPROC,     glGetError);
++    MESA_PFN(PFNGLREADBUFFERPROC,   glReadBuffer);
++    MESA_PFN(PFNGLREADPIXELSPROC,   glReadPixels);
++    EGLContext prev_ctx = egl.GetCurrentContext(), ctx;
++    EGLSurface prev_draw = egl.GetCurrentSurface(EGL_DRAW),
++               prev_read = egl.GetCurrentSurface(EGL_READ), surf;
++    uint8_t px[4] = { 0, 0, 0, 0 };
++    GLboolean dbl = GL_TRUE;
++    int ok = 0;
++
++    if (!p_glClearColor || !p_glClear || !p_glFinish || !p_glGetBooleanv || !p_glGetError ||
++        !p_glReadBuffer || !p_glReadPixels)
++        return 0;
++    surf = egl_pbuffer(cfg, 4, 4);
++    ctx = (surf)? egl.CreateContext(e.dpy, cfg, EGL_NO_CONTEXT, NULL):EGL_NO_CONTEXT;
++    if (ctx && egl.MakeCurrent(e.dpy, surf, surf, ctx)) {
++        p_glClearColor(0, 1, 0, 1);
++        p_glClear(GL_COLOR_BUFFER_BIT);
++        p_glFinish();
++        p_glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
++        p_glReadBuffer((dbl)? GL_BACK:GL_FRONT);
++        p_glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
++        ok = (p_glGetError() == GL_NO_ERROR) && (px[1] > 0xf0) && (px[0] < 0x10);
++    }
++    egl.MakeCurrent(e.dpy, prev_draw, prev_read, prev_ctx);
++    if (ctx)
++        egl.DestroyContext(e.dpy, ctx);
++    if (surf)
++        egl.DestroySurface(e.dpy, surf);
++    return ok;
++}
++
++/* The guest's first wglChoosePixelFormat/wglSetPixelFormat/wglDescribePixelFormat: the "window" */
++static int MGLEglPreset(void)
++{
++    int msaa;
++
++    qatomic_set(&e.wnd_ready, 0);
++    ImplMesaGLReset();
++    if (e.failed) {
++        qatomic_set(&e.wnd_ready, 1);
++        return 0;
++    }
++    msaa = GetContextMSAA();
++    if (msaa && egl_choose(&e.cfg, msaa, 1) && !egl_msaa_works(e.cfg)) {
++        DPRINTF("%dx multisampling: this EGL driver doesn't return a multisampled pbuffer's "
++            "frame, rendering without", msaa);
++        msaa = 0;
++    }
++    if (!egl_choose(&e.cfg, msaa, 1)) {
++        if (msaa)
++            DPRINTF("no EGL config with %dx multisampling, rendering without", msaa);
++        if (!(msaa && egl_choose(&e.cfg, 0, 1)) && !egl_choose(&e.cfg, 0, 0)) {
++            DPRINTF("no EGL pbuffer config for desktop OpenGL; the guest's OpenGL fails");
++            e.failed = 1;
++            qatomic_set(&e.wnd_ready, 1);
++            return 0;
++        }
++    }
++    if (!egl_choose(&e.pbcfg, 0, 1))
++        e.pbcfg = e.cfg;
++    egl.GetConfigAttrib(e.dpy, e.cfg, EGL_ALPHA_SIZE, &e.cAlphaBits);
++    egl.GetConfigAttrib(e.dpy, e.cfg, EGL_DEPTH_SIZE, &e.cDepthBits);
++    egl.GetConfigAttrib(e.dpy, e.cfg, EGL_STENCIL_SIZE, &e.cStencilBits);
++    egl.GetConfigAttrib(e.dpy, e.cfg, EGL_SAMPLE_BUFFERS, &e.cSampleBuf[0]);
++    egl.GetConfigAttrib(e.dpy, e.cfg, EGL_SAMPLES, &e.cSampleBuf[1]);
++    e.cAuxBuffers = 0;
++    egl_display_size(&e.w, &e.h);
++    e.surf = egl_pbuffer(e.cfg, e.w, e.h);
++    if (e.surf == EGL_NO_SURFACE) {
++        DPRINTF("eglCreatePbufferSurface %dx%d 0x%04x; the guest's OpenGL fails",
++            e.w, e.h, egl.GetError());
++        e.failed = 1;
++        qatomic_set(&e.wnd_ready, 1);
++        return 0;
++    }
++    e.cfg_ok = 1;
++    fxdisp_open(e.fx, e.w, e.h, 0);
++    DPRINTF("offscreen window %dx%d, alpha %d depth %d stencil %d samples %d %d%s", e.w, e.h,
++        e.cAlphaBits, e.cDepthBits, e.cStencilBits, e.cSampleBuf[0], e.cSampleBuf[1],
++        (GetContextMSAA() && !e.cSampleBuf[0])? " (multisampling not available)":"");
++    qatomic_set(&e.wnd_ready, 1);
++    return 1;
++}
++
++int MGLEglChoosePixelFormat(void)
++{
++    if (!e.cfg_ok)
++        return MGLEglPreset();
++    return 1;
++}
++
++int MGLEglSetPixelFormat(int fmt, const void *p)
++{
++    int ret = (e.cfg_ok)? 1:MGLEglPreset();
++    DPRINTF("SetPixelFormat() ret %d", ret);
++    return ret;
++}
++
++int MGLEglDescribePixelFormat(int fmt, unsigned int sz, void *p)
++{
++    if (!e.cfg_ok && !MGLEglPreset())
++        return 0;
++    memcpy(p, &pfd, sizeof(PFD));
++    ((PFD *)p)->cDepthBits = e.cDepthBits;
++    ((PFD *)p)->cStencilBits = e.cStencilBits;
++    ((PFD *)p)->cAuxBuffers = e.cAuxBuffers;
++    return 1;
++}
++
++static void egl_destroy_levels(int from)
++{
++    for (int i = MAX_LVLCNTX; i > from;) {
++        if (e.ctx[--i]) {
++            egl.DestroyContext(e.dpy, e.ctx[i]);
++            e.ctx[i] = 0;
++        }
++    }
++}
++
++void MGLEglDeleteContext(int level)
++{
++    int n = (level)? ((level % MAX_LVLCNTX)? (level % MAX_LVLCNTX):1):level;
++    if (!e.cfg_ok)
++        return;
++    egl.MakeCurrent(e.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    if (n) {
++        if (e.ctx[n])
++            egl.DestroyContext(e.dpy, e.ctx[n]);
++        e.ctx[n] = 0;
++    }
++    else {
++        egl_destroy_levels(1);
++        MesaBlitFree();
++        MGLActivateHandler(0, 0);
++    }
++}
++
++/* DLL detach: everything goes, the console shows the VGA */
++void MGLEglWndRelease(void)
++{
++    if (!e.active)
++        return;
++    /* a detach without wglDeleteContext leaves the window active: deactivate it (the next
++     * attach's MGLActivateHandler(1) must show its frames again) */
++    MGLActivateHandler(0, 0);
++    deactivateCancel();
++    if (e.dpy != EGL_NO_DISPLAY) {
++        egl.MakeCurrent(e.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++        egl_destroy_levels(0);
++        for (int i = 0; i < MAX_PBUFFER; i++) {
++            if (e.PBRC[i])
++                egl.DestroyContext(e.dpy, e.PBRC[i]);
++            if (e.PBDC[i])
++                egl.DestroySurface(e.dpy, e.PBDC[i]);
++        }
++        if (e.surf)
++            egl.DestroySurface(e.dpy, e.surf);
++        egl.Terminate(e.dpy);
++    }
++    fxdisp_close(e.fx);
++    egl_reset_ramp();
++    CompareAttribArray(NULL);
++    memset(e.PBRC, 0, sizeof(e.PBRC));
++    memset(e.PBDC, 0, sizeof(e.PBDC));
++    memset(e.hPbuffer, 0, sizeof(e.hPbuffer));
++    e.surf = EGL_NO_SURFACE;
++    e.dpy = EGL_NO_DISPLAY;
++    e.cfg_ok = 0;
++    e.failed = 0;
++    e.active = 0;
++    qatomic_set(&e.wnd_ready, 0);
++}
++
++int MGLEglCreateContext(uint32_t gDC)
++{
++    int i = gDC & (MAX_PBUFFER - 1);
++    if (gDC == ((MESAGL_HPBDC & 0xFFFFFFF0U) | i))
++        return 0;
++    if (!e.cfg_ok)
++        return 1;
++    egl.MakeCurrent(e.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    egl_destroy_levels(1);
++    if (!e.ctx[0]) {
++        e.ctx[0] = egl.CreateContext(e.dpy, e.cfg, EGL_NO_CONTEXT, NULL);
++        if (!e.ctx[0])
++            DPRINTF("eglCreateContext 0x%04x; the guest's OpenGL fails", egl.GetError());
++    }
++    return (e.ctx[0])? 0:1;
++}
++
++/* A new display mode since the window was made (only while its frames aren't shown, as an SDL
++ * window follows the VGA only then): a pbuffer of the new size */
++static void egl_follow_display(void)
++{
++    int w, h;
++    EGLSurface surf;
++
++    egl_display_size(&w, &h);
++    if ((w == e.w) && (h == e.h))
++        return;
++    surf = egl_pbuffer(e.cfg, w, h);
++    if (surf == EGL_NO_SURFACE)
++        return;
++    egl.MakeCurrent(e.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    egl.DestroySurface(e.dpy, e.surf);
++    e.surf = surf;
++    e.w = w;
++    e.h = h;
++    fxdisp_resize(e.fx, w, h);
++}
++
++int MGLEglMakeCurrent(uint32_t cntxRC, int level)
++{
++    int n = (level)? ((level % MAX_LVLCNTX)? (level % MAX_LVLCNTX):1):level;
++    uint32_t i = cntxRC & (MAX_PBUFFER - 1);
++    if (!e.cfg_ok)
++        return (cntxRC)? 1:0;
++    if (cntxRC == (MESAGL_MAGIC - n)) {
++        if (!n && !fxdisp_shown(e.fx))
++            egl_follow_display();
++        if (!e.ctx[n] || !egl.MakeCurrent(e.dpy, e.surf, e.surf, e.ctx[n])) {
++            DPRINTF("eglMakeCurrent level %d 0x%04x", n, egl.GetError());
++            return 1;
++        }
++        InitMesaGLExt();
++        wrContextSRGB(ContextUseSRGB());
++        if (!n)
++            MGLActivateHandler(1, 0);
++    }
++    if (cntxRC == (((MESAGL_MAGIC & 0xFFFFFFFU) << 4) | i))
++        egl.MakeCurrent(e.dpy, e.PBDC[i], e.PBDC[i], e.PBRC[i]);
++    return 0;
++}
++
++int MGLEglSwapBuffers(void)
++{
++    MGLActivateHandler(1, 0);
++    /* A pbuffer has no swap: its frame is read now, before the guest draws the next one */
++    fxdisp_frame(e.fx, 1, 0);
++    return 1;
++}
++
++int MGLEglNumPbuffer(void)
++{
++    int c = 0;
++    for (int i = 0; i < MAX_PBUFFER; i++)
++        if (e.hPbuffer[i].width)
++            c++;
++    return c;
++}
++
++int MGLEglDrawableContext(void)
++{
++    return e.ctx[0] && (e.ctx[0] == egl.GetCurrentContext());
++}
++
++int MGLGuiFullscreen(int *v)
++{
++    if (!e.active)
++        return mesa_gui_fullscreen(v);
++    if (v) {
++        v[0] = e.w;
++        v[1] = e.h;
++        v[2] = e.w;
++        v[3] = e.h;
++    }
++    return 0;
++}
++
++void MGLRendererStat(const int activate)
++{
++    if (!e.active)
++        mesa_renderer_stat(activate);
++    else
++        fxdisp_renderer(e.fx, activate);
++}
++
++static int PbufferGLBinding(const int target)
++{
++    switch (target) {
++        case WGL_TEXTURE_2D_ARB:
++            return GL_TEXTURE_BINDING_2D;
++        case WGL_TEXTURE_RECTANGLE_NV:
++            return GL_TEXTURE_BINDING_RECTANGLE;
++        default:
++            return 0;
++    }
++}
++static int PbufferGLAttrib(const int attr)
++{
++    switch (attr) {
++        case WGL_TEXTURE_2D_ARB:
++            return GL_TEXTURE_2D;
++        case WGL_TEXTURE_RECTANGLE_NV:
++            return GL_TEXTURE_RECTANGLE;
++        case WGL_TEXTURE_RGB_ARB:
++            return GL_RGB;
++        case WGL_TEXTURE_RGBA_ARB:
++            return GL_RGBA;
++        default:
++            return 0;
++    }
++}
++static int LookupAttribArray(const int *attrib, const int attr)
++{
++    for (int i = 0; attrib[i]; i+=2) {
++        if (attrib[i] == attr) {
++            switch (attr) {
++                case WGL_DEPTH_BITS_ARB:
++                    return e.cDepthBits;
++                case WGL_STENCIL_BITS_ARB:
++                    return e.cStencilBits;
++                case WGL_AUX_BUFFERS_ARB:
++                    return e.cAuxBuffers;
++                case WGL_SAMPLE_BUFFERS_ARB:
++                    return e.cSampleBuf[0];
++                case WGL_SAMPLES_ARB:
++                    return e.cSampleBuf[1];
++                default:
++                    return attrib[i+1];
++            }
++        }
++    }
++    return 0;
++}
++
++/* WGL_ARB_create_context's attributes as EGL_KHR_create_context's (same bits) */
++static void egl_context_attribs(const int *wgl, EGLint *out, int max)
++{
++    int n = 0;
++    for (int i = 0; wgl[i] && (n + 2) < max; i += 2) {
++        switch (wgl[i]) {
++            case WGL_CONTEXT_MAJOR_VERSION_ARB:
++                out[n++] = EGL_CONTEXT_MAJOR_VERSION_KHR;
++                break;
++            case WGL_CONTEXT_MINOR_VERSION_ARB:
++                out[n++] = EGL_CONTEXT_MINOR_VERSION_KHR;
++                break;
++            case WGL_CONTEXT_FLAGS_ARB:
++                out[n++] = EGL_CONTEXT_FLAGS_KHR;
++                break;
++            case WGL_CONTEXT_PROFILE_MASK_ARB:
++                out[n++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
++                break;
++            default:
++                continue;
++        }
++        out[n++] = wgl[i + 1];
++    }
++    out[n] = EGL_NONE;
++}
++
++void MGLEglFuncHandler(const char *name)
++{
++    char fname[64];
++    uint32_t *argsp = (uint32_t *)(name + ALIGNED((strnlen(name, sizeof(fname))+1)));
++    strncpy(fname, name, sizeof(fname)-1);
++    fname[sizeof(fname)-1] = 0;
++
++#define FUNCP_HANDLER(a) \
++    if (!memcmp(fname, a, sizeof(a)))
++
++    FUNCP_HANDLER("wglShareLists") {
++        uint32_t i = argsp[1] & (MAX_PBUFFER - 1), ret = 0;
++        if ((argsp[0] == MESAGL_MAGIC) && (argsp[1] == ((MESAGL_MAGIC & 0xFFFFFFFU) << 4 | i)))
++            ret = 1;
++        else
++            DPRINTF("  *WARN* ShareLists called with unknown contexts, %x %x", argsp[0], argsp[1]);
++        argsp[0] = ret;
++        return;
++    }
++    FUNCP_HANDLER("wglUseFontBitmapsA") {
++        fgFontGenList(argsp[1], argsp[2], argsp[3]);
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglSwapIntervalEXT") {
++        /* nothing waits for a vertical blank offscreen */
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglGetSwapIntervalEXT") {
++        argsp[0] = 0;
++        return;
++    }
++    FUNCP_HANDLER("wglGetExtensionsStringARB") {
++        const char wglext[] = "WGL_3DFX_gamma_control "
++            "WGL_ARB_create_context "
++            "WGL_ARB_create_context_profile "
++            "WGL_ARB_extensions_string "
++            "WGL_ARB_multisample "
++            "WGL_ARB_pixel_format "
++            "WGL_ARB_pbuffer WGL_ARB_render_texture WGL_NV_render_texture_rectangle "
++            "WGL_EXT_extensions_string "
++            "WGL_EXT_swap_control "
++            ;
++        memcpy((char *)name, wglext, sizeof(wglext));
++        *((char *)name + sizeof(wglext) - 2) = '\0';
++        return;
++    }
++    FUNCP_HANDLER("wglCreateContextAttribsARB") {
++        uint32_t i, ret = 0;
++        EGLint attr[32];
++        if (!e.cfg_ok) {
++            argsp[0] = 0;
++            return;
++        }
++        egl_context_attribs((const int *)&argsp[2], attr, ARRAY_SIZE(attr));
++        for (i = 0; ((i < MAX_LVLCNTX) && e.ctx[i]); i++);
++        argsp[1] = (argsp[0])? i:0;
++        if (argsp[1] == 0) {
++            egl.MakeCurrent(e.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++            if (CompareAttribArray((const int *)&argsp[2])) {
++                egl_destroy_levels(0);
++                MGLActivateHandler(0, 0);
++                e.ctx[0] = egl.CreateContext(e.dpy, e.cfg, EGL_NO_CONTEXT, attr);
++                if (!e.ctx[0])
++                    DPRINTF("eglCreateContext (attribs) 0x%04x", egl.GetError());
++            }
++            ret = (e.ctx[0])? 1:0;
++        }
++        else {
++            if (i == MAX_LVLCNTX) {
++                egl.DestroyContext(e.dpy, e.ctx[1]);
++                for (i = 1; i < (MAX_LVLCNTX - 1); i++)
++                    e.ctx[i] = e.ctx[i + 1];
++                argsp[1] = i;
++            }
++            e.ctx[i] = egl.CreateContext(e.dpy, e.cfg, e.ctx[i-1], attr);
++            ret = (e.ctx[i])? 1:0;
++        }
++        argsp[0] = ret;
++        return;
++    }
++    FUNCP_HANDLER("wglGetPixelFormatAttribfvARB") {
++        const int *ia = (const int *)&argsp[4], n = MIN(argsp[2], 64);
++        float pf[64];
++        for (int i = 0; i < n; i++)
++            pf[i] = (float)LookupAttribArray(iAttribs, ia[i]);
++        memcpy(&argsp[2], pf, n*sizeof(float));
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglGetPixelFormatAttribivARB") {
++        const int *ia = (const int *)&argsp[4], n = MIN(argsp[2], 64);
++        int pi[64];
++        for (int i = 0; i < n; i++)
++            pi[i] = LookupAttribArray(iAttribs, ia[i]);
++        memcpy(&argsp[2], pi, n*sizeof(int));
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglChoosePixelFormatARB") {
++        const int *ia = (const int *)argsp;
++        if (LookupAttribArray(ia, WGL_DRAW_TO_PBUFFER_ARB))
++            argsp[1] = 0x02;
++        else
++            argsp[1] = MGLEglChoosePixelFormat();
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglBindTexImageARB") {
++        MESA_PFN(PFNGLBINDTEXTUREPROC,     glBindTexture);
++        MESA_PFN(PFNGLCOPYTEXIMAGE2DPROC,  glCopyTexImage2D);
++        MESA_PFN(PFNGLGETINTEGERVPROC,     glGetIntegerv);
++        uint32_t i = argsp[0] & (MAX_PBUFFER - 1);
++        if (PbufferGLBinding(e.hPbuffer[i].target) && PbufferGLAttrib(e.hPbuffer[i].format) &&
++            e.PBRC[i]) {
++            int prev_binded_texture = 0;
++            EGLContext prev_context = egl.GetCurrentContext();
++            EGLSurface prev_draw = egl.GetCurrentSurface(EGL_DRAW),
++                       prev_read = egl.GetCurrentSurface(EGL_READ);
++            PFN_CALL(glGetIntegerv(PbufferGLBinding(e.hPbuffer[i].target), &prev_binded_texture));
++            egl.MakeCurrent(e.dpy, e.PBDC[i], e.PBDC[i], e.PBRC[i]);
++            PFN_CALL(glBindTexture(PbufferGLAttrib(e.hPbuffer[i].target), prev_binded_texture));
++            PFN_CALL(glCopyTexImage2D(PbufferGLAttrib(e.hPbuffer[i].target), e.hPbuffer[i].level,
++                PbufferGLAttrib(e.hPbuffer[i].format), 0, 0, e.hPbuffer[i].width, e.hPbuffer[i].height, 0));
++            egl.MakeCurrent(e.dpy, prev_draw, prev_read, prev_context);
++        }
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglReleaseTexImageARB") {
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglCreatePbufferARB") {
++        uint32_t i;
++        for (i = 0; ((i < MAX_PBUFFER) && e.hPbuffer[i].width); i++);
++        if ((MAX_PBUFFER == i) || !e.cfg_ok) {
++            DPRINTF("wglCreatePbufferARB: %s", (e.cfg_ok)? "MAX_PBUFFER reached":"no EGL");
++            argsp[0] = 0;
++            return;
++        }
++        const int *pattr = (const int *)&argsp[4];
++        e.hPbuffer[i].width = argsp[1];
++        e.hPbuffer[i].height = argsp[2];
++        e.hPbuffer[i].target = LookupAttribArray(pattr, WGL_TEXTURE_TARGET_ARB);
++        e.hPbuffer[i].format = LookupAttribArray(pattr, WGL_TEXTURE_FORMAT_ARB);
++        e.hPbuffer[i].level = LookupAttribArray(pattr, WGL_MIPMAP_LEVEL_ARB);
++        e.PBDC[i] = egl_pbuffer(e.pbcfg, e.hPbuffer[i].width, e.hPbuffer[i].height);
++        e.PBRC[i] = (e.PBDC[i])? egl.CreateContext(e.dpy, e.pbcfg, egl.GetCurrentContext(), NULL):0;
++        if (!e.PBDC[i] || !e.PBRC[i]) {
++            DPRINTF("wglCreatePbufferARB %dx%d: EGL 0x%04x", argsp[1], argsp[2], egl.GetError());
++            if (e.PBDC[i])
++                egl.DestroySurface(e.dpy, e.PBDC[i]);
++            e.PBDC[i] = 0;
++            e.PBRC[i] = 0;
++            memset(&e.hPbuffer[i], 0, sizeof(PbufferARB));
++            argsp[0] = 0;
++        }
++        else
++            argsp[0] = 1;
++        argsp[1] = i;
++        return;
++    }
++    FUNCP_HANDLER("wglDestroyPbufferARB") {
++        uint32_t i = argsp[0] & (MAX_PBUFFER - 1);
++        if (e.PBRC[i])
++            egl.DestroyContext(e.dpy, e.PBRC[i]);
++        if (e.PBDC[i])
++            egl.DestroySurface(e.dpy, e.PBDC[i]);
++        e.PBRC[i] = 0;
++        e.PBDC[i] = 0;
++        memset(&e.hPbuffer[i], 0, sizeof(PbufferARB));
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglQueryPbufferARB") {
++        uint32_t i = argsp[0] & (MAX_PBUFFER - 1);
++        switch(argsp[1]) {
++            case WGL_PBUFFER_WIDTH_ARB:
++                argsp[2] = e.hPbuffer[i].width;
++                break;
++            case WGL_PBUFFER_HEIGHT_ARB:
++                argsp[2] = e.hPbuffer[i].height;
++                break;
++            case WGL_TEXTURE_TARGET_ARB:
++                argsp[2] = e.hPbuffer[i].target;
++                break;
++            case WGL_TEXTURE_FORMAT_ARB:
++                argsp[2] = e.hPbuffer[i].format;
++                break;
++            case WGL_MIPMAP_LEVEL_ARB:
++                argsp[2] = e.hPbuffer[i].level;
++                break;
++            default:
++                argsp[0] = 0;
++                return;
++        }
++        argsp[0] = 1;
++        return;
++    }
++    /* Gamma: no X server to take the ramp, it is applied to the frames offscreen (fxdisp) */
++    FUNCP_HANDLER("wglGetDeviceGammaRamp3DFX") {
++        if (ContextUseSRGB()) {
++            argsp[0] = 0;
++            return;
++        }
++        memcpy(&argsp[2], &e.ramp, sizeof(e.ramp));
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglSetDeviceGammaRamp3DFX") {
++        if (ContextUseSRGB()) {
++            argsp[0] = 0;
++            return;
++        }
++        memcpy(&e.ramp, &argsp[0], sizeof(e.ramp));
++        fxdisp_gamma(e.fx, e.ramp.r, e.ramp.g, e.ramp.b);
++        argsp[0] = 1;
++        return;
++    }
++    FUNCP_HANDLER("wglSetDeviceCursor3DFX") {
++        return;
++    }
++
++    DPRINTF("  *WARN* Unhandled GLFunc %s", name);
++    argsp[0] = 0;
++}
++
++#else /* !CONFIG_LINUX: the SDL window's code only */
++
++int MGLEglActive(void) { return 0; }
++
++int MGLGuiFullscreen(int *v)
++{
++    return mesa_gui_fullscreen(v);
++}
++
++void MGLRendererStat(const int activate)
++{
++    mesa_renderer_stat(activate);
++}
++
++#endif /* CONFIG_LINUX */
+diff --git a/qemu-1/hw/mesa/mglcntx_egl.h b/qemu-1/hw/mesa/mglcntx_egl.h
+new file mode 100644
+index 0000000..ccf2ca9
+--- /dev/null
++++ b/qemu-1/hw/mesa/mglcntx_egl.h
+@@ -0,0 +1,58 @@
++/*
++ * QEMU MESA GL Pass-Through: EGL offscreen context (mglcntx_egl.c)
++ *
++ *  Copyright (c) 2026 WsHosting ENK
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public
++ * License along with this library;
++ * if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef MGLCNTX_EGL_H
++#define MGLCNTX_EGL_H
++
++#if !defined(CONFIG_LINUX)
++/* macOS (XQuartz GLX): no EGL offscreen, MGLEglActive() is 0 */
++static inline int MGLEglAttach(void) { return 0; }
++#define MGLEglWndReady() 0
++#define MGLEglGetProc(p) NULL
++#define MGLEglDeleteContext(l)
++#define MGLEglWndRelease()
++#define MGLEglCreateContext(d) 1
++#define MGLEglMakeCurrent(c, l) 1
++#define MGLEglSwapBuffers() 0
++#define MGLEglChoosePixelFormat() 0
++#define MGLEglDescribePixelFormat(f, s, p) 0
++#define MGLEglSetPixelFormat(f, p) 0
++#define MGLEglNumPbuffer() 0
++#define MGLEglDrawableContext() 0
++#define MGLEglFuncHandler(n)
++#else
++/* mglcntx_linux.c's entry points while MGLEglActive() */
++int MGLEglAttach(void);
++int MGLEglWndReady(void);
++void *MGLEglGetProc(const char *);
++void MGLEglDeleteContext(int);
++void MGLEglWndRelease(void);
++int MGLEglCreateContext(uint32_t);
++int MGLEglMakeCurrent(uint32_t, int);
++int MGLEglSwapBuffers(void);
++int MGLEglChoosePixelFormat(void);
++int MGLEglDescribePixelFormat(int, unsigned int, void *);
++int MGLEglSetPixelFormat(int, const void *);
++int MGLEglNumPbuffer(void);
++int MGLEglDrawableContext(void);
++void MGLEglFuncHandler(const char *);
++#endif
++
++#endif // MGLCNTX_EGL_H
 diff --git a/qemu-1/hw/mesa/mglcntx_linux.c b/qemu-1/hw/mesa/mglcntx_linux.c
-index c8c6a78..2260805 100644
+index c8c6a78..b6aab3c 100644
 --- a/qemu-1/hw/mesa/mglcntx_linux.c
 +++ b/qemu-1/hw/mesa/mglcntx_linux.c
-@@ -688,7 +688,7 @@ void MGLFuncHandler(const char *name)
+@@ -23,6 +23,7 @@
+ #include "ui/console.h"
+ 
+ #include "mesagl_impl.h"
++#include "mglcntx_egl.h"
+ 
+ #define DPRINTF(fmt, ...) \
+     do { fprintf(stderr, "glcntx: " fmt "\n" , ## __VA_ARGS__); } while(0)
+@@ -280,7 +281,7 @@ static struct {
+     int has_mesa_exts;
+ } xglFuncs;
+ 
+-int glwnd_ready(void) { return qatomic_read(&wnd_ready); }
++int glwnd_ready(void) { return (MGLEglActive())? MGLEglWndReady():qatomic_read(&wnd_ready); }
+ 
+ int MGLExtIsAvail(const char *xstr, const char *str)
+ { return find_xstr(xstr, str); }
+@@ -358,11 +359,16 @@ void SetMesaFuncPtr(void *p)
+ 
+ void *MesaGLGetProc(const char *proc)
+ {
++    if (MGLEglActive())
++        return MGLEglGetProc(proc);
+     return (void *)glXGetProcAddress((const GLubyte *)proc);
+ }
+ 
+ void MGLTmpContext(void)
+ {
++    /* without an SDL window (no X display either), EGL offscreen: mglcntx_egl.c */
++    if (MGLEglAttach())
++        return;
+     Display *tmpDisp = XOpenDisplay(NULL);
+     xcstr = glXGetClientString(tmpDisp, GLX_VENDOR);
+     xstr = glXQueryExtensionsString(tmpDisp, DefaultScreen(tmpDisp));
+@@ -376,6 +382,10 @@ void MGLTmpContext(void)
+ void MGLDeleteContext(int level)
+ {
+     int n = (level)? ((level % MAX_LVLCNTX)? (level % MAX_LVLCNTX):1):level;
++    if (MGLEglActive()) {
++        MGLEglDeleteContext(level);
++        return;
++    }
+     glXMakeContextCurrent(dpy, None, None, NULL);
+     if (n) {
+         glXDestroyContext(dpy, ctx[n]);
+@@ -395,6 +405,10 @@ void MGLDeleteContext(int level)
+ 
+ void MGLWndRelease(void)
+ {
++    if (MGLEglActive()) {
++        MGLEglWndRelease();
++        return;
++    }
+     if (win) {
+         if (ctx[0]) {
+             glXMakeContextCurrent(dpy, None, None, NULL);
+@@ -415,6 +429,8 @@ void MGLWndRelease(void)
+ int MGLCreateContext(uint32_t gDC)
+ {
+     int i, ret;
++    if (MGLEglActive())
++        return MGLEglCreateContext(gDC);
+     i = gDC & (MAX_PBUFFER - 1);
+     if (gDC == ((MESAGL_HPBDC & 0xFFFFFFF0U) | i)) {
+         ret = 0;
+@@ -436,6 +452,8 @@ int MGLCreateContext(uint32_t gDC)
+ 
+ int MGLMakeCurrent(uint32_t cntxRC, int level)
+ {
++    if (MGLEglActive())
++        return MGLEglMakeCurrent(cntxRC, level);
+     int n = (level)? ((level % MAX_LVLCNTX)? (level % MAX_LVLCNTX):1):level;
+     uint32_t i = cntxRC & (MAX_PBUFFER - 1);
+     if (cntxRC == (MESAGL_MAGIC - n)) {
+@@ -464,6 +482,8 @@ int MGLMakeCurrent(uint32_t cntxRC, int level)
+ 
+ int MGLSwapBuffers(void)
+ {
++    if (MGLEglActive())
++        return MGLEglSwapBuffers();
+     MGLActivateHandler(1, 0);
+     MesaBlitScale();
+     glXSwapBuffers(dpy, win);
+@@ -506,6 +526,8 @@ static int MGLPresetPixelFormat(void)
+ 
+ int MGLChoosePixelFormat(void)
+ {
++    if (MGLEglActive())
++        return MGLEglChoosePixelFormat();
+     DPRINTF("ChoosePixelFormat()");
+     if (xvi == 0)
+         return MGLPresetPixelFormat();
+@@ -515,6 +537,8 @@ int MGLChoosePixelFormat(void)
+ int MGLSetPixelFormat(int fmt, const void *p)
+ {
+     int ret;
++    if (MGLEglActive())
++        return MGLEglSetPixelFormat(fmt, p);
+     ret = (xvi == 0)? MGLPresetPixelFormat():1;
+     TmpContextPurge();
+     DPRINTF("SetPixelFormat() ret %d", ret);
+@@ -523,6 +547,8 @@ int MGLSetPixelFormat(int fmt, const void *p)
+ 
+ int MGLDescribePixelFormat(int fmt, unsigned int sz, void *p)
+ {
++    if (MGLEglActive())
++        return MGLEglDescribePixelFormat(fmt, sz, p);
+     //DPRINTF("DescribePixelFormat()");
+     if (xvi == 0)
+         MGLPresetPixelFormat();
+@@ -536,6 +562,8 @@ int MGLDescribePixelFormat(int fmt, unsigned int sz, void *p)
+ int NumPbuffer(void)
+ {
+     int i, c;
++    if (MGLEglActive())
++        return MGLEglNumPbuffer();
+     for (i = 0, c = 0; i < MAX_PBUFFER;)
+         if (hPbuffer[i++].width) c++;
+     return c;
+@@ -543,6 +571,8 @@ int NumPbuffer(void)
+ 
+ int DrawableContext(void)
+ {
++    if (MGLEglActive())
++        return MGLEglDrawableContext();
+     return (ctx[0] == glXGetCurrentContext());
+ }
+ 
+@@ -618,6 +648,10 @@ void MGLFuncHandler(const char *name)
+     char fname[64];
+     uint32_t *argsp = (uint32_t *)(name + ALIGNED((strnlen(name, sizeof(fname))+1)));
+     strncpy(fname, name, sizeof(fname)-1);
++    if (MGLEglActive()) {
++        MGLEglFuncHandler(name);
++        return;
++    }
+ 
+ #define FUNCP_HANDLER(a) \
+     if (!memcmp(fname, a, sizeof(a)))
+@@ -688,7 +722,7 @@ void MGLFuncHandler(const char *name)
      }
      FUNCP_HANDLER("wglGetSwapIntervalEXT") {
          if (!xglFuncs.SwapIntervalEXT && xglFuncs.has_mesa_exts) {
@@ -535,7 +1954,7 @@ index c8c6a78..2260805 100644
              int (*GetSwapIntervalMESA)(void) =
                  (int (*)(void)) MesaGLGetProc("glXGetSwapIntervalMESA");
              if (GetSwapIntervalMESA) {
-@@ -704,7 +704,7 @@ void MGLFuncHandler(const char *name)
+@@ -704,7 +738,7 @@ void MGLFuncHandler(const char *name)
                  argsp[0] = 1;
                  return;
              }
@@ -544,3 +1963,34 @@ index c8c6a78..2260805 100644
              glXQueryDrawable(dpy, win, GLX_SWAP_INTERVAL_EXT, &ret);
              DPRINTF("wglGetSwapIntervalEXT() ret %-24u", ret);
              argsp[0] = ret;
+diff --git a/qemu-1/hw/mesa/mglcntx_mingw.c b/qemu-1/hw/mesa/mglcntx_mingw.c
+index c1fbe0c..b9ad731 100644
+--- a/qemu-1/hw/mesa/mglcntx_mingw.c
++++ b/qemu-1/hw/mesa/mglcntx_mingw.c
+@@ -787,7 +787,7 @@ void MGLActivateHandler(const int i, const int d)
+         DPRINTF_COND(GLFuncTrace(), "wm_activate %s%-32d", (d)? "dfr ":"imm ", i);
+         if (i) {
+             deactivateGuiRefSched();
+-            mesa_renderer_stat(i);
++            MGLRendererStat(i);
+         }
+         else
+             deactivateSched(d);
+@@ -818,7 +818,7 @@ static void deactivateOnce(void)
+     if (!GetContextZERO())
+         CompareAttribArray(NULL);
+     MGLMouseWarp(0);
+-    mesa_renderer_stat(0);
++    MGLRendererStat(0);
+ }
+ static void deactivateOneshot(void *opaque)
+ {
+@@ -920,7 +920,7 @@ static void profile_stat(void)
+     if (p->last == 0) {
+ 	p->fcount = 0;
+ 	p->ftime = 0;
+-	p->last = (mesa_gui_fullscreen(0))? 0:get_clock();
++	p->last = (MGLGuiFullscreen(0))? 0:get_clock();
+ 	return;
+     }
+ 

@@ -7,7 +7,9 @@ object whose colour attachments 0 and 1 are Glide's back and front buffers (OGLB
 GL_BACK/GL_FRONT at the four places that select a buffer). grBufferSwap() copies back to front.
 The host program reads the front buffer with the new exports getOffscreenSize() and
 getOffscreenFrame() (BGRX, rows bottom up). Without the flag nothing changes (X11/GLX).
-Gamma ramps and MSAA are not applied offscreen yet.
+Gamma offscreen (grGammaCorrectionValue, grLoadGammaTable, grGetGammaTableExt) has no X server to
+go to: the ramp is kept by the EGL platform and applied to each frame getOffscreenFrame() returns
+(on the CPU, only while it isn't the identity). MSAA is not applied offscreen yet.
 
 For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins,
 after 0001-openglide-dir-no-exit.patch.
@@ -103,10 +105,10 @@ index 1606fa3..830f9bc 100644
 +platform/linux/egl.h
 diff --git a/openglide/platform/linux/egl.cpp b/openglide/platform/linux/egl.cpp
 new file mode 100644
-index 0000000..f6622f1
+index 0000000..f3237c2
 --- /dev/null
 +++ b/openglide/platform/linux/egl.cpp
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,367 @@
 +//**************************************************************
 +//*            OpenGLide - Glide to OpenGL Wrapper
 +//*
@@ -130,6 +132,7 @@ index 0000000..f6622f1
 +
 +#include <stdio.h>
 +#include <string.h>
++#include <math.h>
 +#include <EGL/egl.h>
 +#include <EGL/eglext.h>
 +
@@ -264,6 +267,50 @@ index 0000000..f6622f1
 +    return true;
 +}
 +
++//*************************************************
++//* Gamma offscreen: there is no X server to set a gamma ramp on, so the ramp the game sets
++//* (grGammaCorrectionValue, grLoadGammaTable) is kept here and applied to each frame the host
++//* program reads (getOffscreenFrame), on the CPU, only while it isn't the identity.
++//*************************************************
++static unsigned char gamma_lut[3][256];
++static bool gamma_on;
++
++static void gamma_ramp(const unsigned short *r, const unsigned short *g, const unsigned short *b)
++{
++    const unsigned short *ramp[3] = { r, g, b };
++    gamma_on = false;
++    for (int c = 0; c < 3; c++)
++        for (int i = 0; i < 256; i++) {
++            gamma_lut[c][i] = (unsigned char)(ramp[c]? (ramp[c][i] >> 8):i);
++            gamma_on |= (gamma_lut[c][i] != i);
++        }
++}
++
++/* As SetGamma() computes it for an X ramp (sst1InitGammaRGB), here for 256 entries */
++void EGLSetGamma(float value)
++{
++    unsigned short ramp[256];
++    for (int i = 0; i < 256; i++) {
++        int v = (int)((255.0 * pow((double)i / 255.0, 1.0 / value)) + 0.5);
++        ramp[i] = (unsigned short)((v << 8) | v);
++    }
++    gamma_ramp(ramp, ramp, ramp);
++}
++
++void EGLSetGammaTable(const unsigned short *r, const unsigned short *g, const unsigned short *b)
++{
++    gamma_ramp(r, g, b);
++}
++
++void EGLGetGammaTable(unsigned short *r, unsigned short *g, unsigned short *b)
++{
++    for (int i = 0; i < 256; i++) {
++        r[i] = (unsigned short)((gamma_lut[0][i] << 8) | i);
++        g[i] = (unsigned short)((gamma_lut[1][i] << 8) | i);
++        b[i] = (unsigned short)((gamma_lut[2][i] << 8) | i);
++    }
++}
++
 +bool EGLInitialiseWindow(int width, int height)
 +{
 +    const char *which = "";
@@ -313,6 +360,7 @@ index 0000000..f6622f1
 +    fprintf(stderr, "Info: EGL offscreen %dx%d, EGL %d.%d on the %s display, %s\n",
 +        width, height, major, minor, which, (const char *) glGetString(GL_RENDERER));
 +    UserConfig.PrecisionFix = false;
++    gamma_ramp(NULL, NULL, NULL);
 +    return true;
 +}
 +
@@ -414,16 +462,26 @@ index 0000000..f6622f1
 +    glPixelStorei(GL_PACK_ROW_LENGTH, pack_row);
 +    glPixelStorei(GL_PACK_ALIGNMENT, pack_align);
 +    glReadBuffer(read_buf);
++    if (gamma_on) {
++        for (int y = 0; y < height; y++) {
++            unsigned char *p = (unsigned char *) dst + (size_t) y * stride;
++            for (int x = 0; x < width * 4; x += 4) {
++                p[x] = gamma_lut[2][p[x]];
++                p[x + 1] = gamma_lut[1][p[x + 1]];
++                p[x + 2] = gamma_lut[0][p[x + 2]];
++            }
++        }
++    }
 +    return 1;
 +}
 +
 +#endif // !C_USE_SDL && !WIN32
 diff --git a/openglide/platform/linux/egl.h b/openglide/platform/linux/egl.h
 new file mode 100644
-index 0000000..d4ab1d3
+index 0000000..a779167
 --- /dev/null
 +++ b/openglide/platform/linux/egl.h
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,22 @@
 +//**************************************************************
 +//*            OpenGLide - Glide to OpenGL Wrapper
 +//*
@@ -441,6 +499,9 @@ index 0000000..d4ab1d3
 +GLenum EGLBuffer(GLenum buffer);
 +void EGLSwapBuffers(void);
 +ExtFn EGLGetProcAddress(const char *name);
++void EGLSetGamma(float value);
++void EGLSetGammaTable(const unsigned short *r, const unsigned short *g, const unsigned short *b);
++void EGLGetGammaTable(unsigned short *r, unsigned short *g, unsigned short *b);
 +
 +#endif
 diff --git a/openglide/platform/linux/openglext.cpp b/openglide/platform/linux/openglext.cpp
@@ -463,7 +524,7 @@ index 92522d6..45d5694 100644
      return glXGetProcAddressARB((const GLubyte *) x);
  #else
 diff --git a/openglide/platform/linux/window.cpp b/openglide/platform/linux/window.cpp
-index f51dcce..4858284 100644
+index f51dcce..06dd5ce 100644
 --- a/openglide/platform/linux/window.cpp
 +++ b/openglide/platform/linux/window.cpp
 @@ -26,6 +26,7 @@
@@ -492,7 +553,7 @@ index f51dcce..4858284 100644
      if (dpy)
      {
          int has_sRGB = UserConfig.FramebufferSRGB;
-@@ -395,6 +400,11 @@ void FinaliseOpenGLWindow(void)
+@@ -395,8 +400,18 @@ void FinaliseOpenGLWindow(void)
      xcolors.clear ();
  }
  
@@ -503,8 +564,48 @@ index f51dcce..4858284 100644
 +
  void SetGamma(float value)
  {
++    if (UserConfig.Offscreen)
++    {
++        EGLSetGamma(value);
++        return;
++    }
      double gamma = value;
-@@ -626,6 +636,8 @@ void SetSwapInterval(const int i)
+ 
+     // This affects all windows
+@@ -444,6 +459,8 @@ void SetGamma(float value)
+ 
+ void RestoreGamma()
+ {
++    if (UserConfig.Offscreen)
++        return;
+     if (gammaRamp.size())
+     {
+         int size = (int)(gammaRamp.size() / 6);
+@@ -462,6 +479,11 @@ void SetGammaTable(void *ptbl)
+         unsigned short g[256];
+         unsigned short b[256];
+     } *ramp_ptr = (struct s_ramp *) ptbl;
++    if (UserConfig.Offscreen)
++    {
++        EGLSetGammaTable(ramp_ptr->r, ramp_ptr->g, ramp_ptr->b);
++        return;
++    }
+     unsigned short *red = &gammaRamp[0] + (3 * size);
+     unsigned short *green = red + size;
+     unsigned short *blue = green + size;
+@@ -523,6 +545,11 @@ void GetGammaTable(void *ptbl)
+         unsigned short g[256];
+         unsigned short b[256];
+     } *ramp_ptr = (struct s_ramp *) ptbl;
++    if (UserConfig.Offscreen)
++    {
++        EGLGetGammaTable(ramp_ptr->r, ramp_ptr->g, ramp_ptr->b);
++        return;
++    }
+     unsigned short *red = &gammaRamp[0] + (3 * size);
+     unsigned short *green = red + size;
+     unsigned short *blue = green + size;
+@@ -626,6 +653,8 @@ void SetSwapInterval(const int i)
          void (*MesaProc)(int);
      } SwapIntervalEXT;
  
@@ -513,7 +614,7 @@ index f51dcce..4858284 100644
      if (last_i != i) {
          last_i = i;
          if (find_xstr(xstr, "GLX_MESA_swap_control")) {
-@@ -647,6 +659,11 @@ void SetSwapInterval(const int i)
+@@ -647,6 +676,11 @@ void SetSwapInterval(const int i)
  
  void SwapBuffers()
  {
