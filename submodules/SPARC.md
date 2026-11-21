@@ -82,6 +82,9 @@ maintains the patches.
 | `0048-tests-qtest-test-an-instruction-fetch-across-a-conte` | qtest `sun4m-mmu-ctx-ifetch-test` for 0047: a boot PROM switches with traps disabled to a context that maps other RAM and not the PROM, stores, flushes the context, stores and switches back; both stores must land in that context's RAM and the PROM must reach its end (SS-10, SS-5). With traps enabled the first fetch there must take an instruction access exception. The traps-off cases fail without 0047 (QEMU stops with the same `Trap 0x21`), also on plain QEMU 11.1.3 | ours | not in QEMU |
 | `0049-target-sparc-take-a-bus-error-on-a-SuperSPARC-load-o` | SunOS 4.1.3 panicked on the SS-10 after `SUNW,fdtwo0` (`BAD TRAP: cpu=0 type=29`): its generic sun4m kernel probes for VME controllers with its fault catcher armed and reads physical `0xd.0108_0000`, where an SS-10 has nothing, and 4.1.3's `trap()` sends only trap 0x09 (data access exception) to the catcher. QEMU raised trap 0x29 (data access error) for a bus error on every sparc32 CPU; the SuperSPARC takes a bus error on a load as trap 0x09 and on an instruction fetch as trap 0x01, with FT=5 (access bus error) in the SFSR. New CPU feature `buserr-access-exc`, on the `TI-SuperSparc-*` models only (SS-10, SS-20, SS-600MP): loads and fetches take 0x09/0x01, the SFSR and SFAR as before. Stores, the MMU bypass ASIs 0x20-0x2f, the MXCC stream registers and unimplemented ASIs keep 0x29; microSPARC, TurboSPARC and LEON are unchanged; `-cpu TI-SuperSparc-II,-buserr-access-exc` turns it off; trace event `sparc_bus_error_access_exc` ("Older Sun releases on sun4m") | ours | not fixed; see `upstream/qemu-sparc32-supersparc-bus-error-trap.md` |
 | `0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m` | qtest `sun4m-bus-error-trap-test` for 0049: a boot PROM maps an unassigned physical region, enables traps and makes one access there; a handler in RAM stores the trap type, SFSR and SFAR. SS-10: a load takes 0x09, a fetch 0x01; a store, an ASI 0x20 and an ASI 0x2d load and a load with the feature off take 0x29. SS-5: load, store and ASI 0x20 load 0x29, fetch 0x21. FT=5 in every case, the address in the SFAR for data accesses. Without 0049 (and on plain QEMU 11.1.3) the two SS-10 load and fetch cases fail | ours | not in QEMU |
+| `0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e` | The SPARCstation LX's own PROM (`lx.bin`) stopped in its POST at `FPU SP Trap Priority <  Test` (`Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03`): it divides by zero with all IEEE traps enabled, follows that with a misaligned FP store and expects trap 7 on the store, then trap 8 on a later FP instruction with the `fdivs` in the FQ. QEMU raised trap 8 on the `fdivs` itself ("we do not model the fp_exception_pending state"). The sparc32 FPUs defer it (V8 manual 7.3 and appendix L, the microSPARC-I and -IIep manuals, the SuperSPARC documentation): an FPop with an IEEE exception enabled in TEM now writes no result, goes into the FQ and enters fp_exception_pending; the next FPop, FBfcc, FP load or FP store (STFSR and STDFQ too) takes trap 8, with its own pc, qne 1 and the FPop in the FQ. A misaligned FP load or store takes trap 7 first and the exception stays pending (alignment as in V8: 8 bytes for LDDF/STDF/STDFQ). All sparc32 CPU models, system emulation only (linux-user and sparc64 unchanged); unimplemented_FPop and sequence_error as before; migrated in subsection `cpu/fp_pending` | ours | not fixed; see `upstream/qemu-sparc32-deferred-fp-exception.md` |
+| `0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s` | qtest `sun4m-fp-deferred-trap-test` for 0053: a boot PROM runs `fdivs` 1/0 with TEM set, two integer instructions and the FP instruction under test; the handler stores the trap type, `%l1`/`%l2`, the FSR, drains the FQ with STDFQ and stores `%f3`. An FPop (`fadds`, `fmovs`), an aligned `st`/`ld` of an FP register, STFSR and FBfcc take trap 8 there (ftt IEEE, cexc dz, qne 1, the FQ entry the `fdivs`, `%f3` unchanged, qne 0 after STDFQ); a misaligned `st`, `ld` and a 4-byte aligned `std` take trap 7, the STFSR after them trap 8; no exception, masked traps and a misaligned store with nothing pending as before. SS-5, SS-10 and LX, 36 cases; on plain QEMU 11.1.3 the 27 trap cases fail | ours | not in QEMU |
+| `0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic` | `-M LX`, `SPARCClassic` and `SPARCbook` (microSPARC-I) took `-m 256`, and OpenBIOS then stopped with `Trap 0x21`: the microSPARC-I's context table pointer holds physical bits 26:8 only (QEMU's mask is right), and its memory interface takes 128 MB (TMS390S10 reference guide: 27 address bits, four banks of 32 MB). New hwdef field `max_ram` (128 MB on those three; the 256 MB memory space and the empty slot above RAM unchanged): more is refused with "Too much memory for this machine" | ours | not reported; see `upstream/qemu-sparc32-deferred-fp-exception.md` ("Also") |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -214,11 +217,34 @@ installs on the SS-10 and boots ("Older Sun releases on sun4m"), and 34 of 34 st
 pass their check as before: 18 on the SS-10 and SS-20 (Solaris 2.6 on the SS-20 also with 4 CPUs),
 16 on the SS-5 (two of them under `ss5.bin`); the list is under "Older Sun releases on sun4m".
 
+0053-0055 apply on top of 0001-0052 (2026-11-21, lab builds of 11.1.3; not in a package yet).
+`sun4m-fp-deferred-trap-test` passes 36/36 with them; against plain QEMU 11.1.3 its 27 trap cases
+fail (trap 8 at the `fdivs`) and the other 9 pass. With 0001-0055 the `qtest-sparc` and
+`qtest-sparc64` suites: 45 OK, 4 skipped, and the two `qmp-test` `oob` failures as before
+(`sparc-linux-user`, `sparc32plus-linux-user` and `sparc64-linux-user` build too). The LX PROM's
+POST passes its FPU tests ("SPARCstation LX with its own PROM"), the SS-5 PROM's POST prints the
+same as before. SIGFPE in a real system: a small C program (gcc 2.95.3 on the Solaris 2.6 build
+disk; statically linked, through a scratch disk, for the SS-5) enables the divide-by-zero trap,
+runs `fdivs` 1/0 and catches SIGFPE. On Solaris 2.6 on the SS-20 and on the SS-5 (the stored
+`sol26-ss5`) it gets SIGFPE with `FPE_FLTDIV` and `si_addr` at the `fdivs` in 504 of 504 cases,
+with 0053 at the next FP instruction (`fdivs` + 100; without it `fdivs` + 4), and also with 50
+system calls or a `sleep(1)` between the two (on the SS-20 the kernel then takes the trap, on the
+SS-5 a libc routine); the masked case gives +inf with the sticky dz flag, and the program's own
+sums and nawk and bc give the same digits as without 0053; the system keeps running and shuts down
+cleanly. 0055: `-m 256` is refused on LX, SPARCClassic and SPARCbook, the SS-5 still takes it, and
+OpenBIOS reaches its prompt with 128 MB on all three (with 256 MB it stopped with `Trap 0x21`, also
+on plain 11.1.3). Lab boots with the 0001-0055 `qemu-system-sparc` (the `openbios-sparc32` of
+pve-qemu-kvm 11.1.3-2+wsh30, the check scenarios on copies of the stored disks): 34 of 34 stored disks
+boot and pass their check as before: 18 on the SS-10 and SS-20 (Solaris 2.6 on the SS-20 also with 4
+CPUs), 16 on the SS-5 (two of them under `ss5.bin`); the same list as for 0049-0050 above. With the OpenBIOS image of the lab container
+(built 2026-11-18) `sol22-ss10` stops in OpenBIOS before its kernel, with and without 0053; the
+wsh30 OpenBIOS boots it.
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
 `sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test`, `sun4m-mmu-ctx-ifetch-test` and
-`sun4m-bus-error-trap-test` (sparc),
+`sun4m-bus-error-trap-test` and `sun4m-fp-deferred-trap-test` (sparc),
 `sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
 `am53c974-test` (i386).
 
@@ -787,7 +813,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
-| LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)` |
+| LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
 | Voyager | `voyager.bin` | default | 256 | `qemu: fatal: Trap 0x02 (Illegal Instruction)` after `Power-ON Reset` |
 
@@ -1766,14 +1792,42 @@ What it would take for the rest:
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
   it doesn't run removed. SS-600MP has no profile (Solaris 2.6 refuses it, and 4.1.2 doesn't start).
 
+### SPARCstation LX with its own PROM (lab only)
+
+Sun's LX PROM `lx.bin` (from the lab's PROM archive; like the other Sun PROMs it never goes into
+this repository) on `-M LX`, measured 2026-11-21 in the lab with local builds of 11.1.3 (not a
+package). Up to pve-qemu `wsh/0052`, and on plain QEMU 11.1.3, its POST stops at `FPU SP Trap
+Priority <  Test` with `Unexpected Synchronous Trap Taken, Trap Type = 00000008` and QEMU aborts
+(`Trap 0x03 (Privileged Instruction) while interrupts disabled`). The test divides by zero with all
+IEEE traps enabled, then stores an FP register to a misaligned address: it wants the alignment trap
+(7) on the store and the deferred fp_exception (8) on a later FP instruction, with the `fdivs` in
+the FQ, as the microSPARC does; QEMU took trap 8 on the `fdivs` itself. pve-qemu `wsh/0053` (qtest
+`wsh/0054`, in review) defers the trap for every sparc32 CPU ("QEMU fixes" above). With 0001-0054
+the POST passes all its FPU tests (single and double precision CEXC tests, `Trap Priority >` and
+`<`), finds 2 banks of 32 MB with `-m 64` (4 with `-m 128`), probes the SBus (`espdma esp sd st
+SUNW,bpp ledma le` in slot 4, `mmcodec` in slot 2) and stops at `ok` after `cgsix Data Access Error`
+in slot 3. POST errors that stay, as with the earlier QEMU: the MMU TLB/CAM and cache RAM/tag
+pattern tests (QEMU has no diagnostic access to those arrays) and `PROC0 Counter/Timer Test`. The
+SS-5 PROM's POST (`ss5.bin`) prints the same with and without 0053.
+
+Still missing before it boots anything (found in the lab on 2026-11-20, not taken further): stubs
+for the LX's built-in SBus devices that the PROM probes (the `mmcodec` audio and the `cgsix` in slot
+3 that QEMU's LX doesn't have), `-nographic` (`NOGRAPHIC=1`) for a PROM that reads ttya, and SunOS
+4.1.3_U1B, which panics in its autoconfiguration on this PROM. The Themis LXE+ PROM below boots.
+
+- **Memory:** the microSPARC-I's memory interface takes 128 MB (TMS390S10 reference guide: 27
+  address bits, four banks of 32 MB) and its context table pointer holds physical bits 26:8, so
+  with more RAM OpenBIOS's context table lands outside what the MMU can reach (`Trap 0x21`).
+  pve-qemu `wsh/0055` (in review) caps `-M LX`, `SPARCClassic` and `SPARCbook` at 128 MB.
+
 ### SPARCstation LX with the Themis LXE+ PROM (lab only)
 
 QEMU's `-M LX` (microSPARC `TI,TMS390S10`) with `lx564.bin` from the lab's PROM archive, measured
-2026-11-20 in the lab with local QEMU builds (11.1.3 with wsh/0001-0041; not a package). The older
-`lx.bin` stops QEMU in its POST (firmware table under "SS-10 and SS-20"). `lx564.bin` is not a Sun LX
-PROM: it is the PROM of the Themis LXE+ (a VME board built around the LX), "ROM Rev. 2.14 4.4", root
-node `THEMIS,LXE+`, banner `SPARCstation LXE+`. It expects an SCV64 VME bridge that QEMU's LX
-doesn't have.
+2026-11-20 in the lab with local QEMU builds (11.1.3 with wsh/0001-0041; not a package). Sun's
+`lx.bin` stopped QEMU in its POST up to `wsh/0052` ("SPARCstation LX with its own PROM" above).
+`lx564.bin` is not a Sun LX PROM: it is the PROM of the Themis LXE+ (a VME board built around the
+LX), "ROM Rev. 2.14 4.4", root node `THEMIS,LXE+`, banner `SPARCstation LXE+`. It expects an SCV64
+VME bridge that QEMU's LX doesn't have.
 
 **Stock QEMU.** POST runs (one `MMU Context Table Reg Test` error with QEMU's microSPARC, `Suspect
 Swift Module`; harmless), then `initializing VME mmuData Access Error` and `ok`. The PROM stopped
@@ -1806,7 +1860,8 @@ SunOS 4's install needs (it reboots, and the PROM's input goes back to the keybo
 - **Memory:** QEMU's LX takes up to 256 MB; the PROM probes 8 banks of 32 MB. 64 and 128 MB boot
   the installed 2.6; with 256 MB its kernel stops QEMU right after the banner (`qemu: fatal: Trap
   0x21 (Instruction Access Error) while interrupts disabled` at `pc f005d2a8`; not traced). The
-  real LX takes at most 96 MB.
+  real LX takes at most 96 MB, the microSPARC-I chip 128 MB, which pve-qemu `wsh/0055` (in review)
+  makes QEMU's limit for the microSPARC-I machines (above).
 - **For PVE** (not done): a pve-qemu patch with the two slots (better: an `LX` variant or machine
   option for the LXE+, since a real LX PROM wouldn't want them), and in qemu-server the machine regex
   (`SS-\d{1,2}` doesn't match `LX`), an `LX` profile (`lx564.bin`, one CPU, 128 MB, no audio) in
