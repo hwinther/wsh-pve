@@ -11,7 +11,7 @@ interpreter) without a disk, a firmware install or a guest OS in the way.
 | --- | --- | --- | --- |
 | `x86_64` | `qemu-system-x86_64` | `pc` | 8250, `ttyS0` |
 | `i386` | `qemu-system-i386` | `pc` | 8250, `ttyS0` |
-| `sparc32` | `qemu-system-sparc` | `SS-5` (also `SS-10`, `SS-20` and `LX` with `--machine`; `LX` needs OpenBIOS patch 0027) | ESCC (zs), `ttyS0` |
+| `sparc32` | `qemu-system-sparc` | `SS-5` (also `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX` and `Voyager` with `--machine`; `LX` and `Voyager` need OpenBIOS patch 0027, in the published package since 11.1.3-3+wsh9) | ESCC (zs), `ttyS0` |
 | `sparc64` | `qemu-system-sparc64` | `sun4u` | 16550 "su" on the EBus, `ttyS0` |
 
 ## What PID 1 prints
@@ -143,7 +143,7 @@ SMP has no futex, and a single static init has no use for a second CPU.
 
 ```sh
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --label tcg --repeat 2
-docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc32 --machine SS-20
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc32 --machine SS-20 --machine LX
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --shell
 ./run.py --arch all --qemu-dir /path/to/tci-build --label tci --timeout 900 --json results.jsonl
 ```
@@ -158,7 +158,9 @@ JSON object per run on stdout (and appended to `--json`), a Markdown table on st
 code 1 if any run failed. Per run: the host's load average at the start, the seconds from starting
 QEMU to the kernel's `Linux version` line, to PID 1's banner, to the result line and to QEMU's exit,
 PID 1's uptime and loop time, the CRC check, and QEMU's peak RSS and CPU time from `wait4`.
-`--log-dir` keeps each run's console log with its timestamps.
+`--log-dir` keeps each run's console log with its timestamps. `--machine` overrides `-M`; given
+more than once, each machine is booted in turn (for every `--arch`), and the table's `machine`
+column shows the `-M` of each run.
 
 Unit tests (parsing, the CRC model, the QEMU command line, the shell transcript checks and the
 Mandelbrot model against `tests/mandel.txt`): `python3 -m unittest discover -s e2e/wisp/tests`.
@@ -178,7 +180,8 @@ OpenBIOS and SeaBIOS.
 
 ## CI
 
-`.github/workflows/wisp-boot.yml` boots all four architectures, plus sparc32 on the SS-20, on a
+`.github/workflows/wisp-boot.yml` boots all four architectures, then sparc32 on the other seven
+machines (`SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager`), on a
 GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
 filter, so its `wisp-boot-required` check always reports; a `changes` job skips the boot when the pull
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
@@ -192,6 +195,11 @@ the four architectures once more and drives the interactive shell (about 2 to 3 
   firmware stays the published package's. Every other run boots the published `pve-qemu-kvm` in the
   image. No workflow builds a pve-qemu-kvm package on a pull request, so the four binaries are built
   here instead of the whole package. With 4 jobs on the lab host that took 4 minutes, the kernels 7.
+- The machines: the LX and the Voyager boot only with OpenBIOS patch 0027, which the published
+  package has since 11.1.3-3+wsh9. Since the firmware is the published package's in both modes, a
+  pull request's QEMU binaries boot them with the fixed OpenBIOS as well. On the lab host, all 15
+  boots of the step (4 architectures, 7 more sparc32 machines, 4 shells) took 36 s with QEMU built
+  from the tree and passed in both modes; each boot is 1.3 to 3.2 s to power-off.
 - The kernels (`out/`) are cached, keyed on the files that make them: `Dockerfile`, `build.sh`,
   `init.c` and `config/`. A change to `run.py`, the tests or the docs reuses them.
 - The unit tests run first. The job summary has `run.py`'s tables. The artifact `wisp-boot-<pr|published>`
@@ -230,7 +238,10 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
 - Peak RSS is lower under TCI on x86 (64-74 against 106-112 MiB); on sparc it is about the same
   (sparc32 180-187 MiB with `-m 128`, sparc64 88-96 MiB with `-m 256`).
 - `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` passes with OpenBIOS patch 0027 (see
-  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stops at the console switch.
+  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stopped at the console switch.
+  All eight sparc32 machines (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`,
+  `Voyager`) pass with 11.1.3-3+wsh9 in 2.4 to 3.2 s to power-off, batch and shell, with the
+  package's QEMU and with QEMU built from the same tree; CI boots all of them.
 
 ### The LX and the Voyager
 
@@ -246,14 +257,16 @@ and `do_sparc_fault()` dereferences the NULL that `search_exception_tables()` re
 fault takes a stack frame until the kernel stack has run down through the kernel's own text,
 `do_sparc_fault` and `trap_setup` included, and QEMU stops in the overwritten trap entry code.
 OpenBIOS patch 0027 (`openbios/patches/`) makes the APC node only on the machines that have the
-chip there (SS-5, SS-4, SPARCClassic, SPARCbook). Until a `pve-qemu-kvm` with it is installed, pass
-a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
+chip there (SS-5, SS-4, SPARCClassic, SPARCbook). The published `pve-qemu-kvm` carries it since
+11.1.3-3+wsh9: with that package, wisp boots on the LX and the Voyager, batch and shell; with
+11.1.3-3+wsh8 both still stop as above (`Trap 0x07` on the LX, `Trap 0x02` on the Voyager). With an
+older package, pass a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
 
 ## Not done
 
 - No network, disk or SMP checks: tier 1 is boot, CPU, memory and power-off only.
-- Not in the table: SS-10 and LX (pass under TCG, see above) and the Sun PROMs (`ss5.bin`
-  and the SS-20 PROM boot from a disk, not from `-kernel`).
+- Not in the table: the six other sparc32 machines (pass under TCG and boot in CI, see above) and
+  the Sun PROMs (`ss5.bin` and the SS-20 PROM boot from a disk, not from `-kernel`).
 - CI boots the published package or a pull request's QEMU binaries (see "CI"); a pull request that
   changes `openbios/**` is not checked with its own firmware, and TCI is not run in CI.
 

@@ -1,9 +1,11 @@
 name: Wisp boot
 
 # A boot smoke test for QEMU changes with wisp, the tiny test system (e2e/wisp/README.md): a Linux 7.3
-# tinyconfig kernel with a nolibc PID 1 boots with -kernel on x86_64 and i386 (pc), sparc32 (SS-5
-# and SS-20) and sparc64 (sun4u) under TCG, and run.py checks the result line, the CRC and the
-# power-off. About 3 s per boot. run.py --shell then boots the four architectures once more with
+# tinyconfig kernel with a nolibc PID 1 boots with -kernel on x86_64 and i386 (pc), sparc32 (SS-5,
+# then SS-20, SS-10, SS-4, SPARCClassic, SPARCbook, LX and Voyager) and sparc64 (sun4u) under TCG,
+# and run.py checks the result line, the CRC and the power-off. About 3 s per boot. The LX and the
+# Voyager need OpenBIOS patch 0027 (in the published pve-qemu-kvm since 11.1.3-3+wsh9); the
+# firmware is the published package's in both QEMU modes below. run.py --shell then boots the four architectures once more with
 # wisp=shell and drives the interactive shell over the serial console (help, info, bench, crc,
 # mandel, poweroff).
 #
@@ -143,8 +145,10 @@ jobs:
           rc=0
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-all.md" || rc=1
-          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 --machine SS-20 "${args[@]}" \
-            2> "$RUNNER_TEMP/wisp/table-ss20.md" || rc=1
+          sparc32=(--machine SS-20 --machine SS-10 --machine SS-4 --machine SPARCClassic
+            --machine SPARCbook --machine LX --machine Voyager)
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 "${sparc32[@]}" "${args[@]}" \
+            2> "$RUNNER_TEMP/wisp/table-sparc32.md" || rc=1
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-shell.md" || rc=1
           exit "$rc"
@@ -159,9 +163,9 @@ jobs:
             echo
             cat "$RUNNER_TEMP/wisp/table-all.md" 2>/dev/null || echo "(no table)"
             echo
-            echo "### sparc32 (SS-20)"
+            echo "### sparc32 machines"
             echo
-            cat "$RUNNER_TEMP/wisp/table-ss20.md" 2>/dev/null || echo "(no table)"
+            cat "$RUNNER_TEMP/wisp/table-sparc32.md" 2>/dev/null || echo "(no table)"
             echo
             echo "### Interactive shell (wisp=shell)"
             echo

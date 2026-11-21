@@ -120,7 +120,7 @@ class Transcript(unittest.TestCase):
         self.assertTrue(rec["ok"], rec["problems"])
         self.assertEqual(rec["mandel_ms"], 90)
         rec["label"] = "tcg"
-        self.assertIn("| sparc32 |  | tcg | 1.00 | 2.50 | 348 | 90 | 3.00 | 2 | yes |",
+        self.assertIn("| sparc32 | SS-5 | tcg | 1.00 | 2.50 | 348 | 90 | 3.00 | 2 | yes |",
                       run.shell_table([rec]))
         raw.update(exit_code=-9, timed_out=True, text=TRANSCRIPT + "WISP-POWEROFF-FAILED\r\n")
         self.assertEqual(run.evaluate_shell("sparc32", raw, None)["problems"],

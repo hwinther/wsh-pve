@@ -2,7 +2,7 @@
 """Boot wisp (the tiny test system) under a QEMU binary and report what it measured.
 
     ./run.py --arch sparc32 [--arch sparc64 ...|--arch all] [--qemu-dir DIR] [--label tcg]
-             [--repeat 2] [--loops N] [--machine SS-20] [--json results.jsonl] [--log-dir logs]
+             [--repeat 2] [--loops N] [--machine SS-20 ...] [--json results.jsonl] [--log-dir logs]
              [--shell]
 
 Each run starts QEMU with -kernel out/<arch>/kernel on a serial console, reads the console with
@@ -269,22 +269,28 @@ def shell_table(records):
     for r in records:
         def f(v, fmt="{:.2f}"):
             return "-" if v is None else fmt.format(v)
-        rows.append(f"| {r['arch']} | {r.get('machine_arg') or ''} | {r.get('label', '')} "
+        rows.append(f"| {r['arch']} | {machine_of(r)} | {r.get('label', '')} "
                     f"| {f(r['load1'])} | {f(r['t_prompt'])} | {f(r.get('bench_ms'), '{}')} "
                     f"| {f(r.get('mandel_ms'), '{}')} | {f(r['t_exit'])} "
                     f"| {f(r['max_rss_kb'] / 1024, '{:.0f}')} | {'yes' if r['ok'] else 'NO'} |")
     return "\n".join(rows)
 
 
+def machine_of(rec):
+    """The -M of a record: the --machine it ran with, or its architecture's default."""
+    return rec.get("machine_arg") or ARCHES[rec["arch"]][1][1]
+
+
 def table(records):
     """Markdown table of the runs."""
-    head = ("| arch | label | load1 | to kernel s | to PID 1 s | to result s | to exit s "
+    head = ("| arch | machine | label | load1 | to kernel s | to PID 1 s | to result s | to exit s "
             "| PID 1 uptime ms | loop ms | peak RSS MiB | ok |")
-    rows = [head, "|" + " --- |" * 11]
+    rows = [head, "|" + " --- |" * 12]
     for r in records:
         def f(v, fmt="{:.2f}"):
             return "-" if v is None else fmt.format(v)
-        rows.append(f"| {r['arch']} | {r.get('label', '')} | {f(r['load1'])} | {f(r['t_kernel'])} "
+        rows.append(f"| {r['arch']} | {machine_of(r)} | {r.get('label', '')} | {f(r['load1'])} "
+                    f"| {f(r['t_kernel'])} "
                     f"| {f(r['t_banner'])} | {f(r['t_result'])} | {f(r['t_exit'])} "
                     f"| {f(r.get('uptime_ms'), '{}')} | {f(r.get('loop_ms'), '{}')} "
                     f"| {f(r['max_rss_kb'] / 1024, '{:.0f}')} | {'yes' if r['ok'] else 'NO'} |")
@@ -296,7 +302,8 @@ def main(argv=None):
     ap.add_argument("--arch", action="append", choices=[*ARCHES, "all"], required=True)
     ap.add_argument("--qemu-dir", help="directory with the qemu-system-* binaries (default: PATH)")
     ap.add_argument("--label", default="", help="free text recorded with each run, e.g. tcg or tci")
-    ap.add_argument("--machine", help="override -M (e.g. SS-20 for sparc32)")
+    ap.add_argument("--machine", action="append",
+                    help="override -M (e.g. SS-20 for sparc32); repeat it to boot each in turn")
     ap.add_argument("--memory", type=int, help="override -m (MiB)")
     ap.add_argument("--loops", type=int, help=f"compute loops (init's default: {DEFAULT_LOOPS})")
     ap.add_argument("--repeat", type=int, default=1)
@@ -312,15 +319,16 @@ def main(argv=None):
 
     arches = list(ARCHES) if "all" in args.arch else args.arch
     records = []
-    for arch in arches:
+    runs = [(arch, machine) for arch in arches for machine in (args.machine or [None])]
+    for arch, machine in runs:
         kernel = os.path.join(args.out, arch, "kernel")
-        cmd = qemu_command(arch, args.qemu_dir, kernel, args.machine, args.memory, args.loops,
+        cmd = qemu_command(arch, args.qemu_dir, kernel, machine, args.memory, args.loops,
                            args.firmware, interactive=args.shell)
         for n in range(1, args.repeat + 1):
             log_path = None
             if args.log_dir:
                 os.makedirs(args.log_dir, exist_ok=True)
-                tag = "-".join(x for x in (arch, args.label, args.machine,
+                tag = "-".join(x for x in (arch, args.label, machine,
                                            "shell" if args.shell else "", str(n)) if x)
                 log_path = os.path.join(args.log_dir, f"{tag}.log")
             if args.shell:
@@ -332,7 +340,7 @@ def main(argv=None):
             else:
                 raw = boot(cmd, args.timeout, log_path)
                 rec = evaluate(arch, raw, args.loops)
-            rec.update(label=args.label, run=n, machine_arg=args.machine, qemu=cmd[0])
+            rec.update(label=args.label, run=n, machine_arg=machine, qemu=cmd[0])
             records.append(rec)
             line = json.dumps(rec, sort_keys=True)
             print(line, flush=True)

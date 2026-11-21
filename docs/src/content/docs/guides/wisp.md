@@ -17,12 +17,14 @@ time and a checksum, prints one result line and powers the machine off. A run un
 | --- | --- | --- | --- |
 | x86_64 | `pc` | 1,287,168 bytes | 17,072 bytes |
 | i386 | `pc` | 1,126,912 bytes | 14,160 bytes |
-| sparc32 | `SS-5`, `SS-10`, `SS-20`, `LX` | 2,441,336 bytes | 8,716 bytes |
+| sparc32 | `SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | 2,441,336 bytes | 8,716 bytes |
 | sparc64 | `sun4u` | 3,092,744 bytes | 8,904 bytes |
 
 The x86 images are compressed `bzImage`s; the sparc images are the stripped, uncompressed ELF the
 OpenBIOS loader takes. PID 1 includes the interactive shell below (before it: 12,976, 8,908, 5,236
-and 5,440 bytes).
+and 5,440 bytes). CI (`.github/workflows/wisp-boot.yml`) boots every architecture and machine in
+the table on pull requests that touch wisp or the QEMU build, and on main; the `LX` and the
+`Voyager` need OpenBIOS patch 0027, in the published `pve-qemu-kvm` since 11.1.3-3+wsh9.
 
 ## What it is for
 
@@ -111,7 +113,10 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
 - Peak RSS is lower under TCI on x86 (64-74 against 106-112 MiB); on sparc it is about the same
   (sparc32 180-187 MiB with `-m 128`, sparc64 88-96 MiB with `-m 256`).
 - `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` passes with OpenBIOS patch 0027 (see
-  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stops at the console switch.
+  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stopped at the console switch.
+  All eight sparc32 machines (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`,
+  `Voyager`) pass with 11.1.3-3+wsh9 in 2.4 to 3.2 s to power-off, batch and shell, with the
+  package's QEMU and with QEMU built from the same tree; CI boots all of them.
 
 ## The LX and the Voyager
 
@@ -127,5 +132,7 @@ and `do_sparc_fault()` dereferences the NULL that `search_exception_tables()` re
 fault takes a stack frame until the kernel stack has run down through the kernel's own text,
 `do_sparc_fault` and `trap_setup` included, and QEMU stops in the overwritten trap entry code.
 OpenBIOS patch 0027 (`openbios/patches/`) makes the APC node only on the machines that have the
-chip there (SS-5, SS-4, SPARCClassic, SPARCbook). Until a `pve-qemu-kvm` with it is installed, pass
-a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
+chip there (SS-5, SS-4, SPARCClassic, SPARCbook). The published `pve-qemu-kvm` carries it since
+11.1.3-3+wsh9: with that package, wisp boots on the LX and the Voyager, batch and shell; with
+11.1.3-3+wsh8 both still stop as above (`Trap 0x07` on the LX, `Trap 0x02` on the Voyager). With an
+older package, pass a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
