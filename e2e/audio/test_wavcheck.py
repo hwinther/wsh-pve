@@ -101,6 +101,50 @@ class WavCheck(unittest.TestCase):
         self.assertTrue(r["header"]["sizes_ok"])
         self.assertEqual(r["header"]["data_size"], r["header"]["data_bytes"])
 
+    def test_header_fields(self):
+        h = self.wav(tone(660, 0.5))["header"]
+        self.assertEqual((h["format_tag"], h["channels"], h["rate"], h["bits"]), (1, 2, RATE, 16))
+        self.assertEqual((h["block_align"], h["byte_rate"], h["data_offset"]), (4, RATE * 4, 44))
+        self.assertEqual(h["sizes"], "set")
+        self.assertEqual(wavcheck.header_problems(h, rate=RATE, channels=2, bits=16), [])
+        self.assertEqual(wavcheck.header_problems(h, rate=48000, channels=1),
+                         ["rate 44100, not 48000", "channels 2, not 1"])
+
+    def test_header_sizes_zero(self):
+        h = self.wav(tone(660, 0.5), sizes=False)["header"]
+        self.assertEqual(h["sizes"], "zero")
+        self.assertEqual(len(wavcheck.header_problems(h)), 1)
+        self.assertIn("header sizes zero", wavcheck.header_problems(h)[0])
+        self.assertEqual(wavcheck.header_problems(h, sizes=("set", "zero")), [])
+
+    def test_header_sizes_short_and_wrong(self):
+        p = os.path.join(self.dir, "s.wav")
+        write_wav(p, tone(660, 0.5))
+        with open(p, "ab") as f:  # sizes written, then more frames after them
+            f.write(b"\0" * 400)
+        h = {}
+        wavcheck.read_wav(p, h)
+        self.assertEqual(h["sizes"], "short")
+        self.assertEqual(wavcheck.sizes_state(10, 20, 1000, 44), "wrong")
+        self.assertEqual(wavcheck.sizes_state(992, 956, 1000, 44), "set")
+
+    def test_header_partial_frame(self):
+        # killed in the middle of a write: the file ends inside a frame
+        p = os.path.join(self.dir, "p.wav")
+        write_wav(p, tone(660, 0.5), sizes=False)
+        with open(p, "ab") as f:
+            f.write(b"\1\2")
+        h = {}
+        wavcheck.read_wav(p, h)
+        self.assertEqual(wavcheck.header_problems(h, sizes=("zero",)),
+                         [f"{h['data_bytes']} data bytes aren't whole 4-byte frames"])
+
+    def test_header_inconsistent_fmt(self):
+        h = {"format_tag": 1, "channels": 2, "rate": RATE, "bits": 16, "block_align": 2,
+             "byte_rate": RATE * 2, "data_bytes": 8, "sizes": "set"}
+        self.assertEqual(wavcheck.header_problems(h),
+                         ["block align 2, not 4 (2 x 16 bit)", f"byte rate {RATE * 2}, not {RATE * 4}"])
+
     def test_mono(self):
         r = self.wav(tone(660, 0.5), channels=1)
         self.assertEqual(r["channels"], 1)

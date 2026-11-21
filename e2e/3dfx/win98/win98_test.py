@@ -425,17 +425,31 @@ def qemu_rev(qemu):
     return (m.group(1) if m else None), ", ".join(lines)
 
 
-# The x86-64-v2 extensions on top of the Pentium III. The guest drivers of the qemu-3dfx-drivers
-# releases are built with -march=x86-64-v2 (SSE2 up to SSE4.2, SSSE3, POPCNT in GLIDE2X.DLL,
+# The x86-64-v2 extensions on top of the Pentium III. The guest drivers of the older qemu-3dfx-drivers
+# releases were built with -march=x86-64-v2 (SSE2 up to SSE4.2, SSSE3, POPCNT in GLIDE2X.DLL,
 # GLIDE3X.DLL and OPENGL32.DLL): under TCG a `cpu: pentium3` guest takes an invalid-opcode fault in
 # them ("This program has performed an illegal operation" on the first Glide call). Under KVM the
-# host CPU runs them whatever the guest's CPUID says.
+# host CPU runs them whatever the guest's CPUID says. Releases built for the Pentium say so in
+# VERSION.txt ("built for i586"); those run on the plain pentium3.
 TCG_CPU_FEATURES = "+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt"
+BASELINE_RE = re.compile(r"^built for (i[3-6]86)\b", re.M)
 
 
-def guest_cpu(accel):
-    """The guest CPU for --cpu auto: the VM's pentium3, with the drivers' extensions under TCG."""
-    return "pentium3" if accel == "kvm" else f"pentium3,{TCG_CPU_FEATURES}"
+def drivers_baseline(drv_dir):
+    """The guest CPU the unpacked drivers were built for ("i586"), from VERSION.txt; None when it
+    doesn't say (the older releases, built for x86-64-v2, or a build without VERSION.txt)."""
+    vt = os.path.join(drv_dir, "version.txt")
+    if not os.path.exists(vt):
+        return None
+    with open(vt, errors="replace") as f:
+        m = BASELINE_RE.search(f.read())
+    return m.group(1) if m else None
+
+
+def guest_cpu(accel, baseline=None):
+    """The guest CPU for --cpu auto: the VM's pentium3; under TCG with the x86-64-v2 extensions
+    unless the drivers were built for an older CPU."""
+    return "pentium3" if accel == "kvm" or baseline else f"pentium3,{TCG_CPU_FEATURES}"
 
 
 OFFSCREEN_RE = re.compile(r"(glidept|mesapt): offscreen closed after ([\d.]+) s: (\d+) swaps \(([\d.]+) per s\), "
@@ -485,7 +499,7 @@ def qemu_command(args, raw, serial, mon, vnc):
         accel = "kvm" if os.access("/dev/kvm", os.W_OK) else "tcg"
     cpu = args.cpu
     if cpu == "auto":
-        cpu = guest_cpu(accel)
+        cpu = guest_cpu(accel, getattr(args, "drivers_baseline", None))
     args.cpu_used = cpu
     cmd = [args.qemu, "-name", "win98-3dfx", "-machine", f"pc,accel={accel}", "-cpu", cpu,
            "-m", str(args.memory), "-smp", "1", "-nodefaults", "-rtc", f"base={args.rtc_base}", "-boot", "c",
@@ -722,7 +736,8 @@ def evaluate(res, tests):
 
 def summary_md(res, info):
     lines = ["## qemu-3dfx in Windows 98 SE", "",
-             f"Binary: `{info['qemu_version']}` (qemu-3dfx {info['qemu_rev']}), guest drivers {info['drivers_rev']}, "
+             f"Binary: `{info['qemu_version']}` (qemu-3dfx {info['qemu_rev']}), guest drivers {info['drivers_rev']} "
+             f"(built for {info.get('drivers_baseline', 'x86-64-v2 (not stated)')}), "
              f"{res['accel']}, display {res['display']}, CPU {info['cpu']}", "",
              f"Boot to desktop {res.get('boot_s', '?')} s, total {res['total_s']} s, end: {res['status']}"
              f"{', powered off by Windows' if res.get('powered_off') else ''}", "",
@@ -754,7 +769,8 @@ def main(argv=None):
                     "binary can show headless (opengl needs the Mesa offscreen display) or all with --display sdl")
     ap.add_argument("--display", choices=("vnc", "sdl"), default="vnc")
     ap.add_argument("--accel", choices=("auto", "tcg", "kvm"), default="auto")
-    ap.add_argument("--cpu", default="auto", help="QEMU -cpu; auto: pentium3 (KVM), with SSE2-SSE4.2 and POPCNT (TCG)")
+    ap.add_argument("--cpu", default="auto", help="QEMU -cpu; auto: pentium3, under TCG with SSE2-SSE4.2 and POPCNT "
+                    "when the drivers don't say they were built for i586 (the older, x86-64-v2 releases)")
     ap.add_argument("--memory", type=int, default=512)
     ap.add_argument("--rtc", default="auto", help="QEMU's -rtc base: auto (an hour after Windows last ran), "
                     "localtime or a date")
@@ -793,11 +809,13 @@ def main(argv=None):
         scene = parse_scene(f.read())
     drv_dir = os.path.join(args.private, "drivers")
     drv_rev = unpack_drivers(args.drivers, drv_dir)
+    args.drivers_baseline = drivers_baseline(drv_dir)
     log(f"{version}; qemu-3dfx {rev}; guest drivers {drv_rev or 'unknown revision'}")
     if drv_rev and drv_rev != rev:
         log(f"ERROR: the guest drivers ({drv_rev}) are not the binary's revision ({rev}): the wrappers refuse it")
         return 2
-    info = {"qemu_version": version, "qemu_rev": rev, "drivers_rev": drv_rev, "cpu": args.cpu,
+    info = {"qemu_version": version, "qemu_rev": rev, "drivers_rev": drv_rev,
+            "drivers_baseline": args.drivers_baseline or "x86-64-v2 (not stated)", "cpu": args.cpu,
             "tests": args.tests}
 
     raw = os.path.join(args.private, "disk.raw")

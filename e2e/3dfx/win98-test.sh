@@ -51,8 +51,13 @@ priv=$(cd "$priv" && pwd)
 template=$(cd "$(dirname "$template")" && pwd)/$(basename "$template")
 
 if [ "$build" = 1 ]; then
-    # --pull: the newest published pve-qemu-kvm and wsh-openglide
-    "$docker" build --pull -f "$top/e2e/3dfx/win98/Dockerfile" -t "$image" "$top"
+    # --pull refreshes only the base image; the layer that installs pve-qemu-kvm and wsh-openglide
+    # stays cached until WSH_PACKAGES changes, so pass the versions the repository publishes now
+    # (a run on 11.1.3-3+wsh6 still tested +wsh5's binary from the cache)
+    pkgs=$(curl -fsS https://debian.wshosting.no/debian/dists/trixie/main/binary-amd64/Packages 2> /dev/null         | awk '/^Package: (pve-qemu-kvm|wsh-openglide)$/ { p = $2 } /^Version:/ && p { printf "%s=%s ", p, $2; p = "" }') || true
+    [ -n "$pkgs" ] || pkgs="unknown-$(date +%s)"
+    echo "win98-test: building the image for: $pkgs"
+    "$docker" build --pull --build-arg "WSH_PACKAGES=$pkgs" -f "$top/e2e/3dfx/win98/Dockerfile" -t "$image" "$top"
 fi
 
 mounts=(-v "$template:/w3d-in/template.raw:ro" -v "$out:/w3d-out" -v "$priv:/w3d-private")
