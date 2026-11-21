@@ -47,6 +47,16 @@ platform keeps the ramp of `grGammaCorrectionValue`/`grLoadGammaTable` and appli
 50 ms later on the vCPU thread that made it (`async_run_on_cpu()` from a main-loop timer), where it
 used to wait for the next Glide call.
 
+dmabuf scanout (ROADMAP, "Stage 2"; `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`):
+two more exports, `getOffscreenDmabuf()` (a third renderbuffer exported once through
+`EGL_MESA_image_dma_buf_export`) and `getOffscreenScanout()` (the front buffer blitted into it,
+`glFinish`), which `fxdisp.c` hands to a GL display (`qemu_console_gl_scanout_dmabuf`) instead of
+reading the frame back. Two things in it are not qemu-3dfx's and might interest QEMU or Mesa
+people, should the owner want to mention them: QEMU's egl-headless took every dmabuf as top down
+(`egl_scanout_dmabuf()` passed `false` for `y0_top`), and an EGL platform display is one handle per
+process, so a library that calls `eglTerminate` on Mesa's surfaceless display also destroys the
+host program's contexts on it (OpenGLide and the MESA GL path no longer terminate it).
+
 ## Not done
 
 MSAA offscreen (`ContextMSAA`: the framebuffer object's buffers are single-sampled; multisampled

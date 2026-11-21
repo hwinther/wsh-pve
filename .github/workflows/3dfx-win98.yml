@@ -27,10 +27,11 @@ on:
         description: "glide2, glide3, opengl separated by commas; auto: those the binary can show headless"
         default: auto
       display:
-        description: "vnc: headless (PVE's console); sdl: an SDL window on Xvfb"
+        description: "vnc: headless (PVE's console); egl: headless with egl-headless (Glide as a dmabuf, with a wsh-openglide that exports one); sdl: an SDL window on Xvfb"
         type: choice
         options:
           - vnc
+          - egl
           - sdl
         default: vnc
       accel:

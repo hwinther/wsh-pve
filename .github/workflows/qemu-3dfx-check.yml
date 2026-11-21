@@ -109,6 +109,27 @@ jobs:
             -v "$RUNNER_TEMP/qemu-3dfx-bin:/qbin:ro" -v "$RUNNER_TEMP/e2e-vnc:/out" \
             debian:trixie sh /src/e2e/3dfx/test.sh "/deb/$DEB" /out
 
+      # The same guests with a GL display (stage 2): egl-headless (VNC) and dbus,gl=on (the test's own
+      # D-Bus listener maps the dmabufs), where the Glide frames go to the console as a dmabuf. With no
+      # GPU, QEMU's EGL display and Mesa's llvmpipe pass dmabufs through /dev/udmabuf; without it on
+      # the runner the test skips (77) and so does this step
+      - name: Pass-through, GL displays (egl-headless, dbus,gl=on)
+        env:
+          DEB: ${{ steps.openglide.outputs.deb }}
+          QEMU3DFX_REV: ${{ steps.openglide.outputs.rev }}
+        run: |
+          if [ ! -e /dev/udmabuf ]; then
+            echo "::notice::no /dev/udmabuf on this runner: the dmabuf scanout runs are skipped"
+            exit 0
+          fi
+          for mode in egl dbus; do
+            mkdir -p "$RUNNER_TEMP/e2e-$mode"
+            docker run --rm --device /dev/udmabuf -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx \
+              -e GLIDE_DISPLAY="$mode" -e GLIDE_GUEST_BENCH=300 -e DBUS_DELAY_MS=2 -v "$PWD:/src:ro" \
+              -v "$PWD/build/wsh-openglide:/deb:ro" -v "$RUNNER_TEMP/qemu-3dfx-bin:/qbin:ro" \
+              -v "$RUNNER_TEMP/e2e-$mode:/out" debian:trixie sh /src/e2e/3dfx/test.sh "/deb/$DEB" /out
+          done
+
       - name: Pass-through, SDL window on Xvfb
         env:
           DEB: ${{ steps.openglide.outputs.deb }}
@@ -154,6 +175,8 @@ jobs:
           path: |
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/e2e-vnc
+            ${{ runner.temp }}/e2e-egl
+            ${{ runner.temp }}/e2e-dbus
             ${{ runner.temp }}/e2e-sdl
           if-no-files-found: ignore
           retention-days: 7
