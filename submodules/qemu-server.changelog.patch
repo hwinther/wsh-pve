@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 504a6e51..8c335352 100644
+index 504a6e51..4d65eaf8 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,37 @@
+@@ -1,10 +1,43 @@
++qemu-server (9.2.19+wsh5) trixie; urgency=medium
++
++  * feat(vga): retrace=precise for DOS games (Wolfenstein 3D) (#394)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 00:56:47 +0000
++
 +qemu-server (9.2.19+wsh4) trixie; urgency=medium
 +
 +  * feat(dos): legacy BIOS memory layout option and idle in the DOS

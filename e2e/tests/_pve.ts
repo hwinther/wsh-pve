@@ -129,6 +129,35 @@ export async function hasLegacyBiosLayoutUi(): Promise<boolean> {
   return probe.output.includes('ui=yes')
 }
 
+/**
+ * Whether the installed qemu-server has `vga: ...,retrace=precise` (QEMU's precise VGA retrace emulation).
+ * TODO: remove with its test.fail() once a qemu-server with it is published.
+ */
+export async function hasVgaRetrace(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer',
+    '-e',
+    `print defined(&PVE::QemuServer::assert_vga_retrace) ? 'retrace=yes' : 'retrace=no';`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^retrace=(yes|no)$/m)
+  return probe.output.includes('retrace=yes')
+}
+
+/**
+ * Whether the installed pve-manager has the "VGA retrace" checkbox in the Display editor.
+ * TODO: remove with its test.fail() once a pve-manager with it is published.
+ */
+export async function hasVgaRetraceUi(): Promise<boolean> {
+  const probe = await pveExec([
+    'sh',
+    '-c',
+    'grep -q retraceSupported /usr/share/pve-manager/js/pvemanagerlib.js && echo ui=yes || echo ui=no',
+  ])
+  expect(probe.output, probe.output).toMatch(/^ui=(yes|no)$/m)
+  return probe.output.includes('ui=yes')
+}
+
 /** The VM's config file as pmxcfs stores it. */
 export async function vmConfFile(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['cat', `/etc/pve/qemu-server/${vmid}.conf`])
