@@ -45,7 +45,9 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   build never fails on them, so this is where a published package without one turns red. The 3dfx
   VM commands (`mesa=1`, with and without `server`) are in `vm-config.spec.ts`; QEMU is started with
   `-display none`, or SDL's dummy video driver for the SDL display, so neither the X display nor the
-  pass-through itself is tested here. The pass-through itself is tested by `3dfx/test.sh`
+  pass-through itself is tested here. There too, a real `qm start` of a `mesa=1` VM checks that
+  QEMU gets `OPENGLIDE_DIR=/run/qemu-server/<vmid>-3dfx` (root, 0700, kept after the stop) for
+  OpenGLide's files, and a VM without `mesa` doesn't. The pass-through itself is tested by `3dfx/test.sh`
   (outside Playwright, in the `wsh-openglide package` workflow), with two Linux guests in the
   published `qemu-system-x86_64-3dfx` and an SDL display on Xvfb. Glide: `/init`
   (`3dfx/glide-guest.c`) draws a scene through qemu-3dfx's Linux guest wrapper into `wsh-openglide`

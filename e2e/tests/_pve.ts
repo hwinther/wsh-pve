@@ -145,6 +145,21 @@ export async function hasVgaRetrace(): Promise<boolean> {
 }
 
 /**
+ * Whether the installed qemu-server gives the 3dfx binary OPENGLIDE_DIR, a directory of the VM's for
+ * OpenGLide's files. TODO: remove with its test.fail() once a qemu-server with it is published.
+ */
+export async function hasQemu3dfxDir(): Promise<boolean> {
+  const probe = await pveExec([
+    'perl',
+    '-MPVE::QemuServer::Helpers',
+    '-e',
+    `print defined(&PVE::QemuServer::Helpers::prepare_qemu_3dfx_env) ? 'dir=yes' : 'dir=no';`,
+  ])
+  expect(probe.output, probe.output).toMatch(/^dir=(yes|no)$/m)
+  return probe.output.includes('dir=yes')
+}
+
+/**
  * Whether the installed pve-manager has the "VGA retrace" checkbox in the Display editor.
  * TODO: remove with its test.fail() once a pve-manager with it is published.
  */

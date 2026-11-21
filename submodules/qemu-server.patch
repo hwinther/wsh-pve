@@ -150,7 +150,7 @@ index cc8b8250..5feca3ca 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 148052cb..6a0b11a5 100644
+index 148052cb..b0951c3d 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -172,7 +172,7 @@ my $vga_fmt = {
@@ -819,7 +819,23 @@ index 148052cb..6a0b11a5 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5713,6 +5948,9 @@ sub vm_start_nolock {
+@@ -5599,6 +5834,15 @@ sub vm_start_nolock {
+         }
+ 
+         push @$cmd, '-uuid', $uuid if defined($uuid);
++
++        # the 3dfx binary: OPENGLIDE_DIR, a writable directory of the VM's for OpenGLide's files
++        PVE::QemuServer::Helpers::prepare_qemu_3dfx_env(
++            $vmid,
++            PVE::QemuServer::Helpers::get_command_for_arch(
++                PVE::QemuServer::Helpers::get_vm_arch($conf),
++                parse_vga($conf->{vga}),
++            ),
++        );
+     };
+     if (my $err = $@) {
+         eval { PVE::Storage::deactivate_volumes($storecfg, $vollist); };
+@@ -5713,6 +5957,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -829,7 +845,7 @@ index 148052cb..6a0b11a5 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5918,7 +6156,11 @@ sub vm_start_nolock {
+@@ -5918,7 +6165,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -842,7 +858,7 @@ index 148052cb..6a0b11a5 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -8172,7 +8414,12 @@ sub bootorder_from_legacy {
+@@ -8172,7 +8423,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -856,7 +872,7 @@ index 148052cb..6a0b11a5 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8210,9 +8457,14 @@ sub get_default_bootdevices {
+@@ -8210,9 +8466,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1190,10 +1206,19 @@ index 621fcc2b..89656fd1 100644
  }
  
 diff --git a/src/PVE/QemuServer/Helpers.pm b/src/PVE/QemuServer/Helpers.pm
-index 5efe7736..ffa38e03 100644
+index 5efe7736..940d5e25 100644
 --- a/src/PVE/QemuServer/Helpers.pm
 +++ b/src/PVE/QemuServer/Helpers.pm
-@@ -25,6 +25,8 @@ our @EXPORT_OK = qw(
+@@ -3,6 +3,8 @@ package PVE::QemuServer::Helpers;
+ use strict;
+ use warnings;
+ 
++use File::Basename qw(dirname);
++use File::Path qw(make_path);
+ use File::stat;
+ use IO::File;
+ 
+@@ -25,6 +27,8 @@ our @EXPORT_OK = qw(
  my $nodename = PVE::INotify::nodename();
  
  my $arch_to_qemu_binary = {
@@ -1202,20 +1227,56 @@ index 5efe7736..ffa38e03 100644
      aarch64 => '/usr/bin/qemu-system-aarch64',
      x86_64 => '/usr/bin/qemu-system-x86_64',
  };
-@@ -34,8 +36,10 @@ sub get_host_arch {
+@@ -34,8 +38,12 @@ sub get_host_arch {
      return PVE::Tools::get_host_arch();
  }
  
 -sub get_command_for_arch($) {
 -    my ($arch) = @_;
++my $qemu_3dfx_binary = '/usr/bin/qemu-system-x86_64-3dfx';
++
 +sub get_command_for_arch {
 +    my ($arch, $vga) = @_;
-+    return '/usr/bin/qemu-system-x86_64-3dfx'
++    return $qemu_3dfx_binary
 +        if get_host_arch() eq $arch && $vga && defined($vga->{mesa}) && $vga->{mesa} == 1;
      return '/usr/bin/kvm' if get_host_arch() eq $arch; # i.e. native arch
  
      my $cmd = $arch_to_qemu_binary->{$arch}
-@@ -54,8 +58,13 @@ my $kvm_mtime = {};
+@@ -48,14 +56,47 @@ sub get_vm_arch {
+     return $conf->{arch} // get_host_arch();
+ }
+ 
++# The per-VM directory of the 3dfx binary's host-side files: OpenGLide (wsh-openglide), which the
++# Glide device loads, keeps OpenGLid.ini and its logs in the directory OPENGLIDE_DIR names. The
++# default, QEMU's working directory, is / once QEMU daemonizes. Under /run: the files are kept after
++# the VM stops (to read the log) and go with the next reboot (the ini is recreated with defaults).
++sub qemu_3dfx_dir {
++    my ($vmid) = @_;
++    return "/run/qemu-server/$vmid-3dfx";
++}
++
++# Sets OPENGLIDE_DIR (in %ENV, which QEMU inherits) to the VM's directory and creates it (root,
++# 0700) when $binary is the 3dfx binary; removes OPENGLIDE_DIR otherwise. Returns the directory or
++# undef.
++sub prepare_qemu_3dfx_env {
++    my ($vmid, $binary) = @_;
++
++    delete $ENV{OPENGLIDE_DIR};
++    return undef if $binary ne $qemu_3dfx_binary;
++
++    my $dir = qemu_3dfx_dir($vmid);
++    if (!-d $dir) {
++        # the parent (/run/qemu-server) as qemu-server makes it elsewhere, the VM's own one private
++        make_path(dirname($dir), { error => \my $err });
++        mkdir($dir, 0700) or die "unable to create directory '$dir' - $!\n";
++    }
++    $ENV{OPENGLIDE_DIR} = $dir;
++    return $dir;
++}
++
+ my $kvm_user_version = {};
+ my $kvm_mtime = {};
+ 
  sub kvm_user_version {
      my ($binary) = @_;
  
@@ -1866,23 +1927,26 @@ index 0ab43614..ede73231 100644
          push @$devices, '-readconfig', '/usr/share/qemu-server/pve-usb.cfg';
      }
 diff --git a/src/test/Makefile b/src/test/Makefile
-index fa14908e..ae3a9ad3 100644
+index fa14908e..423f3730 100644
 --- a/src/test/Makefile
 +++ b/src/test/Makefile
 @@ -1,6 +1,6 @@
  all: test
  
 -test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_agent test_raw_config_write test_api test_api_cloudinit_dump
-+test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_agent test_raw_config_write test_api test_api_cloudinit_dump test_machine_version
++test: test_snapshot test_cfg_to_cmd test_cfg_to_cmd_aarch64 test_hotplug test_hotplug_aarch64 test_pci_addr_conflicts test_pci_reservation test_qemu_img_convert test_migration test_restore_config test_parse_config test_memory test_agent test_raw_config_write test_api test_api_cloudinit_dump test_machine_version test_qemu_3dfx_env
  
  test_snapshot: run_snapshot_tests.pl
  	./run_snapshot_tests.pl
-@@ -57,6 +57,9 @@ test_api: run_api_tests.pl
+@@ -57,6 +57,12 @@ test_api: run_api_tests.pl
  test_api_cloudinit_dump: run_api_cloudinit_dump_tests.pl
  	./run_api_cloudinit_dump_tests.pl
  
 +test_machine_version: run_machine_version_tests.pl
 +	./run_machine_version_tests.pl
++
++test_qemu_3dfx_env: run_qemu_3dfx_env_tests.pl
++	./run_qemu_3dfx_env_tests.pl
 +
  .PHONY: clean
  clean:
@@ -4465,5 +4529,66 @@ index 00000000..049450bd
 +$installed_version = 'unknown';
 +eval { PVE::QemuServer::Machine::is_machine_version_at_least('SS-5+pve0', 10, 0) };
 +is($@, "unable to determine the version of machine type 'SS-5+pve0'\n", 'unknown QEMU version');
++
++done_testing();
+diff --git a/src/test/run_qemu_3dfx_env_tests.pl b/src/test/run_qemu_3dfx_env_tests.pl
+new file mode 100755
+index 00000000..1b76fba8
+--- /dev/null
++++ b/src/test/run_qemu_3dfx_env_tests.pl
+@@ -0,0 +1,55 @@
++#!/usr/bin/perl
++
++# prepare_qemu_3dfx_env(): the 3dfx binary gets OPENGLIDE_DIR, a per-VM directory (root, 0700) for
++# OpenGLide's OpenGLid.ini and logs; any other binary gets no OPENGLIDE_DIR (not even one left in
++# %ENV by an earlier start in the same process).
++
++use strict;
++use warnings;
++
++use lib qw(..);
++
++use File::Temp qw(tempdir);
++use Test::More;
++use Test::MockModule;
++
++use PVE::QemuServer::Helpers;
++
++my $base = tempdir(CLEANUP => 1);
++my $helpers = Test::MockModule->new('PVE::QemuServer::Helpers');
++$helpers->redefine(qemu_3dfx_dir => sub { return "$base/run/qemu-server/$_[0]-3dfx" });
++$helpers->redefine(get_host_arch => sub { return 'x86_64' });
++
++is(
++    PVE::QemuServer::Helpers::get_command_for_arch('x86_64', { mesa => 1 }),
++    '/usr/bin/qemu-system-x86_64-3dfx',
++    'mesa=1 on the host arch: the 3dfx binary',
++);
++
++$ENV{OPENGLIDE_DIR} = '/left/over';
++is(PVE::QemuServer::Helpers::prepare_qemu_3dfx_env(100, '/usr/bin/kvm'), undef, 'kvm: no directory');
++ok(!exists($ENV{OPENGLIDE_DIR}), 'kvm: no OPENGLIDE_DIR, a left-over one removed');
++ok(!-e "$base/run/qemu-server/100-3dfx", 'kvm: nothing created');
++
++my $dir = "$base/run/qemu-server/101-3dfx";
++is(
++    PVE::QemuServer::Helpers::prepare_qemu_3dfx_env(101, '/usr/bin/qemu-system-x86_64-3dfx'),
++    $dir,
++    '3dfx: the VM\'s directory',
++);
++is($ENV{OPENGLIDE_DIR}, $dir, '3dfx: OPENGLIDE_DIR is the VM\'s directory');
++ok(-d $dir, '3dfx: directory created, with its parents');
++is((stat($dir))[2] & 07777, 0700, '3dfx: mode 0700');
++
++open(my $fh, '>', "$dir/OpenGLid.ini") or die "$!\n";
++close($fh);
++is(PVE::QemuServer::Helpers::prepare_qemu_3dfx_env(101, '/usr/bin/qemu-system-x86_64-3dfx'),
++    $dir, '3dfx again: the same directory');
++ok(-e "$dir/OpenGLid.ini", '3dfx again: the files in it are kept');
++
++open($fh, '>', "$base/run/qemu-server/102-3dfx") or die "$!\n"; # a file where the directory goes
++close($fh);
++eval { PVE::QemuServer::Helpers::prepare_qemu_3dfx_env(102, '/usr/bin/qemu-system-x86_64-3dfx') };
++like($@, qr/^unable to create directory '\Q$base\E\/run\/qemu-server\/102-3dfx'/, '3dfx: dies when it can\'t');
 +
 +done_testing();
