@@ -1093,6 +1093,13 @@ then the ones that installed got targets:
   install, OpenBIOS. The CD is a plain image with 2048-byte sectors (no `--convert`). Without patch
   101508 the CD's and the installed kernel run on the SS-5 (`SunOS Release 4.1.3_U1 (MUNIX) #2`).
   The SS-10 also installs it in the lab (152 s), not made a target.
+- **`sunos412-ss600mp`** (SunOS 4.1.2, Solaris 1.0.1, the SPARCserver 600MP, one CPU), catalogue only:
+  the `sunos414-ss5` target with its own CD (2048-byte sectors, no `--convert`), the SS-600MP at 256
+  MB and `SERIAL_7BIT=1` in every phase: its `getty` sends even parity in bit 7, which the harness
+  masks before the terminal (`serial.raw` keeps it). The scenarios boot the ESP by its path on the
+  machine (`_sparc32.esp()`: `/iommu/sbus/dma/esp` on the SS-600MP, openbios 0028). It needs pve-qemu
+  `wsh/0063`-`0065` and openbios 0028 in a published package and an SS-600MP profile in qemu-server,
+  so it has run in the lab's own QEMU only (below).
 - **`sunos413-ss10`** (the original SunOS 4.1.3, Solaris 1.1, SS-10 only): the `sunos414-ss5`
   target with its own CD (`Solaris_1.1.img`, 2048-byte sectors, no `--convert`) and the SS-10's
   profile (256 MB, one CPU, OpenBIOS): the same three scenarios unchanged, 64 MB during the install.
@@ -1134,6 +1141,7 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | no | | | the kernel loads (`Boot: vmunix`), then `Unhandled Exception 0x00000029` before its banner |
+| SunOS 4.1.2 | SS-600MP, OpenBIOS with openbios 0028, 64 MB (256 MB after the install), QEMU 11.1.3 with wsh/0001-0060 and wsh/0063-0065 (the VMEbus interface registers, the lance's lebuffer) | yes | yes (109-166 s) | yes (256 MB) | `SunOS sunos412 4.1.2 1 sun4m`, the 4.1.4 scenarios with the ESP under `dma` and `SERIAL_7BIT=1`; `le0` answers ping with `NET=user`; with 2 CPUs CPU 1 panics in `check_cpuid` (the Ross module ID in the MMU control register, `submodules/SPARC.md`) (2026-11-21) |
 
 The SS-10 Sun PROM doesn't run on QEMU's SS-10 ("SS-10 and SS-20" in `submodules/SPARC.md`), so
 2.1, 2.2 and 4.1.3 had OpenBIOS on the SS-10 or the SS-20 PROM on the SS-20 (they predate the

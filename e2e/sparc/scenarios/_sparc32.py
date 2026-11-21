@@ -39,6 +39,8 @@ Variables (lab.py run ... --var KEY=VALUE):
             tap: a tap interface in the lab container (labtap0, 10.0.2.2/24, the same addresses),
             which needs `docker run --cap-add NET_ADMIN --device /dev/net/tun`
             none (default): the lance NIC with nothing behind it
+  SERIAL_7BIT 1 = mask bit 7 of the console output before the terminal and the text (lab.py;
+            SunOS 4.1.2's getty sends even parity there); serial.raw keeps it  (none)
 """
 import os
 import re
@@ -145,6 +147,13 @@ def tap_up():
 # first node of that name, so this one path works on SS-5 (/iommu@0,10000000/sbus@0,10001000/...) and
 # SS-10/SS-20 (/iommu@f,e0000000/sbus@f,e0001000/...). The packaged OpenBIOS's aliases use it too.
 ESP = "/iommu/sbus/espdma/esp"
+# The SS-600MP's DMA controller is `dma`, the name SunOS 4.1.2 knows (openbios 0028).
+ESP_BY_MACHINE = {"SS-600MP": "/iommu/sbus/dma/esp"}
+
+
+def esp(v):
+    """The ESP's path on the VM's machine."""
+    return ESP_BY_MACHINE.get(v.get("MACHINE"), ESP)
 
 
 def prom_boot(m, v, target):
@@ -173,7 +182,7 @@ def prom_boot(m, v, target):
         if m.expect_any([r"0 >", r"bootpath: "], 300) == 1:
             return  # it found the boot device by itself
         m.snap("OpenBIOS prompt")
-        path = f"{ESP}/sd@6,0:d" if target == "cdrom" else f"{ESP}/sd@3,0:a"
+        path = f"{esp(v)}/sd@6,0:d" if target == "cdrom" else f"{esp(v)}/sd@3,0:a"
         m.send(f"boot {path}\r")
         return
     seen = m.expect_any([r"Keyboard Present", r"No Keyboard", r"\nok "], 600)

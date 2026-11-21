@@ -6,6 +6,7 @@ media swapper and the masking of secrets in result.json. Standard library only:
     cd e2e/sparc && python3 -m unittest -v tests/test_targets.py
 """
 import hashlib
+import io
 import os
 import re
 import sys
@@ -85,6 +86,11 @@ class Catalogue(unittest.TestCase):
                 cpus = int(p.get("sockets", 1)) * int(p.get("cores", 1))
                 self.assertNotIn("cpu", p)
                 if p["arch"] == "sparc":
+                    if p["machine"].split(",")[0] not in s32:
+                        # a machine qemu-server has no profile for yet: a catalogue entry that says so
+                        self.assertEqual(t["status"], "catalogue")
+                        self.assertIn("qemu-server", t["blocked"])
+                        continue
                     prof = s32[p["machine"].split(",")[0]]  # the type, without machine options
                     self.assertIn(p["bios"], prof["firmware"])
                     self.assertLessEqual(int(p["memory"]), prof["max-memory"])
@@ -1083,9 +1089,61 @@ class OlderSun(unittest.TestCase):
         self.assertIn("4.1.3_U1B", targets.TARGETS["sunos413u1b-ss5"]["net_refuse"]["dns"])
         self.assertEqual(targets.problems(), [])
 
+    def test_sunos412_target(self):
+        # SunOS 4.1.2 on the SS-600MP: the 4.1.4 install with SERIAL_7BIT in every phase, from its own CD;
+        # catalogue until the QEMU and OpenBIOS patches are published and qemu-server has a profile
+        base = targets.TARGETS["sunos414-ss5"]
+        t = targets.TARGETS["sunos412-ss600mp"]
+        self.assertEqual(t["status"], "catalogue")
+        self.assertIn("wsh/0063-0065", t["blocked"])
+        self.assertIn("openbios 0028", t["blocked"])
+        self.assertNotIn("sunos412-ss600mp", targets.automated())
+        p = t["profile"]
+        self.assertEqual((p["machine"], p["bios"], p["memory"]), ("SS-600MP", "openbios-sparc32", 256))
+        self.assertNotIn("cores", p)  # one CPU: no Ross module model for its multiprocessor start
+        for phase in ("install", "firstboot", "check"):
+            self.assertEqual(t[phase]["scenario"], base[phase]["scenario"])
+            self.assertEqual(t[phase]["vars"], {**base[phase]["vars"], "SERIAL_7BIT": "1"})
+            self.assertNotIn("SERIAL_7BIT", base[phase]["vars"])  # the 4.1.4 target unchanged
+        self.assertEqual(t["install"]["memory"], 64)
+        self.assertEqual(t["disk"], base["disk"])
+        self.assertEqual(t["media"], [{"name": "sunos_4.1.2.iso", "drive": "scsi6"}])
+        med = targets.MEDIA["sunos_4.1.2.iso"]
+        self.assertNotIn("from", med)  # 2048-byte sectors already
+        self.assertEqual(med["size"] % 2048, 0)
+        self.assertIn("SunOS 4.1.2 ", t["net_refuse"]["dns"])
+        self.assertEqual(targets.problems(), [])
+
+    def test_serial_7bit(self):
+        # SERIAL_7BIT: SunOS 4.1.2's getty sends even parity in bit 7 ("sunos412 login: " arrives with
+        # some letters | 0x80); the terminal and the text see 7 bits, serial.raw keeps what came
+        class Cast:
+            def __init__(self):
+                self.data = b""
+
+            def output(self, data):
+                self.data += data
+
+        sent = bytes(b | 0x80 if bin(b).count("1") % 2 else b for b in b"sunos412 login: ")
+        for seven_bit, want in ((True, "sunos412 login: "), (False, sent.decode("latin-1"))):
+            m = object.__new__(lab.Machine)
+            m.raw, m.cast, m.text = io.BytesIO(), Cast(), ""
+            m.stream = types.SimpleNamespace(feed=lambda data: None)  # the terminal: pyte, not needed here
+            m.seven_bit = seven_bit
+            m._feed(sent)
+            self.assertEqual(m.text, want)
+            self.assertEqual(m.raw.getvalue(), sent)
+        self.assertNotEqual(sent, b"sunos412 login: ")  # the sample has parity bits set
+
+    def test_esp_path_by_machine(self):
+        sparc32 = lab.load_scenario(os.path.join(HERE, "scenarios", "_sparc32.py"))
+        self.assertEqual(sparc32.esp({"MACHINE": "SS-600MP"}), "/iommu/sbus/dma/esp")
+        for machine in ("SS-5", "SS-10", "SS-20", "LX"):
+            self.assertEqual(sparc32.esp({"MACHINE": machine}), "/iommu/sbus/espdma/esp")
+
     def test_sun_media_have_no_url(self):
         for name in ("Solaris2.3Edition-II.iso", "solaris2.5_sparc.iso", "sunos_4.1.3U1B.iso", "Solaris_2.2.img",
-                     "Solaris_1.1.img"):
+                     "Solaris_1.1.img", "sunos_4.1.2.iso"):
             self.assertNotIn("url", targets.MEDIA[name])
             self.assertFalse(targets.MEDIA[name]["lab"].startswith("/"))
 
