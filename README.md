@@ -104,6 +104,10 @@ The `submodules/qemu-3dfx` pin moves only through a pull request: the daily sync
 Run `make dev-links` to symlink the PVE pm and js files that are currently altered, in order to be able to reload and observe changes quickly.
 Note: There are still manual steps in this process due to the pvemanagerlib.js file being cached in the browser, and changes to the PVE API will often require a `systemctl restart pvedaemon pveproxy`
 
+### Tiny test system
+
+`e2e/tiny/` builds a minimal distroless Linux (kernel + an initramfs whose only file is a static nolibc PID 1) for x86_64, i386, sparc32 and sparc64 and boots it under any QEMU binary in 2-3 s under TCG: a smoke test for a QEMU build and a TCG/TCI comparison. See [e2e/tiny/README.md](e2e/tiny/README.md).
+
 ## Roadmap
 
 [ROADMAP.md](ROADMAP.md): what is done, what is in progress and what comes next.
