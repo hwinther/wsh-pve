@@ -228,10 +228,17 @@ was measured under TCG only.
 
 ## VGA retrace (games)
 
-Wolfenstein 3D starts, switches to mode 13h and stays on a black screen. It waits on the VGA input
-status register (port 3DAh) for "display enabled, not in vertical retrace". QEMU's default retrace
-emulation (`dumb`) flips both bits on every read, so the two never come together. QEMU's precise
-emulation reports them with a real CRT's timing. The WSH qemu-server sets it per VM:
+Wolfenstein 3D starts, switches to mode 13h and stays on a black screen. Before it sets the CRTC
+start address it polls the VGA input status register (port 3DAh): first for display enable (bit 0
+clear), then for several reads in a row with the display blanked (bit 0 set) but not in vertical
+retrace (bit 3 clear), which is a horizontal blank. QEMU's default retrace emulation (`dumb`) flips
+both bits together on every read, so a read with bit 0 set always has bit 3 set too, and the loop
+starts over. Its only way out is a timeout of two ticks of the game's own timer counter, which isn't
+running yet at that point: sampled in the lab, the CPU sat in this loop with interrupts off and the
+counter at 0 for the whole run, under TCG and under KVM alike. So no memory profile, `CONFIG.SYS` or
+driver changes it, and it isn't the attribute controller (`VGAAR` passes on plain `std` with
+pve-qemu-kvm 11.1.3-3+wsh2 and later). Doom doesn't wait this way and runs on plain `std`. QEMU's
+precise emulation reports both bits with a real CRT's timing. The WSH qemu-server sets it per VM:
 
 ```sh
 qm set 130 --vga std,retrace=precise
@@ -286,15 +293,26 @@ LH C:\DOS\WSHIDLE.COM
 Load CD-ROM, mouse and keyboard drivers with `DEVICEHIGH=` and `LH` as well.
 
 **EMS** (a page frame at D800 and upper memory around it): games that want expanded memory (The
-Incredible Machine 2, Dune, King's Quest VII). The same as Full except the EMM386 line:
+Incredible Machine 2, Dune, King's Quest VII), and DOS/4GW games as well. The same as Full except
+the EMM386 line:
 
 ```text
-DEVICE=C:\DOS\EMM386.EXE RAM 4096 FRAME=D800 I=CD00-D7FF I=E800-E8FF
+DEVICE=C:\DOS\EMM386.EXE RAM FRAME=D800 I=CD00-D7FF I=E800-E8FF
 ```
 
 Set the frame and the `I=` ranges around it explicitly. With `I=` over the whole gap, EMM386 finds
 no room for a frame and quietly has no EMS at all: `MEM` shows no expanded memory, and a game that
-needs it says it hasn't enough memory.
+needs it says it hasn't enough memory. Give `RAM` no size: EMM386 then takes its EMS and VCPI
+memory from all free XMS as programs ask for it. A size caps both, and DOS/4GW games get their
+memory through VCPI from that pool: with `RAM 4096` Duke Nukem 3D stops at once, "requires 2607200
+more bytes".
+
+With this line one boot runs every game in the table below (with `retrace=precise` for
+Wolfenstein 3D), so a startup menu is only needed for programs that refuse EMM386: give those a
+second entry without it (Maximum conventional or No EMM386). With
+[Legacy BIOS memory layout](#legacy-bios-memory-layout) the free gap starts at CA00, and
+`I=CA00-D7FF I=E800-E8FF` gives 55K of upper memory around the frame instead of 43K (measured in the
+lab: no NIC, `-global apic-common.vapic=off`, which is what the option does).
 
 **Maximum conventional** (HIMEM only, nothing else loaded): real-mode games that need the most
 conventional memory (Commander Keen, Leisure Suit Larry, Dune II):
@@ -357,11 +375,11 @@ VGAAR read `00` in the data state.
 | --- | --- | --- | --- | --- | --- | --- |
 | MS-DOS 6.22 (the lab's `msdos622` install) | as installed (HIMEM, `DOS=HIGH`, WSHIDLE) | 621K | 620K | - | none | 31,552K |
 | | Full | 614K | 613K | 107K | none | 31,240K |
-| | EMS | 614K | 613K | 42K | 4,480K (D800) | 31,072K |
+| | EMS | 614K | 613K | 42K | 31,936K (D800) | 31,040K |
 | | Maximum conventional / No EMM386 | 616K | 616K | - | none | 31,552K |
 | MS-DOS 6.22 with a CD-ROM driver, mouse, `KEYB` and an idle TSR | its own `CONFIG.SYS` and `AUTOEXEC.BAT` | 613K | 612K | 63K | none | 20,815K |
 | | Full | 613K | 613K | 86K | none | 31,240K |
-| | EMS | 613K | 613K | 22K | 4,480K (D800) | 31,072K |
+| | EMS | 613K | 613K | 22K | 31,936K (D800) | 31,040K |
 | | Maximum conventional (idle TSR only) | 616K | 616K | - | none | 31,552K |
 | | No EMM386 (all of them low) | 595K | 595K | - | none | 31,552K |
 | FreeDOS 1.4 (the `freedos14` install) | as installed (menu entry 2: JEMMEX `NOEMS`) | 628K | 628K | 86K | none | 31,073K |
@@ -381,29 +399,38 @@ run logged any.
 `retrace=precise`; each game started after the measurements, keys pressed at fixed times, the screen
 sampled once a second for 45-75 s). Cells: distinct screens, seconds with sound in the recording.
 "Own files" is that disk's own `CONFIG.SYS`/`AUTOEXEC.BAT` (no `BLASTER` set). Every game that
-started was still running at the end.
+started was still running at the end. The EMS column is the profile as it is now (`RAM` without a
+size).
 
 | Game | Own files | Full | EMS | Maximum conventional | No EMM386 |
 | --- | --- | --- | --- | --- | --- |
-| Doom | 54, 56 s | 55, 54 s | 55, 52 s | 55, 54 s | 55, 55 s |
-| Duke Nukem 3D | 62, 70 s | 64, 69 s | **stops: not enough memory** | 62, 69 s | 62, 69 s |
+| Doom | 54, 56 s | 55, 54 s | 55, 55 s | 55, 54 s | 55, 55 s |
+| Duke Nukem 3D | 62, 70 s | 64, 69 s | 63, 70 s | 62, 69 s | 62, 69 s |
 | Wolfenstein 3D | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s | 12, 46 s |
-| Commander Keen 4 | 17, none | 16, none | 18, none | 18, none | 15, none |
-| Leisure Suit Larry 1 | 11, 11 s | 11, 11 s | 11, 11 s | 12, 11 s | 11, 11 s |
+| Commander Keen 4 | 17, none | 16, none | 16, none | 18, none | 15, none |
+| Leisure Suit Larry 1 | 11, 11 s | 11, 11 s | 12, 11 s | 12, 11 s | 11, 11 s |
 | The Incredible Machine | 17, 2 s | 17, 2 s | 17, 2 s | 19, 2 s | 17, 2 s |
-| The Incredible Machine 2 | **needs EMS** | **needs EMS** | 21, 42 s | **needs EMS** | **needs EMS** |
+| The Incredible Machine 2 | **needs EMS** | **needs EMS** | 20, 42 s | **needs EMS** | **needs EMS** |
 | Dune | 40, none | 41, none | 40, none | 19, none | 41, none |
 | Dune II | 16, 37 s | 17, 37 s | 18, 38 s | 17, 37 s | 16, 37 s |
 
-- **Duke Nukem 3D under the EMS profile** stops at once ("requires 2607200 more bytes"): DOS/4GW
-  gets its memory through VCPI from EMM386's EMS pool, which `RAM 4096` limits to 4 MB. Use Full for
-  DOS/4GW games, or give EMM386 a larger pool.
+- **Duke Nukem 3D and the EMS pool**: under EMM386 DOS/4GW gets its memory through VCPI, from
+  EMM386's EMS pool. The first version of the EMS profile had `RAM 4096`, which limits the pool to
+  4 MB, and Duke Nukem 3D stopped at once ("requires 2607200 more bytes"). With `RAM` and no size
+  (the profile now) the pool is all free XMS and Duke Nukem 3D runs as under Full. Under Full
+  (`NOEMS`) EMM386 still offers VCPI from XMS, which is why it ran there.
 - **Wolfenstein 3D needs `retrace=precise`**: the same run under the Full profile with plain
   `-vga std` showed 2 distinct screens (the prompt and black) and no sound in 60 s, and VGARTRC
   timed out (longest run of display enable: 1 read); with `retrace=precise`, 12 screens and 46 s of
-  sound. Doom on plain `std` ran as with the precise retrace (54 screens, 54 s of sound).
+  sound. Doom on plain `std` ran as with the precise retrace (54 screens, 54 s of sound). With an EMS
+  page frame and every driver high, on plain `std` Wolfenstein 3D stayed black as well (1 distinct
+  screen): it is the retrace loop in [VGA retrace](#vga-retrace-games), not memory.
 - **The Incredible Machine 2** needs 256K of EMS and says so without it; only the EMS profile runs
-  it (with the 3C0h fix it shows its screens).
+  it (with the 3C0h fix it shows its screens). It is also sensitive to the memory manager: with the
+  same EMS line but Windows 95's `HIMEM.SYS` and `EMM386.EXE` (4.95) in place of MS-DOS 6.22's, it
+  stayed on its loading clock on a black screen; tools that move DOS's own data (files, buffers,
+  `LASTDRIVE`, the shell) into upper memory had the same effect in most combinations tried, for 3-8K
+  more conventional memory. Use MS-DOS 6.22's own `HIMEM.SYS` and `EMM386.EXE` with it.
 - Keen 4 and Dune made no sound in the sampled time with any profile; Doom, Duke Nukem 3D,
   Wolfenstein 3D and Dune II played sound with every profile that ran them, also with the disk's own
   files without `BLASTER` (they keep their own sound settings).

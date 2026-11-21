@@ -402,7 +402,8 @@ def retrace_com():
     """VGARTRC.COM: does the VGA ever report "display enabled" (input status 1, port 3DAh, bit 0 clear)
     on several reads in a row? A real VGA does for most of every scan line; QEMU's default retrace
     emulation (`dumb`) flips bits 0 and 3 on every read, so no two reads in a row agree, and a game that
-    waits for a stretch of display enable (Wolfenstein 3D) waits for ever. QEMU's precise emulation
+    waits for a stretch of equal reads (Wolfenstein 3D: several reads of "blanked, not in vertical
+    retrace", a horizontal blank) waits for ever. QEMU's precise emulation
     (`-vga std,retrace=precise`, qemu-server `vga: std,retrace=precise`) reports a CRT's timing.
 
     Polls for RETRACE_RUN reads in a row with bit 0 clear, for at most one second (18 ticks); prints
