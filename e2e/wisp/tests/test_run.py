@@ -149,7 +149,7 @@ class Table(unittest.TestCase):
         rec["label"] = "tcg"
         out = run.table([rec, rec]).splitlines()
         self.assertEqual(len(out), 4)
-        self.assertIn("| sparc32 | tcg | 1.00 |", out[2])
+        self.assertIn("| sparc32 | SS-5 | tcg | 1.00 |", out[2])
         self.assertIn("| 50 | yes |", out[2])
 
 
