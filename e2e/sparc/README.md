@@ -1051,6 +1051,12 @@ then the ones that installed got targets:
   install, OpenBIOS. The CD is a plain image with 2048-byte sectors (no `--convert`). Without patch
   101508 the CD's and the installed kernel run on the SS-5 (`SunOS Release 4.1.3_U1 (MUNIX) #2`).
   The SS-10 also installs it in the lab (152 s), not made a target.
+- **`sunos413-ss10`** (the original SunOS 4.1.3, Solaris 1.1, SS-10 only): the `sunos414-ss5`
+  target with its own CD (`Solaris_1.1.img`, 2048-byte sectors, no `--convert`) and the SS-10's
+  profile (256 MB, one CPU, OpenBIOS): the same three scenarios unchanged, 64 MB during the install.
+  Its kernel needs the QEMU fix `wsh/0049` (pve-qemu-kvm 11.1.3-2+wsh31 and later; without it the
+  CD's kernel panics in its VME probe, `BAD TRAP: cpu=0 type=29`), so it was catalogue only until
+  that package was published; results through PVE below the OpenBIOS targets.
 
 Results in the lab's own QEMU (serial console, Sun-labelled 3G disk, `solaris-boot-cd.py` for "CD
 boots", the install scenarios for "installs", their first boot and check for "boots"):
@@ -1082,7 +1088,7 @@ boots", the install scenarios for "installs", their first boot and check for "bo
 | Solaris 2.2 | SS-20, `ss20_v2.25_rom` -50, CD as a disk | kernel only | | | the same `BAD TRAP: type=9` and `panic: Data fault` (the unnamed node) |
 | Solaris 2.2 | the same with `PROM_NAME_UNNAMED=1` (QEMU 11.1.3 with wsh/0001-0041, no other change) | yes (55 s) | not tried | | 2026-11-20 |
 | SunOS 4.1.3 | SS-10, OpenBIOS, 64 or 32 MB, also `-cpu TI-SuperSparc-40` | kernel only | | | `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B goes on to its munixfs root: a probe read of physical `0xd.0108_0000`, where QEMU has nothing (`submodules/SPARC.md`) |
-| SunOS 4.1.3 | SS-10, OpenBIOS, 64 MB (256 MB after the install), QEMU 11.1.3 with wsh/0001-0050 (`wsh/0049`: a bus error on a SuperSPARC load takes trap 0x09) | yes | yes (124-138 s) | yes (256 MB) | `SunOS sunos413 4.1.3 3 sun4m`, the 4.1.4 scenarios unchanged, four passes (2026-11-20); target `sunos413-ss10`, catalogue until a published package has the patch |
+| SunOS 4.1.3 | SS-10, OpenBIOS, 64 MB (256 MB after the install), QEMU 11.1.3 with wsh/0001-0050 (`wsh/0049`: a bus error on a SuperSPARC load takes trap 0x09) | yes | yes (124-138 s) | yes (256 MB) | `SunOS sunos413 4.1.3 3 sun4m`, the 4.1.4 scenarios unchanged, four passes (2026-11-20); target `sunos413-ss10` since pve-qemu-kvm 11.1.3-2+wsh31 (through PVE below) |
 | SunOS 4.1.3 | SS-20, OpenBIOS | kernel only | | | the same |
 | SunOS 4.1.3 | SS-20, `ss20_v2.25_rom` -50, 64 MB | kernel only | | | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | no | | | the kernel loads (`Boot: vmunix`), then `Unhandled Exception 0x00000029` before its banner |
@@ -1194,6 +1200,29 @@ question. As in the lab runs, `df -k` in the check lists `/` and `/usr` only: `/
 prints "not found"; `uname -a` and the marker carry the name). `pve_matrix.py install` now also
 needs the 2.1 CD in `--iso` (`sun_solaris/Solaris/2.1/SPARC/`). Not tried: `--user`, `--gateway`,
 the 9G disk, a boot test of the stored disk, more than one CPU (traps, `submodules/SPARC.md`).
+
+**`sunos413-ss10` through PVE** (the PVE test container from `e2e/pve/Dockerfile` with the lab, built
+`--no-cache` from the published packages: pve-qemu-kvm 11.1.3-2+wsh31, qemu-server 9.2.19+wsh4,
+pve-manager 9.2.32+wsh4, libpve-storage-perl 9.1.18+wsh2), `lab.py install sunos413-ss10 --check`
+on VMIDs of their own, two at a time, 2026-11-21:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sunos413-ss10` (VM 1) | passed; `SunOS sunos413 4.1.3 3 sun4m`; the marker; `le0` with `inet 10.0.2.15 netmask ffffff00`; the finished VM `scsi6: none,media=cdrom`, `boot: order=scsi3` | 10.6 min (install 404 s, first boot 151 s, check 55 s) |
+| `install sunos413-ss10` (VM 2) | passed | 10.4 min (397 s, 154 s, 51 s) |
+| `install sunos413-ss10` (VM 3) | failed in the first boot (stopped by hand): the install passed (155 s), then the guest's `duplicate IP address!!` message, from VM 4 on the same bridge with the same address, came right after `login:` and the scenario waited for a prompt at the end of the line | |
+| `install sunos413-ss10` (VM 4) | passed | 6.1 min (142 s, 149 s, 54 s) |
+| `install sunos413-ss10` (VM 5) | passed | 5.9 min (134 s, 149 s, 52 s) |
+| `install sunos413-ss10 --ip 10.0.2.16` (VM 6, next to VM 5) | passed; `inet 10.0.2.16` | 5.9 min (136 s, 148 s, 52 s) |
+| unit tests (`test_targets.py`) | passed | |
+
+VMs 1 and 2 ran while the host was busy with other builds and guests (the install's package copy
+took ~5.5 min instead of ~1.5). Two SunOS 4 guests with the same static address on one bridge
+report each other on the console (`vmunix: duplicate IP address!!`); one such message after the
+login prompt stopped VM 3, so parallel runs need `--ip` (VM 6). `pve_matrix.py install` runs one
+target at a time and now also needs the 4.1.3 CD in `--iso`
+(`sunos_202004/SunOS/SPARC/4.1.3/Solaris_1.1.img`, next to 4.1.3_U1B's). Not tried: `--user`,
+`--gateway`, the 9G disk, a boot test of the stored disk.
 
 ### NetBSD install targets
 

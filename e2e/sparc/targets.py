@@ -112,6 +112,9 @@ PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+
 # Solaris 2.1 on the SS-10 (published packages; pve-qemu-kvm +wsh29 and later have wsh/0047)
 PACKAGES_2026_11_20_WSH30 = {"pve-qemu-kvm": "11.1.3-2+wsh30", "qemu-server": "9.2.19+wsh4",
                              "pve-manager": "9.2.32+wsh4"}
+# SunOS 4.1.3 on the SS-10 (published packages; pve-qemu-kvm +wsh31 and later have wsh/0049)
+PACKAGES_2026_11_21_WSH31 = {"pve-qemu-kvm": "11.1.3-2+wsh31", "qemu-server": "9.2.19+wsh4",
+                             "pve-manager": "9.2.32+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -1247,21 +1250,17 @@ TARGETS["sunos413u1b-ss20"] = {
 # fault catcher armed), and 4.1.3's trap() takes only trap 0x09 there; QEMU raised trap 0x29 for that
 # bus error and the kernel panicked ("BAD TRAP: cpu=0 type=29") after SUNW,fdtwo0. The SuperSPARC
 # takes a bus error on a load as trap 0x09 (submodules/SPARC.md, "Older Sun releases on sun4m"):
-# pve-qemu patch wsh/0049.
+# pve-qemu patch wsh/0049, in pve-qemu-kvm 11.1.3-2+wsh31 and later.
 TARGETS["sunos413-ss10"] = {
     **_SUNOS4,
     "title": "SunOS 4.1.3 Programmer install on a SPARCstation 10 (OpenBIOS, one CPU)",
-    "status": "catalogue",
-    "blocked": ("Needs pve-qemu patch wsh/0049, which no published pve-qemu-kvm has yet: on the SuperSPARC a bus"
-                " error on a load is a data access exception (trap 0x09), not a data access error (0x29)"
-                " (target/sparc, sparc_raise_mmu_fault). Without it the kernel panics after SUNW,fdtwo0 (BAD TRAP"
-                " type=29 in its probe for VME controllers). With it the lab's own QEMU runs the target's three"
-                " scenarios (install 2.1-2.3 min, first boot 1.5-1.6 min, check 0.8 min, four passes; 2026-11-20,"
-                " a local build of 11.1.3 with wsh/0001-0050); not run through PVE."),
+    "status": "automated",
     "profile": {**SPARC32, "machine": "SS-10", "memory": 256, "ostype": "other"},
     "media": [{"name": "Solaris_1.1.img", "drive": "scsi6"}],
     "net_refuse": {k: v.replace("4.1.4", "4.1.3") for k, v in TARGETS["sunos414-ss5"]["net_refuse"].items()},
     "hostname": "sunos413",
+    "minutes": 6,  # 5.9-6.1 min: install 2.2-2.4, first boot 2.5, --check 0.9 (10.5 min on a loaded host)
+    "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_WSH31, "with": "--check"},
 }
 
 # Solaris 2.1 (SunOS 5.1), the first sun4m release (SS-10 only of QEMU's machines): the 2.2 path of
