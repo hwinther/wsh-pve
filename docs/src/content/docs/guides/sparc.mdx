@@ -331,12 +331,16 @@ the `drive` property of `sysbus-m48t08`).
 
 Tested in the lab with Solaris 2.6 on the LX (`lx.bin`) and Solaris 8 on the SS-5 (`ss5.bin`):
 after the one `setenv`, every start reaches the login prompt by itself (about 90 s on the LX, 45 s
-on the SS-5).
+on the SS-5). Solaris 2.6 on the SS-20 PROM too, with `wsh/0061` (about 65 s).
 
-- **Not yet on the SS-20 PROM** (`ss20_v2.25_rom`): the PROM boots the disk by itself, but when it
-  does, Solaris 2.6 stops QEMU at `configuring network interfaces:` (`Trap 0x29`). That also
-  happens without the volume after `setenv diag-switch? false` and `reset`; a `boot disk` typed at
-  `ok` works. On the SS-20 PROM leave `diag-switch?` true and type `boot disk`, or use OpenBIOS.
+- **The SS-20 PROM** (`ss20_v2.25_rom`) needs a `pve-qemu-kvm` with `wsh/0061` as well. With an
+  older one, Solaris 2.6 stops QEMU at `configuring network interfaces:` (`Trap 0x29`) whenever
+  the PROM started with `diag-switch?` false, whether it boots by itself or you type `boot disk`.
+  On such a package, leave `diag-switch?` true and type `boot disk`, or use OpenBIOS. With
+  `wsh/0061`, Solaris 2.6 boots to the login prompt by itself (tested in the lab with plain QEMU, not
+  yet through PVE).
+- **No reconfiguration boot on the SS-20 PROM** (`boot -r`, or `touch /reconfigure`): Solaris 2.6
+  panics in its `dbri` audio driver (`BAD TRAP ... module "dbri"`). Normal boots are not affected.
 
 - **The MAC address and the machine type** (the IDPROM at the end of the NVRAM) come from the VM's
   configuration at every start, as without the volume. Changing net0's MAC keeps the PROM's

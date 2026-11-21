@@ -90,6 +90,8 @@ maintains the patches.
 | `0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m` | qtest `sun4m-onboard-sbus-test` for 0056-0057: the LX's cgsix, DBRI and bpp regions at their addresses and priority with the default TCX's ROM above them, none on the SS-5, and the DBRI's FCode (header, checksum, length, program, zeros after it, big-endian wide reads) on the LX and the SS-20 | ours | not in QEMU |
 | `0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it` | QEMU wrote OpenBIOS's NVRAM layout into the sun4m M48T08 at every start and kept nothing across runs, so the Sun PROMs (SS-5, SS-20, LX) found their checksum wrong, set `diag-switch?` and stopped at `ok` on every power-on. A `drive` property for the sysbus M48Txx's NVRAM bytes (written through per byte, clock registers left out); on sun4m a blank image gets QEMU's contents once, any other image is left alone except the IDPROM (from `-M` and the MAC) and, with `-prom-env`, OpenBIOS's partitions; the M48T08 at `/machine/nvram` ("The NVRAM kept in a volume") | ours | not in QEMU |
 | `0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive` | qtest `sun4m-nvram-test` for 0059: no image, a blank image, persistence across two runs (guest writes stored, clock registers not, the IDPROM following the MAC), `-prom-env`, a larger image, `-blockdev` and `query-block`'s path, a read-only image | ours | not in QEMU |
+| `0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres` | The lance has 24-bit addresses; the ledma adds the upper 8 bits of the DVMA address from its fourth register (`E_BASE_ADDR`, "defaults to 0xff" in the DMA2 description the file cites), which QEMU reset to 0. Solaris 2.6's `le` driver never writes it, and the SS-20 PROM sets it only when it probes with `diag-switch?` true, so when the PROM booted by itself (`diag-switch?` false) the lance asked for `0x0040f000` instead of `0xff40f000`, the IOMMU (64 MB range) faulted at level 15, and the kernel recursed into its level-15 handler until QEMU stopped (`Trap 0x29`). Reset value `0xff000000` for the ledma only ("SS-20 PROM: auto-boot and the lance DMA") | ours | not in QEMU |
+| `0062-tests-qtest-test-the-lance-DMA-s-base-address-regist` | qtest `sun4m-ledma-test` for 0061: the register after start and `system_reset` (SS-5, SS-20, LX), the ESP channel's stays 0, and the lance's init block read through a 64 MB IOMMU from `0xff400000` (an IOMMU error at `0x00400000` with the register at 0); fails without 0061 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -264,12 +266,16 @@ section).
 `sun4m-nvram-test` 7/7, `qtest-sparc` 28 OK with `m48t59-test` and `prom-env-test`, 2 skipped and the
 `qmp-test` `oob` failure as before ("The NVRAM kept in a volume").
 
+0061-0062 apply on top of 0001-0060 (2026-11-21, lab build of 11.1.3; not in a package yet):
+`sun4m-ledma-test` 5/5 (its lance and reset cases fail without 0061), `qtest-sparc` 29 OK, 2 skipped
+and the `qmp-test` `oob` failure as before.
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
 `sun4m-fsr-rd-test`, `sun4m-cs4231-test`, `sun4m-esp-test`, `sun4m-mmu-ctx-ifetch-test` and
-`sun4m-bus-error-trap-test`, `sun4m-fp-deferred-trap-test`, `sun4m-onboard-sbus-test` and
-`sun4m-nvram-test` (sparc),
+`sun4m-bus-error-trap-test`, `sun4m-fp-deferred-trap-test`, `sun4m-onboard-sbus-test`,
+`sun4m-nvram-test` and `sun4m-ledma-test` (sparc),
 `sun4u-cmd646-test`, `sun4u-idprom-test`, `sun4u-softint-test` and `sun4u-idle-test` (sparc64) and
 `am53c974-test` (i386).
 
@@ -2073,7 +2079,7 @@ a 0001-0060 `qemu-system-sparc` bind-mounted, copies of the stored disks; each V
 | LX, `lx.bin`, Solaris 2.6 (64 MB) | `ok` after 27 s; `setenv diag-switch? false` | `login:` after 88 s |
 | LX clone (`qm clone --full`, new MAC) | (the cloned volume) | `login:` |
 | SS-5, `ss5.bin`, Solaris 8 (`sol8-ss5-prom`) | `ok` after 14 s; `setenv diag-switch? false` | `login:` after 46 s |
-| SS-20, `ss20_v2.25_rom`, Solaris 2.6 (`sol26-ss20`, 512 MB) | `ok` after 21 s; `setenv diag-switch? false` | the PROM boots the disk by itself; QEMU then stops at `configuring network interfaces:` (below) |
+| SS-20, `ss20_v2.25_rom`, Solaris 2.6 (`sol26-ss20`, 512 MB) | `ok` after 21 s; `setenv diag-switch? false` | the PROM boots the disk by itself; QEMU then stops at `configuring network interfaces:` (before 0061, below) |
 | SS-5 OpenBIOS with the volume (qcow2), Solaris 2.6 | `login:` after 59 s; the volume holds QEMU's layout | `login:` after 58 s |
 | SS-20 OpenBIOS with the volume, Solaris 2.6 | `login:` after 57 s | `login:` after 58 s |
 | SS-5 OpenBIOS without it | `login:` after 59 s | |
@@ -2083,17 +2089,59 @@ byte-identical volumes, `qm disk move ... --format qcow2` and `qm destroy --purg
 Add/Remove was checked in the same container (screenshots in the PR). Not tested: live migration,
 backup of a running VM, snapshots with the volume, storages other than `dir`.
 
-**SS-20 PROM: Solaris 2.6 auto-booted by the PROM stops QEMU (not the volume).** When the SS-20
-PROM boots the disk by itself, Solaris 2.6 gets to `configuring network interfaces:` and QEMU
-aborts with `Trap 0x29 (Data Access Error) while interrupts disabled` (pc `f00412f4`). The same
-disk boots to `login:` when `boot disk` is typed at `ok`, with diag-switch? true or false, with or
-without the volume. Without any volume, `setenv diag-switch? false` and `reset` (the PROM boots by
-itself) stops QEMU the same way, so it is the PROM's auto-boot path, not the backend (lab,
-`-netdev hubport` and the PVE tap alike; `-d guest_errors,unimp` shows the same accesses in both
-paths). Also: the stored `sol26-enduser-ss20prom` disk panics in `dbri` on its reconfiguration
-boot (`BAD TRAP: type=9 ... module "dbri"`) with a typed `boot disk` and no volume (likely 0057's
-named DBRI node, which its drivers now attach to; not checked). Both are open (ROADMAP); until then the SS-20 PROM VM keeps `diag-switch?` true
-and `boot disk` is typed.
+**SS-20 PROM: auto-boot and the lance DMA (pve-qemu `wsh/0061`-`0062`).** Before 0061, when the
+SS-20 PROM booted the disk by itself, Solaris 2.6 got to `configuring network interfaces:` and QEMU
+stopped with `Trap 0x29 (Data Access Error) while interrupts disabled` (pc `f00412f4`), with or
+without the volume. It was not the auto-boot path as such: a `boot disk` typed at `ok` failed the
+same way once the PROM had started with `diag-switch?` false (`setenv auto-boot? false` in the
+volume, then `boot disk`; lab, 2026-11-21). What decides it is whether the PROM probed with
+`diag-switch?` true in that QEMU process: only then does it write `0xff000000` to the ledma's
+fourth register (`E_BASE_ADDR`, the upper 8 bits of the lance's 24-bit DVMA addresses; `-trace
+sparc32_dma_mem_writel`: `write dmareg 0xc: 0x00000000 -> 0xff000000` during the probe, missing with
+`diag-switch?` false). The earlier "typed `boot disk` works" runs had all started with
+`diag-switch?` true.
+
+What happened then (`-d int`, `-trace slavio_set_irq`, `-trace sun4m_iommu_*`): Solaris sets the
+IOMMU range to 64 MB (`iostart` `0xfc000000`) and maps the lance's init block at DVMA `0xff40f000`;
+its `le` driver never writes the register, QEMU had reset it to 0, so the lance asked for
+`0x0040f000`, which indexes another, invalid IOMMU entry: `sun4m_iommu_bad_addr bad addr 0x40f000`,
+the IOMMU's interrupt (bit 30, level 15) raised. Level 15 can't be masked; the kernel's handler at
+`f0041cec` took it again and again (the `-d int` log ends in nested `External Interrupt 15` at the
+same pc, `%sp` going down by `0xa8` each time) until a window overflow with traps disabled hit an
+unmapped stack page: the `Trap 0x29` at `f00412f4`. On the LX the same kernel, also with a 64 MB
+range and the register at 0, boots: no IOMMU error was seen there (not looked into further; the
+fix gives it the right addresses too). The DMA2 description the QEMU file cites says the register
+"defaults to 0xff". 0061 resets the ledma's register to `0xff000000` (the ESP channel's stays 0);
+qtest 0062 checks the reset value on the SS-5, SS-20 and LX and has the lance read an init block
+through a 64 MB IOMMU from `0xff400000`.
+
+With 0001-0062 (lab, plain `qemu-system-sparc`, `-M SS-20 -cpu TI-SuperSparc-50 -m 512`, the
+stored `sol26-ss20` disk, an 8 KB NVRAM image after one `setenv diag-switch? false`): three starts in
+a row reach `login:` by themselves (61-65 s), `configuring network interfaces: le0.`, no trap.
+Without 0061 the same image stops QEMU at every start. OpenBIOS writes the register itself
+(`write dmareg 0xc: 0x00000000 -> 0xff000000` without 0061 too), which is why its profiles never
+showed this.
+
+Regressions with 0001-0062 (same lab setup, copies of the stored disks, each started without
+input): OpenBIOS SS-20 (the packaged `openbios-sparc32`, `sol26-ss20`, 512 MB) to `login:` twice with
+an NVRAM image and once without (56-57 s); the SS-5 PROM (`ss5.bin`, `sol8-ss5-prom`, 256 MB) after
+one `setenv diag-switch? false` to `login:` twice (42-43 s); the LX PROM (`lx.bin`, Solaris 2.6, 64
+MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Not done: the SS-20 PROM VM through PVE with
+`nvram0` (the command line was the same `-drive` plus `-global sysbus-m48t08.drive`), the network
+itself (the lab NIC had no host side: only `le0` plumbing and the init block were seen), other
+Solaris releases on the SS-20 PROM.
+
+**The `dbri` panic on reconfiguration boots under the SS-20 PROM (open).** Not the stored disk and
+not 0061: `boot disk -r` with the `sol26-ss20` disk (installed under OpenBIOS) panics the same way
+as the stored `sol26-enduser-ss20prom` disk's pending reconfiguration boot (both with 0061, 512
+and 256 MB; the stored disk's also before it, #418): `Configuring the /devices directory`, `WARNING: dbri: DBRI Reg8 bad!`, then `BAD
+TRAP: type=9 ... addr=0 mmu_fsr=126 rw=1` in module `dbri` (kernel read at address 0), `panic: Data
+fault`; the traceback runs through the kernel's interrupt dispatch, so it is the driver's interrupt
+(or soft interrupt) routine running after its attach found no DBRI behind 0057's register stub. An
+`mmcodec` child node added by hand at `ok` (the LX PROM's DBRI node has one, the SS-20's not) does
+not change it. On the LX the same Solaris attaches `dbri` with the same warning and runs. Until it
+is fixed, don't do reconfiguration boots under the SS-20 PROM (`rem_drv dbri` first might avoid
+it; not tested); the normal boots above reach `login:`.
 
 ### SPARCstation LX with the Themis LXE+ PROM (lab only)
 
@@ -3899,6 +3947,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - qtests: `sun4m-escc-test` (0005), `sun4m-apc-test` (0011), `sun4m-solaris-idle-test` (0016),
   `sun4m-mmu-nofault-test` (0018), `sun4m-pil-delay-slot-test` (0020), `sun4m-fsr-rd-test` (0027),
   `sun4m-cs4231-test` (0033), `sun4m-esp-test` (0039), `sun4m-nvram-test` (0060),
+  `sun4m-ledma-test` (0062),
   `sun4u-cmd646-test` (0022), `sun4u-idprom-test` (0035), `sun4u-softint-test` (0037),
   `sun4u-idle-test` (0044) and `am53c974-test` with 0007;
   they
