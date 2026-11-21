@@ -1,0 +1,240 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: name the SS-600MP's dma and lebuffer nodes as SunOS 4.1.2 knows them
+
+SunOS 4.1.2, the first release for the SPARCserver 600MP (machine ID
+66), walks the device tree by node names and knows the 600MP's on-board
+SCSI and Ethernet only as the 600MP has them: the ESP under a DMA
+controller named "dma" (the name the SPARCstation 1 and 2 use too), and
+the lance under an "lebuffer", the buffer memory it works in, at SBus
+slot f offset 0x40000. OpenBIOS gave the machine the SPARCstation 10's
+names, "espdma" and "ledma": the kernel attached neither, so it found no
+disk and no network interface (its CD's installer ran with swap on
+"ns0b"). A lance moved directly onto the SBus it refuses ("le0: not
+used - unsupported SBus card for this architecture!").
+
+On machine ID 66 only:
+- rename the ESP's DMA node to "dma"; ob_esp_init() takes the DMA
+  node's path, so the esp and sd nodes and the disk and cdrom aliases
+  are made under it (/iommu/sbus/dma/esp/sd@3,0);
+- rename the lance's parent to "lebuffer", with its registers at offset
+  0x40000, 0x20000 bytes (the buffer QEMU's SS-600MP has with pve-qemu
+  wsh/0064, up to the lance at 0x60000; SS600MP_LEBUFFER's old value
+  was the ledma's, with a note that it should be 0x40000), and leave out
+  the ledma's register setup.
+
+With the QEMU side (wsh/0063-0065) the 4.1.2 CD attaches "dma0", "esp0",
+"sd0", "lebuffer0" and "le0", installs, and the installed system boots
+and answers ping over user networking. The other sun4m machines keep
+"espdma" and "ledma".
+---
+ drivers/esp.c             | 22 +++++++-------
+ drivers/sbus.c            | 62 +++++++++++++++++++++++++++++++++++----
+ include/drivers/drivers.h |  2 +-
+ 3 files changed, 68 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/esp.c b/drivers/esp.c
+index bd1a497..f87d6f5 100644
+--- a/drivers/esp.c
++++ b/drivers/esp.c
+@@ -389,7 +389,7 @@ NODE_METHODS(ob_sd) = {
+ 
+ static int
+ espdma_init(unsigned int slot, uint64_t base, unsigned long offset,
+-            struct esp_dma *espdma)
++            struct esp_dma *espdma, const char *dmapath)
+ {
+     espdma->regs = (void *)ofmem_map_io(base + (uint64_t)offset, 0x10);
+ 
+@@ -433,7 +433,7 @@ espdma_init(unsigned int slot, uint64_t base, unsigned long offset,
+     }
+     DPRINTF("\n");
+ 
+-    push_str("/iommu/sbus/espdma");
++    push_str(dmapath);
+     fword("find-device");
+ 
+     /* set reg */
+@@ -488,10 +488,10 @@ add_alias(const char *device, const char *alias)
+ 
+ int
+ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+-            unsigned long dmaoffset)
++            unsigned long dmaoffset, const char *dmapath)
+ {
+     int id, diskcount = 0, cdcount = 0, *counter_ptr;
+-    char nodebuff[256], aliasbuff[256];
++    char nodebuff[256], aliasbuff[256], esppath[64];
+     esp_private_t *esp;
+     ucell addr;
+     unsigned int i;
+@@ -506,9 +506,10 @@ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+ 
+     global_esp = esp;
+ 
+-    if (espdma_init(slot, base, dmaoffset, &esp->espdma) != 0) {
++    if (espdma_init(slot, base, dmaoffset, &esp->espdma, dmapath) != 0) {
+         return -1;
+     }
++    snprintf(esppath, sizeof(esppath), "%s/esp", dmapath);
+     /* Get the IO region */
+     esp->ll = (void *)ofmem_map_io(base + (uint64_t)espoffset,
+                              sizeof(struct esp_regs));
+@@ -517,7 +518,7 @@ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+         return -1;
+     }
+ 
+-    push_str("/iommu/sbus/espdma");
++    push_str(dmapath);
+     fword("find-device");
+     fword("new-device");
+ 
+@@ -560,12 +561,12 @@ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+     push_str("clock-frequency");
+     fword("property");
+ 
+-    REGISTER_NODE_METHODS(ob_esp, "/iommu/sbus/espdma/esp");
++    REGISTER_NODE_METHODS(ob_esp, esppath);
+ 
+     fword("finish-device");
+ 
+     fword("my-self");
+-    push_str("/iommu/sbus/espdma/esp");
++    push_str(esppath);
+     feval("open-dev to my-self");
+     PUSH(BUFSIZE);
+     feval("dma-alloc");
+@@ -620,7 +621,7 @@ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+     for (id = 0; id < 8; id++) {
+         if (!esp->sd[id].present)
+             continue;
+-        push_str("/iommu/sbus/espdma/esp");
++        push_str(esppath);
+         fword("find-device");
+         fword("new-device");
+         push_str("sd");
+@@ -636,8 +637,7 @@ ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+         push_str("reg");
+         fword("property");
+         fword("finish-device");
+-        snprintf(nodebuff, sizeof(nodebuff), "/iommu/sbus/espdma/esp/sd@%d,0",
+-                 id);
++        snprintf(nodebuff, sizeof(nodebuff), "%s/sd@%d,0", esppath, id);
+         REGISTER_NODE_METHODS(ob_sd, nodebuff);
+         if (esp->sd[id].media == TYPE_ROM) {
+             counter_ptr = &cdcount;
+diff --git a/drivers/sbus.c b/drivers/sbus.c
+index 66af97a..06204ce 100644
+--- a/drivers/sbus.c
++++ b/drivers/sbus.c
+@@ -29,7 +29,8 @@
+ #define MACIO_ESP        0x00800000ULL /* ESP SCSI */
+ #define SS600MP_ESPDMA   0x00081000ULL
+ #define SS600MP_ESP      0x00080000ULL
+-#define SS600MP_LEBUFFER (SS600MP_ESPDMA + 0x10) // XXX should be 0x40000
++#define SS600MP_LEBUFFER 0x00040000ULL
++#define SS600MP_LEBUFFER_SIZE 0x20000 /* the 128 KB QEMU's SS-600MP has */
+ #define LEDMA_REGS       0x4
+ #define LE_REGS          0x20
+ 
+@@ -71,11 +72,48 @@ ob_sbus_node_init(uint64_t base)
+     fword("property");
+ }
+ 
++/*
++ * The lance's parent: "ledma", its DMA engine, or with lebuffer_size an
++ * "lebuffer", the buffer memory (lebuffer_size bytes at dmaoffset) the
++ * lance works in instead (SPARCserver 600MP).
++ */
+ static void
+-ob_le_init(unsigned int slot, uint64_t base, unsigned long leoffset, unsigned long dmaoffset)
++ob_le_init(unsigned int slot, uint64_t base, unsigned long leoffset,
++           unsigned long dmaoffset, unsigned long lebuffer_size)
+ {
+     le_private_t *le;
+ 
++    if (lebuffer_size) {
++        push_str("/iommu/sbus/ledma");
++        fword("find-device");
++        push_str("lebuffer");
++        fword("device-name");
++        PUSH(slot);
++        fword("encode-int");
++        PUSH(dmaoffset);
++        fword("encode-int");
++        fword("encode+");
++        PUSH(lebuffer_size);
++        fword("encode-int");
++        fword("encode+");
++        push_str("reg");
++        fword("property");
++
++        push_str("/iommu/sbus/lebuffer/le");
++        fword("find-device");
++        PUSH(slot);
++        fword("encode-int");
++        PUSH(leoffset);
++        fword("encode-int");
++        fword("encode+");
++        PUSH(0x00000004);
++        fword("encode-int");
++        fword("encode+");
++        push_str("reg");
++        fword("property");
++        return;
++    }
++
+     le = malloc(sizeof(le_private_t));
+     if (!le) {
+         DPRINTF("Can't allocate LANCE private structure\n");
+@@ -247,11 +285,12 @@ ob_macio_init(unsigned int slot, uint64_t base, unsigned long offset)
+     // NCR 53c9x, aka ESP. See
+     // http://www.ibiblio.org/pub/historic-linux/early-ports/Sparc/NCR/NCR53C9X.txt
+ #ifdef CONFIG_DRIVER_ESP
+-    ob_esp_init(slot, base, offset + MACIO_ESP, offset + MACIO_ESPDMA);
++    ob_esp_init(slot, base, offset + MACIO_ESP, offset + MACIO_ESPDMA,
++                "/iommu/sbus/espdma");
+ #endif
+ 
+     // NCR 92C990, Am7990, Lance. See http://www.amd.com
+-    ob_le_init(slot, base, offset + 0x00c00000, offset + 0x00400010);
++    ob_le_init(slot, base, offset + 0x00c00000, offset + 0x00400010, 0);
+ 
+     // Parallel port
+     //ob_bpp_init(base);
+@@ -386,10 +425,21 @@ sbus_probe_slot_ss600mp(unsigned int slot, uint64_t base)
+ #endif
+     case 0xf: // le, esp, bpp, power-management
+ #ifdef CONFIG_DRIVER_ESP
+-        ob_esp_init(slot, base, SS600MP_ESP, SS600MP_ESPDMA);
++        /*
++         * SunOS 4.1.2, the first release for the 600MP, knows the ESP's
++         * DMA controller only by the name "dma" (as on the SPARCstation 1
++         * and 2) and finds no disk under "espdma", the SPARCstation 10's
++         * name. The esp node stays its child.
++         */
++        push_str("/iommu/sbus/espdma");
++        fword("find-device");
++        push_str("dma");
++        fword("device-name");
++        ob_esp_init(slot, base, SS600MP_ESP, SS600MP_ESPDMA, "/iommu/sbus/dma");
+ #endif
+         // NCR 92C990, Am7990, Lance. See http://www.amd.com
+-        ob_le_init(slot, base, 0x00060000, SS600MP_LEBUFFER);
++        ob_le_init(slot, base, 0x00060000, SS600MP_LEBUFFER,
++                   SS600MP_LEBUFFER_SIZE);
+         // Power management (APC) XXX should not exist
+         ob_apc_init(slot, APC_OFFSET);
+         break;
+diff --git a/include/drivers/drivers.h b/include/drivers/drivers.h
+index 3d6fa12..8d3e01f 100644
+--- a/include/drivers/drivers.h
++++ b/include/drivers/drivers.h
+@@ -68,7 +68,7 @@ int macio_ide_init(const char *path, uint32_t addr, int nb_channels);
+ #ifdef CONFIG_DRIVER_ESP
+ /* drivers/esp.c */
+ int ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
+-                unsigned long dmaoffset);
++                unsigned long dmaoffset, const char *dmapath);
+ #endif
+ #ifdef CONFIG_DRIVER_LSI_53C810
+ /* drivers/lsi.c */
