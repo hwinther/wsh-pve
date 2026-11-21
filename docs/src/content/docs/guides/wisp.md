@@ -15,13 +15,16 @@ time and a checksum, prints one result line and powers the machine off. A run un
 
 | Architecture | QEMU machine | Kernel image | PID 1 |
 | --- | --- | --- | --- |
-| x86_64 | `pc` | 1,283,072 bytes | 12,976 bytes |
-| i386 | `pc` | 1,126,912 bytes | 8,908 bytes |
-| sparc32 | `SS-5`, `SS-10`, `SS-20`, `LX` | 2,437,240 bytes | 5,236 bytes |
-| sparc64 | `sun4u` | 3,092,744 bytes | 5,440 bytes |
+| x86_64 | `pc` | 1,287,168 bytes | 17,072 bytes |
+| i386 | `pc` | 1,126,912 bytes | 14,160 bytes |
+| sparc32 | `SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | 2,441,336 bytes | 8,716 bytes |
+| sparc64 | `sun4u` | 3,092,744 bytes | 8,904 bytes |
 
 The x86 images are compressed `bzImage`s; the sparc images are the stripped, uncompressed ELF the
-OpenBIOS loader takes.
+OpenBIOS loader takes. PID 1 includes the interactive shell below (before it: 12,976, 8,908, 5,236
+and 5,440 bytes). CI (`.github/workflows/wisp-boot.yml`) boots every architecture and machine in
+the table on pull requests that touch wisp or the QEMU build, and on main; the `LX` and the
+`Voyager` need OpenBIOS patch 0027, in the published `pve-qemu-kvm` since 11.1.3-3+wsh9.
 
 ## What it is for
 
@@ -32,6 +35,34 @@ OpenBIOS loader takes.
   has where it can't generate host code, such as a WebAssembly build), without a guest OS's own
   start-up time in the numbers.
 
+## Interactive mode
+
+`wisp=shell` on the kernel command line starts a small shell on the serial console instead of the
+batch run; without it, nothing changes. It is meant as the base of a browser demo (QEMU as
+WebAssembly with xterm.js), so it fits an 80 x 24 terminal and uses a few ANSI colours.
+
+```sh
+qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monitor none \
+  -kernel e2e/wisp/out/sparc32/kernel -append "console=ttyS0 wisp=shell"
+```
+
+| Command | What it does |
+| --- | --- |
+| `help` | the list of commands |
+| `info`, `uname` | architecture, kernel, CPUs, memory, uptime, PID |
+| `bench` | the batch run's compute loop with its CRC, time and KiB/s |
+| `crc <n>` | the loop's CRC after `n` rounds |
+| `mandel` | an ASCII Mandelbrot set (78 x 20) in fixed-point 32-bit integer math |
+| `banner` | the logo |
+| `clear` | clears the screen |
+| `poweroff`, `reboot` | power off or restart (`reboot` not on sun4u, where OpenBIOS doesn't restart) |
+
+The console stays in the kernel's canonical mode: the TTY line discipline echoes and edits the line
+(Backspace, Ctrl-U, Ctrl-W, Ctrl-C). `run.py --shell` drives the shell over the serial console on
+all four architectures and checks every answer, down to each character of the Mandelbrot set; CI
+runs it after the batch boots. On sparc, `init.c` brings its own `_start`: nolibc's lost the
+kernel's arguments and environment there, so until now `loops=` never reached PID 1 on sparc.
+
 ## Building and running
 
 Everything is in `e2e/wisp/` (see its README):
@@ -40,6 +71,7 @@ Everything is in `e2e/wisp/` (see its README):
 docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --repeat 2
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --shell
 ```
 
 The image has Debian 13's cross compilers, `linux-source-7.3` from trixie-backports and the
@@ -81,7 +113,10 @@ with and without `--enable-tcg-interpreter`. All 24 runs passed (result line, CR
 - Peak RSS is lower under TCI on x86 (64-74 against 106-112 MiB); on sparc it is about the same
   (sparc32 180-187 MiB with `-m 128`, sparc64 88-96 MiB with `-m 256`).
 - `SS-10` (TCG) passes as well (2.7 s to power-off). `-M LX` passes with OpenBIOS patch 0027 (see
-  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stops at the console switch.
+  "The LX and the Voyager" below); with the published 11.1.3-3+wsh6 it stopped at the console switch.
+  All eight sparc32 machines (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`,
+  `Voyager`) pass with 11.1.3-3+wsh9 in 2.4 to 3.2 s to power-off, batch and shell, with the
+  package's QEMU and with QEMU built from the same tree; CI boots all of them.
 
 ## The LX and the Voyager
 
@@ -97,5 +132,7 @@ and `do_sparc_fault()` dereferences the NULL that `search_exception_tables()` re
 fault takes a stack frame until the kernel stack has run down through the kernel's own text,
 `do_sparc_fault` and `trap_setup` included, and QEMU stops in the overwritten trap entry code.
 OpenBIOS patch 0027 (`openbios/patches/`) makes the APC node only on the machines that have the
-chip there (SS-5, SS-4, SPARCClassic, SPARCbook). Until a `pve-qemu-kvm` with it is installed, pass
-a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
+chip there (SS-5, SS-4, SPARCClassic, SPARCbook). The published `pve-qemu-kvm` carries it since
+11.1.3-3+wsh9: with that package, wisp boots on the LX and the Voyager, batch and shell; with
+11.1.3-3+wsh8 both still stop as above (`Trap 0x07` on the LX, `Trap 0x02` on the Voyager). With an
+older package, pass a patched `openbios-sparc32` with `--firmware` (QEMU's `-L`).
