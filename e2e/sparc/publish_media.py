@@ -14,9 +14,13 @@ The paths are the case directories the matrices write, so one runs directory can
 from these, all in the PVE test container (pve.Dockerfile):
 
   pve_matrix.py pve                           sol26-install-ss5, netbsd-sparc64, alpine-aarch64
-  pve_matrix.py install --disks <stored disks> boot-tests: tribblix-m34-sun4u, sol10-sun4u
+  pve_matrix.py install --disks <stored disks> boot-tests: tribblix-m34-sun4u, sol10-sun4u, sol9-sun4u
   pve_matrix.py install --disks <empty dir>   installs (install, then the --check boot of the same
-                                              run): netbsd111-sparc, sunos413u1b-ss5, freedos14
+                                              run): netbsd111-sparc, sunos413u1b-ss5, freedos14,
+                                              openbsd59-ss5, redhat62-ss5
+  lab.py install <target> --check --out <runs>/install-<target>/1-install-<target>
+                                              the same layout for one target: sol21-ss10, openbsd80-sun4u,
+                                              sunos413-ss10
   pve_matrix.py recordings                    sol26-ss20-smp4, sol22-install-ss10
   lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5
                                               (a route out: pve_matrix.py passes none)
@@ -40,11 +44,22 @@ CASTS = [
     # install: boot-tests of the stored disks (their installs take hours)
     ("install-tribblix-m34-sun4u/1-boot-test-tribblix-m34-sun4u/check", "tribblix-m34-boot-sun4u.cast", 1, 2),
     ("install-sol10-sun4u/1-boot-test-sol10-sun4u/check", "sol10-boot-sun4u.cast", 1, 1),
+    ("install-sol9-sun4u/1-boot-test-sol9-sun4u/check", "sol9-boot-sun4u.cast", 1, 1),
     # install: installs into an empty --disks, each with the --check boot of the same run
     ("install-netbsd111-sparc/1-install-netbsd111-sparc/install", "netbsd111-install-ss5.cast", 1, 2),
     ("install-netbsd111-sparc/1-install-netbsd111-sparc/check", "netbsd111-boot-ss5.cast", 1, 1),
     ("install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/install", "sunos413-install-ss5.cast", 1, 1),
     ("install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/check", "sunos413-boot-ss5.cast", 1, 1),
+    ("install-sunos413-ss10/1-install-sunos413-ss10/install", "sunos413-install-ss10.cast", 1, 1),
+    ("install-sunos413-ss10/1-install-sunos413-ss10/check", "sunos413-boot-ss10.cast", 1, 1),
+    ("install-openbsd59-ss5/1-install-openbsd59-ss5/install", "openbsd59-install-ss5.cast", 1, 2),
+    ("install-openbsd59-ss5/1-install-openbsd59-ss5/check", "openbsd59-boot-ss5.cast", 1, 1),
+    ("install-redhat62-ss5/1-install-redhat62-ss5/install", "redhat62-install-ss5.cast", 1, 1),
+    ("install-redhat62-ss5/1-install-redhat62-ss5/check", "redhat62-boot-ss5.cast", 1, 1),
+    ("install-sol21-ss10/1-install-sol21-ss10/install", "sol21-install-ss10.cast", 1, 2),
+    ("install-sol21-ss10/1-install-sol21-ss10/check", "sol21-boot-ss10.cast", 1, 1),
+    ("install-openbsd80-sun4u/1-install-openbsd80-sun4u/install", "openbsd80-install-sun4u.cast", 1, 3),
+    ("install-openbsd80-sun4u/1-install-openbsd80-sun4u/check", "openbsd80-boot-sun4u.cast", 1, 2),
     # lab.py install debian40-ss5 --check (with a route out)
     ("debian40-ss5/1-install-debian40-ss5/install", "debian40-install-ss5.cast", 1, 4),
     ("debian40-ss5/1-install-debian40-ss5/check", "debian40-boot-ss5.cast", 1, 1),
