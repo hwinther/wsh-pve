@@ -3,6 +3,7 @@
 
     ./run.py --arch sparc32 [--arch sparc64 ...|--arch all] [--qemu-dir DIR] [--label tcg]
              [--repeat 2] [--loops N] [--machine SS-20] [--json results.jsonl] [--log-dir logs]
+             [--shell]
 
 Each run starts QEMU with -kernel out/<arch>/kernel on a serial console, reads the console with
 timestamps, and stops at power-off (or at --timeout). One JSON object per run goes to stdout (and
@@ -12,6 +13,10 @@ Measured per run: the host's load average at the start, wall time from starting 
 kernel's first line, to PID 1's banner, to its result line and to QEMU's exit, PID 1's own
 uptime and compute-loop time, and QEMU's peak RSS (from wait4). The loop's CRC is checked
 against the value every architecture must produce for that loop count.
+
+With --shell, the kernel gets wisp=shell and PID 1 starts its interactive shell instead: run.py
+answers the prompts with a fixed script (help typed with a Backspace, info, bench, crc 64,
+mandel, poweroff; shell.py) and checks the answers, including every row of the Mandelbrot set.
 """
 
 import argparse
@@ -24,6 +29,8 @@ import sys
 import threading
 import time
 import zlib
+
+import shell
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -109,7 +116,7 @@ def crc_for(loops, compute_limit=256):
 
 
 def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, loops=None,
-                 firmware=None, extra=()):
+                 firmware=None, extra=(), interactive=False):
     """The QEMU command line for one boot."""
     binary, machine_args, default_mem, console = ARCHES[arch]
     if qemu_dir:
@@ -119,6 +126,8 @@ def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, lo
     append = f"{console} panic=-1"
     if loops:
         append += f" loops={loops}"
+    if interactive:
+        append += " wisp=shell"
     cmd = [binary, *machine_args, "-m", str(memory or default_mem), "-display", "none",
            "-serial", "stdio", "-monitor", "none", "-no-reboot", "-nodefaults"]
     if firmware:
@@ -230,6 +239,43 @@ def evaluate(arch, raw, loops):
     return rec
 
 
+def evaluate_shell(arch, raw, loops, script=shell.SCRIPT):
+    """The reported record of a --shell run; 'ok' only if every answer checks out."""
+    answers = shell.split_transcript(raw["text"])
+    problems, numbers = shell.check_answers(arch, script, answers, crc_for,
+                                            loops or DEFAULT_LOOPS)
+    rec = {"arch": arch, "mode": "shell"}
+    for key in ("load1", "load5", "exit_code", "timed_out", "max_rss_kb", "user_s", "sys_s",
+                "t_prompt", "prompt_s"):
+        rec[key] = raw[key]
+    rec["t_exit"] = round(raw["t_exit"], 3)
+    rec.update(numbers)
+    if "WISP-POWEROFF-FAILED" in raw["text"]:
+        problems.append("power-off failed")
+    if raw["timed_out"]:
+        problems.append("timed out")
+    elif raw["exit_code"] != 0:
+        problems.append(f"QEMU exit code {raw['exit_code']}")
+    rec["ok"] = not problems
+    rec["problems"] = problems
+    return rec
+
+
+def shell_table(records):
+    """Markdown table of --shell runs."""
+    head = ("| arch | machine | label | load1 | to prompt s | bench ms | mandel ms | to exit s "
+            "| peak RSS MiB | ok |")
+    rows = [head, "|" + " --- |" * 10]
+    for r in records:
+        def f(v, fmt="{:.2f}"):
+            return "-" if v is None else fmt.format(v)
+        rows.append(f"| {r['arch']} | {r.get('machine_arg') or ''} | {r.get('label', '')} "
+                    f"| {f(r['load1'])} | {f(r['t_prompt'])} | {f(r.get('bench_ms'), '{}')} "
+                    f"| {f(r.get('mandel_ms'), '{}')} | {f(r['t_exit'])} "
+                    f"| {f(r['max_rss_kb'] / 1024, '{:.0f}')} | {'yes' if r['ok'] else 'NO'} |")
+    return "\n".join(rows)
+
+
 def table(records):
     """Markdown table of the runs."""
     head = ("| arch | label | load1 | to kernel s | to PID 1 s | to result s | to exit s "
@@ -260,6 +306,8 @@ def main(argv=None):
     ap.add_argument("--out", default=os.path.join(HERE, "out"), help="build output directory")
     ap.add_argument("--json", help="append one JSON object per run to this file")
     ap.add_argument("--log-dir", help="write each run's timestamped console log here")
+    ap.add_argument("--shell", action="store_true",
+                    help="boot with wisp=shell and drive the interactive shell (shell.py)")
     args = ap.parse_args(argv)
 
     arches = list(ARCHES) if "all" in args.arch else args.arch
@@ -267,15 +315,23 @@ def main(argv=None):
     for arch in arches:
         kernel = os.path.join(args.out, arch, "kernel")
         cmd = qemu_command(arch, args.qemu_dir, kernel, args.machine, args.memory, args.loops,
-                           args.firmware)
+                           args.firmware, interactive=args.shell)
         for n in range(1, args.repeat + 1):
             log_path = None
             if args.log_dir:
                 os.makedirs(args.log_dir, exist_ok=True)
-                tag = "-".join(x for x in (arch, args.label, args.machine, str(n)) if x)
+                tag = "-".join(x for x in (arch, args.label, args.machine,
+                                           "shell" if args.shell else "", str(n)) if x)
                 log_path = os.path.join(args.log_dir, f"{tag}.log")
-            raw = boot(cmd, args.timeout, log_path)
-            rec = evaluate(arch, raw, args.loops)
+            if args.shell:
+                raw = shell.drive(cmd, shell.SCRIPT, args.timeout)
+                if log_path:
+                    with open(log_path, "w", encoding="utf-8") as fh:
+                        fh.write(raw["text"])
+                rec = evaluate_shell(arch, raw, args.loops)
+            else:
+                raw = boot(cmd, args.timeout, log_path)
+                rec = evaluate(arch, raw, args.loops)
             rec.update(label=args.label, run=n, machine_arg=args.machine, qemu=cmd[0])
             records.append(rec)
             line = json.dumps(rec, sort_keys=True)
@@ -283,7 +339,7 @@ def main(argv=None):
             if args.json:
                 with open(args.json, "a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
-    print(table(records), file=sys.stderr)
+    print((shell_table if args.shell else table)(records), file=sys.stderr)
     return 0 if all(r["ok"] for r in records) else 1
 
 

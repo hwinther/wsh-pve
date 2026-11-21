@@ -35,6 +35,85 @@ reboot: Power down
   the sun4m machines and the firmware's power-off on sun4u. QEMU runs with `-no-reboot` and the kernel
   with `panic=-1`, so a panic ends QEMU as well; if power-off returns, PID 1 prints
   `WISP-POWEROFF-FAILED`.
+- On sparc, `init.c` brings its own `_start`. nolibc's is a C function around the asm that hands
+  `argc`'s address to `_start_c`, and gcc (no `naked` functions on sparc) puts a `save %sp, -96, %sp`
+  in front of it, so `_start_c` read `argc`, `argv` and the environment 96 bytes too low: `argc` 0
+  and no `loops=` (or `wisp=`) from the kernel command line. Before this, `loops=` was silently
+  ignored on sparc32 and sparc64.
+
+## Interactive mode
+
+`wisp=shell` on the kernel command line (it reaches PID 1 as an environment variable, like
+`loops=`) starts a small shell on the serial console instead of the batch run. The banner line
+comes first as in batch mode; the shell then lowers the kernel's console log level to emergencies
+only, so kernel messages don't land in the middle of its output. The default (no `wisp=`) is the
+batch run above, unchanged.
+
+```sh
+qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monitor none \
+  -kernel out/sparc32/kernel -append "console=ttyS0 wisp=shell"
+```
+
+| Command | What it does |
+| --- | --- |
+| `help` | the list of commands |
+| `info`, `uname` | architecture, kernel (`uname`), CPUs, memory total and free, uptime, PID |
+| `bench` | the compute loop of the batch run (`loops=`, default 4096 rounds) with its CRC, time and KiB/s |
+| `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
+| `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
+| `banner` | the logo with the architecture and kernel release |
+| `clear` | clears the screen (`ESC [H ESC [2J`) |
+| `poweroff` | powers the machine off, as the batch run does |
+| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. Not on sun4u: OpenBIOS doesn't carry out Linux's restart request there and the kernel panics, so the shell refuses and says to use `poweroff` |
+
+```
+wisp:sparc32> crc 64
+  crc32 0x36c8a4f9 after 64 rounds (1024 KiB) in 6 ms
+wisp:sparc32> mandel
+                                                  ..........
+                                           ............+:..+......
+                                       ...............:-==-:.........
+                                   ................::=@@@@@#:...........
+                                ...........:==-::-*-==*@@@*=-=-+:...:+...
+                           ...............::-#@@@@@@@@@@@@@@@@@@@*@@*:.....
+                    ......-:............::=@@@@@@@@@@@@@@@@@@@@@@@@@@::.....
+             .............::-+---@=*-:::-*@@@@@@@@@@@@@@@@@@@@@@@@@@@*=:.....
+         ...............::-++@@@@@@@@@@=@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:......
+        .............::-*@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@%:.......
+        .............::-*@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@#:.......
+         ...............::-=+@@@@@@@@@@=@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@:......
+             .............::-+---@++-:::-*@@@@@@@@@@@@@@@@@@@@@@@@@@@*=:.....
+                    ......-:............::=@@@@@@@@@@@@@@@@@@@@@@@@@@::.....
+                           ...............::-#@@@@@@@@@@@@@@@@@@@*@@*:.....
+                                ...........:==-::-*-==*@@@*=-+-+:...:=...
+                                   ................::=@@@@@#:...........
+                                       ...............:-==-:.........
+                                           ............+:..+......
+                                                  ..........
+  78 x 20 points, 32 iterations, 90 ms
+wisp:sparc32> poweroff
+  powering off
+reboot: Power down
+```
+
+- The layout fits an 80 x 24 terminal: `mandel` is 20 rows plus its footer, so the command, the
+  picture and the next prompt fit on one screen. The prompt, the logo and `help` use a few ANSI
+  colours (bold, green, blue, cyan) for a terminal such as xterm.js; everything else is plain.
+- Line editing: the console stays in the kernel's canonical mode, so the TTY line discipline
+  echoes and edits the line: Backspace (DEL, what xterm.js and most terminals send), Ctrl-U (the
+  line), Ctrl-W (a word), Ctrl-C (drops the line). The shell itself also applies `^H` (which the
+  line discipline echoes as `^H` but leaves in the line), turns a tab into a space and drops other
+  control characters and `ESC [ ...` sequences such as the arrow keys. There is no history.
+- Size: the shell adds about 3.5 KB to PID 1 on sparc (5,236 to 8,716 bytes on sparc32, 5,440 to
+  8,904 on sparc64) and 4 KB to the x86 binaries, which are padded to 4 KiB pages (12,976 to 17,072
+  on x86_64, 8,908 to 14,160 on i386). The commands are a string table and a `switch`, not a table of
+  function pointers: that would need a `.data` section, and the linker pads the writable segment
+  to the target's page size (64 KiB on sparc32, 1 MiB on sparc64).
+- `run.py --shell` boots with `wisp=shell`, answers each prompt with the next line of a fixed script
+  (`help` typed as `hepl`, two Backspaces and `lp`, then `info`, `bench`, `crc 64`, `mandel`,
+  `poweroff`) and checks the answers: the command list (so the line discipline applied the
+  Backspaces), the info lines, both CRCs against the model, every character of the 20 Mandelbrot
+  rows against `shell.py`'s integer model (and `tests/mandel.txt`), and the power-off.
 
 ## Build
 
@@ -65,8 +144,13 @@ SMP has no futex, and a single static init has no use for a second CPU.
 ```sh
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --label tcg --repeat 2
 docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc32 --machine SS-20
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch all --shell
 ./run.py --arch all --qemu-dir /path/to/tci-build --label tci --timeout 900 --json results.jsonl
 ```
+
+With `--shell`, each run drives the interactive shell instead (see "Interactive mode"; `shell.py`):
+the table has the seconds to the first prompt and to QEMU's exit and the `bench` and `mandel` times,
+and `--log-dir` keeps the whole console transcript.
 
 `run.py` (Python standard library) starts QEMU with `-nodefaults -display none -serial stdio
 -no-reboot -kernel out/<arch>/kernel`, timestamps each console line and kills QEMU at `--timeout`. One
@@ -76,7 +160,12 @@ QEMU to the kernel's `Linux version` line, to PID 1's banner, to the result line
 PID 1's uptime and loop time, the CRC check, and QEMU's peak RSS and CPU time from `wait4`.
 `--log-dir` keeps each run's console log with its timestamps.
 
-Unit tests (parsing, the CRC model, the QEMU command line): `python3 -m unittest discover -s e2e/wisp/tests`.
+Unit tests (parsing, the CRC model, the QEMU command line, the shell transcript checks and the
+Mandelbrot model against `tests/mandel.txt`): `python3 -m unittest discover -s e2e/wisp/tests`.
+With a C compiler on the host, `tests/test_shell.py` also builds `init.c` against the host's C
+library (it is written to build with both nolibc and glibc) and runs it outside PID 1: the batch
+line with `loops=64`, the shell script, the Mandelbrot rows against `tests/mandel.txt`, line
+editing and errors.
 
 ### A TCI build
 
@@ -93,7 +182,8 @@ OpenBIOS and SeaBIOS.
 GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
 filter, so its `wisp-boot-required` check always reports; a `changes` job skips the boot when the pull
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
-main that change `e2e/wisp/` and by hand.
+main that change `e2e/wisp/` and by hand. After the batch runs, `run.py --arch all --shell` boots
+the four architectures once more and drives the interactive shell (about 2 to 3 s each).
 
 - Which QEMU: a pull request that changes `submodules/pve-qemu.patch`, the pve-qemu pin,
   `qemu-tci.sh` or the workflow gets QEMU built from its own tree: pve-qemu with `pve-qemu.patch`, its
@@ -188,4 +278,6 @@ built):
   the page reads), threads through SharedArrayBuffer (so the page needs cross-origin isolation
   headers), and no guest network without further work.
 - wisp fits that well: no disk, a 2.4 MB kernel, output on the serial console only, and a
-  result line a page can parse.
+  result line a page can parse. With `wisp=shell` on the command line it is also something to type
+  at in an xterm.js terminal (see "Interactive mode"): an 80 x 24 layout, line editing in the
+  kernel's line discipline, and `bench` and `mandel` to show the emulated CPU at work.
