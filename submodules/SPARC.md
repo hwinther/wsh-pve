@@ -1624,7 +1624,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.2 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | installs (the 2.3 path: Quick Install, ~5 min) and boots (`SunOS solaris 5.2 Generic sun4m`); target `sol22-ss10` (~9 min) |
 | Solaris 2.1 | SS-10 OpenBIOS with openbios 0019-0022, CD as a disk | the kernel configures its devices, then QEMU stops: `qemu: fatal: Trap 0x21 (Instruction Access Error) while interrupts disabled` at `pc f0014768` (`srmmu_mmu_flushctx`); the same with `-cpu TI-SuperSparc-40`. From a `scsi-cd`: `cannot mount root`. With pve-qemu `wsh/0047` (below; pve-qemu-kvm 11.1.3-2+wsh29 and later) it installs (Standalone Quick Install, End-User) and boots (`SunOS sol21-ss10 5.1 Generic sun4m sparc`); target `sol21-ss10` (~10 min) |
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots |
-| SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (not in a published package yet) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (catalogue until a package has the patch) |
+| SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (below; pve-qemu-kvm 11.1.3-2+wsh31 and later) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (~6 min) |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
 | SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner |
 
@@ -1774,9 +1774,13 @@ What it would take for the rest:
   and SunOS 4.1.3_U1B's VME probes); on the SS-5 `sunos414-ss5`, `sunos413u1b-ss5`, `sol23-ss5`,
   `sol24-ss5`, `sol25-ss5`, `sol251-ss5` and `sol8-ss5-prom` (`ss5.bin`), `sol26-ss5`, `sol7-ss5`,
   `sol8-ss5`, `sol9-ss5`, `netbsd93-sparc`, `netbsd111-sparc`, `openbsd59-ss5`, `debian40-ss5` and
-  `redhat62-ss5`, which never take it (microSPARC-II). Target
-  `sunos413-ss10`, catalogue until a published pve-qemu-kvm has the patch. Write-up:
-  `upstream/qemu-sparc32-supersparc-bus-error-trap.md`.
+  `redhat62-ss5`, which never take it (microSPARC-II). Write-up:
+  `upstream/qemu-sparc32-supersparc-bus-error-trap.md`. Through PVE on the
+  published pve-qemu-kvm 11.1.3-2+wsh31 (qemu-server 9.2.19+wsh4, 2026-11-21): `lab.py install
+  sunos413-ss10 --check` passed 5 of 6 (5.9-6.1 min, install 2.2-2.4 min, first boot 2.5, check
+  0.9; 10.5 min on a busy host); the other stopped in its first boot on a `duplicate IP address`
+  console message from a second guest with the same address (the test setup, not the guest). So
+  `sunos413-ss10` is an automated target (e2e/sparc/README.md, "Older Sun releases").
 - **SunOS 4.1.2 on SS-600MP, diagnosis (not planned):** the same generic kernel family, but the
   SS-600MP also needs its VMEbus interface registers at `0xf.df01_0000` (control, AFSR, AFAR),
   which QEMU's SS-600MP doesn't have, and the kernel knows the 4/600's `dma`/`esp`/`le` node names,

@@ -1055,14 +1055,19 @@ class OlderSun(unittest.TestCase):
         self.assertIn("4.1.4", base["net_refuse"]["dns"])  # the copy didn't change the 4.1.4 target
 
     def test_sunos413_target(self):
-        # SunOS 4.1.3 needs pve-qemu wsh/0049 (a bus error on a SuperSPARC load is trap 0x09): catalogue
-        # until a published package has it; the 4.1.4 install unchanged on the SS-10, from its own CD
+        # SunOS 4.1.3 needs pve-qemu wsh/0049 (a bus error on a SuperSPARC load is trap 0x09, pve-qemu-kvm
+        # 11.1.3-2+wsh31 and later): automated since a published package has it; the 4.1.4 install
+        # unchanged on the SS-10, from its own CD
         base = targets.TARGETS["sunos414-ss5"]
         t = targets.TARGETS["sunos413-ss10"]
-        self.assertEqual(t["status"], "catalogue")
-        self.assertIn("wsh/0049", t["blocked"])
-        self.assertNotIn("sunos413-ss10", targets.automated())
-        self.assertNotIn("tested", t)
+        self.assertEqual(t["status"], "automated")
+        self.assertNotIn("blocked", t)
+        self.assertIn("sunos413-ss10", targets.automated())
+        pkg = t["tested"]["packages"]["pve-qemu-kvm"]
+        self.assertTrue(pkg.startswith("11.1.3-2+wsh"))
+        self.assertGreaterEqual(int(pkg.rsplit("+wsh", 1)[1]), 31)
+        self.assertEqual(t["tested"]["with"], "--check")
+        self.assertGreater(t["minutes"], 0)
         p = t["profile"]
         self.assertEqual((p["machine"], p["bios"], p["memory"]), ("SS-10", "openbios-sparc32", 256))
         self.assertNotIn("cores", p)

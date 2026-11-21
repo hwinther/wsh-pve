@@ -51,6 +51,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss5` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
 | `sunos413u1b-ss20` | SunOS 4.1.3_U1B (Solaris 1.1.1B), Programmer, suninstall's Quick install | SS-20, OpenBIOS, 512 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5` | `sunos_4.1.3U1B.iso` | `root` / `wshlab` | ~6 min |
+| `sunos413-ss10` | SunOS 4.1.3 (Solaris 1.1), Programmer, suninstall's Quick install | SS-10, OpenBIOS, 256 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5`; needs `pve-qemu-kvm` 11.1.3-2+wsh31 or later | `Solaris_1.1.img` | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order; idle driver `WSHIDLE.COM` | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~8 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 | `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
@@ -78,8 +79,6 @@ TCX) wait for framebuffer scenarios: their installs run on the TCX with the keyb
 not on the serial console. Their profiles set `machine: SS-5,esp-irq-latency=500` (the [SCSI
 interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qemu-kvm
 11.1.3-2+wsh24 and qemu-server 9.2.19+wsh2 and later); without it their installers hang on the disk.
-`sunos413-ss10` (SunOS 4.1.3 on the SS-10, the 4.1.4 install unchanged) waits for a published
-pve-qemu-kvm with pve-qemu patch `wsh/0049`; without it the CD's kernel panics in a device probe.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
@@ -321,6 +320,13 @@ screens, the same disk layout, network options and refusals, 64 MB during the in
 plain image (no conversion). Sun lists the kernel patch 101508 for the SS-5's microSPARC-II; the CD's
 kernel and the installed one run without it on QEMU's SS-5. Host name `sunos413`.
 
+**SunOS 4.1.3** (`sunos413-ss10`; Solaris 1.1, the first SunOS 4 for the SS-10) runs only on the
+SS-10 of QEMU's machines and installs exactly like 4.1.4 too, from its own CD (`Solaris_1.1.img`, a
+plain image with 2048-byte sectors and an `.img` name, which PVE's ISO storage accepts as it is). It
+needs `pve-qemu-kvm` 11.1.3-2+wsh31 or later: with an older package the CD's kernel panics after
+`SUNW,fdtwo0` (`BAD TRAP: cpu=0 type=29`), in its probe for VME controllers, which the SS-10
+doesn't have. Host name `sunos413`.
+
 ## Media
 
 The media must be on the node's storage (`local` by default, content type ISO image) under these
@@ -334,6 +340,7 @@ software is never part of this project.
 | `Solaris_2.2.img` | 388608000 | `276af9322e3f311b8bd8e4a567feb47ccc771cf9fd98a02aac61db749cbdafd8` |
 | `solaris2.5_sparc.iso` | 378101760 | `33f7b716af2354725c510b54e9e5f1bf7962352302137604e7c3570941b22259` |
 | `sunos_4.1.3U1B.iso` | 335851520 | `37bbb203e0e4267bb0977aa9237e777bdda840b03cb5a6044cf777bfe8ebb202` |
+| `Solaris_1.1.img` | 325693440 | `66e076811d8a72554363f3a8831bbd648e0853272f9baab04912d0c30f41c5f1` |
 | `solaris_2.4_sparc.iso` | 455819264 | `c23fe150a9963e5dacbfc988fa700c5f2c7506d36ad0b40910e77444709d1fa4` |
 | `solaris_2.5.1_1197.iso` | 452157440 | `18da51043271d0aa69d6fc098b84156673ef4f0728dace4a9e679f79d70d2422` |
 | `solaris_2.6_598_sparc.iso` | 565862400 | `17351669cb91a89562ed6bb23345879c4d18bd019a85085ad53f777e7b7a6b14` |

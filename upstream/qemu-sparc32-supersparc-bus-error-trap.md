@@ -2,9 +2,9 @@
 
 Material for a bug report to upstream QEMU, for the owner to write and send by hand (QEMU doesn't
 take AI-written code or text). Carried in pve-qemu as `debian/patches/wsh/0049`, with the qtest
-`wsh/0050`; not in a published package yet. Our own finding in QEMU's code, independent of LEMU
-(column "may send" in [README.md](README.md)). Tested in the lab (`submodules/SPARC.md`, "Older Sun
-releases on sun4m").
+`wsh/0050`; published in pve-qemu-kvm 11.1.3-2+wsh31. Our own finding in QEMU's code, independent
+of LEMU (column "may send" in [README.md](README.md)). Tested in the lab and through PVE
+(`submodules/SPARC.md`, "Older Sun releases on sun4m").
 
 **Reproduced on plain QEMU** (2026-11-20): `qemu-system-sparc` built from the v11.1.3 tag (a clean
 checkout, `--target-list=sparc-softmmu`, no patch of ours or LEMU's), with the OpenBIOS image of that
