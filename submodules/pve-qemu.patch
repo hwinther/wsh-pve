@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..967d0f9 100644
+index 7b0cba5..455a842 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,66 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,68 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -137,6 +137,8 @@ index 7b0cba5..967d0f9 100644
 +wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
 +wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
 +wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
++wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres.patch
++wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist.patch
 +wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
 +wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
 +wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
@@ -12486,6 +12488,288 @@ index 0000000..a8d99d3
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres.patch b/debian/patches/wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres.patch
+new file mode 100644
+index 0000000..105d8c2
+--- /dev/null
++++ b/debian/patches/wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres.patch
+@@ -0,0 +1,54 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/dma/sparc32_dma: reset the lance DMA's base address register to 0xff
++
++The lance has 24-bit addresses; the Ethernet channel of the DMA2
++(ledma) drives the upper 8 bits of the 32-bit SBus DVMA address from
++its fourth register, E_BASE_ADDR, which "defaults to 0xff" (DMA2.txt,
++referenced at the top of the file). QEMU cleared it at reset like the
++other registers.
++
++Solaris 2.6's le driver never writes it. The SS-20 boot PROM sets it to
++0xff000000 when it probes the Ethernet with diag-switch? true; with
++diag-switch? false (the setting that lets the PROM boot by itself) it
++does not. Solaris then sets the IOMMU range to 64 MB and maps the
++lance's init block at 0xff40f000; the lance asks for 0x0040f000, which
++falls on another, invalid IOMMU entry. The IOMMU reports the error at
++level 15 and the kernel takes the interrupt again and again until its
++stack runs out: "Trap 0x29 (Data Access Error) while interrupts
++disabled" at "configuring network interfaces:".
++
++Reset the ledma's register to 0xff000000; the ESP channel's fourth
++register stays 0. Guests that write it (NetBSD, Linux, the boot PROMs)
++are unaffected.
++---
++ hw/dma/sparc32_dma.c | 10 ++++++++++
++ 1 file changed, 10 insertions(+)
++
++diff --git a/hw/dma/sparc32_dma.c b/hw/dma/sparc32_dma.c
++index a5dc35e..3d815ae 100644
++--- a/hw/dma/sparc32_dma.c
+++++ b/hw/dma/sparc32_dma.c
++@@ -62,6 +62,13 @@
++ #define DMA_DRAIN_FIFO 0x40
++ #define DMA_RESET 0x80
++ 
+++/*
+++ * The Ethernet channel's fourth register (E_BASE_ADDR in DMA2.txt) holds
+++ * the upper 8 bits of the lance's 32-bit DVMA addresses and "defaults to
+++ * 0xff". Solaris 2.6's le driver never writes it.
+++ */
+++#define LEDMA_BASE_ADDR_RESET 0xff000000
+++
++ /* XXX SCSI and ethernet should have different read-only bit masks */
++ #define DMA_CSR_RO_MASK 0xfe000007
++ 
++@@ -243,6 +250,9 @@ static void sparc32_dma_device_reset(DeviceState *d)
++ 
++     memset(s->dmaregs, 0, DMA_SIZE);
++     s->dmaregs[0] = DMA_VER;
+++    if (object_dynamic_cast(OBJECT(d), TYPE_SPARC32_LEDMA_DEVICE)) {
+++        s->dmaregs[3] = LEDMA_BASE_ADDR_RESET;
+++    }
++ }
++ 
++ static const VMStateDescription vmstate_sparc32_dma_device = {
+diff --git a/debian/patches/wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist.patch b/debian/patches/wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist.patch
+new file mode 100644
+index 0000000..07fe447
+--- /dev/null
++++ b/debian/patches/wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist.patch
+@@ -0,0 +1,216 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the lance DMA's base address register on sun4m
++
++qtest sun4m-ledma-test for the patch before: the ledma's base address
++register reads 0xff000000 after start and after a system reset on the
++SS-5, SS-20 and LX, and is writable; the ESP channel's register stays
++0. On the SS-5 and SS-20 the lance reads an init block through the
++IOMMU with a 64 MB range from the page mapped at 0xff400000; with the
++register written to 0 the IOMMU reports an error at 0x00400000. The
++cases fail without the patch before.
++---
++ tests/qtest/meson.build        |   3 +-
++ tests/qtest/sun4m-ledma-test.c | 180 +++++++++++++++++++++++++++++++++
++ 2 files changed, 182 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-ledma-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 054b26b..f8f3c15 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -212,7 +212,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++-                'sun4m-nvram-test'] + \
+++                'sun4m-nvram-test',
+++                'sun4m-ledma-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-ledma-test.c b/tests/qtest/sun4m-ledma-test.c
++new file mode 100644
++index 0000000..6558891
++--- /dev/null
+++++ b/tests/qtest/sun4m-ledma-test.c
++@@ -0,0 +1,180 @@
+++/*
+++ * QTest: the lance DMA's base address register on sun4m
+++ *
+++ * The lance has 24-bit addresses; the Ethernet channel of the DMA2
+++ * (ledma) adds the upper 8 bits of the 32-bit DVMA address from its
+++ * fourth register, E_BASE_ADDR, which "defaults to 0xff" (DMA2.txt).
+++ * QEMU reset it to 0. Solaris 2.6's le driver never writes it: it takes
+++ * the default, or what a boot PROM left there (the SS-20 PROM sets it
+++ * only when diag-switch? is true). With 0 and the IOMMU range of 64 MB
+++ * that Solaris sets on an SS-20, the lance's init block address
+++ * 0x00400000 misses the IOMMU page that Solaris mapped at 0xff400000,
+++ * the IOMMU reports an error at level 15, and the kernel overflows its
+++ * stack ("Trap 0x29 ... while interrupts disabled").
+++ *
+++ * The test checks the register after start and after a system reset,
+++ * that the ESP channel's fourth register stays 0, and has the lance
+++ * read an init block through the IOMMU with a 64 MB range: from the page
+++ * mapped at 0xff400000 by default, and an IOMMU error with the register
+++ * set to 0. Nothing runs on the CPU.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t dma_base;          /* espdma; ledma at +0x10 */
+++    uint64_t le_base;
+++    uint64_t iommu_base;
+++} LedmaCase;
+++
+++static const LedmaCase ss5 = {
+++    "SS-5", 0x78400000ULL, 0x78c00000ULL, 0x10000000ULL
+++};
+++static const LedmaCase ss20 = {
+++    "SS-20", 0xef0400000ULL, 0xef0c00000ULL, 0xfe0000000ULL
+++};
+++static const LedmaCase lx = {
+++    "LX", 0x78400000ULL, 0x78c00000ULL, 0x10000000ULL
+++};
+++
+++#define ESPDMA_BASE_ADDR(c)     ((c)->dma_base + 0x0c)
+++#define LEDMA_BASE_ADDR(c)      ((c)->dma_base + 0x1c)
+++#define LEDMA_BASE_ADDR_RESET   0xff000000
+++
+++/* The lance's data and address ports */
+++#define LE_RDP(c)               ((c)->le_base + 0)
+++#define LE_RAP(c)               ((c)->le_base + 2)
+++#define CSR0_INIT               0x0001
+++#define CSR0_IDON               0x0100
+++
+++#define IOMMU_CTRL(c)           ((c)->iommu_base + 0x0000)
+++#define IOMMU_BASE(c)           ((c)->iommu_base + 0x0004)
+++#define IOMMU_AFSR(c)           ((c)->iommu_base + 0x1000)
+++#define IOMMU_AFAR(c)           ((c)->iommu_base + 0x1004)
+++#define IOMMU_CTRL_64M_ENAB     0x9     /* range 64 MB, enable */
+++#define IOMMU_AFSR_ERR          0x80000000
+++#define IOPTE_WRITE             0x4
+++#define IOPTE_VALID             0x2
+++
+++/* The IOMMU table (64 KB for 64 MB), the init block and its DVMA address */
+++#define IOPT_PA                 0x100000
+++#define INITBLK_PA              0x200000
+++#define INITBLK_DVMA            0xff400000U
+++#define DVMA_START_64M          0xfc000000U
+++#define INITBLK_MODE            0x8003
+++
+++static QTestState *start(const LedmaCase *c)
+++{
+++    return qtest_initf("-M %s -m 64 -nodefaults", c->machine);
+++}
+++
+++static void test_reset_value(const void *opaque)
+++{
+++    const LedmaCase *c = opaque;
+++    QTestState *qts = start(c);
+++
+++    g_assert_cmphex(qtest_readl(qts, LEDMA_BASE_ADDR(c)), ==,
+++                    LEDMA_BASE_ADDR_RESET);
+++    g_assert_cmphex(qtest_readl(qts, ESPDMA_BASE_ADDR(c)), ==, 0);
+++
+++    /* writable, and back to the default after a reset */
+++    qtest_writel(qts, LEDMA_BASE_ADDR(c), 0);
+++    g_assert_cmphex(qtest_readl(qts, LEDMA_BASE_ADDR(c)), ==, 0);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
+++    qtest_qmp_eventwait(qts, "RESET");
+++    g_assert_cmphex(qtest_readl(qts, LEDMA_BASE_ADDR(c)), ==,
+++                    LEDMA_BASE_ADDR_RESET);
+++
+++    qtest_quit(qts);
+++}
+++
+++static void le_csr_write(QTestState *qts, const LedmaCase *c, int csr,
+++                         uint16_t val)
+++{
+++    qtest_writew(qts, LE_RAP(c), csr);
+++    qtest_writew(qts, LE_RDP(c), val);
+++}
+++
+++static uint16_t le_csr_read(QTestState *qts, const LedmaCase *c, int csr)
+++{
+++    qtest_writew(qts, LE_RAP(c), csr);
+++    return qtest_readw(qts, LE_RDP(c));
+++}
+++
+++/*
+++ * Map INITBLK_DVMA to INITBLK_PA with a 64 MB IOMMU range, put a 16-bit
+++ * init block there and let the lance read it from INITBLK_DVMA's lower
+++ * 24 bits. Returns the IOMMU's AFSR afterwards; *mode is the mode word
+++ * the lance took (CSR15).
+++ */
+++static uint32_t lance_init_through_iommu(QTestState *qts, const LedmaCase *c,
+++                                         uint16_t *mode)
+++{
+++    uint32_t idx = (INITBLK_DVMA - DVMA_START_64M) >> 12;
+++    int i;
+++
+++    qtest_writel(qts, IOMMU_BASE(c), IOPT_PA >> 4);
+++    qtest_writel(qts, IOMMU_CTRL(c), IOMMU_CTRL_64M_ENAB);
+++    qtest_writel(qts, IOPT_PA + idx * 4,
+++                 (INITBLK_PA >> 4) | IOPTE_WRITE | IOPTE_VALID);
+++    /* AFSR and AFAR clear */
+++    qtest_readl(qts, IOMMU_AFSR(c));
+++
+++    /* mode, then the MAC address, filter and ring pointers (zero) */
+++    qtest_writew(qts, INITBLK_PA, INITBLK_MODE);
+++    for (i = 2; i < 24; i += 2) {
+++        qtest_writew(qts, INITBLK_PA + i, 0);
+++    }
+++
+++    le_csr_write(qts, c, 1, INITBLK_DVMA & 0xffff);
+++    le_csr_write(qts, c, 2, (INITBLK_DVMA >> 16) & 0xff);
+++    le_csr_write(qts, c, 0, CSR0_INIT);
+++    g_assert_cmphex(le_csr_read(qts, c, 0) & CSR0_IDON, ==, CSR0_IDON);
+++    *mode = le_csr_read(qts, c, 15);
+++    return qtest_readl(qts, IOMMU_AFSR(c));
+++}
+++
+++static void test_lance_dvma(const void *opaque)
+++{
+++    const LedmaCase *c = opaque;
+++    QTestState *qts = start(c);
+++    uint16_t mode;
+++    uint32_t afsr;
+++
+++    /* the default: the init block comes from 0xff400000 */
+++    afsr = lance_init_through_iommu(qts, c, &mode);
+++    g_assert_cmphex(afsr & IOMMU_AFSR_ERR, ==, 0);
+++    g_assert_cmphex(mode, ==, INITBLK_MODE);
+++    qtest_quit(qts);
+++
+++    /* E_BASE_ADDR 0: the lance asks for 0x00400000, which isn't mapped */
+++    qts = start(c);
+++    qtest_writel(qts, LEDMA_BASE_ADDR(c), 0);
+++    afsr = lance_init_through_iommu(qts, c, &mode);
+++    g_assert_cmphex(afsr & IOMMU_AFSR_ERR, ==, IOMMU_AFSR_ERR);
+++    g_assert_cmphex(qtest_readl(qts, IOMMU_AFAR(c)), ==,
+++                    INITBLK_DVMA & 0x00ffffff);
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_data_func("/sun4m/ledma/reset-value/ss5", &ss5,
+++                        test_reset_value);
+++    qtest_add_data_func("/sun4m/ledma/reset-value/ss20", &ss20,
+++                        test_reset_value);
+++    qtest_add_data_func("/sun4m/ledma/reset-value/lx", &lx,
+++                        test_reset_value);
+++    qtest_add_data_func("/sun4m/ledma/lance-dvma/ss5", &ss5,
+++                        test_lance_dvma);
+++    qtest_add_data_func("/sun4m/ledma/lance-dvma/ss20", &ss20,
+++                        test_lance_dvma);
+++
+++    return g_test_run();
+++}
 diff --git a/debian/patches/wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch b/debian/patches/wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
 new file mode 100644
 index 0000000..e505bf4
@@ -12848,10 +13132,10 @@ index 0000000..9301a26
 + /* sparc32_dma.c */
 diff --git a/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
 new file mode 100644
-index 0000000..7956762
+index 0000000..febf1d2
 --- /dev/null
 +++ b/debian/patches/wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,213 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the SPARCserver 600MP's VMEbus registers
 + and lebuffer
@@ -12874,12 +13158,13 @@ index 0000000..7956762
 +index 054b26b..ea13663 100644
 +--- a/tests/qtest/meson.build
 ++++ b/tests/qtest/meson.build
-+@@ -212,7 +212,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++@@ -212,8 +212,9 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
 +                 'sun4m-bus-error-trap-test',
 +                 'sun4m-fp-deferred-trap-test',
 +                 'sun4m-onboard-sbus-test',
-+-                'sun4m-nvram-test'] + \
-++                'sun4m-nvram-test',
++                 'sun4m-nvram-test',
++-                'sun4m-ledma-test'] + \
+++                'sun4m-ledma-test',
 ++                'sun4m-ss600mp-test'] + \
 +   qtests_filter
 + 

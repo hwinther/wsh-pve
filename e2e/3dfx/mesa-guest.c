@@ -350,6 +350,6 @@ int main(void)
 		snprintf(verdict, sizeof(verdict), "FAIL %d", failed);
 	else
 		snprintf(verdict, sizeof(verdict), "PASS");
-	finish(verdict, 1);
+	finish(verdict, 2); /* the host takes the VGA's picture after the close */
 	return 0;
 }
