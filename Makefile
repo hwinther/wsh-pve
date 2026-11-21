@@ -371,6 +371,9 @@ REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*
 # scripts/refresh-qemu-3dfx-patch.sh) and qemu-3dfx's hw/3dfx and hw/mesa, stamped with its revision
 # the way its scripts/sign_commit does (whose other edits are for older QEMUs). Never fails: without
 # the binary, pve-qemu ships without it. pve-qemu starts over from a fresh submodules/pve-qemu.
+# debian/changelog gets submodules/pve-qemu.changelog.patch and `dch -l +wsh` as in the pve-qemu target,
+# so the binary's --version (QEMU's pkgversion, from the changelog) names the +wshN of the package it
+# ships in; without the patch every build said +wsh1.
 pve-qemu-3dfx: prepare-qemu-3dfx
 	@set -e; \
 	$(MAKE) restore-pve-qemu; \
@@ -396,6 +399,9 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		cp -r submodules/qemu-3dfx/qemu-0/hw/3dfx submodules/qemu-3dfx/qemu-1/hw/mesa submodules/pve-qemu/qemu/hw/; \
 		patch -d submodules/pve-qemu/qemu -p2 -i ../../qemu-3dfx.patch; \
 		sed -i -e "s/\(rev_\[\).*\].*/\1\]\ =\ \"$(REV)\"/" submodules/pve-qemu/debian/patches/wsh/0099-WSH-qemu-3dfx.patch submodules/pve-qemu/qemu/hw/3dfx/g2xfuncs.h submodules/pve-qemu/qemu/hw/mesa/mglfuncs.h; \
+		if [ -f submodules/pve-qemu.changelog.patch ] && ! patch -d submodules/pve-qemu -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch; then \
+			git -C submodules/pve-qemu checkout debian/changelog; \
+		fi; \
 		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 			-w /src/submodules/pve-qemu \
@@ -426,22 +432,32 @@ clean-qemu-3dfx:
 	rm -rf submodules/pve-qemu/debian/patches/wsh submodules/pve-qemu/qemu/hw/3dfx submodules/pve-qemu/qemu/hw/mesa; \
 	cd submodules/pve-qemu && git checkout debian/patches/series && make clean
 
+# The qemu-3dfx guest drivers (wrappers/) into build/3dfx and build/mesa, for a Pentium-class guest:
+# submodules/qemu-3dfx-drivers.patch replaces upstream's -march=x86-64-v2 (SSE2 to SSE4.2, POPCNT) for
+# the build and is reverted afterwards, and scripts/check-3dfx-drivers-isa.sh fails the build on any
+# MMX/SSE or later instruction in what was compiled (the DLLs and EXEs, the DXEs' and OVL's objects).
 .PHONY: 3dfx-drivers
 3dfx-drivers:
 	set -e; \
 	git submodule update --init submodules/qemu-3dfx; \
+	if ! git -C submodules/qemu-3dfx apply --reverse --check ../qemu-3dfx-drivers.patch 2>/dev/null; then \
+		git -C submodules/qemu-3dfx apply ../qemu-3dfx-drivers.patch; \
+	fi; \
+	trap 'git -C submodules/qemu-3dfx apply --reverse ../qemu-3dfx-drivers.patch' EXIT; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -v $(CURRENT_DIR)/scripts:/src/scripts:ro \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && /src/scripts/check-3dfx-drivers-isa.sh *.dll *.exe *.sys ../dxe/*.o ../ovl/*.obj && make clean"; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -v $(CURRENT_DIR)/scripts:/src/scripts:ro \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && /src/scripts/check-3dfx-drivers-isa.sh *.dll *.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
 	mkdir -p build && rm -rf build/3dfx build/mesa; \

@@ -95,12 +95,11 @@ What it found (November 2026, KVM unless noted, llvmpipe, 640x480, 2000 frames o
 | --- | --- | --- | --- |
 | pve-qemu-kvm 11.1.3-3+wsh5 (published, stage 1) | passes, 1400-1650 frames/s | passes, 1480-1690 frames/s | QEMU ends (a segmentation fault, no message) as soon as the guest loads `OPENGL32.DLL` without an SDL window |
 | built with the Mesa offscreen display (stage 1b) | passes | passes | passes, 1890-2540 frames/s |
+| pve-qemu-kvm 11.1.3-3+wsh6 (published, stage 1b), drivers built for i586, `cpu: pentium3` | passes, 730-910 frames/s (TCG and KVM) | passes, 760-1170 frames/s | passes, 840-1180 frames/s |
 
 Windows reaches its desktop in 13-17 s under KVM and 26 s under TCG; the whole run with all three tests takes 50-70 s (KVM) or 83 s (TCG). qemu-3dfx reads a Glide frame back in 0.14 ms and an OpenGL frame in 0.3-0.4 ms, and the console has it 0.02 ms later; the desktop is back 0.6 s after the 3D window closes.
 
-:::caution
-The guest drivers of the `qemu-3dfx-drivers` releases are built for x86-64-v2 (`-march=x86-64-v2`): `GLIDE2X.DLL`, `GLIDE3X.DLL` and `OPENGL32.DLL` use SSE2 to SSE4.2, SSSE3 and POPCNT. Under KVM that doesn't matter (the host's CPU runs them whatever the guest's CPU model says), but without KVM (TCG) a `cpu: pentium3` guest stops at the first Glide call with "This program has performed an illegal operation". There the guest CPU needs those extensions, e.g. `pentium3,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt` (Windows 98 doesn't notice); the test adds them itself under TCG.
-:::
+The guest drivers are built for the Pentium (see [Installing the guest drivers](#installing-the-guest-drivers)), so the test runs the VM's plain `cpu: pentium3` under TCG as well. A `qemu-3dfx-drivers` zip built before that (its `VERSION.txt` has no "built for i586" line) needs SSE2 to SSE4.2 and POPCNT; with such drivers `--cpu auto` (the default) adds `+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt` under TCG, and an explicit `--cpu` is passed on as it is.
 
 With an SDL window on Xvfb (`--display sdl`) the frame is scaled into the window, which keeps the desktop's size (1024x768); Xvfb's screen has to be larger than that, or SDL makes the window smaller and crops the frame. There each test passed on its own, but in one VM the second or third 3D window ended QEMU with an X error (`BadRequest`, `BadLength`); not looked into further.
 
@@ -119,6 +118,8 @@ The 3dfx build is optional: when the qemu-3dfx patches stop applying to a new QE
 ```bash
 ls /usr/bin/qemu-system-x86_64-3dfx && /usr/bin/qemu-system-x86_64-3dfx --version | grep qemu-3dfx
 ```
+
+The version in brackets on the first line is the `pve-qemu-kvm` version the binary was built for. Up to `11.1.3-3+wsh6` the 3dfx binary always said `+wsh1` there (its build didn't take the package's changelog), whatever version it shipped in; `dpkg-query -W pve-qemu-kvm` gives the real one.
 
 ## Installing the guest drivers
 
@@ -141,7 +142,7 @@ Transfer the files into the guest and install the ones for your Windows version:
 - Run `INSTDRV.EXE` (requires Administrator privileges)
 - Copy `OPENGL32.DLL` into each game's installation folder
 
-The wrappers need a CPU with SSE2 to SSE4.2 and POPCNT. With KVM (the default) the host's CPU provides them; a VM without KVM needs them in its CPU model (see the caution under [Testing in a Windows 98 guest](#testing-in-a-windows-98-guest)).
+The wrappers are built for a Pentium-class guest CPU: everything compiled is built with `-march=pentium` (x87 math, no MMX, SSE or later), and the build fails if a DLL, EXE or the DOS objects contain an MMX, SSE or later instruction (`scripts/check-3dfx-drivers-isa.sh` in wsh-pve). The MinGW runtime the DLLs link in is Debian's, built for the Pentium Pro, so a few of its routines (number formatting, among others) use CMOV; every CPU model from `pentium2` on has it. A `cpu: pentium3` VM runs them with or without KVM. Upstream qemu-3dfx builds them for x86-64-v2 (SSE2 to SSE4.2, POPCNT), and so did the `qemu-3dfx-drivers` releases until November 2026: a VM without KVM stops at the first Glide call with "This program has performed an illegal operation" with those unless its CPU model has the extensions, e.g. `pentium3,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt`. A zip built for the Pentium says "built for i586" in its `VERSION.txt`.
 
 ## Further reading
 
