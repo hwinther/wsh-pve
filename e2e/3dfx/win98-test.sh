@@ -15,17 +15,21 @@
 #                     instead of the published pve-qemu-kvm's; it is installed over the published one
 #   --drivers ZIP     the guest drivers (default: gh release download qemu-3dfx-drivers-<rev>, the
 #                     revision the binary names; needs gh and a token, GH_TOKEN in CI)
+#   --openglide DEB   install this wsh-openglide package over the published one (e.g. one built with
+#                     `make wsh-openglide`, for its dmabuf scanout)
 #   --image NAME      the test image's tag (default wsh-3dfx-win98:local); --no-build uses it as it is
 #   --docker CMD      docker or podman (default docker)
 #
-# Harness options after --: --tests glide2,glide3,opengl (default auto), --display sdl (starts Xvfb),
+# Harness options after --: --tests glide2,glide3,opengl (default auto), --display sdl (starts Xvfb)
+# or egl (QEMU's egl-headless display, which takes the Glide frames as a dmabuf; /dev/udmabuf is
+# passed to the container when it exists, for Mesa's software renderer on a host without a GPU),
 # --accel tcg|kvm, --cpu, --bench N, --timeout S; see win98_test.py --help. /dev/kvm is passed to
 # the container when it exists. Exit status: the harness's (0 all passed, 1 a test failed, 2 setup,
 # 77 the binary has no qemu-3dfx or can't show it headless).
 set -euo pipefail
 
 top=$(cd "$(dirname "$0")/../.." && pwd)
-template="" out="" priv="" qbin="" drivers="" image="wsh-3dfx-win98:local" build=1 docker=docker
+template="" out="" priv="" qbin="" drivers="" openglide="" image="wsh-3dfx-win98:local" build=1 docker=docker
 die() { echo "win98-test.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,6 +38,7 @@ while [ $# -gt 0 ]; do
         --private) priv=${2:?}; shift 2 ;;
         --qemu-bin) qbin=${2:?}; shift 2 ;;
         --drivers) drivers=${2:?}; shift 2 ;;
+        --openglide) openglide=${2:?}; shift 2 ;;
         --image) image=${2:?}; shift 2 ;;
         --no-build) build=0; shift ;;
         --docker) docker=${2:?}; shift 2 ;;
@@ -68,6 +73,12 @@ if [ -n "$qbin" ]; then
     # in the published binary's place: QEMU finds its firmware relative to its own path
     install="install -m 755 /w3d-in/qemu-system-x86_64-3dfx /usr/bin/qemu-system-x86_64-3dfx && "
 fi
+if [ -n "$openglide" ]; then
+    [ -r "$openglide" ] || die "no wsh-openglide package at $openglide"
+    openglide=$(cd "$(dirname "$openglide")" && pwd)/$(basename "$openglide")
+    mounts+=(-v "$openglide:/w3d-in/wsh-openglide.deb:ro")
+    install="${install}dpkg -i /w3d-in/wsh-openglide.deb > /dev/null && "
+fi
 run_in_image() { "$docker" run --rm "${mounts[@]}" --entrypoint sh "$image" -c "$install$1"; }
 
 # The revision the binary was built from names the guest drivers' release
@@ -87,8 +98,9 @@ drivers=$(cd "$(dirname "$drivers")" && pwd)/$(basename "$drivers")
 mounts+=(-v "$drivers:/w3d-in/drivers.zip:ro")
 echo "qemu-3dfx $rev, guest drivers $(basename "$drivers")"
 
-kvm=()
-[ ! -e /dev/kvm ] || kvm=(--device /dev/kvm)
+devices=()
+[ ! -e /dev/kvm ] || devices=(--device /dev/kvm)
+[ ! -e /dev/udmabuf ] || devices+=(--device /dev/udmabuf)
 xvfb=""
 case " $* " in
     *" --display sdl "* | *" --display=sdl "*)
@@ -98,7 +110,7 @@ case " $* " in
         ;;
 esac
 status=0
-"$docker" run --rm "${kvm[@]}" "${mounts[@]}" --entrypoint sh "$image" -c \
+"$docker" run --rm "${devices[@]}" "${mounts[@]}" --entrypoint sh "$image" -c \
     "$install${xvfb}exec python3 /w3d/e2e/3dfx/win98/win98_test.py --template /w3d-in/template.raw \
     --drivers /w3d-in/drivers.zip --out /w3d-out --private /w3d-private \"\$@\"" win98-test "$@" || status=$?
 # the container wrote as root: the summary and logs readable for the caller (an artifact upload)

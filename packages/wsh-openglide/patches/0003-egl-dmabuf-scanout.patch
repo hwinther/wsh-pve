@@ -1,0 +1,212 @@
+dmabuf scanout for the EGL offscreen platform (wsh-pve, LGPL-2.1 like OpenGLide)
+
+With the EGL offscreen platform (0002-egl-offscreen.patch) qemu-3dfx reads every Glide frame back
+to the CPU (getOffscreenFrame) and copies it into the VM's console. When QEMU's display has GL
+(-display egl-headless, -display dbus,gl=on) it can take the frame as a dmabuf instead, a buffer
+both EGL displays share, with no copy through system memory:
+
+- getOffscreenDmabuf() creates a third renderbuffer of the window's size and exports it once as a
+  dmabuf through EGL_MESA_image_dma_buf_export (fd, stride, offset, fourcc, modifier; the caller
+  closes the fd). Mesa's llvmpipe exports through /dev/udmabuf, a GPU driver through its render
+  node; without the extension it returns 0 and says why.
+- getOffscreenScanout() blits the front buffer into it (unscaled and unflipped, which llvmpipe
+  does as a memory copy; the rows stay bottom up, which the host program tells its display), and
+  finishes the GL work, so the display can read it from its own context and thread at once. It
+  refuses (returns 0) while a gamma ramp is set: the caller reads that frame back with
+  getOffscreenFrame(), which applies the ramp. A buffer of its own, so that the next swap can't
+  change a frame the display still reads.
+
+The scanout buffer goes with the window (EGLFinaliseWindow). Nothing changes for a host program
+that doesn't call the new exports.
+
+No eglTerminate when the window closes any more: an EGL platform display is one handle per process,
+and QEMU's own egl-headless or dbus,gl=on display on Mesa's surfaceless platform (and qemu-3dfx's
+MESA GL pass-through) use the same one; terminating it destroyed their contexts (QEMU then ended in
+libepoxy, "Couldn't find current GLX or EGL context").
+
+For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins,
+after 0002-egl-offscreen.patch.
+---
+diff --git a/openglide/platform/linux/egl.cpp b/openglide/platform/linux/egl.cpp
+index f3237c2..2067eb9 100644
+--- a/openglide/platform/linux/egl.cpp
++++ b/openglide/platform/linux/egl.cpp
+@@ -22,6 +22,8 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <math.h>
++#include <stdint.h>
++#include <unistd.h>
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
+ 
+@@ -77,6 +79,7 @@ static EGLContext egl_ctx = EGL_NO_CONTEXT;
+ static EGLSurface egl_pbuf = EGL_NO_SURFACE;
+ static GLuint fbo, rb_color[2], rb_depth;
+ static int fbo_w, fbo_h;
++static void destroy_scanout(void);
+ 
+ static bool has_ext(const char *list, const char *ext)
+ {
+@@ -258,6 +261,7 @@ void EGLFinaliseWindow(void)
+     if (egl_dpy == EGL_NO_DISPLAY)
+         return;
+     if (egl_ctx != EGL_NO_CONTEXT && eglGetCurrentContext() == egl_ctx) {
++        destroy_scanout();
+         if (fbo) {
+             pBindFramebuffer(E_FRAMEBUFFER, 0);
+             pDeleteFramebuffers(1, &fbo);
+@@ -270,7 +274,10 @@ void EGLFinaliseWindow(void)
+         eglDestroyContext(egl_dpy, egl_ctx);
+     if (egl_pbuf != EGL_NO_SURFACE)
+         eglDestroySurface(egl_dpy, egl_pbuf);
+-    eglTerminate(egl_dpy);
++    // No eglTerminate: the display is the process's one (an EGL platform display is the same
++    // handle for every caller), which the host program may use too (QEMU's egl-headless and
++    // dbus,gl=on displays on Mesa's surfaceless platform, qemu-3dfx's MESA GL pass-through), and
++    // terminating it would destroy their contexts. The next window's eglInitialize is a no-op.
+     egl_dpy = EGL_NO_DISPLAY;
+     egl_ctx = EGL_NO_CONTEXT;
+     egl_pbuf = EGL_NO_SURFACE;
+@@ -364,4 +371,141 @@ extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
+     return 1;
+ }
+ 
++//*************************************************
++//* dmabuf scanout: instead of reading every frame back to the CPU, the host program can ask for
++//* a buffer it shares with its display as a dmabuf (getOffscreenDmabuf, once per window), and then
++//* have each frame copied into it on the GPU (getOffscreenScanout). The buffer is a third
++//* renderbuffer of the window's size, exported through EGL_MESA_image_dma_buf_export (Mesa's
++//* llvmpipe exports through /dev/udmabuf, a GPU driver through its render node); the copy is a
++//* framebuffer blit of the front buffer, unscaled and unflipped (llvmpipe then copies memory), so
++//* the rows are in OpenGL's order, bottom up: the display is told so (QEMU's y0_top). A separate
++//* buffer, not the front buffer itself, so that the next swap can't change a frame the display
++//* still reads. While a gamma ramp is set the copy is refused (it would need a shader), and the
++//* host program reads that frame back with getOffscreenFrame instead.
++//*************************************************
++static GLuint fbo_scan, rb_scan;
++static EGLImageKHR scan_img = EGL_NO_IMAGE_KHR;
++
++static void destroy_scanout(void)
++{
++    if (scan_img != EGL_NO_IMAGE_KHR) {
++        PFNEGLDESTROYIMAGEKHRPROC destroyImage =
++            (PFNEGLDESTROYIMAGEKHRPROC) eglGetProcAddress("eglDestroyImageKHR");
++        if (destroyImage)
++            destroyImage(egl_dpy, scan_img);
++        scan_img = EGL_NO_IMAGE_KHR;
++    }
++    if (fbo_scan)
++        pDeleteFramebuffers(1, &fbo_scan);
++    if (rb_scan)
++        pDeleteRenderbuffers(1, &rb_scan);
++    fbo_scan = rb_scan = 0;
++}
++
++//*************************************************
++//* The scanout buffer as a dmabuf: one plane, its file descriptor (the caller's to close), the
++//* bytes from one row to the next, the offset of the first, the DRM fourcc and format modifier.
++//* Called on the thread that opened the Glide window, while it is open. Returns 1, or 0 when the
++//* EGL display can't export (no EGL_MESA_image_dma_buf_export, or llvmpipe without /dev/udmabuf).
++//*************************************************
++extern "C" int getOffscreenDmabuf(int *fd, int *stride, int *offset, unsigned int *fourcc,
++                                  unsigned long *modifier)
++{
++    const char *ext;
++    PFNEGLCREATEIMAGEKHRPROC createImage;
++    PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC exportQuery;
++    PFNEGLEXPORTDMABUFIMAGEMESAPROC exportImage;
++    int fmt = 0, planes = 0;
++    EGLuint64KHR mod = 0;
++    EGLint pitch = 0, off = 0;
++    int f = -1;
++
++    if (!fbo)
++        return 0;
++    ext = eglQueryString(egl_dpy, EGL_EXTENSIONS);
++    if (!has_ext(ext, "EGL_MESA_image_dma_buf_export") || !has_ext(ext, "EGL_KHR_gl_renderbuffer_image")) {
++        fprintf(stderr, "Info: EGL offscreen: this EGL display exports no dmabuf "
++            "(EGL_MESA_image_dma_buf_export; llvmpipe needs /dev/udmabuf)\n");
++        return 0;
++    }
++    createImage = (PFNEGLCREATEIMAGEKHRPROC) eglGetProcAddress("eglCreateImageKHR");
++    exportQuery = (PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC) eglGetProcAddress("eglExportDMABUFImageQueryMESA");
++    exportImage = (PFNEGLEXPORTDMABUFIMAGEMESAPROC) eglGetProcAddress("eglExportDMABUFImageMESA");
++    if (!createImage || !exportQuery || !exportImage)
++        return 0;
++
++    if (!fbo_scan) {
++        pGenFramebuffers(1, &fbo_scan);
++        pGenRenderbuffers(1, &rb_scan);
++        pBindRenderbuffer(E_RENDERBUFFER, rb_scan);
++        pRenderbufferStorage(E_RENDERBUFFER, GL_RGBA8, fbo_w, fbo_h);
++        pBindRenderbuffer(E_RENDERBUFFER, 0);
++        pBindFramebuffer(E_FRAMEBUFFER, fbo_scan);
++        pFramebufferRenderbuffer(E_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan);
++        GLenum status = pCheckFramebufferStatus(E_FRAMEBUFFER);
++        if (status == E_FRAMEBUFFER_COMPLETE) {
++            glClearColor(0, 0, 0, 0);
++            glClear(GL_COLOR_BUFFER_BIT);
++        }
++        pBindFramebuffer(E_FRAMEBUFFER, fbo);
++        if (status != E_FRAMEBUFFER_COMPLETE) {
++            fprintf(stderr, "Error: EGL offscreen: scanout framebuffer incomplete (0x%04x)\n", status);
++            destroy_scanout();
++            return 0;
++        }
++        glFinish();
++        scan_img = createImage(egl_dpy, egl_ctx, EGL_GL_RENDERBUFFER_KHR,
++                               (EGLClientBuffer)(uintptr_t) rb_scan, NULL);
++        if (scan_img == EGL_NO_IMAGE_KHR) {
++            fprintf(stderr, "Error: EGL offscreen: eglCreateImage of the scanout buffer 0x%04x\n", eglGetError());
++            destroy_scanout();
++            return 0;
++        }
++    }
++    if (!exportQuery(egl_dpy, scan_img, &fmt, &planes, &mod) || planes != 1 ||
++        !exportImage(egl_dpy, scan_img, &f, &pitch, &off) || f < 0) {
++        fprintf(stderr, "Error: EGL offscreen: the scanout buffer can't be exported as a dmabuf "
++            "(planes %d, fd %d, 0x%04x)\n", planes, f, eglGetError());
++        if (f >= 0)
++            close(f);
++        destroy_scanout();
++        return 0;
++    }
++    *fd = f;
++    *stride = pitch;
++    *offset = off;
++    *fourcc = (unsigned int) fmt;
++    *modifier = (unsigned long) mod;
++    return 1;
++}
++
++//*************************************************
++//* The front buffer (what a window would show) into the scanout buffer, finished, so that the
++//* display can read it from another context (and thread) at once. Called on the thread that opened
++//* the Glide window. Returns 1, or 0 when there is no scanout buffer or a gamma ramp is set (the
++//* caller then reads the frame back with getOffscreenFrame).
++//*************************************************
++extern "C" int getOffscreenScanout(void)
++{
++    GLint read_buf;
++    GLboolean scissor;
++
++    if (!fbo || !fbo_scan || gamma_on)
++        return 0;
++    RenderDrawTriangles();
++    glGetIntegerv(GL_READ_BUFFER, &read_buf);
++    scissor = glIsEnabled(GL_SCISSOR_TEST);
++    if (scissor)
++        glDisable(GL_SCISSOR_TEST);
++    glReadBuffer(FBO_FRONT);
++    pBindFramebuffer(E_DRAW_FRAMEBUFFER, fbo_scan);
++    pBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    pBindFramebuffer(E_DRAW_FRAMEBUFFER, fbo);
++    glReadBuffer(read_buf);
++    if (scissor)
++        glEnable(GL_SCISSOR_TEST);
++    glFinish();
++    return 1;
++}
++
+ #endif // !C_USE_SDL && !WIN32

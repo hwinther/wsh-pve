@@ -29,6 +29,19 @@
 # says so), mesa-noegl has no EGL driver (glvnd finds no vendor): the guest's wglChoosePixelFormat
 # must fail and QEMU keep running.
 #
+# GLIDE_DISPLAY=egl runs the headless guests (glide and mesa by default) with `-display egl-headless`
+# and VNC: the console has GL, so the Glide frames go to it as a dmabuf (wsh-openglide's scanout
+# buffer, imported by egl-headless, which reads it for VNC and screendump) instead of being read back;
+# the Glide guest's gamma phase is read back (the copy into the dmabuf doesn't apply a ramp), and so
+# is every MESA GL frame (no dmabuf scanout yet); QEMU's log must say which way each went; the frame
+# is checked as the VNC server sends it (QEMU's screendump has no surface during a GL scanout).
+# GLIDE_DISPLAY=dbus does the same with `-display dbus,gl=on` on a dbus-daemon of its own and no VNC:
+# dbus-listener.py registers on console 0, maps each dmabuf QEMU sends and writes the newest frame,
+# which is what the probes are checked in (DBUS_DELAY_MS delays its replies, during which QEMU keeps
+# the console gl-blocked and qemu-3dfx holds frames back). QEMU's EGL display needs a render node, or
+# /dev/udmabuf for Mesa's surfaceless platform (docker run --device /dev/udmabuf); without either the
+# run is skipped (77).
+#
 # /src is this repository with submodules/qemu-3dfx checked out (the guest wrapper's source and the
 # mesapt headers, at the commit the published binary was built from). Without a .deb argument ("-")
 # wsh-openglide comes from the apt repository. Everything else is Debian's and the apt repository's:
@@ -58,7 +71,9 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 case "$MODE" in
 sdl) GUESTS=${GUESTS:-glide mesa} ;;
 vnc) GUESTS=${GUESTS:-glide mesa mesa-msaa mesa-noegl} ;;
-*) fail "GLIDE_DISPLAY is sdl or vnc, not '$MODE'" ;;
+egl) GUESTS=${GUESTS:-glide mesa} ;;
+dbus) GUESTS=${GUESTS:-glide mesa} ;;
+*) fail "GLIDE_DISPLAY is sdl, vnc, egl or dbus, not '$MODE'" ;;
 esac
 mkdir -p "$OUT"
 
@@ -82,6 +97,9 @@ if [ "$MODE" = sdl ]; then
 	extra="xvfb xauth x11-utils"
 else
 	extra="socat"
+	[ "$MODE" != egl ] || extra="socat python3-minimal"
+	# dbus: a bus of its own and our listener (e2e/3dfx/dbus-listener.py, Gio)
+	[ "$MODE" != dbus ] || extra="socat dbus-daemon python3-gi"
 fi
 # shellcheck disable=SC2086 # extra is a list of packages
 apt-get install --no-install-recommends --assume-yes -qq pve-qemu-kvm "$DEB" $extra binutils \
@@ -98,11 +116,21 @@ if [ ! -x "$QEMU" ]; then
 	echo "SKIP: this pve-qemu-kvm has no $QEMU (the optional 3dfx extra is missing)"
 	exit 77
 fi
-if [ "$MODE" = vnc ] && ! grep -aq 'offscreen %dx%d, frames to' "$QEMU"; then
+if [ "$MODE" != sdl ] && ! grep -aq 'offscreen %dx%d, frames to' "$QEMU"; then
 	echo "SKIP: $QEMU has no offscreen display for qemu-3dfx yet (it would need an SDL window)"
 	exit 77
 fi
-if [ "$MODE" = vnc ] && ! grep -aq 'rendering offscreen, EGL' "$QEMU"; then
+# egl: QEMU's own EGL display needs a render node, or (the 3dfx binary since stage 2) Mesa's
+# surfaceless platform, whose llvmpipe passes dmabufs through /dev/udmabuf
+if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && ! grep -aq 'as a dmabuf (no readback)' "$QEMU"; then
+	echo "SKIP: $QEMU has no dmabuf scanout for qemu-3dfx yet"
+	exit 77
+fi
+if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && [ ! -e /dev/udmabuf ] && ! ls /dev/dri/renderD* > /dev/null 2>&1; then
+	echo "SKIP: no /dev/udmabuf and no render node for egl-headless (docker run --device /dev/udmabuf)"
+	exit 77
+fi
+if [ "$MODE" != sdl ] && ! grep -aq 'rendering offscreen, EGL' "$QEMU"; then
 	echo "SKIP: $QEMU renders Glide offscreen, but not MESA GL yet (the Mesa guests need an SDL window)"
 	# shellcheck disable=SC2086 # GUESTS is a list
 	GUESTS=$(printf '%s\n' $GUESTS | grep -v '^mesa' | tr '\n' ' ' || true)
@@ -145,16 +173,91 @@ if [ "$MODE" = sdl ]; then
 	display="-display sdl"
 else
 	unset DISPLAY
-	display="-display none -vnc unix:$work/vnc.sock -monitor unix:$work/mon.sock,server=on,wait=off"
+	gl=none
+	[ "$MODE" != egl ] || gl=egl-headless
+	display="-display $gl -vnc unix:$work/vnc.sock -monitor unix:$work/mon.sock,server=on,wait=off"
+	if [ "$MODE" = dbus ]; then
+		dbus-daemon --config-file=/usr/share/dbus-1/session.conf --address="unix:path=$work/bus" --fork --nopidfile
+		display="-display dbus,addr=unix:path=$work/bus,gl=on -monitor unix:$work/mon.sock,server=on,wait=off"
+	fi
 fi
 accel=tcg
 [ ! -w /dev/kvm ] || accel=kvm
 
 # HMP command on the monitor socket (headless runs)
 hmp() { printf '%s\n' "$*" | socat -t 2 - "UNIX-CONNECT:$work/mon.sock" > /dev/null 2>&1; }
-# screendump to a file, waiting until QEMU has written it
+# egl: the console's picture as its VNC server sends it, as a P6 image. QEMU's screendump can't be
+# used: while the console scans a dmabuf out it has no surface ("Error: no surface"), egl-headless
+# reads the frame into a surface of its own for VNC. RFB 3.8, no authentication, raw encoding.
+cat > "$work/vncgrab.py" << 'EOF'
+import socket, struct, sys
+def recv(s, n):
+    b = b""
+    while len(b) < n:
+        c = s.recv(n - len(b))
+        if not c:
+            raise EOFError("VNC server closed the connection")
+        b += c
+    return b
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+s.connect(sys.argv[1])
+recv(s, 12)
+s.sendall(b"RFB 003.008\n")
+types = recv(s, recv(s, 1)[0])
+if 1 not in types:
+    sys.exit("no security type None: %r" % types)
+s.sendall(b"\x01")
+if struct.unpack(">I", recv(s, 4))[0] != 0:
+    sys.exit("VNC security handshake failed")
+s.sendall(b"\x01")
+w, h = struct.unpack(">HH", recv(s, 4))
+recv(s, 16)
+recv(s, struct.unpack(">I", recv(s, 4))[0])
+# 32 bits per pixel, little endian, true colour, r/g/b at 16/8/0: B G R X in memory
+s.sendall(struct.pack(">BxxxBBBBHHHBBBxxx", 0, 32, 24, 0, 1, 255, 255, 255, 16, 8, 0))
+s.sendall(struct.pack(">BxHi", 2, 1, 0))
+s.sendall(struct.pack(">BBHHHH", 3, 0, 0, 0, w, h))
+fb = bytearray(w * h * 3)
+while True:
+    t = recv(s, 1)[0]
+    if t == 2:
+        continue
+    if t == 3:
+        recv(s, 3)
+        recv(s, struct.unpack(">I", recv(s, 4))[0])
+        continue
+    if t != 0:
+        sys.exit("unexpected VNC message %d" % t)
+    recv(s, 1)
+    for _ in range(struct.unpack(">H", recv(s, 2))[0]):
+        x, y, rw, rh, enc = struct.unpack(">HHHHi", recv(s, 12))
+        if enc != 0:
+            sys.exit("unexpected VNC encoding %d" % enc)
+        px = recv(s, rw * rh * 4)
+        for r in range(rh):
+            o = ((y + r) * w + x) * 3
+            row = px[r * rw * 4:(r + 1) * rw * 4]
+            fb[o:o + rw * 3:3] = row[2::4]
+            fb[o + 1:o + rw * 3:3] = row[1::4]
+            fb[o + 2:o + rw * 3:3] = row[0::4]
+    break
+with open(sys.argv[2], "wb") as f:
+    f.write(b"P6\n%d %d\n255\n" % (w, h) + bytes(fb))
+EOF
+# screendump to a file, waiting until QEMU has written it (egl: from the VNC server)
 screendump() {
 	rm -f "$1"
+	# dbus: the newest frame our D-Bus listener got (it writes one at most every 100 ms)
+	if [ "$MODE" = dbus ]; then
+		sleep 0.3
+		cp "$work/dbus-frame.ppm" "$1" 2> /dev/null && [ -s "$1" ]
+		return
+	fi
+	if [ "$MODE" = egl ]; then
+		python3 "$work/vncgrab.py" "$work/vnc.sock" "$1" && [ -s "$1" ]
+		return
+	fi
 	hmp "screendump $1" || return 1
 	for _ in $(seq 50); do [ -s "$1" ] && break; sleep 0.1; done
 	sleep 0.2
@@ -204,6 +307,13 @@ run_guest() {
 		-append "console=ttyS0 rdinit=/init panic=-1 quiet GLIDE_GUEST_FRONT=$front GLIDE_GUEST_BENCH=$BENCH ${GUEST_APPEND:-}" \
 		"$@" > "$qlog" 2>&1 &
 	bg=$!
+	listener=""
+	if [ "$MODE" = dbus ]; then
+		rm -f "$work/dbus-frame.ppm"
+		python3 "$SRC/e2e/3dfx/dbus-listener.py" "unix:path=$work/bus" "$work/dbus-frame.ppm" "${DBUS_DELAY_MS:-0}" \
+			> "$OUT/$name-dbus.log" 2>&1 &
+		listener=$!
+	fi
 	for _ in $(seq 100); do [ -s "$work/qemu.pid" ] && break; sleep 0.1; done
 	[ -s "$work/qemu.pid" ] || { cat "$qlog"; fail "$name: QEMU didn't start"; }
 	qemu=$(cat "$work/qemu.pid")
@@ -239,7 +349,7 @@ run_guest() {
 				phases_failed="$phases_failed $key"
 			fi
 		done
-		if [ "$MODE" = vnc ] && [ -z "$closed_seen" ] && grep -q "$prefix: offscreen closed" "$qlog"; then
+		if [ "$MODE" != sdl ] && [ -z "$closed_seen" ] && grep -q "$prefix: offscreen closed" "$qlog"; then
 			closed_seen=1
 			sleep 0.5
 			! screendump "$OUT/$name-after.ppm" || vga_after="$(ppm_size "$OUT/$name-after.ppm") #$(ppm_pixel "$OUT/$name-after.ppm" 10 10)"
@@ -248,6 +358,12 @@ run_guest() {
 		sleep 0.2
 	done
 	wait "$bg" || true
+	if [ -n "$listener" ]; then
+		kill -TERM "$listener" 2> /dev/null || true
+		wait "$listener" || true
+		step "$name: the D-Bus listener"
+		cat "$OUT/$name-dbus.log"
+	fi
 	step "$name: the guest's console"
 	cat "$serial"
 	step "$name: QEMU's output"
@@ -274,6 +390,7 @@ run_guest() {
 	grep "^$tag: BENCH" "$serial" || true
 	grep -o "$prefix: offscreen window .*" "$qlog" || true
 	grep -o "$prefix: offscreen closed.*" "$qlog" || true
+	grep -o "$prefix: dmabuf scanout.*" "$qlog" || true
 }
 
 for guest in $GUESTS; do
@@ -291,7 +408,7 @@ for guest in $GUESTS; do
 		# Headless: front-buffer drawing (dark green) and a gamma of 2.0 (the clear's 0x80 blue to
 		# 0xb5), when the library applies gamma offscreen
 		phases="" append=""
-		if [ "$MODE" = vnc ]; then
+		if [ "$MODE" != sdl ]; then
 			append="GLIDE_GUEST_EXTRA=1"
 			# The front-buffer timer came with the OpenGL offscreen code (stage 1b); an older binary
 			# (the published one, in wsh-openglide.yml) shows such a frame only at the next call
@@ -317,18 +434,45 @@ for guest in $GUESTS; do
 		else
 			echo "info: this wsh-openglide predates OPENGLIDE_DIR (its files go into QEMU's working directory, /)"
 		fi
+		# egl-headless, dbus,gl=on: the frames as a dmabuf (the gamma phase's frames are read
+		# back, which wsh-openglide's copy into the dmabuf doesn't apply)
+		if [ "$MODE" = egl ] || [ "$MODE" = dbus ]; then
+			if strings "$libglide" | grep -q getOffscreenDmabuf; then
+				grep -q 'glidept: offscreen .* as a dmabuf' "$OUT/glide-qemu.log" \
+					|| fail "glide: egl-headless, but the frames weren't scanned out as a dmabuf"
+				grep -q 'glidept: dmabuf scanout: [1-9][0-9]* frames copied' "$OUT/glide-qemu.log" \
+					|| fail "glide: no frame reached the console as a dmabuf"
+				case "$phases" in
+				*GAMMA*)
+					grep -q 'busy, [1-9][0-9]* frames read back instead' "$OUT/glide-qemu.log" \
+						|| fail "glide: the gamma phase's frames weren't read back"
+					;;
+				esac
+				echo "ok: glide: frames to the console as a dmabuf (with a gamma ramp read back)"
+				if [ "$MODE" = dbus ]; then
+					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
+						"$OUT/glide-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
+					echo "ok: glide: the D-Bus listener mapped the frames' dmabuf"
+				fi
+			else
+				echo "info: this wsh-openglide exports no dmabuf (the frames are read back)"
+			fi
+		fi
 		;;
 	mesa)
-		if [ "$MODE" = vnc ]; then
+		if [ "$MODE" != sdl ]; then
 			GUEST_APPEND="MESA_GUEST_GAMMA=1"
 			run_guest mesa MESA-GUEST mesa mesapt "GAMMA:0000b5"
 			GUEST_APPEND=""
+			# MESA GL has no dmabuf scanout yet: read back, also with a GL display
+			[ "$MODE" = vnc ] || grep -q 'mesapt: offscreen .* read back' "$OUT/mesa-qemu.log" \
+				|| fail "mesa: GL display: the frames weren't read back"
 		else
 			run_guest mesa MESA-GUEST mesa mesapt ""
 		fi
 		;;
 	mesa-msaa)
-		[ "$MODE" = vnc ] || fail "mesa-msaa: headless only (GLIDE_DISPLAY=vnc)"
+		[ "$MODE" != sdl ] || fail "mesa-msaa: headless only (GLIDE_DISPLAY=vnc)"
 		GUEST_APPEND="MESA_GUEST_MSAA=4"
 		run_guest mesa-msaa MESA-GUEST mesa mesapt ""
 		GUEST_APPEND=""
@@ -338,7 +482,7 @@ for guest in $GUESTS; do
 	mesa-noegl)
 		# No EGL driver (glvnd finds no vendor): the guest's wglChoosePixelFormat must fail and QEMU
 		# keep running until the guest powers the VM off
-		[ "$MODE" = vnc ] || fail "mesa-noegl: headless only (GLIDE_DISPLAY=vnc)"
+		[ "$MODE" != sdl ] || fail "mesa-noegl: headless only (GLIDE_DISPLAY=vnc)"
 		step "mesa-noegl: QEMU ($accel) headless with no EGL driver"
 		: > "$OUT/mesa-noegl-serial.log"
 		rc=0

@@ -93,7 +93,8 @@ come after that, not before.
 | wisp, the tiny test system, tier 1 (`e2e/wisp/`, guide "wisp"): a kernel (Linux 7.3.4 from Debian's `linux-source-7.3`, `tinyconfig` plus a fragment per architecture, uniprocessor) with a built-in initramfs whose only file is a static PID 1 built with the kernel's nolibc (no C library; sparc32 as V8 with `-m32 -mcpu=v8`), for x86_64 and i386 (`pc`), sparc32 (`SS-5`, `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager`) and sparc64 (`sun4u`). It boots with `-kernel` on the serial console, prints a banner, `uname`, CPU count, memory, a compute loop (xorshift32 + CRC-32, the same checksum on every architecture) with its time and one result line, and powers off; `run.py` (stdlib, unit tests) boots it under a given QEMU and reports times to PID 1 and power-off, loop time and peak RSS; `qemu-tci.sh` builds a TCI QEMU. Kernels 1.1-1.3 MB (x86 bzImage) and 2.4/3.1 MB (sparc32/sparc64 ELF), PID 1 5-13 KB. Lab, load 4-6 on 14 threads, two passes, all 24 runs pass: to power-off 1.6-3.2 s under TCG (published 11.1.3-3+wsh6), 22-28 s under TCI; the loop 15-21 times slower under TCI, and 9-15 s of a TCI boot pass before the kernel's first line (firmware, plus XZ decompression on x86). `-M LX` (and `-M Voyager`) with OpenBIOS stopped Linux 7.3 at its first idle: OpenBIOS gave them the SS-5's APC node, which QEMU (and a real LX) doesn't have there, Linux's `apc_swift_idle()` took a data access error on it and the nested faults overwrote the kernel text (`Trap 0x07` in `tsetup_patch2`); OpenBIOS patch 0027 makes the APC node only on the SS-5, SS-4, SPARCClassic and SPARCbook, and the LX and the Voyager pass (`e2e/wisp/README.md`, "The LX and the Voyager"). CI: `wisp-boot.yml` boots the eleven machines (the four architectures, then sparc32 on the seven other machines; the LX and the Voyager since the published 11.1.3-3+wsh9 carries OpenBIOS patch 0027, verified on the lab with the package's QEMU and with QEMU built from the tree: 15 boots in 36 s, all pass) on a GitHub-hosted runner for pull requests that touch `e2e/wisp/`, `pve-qemu.patch` or the pve-qemu pin (for the latter two with qemu-system-{x86_64,i386,sparc,sparc64} built from the pull request's patched tree), and on main with the published package; kernels cached, `wisp-boot-required` gate | merged | #417, #422, #427 |
 | wisp interactive mode (`e2e/wisp/`, README "Interactive mode"): `wisp=shell` on the kernel command line starts a small shell in PID 1 on the serial console instead of the batch run (the default is unchanged): `help`, `info`/`uname`, `bench`, `crc <n>`, `mandel` (ASCII Mandelbrot, 78 x 20, 4.12 fixed point in 32-bit integers), `banner`, `clear`, `poweroff`, `reboot` (not on sun4u, where OpenBIOS doesn't restart). Canonical TTY mode: the line discipline does the echo and Backspace, Ctrl-U, Ctrl-W, Ctrl-C; an 80 x 24 layout with a few ANSI colours, for the Browser SPARC demo. `run.py --shell` drives it over the console on all four architectures and checks every answer (Mandelbrot character by character against a Python model and `tests/mandel.txt`); unit tests also build `init.c` against the host's glibc and drive it there; CI runs `--shell` after the batch boots. PID 1 grows by about 3.5 KB on sparc (5.2 to 8.7 KB sparc32, 5.4 to 8.9 KB sparc64) and 4 KB on x86. Found on the way: nolibc's sparc `_start` gets a `save` prologue from gcc and read `argc`/`envp` 96 bytes too low, so `loops=` never reached PID 1 on sparc; `init.c` now has its own `_start` there (an upstream nolibc fix candidate) | merged | #428 |
 | wisp tier 2: disk, network, SMP (`e2e/wisp/`, README "Tier 2"): a second kernel per architecture, `kernel-t2` (`config/tier2/`), with the block layer, devtmpfs, each machine's disk and NIC drivers, packet sockets and SMP where QEMU's machine has more than one CPU; the tier-1 kernel and its output are unchanged. `run.py --tier2` boots every machine once per profile: a 4 MiB raw image per disk controller (pc: PIIX3 IDE and virtio-blk; sun4m: ESP SCSI; sun4u: cmd646 IDE and virtio-blk on its PCI bus), PID 1 reads and checks it, writes 1 MiB, syncs, drops the page cache and reads it back, and run.py checks the image afterwards; a NIC on QEMU's user-mode network (pc: e1000 and virtio-net; sun4m: lance; sun4u: hme) with ARP and 8 ICMP echoes of 1,400 bytes to slirp's 10.0.2.2, frames built by PID 1 on a packet socket (no IP stack in the kernel: 385 KB less on sparc32; no host network or DNS involved); the compute loop on every CPU with `sched_setaffinity` on pc and on the SS-10 and SS-20 (`-smp 2` and `4`; the sparc32 SMP kernel drops futex, which wisp doesn't use, and boots the uniprocessor sun4m machines too; sun4u has one CPU in QEMU). The shell has `disk`, `net` and `smp` (`run.py --shell --tier2`). `kernel-t2` is 0.55 MB larger on x86 (bzImage), 0.86 MB on sparc32 and 1.0 MB on sparc64 (ELF); PID 1 has 6.6-8.3 KB more code. Lab: all 32 tier-2 boots (21 batch, 11 shell) pass with the published 11.1.3-3+wsh9 and with QEMU built from the tree, and tier 1 still passes; `run.py` fixes the sparc32 delay-loop calibration (`lpj=`), which a descheduled QEMU could leave at 8191 so that the second CPU was given up as stuck. CI runs tier 2 after the shell boots | in review | |
-| Sun PROMs' NVRAM kept across starts: pve-qemu `wsh/0059` gives the sun4m M48T08 a `drive` (written through per byte; a blank image gets QEMU's contents once, any other is left alone except the IDPROM from `-M` and the MAC, and OpenBIOS's partitions when `-prom-env` is given), qtest `wsh/0060`; qemu-server `nvram0` (sparc32 only, 4 MiB like the TPM state, `-blockdev` + `-global sysbus-m48t08.drive`, in backup/restore/clone/move like a disk; cfg2cmd and hotplug tests) and Hardware → Add → NVRAM in pve-manager (no wizard default). In PVE (lab): after one `setenv diag-switch? false` the LX PROM (Solaris 2.6) and the SS-5 PROM (Solaris 8) boot to `login:` on every start without input, also a clone with a new MAC; OpenBIOS SS-5/SS-20 with and without the volume as before; qtest-sparc 28 OK. The SS-20 PROM's own auto-boot stops QEMU in Solaris 2.6 (`Trap 0x29`, also without the volume; Next). `submodules/SPARC.md`, "The NVRAM kept in a volume"; sparc guide, "Making a Sun PROM VM boot by itself"; `upstream/qemu-sun4m-nvram-backend.md` | in review | |
+| Sun PROMs' NVRAM kept across starts: pve-qemu `wsh/0059` gives the sun4m M48T08 a `drive` (written through per byte; a blank image gets QEMU's contents once, any other is left alone except the IDPROM from `-M` and the MAC, and OpenBIOS's partitions when `-prom-env` is given), qtest `wsh/0060`; qemu-server `nvram0` (sparc32 only, 4 MiB like the TPM state, `-blockdev` + `-global sysbus-m48t08.drive`, in backup/restore/clone/move like a disk; cfg2cmd and hotplug tests) and Hardware → Add → NVRAM in pve-manager (no wizard default). In PVE (lab): after one `setenv diag-switch? false` the LX PROM (Solaris 2.6) and the SS-5 PROM (Solaris 8) boot to `login:` on every start without input, also a clone with a new MAC; OpenBIOS SS-5/SS-20 with and without the volume as before; qtest-sparc 28 OK. The SS-20 PROM's own auto-boot stopped QEMU in Solaris 2.6 (`Trap 0x29`, also without the volume): fixed by `wsh/0061`, next row. `submodules/SPARC.md`, "The NVRAM kept in a volume"; sparc guide, "Making a Sun PROM VM boot by itself"; `upstream/qemu-sun4m-nvram-backend.md` | in review | |
+| SS-20 PROM boots Solaris 2.6 by itself: the ledma's upper-address register (`E_BASE_ADDR`, the top 8 bits of the lance's 24-bit DVMA addresses) reset to 0 in QEMU; the DMA2 description says it defaults to `0xff`. Solaris 2.6's `le` never writes it and the SS-20 PROM sets it only when it probes with `diag-switch?` true, so with `diag-switch?` false (auto-boot, or a typed `boot disk` after such a start) the lance read its init block from `0x0040f000` instead of `0xff40f000`, the 64 MB IOMMU faulted at level 15 and the kernel recursed in its level-15 handler until QEMU stopped (`Trap 0x29`). pve-qemu `wsh/0061` resets it to `0xff000000` (ledma only), qtest `wsh/0062` `sun4m-ledma-test` (fails without 0061). Lab, plain QEMU 0001-0062: the stored `sol26-ss20` disk on the SS-20 PROM with an NVRAM image boots to `login:` by itself on three starts in a row; OpenBIOS SS-20, the SS-5 PROM (Solaris 8) and the LX PROM (Solaris 2.6) as before; qtest-sparc 29 OK. Not yet through PVE. `submodules/SPARC.md`, "SS-20 PROM: auto-boot and the lance DMA" | in review | |
 | sparc: no EFI Disk or TPM State. pve-manager hides both in Hardware → Add for sparc32 and sparc64 (as NVRAM is shown for sparc32 only) and the wizard's Add TPM (OVMF was already not offered); qemu-server refuses `efidisk0`/`tpmstate0` on sparc32 at create, update and start (a `tpmstate0` was taken and the start then failed: `qemu-system-sparc` has no `tpm-tis`; sparc64 already refused both). `qm showcmd` prints only the command again: two debug prints are gone (`-- Using <display> display ...` for a `vga` with `server=`, and `sparc/sparc64 does not support PCI devices, ignoring: ...` on every sparc VM); the cfg2cmd runner gets `EXPECT_NO_STDOUT`. cfg2cmd tests, e2e with `test.fail` probes until the packages have it | in review | |
 
 ## In progress
@@ -103,12 +104,13 @@ merged; what is left of them is item 2 under "Next".
 
 ## Next, in this order
 
-**First, the SS-20 PROM's auto-boot.** With the NVRAM volume (Done) the SS-20 PROM boots the disk
-by itself, but Solaris 2.6 then stops QEMU at `configuring network interfaces:` (`Trap 0x29 (Data
-Access Error) while interrupts disabled`); a typed `boot disk` works, and `setenv diag-switch?
-false` + `reset` without the volume fails the same way. Also the stored `sol26-enduser-ss20prom`
-disk panics in `dbri` on its reconfiguration boot. `submodules/SPARC.md`, "The NVRAM kept in a
-volume".
+**First, the `dbri` panic on reconfiguration boots under the SS-20 PROM.** `boot -r` (and the
+stored `sol26-enduser-ss20prom` disk's pending reconfiguration boot) panics Solaris 2.6 in `dbri`
+(`WARNING: dbri: DBRI Reg8 bad!`, then `BAD TRAP: type=9 ... addr=0`, from the interrupt path) after
+its attach finds no DBRI behind `wsh/0057`'s register stub; on the LX the driver attaches with the
+same warning and Solaris runs, and an `mmcodec` child added at `ok` doesn't help. Also: the SS-20 auto-boot fix
+(`wsh/0061`, Done) through PVE with the `nvram0` volume. `submodules/SPARC.md`, "The `dbri` panic
+on reconfiguration boots under the SS-20 PROM".
 
 1. **Idle on sparc64, what is left.** The guests with a stored disk idle (see Done: `wsh/0042`-`0044`).
    Not covered: Linux on sun4u (Debian 12's install fails, so no disk; its `arch_cpu_idle()` does
@@ -278,9 +280,70 @@ volume".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (~2-3 weeks).** Zero copy: a `gbm_surface`,
-       `qemu_console_gl_scanout_dmabuf` from a main-loop BH, `gl_block` back-pressure; shown through
-       `egl-headless` and `-display dbus,gl=on`.
+     - **Stage 2: dmabuf scanout (first slice in review: Glide; the rest ~1-2 weeks).** When QEMU's
+       display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
+       console as a dmabuf instead of being read back. wsh-openglide (new
+       `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
+       window's size, exported once through `EGL_MESA_image_dma_buf_export` (`getOffscreenDmabuf`),
+       and per frame a blit of the front buffer into it plus `glFinish` (`getOffscreenScanout`;
+       unscaled and unflipped, which llvmpipe does as a memory copy, so the rows stay bottom up and
+       the dmabuf says `y0_top`). A buffer of its own rather than the front buffer, so the next swap
+       can't change a frame the display still reads. qemu-3dfx (`fxdisp.c`): the dmabuf way is chosen
+       when the window opens, if the console has GL and the export works; the vCPU thread copies the
+       frame unless the console is gl-blocked (a D-Bus client still reads the last one; the newest
+       frame then follows 50 ms later through the existing stale timer), and a main-loop bottom half
+       calls `qemu_console_gl_scanout_dmabuf` once and `qemu_console_gl_update` per frame. Everything
+       that touches the console's GL state runs on the main loop (the vCPU thread has OpenGLide's
+       context current), including giving the console back to the VGA: a GL scanout has no surface,
+       and `vga_update_display()` dereferences it (QEMU crashed at the first close until the hand-back
+       set a surface first). Readback stays for everything else: no GL display (PVE today: VNC with
+       `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
+       ramp set (the copy applies none), and all of MESA GL. Instead of the `gbm_surface` planned,
+       the renderer exports its own buffer: the frames are rendered in OpenGLide's context, and the
+       display imports from it, so nothing has to be imported into OpenGLide. QEMU side (in
+       `submodules/pve-qemu-qemu-3dfx.patch`, the 3dfx binary only): without a render node
+       `egl_rendernode_init()` falls back to Mesa's surfaceless EGL platform (llvmpipe exports and
+       imports dmabufs through `/dev/udmabuf`), so both GL displays start on a node without a GPU;
+       egl-headless honours a dmabuf's `y0_top` (it took every dmabuf as top down). Found on the way:
+       an EGL platform display is one handle per process, so OpenGLide's and the MESA GL
+       pass-through's `eglTerminate` at close destroyed QEMU's own display context (QEMU ended in
+       libepoxy, "Couldn't find current GLX or EGL context"); neither terminates now, which also
+       fixes Glide closing while a GL context is open. QEMU's `screendump` has no surface during a
+       GL scanout ("Error: no surface"), so the tests read what VNC serves, or what the D-Bus client
+       got. Tested (lab, TCG, llvmpipe, no render node, `/dev/udmabuf` passed to the container):
+       `e2e/3dfx` with the new `GLIDE_DISPLAY=egl` (egl-headless, the frame checked as VNC serves it)
+       and `GLIDE_DISPLAY=dbus` (dbus,gl=on with the test's own listener,
+       `e2e/3dfx/dbus-listener.py`, which maps each dmabuf and writes the frame for the probes;
+       `DBUS_DELAY_MS` delays its replies): the Glide guest's frame, front-buffer drawing (through
+       the dmabuf) and gamma (read back), the VGA back after; the Mesa guest read back with both;
+       `vnc` and `sdl` unchanged. Windows 98 SE (`win98-test.sh` with the new `--display egl` and
+       `--openglide`, KVM, `cpu: pentium3`): Glide 2 and Glide 3 pass as dmabufs (the frame as VNC
+       serves it, the desktop back at 1024x768; 0.07 ms a copy, 0.5-0.6 ms egl-headless's update;
+       960-970 frames/s against 1540-1700 read back in the same run with `--display vnc`), OpenGL
+       passes read back. Measured (640x480, the test scene, a lab under other load):
+
+       | Display | Glide guest | vCPU thread per frame | main loop per frame |
+       | --- | --- | --- | --- |
+       | VNC, `-display none` (readback) | 1440-1790 frames/s | 0.14-0.16 ms `glReadPixels` | 0.02-0.03 ms copy |
+       | egl-headless + VNC (dmabuf) | 830-1070 frames/s | 0.07 ms copy and `glFinish` | 0.57-0.78 ms (egl-headless imports, blits and reads the frame for VNC) |
+       | dbus,gl=on (dmabuf), listener replies at once | 2140 frames/s | 0.07 ms | 0.04 ms; 152 of 306 frames held while the client read |
+       | dbus,gl=on, listener replies 2 ms late | 2630 frames/s | 0.08 ms | 0.04 ms; 256 held |
+
+       With egl-headless the frame still goes through system memory for VNC (egl-headless reads it
+       on the main loop, under the BQL), which costs more than the readback with Mesa's software
+       renderer; the dmabuf way pays off where the consumer takes the dmabuf itself (D-Bus, stage 3)
+       or on a GPU, where `glReadPixels` stalls the pipeline. Left: MESA GL as a dmabuf (the
+       guest's pbuffer is its window: a second context current on the same pbuffer could blit
+       framebuffer 0 into an exported buffer without touching the guest's state); gamma in the copy
+       (a shader pass) so ramp frames stay dmabufs; a real GPU render node (modifiers other than
+       linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
+       no D-Bus client yet) and a real game over time; qemu-server: which display a 3dfx VM gets (VNC needs pixels, so
+       egl-headless gains nothing there today; dbus,gl=on with the stage 3 client), and
+       `/dev/udmabuf` access for QEMU on a node without a GPU; double buffering instead of holding
+       frames while a D-Bus client reads; the D-Bus listener's 30 ms refresh cap; whether GitHub's
+       runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
+       `3dfx in Windows 98` workflow has an `egl` display now but installs the published
+       wsh-openglide, so until one with the exports is published its Glide frames are read back.
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.
