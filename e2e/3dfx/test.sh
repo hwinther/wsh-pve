@@ -31,10 +31,12 @@
 #
 # GLIDE_DISPLAY=egl runs the headless guests (glide and mesa by default) with `-display egl-headless`
 # and VNC: the console has GL, so the Glide frames go to it as a dmabuf (wsh-openglide's scanout
-# buffer, imported by egl-headless, which reads it for VNC and screendump) instead of being read back;
-# the Glide guest's gamma phase is read back (the copy into the dmabuf doesn't apply a ramp), and so
-# is every MESA GL frame (no dmabuf scanout yet); QEMU's log must say which way each went; the frame
-# is checked as the VNC server sends it (QEMU's screendump has no surface during a GL scanout).
+# buffer, imported by egl-headless, which reads it for VNC and screendump) instead of being read back,
+# and so do the MESA GL frames (mesapt's own scanout buffer, the gamma phase's too: its copy applies
+# the ramp); the Glide guest's gamma phase is read back (wsh-openglide's copy doesn't apply a ramp);
+# QEMU's log must say which way each went; the frame is checked as the VNC server sends it (QEMU's
+# screendump has no surface during a GL scanout). With QEMU_3DFX_DMABUF=0 in the environment both
+# guests must be read back instead.
 # GLIDE_DISPLAY=dbus does the same with `-display dbus,gl=on` on a dbus-daemon of its own and no VNC:
 # dbus-listener.py registers on console 0, maps each dmabuf QEMU sends and writes the newest frame,
 # which is what the probes are checked in (DBUS_DELAY_MS delays its replies, during which QEMU keeps
@@ -436,7 +438,11 @@ for guest in $GUESTS; do
 		fi
 		# egl-headless, dbus,gl=on: the frames as a dmabuf (the gamma phase's frames are read
 		# back, which wsh-openglide's copy into the dmabuf doesn't apply)
-		if [ "$MODE" = egl ] || [ "$MODE" = dbus ]; then
+		if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && [ "${QEMU_3DFX_DMABUF:-}" = 0 ]; then
+			grep -q 'glidept: offscreen .* read back (QEMU_3DFX_DMABUF=0)' "$OUT/glide-qemu.log" \
+				|| fail "glide: QEMU_3DFX_DMABUF=0, but the frames weren't read back"
+			echo "ok: glide: QEMU_3DFX_DMABUF=0: frames read back"
+		elif [ "$MODE" = egl ] || [ "$MODE" = dbus ]; then
 			if strings "$libglide" | grep -q getOffscreenDmabuf; then
 				grep -q 'glidept: offscreen .* as a dmabuf' "$OUT/glide-qemu.log" \
 					|| fail "glide: egl-headless, but the frames weren't scanned out as a dmabuf"
@@ -464,9 +470,31 @@ for guest in $GUESTS; do
 			GUEST_APPEND="MESA_GUEST_GAMMA=1"
 			run_guest mesa MESA-GUEST mesa mesapt "GAMMA:0000b5"
 			GUEST_APPEND=""
-			# MESA GL has no dmabuf scanout yet: read back, also with a GL display
-			[ "$MODE" = vnc ] || grep -q 'mesapt: offscreen .* read back' "$OUT/mesa-qemu.log" \
-				|| fail "mesa: GL display: the frames weren't read back"
+			if [ "$MODE" = vnc ]; then
+				:
+			elif [ "${QEMU_3DFX_DMABUF:-}" = 0 ]; then
+				grep -q 'mesapt: offscreen .* read back (QEMU_3DFX_DMABUF=0)' "$OUT/mesa-qemu.log" \
+					|| fail "mesa: QEMU_3DFX_DMABUF=0, but the frames weren't read back"
+				echo "ok: mesa: QEMU_3DFX_DMABUF=0: frames read back"
+			elif ! grep -aq 'the window is multisampled, its frames are read back' "$QEMU"; then
+				# a binary from before the MESA GL dmabuf scanout: read back, also with a GL display
+				grep -q 'mesapt: offscreen .* read back' "$OUT/mesa-qemu.log" \
+					|| fail "mesa: GL display: the frames weren't read back"
+				echo "info: this qemu-3dfx reads MESA GL frames back with a GL display too"
+			else
+				# GL display: every frame as a dmabuf, the gamma phase's too (mesapt's copy applies
+				# the ramp with a shader)
+				grep -q 'mesapt: offscreen .* as a dmabuf' "$OUT/mesa-qemu.log" \
+					|| fail "mesa: GL display, but the frames weren't scanned out as a dmabuf"
+				grep -q 'mesapt: dmabuf scanout: [1-9][0-9]* frames copied.* busy, 0 frames read back instead' \
+					"$OUT/mesa-qemu.log" || fail "mesa: not every frame reached the console as a dmabuf"
+				echo "ok: mesa: frames to the console as a dmabuf (the gamma phase's too)"
+				if [ "$MODE" = dbus ]; then
+					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
+						"$OUT/mesa-dbus.log" || fail "mesa: the D-Bus listener got no 640x480 frame as a dmabuf"
+					echo "ok: mesa: the D-Bus listener mapped the frames' dmabuf"
+				fi
+			fi
 		else
 			run_guest mesa MESA-GUEST mesa mesapt ""
 		fi
