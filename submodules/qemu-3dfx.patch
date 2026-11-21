@@ -1,9 +1,9 @@
 diff --git a/qemu-0/hw/3dfx/fxdisp.c b/qemu-0/hw/3dfx/fxdisp.c
 new file mode 100644
-index 0000000..86d5f4f
+index 0000000..14b2b48
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.c
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,551 @@
 +/*
 + * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display
 + *
@@ -36,17 +36,21 @@ index 0000000..86d5f4f
 + * A frame reaches the console in one of two ways:
 + *
 + *  - dmabuf scanout, when the display has GL (-display egl-headless, -display dbus,gl=on) and the
-+ *    user can export a buffer as a dmabuf (fxdisp_dmabuf(); wsh-openglide's getOffscreenDmabuf):
++ *    user can export a buffer as a dmabuf (fxdisp_dmabuf(); wsh-openglide's getOffscreenDmabuf,
++ *    mesapt's egl_export in hw/mesa/mglcntx_egl.c):
 + *    the buffer is exported once when the window opens, each frame is copied into it on the GPU
 + *    and finished on the vCPU thread, and a bottom half on the main loop hands it to the console
 + *    (qemu_console_gl_scanout_dmabuf the first time, qemu_console_gl_update for each frame). The
 + *    display imports it into its own EGL context: no copy through system memory. While the
 + *    console is gl-blocked (a D-Bus client still reads the last frame) a frame isn't copied, and
-+ *    the newest one follows FXDISP_STALE_MS later. Everything that touches the console's GL state
++ *    the newest one follows FXDISP_STALE_MS later (a user whose next frame overwrites the held one,
++ *    MESA GL, keeps a copy of it: fxdisp_hold). Everything that touches the console's GL state
 + *    runs on the main loop, where the display's context is current; the vCPU thread has the
 + *    pass-through's context.
-+ *  - readback otherwise (no GL display, as PVE's VNC console; no export; QEMU_3DFX_DMABUF=0) and
-+ *    for the frames the user can't copy into the buffer (wsh-openglide while a gamma ramp is set):
++ *  - readback otherwise (no GL display, as PVE's VNC console; no export, as for a multisampled
++ *    MESA GL window; QEMU_3DFX_DMABUF=0) and for the frames the user can't copy into the buffer
++ *    (wsh-openglide while a gamma ramp is set; mesapt copies through the ramp with a shader, and
++ *    reads back only when that shader can't be built):
 + *    the frame is read with glReadPixels on the vCPU thread, and the bottom half copies it into a
 + *    console surface of fxdisp's own (flipping it, OpenGL's rows are bottom up, and applying the
 + *    guest's gamma ramp when it set one) and marks the console updated.
@@ -80,6 +84,7 @@ index 0000000..86d5f4f
 +    FxDispRead read;
 +    FxDispExport export_buf;
 +    FxDispScanout scanout;
++    FxDispHold hold;
 +    void *opaque;
 +    int open;               /* an offscreen window (Glide) or context (MESA GL) is open */
 +    int shown;              /* 3D output selected */
@@ -300,7 +305,8 @@ index 0000000..86d5f4f
 +    }
 +}
 +
-+static void fxdisp_read(FxDisp *fx)
++/* swap: the frame of a swap, not one taken later (FXDISP_STALE_MS) */
++static void fxdisp_read(FxDisp *fx, int swap)
 +{
 +    int64_t t;
 +
@@ -312,6 +318,8 @@ index 0000000..86d5f4f
 +    if (fx->dmabuf) {
 +        /* The display still reads the last frame (a D-Bus client): the newest frame later */
 +        if (qemu_console_is_gl_blocked(fx->con)) {
++            if (swap && fx->hold)
++                fx->hold(fx->opaque);
 +            fx->held++;
 +            fxdisp_arm_stale(fx);
 +            return;
@@ -342,7 +350,7 @@ index 0000000..86d5f4f
 +
 +    if (fx->open && fx->dirty && (fx->cpu == cpu)) {
 +        fx->stale_reads++;
-+        fxdisp_read(fx);
++        fxdisp_read(fx, 0);
 +    }
 +}
 +
@@ -376,6 +384,12 @@ index 0000000..86d5f4f
 +{
 +    fx->export_buf = (export_buf && scanout)? export_buf:NULL;
 +    fx->scanout = scanout;
++}
++
++/* See FxDispHold (on the thread of the user's context) */
++void fxdisp_hold(FxDisp *fx, FxDispHold hold)
++{
++    fx->hold = hold;
 +}
 +
 +int fxdisp_is_open(FxDisp *fx)
@@ -459,14 +473,14 @@ index 0000000..86d5f4f
 +    fx->cpu = current_cpu;
 +    if (swap) {
 +        fx->swaps++;
-+        fxdisp_read(fx);
++        fxdisp_read(fx, 1);
 +        return;
 +    }
 +    if (!stale)
 +        return;
 +    now = get_clock();
 +    if ((now - fx->last_read) >= (FXDISP_STALE_MS * SCALE_MS)) {
-+        fxdisp_read(fx);
++        fxdisp_read(fx, 0);
 +        return;
 +    }
 +    fxdisp_arm_stale(fx);
@@ -543,10 +557,10 @@ index 0000000..86d5f4f
 +}
 diff --git a/qemu-0/hw/3dfx/fxdisp.h b/qemu-0/hw/3dfx/fxdisp.h
 new file mode 100644
-index 0000000..b405117
+index 0000000..152cdda
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.h
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,59 @@
 +/*
 + * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display (fxdisp.c)
 + *
@@ -588,10 +602,14 @@ index 0000000..b405117
 +/* Copies the current frame into it and finishes the GL work: 1, or 0 to have this frame read
 + * back instead */
 +typedef int (*FxDispScanout)(void *opaque);
++/* A swap's frame is held back (the display still reads the last one): a user whose next frame
++ * overwrites it (MESA GL draws into the same pbuffer) keeps a copy for the scanout that follows */
++typedef void (*FxDispHold)(void *opaque);
 +
 +int fxdisp_choose(void);
 +FxDisp *fxdisp_new(const char *, FxDispRead, void *);
 +void fxdisp_dmabuf(FxDisp *, FxDispExport, FxDispScanout);
++void fxdisp_hold(FxDisp *, FxDispHold);
 +int fxdisp_is_open(FxDisp *);
 +void fxdisp_open(FxDisp *, int, int, int);
 +int fxdisp_shown(FxDisp *);
@@ -984,10 +1002,10 @@ index 051c953..2c64a33 100644
      void (*stat)(void);
 diff --git a/qemu-1/hw/mesa/mglcntx_egl.c b/qemu-1/hw/mesa/mglcntx_egl.c
 new file mode 100644
-index 0000000..892d5a6
+index 0000000..8593587
 --- /dev/null
 +++ b/qemu-1/hw/mesa/mglcntx_egl.c
-@@ -0,0 +1,1016 @@
+@@ -0,0 +1,1445 @@
 +/*
 + * QEMU MESA GL Pass-Through: EGL offscreen context
 + *
@@ -1015,12 +1033,14 @@ index 0000000..892d5a6
 + * system (Mesa's surfaceless platform: a GPU's render node or llvmpipe; else the first EGL device,
 + * else the default display), current on an EGL pbuffer the size of the guest's display. The
 + * pbuffer is the "window": the guest's framebuffer 0, GL_BACK and its default viewport are the
-+ * pbuffer's, so no GL call needs rewriting. At every wglSwapBuffers the frame is read
-+ * (glReadPixels of framebuffer 0, which also resolves a multisampled pbuffer) and handed to
-+ * fxdisp, which shows it in the first graphic console (VNC, screendump) in place of the VGA while
-+ * the context's 3D output is active (MGLActivateHandler), with the guest's gamma ramp
++ * pbuffer's, so no GL call needs rewriting. At every wglSwapBuffers the frame is handed to fxdisp,
++ * which shows it in the first graphic console (VNC, screendump) in place of the VGA while the
++ * context's 3D output is active (MGLActivateHandler), with the guest's gamma ramp
 + * (wglSetDeviceGammaRamp3DFX) applied. The VGA comes back when the guest deactivates its window or
-+ * the GL context ends.
++ * the GL context ends. With a GL display (egl-headless, dbus,gl=on) the frame is copied into a
++ * dmabuf the display imports (egl_export, egl_scanout below); otherwise, and where that copy
++ * can't be made, it is read back (glReadPixels of framebuffer 0, which also resolves a
++ * multisampled pbuffer).
 + *
 + * libEGL.so.1 is opened at run time, so the binary links nothing new; when it, the display or a
 + * context can't be had, the guest's wglChoosePixelFormat/wglCreateContext fail and QEMU keeps
@@ -1190,6 +1210,7 @@ index 0000000..892d5a6
 +    PbufferARB hPbuffer[MAX_PBUFFER];
 +    int cAlphaBits, cDepthBits, cStencilBits, cAuxBuffers, cSampleBuf[2];
 +    struct wgamma ramp;
++    int gamma;              /* ramp is not the identity */
 +    FxDisp *fx;
 +} e;
 +
@@ -1262,6 +1283,7 @@ index 0000000..892d5a6
 +        e.ramp.g[i] = (uint16_t)((i << 8) | i);
 +        e.ramp.b[i] = (uint16_t)((i << 8) | i);
 +    }
++    e.gamma = 0;
 +    if (e.fx)
 +        fxdisp_gamma(e.fx, NULL, NULL, NULL);
 +}
@@ -1316,6 +1338,423 @@ index 0000000..892d5a6
 +    if (read_fb)
 +        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fb);
 +    return 1;
++}
++
++/*
++ * dmabuf scanout (fxdisp_dmabuf), with a GL display: each frame is copied into a renderbuffer
++ * that is exported once as a dmabuf (EGL_MESA_image_dma_buf_export; llvmpipe exports through
++ * /dev/udmabuf, a GPU driver through its render node), which the display imports.
++ *
++ * The copy runs in a context of our own (scan.ctx), made current on the guest's window pbuffer
++ * for it, not in the guest's context: it reads the pbuffer's framebuffer 0 directly, so it shares
++ * nothing with the guest's contexts. In the guest's context the framebuffer and renderbuffer
++ * would be names in the guest's namespace, which the guest may fill with names it never had from
++ * glGen* (legacy GL allows that), and the blit depends on state the guest owns (scissor test,
++ * read buffer, read and draw framebuffer bindings, GL_FRAMEBUFFER_SRGB), all of which would have
++ * to be saved and put back every frame. The price is two eglMakeCurrent and a glFinish in the
++ * guest's context per frame (its rendering must be done before another context reads it).
++ *
++ * The copy is a framebuffer blit of the back buffer (the front one when single-buffered),
++ * unscaled and unflipped (llvmpipe copies memory), so its rows are bottom up, as fxdisp tells the
++ * display (y0_top). With a gamma ramp it is two passes instead: the frame into a texture, then
++ * drawn into the renderbuffer through a 256-entry lookup per channel, the same lookup as fxdisp
++ * applies to a frame read back. Read back instead: a multisampled pbuffer (a resolving blit needs
++ * identical formats, and Mesa's software renderers never get one here, egl_msaa_works, so it is
++ * untested), and frames with a gamma ramp when the shader can't be built.
++ *
++ * While the display still reads the last frame (a D-Bus client), fxdisp holds a swap's frame back
++ * and asks for it again later; by then the guest draws its next frame into the same back buffer,
++ * so egl_hold copies the held frame into a renderbuffer of its own (stage) right away, and the
++ * scanout that follows copies from there.
++ */
++typedef struct {
++    EGLContext ctx;
++    EGLSurface draw, read;
++} EglCurrent;
++
++static struct {
++    EGLContext ctx;         /* ours: current on e.surf only during the copy */
++    EGLImageKHR img;        /* the exported renderbuffer */
++    GLuint fbo, rb;
++    GLuint stage_fbo, stage_rb; /* the held frame */
++    int w, h, staged;
++    GLuint prog, tex, lut;  /* gamma: the program, the frame's copy, the lookup (256 x 1) */
++    int tex_w, tex_h, lut_dirty, gamma_failed;
++} scan;
++
++static void egl_current_save(EglCurrent *c)
++{
++    c->ctx = egl.GetCurrentContext();
++    c->draw = egl.GetCurrentSurface(EGL_DRAW);
++    c->read = egl.GetCurrentSurface(EGL_READ);
++}
++
++static void egl_current_restore(const EglCurrent *c)
++{
++    egl.MakeCurrent(e.dpy, c->draw, c->read, c->ctx);
++}
++
++static void scan_destroy_image(void)
++{
++    PFNEGLDESTROYIMAGEKHRPROC destroyImage =
++        (PFNEGLDESTROYIMAGEKHRPROC) egl.GetProcAddress("eglDestroyImageKHR");
++
++    if (scan.img && destroyImage)
++        destroyImage(e.dpy, scan.img);
++    scan.img = EGL_NO_IMAGE_KHR;
++}
++
++/* The buffer's GL objects, with scan.ctx current */
++static void scan_free_buffer(void)
++{
++    MESA_PFN(PFNGLDELETEFRAMEBUFFERSPROC,  glDeleteFramebuffers);
++    MESA_PFN(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers);
++
++    scan_destroy_image();
++    if (p_glDeleteFramebuffers) {
++        p_glDeleteFramebuffers(1, &scan.fbo);
++        p_glDeleteFramebuffers(1, &scan.stage_fbo);
++    }
++    if (p_glDeleteRenderbuffers) {
++        p_glDeleteRenderbuffers(1, &scan.rb);
++        p_glDeleteRenderbuffers(1, &scan.stage_rb);
++    }
++    scan.fbo = scan.rb = scan.stage_fbo = scan.stage_rb = 0;
++    scan.w = scan.h = scan.staged = 0;
++}
++
++/* Window gone: the context takes its objects with it */
++static void scan_destroy(void)
++{
++    scan_destroy_image();
++    if (scan.ctx)
++        egl.DestroyContext(e.dpy, scan.ctx);
++    memset(&scan, 0, sizeof(scan));
++}
++
++/* fxdisp's export, on the vCPU thread, when the window opens or changes size: a renderbuffer of
++ * the window's size, exported as a dmabuf */
++static int egl_export(void *opaque, FxDispDmabuf *b)
++{
++    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC,         glBindFramebuffer);
++    MESA_PFN(PFNGLBINDRENDERBUFFERPROC,        glBindRenderbuffer);
++    MESA_PFN(PFNGLBLITFRAMEBUFFERPROC,         glBlitFramebuffer);
++    MESA_PFN(PFNGLCHECKFRAMEBUFFERSTATUSPROC,  glCheckFramebufferStatus);
++    MESA_PFN(PFNGLCLEARCOLORPROC,              glClearColor);
++    MESA_PFN(PFNGLCLEARPROC,                   glClear);
++    MESA_PFN(PFNGLFINISHPROC,                  glFinish);
++    MESA_PFN(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer);
++    MESA_PFN(PFNGLGENFRAMEBUFFERSPROC,         glGenFramebuffers);
++    MESA_PFN(PFNGLGENRENDERBUFFERSPROC,        glGenRenderbuffers);
++    MESA_PFN(PFNGLGETBOOLEANVPROC,             glGetBooleanv);
++    MESA_PFN(PFNGLREADBUFFERPROC,              glReadBuffer);
++    MESA_PFN(PFNGLRENDERBUFFERSTORAGEPROC,     glRenderbufferStorage);
++    PFNEGLCREATEIMAGEKHRPROC createImage =
++        (PFNEGLCREATEIMAGEKHRPROC) egl.GetProcAddress("eglCreateImageKHR");
++    PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC exportQuery =
++        (PFNEGLEXPORTDMABUFIMAGEQUERYMESAPROC) egl.GetProcAddress("eglExportDMABUFImageQueryMESA");
++    PFNEGLEXPORTDMABUFIMAGEMESAPROC exportImage =
++        (PFNEGLEXPORTDMABUFIMAGEMESAPROC) egl.GetProcAddress("eglExportDMABUFImageMESA");
++    const char *ext = egl.QueryString(e.dpy, EGL_EXTENSIONS);
++    int fourcc = 0, planes = 0, fd = -1, ok = 0;
++    EGLuint64KHR modifier = 0;
++    EGLint stride = 0, offset = 0;
++    GLboolean dbl = GL_TRUE;
++    GLenum status;
++    EglCurrent cur;
++
++    if (!e.surf)
++        return 0;
++    if (e.cSampleBuf[0]) {
++        DPRINTF("dmabuf scanout: the window is multisampled, its frames are read back");
++        return 0;
++    }
++    if (!has_ext(ext, "EGL_MESA_image_dma_buf_export") ||
++        !has_ext(ext, "EGL_KHR_gl_renderbuffer_image")) {
++        DPRINTF("dmabuf scanout: this EGL display exports no dmabuf "
++            "(EGL_MESA_image_dma_buf_export; llvmpipe needs /dev/udmabuf)");
++        return 0;
++    }
++    if (!createImage || !exportQuery || !exportImage || !p_glBindFramebuffer ||
++        !p_glBindRenderbuffer || !p_glBlitFramebuffer || !p_glCheckFramebufferStatus ||
++        !p_glClearColor || !p_glClear || !p_glFinish || !p_glFramebufferRenderbuffer ||
++        !p_glGenFramebuffers || !p_glGenRenderbuffers || !p_glGetBooleanv || !p_glReadBuffer ||
++        !p_glRenderbufferStorage)
++        return 0;
++    egl_current_save(&cur);
++    if (!scan.ctx)
++        scan.ctx = egl.CreateContext(e.dpy, e.cfg, EGL_NO_CONTEXT, NULL);
++    if (!scan.ctx || !egl.MakeCurrent(e.dpy, e.surf, e.surf, scan.ctx)) {
++        DPRINTF("dmabuf scanout: no context for the copy (0x%04x)", egl.GetError());
++        goto out;
++    }
++    scan_free_buffer();
++    p_glGenRenderbuffers(1, &scan.rb);
++    p_glBindRenderbuffer(GL_RENDERBUFFER, scan.rb);
++    p_glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, e.w, e.h);
++    p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
++    p_glGenFramebuffers(1, &scan.fbo);
++    p_glBindFramebuffer(GL_FRAMEBUFFER, scan.fbo);
++    p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, scan.rb);
++    status = p_glCheckFramebufferStatus(GL_FRAMEBUFFER);
++    if (status != GL_FRAMEBUFFER_COMPLETE) {
++        DPRINTF("dmabuf scanout: framebuffer incomplete (0x%04x)", status);
++        goto out;
++    }
++    p_glClearColor(0, 0, 0, 0);
++    p_glClear(GL_COLOR_BUFFER_BIT);
++    /* From now on: draw into the renderbuffer, read the window's frame */
++    p_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    p_glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
++    p_glReadBuffer((dbl)? GL_BACK:GL_FRONT);
++    p_glFinish();
++    scan.img = createImage(e.dpy, scan.ctx, EGL_GL_RENDERBUFFER_KHR,
++                           (EGLClientBuffer)(uintptr_t)scan.rb, NULL);
++    if (scan.img == EGL_NO_IMAGE_KHR) {
++        DPRINTF("dmabuf scanout: eglCreateImage 0x%04x", egl.GetError());
++        goto out;
++    }
++    if (!exportQuery(e.dpy, scan.img, &fourcc, &planes, &modifier) || (planes != 1) ||
++        !exportImage(e.dpy, scan.img, &fd, &stride, &offset) || (fd < 0)) {
++        DPRINTF("dmabuf scanout: the buffer can't be exported (planes %d, fd %d, 0x%04x)",
++            planes, fd, egl.GetError());
++        if (fd >= 0)
++            close(fd);
++        goto out;
++    }
++    b->fd = fd;
++    b->stride = stride;
++    b->offset = offset;
++    b->fourcc = (uint32_t)fourcc;
++    b->modifier = modifier;
++    scan.w = e.w;
++    scan.h = e.h;
++    scan.lut_dirty = 1;
++    ok = 1;
++out:
++    if (!ok && scan.ctx && (egl.GetCurrentContext() == scan.ctx))
++        scan_free_buffer();
++    egl_current_restore(&cur);
++    return ok;
++}
++
++/* The gamma pass's program and textures, with scan.ctx current; 0 when they can't be had */
++static int scan_gamma_init(void)
++{
++    MESA_PFN(PFNGLACTIVETEXTUREPROC,            glActiveTexture);
++    MESA_PFN(PFNGLATTACHSHADERPROC,             glAttachShader);
++    MESA_PFN(PFNGLBINDATTRIBLOCATIONPROC,       glBindAttribLocation);
++    MESA_PFN(PFNGLBINDTEXTUREPROC,              glBindTexture);
++    MESA_PFN(PFNGLCOMPILESHADERPROC,            glCompileShader);
++    MESA_PFN(PFNGLCREATEPROGRAMPROC,            glCreateProgram);
++    MESA_PFN(PFNGLCREATESHADERPROC,             glCreateShader);
++    MESA_PFN(PFNGLDELETESHADERPROC,             glDeleteShader);
++    MESA_PFN(PFNGLENABLEVERTEXATTRIBARRAYPROC,  glEnableVertexAttribArray);
++    MESA_PFN(PFNGLGENTEXTURESPROC,              glGenTextures);
++    MESA_PFN(PFNGLGETPROGRAMIVPROC,             glGetProgramiv);
++    MESA_PFN(PFNGLGETUNIFORMLOCATIONPROC,       glGetUniformLocation);
++    MESA_PFN(PFNGLLINKPROGRAMPROC,              glLinkProgram);
++    MESA_PFN(PFNGLSHADERSOURCEPROC,             glShaderSource);
++    MESA_PFN(PFNGLTEXIMAGE2DPROC,               glTexImage2D);
++    MESA_PFN(PFNGLTEXPARAMETERIPROC,            glTexParameteri);
++    MESA_PFN(PFNGLUNIFORM1IPROC,                glUniform1i);
++    MESA_PFN(PFNGLUSEPROGRAMPROC,               glUseProgram);
++    MESA_PFN(PFNGLVERTEXATTRIBPOINTERPROC,      glVertexAttribPointer);
++    /* a triangle over the whole viewport; t: the texel centres of the frame, unflipped */
++    static const char *vs =
++        "#version 120\n"
++        "attribute vec2 p;\n"
++        "varying vec2 t;\n"
++        "void main() { t = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }\n";
++    /* an 8-bit channel value v as the centre of lut's texel v */
++    static const char *fs =
++        "#version 120\n"
++        "uniform sampler2D frame, lut;\n"
++        "varying vec2 t;\n"
++        "void main() {\n"
++        "    vec3 c = texture2D(frame, t).rgb * (255.0 / 256.0) + (0.5 / 256.0);\n"
++        "    gl_FragColor = vec4(texture2D(lut, vec2(c.r, 0.5)).r,\n"
++        "        texture2D(lut, vec2(c.g, 0.5)).g, texture2D(lut, vec2(c.b, 0.5)).b, 1.0);\n"
++        "}\n";
++    static const GLfloat tri[] = { -1, -1, 3, -1, -1, 3 };
++    GLuint sh[2], tex[2];
++    GLint linked = 0;
++
++    if (!p_glActiveTexture || !p_glAttachShader || !p_glBindAttribLocation || !p_glBindTexture ||
++        !p_glCompileShader || !p_glCreateProgram || !p_glCreateShader || !p_glDeleteShader ||
++        !p_glEnableVertexAttribArray || !p_glGenTextures || !p_glGetProgramiv ||
++        !p_glGetUniformLocation || !p_glLinkProgram || !p_glShaderSource || !p_glTexImage2D ||
++        !p_glTexParameteri || !p_glUniform1i || !p_glUseProgram || !p_glVertexAttribPointer)
++        return 0;
++    scan.prog = p_glCreateProgram();
++    sh[0] = p_glCreateShader(GL_VERTEX_SHADER);
++    sh[1] = p_glCreateShader(GL_FRAGMENT_SHADER);
++    p_glShaderSource(sh[0], 1, &vs, NULL);
++    p_glShaderSource(sh[1], 1, &fs, NULL);
++    for (int i = 0; i < 2; i++) {
++        p_glCompileShader(sh[i]);
++        p_glAttachShader(scan.prog, sh[i]);
++        p_glDeleteShader(sh[i]);
++    }
++    p_glBindAttribLocation(scan.prog, 0, "p");
++    p_glLinkProgram(scan.prog);
++    p_glGetProgramiv(scan.prog, GL_LINK_STATUS, &linked);
++    if (!linked)
++        return 0;
++    /* the program, the textures and the triangle stay bound: nothing else draws in scan.ctx */
++    p_glUseProgram(scan.prog);
++    p_glUniform1i(p_glGetUniformLocation(scan.prog, "frame"), 0);
++    p_glUniform1i(p_glGetUniformLocation(scan.prog, "lut"), 1);
++    p_glGenTextures(2, tex);
++    scan.tex = tex[0];
++    scan.lut = tex[1];
++    for (int i = 0; i < 2; i++) {
++        p_glActiveTexture(GL_TEXTURE0 + i);
++        p_glBindTexture(GL_TEXTURE_2D, tex[i]);
++        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    }
++    p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
++    p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, tri);
++    p_glEnableVertexAttribArray(0);
++    scan.lut_dirty = 1;
++    scan.tex_w = scan.tex_h = 0;
++    return 1;
++}
++
++/* The frame into the renderbuffer through the guest's gamma ramp, with scan.ctx current */
++static int scan_gamma(void)
++{
++    MESA_PFN(PFNGLACTIVETEXTUREPROC,     glActiveTexture);
++    MESA_PFN(PFNGLCOPYTEXSUBIMAGE2DPROC, glCopyTexSubImage2D);
++    MESA_PFN(PFNGLDRAWARRAYSPROC,        glDrawArrays);
++    MESA_PFN(PFNGLTEXIMAGE2DPROC,        glTexImage2D);
++    MESA_PFN(PFNGLTEXSUBIMAGE2DPROC,     glTexSubImage2D);
++    MESA_PFN(PFNGLVIEWPORTPROC,          glViewport);
++
++    if (scan.gamma_failed || !p_glActiveTexture || !p_glCopyTexSubImage2D || !p_glDrawArrays ||
++        !p_glTexImage2D || !p_glTexSubImage2D || !p_glViewport)
++        return 0;
++    if (!scan.prog && !scan_gamma_init()) {
++        DPRINTF("dmabuf scanout: no shader for the gamma ramp, frames with one are read back");
++        scan.gamma_failed = 1;
++        return 0;
++    }
++    if (scan.lut_dirty) {
++        uint8_t lut[256 * 4];
++        for (int i = 0; i < 256; i++) {
++            lut[i * 4] = e.ramp.r[i] >> 8;
++            lut[i * 4 + 1] = e.ramp.g[i] >> 8;
++            lut[i * 4 + 2] = e.ramp.b[i] >> 8;
++            lut[i * 4 + 3] = 0xff;
++        }
++        p_glActiveTexture(GL_TEXTURE1);
++        p_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, lut);
++        scan.lut_dirty = 0;
++    }
++    p_glActiveTexture(GL_TEXTURE0);
++    if ((scan.tex_w != scan.w) || (scan.tex_h != scan.h)) {
++        p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scan.w, scan.h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
++                       NULL);
++        scan.tex_w = scan.w;
++        scan.tex_h = scan.h;
++    }
++    p_glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, scan.w, scan.h);
++    p_glViewport(0, 0, scan.w, scan.h);
++    p_glDrawArrays(GL_TRIANGLES, 0, 3);
++    return 1;
++}
++
++/* Makes scan.ctx current for a copy of the guest's frame, the guest's rendering done (another
++ * context reads it); 0, with nothing changed, when the guest's window isn't current */
++static int scan_begin(EglCurrent *cur)
++{
++    MESA_PFN(PFNGLFINISHPROC, glFinish);
++
++    egl_current_save(cur);
++    if ((cur->draw != e.surf) || !p_glFinish)
++        return 0;
++    p_glFinish();
++    if (!egl.MakeCurrent(e.dpy, e.surf, e.surf, scan.ctx)) {
++        egl_current_restore(cur);
++        return 0;
++    }
++    return 1;
++}
++
++/* The copy finished (the guest's next frame may overwrite its source, the display read its
++ * destination), the guest's context back */
++static void scan_end(const EglCurrent *cur)
++{
++    MESA_PFN(PFNGLFINISHPROC, glFinish);
++
++    p_glFinish();
++    egl_current_restore(cur);
++}
++
++/* fxdisp's hold, on the vCPU thread at a swap whose frame can't go yet: the frame into stage */
++static void egl_hold(void *opaque)
++{
++    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC,         glBindFramebuffer);
++    MESA_PFN(PFNGLBINDRENDERBUFFERPROC,        glBindRenderbuffer);
++    MESA_PFN(PFNGLBLITFRAMEBUFFERPROC,         glBlitFramebuffer);
++    MESA_PFN(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer);
++    MESA_PFN(PFNGLGENFRAMEBUFFERSPROC,         glGenFramebuffers);
++    MESA_PFN(PFNGLGENRENDERBUFFERSPROC,        glGenRenderbuffers);
++    MESA_PFN(PFNGLRENDERBUFFERSTORAGEPROC,     glRenderbufferStorage);
++    EglCurrent cur;
++
++    scan.staged = 0;
++    if (!scan.img || (scan.w != e.w) || (scan.h != e.h) || !scan_begin(&cur))
++        return;
++    if (!scan.stage_fbo) {
++        p_glGenRenderbuffers(1, &scan.stage_rb);
++        p_glBindRenderbuffer(GL_RENDERBUFFER, scan.stage_rb);
++        p_glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, scan.w, scan.h);
++        p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
++        p_glGenFramebuffers(1, &scan.stage_fbo);
++        p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.stage_fbo);
++        p_glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
++                                    scan.stage_rb);
++    }
++    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.stage_fbo);
++    p_glBlitFramebuffer(0, 0, scan.w, scan.h, 0, 0, scan.w, scan.h, GL_COLOR_BUFFER_BIT,
++                        GL_NEAREST);
++    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.fbo);
++    scan.staged = 1;
++    scan_end(&cur);
++}
++
++/* fxdisp's scanout, on the vCPU thread after a swap (or later, for a held frame): the frame (the
++ * held one, if any: every later swap held its own or cleared it) into the dmabuf, finished; 0 to
++ * have it read back */
++static int egl_scanout(void *opaque)
++{
++    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer);
++    MESA_PFN(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer);
++    EglCurrent cur;
++    int ok, staged;
++
++    if (!scan.img || (scan.w != e.w) || (scan.h != e.h) || !p_glBindFramebuffer ||
++        !p_glBlitFramebuffer || (e.gamma && scan.gamma_failed) || !scan_begin(&cur))
++        return 0;
++    staged = scan.staged;
++    scan.staged = 0;
++    if (staged)
++        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, scan.stage_fbo);
++    if (e.gamma)
++        ok = scan_gamma();
++    else {
++        p_glBlitFramebuffer(0, 0, scan.w, scan.h, 0, 0, scan.w, scan.h, GL_COLOR_BUFFER_BIT,
++                            GL_NEAREST);
++        ok = 1;
++    }
++    if (staged)
++        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    scan_end(&cur);
++    return ok;
 +}
 +
 +/* The guest's display mode: the first graphic console's size, brought up to date (the VGA isn't
@@ -1374,6 +1813,8 @@ index 0000000..892d5a6
 +    e.failed = 0;
 +    if (!e.fx)
 +        e.fx = fxdisp_new("mesapt", egl_read, NULL);
++    fxdisp_dmabuf(e.fx, egl_export, egl_scanout);
++    fxdisp_hold(e.fx, egl_hold);
 +    egl_reset_ramp();
 +    DPRINTF("no SDL window: rendering offscreen, EGL %d.%d on the %s display (%s)", major, minor,
 +        which, egl.QueryString(e.dpy, EGL_VENDOR));
@@ -1560,6 +2001,7 @@ index 0000000..892d5a6
 +            if (e.PBDC[i])
 +                egl.DestroySurface(e.dpy, e.PBDC[i]);
 +        }
++        scan_destroy();
 +        if (e.surf)
 +            egl.DestroySurface(e.dpy, e.surf);
 +        /* No eglTerminate: the display is the process's one (an EGL platform display is the
@@ -1978,6 +2420,11 @@ index 0000000..892d5a6
 +        }
 +        memcpy(&e.ramp, &argsp[0], sizeof(e.ramp));
 +        fxdisp_gamma(e.fx, e.ramp.r, e.ramp.g, e.ramp.b);
++        e.gamma = 0;
++        for (int i = 0; i < 0x100; i++)
++            e.gamma |= ((e.ramp.r[i] >> 8) != i) || ((e.ramp.g[i] >> 8) != i) ||
++                ((e.ramp.b[i] >> 8) != i);
++        scan.lut_dirty = 1;
 +        argsp[0] = 1;
 +        return;
 +    }

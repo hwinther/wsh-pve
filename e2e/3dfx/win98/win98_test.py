@@ -19,7 +19,7 @@ QEMU (qemu-system-x86_64-3dfx, --qemu) boots the copy with the devices of the PV
 installed in (an identical device set keeps Windows' new-hardware wizard away; see qemu_command()):
 headless as PVE runs a VM with `vga: std,mesa=1` (no display, a VNC server, the HMP monitor on a
 socket), the same with QEMU's egl-headless display (--display egl: the console has GL, so qemu-3dfx
-hands the Glide frames to it as a dmabuf; the captures then come from the VNC server, as QEMU's
+hands the Glide and OpenGL frames to it as a dmabuf; the captures then come from the VNC server, as QEMU's
 screendump has no surface to read while the console scans a dmabuf out; needs /dev/udmabuf or a
 render node), or with an SDL window on an X display (--display sdl, Xvfb). The test programs print to COM1
 (QEMU writes it to a file); on "<TAG>: FRAME" the harness takes a screendump of the console
@@ -457,17 +457,27 @@ def guest_cpu(accel, baseline=None):
 
 OFFSCREEN_RE = re.compile(r"(glidept|mesapt): offscreen closed after ([\d.]+) s: (\d+) swaps \(([\d.]+) per s\), "
                           r"(\d+) reads of ([\d.]+) ms average.*?(\d+) frames to the console, ([\d.]+) ms after")
+# With a GL display (--display egl), the line after it: how many frames went as a dmabuf
+DMABUF_RE = re.compile(r"[^\n]*\n(glidept|mesapt): dmabuf scanout: (\d+) frames copied to the dmabuf in ([\d.]+) ms "
+                       r"average, the display's update ([\d.]+) ms a frame, (\d+) held while the display was busy, "
+                       r"(\d+) frames read back instead")
 
 
 def offscreen_stats(qemu_log):
     """The offscreen windows QEMU reported on closing them (qemu-3dfx's glidept and mesapt lines), in
     order: device, seconds open, swaps, swaps per second, reads, read ms average, frames to the
-    console, ms from read to console."""
+    console, ms from read to console; with a dmabuf scanout also the frames copied to the dmabuf, the
+    copy's ms average, the display's ms per frame and the frames read back instead."""
     out = []
     for m in OFFSCREEN_RE.finditer(qemu_log):
-        out.append({"device": m.group(1), "open_s": float(m.group(2)), "swaps": int(m.group(3)),
-                    "swaps_per_s": float(m.group(4)), "reads": int(m.group(5)), "read_ms": float(m.group(6)),
-                    "frames_to_console": int(m.group(7)), "console_ms": float(m.group(8))})
+        o = {"device": m.group(1), "open_s": float(m.group(2)), "swaps": int(m.group(3)),
+             "swaps_per_s": float(m.group(4)), "reads": int(m.group(5)), "read_ms": float(m.group(6)),
+             "frames_to_console": int(m.group(7)), "console_ms": float(m.group(8))}
+        d = DMABUF_RE.match(qemu_log, m.start())
+        if d and d.group(1) == o["device"]:
+            o.update({"dmabuf_frames": int(d.group(2)), "dmabuf_ms": float(d.group(3)),
+                      "display_ms": float(d.group(4)), "held": int(d.group(5)), "read_back": int(d.group(6))})
+        out.append(o)
     return out
 
 
@@ -821,10 +831,13 @@ def summary_md(res, info):
                      f"{'ok' if fr.get('ok') else 'no'} {fr.get('size', '')} | {back} {af.get('size', '')} | {rate} |")
     if res.get("offscreen"):
         lines += ["", "QEMU's offscreen windows (qemu-3dfx's own figures):", "",
-                  "| Device | Open | Swaps | Reads | Read average | Read to console |", "|---|---|---|---|---|---|"]
+                  "| Device | Open | Swaps | Reads | Read average | Read to console | As a dmabuf |",
+                  "|---|---|---|---|---|---|---|"]
         for o in res["offscreen"]:
+            dmabuf = (f"{o['dmabuf_frames']} frames, copy {o['dmabuf_ms']} ms, display {o['display_ms']} ms, "
+                      f"{o['read_back']} read back" if "dmabuf_frames" in o else "-")
             lines.append(f"| {o['device']} | {o['open_s']} s | {o['swaps']} ({o['swaps_per_s']}/s) | {o['reads']} | "
-                         f"{o['read_ms']} ms | {o['console_ms']} ms |")
+                         f"{o['read_ms']} ms | {o['console_ms']} ms | {dmabuf} |")
     return "\n".join(lines) + "\n"
 
 

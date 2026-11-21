@@ -280,7 +280,7 @@ on reconfiguration boots under the SS-20 PROM".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (first slice in review: Glide; the rest ~1-2 weeks).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide done, MESA GL in review; the rest ~1 week).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -298,7 +298,7 @@ on reconfiguration boots under the SS-20 PROM".
        and `vga_update_display()` dereferences it (QEMU crashed at the first close until the hand-back
        set a surface first). Readback stays for everything else: no GL display (PVE's default: VNC
        with `-display none`), a library without the exports, `QEMU_3DFX_DMABUF=0`, frames with a gamma
-       ramp set (the copy applies none), and all of MESA GL. Instead of the `gbm_surface` planned,
+       ramp set (the copy applies none), and (in the first slice) all of MESA GL. Instead of the `gbm_surface` planned,
        the renderer exports its own buffer: the frames are rendered in OpenGLide's context, and the
        display imports from it, so nothing has to be imported into OpenGLide. QEMU side (in
        `submodules/pve-qemu-qemu-3dfx.patch`, the 3dfx binary only): without a render node
@@ -332,13 +332,59 @@ on reconfiguration boots under the SS-20 PROM".
        With egl-headless the frame still goes through system memory for VNC (egl-headless reads it
        on the main loop, under the BQL), which costs more than the readback with Mesa's software
        renderer; the dmabuf way pays off where the consumer takes the dmabuf itself (D-Bus, stage 3)
-       or on a GPU, where `glReadPixels` stalls the pipeline. Left: MESA GL as a dmabuf (the
-       guest's pbuffer is its window: a second context current on the same pbuffer could blit
-       framebuffer 0 into an exported buffer without touching the guest's state); gamma in the copy
-       (a shader pass) so ramp frames stay dmabufs; a real GPU render node (modifiers other than
+       or on a GPU, where `glReadPixels` stalls the pipeline.
+       Second slice (in review): MESA GL as a dmabuf (`hw/mesa/mglcntx_egl.c`, `egl_export` and
+       `egl_scanout`, registered through the same `fxdisp_dmabuf`, so the bottom half, the
+       back-pressure and the readback fallback are #425's). The copy runs in a GL context of
+       mesapt's own, created on the guest's config without sharing, and made current on the
+       guest's window pbuffer only for the copy: it reads framebuffer 0 directly, so no object of
+       ours lands in the guest's namespace (a legacy GL guest may bind names it never got from
+       `glGen*`) and none of the guest's state (scissor, read buffer, framebuffer bindings,
+       `GL_FRAMEBUFFER_SRGB`, pack state) has to be saved and put back; it costs two
+       `eglMakeCurrent` (0.03 ms) and a `glFinish` in the guest's context, as another context
+       reads the frame. Per frame: a blit of the back buffer (the front one when single-buffered)
+       into a renderbuffer exported once through `EGL_MESA_image_dma_buf_export`, unscaled and
+       unflipped (rows bottom up, `y0_top` as for Glide), then `glFinish`. With a gamma ramp the
+       copy is two passes, the frame into a texture and a draw through a 256x1 lookup texture (a
+       12-line GLSL 1.20 shader, the same lookup the readback applies), so ramp frames stay
+       dmabufs. A pbuffer has no swap, and the guest draws its next frame into the same back
+       buffer, so a frame held while a D-Bus client is busy would be half overwritten by the time
+       the stale timer takes it: fxdisp gains a hold callback (`fxdisp_hold`, called at a swap
+       whose frame is held), with which mesapt copies the frame into a second renderbuffer, and
+       the scanout that follows copies from there. Readback stays for MESA GL with no GL display,
+       `QEMU_3DFX_DMABUF=0`, an EGL display without the export, a multisampled window (a
+       resolving blit needs identical formats; llvmpipe never gets one, `egl_msaa_works`, so it
+       is untested), and ramp frames if the shader can't be built. Tested (lab, KVM, llvmpipe,
+       `/dev/udmabuf`): `e2e/3dfx` `egl`, `dbus` and `dbus` with `DBUS_DELAY_MS=2`: the Mesa
+       guest's probes match as VNC serves them and as the D-Bus listener maps them, its gamma
+       phase arrives as a dmabuf with the ramp (`#0000b5`), every frame went as a dmabuf, the
+       VGA comes back after; `egl` with `QEMU_3DFX_DMABUF=0` reads both guests back (the test now
+       checks that); `vnc` and `sdl` unchanged; Glide unchanged. Windows 98 SE (`win98-test.sh
+       --display egl --openglide`, KVM): OpenGL passes as a dmabuf (0.87-1.09 ms a copy, 600-770
+       frames/s against 2200 read back with `--display vnc`), Glide 2 and 3 still pass as dmabufs;
+       the harness's summary now says per window how many frames went as a dmabuf. Measured (640x480, the test
+       scene, KVM, a lab under other load; the bench without a gamma ramp unless noted):
+
+       | Display | Mesa guest | vCPU thread per frame | main loop per frame |
+       | --- | --- | --- | --- |
+       | VNC, `-display none` (readback) | 357 frames/s (359 with a ramp) | 0.65 ms `glReadPixels` (0.45 with a ramp) | copy, 0.03-0.04 ms to the console |
+       | egl-headless + VNC, `QEMU_3DFX_DMABUF=0` | 448 frames/s (395 with a ramp) | 0.39 ms (0.36) | as above, plus egl-headless's upload |
+       | egl-headless + VNC (dmabuf) | 326 frames/s (253-310 with a ramp) | 0.81-0.98 ms (1.19-1.55 with a ramp) | 0.75-0.98 ms |
+       | dbus,gl=on (dmabuf), listener replies at once | 326 frames/s (364 with a ramp) | 1.11 ms (1.23) | 0.05-0.08 ms; 5-8 frames held |
+       | dbus,gl=on, listener replies 2 ms late, with a ramp | 405 frames/s | 1.21 ms | 0.06 ms; 157 of 302 held |
+
+       The copy costs more than the readback on llvmpipe. Instrumented (egl-headless, no ramp):
+       0.35 ms waiting for the guest's frame (`glFinish`; the readback waits as long), 0.03 ms
+       for the two context switches, 0.6 ms for the blit and its `glFinish`: llvmpipe converts
+       the pbuffer's pixel format into the `GL_RGBA8` renderbuffer by drawing (no renderbuffer
+       format gave its memcpy path, and desktop GL has no BGRA8 one), where Glide's
+       renderbuffer-to-renderbuffer blit is a 0.06 ms memcpy. On a GPU it is a GPU blit.
+       Left: a real GPU render node (modifiers other than
        linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
        no D-Bus client yet) and a real game over time; double buffering instead of holding
-       frames while a D-Bus client reads; the D-Bus listener's 30 ms refresh cap; whether GitHub's
+       frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
+       wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
+       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms refresh cap; whether GitHub's
        runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
        `3dfx in Windows 98` workflow has an `egl` display now but installs the published
        wsh-openglide, so until one with the exports is published its Glide frames are read back.
