@@ -1,5 +1,9 @@
 bin/wsh-lab usr/bin
 bin/wsh-lab-mcp usr/bin
+bin/wsh-sun-proms usr/bin
+sun-proms/sun_proms.py usr/share/wsh-lab/sun-proms
+sun-proms/manifest.json usr/share/wsh-lab/sun-proms
+sun-proms/test_sun_proms.py usr/share/wsh-lab/sun-proms
 lab/*.py usr/share/wsh-lab
 lab/*.txt usr/share/wsh-lab
 lab/VERSION usr/share/wsh-lab

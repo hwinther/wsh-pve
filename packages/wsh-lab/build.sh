@@ -22,7 +22,7 @@ trap 'rm -rf "$work"' EXIT
 tree="$work/wsh-lab-$WSH_LAB_VERSION"
 mkdir -p "$tree/lab/scenarios" "$tree/lab/tests" "$tree/player"
 
-cp -r "$SRC/packages/wsh-lab/debian" "$SRC/packages/wsh-lab/bin" "$SRC/packages/wsh-lab/man" "$tree/"
+cp -r "$SRC/packages/wsh-lab/debian" "$SRC/packages/wsh-lab/bin" "$SRC/packages/wsh-lab/man" "$SRC/packages/wsh-lab/sun-proms" "$tree/"
 sparc="$SRC/e2e/sparc"
 for f in lab.py recording.py install.py targets.py targets_dos.py vgatext.py dos_tools.py dos_mem.py sunlabel.py \
 	answer_media.py mirror.py mcp_server.py lab-requirements.txt mcp-requirements.txt; do
@@ -32,7 +32,8 @@ cp "$sparc"/scenarios/*.py "$tree/lab/scenarios/"
 cp "$sparc/tests/test_targets.py" "$sparc/tests/test_mirror.py" "$tree/lab/tests/"
 echo "$WSH_LAB_VERSION" > "$tree/lab/VERSION"
 chmod 755 "$tree/bin/"* "$tree/lab/lab.py" "$tree/lab/mcp_server.py" "$tree/lab/sunlabel.py" "$tree/debian/rules"
-chmod 644 "$tree/lab/scenarios/"*.py "$tree/lab/tests/"*.py "$tree/lab/"*.txt
+chmod 644 "$tree/lab/scenarios/"*.py "$tree/lab/tests/"*.py "$tree/lab/"*.txt "$tree/sun-proms/manifest.json" "$tree/sun-proms/test_sun_proms.py"
+chmod 755 "$tree/sun-proms/sun_proms.py"
 for f in install.py recording.py targets.py targets_dos.py vgatext.py dos_tools.py dos_mem.py answer_media.py mirror.py; do
 	chmod 644 "$tree/lab/$f"
 done

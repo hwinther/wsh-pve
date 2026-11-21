@@ -1,0 +1,8 @@
+#!/bin/sh
+# wsh-sun-proms: installs Sun boot PROM images you are entitled to use, from a source you provide,
+# into /usr/share/kvm, checked against the manifest in the wsh-lab package (wsh-sun-proms --help).
+#   wsh-sun-proms install --source SRC | status | verify | remove
+set -e
+WSH_SUN_PROMS_PROG=wsh-sun-proms
+export WSH_SUN_PROMS_PROG
+exec /usr/bin/python3 /usr/share/wsh-lab/sun-proms/sun_proms.py "$@"

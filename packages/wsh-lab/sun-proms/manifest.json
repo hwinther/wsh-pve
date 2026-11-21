@@ -1,0 +1,33 @@
+{
+  "comment": "The Sun boot PROM images that wsh-sun-proms knows: name, size and SHA-256 of each, and the QEMU machine that runs it. Only hashes and names; the images are never in this repository. wsh-sun-proms refuses a file whose name or hash isn't here unless --force.",
+  "proms": [
+    {
+      "name": "ss5.bin",
+      "machine": "SS-5",
+      "size": 262144,
+      "sha256": "e7f40845504c65f4011278aa3e97a9810aa36775e6c199b715839fbc25eec45e",
+      "description": "SPARCstation 5 boot PROM (OBP 2.15): bios: ss5.bin on machine SS-5"
+    },
+    {
+      "name": "ss10_v2.25_rom",
+      "machine": "SS-10",
+      "size": 524288,
+      "sha256": "f8663a42f66b66ccb873338183fc7c5af56c7f9598d9ce6f56c2896f473d35e9",
+      "description": "SPARCstation 10 boot PROM (OBP 2.25): doesn't run on QEMU's SS-10, so no PVE profile offers it"
+    },
+    {
+      "name": "ss20_v2.25_rom",
+      "machine": "SS-20",
+      "size": 524288,
+      "sha256": "7a0ab6f299dcc6d72a33d119a7d7737ac0910c328ad6ffc68bd2605add1bcb43",
+      "description": "SPARCstation 20 boot PROM (OBP 2.25): bios: ss20_v2.25_rom on machine SS-20 (CPU TI-SuperSparc-50, one CPU)"
+    },
+    {
+      "name": "lx.bin",
+      "machine": "LX",
+      "size": 262144,
+      "sha256": "27bde385245fb2e0fe39b6dbb11afb7e1f977798e90ba07255d1e6b0d04136b5",
+      "description": "SPARCstation LX boot PROM (OBP 2.10): bios: lx.bin on machine LX, the only firmware it takes"
+    }
+  ]
+}
