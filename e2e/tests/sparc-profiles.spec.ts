@@ -266,7 +266,8 @@ test.describe('refused combinations', () => {
       params: { machine: 'SS-20', memory: 1024 },
     },
     {
-      message: "sparc: machine 'SS-4' is not supported, use one of: SS-10, SS-20, SS-5",
+      // the list (with LX or not, by package) is checked in 'the SPARCstation LX' below
+      message: "sparc: machine 'SS-4' is not supported, use one of: ",
       name: 'a machine without a profile',
       params: { machine: 'SS-4', memory: 256 },
     },
@@ -597,6 +598,128 @@ test.describe('sound on the SS-5 (audio0: device=cs4231)', () => {
         : UNKNOWN,
     )
     expect(await vmConfFile(vmid)).not.toContain('audio0:')
+  })
+})
+
+// The SPARCstation LX with Sun's own PROM (submodules/SPARC.md, "SPARCstation LX with its own PROM"):
+// `bios: lx.bin`, at most 128 MB, one CPU, a serial console (there is no cgsix model) or none. CI runs
+// against the published packages: the profile needs a qemu-server that has it (probed once, skipped
+// otherwise). The PROM itself isn't in any package (Sun's PROMs aren't published), so QEMU is only
+// started where the node has /usr/share/kvm/lx.bin.
+test.describe('the SPARCstation LX (its own PROM, serial console)', () => {
+  let hasLx = false
+  let hasLxProm = false
+
+  test.beforeAll(async () => {
+    hasLx = (await pveExec(['grep', '-q', "'LX'", '/usr/share/perl5/PVE/QemuServer/Machine.pm'])).code === 0
+    hasLxProm = (await pveExec(['test', '-s', '/usr/share/kvm/lx.bin'])).code === 0
+  })
+
+  const LX = {
+    arch: 'sparc',
+    bios: 'lx.bin',
+    machine: 'LX',
+    memory: 128,
+    net0: 'lance,bridge=vmbr0',
+    ostype: 'solaris',
+    scsi3: 'local:0.0625,format=raw',
+    scsi6: `${ISO},media=cdrom`,
+  }
+
+  for (const [name, extra] of [
+    ['vga serial0', { serial0: 'socket', vga: 'serial0' }],
+    ['no display set: serial0, not cg3', { serial0: 'socket' }],
+  ] as const) {
+    test(`LX, lx.bin, 128 MB, ${name}`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the LX
+      test.skip(!hasLx, 'the installed qemu-server has no LX profile yet')
+      const vmid = await createVm({ ...LX, name: 'sparc-lx', ...extra })
+      const mac = MAC.exec(await vmConfFile(vmid))?.[1]
+
+      const cmd = await showcmd(vmid)
+      expect(cmd).toContain("-machine 'accel=tcg,type=LX+pve0'")
+      expect(cmd).toContain('-bios lx.bin')
+      expect(cmd).toContain('-m 128')
+      expect(cmd).toContain("-smp '1,sockets=1,cores=1,maxcpus=1'")
+      expect(cmd).toMatch(/^\s*-nographic \\$/m)
+      expect(cmd).toContain(`-chardev 'socket,id=serial0,path=/var/run/qemu-server/${vmid}.serial0,server=on,wait=off'`)
+      expect(cmd).toContain('-serial chardev:serial0')
+      expect(cmd).toContain(`-net 'nic,model=lance,macaddr=${mac}`)
+      expect(cmd).toContain("-device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,")
+      expect(cmd).toMatch(/-device 'scsi-cd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,[^']*physical_block_size=512'/)
+      for (const absent of ['-vga', '-cpu', '-vnc', 'usb-tablet', 'virtio-balloon', 'vmgenid', 'isa-serial'])
+        expect(cmd).not.toContain(absent)
+
+      // eslint-disable-next-line playwright/no-skipped-test -- Sun's PROMs aren't in any package
+      test.skip(!hasLxProm, 'no /usr/share/kvm/lx.bin on this node (not packaged), QEMU not started')
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    })
+  }
+
+  const refusals: { name: string; params: Record<string, number | string>; message: string }[] = [
+    {
+      message: "sparc: display (vga) 'cg3' is not supported on LX, use one of: serial0, none",
+      name: 'a framebuffer (no cgsix model)',
+      params: { ...LX, vga: 'cg3' },
+    },
+    {
+      message: "sparc: firmware (bios) 'openbios-sparc32' is not supported on LX, use one of: lx.bin",
+      name: 'OpenBIOS (the default firmware)',
+      params: { machine: 'LX', memory: 128, vga: 'serial0' },
+    },
+    {
+      message: 'sparc: LX takes at most 128 MB of memory, not 256',
+      name: 'more than 128 MB (the microSPARC-I)',
+      params: { ...LX, memory: 256 },
+    },
+    {
+      message: 'sparc: LX with firmware lx.bin takes at most 1 CPU (sockets x cores), not 2',
+      name: 'two CPUs',
+      params: { ...LX, sockets: 2 },
+    },
+    {
+      message:
+        "sparc: audio0 is not supported on LX, its sound chip (DBRI) isn't emulated; only SS-5 has sound (device cs4231)",
+      name: 'audio (the DBRI)',
+      params: { ...LX, audio0: 'device=cs4231,driver=none' },
+    },
+    {
+      message: "sparc: firmware (bios) 'lx.bin' is not supported on SS-5, use one of: openbios-sparc32, ss5.bin",
+      name: 'the LX PROM on SS-5',
+      params: { bios: 'lx.bin', machine: 'SS-5', memory: 256 },
+    },
+    {
+      message: "sparc: machine 'SS-4' is not supported, use one of: LX, SS-10, SS-20, SS-5",
+      name: 'a machine without a profile lists the LX',
+      params: { machine: 'SS-4', memory: 128 },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the LX
+      test.skip(!hasLx, 'the installed qemu-server has no LX profile yet')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
+      expect(refused.message).toContain(c.message)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('update: an SS-5 becomes an LX only with its PROM, memory and a serial console', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the LX
+    test.skip(!hasLx, 'the installed qemu-server has no LX profile yet')
+    const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-lx-update', vga: 'cg3' })
+    const config = `/nodes/${NODE}/qemu/${vmid}/config`
+    expect((await pve.refused('PUT', config, { bios: 'lx.bin', machine: 'LX', memory: 128 })).message).toContain(
+      "sparc: display (vga) 'cg3' is not supported on LX, use one of: serial0, none",
+    )
+    await pve.put(config, { bios: 'lx.bin', machine: 'LX', memory: 128, serial0: 'socket', vga: 'serial0' })
+    const conf = await vmConfFile(vmid)
+    for (const line of ['bios: lx.bin', 'machine: LX', 'memory: 128', 'vga: serial0']) expect(conf).toContain(line)
+    expect(await showcmd(vmid)).toContain("type=LX+pve0'")
   })
 })
 
@@ -974,6 +1097,16 @@ test.describe('the lab runs the same machines', () => {
 })
 
 test.describe('web UI', () => {
+  /** The sparc32 machines the installed pve-manager offers (the LX since its profile). */
+  let machinesOffered = ['Default (SS-5)', 'SS-10', 'SS-20']
+  let uiHasLx = false
+
+  test.beforeAll(async () => {
+    const js = '/usr/share/pve-manager/js/pvemanagerlib.js'
+    uiHasLx = (await pveExec(['grep', '-q', 'SPARCstation LX PROM', js])).code === 0
+    if (uiHasLx) machinesOffered = [...machinesOffered, 'LX']
+  })
+
   test.beforeEach(async ({ page }) => {
     await login(page)
   })
@@ -993,7 +1126,7 @@ test.describe('web UI', () => {
       await next(wizard)
 
       // System: SS-5 (the default), SS-10, SS-20, and only the firmware the machine runs.
-      expect(await comboOptions(page, wizard, 'Machine')).toEqual(['Default (SS-5)', 'SS-10', 'SS-20'])
+      expect(await comboOptions(page, wizard, 'Machine')).toEqual(machinesOffered)
       await pickCombo(page, wizard, 'Machine', p.machine)
       expect(await comboOptions(page, wizard, 'BIOS')).toEqual(p.firmwareOffered)
       await pickCombo(page, wizard, 'BIOS', p.firmwarePick)
@@ -1043,6 +1176,77 @@ test.describe('web UI', () => {
     })
   }
 
+  test('create wizard: LX, its PROM and a serial console picked with the machine', async ({ page }) => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published pve-manager has the LX
+    test.skip(!uiHasLx, 'the installed pve-manager has no LX profile yet')
+    const vmid = Number(await pve.get<string>('/cluster/nextid'))
+    const wizard = await openWizard(page, 'sparc-ui-lx')
+
+    await pickCombo(page, wizard, 'vCPU Architecture', 'SPARC (32-bit)')
+    await next(wizard)
+    await wizard.getByText('Do not use any media').click()
+    await pickCombo(page, wizard, 'Type', 'Solaris Kernel')
+    await next(wizard)
+
+    // System: picking LX sets its PROM and ttya, the only choices besides no display
+    await pickCombo(page, wizard, 'Machine', 'LX')
+    await expect(wizard.getByLabel(fieldLabel('BIOS'))).toHaveValue('SPARCstation LX PROM')
+    await expect(wizard.getByLabel(fieldLabel('Graphic card'))).toHaveValue('Serial terminal 0')
+    expect(await comboOptions(page, wizard, 'BIOS')).toEqual(['SPARCstation LX PROM'])
+    expect(await comboOptions(page, wizard, 'Graphic card')).toEqual(['Serial terminal 0', 'none'])
+    await next(wizard)
+
+    await expect(wizard.getByText('scsi3', { exact: true })).toBeVisible()
+    await next(wizard)
+
+    // CPU: one; Memory: preset to and capped at 128 MB
+    await expect(wizard.getByLabel(fieldLabel('Sockets'))).toBeDisabled()
+    await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeDisabled()
+    await next(wizard)
+    const memory = wizard.getByLabel(fieldLabel('Memory (MiB)'))
+    await expect(memory).toHaveValue('128')
+    await memory.fill('256')
+    await expect(wizard.getByRole('button', { name: 'Next' })).toBeDisabled()
+    await memory.fill('128')
+    await next(wizard)
+
+    await expect(wizard.getByLabel(fieldLabel('Model'))).toHaveValue(/Lance/)
+    await next(wizard)
+
+    await wizard.getByRole('button', { name: 'Finish' }).click()
+    await expect.poll(async () => (await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])).code).toBe(0)
+    await expect.poll(async () => (await vmConfFile(vmid)).includes('lock: create'), { timeout: 30_000 }).toBe(false)
+
+    const conf = await vmConfFile(vmid)
+    for (const line of ['arch: sparc', 'bios: lx.bin', 'machine: LX', 'memory: 128', 'serial0: socket', 'vga: serial0'])
+      expect(conf).toMatch(new RegExp(`^${line}$`, 'm'))
+    const cmd = await showcmd(vmid)
+    expect(cmd).toContain('type=LX+pve0')
+    expect(cmd).toContain('-bios lx.bin')
+    expect(cmd).toContain('-nographic')
+  })
+
+  test("Hardware: the LX's display editor offers a serial console or none", async ({ page }) => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published packages have the LX
+    test.skip(!uiHasLx, 'the installed pve-manager has no LX profile yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      bios: 'lx.bin',
+      machine: 'LX',
+      memory: 128,
+      name: 'sparc-lx-editors',
+      serial0: 'socket',
+      vga: 'serial0',
+    })
+    await page.goto(`/#v1:0:=qemu%2F${vmid}:4:=hardware`)
+    await page.reload() // the resource tree learns about VMs created after login only on a reload
+    await page.locator('.x-panel').getByText('Hardware', { exact: true }).first().click()
+    const editor = page.locator('.x-window').filter({ hasText: 'Edit: Display' })
+    await page.getByText(/^Display$/).dblclick()
+    expect(await comboOptions(page, editor, 'Graphic card')).toEqual(['Serial terminal 0', 'none'])
+    await closeWindow(editor)
+  })
+
   test("Hardware: the editors offer only the profile's choices", async ({ page }) => {
     const vmid = await createVm({ arch: 'sparc', memory: 256, name: 'sparc-editors' })
     await page.goto(`/#v1:0:=qemu%2F${vmid}:4:=hardware`)
@@ -1071,7 +1275,7 @@ test.describe('web UI', () => {
     await closeWindow(editor('Memory'))
 
     await page.getByText(/^Machine$/).dblclick()
-    expect(await comboOptions(page, editor('Machine'), 'Machine')).toEqual(['Default (SS-5)', 'SS-10', 'SS-20'])
+    expect(await comboOptions(page, editor('Machine'), 'Machine')).toEqual(machinesOffered)
     await pickCombo(page, editor('Machine'), 'Machine', 'SS-20')
     await editor('Machine').getByRole('button', { name: 'OK' }).click()
     await expect(editor('Machine')).toBeHidden()
