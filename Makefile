@@ -216,7 +216,7 @@ restore-sparc:
 	$(WARN_EXTRA_MISSING); \
 	git submodule update --init submodules/sparc || true; \
 	missing=""; \
-	for f in ss5.bin ss10_v2.25_rom ss20_v2.25_rom; do [ -s "submodules/sparc/$$f" ] || missing="$$missing $$f"; done; \
+	for f in ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin; do [ -s "submodules/sparc/$$f" ] || missing="$$missing $$f"; done; \
 	if [ -n "$$missing" ]; then \
 		warn_extra_missing sun-proms "not in submodules/sparc (private repository: no access?):$$missing"; \
 	fi
