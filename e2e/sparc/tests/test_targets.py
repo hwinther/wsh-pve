@@ -39,7 +39,7 @@ def qemu_server_profiles():
         text = f.read()
     s32 = {}
     block = perl_block(text, "+our $SPARC32_PROFILES = {")
-    for m in re.finditer(r"'(SS-\d+)' => \{\n\+\s+'max-memory' => (\d+),(.*?)\n\+    \},", block, re.S):
+    for m in re.finditer(r"'(SS-\d+(?:MP)?)' => \{\n\+\s+'max-memory' => (\d+),(.*?)\n\+    \},", block, re.S):
         fw = {f: {"max-cpus": int(n), "cpu": cpu}
               for f, cpu, n in re.findall(r"'([\w.-]+)' => \{ (?:cpu => '([\w-]+)', )?'max-cpus' => (\d+) \}", m[3])}
         s32[m[1]] = {"max-memory": int(m[2]), "firmware": fw}
@@ -76,7 +76,7 @@ class Catalogue(unittest.TestCase):
     @unittest.skipUnless(os.path.exists(PATCH), "needs the repository's submodules/qemu-server.patch")
     def test_profiles(self):
         s32, vga32, s64 = qemu_server_profiles()
-        self.assertEqual(set(s32), {"SS-5", "SS-10", "SS-20"})  # the parser found the table
+        self.assertEqual(set(s32), {"SS-5", "SS-10", "SS-20", "SS-600MP"})  # the parser found the table
         self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["cpu"], "TI-SuperSparc-50")
         for name, t in targets.TARGETS.items():
             p, disk = t["profile"], t["disk"]
@@ -1091,13 +1091,19 @@ class OlderSun(unittest.TestCase):
 
     def test_sunos412_target(self):
         # SunOS 4.1.2 on the SS-600MP: the 4.1.4 install with SERIAL_7BIT in every phase, from its own CD;
-        # catalogue until the QEMU and OpenBIOS patches are published and qemu-server has a profile
+        # automated since a published package has the QEMU and OpenBIOS patches (pve-qemu-kvm
+        # 11.1.3-3+wsh13) and qemu-server has the SS-600MP profile
         base = targets.TARGETS["sunos414-ss5"]
         t = targets.TARGETS["sunos412-ss600mp"]
-        self.assertEqual(t["status"], "catalogue")
-        self.assertIn("wsh/0063-0065", t["blocked"])
-        self.assertIn("openbios 0028", t["blocked"])
-        self.assertNotIn("sunos412-ss600mp", targets.automated())
+        self.assertEqual(t["status"], "automated")
+        self.assertNotIn("blocked", t)
+        self.assertIn("sunos412-ss600mp", targets.automated())
+        pkg = t["tested"]["packages"]["pve-qemu-kvm"]
+        self.assertTrue(pkg.startswith("11.1.3-3+wsh"))
+        self.assertGreaterEqual(int(pkg.rsplit("+wsh", 1)[1]), 13)
+        self.assertIn("SS-600MP profile", t["tested"]["packages"]["qemu-server"])
+        self.assertEqual(t["tested"]["with"], "--check")
+        self.assertGreater(t["minutes"], 0)
         p = t["profile"]
         self.assertEqual((p["machine"], p["bios"], p["memory"]), ("SS-600MP", "openbios-sparc32", 256))
         self.assertNotIn("cores", p)  # one CPU: no Ross module model for its multiprocessor start

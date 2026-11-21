@@ -1674,7 +1674,7 @@ changes are in `e2e/sparc/README.md`, "Older Sun releases".
 | Solaris 2.1, 2.2 | SS-20 `ss20_v2.25_rom` (-50), CD as a disk | the kernel starts, then `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, on the SBus node the PROM leaves unnamed (64 and 256 MB). Named at the prompt (`PROM_NAME_UNNAMED=1`), 2.2's CD reaches its installer; 2.1 under `ss10_v2.25_rom` or `ss20_v2.25_rom` (on QEMU's SS-20) needs the QEMU change too, then installs and boots. With pve-qemu `wsh/0057` (lab, in review) the node has its name, and the 2.2 CD reaches its installer without `PROM_NAME_UNNAMED` |
 | SunOS 4.1.3 | SS-10 and SS-20, OpenBIOS (32 or 64 MB, also `-cpu TI-SuperSparc-40`) | the CD's kernel probes the devices, then `BAD TRAP: cpu=0 type=29` (data access error) after `SUNW,fdtwo0`, where 4.1.3_U1B mounts its munixfs root: a bus error in a probe took the wrong trap (below). With pve-qemu `wsh/0049` (below; pve-qemu-kvm 11.1.3-2+wsh31 and later) it installs on the SS-10 with the 4.1.4 scenarios unchanged and boots (`SunOS sunos413 4.1.3 3 sun4m`); target `sunos413-ss10` (~6 min) |
 | SunOS 4.1.3 | SS-20 `ss20_v2.25_rom` (-50) | `BAD TRAP: cpu=0 type=9` |
-| SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner. With pve-qemu `wsh/0063`-`0065` and openbios 0028 (lab, 2026-11-21): installs with the 4.1.4 scenarios (`SERIAL_7BIT=1`, 64 MB, ~2.5 min) and boots (`SunOS sunos412 4.1.2 1 sun4m`, 256 MB), `le0` answers ping; one CPU only (below). Catalogue target `sunos412-ss600mp` |
+| SunOS 4.1.2 | SS-600MP, OpenBIOS | the kernel loads (`Boot: vmunix`, romvec version 3), then `Unhandled Exception 0x00000029` before its banner. With pve-qemu `wsh/0063`-`0065` and openbios 0028 (lab, 2026-11-21): installs with the 4.1.4 scenarios (`SERIAL_7BIT=1`, 64 MB, ~2.5 min) and boots (`SunOS sunos412 4.1.2 1 sun4m`, 256 MB; 512 MB to 2 GB boot too), `le0` answers ping; one CPU only (below). Target `sunos412-ss600mp` through PVE with qemu-server's SS-600MP profile (~7 min) |
 
 **Solaris 2.1-2.4 under OpenBIOS (openbios 0019-0022).** Four gaps, one behind the other, each
 found by booting the 2.3 CD (lab, pve-qemu-kvm 11.1.3-2+wsh21 with the patched `openbios-sparc32`
@@ -1886,18 +1886,25 @@ What it would take for the rest:
   register (`lda [0] 4`, `>> 15 & 3`), reads 0 (`cpuid mid err`). The kernel expects the module ID
   there, as on the 600MP's Ross modules (it skips the checks when those bits are all ones); on the
   SuperSPARC they are other control bits, and QEMU has no Ross CPU model. So SMP needs the Ross
-  module (the RT625 model that Sun's own 600MP PROM needs too): not done. The target
-  `sunos412-ss600mp` (`e2e/sparc/targets.py`) is catalogue only: it needs a published package with
-  the patches and an SS-600MP profile in qemu-server (below).
+  module (the RT625 model that Sun's own 600MP PROM needs too): not done.
+  **Through PVE (2026-11-22):** qemu-server's and pve-manager's SS-600MP profile ("Supported
+  profiles"), built from this branch, with the published pve-qemu-kvm 11.1.3-3+wsh14 (it has
+  `wsh/0063`-`0065` and openbios 0028; +wsh13 was the first), in the PVE test container from
+  `e2e/pve/Dockerfile` with the lab: `lab.py install sunos412-ss600mp --check` passed twice (6.7 and
+  6.5 min: install 151/135 s, first boot 165/168 s, check 61/64 s; `SunOS sunos412 4.1.2 1 sun4m`, the marker, `le0` with
+  `inet 10.0.2.15 netmask ffffff00`, the finished VM `scsi6: none,media=cdrom`, `boot: order=scsi3`).
+  The installed disk then booted to the check's root shell with 512 MB (`mem = 507772K`), 1024 MB
+  (`mem = 1032060K`) and 2048 MB (`mem = 2080636K`) through PVE (the profile's limit lifted in the
+  test container for that); the profile offers 1024 MB at most, the wizard presets 256. Under
+  OpenBIOS the SS-600MP draws its banner and prompt on cg3 and on TCX; 4.1.2 itself was run on the
+  serial console only. So `sunos412-ss600mp` is an automated target (e2e/sparc/README.md, "Older Sun
+  releases").
 - **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
-  it doesn't run removed. SS-600MP has no profile yet (Solaris 2.6 refuses it). For
-  `sunos412-ss600mp` it would need `'SS-600MP' => { 'max-memory' => 256, firmware => {
-  'openbios-sparc32' => { 'max-cpus' => 1 } } }` (one CPU: SunOS 4.1.2's multiprocessor start
-  needs the Ross module), the same in pve-manager, and a published pve-qemu-kvm with `wsh/0063`-`0065`
-  and openbios 0028.
+  it doesn't run removed. The SS-600MP has a profile since `sunos412-ss600mp` (OpenBIOS only, one
+  CPU, 1024 MB; "Supported profiles"); Solaris 2.6 still refuses the platform under OpenBIOS.
 
 ### SPARCstation LX with its own PROM (lab only)
 
@@ -3839,12 +3846,21 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 | SS-20 | `openbios-sparc32` | none | 512 MB | 1-4 |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
 | LX | `lx.bin` (only; not in any package, see "SPARCstation LX with its own PROM") | none | 128 MB | 1 |
+| SS-600MP | `openbios-sparc32` (only) | none (the machine's SuperSPARC) | 1024 MB | 1 |
 
 - Display: `cg3` (default), `tcx`, `none`, `serial0`/`serial1` (ttya/ttyb). No resolution option
   (`-g`): qemu-server passes none, so cg3 runs at QEMU's 1024x768. The LX takes `serial0` (its
   default: QEMU has no cgsix model) or `none` (both give `-nographic`; the profile's `displays`).
 - Disk on the built-in ESP at SCSI target 3, CD-ROM at target 6 (`physical_block_size=512`), the
   built-in lance with `net0`'s MAC, at most one NIC.
+- SS-600MP (SunOS 4.1.2, "Older Sun releases on sun4m"): needs pve-qemu-kvm 11.1.3-3+wsh13 or later
+  (`wsh/0063`-`0065`, openbios 0028); the ESP is under OpenBIOS's `dma` node and the lance under its
+  `lebuffer`, the command line is the same as for the other machines. OpenBIOS only and one CPU: the
+  real machine's Ross RT625 modules aren't modelled, and Sun's 600MP PROM and 4.1.2's start of a
+  second CPU need one; both refusals say so. 4.1.2 boots with up to 2 GB; 1024 MB is offered, the
+  wizard presets 256 (`defaultMemory` in pve-manager). The displays are the default list (OpenBIOS
+  draws on cg3 and TCX; the target uses `serial0`), no `audio0` (no sound chip), and `nvram0` as on
+  the other OpenBIOS machines (accepted, on the M48T08).
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
 - CPUs: sockets x cores, one by default. 2-4 only on SS-10/SS-20 with OpenBIOS and only with
@@ -3866,10 +3882,12 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   return empty lists for sparc.
 - **Binaries:** `sparc` → `/usr/bin/qemu-system-sparc`, `sparc64` → `/usr/bin/qemu-system-sparc64`.
 - **Machines:** `SS-5` (sparc) and `sun4u` (sparc64) by default; the machine regex accepts
-  `SS-\d{1,2}`, `LX` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type
+  `SS-\d{1,2}`, `SS-600MP`, `LX` and `sun4[a-z]` with an optional `+pveN` (a snapshot's `runningmachine`), type
   `sun`.
 - **Profiles:** `assert_sparc32_profile` checks the machine, the firmware for the machine, memory,
   sockets × cores up to the profile's most (1 or 4), `vcpus` equal to it, no CPU hotplug, no `cpu`, the display, no guest agent, serial0/serial1 only, one lance NIC, `audio0` (SS-5 only, `device=cs4231`, no SPICE) and no `efidisk0` or `tpmstate0` (no UEFI firmware, no TPM).
+  A profile's `why` gives the reason in the refusal where the generic message would mislead (the
+  SS-600MP's firmware, CPUs and sound).
   It runs on create (before the config exists), on every config update against the config as it
   will be (pending changes and deletions included), and in `config_to_command` (start, `qm showcmd`,
   vzdump). `assert_sparc64_profile` does the same for sparc64 (machine, firmware, memory, one CPU, no
@@ -3997,9 +4015,10 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   Architecture (an advanced option); per architecture the OS types (Linux, Solaris, Other),
   machines, firmware, displays, SCSI controller and buses; the mirrored sparc32 profiles; the
   firmware display names that both the selectors and the renderers use.
-- sparc32 in the wizard and the Hardware editors: machine SS-5 (default), SS-10 or SS-20 (no
-  versions), only the firmware the machine runs, memory preset to and capped at the machine's
-  maximum, CPU type disabled, sockets and cores disabled (nothing is submitted) except on SS-10 and
+- sparc32 in the wizard and the Hardware editors: machine SS-5 (default), SS-10, SS-20, SS-600MP
+  or LX (no versions), only the firmware the machine runs (picking a machine switches to its first
+  firmware where the chosen one doesn't fit), memory preset to the machine's maximum (or its
+  `defaultMemory`: 256 MB on the SS-600MP) and capped at it, CPU type disabled, sockets and cores disabled (nothing is submitted) except on SS-10 and
   SS-20 with OpenBIOS, where they go up to 4 CPUs in total with a hint on the cost, displays cg3 (default), tcx,
   serial0, serial1 and none, the lance NIC only, the first disk on SCSI target 3 and the CD-ROM on
   target 6.

@@ -1093,13 +1093,15 @@ then the ones that installed got targets:
   install, OpenBIOS. The CD is a plain image with 2048-byte sectors (no `--convert`). Without patch
   101508 the CD's and the installed kernel run on the SS-5 (`SunOS Release 4.1.3_U1 (MUNIX) #2`).
   The SS-10 also installs it in the lab (152 s), not made a target.
-- **`sunos412-ss600mp`** (SunOS 4.1.2, Solaris 1.0.1, the SPARCserver 600MP, one CPU), catalogue only:
-  the `sunos414-ss5` target with its own CD (2048-byte sectors, no `--convert`), the SS-600MP at 256
-  MB and `SERIAL_7BIT=1` in every phase: its `getty` sends even parity in bit 7, which the harness
-  masks before the terminal (`serial.raw` keeps it). The scenarios boot the ESP by its path on the
-  machine (`_sparc32.esp()`: `/iommu/sbus/dma/esp` on the SS-600MP, openbios 0028). It needs pve-qemu
-  `wsh/0063`-`0065` and openbios 0028 in a published package and an SS-600MP profile in qemu-server,
-  so it has run in the lab's own QEMU only (below).
+- **`sunos412-ss600mp`** (SunOS 4.1.2, Solaris 1.0.1, the SPARCserver 600MP, one CPU): the
+  `sunos414-ss5` target with its own CD (2048-byte sectors, no `--convert`), the SS-600MP at 256 MB
+  and `SERIAL_7BIT=1` in every phase: its `getty` sends even parity in bit 7, which the harness masks
+  before the terminal (`serial.raw` keeps it). The scenarios boot the ESP by its path on the machine
+  (`_sparc32.esp()`: `/iommu/sbus/dma/esp` on the SS-600MP, openbios 0028). It needs pve-qemu
+  `wsh/0063`-`0065` and openbios 0028 (pve-qemu-kvm 11.1.3-3+wsh13 and later) and qemu-server's
+  SS-600MP profile (OpenBIOS only, one CPU, up to 1024 MB; `submodules/SPARC.md`, "Supported
+  profiles"), so it was catalogue only until both existed; results through PVE below the OpenBIOS
+  targets.
 - **`sunos413-ss10`** (the original SunOS 4.1.3, Solaris 1.1, SS-10 only): the `sunos414-ss5`
   target with its own CD (`Solaris_1.1.img`, 2048-byte sectors, no `--convert`) and the SS-10's
   profile (256 MB, one CPU, OpenBIOS): the same three scenarios unchanged, 64 MB during the install.
@@ -1147,6 +1149,21 @@ The SS-10 Sun PROM doesn't run on QEMU's SS-10 ("SS-10 and SS-20" in `submodules
 2.1, 2.2 and 4.1.3 had OpenBIOS on the SS-10 or the SS-20 PROM on the SS-20 (they predate the
 SS-20). Not tried: 2.3 under OpenBIOS with a framebuffer console, 2.5 SS-5 installs under `ss5.bin`,
 2.6-era tricks for 2.1/2.2 (other `-cpu` models on the SS-20 PROM), 4.1.2 on the SS-10.
+
+**`sunos412-ss600mp` through PVE** (the PVE test container from `e2e/pve/Dockerfile` with the lab,
+`PACKAGES=mixed`: the published pve-qemu-kvm 11.1.3-3+wsh14 and libpve-storage-perl 9.1.18+wsh2, with
+qemu-server and pve-manager built from the branch that adds the SS-600MP profile), 2026-11-22:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sunos412-ss600mp --check` (VM 1) | passed; `SunOS sunos412 4.1.2 1 sun4m`; the marker; `le0` with `inet 10.0.2.15 netmask ffffff00`; the finished VM `machine: SS-600MP`, `memory: 256`, `scsi6: none,media=cdrom`, `boot: order=scsi3` | 6.7 min (install 151 s, first boot 165 s, check 61 s) |
+| `install sunos412-ss600mp --check` (VM 2, the final packages: the profile at 1024 MB) | passed; the same | 6.5 min (135 s, 168 s, 64 s) |
+| VM 1's disk, `sunos-boot-disk.py` at 512, 1024 and 2048 MB (the profile's limit lifted in the container) | passed each: `mem = 507772K`, `1032060K`, `2080636K` | 50-66 s each |
+| the profile's API checks of `sparc-profiles.spec.ts` as `qm create`/`qm showcmd` (serial0, cg3, TCX and `nvram0` started frozen in QEMU; the refusals; an SS-20 with 2 CPUs changed to SS-600MP) | 17/17 passed | |
+| unit tests (`test_targets.py`) | passed | |
+
+Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, a framebuffer console
+(OpenBIOS draws on cg3 and TCX on the SS-600MP; 4.1.2 there was not run).
 
 The rows "with openbios 0019-0022" ran the lab image of the published package with a patched
 `openbios-sparc32` mounted over `/usr/share/kvm/openbios-sparc32`, one run each (the 2.3 install

@@ -31,7 +31,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   `qm showcmd`, and a CD that answers as a disk (`cd_as_disk=1`: `scsi-hd` on target 6, read only,
   an empty `scsi-cd` once ejected, and its refusals). The `cd_as_disk` tests probe the installed
   qemu-server once: with a package that lacks the option the test of what it does is skipped and the
-  refusals expect the older "property is not defined in schema" (the option is refused either way).
+  refusals expect the older "property is not defined in schema" (the option is refused either way). The
+  SS-600MP tests (OpenBIOS only, one CPU, the refusals with the Ross module as the reason, the wizard)
+  are skipped where the installed qemu-server or pve-manager has no SS-600MP profile, and QEMU is
+  started only with a pve-qemu-kvm that has its lebuffer (`wsh/0064`).
 - `tests/sparc64-profile.spec.ts`: the sparc64 profile (`submodules/SPARC.md`, "sparc64 (sun4u)"):
   the wizard's layout through the API (IDE disk and CD-ROM, `-boot order=d|c`, no `bootindex` or
   balloon), a serial console, four NICs, every refusal, a VM from the old wizard, and the wizard and
