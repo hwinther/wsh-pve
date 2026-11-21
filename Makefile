@@ -426,22 +426,32 @@ clean-qemu-3dfx:
 	rm -rf submodules/pve-qemu/debian/patches/wsh submodules/pve-qemu/qemu/hw/3dfx submodules/pve-qemu/qemu/hw/mesa; \
 	cd submodules/pve-qemu && git checkout debian/patches/series && make clean
 
+# The qemu-3dfx guest drivers (wrappers/) into build/3dfx and build/mesa, for a Pentium-class guest:
+# submodules/qemu-3dfx-drivers.patch replaces upstream's -march=x86-64-v2 (SSE2 to SSE4.2, POPCNT) for
+# the build and is reverted afterwards, and scripts/check-3dfx-drivers-isa.sh fails the build on any
+# MMX/SSE or later instruction in what was compiled (the DLLs and EXEs, the DXEs' and OVL's objects).
 .PHONY: 3dfx-drivers
 3dfx-drivers:
 	set -e; \
 	git submodule update --init submodules/qemu-3dfx; \
+	if ! git -C submodules/qemu-3dfx apply --reverse --check ../qemu-3dfx-drivers.patch 2>/dev/null; then \
+		git -C submodules/qemu-3dfx apply ../qemu-3dfx-drivers.patch; \
+	fi; \
+	trap 'git -C submodules/qemu-3dfx apply --reverse ../qemu-3dfx-drivers.patch' EXIT; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -v $(CURRENT_DIR)/scripts:/src/scripts:ro \
         -w /src/submodules/qemu-3dfx/wrappers/3dfx \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make && /src/scripts/check-3dfx-drivers-isa.sh *.dll *.exe *.sys ../dxe/*.o ../ovl/*.obj && make clean"; \
     $(DOCKER) run $(DOCKER_ARG) --rm \
         -v $(CURRENT_DIR)/.git:/src/.git \
         -v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx \
+        -v $(CURRENT_DIR)/scripts:/src/scripts:ro \
         -w /src/submodules/qemu-3dfx/wrappers/mesa \
         $(DJGPP_BUILD_IMAGE) \
-        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && make clean"; \
+        bash -c "git config --global --add safe.directory '*' && mkdir -p build && cd build && bash ../../../scripts/conf_wrapper && make TOOLS=wglinfo.exe && /src/scripts/check-3dfx-drivers-isa.sh *.dll *.exe && make clean"; \
 	ls -la submodules/qemu-3dfx/wrappers/3dfx/build; \
 	ls -la submodules/qemu-3dfx/wrappers/mesa/build; \
 	mkdir -p build && rm -rf build/3dfx build/mesa; \

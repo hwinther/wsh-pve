@@ -7,6 +7,9 @@ on:
     paths:
       # the submodule gitlink changes when the pinned qemu-3dfx commit is bumped
       - "submodules/qemu-3dfx"
+      # our change to its build (the guest CPU baseline) and the check of the result
+      - "submodules/qemu-3dfx-drivers.patch"
+      - "scripts/check-3dfx-drivers-isa.sh"
 
 permissions:
   # for pulling the djgpp-build image from ghcr.io
@@ -80,6 +83,7 @@ jobs:
             "" \
             "submodule commit: ${QEMU3DFX_SHA}" \
             "revision (__REV__): ${QEMU3DFX_SHORT}-" \
+            "built for i586 (-march=pentium, x87 math; no MMX, SSE or later)" \
             "" \
             "These Windows 9x/2000/ME guest drivers must match the host qemu-system" \
             "binary built from the same qemu-3dfx commit. The pve-qemu-kvm package" \
@@ -102,6 +106,9 @@ jobs:
             "Install these in the Windows 9x/2000/ME guest to enable 3D acceleration with the" \
             "matching \`pve-qemu-kvm\` build. The guest driver revision \`${QEMU3DFX_SHORT}-\` must" \
             "match the host qemu binary, otherwise the wrapper will refuse to load." \
+            "" \
+            "Built for a Pentium-class guest CPU (i586, x87 math; no MMX, SSE or later, checked by" \
+            "\`scripts/check-3dfx-drivers-isa.sh\`), so a \`cpu: pentium3\` guest runs them without KVM too." \
             > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP" --clobber
