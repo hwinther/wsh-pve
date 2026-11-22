@@ -23,6 +23,7 @@ export default defineConfig({
             { label: "Setup Guide", slug: "guides/setup" },
             { label: "SPARC Guests", slug: "guides/sparc" },
             { label: "SPARC lab recordings", slug: "guides/sparc-recordings" },
+            { label: "Living museum", slug: "guides/living-museum" },
             { label: "Lab install targets", slug: "guides/lab-install" },
             { label: "3DFX / Mesa passthrough", slug: "guides/3dfx" },
             { label: "Guest operating systems", slug: "guides/operating-systems" },
