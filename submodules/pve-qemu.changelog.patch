@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..6032814 100644
+index 9da9d72..3c840d2 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,73 @@
+@@ -1,10 +1,79 @@
++pve-qemu-kvm (11.1.3-4+wsh10) trixie; urgency=medium
++
++  * fix(pve-qemu): LF line endings in wsh/0033, 0066 and 0123 (#463)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 19:36:21 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh9) trixie; urgency=medium
 +
 +  * fix(pve-qemu): raise the cs4231's pi and pmi when the codec gets
