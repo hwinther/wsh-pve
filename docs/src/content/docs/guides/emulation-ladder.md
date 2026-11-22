@@ -21,7 +21,7 @@ ideas", item 3), built from numbers the lab already has plus two rungs it doesn'
 Rungs 3-5 remove something a real CPU does for every other rung: rung 3 (on a cross-architecture
 guest) replaces the host's instruction set with a translated one; rung 4 replaces the translator's
 compiled output with a bytecode loop; rung 5 moves that whole interpreter into a browser's own
-JavaScript/Wasm engine. Rung 6 is the joke made literal: run rung 3's translator *underneath* rung 5,
+JavaScript/Wasm engine. Rung 6 runs rung 3's translator *underneath* rung 5,
 so the "fast" step (TCG, normally close to native) sits on top of the slowest one (TCI in Wasm) —
 the sparc guest's translated code is itself interpreted, one more time, before anything executes.
 
