@@ -464,8 +464,9 @@ builds it, from Debian packages only:
   (4.8 MB); the page starts with `-incoming file:...` and has a running prompt in under a second,
   where a boot from OpenBIOS takes 162-167 s in Chromium.
 
-Measured in Chromium: `bench` takes 31-35 s of wall time (the guest reports 11.1 s: its clock runs
-about 3 times behind), against 0.37 s under TCG in the published package; `mandel`'s 20 rows match
-`tests/mandel.txt`. The page's console is a character device registered in Emscripten's file system
+Measured in Chromium: `bench` takes 31-47 s of wall time, against 0.37 s under TCG in the published
+package; `mandel`'s 20 rows match `tests/mandel.txt`. The guest's clock keeps to the wall clock since
+`web/patches/slavio-timer-missed-ticks.patch` (before it, lost timer ticks put it about 3 times
+behind; the guide, "How fast"). The page's console is a character device registered in Emscripten's file system
 that QEMU opens with `-chardev pipe`; COOP/COEP come from a small service worker of the page's own,
 since GitHub Pages can't send headers. Details: the guide.

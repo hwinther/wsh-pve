@@ -1,0 +1,166 @@
+slavio_timer: make up for limit matches the host ran late
+
+Browser SPARC only (web/scripts/build-qemu.sh applies web/patches/*.patch after the wsh series,
+to the WebAssembly build and to the native build that makes the snapshot). Not part of pve-qemu.
+
+Linux on sun4m keeps time by counting the system timer's level-10 interrupts: its clocksource
+(timer_cs in arch/sparc/kernel/time_32.c) is the number of interrupts handled times the period,
+plus the counter. The timer is a ptimer on QEMU_CLOCK_VIRTUAL, which follows the host clock, and
+its callback runs in the main loop. When the main loop wakes up late, the ptimer runs every period
+it missed back to back; the first sets the reached bit and raises the interrupt, the others find
+it still pending and are lost, so the guest sees one tick where several passed.
+
+Natively the main loop wakes on time. In the browser it sleeps in poll(), which Emscripten proxies
+to the page's main thread, and the timeout is a setTimeout() there: any work on the page's thread
+(the terminal, the browser itself) delays it, often by more than the 10 ms period, and the guest's
+clock falls behind (about 3x in the measurements that found it; nearly stopped with the page's
+thread kept busy).
+
+The fix counts the matches that find the interrupt pending and raises it again each time the guest
+clears it by reading the limit register, so a late host delivers the ticks in a burst instead of
+dropping them. The backlog is capped at a minute; writing the limit or the mode clears it. The
+count travels in a subsection that is only sent when it is not zero.
+
+--- a/hw/timer/slavio_timer.c
++++ b/hw/timer/slavio_timer.c
+@@ -57,6 +57,8 @@
+     /* processor only */
+     uint32_t run;
+     uint64_t limit;
++    /* limit matches while the interrupt of an earlier one was still pending */
++    uint32_t missed;
+ } CPUTimerState;
+ 
+ #define TYPE_SLAVIO_TIMER "slavio_timer"
+@@ -121,6 +123,19 @@
+     t->counthigh = count >> 32;
+ }
+ 
++/*
++ * At most a minute of missed limit matches is made up for: a longer
++ * backlog (a host that stopped running the machine) is dropped as before.
++ */
++#define TIMER_MAX_BACKLOG_NS 60000000000ULL
++
++static uint32_t slavio_timer_max_missed(CPUTimerState *t)
++{
++    uint64_t period_ns = (t->limit >> 9) * TIMER_PERIOD;
++
++    return period_ns ? MIN(TIMER_MAX_BACKLOG_NS / period_ns, UINT32_MAX) : 0;
++}
++
+ // timer callback
+ static void slavio_timer_irq(void *opaque)
+ {
+@@ -130,14 +145,26 @@
+ 
+     slavio_timer_get_out(t);
+     trace_slavio_timer_irq(t->counthigh, t->count);
+-    /* if limit is 0 (free-run), there will be no match */
+-    if (t->limit != 0) {
+-        t->reached = TIMER_REACHED;
+-    }
+     /* there is no interrupt if user timer or free-run */
+     if (!slavio_timer_is_user(tc) && t->limit != 0) {
++        /*
++         * A match while the last one is still pending: the host ran this
++         * timer late (several periods at once). Count it and raise the
++         * interrupt again when the guest clears the pending one, so that
++         * a guest counting ticks keeps time.
++         */
++        if (t->reached) {
++            if (t->missed < slavio_timer_max_missed(t)) {
++                t->missed++;
++            }
++            return;
++        }
+         qemu_irq_raise(t->irq);
+     }
++    /* if limit is 0 (free-run), there will be no match */
++    if (t->limit != 0) {
++        t->reached = TIMER_REACHED;
++    }
+ }
+ 
+ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
+@@ -164,6 +191,12 @@
+             qemu_irq_lower(t->irq);
+             t->reached = 0;
+             ret = t->limit & TIMER_LIMIT_MASK32;
++            // the next of the matches the host ran late, if any
++            if (t->missed) {
++                t->missed--;
++                t->reached = TIMER_REACHED;
++                qemu_irq_raise(t->irq);
++            }
+         }
+         break;
+     case TIMER_COUNTER:
+@@ -227,6 +260,7 @@
+         } else {
+             // set limit, reset counter
+             qemu_irq_lower(t->irq);
++            t->missed = 0;
+             t->limit = val & TIMER_MAX_COUNT32;
+             if (t->limit == 0) { /* free-run */
+                 ptimer_set_limit(t->timer,
+@@ -256,6 +290,7 @@
+         break;
+     case TIMER_COUNTER_NORST:
+         // set limit without resetting counter
++        t->missed = 0;
+         t->limit = val & TIMER_MAX_COUNT32;
+         ptimer_transaction_begin(t->timer);
+         if (t->limit == 0) { /* free-run */
+@@ -293,6 +328,7 @@
+                 if ((val & processor) != (s->cputimer_mode & processor)) {
+                     if (val & processor) { // counter -> user timer
+                         qemu_irq_lower(curr_timer->irq);
++                        curr_timer->missed = 0;
+                         // counters are always running
+                         if (!curr_timer->run) {
+                             ptimer_stop(curr_timer->timer);
+@@ -341,6 +377,24 @@
+     },
+ };
+ 
++static bool slavio_timer_missed_needed(void *opaque)
++{
++    CPUTimerState *t = opaque;
++
++    return t->missed != 0;
++}
++
++static const VMStateDescription vmstate_timer_missed = {
++    .name = "timer/missed",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .needed = slavio_timer_missed_needed,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(missed, CPUTimerState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ static const VMStateDescription vmstate_timer = {
+     .name ="timer",
+     .version_id = 3,
+@@ -353,6 +407,10 @@
+         VMSTATE_UINT32(run    , CPUTimerState),
+         VMSTATE_PTIMER(timer, CPUTimerState),
+         VMSTATE_END_OF_LIST()
++    },
++    .subsections = (const VMStateDescription * const []) {
++        &vmstate_timer_missed,
++        NULL
+     }
+ };
+ 
+@@ -378,6 +436,7 @@
+         curr_timer->limit = 0;
+         curr_timer->count = 0;
+         curr_timer->reached = 0;
++        curr_timer->missed = 0;
+         if (i <= s->num_cpus) {
+             ptimer_transaction_begin(curr_timer->timer);
+             ptimer_set_limit(curr_timer->timer,
