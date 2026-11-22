@@ -9,7 +9,7 @@
 # QEMU 7.2 is built on Debian 12, which builds it as is; on Debian 13 it needs extra fixes.
 ARG LAB_IMAGE=wsh-sparc-lab
 
-FROM debian:12 AS build
+FROM debian:13 AS build
 ARG QEMU_REF=v7.2.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential ninja-build python3 python3-venv pkg-config git ca-certificates \
