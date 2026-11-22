@@ -126,8 +126,8 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
 # FreeBSD 12.4 on sun4u: the published packages with the lab's qemu-system-sparc64 (the 11.1.3-4 series with
-# wsh/0100-0101) and openbios-sparc64 (0001-0030 with 0040-0041) mounted over the package's
-PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0100-0101, openbios 0040-0041 (lab build)",
+# wsh/0114-0115) and openbios-sparc64 (0001-0030 with 0032-0033) mounted over the package's
+PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0114-0115, openbios 0032-0033 (lab build)",
                             "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
                             "libpve-storage-perl": "9.1.18+wsh2"}
 # Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
@@ -960,8 +960,8 @@ TARGETS = {
     # welcome screen's Shell and runs `bsdinstall script` (_freebsd.install: the auto layout, VTOC8, on
     # ada0, kernel and base from the CD), then halt -p; the first boot sets root's password, the marker,
     # the host name and the network (rc.conf), the check boots it again. The reboot and the power-off
-    # need openbios 0040-0041 (before, FreeBSD panics on reboot and the power-off spins in the
-    # firmware); idle needs pve-qemu wsh/0100. README.md, "The FreeBSD 12.4 install target"
+    # need openbios 0032-0033 (before, FreeBSD panics on reboot and the power-off spins in the
+    # firmware); idle needs pve-qemu wsh/0114. README.md, "The FreeBSD 12.4 install target"
     "freebsd124-sun4u": {
         "title": "FreeBSD 12.4 sparc64, kernel and base (sun4u, OpenBIOS, IDE disk)",
         "status": "automated",
@@ -982,8 +982,8 @@ TARGETS = {
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
         "net_modes": ["static", "dhcp"],
         "dhcp_note": "dhclient takes the address, router and name servers; the host name stays as installed (rc.conf)",
-        # the first boot's and the check's power-off spin in the firmware without openbios 0040
-        "matrix_skip": "needs openbios 0040-0041, not in a published pve-qemu-kvm yet: installed on request",
+        # the first boot's and the check's power-off spin in the firmware without openbios 0032
+        "matrix_skip": "needs openbios 0032-0033, not in a published pve-qemu-kvm yet: installed on request",
         "minutes": 15,  # 14.9 min through PVE: install 9.6, first boot 3.3, --check 1.8
         "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_FBSD, "with": "--check --export"},
     },

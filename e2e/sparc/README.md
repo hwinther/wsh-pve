@@ -1591,9 +1591,9 @@ CD on `ide2`, `sunhme`) installs FreeBSD 12.4-RELEASE, the last release with spa
 is end of life), from `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` (640942080 bytes; size, sha256 and
 sha512 as in the release's `CHECKSUM.SHA256-FreeBSD-12.4-RELEASE-sparc64` and `CHECKSUM.SHA512-...`
 on ftp-archive.freebsd.org; freely redistributable, not downloaded by any test). It needs openbios
-0040 and 0041 for the power-off and the reboot (before, `shutdown -p now` stays on after `Uptime:`
+0032 and 0033 for the power-off and the reboot (before, `shutdown -p now` stays on after `Uptime:`
 and every reboot panics: `submodules/SPARC.md`, "FreeBSD 12.4 on sun4u"), which no published
-`pve-qemu-kvm` has yet: the target has `matrix_skip` until one does, and pve-qemu `wsh/0100` for
+`pve-qemu-kvm` has yet: the target has `matrix_skip` until one does, and pve-qemu `wsh/0114` for
 idle.
 
 - **Install** (`freebsd-install-sparc64.py`, `_freebsd.py`): OpenBIOS boots the CD's boot block, the
@@ -1620,7 +1620,7 @@ idle.
   `REBOOT=1` reboots once (`shutdown -r now`) and logs in again before the power-off.
 
 Lab runs (the lab's own QEMU, `NET=user`; pve-qemu-kvm 11.1.3-4+wsh3's `qemu-system-sparc64` or the
-same tree built with `wsh/0100`-`0101`, OpenBIOS 0001-0030 + 0040-0041 mounted over the package's;
+same tree built with `wsh/0114`-`0115`, OpenBIOS 0001-0030 + 0032-0033 mounted over the package's;
 2026-11-22, load average 2-9 on 14 cores):
 
 | Run | Result | Time |

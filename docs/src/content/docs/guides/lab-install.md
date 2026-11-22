@@ -55,7 +55,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order; idle driver `WSHIDLE.COM` | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~8 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
 | `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
-| `freebsd124-sun4u` | FreeBSD 12.4 (the last release with sparc64), kernel and base | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs OpenBIOS patches 0040 and 0041 (not in a package yet: reboot and power-off) | `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` | `root` / `wshlab` | ~16 min |
+| `freebsd124-sun4u` | FreeBSD 12.4 (the last release with sparc64), kernel and base | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs OpenBIOS patches 0032 and 0033 (not in a package yet: reboot and power-off) | `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` | `root` / `wshlab` | ~16 min |
 | `openbsd59-ss5` | OpenBSD 5.9 (the last release for 32-bit sparc), all sets but X11 (base, comp, man, game), checked against the release's signature by the installer, ntpd off | SS-5, OpenBIOS, 256 MB, serial console (needed: with a framebuffer the kernel panics), 8 GiB blank disk on `scsi3`, the boot CD on `scsi6`, the sets CD on `scsi5`, lance (`le0`) | `cd59.iso`, `openbsd59-sparc-sets.iso` (made on the node, below) | `root` / `wshlab` | ~10 min |
 | `openbsd59-ss20` | as `openbsd59-ss5` | SS-20, OpenBIOS, 512 MB, one CPU (OpenBSD/sparc has no multiprocessor kernel), otherwise as `openbsd59-ss5` | `cd59.iso`, `openbsd59-sparc-sets.iso` | `root` / `wshlab` | ~10 min |
 | `netbsd111-sparc64` | NetBSD 11.1, without X11 | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme | `NetBSD-11.1-sparc64.iso` | `root` / `wshlab` | ~11 min |
@@ -303,7 +303,7 @@ own unattended mode (`bsdinstall script`): the automatic layout on `ada0` (VTOC8
 on. The first boot sets root's password, the marker and the network (`--ip dhcp` gives
 `ifconfig_hme0="DHCP"`; otherwise the address, `--gateway` as `defaultrouter`, `--dns`/`--domain` in
 `/etc/resolv.conf`) and the optional user (group `wheel`). Root's shell is csh. Reboot and power-off
-need OpenBIOS patches 0040 and 0041, which no published package has yet; until then the weekly
+need OpenBIOS patches 0032 and 0033, which no published package has yet; until then the weekly
 install matrix skips the target (`matrix_skip`).
 
 **OpenBSD 8.0** (`openbsd80-sun4u`) boots the install CD's `bsd.rd` and answers the installer's

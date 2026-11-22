@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..52eef3a 100644
+index bc240a0..6db4390 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,81 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,83 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -153,6 +153,8 @@ index bc240a0..52eef3a 100644
 +wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
 +wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
 +wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
++wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
++wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
 +wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
 +wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
@@ -15447,6 +15449,471 @@ index 0000000..1b07aba
 ++    }
 +     return g_test_run();
 + }
+diff --git a/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch b/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
+new file mode 100644
+index 0000000..5d4abb7
+--- /dev/null
++++ b/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
+@@ -0,0 +1,252 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt the CPU in FreeBSD's idle loop on sun4u
++
++FreeBSD 12.4 on sun4u spins in its idle loop and keeps a host core at
++100% for as long as the VM runs: the ULE scheduler's idle thread
++(sched_idletd()) calls cpu_idle(), which is empty on sparc64.
++
++The translator recognises the call in sched_idletd() as gcc 4.2 lays it
++out (FreeBSD 12.4-RELEASE GENERIC, at 0xc068f230): tdq_cpu_idle set,
++a membar, the test of tdq_load that branches to the call when it is 0,
++tdq_cpu_idle cleared again on both ways, the registers checked against
++each other. The word is tdq_load.
++
++Two things differ from the kernels 0042 handles:
++
++- FreeBSD's kernel runs at TL 1 (the user process's context stays in
++  the primary context register), so its idle loop is halted at TL 1;
++  the other kernels are still halted at TL 0 only.
++- Between two calls the loop looks for work to steal on other CPUs and
++  may spin for it itself (sched_idlespins), longer than the 20 us that
++  the 100 us poll allows between rounds, so the poll never ended and
++  the CPU was never halted. The loop is halted at the first call
++  instead; once woken, the call and one round of the loop run before
++  the next halt, as after a wake at the poll.
++
++The helper takes these as flags of the kernel (SPARC64_IDLE_TL1,
++SPARC64_IDLE_NO_POLL). -trace sparc64_idle_match shows "FreeBSD".
++
++An idle FreeBSD 12.4 at the shell then uses 8.7% of a host core
++instead of 105-107%; ten "sleep 1", the guest clock and a CPU-bound
++job are as before.
++---
++ target/sparc/cpu.h          |  4 +++
++ target/sparc/helper.h       |  2 +-
++ target/sparc/sparc64_idle.c | 40 +++++++++++++++++----
++ target/sparc/translate.c    | 71 ++++++++++++++++++++++++++++++++++++-
++ 4 files changed, 108 insertions(+), 9 deletions(-)
++
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 269efc5..d3d2bce 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -583,7 +583,11 @@ struct CPUArchState {
++     bool idle_halt;
++     int64_t idle_halt_since;    /* when the loop first found no work */
++     int64_t idle_halt_last;     /* when the loop last found no work */
+++    bool idle_halted;           /* halted there (SPARC64_IDLE_NO_POLL) */
++ #endif
+++/* What helper_sparc64_idle() is told about the kernel (sparc64_idle.c) */
+++#define SPARC64_IDLE_TL1        1   /* it runs its idle loop at TL 1 */
+++#define SPARC64_IDLE_NO_POLL    2   /* its loop has polled before the call */
++     uint32_t softint;
++ #define SOFTINT_TIMER   1
++ #define SOFTINT_STIMER  (1 << 16)
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 6cb1b0d..4440cf1 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -13,7 +13,7 @@ DEF_HELPER_3(solaris_idle_mp, void, env, tl, tl)
++ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++ #ifndef CONFIG_USER_ONLY
++-DEF_HELPER_5(sparc64_idle, void, env, tl, tl, tl, tl)
+++DEF_HELPER_6(sparc64_idle, void, env, tl, tl, tl, tl, tl)
++ DEF_HELPER_4(sparc64_idle_linux, void, env, tl, tl, tl)
++ #endif
++ DEF_HELPER_2(wrpstate, void, env, tl)
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index d484a1d..a71a79f 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -9,9 +9,10 @@
++  * the kernels that run on QEMU's sun4u has a way to do it there. Solaris
++  * and illumos only halt an idle CPU through cpu_halt_cpu(), which only the
++  * SPARC64-VI module provides; NetBSD and Linux only yield to the
++- * hypervisor on sun4v, and OpenBSD's sleep instruction is patched in only
++- * on CPUs with several strands. So an idle guest spins in its idle loop,
++- * and keeps a host core busy for as long as the VM runs.
+++ * hypervisor on sun4v, OpenBSD's sleep instruction is patched in only
+++ * on CPUs with several strands, and FreeBSD's cpu_idle() is empty on
+++ * sparc64. So an idle guest spins in its idle loop, and keeps a host core
+++ * busy for as long as the VM runs.
++  *
++  * The translator recognises the idle loops of the guests below by the
++  * instructions around one call in them (gen_sparc64_idle() in
++@@ -45,6 +46,21 @@
++  *     call (gcc, Tribblix), the helper follows it again from the CPU
++  *     structure.
++  *
+++ *   FreeBSD 12 sched_idletd() (ULE), with one CPU:
+++ *       if (tdq->tdq_load == 0) {
+++ *           tdq->tdq_cpu_idle = 1;
+++ *           if (tdq->tdq_load == 0)
+++ *               cpu_idle(busy);               <- here
+++ *           tdq->tdq_cpu_idle = 0;
+++ *       }
+++ *     cpu_idle() does nothing on sparc64; the word is tdq_load. FreeBSD's
+++ *     kernel runs at TL 1 (the user's context stays in the primary
+++ *     context register), so the loop is halted there at TL 1. Between two
+++ *     calls the loop looks for work to steal and may spin for it itself
+++ *     (sched_idlespins), more than the 20 us that sparc64_idle_polled()
+++ *     allows between rounds, so it is halted at the first call; woken,
+++ *     the call and one round of the loop run before the next halt.
+++ *
++  * At the call helper_sparc64_idle() halts the CPU when the word is 0,
++  * interrupts are enabled at level 0 and none is pending: the call is
++  * where the kernel would stop the processor if it could. QEMU's sun4u has
++@@ -145,11 +161,13 @@ static bool sparc64_idle_read(CPUSPARCState *env, target_ulong addr,
++  * The guest is at the call in its idle loop (pc) and the 4-byte word at
++  * addr, or with indirect at off past the pointer at addr, says whether
++  * there is work. Halt until the next interrupt when there is none, and go
++- * on at the call then.
+++ * on at the call then. kernel: SPARC64_IDLE_TL1 when the kernel runs its
+++ * idle loop at TL 1 rather than 0, SPARC64_IDLE_NO_POLL when the loop has
+++ * polled for work itself before the call (FreeBSD both).
++  */
++ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++                           target_ulong addr, target_ulong indirect,
++-                          target_ulong off)
+++                          target_ulong off, target_ulong kernel)
++ {
++     CPUState *cs = env_cpu(env);
++     uint64_t val;
++@@ -158,7 +176,8 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++      * Interrupts are enabled at level 0 and nothing is pending: no
++      * interrupt, interrupt vector or soft interrupt
++      */
++-    if (!(env->pstate & PS_IE) || env->psrpil || env->tl ||
+++    if (!(env->pstate & PS_IE) || env->psrpil ||
+++        env->tl > !!(kernel & SPARC64_IDLE_TL1) ||
++         cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++         (env->ivec_status & 0x20) || env->softint || env->pil_in) {
++         return;
++@@ -172,7 +191,14 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++     if (!sparc64_idle_read(env, addr, 4, &val) || val) {
++         return;
++     }
++-    if (!sparc64_idle_polled(env)) {
+++    if (kernel & SPARC64_IDLE_NO_POLL) {
+++        /* Woken: the call and the loop run once before the next halt */
+++        if (env->idle_halted) {
+++            env->idle_halted = false;
+++            return;
+++        }
+++        env->idle_halted = true;
+++    } else if (!sparc64_idle_polled(env)) {
++         return;
++     }
++ 
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 3f5aa5d..7eef12f 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6545,6 +6545,71 @@ static bool s64_idle_solaris7(const uint32_t *w, target_ulong pc,
++     return true;
++ }
++ 
+++/* stw %rd, [%rs1 + simm13] */
+++static bool s64_stw(uint32_t w, int *rs1, int32_t *off, int *rd)
+++{
+++    if (extract32(w, 30, 2) != 3 || extract32(w, 19, 6) != 4 ||
+++        !extract32(w, 13, 1)) {
+++        return false;
+++    }
+++    *rs1 = S64_RS1(w);
+++    *off = sextract32(w, 0, 13);
+++    *rd = S64_RD(w);
+++    return true;
+++}
+++
+++/*
+++ * FreeBSD 12, sched_idletd() (ULE) as gcc 4.2 lays it out
+++ * (w[S64_IDLE_BEFORE] is the call):
+++ *
+++ *        st    %a, [%tdq + cpu_idle]          tdq_cpu_idle = 1
+++ *        membar ...
+++ *        ld    [%tdq + load], %x
+++ *        cmp   %x, 0
+++ *        be    idle
+++ *         ...
+++ *        clr   [%tdq + cpu_idle]
+++ *        b     top
+++ *         nop
+++ *  idle: five words that compute cpu_idle()'s argument
+++ *        call  cpu_idle                       <- here
+++ *         ...
+++ *        clr   [%tdq + cpu_idle]
+++ *
+++ * The word is tdq_load.
+++ */
+++static bool s64_idle_freebsd(const uint32_t *w, target_ulong pc,
+++                             S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t, top;
+++    int tdq, r, x, x2, i;
+++    int32_t flag, off2;
+++
+++    if (extract32(c[0], 30, 2) != 1 ||
+++        !s64_stw(c[-14], &tdq, &flag, &r) || r == 0 ||
+++        (c[-13] & 0xffffff80) != 0x8143e000 ||          /* membar */
+++        !s64_lduw(c[-12], &r, &iw->off, &x) || r != tdq ||
+++        !s64_cmp0(c[-11], &x2) || x2 != x ||
+++        !s64_bcc(c[-10], pc - 40, S64_BE, &t) || t != pc - 20 ||
+++        !s64_stw(c[-8], &r, &off2, &x2) || r != tdq || off2 != flag ||
+++        x2 != 0 ||
+++        !s64_bcc(c[-7], pc - 28, S64_BA, &top) || c[-6] != S64_NOP ||
+++        top >= pc - 56 || pc - top > 4 * 512 ||
+++        !s64_stw(c[2], &r, &off2, &x2) || r != tdq || off2 != flag ||
+++        x2 != 0 || tdq == 0) {
+++        return false;
+++    }
+++    /* Nothing between the test and the call writes %tdq */
+++    for (i = -9; i < 0; i++) {
+++        if ((i == -9 || i >= -5) && S64_RD(c[i]) == tdq) {
+++            return false;
+++        }
+++    }
+++    iw->reg = tdq;
+++    return true;
+++}
+++
++ /* cmp %rs1, 3 (subcc %rs1, 3, %g0) */
++ static bool s64_cmp3(uint32_t w, int *rs1)
++ {
++@@ -6704,6 +6769,7 @@ typedef struct Sparc64IdleLoop {
++     bool (*match)(const uint32_t *w, target_ulong pc, S64IdleWord *iw);
++     bool linux_loop;    /* helper_sparc64_idle_linux(), at %pil pil */
++     int pil;
+++    int flags;          /* SPARC64_IDLE_TL1, SPARC64_IDLE_NO_POLL */
++ } Sparc64IdleLoop;
++ 
++ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++@@ -6711,6 +6777,8 @@ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
++     { "Solaris 7/8", s64_idle_solaris7 },
+++    { "FreeBSD", s64_idle_freebsd, false, 0,
+++      SPARC64_IDLE_TL1 | SPARC64_IDLE_NO_POLL },
++     { "Linux", s64_idle_linux, true, 14 },
++     { "Linux 3.2", s64_idle_linux32, true, 0 },
++ };
++@@ -6770,7 +6838,8 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         } else {
++             gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
++                                     tcg_constant_tl(iw.indirect),
++-                                    tcg_constant_tl(iw.off2));
+++                                    tcg_constant_tl(iw.off2),
+++                                    tcg_constant_tl(l->flags));
++         }
++         return;
++     }
+diff --git a/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch b/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
+new file mode 100644
+index 0000000..1a9c865
+--- /dev/null
++++ b/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
+@@ -0,0 +1,201 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the FreeBSD idle loop on sun4u
++
++sun4u-idle-test gets FreeBSD 12's sched_idletd() layout with the cases
++of the others, run at TL 1 as FreeBSD's kernel runs (the boot PROM now
++has a trap table for TL>0 too, for the tick taken there). A new case,
++tl-up, runs each loop one trap level above where its kernel idles (TL 1,
++FreeBSD TL 2): the CPU must not halt there. The FreeBSD loop counts a
++round before it starts, as the CPU halts at its first idle call.
++
++Without the previous patch freebsd/idle fails (the loop goes on
++counting); with the FreeBSD layout halted at TL 0 only it fails too. 70
++cases.
++---
++ tests/qtest/sun4u-idle-test.c | 106 +++++++++++++++++++++++++---------
++ 1 file changed, 79 insertions(+), 27 deletions(-)
++
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index 151465b..d838df3 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -2,15 +2,15 @@
++  * QTest: halting the CPU in the idle loop of a guest kernel on sun4u
++  *
++  * A boot PROM runs a loop laid out as the idle loop of NetBSD, OpenBSD,
++- * Solaris 10, Tribblix (illumos built with gcc) or Solaris 7 and 8 on sun4u,
++- * and counts its rounds in RAM in the function the loop calls. With the
++- * word that says there is work at 0, interrupts enabled at level 0 and
++- * none pending, QEMU halts the CPU at that call; with no interrupt to
++- * come, the count stops. It must keep going with idle-halt=off, with
++- * work, with interrupts disabled and at interrupt level 15. With a tick
++- * interrupt every millisecond, each tick must wake the CPU, its handler
++- * must run and the loop must go on after it, with far fewer rounds than
++- * with idle-halt=off.
+++ * Solaris 10, Tribblix (illumos built with gcc), Solaris 7 and 8 or
+++ * FreeBSD 12 (at TL 1, as its kernel runs) on sun4u, and counts its rounds
+++ * in RAM in the function the loop calls. With the word that says there is
+++ * work at 0, interrupts enabled at level 0 and none pending, QEMU halts
+++ * the CPU at that call; with no interrupt to come, the count stops. It must
+++ * keep going with idle-halt=off, with work, with interrupts disabled and
+++ * at interrupt level 15. With a tick interrupt every millisecond, each
+++ * tick must wake the CPU, its handler must run and the loop must go on
+++ * after it, with far fewer rounds than with idle-halt=off.
++  *
++  * Linux's arch_cpu_idle() (as Linux 7.3, 6.1 and 7.0 lay it out) is
++  * called with interrupts disabled at level 14: the CPU must halt there,
++@@ -53,12 +53,12 @@
++ #define FUNC            (CODE + 0x1f0)  /* the called functions */
++ #define TBA             (0x8000 / 4)
++ #define TT_TICK         0x4e            /* interrupt level 14 */
++-#define PROM_WORDS      (TBA + 0x200 * 8)
+++#define PROM_WORDS      (TBA + 0x400 * 8)   /* the TL 0 and TL>0 tables */
++ 
++ #define NOP             0x01000000
++ 
++-enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX32, LINUX73, LINUX61,
++-       LINUX70 };
+++enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, FREEBSD, LINUX32, LINUX73,
+++       LINUX61, LINUX70 };
++ 
++ #define IS_LINUX(k)     ((k) >= LINUX73)
++ 
++@@ -122,8 +122,15 @@ typedef struct IdleCase {
++     uint32_t pil;
++     bool tick;          /* a tick interrupt every millisecond */
++     bool halts;
+++    bool tl_up;         /* the loop one trap level above its kernel's */
++ } IdleCase;
++ 
+++/* The trap level a kernel idles at: FreeBSD's kernel runs at TL 1 */
+++static int kernel_tl(int k)
+++{
+++    return k == FREEBSD;
+++}
+++
++ #define PS_PEF_PRIV_IE  0x16
++ #define PS_PEF_PRIV     0x14
++ 
++@@ -360,6 +367,41 @@ static int write_loop(uint32_t *p, int k, uint32_t pil)
++         p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
++         p[n++] = NOP;
++         break;
+++    case FREEBSD:
+++        /*
+++         * FreeBSD 12 sched_idletd(): the tdq at %l4, tdq_load at + 0,
+++         * tdq_cpu_idle at + 0x8c; with work, b top goes through out:,
+++         * which counts the round. cpu_idle() at FUNC counts it too. The
+++         * CPU halts at the first idle call (no poll first), so a round is
+++         * counted before the loop: the test waits for one.
+++         */
+++        p[n] = call_to(LOOP + n, FUNC); n++;
+++        p[n++] = NOP;
+++        p[n] = bcc_to(BA, LOOP + n, LOOP + 6); n++;
+++        p[n++] = NOP;
+++        p[n] = call_to(LOOP + n, FUNC); n++;         /* out: */
+++        p[n++] = NOP;
+++        p[n++] = 0x82102001;            /* top: mov 1, %g1 */
+++        p[n++] = 0xc225208c;            /* st %g1, [%l4 + 0x8c] */
+++        p[n++] = 0x8143e00f;            /* membar #Sync-ish (0xf) */
+++        p[n++] = 0xc2052000;            /* ld [%l4], %g1 tdq_load */
+++        p[n++] = 0x80a06000;            /* cmp %g1, 0 */
+++        p[n] = bpcc_icc_to(BE, LOOP + n, LOOP + 16); n++;   /* be,pn */
+++        p[n++] = 0x852c2002;            /*  sll %l0, 2, %g2 */
+++        p[n++] = 0xc025208c;            /* clr [%l4 + 0x8c] */
+++        p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP + 4); n++;    /* b top */
+++        p[n++] = NOP;
+++        p[n++] = 0x86102800;            /* idle: mov 0x800, %g3 */
+++        p[n++] = 0xc200e010;            /* ld [%g3 + 0x10], %g1 */
+++        p[n++] = 0x80a08001;            /* cmp %g2, %g1 */
+++        p[n++] = 0x90102000;            /* clr %o0 */
+++        p[n++] = 0x9166a001;            /* movg %xcc, 1, %o0 */
+++        p[n] = call_to(LOOP + n, FUNC); n++;         /* cpu_idle */
+++        p[n++] = 0x913a2000;            /*  sra %o0, 0, %o0 */
+++        p[n++] = 0xc025208c;            /* clr [%l4 + 0x8c] */
+++        p[n] = bcc_to(BA, LOOP + n, LOOP + 6); n++;
+++        p[n++] = NOP;
+++        break;
++     }
++     /* out: the loop found work; count the round and go round again */
++     p[n] = call_to(LOOP + n, FUNC); n++;
++@@ -382,7 +424,7 @@ static char *write_prom(int k, const IdleCase *t)
++     uint32_t *be = g_new0(uint32_t, PROM_WORDS);
++     uint32_t code[64];
++     char *path = NULL;
++-    int fd, i, n = 0;
+++    int fd, i, j, n = 0;
++ 
++     /* Power-on reset at + 0x20: ba CODE */
++     be[8] = bcc_to(BA, 8, CODE);
++@@ -418,7 +460,7 @@ static char *write_prom(int k, const IdleCase *t)
++             code[n++] = arm_tick[i];
++         }
++     }
++-    code[n++] = 0x8f902000;                         /* wrpr %g0, 0, %tl */
+++    code[n++] = 0x8f902000 | (kernel_tl(k) + t->tl_up); /* wrpr %g0, tl, %tl */
++     code[n++] = 0x91902000 | t->pil;                /* wrpr %g0, pil, %pil */
++     /* Then %g6 (thread_info) in the normal globals, with PSTATE.AG off */
++     code[n++] = 0x8d902000 | t->pstate;             /* wrpr .., %pstate */
++@@ -438,23 +480,31 @@ static char *write_prom(int k, const IdleCase *t)
++     be[FUNC + 3] = 0x81c3e008;                      /* retl */
++     be[FUNC + 4] = 0x90102000;                      /*  mov 0, %o0 */
++ 
++-    /* Trap table at TL 0: store the trap type at RAM_TRAP and stop */
++-    for (i = 0; i < 0x200; i++) {
+++    /*
+++     * Trap tables at TL 0 and TL>0: store the trap type (+ 0x200 at TL>0)
+++     * at RAM_TRAP and stop
+++     */
+++    for (i = 0; i < 0x400; i++) {
++         be[TBA + 8 * i] = 0x84102000 | i;           /* mov tt, %g2 */
++         be[TBA + 8 * i + 1] = 0xc4702818;           /* stx %g2, [0x818] */
++         be[TBA + 8 * i + 2] = 0x10800000;           /* b . */
++         be[TBA + 8 * i + 3] = NOP;
++     }
++-    /* The tick: count it, clear TICK_INT, arm the next, retry */
++-    i = TBA + 8 * TT_TICK;
++-    be[i++] = 0xc2582810;                           /* ldx [0x810], %g1 */
++-    be[i++] = 0x82006001;                           /* inc %g1 */
++-    be[i++] = 0xc2702810;                           /* stx %g1, [0x810] */
++-    be[i++] = 0xab802001;                           /* wr 1, %clear_softint */
++-    for (n = 0; n < ARRAY_SIZE(arm_tick); n++) {
++-        be[i++] = arm_tick[n];
+++    /*
+++     * The tick, taken at TL 0 or (FreeBSD) TL 1: count it, clear TICK_INT,
+++     * arm the next, retry
+++     */
+++    for (j = 0; j < 2; j++) {
+++        i = TBA + 8 * (TT_TICK + 0x200 * j);
+++        be[i++] = 0xc2582810;                       /* ldx [0x810], %g1 */
+++        be[i++] = 0x82006001;                       /* inc %g1 */
+++        be[i++] = 0xc2702810;                       /* stx %g1, [0x810] */
+++        be[i++] = 0xab802001;                       /* wr 1, %clear_softint */
+++        for (n = 0; n < ARRAY_SIZE(arm_tick); n++) {
+++            be[i++] = arm_tick[n];
+++        }
+++        be[i++] = 0x83f00000;                       /* retry */
++     }
++-    be[i++] = 0x83f00000;                           /* retry */
++ 
++     for (i = 0; i < PROM_WORDS; i++) {
++         be[i] = cpu_to_be32(be[i]);
++@@ -526,8 +576,8 @@ static void test_idle(const void *data)
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++-        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "linux-3.2",
++-        "linux-7.3", "linux-6.1", "linux-7.0"
+++        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "freebsd",
+++        "linux-3.2", "linux-7.3", "linux-6.1", "linux-7.0"
++     };
++     static const IdleCase cases[] = {
++         { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, true },
++@@ -536,6 +586,8 @@ int main(int argc, char **argv)
++         { "noint", "sun4u", 0, PS_PEF_PRIV, 0, false, false },
++         { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
+++        /* not one trap level above where the kernel idles (TL 1, or 2) */
+++        { "tl-up", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, false, true },
++     };
++     /*
++      * Linux: pil is what the idle loop disables interrupts to (14); work
 diff --git a/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
 new file mode 100644
 index 0000000..a4884fb
