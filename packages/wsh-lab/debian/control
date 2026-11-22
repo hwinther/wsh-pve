@@ -17,7 +17,8 @@ Depends: fonts-dejavu-core,
          python3-yaml,
          ${misc:Depends},
          ${python3:Depends},
-Suggests: python3-venv,
+Suggests: git,
+          python3-venv,
           qemu-server,
           mtools,
           tesseract-ocr,
@@ -30,11 +31,17 @@ Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
  a Proxmox VE node, from install media the user provides, and leaves a powered
  off VM with known, publicly documented login details.
  .
- Commands: wsh-lab (install, targets, media, run, serve, ...) and wsh-lab-mcp,
- an MCP server that lets an AI assistant see and type on an allowed VM. The MCP
- server's Python SDK is not packaged in Debian: wsh-lab-mcp --setup installs it
- into a venv under /var/lib/wsh-lab from the pinned, hash-checked requirements
- in this package.
+ Commands: wsh-lab (install, targets, media, run, serve, ...), wsh-sun-proms
+ and wsh-lab-mcp, an MCP server that lets an AI assistant see and type on an
+ allowed VM. The MCP server's Python SDK is not packaged in Debian:
+ wsh-lab-mcp --setup installs it into a venv under /var/lib/wsh-lab from the
+ pinned, hash-checked requirements in this package.
+ .
+ wsh-sun-proms installs Sun boot PROM images you are entitled to use, from a
+ source you provide (a directory, an archive, a git repository with your own
+ credentials, or an HTTPS URL), into /usr/share/kvm, where QEMU loads firmware
+ from. Each file is checked against a manifest of known images (name, size,
+ SHA-256); no images come with the package.
  .
  The package works with whatever qemu-server is installed and depends on none
  of the wsh-pve packages. tesseract-ocr is needed for targets driven on a

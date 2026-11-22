@@ -7,7 +7,8 @@
 # apt installs it with its dependencies; wsh-lab --version/--help, targets, media --dir, the refusal
 # off a PVE node, mirror sync/list/prune and a description file's init/import/apply/plan and timer units
 # (on a storage.cfg of its own) work; the catalogue's and the
-# mirror tool's unit tests pass against the installed copy; wsh-lab-mcp explains its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
+# mirror tool's unit tests pass against the installed copy; wsh-sun-proms's unit tests pass and it
+# installs, verifies and removes fake PROMs (a test manifest) in /usr/share/kvm; wsh-lab-mcp explains its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
 # --check from the venv. Then `apt purge` must leave nothing of the package behind: no file of it, no
 # venv, no __pycache__, no /var/lib/wsh-lab. Exit 0 when everything passed.
 set -eu
@@ -108,6 +109,53 @@ rm -r /tmp/nas /tmp/mirror /tmp/units /tmp/storage.cfg /tmp/mirror.out
 step "the catalogue's and the mirror tool's unit tests against the installed copy"
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_targets.py')
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_mirror.py')
+
+step "wsh-sun-proms: its unit tests against the installed copy"
+(cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/sun-proms -p 'test_sun_proms.py')
+
+step "wsh-sun-proms: install, status, verify, remove with fake PROMs and a test manifest"
+wsh-sun-proms --help > /dev/null
+wsh-sun-proms status | tee /tmp/proms.out
+for n in ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin; do
+	grep -q "^  $n .* missing" /tmp/proms.out || fail "status doesn't list $n as missing"
+done
+mkdir -p /tmp/proms/sub
+printf 'fake SS-5 PROM\n' > /tmp/proms/ss5.bin
+printf 'fake LX PROM\n' > /tmp/proms/sub/LX-renamed.rom
+printf 'something else\n' > /tmp/proms/ss20_v2.25_rom
+python3 - /tmp/proms /tmp/proms-manifest.json <<'EOF'
+import hashlib, json, sys
+src, out = sys.argv[1], sys.argv[2]
+files = {"ss5.bin": "ss5.bin", "lx.bin": "sub/LX-renamed.rom", "ss20_v2.25_rom": None}
+proms = []
+for name, path in files.items():
+    data = open(f"{src}/{path}", "rb").read() if path else b"the right SS-20 PROM\n"
+    proms.append({"name": name, "machine": "test", "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(), "description": "fake"})
+json.dump({"proms": proms}, open(out, "w"))
+EOF
+export WSH_SUN_PROMS_MANIFEST=/tmp/proms-manifest.json
+rc=0
+wsh-sun-proms install --source /tmp/proms > /tmp/proms.out 2>&1 || rc=$?
+cat /tmp/proms.out
+[ "$rc" = 1 ] && grep -q 'refused: ss20_v2.25_rom' /tmp/proms.out || fail "a differing ss20_v2.25_rom wasn't refused (rc $rc)"
+[ "$(stat -c '%a %U' /usr/share/kvm/ss5.bin)" = "644 root" ] || fail "ss5.bin not installed 0644 root"
+cmp -s /tmp/proms/sub/LX-renamed.rom /usr/share/kvm/lx.bin || fail "lx.bin wasn't found under another name"
+[ ! -e /usr/share/kvm/ss20_v2.25_rom ] || fail "the refused file was installed"
+wsh-sun-proms install --source /tmp/proms ss5.bin lx.bin | tee /tmp/proms.out
+grep -q 'ss5.bin  *already installed' /tmp/proms.out || fail "a second install isn't idempotent"
+wsh-sun-proms verify ss5.bin lx.bin
+wsh-sun-proms status | tee /tmp/proms.out
+grep -q '^  lx.bin .* ok  *wsh-sun-proms, from /tmp/proms' /tmp/proms.out || fail "status doesn't name the source"
+rc=0
+wsh-sun-proms verify --all > /dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || fail "verify --all passed without ss20_v2.25_rom"
+wsh-sun-proms remove | tee /tmp/proms.out
+[ -z "$(ls -A /usr/share/kvm)" ] || fail "remove left files in /usr/share/kvm"
+[ ! -e /var/lib/wsh-sun-proms ] || fail "remove left its record behind"
+unset WSH_SUN_PROMS_MANIFEST
+rmdir /usr/share/kvm
+rm -r /tmp/proms /tmp/proms-manifest.json /tmp/proms.out
 
 step "wsh-lab-mcp without its venv"
 rc=0
