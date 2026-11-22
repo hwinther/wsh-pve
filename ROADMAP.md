@@ -656,9 +656,14 @@ merged; what is left of them is item 2 under "Next".
      post at the self-test's failing and passing runs. uClibc-ng for sparc32 is left for later
      (Buildroot, as item 10).
   3. *The emulation ladder*: one compute loop native, under KVM, TCG, TCI and TCI-in-Wasm, and nested
-     (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab.
+     (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab. The
+     page exists (guide "The emulation ladder"); native, KVM and the nested rung are not measured yet.
   4. *ASCII Mandelbrot or a ray tracer on the serial console* of all three architectures at once,
      recorded with asciinema and timed. wisp's shell has the Mandelbrot (`mandel` with `wisp=shell`).
+     Recorded 2026-11-22: `wisp-mandel-ss5.cast`, `-sun4u.cast` and `-pc.cast` (boot, `mandel`,
+     `poweroff`, real time, 3.7-4.7 s each; `e2e/wisp/record.py`), shown in the guide "wisp",
+     "Mandelbrot on three architectures"; the owner uploads them to the `media` release. A ray
+     tracer and a side-by-side view are not done.
   5. *An AI drives a SPARCstation*: a recording of an agent using `sparc-lab-mcp` to log in to
      Solaris 2.6 or SunOS 4.1.4, compile a program with the period compiler and run it.
   6. *3dfx in the browser*: a Glide demo in Windows 98 rendered offscreen and shown in PVE's noVNC
@@ -672,7 +677,10 @@ merged; what is left of them is item 2 under "Next".
      published 1995 figures for real machines (Dhrystone, nbench from the lab's bench), with the LX
      on its own PROM as a curiosity (results only, no PROM).
   9. *A living museum*: a page to pick a machine and OS (SunOS, Solaris 2.x, NetBSD, OpenBSD,
-     Debian 4, Red Hat 6.2) and watch its install and first boot from the existing recordings.
+     Debian 4, Red Hat 6.2) and watch its install and first boot from the existing recordings. The
+     page exists (guide "Living museum") and now has the sun4u boots (Solaris 9, Solaris 10,
+     Tribblix), aarch64 (Alpine, through Proxmox VE) and the wisp casts (SS-5, sun4u, pc) too; only
+     the NetBSD-on-sparc64-under-PVE cast stays out (no matching first boot).
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
      a libc under wisp (Buildroot with uClibc-ng).
 

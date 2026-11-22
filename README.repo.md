@@ -31,7 +31,7 @@ $ reprepro -Vb . includedeb trixie /mnt/dev/user/qemu-server/qemu-server_8.2.2+w
 # (Key generated via: gpg --armor --output wsh-pve.gpg.key --export-options export-minimal --export 59BAC7572E734EDFBDEE1E76E977413A1BE58860)
 # (Sources file created via this guide https://wiki.debian.org/DebianRepository/SetupWithReprepro)
 
-See [setup docs](docs/src/content/docs/guides/setup.md) for consumer installation instructions.
+See [setup docs](docs/src/content/docs/guides/setup.mdx) for consumer installation instructions.
 
 ## Change password
 

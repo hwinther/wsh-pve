@@ -1,0 +1,44 @@
+---
+title: Living museum
+description: Pick a machine and an operating system and watch its install and first boot from the sparc lab's own recordings
+---
+
+import LivingMuseum from "../../../components/LivingMuseum.astro";
+
+Every exhibit below is a real run of the [sparc lab](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc)
+against the packaged QEMU, most of them through Proxmox VE: pick a machine, pick an operating
+system, and watch it get installed and boot for the first time. There is no simulation here, only
+the lab's own [terminal and framebuffer recordings](/guides/sparc-recordings/), picked out by machine
+and OS instead of read top to bottom.
+
+Not every machine has run every OS — the SPARCserver 600MP only ever got SunOS 4.1.2, and Solaris
+2.1 only ran on the SS-10. Where a combination hasn't been recorded, the picker says so and offers
+what has. FreeDOS 1.4 on an x86 PC (VGA text, time-lapse from the gallery) is there too; see the
+[DOS guide](/guides/dos/) for how those VMs are set up. Solaris 9, Solaris 10 and Tribblix (illumos)
+only ever ran on sun4u, and only as a boot of an already-installed disk — their Web Start and live-CD
+installs are too long to record afresh for a check. [wisp](/guides/wisp/), the lab's tiny nolibc test
+kernel, has no OS or installer at all: it boots straight from `-kernel` on three machines (SS-5,
+sun4u and the PC) to an ASCII Mandelbrot set and a power-off, timed in real time. Alpine Linux on
+aarch64 is there too, but as a VM Proxmox VE started directly rather than one of the lab's own
+install targets, so it has no "Try it yourself" line.
+
+<LivingMuseum />
+
+Each exhibit that comes from a [lab install target](/guides/lab-install/) has a "Try it yourself"
+line: the exact `wsh-lab install <target> --check` command and how long it takes, so a node of your
+own can make the same VM. Every target's root password is `wshlab` unless you pass
+`--root-password`, written in the lab's documentation on purpose — these are throwaway lab VMs, so
+change the password before one is reachable from anywhere untrusted (the [lab install
+guide](/guides/lab-install/) has the full warning, "Publicly known passwords"). wisp needs no
+Proxmox VE node and no install media, so its "Try it yourself" line is a [wisp
+guide](/guides/wisp/) `docker run` command instead, straight from `e2e/wisp/README.md`. Alpine on
+aarch64 has no "Try it yourself" line at all: it isn't a target the tool installs, just a VM
+Proxmox VE started directly.
+
+## Seeing more
+
+This page shows the install and the first boot. The [full recordings gallery](/guides/sparc-recordings/)
+has one extra run this exhibits leave out: NetBSD's install CD on sparc64 under Proxmox VE, which
+only reaches the sysinst shell and has no matching first boot recorded. The [lab install
+targets](/guides/lab-install/) guide has the full catalogue, the media each target needs and what a
+finished VM looks like.

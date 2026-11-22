@@ -123,6 +123,14 @@ reboot: Power down
   PC, the SS-10 and the SS-20) and adds `disk`, `net` and `smp` before `poweroff`. With `--reboot`
   the script ends with `reboot` instead of `poweroff`: the answer `restarting`, no kernel panic
   (`Reboot failed!`), and QEMU's exit code 0 (`-no-reboot` turns the reset into an exit).
+- `record.py --arch A --out F.cast [command ...]` records the shell as an asciinema v2 cast in real
+  time: the same QEMU command line, each command (default `mandel`) typed at the prompt a
+  character at a time, then `poweroff`, with a marker per step (the sparc lab's `CastWriter`).
+  The guide's "Mandelbrot on three architectures" embeds `wisp-mandel-ss5.cast`,
+  `wisp-mandel-sun4u.cast` and `wisp-mandel-pc.cast`, made with it from the `wisp-test-kit`
+  kernels (`--kernel <kit>/<arch>/kernel`) in `ubuntu:24.04` and uploaded to the `media` release by
+  hand (not in git): 4.7, 4.6 and 3.7 s from starting QEMU to its exit, the prompt after 2.2, 2.2
+  and 1.3 s; `mandel` itself 97, 13 and 6 ms.
 
 ## Tier 2: disk, network, SMP
 
@@ -241,7 +249,8 @@ in `out/<arch>/sysroot.tar.xz`), 7 MB, from the `wisp-test-kit` release, which
 also tests the action on pull requests that touch `e2e/wisp/` or the action, with the kit built in
 the run: an endianness bug (`examples/endian.c`, exit code 1 on sparc) and an alignment bug
 (`examples/align.c`, `SIGBUS` on sparc) that pass on x86_64, their fixes (`-DFIXED`) that pass
-everywhere, and the arguments on sparc (`tests/args.c`).
+everywhere, the arguments on sparc (`tests/args.c`) and 64-bit division on all three
+(`tests/div64.c`).
 
 Measured 2026-11-22 on the lab host (load 8 to 10 on 14 threads) in a fresh `ubuntu:24.04`
 container limited to 2 CPUs, with the action's script and a locally built kit: all 11 cases of the
@@ -265,6 +274,14 @@ Earlier passes took 1.4 to 3.7 s per boot (load 8 to 11) and 13 to 32 s for the 
 sparc cases also pass in `ubuntu:26.04` (QEMU 10.2.1, gcc 15) as in 24.04 (QEMU 8.2.2, gcc 13).
 The kit's download (`kit-url`) was not tested, as the release doesn't exist yet.
 
+64-bit division on sparc32: the action links `libgcc-sparc32.c` there, its own `__udivdi3`,
+`__divdi3`, `__umoddi3`, `__moddi3`, `__udivmoddi4` and `__divmoddi4` (shift-subtract long
+division, with the V8 `udiv` when both operands fit in 32 bits; division by zero traps with
+`SIGFPE` as on the other two). Checked 2026-11-22 in `ubuntu:24.04` (2 CPUs) on the lab host
+with the published kit: `tests/div64.c` (12 unsigned and signed cases: negative operands,
+`INT64_MIN`, divisors above 32 bits) passes on sparc32, sparc64 and x86_64, 1.5 to 2.2 s per
+boot, and the 11 other cases give their results as before.
+
 Found on the way:
 
 - A program built with nolibc on sparc needs the same `_start` fix as PID 1: the action renames
@@ -281,7 +298,8 @@ Found on the way:
 - Ubuntu's 32-bit sparc libgcc and glibc (`lib32gcc-*-dev-sparc64-cross`,
   `libc6-dev-sparc-sparc64-cross`) are V8+ (`EM_SPARC32PLUS`, V9 instructions such as `bne %icc`
   and `return`), even with `-mcpu=v8`, and the sparc32 kernel refuses such a binary (`ENOEXEC`).
-  So nolibc on sparc32 stays without libgcc: no 64-bit division (`__udivdi3`). A static glibc
+  So nolibc on sparc32 stays without libgcc; the action brings the 64-bit division helpers
+  itself (`libgcc-sparc32.c`). A static glibc
   binary for sparc64 (`libc6-dev-sparc64-cross`) runs in the tier-1 kernel.
 
 ## Build
