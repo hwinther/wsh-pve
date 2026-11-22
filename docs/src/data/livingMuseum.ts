@@ -1,9 +1,16 @@
 // Data for the living museum picker (components/LivingMuseum.astro, guides/living-museum.mdx):
 // demo idea 9 in ROADMAP.md ("pick a machine and OS ... and watch its install and first boot from
-// the existing recordings"). Every fact here comes from one of four places: guides/sparc-recordings.mdx
-// (the recordings themselves), guides/dos.md, guides/lab-install.md (the "Try it yourself"
-// commands and timings) or a README under e2e/. Add a scenario when sparc-recordings.mdx documents
-// an install/boot pair (or a section with matching casts/videos).
+// the existing recordings"). Every fact here comes from one of these places: guides/sparc-recordings.mdx
+// and guides/wisp.mdx (the recordings themselves), guides/dos.md, guides/lab-install.md or a README
+// under e2e/ (the "Try it yourself" commands and timings). Add a scenario when sparc-recordings.mdx
+// or wisp.mdx documents an install/boot pair (or a section/subsection with matching casts/videos) -
+// that covers the sun4u-only boots (Solaris 9, Solaris 10, Tribblix m34: stored disks, no install
+// stage recorded) and wisp's Mandelbrot cast on three machines (SS-5, sun4u, pc; no installer or
+// guest OS, so tryIt is an e2e/wisp/README.md `run.py` command instead of `wsh-lab install`).
+// Alpine on aarch64, a VM Proxmox VE started directly rather than one of the lab's own install
+// targets, has no tryIt at all. Left out on purpose: the NetBSD install CD on sparc64 under PVE in
+// the same sparc-recordings.mdx section as Alpine, which only reaches the sysinst shell and has no
+// matching first boot (see guides/living-museum.mdx, "Seeing more").
 //
 // Recordings aren't in git: see components/LabCast.astro and components/LabVideo.astro for where
 // they come from and what a visitor sees when a copy of the site doesn't have them.
@@ -538,6 +545,203 @@ const scenarios: LivingMuseumScenario[] = [
     tryIt: {
       command: "wsh-lab install freedos14 --check",
       note: "about 11 minutes; VGA console, no login password (lab-install.md; dos.md)",
+    },
+  },
+  {
+    id: "sol9-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol9",
+    osLabel: "Solaris 9",
+    osFamily: "Solaris (64-bit)",
+    blurb:
+      "A boot of the stored Solaris 9 9/05 disk, installed by Web Start from the DVD: OpenBIOS " +
+      "for sparc64, the kernel, the services, login, uname, the marker, df, prtvtoc, ifconfig, " +
+      "netstat -rn and init 5. sun4u, OpenBIOS, 1024 MB, IDE disk.",
+    stages: [
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol9-boot-sun4u.cast",
+          caption: "Solaris 9 9/05 booting an installed disk, sun4u with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol9-sun4u --check",
+      note:
+        "about 70 minutes for the Web Start install; needs pve-qemu-kvm 11.1.3-2+wsh25 or later " +
+        "(OpenBIOS patches 0024 and 0025; lab-install.md)",
+    },
+  },
+  {
+    id: "sol10-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol10",
+    osLabel: "Solaris 10",
+    osFamily: "Solaris (64-bit)",
+    blurb:
+      "A boot of the stored Solaris 10 1/13 disk, installed by the text installer: OpenBIOS for " +
+      "sparc64, the kernel, the services, login, uname/prtconf/df/ifconfig and init 5. sun4u, " +
+      "OpenBIOS, 1024 MB, IDE disk.",
+    stages: [
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol10-boot-sun4u.cast",
+          caption: "Solaris 10 1/13 booting an installed disk, sun4u with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol10-sun4u --check",
+      note: "about 110 minutes; needs pve-qemu-kvm 11.1.3-2+wsh13 or later (lab-install.md)",
+    },
+  },
+  {
+    id: "tribblix-m34-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "tribblix-m34",
+    osLabel: "Tribblix m34 (illumos)",
+    osFamily: "illumos",
+    blurb:
+      "A boot of the stored Tribblix m34 disk, installed by the live CD's own installer onto a ZFS " +
+      "root: OpenBIOS, the illumos kernel, the SMF services, login, the system state and init 5. " +
+      "The run takes about 29 minutes under TCG, most of it pauses, which are cut; it plays at 2x. " +
+      "sun4u, OpenBIOS, 2048 MB, IDE disk.",
+    stages: [
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/tribblix-m34-boot-sun4u.cast",
+          caption: "Tribblix m34 (illumos) booting an installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install tribblix-m34-sun4u --check",
+      note:
+        "about 4.3 hours for the install (its login prompt alone takes 45-70 minutes importing " +
+        "service descriptions); the weekly lab matrix boot-tests a stored disk instead of " +
+        "reinstalling every run (lab-install.md)",
+    },
+  },
+  {
+    id: "alpine319-aarch64",
+    machine: "aarch64",
+    machineLabel: "aarch64 (virt)",
+    os: "alpine319",
+    osLabel: "Alpine Linux 3.19",
+    osFamily: "Alpine",
+    blurb:
+      "Not one of the sparc lab's install targets: a VM created through the Proxmox VE API and " +
+      "started by qm start, with the lab attached to its serial socket (attach mode) instead of " +
+      "driving an install. Alpine Linux 3.19 on aarch64 (the virt machine, AAVMF firmware) booting " +
+      "to a root shell.",
+    stages: [
+      {
+        label: "Boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/alpine-aarch64-pve.cast",
+          caption: "Alpine Linux 3.19 on aarch64 (virt, AAVMF) under PVE, to a root shell",
+          poster: "npt:0:8",
+        },
+      },
+    ],
+  },
+  {
+    id: "wisp-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "wisp",
+    osLabel: "wisp (test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp, the sparc lab's tiny nolibc test kernel (e2e/wisp/), booted directly with QEMU's " +
+      "-kernel: no disk, no installer, no guest OS. Its interactive shell's mandel draws an ASCII " +
+      "Mandelbrot set in fixed-point integer math, then poweroff shuts it down, all in real time. " +
+      "SS-5, OpenBIOS, serial console, 128 MB: the prompt comes up after 2.2 s and mandel itself " +
+      "takes 97 ms.",
+    stages: [
+      {
+        label: "Boot, mandel, poweroff",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-mandel-ss5.cast",
+          caption: "wisp's shell on sparc32: boot, mandel, poweroff (SS-5, OpenBIOS, serial console)",
+          poster: "npt:0:3.8",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc32 --shell',
+      note: "the prompt after 2.2 s, mandel in 97 ms, power-off by 4-5 s (e2e/wisp/README.md)",
+    },
+  },
+  {
+    id: "wisp-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "wisp",
+    osLabel: "wisp (test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "The same wisp test kernel on sparc64: boot, mandel, poweroff, in real time. sun4u, " +
+      "OpenBIOS, serial console, 256 MB: the prompt comes up after 2.2 s and mandel itself takes " +
+      "13 ms.",
+    stages: [
+      {
+        label: "Boot, mandel, poweroff",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-mandel-sun4u.cast",
+          caption: "wisp's shell on sparc64: boot, mandel, poweroff (sun4u, OpenBIOS, serial console)",
+          poster: "npt:0:3.7",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch sparc64 --shell',
+      note: "the prompt after 2.2 s, mandel in 13 ms, power-off by 4-5 s (e2e/wisp/README.md)",
+    },
+  },
+  {
+    id: "wisp-pc",
+    machine: "pc",
+    machineLabel: "x86 (i440fx)",
+    os: "wisp",
+    osLabel: "wisp (test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "The same wisp test kernel on x86_64: boot, mandel, poweroff, in real time. pc (i440fx), " +
+      "SeaBIOS, serial console, 128 MB: the prompt comes up after 1.3 s and mandel itself takes " +
+      "6 ms.",
+    stages: [
+      {
+        label: "Boot, mandel, poweroff",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-mandel-pc.cast",
+          caption: "wisp's shell on x86_64: boot, mandel, poweroff (pc, SeaBIOS, serial console)",
+          poster: "npt:0:3.0",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch x86_64 --shell',
+      note: "the prompt after 1.3 s, mandel in 6 ms, power-off by 4-5 s (e2e/wisp/README.md)",
     },
   },
 ];
