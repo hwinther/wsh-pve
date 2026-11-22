@@ -592,6 +592,23 @@ once a package has them. `submodules/SPARC.md`, "SS-20 PROM: auto-boot and the l
   MiSTer-devel/SunSparcStation20_MiSTer (`docs/rom-disassembly/ss20-obp-2.25/`), read but not
   verified on QEMU; it would mean changes to QEMU's sun4m and isn't small (`submodules/SPARC.md`,
   "SMP").
+- **SMP on sparc64 (sun4u): scoped, parked** (2026-11-22). Today `sun4u` refuses more than one CPU.
+  - **What is missing in QEMU 11.1.3:**
+    - `hw/sparc64/sun4u.c` sets `max_cpus = 1` ("XXX for now"; niagara is the same) and creates one CPU.
+    - `main_cpu_reset()` keeps a single static reset count.
+    - `ASI_UPA_CONFIG` reads 0, so every CPU would see MID 0.
+    - The interrupt dispatch registers (`ASI_INTR_W`, 0x77) are not handled: a guest's cross-call raises an MMU fault. The dispatch status (0x48) always reads "delivered".
+  - **What is missing in OpenBIOS:** it builds one CPU node, and `start-cpu` is unimplemented. There is no `SUNW,start-cpu`, `SUNW,start-cpu-by-cpuid` or `SUNW,stop-self`, and no parking for a second CPU in `entry.S`.
+  - **Already in place:** MTTCG, TSO ordering and TCG atomics for sparc64 are upstream; tick and stick are per CPU.
+  - **Machine model:** NetBSD, OpenBSD, Linux and Solaris start CPUs through those client-interface services and cross-call through 0x77/0x48 with the BUSY/NACK protocol. So a 2-4 CPU `sun4u` with the sabre (a machine that never existed) is likely enough. An Ultra 60/E450 model with a Psycho bridge isn't needed.
+  - **Steps:**
+    1. QEMU: N CPUs (the others start powered off), MID in `ASI_UPA_CONFIG`, dispatch with NACK, reset per CPU, a qtest (small to medium).
+    2. OpenBIOS: CPU nodes, parking, the start/stop services, a client interface entered from any CPU (medium, new firmware assembly, the risky part). Steps 1 and 2 together are the smallest useful step: wisp tier 2 and NetBSD 11.1 with `-smp 2`/`4`.
+    3. Idle halt on every CPU (the BSDs, Linux).
+    4. Proxmox: the profile's CPU limit, the wizard, e2e tests, a `sparc64-smp` lab matrix.
+    5. Solaris 9/10 and Tribblix: the remaining PROM services and a sun4u port of the multiprocessor idle match (`wsh/0023`) per compiler layout (medium).
+  - **Why parked:** on TCG more CPUs only help parallel CPU-bound work (sparc32 measured 1.6-2.7x throughput with 2-4 CPUs, `submodules/SPARC.md` "SMP"). Installs and interactive use, what the sparc64 profile serves, gain nothing, and the open sun4u items give more.
+  - **If picked up:** a time-boxed proof of steps 1-3 with wisp and NetBSD; go on only if NetBSD shows `hw.ncpu = 2` and passes a 30-minute soak. SMP on sun4v/`niagara` stays out of scope: it has no mondo queues, disk or network.
 - **WRP in retronet** (owner's request, 2026-11-21). Look into tenox7's Web Rendering Proxy (WRP),
   which renders modern pages as images (ISMAP/GIF) for old browsers, as a service next to the
   retronet gateway and vintagehive, so the Solaris/Netscape, Windows 9x and DOS guests can read
