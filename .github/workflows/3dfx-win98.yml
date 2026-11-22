@@ -162,3 +162,7 @@ jobs:
             fi
           fi
           docker image rm "$IMAGE" || true
+          # BuildKit never trims its build cache by itself, and the lab's builds use --no-cache, so the
+          # cache only grows (agents' builds add to it too); it filled the 63 GB Docker disk twice on
+          # 2026-11-22. Keep at most 15 GB of it.
+          docker builder prune -f --max-used-space 15GB || true

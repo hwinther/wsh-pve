@@ -236,6 +236,10 @@ jobs:
           docker run --rm -v "$(dirname "$RUN_DIR"):/runs" --entrypoint rm "$IMAGE" -rf "/runs/$(basename "$RUN_DIR")" || true
           docker image rm "$IMAGE" || true
           docker image rm "$IMAGE-pve" 2>/dev/null || true
+          # BuildKit never trims its build cache by itself, and the lab's builds use --no-cache, so the
+          # cache only grows (agents' builds add to it too); it filled the 63 GB Docker disk twice on
+          # 2026-11-22. Keep at most 15 GB of it.
+          docker builder prune -f --max-used-space 15GB || true
 
   # Opt-in (publish_media, manual runs only): the curated recordings of a run in which every case
   # passed replace those assets of the `media` release; the docs site copies the release into
