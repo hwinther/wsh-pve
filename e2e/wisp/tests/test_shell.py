@@ -126,6 +126,24 @@ class Transcript(unittest.TestCase):
         self.assertEqual(run.evaluate_shell("sparc32", raw, None)["problems"],
                          ["power-off failed", "timed out"])
 
+    def test_reboot_script(self):
+        script = shell.reboot_script(shell.SCRIPT)
+        self.assertEqual(script[:-1], shell.SCRIPT[:-1])
+        self.assertEqual(script[-1], "reboot")
+        # what the sun4u shell answers since the firmware restarts the machine (openbios 0030)
+        text = TRANSCRIPT.replace("poweroff\r\n  powering off\r\nreboot: Power down\r\n",
+                                  "reboot\r\n  restarting\r\nreboot: Restarting system\r\n")
+        answers = shell.split_transcript(text)
+        problems, _ = shell.check_answers("sparc32", script, answers, run.crc_for,
+                                          run.DEFAULT_LOOPS)
+        self.assertEqual(problems, [])
+        # before it: Linux's restart through the firmware's boot service returned
+        problems, _ = shell.check_answers("sparc32", script, shell.split_transcript(
+            text.replace("reboot: Restarting system\r\n",
+                         "Kernel panic - not syncing: Reboot failed!\r\n")),
+            run.crc_for, run.DEFAULT_LOOPS)
+        self.assertEqual(problems, ["reboot: the kernel panicked instead of restarting"])
+
     def test_command_line(self):
         cmd = run.qemu_command("sparc32", kernel="/k", interactive=True)
         self.assertEqual(cmd[-1], "console=ttyS0 panic=-1 wisp=shell")

@@ -69,7 +69,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `banner` | the logo with the architecture and kernel release |
 | `clear` | clears the screen (`ESC [H ESC [2J`) |
 | `poweroff` | powers the machine off, as the batch run does |
-| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. Not on sun4u: OpenBIOS doesn't carry out Linux's restart request there and the kernel panics, so the shell refuses and says to use `poweroff` |
+| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. On sun4u Linux restarts through the firmware's `boot` service, which needs openbios-sparc64 with patch 0030 (`openbios/patches/`); with older firmware the kernel panics with "Reboot failed!" and, with `panic=-1`, tries again for ever |
 
 ```
 wisp:sparc32> crc 64
@@ -120,7 +120,9 @@ reboot: Power down
   Backspaces), the info lines, both CRCs against the model, every character of the 20 Mandelbrot
   rows against `shell.py`'s integer model (and `tests/mandel.txt`), and the power-off. With
   `--tier2` as well, it boots `kernel-t2` with the machine's first tier-2 profile (two CPUs on the
-  PC, the SS-10 and the SS-20) and adds `disk`, `net` and `smp` before `poweroff`.
+  PC, the SS-10 and the SS-20) and adds `disk`, `net` and `smp` before `poweroff`. With `--reboot`
+  the script ends with `reboot` instead of `poweroff`: the answer `restarting`, no kernel panic
+  (`Reboot failed!`), and QEMU's exit code 0 (`-no-reboot` turns the reset into an exit).
 
 ## Tier 2: disk, network, SMP
 
@@ -295,7 +297,9 @@ GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull r
 filter, so its `wisp-boot-required` check always reports; a `changes` job skips the boot when the pull
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
 main that change `e2e/wisp/` and by hand. After the batch runs, `run.py --arch all --shell` boots
-the four architectures once more and drives the interactive shell (about 2 to 3 s each). Then tier
+the four architectures once more and drives the interactive shell (about 2 to 3 s each), and
+`--shell --reboot` the PC and sparc32 once more with `reboot` at the end (sparc64 joins once the
+published package's `openbios-sparc64` has patch 0030). Then tier
 2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
 disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), and `--shell
 --tier2` on the four architectures.

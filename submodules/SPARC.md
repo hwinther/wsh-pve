@@ -97,6 +97,11 @@ maintains the patches.
 | `0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi` | qtest `sun4m-ss600mp-test` for 0063-0064: the VME registers' unimplemented device (reads 0), the lebuffer's RAM and address space, the lance initialized from an init block in it (station address), sending from a descriptor there, handing it back and interrupting without the ledma's enable; the SS-10 unchanged | ours | not in QEMU |
 | `0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its` | The DBRI's registers (slot offset `0x10000` on the SS-20 and the LX) were an unimplemented device that reads 0. A reconfiguration boot of Solaris 2.6 under the SS-20 or SS-10 PROM panicked in `dbri` (`WARNING: dbri: DBRI Reg8 bad!`, `BAD TRAP: type=9 ... addr=0`): the driver's first command found REG8, the command queue pointer, outside its queue, and its chip error routine walked all 14 pipes, of which the 12 ISDN ones are never set up when the node has `isdn-disabled`, which the SS-20 and SS-10 PROMs give it and the LX PROM doesn't. A model of the registers, new file `hw/sparc/sun4m_dbri.c` (`sun-DBRI`): they keep what is written, REG0's soft reset clears them, writing REG8 or REG0's P bit walks the command queue through the IOMMU (each command by its length, JUMP followed) to a WAIT and leaves REG8 on it; no data, no interrupt, the PIO pins in REG2 read low, so the drivers find no codec ("The `dbri` panic on reconfiguration boots under the SS-20 PROM") | ours | not in QEMU |
 | `0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu` | qtest `sun4m-dbri-test` for 0066 on the SS-20 and the LX: the registers after start, kept values, soft reset, PIO pins low; a queue of one-, two- and three-word commands with a JUMP to another page read through the IOMMU leaves REG8 on its WAIT, the P bit goes on from there (or stays when nothing was added) and doesn't stay set, a queue on an unmapped page leaves REG8 as written; fails against the 0001-0062 build | ours | not in QEMU |
+| `0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis` | `sabre_reset()` left the PCI control/status registers (`0x2000`-`0x202f`) as the guest last wrote them; Solaris writes its error bits back there, and after a reset (its reboot, OpenBIOS 0030) every boot warned `pcipsy0: SERR asserted on pci bus`. They are cleared on reset, as at power-on ("The firmware reboot on sun4u") | ours | not in QEMU |
+| `0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a` | qtest `sun4u-sabre-reset-test` for 0068 | ours | not in QEMU |
+| `0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su` | Linux on sun4u spun in its idle loop at 100% of a host core: `arch_cpu_idle()` only touches the NMI watchdog there (it yields to the hypervisor on sun4v), and no kernel option changes that. The translator recognises `arch_cpu_idle()` at its call of `arch_touch_nmi_watchdog()` by the `tlb_type` test next to it and the start of the sun4v branch, as gcc lays it out either way round (Linux 6.1 and 7.3: `be` to the sun4v branch; 6.17 and 7.0: `bne` around it), and halts the CPU there at `%pil` 14 (interrupts disabled, as the idle loop calls it), with nothing pending and `TIF_NEED_RESCHED` clear; the tick, stick and interrupt vector wake it whatever `%pil`, and the interrupt is taken when the loop enables interrupts. The window around a call grows to 24 words before it; words on another page read as 0 ("sparc64 (sun4u)", "Idle") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an` | Solaris 7 and 8 spun in `idle()` on sun4u: Sun's older compiler lays the loop out the other way round from 9 and 10 (`be` to the call through `idle_cpu`, `swtch()` first). The translator recognises that layout too and halts at the call as for Solaris 9 and 10 (`-trace sparc64_idle_match`: `Solaris 7/8`) | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop` | qtest `sun4u-idle-test` for 0070-0071: the Solaris 7/8 layout with the cases of the others, and Linux 7.3, 6.1 and 7.0's `arch_cpu_idle()` in a loop that disables interrupts to level 14 round it: it must halt there, not with `TIF_NEED_RESCHED` set, without `PSTATE.IE`, at level 0 or 15, and a 1 ms tick must wake it at level 14 and be taken when the loop enables interrupts; 51 cases | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -275,6 +280,19 @@ section).
 `sun4m-ledma-test` 5/5 (its lance and reset cases fail without 0061), `qtest-sparc` 29 OK, 2 skipped
 and the `qmp-test` `oob` failure as before.
 
+0070-0072 apply on top of 0001-0067 (2026-11-22, lab build of 11.1.3; not in a package yet; the whole
+series with `patch -F0` on the pinned 11.1.3, 145 patches). `sun4u-idle-test` passes 51/51 with them;
+against the 0001-0067 build the `idle` and `tick` cases of `solaris7` and the three Linux layouts fail
+(the loop went on: 1.1-10.6 million rounds in 300 ms) and the old layouts' cases pass. 0070 and
+0071 each build without a warning. With 0001-0072 the `qtest-sparc` and `qtest-sparc64` suites: 50 OK,
+4 skipped, and the two `qmp-test` `oob` failures as before.
+Lab regression with the 0001-0072 `qemu-system-sparc64` (2026-11-22): `sparc64` 10/10
+(`nb111-idle-sparc64` 2.4%, `nb111-noidle-spins-sparc64` 99.8%), `solaris10` 2/2, and `wsh-lab
+boot-test` through PVE (the binary bind-mounted into the test node behind a wrapper that adds the
+version suffix qemu-server parses and `-L /usr/share/kvm`; packages 11.1.3-3+wsh13) of the stored
+`sol8-sun4u` and `sol7-sun4u` disks: 2/2 passed (4.5 and 4.1 min). The sparc32 binary wasn't tested
+again: 0070-0072 change only code built for sparc64. Results under "sparc64 (sun4u)", "Idle".
+
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
 `sun4m-mmu-nofault-test`, `sun4m-pil-delay-slot-test`, `sun4m-solaris-smp-idle-test` and
@@ -342,7 +360,6 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0009-sparc64-name-upa-and-ebus-children-like-obp` | The sabre was `pci@1fe,0` and the ebus children `su@0`, `8042@0`, ...; OBP (and Solaris, which builds the same names and looks the console path up among them) has `pci@1f,0` and `su@14,3f8`. Solaris 10 never opened its console driver and its installer ignored all input on ttya. The root prints the UPA port id; the ebus node has its own two-cell space,offset `encode-unit`/`decode-unit` | not fixed; see `upstream/openbios-sparc64-node-names.md` |
 | `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not fixed; see `upstream/openbios-sparc64-ide-tree.md` |
 | `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | as 0010 |
-| `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Resets at the `ok` prompt, but Solaris's `reboot` then hangs the VM, so it stays `.wip` (the Dockerfile only applies `*.patch`) | — |
 | `0013-sparc64-ofmem-keep-the-upper-bits-of-physical-addresses-in-align_ptr` | `align_ptr()` masked with a 32-bit `size_t`, so the firmware's heap broke once it sat above 4 GB (it is at the top of RAM): from about 4.3 GB OpenBIOS stopped before its banner (`Unhandled Exception 0x0000000000000030`; at 8192 MB `out of malloc memory (28)!` first). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-sparc64-ram-above-4g.md` |
 | `0014-sparc64-ofmem-find-claim-memory-whose-1-1-virtual-range-is-free` | A client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking the virtual side; with 4 GB that is the firmware's own range, the claim failed and NetBSD stopped after its loader (`Can't claim two pages of memory.`). It now searches below `0xff000000` and lower while the virtual range is taken. Generic code, applied to sparc64 only here | as 0013 |
 | `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
@@ -351,6 +368,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
 | `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 | `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
+| `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept ("The firmware reboot on sun4u") | not reported |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -2215,10 +2233,9 @@ Regressions with 0001-0062 (same lab setup, copies of the stored disks, each sta
 input): OpenBIOS SS-20 (the packaged `openbios-sparc32`, `sol26-ss20`, 512 MB) to `login:` twice with
 an NVRAM image and once without (56-57 s); the SS-5 PROM (`ss5.bin`, `sol8-ss5-prom`, 256 MB) after
 one `setenv diag-switch? false` to `login:` twice (42-43 s); the LX PROM (`lx.bin`, Solaris 2.6, 64
-MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Not done: the SS-20 PROM VM through PVE with
-`nvram0` (the command line was the same `-drive` plus `-global sysbus-m48t08.drive`), the network
-itself (the lab NIC had no host side: only `le0` plumbing and the init block were seen), other
-Solaris releases on the SS-20 PROM.
+MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Through PVE with `nvram0` since: "The SS-20
+PROM through PVE" below. Not done: the network itself (the lab NIC had no host side: only `le0`
+plumbing and the init block were seen), other Solaris releases on the SS-20 PROM.
 
 **The `dbri` panic on reconfiguration boots under the SS-20 PROM (pve-qemu `wsh/0066`-`0067`).**
 Any reconfiguration boot of Solaris 2.6 under the SS-20 PROM (`boot disk -r`, `touch /reconfigure`,
@@ -2275,12 +2292,53 @@ the stored disks):
 
 `qtest-sparc` with 0001-0067: 31 OK, 2 skipped, and the `qmp-test` `oob` failure as before (PVE's
 patch turns off the OOB capability); `sun4m-dbri-test` passes 4/4 and fails against the 0001-0062
-build. All 141 patches of the series apply to the pinned QEMU with `patch -p1 --fuzz=0`. Not tested:
-a PVE VM (package), other Solaris releases under the SS-20 PROM (2.2's CD, 0057's case, not
-retried), SunOS 4.1.x and Linux under the SS-20 PROM.
+build. All 141 patches of the series apply to the pinned QEMU with `patch -p1 --fuzz=0`. Through PVE
+(package) since: "The SS-20 PROM through PVE" below. Not tested: other Solaris releases under the
+SS-20 PROM (2.2's CD, 0057's case, not retried), SunOS 4.1.x and Linux under the SS-20 PROM.
 
 On a package without 0066, `exclude: drv/dbri` in `/etc/system` before the reconfiguration boot
 avoids the panic (lab, the 0001-0062 build: `boot disk -r` to `login:`).
+
+**The SS-20 PROM through PVE (pve-qemu-kvm 11.1.3-4+wsh2, qemu-server 9.2.20+wsh7, pve-manager
+9.2.32+wsh11).** Both fixes above, 0061 and 0066, on a VM that PVE starts, with the published packages
+(lab, 2026-11-22: the PVE test container built from the apt repository, `e2e/sparc/pve.Dockerfile`).
+First the package: its changelog has #440 (0066), `qemu-system-sparc` has the `sun-DBRI` device, and
+the ledma's fourth register reads `0xff000000` at reset (`xp /4wx 0xef0400010` at `-S` on `-M
+SS-20`: `0xa0000000 0 0 0xff000000`), which is 0061. The VM: `machine: SS-20`, `bios:
+ss20_v2.25_rom` (qemu-server adds `-cpu TI-SuperSparc-50`), 512 MB, `vga: serial0`, `nvram0: local:1`
+(blank, 4 MiB raw), the lance on `vmbr0` (no host side), and a copy of the stored
+`sol26-enduser-ss20prom` disk imported to target 3 (`import-from`, the stored disk only read). That
+disk's first boot is still pending: a reconfiguration boot, then sysidtool's root password screen.
+The disk was installed with the host name, network and time zone answered, so the root password is
+the only first-boot question, and the lab's `login()` answers it (an empty password, as `matrix.py`
+does for this disk); no pre-answered copy of the disk was needed.
+
+`scenarios/sun-prom-nvram.py` through `pve_matrix.py pve`, case `sol26-ss20prom-nvram`, nothing typed
+except as listed:
+
+| Step | What happens | Time |
+| --- | --- | --- |
+| first start, blank volume | the PROM resets its NVRAM to defaults (`Setting diag-switch? NVRAM parameter to true`), runs the long memory test, boots the network (`le@f,c00000`), fails and stops at `ok`; `setenv diag-switch? false`, `boot disk` | `ok` after 18-25 s |
+| the stored disk's first boot | `configuring network interfaces: le0.`, `Configuring the /devices directory` (the reconfiguration boot: `dbri` loads, no warning, no panic), the root password screen, `System identification is completed`, `console login:`; `eeprom` prints `diag-switch?=false`; `halt` to `ok` | 108-111 s from `ok` to the shell |
+| `qm stop`, `qm start` | the short memory test, `Boot device: .../esp@f,800000/sd@3,0`, Solaris 2.6 to `console login:`, `le0` up, no `Trap 0x29` | 60 s from `qm start` (all three runs) |
+| `reboot -- -r` | `Rebooting with command: -r`, the PROM boots `sd@3,0` with `-r`, `Configuring the /devices directory`, `console login:`, no panic; `eeprom` still `diag-switch?=false`; `init 5` powers the VM off (PVE ends QEMU); `/devices` has `SUNW,DBRIe@e,10000:sound,audio` and `audioctl` (the scenario checks them) | 66-76 s from `reboot` |
+
+The whole case took 305-322 s; three runs in a row passed. A try before them showed that `init 5`
+powers the SS-20 off through PVE (PVE ends QEMU) where the scenario had waited for `ok`, so the
+scenario now uses `halt` before the `qm stop`. No QEMU patch was needed. The SS-10 PROM has no PVE
+profile (`ss10_v2.25_rom` is refused on SS-10 and SS-20), so it stays covered by the plain-QEMU runs
+above.
+
+Without media, `e2e/tests/sparc-profiles.spec.ts` ("the SS-20 PROM with an NVRAM volume") checks
+the same persistence in the e2e container: `qm showcmd` has the `-blockdev` with node `drive-nvram0`
+and `-global sysbus-m48t08.drive=drive-nvram0`; the first start (blank volume) runs the long memory
+test and the network boot and takes `setenv diag-switch? false` at `ok`; after `qm stop` and `qm
+start` the PROM skips the long test, tries the blank disk (`Bad magic number in disk label`), then
+the network, and `printenv` shows `false`. Checked by hand in the lab container with the same
+commands; the Playwright test itself was not run there (no Node on the lab host).
+
+Not tested through PVE: other Solaris releases under the SS-20 PROM, the network beyond `le0`'s
+plumbing, live migration and snapshots with the volume.
 
 ### SPARCstation LX with the Themis LXE+ PROM (lab only)
 
@@ -2794,7 +2852,8 @@ disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
 | NetBSD 9.3, 11.1 | `idle_loop()` calls `cpu_idle()` while `sched_curcpu_runnable_p()` is false, then checks `ci_want_resched` | nothing: `cpu_idle()` calls `ci_idlespin`, which only sun4v sets (`hv_cpu_yield`); 9.3's `cpu_idle` is `retl; nop`. The ebus `power` node isn't attached (`power at ebus0 ... not configured`) |
 | OpenBSD 8.0 | `sched_idle()`: `while (spc_whichqs == 0) cpu_idle_cycle();` | nothing: `cpu_idle_cycle()` yields to the hypervisor on sun4v; on sun4u it is a `nop` that is patched to `sleep` (SPARC64-VI/VII) only on CPUs with several strands |
 | Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
-| Debian 12 (Linux) | `arch_cpu_idle()` | nothing: `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No installed disk (the install fails), not covered |
+| Solaris 7 3/99, 8 2/02 | `idle()` as in 9 and 10 | nothing, as on 9 and 10 |
+| Linux 6.1-7.3 (wisp; Debian 12 and 13 installers) | the generic `do_idle()`: with interrupts disabled (`%pil` 14) and `need_resched()` clear it calls `arch_cpu_idle()`, enables interrupts and goes round again | nothing: `arch_cpu_idle()` calls `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No kernel option helps: sparc64 has no cpuidle driver, `idle=poll` spins elsewhere, and `nohz` takes away clock interrupts, not the spin. No installed disk (Debian's install fails); measured with `-kernel` |
 
 None of them uses `sir` or an `%asr` write to idle. The clock-divider power management of the
 UltraSPARC-IIe/IIIi (Energy Star) slows the clock rather than stopping it, and QEMU emulates a IIi (not
@@ -2811,6 +2870,12 @@ the word that says there is work:
 | Solaris 10 1/13 | `jmpl %o1, %o7` (0x10621d0) | `disp_nrunnable` (`[%o0 + 0x24]`, `%o0` = `cpu_disp`) | Sun's compiler: `ld; cmp; bne run; sethi %hi(idle_cpu); ldx; call; ...; b` |
 | Solaris 9 9/05 | `jmpl %l0, %o7` (0x104618c) | `disp_nrunnable` (`[%l2 + 0xb4]`, in the CPU structure) | the same |
 | Tribblix m34 | `jmpl %g1, %o7` (0x10621c8) | `disp_nrunnable`, 0x24 past the `cpu_disp` pointer at `[%l0 + 0xd0]` (gcc loads the pointer and the count into the same `%g1`, so the helper follows the pointer again) | gcc: `ldx; ld; cmp; bne,pt %icc run; nop; ldx [%l1]; call; nop; ba,pt %xcc top` |
+| Solaris 7 3/99 (0071) | `jmpl %l0, %o7` (0x1003d528) | `disp_nrunnable` (`[%i2 + 0x9c]`, in the CPU structure) | Sun's older compiler: `ld; cmp; be idle; sethi %hi(idle_cpu); call swtch; nop; b top; ...; idle: ldx; call; nop; b top` |
+| Solaris 8 2/02 (0071) | the call through `idle_cpu` (0x10040660; the same in the Installation CD's kernel) | `disp_nrunnable` (`[%i3 + 0x9c]`) | the same as 7 |
+| Solaris 8 1/01, Installation CD's kernel (0071) | (0x1003fab4) | `disp_nrunnable` | the same as 7 |
+| Linux 7.3.4, wisp (0070) | `call arch_touch_nmi_watchdog` (0x431104) | `TIF_NEED_RESCHED` in `current_thread_info()->flags` (`[%g6 + 8]`) | gcc 14: `ld [tlb_type]; cmp 3; be %icc sun4v; nop; call; restore` (a tail call), the sun4v branch right after (`wrpr %g0, 0, %pil; rdpr %pstate; andn 2; wrpr %pstate`) |
+| Linux 6.1.27, Debian 12 installer (0070) | `call arch_touch_nmi_watchdog` (0x42c280) | the same | gcc 12: `... be,pn %icc sun4v; nop; call; nop; call touch_softlockup_watchdog; nop; wrpr %g0, 0, %pil; return; nop`, then the sun4v branch |
+| Linux 6.17.7 and 7.0.12, Debian 13 installers of 2025-11 and 2026-06 (0070) | `call arch_touch_nmi_watchdog` (0x43a9a0, 0x43aa40) | the same | gcc 15: `... bne,pn %icc sun4u; nop;` the sun4v branch (16 words, `return; nop` at its end), `sun4u: call; nop; call touch_softlockup_watchdog; nop; return; nop` |
 
 At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
 no interrupt, interrupt vector, `%softint` bit or `pil_in` line is pending, after spinning 100 us as on
@@ -2865,6 +2930,65 @@ so with `fmd` running it reads 104-108% either way. With `fmd` disabled (`svcadm
 real installation shouldn't do) it idles at 21.8% (258 111 halts traced in the run); the rest is
 Tribblix's own work under emulation, not analysed. Its ten `sleep 1` take 11.7 s with and without the
 halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
+
+**Idle, more guests (pve-qemu `wsh/0070`-`0072`, 2026-11-22).** Linux and Solaris 7 and 8 spun as well.
+
+- **Solaris 7 and 8.** `-trace sparc64_idle_match` showed no match on the stored `sol7-sun4u` disk
+  nor on the new `sol8-sun4u` one (installed for this, "Solaris 8 and 9 on sun4u" in the lab README),
+  and QEMU's `x/i` at the sampled idle PC showed why: Sun's older compiler lays `idle()` out the other
+  way round from 9 and 10 (table above). Solaris 8 is laid out like 7, not like 9. 0071 recognises that
+  layout; the call goes through `helper_sparc64_idle()` as for 9 and 10. The kernels of the Solaris 8
+  2/02 and 1/01 Installation CDs match it too (trace at their first question).
+- **Linux.** The generic idle loop (`kernel/sched/idle.c`, Linux 7.3) calls `arch_cpu_idle()` with
+  interrupts disabled (sparc64's `local_irq_disable()` writes `%pil` 14) once `need_resched()` is
+  clear; on sun4u `arch_cpu_idle()` only touches the NMI watchdog (`arch/sparc/kernel/process_64.c`;
+  6.1 also enables interrupts there, the older contract), and the loop goes round once it has enabled
+  interrupts. The sun4v branch shows what the kernel itself accepts: interrupts enabled, `PSTATE.IE`
+  cleared, the hypervisor's `cpu_yield` (which returns on a pending interrupt even with `IE` clear),
+  `IE` set again. No upstream option makes sun4u stop the CPU: there is no cpuidle driver for sparc64,
+  `CONFIG_SUN_LDOMS` and the hypervisor calls need sun4v, `idle=poll` only moves the spin, and
+  `nohz` removes clock interrupts but not the spin. So 0070 recognises `arch_cpu_idle()` by its
+  `tlb_type` test and the start of the sun4v branch (both orders gcc uses, table above) and halts at
+  the call of `arch_touch_nmi_watchdog()` with `%pil` 14, `PSTATE.IE` set, `%tl` 0, nothing pending
+  and `TIF_NEED_RESCHED` clear: waiting with interrupts disabled, as `cpu_yield` (and x86's `mwait`,
+  which the comment in `do_idle()` names) do. QEMU's sun4u wakes a halted CPU whatever `%pil`: the
+  tick, stick and hstick compare interrupts and the interrupt vector clear `cs->halted`
+  (`hw/sparc64/sparc64.c`), and nothing on sun4u raises `pil_in`. The CPU goes on at the call; the
+  interrupt is taken when the loop enables interrupts, so no state is kept across the halt (nothing
+  for migration). 0042's halt needs `%pil` 0 and stays as it was. The window read around a call grew
+  from 8 to 24 words before it (Debian 13's bne layout needs 20, Solaris 7's 9); words on another page than
+  the call's read as 0 (illtrap, in no layout) instead of the call being skipped.
+
+Measured on the lab host (14 threads, quiet: 1-minute load 0.1-1.1 at every start and end), one QEMU at
+a time, "before" the 0001-0067 build, "with" the same tree with 0070-0072, "off" that one with
+`-M sun4u,idle-halt=off`. Linux booted with `-kernel` (no Linux disk: Debian's install fails): wisp's
+tier-1 kernel with `wisp=shell` (256 MB), host CPU over 60 s at its prompt, then the guest's uptime
+against the host's clock and `crc 100000` three times (host seconds, two passes); the Debian netinst
+`install/vmlinux` and `initrd.gz` from the CDs (1024 MB, `console=ttyS0`), host CPU over 60 s at the
+installer's first question, and the time to it:
+
+| Guest | Host CPU before / with / off | Clock drift | Job s before / with / off | To the prompt s before / with / off |
+| --- | --- | --- | --- | --- |
+| wisp, Linux 7.3.4 (two passes) | 100.5, 100.5 / 5.6, 5.3 / 100.5, 100.5% | 0.0 s | `crc 100000` 8.72-8.82 / 8.77-8.92 / 8.67-8.77 | 2.1-2.2 |
+| Debian 12 installer, Linux 6.1.27 | 100.4 / 5.7 / 100.5% | | | 31.0 / 30.9 / 33.5 |
+| Debian 13 installer of 2025-11, Linux 6.17.7 | 100.4 / 6.0 / 100.4% | | | 33.5 / 33.7 / 32.4 |
+| Debian 13 installer of 2026-06, Linux 7.0.12 | 100.4 / 5.8 / 100.5% | | | 33.8 / 33.9 / 33.8 |
+| Solaris 7 3/99, `install-sol7-sun4u` (1024 MB) | 100.5 / 2.5 / 100.5% | 0.0 s | awk 6.0 / 6.0 / 6.1 | `login:` 180.7 / 180.5 / 180.5 |
+| Solaris 8 2/02, `install-sol8-sun4u` (1024 MB) | 100.5 / 3.0 / 100.5% | 0.0 s | awk 7.1 / 7.0 / 6.8 | `login:` 206.7 / 206.7 / 206.6 |
+
+Solaris with `scenarios/sparc64-idle.py` on copies of the stored disks (the Solaris 9 variables, lab
+README "Idle"; the awk job of the table above, 60 s at the shell); ten `sleep 1` took 10.1-10.2 s in
+all six runs. Longer jobs, with the halt on / off: five awk jobs in a row on Solaris 8 34.5 / 34.5 s,
+wisp's `crc 500000` 43.7 / 43.6 s. The Debian installer's boot is mixed work with the halt on: it
+takes as long as with it off. The wisp kernel ticks 250 times a second (`HZ_PERIODIC`), so it
+wakes at every tick and spins 100 us before it halts again; whether the Debian kernels stop the tick
+when idle wasn't looked at (their configuration isn't on the CDs).
+
+The guests 0042 covers, with the build with 0070-0072 (same runs, same host, `TRACE` shows their old
+layout matched): NetBSD 11.1 2.6%, NetBSD 9.3 2.5%, OpenBSD 8.0 4.3%, Solaris 9 3.1% (ten `sleep 1`
+10.1-10.3 s, clock drift 0.0 s); Solaris 10 and Tribblix weren't measured again. The installer kernels
+of NetBSD 9.3 and 11.1 and OpenBSD 8.0's `bsd.rd` (the CDs, `sparc64-boot-cd.py` with the trace) match
+the NetBSD and OpenBSD layouts as well.
 
 **Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
 `halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,
@@ -3001,8 +3125,8 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   This is an intermittent kernel panic around the IDE interrupt path. paulsheer reports similar
   crashes ("not stable", within an hour). Not found.
 - **Reboot.** After the install, `rebooting...` ends in `panic - kernel: prom_reboot: reboot call
-  returned!`: OpenBIOS's client-interface `boot` service only prints `BOOT` and returns. A fix (reset
-  the machine) is written but not tested yet.
+  returned!`: OpenBIOS's client-interface `boot` service only prints `BOOT` and returns. Fixed since
+  by OpenBIOS 0030 ("The firmware reboot on sun4u").
 - **The installed disk.** OpenBIOS loads the boot block and the boot archive from `disk@0,0:a`, and
   the kernel starts (`SunOS Release 5.10`). Then `Cannot load drivers for
   /pci@1f,0/pci@1,1/ide@3/disk@0,0:a`, `Cannot assemble drivers for root`, `vfs_mountroot: cannot
@@ -3036,7 +3160,8 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
   tree). On the installed disk, `reboot` prints `syncing file systems... done` and `rebooting...`,
   then nothing for 900 s: the VM hangs (1 of 1). `reset-all` at the `ok` prompt does reset the
   machine (the banner comes back, 1 of 1). Resetting from inside the client interface call is what
-  fails; not traced further. So 0012 stays `.wip`.
+  fails; not traced further. So 0012 stayed `.wip`; traced and replaced by 0030 ("The firmware
+  reboot on sun4u").
 - **System MAC:** with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris's `hme0` shows `ether
   52:54:0:12:34:56`. QEMU's sun4u writes the MAC of the onboard NIC into the IDPROM. The onboard NIC
   is the first `-nic`/`-net nic` of the default model, created at PCI 01.1 on bus A. A NIC added with
@@ -3322,8 +3447,9 @@ console; installs driven by a scratch wrapper around `solaris-webstart-serial.py
 Installs with 2048 MB and of 9 (original), 8 1/01 and 7 weren't run. What else stood in the way,
 none of it from 0024:
 
-- **The reboot** returns from the firmware (0012, `.wip`): Solaris prints `prom_reboot: reboot call
-  returned!`, panics on it, dumps and exits to `0 >`. For 8's mini-root step that is where the
+- **The reboot** returns from the firmware (0012, `.wip`; fixed since by 0030, "The firmware reboot
+  on sun4u"): Solaris prints `prom_reboot: reboot call returned!`, panics on it, dumps and exits to
+  `0 >`. For 8's mini-root step that is where the
   install continues: `boot disk:b` after `reset-all` panicked the mini-root's kernel (`page_free` ←
   `add_physmem` ← `kphysm_init`; OpenBIOS doesn't clear RAM on reset and the old contents are still
   there), while a fresh QEMU boots `disk:b` and the install goes on. An install target for 8 would
@@ -3364,7 +3490,9 @@ CD on `ide2`, `sunhme`, serial console), End User, through PVE with `lab.py inst
   ebus0 addr 0-ffffffff not configured`). With 0025 the installed 9 9/05's first, reconfiguring boot
   goes through without the rename, and none of the installs prints `Out of range register
   specification from device node <fdthree>` any more.
-- **The reboot** (no firmware change; 0012 stays `.wip`): Solaris's reboot returns (`prom_reboot:
+- **The reboot** (no firmware change then; 0030 has fixed it since, "The firmware reboot on sun4u",
+  and the scenario stops the VM at the firmware's banner and resets for the mini-root instead of
+  power-cycling): Solaris's reboot returns (`prom_reboot:
   reboot call returned!`), the kernel panics and exits to `0 >`. `solaris-webstart-serial.py` waits
   for that prompt (Solaris has synced by then) and, at the end of the install, stops the VM there as
   `sol10-sun4u` does; `install` then ejects the media and boots `ide0`. For 8's reboot into the
@@ -3602,6 +3730,88 @@ valid is accepted.
   (NetBSD, OpenBSD, Solaris 9/10; Tribblix about 22% with `fmd` off; "Idle" above), before them 100%
   for as long as the VM ran.
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
+
+### The firmware reboot on sun4u (OpenBIOS 0030, pve-qemu `wsh/0068`-`0069`, 2026-11-22)
+
+Every system that runs on QEMU's sun4u reboots through the client interface's `boot` service, with
+a boot string: Solaris 7 to 10 (`reboot`, `init 6`, `uadmin`, the installers' reboots: `mdboot()`
+→ `prom_reboot()`), Linux (`machine_restart()` → `prom_reboot()`) and NetBSD/OpenBSD (`OF_boot()`).
+None of them expects it to return. OpenBIOS's `boot` printed `BOOT` and returned: Solaris panicked
+with `prom_reboot: reboot call returned!` and exited to `0 >`, Linux panicked with `Reboot
+failed!` (with `panic=-1` it tried again for ever, which is why wisp's shell refused `reboot` on
+sun4u). OpenBIOS 0012 (`.wip`) made `boot` call `reset-all`, which writes the sabre's reset control
+register (`0x1fe0000f020`, bit 29); QEMU then resets the machine (`qemu_system_reset_request`) and
+the CPU starts the firmware at its reset vector (`prom_addr + 0x20` on QEMU's first reset, `+ 0x40`
+after that). The reset itself worked; the firmware and the next system didn't survive what QEMU's
+reset leaves behind. `cpu_reset()` clears `CPUSPARCState` only up to `end_reset_fields`: SOFTINT,
+the interrupt receive register, the timers' NPT bits, the MMU registers and the TLBs are kept, and
+QEMU never clears RAM on a reset (the TLBs the firmware clears itself). What went wrong, in the
+order the lab found it (scenario `sparc64-reboot.py`, the stored disks, standalone QEMU from the
+published 11.1.3-3+wsh13):
+
+- **A pending soft interrupt.** Solaris 10's `mdboot()` raises the PIL (`spl6`) and the client
+  interface runs with interrupts off (0016), so a level 6 soft interrupt was still set in SOFTINT
+  when the machine reset. `entry` enables interrupts early, the level 6 trap went to `handler_irq`
+  (the firmware's `bug`) and the firmware stopped before its banner: `Unhandled Exception
+  0x0000000000000006`, PC at the instruction after `entry`'s `wrpr ..., %pstate`. That is 0012's
+  hang (its earlier test saw no output in 900 s; here the exception was printed). An interrupt
+  vector received but not taken would have blocked every later interrupt in the same way
+  (`cpu_check_irqs()` returns while the busy bit is set). 0030 clears SOFTINT and the interrupt
+  receive register in `entry`, before interrupts are on.
+- **TICK.NPT.** A power-on reset sets it; the guests clear it. `softint_irq` doesn't re-arm the
+  firmware's 100 Hz timer while NPT is set, so after a power-on the firmware takes one timer
+  interrupt and no more. After a guest's reboot the timer kept firing: into the MMU miss handler at
+  TL 1, whose level 14 vector only retries without clearing SOFTINT, so the CPU spun there
+  (NetBSD's `ofwboot` hung after its banner; `info registers`: PC on the `call` into the miss
+  handler, `tl: 1`, `pstate: 16`), or into the next kernel before it had its own handler (NetBSD's
+  kernel stopped in ddb: `kernel trap 30: data access exception`, `tt=4e`). 0030 sets NPT again in
+  `entry`. At `ok` neither of these is set (the firmware never clears NPT), which is why
+  `reset-all` there worked.
+- **The RAM.** Solaris expects the zeroed RAM of a power-on: after a reset Solaris 10 panicked in
+  `kphysm_init` (`panic[cpu0]/thread=180e000: prom page locked`, `kphysm_erase` ←
+  `diff_memlists` ← `kphysm_init` ← `startup_memlist`) and Solaris 9 in `startup_memlist`, on the
+  page structures of the system before; Solaris 8's mini-root panicked in `page_free` after
+  `reset-all` (above, "Solaris 8 and 9 install targets on sun4u"). 0030 marks the power-on vector
+  (`%l7` 0 at `0x20`, 1 at the others, stored in `sparc64_warm_reset`) and, after any later reset,
+  `openbios()` clears the RAM below the firmware's own (the top of RAM, from `entry.S`), except a
+  kernel and an initrd QEMU loaded with `-kernel`/`-initrd`: QEMU writes those back on every reset
+  (the first version cleared them too, and wisp without `-no-reboot` stopped with `Unhandled
+  Exception 0x10` at `0x40004000` after `Kernel already loaded`). It costs a few seconds per reset
+  (1 GB), none at power-on.
+- **The sabre's PCI control/status registers** (`0x2000`-`0x202f`) kept what Solaris last wrote,
+  its error bits among them, and every Solaris boot after a reset warned `WARNING: pcipsy0: SERR
+  asserted on pci bus` (harmless; never on a power-on). pve-qemu `wsh/0068` clears them in
+  `sabre_reset()`, qtest `sun4u-sabre-reset-test` (`wsh/0069`).
+
+The boot string isn't kept (as on sparc32, "Known gaps"): the firmware boots its boot device again,
+so Solaris 8's `reboot -- disk:b` into its mini-root still needs `auto-boot?` false and `boot disk:b`
+at `0 >`, but no power cycle any more. QEMU's own reset path (QMP `system_reset`, PVE's Reset)
+goes through the same firmware entry, so it gets the same clean state.
+
+Results (2026-11-22, lab host, up to five guests at once; "reboots" = `sparc64-reboot.py` with
+`REBOOTS=3` on a copy of the stored disk, the firmware's banner back and the login prompt again
+after each, in one QEMU process; QEMU is the published 11.1.3-3+wsh13 unless "+0068"):
+
+| Run | Firmware, QEMU | Result |
+| --- | --- | --- |
+| Solaris 10 1/13 (`install-sol10-sun4u`), `reboot` x3 | 0030 | passed: banner 17-19 s after `reboot`, `console login:` again after 390-451 s; `SERR asserted` on each boot after a reset |
+| Solaris 9 9/05 (`install-sol9-sun4u`), `reboot` x3 | 0030 | passed (10-13 s to the banner, ~180 s to login); `SERR` after each reset |
+| Solaris 9 9/05, `reboot` x3 | 0001-0030, +0068 | passed, no `SERR` warning |
+| Solaris 7 3/99 (`install-sol7-sun4u`, 2048 MB), `reboot` x3 | 0001-0030 | passed (10-13 s, ~207 s) |
+| NetBSD 11.1 (`install-netbsd111-sparc64`), `reboot` x3 | 0030 | passed (8 s, ~80 s) |
+| OpenBSD 8.0 (`install-openbsd80-sun4u`), `reboot` x3 | 0030 | passed (21-70 s, ~250 s) |
+| wisp, Linux 7.3 on sun4u: `run.py --shell --reboot` x3, `--shell --tier2 --reboot`; without `-no-reboot` | 0030 | passed: QEMU exits 0 on the reset; without `-no-reboot` wisp boots again |
+| the same with the published firmware | package | failed as before: `Reboot failed!` panics in a loop |
+| `install sol8-sun4u --check` through PVE (the PVE test container, qemu-server 9.2.20+wsh6) | 0030 | passed in 54.8 min (install 2622 s, first boot 375 s, check 265 s): two firmware resets (the mini-root reboot, the end), no power cycle |
+| `matrix.py sparc64`, `matrix.py solaris10` | 0001-0030, +0068 | 10/10, 2/2 |
+| wisp sun4u batch, `--shell`, `--tier2`, `--shell --tier2` | 0030 | all passed |
+| `make check-qtest-sparc64` | 0001-0030 in `pc-bios`, +0068-0069 | 20 OK (`sun4u-sabre-reset-test`, `prom-env-test`, `boot-serial-test` among them), 2 skipped, `qmp-test` fails as before (the PVE patches) |
+
+Before 0030's RAM clear, with only the SOFTINT and NPT fixes, Solaris 9 and 10 reached their
+kernels after a reset and panicked in `startup_memlist`/`kphysm_init`; NetBSD and OpenBSD passed.
+Not tried: Tribblix (illumos uses the same `prom_reboot()`), Solaris 8 from an installed disk
+(no stored disk; its installer's two resets passed), Debian (no installed disk), a reboot with
+more than 3 GB of RAM (the clear covers it, not measured).
 
 ## sparc64: niagara (sun4v)
 

@@ -1,0 +1,192 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: reset the machine on the client interface boot
+ service
+
+The client interface "boot" service printed "BOOT" and returned. Solaris
+(reboot, init 6, uadmin, the installer's reboot), Linux (machine_restart)
+and the BSDs (OF_boot) all reboot through it, and none of them expects it
+to return: Solaris panics with "prom_reboot: reboot call returned!",
+Linux with "Reboot failed!" (and with panic=-1 tries again for ever).
+
+Resetting the machine there (reset-all, the sabre's reset control
+register) is not enough on its own. QEMU's sun4u resets the machine, but
+the CPU keeps more of its state across the reset than a power-on leaves,
+the client that asked for the reset had set some of it, and the RAM
+keeps what that client left there:
+
+- SOFTINT and the interrupt receive register. The client makes the call
+  with interrupts disabled (patch 0016), so soft interrupts and a
+  received interrupt vector can be pending when the machine resets.
+  Solaris 10 left level 6 pending: the firmware stopped with "Unhandled
+  Exception 0x6" as soon as entry enabled interrupts. Clear both in
+  entry, before interrupts are enabled.
+- TICK.NPT, which a power-on reset sets. With NPT set, softint_irq
+  doesn't re-arm the timer, so the firmware takes one timer interrupt
+  after a power-on and no more. Linux, the BSDs and Solaris clear NPT;
+  after their reset the timer interrupt kept firing every 10 ms, into the
+  MMU miss handler at TL 1 (whose level 14 handler only retries, so the
+  CPU spun there: NetBSD's ofwboot hung after its banner) or into the
+  next kernel before it had set up its own handler (NetBSD's kernel
+  stopped in ddb, "kernel trap 30: data access exception" from
+  tt=4e). Set NPT again in entry.
+- The RAM. After a power-on it is zero, and Solaris relies on that:
+  after a reset Solaris 10 panicked in kphysm_init ("prom page locked")
+  and Solaris 9 in startup_memlist, on the page structures of the system
+  before. QEMU enters the firmware at 0x20 (power-on reset) only on its
+  first reset and at 0x40 after that; the reset vectors tell entry which
+  one it was, and after any later reset openbios() clears the RAM below
+  the firmware's own, except for a kernel and an initrd QEMU loaded
+  (-kernel, -initrd), which QEMU writes back on every reset.
+
+The bootspec the client passes isn't kept: the firmware boots its
+boot-device again, as on sparc32.
+---
+ arch/sparc64/entry.S    | 22 +++++++++++++++++++++
+ arch/sparc64/openbios.c | 43 +++++++++++++++++++++++++++++++++++++++++
+ arch/sparc64/vectors.S  | 14 ++++++++------
+ forth/system/ciface.fs  |  5 ++++-
+ 4 files changed, 77 insertions(+), 7 deletions(-)
+
+diff --git a/arch/sparc64/entry.S b/arch/sparc64/entry.S
+index 224a53b..aff3f66 100644
+--- a/arch/sparc64/entry.S
++++ b/arch/sparc64/entry.S
+@@ -57,6 +57,25 @@ entry:
+         ! Disable I/D MMUs and caches
+         stxa    %g0, [%g0] ASI_LSU_CONTROL
+ 
++        ! Put back what a power-on reset sets and a reset requested by a
++        ! running client (its reboot, through the client interface boot
++        ! service) leaves as the client had it:
++        ! - SOFTINT and the interrupt receive register: the client runs the
++        !   call with interrupts disabled and can leave soft interrupts or a
++        !   received interrupt vector pending, taken (and unhandled here) as
++        !   soon as interrupts are enabled;
++        ! - TICK.NPT, which the client may have cleared: with it clear the
++        !   timer interrupt below (softint_irq) keeps re-arming itself and
++        !   fires into trap handlers and the next client's early start.
++        wr      %g0, 0, %softint
++        stxa    %g0, [%g0] ASI_INTR_RECEIVE
++        membar  #Sync
++        rdpr    %tick, %g1
++        mov     1, %g2
++        sllx    %g2, 63, %g2
++        or      %g1, %g2, %g1
++        wrpr    %g1, 0, %tick
++
+         ! Check signature "QEMU"
+         setx    CFG_ADDR, %g2, %g5
+         mov     FW_CFG_SIGNATURE, %g2
+@@ -251,6 +270,9 @@ lowmem:
+         bl	1b
+          add	%o0, 0x8, %o0
+ 
++        setx    sparc64_warm_reset, %g2, %g1    ! %l7 from the reset vector
++        stx     %l7, [%g1]
++
+         setx    trap_table, %g2, %g1
+         wrpr    %g1, %tba
+ 
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index 55bb3bb..55ee69e 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -856,6 +856,45 @@ unsigned long isa_io_base;
+ 
+ extern struct _console_ops arch_console_ops;
+ 
++/* Set by entry.S: 0 after the power-on reset (QEMU's first reset), 1 after
++   any later one (a client's reboot through the boot service, reset-all, a
++   reset from QEMU's monitor) */
++uint64_t sparc64_warm_reset;
++
++/* After a power-on the RAM is zero. After any later reset it holds what the
++   last system left there, and clients rely on getting the former: Solaris 9
++   and 10 panic in startup_memlist/kphysm_init ("prom page locked") on page
++   structures of the system before, and Solaris 8's mini-root in page_free.
++   Clear the RAM below the firmware's own (entry.S puts that at the top),
++   except for a kernel and an initrd QEMU loaded (-kernel, -initrd): QEMU
++   writes them back on every reset. */
++static void sparc64_clear_ram(void)
++{
++    uint64_t end = (uint64_t)&_data - va_shift;
++    uint64_t kstart = 0, kend = 0, istart = 0, iend = 0, pa, off;
++    uint32_t size;
++
++    size = fw_cfg_read_i32(FW_CFG_KERNEL_SIZE);
++    if (size) {
++        kstart = fw_cfg_read_i64(FW_CFG_KERNEL_ADDR);
++        kend = kstart + size;
++    }
++    size = fw_cfg_read_i32(FW_CFG_INITRD_SIZE);
++    if (size) {
++        istart = fw_cfg_read_i32(FW_CFG_INITRD_ADDR);
++        iend = istart + size;
++    }
++    for (pa = 0; pa < end; pa += 64) {
++        if ((pa + 64 > kstart && pa < kend) || (pa + 64 > istart && pa < iend)) {
++            continue;
++        }
++        for (off = 0; off < 64; off += 8) {
++            asm volatile("stxa %%g0, [%0] %1"
++                         : : "r" (pa + off), "i" (ASI_PHYS_USE_EC) : "memory");
++        }
++    }
++}
++
+ int openbios(void)
+ {
+         unsigned int i;
+@@ -876,6 +915,10 @@ int openbios(void)
+         if (!hwdef)
+             for(;;); // Internal inconsistency, hang
+ 
++        if (sparc64_warm_reset) {
++            sparc64_clear_ram();
++        }
++
+ #ifdef CONFIG_DEBUG_CONSOLE
+         init_console(arch_console_ops);
+ #ifdef CONFIG_DEBUG_CONSOLE_SERIAL
+diff --git a/arch/sparc64/vectors.S b/arch/sparc64/vectors.S
+index b66f0d2..3d6b066 100644
+--- a/arch/sparc64/vectors.S
++++ b/arch/sparc64/vectors.S
+@@ -110,12 +110,14 @@ trap_table:
+ #define STACK_BIAS		2047
+ 	.globl	sparc64_ttable_tl0, sparc64_ttable_tl1
+ sparc64_ttable_tl0:
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! XXX remove
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! Power-on reset
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! Watchdog reset
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! External reset
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! Software reset
+-                ba entry; nop; nop; nop; nop; nop; nop; nop;! RED state
++                ! %l7: 0 for the power-on reset (QEMU's first reset), 1 for any
++                ! later one (entry stores it in sparc64_warm_reset)
++                ba entry; mov 1, %l7; nop; nop; nop; nop; nop; nop;! XXX remove
++                ba entry; mov 0, %l7; nop; nop; nop; nop; nop; nop;! Power-on reset
++                ba entry; mov 1, %l7; nop; nop; nop; nop; nop; nop;! Watchdog reset
++                ba entry; mov 1, %l7; nop; nop; nop; nop; nop; nop;! External reset
++                ba entry; mov 1, %l7; nop; nop; nop; nop; nop; nop;! Software reset
++                ba entry; mov 1, %l7; nop; nop; nop; nop; nop; nop;! RED state
+                 BTRAP(0x06) BTRAP(0x07) BTRAPS(0x08)
+ 		BTRAPS(0x10) BTRAPS(0x18)
+ 		BTRAP(0x20) BTRAP(0x21) BTRAP(0x22) BTRAP(0x23)
+diff --git a/forth/system/ciface.fs b/forth/system/ciface.fs
+index 146561a..7527a31 100644
+--- a/forth/system/ciface.fs
++++ b/forth/system/ciface.fs
+@@ -262,8 +262,11 @@ external
+ \ 6.3.2.5 Control transfer
+ \ -------------------------------------------------------------
+ 
++\ The client asks for a reboot (Solaris' reboot and uadmin, Linux's restart):
++\ reset the machine. The bootspec isn't kept, the firmware boots its
++\ boot-device again.
+ : boot ( bootspec -- )
+-  ." BOOT"
++  drop reset-all
+ ;
+ 
+ : enter ( -- )

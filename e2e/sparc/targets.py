@@ -945,8 +945,9 @@ TARGETS = {
         "device": "c0t0d0",  # the IDE disk as Solaris names it (the check's prtvtoc)
         "media": [{"name": "sol-10-u11-ga-sparc-dvd.iso", "drive": "ide2"}],
         # The text installer on ttya with a static address (DHCP=no), root's password asked by the
-        # installer (root_password); its reboot at the end doesn't come back (OpenBIOS has no
-        # client-interface reboot), so the scenario stops the VM and `install` boots the disk.
+        # installer (root_password); at its reboot at the end the scenario stops the VM (at the
+        # firmware's banner with openbios 0030, or where Solaris says the reboot call returned
+        # without it) and `install` boots the disk.
         "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": "", "DHCP": "no"},
                     "root_password": True, "retry_on": "before the installer", "timeout": 10800},
         "firstboot": {"scenario": "solaris10-firstboot.py", "vars": {}, "timeout": 3600},
@@ -968,9 +969,11 @@ TARGETS = {
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
     # support), End User. Both need openbios-sparc64 with patch 0024 (pp is NULL or free; pve-qemu-kvm
     # 11.1.3-2+wsh23 and later), 9 also 0025 (no ebus floppy node: its first, reconfiguring boot
-    # panicked in the fd driver; 8 only warns; pve-qemu-kvm 11.1.3-2+wsh25 and later). A reboot doesn't
-    # come back on sun4u: the scenario stops the VM at `0 >` after the install (as sol10-sun4u), and
-    # 8's reboot into the mini-root is a power cycle through PVE (lab.PveMachine.power_cycle()).
+    # panicked in the fd driver; 8 only warns; pve-qemu-kvm 11.1.3-2+wsh25 and later). The reboot at
+    # the end: the scenario stops the VM at the firmware's banner (openbios 0030 resets the machine;
+    # before it, at `0 >` after the panic on the returned reboot call), as sol10-sun4u. 8's reboot
+    # into the mini-root: a firmware reset with 0030, a power cycle through PVE before it
+    # (lab.PveMachine.power_cycle()).
     "sol9-sun4u": {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 9 9/05 End User on sun4u (OpenBIOS, IDE disk)",
@@ -995,10 +998,10 @@ TARGETS = {
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19_WSH25,
                    "with": "--check (openbios 0025 mounted on +wsh23); --check (+wsh25); boot-test of the stored disk (+wsh25)"},
     },
-    # The Installation CD copies a mini-root to the swap slice (b) and reboots into it: on sun4u the
-    # reboot returns to `0 >` (a panic), the VM is power-cycled and slice b booted at `0 >` (auto-boot?
-    # false for the install phase); Web Start from the mini-root asks for Software 1 of 2 (End User
-    # needs no Software 2 of 2)
+    # The Installation CD copies a mini-root to the swap slice (b) and reboots into it: the firmware
+    # resets (openbios 0030; before it the reboot returned to `0 >` and the VM was power-cycled) and
+    # stops at `0 >` (auto-boot? false for the install phase), where slice b is booted; Web Start from
+    # the mini-root asks for Software 1 of 2 (End User needs no Software 2 of 2)
     "sol8-sun4u": {
         **SOLARIS_SCRIPTED,
         "title": "Solaris 8 2/02 End User on sun4u (OpenBIOS, IDE disk)",

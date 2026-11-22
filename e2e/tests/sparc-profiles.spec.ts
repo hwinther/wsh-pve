@@ -975,6 +975,100 @@ test.describe('backup and restore', () => {
   }
 })
 
+// The NVRAM volume (nvram0, submodules/SPARC.md, "The NVRAM kept in a volume") under the Sun SS-20
+// PROM, without a guest OS: the PROM's `setenv` must last across `qm stop` and `qm start`. Solaris to
+// the login prompt on top of it (auto-boot, a reconfiguration boot) needs install media and stays in
+// the lab (e2e/sparc/pve_matrix.py pve, case sol26-ss20prom-nvram).
+test.describe('the SS-20 PROM with an NVRAM volume (nvram0)', () => {
+  /**
+   * Reads the VM's serial console (ttya) until the PROM's `ok` prompt, types each line and waits for
+   * `ok` again; prints everything it read. Exit 1 when no prompt comes within the timeout.
+   */
+  const PROM_CONSOLE = String.raw`
+import socket, sys, time
+path, timeout, lines = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+s = socket.socket(socket.AF_UNIX)
+s.connect(path)
+s.settimeout(0.5)
+buf = b""
+def until_ok():
+    global buf
+    start, end = len(buf), time.time() + timeout
+    while b"\nok " not in buf[start:]:
+        if time.time() > end:
+            print(buf.decode("latin-1"))
+            sys.exit("no ok prompt within %gs" % timeout)
+        try:
+            data = s.recv(4096)
+        except socket.timeout:
+            continue
+        if not data:
+            sys.exit("the console closed")
+        buf += data
+until_ok()
+for line in lines:
+    for ch in line + "\r":
+        s.send(ch.encode())
+        time.sleep(0.05)
+    until_ok()
+print(buf.decode("latin-1"))
+`
+
+  async function promConsole(vmid: number, lines: string[] = []): Promise<string> {
+    const { code, output } = await pveExec([
+      'python3',
+      '-c',
+      PROM_CONSOLE,
+      `/var/run/qemu-server/${vmid}.serial0`,
+      '120',
+      ...lines,
+    ])
+    expect(code, output).toBe(0)
+    return output
+  }
+
+  test('qm showcmd, and the PROM keeps setenv across qm stop and qm start', async () => {
+    test.setTimeout(300_000)
+    const hasNvram = (await pveExec(['grep', '-q', 'nvram0', '/usr/share/perl5/PVE/QemuServer/Drive.pm'])).code === 0
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has nvram0
+    test.skip(!hasNvram, 'the installed qemu-server has no nvram0 yet')
+    const vmid = await createVm(
+      profileParams(SS20_PROM, {
+        name: 'sparc-ss20-nvram',
+        nvram0: 'local:1',
+        scsi6: 'none,media=cdrom',
+        serial0: 'socket',
+        vga: 'serial0',
+      }),
+    )
+    expect(await vmConfFile(vmid)).toMatch(/^nvram0: local:\d+\/vm-\d+-disk-\d+\.raw,size=4M$/m)
+    const cmd = await showcmd(vmid)
+    expect(cmd).toContain('-bios ss20_v2.25_rom')
+    expect(cmd).toContain(`-cpu ${SS20_PROM.cpu}`)
+    expect(cmd).toMatch(/-blockdev '\{[^']*"node-name":"drive-nvram0"/)
+    expect(cmd).toContain("-global 'sysbus-m48t08.drive=drive-nvram0'")
+
+    // First start, blank volume: the PROM's defaults (diag-switch? true: the long memory test, then the
+    // network, which fails) and ok. setenv writes into the volume.
+    await qm(['start', String(vmid)])
+    const first = await promConsole(vmid, ['setenv diag-switch? false'])
+    expect(first).toContain('Testing 512 megs of memory')
+    expect(first).not.toContain('disk label')
+    expect(first).toMatch(/diag-switch\? =\s+false/)
+    await qm(['stop', String(vmid)])
+
+    // A new QEMU process: the PROM reads diag-switch? false from the volume, skips the long memory test
+    // and boots boot-device, the disk on target 3 (blank here: no label, so it falls back to the
+    // network and stops at ok again).
+    await qm(['start', String(vmid)])
+    const second = await promConsole(vmid, ['printenv diag-switch?'])
+    expect(second).not.toContain('Testing 512 megs of memory')
+    expect(second).toContain('Bad magic number in disk label')
+    expect(second).toMatch(/diag-switch\? =\s+false/)
+    await qm(['stop', String(vmid)])
+  })
+})
+
 // More than one CPU (submodules/SPARC.md, "SMP"): SS-10 and SS-20 with OpenBIOS take up to 4, the
 // SS-20 PROM and SS-5 one. Needs qemu-server and pve-manager with the CPU limits per profile.
 test.describe('more than one CPU', () => {
