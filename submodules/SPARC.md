@@ -99,6 +99,9 @@ maintains the patches.
 | `0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu` | qtest `sun4m-dbri-test` for 0066 on the SS-20 and the LX: the registers after start, kept values, soft reset, PIO pins low; a queue of one-, two- and three-word commands with a JUMP to another page read through the IOMMU leaves REG8 on its WAIT, the P bit goes on from there (or stays when nothing was added) and doesn't stay set, a queue on an unmapped page leaves REG8 as written; fails against the 0001-0062 build | ours | not in QEMU |
 | `0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis` | `sabre_reset()` left the PCI control/status registers (`0x2000`-`0x202f`) as the guest last wrote them; Solaris writes its error bits back there, and after a reset (its reboot, OpenBIOS 0030) every boot warned `pcipsy0: SERR asserted on pci bus`. They are cleared on reset, as at power-on ("The firmware reboot on sun4u") | ours | not in QEMU |
 | `0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a` | qtest `sun4u-sabre-reset-test` for 0068 | ours | not in QEMU |
+| `0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su` | Linux on sun4u spun in its idle loop at 100% of a host core: `arch_cpu_idle()` only touches the NMI watchdog there (it yields to the hypervisor on sun4v), and no kernel option changes that. The translator recognises `arch_cpu_idle()` at its call of `arch_touch_nmi_watchdog()` by the `tlb_type` test next to it and the start of the sun4v branch, as gcc lays it out either way round (Linux 6.1 and 7.3: `be` to the sun4v branch; 6.17 and 7.0: `bne` around it), and halts the CPU there at `%pil` 14 (interrupts disabled, as the idle loop calls it), with nothing pending and `TIF_NEED_RESCHED` clear; the tick, stick and interrupt vector wake it whatever `%pil`, and the interrupt is taken when the loop enables interrupts. The window around a call grows to 24 words before it; words on another page read as 0 ("sparc64 (sun4u)", "Idle") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an` | Solaris 7 and 8 spun in `idle()` on sun4u: Sun's older compiler lays the loop out the other way round from 9 and 10 (`be` to the call through `idle_cpu`, `swtch()` first). The translator recognises that layout too and halts at the call as for Solaris 9 and 10 (`-trace sparc64_idle_match`: `Solaris 7/8`) | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop` | qtest `sun4u-idle-test` for 0070-0071: the Solaris 7/8 layout with the cases of the others, and Linux 7.3, 6.1 and 7.0's `arch_cpu_idle()` in a loop that disables interrupts to level 14 round it: it must halt there, not with `TIF_NEED_RESCHED` set, without `PSTATE.IE`, at level 0 or 15, and a 1 ms tick must wake it at level 14 and be taken when the loop enables interrupts; 51 cases | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -276,6 +279,19 @@ section).
 0061-0062 apply on top of 0001-0060 (2026-11-21, lab build of 11.1.3; not in a package yet):
 `sun4m-ledma-test` 5/5 (its lance and reset cases fail without 0061), `qtest-sparc` 29 OK, 2 skipped
 and the `qmp-test` `oob` failure as before.
+
+0070-0072 apply on top of 0001-0067 (2026-11-22, lab build of 11.1.3; not in a package yet; the whole
+series with `patch -F0` on the pinned 11.1.3, 145 patches). `sun4u-idle-test` passes 51/51 with them;
+against the 0001-0067 build the `idle` and `tick` cases of `solaris7` and the three Linux layouts fail
+(the loop went on: 1.1-10.6 million rounds in 300 ms) and the old layouts' cases pass. 0070 and
+0071 each build without a warning. With 0001-0072 the `qtest-sparc` and `qtest-sparc64` suites: 50 OK,
+4 skipped, and the two `qmp-test` `oob` failures as before.
+Lab regression with the 0001-0072 `qemu-system-sparc64` (2026-11-22): `sparc64` 10/10
+(`nb111-idle-sparc64` 2.4%, `nb111-noidle-spins-sparc64` 99.8%), `solaris10` 2/2, and `wsh-lab
+boot-test` through PVE (the binary bind-mounted into the test node behind a wrapper that adds the
+version suffix qemu-server parses and `-L /usr/share/kvm`; packages 11.1.3-3+wsh13) of the stored
+`sol8-sun4u` and `sol7-sun4u` disks: 2/2 passed (4.5 and 4.1 min). The sparc32 binary wasn't tested
+again: 0070-0072 change only code built for sparc64. Results under "sparc64 (sun4u)", "Idle".
 
 When pve-qemu moves to a new QEMU: check each patch still applies, drop any that upstream has
 taken, and run `sun4m-escc-test`, `sun4m-apc-test`, `sun4m-solaris-idle-test`,
@@ -2796,7 +2812,8 @@ disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
 | NetBSD 9.3, 11.1 | `idle_loop()` calls `cpu_idle()` while `sched_curcpu_runnable_p()` is false, then checks `ci_want_resched` | nothing: `cpu_idle()` calls `ci_idlespin`, which only sun4v sets (`hv_cpu_yield`); 9.3's `cpu_idle` is `retl; nop`. The ebus `power` node isn't attached (`power at ebus0 ... not configured`) |
 | OpenBSD 8.0 | `sched_idle()`: `while (spc_whichqs == 0) cpu_idle_cycle();` | nothing: `cpu_idle_cycle()` yields to the hypervisor on sun4v; on sun4u it is a `nop` that is patched to `sleep` (SPARC64-VI/VII) only on CPUs with several strands |
 | Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
-| Debian 12 (Linux) | `arch_cpu_idle()` | nothing: `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No installed disk (the install fails), not covered |
+| Solaris 7 3/99, 8 2/02 | `idle()` as in 9 and 10 | nothing, as on 9 and 10 |
+| Linux 6.1-7.3 (wisp; Debian 12 and 13 installers) | the generic `do_idle()`: with interrupts disabled (`%pil` 14) and `need_resched()` clear it calls `arch_cpu_idle()`, enables interrupts and goes round again | nothing: `arch_cpu_idle()` calls `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No kernel option helps: sparc64 has no cpuidle driver, `idle=poll` spins elsewhere, and `nohz` takes away clock interrupts, not the spin. No installed disk (Debian's install fails); measured with `-kernel` |
 
 None of them uses `sir` or an `%asr` write to idle. The clock-divider power management of the
 UltraSPARC-IIe/IIIi (Energy Star) slows the clock rather than stopping it, and QEMU emulates a IIi (not
@@ -2813,6 +2830,12 @@ the word that says there is work:
 | Solaris 10 1/13 | `jmpl %o1, %o7` (0x10621d0) | `disp_nrunnable` (`[%o0 + 0x24]`, `%o0` = `cpu_disp`) | Sun's compiler: `ld; cmp; bne run; sethi %hi(idle_cpu); ldx; call; ...; b` |
 | Solaris 9 9/05 | `jmpl %l0, %o7` (0x104618c) | `disp_nrunnable` (`[%l2 + 0xb4]`, in the CPU structure) | the same |
 | Tribblix m34 | `jmpl %g1, %o7` (0x10621c8) | `disp_nrunnable`, 0x24 past the `cpu_disp` pointer at `[%l0 + 0xd0]` (gcc loads the pointer and the count into the same `%g1`, so the helper follows the pointer again) | gcc: `ldx; ld; cmp; bne,pt %icc run; nop; ldx [%l1]; call; nop; ba,pt %xcc top` |
+| Solaris 7 3/99 (0071) | `jmpl %l0, %o7` (0x1003d528) | `disp_nrunnable` (`[%i2 + 0x9c]`, in the CPU structure) | Sun's older compiler: `ld; cmp; be idle; sethi %hi(idle_cpu); call swtch; nop; b top; ...; idle: ldx; call; nop; b top` |
+| Solaris 8 2/02 (0071) | the call through `idle_cpu` (0x10040660; the same in the Installation CD's kernel) | `disp_nrunnable` (`[%i3 + 0x9c]`) | the same as 7 |
+| Solaris 8 1/01, Installation CD's kernel (0071) | (0x1003fab4) | `disp_nrunnable` | the same as 7 |
+| Linux 7.3.4, wisp (0070) | `call arch_touch_nmi_watchdog` (0x431104) | `TIF_NEED_RESCHED` in `current_thread_info()->flags` (`[%g6 + 8]`) | gcc 14: `ld [tlb_type]; cmp 3; be %icc sun4v; nop; call; restore` (a tail call), the sun4v branch right after (`wrpr %g0, 0, %pil; rdpr %pstate; andn 2; wrpr %pstate`) |
+| Linux 6.1.27, Debian 12 installer (0070) | `call arch_touch_nmi_watchdog` (0x42c280) | the same | gcc 12: `... be,pn %icc sun4v; nop; call; nop; call touch_softlockup_watchdog; nop; wrpr %g0, 0, %pil; return; nop`, then the sun4v branch |
+| Linux 6.17.7 and 7.0.12, Debian 13 installers of 2025-11 and 2026-06 (0070) | `call arch_touch_nmi_watchdog` (0x43a9a0, 0x43aa40) | the same | gcc 15: `... bne,pn %icc sun4u; nop;` the sun4v branch (16 words, `return; nop` at its end), `sun4u: call; nop; call touch_softlockup_watchdog; nop; return; nop` |
 
 At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
 no interrupt, interrupt vector, `%softint` bit or `pil_in` line is pending, after spinning 100 us as on
@@ -2867,6 +2890,65 @@ so with `fmd` running it reads 104-108% either way. With `fmd` disabled (`svcadm
 real installation shouldn't do) it idles at 21.8% (258 111 halts traced in the run); the rest is
 Tribblix's own work under emulation, not analysed. Its ten `sleep 1` take 11.7 s with and without the
 halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
+
+**Idle, more guests (pve-qemu `wsh/0070`-`0072`, 2026-11-22).** Linux and Solaris 7 and 8 spun as well.
+
+- **Solaris 7 and 8.** `-trace sparc64_idle_match` showed no match on the stored `sol7-sun4u` disk
+  nor on the new `sol8-sun4u` one (installed for this, "Solaris 8 and 9 on sun4u" in the lab README),
+  and QEMU's `x/i` at the sampled idle PC showed why: Sun's older compiler lays `idle()` out the other
+  way round from 9 and 10 (table above). Solaris 8 is laid out like 7, not like 9. 0071 recognises that
+  layout; the call goes through `helper_sparc64_idle()` as for 9 and 10. The kernels of the Solaris 8
+  2/02 and 1/01 Installation CDs match it too (trace at their first question).
+- **Linux.** The generic idle loop (`kernel/sched/idle.c`, Linux 7.3) calls `arch_cpu_idle()` with
+  interrupts disabled (sparc64's `local_irq_disable()` writes `%pil` 14) once `need_resched()` is
+  clear; on sun4u `arch_cpu_idle()` only touches the NMI watchdog (`arch/sparc/kernel/process_64.c`;
+  6.1 also enables interrupts there, the older contract), and the loop goes round once it has enabled
+  interrupts. The sun4v branch shows what the kernel itself accepts: interrupts enabled, `PSTATE.IE`
+  cleared, the hypervisor's `cpu_yield` (which returns on a pending interrupt even with `IE` clear),
+  `IE` set again. No upstream option makes sun4u stop the CPU: there is no cpuidle driver for sparc64,
+  `CONFIG_SUN_LDOMS` and the hypervisor calls need sun4v, `idle=poll` only moves the spin, and
+  `nohz` removes clock interrupts but not the spin. So 0070 recognises `arch_cpu_idle()` by its
+  `tlb_type` test and the start of the sun4v branch (both orders gcc uses, table above) and halts at
+  the call of `arch_touch_nmi_watchdog()` with `%pil` 14, `PSTATE.IE` set, `%tl` 0, nothing pending
+  and `TIF_NEED_RESCHED` clear: waiting with interrupts disabled, as `cpu_yield` (and x86's `mwait`,
+  which the comment in `do_idle()` names) do. QEMU's sun4u wakes a halted CPU whatever `%pil`: the
+  tick, stick and hstick compare interrupts and the interrupt vector clear `cs->halted`
+  (`hw/sparc64/sparc64.c`), and nothing on sun4u raises `pil_in`. The CPU goes on at the call; the
+  interrupt is taken when the loop enables interrupts, so no state is kept across the halt (nothing
+  for migration). 0042's halt needs `%pil` 0 and stays as it was. The window read around a call grew
+  from 8 to 24 words before it (Debian 13's bne layout needs 20, Solaris 7's 9); words on another page than
+  the call's read as 0 (illtrap, in no layout) instead of the call being skipped.
+
+Measured on the lab host (14 threads, quiet: 1-minute load 0.1-1.1 at every start and end), one QEMU at
+a time, "before" the 0001-0067 build, "with" the same tree with 0070-0072, "off" that one with
+`-M sun4u,idle-halt=off`. Linux booted with `-kernel` (no Linux disk: Debian's install fails): wisp's
+tier-1 kernel with `wisp=shell` (256 MB), host CPU over 60 s at its prompt, then the guest's uptime
+against the host's clock and `crc 100000` three times (host seconds, two passes); the Debian netinst
+`install/vmlinux` and `initrd.gz` from the CDs (1024 MB, `console=ttyS0`), host CPU over 60 s at the
+installer's first question, and the time to it:
+
+| Guest | Host CPU before / with / off | Clock drift | Job s before / with / off | To the prompt s before / with / off |
+| --- | --- | --- | --- | --- |
+| wisp, Linux 7.3.4 (two passes) | 100.5, 100.5 / 5.6, 5.3 / 100.5, 100.5% | 0.0 s | `crc 100000` 8.72-8.82 / 8.77-8.92 / 8.67-8.77 | 2.1-2.2 |
+| Debian 12 installer, Linux 6.1.27 | 100.4 / 5.7 / 100.5% | | | 31.0 / 30.9 / 33.5 |
+| Debian 13 installer of 2025-11, Linux 6.17.7 | 100.4 / 6.0 / 100.4% | | | 33.5 / 33.7 / 32.4 |
+| Debian 13 installer of 2026-06, Linux 7.0.12 | 100.4 / 5.8 / 100.5% | | | 33.8 / 33.9 / 33.8 |
+| Solaris 7 3/99, `install-sol7-sun4u` (1024 MB) | 100.5 / 2.5 / 100.5% | 0.0 s | awk 6.0 / 6.0 / 6.1 | `login:` 180.7 / 180.5 / 180.5 |
+| Solaris 8 2/02, `install-sol8-sun4u` (1024 MB) | 100.5 / 3.0 / 100.5% | 0.0 s | awk 7.1 / 7.0 / 6.8 | `login:` 206.7 / 206.7 / 206.6 |
+
+Solaris with `scenarios/sparc64-idle.py` on copies of the stored disks (the Solaris 9 variables, lab
+README "Idle"; the awk job of the table above, 60 s at the shell); ten `sleep 1` took 10.1-10.2 s in
+all six runs. Longer jobs, with the halt on / off: five awk jobs in a row on Solaris 8 34.5 / 34.5 s,
+wisp's `crc 500000` 43.7 / 43.6 s. The Debian installer's boot is mixed work with the halt on: it
+takes as long as with it off. The wisp kernel ticks 250 times a second (`HZ_PERIODIC`), so it
+wakes at every tick and spins 100 us before it halts again; whether the Debian kernels stop the tick
+when idle wasn't looked at (their configuration isn't on the CDs).
+
+The guests 0042 covers, with the build with 0070-0072 (same runs, same host, `TRACE` shows their old
+layout matched): NetBSD 11.1 2.6%, NetBSD 9.3 2.5%, OpenBSD 8.0 4.3%, Solaris 9 3.1% (ten `sleep 1`
+10.1-10.3 s, clock drift 0.0 s); Solaris 10 and Tribblix weren't measured again. The installer kernels
+of NetBSD 9.3 and 11.1 and OpenBSD 8.0's `bsd.rd` (the CDs, `sparc64-boot-cd.py` with the trace) match
+the NetBSD and OpenBSD layouts as well.
 
 **Stability** (NetBSD 11.1): 4 boots in a row of the same disk, each a new QEMU process, login,
 `halt -p` (`sparc64-boot-disk.py BOOTS=4`): all passed, `login:` after 56.0, 56.1, 56.0 and 71.4 s,

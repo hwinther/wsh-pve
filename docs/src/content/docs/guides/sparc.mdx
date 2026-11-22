@@ -662,10 +662,17 @@ loop of these guests and halts the virtual CPU there until the next interrupt:
 | Solaris 9 9/05 and 10 1/13 | 102% / 5-7% |
 | Tribblix m34 (illumos) | 102% / 22%, but only with FMA's `fmd` off: on QEMU's IDE its ZFS disk soon gets marked DEGRADED and `rcm_daemon` then keeps the guest busy (104-108% either way) |
 
+Patches `wsh/0070`-`0072` (not in a package yet) add Linux and Solaris 7 and 8:
+
+| Guest | Host CPU idle, before / with the idle halt |
+| --- | --- |
+| Solaris 7 3/99 and 8 2/02, at the shell | 100% / 2.5-3% |
+| Linux 6.1 to 7.3: the Debian 12 and 13 installers at their first question, the wisp test kernel at its prompt | 100% / 5-6% |
+
 The guest clock, `sleep` and CPU-bound work behave as before (measured in the sparc lab, QEMU started
 directly). It is the machine option `idle-halt`, on by default; to turn it off for one VM add
 `args: -machine idle-halt=off` to its configuration (`qm set <vmid> --args '-machine idle-halt=off'`).
-Other kernel builds (other releases, patch levels, or Linux) aren't recognised and spin as before.
+Other kernel builds (other releases, patch levels) aren't recognised and spin as before.
 Solaris 10 keeps starting services for several minutes after the login prompt, at full speed: it is
 idle only after that.
 

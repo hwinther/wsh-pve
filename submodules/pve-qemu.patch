@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..3b61a5f 100644
+index bc240a0..321ee6d 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,72 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,75 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -146,6 +146,9 @@ index bc240a0..3b61a5f 100644
 +wsh/0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu.patch
 +wsh/0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis.patch
 +wsh/0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a.patch
++wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch
++wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch
++wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -14150,6 +14153,780 @@ index 0000000..f584fbd
 ++    qtest_add_func("/sun4u/sabre/pci-control-reset", test_pci_control_reset);
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch b/debian/patches/wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch
+new file mode 100644
+index 0000000..92a6e00
+--- /dev/null
++++ b/debian/patches/wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch
+@@ -0,0 +1,314 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt the CPU in Linux's idle loop on sun4u
++
++Linux on sun4u spins in its idle loop and keeps a host core busy for as
++long as the VM runs: the generic idle loop disables interrupts, finds
++need_resched() clear and calls arch_cpu_idle(), which on sun4u only
++touches the NMI watchdog (it yields to the hypervisor on sun4v), and
++goes round again once it has enabled interrupts. No kernel option
++changes that.
++
++The translator now also recognises arch_cpu_idle() at its call of
++arch_touch_nmi_watchdog(), by the test of tlb_type against hypervisor
++(3) next to it and the start of the sun4v branch (interrupts enabled,
++then PSTATE.IE cleared), as gcc lays it out either way round: Linux 6.1
++and 7.3 branch to the sun4v code, 6.17 and 7.0 around it. The helper
++halts the CPU there when %pil is 14 (what local_irq_disable() writes),
++PSTATE.IE is set, nothing is pending and TIF_NEED_RESCHED is clear in
++current_thread_info()->flags at %g6 + 8, after the same 100 us of
++spinning as for the other guests. It halts with interrupts disabled, as
++sun4v's cpu_yield and x86's mwait wait: on sun4u the tick, stick and
++interrupt vector wake a halted CPU whatever %pil, and the CPU goes on at
++the call; the interrupt is taken once the idle loop enables interrupts.
++
++The window read around a call grows from 8 to 24 words before it, for
++the layout where the sun4v branch comes first, and words on another page
++than the call's are read as 0 instead of skipping the call.
++
++An idle Linux then uses 5-6% of a host core instead of 100%: the wisp
++test kernel (Linux 7.3.4) and the installer kernels of Debian 12
++(6.1.27), 13 of 2025-11 (6.17.7) and 13 of 2026-06 (7.0.12). A CPU-bound
++job and the installer's boot take as long as before, and the guest
++clock keeps time.
++---
++ hw/sparc64/sun4u.c          |   2 +-
++ target/sparc/helper.h       |   1 +
++ target/sparc/sparc64_idle.c |  53 ++++++++++++++
++ target/sparc/translate.c    | 138 +++++++++++++++++++++++++++++++++---
++ 4 files changed, 184 insertions(+), 10 deletions(-)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index ca52e1a..1901d47 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -909,7 +909,7 @@ static void sun4u_class_init(ObjectClass *oc, const void *data)
++                                    sun4u_set_idle_halt);
++     object_class_property_set_description(oc, "idle-halt",
++         "Halt the CPU while a known guest kernel (NetBSD, OpenBSD, Solaris, "
++-        "illumos) is idle, instead of spinning (default: on)");
+++        "illumos, Linux) is idle, instead of spinning (default: on)");
++ }
++ 
++ static const TypeInfo sun4u_type = {
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 130259e..7685738 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -14,6 +14,7 @@ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++ #ifndef CONFIG_USER_ONLY
++ DEF_HELPER_5(sparc64_idle, void, env, tl, tl, tl, tl)
+++DEF_HELPER_3(sparc64_idle_linux, void, env, tl, tl)
++ #endif
++ DEF_HELPER_2(wrpstate, void, env, tl)
++ DEF_HELPER_1(done, void, env)
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index 1b545f5..a7e7384 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -57,6 +57,22 @@
++  *
++  * As in the sun4m idle loops, the loop spins on for 100 us before the
++  * first halt, as a disk request often completes that soon.
+++ *
+++ *   Linux arch_cpu_idle(), which the generic idle loop calls with
+++ *   interrupts disabled (%pil 14) once it has found need_resched() clear:
+++ *       if (tlb_type != hypervisor)
+++ *           touch_nmi_watchdog();             <- here
+++ *       else
+++ *           ... sun4v_cpu_yield() ...
+++ *     On sun4u it only touches the NMI watchdog, and the idle loop goes
+++ *     round again as soon as it has enabled interrupts; the word is
+++ *     need_resched()'s, the flags of current_thread_info() at %g6 + 8.
+++ *
+++ * Linux is halted at %pil 14 by helper_sparc64_idle_linux(), as sun4v's
+++ * cpu_yield and x86's mwait wait with interrupts disabled. The tick and
+++ * stick compare interrupts and the interrupt vector wake a halted CPU
+++ * whatever %pil (hw/sparc64/sparc64.c), and the CPU goes on at the call;
+++ * the interrupt is taken when the idle loop enables interrupts again.
++  */
++ 
++ #include "qemu/osdep.h"
++@@ -156,3 +172,40 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++     cs->exception_index = EXCP_HLT;
++     cpu_loop_exit(cs);
++ }
+++
+++#define LINUX_PIL_NORMAL_MAX    14      /* local_irq_disable() */
+++#define LINUX_TIF_NEED_RESCHED  (1 << 3)
+++
+++/*
+++ * Linux, at the call in arch_cpu_idle() (pc); flags_addr is
+++ * current_thread_info()->flags. Halt until the next interrupt when
+++ * interrupts are disabled as the idle loop disables them, none is pending
+++ * and need_resched() is clear, and go on at the call then: whatever %pil,
+++ * the tick, stick and interrupt vector set cs->halted to 0.
+++ */
+++void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
+++                                target_ulong flags_addr)
+++{
+++    CPUState *cs = env_cpu(env);
+++    uint64_t flags;
+++
+++    if (!(env->pstate & PS_IE) || env->psrpil != LINUX_PIL_NORMAL_MAX ||
+++        env->tl || cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
+++        (env->ivec_status & 0x20) || env->softint || env->pil_in) {
+++        return;
+++    }
+++    if (!sparc64_idle_read(env, flags_addr, 8, &flags) ||
+++        (flags & LINUX_TIF_NEED_RESCHED)) {
+++        return;
+++    }
+++    if (!sparc64_idle_polled(env)) {
+++        return;
+++    }
+++
+++    trace_sparc64_idle(pc);
+++    env->pc = pc;
+++    env->npc = pc + 4;
+++    cs->halted = 1;
+++    cs->exception_index = EXCP_HLT;
+++    cpu_loop_exit(cs);
+++}
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 72ed920..8999afe 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6183,7 +6183,7 @@ static void gen_solaris_idle_mp(DisasContext *dc, CPUSPARCState *env,
++  * into a fixed pattern.
++  */
++ #define S64_NOP         0x01000000
++-#define S64_IDLE_BEFORE 8       /* words read before the call */
+++#define S64_IDLE_BEFORE 24      /* words read before the call */
++ #define S64_IDLE_AFTER  12      /* and after it */
++ 
++ #define S64_RD(w)       extract32(w, 25, 5)
++@@ -6491,15 +6491,123 @@ static bool s64_idle_solaris(const uint32_t *w, target_ulong pc,
++     return true;
++ }
++ 
+++/* cmp %rs1, 3 (subcc %rs1, 3, %g0) */
+++static bool s64_cmp3(uint32_t w, int *rs1)
+++{
+++    if ((w & 0xfff83fff) != 0x80a02003) {
+++        return false;
+++    }
+++    *rs1 = S64_RS1(w);
+++    return true;
+++}
+++
+++#define S64_WRPR_PIL0   0x91902000      /* wrpr %g0, 0, %pil */
+++#define S64_RETURN      0x81cfe008      /* return %i7 + 8 */
+++#define S64_RET         0x81c7e008      /* ret: jmpl %i7 + 8, %g0 */
+++
+++/*
+++ * The start of the sun4v branch of Linux's arch_cpu_idle() at w[0]:
+++ * interrupts enabled, then PSTATE.IE cleared over the hypervisor call
+++ *
+++ *        wrpr  %g0, 0, %pil
+++ *        rdpr  %pstate, %a
+++ *        andn  %a, 2, %a                  (PSTATE_IE)
+++ *        wrpr  %a, %pstate
+++ */
+++static bool s64_linux_sun4v(const uint32_t *w)
+++{
+++    int a;
+++
+++    if (w[0] != S64_WRPR_PIL0 || (w[1] & 0xc1ffffff) != 0x81518000) {
+++        return false;
+++    }
+++    a = S64_RD(w[1]);
+++    return w[2] == (0x80282002 | a << 25 | a << 14) &&
+++           (w[3] == (0x8d900000 | a << 14) || w[3] == (0x8d902000 | a << 14));
+++}
+++
+++/*
+++ * Linux arch_cpu_idle() (w[S64_IDLE_BEFORE] is the call). The generic
+++ * idle loop calls it with interrupts disabled (%pil 14), having found
+++ * need_resched() clear:
+++ *
+++ *     if (tlb_type != hypervisor)
+++ *         touch_nmi_watchdog();           <- here, the call of
+++ *     else {                                 arch_touch_nmi_watchdog()
+++ *         raw_local_irq_enable(); ... sun4v_cpu_yield(); ...
+++ *     }
+++ *
+++ * gcc lays the test of tlb_type out either way round. Linux 6.1 and 7.3:
+++ *
+++ *        ld    [%x + %lo(tlb_type)], %r
+++ *        cmp   %r, 3                      (hypervisor)
+++ *        be    sun4v
+++ *         nop
+++ *        call  arch_touch_nmi_watchdog    <- here
+++ *        ...
+++ *  sun4v: the sun4v branch (s64_linux_sun4v)
+++ *
+++ * Linux 6.17 and 7.0:
+++ *
+++ *        ld    [%x + %lo(tlb_type)], %r
+++ *        cmp   %r, 3
+++ *        bne   sun4u
+++ *         nop
+++ *        the sun4v branch (s64_linux_sun4v)
+++ *        ...
+++ *        return %i7 + 8                   (or ret)
+++ *         ...
+++ *  sun4u: call  arch_touch_nmi_watchdog   <- here
+++ *
+++ * The word is need_resched()'s, the flags of current_thread_info() at
+++ * %g6 + 8.
+++ */
+++static bool s64_idle_linux(const uint32_t *w, target_ulong pc,
+++                           S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t;
+++    int32_t off;
+++    int r, r2, x, i;
+++
+++    if (extract32(c[0], 30, 2) != 1) {      /* call disp30 */
+++        return false;
+++    }
+++    iw->reg = 6;
+++    iw->off = 8;
+++
+++    /* be sun4v; nop; call */
+++    if (s64_lduw(c[-4], &x, &off, &r) && s64_cmp3(c[-3], &r2) && r2 == r &&
+++        s64_bcc(c[-2], pc - 8, S64_BE, &t) && c[-1] == S64_NOP &&
+++        t > pc + 4 && (t - pc) / 4 + 3 <= S64_IDLE_AFTER) {
+++        return s64_linux_sun4v(c + (t - pc) / 4);
+++    }
+++
+++    /* bne sun4u; nop; the sun4v branch; ...; return; ...; call */
+++    if (c[-2] != S64_RETURN && c[-2] != S64_RET) {
+++        return false;
+++    }
+++    for (i = 8; i <= S64_IDLE_BEFORE - 2; i++) {
+++        if (s64_bcc(c[-i], pc - 4 * i, S64_BNE, &t) && t == pc &&
+++            c[-i + 1] == S64_NOP && s64_cmp3(c[-i - 1], &r2) &&
+++            s64_lduw(c[-i - 2], &x, &off, &r) && r == r2) {
+++            return s64_linux_sun4v(c - i + 2);
+++        }
+++    }
+++    return false;
+++}
+++
++ typedef struct Sparc64IdleLoop {
++     const char *kernel;
++     bool (*match)(const uint32_t *w, target_ulong pc, S64IdleWord *iw);
+++    bool irqs_off;      /* at %pil 14: helper_sparc64_idle_linux() */
++ } Sparc64IdleLoop;
++ 
++ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "NetBSD", s64_idle_netbsd },
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
+++    { "Linux", s64_idle_linux, true },
++ };
++ 
++ /*
++@@ -6519,14 +6627,21 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         return;
++     }
++     /* Off RAM, translator_ldl_end() would record these words as code */
++-    if (tb_page_addr0(dc->base.tb) == -1 ||
++-        !translator_is_same_page(&dc->base, start) ||
++-        !translator_is_same_page(&dc->base, start + 4 * (ARRAY_SIZE(w) - 1))) {
+++    if (tb_page_addr0(dc->base.tb) == -1) {
++         return;
++     }
+++    /*
+++     * Only words on the call's page are read; the others are 0 (illtrap),
+++     * which no layout has
+++     */
++     for (i = 0; i < ARRAY_SIZE(w); i++) {
++-        w[i] = i == S64_IDLE_BEFORE ? insn :
++-               translator_ldl_end(env, &dc->base, start + 4 * i, MO_BE);
+++        if (i == S64_IDLE_BEFORE) {
+++            w[i] = insn;
+++        } else if (translator_is_same_page(&dc->base, start + 4 * i)) {
+++            w[i] = translator_ldl_end(env, &dc->base, start + 4 * i, MO_BE);
+++        } else {
+++            w[i] = 0;
+++        }
++     }
++ 
++     for (k = 0; k < ARRAY_SIZE(sparc64_idle_loops); k++) {
++@@ -6544,9 +6659,14 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         translator_io_start(&dc->base);
++         addr = tcg_temp_new();
++         tcg_gen_addi_tl(addr, gen_load_gpr(dc, iw.reg), iw.off);
++-        gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
++-                                tcg_constant_tl(iw.indirect),
++-                                tcg_constant_tl(iw.off2));
+++        if (l->irqs_off) {
+++            gen_helper_sparc64_idle_linux(tcg_env, tcg_constant_tl(dc->pc),
+++                                          addr);
+++        } else {
+++            gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
+++                                    tcg_constant_tl(iw.indirect),
+++                                    tcg_constant_tl(iw.off2));
+++        }
++         return;
++     }
++ }
+diff --git a/debian/patches/wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch b/debian/patches/wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch
+new file mode 100644
+index 0000000..1b40daa
+--- /dev/null
++++ b/debian/patches/wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch
+@@ -0,0 +1,112 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: recognise the idle loop of Solaris 7 and 8 on sun4u
++
++Solaris 7 3/99 and 8 2/02 (and 8 1/01's installation kernel) spin in
++idle() on sun4u like Solaris 9 and 10 did, but Sun's older compiler
++lays the loop out the other way round: the test of disp_nrunnable (in
++the CPU structure) branches to the call through idle_cpu when there is
++no work, and the call of swtch() comes first:
++
++    ld [%cpu + nrunnable], %x; cmp %x, 0; be idle; sethi %hi(idle_cpu)
++    call swtch; nop; b top; ...
++    idle: ldx [%y + %lo(idle_cpu)], %z; call %z; nop; b top
++
++The translator recognises that layout too, with the registers checked
++against each other and both branches back to the same top, and halts
++at the call through helper_sparc64_idle() as for Solaris 9 and 10. The
++layout needs the nine words before the call that the window now has.
++
++An idle Solaris 7 or 8 at the shell then uses about 3% of a host core
++instead of 100%; ten "sleep 1" and a CPU-bound job take as long as
++before.
++---
++ target/sparc/sparc64_idle.c |  2 +-
++ target/sparc/translate.c    | 55 +++++++++++++++++++++++++++++++++++++
++ 2 files changed, 56 insertions(+), 1 deletion(-)
++
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index a7e7384..69ad8e5 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -31,7 +31,7 @@
++  *           cpu_idle_cycle();                 <- here
++  *     cpu_idle_cycle() does nothing on sun4u; the word is spc_whichqs.
++  *
++- *   Solaris 9 and 10, illumos (Tribblix) idle(), with one CPU:
+++ *   Solaris 7 to 10, illumos (Tribblix) idle(), with one CPU:
++  *       while (ncpus == 1) {
++  *           if (CPU->cpu_disp->disp_nrunnable == 0) {
++  *               (*idle_cpu)();                <- here
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 8999afe..10299b1 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6491,6 +6491,60 @@ static bool s64_idle_solaris(const uint32_t *w, target_ulong pc,
++     return true;
++ }
++ 
+++/*
+++ * Solaris 7 and 8, idle() with one CPU (w[S64_IDLE_BEFORE] is the call),
+++ * as Sun's older compiler lays it out: the branch goes to the idle_cpu
+++ * call when there is no work, and swtch() comes first:
+++ *
+++ *        ld    [%cpu + nrunnable], %x
+++ *        cmp   %x, 0
+++ *        be    idle
+++ *         sethi %hi(idle_cpu), %y
+++ *        call  swtch
+++ *         nop
+++ *        b     top
+++ *         ...
+++ *  idle: ldx   [%y + %lo(idle_cpu)], %z
+++ *        call  %z                         <- here
+++ *         nop
+++ *        b     top
+++ *
+++ * The word is disp_nrunnable, in the CPU structure.
+++ */
+++static bool s64_idle_solaris7(const uint32_t *w, target_ulong pc,
+++                              S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t, top, top2, sw;
+++    int cpu, x, x2, y, a, z;
+++    int32_t off, off2;
+++
+++    if (extract32(c[0], 30, 2) != 2 ||
+++        !s64_lduw(c[-9], &cpu, &off, &x) ||
+++        !s64_cmp0(c[-8], &x2) || x2 != x ||
+++        !s64_bcc(c[-7], pc - 28, S64_BE, &t) || t != pc - 4 ||
+++        !s64_call(c[-5], pc - 20, &sw) || c[-4] != S64_NOP ||
+++        !s64_bcc(c[-3], pc - 12, S64_BA, &top) ||
+++        !s64_ldx(c[-1], &a, &off2, &z) || S64_RS1(c[0]) != z ||
+++        c[1] != S64_NOP || !s64_bcc(c[2], pc + 8, S64_BA, &top2) ||
+++        top2 != top || top > pc - 36 || pc - top > 4 * 64) {
+++        return false;
+++    }
+++    /* The delay slot: sethi %hi(idle_cpu), %y for the ldx */
+++    if (extract32(c[-6], 22, 10) != (extract32(c[-6], 25, 5) << 3 | 4) ||
+++        c[-6] == S64_NOP) {
+++        return false;
+++    }
+++    y = S64_RD(c[-6]);
+++    /* Nothing between the load and the call writes %cpu */
+++    if (a != y || cpu == 0 || cpu == x || cpu == y || cpu == z) {
+++        return false;
+++    }
+++    iw->reg = cpu;
+++    iw->off = off;
+++    return true;
+++}
+++
++ /* cmp %rs1, 3 (subcc %rs1, 3, %g0) */
++ static bool s64_cmp3(uint32_t w, int *rs1)
++ {
++@@ -6607,6 +6661,7 @@ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "NetBSD", s64_idle_netbsd },
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
+++    { "Solaris 7/8", s64_idle_solaris7 },
++     { "Linux", s64_idle_linux, true },
++ };
++ 
+diff --git a/debian/patches/wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch b/debian/patches/wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
+new file mode 100644
+index 0000000..385d8a7
+--- /dev/null
++++ b/debian/patches/wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
+@@ -0,0 +1,330 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the Linux and Solaris 7/8 idle loops on sun4u
++
++sun4u-idle-test gets the Solaris 7/8 layout and three Linux layouts of
++arch_cpu_idle(): 7.3 (be to the sun4v branch, a tail call), 6.1 (be,
++then touch_softlockup_watchdog() and interrupts enabled) and 7.0 (bne
++around the sun4v branch). Solaris 7/8 runs the cases of the other
++layouts. Linux's loop disables interrupts to level 14 round the call of
++arch_cpu_idle() and enables them after it: the CPU must halt there, and
++not with TIF_NEED_RESCHED set, without PSTATE.IE, at level 0 or at level
++15; with a tick every millisecond the tick must wake the CPU at level 14,
++be taken when the loop enables interrupts, and the loop must run far
++fewer rounds than with idle-halt=off. The boot PROM sets up the register
++windows, %g6 and the flags and tlb_type words for it.
++
++Against the binary without the two patches before, the idle and tick
++cases of the new layouts fail.
++---
++ tests/qtest/sun4u-idle-test.c | 213 +++++++++++++++++++++++++++++++---
++ 1 file changed, 196 insertions(+), 17 deletions(-)
++
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index b70f7db..3b8ebb9 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -2,16 +2,22 @@
++  * QTest: halting the CPU in the idle loop of a guest kernel on sun4u
++  *
++  * A boot PROM runs a loop laid out as the idle loop of NetBSD, OpenBSD,
++- * Solaris 10 or Tribblix (illumos built with gcc) on sun4u, and counts
++- * its rounds in RAM in the function the loop calls. With the word that
++- * says there is work at 0, interrupts enabled at level 0 and none
++- * pending, QEMU halts the CPU at that call; with no interrupt to come,
++- * the count stops. It must keep going with idle-halt=off, with work,
++- * with interrupts disabled and at interrupt level 15. With a tick
+++ * Solaris 10, Tribblix (illumos built with gcc) or Solaris 7 and 8 on sun4u,
+++ * and counts its rounds in RAM in the function the loop calls. With the
+++ * word that says there is work at 0, interrupts enabled at level 0 and
+++ * none pending, QEMU halts the CPU at that call; with no interrupt to
+++ * come, the count stops. It must keep going with idle-halt=off, with
+++ * work, with interrupts disabled and at interrupt level 15. With a tick
++  * interrupt every millisecond, each tick must wake the CPU, its handler
++  * must run and the loop must go on after it, with far fewer rounds than
++  * with idle-halt=off.
++  *
+++ * Linux's arch_cpu_idle() (as Linux 7.3, 6.1 and 7.0 lay it out) is
+++ * called with interrupts disabled at level 14: the CPU must halt there,
+++ * not with need_resched() set, interrupts enabled or at level 15, and
+++ * the tick must wake it at level 14 and be taken when the loop enables
+++ * interrupts.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -32,6 +38,9 @@
++ #define RAM_NRUNNABLE   0x824ULL        /* disp_t at RAM_WORD, + 0x24 */
++ #define RAM_CPU         0x840ULL        /* cpu_disp at + 0 */
++ #define RAM_IDLE_CPU    0x848ULL
+++#define RAM_TI          0x860ULL        /* Linux's thread_info: %g6 */
+++#define RAM_TI_FLAGS    0x868ULL        /* its flags, TIF_NEED_RESCHED 8 */
+++#define RAM_TLB_TYPE    0x870ULL        /* Linux's tlb_type: 1, spitfire */
++ 
++ /* PROM: reset at + 0x20, code at + 0x400, trap table at + 0x8000 */
++ #define PROM_BASE_HI    0x1fff0000      /* << 12 = 0x1fff0000000 */
++@@ -44,7 +53,9 @@
++ 
++ #define NOP             0x01000000
++ 
++-enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX };
+++enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX73, LINUX61, LINUX70 };
+++
+++#define IS_LINUX(k)     ((k) >= LINUX73)
++ 
++ static uint32_t call_to(int from, int to)
++ {
++@@ -64,6 +75,18 @@ static uint32_t bpcc_xcc_to(int cond, int from, int to)
++            ((to - from) & 0x7ffff);
++ }
++ 
+++/* BPcc on %icc with cond, predicted not taken */
+++static uint32_t bpcc_icc_to(int cond, int from, int to)
+++{
+++    return (cond << 25) | (1 << 22) | ((to - from) & 0x7ffff);
+++}
+++
+++/* BPcc on %xcc with cond, predicted not taken */
+++static uint32_t bpcc_xcc_pn_to(int cond, int from, int to)
+++{
+++    return (cond << 25) | (1 << 22) | (2 << 20) | ((to - from) & 0x7ffff);
+++}
+++
++ /* brnz %o0 */
++ static uint32_t brnz_o0_to(int from, int to)
++ {
++@@ -90,11 +113,119 @@ typedef struct IdleCase {
++ #define PS_PEF_PRIV_IE  0x16
++ #define PS_PEF_PRIV     0x14
++ 
+++/*
+++ * The sun4v branch of Linux's arch_cpu_idle() at p[0], from word index
+++ * at; never taken here (tlb_type is 1). Returns its length.
+++ */
+++static int write_linux_sun4v(uint32_t *p, int at, bool pil14)
+++{
+++    int n = 0;
+++
+++    p[n++] = 0x91902000;                /* wrpr %g0, 0, %pil */
+++    p[n++] = 0x83518000;                /* rdpr %pstate, %g1 */
+++    p[n++] = 0x82286002;                /* andn %g1, 2, %g1 */
+++    p[n++] = 0x8d904000;                /* wrpr %g1, %pstate */
+++    p[n++] = 0xc259a008;                /* ldx [%g6 + 8], %g1 */
+++    p[n++] = 0x80886008;                /* btst 8, %g1 */
+++    p[n] = bpcc_xcc_pn_to(BNE, at + n, at + n + 4); n++;
+++    p[n++] = NOP;
+++    p[n] = call_to(at + n, FUNC + 3); n++;      /* sun4v_cpu_yield */
+++    p[n++] = NOP;
+++    p[n++] = 0x83518000;                /* rdpr %pstate, %g1 */
+++    p[n++] = 0x82106002;                /* or %g1, 2, %g1 */
+++    p[n++] = 0x8d904000;                /* wrpr %g1, %pstate */
+++    if (pil14) {
+++        p[n++] = 0x9190200e;            /* wrpr %g0, 14, %pil */
+++    }
+++    p[n++] = 0x81cfe008;                /* return %i7 + 8 */
+++    p[n++] = NOP;
+++    return n;
+++}
+++
+++/*
+++ * Linux's idle loop at LOOP: interrupts disabled at pil (14, as
+++ * local_irq_disable() does), arch_cpu_idle() at ACI, interrupts enabled
+++ * (the tick is taken here). arch_cpu_idle() calls FUNC on sun4u, which
+++ * counts the round; FUNC + 3 stands in for touch_softlockup_watchdog()
+++ * and sun4v_cpu_yield().
+++ */
+++static int write_linux(uint32_t *p, int k, uint32_t pil)
+++{
+++    const int aci = 8;                  /* arch_cpu_idle() at LOOP + 8 */
+++    uint32_t *a = p + aci;
+++    int at = LOOP + aci;
+++    int n = 0, t;
+++
+++    p[n++] = 0x91902000 | pil;          /* top: wrpr %g0, pil, %pil */
+++    p[n] = call_to(LOOP + n, at); n++;
+++    p[n++] = NOP;
+++    p[n++] = 0x91902000;                /* wrpr %g0, 0, %pil */
+++    p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++
+++    n = 0;
+++    a[n++] = 0x9de3bf50;                /* save %sp, -176, %sp */
+++    a[n++] = 0x03000002;                /* sethi %hi(0x800), %g1 */
+++    a[n++] = 0xc2006070;                /* ld [%g1 + 0x70], %g1 tlb_type */
+++    a[n++] = 0x80a06003;                /* cmp %g1, 3 (hypervisor) */
+++    switch (k) {
+++    case LINUX73:
+++        /* be sun4v; nop; call arch_touch_nmi_watchdog; restore */
+++        a[n] = bpcc_icc_to(BE, at + n, at + n + 4); n++;
+++        a[n++] = NOP;
+++        a[n] = call_to(at + n, FUNC); n++;
+++        a[n++] = 0x81e80000;            /* restore */
+++        n += write_linux_sun4v(a + n, at + n, true);
+++        break;
+++    case LINUX61:
+++        /*
+++         * be,pn sun4v; nop; call arch_touch_nmi_watchdog; nop;
+++         * call touch_softlockup_watchdog; nop; enable interrupts; return
+++         */
+++        t = n;
+++        n += 2;
+++        a[n] = call_to(at + n, FUNC); n++;
+++        a[n++] = NOP;
+++        a[n] = call_to(at + n, FUNC + 3); n++;
+++        a[n++] = NOP;
+++        a[n++] = 0x91902000;            /* wrpr %g0, 0, %pil */
+++        a[n++] = 0x81cfe008;            /* return %i7 + 8 */
+++        a[n++] = NOP;
+++        a[t] = bpcc_icc_to(BE, at + t, at + n);
+++        a[t + 1] = NOP;
+++        n += write_linux_sun4v(a + n, at + n, false);
+++        break;
+++    case LINUX70:
+++        /*
+++         * bne,pn sun4u; nop; the sun4v branch; sun4u: call
+++         * arch_touch_nmi_watchdog; nop; call touch_softlockup_watchdog;
+++         * nop; return
+++         */
+++        t = n;
+++        n += 2;
+++        n += write_linux_sun4v(a + n, at + n, true);
+++        a[t] = bpcc_icc_to(BNE, at + t, at + n);
+++        a[t + 1] = NOP;
+++        a[n] = call_to(at + n, FUNC); n++;
+++        a[n++] = NOP;
+++        a[n] = call_to(at + n, FUNC + 3); n++;
+++        a[n++] = NOP;
+++        a[n++] = 0x81cfe008;            /* return %i7 + 8 */
+++        a[n++] = NOP;
+++        break;
+++    }
+++    return aci + n;
+++}
+++
++ /* Lay the loop of kernel k out at LOOP; returns its length */
++-static int write_loop(uint32_t *p, int k)
+++static int write_loop(uint32_t *p, int k, uint32_t pil)
++ {
++     int n = 0;
++ 
+++    if (IS_LINUX(k)) {
+++        return write_linux(p, k, pil);
+++    }
+++
++     switch (k) {
++     case NETBSD:
++         /*
++@@ -159,6 +290,25 @@ static int write_loop(uint32_t *p, int k)
++         p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP); n++;    /* ba,pt %xcc */
++         p[n++] = NOP;
++         break;
+++    case SOLARIS7:
+++        /*
+++         * Solaris 7 and 8 idle(): disp_nrunnable at %l4 + 0x24 in the CPU
+++         * structure; with work, swtch() (FUNC) counts the round
+++         */
+++        p[n++] = 0xc8052024;            /* top: ld [%l4 + 0x24], %g4 */
+++        p[n++] = 0x80a12000;            /* cmp %g4, 0 */
+++        p[n] = bpcc_icc_to(BE, LOOP + n, LOOP + 8); n++;    /* be,pn */
+++        p[n++] = 0x09000002;            /*  sethi %hi(0x800), %g4 */
+++        p[n] = call_to(LOOP + n, FUNC); n++;         /* swtch */
+++        p[n++] = NOP;
+++        p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++        p[n++] = NOP;
+++        p[n++] = 0xe0592048;            /* idle: ldx [%g4 + 0x48], %l0 */
+++        p[n++] = 0x9fc40000;            /* call %l0 */
+++        p[n++] = NOP;
+++        p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++        p[n++] = NOP;
+++        break;
++     }
++     /* out: the loop found work; count the round and go round again */
++     p[n] = call_to(LOOP + n, FUNC); n++;
++@@ -203,6 +353,15 @@ static char *write_prom(int k, const IdleCase *t)
++     code[n++] = 0xa6102840;                         /* mov 0x840, %l3 */
++     code[n++] = 0xa2102848;                         /* mov 0x848, %l1 */
++     code[n++] = 0xaa102001;                         /* mov 1, %l5 */
+++    /* Linux: thread_info flags, tlb_type; register windows */
+++    code[n++] = 0x8f292003;                         /* sll %g4, 3, %g7 */
+++    code[n++] = 0xce702868;                         /* stx %g7, [0x868] */
+++    code[n++] = 0x8e102001;                         /* mov 1, %g7 */
+++    code[n++] = 0xce202870;                         /* st %g7, [0x870] */
+++    code[n++] = 0x95902006;                         /* wrpr %g0, 6, %cansave */
+++    code[n++] = 0x97902000;                         /* wrpr %g0, 0, %canrestore */
+++    code[n++] = 0x9b902000;                         /* wrpr %g0, 0, %otherwin */
+++    code[n++] = 0x99902007;                         /* wrpr %g0, 7, %cleanwin */
++     if (t->tick) {
++         for (i = 0; i < ARRAY_SIZE(arm_tick); i++) {
++             code[n++] = arm_tick[i];
++@@ -210,14 +369,15 @@ static char *write_prom(int k, const IdleCase *t)
++     }
++     code[n++] = 0x8f902000;                         /* wrpr %g0, 0, %tl */
++     code[n++] = 0x91902000 | t->pil;                /* wrpr %g0, pil, %pil */
+++    /* Then %g6 (thread_info) in the normal globals, with PSTATE.AG off */
++     code[n++] = 0x8d902000 | t->pstate;             /* wrpr .., %pstate */
++     code[n] = bcc_to(BA, CODE + n, LOOP); n++;
++-    code[n++] = NOP;
+++    code[n++] = 0x8c102860;                         /*  mov 0x860, %g6 */
++     for (i = 0; i < n; i++) {
++         be[CODE + i] = code[i];
++     }
++ 
++-    n = write_loop(be + LOOP, k);
+++    n = write_loop(be + LOOP, k, t->pil);
++     g_assert_cmpint(LOOP + n, <=, FUNC);
++ 
++     /* FUNC: count the round; FUNC + 3: return 0 (runnable_p) */
++@@ -315,7 +475,8 @@ static void test_idle(const void *data)
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++-        "netbsd", "openbsd", "solaris", "tribblix"
+++        "netbsd", "openbsd", "solaris", "tribblix", "solaris7",
+++        "linux-7.3", "linux-6.1", "linux-7.0"
++     };
++     static const IdleCase cases[] = {
++         { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, true },
++@@ -325,20 +486,38 @@ int main(int argc, char **argv)
++         { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
++     };
++-    static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(cases)];
++-    int k, i;
+++    /*
+++     * Linux: pil is what the idle loop disables interrupts to (14); work
+++     * is TIF_NEED_RESCHED. The loop must not halt with interrupts enabled
+++     * (pil 0) or at pil 15. With the tick, the tick wakes the CPU at pil
+++     * 14 and is taken when the loop enables interrupts.
+++     */
+++    static const IdleCase linux_cases[] = {
+++        { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 14, false, true },
+++        { "off", "sun4u,idle-halt=off", 0, PS_PEF_PRIV_IE, 14, false, false },
+++        { "work", "sun4u", 1, PS_PEF_PRIV_IE, 14, false, false },
+++        { "noint", "sun4u", 0, PS_PEF_PRIV, 14, false, false },
+++        { "pil0", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, false },
+++        { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
+++        { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 14, true, true },
+++    };
+++    static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(linux_cases)];
+++    int k, i, n = 0;
++ 
++     g_test_init(&argc, &argv, NULL);
++ 
++     if (qtest_has_accel("tcg")) {
++         for (k = 0; k < ARRAY_SIZE(kernels); k++) {
++-            for (i = 0; i < ARRAY_SIZE(cases); i++) {
++-                IdleTest *t = &tests[k * ARRAY_SIZE(cases) + i];
+++            const IdleCase *c = IS_LINUX(k) ? linux_cases : cases;
+++            int nc = IS_LINUX(k) ? ARRAY_SIZE(linux_cases) : ARRAY_SIZE(cases);
+++
+++            for (i = 0; i < nc; i++) {
+++                IdleTest *t = &tests[n++];
++                 g_autofree char *name = g_strdup_printf("sun4u-idle/%s/%s",
++                                                         kernels[k],
++-                                                        cases[i].name);
+++                                                        c[i].name);
++                 t->kernel = k;
++-                t->c = &cases[i];
+++                t->c = &c[i];
++                 qtest_add_data_func(name, t, test_idle);
++             }
++         }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
