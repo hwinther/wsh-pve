@@ -97,6 +97,7 @@ come after that, not before.
 | SS-20 PROM boots Solaris 2.6 by itself: the ledma's upper-address register (`E_BASE_ADDR`, the top 8 bits of the lance's 24-bit DVMA addresses) reset to 0 in QEMU; the DMA2 description says it defaults to `0xff`. Solaris 2.6's `le` never writes it and the SS-20 PROM sets it only when it probes with `diag-switch?` true, so with `diag-switch?` false (auto-boot, or a typed `boot disk` after such a start) the lance read its init block from `0x0040f000` instead of `0xff40f000`, the 64 MB IOMMU faulted at level 15 and the kernel recursed in its level-15 handler until QEMU stopped (`Trap 0x29`). pve-qemu `wsh/0061` resets it to `0xff000000` (ledma only), qtest `wsh/0062` `sun4m-ledma-test` (fails without 0061). Lab, plain QEMU 0001-0062: the stored `sol26-ss20` disk on the SS-20 PROM with an NVRAM image boots to `login:` by itself on three starts in a row; OpenBIOS SS-20, the SS-5 PROM (Solaris 8) and the LX PROM (Solaris 2.6) as before; qtest-sparc 29 OK. Not yet through PVE. `submodules/SPARC.md`, "SS-20 PROM: auto-boot and the lance DMA" | in review | |
 | sparc: no EFI Disk or TPM State. pve-manager hides both in Hardware → Add for sparc32 and sparc64 (as NVRAM is shown for sparc32 only) and the wizard's Add TPM (OVMF was already not offered); qemu-server refuses `efidisk0`/`tpmstate0` on sparc32 at create, update and start (a `tpmstate0` was taken and the start then failed: `qemu-system-sparc` has no `tpm-tis`; sparc64 already refused both). `qm showcmd` prints only the command again: two debug prints are gone (`-- Using <display> display ...` for a `vga` with `server=`, and `sparc/sparc64 does not support PCI devices, ignoring: ...` on every sparc VM); the cfg2cmd runner gets `EXPECT_NO_STDOUT`. cfg2cmd tests, e2e with `test.fail` probes until the packages have it | in review | |
 | SunOS 4.1.2 on the SPARCserver 600MP (lab only, one CPU): installs and boots under OpenBIOS. Its kernel sets up the 600MP's VMEbus interface registers (`0xf.df01_0000`, MMU bypass) before its banner, where QEMU had nothing (`Unhandled Exception 0x00000029`): pve-qemu `wsh/0063` maps them as an unimplemented device. It finds the disk only under a DMA node named `dma` and the lance only under an `lebuffer`, the 600MP's buffer memory the lance works in: `wsh/0064` gives the SS-600MP's lance 128 KB of its own at slot f `0x40000` (no ledma, no DVMA), openbios 0028 names the nodes `dma` and `lebuffer` on machine ID 66; qtest `wsh/0065`. The 4.1.4 scenarios install it (the ESP path by machine, `SERIAL_7BIT=1` for its getty's parity bit) and the installed system answers ping. Two CPUs: the kernel's start of CPU 1 checks the module ID in the MMU control register, which needs the Ross module (not modelled). Target `sunos412-ss600mp` in the catalogue until a published package has the patches and qemu-server an SS-600MP profile (`submodules/SPARC.md`, "Older Sun releases on sun4m"). New pve-qemu patches start at `wsh/0063` (#424 adds 0061-0062) | in review | |
+| Browser SPARC, step 2: wisp's shell in the browser (`web/`, `docs/public/browser-sparc/`, guide "Browser SPARC"): `qemu-system-sparc -M SS-5` built for WebAssembly (wasm64, TCI) from Debian packages only: Emscripten 6.0.5 from sid, upstream QEMU 11.1.3 from Debian's source package plus all 65 `wsh/` patches (they apply to upstream with no fuzz), glib/pixman/libffi/pcre2/zlib from Debian source packages; OpenBIOS from the published package, wisp's tier-1 kernel, Debian's xterm.js. The console is a character device in Emscripten's file system behind `-chardev pipe`; COOP/COEP from the page's own service worker. A snapshot taken at the prompt by a native build of the same tree (`make-snapshot.py`, 4.8 MB) starts the page in 0.8 s; a boot from OpenBIOS takes 162-167 s in Chromium. `bench` 31-35 s (about 100x TCG, 5x native TCI), `mandel` matches `tests/mandel.txt`; the guest clock runs about 3x behind. `browser-sparc.yml` (by hand) builds the files and can publish them as the `browser-sparc` release, which `repo-update.yml` copies into the Pages site | in review | |
 
 ## In progress
 
@@ -449,27 +450,23 @@ on reconfiguration boots under the SS-20 PROM".
   or profile. For Solaris, `pkgadd` from the mounted media in the first boot or check step, or the
   installer's Customize step where the scenario supports it; for other systems their own installer
   sets or packages.
-- **Browser SPARC (WebAssembly), researched 2026-11-21.** Run `qemu-system-sparc -M SS-5` on the
-  docs site with QEMU's upstream Emscripten host support: wasm64 with the TCI interpreter is in
-  11.1.3 (TCI is the only TCG backend there; the Wasm-emitting TCG backend is an out-of-tree series
-  by Kohei Tokunaga, not in 11.2.0-rc1). The SS-5's devices need no change and `-bios` loads from
-  Emscripten's file system, so OpenBIOS or a user's `ss5.bin` both work in principle; missing are a
-  display backend (serial only at first), an audio backend and networking (a WebSocket proxy). Step 1
-  (done 2026-11-21, `submodules/SPARC.md`, "TCI (QEMU's TCG interpreter)"): a native `--enable-tcg-interpreter` build against
-  the same tree with the x86-64 backend, on the lab host: Solaris 2.6 on SS-5 boots to login in 1.6-1.7x
-  the time (about 3 minutes), NetBSD 9.3 in 4x (SS-5) and 6x (sun4u, 7 minutes); compiled code runs
-  8-35x slower (Dhrystone 946 against 49 VAX MIPS, 19x; Whetstone 10x; nbench integer 17x, memory
-  26x); a guest that halts when idle costs 3-7% of a host core with either. Native TCI has no use on
-  a host with a TCG backend; for the browser it is enough for a serial demonstration, starting with
-  sparc32. Step 2: a serial-only page (xterm.js, OpenBIOS and a NetBSD/sparc disk, `-nographic -nic none
-  -audiodev none`, `coi-serviceworker` for the COOP/COEP headers GitHub Pages can't set, the disk
-  fetched in ranges, optionally a migrated snapshot for an instant start), plus a local-only picker
-  for `ss5.bin` and Sun disks, since Sun firmware and installed Sun systems are never published.
-  Later: a canvas display with the Sun keyboard and mouse, WebAudio for the CS4231, and the Wasm TCG
-  backend once it is upstream. Generic Wasm pieces (display and audio backends) are written against
-  plain upstream QEMU; LEMU-derived code stays in wsh-pve. The guest for the first page can be
-  wisp: its interactive mode exists (`wisp=shell`, `e2e/wisp/README.md`, "Interactive mode"), a
-  shell on the serial console laid out for an 80 x 24 xterm.js terminal, with no disk to fetch.
+- **Browser SPARC (WebAssembly).** Run `qemu-system-sparc -M SS-5` on the docs site with QEMU's
+  upstream Emscripten host support: wasm64 with the TCI interpreter (TCI is the only TCG backend
+  there; the Wasm-emitting TCG backend is an out-of-tree series by Kohei Tokunaga, not in
+  11.2.0-rc1). Step 1 (done 2026-11-21, `submodules/SPARC.md`, "TCI (QEMU's TCG interpreter)"):
+  native TCI against TCG on the lab host: compiled code 8-35x slower, boots 1.6-6x. Step 2 (Done,
+  see the table): wisp's shell on a serial-only page, `/browser-sparc/`, started from a migrated
+  snapshot; built from Debian packages only (`web/Dockerfile`). What is left:
+  - publishing: run `browser-sparc.yml` with `publish` once, so the `browser-sparc` release exists
+    and the next Pages deploy carries the files;
+  - the guest clock running about 3x behind the wall clock in the browser (not seen natively);
+  - speed: the interpreter in WebAssembly is about 5x slower than native TCI (Memory64, Asyncify);
+    the Wasm TCG backend once it is upstream;
+  - a canvas display with the Sun keyboard and mouse, WebAudio for the CS4231, networking (a
+    WebSocket proxy), a NetBSD/sparc disk fetched in ranges, and a local-only picker for a user's
+    `ss5.bin` and Sun disks (Sun firmware and installed Sun systems are never published).
+  Generic Wasm pieces (display and audio backends) are written against plain upstream QEMU;
+  LEMU-derived code stays in wsh-pve.
 - **More architectures.** In order of fit: HP-UX on PA-RISC (`qemu-system-hppa`, open firmware,
   upstream), PowerPC (AIX 5.1 on `40p`, AIX 7 on `pseries`, Mac OS), Quadra 800 with A/UX. AIX 3.2.5
   needs LEMU's MCA machine, which is a large out-of-tree model. IRIX and DG/UX are not feasible in
@@ -598,7 +595,8 @@ on reconfiguration boots under the SS-20 PROM".
 - **Demo ideas to show and post** (collected 2026-11-21; the owner drops what isn't wanted). Public
   demos use OpenBIOS and our own software only: no Sun PROMs, MS-DOS, Windows or NeXT material.
   1. *A SPARCstation 5 boots Linux in your browser*: the Browser SPARC item above with wisp, the tiny
-     nolibc kernel+initramfs (`e2e/wisp/`) instead of a NetBSD disk, booting in seconds; optionally
+     nolibc kernel+initramfs (`e2e/wisp/`) instead of a NetBSD disk; the page exists
+     (`/browser-sparc/`, resumed from a snapshot in under a second); optionally
      three terminals side by side (SS-5, sun4u, PC) running the same `init.c`, big- and little-endian
      in the banner.
   2. *A GitHub Action for big-endian testing*: build a C program for sparc32 v8 (nolibc or
