@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..4afee6a 100644
+index 9da9d72..62be3be 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,31 @@
+@@ -1,10 +1,38 @@
++pve-qemu-kvm (11.1.3-4+wsh4) trixie; urgency=medium
++
++  * feat(sparc64): halt the CPU in the idle loops of Linux and Solaris
++    7/8 on sun4u (#442)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 06:55:31 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh3) trixie; urgency=medium
 +
 +  * fix(sparc64): restart sun4u from the firmware's boot service
