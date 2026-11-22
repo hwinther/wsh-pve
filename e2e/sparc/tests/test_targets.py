@@ -2234,5 +2234,99 @@ class Debian40(unittest.TestCase):
                          targets.TARGETS["debian40-ss5"]["install"]["answers"]["drive"])
 
 
+class Debian13(unittest.TestCase):
+    """debian13-sun4u: the unattended method with the debian-ports preseed file (answer CD on ide3,
+    Linux's sr1, loaded by preseed/early_command typed on the netinst's GRUB `linux` line)."""
+
+    def test_target(self):
+        t = targets.TARGETS["debian13-sun4u"]
+        self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "enp2s0"))
+        self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertEqual(t["install"]["answers"], {"format": "preseed-ports", "drive": "ide3"})
+        self.assertEqual(t["media"], [{"name": "debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso", "drive": "ide2"}])
+        self.assertIn(t["media"][0]["name"], targets.MEDIA)
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"]), ("ide0", None, "ide0"))
+        self.assertEqual((t["profile"]["arch"], t["profile"]["machine"], t["profile"]["memory"]), ("sparc64", "sun4u", 1024))
+        self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"]), (["static"], ["gateway", "dns"], True))
+        self.assertIn("matrix_skip", t)  # 2.5-3 h
+        for phase, scenario in (("install", "debian13-install-sparc64.py"), ("firstboot", "debian13-firstboot.py"),
+                                ("check", "debian13-boot-disk.py")):
+            self.assertEqual(t[phase]["scenario"], scenario)
+            self.assertTrue(os.path.exists(os.path.join(HERE, "scenarios", scenario)))
+        self.assertIn("cat /etc/wsh-lab-target", t["check"]["commands"])
+        self.assertIn("systemctl is-active ssh", t["check"]["commands"])
+
+    def test_answers_drive(self):
+        """The answer CD's drive in the target is the one the lab's own QEMU uses and the device the
+        early command mounts: ide3 = the secondary slave = sr1 after the netinst's sr0."""
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian13
+        self.assertEqual(_debian13.ANSWERS_DRIVE, targets.TARGETS["debian13-sun4u"]["install"]["answers"]["drive"])
+        self.assertEqual(_debian13.ANSWERS_DEV, "/dev/sr1")
+        v = {**_debian13.DEFAULTS, "ISO": "/x.iso", "DISK": "/dev/null", "ANSWERS_ISO": "/a.iso"}
+        args = " ".join(_debian13.qemu_args(v, "/tmp", answers=True))
+        self.assertIn("ide-cd,bus=ide.1,unit=1,drive=drive-ide3", args)
+        self.assertIn("ide-cd,bus=ide.1,unit=0,drive=drive-cd", args)
+
+    def test_boot_options(self):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian13
+        line = _debian13.boot_options()
+        self.assertTrue(line.startswith("priority=critical locale=en_US.UTF-8 keymap=us preseed/early_command=\""))
+        self.assertTrue(line.endswith('sh /mnt/wshlab"'))
+        self.assertEqual(line.count('"'), 2)  # one quoted word, typed on GRUB's linux line (not via $options)
+        self.assertNotIn("'", line)
+        self.assertIn("mount -r -t iso9660 /dev/sr1 /mnt", line)
+        self.assertIn("modprobe pata_cmd64x", line)
+
+    def test_preseed_ports(self):
+        import answer_media
+        ps = answer_media.preseed_ports("10.77.0.60", "255.255.255.0", "10.77.0.1", ["10.77.0.1"], "lab.test",
+                                        "debian13-sun4u")
+        lines = ps.splitlines()
+        for line in ("d-i netcfg/disable_autoconfig boolean true", "d-i netcfg/get_ipaddress string 10.77.0.60",
+                     "d-i netcfg/get_gateway string 10.77.0.1", "d-i netcfg/get_nameservers string 10.77.0.1",
+                     "d-i netcfg/get_hostname string debian13-sun4u", "d-i netcfg/get_domain string lab.test",
+                     "d-i mirror/http/hostname string deb.debian.org",
+                     "d-i mirror/http/directory string /debian-ports", "d-i mirror/suite string unstable",
+                     "d-i partman-auto/disk string /dev/sda", "d-i partman-auto/choose_recipe select atomic",
+                     "d-i passwd/root-password-crypted password *", "d-i passwd/make-user boolean false",
+                     "tasksel tasksel/first multiselect ssh-server",
+                     "d-i preseed/late_command string in-target passwd -d root; in-target sed -i"
+                     " 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list"):
+            self.assertIn(line, lines)
+        self.assertNotIn("allow_unauthenticated", ps)  # the netinst brings debian-ports-archive-keyring
+        lines = answer_media.preseed_ports("10.0.2.15", "255.255.255.0", proxy="http://10.0.2.2:3142").splitlines()
+        self.assertIn("d-i mirror/http/proxy string http://10.0.2.2:3142", lines)
+        late = next(line for line in lines if "late_command" in line)
+        self.assertIn("in-target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces", late)
+        self.assertIn("in-target sed -i '/^nameserver /d' /etc/resolv.conf", late)
+        for bad in (dict(gateway=None), dict(dns=[]), dict(hostname="a b"), dict(proxy="http://x/;rm")):
+            kw = {"gateway": "10.0.2.2", "dns": ["10.0.2.3"], **bad}
+            with self.assertRaises(ValueError, msg=bad):
+                answer_media.preseed_ports("10.0.2.15", "255.255.255.0", **kw)
+
+    def test_answer_cd(self):
+        import answer_media
+        import dos_tools
+        self.assertIn("preseed-ports", answer_media.FORMATS)
+        data = answer_media.image("preseed-ports", "10.0.2.15", "255.255.255.0", "10.0.2.2", ["10.0.2.3"], None,
+                                  "debian13-sun4u")
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["PRESEED.CFG", "WSHLAB"])
+            self.assertIn(b"d-i netcfg/get_hostname string debian13-sun4u\n", iso.cat("preseed.cfg"))
+            self.assertEqual(iso.cat("wshlab"), answer_media.PRESEED_PORTS_LOADER.encode())
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        loader = answer_media.PRESEED_PORTS_LOADER
+        self.assertIn("debconf-set-selections /mnt/preseed.cfg", loader)
+        self.assertIn("/device/delete", loader)  # the installed system must not keep the answer CD's drive
+        self.assertNotIn("set -e", loader)  # every step logs; only a failed load fails early_command
+
+
 if __name__ == "__main__":
     unittest.main()

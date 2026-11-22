@@ -123,6 +123,9 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
+# Debian 13 on sun4u: the lab image of the published pve-qemu-kvm (wsh/0070 Linux idle, openbios 0030 reboot);
+# the scenarios ran against the lab's own QEMU, not yet through PVE
+PACKAGES_2026_11_22_DEB13 = {"pve-qemu-kvm": "11.1.3-4+wsh4"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -301,6 +304,14 @@ MEDIA = {
         "sha256": "91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd",
         "lab": "other-os/debian-40r9-sparc-netinst.iso",
         "url": "https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso"},
+    # The debian-ports sparc64 netinst snapshot of 2026-06-11 (Linux 7.0.12, GRUB 2.14), saved under its date;
+    # the sha256 is the one in the snapshot's SHA256SUMS (debian-13.0.0-sparc64-NETINST-1.iso there)
+    "debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso": {
+        "title": "Debian 13 (debian-ports, sid) sparc64 netinst CD, snapshot of 2026-06-11", "content": "iso",
+        "size": 344315904,
+        "sha256": "b75e1b64544b534453c2442f57649579641d8db9eea464f5dcc9174cf3697fb6",
+        "lab": "other-os/debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso",
+        "url": "https://cdimage.debian.org/cdimage/ports/snapshots/2026-06-11/debian-13.0.0-sparc64-NETINST-1.iso"},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
@@ -1221,6 +1232,39 @@ TARGETS = {
         "minutes": 24,
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19,
                    "with": "--check --user lab --gateway --dns --apt-proxy; --check --gateway --dns"},
+    },
+    # Debian 13 (debian-ports sparc64, sid) on sun4u: the netinst's GRUB gets the kernel options at its
+    # command line (_debian13.boot_options), preseed/early_command loads the preseed file from the
+    # answer CD on ide3 (Linux's sr1) and removes that drive; the rest comes from
+    # deb.debian.org/debian-ports (or --apt-proxy). partman's "atomic" recipe on a Sun label it writes
+    # (/boot ext2, / ext4, swap), the SSH server, GRUB (sparc64-ieee1275) on the disk, which OpenBIOS
+    # boots. README.md, "Debian 13 on sun4u"
+    "debian13-sun4u": {
+        **DEBIAN_UNATTENDED,
+        "title": "Debian 13 (debian-ports sparc64, sid) with the SSH server on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 1024,
+                    "ostype": "l26", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # partman writes its own Sun label
+        "media": [{"name": "debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso", "drive": "ide2"}],
+        "install": {"scenario": "debian13-install-sparc64.py", "vars": {}, "timeout": 14400,
+                    "answers": {"format": "preseed-ports", "drive": "ide3"}},
+        "firstboot": {"scenario": "debian13-firstboot.py", "vars": {}, "timeout": 1800},
+        "check": {"scenario": "debian13-boot-disk.py", "vars": {}, "timeout": 1800,
+                  "commands": "uname -a; hostname; cat /etc/wsh-lab-target; cat /etc/debian_version; df -k;"
+                              " lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT; ip -br addr; ip route; cat /etc/resolv.conf;"
+                              " cat /etc/apt/sources.list; systemctl is-active ssh"},
+        "boot": "ide0",
+        "hostname": "debian13-sun4u",
+        "nic": "enp2s0",
+        "network": "enp2s0 (sunhme): a static address (10.0.2.15/24 unless --ip/--netmask) with --gateway and"
+                   " --dns, which must reach deb.debian.org (or --apt-proxy), or only --apt-proxy at an address"
+                   " on the guest's network (no router, no name server); --domain",
+        "minutes": 180,
+        "matrix_skip": "takes 2.5-3 h (the base system over the network under TCG), too much of the sparc lab"
+                       " job's 240 minutes: installed on request",
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_DEB13,
+                   "with": "lab scenarios with the lab's QEMU (install, disk boot); lab.py install not yet run"},
     },
     "debian40-ss20": {
         **DEBIAN_UNATTENDED,
