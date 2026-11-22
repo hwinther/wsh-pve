@@ -1,13 +1,14 @@
 #!/bin/sh
 # Builds qemu-system-sparc for the wasm64 Emscripten host with the TCG interpreter: upstream QEMU
 # from Debian's source package (the release tarball, Debian patches skipped) plus wsh-pve's sparc
-# patches (pve-qemu's debian/patches/wsh/, taken from submodules/pve-qemu.patch), against the
-# libraries build-deps.sh put in $TARGET.
+# patches (pve-qemu's debian/patches/wsh/, taken from submodules/pve-qemu.patch) and the page's own
+# patches in web/patches/, against the libraries build-deps.sh put in $TARGET.
 #
 #   build-qemu.sh <work dir> <pve-qemu.patch> <output dir> [native output dir]
 #
 # Environment: TARGET (as build-deps.sh), JOBS, QEMU (source package spec, default qemu=1:11.1.3+ds-2),
-# QEMU_VERSION (the upstream version the tree must have, default 11.1.3).
+# QEMU_VERSION (the upstream version the tree must have, default 11.1.3), WEB_PATCHES (the directory
+# of web/patches/*.patch, default /src/web-patches).
 set -eu
 
 WORK=$1
@@ -17,6 +18,7 @@ TARGET=${TARGET:-/builddeps/target}
 JOBS=${JOBS:-$(nproc)}
 QEMU=${QEMU:-qemu=1:11.1.3+ds-2}
 QEMU_VERSION=${QEMU_VERSION:-11.1.3}
+WEB_PATCHES=${WEB_PATCHES:-/src/web-patches}
 
 export CPATH="$TARGET/include"
 export PKG_CONFIG_PATH="$TARGET/lib/pkgconfig"
@@ -63,6 +65,16 @@ done < "$WORK/wsh-series"
 [ "$n" -gt 0 ] || { log "no wsh patches found in $PATCH"; exit 1; }
 log "$n wsh patches applied (last: $(tail -n 1 "$WORK/wsh-series"))"
 
+# The page's own patches (web/patches/, each says why), after the wsh series. They go into the native
+# build below as well: the snapshot's migration stream must come from the same device models.
+m=0
+for p in "$WEB_PATCHES"/*.patch; do
+	[ -f "$p" ] || continue
+	patch -p1 --fuzz=0 --no-backup-if-mismatch -s < "$p" || { log "$(basename "$p") does not apply"; exit 1; }
+	m=$((m + 1))
+	log "web patch applied: $(basename "$p")"
+done
+
 # Configure as QEMU's CI wasm64 jobs do (--static --cpu=wasm64 --disable-tools
 # --enable-tcg-interpreter), for one target and without optional features: no display, audio,
 # network or image formats beyond the defaults the build needs. No firmware blobs: Debian's +ds
@@ -85,7 +97,7 @@ emmake ninja -j"$JOBS" qemu-system-sparc.js
 cp qemu-system-sparc.js qemu-system-sparc.wasm "$OUT/"
 [ ! -f qemu-system-sparc.worker.js ] || cp qemu-system-sparc.worker.js "$OUT/"
 {
-	echo "qemu $ver + $n wsh patches ($(sed -n 's/^Version: //p' "$WORK/qemu/$dsc"))"
+	echo "qemu $ver + $n wsh patches + $m web patches ($(sed -n 's/^Version: //p' "$WORK/qemu/$dsc"))"
 	echo "emscripten $(emcc --version | head -n 1 | sed 's/.*) \([0-9.]*\).*/\1/')"
 	cat "$TARGET/versions"
 } > "$OUT/versions.txt"
