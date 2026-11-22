@@ -67,7 +67,8 @@ network device, `lance`. The LX takes a serial console on `serial0` (its default
 It needs `pve-qemu-kvm` 11.1.3-3+wsh13 or later (the 600MP's VMEbus registers and the buffer memory
 its network chip works in, and the device names 4.1.2 looks for) and a qemu-server and pve-manager
 with the SS-600MP profile. The lab target `sunos412-ss600mp` installs it (see [Lab
-install](/guides/lab-install/)).
+install](/guides/lab-install/)); its install and boot are on [SPARC lab
+recordings](/guides/sparc-recordings/#sunos-412-on-sparcserver-600mp).
 
 - **OpenBIOS only, one CPU:** the real machine has Ross RT625 CPU modules, which QEMU doesn't
   emulate (it gives the machine a SuperSPARC). Sun's own 600MP boot PROM needs one, and so does
@@ -75,8 +76,10 @@ install](/guides/lab-install/)).
   that reason, and the wizard offers neither.
 - **Memory:** 4.1.2 boots with 256 MB to 2 GB; up to 1024 MB is allowed, the wizard presets 256.
 - **Console:** 4.1.2 was tested on the serial console (`vga: serial0`; its `getty` sends even
-  parity in bit 7, so set your terminal to 7 bits). OpenBIOS also draws on cg3 and TCX; 4.1.2 on a
-  framebuffer wasn't tried.
+  parity in bit 7, so set your terminal to 7 bits). OpenBIOS also draws on cg3 and TCX. On a cg3
+  4.1.2 boots to single user with the console on the screen, but its kernel finds no frame buffer
+  (`No default frame buffer found`) and only passes its text to OpenBIOS's terminal; multi-user on
+  a framebuffer wasn't tried, so use the serial console.
 - No sound (the machine has no sound chip), one network device (the built-in lance). The disk is
   found under OpenBIOS's `dma` node on this machine only, so install on the SS-600MP rather than
   moving a disk from another machine type (not tried).
