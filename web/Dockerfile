@@ -38,6 +38,7 @@ RUN build-deps.sh /work/deps && rm -rf /work/deps
 FROM deps AS qemu
 COPY web/scripts/build-qemu.sh /usr/local/bin/
 COPY submodules/pve-qemu.patch /src/pve-qemu.patch
+COPY web/patches/ /src/web-patches/
 RUN build-qemu.sh /work/qemu /src/pve-qemu.patch /out /native && rm -rf /work/qemu
 
 # wisp's sparc32 kernel with its interactive shell (e2e/wisp, tier 1 only), as e2e/wisp/Dockerfile
@@ -74,12 +75,14 @@ RUN apt-get update && apt-get install --no-install-recommends --assume-yes gnupg
     && for d in ./*.deb; do dpkg-deb -W --showformat='${Package} ${Version}\n' "$d"; done > /files/versions-files.txt
 
 # The machine at wisp's first prompt, booted with the page's options (make-snapshot.py), and the
-# console transcript up to there.
+# console transcript up to there. clock-check.py then resumes it with QEMU's main loop held up and
+# fails the build if the guest's clock falls behind (web/patches/slavio-timer-missed-ticks.patch).
 FROM qemu AS snapshot
-COPY web/scripts/make-snapshot.py /usr/local/bin/
+COPY web/scripts/make-snapshot.py web/scripts/clock-check.py /usr/local/bin/
 COPY --from=kernel /wisp-sparc32-kernel /tmp/
 COPY --from=files /files/openbios-sparc32 /tmp/
-RUN make-snapshot.py /native/qemu-system-sparc /tmp/openbios-sparc32 /tmp/wisp-sparc32-kernel /snap 128
+RUN make-snapshot.py /native/qemu-system-sparc /tmp/openbios-sparc32 /tmp/wisp-sparc32-kernel /snap 128 \
+    && clock-check.py /native/qemu-system-sparc /snap/wisp-ss5-128m.state
 
 # The page's binary files (the assets of the `browser-sparc` release, see docs/public/browser-sparc/)
 # and versions.txt with what went into them.
