@@ -102,6 +102,8 @@ maintains the patches.
 | `0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su` | Linux on sun4u spun in its idle loop at 100% of a host core: `arch_cpu_idle()` only touches the NMI watchdog there (it yields to the hypervisor on sun4v), and no kernel option changes that. The translator recognises `arch_cpu_idle()` at its call of `arch_touch_nmi_watchdog()` by the `tlb_type` test next to it and the start of the sun4v branch, as gcc lays it out either way round (Linux 6.1 and 7.3: `be` to the sun4v branch; 6.17 and 7.0: `bne` around it), and halts the CPU there at `%pil` 14 (interrupts disabled, as the idle loop calls it), with nothing pending and `TIF_NEED_RESCHED` clear; the tick, stick and interrupt vector wake it whatever `%pil`, and the interrupt is taken when the loop enables interrupts. The window around a call grows to 24 words before it; words on another page read as 0 ("sparc64 (sun4u)", "Idle") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an` | Solaris 7 and 8 spun in `idle()` on sun4u: Sun's older compiler lays the loop out the other way round from 9 and 10 (`be` to the call through `idle_cpu`, `swtch()` first). The translator recognises that layout too and halts at the call as for Solaris 9 and 10 (`-trace sparc64_idle_match`: `Solaris 7/8`) | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop` | qtest `sun4u-idle-test` for 0070-0071: the Solaris 7/8 layout with the cases of the others, and Linux 7.3, 6.1 and 7.0's `arch_cpu_idle()` in a loop that disables interrupts to level 14 round it: it must halt there, not with `TIF_NEED_RESCHED` set, without `PSTATE.IE`, at level 0 or 15, and a 1 ms tick must wake it at level 14 and be taken when the loop enables interrupts; 51 cases | ours | not in QEMU |
+| `0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-` | FreeBSD 12.4 on sun4u spun in its idle loop at 100% of a host core: ULE's `sched_idletd()` calls `cpu_idle()`, which is empty on sparc64. The translator recognises the call by the `tdq_cpu_idle` stores and the `tdq_load` test round it and halts there; FreeBSD's kernel runs at TL 1, so it is halted at TL 1 (the others still only at TL 0), and without the 100 us poll, which its loop (a steal attempt and its own `sched_idlespins` between calls) never ended: halted at the first call, one round of the loop after each wake (`SPARC64_IDLE_TL1`, `SPARC64_IDLE_NO_POLL`). Idle at the shell 8.7% instead of 105-107% ("FreeBSD 12.4 on sun4u") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
+| `0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u` | qtest `sun4u-idle-test` for 0114: the FreeBSD layout at TL 1 with the cases of the others, a TL>0 trap table for the tick there, and a `tl-up` case for every layout (one trap level above where its kernel idles: no halt); 70 cases with 0111's Linux 3.2 | ours | not in QEMU |
 | `0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-` | Sun's SS-600MP boot PROM stopped QEMU within seconds (`Trap 0x01 (Instruction Access Fault) while interrupts disabled`): its MMU register test, run from the PROM in boot mode with traps disabled, sets the MMU enable bit, and QEMU translated the next instruction fetch. On the SuperSPARC the boot mode bit (bit 13 of the MMU control register) sends every instruction fetch to the PROM whether the MMU is on or not, and data accesses are translated. New CPU feature `boot-mode-ifetch`, on the `TI-SuperSparc-*` models only: an instruction fetch in boot mode uses the physical MMU index, which maps it to the PROM as with the MMU off; `-cpu TI-SuperSparc-II,-boot-mode-ifetch` turns it off. OpenBIOS clears boot mode when it turns the MMU on, so it isn't affected. The PROM then loops in its later tests ("Older Sun releases on sun4m", "Sun's own SS-600MP boot PROM") | ours | not reported |
 | `0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o` | qtest `sun4m-boot-mode-ifetch-test` for 0120: a PROM turns the MMU on with traps disabled while context 0 maps virtual 0 to RAM holding other code; the next fetch must come from the PROM in boot mode on SS-10, SS-20 (`TI-SuperSparc-50`) and SS-600MP, and from RAM with boot mode cleared, with `-boot-mode-ifetch` and on SS-5. `sun4m-mmu-ctx-ifetch-test` and `sun4m-bus-error-trap-test` now write the MMU enable bit alone (clearing boot mode, as OpenBIOS and an OS do) | ours | not in QEMU |
 
@@ -372,6 +374,8 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
 | `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept ("The firmware reboot on sun4u") | not reported |
 | `0031-sparc64-give-the-solaris-2.5.1-2.6-boot-block-init-program-and-go` | The sun4u boot block of Solaris 2.5.1 and 2.6 (FCode UFS Reader 1.6/1.10) copies ufsboot's ELF segments into place itself, then evaluates `to load-base init-program` with `load-base` at the entry point and `?go`; OpenBIOS's `init-program` recognised no header there and there was no `?go`: `?go:`, `byte-load: exception caught!`. `init-program` looked up by name now takes unrecognised code at `load-base` as the program (as OBP), after clearing `state-valid`; `?go` starts it. Both kernels start ("Solaris 2.5.1 and 2.6 on sun4u: the boot block") | not in OpenBIOS |
+| `0032-sparc64-keep-interrupts-disabled-in-the-mmu-miss-handlers` | The I- and D-MMU miss handlers enabled interrupts around their C handler ("for window spill/fill traps", which don't need them) at TL 1, where the TL>0 table's level 14 entry only retries: a timer interrupt pending then trapped again on the same instruction for good. FreeBSD 12.4's `shutdown -p now` (the `SUNW,power-off` call, with its `%tick` interrupt pending) stayed on after `Uptime:` at 100% of a host core (`-d int`: interrupt 0x4e at one PC). They now run with interrupts disabled, as the trap left them ("FreeBSD 12.4 on sun4u") | not reported |
+| `0033-sparc64-save-and-restore-the-trap-state-of-tl-4-to-1` | `SAVE_CPU_TRAP_STATE`/`RESTORE_CPU_TRAP_STATE` walked `%tl` from 3 down to 0, so a few instructions of every client call ran at TL 0 (no trap state there; `rdpr %tpc` is an illegal instruction at TL 0 on the UltraSPARC), fetched in the primary context. FreeBSD runs its kernel at TL 1 with the user process's context in the primary context register: the firmware's context-0 ITLB entry missed, FreeBSD's own trap table found no mapping, and every reboot and `ofwdump` panicked (`fast instruction access mmu miss (kernel)`; QEMU then stopped with `Trap 0x00a4 while trap level (5) >= MAXTL (5)`). Now TL 4 down to 1 ("FreeBSD 12.4 on sun4u") | not reported |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -2710,6 +2714,7 @@ serial console unless stated.
 | NetBSD 9.3 | yes | not tried | not tried | |
 | OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts once ntpd ran (below) until pve-qemu `wsh/0045`; the target keeps ntpd on since |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
+| FreeBSD 12.4 | yes: bsdinstall's console-type question in 59 s (`bootonly` and `disc1`); no interrupt storm (FreeBSD bug 239068) | not tried | yes: `bsdinstall script` from the installer's shell, kernel and base from disc1, ~10 min (target `freebsd124-sun4u`) | `login:` in 84-120 s, DHCP on `hme0`; `shutdown -p now` ends QEMU (exit 0) with openbios 0032, the reboot needs 0033, idle needs pve-qemu `wsh/0114` ("FreeBSD 12.4 on sun4u") |
 | Debian 7.11 (wheezy) netinst and CD 1 | yes: SILO 1.4.14 from the CD (`Trying cdrom:f...`), Return at `boot:`, then "Select a language" (Linux 3.2.0-4) | not tried | yes, from CD 1 with a preseed file (target `debian7-sun4u`): the base system with SSH, 84 min to the reset in the lab's own QEMU, nothing fetched | yes: SILO boots `/vmlinuz` and its initrd, `login:` 152-164 s from QEMU start, DHCP and static on `eth0` (`sunhme`), `poweroff` ends QEMU (exit 0); `reboot` with pve-qemu `wsh/0112` ("Debian 7 on sun4u" below) |
 | Ubuntu 9.04 server (jaunty) | yes: SILO 1.4.14, Return at `boot:`, then "Choose language" 31 s later (Linux 2.6.28-6; the boot is `quiet`) | not tried | not tried | |
 
@@ -2938,6 +2943,7 @@ disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
 | OpenBSD 8.0 | `sched_idle()`: `while (spc_whichqs == 0) cpu_idle_cycle();` | nothing: `cpu_idle_cycle()` yields to the hypervisor on sun4v; on sun4u it is a `nop` that is patched to `sleep` (SPARC64-VI/VII) only on CPUs with several strands |
 | Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
 | Solaris 7 3/99, 8 2/02 | `idle()` as in 9 and 10 | nothing, as on 9 and 10 |
+| FreeBSD 12.4 | `sched_idletd()` (ULE): `cpu_idle(busy)` while `tdq_load` is 0, `tdq_cpu_idle` set round it | nothing: `cpu_idle()` is empty on sparc64 (`retl; nop`); the kernel runs at TL 1 |
 | Linux 6.1-7.3 (wisp; Debian 12 and 13 installers) | the generic `do_idle()`: with interrupts disabled (`%pil` 14) and `need_resched()` clear it calls `arch_cpu_idle()`, enables interrupts and goes round again | nothing: `arch_cpu_idle()` calls `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No kernel option helps: sparc64 has no cpuidle driver, `idle=poll` spins elsewhere, and `nohz` takes away clock interrupts, not the spin. No installed disk (Debian 12's install fails); measured with `-kernel` |
 | Linux 3.2 (Debian 7, installed disk and installer) | `cpu_idle()` in `arch/sparc/kernel/process_64.c`, with interrupts enabled (`%pil` 0): `while (!need_resched() && !cpu_is_offline(cpu)) sparc64_yield(cpu);` | nothing: `sparc64_yield()` clears `TIF_POLLING_NRFLAG` and calls `sun4v_cpu_yield` on sun4v; on sun4u it only calls `touch_nmi_watchdog()` (pve-qemu `wsh/0110`) |
 
@@ -2962,6 +2968,7 @@ the word that says there is work:
 | Linux 7.3.4, wisp (0070) | `call arch_touch_nmi_watchdog` (0x431104) | `TIF_NEED_RESCHED` in `current_thread_info()->flags` (`[%g6 + 8]`) | gcc 14: `ld [tlb_type]; cmp 3; be %icc sun4v; nop; call; restore` (a tail call), the sun4v branch right after (`wrpr %g0, 0, %pil; rdpr %pstate; andn 2; wrpr %pstate`) |
 | Linux 6.1.27, Debian 12 installer (0070) | `call arch_touch_nmi_watchdog` (0x42c280) | the same | gcc 12: `... be,pn %icc sun4v; nop; call; nop; call touch_softlockup_watchdog; nop; wrpr %g0, 0, %pil; return; nop`, then the sun4v branch |
 | Linux 6.17.7 and 7.0.12, Debian 13 installers of 2025-11 and 2026-06 (0070) | `call arch_touch_nmi_watchdog` (0x43a9a0, 0x43aa40) | the same | gcc 15: `... bne,pn %icc sun4u; nop;` the sun4v branch (16 words, `return; nop` at its end), `sun4u: call; nop; call touch_softlockup_watchdog; nop; return; nop` |
+| FreeBSD 12.4 (0114) | `call cpu_idle` (0xc068f230) | `tdq_load` (`[%l1 + 0x88]`) | gcc 4.2: `st %g1, [%tdq + 0x8c]; membar; ld [%tdq + 0x88]; cmp; be idle; ...; clr [%tdq + 0x8c]; b top; nop; idle:` five words, the call, `clr [%tdq + 0x8c]` after it; halted at TL 1 and without the 100 us poll ("FreeBSD 12.4 on sun4u") |
 | Linux 3.2.78, Debian 7's `3.2.0-4-sparc64` (installed and installer kernel, the same image) and `-smp` (0110) | `call touch_nmi_watchdog` in `cpu_idle()` (0x42ab58; `-smp` 0x42ad7c) | the same, at `%pil` 0 | gcc 4.6: `cmp %r, 3; be,pn %icc sun4v; mov 14, %o0; call; nop; b %xcc top; nop; sun4v: call clear_bit; add %o1, 8, %o1` (the `tlb_type` load right before in the uniprocessor kernel, elsewhere in `-smp`) |
 
 At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
@@ -4077,6 +4084,96 @@ hrtimer code had a bug of this shape (after a detected hang a timer cancel could
 event to a far timer and block all timers until it fired; "hrtimer: Prevent all reprogramming if
 hang detected", upstream 2013); whether Debian's 3.2.78 has the fix, and why the halt would make the
 hang detection more likely, wasn't checked.
+
+### FreeBSD 12.4 on sun4u (OpenBIOS 0032-0033, pve-qemu `wsh/0114`-`0115`, 2026-11-22)
+
+FreeBSD 12.4-RELEASE is the last release with sparc64 (removed in 13.0; the 12 branch is end of life).
+Its `bootonly` and `disc1` CDs (from ftp-archive.freebsd.org, checked against the release's
+`CHECKSUM.SHA256` and `CHECKSUM.SHA512`) boot on `-M sun4u` with OpenBIOS: the boot block on slice `f`,
+`/boot/loader`, the GENERIC kernel (`FreeBSD 12.4-RELEASE r372781 GENERIC`, gcc 4.2.1), bsdinstall's
+console-type question on ttya at 59 s. The kernel sees the hardware as `pcib0: <U2P UPA-PCI bridge>`
+(Sabre, IGN 0x1f), `uart0` (the console, `ttyu0`), `atapci0: <SiI (CMD) 646U2 UDMA33 controller>`
+with `ada0` and `cd0` (UDMA2), `hme0`, `eeprom0` (mk48t59 clock), timecounter and event timer `tick`
+at 100 MHz, `hz` 1000; `ebus0: <power>` and the 8042 stay without a driver. The install, the installed
+disk, DHCP on `hme0`, the reboot and the power-off work with the patches below; the install target is
+`freebsd124-sun4u` (e2e/sparc/README.md, "The FreeBSD 12.4 install target"), which passed `--check
+--export` through PVE in 14.9 min with the lab's QEMU and firmware mounted over the package's.
+
+**No interrupt storm.** FreeBSD bug 239068 (2019) reports an endless `interrupt storm detected on
+"vec2016:"` after the disks are found, on QEMU 2.12 and 3.0 (2.9 was fine). 2016 = 0x7e0 = IGN 0x1f, INO
+0x20: the cmd646's OBIO interrupt. With pve-qemu-kvm 11.1.3-4+wsh3 and the lab's build of the series
+it doesn't happen: neither CD boot, the install (8 minutes of extraction from `cd0` to `ada0`) nor about
+20 boots of the installed disk printed a storm or an ata timeout, and `vmstat -i` shows `vec2016:
+atapci0` at 18-19 interrupts a second averaged over the boot (`DISK_TROUBLE` in `_freebsd.py` fails
+any run that prints either). Not followed further: which change since 2.12 fixed it (the bug is about
+upstream QEMU; `wsh/0021`'s latch keeps the line on INTRQ, and `wsh/0045` keeps the sabre's
+requests in order), and plain upstream QEMU 11.1.3 wasn't tried.
+
+**Power-off: the firmware spun (OpenBIOS 0032).** `shutdown -p now` printed `Uptime:` and the
+machine stayed on, QEMU at 100% of a host core. FreeBSD powers off through `ofw_exit()` with the
+`SUNW,power-off` client call, the firmware's trap table back and its own timer interrupt (`%tick`
+compare, 1000 Hz) pending. The PC stayed at one instruction in OpenBIOS's `reload_DMMU_tlb`, and `-d
+int` showed interrupt 0x4e (level 14) taken there over and over: the MMU miss handlers enable
+interrupts around their C handler at TL 1, where the TL>0 table's level-14 entry only retries without
+clearing the interrupt. 0030 met the same spin after a reboot ("The firmware reboot on sun4u") and
+kept the firmware's own timer from firing; FreeBSD's timer is the kernel's. 0032 leaves interrupts
+disabled in both miss handlers (spill and fill traps aren't interrupts). `shutdown -p now` and the
+installer's `halt -p` then end QEMU with exit 0 in 15-22 s.
+
+**Reboot: the kernel panicked (OpenBIOS 0033).** Every `shutdown -r now` (and `ofwdump`) ended in
+`panic: trap: fast instruction access mmu miss (kernel)`, and the panic's own reboot made QEMU stop
+with `Trap 0x00a4 while trap level (5) >= MAXTL (5), Error state` (with the package's firmware too).
+FreeBSD runs its kernel at TL 1 with the user process's context in the primary context register, and
+calls the client interface from there on its own trap table (`ofw_entry()`; only `ofw_exit()` sets
+the primary context to 0). OpenBIOS's `SAVE_CPU_TRAP_STATE` and `RESTORE_CPU_TRAP_STATE` walked `%tl`
+from 3 down to 0, and at TL 0 the next instructions are fetched in the primary context: the
+firmware's locked ITLB entry (`ffd00000`, 512 KB, context 0, not global; `info tlb`) missed, FreeBSD's
+handler had no mapping for it (its kernel never takes an instruction miss on itself), and panicked.
+Before user processes ran the primary context was 0, so the boot's own client calls worked. 0033
+walks TL 4 down to 1 (there is no trap state at TL 0; `rdpr %tpc` there is an illegal instruction on
+the UltraSPARC). The reboot then reaches `login:` again in 94 s and `ofwdump -p /chosen` works.
+0032 is still needed with 0033: with a build that has 0033 and not 0032 the installed disk boots,
+and `shutdown -p now` stays on after `Uptime:` as before (no QEMU exit within 300 s).
+
+**Other sun4u guests with 0032-0033 and 0114-0115** (the lab's own QEMU, both mounted over pve-qemu-kvm
+11.1.3-4+wsh3's, 2026-11-22): the `sparc64` matrix passed 10/10 (the NetBSD 11.1, 9.3, OpenBSD 8.0
+and Debian 12 CDs, NetBSD on the VGA console, the NetBSD install, its disk with DHCP and an HTTP fetch
+over `sunhme` and over virtio, idle 2.3% with the halt and 100.6% without); `sparc64-reboot.py` on
+copies of the stored disks: NetBSD 11.1 two reboots (each back at `login:` in 84 s), OpenBSD 8.0 one
+(194 s), Solaris 10 one (400 s), all powered off; Solaris 9 booted to `console login:` and powered off
+(`sparc64-boot-disk.py`); FreeBSD two reboots (129-131 s each) and the power-off. qtest
+`sun4u-idle-test` 63/63 (70/70 on the series with `wsh/0110`-`0113`, below).
+
+**On the series with Debian 7's patches** (pve-qemu `wsh/0001`-`0115` and `0120`-`0121`, built from
+the pinned QEMU with the whole series; OpenBIOS 0001-0033 with 0031; 2026-11-22, load average 1.8-3.5):
+`sun4u-idle-test` 70/70 and `sun4u-sabre-reset-test` 2/2; FreeBSD (the stored disk from the PVE
+install) idle 8.3% (103.0% with `idle-halt=off`), Debian 7 idle 0.1% (`wsh/0110` unchanged);
+`sparc64-reboot.py`: FreeBSD two reboots (back at `login:` in 94 s each), Debian 7 one (149 s, with
+`wsh/0112`'s TB flush), NetBSD 11.1 one (81 s); every power-off ended QEMU with exit 0.
+
+**Idle (pve-qemu `wsh/0114`).** An idle FreeBSD kept a host core at 100%: ULE's idle thread
+`sched_idletd()` calls `cpu_idle()`, which is empty on sparc64 (`retl; nop`). 0114 recognises the call
+(table in "Idle" above) and halts there, with two differences from the other kernels: FreeBSD's idle
+loop runs at TL 1, and between two calls it looks for work to steal and may spin itself
+(`sched_idlespins`), longer than the 20 us the 100 us poll allows between rounds, so the poll never
+ended and the first build (TL 1 allowed, poll kept) still read 103.5%. FreeBSD is halted at its
+first idle call; once woken, the call and one round of its loop run before the next halt. The
+kernel ticks 1000 times a second (`hz` 1000, `pil14: tick` ~1070/s in `vmstat -i`), so it wakes that
+often.
+
+`scenarios/sparc64-idle.py` on copies of the first-booted disk (`GUEST=freebsd PASSWORD=wshlab
+LOAD=120`, one QEMU at a time, load average 2.4-6.1 on 14 threads): "before" pve-qemu-kvm 11.1.3-4+wsh3's
+`qemu-system-sparc64`, "with" the series built with 0114-0115, "off" that build with
+`-M sun4u,idle-halt=off`; OpenBIOS 0032-0033 in all three:
+
+| | Host CPU idle | Clock drift over 60 s | 10 x `sleep 1` | awk job | Load rounds (120 s) | `login:` |
+| --- | --- | --- | --- | --- | --- | --- |
+| before | 107.0% | 0.0 s | 10.3 s | 21.4 s | 6 | 119 s |
+| with | 8.7% | 0.0 s | 10.4 s | 16.7 s | 7 | 116 s |
+| off | 105.0% (104.2% in an earlier run) | 0.0 s | 10.4 s | 16.9 s | 7 | 121 s |
+
+The rest (8.7%) is the 1000 wakes a second and FreeBSD's own work after each; the CPU-bound job takes
+as long with the halt as without (the "before" job ran at a higher host load).
 
 ## sparc64: niagara (sun4v)
 

@@ -9,7 +9,7 @@ again. Then power off.
 
 The guest changes the disk (logs, the reboot's sync): give it a copy.
 
-  GUEST     netbsd | openbsd | debian | solaris10 | solaris (7, 8, 9): login prompt, account,
+  GUEST     netbsd | openbsd | freebsd | debian | solaris10 | solaris (7, 8, 9): login prompt, account,
             power-off command (_sparc64.GUESTS)
   PROMPT, USER, PASSWORD, POWEROFF, FIRSTBOOT  override GUEST's
   REBOOT    the reboot command                                   (reboot)
