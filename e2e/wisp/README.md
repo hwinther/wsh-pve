@@ -432,27 +432,36 @@ host (36 boots, 2026-11-21).
 - CI boots the published package or a pull request's QEMU binaries (see "CI"); a pull request that
   changes `openbios/**` is not checked with its own firmware, and TCI is not run in CI.
 
-## Notes: a WebAssembly build of qemu-system-sparc (not tried)
+## Browser SPARC: wisp in a WebAssembly qemu-system-sparc
 
-What a browser build of the sparc emulator would need, from reading the QEMU 11.1 tree (nothing
-built):
+The docs site's Browser SPARC page (`/browser-sparc/`, guide "Browser SPARC") runs this kernel's
+interactive mode in the browser: `qemu-system-sparc -M SS-5 -m 128` built for WebAssembly, OpenBIOS,
+and `console=ttyS0 wisp=shell` with the serial console in an xterm.js terminal. `web/Dockerfile`
+builds it, from Debian packages only:
 
-- QEMU 11.1 builds for an Emscripten host only as **wasm64** (`configure --cpu=wasm64`, optionally
-  `--wasm64-32bit-address-limit` for runtimes without full Memory64); there is no wasm32 host any
-  more. TCG has no WebAssembly code generator in the tree, so `--enable-tcg-interpreter` is
-  required: the TCI column above is the speed to expect, before the cost of running the interpreter
-  itself as WebAssembly. Upstream CI builds it with `--static --disable-tools`.
-- The cross build environment is `tests/docker/dockerfiles/emsdk-wasm64-cross.docker`: emsdk plus
-  zlib, libffi, glib and pixman built from source with `-sMEMORY64=1 -sASYNCIFY=1 -pthread`.
-  Coroutines use the `wasm` backend.
-- pve-qemu's own additions (Proxmox Backup through libproxmox-backup-qemu0) need libraries that
-  aren't built for Emscripten, so it would be upstream QEMU with only the sparc patches from
-  pve-qemu's `debian/patches` (the `wsh/` ones), not the package's tree.
-- At run time: OpenBIOS (`openbios-sparc32`) and this kernel image placed in Emscripten's file system
-  for `-L` and `-kernel`, the serial console wired to a terminal in the page (`-serial` on a chardev
-  the page reads), threads through SharedArrayBuffer (so the page needs cross-origin isolation
-  headers), and no guest network without further work.
-- wisp fits that well: no disk, a 2.4 MB kernel, output on the serial console only, and a
-  result line a page can parse. With `wisp=shell` on the command line it is also something to type
-  at in an xterm.js terminal (see "Interactive mode"): an 80 x 24 layout, line editing in the
-  kernel's line discipline, and `bench` and `mandel` to show the emulated CPU at work.
+- QEMU 11.1.3 from Debian's source package (`apt-get source qemu`, the release tarball without
+  Debian's patches) plus pve-qemu's `wsh/` patches from `submodules/pve-qemu.patch`: all 65 apply
+  to upstream with no fuzz. pve-qemu's Proxmox Backup additions need libraries that aren't built for
+  Emscripten, so it is not the package's tree. Configured as QEMU's CI wasm64 jobs (`--static
+  --cpu=wasm64 --disable-tools --enable-tcg-interpreter`) for `sparc-softmmu` only, without optional
+  features.
+- Emscripten 6.0.5 from Debian sid (QEMU's CI uses emsdk 4.0.10; trixie's 3.1.69 is older than
+  QEMU's wasm64 support was written against). Two differences from the emsdk build: Emscripten 6 no
+  longer defines `EMSCRIPTEN`, which QEMU tests (passed in `EMCC_CFLAGS`), and Debian's `+ds` tarball
+  has no Python wheels, firmware or device trees (meson, pycotap and qemu.qmp from Debian packages,
+  `--disable-install-blobs`, device trees compiled with `dtc`).
+- zlib, libffi 3.5.2, pcre2, pixman and glib 2.84 built with `emcc` from Debian source packages
+  (`web/scripts/build-deps.sh`, as the emsdk image builds them from upstream tarballs; pcre2 is built
+  separately where the emsdk image lets glib's meson fetch it).
+- This kernel (tier 1, `TIER2=0 ./build.sh sparc32`), OpenBIOS from the published `pve-qemu-kvm`,
+  and xterm.js from Debian's `libjs-xterm`.
+- A snapshot: `web/scripts/make-snapshot.py` boots the same machine on a native
+  `qemu-system-sparc` built from the same tree, waits for the prompt and migrates it to a file
+  (4.8 MB); the page starts with `-incoming file:...` and has a running prompt in under a second,
+  where a boot from OpenBIOS takes 162-167 s in Chromium.
+
+Measured in Chromium: `bench` takes 31-35 s of wall time (the guest reports 11.1 s: its clock runs
+about 3 times behind), against 0.37 s under TCG in the published package; `mandel`'s 20 rows match
+`tests/mandel.txt`. The page's console is a character device registered in Emscripten's file system
+that QEMU opens with `-chardev pipe`; COOP/COEP come from a small service worker of the page's own,
+since GitHub Pages can't send headers. Details: the guide.
