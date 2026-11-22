@@ -4,8 +4,8 @@ with the auto layout on ada0 and the kernel and base sets from the CD (_freebsd.
 `halt -p` from the installer's shell (its `shutdown -p now` only says "System shutdown time
 has arrived" and leaves the machine on). The disk then boots with freebsd-firstboot.py.
 
-    lab.py run scenarios/freebsd-install-sparc64.py --out /mnt/runs/fbi \
-        --var ISO=/mnt/os/iso/other-os/freebsd12.4/FreeBSD-12.4-RELEASE-sparc64-disc1.iso
+    lab.py run scenarios/freebsd-install-sparc64.py --out /work/fbi \
+        --var ISO=/work/iso/FreeBSD-12.4-RELEASE-sparc64-disc1.iso
 
   HOSTNAME       the host name                                                  (freebsd)
   IP, NETMASK    hme0's address (the first boot writes the network again)       (10.0.2.15, 255.255.255.0)

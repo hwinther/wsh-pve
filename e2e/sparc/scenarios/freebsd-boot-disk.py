@@ -2,7 +2,7 @@
 then power off with `shutdown -p now`. `lab.py install freebsd124-sun4u --check` and `lab.py boot-test`
 run it (ROOT_PASSWORD, COMMANDS with `cat /etc/wsh-lab-target`, CHECK the target's name).
 
-    lab.py run scenarios/freebsd-boot-disk.py --out /mnt/runs/check --var DISK=<a copy> --var ROOT_PASSWORD=wshlab
+    lab.py run scenarios/freebsd-boot-disk.py --out /work/check --var DISK=/work/check/disk.raw --var ROOT_PASSWORD=wshlab
 
   ROOT_PASSWORD  root's password                                          (none)
   COMMANDS       run at the root prompt and recorded                     (uname, df, ifconfig)

@@ -2,7 +2,7 @@
 runs it: logs in as root (no password yet), sets root's password, writes the marker file, the host
 name and the network, optionally adds a user, and powers off with `shutdown -p now`.
 
-    lab.py run scenarios/freebsd-firstboot.py --pve 9220 --out /mnt/runs/first \
+    lab.py run scenarios/freebsd-firstboot.py --pve 9220 --out /work/first \
         --var ROOT_PASSWORD=wshlab --var MARKER="$(printf 'target=freebsd124-sun4u\n...')"
 
   ROOT_PASSWORD  root's new password, typed at passwd's prompts (they don't echo)      (none: unchanged)
