@@ -16748,10 +16748,10 @@ index 0000000..c5b21aa
 + static void cs4231_realize(DeviceState *dev, Error **errp)
 diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 new file mode 100644
-index 0000000..2c82f87
+index 0000000..6b9b11f
 --- /dev/null
 +++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,397 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the cs4231's pi and pmi for a short
 + buffer on sun4m
@@ -16784,12 +16784,7 @@ index 0000000..2c82f87
 +never comes), and short-chain without the take at load (the pipe runs
 +empty after the second buffer).
 +
-+wsh-pve deviation from LEMU fefb0f0f55: migrate waits for the destination
-+with query-status (wait_running) instead of the RESUME event. On QEMU
-+11.1.3 the destination loads the -incoming file and resumes before the
-+test's QMP client has connected, so the event is lost and the case hung.
-+
-+Origin: https://github.com/hwinther/lemu/commit/fefb0f0f55b3321b2efa52c9a0ae8f2e17c953a2
++Origin: https://github.com/hwinther/lemu/commit/c92620599a8b19e90b671e47f1b04a3a2646c22d
 +---
 + tests/qtest/sun4m-cs4231-test.c | 322 +++++++++++++++++++++++++++++++-
 + 1 file changed, 320 insertions(+), 2 deletions(-)
