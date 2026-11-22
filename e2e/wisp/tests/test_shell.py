@@ -212,6 +212,16 @@ class HostInit(unittest.TestCase):
         self.assertRegex(answers[6][1][0], r"^  crc32 0x[0-9a-f]{8} after 1 rounds \(16 KiB\)")
         self.assertEqual(int(answers[6][1][0].split()[1], 16), run.expected_crc(1))
 
+    @unittest.skipIf(os.path.exists("/test"), "the host has a /test")
+    def test_test_mode_reports_a_missing_test(self):
+        # wisp=test runs /test (the wisp-test action's initramfs has it); here there is none, so
+        # the child's exec fails, and the result line carries its exit code 127
+        proc = self.start({"wisp": "test"}, [])
+        self.assertEqual(proc.returncode, 0)
+        lines = proc.stdout.decode().splitlines()
+        self.assertIn("WISP-TEST-ERROR exec /test failed: errno 2", lines)
+        self.assertRegex(lines[-1], r"^WISP-TEST v=1 exit=127 signal=0 ms=\d+$")
+
     def test_end_of_input_powers_off(self):
         proc = self.start({"wisp": "shell"}, ["help"])
         self.assertEqual(proc.returncode, 0)

@@ -1,0 +1,219 @@
+name: wisp-test action
+
+# The self-test of the wisp-test action (.github/actions/wisp-test): builds the action's kit (wisp's
+# tier-1 kernels for sparc32, sparc64 and x86_64, whose PID 1 runs /test with wisp=test, plus the
+# nolibc headers; e2e/wisp/kit.sh), then runs the action on its example programs with the kit from
+# this run. Each case states the result it must give: the buggy examples pass on x86_64 and fail on
+# sparc (an exit code for the endianness bug, SIGBUS for the alignment bug), the fixed ones pass
+# everywhere, so both outcomes of the action are checked.
+#
+# With workflow_dispatch and `publish`, the tested kit then replaces the assets of the
+# `wisp-test-kit` release, which the action downloads by default.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Replace the assets of the wisp-test-kit release with this run's kit"
+        type: boolean
+        default: false
+  # Every pull request, without a paths filter, so the wisp-test-action-required check always
+  # reports; the changes job skips the other jobs when the PR touches none of their paths.
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    paths:
+      - 'e2e/wisp/**'
+      - '.github/actions/wisp-test/**'
+      - '.github/workflows/wisp-test-action.yml'
+
+permissions: {}
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read # the changed-files action reads the PR file list
+    outputs:
+      changed: ${{ steps.changed.outputs.changed }}
+    steps:
+      - name: Changed files
+        id: changed
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^e2e/wisp/
+            ^\.github/actions/wisp-test/
+            ^\.github/workflows/wisp-test-action\.yml$
+
+  kit:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The kernels wisp-boot.yml caches (same key; restored only, so this job never saves a
+      # partial set under it). On a miss, the three tier-1 kernels the kit needs are built here.
+      - name: Restore the kernels
+        id: kernels
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: e2e/wisp/out
+          key: wisp-kernels-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+
+      - name: Build the kernels
+        if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
+        run: |
+          docker build --pull -f e2e/wisp/Dockerfile -t wsh-wisp:ci .
+          docker run --rm -e JOBS="$(nproc)" -e TIER2=0 -v "$PWD/e2e/wisp:/wisp" wsh-wisp:ci \
+            ./build.sh sparc32 sparc64 x86_64
+
+      - name: Pack the kit
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/kit"
+          e2e/wisp/kit.sh "$RUNNER_TEMP/kit/wisp-test-kit.tar.xz"
+          (cd "$RUNNER_TEMP/kit" && sha256sum wisp-test-kit.tar.xz > wisp-test-kit.tar.xz.sha256)
+          cat "$RUNNER_TEMP/kit/wisp-test-kit.tar.xz.sha256"
+
+      - name: Upload the kit
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wisp-test-kit
+          path: ${{ runner.temp }}/kit/
+          retention-days: 14
+
+  test:
+    needs: [kit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: endian bug x86_64, arch: x86_64, sources: examples/endian.c, want: pass }
+          - { name: endian bug sparc32, arch: sparc32, sources: examples/endian.c, want: fail, exit: '1' }
+          - { name: endian fixed sparc32, arch: sparc32, sources: examples/endian.c, cflags: -DFIXED, want: pass }
+          - { name: endian bug sparc64, arch: sparc64, sources: examples/endian.c, want: fail, exit: '1' }
+          - { name: endian fixed sparc64, arch: sparc64, sources: examples/endian.c, cflags: -DFIXED, want: pass }
+          - { name: align bug x86_64, arch: x86_64, sources: examples/align.c, want: pass }
+          - { name: align bug sparc32, arch: sparc32, sources: examples/align.c, want: fail, signal: SIGBUS }
+          - { name: align bug sparc64, arch: sparc64, sources: examples/align.c, want: fail, signal: SIGBUS }
+          - { name: align fixed sparc32, arch: sparc32, sources: examples/align.c, cflags: -DFIXED, want: pass }
+          - { name: args sparc32, arch: sparc32, sources: tests/args.c, args: hello big-endian, want: pass }
+          - { name: args sparc64, arch: sparc64, sources: tests/args.c, args: hello big-endian, want: pass }
+    name: ${{ matrix.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the kit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wisp-test-kit
+          path: ${{ runner.temp }}/kit
+
+      - name: wisp-test
+        id: wisp
+        continue-on-error: true
+        uses: $/.github/actions/wisp-test
+        with:
+          arch: ${{ matrix.arch }}
+          sources: .github/actions/wisp-test/${{ matrix.sources }}
+          cflags: ${{ matrix.cflags }}
+          args: ${{ matrix.args }}
+          kit: ${{ runner.temp }}/kit/wisp-test-kit.tar.xz
+
+      - name: Check the result
+        env:
+          WANT: ${{ matrix.want }}
+          WANT_EXIT: ${{ matrix.exit }}
+          WANT_SIGNAL: ${{ matrix.signal }}
+          RESULT: ${{ steps.wisp.outputs.result }}
+          EXIT_CODE: ${{ steps.wisp.outputs.exit-code }}
+          SIGNAL_NAME: ${{ steps.wisp.outputs.signal-name }}
+          SECONDS_TAKEN: ${{ steps.wisp.outputs.seconds }}
+          OUTCOME: ${{ steps.wisp.outcome }}
+        run: |
+          echo "result=$RESULT exit-code=$EXIT_CODE signal-name=$SIGNAL_NAME seconds=$SECONDS_TAKEN outcome=$OUTCOME"
+          bad=0
+          [ "$RESULT" = "$WANT" ] || { echo "::error::result $RESULT, want $WANT"; bad=1; }
+          if [ "$WANT" = pass ]; then want_outcome=success; else want_outcome=failure; fi
+          [ "$OUTCOME" = "$want_outcome" ] || { echo "::error::step outcome $OUTCOME, want $want_outcome"; bad=1; }
+          [ -z "$WANT_EXIT" ] || [ "$EXIT_CODE" = "$WANT_EXIT" ] || { echo "::error::exit code $EXIT_CODE, want $WANT_EXIT"; bad=1; }
+          [ -z "$WANT_SIGNAL" ] || [ "$SIGNAL_NAME" = "$WANT_SIGNAL" ] || { echo "::error::signal $SIGNAL_NAME, want $WANT_SIGNAL"; bad=1; }
+          exit "$bad"
+
+  publish:
+    needs: [kit, test]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # gh release create/upload
+    steps:
+      - name: Download the kit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wisp-test-kit
+          path: kit
+
+      - name: Publish to the wisp-test-kit release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          tar -xJOf kit/wisp-test-kit.tar.xz wisp-test-kit/VERSION > version.txt
+          printf '%s\n' \
+            "The kit of the wisp-test action (\`.github/actions/wisp-test\`): wisp's tier-1 kernels for" \
+            "sparc32, sparc64 and x86_64 and the nolibc headers, built and tested by" \
+            "\`.github/workflows/wisp-test-action.yml\` from \`${SHA}\`." \
+            "" '```' "$(cat version.txt)" "$(cat kit/wisp-test-kit.tar.xz.sha256)" '```' > release-notes.md
+          if gh release view wisp-test-kit -R "$REPO" >/dev/null 2>&1; then
+            gh release edit wisp-test-kit -R "$REPO" --notes-file release-notes.md
+            gh release upload wisp-test-kit -R "$REPO" --clobber kit/wisp-test-kit.tar.xz kit/wisp-test-kit.tar.xz.sha256
+          else
+            gh release create wisp-test-kit -R "$REPO" --prerelease --title "wisp-test kit" \
+              --notes-file release-notes.md kit/wisp-test-kit.tar.xz kit/wisp-test-kit.tar.xz.sha256
+          fi
+
+  # Passes when the jobs passed or were skipped because nothing relevant changed; fails when one
+  # failed or was cancelled. Not a required check unless the owner adds it to the rulesets.
+  wisp-test-action-required:
+    name: wisp-test-action-required
+    if: ${{ always() }}
+    needs: [changes, kit, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check the jobs' results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' > /dev/null; then
+            echo "::error::A wisp-test action job failed or was cancelled."
+            exit 1
+          fi
