@@ -169,6 +169,22 @@ jobs:
             echo "::warning::No assets of the media release in $REPO: the docs show placeholders for the recordings."
           fi
 
+      # Browser SPARC (/browser-sparc/): the page itself is in docs/public/browser-sparc/; its binary
+      # files (QEMU for WebAssembly, OpenBIOS, wisp's sparc32 kernel, xterm.js; built by
+      # web/Dockerfile, see browser-sparc.yml) are the assets of the `browser-sparc` release, kept out
+      # of git like the recordings. Without them the page says it can't load; the deploy goes on.
+      - name: Fetch the Browser SPARC files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p github-pages/browser-sparc
+          if gh release download browser-sparc -R "$REPO" --dir github-pages/browser-sparc --clobber; then
+            ls -l github-pages/browser-sparc
+          else
+            echo "::warning::No assets of the browser-sparc release in $REPO: the Browser SPARC page can't start."
+          fi
+
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 

@@ -1,0 +1,70 @@
+name: Browser SPARC
+
+# Builds the binary files of the Browser SPARC page (docs/public/browser-sparc/, served at
+# /browser-sparc/): qemu-system-sparc for WebAssembly (wasm64, TCG interpreter; upstream QEMU from
+# Debian's source package with the wsh sparc patches), OpenBIOS from the published pve-qemu-kvm,
+# wisp's sparc32 kernel, Debian's xterm.js and the snapshot the page resumes from (web/Dockerfile;
+# the docs guide "Browser SPARC"). The result is an artifact; with `publish`, it also replaces the
+# assets of the `browser-sparc` release, which repo-update.yml copies into the Pages site on its
+# next deploy.
+#
+# By hand only: the build takes a while (Emscripten builds glib and QEMU) and its inputs change
+# rarely (the wsh patches, the Debian packages, wisp).
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Replace the assets of the browser-sparc release with this build"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: '${{ github.workflow }}'
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write # gh release create/upload with publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          DOCKER_BUILDKIT=1 docker build -f web/Dockerfile --target dist -o type=local,dest=web/dist .
+          cat web/dist/versions.txt
+          ls -l web/dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-sparc
+          path: web/dist/
+          retention-days: 14
+
+      - name: Publish to the browser-sparc release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          printf '%s\n' \
+            "The binary files of the Browser SPARC page (/browser-sparc/ on the docs site), built by" \
+            "\`.github/workflows/browser-sparc.yml\` from \`${SHA}\`. Pages deploys copy them next to the page." \
+            "" '```' "$(cat web/dist/versions.txt)" '```' > release-notes.md
+          if gh release view browser-sparc -R "$REPO" >/dev/null 2>&1; then
+            gh release edit browser-sparc -R "$REPO" --notes-file release-notes.md
+            gh release upload browser-sparc -R "$REPO" --clobber web/dist/*
+          else
+            gh release create browser-sparc -R "$REPO" --prerelease --title "Browser SPARC files" \
+              --notes-file release-notes.md web/dist/*
+          fi
