@@ -123,6 +123,11 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
+# FreeBSD 12.4 on sun4u: the published packages with the lab's qemu-system-sparc64 (the 11.1.3-4 series with
+# wsh/0100-0101) and openbios-sparc64 (0001-0030 with 0040-0041) mounted over the package's
+PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0100-0101, openbios 0040-0041 (lab build)",
+                            "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
+                            "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -256,6 +261,18 @@ MEDIA = {
         "lab": "other-os/openbsd8.0/install80.iso",
         # freely redistributable; the sha256 is the one in the release's SHA256 file
         "url": "https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso"},
+    # FreeBSD 12.4, the last release with sparc64 (the branch is end of life); size and sha256 as in the
+    # release's CHECKSUM.SHA256-FreeBSD-12.4-RELEASE-sparc64, the sha512 its CHECKSUM.SHA512. The
+    # bootonly CD (263782400 bytes, sha256 0adb1cccd0ccde4438886dcfd8bddbc4cfc12c6a961ab1a8af08d449628fe0cb)
+    # boots to bsdinstall too but has no sets (it would fetch them)
+    "FreeBSD-12.4-RELEASE-sparc64-disc1.iso": {
+        "title": "FreeBSD 12.4-RELEASE sparc64 disc1 (ftp-archive.freebsd.org)", "content": "iso",
+        "size": 640942080, "sha256": "72abeb51bae9680b8354a623fcddadf98c67ae706c15f7e80054e1ba7764aaa9",
+        "lab": "other-os/freebsd12.4/FreeBSD-12.4-RELEASE-sparc64-disc1.iso",
+        "sha512": "8d5cd28684e04dc58de357238a87b509a7bcb3d939476a195835bc8b8cdd76ad"
+                  "65642638a20f887199eb97277965db73a1093e58673940cbc416d328c7c067f9",
+        "url": "http://ftp-archive.freebsd.org/pub/FreeBSD-Archive/old-releases/ISO-IMAGES/12.4/"
+               "FreeBSD-12.4-RELEASE-sparc64-disc1.iso"},
     # OpenBSD 5.9, the last release with the sparc (sun4m) port: its CD boots bsd.rd only (the release
     # has no install CD with the sets for sparc), so the sets come from a second CD made on the node from
     # the release's files (`lab.py media openbsd59-ss5 --convert <the release's directory>`). Sizes and
@@ -906,6 +923,37 @@ TARGETS = {
         # through vmbr0 (ntpd synced to its servers), and a boot-test of the stored disk
         "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_3_WSH6,
                    "with": "--check; --check --export; --check --ip --gateway --dns --domain; boot-test"},
+    },
+    # FreeBSD 12.4, the last release with sparc64: disc1 boots bsdinstall on ttya; the install takes the
+    # welcome screen's Shell and runs `bsdinstall script` (_freebsd.install: the auto layout, VTOC8, on
+    # ada0, kernel and base from the CD), then halt -p; the first boot sets root's password, the marker,
+    # the host name and the network (rc.conf), the check boots it again. The reboot and the power-off
+    # need openbios 0040-0041 (before, FreeBSD panics on reboot and the power-off spins in the
+    # firmware); idle needs pve-qemu wsh/0100. README.md, "The FreeBSD 12.4 install target"
+    "freebsd124-sun4u": {
+        "title": "FreeBSD 12.4 sparc64, kernel and base (sun4u, OpenBIOS, IDE disk)",
+        "status": "automated",
+        "method": "scripted",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # bsdinstall writes its VTOC8 label
+        "media": [{"name": "FreeBSD-12.4-RELEASE-sparc64-disc1.iso", "drive": "ide2"}],
+        "install": {"scenario": "freebsd-install-sparc64.py", "vars": {}, "timeout": 3600},
+        "firstboot": {"scenario": "freebsd-firstboot.py", "vars": {}, "timeout": 1800},
+        "check": {"scenario": "freebsd-boot-disk.py", "vars": {}, "timeout": 1800,
+                  "commands": "uname -a; cat /etc/wsh-lab-target; df -k; gpart show ada0; ifconfig hme0;"
+                              " netstat -rn -f inet; cat /etc/resolv.conf; vmstat -i"},
+        "boot": "ide0",
+        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "hostname": "freebsd124-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "net_modes": ["static", "dhcp"],
+        "dhcp_note": "dhclient takes the address, router and name servers; the host name stays as installed (rc.conf)",
+        # the first boot's and the check's power-off spin in the firmware without openbios 0040
+        "matrix_skip": "needs openbios 0040-0041, not in a published pve-qemu-kvm yet: installed on request",
+        "minutes": 15,  # 14.9 min through PVE: install 9.6, first boot 3.3, --check 1.8
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_FBSD, "with": "--check --export"},
     },
     # OpenBSD 5.9, the last release of the sparc port, on sun4m: cd59.iso boots bsd.rd (by path at
     # OpenBIOS's `0 >`), the sets come from the sets CD made on the node (`lab.py media <target>

@@ -1563,6 +1563,65 @@ class OpenBSD80(unittest.TestCase):
         self.assertEqual(m.sent, [])
 
 
+class FreeBSD124(unittest.TestCase):
+    """freebsd124-sun4u: the target, the medium, bsdinstall's script (_freebsd.py), passwd's prompts."""
+    t = targets.TARGETS["freebsd124-sun4u"]
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _freebsd
+        cls.fb = _freebsd
+
+    def test_target(self):
+        t, p = self.t, self.t["profile"]
+        self.assertEqual((p["arch"], p["machine"], p["bios"], p["net0"]), ("sparc64", "sun4u", "openbios-sparc64", "sunhme"))
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"], t["nic"]), ("ide0", None, "ide0", "hme0"))
+        self.assertEqual(t["media"], [{"name": "FreeBSD-12.4-RELEASE-sparc64-disc1.iso", "drive": "ide2"}])
+        self.assertNotIn("root_password", t["install"])  # the first boot sets it at passwd's prompts
+        self.assertEqual(t["net_modes"], ["static", "dhcp"])
+        self.assertGreater(t["minutes"], 0)
+        med = targets.MEDIA["FreeBSD-12.4-RELEASE-sparc64-disc1.iso"]
+        self.assertEqual((med["size"], med["lab"]),
+                         (640942080, "other-os/freebsd12.4/FreeBSD-12.4-RELEASE-sparc64-disc1.iso"))
+        self.assertEqual(len(med["sha512"]), 128)
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9230", name=None, target="freebsd124-sun4u")
+        vp = install.vm_params(t, a, {med["lab"].rsplit("/", 1)[1]: "local:iso/x.iso"}, None)
+        self.assertEqual((vp["ide0"], vp["ide2"]), ("local:8,format=raw", "local:iso/x.iso,media=cdrom"))
+
+    def test_installerconfig(self):
+        lines = self.fb.installerconfig({"HOSTNAME": "freebsd124-sun4u", "IP": "10.0.2.15", "NETMASK": "255.255.255.0"})
+        # the preamble, then the setup script, which runs in the new system
+        self.assertEqual(lines[:5], ["PARTITIONS=ada0", 'DISTRIBUTIONS="kernel.txz base.txz"',
+                                     "BSDINSTALL_DISTDIR=/usr/freebsd-dist", "nonInteractive=YES", "#!/bin/sh"])
+        self.assertIn('sysrc ifconfig_hme0="inet 10.0.2.15 netmask 255.255.255.0"', lines)
+        self.assertIn("sysrc hostname=freebsd124-sun4u", lines)
+        self.assertFalse(any("'" in line for line in lines))  # typed with echo '...'
+        with self.assertRaises(ValueError):
+            self.fb.installerconfig({"HOSTNAME": "it's", "IP": "10.0.2.15", "NETMASK": "255.255.255.0"})
+
+    def test_passwd_echo_is_no_result(self):
+        # the echoed command line must not end passwd() before its prompts (it typed the next command
+        # in as the password once)
+        m = InstallerConsole(["", "Changing local password for root\nNew Password:",
+                              "Retype New Password:", "PASSWD-RC=0\nroot@freebsd124-sun4u:~ # "])
+        sent = []
+        saved = self.fb.shell
+        try:
+            self.fb.shell = lambda m_, c, timeout=300: sent.append(c) or ""
+            self.fb.passwd(m, "root", "pw")
+        finally:
+            self.fb.shell = saved
+        self.assertEqual(m.sent, ["sh -c 'passwd root; echo PASSWD-RC=$?'\r", "pw\r", "pw\r"])
+        self.assertIsNone(re.search(r"PASSWD-RC=\d", m.sent[0]))
+
+    def test_disk_trouble(self):
+        for line in ['interrupt storm detected on "vec2016:"; throttling interrupt source',
+                     "ada0: timeout"]:
+            self.assertTrue(re.search(self.fb.DISK_TROUBLE, line), line)
+        self.assertIsNone(re.search(self.fb.DISK_TROUBLE, "ada0: 33.300MB/s transfers (UDMA2, PIO 8192bytes)"))
+
+
 class OpenBSD59(unittest.TestCase):
     """openbsd59-ss5 and openbsd59-ss20: the targets, the sets CD made from the release's files
     (answer_media.openbsd_sets, install.convert_files) and 5.9's installer questions (_openbsd.py)."""
