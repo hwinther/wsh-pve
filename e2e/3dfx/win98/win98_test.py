@@ -28,6 +28,17 @@ packages/wsh-openglide/tests/scene.h, the scene every 3dfx test draws; on "<TAG>
 checks that the console shows Windows again (not the scene). A test passes when the guest program
 reports PASS (its own read-back matched), the console showed the frame, and Windows came back.
 
+With --pve VMID the harness runs on a PVE node (the e2e PVE container: e2e/3dfx/win98-test.sh --pve)
+and PVE starts the VM instead: `qm create` with the same devices (`cpu: pentium3`, `scsihw: lsi`,
+`vga: std,mesa=1`, with --display egl also `mesa-display=egl-headless`, an rtl8139 NIC, AC97, the
+tablet), COM1 and QEMU's messages to files through `args` (-D
+with a log mask keeps a daemonized QEMU's stderr in that file), then `qm start`. The frames are read
+where PVE's console reads them: QEMU's screendump through the VM's QMP socket, or (egl) PVE's VNC
+socket, with a VNC password set through QMP; OpenGLide's log comes from the directory qemu-server
+gives it. PVE attaches only a storage's disks, so the run adds a directory storage in PRIV
+(`w3d<VMID>`) with the disk copy hard-linked into it. Windows powering off stops the VM; the VM and
+the storage are removed afterwards.
+
 PRIV keeps the disk copy and the screendumps, which show Windows: they stay on the machine that ran
 the test. OUT gets only our own text: summary.json and summary.md (verdicts, probe values, times,
 frame rates), the serial log, QEMU's output, OpenGLide's log and the guest's C:\\WIN3DFX\\LOG.TXT.
@@ -572,10 +583,127 @@ class Monitor:
         return os.path.exists(path)
 
 
-def vnc_grab(path):
+class Qmp:
+    """A VM's QMP socket (PVE: /var/run/qemu-server/<vmid>.qmp), one connection per command, as
+    qemu-server uses it."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def cmd(self, execute, **arguments):
+        """The command's "return" value; raises OSError or RuntimeError (its "error")."""
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(10)
+            s.connect(self.path)
+            f = s.makefile("rwb")
+
+            def reply():
+                while True:
+                    line = f.readline()
+                    if not line:
+                        raise OSError("QMP: connection closed")
+                    msg = json.loads(line)
+                    if "return" in msg or "error" in msg:
+                        return msg
+
+            f.readline()  # the greeting
+            for name, a in (("qmp_capabilities", {}), (execute, arguments)):
+                f.write(json.dumps({"execute": name, "arguments": a}).encode() + b"\n")
+                f.flush()
+                msg = reply()
+                if "error" in msg:
+                    raise RuntimeError(f"QMP {name}: {msg['error'].get('desc', msg['error'])}")
+            return msg["return"]
+
+    def screendump(self, path):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        try:
+            self.cmd("screendump", filename=path)
+        except (OSError, RuntimeError):
+            return False
+        return os.path.exists(path) and os.path.getsize(path) > 15
+
+
+# --- DES, for the VNC authentication of PVE's console (a VNC password is always on there) ------------
+
+_DES_IP = [58, 50, 42, 34, 26, 18, 10, 2, 60, 52, 44, 36, 28, 20, 12, 4, 62, 54, 46, 38, 30, 22, 14, 6,
+           64, 56, 48, 40, 32, 24, 16, 8, 57, 49, 41, 33, 25, 17, 9, 1, 59, 51, 43, 35, 27, 19, 11, 3,
+           61, 53, 45, 37, 29, 21, 13, 5, 63, 55, 47, 39, 31, 23, 15, 7]
+_DES_FP = [40, 8, 48, 16, 56, 24, 64, 32, 39, 7, 47, 15, 55, 23, 63, 31, 38, 6, 46, 14, 54, 22, 62, 30,
+           37, 5, 45, 13, 53, 21, 61, 29, 36, 4, 44, 12, 52, 20, 60, 28, 35, 3, 43, 11, 51, 19, 59, 27,
+           34, 2, 42, 10, 50, 18, 58, 26, 33, 1, 41, 9, 49, 17, 57, 25]
+_DES_E = [32, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8, 9, 8, 9, 10, 11, 12, 13, 12, 13, 14, 15, 16, 17,
+          16, 17, 18, 19, 20, 21, 20, 21, 22, 23, 24, 25, 24, 25, 26, 27, 28, 29, 28, 29, 30, 31, 32, 1]
+_DES_P = [16, 7, 20, 21, 29, 12, 28, 17, 1, 15, 23, 26, 5, 18, 31, 10, 2, 8, 24, 14, 32, 27, 3, 9,
+          19, 13, 30, 6, 22, 11, 4, 25]
+_DES_PC1 = [57, 49, 41, 33, 25, 17, 9, 1, 58, 50, 42, 34, 26, 18, 10, 2, 59, 51, 43, 35, 27, 19, 11, 3,
+            60, 52, 44, 36, 63, 55, 47, 39, 31, 23, 15, 7, 62, 54, 46, 38, 30, 22, 14, 6, 61, 53, 45, 37,
+            29, 21, 13, 5, 28, 20, 12, 4]
+_DES_PC2 = [14, 17, 11, 24, 1, 5, 3, 28, 15, 6, 21, 10, 23, 19, 12, 4, 26, 8, 16, 7, 27, 20, 13, 2,
+            41, 52, 31, 37, 47, 55, 30, 40, 51, 45, 33, 48, 44, 49, 39, 56, 34, 53, 46, 42, 50, 36, 29, 32]
+_DES_SHIFTS = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1]
+_DES_S = [[int(x) for x in s.split()] for s in (
+    "14 4 13 1 2 15 11 8 3 10 6 12 5 9 0 7 0 15 7 4 14 2 13 1 10 6 12 11 9 5 3 8 "
+    "4 1 14 8 13 6 2 11 15 12 9 7 3 10 5 0 15 12 8 2 4 9 1 7 5 11 3 14 10 0 6 13",
+    "15 1 8 14 6 11 3 4 9 7 2 13 12 0 5 10 3 13 4 7 15 2 8 14 12 0 1 10 6 9 11 5 "
+    "0 14 7 11 10 4 13 1 5 8 12 6 9 3 2 15 13 8 10 1 3 15 4 2 11 6 7 12 0 5 14 9",
+    "10 0 9 14 6 3 15 5 1 13 12 7 11 4 2 8 13 7 0 9 3 4 6 10 2 8 5 14 12 11 15 1 "
+    "13 6 4 9 8 15 3 0 11 1 2 12 5 10 14 7 1 10 13 0 6 9 8 7 4 15 14 3 11 5 2 12",
+    "7 13 14 3 0 6 9 10 1 2 8 5 11 12 4 15 13 8 11 5 6 15 0 3 4 7 2 12 1 10 14 9 "
+    "10 6 9 0 12 11 7 13 15 1 3 14 5 2 8 4 3 15 0 6 10 1 13 8 9 4 5 11 12 7 2 14",
+    "2 12 4 1 7 10 11 6 8 5 3 15 13 0 14 9 14 11 2 12 4 7 13 1 5 0 15 10 3 9 8 6 "
+    "4 2 1 11 10 13 7 8 15 9 12 5 6 3 0 14 11 8 12 7 1 14 2 13 6 15 0 9 10 4 5 3",
+    "12 1 10 15 9 2 6 8 0 13 3 4 14 7 5 11 10 15 4 2 7 12 9 5 6 1 13 14 0 11 3 8 "
+    "9 14 15 5 2 8 12 3 7 0 4 10 1 13 11 6 4 3 2 12 9 5 15 10 11 14 1 7 6 0 8 13",
+    "4 11 2 14 15 0 8 13 3 12 9 7 5 10 6 1 13 0 11 7 4 9 1 10 14 3 5 12 2 15 8 6 "
+    "1 4 11 13 12 3 7 14 10 15 6 8 0 5 9 2 6 11 13 8 1 4 10 7 9 5 0 15 14 2 3 12",
+    "13 2 8 4 6 15 11 1 10 9 3 14 5 0 12 7 1 15 13 8 10 3 7 4 12 5 6 11 0 14 9 2 "
+    "7 11 4 1 9 12 14 2 0 6 10 13 15 3 5 8 2 1 14 7 4 10 8 13 15 12 9 0 3 5 6 11")]
+
+
+def _des_perm(v, table, width):
+    out = 0
+    for p in table:
+        out = (out << 1) | ((v >> (width - p)) & 1)
+    return out
+
+
+def des_encrypt(key, block):
+    """One 8-byte block of DES (ECB): all the VNC authentication needs, and not in Python's library."""
+    k = _des_perm(int.from_bytes(key, "big"), _DES_PC1, 64)
+    c, d = k >> 28, k & 0xFFFFFFF
+    subkeys = []
+    for s in _DES_SHIFTS:
+        c = ((c << s) | (c >> (28 - s))) & 0xFFFFFFF
+        d = ((d << s) | (d >> (28 - s))) & 0xFFFFFFF
+        subkeys.append(_des_perm((c << 28) | d, _DES_PC2, 56))
+    v = _des_perm(int.from_bytes(block, "big"), _DES_IP, 64)
+    left, right = v >> 32, v & 0xFFFFFFFF
+    for sk in subkeys:
+        x = _des_perm(right, _DES_E, 32) ^ sk
+        f = 0
+        for i in range(8):
+            six = (x >> (42 - 6 * i)) & 0x3F
+            f = (f << 4) | _DES_S[i][(((six & 0x20) >> 4) | (six & 1)) * 16 + ((six >> 1) & 0xF)]
+        left, right = right, left ^ _des_perm(f, _DES_P, 32)
+    return _des_perm((right << 32) | left, _DES_FP, 64).to_bytes(8, "big")
+
+
+def vnc_auth_response(password, challenge):
+    """The VNC authentication's reply: the 16-byte challenge encrypted with the password (8 bytes,
+    zero padded) as the DES key, each byte's bits mirrored, as RFB's VNC authentication has it."""
+    key = bytes(int(f"{b:08b}"[::-1], 2) for b in password.encode()[:8].ljust(8, b"\0"))
+    return des_encrypt(key, challenge[:8]) + des_encrypt(key, challenge[8:16])
+
+
+def vnc_grab(path, password=None):
     """The console's picture as the VNC server at path sends it, as (width, height, rgb) or None (RFB
-    3.8, no authentication, raw encoding). For --display egl: while qemu-3dfx's dmabuf is scanned
-    out, egl-headless reads it into a surface of its own for VNC, and QEMU's screendump has none."""
+    3.8, raw encoding; no authentication, or the VNC authentication with password, as on PVE). For
+    --display egl: while qemu-3dfx's dmabuf is scanned out, egl-headless reads it into a surface of
+    its own for VNC, and QEMU's screendump has none."""
     def recv(s, n):
         b = b""
         while len(b) < n:
@@ -590,9 +718,14 @@ def vnc_grab(path):
             s.connect(path)
             recv(s, 12)
             s.sendall(b"RFB 003.008\n")
-            if 1 not in recv(s, recv(s, 1)[0]):
+            types = recv(s, recv(s, 1)[0])
+            if password is not None and 2 in types:
+                s.sendall(b"\x02")
+                s.sendall(vnc_auth_response(password, recv(s, 16)))
+            elif 1 in types:
+                s.sendall(b"\x01")
+            else:
                 return None
-            s.sendall(b"\x01")
             if struct.unpack(">I", recv(s, 4))[0] != 0:
                 return None
             s.sendall(b"\x01")
@@ -638,7 +771,20 @@ def write_ppm(path, w, h, pix):
 def capture(args, mon, path):
     """What the VM shows, as (width, height, rgb) or None, also written to path (PPM): headless,
     QEMU's screendump of the console (egl: the VNC server's picture); with SDL, the QEMU window on
-    the X display (xwd)."""
+    the X display (xwd). With --pve: through the VM's QMP socket and PVE's VNC socket."""
+    if args.pve:
+        if args.display == "egl":
+            # again before every grab: PVE's console (vncproxy) sets its own ticket as the password
+            # whenever someone opens the VM's noVNC console
+            try:
+                mon.cmd("set_password", protocol="vnc", password=PVE_VNC_PASSWORD)
+            except (OSError, RuntimeError):
+                pass
+            r = vnc_grab(pve_path(args.pve, "vnc"), PVE_VNC_PASSWORD)
+            if r:
+                write_ppm(path, *r)
+            return r
+        return read_ppm(path) if mon.screendump(path) else None
     if args.display == "egl":
         r = vnc_grab(os.path.join(args.private, "vnc.sock"))
         if r:
@@ -697,27 +843,178 @@ def after_check(args, scene, mon, priv, name, desktop):
         time.sleep(0.5)
 
 
+class LocalVm:
+    """QEMU started by the harness itself, as qemu_command() builds it."""
+
+    def __init__(self, args, raw, serial_path):
+        self.args, self.priv, self.out = args, args.private, args.out
+        self.ogl = os.path.join(self.priv, "openglide")
+        os.makedirs(self.ogl, exist_ok=True)
+        self.cmd, self.accel = qemu_command(args, raw, serial_path, os.path.join(self.priv, "mon.sock"),
+                                            os.path.join(self.priv, "vnc.sock"))
+        self.mon = Monitor(os.path.join(self.priv, "mon.sock"))
+
+    def start(self):
+        env = dict(os.environ, OPENGLIDE_DIR=self.ogl)
+        if self.args.display != "sdl":
+            env.pop("DISPLAY", None)
+        with open(os.path.join(self.out, "qemu-command.txt"), "w") as f:
+            f.write(" ".join(self.cmd) + "\n")
+        self.qlog = open(os.path.join(self.out, "qemu.log"), "wb")
+        log(f"QEMU ({self.accel}, {self.args.display}): {' '.join(self.cmd)}")
+        self.proc = subprocess.Popen(self.cmd, stdout=self.qlog, stderr=subprocess.STDOUT, env=env, cwd=self.priv)
+
+    def exited(self):
+        """None while QEMU runs, else how it ended."""
+        rc = self.proc.poll()
+        return None if rc is None else f"QEMU exited with status {rc}"
+
+    def stop(self):
+        if self.args.display != "sdl":
+            self.mon.screendump(os.path.join(self.priv, "timeout.ppm"))
+        self.mon.cmd("quit")
+        try:
+            self.proc.wait(10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+
+    def finish(self):
+        """Waits for QEMU; True when it ended cleanly (Windows powered off)."""
+        self.proc.wait()
+        self.qlog.close()
+        return self.proc.returncode == 0
+
+
+PVE_VNC_PASSWORD = "w3dtest"
+
+
+def pve_path(vmid, what):
+    """qemu-server's per-VM paths: the QMP and VNC sockets, the pid file, OpenGLide's directory."""
+    return {"qmp": f"/var/run/qemu-server/{vmid}.qmp", "vnc": f"/var/run/qemu-server/{vmid}.vnc",
+            "pid": f"/var/run/qemu-server/{vmid}.pid", "openglide": f"/run/qemu-server/{vmid}-3dfx"}[what]
+
+
+def pve_create_options(args, volume, serial_path, qlog_path, accel, cpu):
+    """`qm create` options for the template's VM (the device set of qemu_command(); PVE adds the PCI
+    bridges, the UHCI controller, the balloon and the PCI addresses itself). COM1 and QEMU's own
+    messages go to files through args: with -D and a log mask, a daemonized QEMU keeps its stderr in
+    the log file instead of /dev/null, and stderr is where qemu-3dfx prints its figures. The mask is
+    `plugin` (output of TCG plugins, of which there are none), so nothing else lands there.
+
+    Where the template's VM had its devices, so Windows finds no new hardware (the wizard waits for
+    input): a machine version before 11.1 (from 11.1 on qemu-server adds a third PCI bridge, pci.4),
+    no vmgenid (an ACPI device Windows 98 doesn't know), and AC97 through args at 00:04.0, where the
+    template's VM had it (qemu-server's `audio0` now puts it behind the second bridge)."""
+    vga = "std,mesa=1" + (",mesa-display=egl-headless" if args.display == "egl" else "")
+    extra = (f"-audiodev none,id=snd0 -device AC97,id=audio0,bus=pci.0,addr=0x4,audiodev=snd0 "
+             f"-chardev file,id=com1,path={serial_path} -device isa-serial,chardev=com1 -d plugin -D {qlog_path}")
+    opts = ["--name", "win98-3dfx", "--ostype", "other", "--machine", "pc-i440fx-11.0", "--vmgenid", "0",
+            "--cpu", cpu, "--memory", str(args.memory),
+            "--sockets", "1", "--cores", "1", "--scsihw", "lsi", "--scsi0", f"{volume},cache=unsafe",
+            "--boot", "order=scsi0", "--vga", vga, "--net0", "rtl8139=BC:24:11:3D:F0:98,bridge=vmbr0",
+            "--tablet", "1", "--kvm", "1" if accel == "kvm" else "0", "--args", extra]
+    if args.rtc_base == "localtime":
+        opts += ["--localtime", "1"]
+    elif args.rtc_base:
+        opts += ["--startdate", args.rtc_base]
+    return opts
+
+
+class PveVm:
+    """The VM created and started by PVE (--pve VMID): qm create, qm start, the console through QMP
+    and PVE's VNC socket, qm stop and qm destroy."""
+
+    def __init__(self, args, raw, serial_path):
+        self.args, self.vmid, self.priv, self.out = args, str(args.pve), args.private, args.out
+        accel = args.accel
+        if accel == "auto":
+            accel = "kvm" if os.access("/dev/kvm", os.W_OK) else "tcg"
+        cpu = args.cpu
+        if cpu == "auto":
+            cpu = guest_cpu(accel, getattr(args, "drivers_baseline", None))
+        if "," in cpu:
+            raise SystemExit(f"win98-test: --pve: PVE's cpu option takes no CPUID flags ({cpu}); use KVM "
+                             "or guest drivers built for i586")
+        self.accel, args.cpu_used = accel, cpu
+        self.qlog_path = os.path.join(self.out, "qemu.log")
+        self.ogl = pve_path(self.vmid, "openglide")
+        self.mon = Qmp(pve_path(self.vmid, "qmp"))
+        # PVE attaches only disks of a storage: a directory storage of this run in PRIVATE, and the disk
+        # copy hard-linked into it, so the copy stays when `qm destroy` deletes the storage's link
+        self.storage = f"w3d{self.vmid}"
+        self.store_dir = os.path.join(self.priv, "pve-storage")
+        self.raw, self.disk = raw, os.path.join(self.store_dir, "images", self.vmid, "disk.raw")
+        self.opts = pve_create_options(args, f"{self.storage}:{self.vmid}/disk.raw", serial_path, self.qlog_path,
+                                       accel, cpu)
+        self.pid = None
+
+    def qm(self, *a, check=True):
+        r = subprocess.run(["qm", *a], capture_output=True, text=True)
+        if check and r.returncode:
+            raise SystemExit(f"win98-test: qm {' '.join(a[:2])}: {(r.stderr or r.stdout).strip()}")
+        return r
+
+    def start(self):
+        if self.qm("status", self.vmid, check=False).returncode == 0:
+            raise SystemExit(f"win98-test: VM {self.vmid} exists already on this node: pick a free --pve VMID")
+        open(self.qlog_path, "wb").close()
+        os.makedirs(os.path.dirname(self.disk), exist_ok=True)
+        if os.path.exists(self.disk):
+            os.unlink(self.disk)
+        os.link(self.raw, self.disk)
+        subprocess.run(["pvesm", "remove", self.storage], capture_output=True)
+        r = subprocess.run(["pvesm", "add", "dir", self.storage, "--path", self.store_dir, "--content", "images"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            raise SystemExit(f"win98-test: pvesm add dir {self.storage}: {(r.stderr or r.stdout).strip()}")
+        self.qm("create", self.vmid, *self.opts)
+        with open(os.path.join(self.out, "qemu-command.txt"), "w") as f:
+            f.write("qm create %s %s\n\n" % (self.vmid, " ".join(self.opts)))
+            f.write(self.qm("showcmd", self.vmid, "--pretty").stdout)
+        log(f"PVE VM {self.vmid} ({self.accel}, {self.args.display}): qm create {self.vmid} {' '.join(self.opts)}")
+        self.qm("start", self.vmid)
+        try:
+            with open(pve_path(self.vmid, "pid")) as f:
+                self.pid = int(f.read().split()[0])
+        except (OSError, ValueError, IndexError):
+            raise SystemExit(f"win98-test: no pid file of VM {self.vmid} after qm start")
+        if self.args.display == "egl":
+            # PVE's VNC socket always asks for a password (noVNC gets a ticket): set one of ours
+            self.mon.cmd("set_password", protocol="vnc", password=PVE_VNC_PASSWORD)
+
+    def exited(self):
+        """None while the VM's QEMU runs (PVE gives no exit status)."""
+        return None if os.path.exists(f"/proc/{self.pid}") else "the VM stopped (QEMU exited)"
+
+    def stop(self):
+        if self.args.display != "egl":
+            self.mon.screendump(os.path.join(self.priv, "timeout.ppm"))
+        self.qm("stop", self.vmid, check=False)
+
+    def finish(self):
+        """Copies OpenGLide's files and destroys the VM; True when the VM stopped by itself."""
+        for name in ("OpenGLid.log", "OpenGLid.err"):
+            if os.path.exists(os.path.join(self.ogl, name)):
+                shutil.copyfile(os.path.join(self.ogl, name), os.path.join(self.out, name))
+        stopped = self.exited() is not None
+        self.qm("destroy", self.vmid, "--purge", "1", check=False)
+        subprocess.run(["pvesm", "remove", self.storage], capture_output=True)
+        shutil.rmtree(self.store_dir, ignore_errors=True)
+        return stopped
+
+
 def run_vm(args, scene, raw):
     priv, out = args.private, args.out
     serial_path = os.path.join(out, "serial.log")
-    mon_path = os.path.join(priv, "mon.sock")
-    vnc_path = os.path.join(priv, "vnc.sock")
-    ogl = os.path.join(priv, "openglide")
-    os.makedirs(ogl, exist_ok=True)
     open(serial_path, "wb").close()
-    cmd, accel = qemu_command(args, raw, serial_path, mon_path, vnc_path)
-    env = dict(os.environ, OPENGLIDE_DIR=ogl)
-    if args.display != "sdl":
-        env.pop("DISPLAY", None)
-    with open(os.path.join(out, "qemu-command.txt"), "w") as f:
-        f.write(" ".join(cmd) + "\n")
-    qlog = open(os.path.join(out, "qemu.log"), "wb")
-    log(f"QEMU ({accel}, {args.display}): {' '.join(cmd)}")
+    vm = PveVm(args, raw, serial_path) if args.pve else LocalVm(args, raw, serial_path)
     t_start = time.monotonic()
-    proc = subprocess.Popen(cmd, stdout=qlog, stderr=subprocess.STDOUT, env=env, cwd=priv)
-    mon = Monitor(mon_path)
+    vm.start()
+    mon = vm.mon
     ser = Serial(serial_path)
-    res = {"accel": accel, "display": args.display, "tests": {}, "events": []}
+    res = {"accel": vm.accel, "display": args.display, "tests": {}, "events": []}
+    if args.pve:
+        res["pve_vmid"] = int(args.pve)
     for t in args.tests:
         res["tests"][t] = {"tag": TESTS[t][0], "guest": None, "frame": None, "after": None, "bench": None,
                            "lines": []}
@@ -763,18 +1060,13 @@ def run_vm(args, scene, raw):
                 log(f"{t}: after the 3D window: {r['after']}")
             elif verdict_of(text):
                 r["guest"] = verdict_of(text)
-        if proc.poll() is not None:
-            status = f"QEMU exited with status {proc.returncode}"
+        ended = vm.exited()
+        if ended:
+            status = ended
             break
         if time.monotonic() > deadline:
             status = f"timeout after {args.timeout} s"
-            if args.display != "sdl":
-                mon.screendump(os.path.join(priv, "timeout.ppm"))
-            mon.cmd("quit")
-            try:
-                proc.wait(10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            vm.stop()
             break
         time.sleep(0.2)
     for tag, text in ser.poll():
@@ -783,16 +1075,16 @@ def run_vm(args, scene, raw):
             res["tests"][t]["lines"].append(text)
             if verdict_of(text):
                 res["tests"][t]["guest"] = verdict_of(text)
-    proc.wait()
-    qlog.close()
+    clean = vm.finish()
     res["status"] = status
     res["total_s"] = round(time.monotonic() - t_start, 1)
-    res["powered_off"] = "shutdown_s" in res and status.startswith("QEMU exited with status 0")
+    res["powered_off"] = "shutdown_s" in res and clean and not status.startswith("timeout")
     with open(os.path.join(out, "qemu.log"), errors="replace") as f:
         res["offscreen"] = offscreen_stats(f.read())
-    for name in ("OpenGLid.log", "OpenGLid.err"):
-        if os.path.exists(os.path.join(ogl, name)):
-            shutil.copyfile(os.path.join(ogl, name), os.path.join(out, name))
+    if not args.pve:
+        for name in ("OpenGLid.log", "OpenGLid.err"):
+            if os.path.exists(os.path.join(vm.ogl, name)):
+                shutil.copyfile(os.path.join(vm.ogl, name), os.path.join(out, name))
     return res
 
 
@@ -817,7 +1109,8 @@ def summary_md(res, info):
     lines = ["## qemu-3dfx in Windows 98 SE", "",
              f"Binary: `{info['qemu_version']}` (qemu-3dfx {info['qemu_rev']}), guest drivers {info['drivers_rev']} "
              f"(built for {info.get('drivers_baseline', 'x86-64-v2 (not stated)')}), "
-             f"{res['accel']}, display {res['display']}, CPU {info['cpu']}", "",
+             f"{res['accel']}, display {res['display']}, CPU {info['cpu']}"
+             f"{', started by PVE (VM %d)' % res['pve_vmid'] if res.get('pve_vmid') else ''}", "",
              f"Boot to desktop {res.get('boot_s', '?')} s, total {res['total_s']} s, end: {res['status']}"
              f"{', powered off by Windows' if res.get('powered_off') else ''}", "",
              "| Test | Verdict | Guest | Console frame | Windows back | Frame rate |", "|---|---|---|---|---|---|"]
@@ -866,7 +1159,13 @@ def main(argv=None):
     ap.add_argument("--keep-disk", action="store_true")
     ap.add_argument("--vga-wait", type=float, default=6, help="seconds for the console to show Windows again")
     ap.add_argument("--stay", action="store_true", help="leave Windows running after the tests (until --timeout)")
+    ap.add_argument("--pve", type=int, metavar="VMID", help="run on this PVE node: PVE creates and starts the VM "
+                    "with this (free) VMID (display vnc or egl)")
+    ap.add_argument("--in-place", action="store_true", help="--template is already this run's own copy (in "
+                    "--private): prepare and boot it instead of copying it")
     args = ap.parse_args(argv)
+    if args.pve and args.display == "sdl":
+        ap.error("--pve runs headless, as PVE does: --display vnc or egl")
     os.makedirs(args.out, exist_ok=True)
     os.makedirs(args.private, exist_ok=True)
 
@@ -902,7 +1201,10 @@ def main(argv=None):
 
     raw = os.path.join(args.private, "disk.raw")
     t0 = time.monotonic()
-    subprocess.run(["cp", "--reflink=auto", "--sparse=always", args.template, raw], check=True)
+    if args.in_place:
+        raw = args.template
+    else:
+        subprocess.run(["cp", "--reflink=auto", "--sparse=always", args.template, raw], check=True)
     os.chmod(raw, 0o600)
     info["marked_clean"] = mark_clean(raw)
     fat, files = prepare_disk(args, raw, args.bin, drv_dir)

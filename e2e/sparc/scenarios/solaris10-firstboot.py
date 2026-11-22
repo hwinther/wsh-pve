@@ -13,7 +13,8 @@ and DNS, and shuts down with `init 5` (OpenBIOS powers the machine off).
   USER           a non-root user to add (home /export/home/USER, /bin/sh)           (none)
   USER_PASSWORD  that user's password, set with passwd as root                      (none: locked)
   NET_MODE       static: NET_GATEWAY into /etc/defaultrouter (the installer set the address and
-                 netmask)                                                           (none)
+                 netmask); dhcp: the installer's /etc/dhcp.hme0 checked, HOSTNAME kept in
+                 /etc/nodename and asked for from the server (network())            (none)
   NET_GATEWAY    the default router                                                 (none)
   NET_DNS        name servers, space separated; NET_DOMAIN their domain: /etc/resolv.conf and
                  `hosts: files dns`                                                 (none)
@@ -23,6 +24,8 @@ and DNS, and shuts down with `init 5` (OpenBIOS powers the machine off).
 The values are typed on the serial console: passwords at prompts that don't echo, the marker with
 `echo`, so it must not contain single quotes.
 """
+import re
+
 from _sparc64 import DEFAULTS as BASE, GUESTS, login, power_off, qemu_args as sparc64_args, shell
 
 DEFAULTS = {**BASE, "MEM": "1024", "BOOT": "c", "ROOT_PASSWORD": "", "MARKER": "", "USER": "",
@@ -92,11 +95,27 @@ def user_password(m, user, password):
 
 
 def network(m, v):
-    """What the installer didn't set: the default router and DNS (it set the host name, the address
-    and the netmask in /etc/hostname.hme0, /etc/inet/hosts and /etc/inet/netmasks)."""
-    if v["NET_MODE"] != "static":
-        raise ValueError(f"NET_MODE {v['NET_MODE']}: only static is supported on Solaris 10 yet")
-    if v["NET_GATEWAY"]:
+    """What the installer didn't set.
+
+    static  the default router and DNS (the installer set the host name, the address and the
+            netmask in /etc/hostname.hme0, /etc/inet/hosts and /etc/inet/netmasks)
+    dhcp    the installer's DHCP answer left /etc/dhcp.hme0 (checked); the router and name servers
+            come from the server at each boot. The host name: Solaris 10 takes the server's
+            (dhcpinfo Hostname) and falls back to /etc/nodename (identity-node), so HOSTNAME goes
+            into /etc/nodename, and as `inet HOSTNAME` into /etc/hostname.hme0, from where
+            dhcpagent asks the server for that name (REQUEST_HOSTNAME, on by default). NET_DNS
+            (+ NET_DOMAIN) are written as for static; net-svc replaces them when the server sends
+            name servers."""
+    if v["NET_MODE"] not in ("static", "dhcp"):
+        raise ValueError(f"NET_MODE {v['NET_MODE']}: static or dhcp")
+    nic = v["NET_IF"] or "hme0"
+    if v["NET_MODE"] == "dhcp":
+        out, _ = shell(m, f"test -f /etc/dhcp.{nic} && echo dhcp.{nic}=yes")
+        if not re.search(rf"(?m)^dhcp\.{nic}=yes\s*$", out):
+            raise AssertionError(f"the installer left no /etc/dhcp.{nic}:\n{out}")
+        if v["HOSTNAME"]:
+            shell(m, f"echo {v['HOSTNAME']} > /etc/nodename; echo inet {v['HOSTNAME']} > /etc/hostname.{nic}")
+    elif v["NET_GATEWAY"]:
         shell(m, f"echo {v['NET_GATEWAY']} > /etc/defaultrouter")
     if v["NET_DNS"]:
         shell(m, "rm -f /etc/resolv.conf")

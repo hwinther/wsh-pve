@@ -816,6 +816,10 @@ class Scripted:
         # turns it into DHCP, adds the netmask, the router and DNS (solaris-firstboot.py, NET_*)
         v = {**t["install"].get("vars", {}), "HOSTNAME": job.hostname, "IP": job.net["ip"] or DEFAULT_IP,
              "NETMASK": job.net["netmask"] or DEFAULT_NETMASK}
+        # An installer with a DHCP choice of its own (Solaris 10: the scenario's DHCP variable) takes
+        # --ip dhcp there
+        if "DHCP" in v and job.net.get("mode") == "dhcp":
+            v["DHCP"] = "yes"
         if t["install"].get("root_password"):  # the installer sets it (Web Start), not the first boot
             v["ROOT_PASSWORD"] = job.root_password
         if t["install"].get("prom_env"):
@@ -858,6 +862,13 @@ class Scripted:
              "COMMANDS": t["check"].get("commands") or "uname -a; hostname; cat /etc/wsh-lab-target; df -k;"
                          f" prtvtoc /dev/rdsk/{t.get('device', 'c0t3d0')}s2; ifconfig -a; netstat -rn",
              "CHECK": rf"(?m)^target={re.escape(job.a.target)}$", "KEYBOARD": getattr(job.a, "keyboard", None) or "us"}
+        dc = t.get("dhcp_check")
+        if dc and job.net.get("mode") == "dhcp":
+            # the lease and the network beyond it: every regex must match (lookaheads; the scenario
+            # takes one regex, and an inline (?m) is only allowed at its start)
+            v["COMMANDS"] += "; " + dc["commands"]
+            v["CHECK"] = "(?m)" + "".join(f"(?=[\\s\\S]*?{rx.removeprefix('(?m)')})"
+                                          for rx in [v["CHECK"], *dc["expect"]])
         if job.a.user:
             # without the password field: SunOS 4 keeps the hash in /etc/passwd itself
             v["COMMANDS"] += f"; grep '^{job.a.user}:' /etc/passwd | cut -d: -f1,3-"

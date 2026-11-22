@@ -55,6 +55,8 @@ TARGETS: per target
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
+  dhcp_check {commands, expect}: with --ip dhcp, what the --check boot runs as well and the regexes
+             its output must all have (the lease and the network beyond it)
   net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
   net_require  options a static address needs (["gateway", "dns"]: the installer fetches packages)
   apt_proxy  True: the installer fetches packages and takes --apt-proxy / WSH_LAB_APT_PROXY
@@ -123,6 +125,7 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
+PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
 # Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
 PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
                             "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
@@ -973,10 +976,10 @@ TARGETS = {
         "disk": {"bus": "ide0", "size": 16, "label": None},
         "device": "c0t0d0",  # the IDE disk as Solaris names it (the check's prtvtoc)
         "media": [{"name": "sol-10-u11-ga-sparc-dvd.iso", "drive": "ide2"}],
-        # The text installer on ttya with a static address (DHCP=no), root's password asked by the
-        # installer (root_password); at its reboot at the end the scenario stops the VM (at the
-        # firmware's banner with openbios 0030, or where Solaris says the reboot call returned
-        # without it) and `install` boots the disk.
+        # The text installer on ttya with a static address (DHCP=no; `install` sets DHCP=yes for
+        # --ip dhcp), root's password asked by the installer (root_password); at its reboot at the
+        # end the scenario stops the VM (at the firmware's banner with openbios 0030, or where
+        # Solaris says the reboot call returned without it) and `install` boots the disk.
         "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": "", "DHCP": "no"},
                     "root_password": True, "retry_on": "before the installer", "timeout": 10800},
         "firstboot": {"scenario": "solaris10-firstboot.py", "vars": {}, "timeout": 3600},
@@ -986,13 +989,21 @@ TARGETS = {
         "hostname": "sol10-sun4u",
         "nic": "hme0",
         # The installer sets the host name, address and netmask; the first boot writes /etc/defaultrouter
-        # and DNS (solaris10-firstboot.py). hme0 uses the IDPROM's MAC, which is net0's with pve-qemu
-        # wsh/0034 (52:54:00:12:34:56 for every guest before it).
-        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
-        "net_modes": ["static"],
-        "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
-        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
-                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
+        # and DNS (solaris10-firstboot.py). With --ip dhcp the installer's DHCP screen says yes
+        # (/etc/dhcp.hme0) and the first boot keeps the host name in /etc/nodename and asks the
+        # server for it. hme0 uses the IDPROM's MAC, which is net0's with pve-qemu wsh/0034
+        # (52:54:00:12:34:56 for every guest before it).
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "net_modes": ["static", "dhcp"],
+        "dhcp_note": "router and name servers from the DHCP server; the host name from the server, else as installed (/etc/nodename)",
+        # --check with --ip dhcp: the lease on hme0 and a ping of the router the server gave
+        # (ifconfig -a is in the check's commands already; the console line takes 256 characters)
+        "dhcp_check": {"commands": "r=`/sbin/dhcpinfo -i hme0 Router`; echo router=$r; ping $r 30",
+                       "expect": [r"<[A-Z0-9,]*\bDHCP\b", r"(?m)^router=\d+\.\d+\.\d+\.\d+", r"is alive"]},
+        "minutes": 110,  # 108.5-110.7 min static: install ~81, first boot ~19, --check ~9; 119.8 with --ip dhcp
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_WSH4,
+                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user (2026-11-17);"
+                           " --check --ip dhcp"},
     },
     # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit

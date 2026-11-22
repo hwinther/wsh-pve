@@ -379,8 +379,41 @@ class Solaris10(unittest.TestCase):
     def test_network_text_names_hme0(self):
         n = install.network_choice(self.t, net_args(target="sol10-sun4u"))
         self.assertTrue(install.network_text(n, self.t["nic"]).startswith("hme0 10.0.2.15/24"))
-        with self.assertRaises(SystemExit):
-            install.network_choice(self.t, net_args(target="sol10-sun4u", ip="dhcp"))
+        n = install.network_choice(self.t, net_args(target="sol10-sun4u", ip="dhcp"))
+        self.assertTrue(install.network_text(n, self.t["nic"], self.t["dhcp_note"]).startswith("hme0 by DHCP"))
+
+    def test_dhcp_reaches_the_installer_and_the_check(self):
+        """--ip dhcp: the installer's DHCP screen says yes (static: no), and the check boot also
+        needs the lease flag, the router from the server and a ping of it."""
+        class Job:
+            target, volids, hostname, root_password = self.t, {}, "sol10-sun4u", "wshlab"
+            a = types.SimpleNamespace(timeout=None, vmid="1", target="sol10-sun4u", user=None, data_disk=False,
+                                      post_install=None)
+
+            def __init__(self, mode):
+                self.net = {"mode": mode, "ip": None if mode == "dhcp" else "10.0.2.15",
+                            "netmask": None if mode == "dhcp" else "255.255.255.0"}
+                self.vars = {}
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                self.vars[name] = v
+
+        for mode, dhcp in (("dhcp", "yes"), ("static", "no")):
+            job = Job(mode)
+            install.Scripted().install(job)
+            install.Scripted().check(job)
+            self.assertEqual(job.vars["install"]["DHCP"], dhcp)
+            check = job.vars["check"]
+            self.assertEqual("dhcpinfo" in check["COMMANDS"], mode == "dhcp")
+            self.assertLess(len(check["COMMANDS"]) + len("; echo END-OF-COMMAND"), 256)
+        job = Job("dhcp")
+        install.Scripted().check(job)
+        rx = re.compile(job.vars["check"]["CHECK"])
+        good = ("target=sol10-sun4u\nhme0: flags=1004843<UP,BROADCAST,RUNNING,MULTICAST,DHCP,IPv4> mtu 1500\n"
+                "router=10.0.2.2\n10.0.2.2 is alive\n")
+        self.assertTrue(rx.search(good))
+        for drop in ("target=sol10-sun4u\n", "DHCP,", "router=10.0.2.2\n", "10.0.2.2 is alive\n"):
+            self.assertFalse(rx.search(good.replace(drop, "")), drop)
 
     def test_select_moves_from_the_marked_choice(self):
         m = FakeScreen("  Default Route for hme0\n      [X] Detect one\n      [ ] Specify one\n      [ ] None\n")
