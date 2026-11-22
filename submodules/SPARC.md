@@ -2233,10 +2233,9 @@ Regressions with 0001-0062 (same lab setup, copies of the stored disks, each sta
 input): OpenBIOS SS-20 (the packaged `openbios-sparc32`, `sol26-ss20`, 512 MB) to `login:` twice with
 an NVRAM image and once without (56-57 s); the SS-5 PROM (`ss5.bin`, `sol8-ss5-prom`, 256 MB) after
 one `setenv diag-switch? false` to `login:` twice (42-43 s); the LX PROM (`lx.bin`, Solaris 2.6, 64
-MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Not done: the SS-20 PROM VM through PVE with
-`nvram0` (the command line was the same `-drive` plus `-global sysbus-m48t08.drive`), the network
-itself (the lab NIC had no host side: only `le0` plumbing and the init block were seen), other
-Solaris releases on the SS-20 PROM.
+MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Through PVE with `nvram0` since: "The SS-20
+PROM through PVE" below. Not done: the network itself (the lab NIC had no host side: only `le0`
+plumbing and the init block were seen), other Solaris releases on the SS-20 PROM.
 
 **The `dbri` panic on reconfiguration boots under the SS-20 PROM (pve-qemu `wsh/0066`-`0067`).**
 Any reconfiguration boot of Solaris 2.6 under the SS-20 PROM (`boot disk -r`, `touch /reconfigure`,
@@ -2293,12 +2292,53 @@ the stored disks):
 
 `qtest-sparc` with 0001-0067: 31 OK, 2 skipped, and the `qmp-test` `oob` failure as before (PVE's
 patch turns off the OOB capability); `sun4m-dbri-test` passes 4/4 and fails against the 0001-0062
-build. All 141 patches of the series apply to the pinned QEMU with `patch -p1 --fuzz=0`. Not tested:
-a PVE VM (package), other Solaris releases under the SS-20 PROM (2.2's CD, 0057's case, not
-retried), SunOS 4.1.x and Linux under the SS-20 PROM.
+build. All 141 patches of the series apply to the pinned QEMU with `patch -p1 --fuzz=0`. Through PVE
+(package) since: "The SS-20 PROM through PVE" below. Not tested: other Solaris releases under the
+SS-20 PROM (2.2's CD, 0057's case, not retried), SunOS 4.1.x and Linux under the SS-20 PROM.
 
 On a package without 0066, `exclude: drv/dbri` in `/etc/system` before the reconfiguration boot
 avoids the panic (lab, the 0001-0062 build: `boot disk -r` to `login:`).
+
+**The SS-20 PROM through PVE (pve-qemu-kvm 11.1.3-4+wsh2, qemu-server 9.2.20+wsh7, pve-manager
+9.2.32+wsh11).** Both fixes above, 0061 and 0066, on a VM that PVE starts, with the published packages
+(lab, 2026-11-22: the PVE test container built from the apt repository, `e2e/sparc/pve.Dockerfile`).
+First the package: its changelog has #440 (0066), `qemu-system-sparc` has the `sun-DBRI` device, and
+the ledma's fourth register reads `0xff000000` at reset (`xp /4wx 0xef0400010` at `-S` on `-M
+SS-20`: `0xa0000000 0 0 0xff000000`), which is 0061. The VM: `machine: SS-20`, `bios:
+ss20_v2.25_rom` (qemu-server adds `-cpu TI-SuperSparc-50`), 512 MB, `vga: serial0`, `nvram0: local:1`
+(blank, 4 MiB raw), the lance on `vmbr0` (no host side), and a copy of the stored
+`sol26-enduser-ss20prom` disk imported to target 3 (`import-from`, the stored disk only read). That
+disk's first boot is still pending: a reconfiguration boot, then sysidtool's root password screen.
+The disk was installed with the host name, network and time zone answered, so the root password is
+the only first-boot question, and the lab's `login()` answers it (an empty password, as `matrix.py`
+does for this disk); no pre-answered copy of the disk was needed.
+
+`scenarios/sun-prom-nvram.py` through `pve_matrix.py pve`, case `sol26-ss20prom-nvram`, nothing typed
+except as listed:
+
+| Step | What happens | Time |
+| --- | --- | --- |
+| first start, blank volume | the PROM resets its NVRAM to defaults (`Setting diag-switch? NVRAM parameter to true`), runs the long memory test, boots the network (`le@f,c00000`), fails and stops at `ok`; `setenv diag-switch? false`, `boot disk` | `ok` after 18-25 s |
+| the stored disk's first boot | `configuring network interfaces: le0.`, `Configuring the /devices directory` (the reconfiguration boot: `dbri` loads, no warning, no panic), the root password screen, `System identification is completed`, `console login:`; `eeprom` prints `diag-switch?=false`; `halt` to `ok` | 108-111 s from `ok` to the shell |
+| `qm stop`, `qm start` | the short memory test, `Boot device: .../esp@f,800000/sd@3,0`, Solaris 2.6 to `console login:`, `le0` up, no `Trap 0x29` | 60 s from `qm start` (all three runs) |
+| `reboot -- -r` | `Rebooting with command: -r`, the PROM boots `sd@3,0` with `-r`, `Configuring the /devices directory`, `console login:`, no panic; `eeprom` still `diag-switch?=false`; `init 5` powers the VM off (PVE ends QEMU); `/devices` has `SUNW,DBRIe@e,10000:sound,audio` and `audioctl` (the scenario checks them) | 66-76 s from `reboot` |
+
+The whole case took 305-322 s; three runs in a row passed. A try before them showed that `init 5`
+powers the SS-20 off through PVE (PVE ends QEMU) where the scenario had waited for `ok`, so the
+scenario now uses `halt` before the `qm stop`. No QEMU patch was needed. The SS-10 PROM has no PVE
+profile (`ss10_v2.25_rom` is refused on SS-10 and SS-20), so it stays covered by the plain-QEMU runs
+above.
+
+Without media, `e2e/tests/sparc-profiles.spec.ts` ("the SS-20 PROM with an NVRAM volume") checks
+the same persistence in the e2e container: `qm showcmd` has the `-blockdev` with node `drive-nvram0`
+and `-global sysbus-m48t08.drive=drive-nvram0`; the first start (blank volume) runs the long memory
+test and the network boot and takes `setenv diag-switch? false` at `ok`; after `qm stop` and `qm
+start` the PROM skips the long test, tries the blank disk (`Bad magic number in disk label`), then
+the network, and `printenv` shows `false`. Checked by hand in the lab container with the same
+commands; the Playwright test itself was not run there (no Node on the lab host).
+
+Not tested through PVE: other Solaris releases under the SS-20 PROM, the network beyond `le0`'s
+plumbing, live migration and snapshots with the volume.
 
 ### SPARCstation LX with the Themis LXE+ PROM (lab only)
 
