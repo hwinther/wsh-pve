@@ -109,6 +109,14 @@ on the LX, SunOS 4.1.4 and 4.1.3_U1B install and boot, Solaris 2.6 and NetBSD 9.
 `sun4m-onboard-sbus-test` checks the FCode on the LX and the SS-20 (header, checksum, length,
 program) and fails without 0057. Solaris 2.1 under the SS-20 PROM was not retried with it.
 
+## The registers (0066, 2026-11-22)
+
+With the node named, a reconfiguration boot of Solaris 2.6 under the SS-20 (and SS-10) PROM panicked
+in `dbri`: the register stub reads REG8 as 0, the driver's error routine then walks pipes that the
+PROM's `isdn-disabled` property kept it from setting up. `wsh/0066` gives the registers a small model
+that walks the command queue to its WAIT (no data, no interrupt); details in `submodules/SPARC.md`.
+A report would need the same note as above: seen with Sun's PROMs only.
+
 ## Reproducing
 
 ```sh
