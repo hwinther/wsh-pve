@@ -63,6 +63,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `bench` | the compute loop of the batch run (`loops=`, default 4096 rounds) with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
+| `endian` | a small guessing game about the thing this lab tests for: a round's four bytes as they sit in memory, low address first; the right answer is the 32-bit word *this machine's* CPU reads from them, so it depends on the architecture under test (unchanged on sparc, byte-swapped on x86). `endian <hex>` guesses it, `endian` alone shows the round again. Three wrong guesses end the game; a right one scores a point and deals another round |
 | `disk [dev ...]` | the tier-2 disk check (see "Tier 2") on each device, by default the ones in `wisp_disk=` (else `sda`); prints its `WISP-DISK` line |
 | `net [if]` | the tier-2 network check on the interface (default `wisp_net=`, else `eth0`); prints its `WISP-NET` line |
 | `smp` | the compute loop on every CPU at once; prints its `WISP-SMP` line |
@@ -116,9 +117,12 @@ reboot: Power down
   to the target's page size (64 KiB on sparc32, 1 MiB on sparc64).
 - `run.py --shell` boots with `wisp=shell`, answers each prompt with the next line of a fixed script
   (`help` typed as `hepl`, two Backspaces and `lp`, then `info`, `bench`, `crc 64`, `mandel`,
-  `poweroff`) and checks the answers: the command list (so the line discipline applied the
-  Backspaces), the info lines, both CRCs against the model, every character of the 20 Mandelbrot
-  rows against `shell.py`'s integer model (and `tests/mandel.txt`), and the power-off. With
+  `endian`, `endian 0`, `poweroff`) and checks the answers: the command list (so the line
+  discipline applied the Backspaces), the info lines, both CRCs against the model, every character
+  of the 20 Mandelbrot rows against `shell.py`'s integer model (and `tests/mandel.txt`), the
+  `endian` game's byte-order line and first round against the model (for the architecture under
+  test) and that the deliberately wrong `endian 0` guess gets exactly the model's right answer,
+  and the power-off. With
   `--tier2` as well, it boots `kernel-t2` with the machine's first tier-2 profile (two CPUs on the
   PC, the SS-10 and the SS-20) and adds `disk`, `net` and `smp` before `poweroff`. With `--reboot`
   the script ends with `reboot` instead of `poweroff`: the answer `restarting`, no kernel panic
