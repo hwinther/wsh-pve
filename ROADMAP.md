@@ -677,7 +677,9 @@ merged; what is left of them is item 2 under "Next".
      on its own PROM as a curiosity (results only, no PROM).
   9. *A living museum*: a page to pick a machine and OS (SunOS, Solaris 2.x, NetBSD, OpenBSD,
      Debian 4, Red Hat 6.2) and watch its install and first boot from the existing recordings. The
-     page exists (guide "Living museum"); the sun4u boots, aarch64 and wisp casts aren't in it yet.
+     page exists (guide "Living museum") and now has the sun4u boots (Solaris 9, Solaris 10,
+     Tribblix), aarch64 (Alpine, through Proxmox VE) and the wisp casts (SS-5, sun4u, pc) too; only
+     the NetBSD-on-sparc64-under-PVE cast stays out (no matching first boot).
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
      a libc under wisp (Buildroot with uClibc-ng).
 
