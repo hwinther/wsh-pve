@@ -119,6 +119,10 @@ PACKAGES_2026_11_21_WSH31 = {"pve-qemu-kvm": "11.1.3-2+wsh31", "qemu-server": "9
 # (published packages; wsh/0045 and wsh/0047 carried over)
 PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9.2.20+wsh3",
                               "pve-manager": "9.2.32+wsh6", "libpve-storage-perl": "9.1.18+wsh2"}
+# SunOS 4.1.2 on the SS-600MP: the published pve-qemu-kvm (+wsh13 and later have wsh/0063-0065 and openbios
+# 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
+PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
+                               "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -1281,14 +1285,12 @@ TARGETS["sunos413-ss10"] = {
 # "lebuffer" nodes it knows), and SERIAL_7BIT: its getty sends even parity in bit 7 on the console.
 # One CPU only: its multiprocessor start checks the module ID in the MMU control register of the
 # 600MP's Ross modules, which QEMU doesn't model (submodules/SPARC.md, "Older Sun releases on sun4m").
+# qemu-server's SS-600MP profile (OpenBIOS only, one CPU, up to 1024 MB) takes it through PVE.
 _SUNOS412_VARS = {"SERIAL_7BIT": "1"}
 TARGETS["sunos412-ss600mp"] = {
     **_SUNOS4,
     "title": "SunOS 4.1.2 Programmer install on a SPARCserver 600MP (OpenBIOS, one CPU)",
-    "status": "catalogue",
-    "blocked": ("Needs pve-qemu wsh/0063-0065 and openbios 0028 in a published pve-qemu-kvm, and an SS-600MP"
-                " profile in qemu-server's $SPARC32_PROFILES (and pve-manager's sparc32Profiles): installed and"
-                " booted in the lab's own QEMU so far (2026-11-21)."),
+    "status": "automated",
     "install": {**_SUNOS4["install"], "vars": {**_SUNOS4["install"]["vars"], **_SUNOS412_VARS}},
     "firstboot": {**_SUNOS4["firstboot"], "vars": {**_SUNOS4["firstboot"]["vars"], **_SUNOS412_VARS}},
     "check": {**_SUNOS4["check"], "vars": {**_SUNOS4["check"]["vars"], **_SUNOS412_VARS}},
@@ -1296,7 +1298,9 @@ TARGETS["sunos412-ss600mp"] = {
     "media": [{"name": "sunos_4.1.2.iso", "drive": "scsi6"}],
     "net_refuse": {k: v.replace("4.1.4", "4.1.2") for k, v in TARGETS["sunos414-ss5"]["net_refuse"].items()},
     "hostname": "sunos412",
-    "minutes": 5,  # lab (three passes): install 1.8-2.8, first boot 0.9-1.5, check 0.7-0.9
+    # through PVE (two passes): 6.5-6.7 min, install 2.3-2.5, first boot 2.8, check 1.0-1.1
+    "minutes": 7,
+    "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_SS600MP, "with": "--check"},
 }
 
 # Solaris 2.1 (SunOS 5.1), the first sun4m release (SS-10 only of QEMU's machines): the 2.2 path of

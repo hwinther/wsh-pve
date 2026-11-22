@@ -859,23 +859,24 @@ index 40abb589..6d36f322 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedFirmware,
 diff --git a/www/manager6/form/QemuMachineSelector.js b/www/manager6/form/QemuMachineSelector.js
-index faeb530a..671ba07f 100644
+index faeb530a..3cf5e0d6 100644
 --- a/www/manager6/form/QemuMachineSelector.js
 +++ b/www/manager6/form/QemuMachineSelector.js
-@@ -5,6 +5,11 @@ Ext.define('PVE.form.QemuMachineSelector', {
+@@ -5,6 +5,12 @@ Ext.define('PVE.form.QemuMachineSelector', {
      comboItems: [
          ['__default__', PVE.Utils.render_qemu_machine('')],
          ['q35', 'q35'],
 +        ['virt', 'aarch64 (virt)'],
 +        ['SS-10', 'SS-10'],
 +        ['SS-20', 'SS-20'],
++        ['SS-600MP', 'SS-600MP'],
 +        ['LX', 'LX'],
 +        ['sun', 'sparc64 (sun)'],
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..e1ffc90e 100644
+index b8412b6f..3cb2cdd6 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -902,7 +903,7 @@ index b8412b6f..e1ffc90e 100644
      },
  
      defaultProcessorModel: {
-@@ -32,11 +42,139 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -32,11 +42,143 @@ Ext.define('PVE.qemu.Architecture', {
      defaultMachines: {
          x86_64: 'pc',
          aarch64: 'virt',
@@ -931,7 +932,9 @@ index b8412b6f..e1ffc90e 100644
 +    // SS-20 PROM starts only the first. The SS-20 PROM gets its CPU model from qemu-server. displays:
 +    // the displays the machine takes, the first being the default (without it allowedDisplays.sparc,
 +    // cg3 by default). The LX runs only its own PROM and has no framebuffer QEMU emulates (its cgsix),
-+    // so its console is a serial port.
++    // so its console is a serial port. The SS-600MP (SunOS 4.1.2) runs OpenBIOS only, with one CPU:
++    // Sun's 600MP PROM and 4.1.2's start of a second CPU need a Ross RT625 module, which QEMU lacks.
++    // defaultMemory: what the wizard presets, where it isn't the most (maxMemory).
 +    sparc32Profiles: {
 +        'SS-5': { maxMemory: 256, firmware: ['openbios-sparc32', 'ss5.bin'] },
 +        'SS-10': {
@@ -944,6 +947,7 @@ index b8412b6f..e1ffc90e 100644
 +            firmware: ['openbios-sparc32', 'ss20_v2.25_rom'],
 +            maxCpus: { 'openbios-sparc32': 4 },
 +        },
++        'SS-600MP': { maxMemory: 1024, defaultMemory: 256, firmware: ['openbios-sparc32'] },
 +        LX: { maxMemory: 128, firmware: ['lx.bin'], displays: ['serial0', 'none'] },
 +    },
 +
@@ -981,8 +985,9 @@ index b8412b6f..e1ffc90e 100644
 +    getSparcMemory: function (arch, machine) {
 +        let me = PVE.qemu.Architecture;
 +        if (arch === 'sparc') {
-+            let max = me.getSparc32Profile(machine)?.maxMemory;
-+            return max ? { preset: max, max } : undefined;
++            let profile = me.getSparc32Profile(machine);
++            let max = profile?.maxMemory;
++            return max ? { preset: profile.defaultMemory ?? max, max } : undefined;
 +        } else if (arch === 'sparc64') {
 +            let p = me.sparc64Profile;
 +            return { preset: p.defaultMemory, max: p.maxMemory };
@@ -1042,7 +1047,7 @@ index b8412b6f..e1ffc90e 100644
      },
  
      allowedScsiHw: {
-@@ -50,21 +188,50 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -50,21 +192,50 @@ Ext.define('PVE.qemu.Architecture', {
              'pvscsi',
          ],
          aarch64: ['virtio-scsi-pci', 'virtio-scsi-single'],
@@ -1054,7 +1059,7 @@ index b8412b6f..e1ffc90e 100644
          x86_64: ['__default__', 'q35'], // __default__ is i440fx
 -        aarch64: ['__default__'], // __default__ is virt
 +        aarch64: ['__default__', 'virt'],
-+        sparc: ['__default__', 'SS-10', 'SS-20', 'LX'], // __default__ is SS-5
++        sparc: ['__default__', 'SS-10', 'SS-20', 'SS-600MP', 'LX'], // __default__ is SS-5
 +        sparc64: ['__default__', 'sun'],
      },
  
@@ -1094,7 +1099,7 @@ index b8412b6f..e1ffc90e 100644
      },
  
      allowedTPMVersions: {
-@@ -79,6 +246,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -79,6 +250,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
@@ -1105,7 +1110,7 @@ index b8412b6f..e1ffc90e 100644
              default:
                  return Proxmox.Utils.unknownText;
          }
-@@ -109,3 +280,15 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -109,3 +284,15 @@ Ext.define('PVE.qemu.Architecture', {
          return (architecture ?? hostArch) === hostArch;
      },
  });
@@ -1122,7 +1127,7 @@ index b8412b6f..e1ffc90e 100644
 +    arch.defaultDisplay[`sparc:${machine}`] = profile.displays?.[0] ?? arch.defaultDisplay.sparc;
 +}
 diff --git a/www/manager6/qemu/AudioEdit.js b/www/manager6/qemu/AudioEdit.js
-index ba588edc..f5d76f14 100644
+index ba588edc..b9852384 100644
 --- a/www/manager6/qemu/AudioEdit.js
 +++ b/www/manager6/qemu/AudioEdit.js
 @@ -16,6 +16,12 @@ Ext.define('PVE.qemu.AudioInputPanel', {
@@ -1187,12 +1192,13 @@ index ba588edc..f5d76f14 100644
          },
      ],
  });
-@@ -63,6 +102,18 @@ Ext.define('PVE.qemu.AudioEdit', {
+@@ -63,6 +102,19 @@ Ext.define('PVE.qemu.AudioEdit', {
              success: function (response) {
                  me.vmconfig = response.result.data;
  
 +                // sparc32: only the SPARCstation 5's built-in CS4231, and no SPICE (no SPICE
-+                // display); qemu-server refuses audio on SS-10/SS-20 (DBRI, not emulated)
++                // display); qemu-server refuses audio on the other machines (SS-10, SS-20 and LX:
++                // DBRI, not emulated; SS-600MP: no sound chip)
 +                if (me.vmconfig.arch === 'sparc') {
 +                    let form = me.down('pveAudioInputPanel');
 +                    let device = form.down('field[name=device]');
@@ -1761,7 +1767,7 @@ index fdb1802c..1e043785 100644
                                  text: gettext('USB Device'),
                                  itemId: 'addUsb',
 diff --git a/www/manager6/qemu/MachineEdit.js b/www/manager6/qemu/MachineEdit.js
-index cd759703..44acdd1a 100644
+index cd759703..744aed39 100644
 --- a/www/manager6/qemu/MachineEdit.js
 +++ b/www/manager6/qemu/MachineEdit.js
 @@ -9,6 +9,8 @@ Ext.define('PVE.qemu.MachineInputPanel', {
@@ -1843,7 +1849,7 @@ index cd759703..44acdd1a 100644
 +        }
  
 -        if (values.machine !== '__default__' && values.machine !== 'q35') {
-+        // sparc32: SS-5 (the default), SS-10, SS-20 or LX, without versions
++        // sparc32: SS-5 (the default), SS-10, SS-20, SS-600MP or LX, without versions
 +        if (values.arch === 'sparc') {
 +            values.machine = values.machine.replace(/\+pve\d+$/, '');
 +            if (values.machine === defaultMachine) {
