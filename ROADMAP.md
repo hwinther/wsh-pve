@@ -120,10 +120,9 @@ merged; what is left of them is item 2 under "Next".
    sun4v/`niagara` (hypervisor `cpu_yield`), out of scope.
 2. **Solaris and Tribblix on sun4u, what is left.** Both install through `lab.py install`
    (`sol7-sun4u` to `sol10-sun4u`, `tribblix-m34-sun4u`). Open:
-   - after the firmware reboot (Done): a reboot case in the `sparc64` matrix and sparc64 in the wisp
-     workflow's `--shell --reboot` run, once a published package has OpenBIOS 0030 (both use the
-     published firmware); Tribblix's reboot not tried; the reboot's boot string is still dropped
-     (Solaris 8's mini-root needs `auto-boot?` false and `boot disk:b`);
+   - after the firmware reboot (Done): Tribblix's reboot not tried; the reboot's boot string is
+     still dropped (Solaris 8's mini-root needs `auto-boot?` false and `boot disk:b`; the `sparc64`
+     matrix case `nb111-reboot-bootstr-sparc64` only checks that such a reboot comes back);
    - `sol10-sun4u` with `--ip dhcp` is not tested through the tool; Solaris 2.5.1/2.6 boot-block
      exceptions;
    - Tribblix: with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first
