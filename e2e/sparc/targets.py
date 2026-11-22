@@ -134,6 +134,9 @@ PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0114-0115, open
 PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
                             "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
 PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
+# Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
+PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
+                            "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
