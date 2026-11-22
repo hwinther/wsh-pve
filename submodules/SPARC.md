@@ -95,6 +95,8 @@ maintains the patches.
 | `0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in` | SunOS 4.1.2 on `-M SS-600MP` stopped before its banner (`Unhandled Exception 0x00000029`, `pc f80a6054`): its early setup for the 600MP reads and writes the VMEbus interface registers at physical `0xf.df01_0000` (offsets 0, 4 and 8: control, AFSR, AFAR) through the MMU bypass ASI 0x2f, where QEMU had nothing (a bypass load keeps trap 0x29 with 0049). An unimplemented device over that page (reads 0, writes ignored), on the SS-600MP only; no VMEbus model, so the VME spaces stay empty and the kernel's VME probes find nothing ("Older Sun releases on sun4m") | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
 | `0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it` | The 600MP's lance works in a buffer memory of its own, the `lebuffer` at SBus slot f offset `0x40000` (128 KB, up to the lance at `0x60000`), not through a DMA engine; QEMU gave the machine the SS-10's `ledma` and DVMA, and SunOS 4.1.2 knows only the lebuffer (a lance directly on the SBus it refuses: `le0: not used - unsupported SBus card for this architecture!`). A `lebuffer-size` property on the sparc32 DMA device: the lance's addresses (modulo the size) go to a RAM region in an address space of its own, which the board maps through an alias at `0xe.f004_0000`, and its interrupt goes straight to the board, past the ledma's interrupt enable; set on the SS-600MP only (with openbios 0028's `lebuffer` node) | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
 | `0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi` | qtest `sun4m-ss600mp-test` for 0063-0064: the VME registers' unimplemented device (reads 0), the lebuffer's RAM and address space, the lance initialized from an init block in it (station address), sending from a descriptor there, handing it back and interrupting without the ledma's enable; the SS-10 unchanged | ours | not in QEMU |
+| `0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its` | The DBRI's registers (slot offset `0x10000` on the SS-20 and the LX) were an unimplemented device that reads 0. A reconfiguration boot of Solaris 2.6 under the SS-20 or SS-10 PROM panicked in `dbri` (`WARNING: dbri: DBRI Reg8 bad!`, `BAD TRAP: type=9 ... addr=0`): the driver's first command found REG8, the command queue pointer, outside its queue, and its chip error routine walked all 14 pipes, of which the 12 ISDN ones are never set up when the node has `isdn-disabled`, which the SS-20 and SS-10 PROMs give it and the LX PROM doesn't. A model of the registers, new file `hw/sparc/sun4m_dbri.c` (`sun-DBRI`): they keep what is written, REG0's soft reset clears them, writing REG8 or REG0's P bit walks the command queue through the IOMMU (each command by its length, JUMP followed) to a WAIT and leaves REG8 on it; no data, no interrupt, the PIO pins in REG2 read low, so the drivers find no codec ("The `dbri` panic on reconfiguration boots under the SS-20 PROM") | ours | not in QEMU |
+| `0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu` | qtest `sun4m-dbri-test` for 0066 on the SS-20 and the LX: the registers after start, kept values, soft reset, PIO pins low; a queue of one-, two- and three-word commands with a JUMP to another page read through the IOMMU leaves REG8 on its WAIT, the P bit goes on from there (or stays when nothing was added) and doesn't stay set, a queue on an unmapped page leaves REG8 as written; fails against the 0001-0062 build | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -2218,17 +2220,67 @@ MB) to `login:` twice (75-76 s); `qtest-sparc` 29 OK. Not done: the SS-20 PROM V
 itself (the lab NIC had no host side: only `le0` plumbing and the init block were seen), other
 Solaris releases on the SS-20 PROM.
 
-**The `dbri` panic on reconfiguration boots under the SS-20 PROM (open).** Not the stored disk and
-not 0061: `boot disk -r` with the `sol26-ss20` disk (installed under OpenBIOS) panics the same way
-as the stored `sol26-enduser-ss20prom` disk's pending reconfiguration boot (both with 0061, 512
-and 256 MB; the stored disk's also before it, #418): `Configuring the /devices directory`, `WARNING: dbri: DBRI Reg8 bad!`, then `BAD
-TRAP: type=9 ... addr=0 mmu_fsr=126 rw=1` in module `dbri` (kernel read at address 0), `panic: Data
-fault`; the traceback runs through the kernel's interrupt dispatch, so it is the driver's interrupt
-(or soft interrupt) routine running after its attach found no DBRI behind 0057's register stub. An
-`mmcodec` child node added by hand at `ok` (the LX PROM's DBRI node has one, the SS-20's not) does
-not change it. On the LX the same Solaris attaches `dbri` with the same warning and runs. Until it
-is fixed, don't do reconfiguration boots under the SS-20 PROM (`rem_drv dbri` first might avoid
-it; not tested); the normal boots above reach `login:`.
+**The `dbri` panic on reconfiguration boots under the SS-20 PROM (pve-qemu `wsh/0066`-`0067`).**
+Any reconfiguration boot of Solaris 2.6 under the SS-20 PROM (`boot disk -r`, `touch /reconfigure`,
+or the stored `sol26-enduser-ss20prom` disk's pending first boot) panicked once `drvconfig` loaded
+`dbri`: `WARNING: dbri: DBRI Reg8 bad!`, then `BAD TRAP: type=9 ... addr=0 mmu_fsr=126 rw=1` in
+module `dbri`, `panic: Data fault`. The SS-10 PROM (`ss10_v2.25_rom` on `-M SS-20`) did the same.
+Ordinary boots don't load `dbri`, so they were fine. Found with kadb (`boot disk kadb -d`, deferred
+breakpoints on the module, lab 2026-11-22) and `-d unimp`, comparing the SS-20 and the LX PROM
+with the same Solaris 2.6:
+
+- On both machines `dbri_attach` succeeds and starts the audio set-up from a timeout. Its first
+  command (`mmcodec_init_pipes` calling `dbri_command`) reads REG8 (offset `0x20`), the command queue
+  pointer, to see how far the chip has got. Behind 0057's FCode the registers were an
+  unimplemented device: REG8 read 0, which is outside the queue, so the driver printed `Reg8 bad`
+  and called its chip error routine (`dbri_panic`): reset the chip (`REG0` = 1, then `0xc`), then
+  report the error to each of its 14 pipes through a pointer in each pipe's state.
+- The SS-20 PROM gives the DBRI node `isdn-disabled` (and `speaker`, `input-microphone` and the
+  other port properties; `.attributes` at `ok`); the LX PROM gives it none of these, but an `mmcodec`
+  child. `dbri_attach` reads `isdn-disabled`, and with it `dbri_initunit` sets up only the two
+  audio pipes (12 and 13): the pointers of pipes 0-11 stay null. The error routine read pipe 0's
+  pointer, null, at its first step: the BAD TRAP, in the timeout thread (`callout_thread`), which
+  is why the traceback ran through the kernel and not through attach. On the LX all 14 pipes are
+  set up, the routine runs through, and each of the driver's further commands does the same (15
+  `Reg8 bad` warnings) until it gives up.
+- An `mmcodec` child added at `ok` changed nothing because `isdn-disabled` decides it, not the child.
+  The register stub's reads were the trigger, not an interrupt (the fault ran in the timeout thread,
+  and the stub can't raise one) or 0057's node, which the driver attached to on both machines.
+
+0066 gives the registers a model (`hw/sparc/sun4m_dbri.c`, device `sun-DBRI`, still at priority
+-1000): they keep what is written, REG0's soft reset clears them, and writing REG8, or REG0 with the
+P bit (`0x8000`), makes the chip walk the command queue through the IOMMU, stepping over each
+command by its length (one to three words by opcode) and following JUMP, until it stops on a
+WAIT with REG8 on it. That is what the driver checks: it writes new commands over the WAIT, ends
+them with a new WAIT and sets the P bit. The model moves no data and raises no interrupt, and the
+PIO pins in REG2 read low, so the drivers still find no codec. With it Solaris 2.6 sets up its
+pipes, gets no answer from a codec and goes without sound, without a warning, under all three PROMs
+(`-trace 'sun4m_dbri_*'` shows the queue: IIQ, DTS, ten SDPs, SSPs, PAUSE). qtest 0067.
+
+Tested in the lab (2026-11-22, plain `qemu-system-sparc` built from 11.1.3 with 0001-0067, copies of
+the stored disks):
+
+| Case | Before (0001-0062) | With 0066 |
+| --- | --- | --- |
+| SS-20 PROM, `sol26-ss20`, `boot disk -r` (256 MB) | BAD TRAP in `dbri`, panic | `login:` (79 s) |
+| SS-20 PROM, `sol26-ss20` with `/reconfigure` | BAD TRAP in `dbri`, panic | `login:` |
+| SS-20 PROM, stored `sol26-enduser-ss20prom` (pending first boot) | BAD TRAP in `dbri`, panic | through `Configuring the /devices directory` to its root password screen (115 s) |
+| SS-20 PROM, `sol26-ss20`, `boot disk` | `login:` | `login:` |
+| SS-10 PROM, `sol26-ss10`, `boot disk -r` | BAD TRAP in `dbri`, panic | `login:` (64 s) |
+| LX PROM, Solaris 2.6 (LX install), `boot disk -r` and `boot disk` | `login:`, 15 `Reg8 bad` warnings at `-r` | `login:`, no warning |
+| LX PROM, stored `sunos414` disk | `login:`; `dbri: DBRI Reg8 bad!`, `Audio: no Audio device found` | `login:`; `Audio: no Audio device found` |
+| LX PROM, NetBSD 9.3 (`install-netbsd93-sparc`) | `login:`; `chip never acked WAIT`, `no mmcodec found`, `no codec detected, aborting` | the same |
+| SS-5 PROM (`ss5.bin`), `sol8-ss5-prom` (no DBRI) | `login:` (0061's runs) | `login:` (61 s) |
+| OpenBIOS, SS-20, `sol26-ss20` (no DBRI node) | `login:` (0061's runs) | `login:` (74 s) |
+
+`qtest-sparc` with 0001-0067: 31 OK, 2 skipped, and the `qmp-test` `oob` failure as before (PVE's
+patch turns off the OOB capability); `sun4m-dbri-test` passes 4/4 and fails against the 0001-0062
+build. All 141 patches of the series apply to the pinned QEMU with `patch -p1 --fuzz=0`. Not tested:
+a PVE VM (package), other Solaris releases under the SS-20 PROM (2.2's CD, 0057's case, not
+retried), SunOS 4.1.x and Linux under the SS-20 PROM.
+
+On a package without 0066, `exclude: drv/dbri` in `/etc/system` before the reconfiguration boot
+avoids the panic (lab, the 0001-0062 build: `boot disk -r` to `login:`).
 
 ### SPARCstation LX with the Themis LXE+ PROM (lab only)
 

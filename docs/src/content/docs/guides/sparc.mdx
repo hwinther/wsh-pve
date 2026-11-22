@@ -399,8 +399,11 @@ on the SS-5). Solaris 2.6 on the SS-20 PROM too, with `wsh/0061` (about 65 s).
   On such a package, leave `diag-switch?` true and type `boot disk`, or use OpenBIOS. With
   `wsh/0061`, Solaris 2.6 boots to the login prompt by itself (tested in the lab with plain QEMU, not
   yet through PVE).
-- **No reconfiguration boot on the SS-20 PROM** (`boot -r`, or `touch /reconfigure`): Solaris 2.6
-  panics in its `dbri` audio driver (`BAD TRAP ... module "dbri"`). Normal boots are not affected.
+- **Reconfiguration boots on the SS-20 PROM** (`boot -r`, or `touch /reconfigure`) need a
+  `pve-qemu-kvm` with `wsh/0066`. With an older one Solaris 2.6 panics in its `dbri` audio driver
+  (`BAD TRAP ... module "dbri"`); normal boots are not affected. On such a package, add
+  `exclude: drv/dbri` to `/etc/system` before the reconfiguration boot (Solaris then leaves the
+  audio driver out), or use OpenBIOS. Tested in the lab with plain QEMU, not yet through PVE.
 
 - **The MAC address and the machine type** (the IDPROM at the end of the NVRAM) come from the VM's
   configuration at every start, as without the volume. Changing net0's MAC keeps the PROM's

@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..71f61c4 100644
+index 7b0cba5..6d80683 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,68 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,70 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -142,6 +142,8 @@ index 7b0cba5..71f61c4 100644
 +wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
 +wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
 +wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
++wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
++wsh/0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -13447,6 +13449,573 @@ index 0000000..e6741d1
 ++    qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
 ++    qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
 ++    qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
+new file mode 100644
+index 0000000..16c9626
+--- /dev/null
++++ b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
+@@ -0,0 +1,341 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: give the DBRI registers that take its command
++ queue
++
++The DBRI's registers (slot offset 0x10000 on the SS-20 and the LX) were
++an unimplemented device that reads 0. Under the SS-20's Sun PROM a
++reconfiguration boot of Solaris 2.6 ("boot -r") then panicked in its
++dbri driver:
++
++  WARNING: dbri: DBRI Reg8 bad!
++  BAD TRAP: type=9 rp=... addr=0 mmu_fsr=126 rw=1
++  BAD TRAP occurred in module "dbri" due to an illegal access to a user
++  address.
++  panic: Data fault
++
++The driver attaches, then runs its audio start-up from a timeout. Its
++first command reads back REG8, the command queue pointer, to see how
++far the chip has got; 0 is outside the queue, so it calls its chip
++error routine, which resets the chip and walks all 14 of its pipes. The
++SS-20 PROM gives the node "isdn-disabled" (the LX PROM doesn't), and
++with that the driver never sets up the 12 ISDN pipes: the routine
++dereferenced the first one's null pointer. On the LX the same routine
++runs with all pipes set up and the system carries on. Ordinary boots
++don't load dbri, so only reconfiguration boots showed it.
++
++Give the registers a small model instead: they keep what is written,
++REG0's soft reset bit clears them, and writing REG8 or setting REG0's P
++bit makes the chip walk the command queue through the IOMMU, command by
++command by its length, following JUMP, until it stops on a WAIT with
++REG8 on it, as the driver expects. No data moves, no interrupt is
++raised, and the PIO pins in REG2 read low, so the drivers find no
++codec: Solaris 2.6 now attaches dbri without a warning under both PROMs
++and goes without sound, SunOS 4.1.4 on the LX says only "Audio: no
++Audio device found" (before also "dbri: DBRI Reg8 bad!"), and NetBSD
++9.3 on the LX still reports "chip never acked WAIT" and "no codec
++detected, aborting".
++---
++ hw/sparc/meson.build  |   1 +
++ hw/sparc/sun4m.c      |  13 ++-
++ hw/sparc/sun4m_dbri.c | 239 ++++++++++++++++++++++++++++++++++++++++++
++ hw/sparc/trace-events |   6 ++
++ 4 files changed, 256 insertions(+), 3 deletions(-)
++ create mode 100644 hw/sparc/sun4m_dbri.c
++
++diff --git a/hw/sparc/meson.build b/hw/sparc/meson.build
++index 19c442c..fbe3e99 100644
++--- a/hw/sparc/meson.build
+++++ b/hw/sparc/meson.build
++@@ -2,5 +2,6 @@ sparc_ss = ss.source_set()
++ sparc_ss.add(when: 'CONFIG_LEON3', if_true: files('leon3.c'))
++ sparc_ss.add(when: 'CONFIG_SUN4M', if_true: files('sun4m.c'))
++ sparc_ss.add(when: 'CONFIG_SUN4M', if_true: files('sun4m_iommu.c'))
+++sparc_ss.add(when: 'CONFIG_SUN4M', if_true: files('sun4m_dbri.c'))
++ 
++ hw_arch += {'sparc': sparc_ss}
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 0b619b1..30277f3 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -1220,9 +1220,16 @@ static void sun4m_hw_init(MachineState *machine)
++         memory_region_add_subregion_overlap(get_system_memory(),
++                                             hwdef->dbri_base + 0x1000,
++                                             dbri_prom, -1000);
++-        /* reg space */
++-        create_unimplemented_device("sun-DBRI",
++-                                    hwdef->dbri_base + 0x10000, 0x100);
+++        /*
+++         * Its registers, which take the command queue and nothing more:
+++         * the drivers find no codec (sun4m_dbri.c).
+++         */
+++        dev = qdev_new("sun-DBRI");
+++        object_property_set_link(OBJECT(dev), "iommu", OBJECT(iommu),
+++                                 &error_abort);
+++        s = SYS_BUS_DEVICE(dev);
+++        sysbus_realize_and_unref(s, &error_fatal);
+++        sysbus_mmio_map_overlap(s, 0, hwdef->dbri_base + 0x10000, -1000);
++     }
++ 
++     if (hwdef->cg6_base) {
++diff --git a/hw/sparc/sun4m_dbri.c b/hw/sparc/sun4m_dbri.c
++new file mode 100644
++index 0000000..ce25e2c
++--- /dev/null
+++++ b/hw/sparc/sun4m_dbri.c
++@@ -0,0 +1,239 @@
+++/*
+++ * The DBRI's registers on the sun4m machines QEMU gives one (SS-20 and
+++ * SPARCstation LX), without its serial pipes or a codec behind them.
+++ *
+++ * The DBRI (an ISDN and audio controller with a CS4215 codec on the board)
+++ * is an SBus master that fetches its commands from a queue in memory: the
+++ * driver writes the queue's DVMA address to REG8, and the chip works
+++ * through it until a WAIT command, where it stops with REG8 on the WAIT.
+++ * To add commands the driver writes them over the WAIT, ends them with a
+++ * new WAIT and sets REG0's P bit, and the chip goes on from REG8.
+++ *
+++ * This model does that much and nothing else: it walks the queue through
+++ * the IOMMU, steps over each command by its length, follows JUMP and stops
+++ * at WAIT. It moves no data and raises no interrupts, and the PIO pins in
+++ * REG2, through which drivers look for a codec, read low. Drivers see a
+++ * chip that takes their commands and find no codec.
+++ *
+++ * Before, the registers read 0. Solaris 2.6's driver then found REG8
+++ * "bad" at its first command and reset the chip in a routine that walks
+++ * all its pipes, the ISDN ones too; under the SS-20 PROM, which gives the
+++ * node "isdn-disabled", those pipes were never set up and the routine
+++ * dereferenced a null pointer (BAD TRAP in module dbri, panic).
+++ *
+++ * Copyright (c) 2026 Hans Christian Winther-Sorensen
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "hw/core/sysbus.h"
+++#include "hw/core/qdev-properties.h"
+++#include "hw/sparc/sun4m_iommu.h"
+++#include "migration/vmstate.h"
+++#include "qapi/error.h"
+++#include "qemu/module.h"
+++#include "system/dma.h"
+++#include "trace.h"
+++#include "qom/object.h"
+++
+++#define TYPE_SUN4M_DBRI "sun-DBRI"
+++OBJECT_DECLARE_SIMPLE_TYPE(DBRIState, SUN4M_DBRI)
+++
+++#define DBRI_REG_SIZE   0x100
+++#define DBRI_NREGS      (DBRI_REG_SIZE / 4)
+++
+++#define DBRI_REG0       0       /* status and control */
+++#define DBRI_REG2       2       /* parallel I/O pins */
+++#define DBRI_REG8       8       /* command queue pointer */
+++
+++#define DBRI_R0_RESET   (1u << 0)   /* soft reset, clears itself */
+++#define DBRI_R0_PROGRAM (1u << 15)  /* (re)start at REG8, clears itself */
+++
+++#define DBRI_R2_PIO     0xfu        /* pin levels; the enables above them */
+++
+++/* opcodes in bits 31-28 of a command's first word */
+++#define DBRI_CMD_WAIT   0x0
+++#define DBRI_CMD_JUMP   0x2
+++
+++/* a queue that never reaches a WAIT is given up after this many commands */
+++#define DBRI_MAX_CMDS   1024
+++
+++struct DBRIState {
+++    SysBusDevice parent_obj;
+++
+++    MemoryRegion iomem;
+++    IOMMUState *iommu;
+++    uint32_t regs[DBRI_NREGS];
+++};
+++
+++/* words per command, by opcode (the DBRI data sheet's command list) */
+++static const uint8_t dbri_cmd_words[16] = {
+++    [0x0] = 1,  /* WAIT */
+++    [0x1] = 1,  /* PAUSE */
+++    [0x2] = 2,  /* JUMP, address */
+++    [0x3] = 2,  /* IIQ, interrupt queue address */
+++    [0x4] = 1,  /* REX */
+++    [0x5] = 2,  /* SDP, buffer address */
+++    [0x6] = 1,  /* CDP */
+++    [0x7] = 3,  /* DTS, input and output time slot */
+++    [0x8] = 2,  /* SSP, data */
+++    [0x9] = 1,  /* CHI */
+++    [0xa] = 1,  /* NT */
+++    [0xb] = 1,  /* TE */
+++    [0xc] = 1,  /* CDEC */
+++    [0xd] = 2,  /* TEST, data */
+++    [0xe] = 1,  /* CDM */
+++    [0xf] = 1,  /* reserved */
+++};
+++
+++static AddressSpace *dbri_dma_as(DBRIState *s)
+++{
+++    return s->iommu ? &s->iommu->iommu_as : &address_space_memory;
+++}
+++
+++/* Work through the command queue from REG8 up to a WAIT. */
+++static void dbri_run_queue(DBRIState *s)
+++{
+++    uint32_t addr = s->regs[DBRI_REG8];
+++    unsigned n;
+++
+++    for (n = 0; n < DBRI_MAX_CMDS; n++) {
+++        uint32_t cmd[3];
+++        unsigned op, words;
+++
+++        if (dma_memory_read(dbri_dma_as(s), addr, cmd, 4,
+++                            MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+++            trace_sun4m_dbri_dma_error(addr);
+++            break;
+++        }
+++        cmd[0] = be32_to_cpu(cmd[0]);
+++        op = cmd[0] >> 28;
+++        words = dbri_cmd_words[op];
+++        trace_sun4m_dbri_command(addr, cmd[0]);
+++        if (op == DBRI_CMD_WAIT) {
+++            /* REG8 stays on the WAIT, which the driver overwrites */
+++            s->regs[DBRI_REG8] = addr;
+++            return;
+++        }
+++        if (op == DBRI_CMD_JUMP) {
+++            if (dma_memory_read(dbri_dma_as(s), addr + 4, &cmd[1], 4,
+++                                MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+++                trace_sun4m_dbri_dma_error(addr + 4);
+++                break;
+++            }
+++            addr = be32_to_cpu(cmd[1]);
+++            continue;
+++        }
+++        addr += words * 4;
+++    }
+++    /* no WAIT (or a DMA error): stop where it got to */
+++    s->regs[DBRI_REG8] = addr;
+++}
+++
+++static void dbri_reset_regs(DBRIState *s)
+++{
+++    memset(s->regs, 0, sizeof(s->regs));
+++}
+++
+++static uint64_t dbri_read(void *opaque, hwaddr addr, unsigned size)
+++{
+++    DBRIState *s = opaque;
+++    uint32_t val = s->regs[addr >> 2];
+++
+++    if ((addr >> 2) == DBRI_REG2) {
+++        /* nothing on the pins: they read low */
+++        val &= ~DBRI_R2_PIO;
+++    }
+++
+++    trace_sun4m_dbri_read(addr, val);
+++    return val;
+++}
+++
+++static void dbri_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+++{
+++    DBRIState *s = opaque;
+++    unsigned reg = addr >> 2;
+++
+++    trace_sun4m_dbri_write(addr, val);
+++    switch (reg) {
+++    case DBRI_REG0:
+++        if (val & DBRI_R0_RESET) {
+++            dbri_reset_regs(s);
+++            return;
+++        }
+++        s->regs[reg] = val & ~DBRI_R0_PROGRAM;
+++        if (val & DBRI_R0_PROGRAM) {
+++            dbri_run_queue(s);
+++        }
+++        break;
+++    case DBRI_REG8:
+++        s->regs[reg] = val;
+++        dbri_run_queue(s);
+++        break;
+++    default:
+++        s->regs[reg] = val;
+++        break;
+++    }
+++}
+++
+++static const MemoryRegionOps dbri_ops = {
+++    .read = dbri_read,
+++    .write = dbri_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 4,
+++        .max_access_size = 4,
+++    },
+++};
+++
+++static void dbri_reset(DeviceState *dev)
+++{
+++    dbri_reset_regs(SUN4M_DBRI(dev));
+++}
+++
+++static void dbri_init(Object *obj)
+++{
+++    DBRIState *s = SUN4M_DBRI(obj);
+++
+++    memory_region_init_io(&s->iomem, obj, &dbri_ops, s, "sun-DBRI",
+++                          DBRI_REG_SIZE);
+++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
+++    object_property_add_link(obj, "iommu", TYPE_SUN4M_IOMMU,
+++                             (Object **)&s->iommu,
+++                             qdev_prop_allow_set_link_before_realize, 0);
+++}
+++
+++static const VMStateDescription vmstate_dbri = {
+++    .name = "sun-DBRI",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT32_ARRAY(regs, DBRIState, DBRI_NREGS),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
+++static void dbri_class_init(ObjectClass *klass, const void *data)
+++{
+++    DeviceClass *dc = DEVICE_CLASS(klass);
+++
+++    device_class_set_legacy_reset(dc, dbri_reset);
+++    dc->vmsd = &vmstate_dbri;
+++    dc->user_creatable = false;
+++}
+++
+++static const TypeInfo dbri_info = {
+++    .name          = TYPE_SUN4M_DBRI,
+++    .parent        = TYPE_SYS_BUS_DEVICE,
+++    .instance_size = sizeof(DBRIState),
+++    .instance_init = dbri_init,
+++    .class_init    = dbri_class_init,
+++};
+++
+++static void dbri_register_types(void)
+++{
+++    type_register_static(&dbri_info);
+++}
+++
+++type_init(dbri_register_types)
++diff --git a/hw/sparc/trace-events b/hw/sparc/trace-events
++index 00b0212..5c2398a 100644
++--- a/hw/sparc/trace-events
+++++ b/hw/sparc/trace-events
++@@ -4,6 +4,12 @@
++ sun4m_cpu_set_irq_raise(int level) "Raise CPU IRQ %d"
++ sun4m_cpu_set_irq_lower(int level) "Lower CPU IRQ %d"
++ 
+++# sun4m_dbri.c
+++sun4m_dbri_read(uint64_t addr, uint32_t val) "read reg[0x%"PRIx64"] = 0x%08x"
+++sun4m_dbri_write(uint64_t addr, uint64_t val) "write reg[0x%"PRIx64"] = 0x%08"PRIx64
+++sun4m_dbri_command(uint32_t addr, uint32_t cmd) "command at 0x%08x: 0x%08x"
+++sun4m_dbri_dma_error(uint32_t addr) "DMA error at 0x%08x"
+++
++ # sun4m_iommu.c
++ sun4m_iommu_mem_readl(uint64_t addr, uint32_t ret) "read reg[0x%"PRIx64"] = 0x%x"
++ sun4m_iommu_mem_writel(uint64_t addr, uint32_t val) "write reg[0x%"PRIx64"] = 0x%x"
+diff --git a/debian/patches/wsh/0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu.patch b/debian/patches/wsh/0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu.patch
+new file mode 100644
+index 0000000..f07930c
+--- /dev/null
++++ b/debian/patches/wsh/0067-tests-qtest-test-the-DBRI-s-registers-and-command-qu.patch
+@@ -0,0 +1,214 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the DBRI's registers and command queue on
++ sun4m
++
++qtest sun4m-dbri-test for the patch before, on the SS-20 and the LX:
++the registers read 0 after start and keep what is written, the soft
++reset bit clears them, the PIO pins read low; a queue of commands of
++one, two and three words with a JUMP to another page, read through the
++IOMMU, leaves REG8 on its WAIT; setting REG0's P bit leaves it there
++when nothing was added and goes on to the next WAIT when commands were
++written over it, and the P bit doesn't stay set; a queue on an unmapped
++page leaves REG8 where it was written. Without the patch before REG8
++reads 0 and the queue cases fail.
++---
++ tests/qtest/meson.build       |   3 +-
++ tests/qtest/sun4m-dbri-test.c | 175 ++++++++++++++++++++++++++++++++++
++ 2 files changed, 177 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-dbri-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 015945a..ca145e6 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -214,7 +214,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-onboard-sbus-test',
++                 'sun4m-nvram-test',
++                 'sun4m-ledma-test',
++-                'sun4m-ss600mp-test'] + \
+++                'sun4m-ss600mp-test',
+++                'sun4m-dbri-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-dbri-test.c b/tests/qtest/sun4m-dbri-test.c
++new file mode 100644
++index 0000000..090efbb
++--- /dev/null
+++++ b/tests/qtest/sun4m-dbri-test.c
++@@ -0,0 +1,175 @@
+++/*
+++ * QTest: the DBRI's registers on the SS-20 and the SPARCstation LX
+++ *
+++ * The DBRI fetches its commands from a queue in memory through the IOMMU:
+++ * REG8 is the queue pointer, and the chip stops on a WAIT command with
+++ * REG8 on it. Solaris 2.6's driver checks REG8 before it adds commands;
+++ * when it read 0 there (the registers were an unimplemented device), the
+++ * driver reset the chip in a routine that, under the SS-20 PROM's
+++ * "isdn-disabled", dereferenced a null pointer and panicked.
+++ *
+++ * The test checks that the registers keep what is written, that the soft
+++ * reset bit clears them, that the PIO pins read low, and that the chip
+++ * walks a queue through the IOMMU (commands of one, two and three words
+++ * and a JUMP) to its WAIT, goes on from there when REG0's P bit is set,
+++ * and stops on a queue it can't read. Nothing runs on the CPU.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t dbri_base;         /* the registers, slot offset 0x10000 */
+++    uint64_t iommu_base;
+++} DbriCase;
+++
+++static const DbriCase ss20 = { "SS-20", 0xee0010000ULL, 0xfe0000000ULL };
+++static const DbriCase lx = { "LX", 0x50010000ULL, 0x10000000ULL };
+++
+++#define REG(c, n)               ((c)->dbri_base + (n) * 4)
+++#define R0_RESET                0x00000001
+++#define R0_PROGRAM              0x00008000
+++
+++#define CMD_WAIT                0x00000000
+++#define CMD_PAUSE               0x10000000
+++#define CMD_JUMP                0x20000000
+++#define CMD_IIQ                 0x30000000
+++#define CMD_SDP                 0x50000000
+++#define CMD_DTS                 0x70000000
+++#define CMD_TEST                0xd0000000
+++
+++#define IOMMU_CTRL(c)           ((c)->iommu_base + 0x0000)
+++#define IOMMU_BASE(c)           ((c)->iommu_base + 0x0004)
+++#define IOMMU_CTRL_64M_ENAB     0x9     /* range 64 MB, enable */
+++#define IOPTE_WRITE             0x4
+++#define IOPTE_VALID             0x2
+++#define DVMA_START_64M          0xfc000000U
+++
+++/* the IOMMU table, and two queue pages that are not adjacent in memory */
+++#define IOPT_PA                 0x100000
+++#define QUEUE_PA                0x200000
+++#define QUEUE_DVMA              0xfc010000U
+++#define JUMP_PA                 0x300000
+++#define JUMP_DVMA               0xfc011000U
+++#define UNMAPPED_DVMA           0xfc020000U
+++
+++static QTestState *start(const DbriCase *c)
+++{
+++    return qtest_initf("-M %s -m 64 -nodefaults", c->machine);
+++}
+++
+++static void test_registers(const void *opaque)
+++{
+++    const DbriCase *c = opaque;
+++    QTestState *qts = start(c);
+++    int i;
+++
+++    for (i = 0; i < 10; i++) {
+++        g_assert_cmphex(qtest_readl(qts, REG(c, i)), ==, 0);
+++    }
+++
+++    /* REG0 keeps its bits; the P bit doesn't stay set */
+++    qtest_writel(qts, REG(c, 0), 0x00005010);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 0)), ==, 0x00005010);
+++    qtest_writel(qts, REG(c, 9), 0x12345678);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 9)), ==, 0x12345678);
+++
+++    /* the PIO pins read low, their enables as written */
+++    qtest_writel(qts, REG(c, 2), 0xff);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 2)), ==, 0xf0);
+++
+++    /* soft reset */
+++    qtest_writel(qts, REG(c, 0), R0_RESET);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 0)), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 2)), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 9)), ==, 0);
+++
+++    qtest_quit(qts);
+++}
+++
+++static void map_page(QTestState *qts, uint32_t dvma, uint32_t pa)
+++{
+++    uint32_t idx = (dvma - DVMA_START_64M) >> 12;
+++
+++    qtest_writel(qts, IOPT_PA + idx * 4,
+++                 (pa >> 4) | IOPTE_WRITE | IOPTE_VALID);
+++}
+++
+++static void put_words(QTestState *qts, uint32_t pa, const uint32_t *w,
+++                      int n)
+++{
+++    int i;
+++
+++    for (i = 0; i < n; i++) {
+++        qtest_writel(qts, pa + i * 4, w[i]);
+++    }
+++}
+++
+++static void test_command_queue(const void *opaque)
+++{
+++    const DbriCase *c = opaque;
+++    QTestState *qts = start(c);
+++    /* IIQ, SDP, DTS, PAUSE, then a JUMP to the other page */
+++    static const uint32_t queue[] = {
+++        CMD_IIQ, 0xfc030000,
+++        CMD_SDP | 0x491, 0x00000000,
+++        CMD_DTS | 0x3c210, 0x00000000, 0x00000000,
+++        CMD_PAUSE,
+++        CMD_JUMP, JUMP_DVMA,
+++    };
+++    static const uint32_t jumped[] = {
+++        CMD_SDP | 0x492, 0x00000000,
+++        CMD_WAIT,
+++    };
+++    static const uint32_t more[] = {
+++        CMD_TEST, 0x00000000,
+++        CMD_WAIT,
+++    };
+++    const uint32_t wait1 = JUMP_DVMA + 2 * 4;
+++    const uint32_t wait2 = wait1 + 2 * 4;
+++
+++    qtest_writel(qts, IOMMU_BASE(c), IOPT_PA >> 4);
+++    qtest_writel(qts, IOMMU_CTRL(c), IOMMU_CTRL_64M_ENAB);
+++    map_page(qts, QUEUE_DVMA, QUEUE_PA);
+++    map_page(qts, JUMP_DVMA, JUMP_PA);
+++    put_words(qts, QUEUE_PA, queue, ARRAY_SIZE(queue));
+++    put_words(qts, JUMP_PA, jumped, ARRAY_SIZE(jumped));
+++
+++    /* writing REG8 starts the chip; it stops on the WAIT */
+++    qtest_writel(qts, REG(c, 8), QUEUE_DVMA);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 8)), ==, wait1);
+++
+++    /* nothing new: the P bit leaves it on the same WAIT */
+++    qtest_writel(qts, REG(c, 0), R0_PROGRAM);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 8)), ==, wait1);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 0)), ==, 0);
+++
+++    /* commands written over the WAIT run when the P bit is set */
+++    put_words(qts, JUMP_PA + 2 * 4, more, ARRAY_SIZE(more));
+++    qtest_writel(qts, REG(c, 0), 0x00005010 | R0_PROGRAM);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 8)), ==, wait2);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 0)), ==, 0x00005010);
+++
+++    /* a queue it can't read: it stops where it is */
+++    qtest_writel(qts, REG(c, 8), UNMAPPED_DVMA);
+++    g_assert_cmphex(qtest_readl(qts, REG(c, 8)), ==, UNMAPPED_DVMA);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_data_func("/sun4m/dbri/registers/ss20", &ss20, test_registers);
+++    qtest_add_data_func("/sun4m/dbri/registers/lx", &lx, test_registers);
+++    qtest_add_data_func("/sun4m/dbri/command-queue/ss20", &ss20,
+++                        test_command_queue);
+++    qtest_add_data_func("/sun4m/dbri/command-queue/lx", &lx,
+++                        test_command_queue);
 ++
 ++    return g_test_run();
 ++}
