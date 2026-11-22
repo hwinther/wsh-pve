@@ -1,4 +1,4 @@
-name: Publish wisp toolchain image
+name: Publish wisp toolchain
 
 on:
   workflow_dispatch:
@@ -14,10 +14,17 @@ on:
         description: "Image tag (e.g. a Buildroot version such as 2025.02.20)"
         required: true
         type: string
+      release:
+        description: "Upload the SDK tarball and checksum to the wisp-toolchain release"
+        type: boolean
+        default: true
+
+concurrency: wisp-toolchain-publish-${{ inputs.arch }}
 
 permissions:
   # for ghcr.io (docker registry):
   packages: write
+  contents: write # gh release create/upload
 
 jobs:
   publish-docker-image:
@@ -27,6 +34,8 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -49,3 +58,33 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           docker push "ghcr.io/hwinther/wsh-pve/wisp-toolchain-$ARCH:$TAG"
+
+      - name: Export the SDK from the tagged image
+        if: ${{ inputs.release }}
+        shell: bash
+        env:
+          ARCH: ${{ inputs.arch }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd "$RUNNER_TEMP"
+          cid=$(docker create "ghcr.io/hwinther/wsh-pve/wisp-toolchain-$ARCH:$TAG")
+          trap 'docker rm "$cid" >/dev/null' EXIT
+          docker cp "$cid:/opt/wisp-toolchain/$ARCH" - | xz > "wisp-toolchain-$ARCH.tar.xz"
+          sha256sum "wisp-toolchain-$ARCH.tar.xz" > "wisp-toolchain-$ARCH.tar.xz.sha256"
+
+      - name: Publish to the wisp-toolchain release
+        if: ${{ inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ARCH: ${{ inputs.arch }}
+        run: |
+          cd "$RUNNER_TEMP"
+          sdk="wisp-toolchain-$ARCH.tar.xz"
+          if ! gh release view wisp-toolchain -R "$REPO" >/dev/null 2>&1; then
+            # The other architecture can create the shared release between view and create.
+            gh release create wisp-toolchain -R "$REPO" --prerelease --title "wisp-toolchain" \
+              --notes "Buildroot uClibc-ng SDKs for static wisp user programs." ||
+              gh release view wisp-toolchain -R "$REPO" >/dev/null
+          fi
+          gh release upload wisp-toolchain -R "$REPO" --clobber "$sdk" "$sdk.sha256"

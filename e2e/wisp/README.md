@@ -392,7 +392,9 @@ sh e2e/wisp/toolchain/build.sh x86_64 2025.02.20
 `make sdk` packages the compiler and sysroot. The Dockerfile relocates them to
 `/opt/wisp-toolchain/<arch>` and puts the compiler on the final image's `PATH`. To export the SDK
 as a tarball, run `sh e2e/wisp/toolchain/build.sh <arch> --export DIR`. The manual
-`publish-wisp-toolchain.yml` workflow builds and publishes a selected image to GHCR.
+`publish-wisp-toolchain.yml` workflow builds and publishes a selected image to GHCR. By default it also uploads
+`wisp-toolchain-<arch>.tar.xz` and its `.sha256` file to the GitHub `wisp-toolchain` release.
+The wisp-test action downloads this SDK for `libc: uclibc` source builds without Docker.
 
 Both static `hello` binaries printed `WISP-HELLO v=1 checksum=0xed3258f703d97351 status=ok`
 under the published `wisp-test-kit` kernel 7.3.4. Each exited with code 0 and signal 0.

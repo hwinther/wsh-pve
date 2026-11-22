@@ -6,7 +6,7 @@ description: >-
 
 inputs:
   sources:
-    description: "C files to build with nolibc (whitespace-separated, globs allowed, relative to the working directory). Give this or binary"
+    description: "C files to build with the selected libc (whitespace-separated, globs allowed, relative to the working directory). Give this or binary"
     required: false
     default: ""
   binary:
@@ -17,6 +17,22 @@ inputs:
     description: "sparc32 (big-endian, SPARC V8, SS-5), sparc64 (big-endian, sun4u) or x86_64 (little-endian, pc)"
     required: false
     default: sparc32
+  libc:
+    description: "C library for sources: nolibc or uclibc (sparc32 and x86_64)"
+    required: false
+    default: nolibc
+  toolchain:
+    description: "Local uClibc-ng SDK tarball to use instead of downloading toolchain-url"
+    required: false
+    default: ""
+  toolchain-url:
+    description: "SDK tarball URL (defaults to wisp-toolchain-<arch>.tar.xz in the wisp-toolchain release)"
+    required: false
+    default: ""
+  toolchain-sha256:
+    description: "Expected SHA-256 of the SDK tarball"
+    required: false
+    default: ""
   cflags:
     description: "More compiler flags, after the default -O2 (e.g. -DFIXED -Wall -Werror)"
     required: false
@@ -84,6 +100,10 @@ runs:
         WISP_SOURCES: ${{ inputs.sources }}
         WISP_BINARY: ${{ inputs.binary }}
         WISP_ARCH: ${{ inputs.arch }}
+        WISP_LIBC: ${{ inputs.libc }}
+        WISP_TOOLCHAIN: ${{ inputs.toolchain }}
+        WISP_TOOLCHAIN_URL: ${{ inputs.toolchain-url }}
+        WISP_TOOLCHAIN_SHA256: ${{ inputs.toolchain-sha256 }}
         WISP_CFLAGS: ${{ inputs.cflags }}
         WISP_ARGS: ${{ inputs.args }}
         WISP_TIMEOUT: ${{ inputs.timeout }}

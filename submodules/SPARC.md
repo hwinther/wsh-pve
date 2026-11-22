@@ -2716,6 +2716,7 @@ serial console unless stated.
 | NetBSD 9.3 | yes | not tried | not tried | |
 | OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts once ntpd ran (below) until pve-qemu `wsh/0045`; the target keeps ntpd on since |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
+| Debian 13 ports netinst (snapshot 2026-06-11, Linux 7.0.12) | yes: GRUB menu, the installer's first screen in ~40 s | not tried | yes: preseeded, base system and the SSH server from deb.debian.org/debian-ports, GRUB on the disk, ~2.5 h (1024 MB; the network fetch under TCG is most of it); no `dpkg-deb` crash (below); target `debian13-sun4u` | yes: GRUB 2.14 (with openbios 0009 and 0011, below) to `login:` in ~3 min, DHCP on `enp2s0` (sunhme), `poweroff` ends QEMU, `reboot` comes back (openbios 0030) |
 | FreeBSD 12.4 | yes: bsdinstall's console-type question in 59 s (`bootonly` and `disc1`); no interrupt storm (FreeBSD bug 239068) | not tried | yes: `bsdinstall script` from the installer's shell, kernel and base from disc1, ~10 min (target `freebsd124-sun4u`) | `login:` in 84-120 s, DHCP on `hme0`; `shutdown -p now` ends QEMU (exit 0) with openbios 0032, the reboot needs 0033, idle needs pve-qemu `wsh/0114` ("FreeBSD 12.4 on sun4u") |
 | Debian 7.11 (wheezy) netinst and CD 1 | yes: SILO 1.4.14 from the CD (`Trying cdrom:f...`), Return at `boot:`, then "Select a language" (Linux 3.2.0-4) | not tried | yes, from CD 1 with a preseed file (target `debian7-sun4u`): the base system with SSH, 84 min to the reset in the lab's own QEMU, nothing fetched | yes: SILO boots `/vmlinuz` and its initrd, `login:` 152-164 s from QEMU start, DHCP and static on `eth0` (`sunhme`), `poweroff` ends QEMU (exit 0); `reboot` with pve-qemu `wsh/0112` ("Debian 7 on sun4u" below) |
 | Ubuntu 9.04 server (jaunty) | yes: SILO 1.4.14, Return at `boot:`, then "Choose language" 31 s later (Linux 2.6.28-6; the boot is `quiet`) | not tried | not tried | |
@@ -2867,6 +2868,37 @@ dpkg: error processing archive /var/cache/apt/archives/perl-base_5.36.0-5_sparc6
 `perl-base` package three times by hand in the installer's shell worked, so it is an intermittent
 crash of user-space code under emulation (in glibc), not a missing instruction. About 25 min of a
 run until the failure; not pursued further (a newer Debian ports snapshot wasn't tried).
+
+**Debian 13 on sun4u** (2026-11-22; the lab image of the published pve-qemu-kvm 11.1.3-4+wsh4, 1024 MB, disk
+and netinst on IDE, `sunhme`, user-mode network; e2e/sparc/README.md, "Debian 13 on sun4u"). The debian-ports
+sparc64 netinst of 2026-06-11 (`debian-13.0.0-sparc64-NETINST-1.iso`, sha256 as in the snapshot's SHA256SUMS)
+installs sid from deb.debian.org/debian-ports: partman's "atomic" recipe on a Sun label (`/boot` ext2, `/`
+ext4, swap), the SSH server task, GRUB 2.14 (`sparc64-ieee1275`, blocklists: "Embedding is not possible"
+because the Sun label nests the partitions). Three complete installs (one by hand with a preseed by URL and
+DHCP, one with the target's scenario and answer CD, one `lab.py install debian13-sun4u --check --export`
+through PVE with the published pve-qemu-kvm 11.1.3-4+wsh8: passed in 177 min), 2.5-2.8 h each. The stored
+`install-debian13-sun4u.raw` boot-tests in 4.9 min; the target has `matrix_skip` like Tribblix, so the matrices
+boot-test it and reinstall it only on request.
+
+- **The Debian 12 failure did not come back.** No `dpkg-deb` segfault or soft lockup in either install
+  (the installer's syslog and dmesg checked), and on the installed system 60 `dpkg-deb -x` of perl-base,
+  libc6 and coreutils (20 rounds) passed without a failure or a kernel message. Not narrowed down, as it
+  never reproduced; the Debian 12.0 netinst itself (Linux 6.1) wasn't tried again, so whether a later QEMU
+  change or the newer kernel and glibc made the difference is open.
+- **GRUB on OpenBIOS ("canonicalise devname failed").** The installed disk boots through GRUB to `login:`.
+  With an openbios-sparc64 built from QEMU 11.1.3's OpenBIOS commit without our patches, the same disk
+  stops as in the 2021 report: `error: canonicalise devname failed.`, then `Unhandled Exception 0x30`.
+  grub-install keeps an OBP-style path for the disk (`/pci@1f,0/pci@1,1/ide@3/disk@0`, from Linux's
+  sysfs), and GRUB's `obdisk` asks the firmware's `canon` for it; that path exists only with openbios
+  0009 (`pci@1f,0`, OBP's names) and 0011 (the drives under the controller); the stock tree has
+  `/pci@1fe,0/pci@1,1/ide@3/ide@0/disk@0`. Built and booted one at a time: 0009 + 0011 boot; 0009, 0010,
+  0011 or 0023 alone, and 0010 + 0011, fail. An install under the stock firmware wasn't tried. What GRUB
+  prints on the way is harmless: `call-method color!: exception -21` (its colours on ttya),
+  `block-size`/`#blocks` failing (OpenBIOS's disk package has neither; GRUB takes 512-byte sectors), `error:
+  out of memory` and `no suitable video mode found` (no framebuffer).
+- **Idle.** The installed kernel is 7.0.12+deb14, the one `wsh/0070` was written against: QEMU at 6.9% and
+  6.5% of a host core over 60 and 120 s at the shell (guest load average 0.09, host 0.5-1.3), against
+  100.5% for this kernel without the halt ("Idle, more guests" above; not measured again here).
 
 **Hardware layout.** OpenBIOS "boots" = loads the guest from it with `-boot c`/`-boot d` (its `disk`
 and `cdrom` aliases). Guest = the driver attaches and the device works (disk: read and write 10 MB

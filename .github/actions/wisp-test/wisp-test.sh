@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wisp-test: build a C program against nolibc (or take a static binary), boot it as /test in wisp
+# wisp-test: build a C program against nolibc or uClibc-ng (or take a static binary), boot it as /test in wisp
 # (e2e/wisp/, a Linux tinyconfig kernel with a nolibc PID 1) under QEMU, and report how it ended.
 # action.yml runs this script; it also runs on its own on a Debian or Ubuntu host. Settings come
 # from the environment (the action's inputs, see README.md):
@@ -7,6 +7,10 @@
 #   WISP_ARCH        sparc32 (default), sparc64 or x86_64
 #   WISP_SOURCES     C files to build (whitespace-separated, globs allowed), or
 #   WISP_BINARY      a static binary for the architecture instead
+#   WISP_LIBC        nolibc (default) or uclibc (sparc32 and x86_64)
+#   WISP_TOOLCHAIN   local SDK tarball instead of downloading WISP_TOOLCHAIN_URL
+#   WISP_TOOLCHAIN_URL     SDK tarball URL (default: wisp-toolchain release for WISP_ARCH)
+#   WISP_TOOLCHAIN_SHA256  the SDK tarball's SHA-256, checked when set
 #   WISP_CFLAGS      more compiler flags (default optimisation: -O2)
 #   WISP_ARGS        arguments for the program (whitespace-separated, no quoting)
 #   WISP_TIMEOUT     seconds for the whole boot (default 60)
@@ -24,6 +28,10 @@
 set -euo pipefail
 
 ARCH=${WISP_ARCH:-sparc32}
+LIBC=${WISP_LIBC:-nolibc}
+TOOLCHAIN=${WISP_TOOLCHAIN:-}
+TOOLCHAIN_URL=${WISP_TOOLCHAIN_URL:-https://github.com/hwinther/wsh-pve/releases/download/wisp-toolchain/wisp-toolchain-$ARCH.tar.xz}
+TOOLCHAIN_SHA256=${WISP_TOOLCHAIN_SHA256:-}
 SOURCES=${WISP_SOURCES:-}
 BINARY=${WISP_BINARY:-}
 USER_CFLAGS=${WISP_CFLAGS:-}
@@ -47,6 +55,17 @@ die() {
 	exit 2
 }
 output() { [ -z "${GITHUB_OUTPUT:-}" ] || printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+
+case "$LIBC" in
+nolibc) ;;
+uclibc)
+	case "$ARCH" in
+	sparc32) SDK_PREFIX=sparc-buildroot-linux-uclibc ;;
+	x86_64) SDK_PREFIX=x86_64-buildroot-linux-uclibc ;;
+	*) die "no uClibc-ng SDK for $ARCH; see 'Your own toolchain' in the action README" ;;
+	esac ;;
+*) die "unknown libc '$LIBC' (nolibc or uclibc)" ;;
+esac
 
 # Per architecture: QEMU binary and its package, machine, memory (MiB), compiler and its package,
 # compiler flags, ELF machine number, whether nolibc's _start needs replacing (start-sparc.c).
@@ -80,8 +99,10 @@ output log "$LOG"
 # seabios), the cross compiler when there are sources, curl and xz for the kit.
 need=()
 command -v "$QEMU" >/dev/null || need+=("$QEMU_PKG")
-[ -z "$SOURCES" ] || command -v "$CC" >/dev/null || need+=("$CC_PKG")
-if [ -z "$KIT" ]; then command -v curl >/dev/null || need+=(curl ca-certificates); fi
+[ -z "$SOURCES" ] || [ "$LIBC" = uclibc ] || command -v "$CC" >/dev/null || need+=("$CC_PKG")
+if [ -z "$KIT" ] || { [ "$LIBC" = uclibc ] && [ -n "$SOURCES" ] && [ -z "$TOOLCHAIN" ]; }; then
+	command -v curl >/dev/null || need+=(curl ca-certificates)
+fi
 command -v xz >/dev/null || need+=(xz-utils)
 if [ ${#need[@]} -gt 0 ]; then
 	[ "$INSTALL" = true ] || die "missing: ${need[*]} (install is off)"
@@ -123,30 +144,49 @@ else
 	# shellcheck disable=SC2206 # word splitting and globs are wanted here
 	files=($SOURCES)
 	for f in "${files[@]}"; do [ -f "$f" ] || die "source not found: $f"; done
-	# As e2e/wisp/build.sh builds PID 1: static, no C library but nolibc, the kit's headers only.
-	# nolibc.h always, so that a file without any #include still gets the start code
-	# shellcheck disable=SC2206
-	flags=($ARCH_CFLAGS -static -nostdlib -nostdinc -I"$KIT/$ARCH/include" -include nolibc.h -fno-stack-protector
-		-fno-asynchronous-unwind-tables -O2 $USER_CFLAGS)
-	if [ "$START" = 1 ]; then
-		# nolibc's sparc _start reads argc 96 bytes too low (e2e/wisp/README.md): rename it
-		# and link a fixed one
-		flags+=(-D_start=wisp_nolibc_start)
-		files+=("$HERE/start-sparc.c")
-	fi
-	# libgcc where the compiler has one for these flags; sparc32 links none: without the multilib
-	# package the compiler names its 64-bit libgcc for -m32, and the multilib's 32-bit libgcc is
-	# V8+, which the sparc32 kernel refuses. It gets the 64-bit division helpers instead
-	# (libgcc-sparc32.c).
-	if [ "$ARCH" = sparc32 ]; then
-		files+=("$HERE/libgcc-sparc32.c")
+	if [ "$LIBC" = uclibc ]; then
+		if [ -z "$TOOLCHAIN" ]; then
+			log "downloading $TOOLCHAIN_URL"
+			TOOLCHAIN=$WORK/toolchain.tar.xz
+			curl -fsSL --retry 3 -o "$TOOLCHAIN" "$TOOLCHAIN_URL" || die "toolchain download failed: $TOOLCHAIN_URL"
+		fi
+		[ -f "$TOOLCHAIN" ] || die "toolchain tarball not found: $TOOLCHAIN"
+		if [ -n "$TOOLCHAIN_SHA256" ]; then
+			echo "$TOOLCHAIN_SHA256  $TOOLCHAIN" | sha256sum -c --quiet - || die "toolchain SHA-256 mismatch"
+		fi
+		sdk=$WORK/sdk
+		mkdir -p "$sdk"
+		tar -xJf "$TOOLCHAIN" -C "$sdk" --strip-components=1 || die "cannot unpack $TOOLCHAIN"
+		"$sdk/relocate-sdk.sh" || die "cannot relocate the SDK"
+		CC=$sdk/bin/$SDK_PREFIX-gcc
+		# shellcheck disable=SC2206
+		flags=(-static -O2 $USER_CFLAGS)
 	else
-		# shellcheck disable=SC2086
-		libgcc=$($CC $ARCH_CFLAGS -print-libgcc-file-name 2>/dev/null || true)
-		[ ! -f "$libgcc" ] || files+=("$libgcc")
+		# As e2e/wisp/build.sh builds PID 1: static, no C library but nolibc, the kit's headers only.
+		# nolibc.h always, so that a file without any #include still gets the start code
+		# shellcheck disable=SC2206
+		flags=($ARCH_CFLAGS -static -nostdlib -nostdinc -I"$KIT/$ARCH/include" -include nolibc.h -fno-stack-protector
+			-fno-asynchronous-unwind-tables -O2 $USER_CFLAGS)
+		if [ "$START" = 1 ]; then
+			# nolibc's sparc _start reads argc 96 bytes too low (e2e/wisp/README.md): rename it
+			# and link a fixed one
+			flags+=(-D_start=wisp_nolibc_start)
+			files+=("$HERE/start-sparc.c")
+		fi
+		# libgcc where the compiler has one for these flags; sparc32 links none: without the multilib
+		# package the compiler names its 64-bit libgcc for -m32, and the multilib's 32-bit libgcc is
+		# V8+, which the sparc32 kernel refuses. It gets the 64-bit division helpers instead
+		# (libgcc-sparc32.c).
+		if [ "$ARCH" = sparc32 ]; then
+			files+=("$HERE/libgcc-sparc32.c")
+		else
+			# shellcheck disable=SC2086
+			libgcc=$($CC $ARCH_CFLAGS -print-libgcc-file-name 2>/dev/null || true)
+			[ ! -f "$libgcc" ] || files+=("$libgcc")
+		fi
 	fi
 	log "$CC ${flags[*]} ${files[*]}"
-	$CC "${flags[@]}" -o "$WORK/test" "${files[@]}" || die "build failed"
+	"$CC" "${flags[@]}" -o "$WORK/test" "${files[@]}" || die "build failed"
 fi
 # An ELF for this architecture (byte 18-19: e_machine, in the file's byte order)
 magic=$(od -An -tx1 -N4 "$WORK/test" | tr -d ' \n')
