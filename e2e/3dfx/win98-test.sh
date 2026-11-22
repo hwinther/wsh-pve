@@ -19,6 +19,13 @@
 #                     `make wsh-openglide`, for its dmabuf scanout)
 #   --image NAME      the test image's tag (default wsh-3dfx-win98:local); --no-build uses it as it is
 #   --docker CMD      docker or podman (default docker)
+#   --pve CONTAINER   PVE starts the VM: run the harness in this PVE container (e2e/pve/Dockerfile,
+#                     privileged) with `qm create`/`qm start` instead of starting QEMU itself. OUT and
+#                     PRIVATE must be bind-mounted into it at the same paths (the disk copy is made in
+#                     PRIVATE and attached to the VM by its path); the test programs and the harness
+#                     are copied in from the test image, mtools is installed with apt, and --qemu-bin
+#                     and --openglide are installed in the container. Display vnc or egl only.
+#   --vmid N          the VM's ID with --pve (default 9398; must be free)
 #
 # Harness options after --: --tests glide2,glide3,opengl (default auto), --display sdl (starts Xvfb)
 # or egl (QEMU's egl-headless display, which takes the Glide frames as a dmabuf; /dev/udmabuf is
@@ -30,6 +37,7 @@ set -euo pipefail
 
 top=$(cd "$(dirname "$0")/../.." && pwd)
 template="" out="" priv="" qbin="" drivers="" openglide="" image="wsh-3dfx-win98:local" build=1 docker=docker
+pve="" vmid=9398
 die() { echo "win98-test.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -42,6 +50,8 @@ while [ $# -gt 0 ]; do
         --image) image=${2:?}; shift 2 ;;
         --no-build) build=0; shift ;;
         --docker) docker=${2:?}; shift 2 ;;
+        --pve) pve=${2:?}; shift 2 ;;
+        --vmid) vmid=${2:?}; shift 2 ;;
         --) shift; break ;;
         -h | --help) sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0"; exit 0 ;;
         *) die "unknown option '$1' (harness options go after --)" ;;
@@ -80,9 +90,22 @@ if [ -n "$openglide" ]; then
     install="${install}dpkg -i /w3d-in/wsh-openglide.deb > /dev/null && "
 fi
 run_in_image() { "$docker" run --rm "${mounts[@]}" --entrypoint sh "$image" -c "$install$1"; }
+in_pve() { "$docker" exec -i "$pve" "$@"; }
+qemu_version() { if [ -n "$pve" ]; then in_pve qemu-system-x86_64-3dfx --version; else run_in_image "qemu-system-x86_64-3dfx --version"; fi; }
+
+if [ -n "$pve" ]; then
+    in_pve test -d "$out" -a -d "$priv" || die "the PVE container $pve doesn't see $out and $priv (bind-mount them at the same paths)"
+    if [ -n "$qbin" ]; then
+        in_pve sh -c 'cat > /usr/bin/qemu-system-x86_64-3dfx.w3d && chmod 755 /usr/bin/qemu-system-x86_64-3dfx.w3d &&
+            mv /usr/bin/qemu-system-x86_64-3dfx.w3d /usr/bin/qemu-system-x86_64-3dfx' < "$qbin"
+    fi
+    if [ -n "$openglide" ]; then
+        in_pve sh -c 'cat > /tmp/wsh-openglide.deb && dpkg -i /tmp/wsh-openglide.deb > /dev/null && rm /tmp/wsh-openglide.deb' < "$openglide"
+    fi
+fi
 
 # The revision the binary was built from names the guest drivers' release
-rev=$(run_in_image "qemu-system-x86_64-3dfx --version" | sed -n 's/.*qemu-3dfx@\([0-9a-f]\{7\}\)-.*/\1/p')
+rev=$(qemu_version | sed -n 's/.*qemu-3dfx@\([0-9a-f]\{7\}\)-.*/\1/p')
 if [ -z "$rev" ]; then
     echo "SKIP: the binary has no qemu-3dfx (the optional 3dfx extra is missing)"
     exit 77
@@ -97,6 +120,27 @@ fi
 drivers=$(cd "$(dirname "$drivers")" && pwd)/$(basename "$drivers")
 mounts+=(-v "$drivers:/w3d-in/drivers.zip:ro")
 echo "qemu-3dfx $rev, guest drivers $(basename "$drivers")"
+
+if [ -n "$pve" ]; then
+    # The test programs from the image, the harness and the scene from this checkout; mtools from apt
+    # (the image has PVE's enterprise repository too, which refuses a node without a subscription)
+    in_pve sh -c 'rm -rf /root/w3d && mkdir -p /root/w3d'
+    "$docker" run --rm --entrypoint tar "$image" -C /w3d -cf - bin | in_pve tar -xf - -C /root/w3d
+    (cd "$top" && tar -cf - e2e/3dfx/win98 packages/wsh-openglide/tests/scene.h) | in_pve tar -xf - -C /root/w3d
+    in_pve sh -c 'command -v mcopy > /dev/null || { export DEBIAN_FRONTEND=noninteractive;
+        apt-get update -qq 2>&1 | grep -v enterprise.proxmox.com; apt-get install --no-install-recommends --assume-yes -qq mtools > /dev/null; }'
+    # This run's copy of the disk, made from the image (the template may be readable by root only)
+    echo "win98-test: copying the template to $priv/disk.raw"
+    "$docker" run --rm -v "$template:/w3d-in/template.raw:ro" -v "$priv:/w3d-private" --entrypoint cp "$image" \
+        --sparse=always /w3d-in/template.raw /w3d-private/disk.raw
+    [ "$drivers" = "$priv/drivers.zip" ] || cp "$drivers" "$priv/drivers.zip"
+    drivers=$priv/drivers.zip
+    status=0
+    in_pve python3 /root/w3d/e2e/3dfx/win98/win98_test.py --pve "$vmid" --template "$priv/disk.raw" --in-place \
+        --drivers "$drivers" --bin /root/w3d/bin --out "$out" --private "$priv" "$@" || status=$?
+    in_pve chmod -R a+rX "$out" || true
+    exit "$status"
+fi
 
 devices=()
 [ ! -e /dev/kvm ] || devices=(--device /dev/kvm)
