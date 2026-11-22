@@ -1,7 +1,7 @@
 # wisp-test: big-endian testing in seconds
 
 A GitHub Action that runs a C program on big-endian, strict-alignment Linux and passes or fails
-on its exit status. It builds the program for sparc32 (SPARC V8, a SPARCstation 5) with nolibc,
+on its exit status. It builds the program for sparc32 (SPARC V8, a SPARCstation 5) with nolibc by default,
 boots it in wisp (`e2e/wisp/`, a Linux 7.3 `tinyconfig` kernel with a tiny PID 1) under QEMU from
 Ubuntu's packages, and reads the exit code back. From starting QEMU to its exit takes 2 to 4
 seconds; the first run on a runner also spends 10 to 30 seconds installing QEMU and the cross
@@ -33,9 +33,13 @@ Exit code 0 passes; any other exit code, or a signal, fails the step.
 
 | Input | Default | What it is |
 | --- | --- | --- |
-| `sources` | | C files to build with nolibc, whitespace-separated, globs allowed, relative to the working directory. Give this or `binary` |
+| `sources` | | C files to build with the selected libc, whitespace-separated, globs allowed, relative to the working directory. Give this or `binary` |
 | `binary` | | A static binary for the architecture, built by you (any C library, see "Your own toolchain") |
 | `arch` | `sparc32` | `sparc32` (big-endian, V8, `SS-5`), `sparc64` (big-endian, V9, `sun4u`) or `x86_64` (little-endian, `pc`: the control, where a byte-order bug passes) |
+| `libc` | `nolibc` | C library for source builds. Use `uclibc` on sparc32 or x86_64 for uClibc-ng |
+| `toolchain` | | Local uClibc-ng SDK tarball to use instead of downloading it |
+| `toolchain-url` | the architecture's tarball in the `wisp-toolchain` release | URL to download for a uClibc-ng build |
+| `toolchain-sha256` | | Expected SHA-256 of the local or downloaded SDK tarball |
 | `cflags` | | More compiler flags, after the default `-O2` (`-DFIXED`, `-Iinclude`, `-Wall -Werror`) |
 | `args` | | Arguments for the program, whitespace-separated, no quoting |
 | `timeout` | `60` | Seconds from starting QEMU to its exit; a test that runs longer is an `error` |
@@ -64,12 +68,12 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
 ## How it works
 
 1. QEMU (`qemu-system-sparc`, whose package also has `qemu-system-sparc64` and OpenBIOS, or
-   `qemu-system-x86`) and the cross compiler (`gcc-sparc64-linux-gnu`) come from Ubuntu's archive.
+   `qemu-system-x86`) and, for nolibc source builds, the cross compiler (`gcc-sparc64-linux-gnu`) come from Ubuntu's archive.
 2. The kit, a 7 MB download, holds wisp's tier-1 kernel per architecture and the headers wisp's
    PID 1 is built with: the kernel's UAPI headers and nolibc (`tools/include/nolibc`, the C library
    of the kernel's own selftests, headers only). `e2e/wisp/kit.sh` packs it; the self-test workflow
    publishes it to the `wisp-test-kit` release.
-3. The sources are built static against nolibc: `sparc64-linux-gnu-gcc -m32 -mcpu=v8 -static
+3. In the default mode, the sources are built static against nolibc: `sparc64-linux-gnu-gcc -m32 -mcpu=v8 -static
    -nostdlib -nostdinc` for sparc32, `-m64` for sparc64. On sparc, nolibc's `_start` is replaced
    (`start-sparc.c`): gcc puts a stack frame in front of nolibc's, which then reads `argc`, `argv`
    and the environment from the wrong place. sparc32 also gets `libgcc-sparc32.c`: `/` and `%` on
@@ -83,6 +87,24 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
    with the `args`, waits for it and prints `WISP-TEST v=1 exit=N signal=N ms=N`, then powers the
    machine off.
 
+## Build with uClibc-ng
+
+On an x86_64 Linux runner, set `libc: uclibc` to compile with the released Buildroot SDK.
+The action extracts and relocates the SDK, then links your program statically. The SDK includes
+uClibc-ng and libgcc for sparc32 V8 or x86_64. The same wisp kernel runs the resulting binary.
+
+```yaml
+- uses: hwinther/wsh-pve/.github/actions/wisp-test@<full commit SHA>
+  with:
+    libc: uclibc
+    arch: sparc32
+    sources: tests/sort.c
+```
+
+The self-test runs `e2e/wisp/toolchain/hello/hello.c` on both targets. It exercises `qsort`,
+`snprintf` and 64-bit division. To pin the SDK, set `toolchain-sha256` to the digest in the
+release's `wisp-toolchain-<arch>.tar.xz.sha256` file. See the [local example](examples/uclibc.md).
+
 ## Limits
 
 - **nolibc is not a full C library.** It has `printf` and friends (integers, strings, pointers:
@@ -90,9 +112,9 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
   functions, `strtol`, `atoi`, `getenv`, `<stdint.h>`, `<endian.h>` (`htole32`, `be32toh`, ...),
   unbuffered `FILE *` wrappers over file descriptors (`fopen`, `fgets`, `fwrite`) and the system
   calls. It has no `qsort`, no locale, no `<math.h>` beyond `fabs`, no threads, no `setjmp`, no
-  C++. Code that needs those needs your own toolchain (below). Build the unit you want to check,
+  C++. For a fuller C library, use uClibc-ng or your own toolchain (below). Build the unit you want to check,
   with a small `main` that checks it, not the whole program.
-- **sparc32 has only the division helpers of libgcc**: there is no V8 libgcc, so the action links
+- **nolibc on sparc32 has only the division helpers of libgcc**: there is no V8 libgcc, so the action links
   its own 64-bit division helpers there (`libgcc-sparc32.c`, below). Other libgcc helpers, such
   as the one `__builtin_popcount` calls (`__popcountsi2`), still fail to link there
   (`undefined reference to ...`). sparc64 and x86_64 link the compiler's libgcc.
@@ -104,7 +126,7 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
   sparc32 (256 on sparc64; more with `qemu-args: -m 256`, the SS-5's maximum).
 - **Emulated speed**: QEMU translates the guest's code (TCG), which is several times slower than
   the runner's CPU, and the boot costs 2 to 4 s of the `timeout`. Raise it for long tests.
-- **x86_64 builds for the baseline**: the action adds `-march=x86-64`, the level QEMU's default
+- **x86_64 nolibc builds for the baseline**: the action adds `-march=x86-64`, the level QEMU's default
   `qemu64` CPU runs (Ubuntu 26.04's amd64v3 gcc defaults to `x86-64-v3`, which gets `SIGILL`
   there). A `binary` built for a newer level needs `qemu-args: -cpu max` (TCG emulates up to
   x86-64-v3, not AVX-512).
