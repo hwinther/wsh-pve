@@ -1,0 +1,83 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: keep interrupts disabled in the MMU miss handlers
+
+reload_DMMU_tlb and reload_IMMU_tlb enabled interrupts around the call
+of their C handler ("for window spill/fill traps"). They run at TL 1,
+where an interrupt goes to the TL>0 trap table, and its level 14 entry
+only retries without clearing the interrupt. A timer interrupt pending
+when the handler enables interrupts therefore traps again on the same
+instruction for good: the CPU spins on the call and nothing else runs.
+
+FreeBSD 12.4 on sun4u hits it on every power-off: shutdown -p now ends
+in the "SUNW,power-off" client call with the kernel's %tick compare
+interrupt pending (the client interface runs with interrupts disabled,
+patch 0016), the firmware takes a DTLB miss in get_property() on the
+way to the power register, and the machine stays on after "Uptime:",
+QEMU at 100% of a host core (-d int: interrupt 0x4e at that one PC, over
+and over). 0030 met the same spin after a reboot and avoided it there by
+keeping the firmware's own timer from firing.
+
+Leave interrupts disabled, as the trap left them. Window spill and fill
+traps are not interrupts and are taken whatever PSTATE.IE says, and a
+pending interrupt is taken when the retry gets back to the code that
+missed (the client, or the firmware at TL 0) with its own PSTATE.IE.
+---
+ arch/sparc64/vectors.S | 34 ++++++++++++++--------------------
+ 1 file changed, 14 insertions(+), 20 deletions(-)
+
+diff --git a/arch/sparc64/vectors.S b/arch/sparc64/vectors.S
+index 3d6b066..79f1b28 100644
+--- a/arch/sparc64/vectors.S
++++ b/arch/sparc64/vectors.S
+@@ -386,18 +386,15 @@ reload_DMMU_tlb:
+ 	add	%g1, %g7, %g7
+ 	mov	%g7, %sp
+ 
+-	/* Enable interrupts for window spill/fill traps */
+-	rdpr	%pstate, %g7
+-	or	%g7, PSTATE_IE, %g7
+-	wrpr	%g7, %pstate	
+-
++	/*
++	 * Interrupts stay disabled, as the trap left them: window spill and
++	 * fill traps don't need them, and an interrupt taken here at TL 1
++	 * goes to the TL>0 table, whose level 14 entry only retries. A timer
++	 * interrupt the client left pending (FreeBSD's, when it calls in to
++	 * power off) then kept the CPU on this call for good.
++	 */
+ 	call	dtlb_miss_handler
+ 	 nop
+-
+-	/* Disable interrupts */
+-	rdpr	%pstate, %g7
+-	andn	%g7, PSTATE_IE, %g7
+-	wrpr	%g7, %pstate
+ 	
+ 	/* Restore CPU state from stack */
+ 	setx	_fcstack_ptr, %g6, %g7
+@@ -472,18 +469,15 @@ reload_IMMU_tlb:
+ 	add	%g1, %g7, %g7
+ 	mov	%g7, %sp
+ 
+-	/* Enable interrupts for window spill/fill traps */
+-	rdpr	%pstate, %g7
+-	or	%g7, PSTATE_IE, %g7
+-	wrpr	%g7, %pstate	
+-
++	/*
++	 * Interrupts stay disabled, as the trap left them: window spill and
++	 * fill traps don't need them, and an interrupt taken here at TL 1
++	 * goes to the TL>0 table, whose level 14 entry only retries. A timer
++	 * interrupt the client left pending (FreeBSD's, when it calls in to
++	 * power off) then kept the CPU on this call for good.
++	 */
+ 	call	itlb_miss_handler
+ 	 nop
+-
+-	/* Disable interrupts */
+-	rdpr	%pstate, %g7
+-	andn	%g7, PSTATE_IE, %g7
+-	wrpr	%g7, %pstate
+ 	
+ 	/* Restore CPU state from stack */
+ 	setx	_fcstack_ptr, %g6, %g7

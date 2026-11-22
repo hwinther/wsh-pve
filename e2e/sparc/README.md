@@ -373,7 +373,10 @@ and `check`, each a scenario run against the VM:
    `netbsd-firstboot.py` and `netbsd-boot-disk.py` (see "NetBSD install targets" below), OpenBSD
    `openbsd-install-sparc64.py` (8.0) or `openbsd-install-sparc.py` (5.9 on sun4m, with a sets CD
    made on the node), `openbsd-firstboot.py` and `openbsd-boot-disk.py` ("The OpenBSD 8.0 install
-   target", "OpenBSD 5.9 on sun4m"); a target's `check` can bring its own `commands`.
+   target", "OpenBSD 5.9 on sun4m"), FreeBSD `freebsd-install-sparc64.py` (bsdinstall's own
+   `bsdinstall script`, typed into the installer's shell), `freebsd-firstboot.py` and
+   `freebsd-boot-disk.py` ("The FreeBSD 12.4 install target"); a target's `check` can bring its own
+   `commands`.
 2. **Unattended by the installer's own mechanism (used by Red Hat 6.2 and Debian 4.0; designed, not used for Solaris):**
    `install.Unattended` writes an answer CD on the node (`answer_media.py`: a one-directory ISO 9660
    image made by the standard library from the target's answers, never from vendor files, nothing
@@ -544,7 +547,9 @@ sparc64 profile (`-boot order=d|c`).
   `DHCP=no`: host name, address and netmask typed into the installer's screens (no default route);
   the handlers match the screen title, and the network's confirmation screen must show the three
   values. The installer asks for the root password itself, so the target says `root_password: True`
-  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. At the installer's reboot
+  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. With `--ip dhcp`, `install`
+  sets `DHCP=yes`: the installer's `DHCP for hme0` screen says yes, then only the IPv6 and
+  confirmation screens follow (no host name or address screens). At the installer's reboot
   the scenario stops the VM (`qm stop`, after "syncing file systems... done"): at the firmware's
   banner (openbios-sparc64 with patch 0030 resets the machine) or, with older firmware, when the
   reboot returns (`prom_reboot: reboot call returned!`); `install` then ejects the DVD and sets
@@ -557,9 +562,13 @@ sparc64 profile (`-boot order=d|c`).
   installer's password, the marker, the optional user (`useradd`, `passwd`: Solaris 10 applies
   `MINNONALPHA=1` from `/etc/default/passwd` to root too and refuses `wshlab`, so the rule is
   relaxed for that one call and the file put back), `/etc/defaultrouter`
-  and DNS, `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
+  and DNS (with `--ip dhcp`: `/etc/dhcp.hme0` checked, the host name written to `/etc/nodename`
+  and as `inet <name>` to `/etc/hostname.hme0`, so dhcpagent asks the server for it and Solaris 10
+  falls back to nodename when the server sends none; the installer leaves the name `unknown`),
+  `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
 - **check:** `solaris10-boot-disk.py` with the usual `COMMANDS` (`prtvtoc` of `c0t0d0s2`, the
-  target's `device`) and `CHECK`.
+  target's `device`) and `CHECK`; with `--ip dhcp` also the target's `dhcp_check`: the `DHCP` flag
+  on `hme0`, the router from `dhcpinfo -i hme0 Router` and `is alive` from a ping of it.
 - `pve_matrix.py install` gives an install case the sum of the target's phase timeouts plus 10
   minutes when that is more than twice `--timeout` (Solaris 10: 4.75 h instead of 2 h).
 
@@ -576,6 +585,16 @@ TCG, published packages pve-qemu-kvm 11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pv
 | `install sol10-sun4u --vmid 103 --check` with the vmbr1 options and `--user lab` as above | passed: `passwd: password successfully changed for lab`, `default 10.77.0.1` in the check | 110.7 min (4907 s, 1167 s, 548 s) |
 | unit tests (`test_targets.py` with the Solaris 10 handlers and the retry, `test_dos.py`, `test_vgatext.py`, `test_freedos.py`) | 71 passed, 1 skipped | 17 s |
 | `pve_matrix.py pve` and `matrix.py smoke` on the branch | 5/5 and 3/3 passed | |
+
+`--ip dhcp`, 2026-11-22, the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh4
+(openbios 0030), qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11; dnsmasq on `vmbr0` with
+10.0.2.2/24 as router and name server, a lease range from 10.0.2.15 (the addresses of QEMU's user
+network); other agents' guests on the host:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol10-sun4u --vmid 9501 --check --ip dhcp` | passed: the installer took a lease (for net0's MAC) during system identification, its reboot came back at the firmware's banner (0030); the first boot found `/etc/dhcp.hme0` (host name `unknown` until it wrote `/etc/nodename`); in the check `Hostname: sol10-sun4u` (the client sent the name, dnsmasq echoed it in option 12), `hme0` `<UP,BROADCAST,RUNNING,MULTICAST,DHCP,IPv4>` 10.0.2.25/24, `default 10.0.2.2`, `router=10.0.2.2`, `10.0.2.2 is alive` | 119.8 min (install 5378 s, first boot 1266 s, check 526 s) |
+| unit tests (`test_targets.py`, with the DHCP variable and check regex) | 116 passed | <1 s |
 
 ### Run it
 
@@ -984,7 +1003,7 @@ pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
 | `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
 
 Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
-and 2.6 or 2.5.1 on sun4u (their boot blocks stop in OpenBIOS: `submodules/SPARC.md`).
+and 2.6 or 2.5.1 on sun4u (with OpenBIOS 0031 their boot blocks work, then the kernels stop: 2.6 at the root mount, 2.5.1 before its banner; `submodules/SPARC.md`, "Solaris 2.5.1 and 2.6 on sun4u: the boot block").
 
 ### Solaris 2.4 and 2.5.1
 
@@ -1567,6 +1586,67 @@ under TCG, and the halt stops it; the old kernel stays, and the next boot tries 
 through the tool: DHCP (`--ip dhcp` is refused; the lab's own runs got an address with `inet
 autoconf`), more memory, the VGA console.
 
+### The FreeBSD 12.4 install target
+
+`freebsd124-sun4u` (the sparc64 profile: sun4u, OpenBIOS, 512 MB, an 8 GiB blank disk on `ide0`, the
+CD on `ide2`, `sunhme`) installs FreeBSD 12.4-RELEASE, the last release with sparc64 (the 12 branch
+is end of life), from `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` (640942080 bytes; size, sha256 and
+sha512 as in the release's `CHECKSUM.SHA256-FreeBSD-12.4-RELEASE-sparc64` and `CHECKSUM.SHA512-...`
+on ftp-archive.freebsd.org; freely redistributable, not downloaded by any test). It needs openbios
+0032 and 0033 for the power-off and the reboot (before, `shutdown -p now` stays on after `Uptime:`
+and every reboot panics: `submodules/SPARC.md`, "FreeBSD 12.4 on sun4u"), which no published
+`pve-qemu-kvm` has yet: the target has `matrix_skip` until one does, and pve-qemu `wsh/0114` for
+idle.
+
+- **Install** (`freebsd-install-sparc64.py`, `_freebsd.py`): OpenBIOS boots the CD's boot block, the
+  loader and the GENERIC kernel; bsdinstall asks for the console type on ttya (`vt100`) and shows its
+  welcome dialog, where the scenario takes **S**hell (the button's hot key: dialog reads vt100's
+  cursor keys as `ESC O C`, and the ESC of `ESC [ C` cancels the dialog, which is the Live CD). In
+  the installer's shell it types `/tmp/installerconfig` line by line with `echo` and runs
+  `bsdinstall script /tmp/installerconfig`, the installer's own unattended mode: the preamble
+  `PARTITIONS=ada0` (the auto layout: VTOC8, `freebsd-ufs` 7.6 GB and swap 410 MB),
+  `DISTRIBUTIONS="kernel.txz base.txz"` from the CD's `/usr/freebsd-dist`, `nonInteractive=YES`, and a
+  setup script that runs in the new system (`sysrc`: the host name, `ifconfig_hme0` with the static
+  address, `dumpdev=NO`, `sendmail_enable=NONE`, `sshd_enable=YES`). No dialog screen is driven by its
+  layout. A non-zero exit fails the install with the end of `/tmp/bsdinstall_log`. Then `halt -p`
+  (the installer's `shutdown -p now` only prints "System shutdown time has arrived").
+- **First boot** (`freebsd-firstboot.py`): login as root (no password yet), root's password at
+  `passwd`'s prompts (through `sh -c`: root's shell is csh, and the echoed command line must not
+  itself look like the result), the marker, `hostname` in `/etc/rc.conf`, the network with `sysrc`
+  (`ifconfig_hme0="inet <ip> netmask <mask>"` and `defaultrouter`, or `ifconfig_hme0="DHCP"`),
+  `/etc/resolv.conf` for `--dns`/`--domain`, the optional `--user` (`pw useradd -G wheel`), `shutdown
+  -p now`.
+- **Check** (`freebsd-boot-disk.py`): login, `uname -a`, the marker, `df -k`, `gpart show ada0`,
+  `ifconfig hme0`, the routes, `resolv.conf`, `vmstat -i`; disk trouble on the console (an ata
+  timeout, or the `interrupt storm detected` of FreeBSD bug 239068, `_freebsd.DISK_TROUBLE`) fails it.
+  `REBOOT=1` reboots once (`shutdown -r now`) and logs in again before the power-off.
+
+Lab runs (the lab's own QEMU, `NET=user`; pve-qemu-kvm 11.1.3-4+wsh3's `qemu-system-sparc64` or the
+same tree built with `wsh/0114`-`0115`, OpenBIOS 0001-0030 + 0032-0033 mounted over the package's;
+2026-11-22, load average 2-9 on 14 cores):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `sparc64-boot-cd.py` with the bootonly CD, `EXPECT=Console type` (package firmware) | passed: no interrupt storm, `ada0`/`cd0` on `ata2`/`ata3` (`atapci0: <SiI (CMD) 646U2 UDMA33 controller>`) | bsdinstall's question at 59 s |
+| `freebsd-install-sparc64.py` with disc1 | passed; `bsdinstall script` exit 0 | 10.3 min (the script 8.1 min); `halt -p` to QEMU's exit 15 s |
+| `freebsd-firstboot.py`, `NET_MODE=dhcp` | passed | `login:` at 97 s, 2.7 min in all |
+| `freebsd-boot-disk.py REBOOT=1` | passed: `hme0` 10.0.2.15/24 by DHCP, `default 10.0.2.2`, `nameserver 10.0.2.3`; `vec2016: atapci0` at 19/s | `login:` at 84 s, the reboot to `login:` 94 s, `shutdown -p now` to QEMU's exit 19 s |
+
+Through PVE (`pve_matrix.py install --only install-freebsd124-sun4u --reinstall freebsd124-sun4u`: the PVE
+test container with the published pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, pve-manager
+9.2.32+wsh11, and the lab's `qemu-system-sparc64` and `openbios-sparc64` above mounted over the
+package's; 2026-11-22, load average ~2-3):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install freebsd124-sun4u --check --export <disks>` | passed: `FreeBSD freebsd124-sun4u 12.4-RELEASE r372781 GENERIC sparc64`, the marker, `/` 7.6 GB on `ada0a` (697 MB used), `hme0` 10.0.2.15/24 (the defaults: static, no route); no disk trouble in any phase; disk exported (8 GiB, 691 MB allocated) | 14.9 min (install 574 s, first boot 201 s, check 107 s; `login:` at 76 s) |
+
+The exported disk is not in the stored disks yet: with `matrix_skip` the weekly install matrix would
+still boot-test a stored disk, on the published packages, where the power-off spins.
+
+Not tried: the VGA console, more memory, other NICs, `--user` and a static address through the
+tool, the bootonly CD's network install.
+
 ### OpenBSD 5.9 on sun4m
 
 `openbsd59-ss5` (SS-5, 256 MB) and `openbsd59-ss20` (SS-20, 512 MB, one CPU), both OpenBIOS with
@@ -1987,6 +2067,78 @@ Tested 2026-11-22 on the lab host (TCG, one install at a time, other matrices on
 
 Not tried: `--apt-proxy` (the pinhole), DHCP (`--ip dhcp` is refused; the hand install used it and got
 its lease), `--user` through PVE (the lab run added one), the VGA console.
+### Debian GNU/Linux 7 on sun4u
+
+`debian7-sun4u` installs Debian GNU/Linux 7.11 "wheezy", the last official Debian release for sparc
+(32-bit userland, the sparc64 kernel Linux 3.2.0-4, SILO), on the sparc64 profile: sun4u, OpenBIOS,
+512 MB, `vga: serial0`, a blank 8 GiB disk on `ide0`, CD 1 (`debian-7.11.0-sparc-CD-1.iso`) on
+`ide2`, `sunhme` (`eth0`). It is the first installed Linux disk on sparc64 here (Debian 12's install
+fails, `submodules/SPARC.md`, "sparc64 (sun4u)"). Everything comes from CD 1, so the install needs no
+router, name server or apt cache, and `pve_matrix.py install` installs it like the BSD targets.
+
+1. **Install** (the `unattended` method, `debian-install-sparc.py` with `ARCH=sparc64`; the same
+   scenarios as Debian 4.0, `_debian.py` picks the machine by `ARCH`). `install.Unattended` writes the
+   answer CD (`answer_media.preseed_wheezy()` and the loader `wshlab`) and puts it on `ide3`, the
+   secondary slave: Linux's `sr1`, after CD 1 on the secondary master (`sr0`). OpenBIOS boots CD 1
+   (`Trying cdrom:f...`, SILO 1.4.14) and the scenario types at SILO's `boot:`
+   (`_debian.boot_line64()`):
+   `install priority=critical locale=en_US preseed/early_command="modprobe pata_cmd64x;modprobe sr_mod;modprobe isofs;until mount -r -t iso9660 /dev/sr1 /mnt;do sleep 1;done;sh /mnt/wshlab"`.
+   `wshlab` loads `preseed.cfg` with `debconf-set-selections`, unmounts the CD (`umount -l`: plain
+   `umount` fails with "Device or resource busy", the script itself is open on it, and d-i shows
+   "Failed to run preseeded command") and deletes its device, so `cdrom-detect` and `apt-setup` see
+   only CD 1. The preseed file: static `eth0` (a router and name servers only when given), no
+   network mirror (`apt-setup/use_mirror false`, no security or updates services), the disk with
+   partman-auto's recipe (`/boot` ext2 128 MB first, `/` ext3, swap 385 MB; partman writes the Sun
+   label), the kernel `linux-image-sparc64`, root's hash `*`, no user, tasksel's "SSH server" and
+   `openssh-server`, SILO on the disk. The scenario stops the VM at the kernel's `Restarting system`
+   (with the published package the firmware's RAM clear after that reset took minutes, see below).
+2. **First boot** (`debian-firstboot.py`): OpenBIOS boots SILO from the disk (`Trying disk:a...`),
+   SILO loads `/vmlinuz` and `/initrd.img` (10 MB) by itself after its 10 s timeout, root logs in on
+   `ttyS0` without a password (the installer's `T0:23:respawn:/sbin/getty -L ttyS0 9600 vt102`),
+   `passwd root`, the marker, the optional user, `poweroff`.
+3. **Check** (`debian-boot-disk.py`): the target's commands (`uname -a`, `hostname`, the marker,
+   `/etc/debian_version` `7.11`, `df -k`, `/proc/partitions`, `ifconfig`, `route -n`, `resolv.conf`,
+   `sources.list`, `netstat -ltn`, `pgrep -l sshd`), `poweroff`.
+
+What the installed system does (lab QEMU, published pve-qemu-kvm 11.1.3-4+wsh3 unless said otherwise):
+
+- `login:` 126-150 s after SILO (152-164 s from QEMU start); `sshd` listens on port 22.
+- **DHCP:** with `iface eth0 inet dhcp` in `/etc/network/interfaces`, `ifup eth0` gets 10.0.2.15
+  from QEMU's user network (`DHCPOFFER from 10.0.2.2`), the default route via 10.0.2.2 and
+  `nameserver 10.0.2.3`; with `deb http://archive.debian.org/debian wheezy main`, `apt-get -o
+  Acquire::Check-Valid-Until=false update` fetched 11.5 MB (the expired archive keys give a
+  `KEYEXPIRED` warning, as for etch). Under that load `sunhme` logged "Happy Meal out of receive
+  descriptors, packet dropped" once.
+- **`poweroff`** ends QEMU with exit code 0, 15 s after the command.
+- **`reboot`** works through OpenBIOS 0030's firmware reset, but with the published package the
+  firmware's RAM clear after the reset crawled: QEMU still held 600 000-1 600 000 translated blocks
+  from Linux, and each store to a page full of them is slow (`submodules/SPARC.md`, "Debian 7 on
+  sun4u"). The installer's final reset (1024 MB, after 85 minutes) reached the banner after about 5
+  minutes, a `reboot` after a minute at the shell (512 MB) after 336 s. With
+  pve-qemu `wsh/0112` (a TB flush on every reset after the power-on one) the banner comes 2 s after
+  `Restarting system` and `login:` 172 s after it.
+- **Idle:** see "Idle" below (pve-qemu `wsh/0110`).
+
+The boot-test VM has a new MAC, which wheezy's udev (`70-persistent-net.rules`) names `eth1`, so the
+boot test runs with the network down, as for etch; the check doesn't need it.
+
+Tested 2026-11-22 on the lab host. Lab runs with the published pve-qemu-kvm 11.1.3-4+wsh3 (the lab
+image), PVE runs in the PVE test container built `--no-cache` from the published packages
+(pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11, libpve-storage-perl
+9.1.18+wsh2), one install at a time, other agents' work on the host (1-minute load 2-17):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| CD 1 and the netinst, `serve`, Return at SILO | "Select a language" on ttya | ~60 s |
+| the install by hand through `serve` (1024 MB, the first preseed loader) | installed; d-i showed "Failed to run preseeded command" (the loader's plain `umount`), the answers were loaded anyway and the install went on; the reset's firmware banner after about 5 minutes (RAM clear) | 84 min to the reset |
+| that disk: SILO, `login:`, DHCP, `apt-get update`, `poweroff`, `reboot` | as described above | |
+| `debian-firstboot.py ARCH=sparc64 ROOT_PASSWORD=wshlab USER=lab`, then `debian-boot-disk.py ARCH=sparc64` with the target's commands, on copies | passed; `7.11`, `/boot` 120 MB ext2 on `sda1`, `/` 7.5 GB on `sda2`, swap on `sda4`, `sshd` on port 22 | 197 s, 179 s |
+| `debian-install-sparc.py ARCH=sparc64` (the final loader), the lab's own QEMU, to the kernel | `-boot d`, the boot line typed, `Kernel command line: ... early_command`, no preseed error (stopped there: one install at a time) | 2 min |
+| `pve_matrix.py install --only install-debian7-sun4u`, empty `--disks` (`lab.py install debian7-sun4u --check --export`) | passed and exported (`install-debian7-sun4u.raw`, 8 GiB, 836 MB allocated); the answer CD in `ide3` and gone afterwards, `boot: order=ide0` | 68.5 min (install 3693 s, first boot 219 s, check 176 s) |
+| the same again, the disk stored | `boot-test debian7-sun4u` passed | 175 s |
+
+Not tried: `--ip dhcp` (refused, as for etch), `--user` through PVE (the first boot's `useradd` ran in
+the lab), `--vlan`, VGA, more memory, the netinst with a network mirror, `reboot` through PVE.
 
 ### The Tribblix install target
 
@@ -2450,8 +2602,8 @@ driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then l
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 
 On sun4u (`scenarios/sparc64-idle.py`) the guests idle through the `idle-halt` machine option (pve-qemu
-`wsh/0042`-`0044` and `0070`-`0072`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
-shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`, `Solaris 7/8`, `Linux`). The stored install disks
+`wsh/0042`-`0044`, `0070`-`0072`, `0110`-`0111` and `0114`-`0115`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
+shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`, `Solaris 7/8`, `Linux`, `Linux 3.2`, `FreeBSD`). The stored install disks
 (`/mnt/os/disks/install-*-sun4u.raw`, `install-netbsd*-sparc64.raw`) take `PASSWORD=wshlab`; each guest
 does something for a while after boot, which `WAIT` ends or waits out before the measurement:
 
@@ -2459,6 +2611,8 @@ does something for a while after boot, which `WAIT` ends or waits out before the
 | --- | --- |
 | NetBSD 9.3, 11.1 | `GUEST=netbsd`, `WAIT=pkill makemandb; sleep 2` (the copied disk rebuilds its manual page index at every boot) |
 | OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
+| FreeBSD 12.4 | `GUEST=freebsd`, `PASSWORD=wshlab` (the target's disk after its first boot; the scenario runs its commands in `sh`, as root's csh ends a here-document only at the quoted word), no `WAIT` |
+| Debian 7 (`install-debian7-sun4u.raw`) | `GUEST=debian`, `PASSWORD=wshlab` (nothing to wait for; the scenario's `LOAD` works too) |
 | Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
 | Solaris 7, 8, 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
 | Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
@@ -2691,9 +2845,12 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `openbsd-install-sparc64.py` | OpenBSD/sparc64 install from `install80.iso` on the serial console, the questions answered by what they ask (`_openbsd.py`), ntpd left on, halted ("The OpenBSD 8.0 install target") | ~9-12 min |
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
+| `freebsd-install-sparc64.py` | FreeBSD 12.4 from disc1 on the serial console: bsdinstall's console type, its Shell, `bsdinstall script` (the auto layout on `ada0`, kernel and base from the CD), `halt -p` ("The FreeBSD 12.4 install target") | ~10 min |
+| `freebsd-firstboot.py`, `freebsd-boot-disk.py` | the install target's first boot (root password, marker, host name, network with `sysrc`, user) and check boot (`REBOOT=1` reboots once first) | ~2-3 min each |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u"). The `sparc64` matrix runs it on the NetBSD 11.1 disk (`nb111-reboot-sparc64`, `nb111-reboot-bootstr-sparc64` with `REBOOT=reboot -- netbsd`) | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
-| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
+| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, FreeBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
+| `debian-install-sparc.py`, `debian-firstboot.py`, `debian-boot-disk.py` with `ARCH=sparc64` | Debian 7.11 on sun4u from CD 1 with a preseed answer CD on the secondary IDE slave, its first boot and check ("Debian GNU/Linux 7 on sun4u") | install ~85 min, first boot ~3.5 min, check ~3 min |
 | `debian13-install-sparc64.py` | Debian 13 (debian-ports sid) from the sparc64 netinst with a preseed file on an answer CD (IDE secondary slave, `sr1`): the kernel options typed on the netinst's GRUB `linux` line, preseed/early_command loads the file; stops the VM when the install reboots, fails at the first question box ("Debian 13 on sun4u") | ~2.5 h |
 | `debian13-firstboot.py`, `debian13-boot-disk.py` | boot the installed Debian 13 disk through GRUB to `login:` on ttyS0; the first sets root's password (chpasswd), the marker and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~4 min |
 

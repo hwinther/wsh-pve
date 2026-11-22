@@ -141,8 +141,14 @@ GUESTS = {
                "COMMANDS": "uname -a ;; sysctl hw.ncpu hw.physmem64 ;; df -h /"},
     "openbsd": {"PROMPT": r"login: ?$", "USER": "root", "PASSWORD": "lab", "POWEROFF": "sync; halt -p",
                 "COMMANDS": "uname -a ;; sysctl hw.ncpu hw.physmem ;; df -h /"},
+    # the freebsd124-sun4u target's disk (the stored disk takes PASSWORD=wshlab); root's shell is csh,
+    # whose here-documents (sparc64-idle.py's LOAD) end only at the quoted word: sh for the commands
+    "freebsd": {"PROMPT": r"login: ?$", "USER": "root", "PASSWORD": "", "POWEROFF": "shutdown -p now",
+                "LOGIN_SHELL": "exec /bin/sh",
+                "COMMANDS": "uname -a ;; sysctl hw.ncpu hw.physmem ;; df -h /"},
     "debian": {"PROMPT": r"login: ?$", "USER": "root", "PASSWORD": "lab", "POWEROFF": "poweroff",
-               "COMMANDS": "uname -a ;; nproc; free -m ;; lsblk ;; ip -br addr"},
+               # also on Debian 7 (wheezy: its ip has no -br)
+               "COMMANDS": "uname -a ;; nproc; free -m ;; lsblk ;; ip addr show eth0"},
     # solaris10-install-sparc64.py's disk; its first boot asks for the keyboard layout
     "solaris10": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "lab12345", "POWEROFF": "init 5",
                   "FIRSTBOOT": r"Configure Keyboard Layout",
@@ -188,6 +194,9 @@ def login(m, v, timeout=900):
         m.expect(r"[Pp]assword: ?$", 60)
         m.send(f"{v['PASSWORD']}\r")
     m.expect(r"[#$] ?$", 300)
+    if v.get("LOGIN_SHELL"):  # a POSIX shell for the commands (FreeBSD's root has csh)
+        m.send(v["LOGIN_SHELL"] + "\r")
+        time.sleep(2)
     shell(m, "true")  # past any login messages
 
 

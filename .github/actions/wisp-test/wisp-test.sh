@@ -136,10 +136,15 @@ else
 	fi
 	# libgcc where the compiler has one for these flags; sparc32 links none: without the multilib
 	# package the compiler names its 64-bit libgcc for -m32, and the multilib's 32-bit libgcc is
-	# V8+, which the sparc32 kernel refuses.
-	# shellcheck disable=SC2086
-	libgcc=$($CC $ARCH_CFLAGS -print-libgcc-file-name 2>/dev/null || true)
-	[ -f "$libgcc" ] && [ "$ARCH" != sparc32 ] && files+=("$libgcc")
+	# V8+, which the sparc32 kernel refuses. It gets the 64-bit division helpers instead
+	# (libgcc-sparc32.c).
+	if [ "$ARCH" = sparc32 ]; then
+		files+=("$HERE/libgcc-sparc32.c")
+	else
+		# shellcheck disable=SC2086
+		libgcc=$($CC $ARCH_CFLAGS -print-libgcc-file-name 2>/dev/null || true)
+		[ ! -f "$libgcc" ] || files+=("$libgcc")
+	fi
 	log "$CC ${flags[*]} ${files[*]}"
 	$CC "${flags[@]}" -o "$WORK/test" "${files[@]}" || die "build failed"
 fi

@@ -379,8 +379,41 @@ class Solaris10(unittest.TestCase):
     def test_network_text_names_hme0(self):
         n = install.network_choice(self.t, net_args(target="sol10-sun4u"))
         self.assertTrue(install.network_text(n, self.t["nic"]).startswith("hme0 10.0.2.15/24"))
-        with self.assertRaises(SystemExit):
-            install.network_choice(self.t, net_args(target="sol10-sun4u", ip="dhcp"))
+        n = install.network_choice(self.t, net_args(target="sol10-sun4u", ip="dhcp"))
+        self.assertTrue(install.network_text(n, self.t["nic"], self.t["dhcp_note"]).startswith("hme0 by DHCP"))
+
+    def test_dhcp_reaches_the_installer_and_the_check(self):
+        """--ip dhcp: the installer's DHCP screen says yes (static: no), and the check boot also
+        needs the lease flag, the router from the server and a ping of it."""
+        class Job:
+            target, volids, hostname, root_password = self.t, {}, "sol10-sun4u", "wshlab"
+            a = types.SimpleNamespace(timeout=None, vmid="1", target="sol10-sun4u", user=None, data_disk=False,
+                                      post_install=None)
+
+            def __init__(self, mode):
+                self.net = {"mode": mode, "ip": None if mode == "dhcp" else "10.0.2.15",
+                            "netmask": None if mode == "dhcp" else "255.255.255.0"}
+                self.vars = {}
+
+            def phase(self, name, scenario, v, timeout, swaps=()):
+                self.vars[name] = v
+
+        for mode, dhcp in (("dhcp", "yes"), ("static", "no")):
+            job = Job(mode)
+            install.Scripted().install(job)
+            install.Scripted().check(job)
+            self.assertEqual(job.vars["install"]["DHCP"], dhcp)
+            check = job.vars["check"]
+            self.assertEqual("dhcpinfo" in check["COMMANDS"], mode == "dhcp")
+            self.assertLess(len(check["COMMANDS"]) + len("; echo END-OF-COMMAND"), 256)
+        job = Job("dhcp")
+        install.Scripted().check(job)
+        rx = re.compile(job.vars["check"]["CHECK"])
+        good = ("target=sol10-sun4u\nhme0: flags=1004843<UP,BROADCAST,RUNNING,MULTICAST,DHCP,IPv4> mtu 1500\n"
+                "router=10.0.2.2\n10.0.2.2 is alive\n")
+        self.assertTrue(rx.search(good))
+        for drop in ("target=sol10-sun4u\n", "DHCP,", "router=10.0.2.2\n", "10.0.2.2 is alive\n"):
+            self.assertFalse(rx.search(good.replace(drop, "")), drop)
 
     def test_select_moves_from_the_marked_choice(self):
         m = FakeScreen("  Default Route for hme0\n      [X] Detect one\n      [ ] Specify one\n      [ ] None\n")
@@ -1563,6 +1596,65 @@ class OpenBSD80(unittest.TestCase):
         self.assertEqual(m.sent, [])
 
 
+class FreeBSD124(unittest.TestCase):
+    """freebsd124-sun4u: the target, the medium, bsdinstall's script (_freebsd.py), passwd's prompts."""
+    t = targets.TARGETS["freebsd124-sun4u"]
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _freebsd
+        cls.fb = _freebsd
+
+    def test_target(self):
+        t, p = self.t, self.t["profile"]
+        self.assertEqual((p["arch"], p["machine"], p["bios"], p["net0"]), ("sparc64", "sun4u", "openbios-sparc64", "sunhme"))
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"], t["nic"]), ("ide0", None, "ide0", "hme0"))
+        self.assertEqual(t["media"], [{"name": "FreeBSD-12.4-RELEASE-sparc64-disc1.iso", "drive": "ide2"}])
+        self.assertNotIn("root_password", t["install"])  # the first boot sets it at passwd's prompts
+        self.assertEqual(t["net_modes"], ["static", "dhcp"])
+        self.assertGreater(t["minutes"], 0)
+        med = targets.MEDIA["FreeBSD-12.4-RELEASE-sparc64-disc1.iso"]
+        self.assertEqual((med["size"], med["lab"]),
+                         (640942080, "other-os/freebsd12.4/FreeBSD-12.4-RELEASE-sparc64-disc1.iso"))
+        self.assertEqual(len(med["sha512"]), 128)
+        a = types.SimpleNamespace(bridge="vmbr0", storage="local", vmid="9230", name=None, target="freebsd124-sun4u")
+        vp = install.vm_params(t, a, {med["lab"].rsplit("/", 1)[1]: "local:iso/x.iso"}, None)
+        self.assertEqual((vp["ide0"], vp["ide2"]), ("local:8,format=raw", "local:iso/x.iso,media=cdrom"))
+
+    def test_installerconfig(self):
+        lines = self.fb.installerconfig({"HOSTNAME": "freebsd124-sun4u", "IP": "10.0.2.15", "NETMASK": "255.255.255.0"})
+        # the preamble, then the setup script, which runs in the new system
+        self.assertEqual(lines[:5], ["PARTITIONS=ada0", 'DISTRIBUTIONS="kernel.txz base.txz"',
+                                     "BSDINSTALL_DISTDIR=/usr/freebsd-dist", "nonInteractive=YES", "#!/bin/sh"])
+        self.assertIn('sysrc ifconfig_hme0="inet 10.0.2.15 netmask 255.255.255.0"', lines)
+        self.assertIn("sysrc hostname=freebsd124-sun4u", lines)
+        self.assertFalse(any("'" in line for line in lines))  # typed with echo '...'
+        with self.assertRaises(ValueError):
+            self.fb.installerconfig({"HOSTNAME": "it's", "IP": "10.0.2.15", "NETMASK": "255.255.255.0"})
+
+    def test_passwd_echo_is_no_result(self):
+        # the echoed command line must not end passwd() before its prompts (it typed the next command
+        # in as the password once)
+        m = InstallerConsole(["", "Changing local password for root\nNew Password:",
+                              "Retype New Password:", "PASSWD-RC=0\nroot@freebsd124-sun4u:~ # "])
+        sent = []
+        saved = self.fb.shell
+        try:
+            self.fb.shell = lambda m_, c, timeout=300: sent.append(c) or ""
+            self.fb.passwd(m, "root", "pw")
+        finally:
+            self.fb.shell = saved
+        self.assertEqual(m.sent, ["sh -c 'passwd root; echo PASSWD-RC=$?'\r", "pw\r", "pw\r"])
+        self.assertIsNone(re.search(r"PASSWD-RC=\d", m.sent[0]))
+
+    def test_disk_trouble(self):
+        for line in ['interrupt storm detected on "vec2016:"; throttling interrupt source',
+                     "ada0: timeout"]:
+            self.assertTrue(re.search(self.fb.DISK_TROUBLE, line), line)
+        self.assertIsNone(re.search(self.fb.DISK_TROUBLE, "ada0: 33.300MB/s transfers (UDMA2, PIO 8192bytes)"))
+
+
 class OpenBSD59(unittest.TestCase):
     """openbsd59-ss5 and openbsd59-ss20: the targets, the sets CD made from the release's files
     (answer_media.openbsd_sets, install.convert_files) and 5.9's installer questions (_openbsd.py)."""
@@ -2338,6 +2430,92 @@ class Debian13(unittest.TestCase):
             text = "".join(m._strip(data[i:i + size]) for i in range(0, len(data), size))
             self.assertIn("\nEND-OF-COMMAND\n", text, size)
             self.assertNotIn("3008", text)
+class Debian7(unittest.TestCase):
+    """debian7-sun4u: the unattended method with a wheezy preseed file (answer CD on ide3, loaded by
+    preseed/early_command), everything from CD 1: no router, name server or apt proxy needed."""
+
+    def test_target(self):
+        t = targets.TARGETS["debian7-sun4u"]
+        self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "eth0"))
+        self.assertEqual(t["install"]["answers"], {"format": "preseed-wheezy", "drive": "ide3"})
+        self.assertEqual(t["media"], [{"name": "debian-7.11.0-sparc-CD-1.iso", "drive": "ide2"}])
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"]), ("ide0", None, "ide0"))
+        self.assertEqual((t["profile"]["arch"], t["profile"]["machine"]), ("sparc64", "sun4u"))
+        self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"], t["matrix_needs"]),
+                         (["static"], [], False, None))
+        self.assertNotIn("matrix_skip", t)
+        self.assertIn("cat /etc/debian_version", t["check"]["commands"])
+        self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertIn("preseed-wheezy", __import__("answer_media").FORMATS)
+
+    def test_network_needs_nothing(self):
+        def a(**kw):
+            base = dict(target="debian7-sun4u", ip=None, netmask=None, gateway=None, dns=None, domain=None,
+                        vlan=None, bridge="vmbr0", apt_proxy=None)
+            return types.SimpleNamespace(**{**base, **kw})
+        t = targets.TARGETS["debian7-sun4u"]
+        net = install.network_choice(t, a())
+        self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", None, []))
+        net = install.network_choice(t, a(gateway="10.0.2.2", dns="10.0.2.3"))
+        self.assertEqual((net["gateway"], net["dns"]), ("10.0.2.2", ["10.0.2.3"]))
+        with self.assertRaises(SystemExit):
+            install.network_choice(t, a(ip="dhcp"))
+        # nothing is fetched: --apt-proxy is refused, the environment variable ignored
+        self.assertIsNone(install.apt_proxy_choice(t, None, env={"WSH_LAB_APT_PROXY": "http://10.0.2.2:3142"}))
+        with self.assertRaises(SystemExit):
+            install.apt_proxy_choice(t, "http://10.0.2.2:3142", env={})
+
+    def test_preseed(self):
+        import answer_media
+        lines = answer_media.preseed_wheezy("10.77.0.60", "255.255.255.0", "10.77.0.1", ["10.77.0.1"],
+                                            "lab.test", "deb7").splitlines()
+        for line in ("d-i netcfg/disable_autoconfig boolean true", "d-i netcfg/get_ipaddress string 10.77.0.60",
+                     "d-i netcfg/get_gateway string 10.77.0.1", "d-i netcfg/get_nameservers string 10.77.0.1",
+                     "d-i netcfg/get_hostname string deb7", "d-i netcfg/get_domain string lab.test",
+                     "d-i apt-setup/use_mirror boolean false", "d-i apt-setup/services-select multiselect",
+                     "d-i partman-auto/disk string /dev/sda", "d-i passwd/root-password-crypted password *",
+                     "d-i passwd/make-user boolean false", "tasksel tasksel/first multiselect ssh-server",
+                     "d-i pkgsel/include string openssh-server", "d-i preseed/early_command string"):
+            self.assertIn(line, lines)
+        self.assertFalse([line for line in lines if "mirror/http" in line])  # nothing fetched
+        recipe = next(line for line in lines if "expert_recipe" in line)
+        self.assertEqual(re.findall(r"mountpoint\{ (\S+) \}", recipe), ["/boot", "/"])  # /boot first (SILO)
+        late = next(line for line in lines if "late_command" in line)
+        self.assertIn("in-target passwd -d root", late)
+        # without a router or name server: empty answers, no default route
+        lines = answer_media.preseed_wheezy("10.0.2.15", "255.255.255.0").splitlines()
+        for line in ("d-i netcfg/get_gateway string ", "d-i netcfg/get_nameservers string ",
+                     "d-i netcfg/no_default_route boolean true"):
+            self.assertIn(line, lines)
+        for bad in (dict(hostname="a b"), dict(dns=["10.0.2.3; reboot"]), dict(proxy="http://10.0.2.2:3142")):
+            with self.assertRaises(ValueError, msg=bad):
+                answer_media.preseed_wheezy("10.0.2.15", "255.255.255.0", **bad)
+
+    def test_answer_cd(self):
+        import answer_media
+        import dos_tools
+        data = answer_media.image("preseed-wheezy", "10.0.2.15", "255.255.255.0", None, (), None, "debian7-sun4u")
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["PRESEED.CFG", "WSHLAB"])
+            self.assertIn(b"d-i netcfg/get_hostname string debian7-sun4u\n", iso.cat("preseed.cfg"))
+            self.assertEqual(iso.cat("wshlab"), answer_media.PRESEED_LOADER_WHEEZY.encode())
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        self.assertIn("/device/delete", answer_media.PRESEED_LOADER_WHEEZY)
+
+    def test_boot_line(self):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian
+        line = _debian.boot_line64()
+        self.assertTrue(line.startswith('install priority=critical locale=en_US preseed/early_command="'))
+        self.assertIn("mount -r -t iso9660 /dev/sr1 /mnt", line)  # ide3: the secondary slave, after CD 1
+        self.assertNotIn(".", line.split("early_command=")[1])  # d-i reads a.b=c as a module parameter
+        self.assertEqual(_debian.ANSWERS_DEV64, "/dev/sr1")
+        self.assertEqual(targets.TARGETS["debian7-sun4u"]["install"]["answers"]["drive"], "ide3")
 
 
 if __name__ == "__main__":

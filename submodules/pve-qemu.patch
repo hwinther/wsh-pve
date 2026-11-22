@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..321ee6d 100644
+index bc240a0..68d84b0 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,75 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,85 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -149,6 +149,16 @@ index bc240a0..321ee6d 100644
 +wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch
 +wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch
 +wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
++wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
++wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
++wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
++wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
++wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
++wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
++wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
++wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
++wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
++wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -6352,7 +6362,7 @@ index 0000000..720c02c
 +     return 0;
 diff --git a/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 new file mode 100644
-index 0000000..37dc275
+index 0000000..34a1204
 --- /dev/null
 +++ b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 @@ -0,0 +1,311 @@
@@ -13459,7 +13469,7 @@ index 0000000..e6741d1
 ++}
 diff --git a/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
 new file mode 100644
-index 0000000..16c9626
+index 0000000..12f0079
 --- /dev/null
 +++ b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
 @@ -0,0 +1,341 @@
@@ -14927,6 +14937,2217 @@ index 0000000..385d8a7
 +                 qtest_add_data_func(name, t, test_idle);
 +             }
 +         }
+diff --git a/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch b/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
+new file mode 100644
+index 0000000..07d53d6
+--- /dev/null
++++ b/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
+@@ -0,0 +1,207 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt the CPU in Linux 3.2's idle loop on sun4u
++
++Debian 7's Linux 3.2 spins in its idle loop on sun4u and keeps a host
++core busy for as long as the VM runs. Its idle loop is older than the
++generic one the Linux layouts so far follow: cpu_idle() in
++arch/sparc/kernel/process_64.c spins with interrupts enabled (%pil 0)
++while need_resched() is clear, and its sparc64_yield() only touches the
++NMI watchdog on sun4u (it yields to the hypervisor on sun4v, after
++clearing TIF_POLLING_NRFLAG).
++
++The translator now also recognises that loop at its call of
++touch_nmi_watchdog(), as gcc 4.6 lays it out in Debian's sparc64 and
++sparc64-smp kernels: the test of tlb_type against hypervisor (3), the
++be,pn to the sun4v branch with mov 14, %o0 (TIF_POLLING_NRFLAG) in its
++delay slot, the call, the branch back to the top and the sun4v branch's
++call of clear_bit() with &current_thread_info()->flags. The Linux helper
++takes the interrupt level the loop runs the call at, 14 for the later
++kernels and 0 for 3.2, and halts the CPU there when TIF_NEED_RESCHED is
++clear in the flags at %g6 + 8, PSTATE.IE is set and nothing is pending,
++after the same 100 us of spinning as for the other guests. The CPU goes
++on at the call after the next interrupt.
++
++An idle Debian 7 at the shell then uses 0.1% of a host core instead of
++100% (the kernel is tickless when idle, CONFIG_NO_HZ); a CPU-bound job
++(13.4 s with the halt, 12.8 and 12.9 s without), ten "sleep 1" (10.4 s)
++and two minutes of CPU and file load take as long as before, and the
++guest clock keeps time.
++---
++ hw/sparc64/sun4u.c          |  3 +-
++ target/sparc/helper.h       |  2 +-
++ target/sparc/sparc64_idle.c | 31 +++++++++++++-------
++ target/sparc/translate.c    | 58 ++++++++++++++++++++++++++++++++++---
++ 4 files changed, 78 insertions(+), 16 deletions(-)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index 1901d47a..8e17e9cd 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -909,7 +909,8 @@ static void sun4u_class_init(ObjectClass *oc, const void *data)
++                                    sun4u_set_idle_halt);
++     object_class_property_set_description(oc, "idle-halt",
++         "Halt the CPU while a known guest kernel (NetBSD, OpenBSD, Solaris, "
++-        "illumos, Linux) is idle, instead of spinning (default: on)");
+++        "illumos, Linux 3.2 and later) is idle, instead of spinning "
+++        "(default: on)");
++ }
++ 
++ static const TypeInfo sun4u_type = {
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 76857387..6cb1b0d8 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -14,7 +14,7 @@ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++ #ifndef CONFIG_USER_ONLY
++ DEF_HELPER_5(sparc64_idle, void, env, tl, tl, tl, tl)
++-DEF_HELPER_3(sparc64_idle_linux, void, env, tl, tl)
+++DEF_HELPER_4(sparc64_idle_linux, void, env, tl, tl, tl)
++ #endif
++ DEF_HELPER_2(wrpstate, void, env, tl)
++ DEF_HELPER_1(done, void, env)
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index 69ad8e5a..d484a1d7 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -68,8 +68,19 @@
++  *     round again as soon as it has enabled interrupts; the word is
++  *     need_resched()'s, the flags of current_thread_info() at %g6 + 8.
++  *
++- * Linux is halted at %pil 14 by helper_sparc64_idle_linux(), as sun4v's
++- * cpu_yield and x86's mwait wait with interrupts disabled. The tick and
+++ *   Linux 3.2 cpu_idle() (Debian 7), which spins with interrupts enabled:
+++ *       while (!need_resched() && !cpu_is_offline(cpu)) {
+++ *           if (tlb_type != hypervisor)
+++ *               touch_nmi_watchdog();         <- here
+++ *           else
+++ *               ... clear TIF_POLLING_NRFLAG, sun4v_cpu_yield() ...
+++ *       }
+++ *     The word is the same as in later kernels; the call is made at
+++ *     %pil 0, as in the BSDs' and Solaris's loops.
+++ *
+++ * Linux is halted at %pil 14 (3.2: at %pil 0) by
+++ * helper_sparc64_idle_linux(), as sun4v's cpu_yield and x86's mwait wait
+++ * with interrupts disabled. The tick and
++  * stick compare interrupts and the interrupt vector wake a halted CPU
++  * whatever %pil (hw/sparc64/sparc64.c), and the CPU goes on at the call;
++  * the interrupt is taken when the idle loop enables interrupts again.
++@@ -173,23 +184,23 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++     cpu_loop_exit(cs);
++ }
++ 
++-#define LINUX_PIL_NORMAL_MAX    14      /* local_irq_disable() */
++ #define LINUX_TIF_NEED_RESCHED  (1 << 3)
++ 
++ /*
++- * Linux, at the call in arch_cpu_idle() (pc); flags_addr is
++- * current_thread_info()->flags. Halt until the next interrupt when
++- * interrupts are disabled as the idle loop disables them, none is pending
++- * and need_resched() is clear, and go on at the call then: whatever %pil,
++- * the tick, stick and interrupt vector set cs->halted to 0.
+++ * Linux, at the call in arch_cpu_idle() or, in 3.2, cpu_idle() (pc);
+++ * flags_addr is current_thread_info()->flags. Halt until the next
+++ * interrupt when %pil is what the idle loop runs the call at (14, as
+++ * local_irq_disable() writes; 0 in 3.2), none is pending and need_resched()
+++ * is clear, and go on at the call then: whatever %pil, the tick, stick and
+++ * interrupt vector set cs->halted to 0.
++  */
++ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++-                                target_ulong flags_addr)
+++                                target_ulong flags_addr, target_ulong pil)
++ {
++     CPUState *cs = env_cpu(env);
++     uint64_t flags;
++ 
++-    if (!(env->pstate & PS_IE) || env->psrpil != LINUX_PIL_NORMAL_MAX ||
+++    if (!(env->pstate & PS_IE) || env->psrpil != pil ||
++         env->tl || cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++         (env->ivec_status & 0x20) || env->softint || env->pil_in) {
++         return;
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 10299b17..3f5aa5d9 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6651,10 +6651,59 @@ static bool s64_idle_linux(const uint32_t *w, target_ulong pc,
++     return false;
++ }
++ 
+++#define S64_MOV14_O0    0x9010200e      /* mov 14, %o0 (TIF_POLLING_NRFLAG) */
+++#define S64_ADD8_O1     0x92026008      /* add %o1, 8, %o1 (&ti->flags) */
+++
+++/*
+++ * Linux 3.2 cpu_idle() (Debian 7's sparc64 and sparc64-smp kernels, gcc
+++ * 4.6; w[S64_IDLE_BEFORE] is the call). It spins with interrupts enabled
+++ * at %pil 0, sparc64_yield() inlined:
+++ *
+++ *     while (!need_resched() && !cpu_is_offline(cpu)) {
+++ *         if (tlb_type != hypervisor)
+++ *             touch_nmi_watchdog();       <- here
+++ *         else {
+++ *             clear_thread_flag(TIF_POLLING_NRFLAG); ... sun4v_cpu_yield();
+++ *         }
+++ *     }
+++ *
+++ *        cmp   %r, 3                      (hypervisor; tlb_type loaded
+++ *        be,pn %icc sun4v                  before, or in another block)
+++ *         mov  14, %o0                    (TIF_POLLING_NRFLAG)
+++ *        call  touch_nmi_watchdog         <- here
+++ *         nop
+++ *        b     top
+++ *         nop
+++ *  sun4v: call clear_bit
+++ *         add  %o1, 8, %o1                (&current_thread_info()->flags)
+++ *
+++ * The word is need_resched()'s, as in later kernels.
+++ */
+++static bool s64_idle_linux32(const uint32_t *w, target_ulong pc,
+++                             S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t, top, bit;
+++    int r;
+++
+++    if (!s64_cmp3(c[-3], &r) ||
+++        !s64_bcc(c[-2], pc - 8, S64_BE, &t) || t != pc + 16 ||
+++        c[-1] != S64_MOV14_O0 || !s64_call(c[0], pc, &t) ||
+++        c[1] != S64_NOP || !s64_bcc(c[2], pc + 8, S64_BA, &top) ||
+++        top == pc + 8 || c[3] != S64_NOP ||
+++        !s64_call(c[4], pc + 16, &bit) || c[5] != S64_ADD8_O1) {
+++        return false;
+++    }
+++    iw->reg = 6;
+++    iw->off = 8;
+++    return true;
+++}
+++
++ typedef struct Sparc64IdleLoop {
++     const char *kernel;
++     bool (*match)(const uint32_t *w, target_ulong pc, S64IdleWord *iw);
++-    bool irqs_off;      /* at %pil 14: helper_sparc64_idle_linux() */
+++    bool linux_loop;    /* helper_sparc64_idle_linux(), at %pil pil */
+++    int pil;
++ } Sparc64IdleLoop;
++ 
++ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++@@ -6662,7 +6711,8 @@ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
++     { "Solaris 7/8", s64_idle_solaris7 },
++-    { "Linux", s64_idle_linux, true },
+++    { "Linux", s64_idle_linux, true, 14 },
+++    { "Linux 3.2", s64_idle_linux32, true, 0 },
++ };
++ 
++ /*
++@@ -6714,9 +6764,9 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         translator_io_start(&dc->base);
++         addr = tcg_temp_new();
++         tcg_gen_addi_tl(addr, gen_load_gpr(dc, iw.reg), iw.off);
++-        if (l->irqs_off) {
+++        if (l->linux_loop) {
++             gen_helper_sparc64_idle_linux(tcg_env, tcg_constant_tl(dc->pc),
++-                                          addr);
+++                                          addr, tcg_constant_tl(l->pil));
++         } else {
++             gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
++                                     tcg_constant_tl(iw.indirect),
+diff --git a/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch b/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
+new file mode 100644
+index 0000000..5b6c3f9
+--- /dev/null
++++ b/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
+@@ -0,0 +1,155 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the Linux 3.2 idle loop on sun4u
++
++sun4u-idle-test gets the layout of Linux 3.2's cpu_idle() as gcc 4.6
++compiled Debian 7's sparc64 kernel: need_resched() tested at the top,
++the test of tlb_type against hypervisor with the be,pn to the sun4v
++branch and mov 14, %o0 in its delay slot, the call of
++touch_nmi_watchdog() and the sun4v branch's clear_bit() call. The loop
++runs at interrupt level 0: the CPU must halt there, and not with
++TIF_NEED_RESCHED set, without PSTATE.IE, at level 14 (where the later
++kernels' loop halts) or at level 15; with a tick every millisecond the
++tick must wake the CPU and the loop must run far fewer rounds than with
++idle-halt=off.
++
++Against the binary without the patch before, the idle case of the new
++layout fails.
++---
++ tests/qtest/sun4u-idle-test.c | 75 +++++++++++++++++++++++++++++++++--
++ 1 file changed, 71 insertions(+), 4 deletions(-)
++
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index 3b8ebb91..151465b8 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -18,6 +18,10 @@
++  * the tick must wake it at level 14 and be taken when the loop enables
++  * interrupts.
++  *
+++ * Linux 3.2's cpu_idle() (Debian 7) spins with interrupts enabled at
+++ * level 0, as the BSDs do: the CPU must halt there, not at level 14 or
+++ * 15, not with need_resched() set or interrupts disabled.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -53,7 +57,8 @@
++ 
++ #define NOP             0x01000000
++ 
++-enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX73, LINUX61, LINUX70 };
+++enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX32, LINUX73, LINUX61,
+++       LINUX70 };
++ 
++ #define IS_LINUX(k)     ((k) >= LINUX73)
++ 
++@@ -96,6 +101,15 @@ static uint32_t brnz_o0_to(int from, int to)
++            (((d >> 14) & 3) << 20) | (d & 0x3fff);
++ }
++ 
+++/* brz %g1 */
+++static uint32_t brz_g1_to(int from, int to)
+++{
+++    int d = to - from;
+++
+++    return (1 << 25) | (3 << 22) | (1 << 14) |
+++           (((d >> 14) & 3) << 20) | (d & 0x3fff);
+++}
+++
++ #define BA      8
++ #define BNE     9
++ #define BE      1
++@@ -217,6 +231,40 @@ static int write_linux(uint32_t *p, int k, uint32_t pil)
++     return aci + n;
++ }
++ 
+++/*
+++ * Linux 3.2's cpu_idle() at LOOP, as gcc 4.6 lays out Debian 7's kernel,
+++ * at the interrupt level the PROM set (0 in Linux): FUNC stands in for
+++ * touch_nmi_watchdog() and counts the round, and for schedule() when
+++ * need_resched() is set; FUNC + 3 for clear_bit() in the sun4v branch
+++ */
+++static int write_linux32(uint32_t *p)
+++{
+++    int n = 0;
+++
+++    p[n++] = 0xc259a008;                /* top: ldx [%g6 + 8], %g1 */
+++    p[n++] = 0x82086008;                /* and %g1, 8, %g1 */
+++    p[n] = brz_g1_to(LOOP + n, LOOP + 8); n++;
+++    p[n++] = 0x92100006;                /*  mov %g6, %o1 */
+++    p[n] = call_to(LOOP + n, FUNC); n++;         /* schedule() */
+++    p[n++] = NOP;
+++    p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    p[n++] = 0x03000002;                /* sethi %hi(0x800), %g1 */
+++    p[n++] = 0xc2006070;                /* ld [%g1 + 0x70], %g1 tlb_type */
+++    p[n++] = 0x80a06003;                /* cmp %g1, 3 (hypervisor) */
+++    p[n] = bpcc_icc_to(BE, LOOP + n, LOOP + n + 6); n++;     /* be,pn */
+++    p[n++] = 0x9010200e;                /*  mov 14, %o0 */
+++    p[n] = call_to(LOOP + n, FUNC); n++;         /* touch_nmi_watchdog */
+++    p[n++] = NOP;
+++    p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    p[n] = call_to(LOOP + n, FUNC + 3); n++;     /* sun4v: clear_bit */
+++    p[n++] = 0x92026008;                /*  add %o1, 8, %o1 */
+++    p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    return n;
+++}
+++
++ /* Lay the loop of kernel k out at LOOP; returns its length */
++ static int write_loop(uint32_t *p, int k, uint32_t pil)
++ {
++@@ -225,6 +273,9 @@ static int write_loop(uint32_t *p, int k, uint32_t pil)
++     if (IS_LINUX(k)) {
++         return write_linux(p, k, pil);
++     }
+++    if (k == LINUX32) {
+++        return write_linux32(p);
+++    }
++ 
++     switch (k) {
++     case NETBSD:
++@@ -475,7 +526,7 @@ static void test_idle(const void *data)
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++-        "netbsd", "openbsd", "solaris", "tribblix", "solaris7",
+++        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "linux-3.2",
++         "linux-7.3", "linux-6.1", "linux-7.0"
++     };
++     static const IdleCase cases[] = {
++@@ -501,6 +552,19 @@ int main(int argc, char **argv)
++         { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 14, true, true },
++     };
+++    /*
+++     * Linux 3.2 runs its idle loop at pil 0, as the BSDs do; work is
+++     * TIF_NEED_RESCHED. Not at pil 14, where later kernels halt.
+++     */
+++    static const IdleCase linux32_cases[] = {
+++        { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, true },
+++        { "off", "sun4u,idle-halt=off", 0, PS_PEF_PRIV_IE, 0, false, false },
+++        { "work", "sun4u", 1, PS_PEF_PRIV_IE, 0, false, false },
+++        { "noint", "sun4u", 0, PS_PEF_PRIV, 0, false, false },
+++        { "pil14", "sun4u", 0, PS_PEF_PRIV_IE, 14, false, false },
+++        { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
+++        { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
+++    };
++     static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(linux_cases)];
++     int k, i, n = 0;
++ 
++@@ -508,8 +572,11 @@ int main(int argc, char **argv)
++ 
++     if (qtest_has_accel("tcg")) {
++         for (k = 0; k < ARRAY_SIZE(kernels); k++) {
++-            const IdleCase *c = IS_LINUX(k) ? linux_cases : cases;
++-            int nc = IS_LINUX(k) ? ARRAY_SIZE(linux_cases) : ARRAY_SIZE(cases);
+++            const IdleCase *c = IS_LINUX(k) ? linux_cases :
+++                                k == LINUX32 ? linux32_cases : cases;
+++            int nc = IS_LINUX(k) ? ARRAY_SIZE(linux_cases) :
+++                     k == LINUX32 ? ARRAY_SIZE(linux32_cases) :
+++                     ARRAY_SIZE(cases);
++ 
++             for (i = 0; i < nc; i++) {
++                 IdleTest *t = &tests[n++];
+diff --git a/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch b/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
+new file mode 100644
+index 0000000..54277e1
+--- /dev/null
++++ b/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
+@@ -0,0 +1,52 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64: drop the translated code on a reset
++
++After a reset (a reboot asks the firmware for one) openbios-sparc64
++clears the RAM below its own with 8-byte stores, so that the next system
++finds it zeroed as after a power-on. A store to a page that still has
++translated blocks on it invalidates the ones it overlaps, and taking a
++block off its page's list costs time in proportion to how many the page
++holds. After Debian 7's Linux 3.2 had run for a few minutes QEMU held
++600 000 to 1 600 000 blocks, many of them on a few pages, and the clear
++crawled there: most of the RAM in a minute or two, then a few bytes to
++a few KB a second around the pages the kernel had used (perf: 86% of
++the time in tb_page_remove()). A reboot after a minute at the shell
++(512 MB) reached the firmware's banner 336 s after the kernel's
++"Restarting system"; the installer's reboot after 85 minutes (1024 MB)
++took about 5 minutes.
++
++Queue a TB flush for the CPU in main_cpu_reset() on every reset after
++the power-on one; it runs before the CPU executes again. The same reboot
++then reaches the banner 2 s after "Restarting system", and the system
++boots to its login prompt.
++---
++ hw/sparc64/sparc64.c | 9 +++++++++
++ 1 file changed, 9 insertions(+)
++
++diff --git a/hw/sparc64/sparc64.c b/hw/sparc64/sparc64.c
++index 16f4aa05..e2e686a2 100644
++--- a/hw/sparc64/sparc64.c
+++++ b/hw/sparc64/sparc64.c
++@@ -30,6 +30,7 @@
++ #include "hw/sparc/sparc64.h"
++ #include "qemu/timer.h"
++ #include "system/reset.h"
+++#include "exec/tb-flush.h"
++ #include "trace.h"
++ 
++ 
++@@ -126,6 +127,14 @@ static void main_cpu_reset(void *opaque)
++         env->pc = s->prom_addr + 0x20ULL;
++     } else {
++         env->pc = s->prom_addr + 0x40ULL;
+++        /*
+++         * Drop the code translated for the system before. The firmware
+++         * clears the RAM after a reset, and a store to a page that still
+++         * has translated blocks invalidates them one by one, each at a
+++         * cost that grows with their number on the page: after a Linux
+++         * guest had run for a minute, the clear took over five minutes.
+++         */
+++        queue_tb_flush(CPU(s->cpu));
++     }
++     env->npc = env->pc + 4;
++ }
+diff --git a/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch b/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
+new file mode 100644
+index 0000000..1b07aba
+--- /dev/null
++++ b/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
+@@ -0,0 +1,76 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the TB flush on a sun4u reset
++
++sun4u-sabre-reset-test gets a case that runs the firmware under TCG,
++resets the machine with system_reset and checks that "info jit" counts
++one more TB flush once the CPU runs again. The power-on reset flushes
++nothing.
++
++Against the binary without the patch before, the count stays where it
++was and the case fails.
++---
++ tests/qtest/sun4u-sabre-reset-test.c | 41 ++++++++++++++++++++++++++++
++ 1 file changed, 41 insertions(+)
++
++diff --git a/tests/qtest/sun4u-sabre-reset-test.c b/tests/qtest/sun4u-sabre-reset-test.c
++index bc6ea306..0a3aead7 100644
++--- a/tests/qtest/sun4u-sabre-reset-test.c
+++++ b/tests/qtest/sun4u-sabre-reset-test.c
++@@ -7,6 +7,12 @@
++  * machine) the next boot read them as set and warned "pcipsy0: SERR
++  * asserted on pci bus". A reset must leave them as a power-on does.
++  *
+++ * A reset after the power-on one also drops the code translated for the
+++ * system before (a TB flush): the firmware clears the RAM after a reset,
+++ * and with the old translations still there each store to a page full of
+++ * them took long enough that the clear ran for minutes after a
+++ * Linux guest had run for a while.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -42,9 +48,44 @@ static void test_pci_control_reset(void)
++     qtest_quit(qts);
++ }
++ 
+++/* The "TB flush count" of "info jit" */
+++static uint64_t tb_flushes(QTestState *qts)
+++{
+++    g_autofree char *jit = qtest_hmp(qts, "info jit");
+++    const char *p = strstr(jit, "TB flush count");
+++
+++    g_assert_nonnull(p);
+++    return g_ascii_strtoull(p + strlen("TB flush count"), NULL, 10);
+++}
+++
+++static void test_reset_tb_flush(void)
+++{
+++    QTestState *qts = qtest_init("-machine sun4u -accel tcg -nodefaults");
+++    gint64 end;
+++    uint64_t n0, n;
+++
+++    /* The firmware runs and translates code; the power-on reset flushes nothing */
+++    g_usleep(300 * 1000);
+++    n0 = tb_flushes(qts);
+++
+++    qtest_system_reset(qts);
+++
+++    /* The flush is queued for the CPU, done before it runs again */
+++    end = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
+++    while ((n = tb_flushes(qts)) == n0 && g_get_monotonic_time() < end) {
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_cmpuint(n, ==, n0 + 1);
+++
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++     qtest_add_func("/sun4u/sabre/pci-control-reset", test_pci_control_reset);
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("/sun4u/reset/tb-flush", test_reset_tb_flush);
+++    }
++     return g_test_run();
++ }
+diff --git a/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch b/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
+new file mode 100644
+index 0000000..5d4abb7
+--- /dev/null
++++ b/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
+@@ -0,0 +1,252 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt the CPU in FreeBSD's idle loop on sun4u
++
++FreeBSD 12.4 on sun4u spins in its idle loop and keeps a host core at
++100% for as long as the VM runs: the ULE scheduler's idle thread
++(sched_idletd()) calls cpu_idle(), which is empty on sparc64.
++
++The translator recognises the call in sched_idletd() as gcc 4.2 lays it
++out (FreeBSD 12.4-RELEASE GENERIC, at 0xc068f230): tdq_cpu_idle set,
++a membar, the test of tdq_load that branches to the call when it is 0,
++tdq_cpu_idle cleared again on both ways, the registers checked against
++each other. The word is tdq_load.
++
++Two things differ from the kernels 0042 handles:
++
++- FreeBSD's kernel runs at TL 1 (the user process's context stays in
++  the primary context register), so its idle loop is halted at TL 1;
++  the other kernels are still halted at TL 0 only.
++- Between two calls the loop looks for work to steal on other CPUs and
++  may spin for it itself (sched_idlespins), longer than the 20 us that
++  the 100 us poll allows between rounds, so the poll never ended and
++  the CPU was never halted. The loop is halted at the first call
++  instead; once woken, the call and one round of the loop run before
++  the next halt, as after a wake at the poll.
++
++The helper takes these as flags of the kernel (SPARC64_IDLE_TL1,
++SPARC64_IDLE_NO_POLL). -trace sparc64_idle_match shows "FreeBSD".
++
++An idle FreeBSD 12.4 at the shell then uses 8.7% of a host core
++instead of 105-107%; ten "sleep 1", the guest clock and a CPU-bound
++job are as before.
++---
++ target/sparc/cpu.h          |  4 +++
++ target/sparc/helper.h       |  2 +-
++ target/sparc/sparc64_idle.c | 40 +++++++++++++++++----
++ target/sparc/translate.c    | 71 ++++++++++++++++++++++++++++++++++++-
++ 4 files changed, 108 insertions(+), 9 deletions(-)
++
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 269efc5..d3d2bce 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -583,7 +583,11 @@ struct CPUArchState {
++     bool idle_halt;
++     int64_t idle_halt_since;    /* when the loop first found no work */
++     int64_t idle_halt_last;     /* when the loop last found no work */
+++    bool idle_halted;           /* halted there (SPARC64_IDLE_NO_POLL) */
++ #endif
+++/* What helper_sparc64_idle() is told about the kernel (sparc64_idle.c) */
+++#define SPARC64_IDLE_TL1        1   /* it runs its idle loop at TL 1 */
+++#define SPARC64_IDLE_NO_POLL    2   /* its loop has polled before the call */
++     uint32_t softint;
++ #define SOFTINT_TIMER   1
++ #define SOFTINT_STIMER  (1 << 16)
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 6cb1b0d..4440cf1 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -13,7 +13,7 @@ DEF_HELPER_3(solaris_idle_mp, void, env, tl, tl)
++ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++ #ifndef CONFIG_USER_ONLY
++-DEF_HELPER_5(sparc64_idle, void, env, tl, tl, tl, tl)
+++DEF_HELPER_6(sparc64_idle, void, env, tl, tl, tl, tl, tl)
++ DEF_HELPER_4(sparc64_idle_linux, void, env, tl, tl, tl)
++ #endif
++ DEF_HELPER_2(wrpstate, void, env, tl)
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index d484a1d..a71a79f 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -9,9 +9,10 @@
++  * the kernels that run on QEMU's sun4u has a way to do it there. Solaris
++  * and illumos only halt an idle CPU through cpu_halt_cpu(), which only the
++  * SPARC64-VI module provides; NetBSD and Linux only yield to the
++- * hypervisor on sun4v, and OpenBSD's sleep instruction is patched in only
++- * on CPUs with several strands. So an idle guest spins in its idle loop,
++- * and keeps a host core busy for as long as the VM runs.
+++ * hypervisor on sun4v, OpenBSD's sleep instruction is patched in only
+++ * on CPUs with several strands, and FreeBSD's cpu_idle() is empty on
+++ * sparc64. So an idle guest spins in its idle loop, and keeps a host core
+++ * busy for as long as the VM runs.
++  *
++  * The translator recognises the idle loops of the guests below by the
++  * instructions around one call in them (gen_sparc64_idle() in
++@@ -45,6 +46,21 @@
++  *     call (gcc, Tribblix), the helper follows it again from the CPU
++  *     structure.
++  *
+++ *   FreeBSD 12 sched_idletd() (ULE), with one CPU:
+++ *       if (tdq->tdq_load == 0) {
+++ *           tdq->tdq_cpu_idle = 1;
+++ *           if (tdq->tdq_load == 0)
+++ *               cpu_idle(busy);               <- here
+++ *           tdq->tdq_cpu_idle = 0;
+++ *       }
+++ *     cpu_idle() does nothing on sparc64; the word is tdq_load. FreeBSD's
+++ *     kernel runs at TL 1 (the user's context stays in the primary
+++ *     context register), so the loop is halted there at TL 1. Between two
+++ *     calls the loop looks for work to steal and may spin for it itself
+++ *     (sched_idlespins), more than the 20 us that sparc64_idle_polled()
+++ *     allows between rounds, so it is halted at the first call; woken,
+++ *     the call and one round of the loop run before the next halt.
+++ *
++  * At the call helper_sparc64_idle() halts the CPU when the word is 0,
++  * interrupts are enabled at level 0 and none is pending: the call is
++  * where the kernel would stop the processor if it could. QEMU's sun4u has
++@@ -145,11 +161,13 @@ static bool sparc64_idle_read(CPUSPARCState *env, target_ulong addr,
++  * The guest is at the call in its idle loop (pc) and the 4-byte word at
++  * addr, or with indirect at off past the pointer at addr, says whether
++  * there is work. Halt until the next interrupt when there is none, and go
++- * on at the call then.
+++ * on at the call then. kernel: SPARC64_IDLE_TL1 when the kernel runs its
+++ * idle loop at TL 1 rather than 0, SPARC64_IDLE_NO_POLL when the loop has
+++ * polled for work itself before the call (FreeBSD both).
++  */
++ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++                           target_ulong addr, target_ulong indirect,
++-                          target_ulong off)
+++                          target_ulong off, target_ulong kernel)
++ {
++     CPUState *cs = env_cpu(env);
++     uint64_t val;
++@@ -158,7 +176,8 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++      * Interrupts are enabled at level 0 and nothing is pending: no
++      * interrupt, interrupt vector or soft interrupt
++      */
++-    if (!(env->pstate & PS_IE) || env->psrpil || env->tl ||
+++    if (!(env->pstate & PS_IE) || env->psrpil ||
+++        env->tl > !!(kernel & SPARC64_IDLE_TL1) ||
++         cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++         (env->ivec_status & 0x20) || env->softint || env->pil_in) {
++         return;
++@@ -172,7 +191,14 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++     if (!sparc64_idle_read(env, addr, 4, &val) || val) {
++         return;
++     }
++-    if (!sparc64_idle_polled(env)) {
+++    if (kernel & SPARC64_IDLE_NO_POLL) {
+++        /* Woken: the call and the loop run once before the next halt */
+++        if (env->idle_halted) {
+++            env->idle_halted = false;
+++            return;
+++        }
+++        env->idle_halted = true;
+++    } else if (!sparc64_idle_polled(env)) {
++         return;
++     }
++ 
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 3f5aa5d..7eef12f 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6545,6 +6545,71 @@ static bool s64_idle_solaris7(const uint32_t *w, target_ulong pc,
++     return true;
++ }
++ 
+++/* stw %rd, [%rs1 + simm13] */
+++static bool s64_stw(uint32_t w, int *rs1, int32_t *off, int *rd)
+++{
+++    if (extract32(w, 30, 2) != 3 || extract32(w, 19, 6) != 4 ||
+++        !extract32(w, 13, 1)) {
+++        return false;
+++    }
+++    *rs1 = S64_RS1(w);
+++    *off = sextract32(w, 0, 13);
+++    *rd = S64_RD(w);
+++    return true;
+++}
+++
+++/*
+++ * FreeBSD 12, sched_idletd() (ULE) as gcc 4.2 lays it out
+++ * (w[S64_IDLE_BEFORE] is the call):
+++ *
+++ *        st    %a, [%tdq + cpu_idle]          tdq_cpu_idle = 1
+++ *        membar ...
+++ *        ld    [%tdq + load], %x
+++ *        cmp   %x, 0
+++ *        be    idle
+++ *         ...
+++ *        clr   [%tdq + cpu_idle]
+++ *        b     top
+++ *         nop
+++ *  idle: five words that compute cpu_idle()'s argument
+++ *        call  cpu_idle                       <- here
+++ *         ...
+++ *        clr   [%tdq + cpu_idle]
+++ *
+++ * The word is tdq_load.
+++ */
+++static bool s64_idle_freebsd(const uint32_t *w, target_ulong pc,
+++                             S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t, top;
+++    int tdq, r, x, x2, i;
+++    int32_t flag, off2;
+++
+++    if (extract32(c[0], 30, 2) != 1 ||
+++        !s64_stw(c[-14], &tdq, &flag, &r) || r == 0 ||
+++        (c[-13] & 0xffffff80) != 0x8143e000 ||          /* membar */
+++        !s64_lduw(c[-12], &r, &iw->off, &x) || r != tdq ||
+++        !s64_cmp0(c[-11], &x2) || x2 != x ||
+++        !s64_bcc(c[-10], pc - 40, S64_BE, &t) || t != pc - 20 ||
+++        !s64_stw(c[-8], &r, &off2, &x2) || r != tdq || off2 != flag ||
+++        x2 != 0 ||
+++        !s64_bcc(c[-7], pc - 28, S64_BA, &top) || c[-6] != S64_NOP ||
+++        top >= pc - 56 || pc - top > 4 * 512 ||
+++        !s64_stw(c[2], &r, &off2, &x2) || r != tdq || off2 != flag ||
+++        x2 != 0 || tdq == 0) {
+++        return false;
+++    }
+++    /* Nothing between the test and the call writes %tdq */
+++    for (i = -9; i < 0; i++) {
+++        if ((i == -9 || i >= -5) && S64_RD(c[i]) == tdq) {
+++            return false;
+++        }
+++    }
+++    iw->reg = tdq;
+++    return true;
+++}
+++
++ /* cmp %rs1, 3 (subcc %rs1, 3, %g0) */
++ static bool s64_cmp3(uint32_t w, int *rs1)
++ {
++@@ -6704,6 +6769,7 @@ typedef struct Sparc64IdleLoop {
++     bool (*match)(const uint32_t *w, target_ulong pc, S64IdleWord *iw);
++     bool linux_loop;    /* helper_sparc64_idle_linux(), at %pil pil */
++     int pil;
+++    int flags;          /* SPARC64_IDLE_TL1, SPARC64_IDLE_NO_POLL */
++ } Sparc64IdleLoop;
++ 
++ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++@@ -6711,6 +6777,8 @@ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
++     { "Solaris 7/8", s64_idle_solaris7 },
+++    { "FreeBSD", s64_idle_freebsd, false, 0,
+++      SPARC64_IDLE_TL1 | SPARC64_IDLE_NO_POLL },
++     { "Linux", s64_idle_linux, true, 14 },
++     { "Linux 3.2", s64_idle_linux32, true, 0 },
++ };
++@@ -6770,7 +6838,8 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         } else {
++             gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
++                                     tcg_constant_tl(iw.indirect),
++-                                    tcg_constant_tl(iw.off2));
+++                                    tcg_constant_tl(iw.off2),
+++                                    tcg_constant_tl(l->flags));
++         }
++         return;
++     }
+diff --git a/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch b/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
+new file mode 100644
+index 0000000..1a9c865
+--- /dev/null
++++ b/debian/patches/wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
+@@ -0,0 +1,201 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the FreeBSD idle loop on sun4u
++
++sun4u-idle-test gets FreeBSD 12's sched_idletd() layout with the cases
++of the others, run at TL 1 as FreeBSD's kernel runs (the boot PROM now
++has a trap table for TL>0 too, for the tick taken there). A new case,
++tl-up, runs each loop one trap level above where its kernel idles (TL 1,
++FreeBSD TL 2): the CPU must not halt there. The FreeBSD loop counts a
++round before it starts, as the CPU halts at its first idle call.
++
++Without the previous patch freebsd/idle fails (the loop goes on
++counting); with the FreeBSD layout halted at TL 0 only it fails too. 70
++cases.
++---
++ tests/qtest/sun4u-idle-test.c | 106 +++++++++++++++++++++++++---------
++ 1 file changed, 79 insertions(+), 27 deletions(-)
++
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index 151465b..d838df3 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -2,15 +2,15 @@
++  * QTest: halting the CPU in the idle loop of a guest kernel on sun4u
++  *
++  * A boot PROM runs a loop laid out as the idle loop of NetBSD, OpenBSD,
++- * Solaris 10, Tribblix (illumos built with gcc) or Solaris 7 and 8 on sun4u,
++- * and counts its rounds in RAM in the function the loop calls. With the
++- * word that says there is work at 0, interrupts enabled at level 0 and
++- * none pending, QEMU halts the CPU at that call; with no interrupt to
++- * come, the count stops. It must keep going with idle-halt=off, with
++- * work, with interrupts disabled and at interrupt level 15. With a tick
++- * interrupt every millisecond, each tick must wake the CPU, its handler
++- * must run and the loop must go on after it, with far fewer rounds than
++- * with idle-halt=off.
+++ * Solaris 10, Tribblix (illumos built with gcc), Solaris 7 and 8 or
+++ * FreeBSD 12 (at TL 1, as its kernel runs) on sun4u, and counts its rounds
+++ * in RAM in the function the loop calls. With the word that says there is
+++ * work at 0, interrupts enabled at level 0 and none pending, QEMU halts
+++ * the CPU at that call; with no interrupt to come, the count stops. It must
+++ * keep going with idle-halt=off, with work, with interrupts disabled and
+++ * at interrupt level 15. With a tick interrupt every millisecond, each
+++ * tick must wake the CPU, its handler must run and the loop must go on
+++ * after it, with far fewer rounds than with idle-halt=off.
++  *
++  * Linux's arch_cpu_idle() (as Linux 7.3, 6.1 and 7.0 lay it out) is
++  * called with interrupts disabled at level 14: the CPU must halt there,
++@@ -53,12 +53,12 @@
++ #define FUNC            (CODE + 0x1f0)  /* the called functions */
++ #define TBA             (0x8000 / 4)
++ #define TT_TICK         0x4e            /* interrupt level 14 */
++-#define PROM_WORDS      (TBA + 0x200 * 8)
+++#define PROM_WORDS      (TBA + 0x400 * 8)   /* the TL 0 and TL>0 tables */
++ 
++ #define NOP             0x01000000
++ 
++-enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX32, LINUX73, LINUX61,
++-       LINUX70 };
+++enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, FREEBSD, LINUX32, LINUX73,
+++       LINUX61, LINUX70 };
++ 
++ #define IS_LINUX(k)     ((k) >= LINUX73)
++ 
++@@ -122,8 +122,15 @@ typedef struct IdleCase {
++     uint32_t pil;
++     bool tick;          /* a tick interrupt every millisecond */
++     bool halts;
+++    bool tl_up;         /* the loop one trap level above its kernel's */
++ } IdleCase;
++ 
+++/* The trap level a kernel idles at: FreeBSD's kernel runs at TL 1 */
+++static int kernel_tl(int k)
+++{
+++    return k == FREEBSD;
+++}
+++
++ #define PS_PEF_PRIV_IE  0x16
++ #define PS_PEF_PRIV     0x14
++ 
++@@ -360,6 +367,41 @@ static int write_loop(uint32_t *p, int k, uint32_t pil)
++         p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
++         p[n++] = NOP;
++         break;
+++    case FREEBSD:
+++        /*
+++         * FreeBSD 12 sched_idletd(): the tdq at %l4, tdq_load at + 0,
+++         * tdq_cpu_idle at + 0x8c; with work, b top goes through out:,
+++         * which counts the round. cpu_idle() at FUNC counts it too. The
+++         * CPU halts at the first idle call (no poll first), so a round is
+++         * counted before the loop: the test waits for one.
+++         */
+++        p[n] = call_to(LOOP + n, FUNC); n++;
+++        p[n++] = NOP;
+++        p[n] = bcc_to(BA, LOOP + n, LOOP + 6); n++;
+++        p[n++] = NOP;
+++        p[n] = call_to(LOOP + n, FUNC); n++;         /* out: */
+++        p[n++] = NOP;
+++        p[n++] = 0x82102001;            /* top: mov 1, %g1 */
+++        p[n++] = 0xc225208c;            /* st %g1, [%l4 + 0x8c] */
+++        p[n++] = 0x8143e00f;            /* membar #Sync-ish (0xf) */
+++        p[n++] = 0xc2052000;            /* ld [%l4], %g1 tdq_load */
+++        p[n++] = 0x80a06000;            /* cmp %g1, 0 */
+++        p[n] = bpcc_icc_to(BE, LOOP + n, LOOP + 16); n++;   /* be,pn */
+++        p[n++] = 0x852c2002;            /*  sll %l0, 2, %g2 */
+++        p[n++] = 0xc025208c;            /* clr [%l4 + 0x8c] */
+++        p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP + 4); n++;    /* b top */
+++        p[n++] = NOP;
+++        p[n++] = 0x86102800;            /* idle: mov 0x800, %g3 */
+++        p[n++] = 0xc200e010;            /* ld [%g3 + 0x10], %g1 */
+++        p[n++] = 0x80a08001;            /* cmp %g2, %g1 */
+++        p[n++] = 0x90102000;            /* clr %o0 */
+++        p[n++] = 0x9166a001;            /* movg %xcc, 1, %o0 */
+++        p[n] = call_to(LOOP + n, FUNC); n++;         /* cpu_idle */
+++        p[n++] = 0x913a2000;            /*  sra %o0, 0, %o0 */
+++        p[n++] = 0xc025208c;            /* clr [%l4 + 0x8c] */
+++        p[n] = bcc_to(BA, LOOP + n, LOOP + 6); n++;
+++        p[n++] = NOP;
+++        break;
++     }
++     /* out: the loop found work; count the round and go round again */
++     p[n] = call_to(LOOP + n, FUNC); n++;
++@@ -382,7 +424,7 @@ static char *write_prom(int k, const IdleCase *t)
++     uint32_t *be = g_new0(uint32_t, PROM_WORDS);
++     uint32_t code[64];
++     char *path = NULL;
++-    int fd, i, n = 0;
+++    int fd, i, j, n = 0;
++ 
++     /* Power-on reset at + 0x20: ba CODE */
++     be[8] = bcc_to(BA, 8, CODE);
++@@ -418,7 +460,7 @@ static char *write_prom(int k, const IdleCase *t)
++             code[n++] = arm_tick[i];
++         }
++     }
++-    code[n++] = 0x8f902000;                         /* wrpr %g0, 0, %tl */
+++    code[n++] = 0x8f902000 | (kernel_tl(k) + t->tl_up); /* wrpr %g0, tl, %tl */
++     code[n++] = 0x91902000 | t->pil;                /* wrpr %g0, pil, %pil */
++     /* Then %g6 (thread_info) in the normal globals, with PSTATE.AG off */
++     code[n++] = 0x8d902000 | t->pstate;             /* wrpr .., %pstate */
++@@ -438,23 +480,31 @@ static char *write_prom(int k, const IdleCase *t)
++     be[FUNC + 3] = 0x81c3e008;                      /* retl */
++     be[FUNC + 4] = 0x90102000;                      /*  mov 0, %o0 */
++ 
++-    /* Trap table at TL 0: store the trap type at RAM_TRAP and stop */
++-    for (i = 0; i < 0x200; i++) {
+++    /*
+++     * Trap tables at TL 0 and TL>0: store the trap type (+ 0x200 at TL>0)
+++     * at RAM_TRAP and stop
+++     */
+++    for (i = 0; i < 0x400; i++) {
++         be[TBA + 8 * i] = 0x84102000 | i;           /* mov tt, %g2 */
++         be[TBA + 8 * i + 1] = 0xc4702818;           /* stx %g2, [0x818] */
++         be[TBA + 8 * i + 2] = 0x10800000;           /* b . */
++         be[TBA + 8 * i + 3] = NOP;
++     }
++-    /* The tick: count it, clear TICK_INT, arm the next, retry */
++-    i = TBA + 8 * TT_TICK;
++-    be[i++] = 0xc2582810;                           /* ldx [0x810], %g1 */
++-    be[i++] = 0x82006001;                           /* inc %g1 */
++-    be[i++] = 0xc2702810;                           /* stx %g1, [0x810] */
++-    be[i++] = 0xab802001;                           /* wr 1, %clear_softint */
++-    for (n = 0; n < ARRAY_SIZE(arm_tick); n++) {
++-        be[i++] = arm_tick[n];
+++    /*
+++     * The tick, taken at TL 0 or (FreeBSD) TL 1: count it, clear TICK_INT,
+++     * arm the next, retry
+++     */
+++    for (j = 0; j < 2; j++) {
+++        i = TBA + 8 * (TT_TICK + 0x200 * j);
+++        be[i++] = 0xc2582810;                       /* ldx [0x810], %g1 */
+++        be[i++] = 0x82006001;                       /* inc %g1 */
+++        be[i++] = 0xc2702810;                       /* stx %g1, [0x810] */
+++        be[i++] = 0xab802001;                       /* wr 1, %clear_softint */
+++        for (n = 0; n < ARRAY_SIZE(arm_tick); n++) {
+++            be[i++] = arm_tick[n];
+++        }
+++        be[i++] = 0x83f00000;                       /* retry */
++     }
++-    be[i++] = 0x83f00000;                           /* retry */
++ 
++     for (i = 0; i < PROM_WORDS; i++) {
++         be[i] = cpu_to_be32(be[i]);
++@@ -526,8 +576,8 @@ static void test_idle(const void *data)
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++-        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "linux-3.2",
++-        "linux-7.3", "linux-6.1", "linux-7.0"
+++        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "freebsd",
+++        "linux-3.2", "linux-7.3", "linux-6.1", "linux-7.0"
++     };
++     static const IdleCase cases[] = {
++         { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, true },
++@@ -536,6 +586,8 @@ int main(int argc, char **argv)
++         { "noint", "sun4u", 0, PS_PEF_PRIV, 0, false, false },
++         { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
+++        /* not one trap level above where the kernel idles (TL 1, or 2) */
+++        { "tl-up", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, false, true },
++     };
++     /*
++      * Linux: pil is what the idle loop disables interrupts to (14); work
+diff --git a/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
+new file mode 100644
+index 0000000..a4884fb
+--- /dev/null
++++ b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
+@@ -0,0 +1,142 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: keep SuperSPARC instruction fetches in the PROM in boot mode with the MMU on
++
++Sun's SPARCserver 600MP boot PROM stops QEMU within seconds of power-on,
++before it prints anything: "Trap 0x01 (Instruction Access Fault) while
++interrupts disabled, Error state". Its MMU register test, run in boot mode
++from the PROM with traps disabled, walks a one through the writable bits of
++the MMU control register, the enable bit (bit 0) among them. QEMU translates
++every instruction fetch once the MMU is enabled; with no page tables set up
++yet, the next fetch faults, and so does the fetch of the trap vector.
++
++On the SuperSPARC (Viking) the boot mode bit (bit 13 of the MMU control
++register) sends every instruction fetch to the boot PROM, at
++0xf.f000_0000 plus the low 28 bits of the address, whether the MMU is
++enabled or not. Data accesses are not affected by it and are translated
++when the MMU is on (Linux's arch/sparc/include/asm/viking.h documents the
++bit this way). QEMU applied boot mode only while the MMU was disabled.
++
++Add the CPU feature "boot-mode-ifetch", set on the TI-SuperSparc-* models.
++With it, sparc_cpu_mmu_index() returns MMU_PHYS_IDX for an instruction
++fetch while boot mode is set, and get_physical_address() maps the fetch to
++the PROM as it already does with the MMU off. Data accesses keep the
++translated index. The TLB is already flushed when the boot mode bit
++changes. The microSPARC, TurboSPARC and LEON models are unchanged, and the
++feature can be turned off (-cpu TI-SuperSparc-II,-boot-mode-ifetch).
++OpenBIOS clears boot mode when it enables the MMU (it writes 1 to the
++control register), so it is not affected.
++
++With this the 600MP PROM gets past that test and on to its other CPU
++module tests; it doesn't boot yet (QEMU models none of the SuperSPARC's
++diagnostic store buffer, cache tag or cache data registers, which those
++tests read back).
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             | 29 +++++++++++++++++++++++------
++ 2 files changed, 24 insertions(+), 6 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index f235739634..ca8fe3180e 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -17,3 +17,4 @@ FEATURE(VIS3)
++ FEATURE(IMA)
++ FEATURE(VIS4)
++ FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
+++FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 919b51821c..4e7a2e4d8d 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -448,7 +448,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-50", /* STP1020PGA */
++@@ -461,7 +462,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-51",
++@@ -475,7 +477,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-60", /* STP1020APGA */
++@@ -488,7 +491,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-61",
++@@ -502,7 +506,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-II",
++@@ -516,7 +521,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "LEON2",
++@@ -567,6 +573,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_DIV] = "div",
++     [CPU_FEATURE_BIT_FSMULD] = "fsmuld",
++     [CPU_FEATURE_BIT_BUSERR_ACCESS_EXC] = "buserr-access-exc",
+++    [CPU_FEATURE_BIT_BOOT_MODE_IFETCH] = "boot-mode-ifetch",
++ #endif
++ };
++ 
++@@ -809,6 +816,14 @@ static int sparc_cpu_mmu_index(CPUState *cs, bool ifetch)
++ #ifndef TARGET_SPARC64
++     if ((env->mmuregs[0] & MMU_E) == 0) { /* MMU disabled */
++         return MMU_PHYS_IDX;
+++    } else if (ifetch && (env->def.features & CPU_FEATURE_BOOT_MODE_IFETCH) &&
+++               (env->mmuregs[0] & env->def.mmu_bm)) {
+++        /*
+++         * SuperSPARC boot mode: instruction fetches go to the boot PROM
+++         * whether the MMU is enabled or not (get_physical_address() maps
+++         * them there); data accesses are translated as usual.
+++         */
+++        return MMU_PHYS_IDX;
++     } else {
++         return env->psrs;
++     }
++@@ -998,6 +1013,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_FSMULD, false),
++     DEFINE_PROP_BIT("buserr-access-exc", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_BUSERR_ACCESS_EXC, false),
+++    DEFINE_PROP_BIT("boot-mode-ifetch", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_BOOT_MODE_IFETCH, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
+diff --git a/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch b/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
+new file mode 100644
+index 0000000..4761fe6
+--- /dev/null
++++ b/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
+@@ -0,0 +1,245 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test SuperSPARC boot mode with the MMU on
++
++A tiny boot PROM sets up a context table whose context 0 maps virtual 0
++to RAM at 0x01000000, where the test writes a run of nops ending in code
++that stores 0x5a at physical 0x1008. With traps disabled the PROM enables
++the MMU, keeping or clearing boot mode, and then stores 1 at physical
++0x1004 through the MMU bypass ASI. A fetch that still comes from the PROM
++stores 1, a translated fetch runs the code in RAM and stores 0x5a.
++
++On SS-10, SS-20 (TI-SuperSparc-50) and SS-600MP the fetch must come from
++the PROM while boot mode is set. It must be translated on SS-10 with boot
++mode cleared, with the CPU feature turned off (-boot-mode-ifetch), and on
++SS-5 (microSPARC-II). Without the previous patch the SS-10 boot mode case
++fails (the fetch is translated).
++
++sun4m-mmu-ctx-ifetch-test and sun4m-bus-error-trap-test turned the MMU on
++by setting the enable bit in the control register as they read it, which
++kept the SuperSPARC in boot mode; their fetches in context 1 and from the
++unassigned region then came from the PROM. They now write the enable bit
++alone, as OpenBIOS and an operating system do, which clears boot mode.
++---
++ tests/qtest/meson.build                   |   1 +
++ tests/qtest/sun4m-boot-mode-ifetch-test.c | 172 ++++++++++++++++++++++
++ tests/qtest/sun4m-bus-error-trap-test.c   |   2 +-
++ tests/qtest/sun4m-mmu-ctx-ifetch-test.c   |   2 +-
++ 4 files changed, 175 insertions(+), 2 deletions(-)
++ create mode 100644 tests/qtest/sun4m-boot-mode-ifetch-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 7ffd4c67a0..4ba5babeb9 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -209,6 +209,7 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-cs4231-test',
++                 'sun4m-esp-test',
++                 'sun4m-mmu-ctx-ifetch-test',
+++                'sun4m-boot-mode-ifetch-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++diff --git a/tests/qtest/sun4m-boot-mode-ifetch-test.c b/tests/qtest/sun4m-boot-mode-ifetch-test.c
++new file mode 100644
++index 0000000000..96e8dcebf7
++--- /dev/null
+++++ b/tests/qtest/sun4m-boot-mode-ifetch-test.c
++@@ -0,0 +1,172 @@
+++/*
+++ * QTest: SuperSPARC boot mode with the MMU enabled on sun4m
+++ *
+++ * On the SuperSPARC (Viking) the boot mode bit of the MMU control register
+++ * (bit 13) sends every instruction fetch to the boot PROM, whether the MMU
+++ * is enabled or not; data accesses are translated when it is. Sun's
+++ * SPARCserver 600MP boot PROM tests the MMU control register's bits in boot
+++ * mode, the MMU enable bit among them, and goes on fetching from the PROM.
+++ * QEMU translated the fetch once the MMU was on and stopped on the
+++ * instruction access fault ("Trap 0x01 while interrupts disabled").
+++ *
+++ * The test PROM sets up a context table whose context 0 maps virtual 0 to
+++ * RAM at 0x01000000, where the test writes a run of nops ending in code
+++ * that stores 0x5a at physical WRONG_PATH. With traps disabled the PROM
+++ * enables the MMU (keeping or clearing boot mode) and then stores 1 at
+++ * physical PROM_PATH through the MMU bypass ASI. A fetch that still comes
+++ * from the PROM stores 1; a translated fetch runs the code in RAM and
+++ * stores 0x5a. The microSPARC (SS-5) and a SuperSPARC without the
+++ * boot-mode-ifetch feature keep translating.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define CTX_TABLE       0x2000ULL
+++#define CTX0_L1         0x3000ULL
+++#define PROM_PATH       0x1004u     /* markers (physical) */
+++#define WRONG_PATH      0x1008u
+++#define RAM_CODE        0x01000000ULL   /* what virtual 0 maps to */
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define STUB            0x200           /* word index of the RAM stub */
+++#define NOP             0x01000000
+++
+++static char *write_prom(bool clear_bm)
+++{
+++    const uint32_t code[] = {
+++        0x07000004,             /* sethi %hi(0x1000), %g3 */
+++        0x8610e004,             /* or    %g3, 4, %g3         PROM_PATH */
+++        0x90102100,             /* mov   0x100, %o0 */
+++        0x92102200,             /* mov   0x200, %o1 */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context table pointer */
+++        0x90102200,             /* mov   0x200, %o0 */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81882f80,             /* wr    %g0, 0xf80, %psr    S, PIL 15 */
+++        NOP,
+++        NOP,
+++        NOP,
+++        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x17000008,             /* sethi %hi(0x2000), %o3    boot mode bit */
+++        clear_bm ? 0x942a800b   /* andn  %o2, %o3, %o2 */
+++                 : NOP,
+++        0x9412a001,             /* or    %o2, 1, %o2         MMU on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4 */
+++        NOP,
+++        NOP,
+++        NOP,
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc8a0c400,             /* sta   %g4, [%g3] 0x20     from the PROM */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(NOP);
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-boot-mode-ifetch-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++/*
+++ * Context 0 maps virtual 0 (16 MB) to RAM_CODE: nops from the code's
+++ * offset on, then a stub that stores 0x5a at WRONG_PATH and stops.
+++ */
+++static void write_tables(QTestState *qts)
+++{
+++    const uint32_t stub[] = {
+++        0x0f000004,             /* sethi %hi(0x1000), %g7 */
+++        0x8e11e008,             /* or    %g7, 8, %g7         WRONG_PATH */
+++        0x8810205a,             /* mov   0x5a, %g4 */
+++        0xc8a1c400,             /* sta   %g4, [%g7] 0x20     fetched from RAM */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[STUB + ARRAY_SIZE(stub)];
+++    int i;
+++
+++    for (i = 0; i < STUB; i++) {
+++        be[i] = cpu_to_be32(NOP);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(stub); i++) {
+++        be[STUB + i] = cpu_to_be32(stub[i]);
+++    }
+++    qtest_memwrite(qts, RAM_CODE, be, sizeof(be));
+++    qtest_writel(qts, CTX_TABLE, (CTX0_L1 >> 4) | 1);
+++    qtest_writel(qts, CTX0_L1, (uint32_t)(RAM_CODE >> 4) | 0x0e);
+++}
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    const char *cpu;
+++    bool clear_bm;
+++    bool from_prom;     /* expected: the fetch after MMU on is from the PROM */
+++} TestCase;
+++
+++static void test_boot_mode_ifetch(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t->clear_bm);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s%s%s -accel tcg -m 64 "
+++                                  "-bios %s -S", t->machine,
+++                                  t->cpu ? " -cpu " : "",
+++                                  t->cpu ? t->cpu : "", prom);
+++
+++    write_tables(qts);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'cont' }");
+++
+++    while (qtest_readl(qts, PROM_PATH) == 0 &&
+++           qtest_readl(qts, WRONG_PATH) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    if (t->from_prom) {
+++        g_assert_cmpuint(qtest_readl(qts, PROM_PATH), ==, 1);
+++        g_assert_cmpuint(qtest_readl(qts, WRONG_PATH), ==, 0);
+++    } else {
+++        g_assert_cmpuint(qtest_readl(qts, WRONG_PATH), ==, 0x5a);
+++        g_assert_cmpuint(qtest_readl(qts, PROM_PATH), ==, 0);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        { "ss10/boot-mode", "SS-10", NULL, false, true },
+++        { "ss20/boot-mode", "SS-20", "TI-SuperSparc-50", false, true },
+++        { "ss600mp/boot-mode", "SS-600MP", NULL, false, true },
+++        { "ss10/boot-mode-cleared", "SS-10", NULL, true, false },
+++        { "ss10/feature-off", "SS-10", "TI-SuperSparc-II,-boot-mode-ifetch",
+++          false, false },
+++        { "ss5/microsparc", "SS-5", NULL, false, false },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-boot-mode-ifetch/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_boot_mode_ifetch);
+++        }
+++    }
+++
+++    return g_test_run();
+++}
++diff --git a/tests/qtest/sun4m-bus-error-trap-test.c b/tests/qtest/sun4m-bus-error-trap-test.c
++index 378a1c3091..6866de3998 100644
++--- a/tests/qtest/sun4m-bus-error-trap-test.c
+++++ b/tests/qtest/sun4m-bus-error-trap-test.c
++@@ -82,7 +82,7 @@ static char *write_prom(const TestCase *t)
++         0x81902000,             /* wr    %g0, 0, %wim */
++         0x81882f80,             /* wr    %g0, 0xf80, %psr    S, PIL 15 */
++         NOP, NOP, NOP,
++-        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x94102000,             /* mov   0, %o2              boot mode off */
++         0x9412a001,             /* or    %o2, 1, %o2         MMU on */
++         0xd4a00080,             /* sta   %o2, [%g0] 4 */
++         0x81882fa0,             /* wr    %g0, 0xfa0, %psr    traps on */
++diff --git a/tests/qtest/sun4m-mmu-ctx-ifetch-test.c b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++index b4fcbd042c..78bb2051db 100644
++--- a/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
+++++ b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++@@ -59,7 +59,7 @@ static char *write_prom(bool traps_on)
++         0x01000000,             /* nop */
++         0x01000000,             /* nop */
++         0x01000000,             /* nop */
++-        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x94102000,             /* mov   0, %o2              boot mode off */
++         0x9412a001,             /* or    %o2, 1, %o2         MMU on */
++         0xd4a00080,             /* sta   %o2, [%g0] 4 */
++         0x07004004,             /* sethi %hi(0x01001000), %g3 */
+diff --git a/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
+new file mode 100644
+index 0000000..c5b21aa
+--- /dev/null
++++ b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
+@@ -0,0 +1,425 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: raise pi and pmi when the codec gets
++ there
++
++The APC takes its samples up to 50 ms ahead of the codec's clock, and it
++set PI (next buffer taken) and PMI (pipe empty) at that moment. A buffer
++that fits in one audio callback, or an interrupt that the guest takes
++late, then showed both bits in one interrupt. On the real chip PMI
++follows PI by the time the buffer takes to play.
++
++SunOS 4.1.4's audio_4231_cintr looks at PMI before PI and acts on PMI
++only after a PI has found no next buffer to load. With both set at once
++it skips the PMI, the PI ends playback, and the PMI has been cleared
++with it: the last buffers are never marked played and a process in
++AUDIO_DRAIN sleeps for ever. SimCity for HyperLook's audiomixer does
++that after a few sound effects, and OpenWindows stops taking input
++("xnews: Warning: input queue lock broken!").
++
++The samples are still taken ahead, but PI is now raised when the codec
++clock gets to the start of the buffer and PMI when it has played the
++last one, from a timer. PMI also waits until the driver has cleared an
++enabled PI, and is not raised when a next buffer was loaded before the
++pipe ran dry. PD (next registers free) shows with the PI and not when
++the samples are taken, so that a driver that loads on PD gets one PI
++for each buffer. After a gap the codec goes on from the end of what it
++still had to play. Turning the DMA off and a reset drop what was due;
++a pause holds it.
++
++With the PI at its right time a driver loads the next buffer only when
++the codec starts on the last one, and a buffer shorter than the audio
++callback's period (10 ms) was then taken too late every time: 5 ms of
++sound, 5 ms of nothing. So a buffer loaded while the codec still plays
++the end of the one before is taken at once, and the codec's clock
++starts when its first samples are taken, not when playback is turned
++on.
++
++The times of a PI or PMI still due are migrated in a subsection, sent
++only while one is due, and the timer is set again after the load:
++without it a migration or loadvm in that window would lose the PMI and
++bring the same hang back. A stream without the subsection loads as
++before, with nothing due.
++
++Tested in a sparc-softmmu build on Linux: sun4m-cs4231-test passes with
++the cases of the next commit, and its short-buffer case fails without
++this change (PI and PMI together). In SunOS 4.1.4 on the SS-5 with a wav
++audiodev, a program that writes 1, 40 or 100 bytes to /dev/audio and
++calls AUDIO_DRAIN, or 4000 bytes and then 1 or 40, hung at once without
++this change and runs every round with it; 200, 512 and 4000 bytes run
++in both. Two seconds of sound written 40 bytes at a time play in 2.01
++to 2.03 s, and in 2.01 s in pieces of 80 to 16000 bytes; without this
++change the pieces of 160 bytes and more took 1.89 to 1.96 s and the
++shorter ones hung. SimCity for HyperLook was played for some minutes
++with sound on a Windows host with an earlier version of this change,
++which still had the gaps after short buffers.
++Not tested: SimCity with this version, NetBSD, Solaris, and a migration
++from a build without this change.
++
++Origin: https://github.com/hwinther/lemu/commit/ff412bc835386f6a30ff4492886e934a54c0f9b0
++---
++ hw/audio/cs4231.c | 211 ++++++++++++++++++++++++++++++++++++++++------
++ 1 file changed, 186 insertions(+), 25 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index ac0fd73..1208461 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -49,6 +49,16 @@
++  * the driver turns the DMA off, so that the audiodev still plays what was
++  * taken: turning it off at once drops the last 50 ms of every sound.
++  *
+++ * The interrupts are not raised when the samples are taken but when the
+++ * codec clock gets to that point, as on the real chip: PI when the
+++ * codec starts on the next buffer, PMI when it has played the last one.
+++ * PMI also waits until the driver has cleared the PI before it. SunOS
+++ * 4.1.4's audio_4231_cintr looks at PMI before PI and acts on PMI only
+++ * after a PI has found no next buffer to load; when both come in one
+++ * interrupt it drops the PMI, the last buffers are never marked played,
+++ * and a process in AUDIO_DRAIN (SimCity's audiomixer) sleeps for ever.
+++ * Taking a short buffer ahead would raise both at once.
+++ *
++  * Capture is not done: its registers keep what is written, and the
++  * capture pipe always reads as empty.
++  */
++@@ -154,6 +164,10 @@ struct CSState {
++     int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
++     uint64_t play_units;    /* taken since play_start */
++     int64_t play_drain;     /* the voice stays on until then */
+++    int64_t play_end;       /* what was taken has been played by then */
+++    int64_t pi_at;          /* PI is due then, or -1 */
+++    int64_t pmi_at;         /* PMI is due then, or -1 */
+++    QEMUTimer *irq_timer;   /* raises them when they are due */
++ };
++ 
++ #define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++@@ -200,8 +214,15 @@ static uint32_t cs_read_csr(CSState *s)
++     if (csr & APC_INTS) {
++         csr |= APC_IP;
++     }
++-    if (!s->play_next) {
+++    /*
+++     * The next registers are free when the codec gets to the buffer
+++     * taken from them, with its PI: a driver that loads on PD would
+++     * otherwise load one more before that PI, and lose a PI.
+++     */
+++    if (!s->play_next && s->pi_at < 0) {
++         csr |= APC_PD;
+++    }
+++    if (!s->play_next) {
++         if (s->regs[CS_PC] == 0) {
++             csr |= APC_PM;
++         }
++@@ -225,19 +246,80 @@ static void cs_update_irq(CSState *s)
++     qemu_set_irq(s->irq, level);
++ }
++ 
++-/* The current playback buffer is done: take the next one, if any. */
+++/* units a second: one sample of each channel, two for ADPCM */
+++static uint64_t cs_play_rate(CSState *s)
+++{
+++    return s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
+++}
+++
+++/* Raise the PI and PMI that are due, and set the timer for the others */
+++static void cs_play_irqs(CSState *s)
+++{
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++    int64_t next = INT64_MAX;
+++    uint32_t csr = s->regs[CS_CSR];
+++    bool pi_pending;
+++
+++    /* paused: nothing moves on until the driver lets it go again */
+++    if (cs_play_go(s)) {
+++        if (s->pi_at >= 0) {
+++            if (now >= s->pi_at) {
+++                s->regs[CS_CSR] |= APC_PI;
+++                s->pi_at = -1;
+++            } else {
+++                next = s->pi_at;
+++            }
+++        }
+++        /* PMI after the driver has taken the PI before it */
+++        pi_pending = s->pi_at >= 0 ||
+++                     ((s->regs[CS_CSR] & APC_PI) &&
+++                      (csr & APC_IE) && (csr & APC_PIE));
+++        /* a buffer loaded in time keeps the pipe from running empty */
+++        if (s->pmi_at >= 0 && !pi_pending && !s->play_next) {
+++            if (now >= s->pmi_at) {
+++                s->regs[CS_CSR] |= APC_PMI;
+++                s->pmi_at = -1;
+++                trace_cs4231_play_empty();
+++            } else {
+++                next = MIN(next, s->pmi_at);
+++            }
+++        }
+++    }
+++    if (next != INT64_MAX) {
+++        timer_mod(s->irq_timer, next);
+++    } else {
+++        timer_del(s->irq_timer);
+++    }
+++    cs_update_irq(s);
+++}
+++
+++static void cs_irq_timer(void *opaque)
+++{
+++    cs_play_irqs(opaque);
+++}
+++
+++/*
+++ * The current playback buffer is done: take the next one, if any. The
+++ * codec gets to this point when it has played what was taken before.
+++ */
++ static void cs_play_next(CSState *s)
++ {
+++    int64_t at = MAX(s->play_end, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+++
++     if (s->play_next) {
++         s->regs[CS_PVA] = s->regs[CS_PNVA];
++         s->regs[CS_PC] = s->regs[CS_PNC];
++         s->play_next = false;
++-        s->regs[CS_CSR] |= APC_PI;
+++        /* loaded before the pipe ran empty: no PMI, the PI then */
+++        s->pmi_at = -1;
+++        if (s->pi_at < 0) {
+++            s->pi_at = at;
+++        }
++         trace_cs4231_play_next(s->regs[CS_PVA], s->regs[CS_PC]);
++     } else {
++-        s->regs[CS_CSR] |= APC_PMI;
++-        trace_cs4231_play_empty();
+++        s->pmi_at = at;
++     }
+++    cs_play_irqs(s);
++ }
++ 
++ /* Playback stopped: let the audiodev play what was taken ahead */
++@@ -253,7 +335,9 @@ static void cs_play_update(CSState *s)
++     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (run && !s->play_running) {
++-        s->play_start = now;
+++        /* the codec goes on after what it still has to play */
+++        s->play_start = MAX(now, s->play_end);
+++        s->play_end = s->play_start;
++         s->play_units = 0;
++     } else if (!run && s->play_running) {
++         cs_play_stopped(s, now);
++@@ -355,29 +439,24 @@ static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
++     }
++ }
++ 
++-/* The audiodev has room for avail bytes: feed it from the DMA buffers. */
++-static void cs_audio_callback(void *opaque, int avail)
+++/* Feed the audiodev, which has room for room bytes, from the DMA buffers. */
+++static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
++ {
++-    CSState *s = opaque;
++     uint8_t in[1024];
++     int16_t out[2048];
++     uint32_t unit_in, unit_out;
++-
++-    uint32_t room = MAX(avail, 0);
++     uint64_t rate, due, budget;
++-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++    int64_t ahead;
++ 
++-    if (!s->play_running) {
++-        /* stopped: the voice is on only to play out the last samples */
++-        if (now >= s->play_drain) {
++-            audio_be_set_active_out(s->audio_be, s->voice, false);
++-        }
++-        return;
+++    /* the codec starts when it asks for its first samples: now */
+++    if (s->play_units == 0 && now > s->play_start) {
+++        s->play_start = now;
+++        s->play_end = now;
++     }
++-    /* units a second: one sample of each channel, two for ADPCM */
++-    rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
++-    due = muldiv64(now - s->play_start,
++-                   rate, NANOSECONDS_PER_SECOND) + rate / 20;
+++    /* up to 50 ms ahead of the codec, which may start in the future */
+++    rate = cs_play_rate(s);
+++    ahead = now - s->play_start + NANOSECONDS_PER_SECOND / 20;
+++    due = ahead > 0 ? muldiv64(ahead, rate, NANOSECONDS_PER_SECOND) : 0;
++     budget = due > s->play_units ? due - s->play_units : 0;
++ 
++     cs_play_units(s, &unit_in, &unit_out);
++@@ -391,7 +470,6 @@ static void cs_audio_callback(void *opaque, int avail)
++                 break;
++             }
++             cs_play_next(s);
++-            cs_update_irq(s);
++             continue;
++         }
++         if (pc < unit_in) {
++@@ -419,10 +497,11 @@ static void cs_audio_callback(void *opaque, int avail)
++             room -= units * unit_out;
++             budget -= units;
++             s->play_units += units;
+++            s->play_end = s->play_start +
+++                muldiv64(s->play_units, NANOSECONDS_PER_SECOND, rate);
++         }
++         if (s->regs[CS_PC] == 0) {
++             cs_play_next(s);
++-            cs_update_irq(s);
++         }
++     }
++     /* after a gap the clock starts again with the next buffer */
++@@ -431,6 +510,22 @@ static void cs_audio_callback(void *opaque, int avail)
++     }
++ }
++ 
+++/* The audiodev has room for avail bytes */
+++static void cs_audio_callback(void *opaque, int avail)
+++{
+++    CSState *s = opaque;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    if (!s->play_running) {
+++        /* stopped: the voice is on only to play out the last samples */
+++        if (now >= s->play_drain) {
+++            audio_be_set_active_out(s->audio_be, s->voice, false);
+++        }
+++        return;
+++    }
+++    cs_play_feed(s, MAX(avail, 0), now);
+++}
+++
++ /* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
++ static uint8_t cs_dac_level(uint8_t reg)
++ {
++@@ -490,6 +585,10 @@ static void cs_reset(DeviceState *d)
++     s->play_next = false;
++     s->play_running = false;
++     s->play_drain = 0;
+++    s->play_end = 0;
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
+++    timer_del(s->irq_timer);
++     cs_play_setup(s);
++     cs_play_update(s);
++ }
++@@ -530,7 +629,8 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++ {
++     CSState *s = opaque;
++     uint32_t saddr, csr;
++-    bool was_go;
+++    bool was_go, feed;
+++    int64_t now;
++ 
++     saddr = addr >> 2;
++     trace_cs4231_mem_writel_reg(saddr, s->regs[saddr], val);
++@@ -583,8 +683,12 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++             /* playback DMA off: drop what it still had */
++             s->regs[CS_PC] = 0;
++             s->play_next = false;
+++            s->pi_at = -1;
+++            s->pmi_at = -1;
++         }
++         cs_play_update(s);
+++        /* a PMI may have waited for this PI to be cleared */
+++        cs_play_irqs(s);
++         break;
++     case CS_PC:
++         s->regs[saddr] = val;
++@@ -594,7 +698,22 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++         /* the count loads the next buffer; a count of 0 unloads it */
++         s->regs[saddr] = val;
++         s->play_next = val != 0;
+++        now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        feed = s->play_next && s->regs[CS_PC] == 0 && now < s->play_end;
++         cs_play_update(s);
+++        /*
+++         * Loaded while the codec still plays the end of the last buffer:
+++         * take it now, for the codec to go on without a gap. At the next
+++         * audio callback a buffer shorter than the callback's period
+++         * would be late every time. The PI comes when the codec gets to
+++         * it. After the pipe ran dry the codec asks again at the next
+++         * callback, as after PEN.
+++         */
+++        if (feed && s->voice && s->play_running) {
+++            cs_play_feed(s, UINT32_MAX, now);
+++        }
+++        /* a PMI still due waits while a next buffer is loaded */
+++        cs_play_irqs(s);
++         break;
++     default:
++         s->regs[saddr] = val;
++@@ -608,6 +727,17 @@ static const MemoryRegionOps cs_mem_ops = {
++     .endianness = DEVICE_BIG_ENDIAN,
++ };
++ 
+++/* without the subsection nothing is due */
+++static int cs_pre_load(void *opaque)
+++{
+++    CSState *s = opaque;
+++
+++    s->play_end = 0;
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
+++    return 0;
+++}
+++
++ static int cs_post_load(void *opaque, int version_id)
++ {
++     CSState *s = opaque;
++@@ -616,19 +746,47 @@ static int cs_post_load(void *opaque, int version_id)
++     s->play_drain = 0;
++     cs_play_setup(s);
++     cs_play_update(s);
+++    /* a PI or PMI still due: set the timer again */
+++    cs_play_irqs(s);
++     return 0;
++ }
++ 
+++/* A PI or PMI still due must come after a migration, or AUDIO_DRAIN hangs */
+++static bool cs_irqs_needed(void *opaque)
+++{
+++    CSState *s = opaque;
+++
+++    return s->pi_at >= 0 || s->pmi_at >= 0;
+++}
+++
+++static const VMStateDescription vmstate_cs4231_irqs = {
+++    .name = "cs4231/irqs",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = cs_irqs_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_INT64(play_end, CSState),
+++        VMSTATE_INT64(pi_at, CSState),
+++        VMSTATE_INT64(pmi_at, CSState),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const VMStateDescription vmstate_cs4231 = {
++     .name ="cs4231",
++     .version_id = 2,
++     .minimum_version_id = 1,
+++    .pre_load = cs_pre_load,
++     .post_load = cs_post_load,
++     .fields = (const VMStateField[]) {
++         VMSTATE_UINT32_ARRAY(regs, CSState, CS_REGS),
++         VMSTATE_UINT8_ARRAY(dregs, CSState, CS_DREGS),
++         VMSTATE_BOOL_V(play_next, CSState, 2),
++         VMSTATE_END_OF_LIST()
+++    },
+++    .subsections = (const VMStateDescription * const []) {
+++        &vmstate_cs4231_irqs,
+++        NULL
++     }
++ };
++ 
++@@ -641,6 +799,9 @@ static void cs4231_init(Object *obj)
++                           CS_SIZE);
++     sysbus_init_mmio(dev, &s->iomem);
++     sysbus_init_irq(dev, &s->irq);
+++    s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cs_irq_timer, s);
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
++ }
++ 
++ static void cs4231_realize(DeviceState *dev, Error **errp)
+diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
+new file mode 100644
+index 0000000..a66322c
+--- /dev/null
++++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
+@@ -0,0 +1,396 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the cs4231's pi and pmi for a short
++ buffer on sun4m
++
++short-buffer plays one buffer of 40 bytes (5 ms): the first interrupt
++must be PI alone, PMI must not come while PI is not cleared, and must
++come at once when it is. short-tail plays 800 bytes and then 40: the
++PI for the short buffer must come when the long one has played, without
++PMI, and PMI a few ms after that PI is cleared.
++
++load-on-pd loads a third buffer as soon as PD shows, without waiting
++for a PI: there must be three PIs for the three buffers and one PMI.
++short-chain loads 20 buffers of 40 bytes, each at the PI of the one
++before: they must play in their 100 ms.
++migrate saves the machine to a file while the PI of a 40 byte buffer is
++set and PMI waits behind it, loads it in a second QEMU and clears the
++PI there: PMI must still come.
++
++playback now also expects the second PI and the PMI no earlier than
++80 ms after the interrupt before them: they come when the codec has
++played the 100 ms buffer, not when the samples are taken.
++
++SunOS 4.1.4's driver needs PI and PMI in two interrupts, see the
++previous commit.
++
++Tested: all seven pass, three runs. Without the previous commit
++short-buffer fails: PI and PMI are set together (0x00408000). Against
++earlier versions of the previous commit load-on-pd fails without its PD
++change (two PIs for three buffers), migrate without its subsection (PMI
++never comes), and short-chain without the take at load (the pipe runs
++empty after the second buffer).
++
++Origin: https://github.com/hwinther/lemu/commit/c92620599a8b19e90b671e47f1b04a3a2646c22d
++---
++ tests/qtest/sun4m-cs4231-test.c | 322 +++++++++++++++++++++++++++++++-
++ 1 file changed, 320 insertions(+), 2 deletions(-)
++
++diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
++--- a/tests/qtest/sun4m-cs4231-test.c
+++++ b/tests/qtest/sun4m-cs4231-test.c
++@@ -19,6 +19,7 @@
++ #include "qemu/osdep.h"
++ #include "libqtest.h"
++ #include "qemu/bswap.h"
+++#include "qobject/qdict.h"
++ 
++ /* SPARCstation 5 */
++ #define CS_BASE         0x6c000000ULL
++@@ -196,7 +197,7 @@
++ 
++     /* It takes the second one when the first has played: about 100 ms */
++     t2 = wait_csr(qts, APC_PI, 300);
++-    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, >=, 80);
++     g_assert_cmpint(t2, <=, 130);
++     g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==,
++                     BUF_DVMA + BUF2_OFFSET);
++@@ -206,7 +207,7 @@
++ 
++     /* No third buffer: the pipe runs empty when the second has played */
++     t2 = wait_csr(qts, APC_PMI, 300);
++-    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, >=, 80);
++     g_assert_cmpint(t2, <=, 130);
++     csr = qtest_readl(qts, APC_CSR);
++     g_assert_cmphex(csr & (APC_IP | APC_PM | APC_PD), ==,
++@@ -259,12 +260,329 @@
++     qtest_quit(qts);
++ }
++ 
+++/*
+++ * A short sound, as SimCity's audiomixer writes them: one buffer of 40
+++ * bytes (5 ms). SunOS's interrupt handler looks at PMI before PI and acts
+++ * on PMI only after a PI has found nothing more to load, so the two must
+++ * come in two interrupts: PI first, PMI only after PI has been cleared
+++ * and the codec has played the buffer. Before the fix both were set in
+++ * the same audio callback.
+++ */
+++#define SHORT_LEN       40
+++
+++static void test_short_buffer(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++
+++    /* The first interrupt: PI alone */
+++    for (ms = 0; ms < 100; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (csr & (APC_PI | APC_PMI)) {
+++            break;
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_cmpint(ms, <, 100);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++
+++    /* While the driver has not cleared PI, no PMI, however long */
+++    qtest_clock_step(qts, 50 * 1000 * 1000);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PMI);
+++
+++    /*
+++     * PI cleared, nothing more loaded: the buffer has long been played,
+++     * so PMI comes at once, as an interrupt of its own
+++     */
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_cmpint(wait_csr(qts, APC_PMI, 20), ==, 0);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PI | APC_PM), ==, APC_IP | APC_PM);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A long buffer and then a short one: the short one's PI comes when the
+++ * codec gets to it, and its PMI not before the codec has played it.
+++ */
+++static void test_short_tail(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[BUF_LEN];
+++    int64_t t_pi, t_pmi;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, SHORT_LEN);
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++
+++    /* PI for the 5 ms buffer when the 100 ms one has played, PMI apart */
+++    t_pi = wait_csr(qts, APC_PI, 300);
+++    g_assert_cmpint(t_pi, >=, 80);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PMI);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    t_pmi = wait_csr(qts, APC_PMI, 100);
+++    g_assert_cmpint(t_pmi, >=, 3);
+++    g_assert_cmpint(t_pmi, <=, 20);
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A driver that loads the next buffer as soon as the next registers are
+++ * free (PD), without waiting for the PI: 800 bytes, then 40, then 40 more
+++ * when PD shows. Each buffer taken must give a PI of its own, so PD must
+++ * not show before the PI of the buffer that was taken.
+++ */
+++static void test_load_on_pd(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[BUF_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++    int npi = 0, npmi = 0;
+++    bool loaded = false;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, SHORT_LEN);
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    npi++;
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++
+++    for (ms = 0; ms < 400; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (!loaded && (csr & APC_PD) && !(csr & APC_PI)) {
+++            /* the same 40 bytes once more */
+++            qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++            qtest_writel(qts, APC_PNC, SHORT_LEN);
+++            loaded = true;
+++        }
+++        if (csr & APC_PI) {
+++            npi++;
+++            qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++        }
+++        if (csr & APC_PMI) {
+++            npmi++;
+++            qtest_writel(qts, APC_CSR, APC_PMI | APC_ENABLES);
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_true(loaded);
+++    g_assert_cmpint(npi, ==, 3);
+++    g_assert_cmpint(npmi, ==, 1);
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A stream of short buffers, each loaded when the PI for the one before
+++ * comes: 20 times 40 bytes are 100 ms of sound and must play in that
+++ * time, one after the other. Taken only at the audio callbacks, every
+++ * 10 ms, each 5 ms buffer was followed by 5 ms of nothing.
+++ */
+++#define CHAIN_BUFS      20
+++
+++static void test_short_chain(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++    int loaded = 1;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++
+++    for (ms = 0; ms < 400; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (csr & APC_PMI) {
+++            break;
+++        }
+++        if (csr & APC_PI) {
+++            /* never with the PMI: that is short-buffer's case */
+++            qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++            if (loaded < CHAIN_BUFS) {
+++                qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++                qtest_writel(qts, APC_PNC, SHORT_LEN);
+++                loaded++;
+++            }
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_cmpint(loaded, ==, CHAIN_BUFS);
+++    g_assert_cmpint(ms, >=, 95);
+++    g_assert_cmpint(ms, <=, 125);
+++    qtest_quit(qts);
+++}
+++
+++static void migrate_to_file(QTestState *qts, const char *uri)
+++{
+++    QDict *rsp;
+++    const char *status;
+++    int i;
+++
+++    qtest_qmp_assert_success(qts, "{'execute': 'migrate',"
+++                             " 'arguments': {'uri': %s}}", uri);
+++    for (i = 0; i < 3000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-migrate'}");
+++        status = qdict_haskey(rsp, "status") ? qdict_get_str(rsp, "status")
+++                                             : "";
+++        if (!strcmp(status, "completed")) {
+++            qobject_unref(rsp);
+++            return;
+++        }
+++        g_assert_cmpstr(status, !=, "failed");
+++        qobject_unref(rsp);
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/*
+++ * The destination loads the file and resumes before our QMP client has
+++ * connected, so its RESUME event is lost: poll the status instead.
+++ */
+++static void wait_running(QTestState *qts)
+++{
+++    QDict *rsp;
+++    bool running;
+++    int i;
+++
+++    for (i = 0; i < 1000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-status'}");
+++        running = !strcmp(qdict_get_str(rsp, "status"), "running");
+++        qobject_unref(rsp);
+++        if (running) {
+++            return;
+++        }
+++        g_usleep(10 * 1000);
+++    }
+++    g_error("destination not running 10 s after -incoming");
+++}
+++
+++/*
+++ * A migration in the middle of a short sound: the 40 bytes have been
+++ * taken and PI is set, the driver has not cleared it yet, and PMI waits
+++ * behind it. On the other side the PI is cleared, and PMI must still
+++ * come: SunOS's AUDIO_DRAIN sleeps until it does.
+++ */
+++static void test_migrate(void)
+++{
+++    g_autofree char *path = NULL;
+++    g_autofree char *uri = NULL;
+++    QTestState *src, *dst;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.mig", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    uri = g_strdup_printf("file:%s", path);
+++
+++    src = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(src, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(src, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(src, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(src, BUF_RAM, buf, sizeof(buf));
+++    codec_write(src, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(src, APC_PNVA, BUF_DVMA);
+++    qtest_writel(src, APC_PNC, SHORT_LEN);
+++    qtest_writel(src, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(src, CS_ICONF, CS_PEN);
+++    wait_csr(src, APC_PI, 100);
+++    csr = qtest_readl(src, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++    migrate_to_file(src, uri);
+++    qtest_quit(src);
+++
+++    dst = qtest_initf("-machine SS-5,audiodev=snd0 -audiodev none,id=snd0 "
+++                      "-incoming %s", uri);
+++    wait_running(dst);
+++    csr = qtest_readl(dst, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++    g_assert_true(level_pending(dst, CS_LEVEL));
+++
+++    /* The driver clears the PI; the buffer plays out, then PMI */
+++    qtest_writel(dst, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_cmpint(wait_csr(dst, APC_PMI, 100), <=, 20);
+++    g_assert_true(level_pending(dst, CS_LEVEL));
+++    qtest_quit(dst);
+++    unlink(path);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++ 
++     qtest_add_func("sun4m-cs4231/playback", test_playback);
++     qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
+++    qtest_add_func("sun4m-cs4231/short-buffer", test_short_buffer);
+++    qtest_add_func("sun4m-cs4231/short-tail", test_short_tail);
+++    qtest_add_func("sun4m-cs4231/load-on-pd", test_load_on_pd);
+++    qtest_add_func("sun4m-cs4231/short-chain", test_short_chain);
+++    qtest_add_func("sun4m-cs4231/migrate", test_migrate);
++ 
++     return g_test_run();
++ }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

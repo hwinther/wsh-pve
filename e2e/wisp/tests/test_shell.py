@@ -49,6 +49,48 @@ class Mandel(unittest.TestCase):
         self.assertLess(bound * bound, 2**31)
 
 
+class Endian(unittest.TestCase):
+    """shell.py's model of init.c's endian game, for both byte orders: HostInit below plays the
+    little-endian side for real (the host build is x86 or x86_64)."""
+
+    def test_answer_little_endian_is_byteswap(self):
+        self.assertEqual(shell.endian_answer(0x12345678), 0x78563412)
+        self.assertEqual(shell.endian_answer(0x12345678, big_endian=False), 0x78563412)
+        self.assertEqual(shell.endian_answer(0), 0)
+        self.assertEqual(shell.endian_answer(0xFFFFFFFF), 0xFFFFFFFF)
+        self.assertEqual(shell.endian_answer(0x000000FF), 0xFF000000)
+
+    def test_answer_big_endian_is_unchanged(self):
+        self.assertEqual(shell.endian_answer(0x12345678, big_endian=True), 0x12345678)
+        self.assertEqual(shell.endian_answer(0xAABBCCDD, big_endian=True), 0xAABBCCDD)
+        self.assertEqual(shell.endian_answer(0xAABBCCDD, big_endian=False), 0xDDCCBBAA)
+        self.assertEqual(shell.endian_answer(0, big_endian=True), 0)
+        self.assertEqual(shell.endian_answer(0xFFFFFFFF, big_endian=True), 0xFFFFFFFF)
+
+    def test_words_are_deterministic_and_differ(self):
+        self.assertEqual(shell.endian_words(3), shell.endian_words(3))
+        words = shell.endian_words(5)
+        self.assertEqual(len(set(words)), 5)
+        self.assertTrue(all(0 <= w <= 0xFFFFFFFF for w in words))
+
+    def test_bytes_line_format(self):
+        self.assertEqual(shell.endian_bytes_line(0x12345678), "  bytes 12 34 56 78")
+
+    def test_byteorder_line(self):
+        self.assertEqual(shell.endian_byteorder_line(True), "  this machine is big-endian")
+        self.assertEqual(shell.endian_byteorder_line(False), "  this machine is little-endian")
+
+    def test_explain_line_names_the_byte_order(self):
+        self.assertIn("big-endian", shell.endian_explain(True))
+        self.assertIn("little-endian", shell.endian_explain(False))
+
+    def test_arch_is_big_endian(self):
+        self.assertTrue(shell.arch_is_big_endian("sparc32"))
+        self.assertTrue(shell.arch_is_big_endian("sparc64"))
+        self.assertFalse(shell.arch_is_big_endian("x86_64"))
+        self.assertFalse(shell.arch_is_big_endian("i386"))
+
+
 TRANSCRIPT = (
     "OpenBIOS\r\nLinux version 7.3.4\r\nWISP-BANNER wsh-pve wisp v1\r\n"
     "\x1b[1;36m logo\x1b[0m\r\n\r\n"
@@ -65,8 +107,19 @@ TRANSCRIPT = (
     "\x1b[1;32mwisp\x1b[0m:\x1b[1;34msparc32\x1b[0m> mandel\r\n"
     + "".join(f" {r}\r\n" for r in shell.mandel_rows())
     + "  78 x 20 points, 32 iterations, 90 ms\r\n"
-    "\x1b[1;32mwisp\x1b[0m:\x1b[1;34msparc32\x1b[0m> poweroff\r\n"
-    "  powering off\r\nreboot: Power down\r\n"
+    + "\x1b[1;32mwisp\x1b[0m:\x1b[1;34msparc32\x1b[0m> endian\r\n"
+    + shell.endian_byteorder_line(True) + "\r\n"
+    + "  bytes, low address first; type the 32-bit word this machine reads from\r\n"
+      "  them, in hex. endian <hex> to guess (wrong costs a life, 3 to start);\r\n"
+      "  endian alone shows the round again.\r\n"
+    + shell.endian_bytes_line(shell.endian_words(1)[0]) + "\r\n"
+    + "\x1b[1;32mwisp\x1b[0m:\x1b[1;34msparc32\x1b[0m> endian 0\r\n"
+    + "  wrong, it was 0x{:08x}. 2 lives left\r\n".format(
+          shell.endian_answer(shell.endian_words(1)[0], True))
+    + shell.endian_explain(True) + "\r\n"
+    + shell.endian_bytes_line(shell.endian_words(2)[1]) + "\r\n"
+    + "\x1b[1;32mwisp\x1b[0m:\x1b[1;34msparc32\x1b[0m> poweroff\r\n"
+      "  powering off\r\nreboot: Power down\r\n"
 )
 
 
@@ -77,12 +130,12 @@ class Transcript(unittest.TestCase):
 
     def test_split(self):
         answers = shell.split_transcript(TRANSCRIPT)
-        self.assertEqual(len(answers), 6)
+        self.assertEqual(len(answers), 8)
         self.assertEqual(answers[1], ("sparc32", ["  arch      sparc32 (sparc)",
                                                   "  kernel    Linux 7.3.4 #1", "  cpus      1",
                                                   "  memory    109024 kB, 107812 kB free",
                                                   "  uptime    0.402 s", "  pid       1"]))
-        self.assertEqual(answers[5], ("sparc32", ["  powering off", "reboot: Power down"]))
+        self.assertEqual(answers[7], ("sparc32", ["  powering off", "reboot: Power down"]))
 
     def test_good_transcript(self):
         problems, numbers = self.check(TRANSCRIPT)
@@ -103,7 +156,7 @@ class Transcript(unittest.TestCase):
     def test_wrong_arch_and_missing_answers(self):
         cut = TRANSCRIPT[:TRANSCRIPT.index("bench\r\n")]
         problems, _ = self.check(cut, arch="sparc64")
-        self.assertIn("3 of 6 commands answered", problems)
+        self.assertIn("3 of 8 commands answered", problems)
         self.assertIn("info: arch sparc32 != sparc64", problems)
         self.assertIn("help: prompt arch sparc32 != sparc64", problems)
 
@@ -111,6 +164,24 @@ class Transcript(unittest.TestCase):
         text = TRANSCRIPT.replace("  mandel          the Mandelbrot set\r\n", "")
         problems, _ = self.check(text)
         self.assertEqual(problems, ["help: no command list (typed with Backspace)"])
+
+    def test_endian_check_accepts_sparc32_and_rejects_little_endian_answer(self):
+        # TRANSCRIPT's endian round is the sparc32 (big-endian) model's answer
+        problems, _ = self.check(TRANSCRIPT)
+        self.assertEqual(problems, [])
+        word = shell.endian_words(1)[0]
+        big_answer = shell.endian_answer(word, big_endian=True)
+        little_answer = shell.endian_answer(word, big_endian=False)
+        self.assertNotEqual(big_answer, little_answer)
+        # the same transcript with the little-endian answer in the wrong-guess reply: rejected
+        bad = TRANSCRIPT.replace(f"0x{big_answer:08x}", f"0x{little_answer:08x}")
+        problems, _ = self.check(bad)
+        self.assertIn(f"endian: wrong-guess reply missing 0x{big_answer:08x}", problems)
+        # and with the little-endian byte-order line instead of the big-endian one: rejected too
+        bad = TRANSCRIPT.replace(shell.endian_byteorder_line(True),
+                                 shell.endian_byteorder_line(False))
+        problems, _ = self.check(bad)
+        self.assertIn("endian: no big-endian line", problems)
 
     def test_evaluate_shell_record(self):
         raw = {"load1": 1.0, "load5": 1.0, "exit_code": 0, "timed_out": False, "max_rss_kb": 2048,
@@ -211,6 +282,59 @@ class HostInit(unittest.TestCase):
         ])
         self.assertRegex(answers[6][1][0], r"^  crc32 0x[0-9a-f]{8} after 1 rounds \(16 KiB\)")
         self.assertEqual(int(answers[6][1][0].split()[1], 16), run.expected_crc(1))
+
+    def test_endian_game(self):
+        words = shell.endian_words(4)
+        answers = [shell.endian_answer(w) for w in words]
+        script = [
+            "endian",
+            f"endian {answers[0]:08x}",
+            "endian",
+            f"endian {(answers[1] ^ 1):08x}",
+            f"endian {answers[2]:08x}",
+            "poweroff",
+        ]
+        proc = self.start({"wisp": "shell"}, script)
+        self.assertEqual(proc.returncode, 0)
+        out = shell.split_transcript(proc.stdout.decode(), echo=False)
+        self.assertEqual(len(out), 6)
+        # a new game starts with the byte-order line (the host build is little-endian) and its
+        # intro ends with the first round's bytes
+        self.assertEqual(out[0][1][0], shell.endian_byteorder_line(False))
+        self.assertEqual(out[0][1][-1], shell.endian_bytes_line(words[0]))
+        # a correct guess scores a point and deals the next round
+        self.assertEqual(out[1][1], [f"  correct, 0x{answers[0]:08x}. score 1",
+                                     shell.endian_bytes_line(words[1])])
+        # "endian" alone shows the same round again, without dealing a new one
+        self.assertEqual(out[2][1], [shell.endian_bytes_line(words[1])])
+        # a wrong guess costs a life, explains the byte order and still deals the next round
+        self.assertEqual(out[3][1], [f"  wrong, it was 0x{answers[1]:08x}. 2 lives left",
+                                     shell.endian_explain(False),
+                                     shell.endian_bytes_line(words[2])])
+        self.assertEqual(out[4][1], [f"  correct, 0x{answers[2]:08x}. score 2",
+                                     shell.endian_bytes_line(words[3])])
+        self.assertIn("  powering off", out[5][1])
+
+    def test_endian_game_over_and_restart(self):
+        words = shell.endian_words(3)
+        wrongs = [shell.endian_answer(w) ^ 1 for w in words]
+        script = ["endian", f"endian {wrongs[0]:08x}", f"endian {wrongs[1]:08x}",
+                  f"endian {wrongs[2]:08x}", "endian", "poweroff"]
+        proc = self.start({"wisp": "shell"}, script)
+        self.assertEqual(proc.returncode, 0)
+        out = shell.split_transcript(proc.stdout.decode(), echo=False)
+        self.assertEqual(len(out), 6)
+        self.assertEqual(out[1][1], [f"  wrong, it was 0x{shell.endian_answer(words[0]):08x}. "
+                                     "2 lives left", shell.endian_explain(False),
+                                     shell.endian_bytes_line(words[1])])
+        self.assertEqual(out[2][1], [f"  wrong, it was 0x{shell.endian_answer(words[1]):08x}. "
+                                     "1 lives left", shell.endian_explain(False),
+                                     shell.endian_bytes_line(words[2])])
+        # three wrong guesses end the game: no next round is dealt
+        self.assertEqual(out[3][1], [f"  wrong, it was 0x{shell.endian_answer(words[2]):08x}. "
+                                     "game over, score 0", shell.endian_explain(False)])
+        # a new game after game over reseeds the same sequence
+        self.assertEqual(out[4][1][-1], shell.endian_bytes_line(words[0]))
 
     @unittest.skipIf(os.path.exists("/test"), "the host has a /test")
     def test_test_mode_reports_a_missing_test(self):

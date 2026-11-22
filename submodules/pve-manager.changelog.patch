@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..b7a69755 100644
+index f305ba44..54034824 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,84 @@
+@@ -1,10 +1,90 @@
++pve-manager (9.2.32+wsh12) trixie; urgency=medium
++
++  * Refresh patches: pve-manager
++
++ -- hwinther <hwinther@users.noreply.github.com>  Sun, 22 Nov 2026 15:57:32 +0000
++
 +pve-manager (9.2.32+wsh11) trixie; urgency=medium
 +
 +  * feat(sparc): SS-600MP profile in PVE, and SunOS 4.1.2 as an

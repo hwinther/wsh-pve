@@ -71,7 +71,10 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   egl-headless' import). On a node with neither a render node nor `/dev/udmabuf` it checks that the
   egl-headless VM is refused at the start instead. Skipped unless the guest is in the container:
   `3dfx/pve-guest-setup.sh [container]` builds it there (apt, gcc, Debian's kernel), for the revision of
-  the container's 3dfx binary. No workflow runs that yet.
+  the container's 3dfx binary. `e2e.yml` runs it before the suite (`PVE_GUEST_FETCH=1` fetches the
+  qemu-3dfx submodule) and sets `E2E_3DFX_GUEST=required`, which fails the spec instead of skipping it
+  when the guest is missing. `3dfx/win98-test.sh --pve CONTAINER` runs the Windows 98 test through PVE
+  in the same container (`qm create`/`qm start`; see the 3dfx guide).
 
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
@@ -86,7 +89,7 @@ A kernel plus a one-program initramfs (PID 1 built with the kernel's nolibc) for
 memory, a compute loop with a checksum and its time, one result line, power-off. `wisp/build.sh` builds
 it in the `wisp/Dockerfile` image, `wisp/run.py` boots it under a given QEMU binary (TCG or a TCI build
 from `wisp/qemu-tci.sh`) and reports times to PID 1 and power-off, the loop time and QEMU's peak RSS. See
-`wisp/README.md` and the [wisp](../docs/src/content/docs/guides/wisp.md) guide. The `Wisp boot`
+`wisp/README.md` and the [wisp](../docs/src/content/docs/guides/wisp.mdx) guide. The `Wisp boot`
 workflow boots it on pull requests that change `wisp/` or the pve-qemu build, with the pull request's own
 QEMU when `pve-qemu.patch` or the pin changes (`wisp/README.md`, "CI").
 

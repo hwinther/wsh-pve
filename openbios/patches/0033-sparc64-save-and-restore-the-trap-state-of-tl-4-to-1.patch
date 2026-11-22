@@ -1,0 +1,66 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: save and restore the trap state of TL 4 to 1, not 3
+ to 0
+
+SAVE_CPU_TRAP_STATE and RESTORE_CPU_TRAP_STATE walk the trap levels
+with wrpr %tl and save or restore %tpc, %tnpc, %tstate and %tt of each.
+They went from 3 down to 0, so a few instructions of every client call
+(and of every MMU miss the firmware handles) ran at TL 0. There is no
+trap state at TL 0 (rdpr %tpc there is an illegal instruction on the
+UltraSPARC), and at TL 0 instructions are fetched in the primary
+context, not the nucleus one.
+
+FreeBSD 12.4 on sun4u runs its kernel at TL 1 with the user process's
+context left in the primary context register, and calls the client
+interface from there with its own trap table. The firmware's locked
+ITLB entry is context 0 and not global, so once user processes ran the
+fetch at TL 0 missed it, FreeBSD's handler found no mapping and the
+kernel panicked: "panic: trap: fast instruction access mmu miss
+(kernel)", on every reboot (cpu_reset() looks /chosen up first) and
+every ofwdump(8); QEMU then stopped with "Trap 0x00a4 while trap level
+(5) >= MAXTL (5), Error state" as the panic tried to reboot again.
+FreeBSD's ofw_exit(), which the power-off uses, sets the primary
+context to 0 itself, so that path got through.
+
+Walk the levels from 4 down to 1 instead. The four slots in the
+context keep their size and order; nothing else reads them.
+---
+ arch/sparc64/cpustate.h | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/arch/sparc64/cpustate.h b/arch/sparc64/cpustate.h
+index b4695ad..5469de6 100644
+--- a/arch/sparc64/cpustate.h
++++ b/arch/sparc64/cpustate.h
+@@ -145,7 +145,8 @@ save_cpu_window_##type: \
+ 	\
+ save_trap_state_##type: \
+ 	deccc	%g6; \
+-	wrpr	%g6, %tl; \
++	add	%g6, 1, %g7; \
++	wrpr	%g7, %tl; \
+ 	rdpr	%tpc, %g7; \
+ 	stx	%g7, [%g5]; \
+ 	rdpr	%tnpc, %g7; \
+@@ -158,7 +159,10 @@ save_trap_state_##type: \
+ 	 add	%g5, 0x20, %g5; \
+ 	\
+ 	/* For 4 trap levels with 4 registers, memory required is \
+-	4*8*4 = 0x80 bytes */ \
++	4*8*4 = 0x80 bytes. The levels are 4 down to 1: there is no \
++	trap state at TL 0, and code run there is fetched in the \
++	primary context, where a client's own context (FreeBSD's user \
++	process) misses the firmware's context 0 ITLB entry */ \
+ 	\
+ 	/* Switch back to original trap level */ \
+ 	wrpr	%g4, %tl;
+@@ -253,7 +257,8 @@ restore_cpu_window_##type: \
+ 	\
+ restore_trap_state_##type: \
+ 	deccc	%g6; \
+-	wrpr	%g6, %tl; \
++	add	%g6, 1, %g7; \
++	wrpr	%g7, %tl; \
+ 	ldx	[%g5], %g7; \
+ 	wrpr	%g7, %tpc; \
+ 	ldx	[%g5 + 0x8], %g7; \

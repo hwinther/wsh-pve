@@ -72,7 +72,12 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
 3. The sources are built static against nolibc: `sparc64-linux-gnu-gcc -m32 -mcpu=v8 -static
    -nostdlib -nostdinc` for sparc32, `-m64` for sparc64. On sparc, nolibc's `_start` is replaced
    (`start-sparc.c`): gcc puts a stack frame in front of nolibc's, which then reads `argc`, `argv`
-   and the environment from the wrong place.
+   and the environment from the wrong place. sparc32 also gets `libgcc-sparc32.c`: `/` and `%` on
+   64-bit integers are calls to libgcc (`__udivdi3`, `__divdi3`, `__umoddi3`, `__moddi3`), and
+   Ubuntu's 32-bit sparc libgcc is V8+, which the kernel refuses. The file has those and
+   `__udivmoddi4` and `__divmoddi4`, as shift-subtract long division (one quotient bit per step,
+   the V8 `udiv` when both operands fit in 32 bits); division by zero gets `SIGFPE`, as on sparc64
+   and x86_64. `tests/div64.c`, signed and unsigned with known results, checks them on all three.
 4. The binary goes into a one-file initramfs as `/test`. QEMU boots the kernel with `-initrd`; the
    kernel unpacks it next to the built-in one, and PID 1, started with `wisp=test`, runs `/test`
    with the `args`, waits for it and prints `WISP-TEST v=1 exit=N signal=N ms=N`, then powers the
@@ -87,9 +92,10 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
   calls. It has no `qsort`, no locale, no `<math.h>` beyond `fabs`, no threads, no `setjmp`, no
   C++. Code that needs those needs your own toolchain (below). Build the unit you want to check,
   with a small `main` that checks it, not the whole program.
-- **No 64-bit division on sparc32**: there is no V8 libgcc, so `/` and `%` on 64-bit integers
-  fail to link there (`undefined reference to '__udivdi3'`), as do other libgcc helpers. 64-bit
-  addition, subtraction, multiplication and shifts work. sparc64 and x86_64 link libgcc.
+- **sparc32 has only the division helpers of libgcc**: there is no V8 libgcc, so the action links
+  its own 64-bit division helpers there (`libgcc-sparc32.c`, below). Other libgcc helpers, such
+  as the one `__builtin_popcount` calls (`__popcountsi2`), still fail to link there
+  (`undefined reference to ...`). sparc64 and x86_64 link the compiler's libgcc.
 - **sparc32 is V8**, as on a real SPARCstation 5: no V9 instructions. Ubuntu's 32-bit sparc libgcc
   and glibc are V8+ (`EM_SPARC32PLUS`, V9 code) even with `-mcpu=v8`, and the sparc32 kernel
   refuses such a binary; the action stops with a message when given one.

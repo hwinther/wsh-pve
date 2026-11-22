@@ -55,6 +55,8 @@ TARGETS: per target
   net_modes  the --ip modes tested for an automated target: "static" (an address, with --netmask,
              --gateway, --dns, --domain) and/or "dhcp"; `lab.py install` refuses the others.
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
+  dhcp_check {commands, expect}: with --ip dhcp, what the --check boot runs as well and the regexes
+             its output must all have (the lease and the network beyond it)
   net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
   net_require  options a static address needs (["gateway", "dns"]: the installer fetches packages)
   apt_proxy  True: the installer fetches packages and takes --apt-proxy / WSH_LAB_APT_PROXY
@@ -126,6 +128,18 @@ PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": 
 # Debian 13 on sun4u through PVE: the published packages (pve-qemu-kvm with wsh/0070 Linux idle and openbios 0030)
 PACKAGES_2026_11_22_DEB13 = {"pve-qemu-kvm": "11.1.3-4+wsh8", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
                              "libpve-storage-perl": "9.1.18+wsh2"}
+# FreeBSD 12.4 on sun4u: the published packages with the lab's qemu-system-sparc64 (the 11.1.3-4 series with
+# wsh/0114-0115) and openbios-sparc64 (0001-0030 with 0032-0033) mounted over the package's
+PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0114-0115, openbios 0032-0033 (lab build)",
+                            "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
+                            "libpve-storage-perl": "9.1.18+wsh2"}
+# Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
+PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
+                            "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
+PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
+# Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
+PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
+                            "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -259,6 +273,18 @@ MEDIA = {
         "lab": "other-os/openbsd8.0/install80.iso",
         # freely redistributable; the sha256 is the one in the release's SHA256 file
         "url": "https://cdn.openbsd.org/pub/OpenBSD/8.0/sparc64/install80.iso"},
+    # FreeBSD 12.4, the last release with sparc64 (the branch is end of life); size and sha256 as in the
+    # release's CHECKSUM.SHA256-FreeBSD-12.4-RELEASE-sparc64, the sha512 its CHECKSUM.SHA512. The
+    # bootonly CD (263782400 bytes, sha256 0adb1cccd0ccde4438886dcfd8bddbc4cfc12c6a961ab1a8af08d449628fe0cb)
+    # boots to bsdinstall too but has no sets (it would fetch them)
+    "FreeBSD-12.4-RELEASE-sparc64-disc1.iso": {
+        "title": "FreeBSD 12.4-RELEASE sparc64 disc1 (ftp-archive.freebsd.org)", "content": "iso",
+        "size": 640942080, "sha256": "72abeb51bae9680b8354a623fcddadf98c67ae706c15f7e80054e1ba7764aaa9",
+        "lab": "other-os/freebsd12.4/FreeBSD-12.4-RELEASE-sparc64-disc1.iso",
+        "sha512": "8d5cd28684e04dc58de357238a87b509a7bcb3d939476a195835bc8b8cdd76ad"
+                  "65642638a20f887199eb97277965db73a1093e58673940cbc416d328c7c067f9",
+        "url": "http://ftp-archive.freebsd.org/pub/FreeBSD-Archive/old-releases/ISO-IMAGES/12.4/"
+               "FreeBSD-12.4-RELEASE-sparc64-disc1.iso"},
     # OpenBSD 5.9, the last release with the sparc (sun4m) port: its CD boots bsd.rd only (the release
     # has no install CD with the sets for sparc), so the sets come from a second CD made on the node from
     # the release's files (`lab.py media openbsd59-ss5 --convert <the release's directory>`). Sizes and
@@ -312,6 +338,13 @@ MEDIA = {
         "sha256": "b75e1b64544b534453c2442f57649579641d8db9eea464f5dcc9174cf3697fb6",
         "lab": "other-os/debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso",
         "url": "https://cdimage.debian.org/cdimage/ports/snapshots/2026-06-11/debian-13.0.0-sparc64-NETINST-1.iso"},
+    # the release's SHA256SUMS and SHA512SUMS, both signed by the Debian CD signing key (checked with gpgv
+    # against debian-keyring's role keys)
+    "debian-7.11.0-sparc-CD-1.iso": {
+        "title": "Debian GNU/Linux 7.11.0 (wheezy) sparc CD 1", "content": "iso", "size": 679512064,
+        "sha256": "1a895390dd946ac11060ee057c785f8d37bb6293bc60405782de8a782d40db8e",
+        "lab": "other-os/debian-7.11.0-sparc-CD-1.iso",
+        "url": "https://cdimage.debian.org/cdimage/archive/7.11.0/sparc/iso-cd/debian-7.11.0-sparc-CD-1.iso"},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
@@ -467,6 +500,25 @@ DEBIAN_UNATTENDED = {
     # pve_matrix.py install gives them the apt cache through a pinhole on its node's vmbr0 (10.0.2.2:3142,
     # --apt-cache / WSH_LAB_APT_CACHE) and nothing else; without one it skips them
     "matrix_needs": "apt_cache",
+}
+
+
+# Debian 7 (wheezy) on sun4u: the same unattended install from CD 1, nothing fetched (no net_require, no
+# apt proxy, no apt cache in the matrix); the answer CD on ide3 (README.md, "Debian GNU/Linux 7 on sun4u")
+DEBIAN7_UNATTENDED = {
+    **DEBIAN_UNATTENDED,
+    # 84 min from the boot line to the reset in the lab's own QEMU on a quiet host
+    "install": {"scenario": "debian-install-sparc.py", "vars": {"TIMEOUT": "9000"}, "timeout": 9600,
+                "answers": {"format": "preseed-wheezy", "drive": "ide3"}},
+    "check": {"scenario": "debian-boot-disk.py", "vars": {}, "timeout": 900,
+              "commands": "uname -a; hostname; cat /etc/wsh-lab-target; cat /etc/debian_version; df -k;"
+                          " cat /proc/partitions; /sbin/ifconfig -a; /sbin/route -n; cat /etc/resolv.conf;"
+                          " grep -v '^#' /etc/apt/sources.list; netstat -ltn; pgrep -l sshd"},
+    "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain);"
+               " the install needs none (everything from CD 1)",
+    "net_require": [],
+    "apt_proxy": False,
+    "matrix_needs": None,
 }
 
 
@@ -918,6 +970,35 @@ TARGETS = {
         "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_3_WSH6,
                    "with": "--check; --check --export; --check --ip --gateway --dns --domain; boot-test"},
     },
+    # FreeBSD 12.4, the last release with sparc64: disc1 boots bsdinstall on ttya; the install takes the
+    # welcome screen's Shell and runs `bsdinstall script` (_freebsd.install: the auto layout, VTOC8, on
+    # ada0, kernel and base from the CD), then halt -p; the first boot sets root's password, the marker,
+    # the host name and the network (rc.conf), the check boots it again. The reboot and the power-off
+    # need openbios 0032-0033 (before, FreeBSD panics on reboot and the power-off spins in the
+    # firmware); idle needs pve-qemu wsh/0114. README.md, "The FreeBSD 12.4 install target"
+    "freebsd124-sun4u": {
+        "title": "FreeBSD 12.4 sparc64, kernel and base (sun4u, OpenBIOS, IDE disk)",
+        "status": "automated",
+        "method": "scripted",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "other", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # bsdinstall writes its VTOC8 label
+        "media": [{"name": "FreeBSD-12.4-RELEASE-sparc64-disc1.iso", "drive": "ide2"}],
+        "install": {"scenario": "freebsd-install-sparc64.py", "vars": {}, "timeout": 3600},
+        "firstboot": {"scenario": "freebsd-firstboot.py", "vars": {}, "timeout": 1800},
+        "check": {"scenario": "freebsd-boot-disk.py", "vars": {}, "timeout": 1800,
+                  "commands": "uname -a; cat /etc/wsh-lab-target; df -k; gpart show ada0; ifconfig hme0;"
+                              " netstat -rn -f inet; cat /etc/resolv.conf; vmstat -i"},
+        "boot": "ide0",
+        "login": {"user": "root", "console": "serial0 (qm terminal <vmid>)"},
+        "hostname": "freebsd124-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "net_modes": ["static", "dhcp"],
+        "dhcp_note": "dhclient takes the address, router and name servers; the host name stays as installed (rc.conf)",
+        "minutes": 15,  # 14.9 min through PVE: install 9.6, first boot 3.3, --check 1.8
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_FBSD, "with": "--check --export"},
+    },
     # OpenBSD 5.9, the last release of the sparc port, on sun4m: cd59.iso boots bsd.rd (by path at
     # OpenBIOS's `0 >`), the sets come from the sets CD made on the node (`lab.py media <target>
     # --convert <the release's directory>`, MEDIA "from") on scsi5, the installer's cd0; answered on
@@ -955,10 +1036,10 @@ TARGETS = {
         "disk": {"bus": "ide0", "size": 16, "label": None},
         "device": "c0t0d0",  # the IDE disk as Solaris names it (the check's prtvtoc)
         "media": [{"name": "sol-10-u11-ga-sparc-dvd.iso", "drive": "ide2"}],
-        # The text installer on ttya with a static address (DHCP=no), root's password asked by the
-        # installer (root_password); at its reboot at the end the scenario stops the VM (at the
-        # firmware's banner with openbios 0030, or where Solaris says the reboot call returned
-        # without it) and `install` boots the disk.
+        # The text installer on ttya with a static address (DHCP=no; `install` sets DHCP=yes for
+        # --ip dhcp), root's password asked by the installer (root_password); at its reboot at the
+        # end the scenario stops the VM (at the firmware's banner with openbios 0030, or where
+        # Solaris says the reboot call returned without it) and `install` boots the disk.
         "install": {"scenario": "solaris10-install-sparc64.py", "vars": {"BOOT": "", "DHCP": "no"},
                     "root_password": True, "retry_on": "before the installer", "timeout": 10800},
         "firstboot": {"scenario": "solaris10-firstboot.py", "vars": {}, "timeout": 3600},
@@ -968,13 +1049,21 @@ TARGETS = {
         "hostname": "sol10-sun4u",
         "nic": "hme0",
         # The installer sets the host name, address and netmask; the first boot writes /etc/defaultrouter
-        # and DNS (solaris10-firstboot.py). hme0 uses the IDPROM's MAC, which is net0's with pve-qemu
-        # wsh/0034 (52:54:00:12:34:56 for every guest before it).
-        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
-        "net_modes": ["static"],
-        "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
-        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
-                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
+        # and DNS (solaris10-firstboot.py). With --ip dhcp the installer's DHCP screen says yes
+        # (/etc/dhcp.hme0) and the first boot keeps the host name in /etc/nodename and asks the
+        # server for it. hme0 uses the IDPROM's MAC, which is net0's with pve-qemu wsh/0034
+        # (52:54:00:12:34:56 for every guest before it).
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
+        "net_modes": ["static", "dhcp"],
+        "dhcp_note": "router and name servers from the DHCP server; the host name from the server, else as installed (/etc/nodename)",
+        # --check with --ip dhcp: the lease on hme0 and a ping of the router the server gave
+        # (ifconfig -a is in the check's commands already; the console line takes 256 characters)
+        "dhcp_check": {"commands": "r=`/sbin/dhcpinfo -i hme0 Router`; echo router=$r; ping $r 30",
+                       "expect": [r"<[A-Z0-9,]*\bDHCP\b", r"(?m)^router=\d+\.\d+\.\d+\.\d+", r"is alive"]},
+        "minutes": 110,  # 108.5-110.7 min static: install ~81, first boot ~19, --check ~9; 119.8 with --ip dhcp
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_WSH4,
+                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user (2026-11-17);"
+                           " --check --ip dhcp"},
     },
     # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
@@ -1283,6 +1372,26 @@ TARGETS = {
         "minutes": 19,
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19,
                    "with": "--check --gateway --dns; --check --user lab --gateway --dns --apt-proxy"},
+    },
+    # Debian 7 (wheezy), the last Debian release for sparc (32-bit userland, the sparc64 kernel Linux 3.2,
+    # SILO), on sun4u: everything from CD 1, nothing fetched, so no router, name server or apt cache. A
+    # preseed file from an answer CD made on the node on ide3 (the secondary slave, sr1 after CD 1 on
+    # ide2), loaded by preseed/early_command on SILO's boot line (_debian.boot_line64); the standard
+    # system with openssh-server; SILO on the disk. README.md, "Debian GNU/Linux 7 on sun4u"
+    "debian7-sun4u": {
+        **DEBIAN7_UNATTENDED,
+        "title": "Debian GNU/Linux 7 (wheezy) base system with SSH (sun4u, OpenBIOS, IDE disk)",
+        "status": "automated",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "l26", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # partman writes its own Sun label
+        "media": [{"name": "debian-7.11.0-sparc-CD-1.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "debian7-sun4u",
+        # 68.5 min through PVE (install 61.6, first boot 3.7, check 2.9) at a host load of 2-4; the boot-test
+        # of the stored disk 2.9 min. 84 min to the reset in the lab's own QEMU (1024 MB, load 4-17)
+        "minutes": 69,
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_DEB7, "with": "--check --export; boot-test"},
     },
 }
 

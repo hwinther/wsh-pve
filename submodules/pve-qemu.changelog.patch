@@ -1,8 +1,49 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..62be3be 100644
+index 9da9d72..3c840d2 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,38 @@
+@@ -1,10 +1,79 @@
++pve-qemu-kvm (11.1.3-4+wsh10) trixie; urgency=medium
++
++  * fix(pve-qemu): LF line endings in wsh/0033, 0066 and 0123 (#463)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 19:36:21 +0000
++
++pve-qemu-kvm (11.1.3-4+wsh9) trixie; urgency=medium
++
++  * fix(pve-qemu): raise the cs4231's pi and pmi when the codec gets
++    there (LEMU) (#459)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 18:53:51 +0000
++
++pve-qemu-kvm (11.1.3-4+wsh8) trixie; urgency=medium
++
++  * feat(sparc64): FreeBSD 12.4 on sun4u, with power-off and reboot
++    fixes in OpenBIOS and idle (#456)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 13:04:02 +0000
++
++pve-qemu-kvm (11.1.3-4+wsh7) trixie; urgency=medium
++
++  * feat(sparc64): Debian 7.11 on sun4u, with idle for Linux 3.2 and a
++    fast reset (#454)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 12:14:13 +0000
++
++pve-qemu-kvm (11.1.3-4+wsh6) trixie; urgency=medium
++
++  * fix(sparc): keep SuperSPARC fetches in the PROM in boot mode, and
++    scope Sun's SS-600MP PROM (#449)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 11:45:04 +0000
++
++pve-qemu-kvm (11.1.3-4+wsh5) trixie; urgency=medium
++
++  * fix(sparc): keep SuperSPARC fetches in the PROM in boot mode, and
++    scope Sun's SS-600MP PROM (#449)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 11:29:37 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh4) trixie; urgency=medium
 +
 +  * feat(sparc64): halt the CPU in the idle loops of Linux and Solaris

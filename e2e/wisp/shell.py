@@ -3,9 +3,11 @@
 QEMU's serial console is on stdin and stdout. The driver waits for each prompt, sends the next
 command and keeps what came back; at the end it checks the answers: the line editing (a mistyped
 "help" fixed with two Backspaces), the info lines, the CRC of bench and of "crc 64" against the
-model in run.py, every row of mandel against mandel_rows() below, and the power-off. With a
-tier-2 profile (run.py --shell --tier2), the script also has disk, net and smp (tier2_script()),
-and run.py checks their lines with tier2.py. Python standard library only.
+model in run.py, every row of mandel against mandel_rows() below, the endian game's byte-order
+line and first round against endian_words()/endian_answer() (for the architecture under test) and
+a deliberately wrong guess's reply, and the power-off. With a tier-2 profile (run.py --shell
+--tier2), the script also has disk, net and smp (tier2_script()), and run.py checks their lines
+with tier2.py. Python standard library only.
 """
 
 import os
@@ -21,8 +23,17 @@ FOOTER = re.compile(r"  \d+ x \d+ points, ")
 LOOP = re.compile(r"crc32 0x([0-9a-f]{8}) after (\d+) rounds \(\d+ KiB\) in (\d+) ms")
 
 # "hepl" and two Backspaces (DEL, what a terminal sends) and "lp": the kernel's line discipline
-# makes it "help".
-SCRIPT = ("hepl\x7f\x7flp", "info", "bench", "crc 64", "mandel", "poweroff")
+# makes it "help". "endian" starts a new game and shows round 1; "endian 0" is a deliberately
+# wrong guess (check_answers checks its reply against the model's answer for the arch under test).
+SCRIPT = ("hepl\x7f\x7flp", "info", "bench", "crc 64", "mandel", "endian", "endian 0", "poweroff")
+
+# Architectures this lab boots as big-endian; the rest (x86_64, i386) are little-endian.
+BIG_ENDIAN_ARCHES = ("sparc32", "sparc64")
+
+
+def arch_is_big_endian(arch):
+    """True for the big-endian architectures under test (sparc32, sparc64)."""
+    return arch in BIG_ENDIAN_ARCHES
 
 
 def reboot_script(script):
@@ -72,6 +83,55 @@ def mandel_rows():
             out.append("@" if n == MANDEL_ITER else MANDEL_CHARS[n * 9 // MANDEL_ITER])
         rows.append("".join(out))
     return rows
+
+
+# init.c's endian game: a xorshift32 stream seeded with "endi", one word per round, and the value
+# the machine under test's CPU reads from that word's bytes (the "bytes" line prints them low
+# address first, which is high byte first): the word unchanged on a big-endian CPU, byte-swapped
+# on a little-endian one. check_answers() checks SCRIPT's "endian" and "endian 0" against this
+# model for the arch under test; tests/test_shell.py also drives a full game with its own scripts.
+ENDIAN_SEED = 0x656E6469  # "endi"
+
+
+def endian_words(n, seed=ENDIAN_SEED):
+    """The first n words of the endian game's xorshift32 stream, in round order: the same
+    generator xorshift() advances for the tier-2 checks, seeded for the game alone."""
+    x = seed
+    words = []
+    for _ in range(n):
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        words.append(x)
+    return words
+
+
+def endian_answer(word, big_endian=False):
+    """The 32-bit value the machine under test's CPU reads from word's bytes (the "bytes" line
+    prints them low address first, i.e. high byte first): word unchanged for a big-endian CPU,
+    with its bytes reversed for a little-endian one."""
+    order = "big" if big_endian else "little"
+    return int.from_bytes(word.to_bytes(4, "big"), order)
+
+
+def endian_bytes_line(word):
+    """The "bytes" line init.c's endian game prints for one round's word."""
+    return "  bytes {:02x} {:02x} {:02x} {:02x}".format((word >> 24) & 0xFF, (word >> 16) & 0xFF,
+                                                         (word >> 8) & 0xFF, word & 0xFF)
+
+
+def endian_byteorder_line(big_endian):
+    """The line init.c's endian game prints once, when a new game starts, naming this machine's
+    byte order."""
+    return "  this machine is {}-endian".format("big" if big_endian else "little")
+
+
+def endian_explain(big_endian):
+    """The short line init.c's endian game prints after a wrong guess, naming the byte order that
+    makes the right value what it is."""
+    if big_endian:
+        return "  big-endian: the first byte is the most significant"
+    return "  little-endian: the first byte is the least significant"
 
 
 def clean(text):
@@ -157,6 +217,21 @@ def check_answers(arch, script, answers, crc_for, default_loops):
             m = re.search(r"points, \d+ iterations, (\d+) ms", text)
             if m:
                 numbers["mandel_ms"] = int(m.group(1))
+        elif name == "endian":
+            big_endian = arch_is_big_endian(arch)
+            word = endian_words(1)[0]
+            if command.strip() == "endian":
+                # a new game: the byte-order line, then round 1's bytes line
+                if endian_byteorder_line(big_endian) not in lines:
+                    problems.append(f"endian: no {'big' if big_endian else 'little'}-endian line")
+                if endian_bytes_line(word) not in lines:
+                    problems.append("endian: no first round bytes line")
+            else:
+                # a deliberately wrong guess ("endian 0"): the reply must carry the model's
+                # right answer for this arch, not another architecture's
+                want = endian_answer(word, big_endian)
+                if f"0x{want:08x}" not in text:
+                    problems.append(f"endian: wrong-guess reply missing 0x{want:08x}")
         elif name == "poweroff":
             if "powering off" not in text:
                 problems.append("poweroff: no answer")

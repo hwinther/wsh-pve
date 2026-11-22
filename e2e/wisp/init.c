@@ -830,6 +830,143 @@ static void mandel_row(int row, char *out)
 	out[MANDEL_COLS] = '\0';
 }
 
+/*
+ * endian: a small game about the thing wisp tests for. Each round shows a word's four bytes as
+ * they sit in memory, low address first, and asks for the 32-bit value this machine's CPU reads
+ * from them: on a big-endian CPU, the bytes shown read straight through; on a little-endian one,
+ * the same bytes read the other way around (the byte-swap of the word). "endian <hex>" is a
+ * guess; "endian" alone shows the round again without spending one. Three wrong guesses end the
+ * game; a right one scores a point and deals another round. The words come from the same
+ * xorshift32 stream the compute loop and the tier-2 checks use (xorshift(), above), seeded with
+ * "endi", so a game is the same sequence of rounds every time; shell.py's endian_words() and
+ * endian_answer(big_endian) model it for the tests.
+ */
+#define ENDIAN_SEED 0x656e6469u /* "endi" */
+#define ENDIAN_LIVES 3
+
+static struct {
+	unsigned int x;    /* this game's xorshift32 state */
+	unsigned int word; /* the current round's bytes, as one 32-bit value, high byte first */
+	unsigned int score;
+	int lives;
+	int playing;
+} eg;
+
+/* 1 if this machine's CPU is big-endian: a known word's first byte (its lowest address) comes out
+ * as its most significant, not its least. */
+static int machine_is_big_endian(void)
+{
+	union {
+		unsigned int w;
+		unsigned char b[4];
+	} u;
+
+	u.w = 1;
+	return u.b[0] == 0;
+}
+
+/*
+ * The 32-bit value this machine's CPU reads from bytes b0..b3 as they'd sit in memory, lowest
+ * address first: each byte is stored on its own, at the address a real word's byte would have,
+ * then the whole word is read back in one load, so the CPU's own byte order decides the result
+ * (not an order assumed in the arithmetic, as a shift-and-mask byte-swap would).
+ */
+static unsigned int bytes_to_word(unsigned char b0, unsigned char b1, unsigned char b2,
+				  unsigned char b3)
+{
+	union {
+		unsigned int w;
+		unsigned char b[4];
+	} u;
+
+	u.b[0] = b0;
+	u.b[1] = b1;
+	u.b[2] = b2;
+	u.b[3] = b3;
+	return u.w;
+}
+
+/* The short line after a wrong guess, naming this machine's byte order. */
+static const char *endian_explain(void)
+{
+	return machine_is_big_endian() ? "big-endian: the first byte is the most significant"
+				       : "little-endian: the first byte is the least significant";
+}
+
+/* A hex number (an optional "0x" or "0X" first) at s; ~0u if s has no hex digit. */
+static unsigned int parse_hex(const char *s)
+{
+	unsigned int n = 0;
+	int any = 0, d;
+
+	if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+		s += 2;
+	for (; *s; s++) {
+		if (*s >= '0' && *s <= '9')
+			d = *s - '0';
+		else if (*s >= 'a' && *s <= 'f')
+			d = *s - 'a' + 10;
+		else if (*s >= 'A' && *s <= 'F')
+			d = *s - 'A' + 10;
+		else
+			break;
+		n = n * 16 + (unsigned int)d;
+		any = 1;
+	}
+	return any ? n : ~0u;
+}
+
+static void endian_show(void)
+{
+	printf("  bytes %02x %02x %02x %02x\n", eg.word >> 24 & 0xff, eg.word >> 16 & 0xff,
+	       eg.word >> 8 & 0xff, eg.word & 0xff);
+}
+
+/* Deals the next round (one more word off the stream) and shows it. */
+static void endian_next(void)
+{
+	eg.word = xorshift(&eg.x);
+	endian_show();
+}
+
+static void cmd_endian(const char *arg)
+{
+	unsigned int want;
+
+	if (!eg.playing) {
+		eg.x = ENDIAN_SEED;
+		eg.score = 0;
+		eg.lives = ENDIAN_LIVES;
+		eg.playing = 1;
+		printf("  this machine is %s-endian\n",
+		       machine_is_big_endian() ? "big" : "little");
+		printf("  bytes, low address first; type the 32-bit word this machine reads from\n"
+		       "  them, in hex. endian <hex> to guess (wrong costs a life, %d to start);\n"
+		       "  endian alone shows the round again.\n", ENDIAN_LIVES);
+		endian_next();
+		return;
+	}
+	if (!*arg) {
+		endian_show();
+		return;
+	}
+	want = bytes_to_word(eg.word >> 24 & 0xff, eg.word >> 16 & 0xff, eg.word >> 8 & 0xff,
+			     eg.word & 0xff);
+	if (parse_hex(arg) == want) {
+		printf("  correct, 0x%08x. score %u\n", want, ++eg.score);
+		endian_next();
+		return;
+	}
+	if (--eg.lives > 0) {
+		printf("  wrong, it was 0x%08x. %d lives left\n", want, eg.lives);
+		printf("  %s\n", endian_explain());
+		endian_next();
+	} else {
+		printf("  wrong, it was 0x%08x. game over, score %u\n", want, eg.score);
+		printf("  %s\n", endian_explain());
+		eg.playing = 0;
+	}
+}
 
 static unsigned int sh_loops;
 
@@ -857,6 +994,7 @@ static void cmd_help(const char *arg)
 	       "  bench           the CRC-32 compute loop (%u rounds) with its time\n"
 	       "  crc <n>         the loop's checksum after n rounds\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
+	       "  endian          a byte-order guessing game\n"
 	       "  disk [dev..]    write, sync and read back a pattern on a raw disk\n"
 	       "  net [if]        ARP and ICMP echo to QEMU's user network at 10.0.2.2\n"
 	       "  smp             the compute loop on every CPU at once\n"
@@ -983,7 +1121,8 @@ static void cmd_reboot(const char *arg)
  * (sparc64) page size of the target.
  */
 static const char command_names[] =
-	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0";
+	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0"
+	"endian\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -1008,6 +1147,7 @@ static void run_command(const char *cmd, const char *arg)
 	case 10: cmd_disk(arg); break;
 	case 11: cmd_net(arg); break;
 	case 12: cmd_smp(arg); break;
+	case 13: cmd_endian(arg); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }

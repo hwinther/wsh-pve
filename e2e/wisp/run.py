@@ -16,9 +16,10 @@ against the value every architecture must produce for that loop count.
 
 With --shell, the kernel gets wisp=shell and PID 1 starts its interactive shell instead: run.py
 answers the prompts with a fixed script (help typed with a Backspace, info, bench, crc 64,
-mandel, poweroff; shell.py) and checks the answers, including every row of the Mandelbrot set.
-With --shell --reboot the script ends with reboot instead: the kernel restarts the machine
-(the firmware's restart on sun4u) and, with -no-reboot, QEMU exits.
+mandel, endian, endian 0, poweroff; shell.py) and checks the answers, including every row of the
+Mandelbrot set and, for the endian game, the byte-order line and the right answer for the
+architecture under test. With --shell --reboot the script ends with reboot instead: the kernel
+restarts the machine (the firmware's restart on sun4u) and, with -no-reboot, QEMU exits.
 
 With --tier2, each machine boots kernel-t2 once per tier-2 profile (tier2.py): raw disk images on
 the machine's disk controllers, a NIC on QEMU's user-mode network, or more than one CPU. Besides

@@ -11,6 +11,10 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
   folder in LEMU's `machines/`). The wsh patches in it have
   `Forwarded: https://github.com/tenox7/lemu/pull/1` in their headers; none is `Applied-Upstream`
   yet.
+- `fix/cs4231-pi-pmi`: `wsh/0122`-`0123` (the CS4231's PI and PMI at the codec's time), two
+  commits on `feat/sparc-fixes` at `5fe502d848`. Written in LEMU first and carried here with `Origin:` lines;
+  LEMU took 0123's `migrate` wait into its test commit (now `c92620599a`), so both are equal; the
+  branch is LEMU PR #1. Not sent to tenox7/lemu.
 - `feat/openbios-fixes`: the OpenBIOS patches and the one QEMU patch that goes with them (`wsh/0030`
   with OpenBIOS 0018), at `86c3a500ec`. Not sent yet.
 
@@ -86,6 +90,8 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write- | ours | tests/qtest: test that a tick during a %softint write is kept on sun4u | [`4b28611dfb`](https://github.com/hwinther/lemu/commit/4b28611dfb) | feat/sparc-fixes | equal |
 | wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the | ours | hw/scsi/esp: don't count the message out bytes as part of the cdb | [`1879f6152e`](https://github.com/hwinther/lemu/commit/1879f6152e) | feat/sparc-fixes | accepted deviation: LEMU's version sits on top of LEMU [`f6b805dd07`](https://github.com/tenox7/lemu/commit/f6b805dd07) ("hw/scsi/esp: run vendor commands sent by pio"), which takes a CDB of the vendor groups as 10 bytes long, so its return line has no `cdblen < 0` test. QEMU 11.1.3 doesn't have that commit, and wsh-pve doesn't take it: its line keeps `cdblen < 0 ? false :`. Both count only the bytes after `cmdfifo_cdb_offset` |
 | wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes | ours | tests/qtest: test a cdb sent byte by byte after a message out on sun4m | [`5fe502d848`](https://github.com/hwinther/lemu/commit/5fe502d848) | feat/sparc-fixes | equal |
+| wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets | built on LEMU | hw/audio/cs4231: raise pi and pmi when the codec gets there | [`ff412bc835`](https://github.com/hwinther/lemu/commit/ff412bc835) | fix/cs4231-pi-pmi | equal |
+| wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short | built on LEMU | tests/qtest: test the cs4231's pi and pmi for a short buffer on sun4m | [`c92620599a`](https://github.com/hwinther/lemu/commit/c92620599a) | fix/cs4231-pi-pmi | equal (applies with line offsets) |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|

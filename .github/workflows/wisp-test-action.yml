@@ -120,6 +120,9 @@ jobs:
           - { name: align fixed sparc32, arch: sparc32, sources: examples/align.c, cflags: -DFIXED, want: pass }
           - { name: args sparc32, arch: sparc32, sources: tests/args.c, args: hello big-endian, want: pass }
           - { name: args sparc64, arch: sparc64, sources: tests/args.c, args: hello big-endian, want: pass }
+          - { name: div64 sparc32, arch: sparc32, sources: tests/div64.c, want: pass }
+          - { name: div64 sparc64, arch: sparc64, sources: tests/div64.c, want: pass }
+          - { name: div64 x86_64, arch: x86_64, sources: tests/div64.c, want: pass }
     name: ${{ matrix.name }}
     steps:
       - name: Checkout
