@@ -1,0 +1,34 @@
+---
+title: Living museum
+description: Pick a machine and an operating system and watch its install and first boot from the sparc lab's own recordings
+---
+
+import LivingMuseum from "../../../components/LivingMuseum.astro";
+
+Every exhibit below is a real run of the [sparc lab](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc)
+against the packaged QEMU, most of them through Proxmox VE: pick a machine, pick an operating
+system, and watch it get installed and boot for the first time. There is no simulation here, only
+the lab's own [terminal and framebuffer recordings](/guides/sparc-recordings/), picked out by machine
+and OS instead of read top to bottom.
+
+Not every machine has run every OS — the SPARCserver 600MP only ever got SunOS 4.1.2, and Solaris
+2.1 only ran on the SS-10. Where a combination hasn't been recorded, the picker says so and offers
+what has. FreeDOS 1.4 on an x86 PC (VGA text, time-lapse from the gallery) is there too; see the
+[DOS guide](/guides/dos/) for how those VMs are set up.
+
+<LivingMuseum />
+
+Each exhibit that comes from a [lab install target](/guides/lab-install/) has a "Try it yourself"
+line: the exact `wsh-lab install <target> --check` command and how long it takes, so a node of your
+own can make the same VM. Every target's root password is `wshlab` unless you pass
+`--root-password`, written in the lab's documentation on purpose — these are throwaway lab VMs, so
+change the password before one is reachable from anywhere untrusted (the [lab install
+guide](/guides/lab-install/) has the full warning, "Publicly known passwords").
+
+## Seeing more
+
+This page shows the install and the first boot. The [full recordings gallery](/guides/sparc-recordings/)
+has a few extra runs these exhibits leave out (Solaris 9 and 10 and Tribblix on sun4u, wisp on three
+architectures, and VMs started through Proxmox VE directly), and the [lab
+install targets](/guides/lab-install/) guide has the full catalogue, the media each target needs and
+what a finished VM looks like.

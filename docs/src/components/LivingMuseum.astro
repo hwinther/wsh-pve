@@ -1,0 +1,423 @@
+---
+// Demo idea 9 in ROADMAP.md: pick a machine and an OS, watch its install and first boot from
+// recordings that already exist. Every recording is one already described in
+// guides/sparc-recordings.mdx (src/data/livingMuseum.ts only reshapes the same list by machine and
+// OS); this component is the picker, not a new source of media.
+//
+// The casts and videos aren't in git: see LabCast.astro and LabVideo.astro for where they come from.
+// This component mounts them itself (instead of rendering <LabCast>/<LabVideo>) so only the chosen
+// exhibit's recording is ever fetched, not all of them at once.
+import scenarios from "../data/livingMuseum";
+
+const release = "https://github.com/hwinther/wsh-pve/releases/tag/media";
+const defaultId = "sol26-ss5";
+
+// Machines and OS options, in the data's own order of first appearance.
+const machineOrder: string[] = [];
+const machineLabels: Record<string, string> = {};
+const osFamilyOrder: string[] = [];
+const osOrder: string[] = [];
+const osLabels: Record<string, string> = {};
+const osFamilyOf: Record<string, string> = {};
+
+for (const s of scenarios) {
+  if (!(s.machine in machineLabels)) {
+    machineOrder.push(s.machine);
+    machineLabels[s.machine] = s.machineLabel;
+  }
+  if (!osFamilyOrder.includes(s.osFamily)) osFamilyOrder.push(s.osFamily);
+  if (!(s.os in osLabels)) {
+    osOrder.push(s.os);
+    osLabels[s.os] = s.osLabel;
+    osFamilyOf[s.os] = s.osFamily;
+  }
+}
+---
+
+<div
+  class="living-museum not-content"
+  id="living-museum"
+  data-scenarios={JSON.stringify(scenarios)}
+  data-release={release}
+  data-default={defaultId}
+>
+  <div class="lm-picker">
+    <label class="lm-field">
+      <span>Machine</span>
+      <select id="lm-machine">
+        {machineOrder.map((m) => <option value={m}>{machineLabels[m]}</option>)}
+      </select>
+    </label>
+    <label class="lm-field">
+      <span>Operating system</span>
+      <select id="lm-os">
+        {
+          osFamilyOrder.map((family) => (
+            <optgroup label={family}>
+              {osOrder
+                .filter((o) => osFamilyOf[o] === family)
+                .map((o) => (
+                  <option value={o}>{osLabels[o]}</option>
+                ))}
+            </optgroup>
+          ))
+        }
+      </select>
+    </label>
+  </div>
+
+  <div id="lm-exhibit" class="lm-exhibit"></div>
+</div>
+
+<script>
+  import { create } from "asciinema-player";
+  import "asciinema-player/dist/bundle/asciinema-player.css";
+
+  interface LivingMuseumMedia {
+    kind: "cast" | "video";
+    src: string;
+    caption: string;
+    poster?: string;
+    captions?: string;
+    width?: number;
+    height?: number;
+  }
+  interface LivingMuseumStage {
+    label: string;
+    media: LivingMuseumMedia;
+  }
+  interface LivingMuseumTryIt {
+    command: string;
+    note: string;
+  }
+  interface LivingMuseumScenario {
+    id: string;
+    machine: string;
+    machineLabel: string;
+    os: string;
+    osLabel: string;
+    osFamily: string;
+    blurb: string;
+    stages: LivingMuseumStage[];
+    tryIt?: LivingMuseumTryIt;
+  }
+
+  const root = document.getElementById("living-museum")!;
+  const scenarios: LivingMuseumScenario[] = JSON.parse(root.dataset.scenarios!);
+  const release = root.dataset.release!;
+  const defaultId = root.dataset.default!;
+
+  const machineSelect = root.querySelector<HTMLSelectElement>("#lm-machine")!;
+  const osSelect = root.querySelector<HTMLSelectElement>("#lm-os")!;
+  const exhibit = root.querySelector<HTMLDivElement>("#lm-exhibit")!;
+
+  const machineLabel = (value: string) => scenarios.find((s) => s.machine === value)?.machineLabel ?? value;
+  const osLabel = (value: string) => scenarios.find((s) => s.os === value)?.osLabel ?? value;
+  const machinesFor = (os: string) => [...new Set(scenarios.filter((s) => s.os === os).map((s) => s.machine))];
+  const osesFor = (machine: string) => [...new Set(scenarios.filter((s) => s.machine === machine).map((s) => s.os))];
+  const findScenario = (machine: string, os: string) =>
+    scenarios.find((s) => s.machine === machine && s.os === os) ?? null;
+
+  // Same fallback as LabCast/LabVideo: a short note where the media release isn't on this copy of
+  // the site, instead of a broken player.
+  function missing(el: HTMLElement) {
+    el.classList.add("lm-media-missing");
+    el.textContent = "This recording isn't available on this copy of the site. It is an asset of the ";
+    const a = document.createElement("a");
+    a.href = release;
+    a.textContent = "media release";
+    el.append(a, ".");
+  }
+
+  function mountCast(media: LivingMuseumMedia) {
+    const player = document.createElement("div");
+    player.className = "lm-cast-player";
+    fetch(media.src)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((text) => {
+        if (!text.startsWith("{")) throw new Error("not a cast"); // e.g. a 404 page served as 200
+        create(
+          { data: text },
+          player,
+          { fit: "width", poster: media.poster, speed: 1, terminalFontSize: "small" },
+        );
+      })
+      .catch(() => missing(player));
+    return player;
+  }
+
+  function mountVideo(media: LivingMuseumMedia) {
+    const box = document.createElement("div");
+    box.className = "lm-video-box";
+    const video = document.createElement("video");
+    video.controls = true;
+    video.preload = "none";
+    if (media.width) video.width = media.width;
+    if (media.height) video.height = media.height;
+    box.append(video);
+
+    fetch(media.src, { method: "HEAD" })
+      .then((r) => {
+        if (!r.ok || (r.headers.get("content-type") || "").startsWith("text/html")) throw new Error();
+        if (media.poster) video.poster = media.poster;
+        if (media.captions) {
+          const track = Object.assign(document.createElement("track"), {
+            kind: "captions",
+            label: "Steps",
+            srclang: "en",
+            src: media.captions,
+            default: true,
+          });
+          video.append(track);
+        }
+        video.addEventListener("error", () => missing(box));
+        video.preload = "metadata";
+        video.src = media.src;
+      })
+      .catch(() => missing(box));
+    return box;
+  }
+
+  function renderStage(stage: LivingMuseumStage) {
+    const section = document.createElement("section");
+    section.className = "lm-stage";
+
+    const heading = document.createElement("h4");
+    heading.textContent = stage.label;
+    section.append(heading);
+
+    const figure = document.createElement("figure");
+    figure.className = stage.media.kind === "cast" ? "lm-cast" : "lm-video";
+    figure.append(stage.media.kind === "cast" ? mountCast(stage.media) : mountVideo(stage.media));
+
+    const figcaption = document.createElement("figcaption");
+    figcaption.textContent = stage.media.caption;
+    figure.append(figcaption);
+
+    section.append(figure);
+    return section;
+  }
+
+  function chipRow(label: string, chips: Array<{ label: string; onClick: () => void }>) {
+    const row = document.createElement("p");
+    row.className = "lm-chip-row";
+    const lead = document.createElement("span");
+    lead.textContent = `${label} `;
+    row.append(lead);
+    for (const chip of chips) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lm-chip";
+      button.textContent = chip.label;
+      button.addEventListener("click", chip.onClick);
+      row.append(button);
+    }
+    return row;
+  }
+
+  function renderMissing(machine: string, os: string) {
+    const wrap = document.createElement("div");
+    wrap.className = "lm-missing";
+
+    const p = document.createElement("p");
+    p.textContent = `Nothing from this exhibit yet: no recording of ${osLabel(os)} on the ${machineLabel(machine)}.`;
+    wrap.append(p);
+
+    const machineOses = osesFor(machine);
+    if (machineOses.length) {
+      wrap.append(
+        chipRow(
+          `The ${machineLabel(machine)} has recordings of:`,
+          machineOses.map((o) => ({
+            label: osLabel(o),
+            onClick: () => {
+              osSelect.value = o;
+              update();
+            },
+          })),
+        ),
+      );
+    }
+
+    const osMachines = machinesFor(os);
+    if (osMachines.length) {
+      wrap.append(
+        chipRow(
+          `${osLabel(os)} was recorded on:`,
+          osMachines.map((m) => ({
+            label: machineLabel(m),
+            onClick: () => {
+              machineSelect.value = m;
+              update();
+            },
+          })),
+        ),
+      );
+    }
+
+    return wrap;
+  }
+
+  function update() {
+    const machine = machineSelect.value;
+    const os = osSelect.value;
+    exhibit.innerHTML = "";
+
+    const scenario = findScenario(machine, os);
+    if (!scenario) {
+      exhibit.append(renderMissing(machine, os));
+      return;
+    }
+
+    const blurb = document.createElement("p");
+    blurb.className = "lm-blurb";
+    blurb.textContent = scenario.blurb;
+    exhibit.append(blurb);
+
+    for (const stage of scenario.stages) {
+      exhibit.append(renderStage(stage));
+    }
+
+    if (scenario.tryIt) {
+      exhibit.append(renderTryIt(scenario.tryIt));
+    }
+  }
+
+  function renderTryIt(tryIt: LivingMuseumTryIt) {
+    const p = document.createElement("p");
+    p.className = "lm-try";
+    const strong = document.createElement("strong");
+    strong.textContent = "Try it yourself: ";
+    p.append(strong);
+    const code = document.createElement("code");
+    code.textContent = tryIt.command;
+    p.append(code, document.createTextNode(` — ${tryIt.note}`));
+    return p;
+  }
+
+  const initial = scenarios.find((s) => s.id === defaultId) ?? scenarios[0];
+  machineSelect.value = initial.machine;
+  osSelect.value = initial.os;
+
+  machineSelect.addEventListener("change", update);
+  osSelect.addEventListener("change", update);
+  update();
+</script>
+
+<style>
+  .living-museum {
+    margin: 1.5rem 0;
+  }
+
+  .lm-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .lm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+
+  .lm-field select {
+    min-width: 14rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-sm);
+  }
+
+  .lm-exhibit {
+    border: 1px solid var(--sl-color-gray-6);
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+  }
+
+  :global(.lm-blurb) {
+    margin-top: 0;
+    color: var(--sl-color-gray-2);
+  }
+
+  :global(.lm-stage) {
+    margin-top: 1.5rem;
+  }
+
+  :global(.lm-stage h4) {
+    margin-bottom: 0.5rem;
+    font-size: var(--sl-text-base);
+  }
+
+  :global(.lm-cast),
+  :global(.lm-video) {
+    margin: 0;
+  }
+
+  :global(.lm-video-box video) {
+    width: 100%;
+    height: auto;
+    background: #000;
+  }
+
+  :global(.lm-cast figcaption),
+  :global(.lm-video figcaption) {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+    margin-top: 0.5rem;
+  }
+
+  :global(.lm-try) {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-gray-6);
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+
+  :global(.lm-try code) {
+    background: var(--sl-color-gray-6);
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    word-break: break-word;
+  }
+
+  :global(.lm-media-missing) {
+    padding: 1rem;
+    border: 1px dashed var(--sl-color-gray-5);
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+
+  :global(.lm-missing p) {
+    margin-block: 0 0.5rem;
+  }
+
+  :global(.lm-chip-row) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  :global(.lm-chip) {
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-gray-6);
+    color: var(--sl-color-white);
+    border-radius: 999px;
+    padding: 0.15rem 0.7rem;
+    font-size: var(--sl-text-sm);
+    cursor: pointer;
+  }
+
+  :global(.lm-chip:hover) {
+    border-color: var(--sl-color-accent);
+  }
+</style>
