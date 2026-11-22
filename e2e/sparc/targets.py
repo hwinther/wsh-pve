@@ -126,6 +126,9 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
 PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
+# Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
+PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
+                            "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -304,6 +307,13 @@ MEDIA = {
         "sha256": "91aeb8639d53252215c99b69fa07ef1ae0e2bafec1c3c77fdfb9094327dd3afd",
         "lab": "other-os/debian-40r9-sparc-netinst.iso",
         "url": "https://cdimage.debian.org/mirror/cdimage/archive/4.0_r9/sparc/iso-cd/debian-40r9-sparc-netinst.iso"},
+    # the release's SHA256SUMS and SHA512SUMS, both signed by the Debian CD signing key (checked with gpgv
+    # against debian-keyring's role keys)
+    "debian-7.11.0-sparc-CD-1.iso": {
+        "title": "Debian GNU/Linux 7.11.0 (wheezy) sparc CD 1", "content": "iso", "size": 679512064,
+        "sha256": "1a895390dd946ac11060ee057c785f8d37bb6293bc60405782de8a782d40db8e",
+        "lab": "other-os/debian-7.11.0-sparc-CD-1.iso",
+        "url": "https://cdimage.debian.org/cdimage/archive/7.11.0/sparc/iso-cd/debian-7.11.0-sparc-CD-1.iso"},
     "tribblix-sparc-0m34.iso": {
         "title": "Tribblix m34 SPARC live/install CD (iso.tribblix.org)", "content": "iso", "size": 710717440,
         "sha256": "afc1b115633c5a3c63bb683c0608fd22c41568eb5909f09556e045caa04aa323",
@@ -459,6 +469,25 @@ DEBIAN_UNATTENDED = {
     # pve_matrix.py install gives them the apt cache through a pinhole on its node's vmbr0 (10.0.2.2:3142,
     # --apt-cache / WSH_LAB_APT_CACHE) and nothing else; without one it skips them
     "matrix_needs": "apt_cache",
+}
+
+
+# Debian 7 (wheezy) on sun4u: the same unattended install from CD 1, nothing fetched (no net_require, no
+# apt proxy, no apt cache in the matrix); the answer CD on ide3 (README.md, "Debian GNU/Linux 7 on sun4u")
+DEBIAN7_UNATTENDED = {
+    **DEBIAN_UNATTENDED,
+    # 84 min from the boot line to the reset in the lab's own QEMU on a quiet host
+    "install": {"scenario": "debian-install-sparc.py", "vars": {"TIMEOUT": "9000"}, "timeout": 9600,
+                "answers": {"format": "preseed-wheezy", "drive": "ide3"}},
+    "check": {"scenario": "debian-boot-disk.py", "vars": {}, "timeout": 900,
+              "commands": "uname -a; hostname; cat /etc/wsh-lab-target; cat /etc/debian_version; df -k;"
+                          " cat /proc/partitions; /sbin/ifconfig -a; /sbin/route -n; cat /etc/resolv.conf;"
+                          " grep -v '^#' /etc/apt/sources.list; netstat -ltn; pgrep -l sshd"},
+    "network": "eth0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain);"
+               " the install needs none (everything from CD 1)",
+    "net_require": [],
+    "apt_proxy": False,
+    "matrix_needs": None,
 }
 
 
@@ -1247,6 +1276,26 @@ TARGETS = {
         "minutes": 19,
         "tested": {"date": "2026-11-19", "packages": PACKAGES_2026_11_19,
                    "with": "--check --gateway --dns; --check --user lab --gateway --dns --apt-proxy"},
+    },
+    # Debian 7 (wheezy), the last Debian release for sparc (32-bit userland, the sparc64 kernel Linux 3.2,
+    # SILO), on sun4u: everything from CD 1, nothing fetched, so no router, name server or apt cache. A
+    # preseed file from an answer CD made on the node on ide3 (the secondary slave, sr1 after CD 1 on
+    # ide2), loaded by preseed/early_command on SILO's boot line (_debian.boot_line64); the standard
+    # system with openssh-server; SILO on the disk. README.md, "Debian GNU/Linux 7 on sun4u"
+    "debian7-sun4u": {
+        **DEBIAN7_UNATTENDED,
+        "title": "Debian GNU/Linux 7 (wheezy) base system with SSH (sun4u, OpenBIOS, IDE disk)",
+        "status": "automated",
+        "profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 512,
+                    "ostype": "l26", "net0": "sunhme", "serial0": "socket", "vga": "serial0"},
+        "disk": {"bus": "ide0", "size": 8, "label": None},  # partman writes its own Sun label
+        "media": [{"name": "debian-7.11.0-sparc-CD-1.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "debian7-sun4u",
+        # 68.5 min through PVE (install 61.6, first boot 3.7, check 2.9) at a host load of 2-4; the boot-test
+        # of the stored disk 2.9 min. 84 min to the reset in the lab's own QEMU (1024 MB, load 4-17)
+        "minutes": 69,
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_DEB7, "with": "--check --export; boot-test"},
     },
 }
 

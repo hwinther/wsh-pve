@@ -2267,5 +2267,93 @@ class Debian40(unittest.TestCase):
                          targets.TARGETS["debian40-ss5"]["install"]["answers"]["drive"])
 
 
+class Debian7(unittest.TestCase):
+    """debian7-sun4u: the unattended method with a wheezy preseed file (answer CD on ide3, loaded by
+    preseed/early_command), everything from CD 1: no router, name server or apt proxy needed."""
+
+    def test_target(self):
+        t = targets.TARGETS["debian7-sun4u"]
+        self.assertEqual((t["method"], t["status"], t["nic"]), ("unattended", "automated", "eth0"))
+        self.assertEqual(t["install"]["answers"], {"format": "preseed-wheezy", "drive": "ide3"})
+        self.assertEqual(t["media"], [{"name": "debian-7.11.0-sparc-CD-1.iso", "drive": "ide2"}])
+        self.assertEqual((t["disk"]["bus"], t["disk"]["label"], t["boot"]), ("ide0", None, "ide0"))
+        self.assertEqual((t["profile"]["arch"], t["profile"]["machine"]), ("sparc64", "sun4u"))
+        self.assertEqual((t["net_modes"], t["net_require"], t["apt_proxy"], t["matrix_needs"]),
+                         (["static"], [], False, None))
+        self.assertNotIn("matrix_skip", t)
+        self.assertIn("cat /etc/debian_version", t["check"]["commands"])
+        self.assertEqual(install.METHODS[t["method"]], install.Unattended)
+        self.assertIn("preseed-wheezy", __import__("answer_media").FORMATS)
+
+    def test_network_needs_nothing(self):
+        def a(**kw):
+            base = dict(target="debian7-sun4u", ip=None, netmask=None, gateway=None, dns=None, domain=None,
+                        vlan=None, bridge="vmbr0", apt_proxy=None)
+            return types.SimpleNamespace(**{**base, **kw})
+        t = targets.TARGETS["debian7-sun4u"]
+        net = install.network_choice(t, a())
+        self.assertEqual((net["ip"], net["gateway"], net["dns"]), ("10.0.2.15", None, []))
+        net = install.network_choice(t, a(gateway="10.0.2.2", dns="10.0.2.3"))
+        self.assertEqual((net["gateway"], net["dns"]), ("10.0.2.2", ["10.0.2.3"]))
+        with self.assertRaises(SystemExit):
+            install.network_choice(t, a(ip="dhcp"))
+        # nothing is fetched: --apt-proxy is refused, the environment variable ignored
+        self.assertIsNone(install.apt_proxy_choice(t, None, env={"WSH_LAB_APT_PROXY": "http://10.0.2.2:3142"}))
+        with self.assertRaises(SystemExit):
+            install.apt_proxy_choice(t, "http://10.0.2.2:3142", env={})
+
+    def test_preseed(self):
+        import answer_media
+        lines = answer_media.preseed_wheezy("10.77.0.60", "255.255.255.0", "10.77.0.1", ["10.77.0.1"],
+                                            "lab.test", "deb7").splitlines()
+        for line in ("d-i netcfg/disable_autoconfig boolean true", "d-i netcfg/get_ipaddress string 10.77.0.60",
+                     "d-i netcfg/get_gateway string 10.77.0.1", "d-i netcfg/get_nameservers string 10.77.0.1",
+                     "d-i netcfg/get_hostname string deb7", "d-i netcfg/get_domain string lab.test",
+                     "d-i apt-setup/use_mirror boolean false", "d-i apt-setup/services-select multiselect",
+                     "d-i partman-auto/disk string /dev/sda", "d-i passwd/root-password-crypted password *",
+                     "d-i passwd/make-user boolean false", "tasksel tasksel/first multiselect ssh-server",
+                     "d-i pkgsel/include string openssh-server", "d-i preseed/early_command string"):
+            self.assertIn(line, lines)
+        self.assertFalse([line for line in lines if "mirror/http" in line])  # nothing fetched
+        recipe = next(line for line in lines if "expert_recipe" in line)
+        self.assertEqual(re.findall(r"mountpoint\{ (\S+) \}", recipe), ["/boot", "/"])  # /boot first (SILO)
+        late = next(line for line in lines if "late_command" in line)
+        self.assertIn("in-target passwd -d root", late)
+        # without a router or name server: empty answers, no default route
+        lines = answer_media.preseed_wheezy("10.0.2.15", "255.255.255.0").splitlines()
+        for line in ("d-i netcfg/get_gateway string ", "d-i netcfg/get_nameservers string ",
+                     "d-i netcfg/no_default_route boolean true"):
+            self.assertIn(line, lines)
+        for bad in (dict(hostname="a b"), dict(dns=["10.0.2.3; reboot"]), dict(proxy="http://10.0.2.2:3142")):
+            with self.assertRaises(ValueError, msg=bad):
+                answer_media.preseed_wheezy("10.0.2.15", "255.255.255.0", **bad)
+
+    def test_answer_cd(self):
+        import answer_media
+        import dos_tools
+        data = answer_media.image("preseed-wheezy", "10.0.2.15", "255.255.255.0", None, (), None, "debian7-sun4u")
+        with tempfile.NamedTemporaryFile(suffix=".iso", delete=False) as f:
+            f.write(data)
+        try:
+            iso = dos_tools.Iso(f.name)
+            self.assertEqual(sorted(p for p, _ in iso.walk()), ["PRESEED.CFG", "WSHLAB"])
+            self.assertIn(b"d-i netcfg/get_hostname string debian7-sun4u\n", iso.cat("preseed.cfg"))
+            self.assertEqual(iso.cat("wshlab"), answer_media.PRESEED_LOADER_WHEEZY.encode())
+            iso.f.close()
+        finally:
+            os.unlink(f.name)
+        self.assertIn("/device/delete", answer_media.PRESEED_LOADER_WHEEZY)
+
+    def test_boot_line(self):
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian
+        line = _debian.boot_line64()
+        self.assertTrue(line.startswith('install priority=critical locale=en_US preseed/early_command="'))
+        self.assertIn("mount -r -t iso9660 /dev/sr1 /mnt", line)  # ide3: the secondary slave, after CD 1
+        self.assertNotIn(".", line.split("early_command=")[1])  # d-i reads a.b=c as a module parameter
+        self.assertEqual(_debian.ANSWERS_DEV64, "/dev/sr1")
+        self.assertEqual(targets.TARGETS["debian7-sun4u"]["install"]["answers"]["drive"], "ide3")
+
+
 if __name__ == "__main__":
     unittest.main()
