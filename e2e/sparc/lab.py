@@ -925,9 +925,10 @@ class PveMachine(Machine):
 
     def power_cycle(self):
         """Power the VM off and on again through PVE (`qm stop`, `qm start`), as a new QEMU process:
-        for a guest whose reboot doesn't come back (sun4u: OpenBIOS's client-interface `boot` returns,
-        submodules/SPARC.md) and where a firmware reset isn't enough (OpenBIOS keeps the RAM's old
-        contents). The serial output goes on in the same terminal, log and recordings; only a VM that
+        for a guest whose reboot doesn't come back. On sun4u with openbios-sparc64 before patch 0030
+        the client-interface `boot` returned and a firmware reset left the RAM's old contents
+        (submodules/SPARC.md, "The firmware reboot on sun4u"); with 0030 the reboot resets the
+        machine and the scenarios use this only when the reboot call returns. The serial output goes on in the same terminal, log and recordings; only a VM that
         the lab started (not one it attached to) is cycled."""
         if not self.started:
             raise RuntimeError(f"VM {self.vmid} was running before the lab attached: not power-cycling it")
