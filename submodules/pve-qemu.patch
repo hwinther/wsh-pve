@@ -70,22 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-<<<<<<< HEAD
 index bc240a0..6db4390 100644
-||||||| 5a5ad69
-index bc240a0..7dcece8 100644
-=======
-index bc240a0..52eef3a 100644
->>>>>>> origin/main
 --- a/debian/patches/series
 +++ b/debian/patches/series
-<<<<<<< HEAD
 @@ -73,3 +73,83 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
-||||||| 5a5ad69
-@@ -73,3 +73,77 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
-=======
-@@ -73,3 +73,81 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
->>>>>>> origin/main
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -165,12 +153,8 @@ index bc240a0..52eef3a 100644
 +wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
 +wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
 +wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
-<<<<<<< HEAD
 +wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
 +wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
-||||||| 5a5ad69
-=======
->>>>>>> origin/main
 +wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
 +wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
@@ -15465,7 +15449,6 @@ index 0000000..1b07aba
 ++    }
 +     return g_test_run();
 + }
-<<<<<<< HEAD
 diff --git a/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch b/debian/patches/wsh/0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-.patch
 new file mode 100644
 index 0000000..5d4abb7
@@ -15931,9 +15914,6 @@ index 0000000..1a9c865
 +     };
 +     /*
 +      * Linux: pil is what the idle loop disables interrupts to (14); work
-||||||| 5a5ad69
-=======
->>>>>>> origin/main
 diff --git a/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
 new file mode 100644
 index 0000000..a4884fb
