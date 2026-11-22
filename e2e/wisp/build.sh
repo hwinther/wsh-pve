@@ -1,20 +1,20 @@
 #!/bin/sh
 # Builds wisp, the tiny test system, for one or more architectures:
 #   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
-# Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, init (PID 1),
+# Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, optional kernel-net, init (PID 1),
 # config, config-t2, sizes, and sysroot.tar.xz (the UAPI and nolibc headers init was built with,
 # for the wisp-test action's kit: kit.sh).
 #
 # Kernel: `make tinyconfig` plus config/common.config and config/<arch>.config, with the initramfs
 # (an uncompressed cpio of /init and /dev/console) linked into the image. kernel-t2, for the tier-2
 # checks (run.py --tier2), adds config/tier2/common.config and config/tier2/<arch>.config: disk and
-# network drivers, devtmpfs, packet sockets, and SMP where the machines have more than one CPU. Both
+# network drivers, devtmpfs, packet sockets, and SMP where the machines have more than one CPU. All
 # kernels have the same PID 1: init.c, built static against the kernel's own nolibc
 # (tools/include/nolibc) and the kernel's UAPI headers.
 #
 # Environment: KSRC (an unpacked kernel tree; default: unpack /usr/src/linux-source-*.tar.xz into
-# build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 builds
-# only the tier-1 kernel).
+# build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 skips
+# kernel-t2), TIER_NET (default 0; 1 adds kernel-net with the tier-2 drivers and IPv4).
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -73,7 +73,7 @@ build_one() {
 	SYSROOT=$B/sysroot
 	O=$OUT/$arch
 	mkdir -p "$KB" "$SYSROOT" "$O"
-	rm -f "$O/kernel-t2" "$O/config-t2"
+	rm -f "$O/kernel-t2" "$O/config-t2" "$O/kernel-net" "$O/config-net"
 
 	log "$arch: headers"
 	kmake headers_install INSTALL_HDR_PATH="$SYSROOT"
@@ -104,11 +104,19 @@ EOF
 			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config"
 		t2_size=$(wc -c < "$O/kernel-t2")
 	fi
+	net_size_field=
+	if [ "${TIER_NET:-0}" = 1 ]; then
+		# Reuse the tier-2 objects after saving its image and resolved config.
+		build_kernel "$B/kbuild-t2" kernel-net config-net "$c1" "$c2" \
+			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config" \
+			"$HERE/config/tier-net/common.config"
+		net_size_field=" kernel_net_bytes=$(wc -c < "$O/kernel-net")"
+	fi
 	kernel_size=$(wc -c < "$O/kernel")
 	init_size=$(wc -c < "$O/init")
 	release=$(cat "$B/kbuild/include/config/kernel.release")
-	printf 'arch=%s release=%s kernel_bytes=%s kernel_t2_bytes=%s init_bytes=%s\n' \
-		"$arch" "$release" "$kernel_size" "$t2_size" "$init_size" | tee "$O/sizes"
+	printf 'arch=%s release=%s kernel_bytes=%s kernel_t2_bytes=%s init_bytes=%s%s\n' \
+		"$arch" "$release" "$kernel_size" "$t2_size" "$init_size" "$net_size_field" | tee "$O/sizes"
 }
 
 # build_kernel <kbuild dir> <image name> <config name> <fragments...>: tinyconfig plus the fragments

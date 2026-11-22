@@ -686,6 +686,7 @@ merged; what is left of them is item 2 under "Next".
      a libc under wisp (Buildroot with uClibc-ng).
 - **wisp libc toolchain (uClibc-ng via Buildroot):** Buildroot 2025.02.20 SDKs built and tested with static hello under wisp on sparc32 V8 and x86_64.
 - wisp-test can build with uClibc-ng from release SDK tarballs on sparc32 and x86_64.
+- **wisp network tier:** `kernel-net` and `wisp=run` run a static HTTP service reached through QEMU port forwarding.
 - **wisp-netbsd:** a NetBSD sibling of wisp as a second, independent OS test of the same QEMU
   machines (sparc/sun4m V8, sparc64, amd64). NetBSD's `build.sh` cross-builds kernel and userland
   from a Linux container without root; the kernel carries a ramdisk root (as NetBSD's install
