@@ -89,7 +89,7 @@ A kernel plus a one-program initramfs (PID 1 built with the kernel's nolibc) for
 memory, a compute loop with a checksum and its time, one result line, power-off. `wisp/build.sh` builds
 it in the `wisp/Dockerfile` image, `wisp/run.py` boots it under a given QEMU binary (TCG or a TCI build
 from `wisp/qemu-tci.sh`) and reports times to PID 1 and power-off, the loop time and QEMU's peak RSS. See
-`wisp/README.md` and the [wisp](../docs/src/content/docs/guides/wisp.md) guide. The `Wisp boot`
+`wisp/README.md` and the [wisp](../docs/src/content/docs/guides/wisp.mdx) guide. The `Wisp boot`
 workflow boots it on pull requests that change `wisp/` or the pve-qemu build, with the pull request's own
 QEMU when `pve-qemu.patch` or the pin changes (`wisp/README.md`, "CI").
 

@@ -659,6 +659,10 @@ merged; what is left of them is item 2 under "Next".
      (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab.
   4. *ASCII Mandelbrot or a ray tracer on the serial console* of all three architectures at once,
      recorded with asciinema and timed. wisp's shell has the Mandelbrot (`mandel` with `wisp=shell`).
+     Recorded 2026-11-22: `wisp-mandel-ss5.cast`, `-sun4u.cast` and `-pc.cast` (boot, `mandel`,
+     `poweroff`, real time, 3.7-4.7 s each; `e2e/wisp/record.py`), shown in the guide "wisp",
+     "Mandelbrot on three architectures"; the owner uploads them to the `media` release. A ray
+     tracer and a side-by-side view are not done.
   5. *An AI drives a SPARCstation*: a recording of an agent using `sparc-lab-mcp` to log in to
      Solaris 2.6 or SunOS 4.1.4, compile a program with the period compiler and run it.
   6. *3dfx in the browser*: a Glide demo in Windows 98 rendered offscreen and shown in PVE's noVNC
