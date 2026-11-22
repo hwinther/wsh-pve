@@ -86,6 +86,7 @@ the recordings (`serial.cast`, `serial.fast.cast` and, with a framebuffer, `fb.w
 | `debian-install-sparc.py` | Debian 4.0 (etch) from the netinst CD with a preseed file (the answer CD on target 5, written from `IP`/`NETMASK`/`GATEWAY`/`DNS`/`DOMAIN`/`HOSTNAME` unless `ANSWERS_ISO`), loaded by `preseed/early_command` on SILO's boot line; the packages come from `archive.debian.org` (`NET=user` reaches it); stops the VM when the install reboots, fails at the first question box. Needs QEMU with `wsh/0038` (pve-qemu-kvm 11.1.3-2+wsh20 or later) | ~20 min |
 | `debian-firstboot.py`, `debian-boot-disk.py` | boot an installed Debian 4.0 disk to `login:` on ttyS0; the first sets root's password, the marker and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~1.5 min |
 | `stop-a.py` | boots an installed disk (`GUEST`: solaris, sunos, netbsd; `none` = the firmware's own prompt) to its login prompt, sends Stop-A (`KEYS`, QMP `send-key`) or a break on ttya (`BREAK=1`, QMP `chardev-send-break`), checks that QEMU is still up and the guest is at the firmware prompt (`EXPECT=prom`: the CPU's PC in the firmware, `Type 'go' to resume` on the console), then `go` (or `boot`, or what `RESUME` says) and that the guest answers; `REPEAT` rounds | ~2-4 min |
+| `sun-prom-nvram.py` | attach mode only (`--pve`): a Sun PROM VM with a blank `nvram0`; `setenv diag-switch? false` at the first `ok`, the disk's (first) boot to `login:`, then `qm stop`/`qm start` without input (the PROM must boot by itself) and `reboot -- -r`, both to `login:`; fails on `BAD TRAP`, `panic` or a QEMU `Trap`; times in `result.json` (`metrics`). `pve_matrix.py pve`, case `sol26-ss20prom-nvram` | ~5-5.5 min (SS-20 PROM) |
 
 Machine options are variables (`--var KEY=VALUE`), listed at the top of `scenarios/_sparc32.py`:
 `BIOS` (openbios-sparc32, ss5.bin, …), `MACHINE`, `MEM`, `SMP` (`-smp` only when > 1), `CPU` (`-cpu`,
@@ -162,7 +163,8 @@ multiprocessor cases need pve-qemu patches 0023-0024 (`solaris-smp-idle`): witho
 The disks are `sol26-enduser-installed.raw` and `sol251-enduser-installed.raw` (End User installs by
 `solaris-install-serial.py` on SS-5), `sol26-enduser-ss10-installed.raw`, `sol26-enduser-ss20-installed.raw`
 (the same on SS-10 and SS-20 with OpenBIOS, `MACHINE=SS-10`/`SS-20`, ~8.5 min each) and
-`sol26-enduser-ss20prom-installed.raw` (SS-20 with `BIOS=ss20_v2.25_rom CPU=TI-SuperSparc-50`),
+`sol26-enduser-ss20prom-installed.raw` (SS-20 with `BIOS=ss20_v2.25_rom CPU=TI-SuperSparc-50`; its first boot
+is still pending: a reconfiguration boot and the root password screen, which `login()` answers),
 `sol26-enduser-pmc-installed.raw` (the 2.6 one with the `pmc`
 driver), `netbsd111-installed.raw` (see "Idle") and `sunos414-installed.raw` (see "SunOS 4.1.4"), the CDs
 `solaris_2.6_598_sparc.iso` and `solaris_2.5.1_1197.iso`.
@@ -258,8 +260,15 @@ and prints a summary like `matrix.py`:
 | `netbsd-sparc64` | `arch: sparc64` as the create wizard makes it (sun4u, OpenBIOS, a blank disk on `ide0`, the NetBSD 11.1 CD on `ide2`, `sunhme`, 512 MB, the API's default boot order), `vga: serial0` | `netbsd-boot-cd.py` with `BOOT=` (OpenBIOS must boot the CD by itself): sysinst, its shell, `uname -m` |
 | `alpine-x86_64` | `kvm: 0`, `vga: std`, `serial0: socket`, the Alpine 3.19 CD on `ide2` | `alpine-boot-cd.py` on the VGA console (OCR, send-key), `uname -m` also through the serial port |
 | `sol26-ss20-smp2` | SS-20, OpenBIOS, `cores: 2`, 512 MB, `vga: serial0`, the installed 2.6 SS-20 disk imported to target 3, the bench disk (`--bench`) imported read only to target 4 | `smp-soak.py` with `SMP=2 SOAK=0`: `psrinfo` lists 2 CPUs on-line, then Dhrystone and the `nawk` loop alone and as 2 copies at once |
+| `sol26-ss20prom-nvram` | SS-20, the Sun SS-20 PROM (`ss20_v2.25_rom`), 512 MB, `vga: serial0`, a blank `nvram0` (`local:1`), the stored `sol26-enduser-ss20prom-installed.raw` imported to target 3 (its first boot still pending) | `sun-prom-nvram.py`: `setenv diag-switch? false` at the first `ok`, `boot disk`, the first boot (reconfiguration, root password) to `login:`, `eeprom` shows `diag-switch?=false`, `halt`; `qm stop`/`qm start` and the PROM must boot the disk by itself to `login:`; `reboot -- -r` to `login:` with the DBRI's nodes in `/devices`; any `BAD TRAP`, `panic` or QEMU `Trap` fails it (pve-qemu `wsh/0061` and `wsh/0066`, pve-qemu-kvm 11.1.3-4+wsh2 or later) |
 
-One run took 12 min for `sol26-install-ss5` and about a minute for each of the others.
+One run took 12 min for `sol26-install-ss5` and about a minute for each of the others;
+`sol26-ss20prom-nvram` 5-5.5 min (first boot to the shell 108-111 s, the auto-boot 60 s, `boot -r` 66-76 s;
+pve-qemu-kvm 11.1.3-4+wsh2, 2026-11-22). Run one case alone with `--only`, e.g. `python3
+pve_matrix.py pve --only sol26-ss20prom-nvram --runs <dir>`. `sun-prom-nvram.py` runs in attach mode
+only (`lab.py run scenarios/sun-prom-nvram.py --pve <vmid>`) and needs a VM whose `nvram0` is blank:
+a volume the PROM has written boots by itself at the first start, which the scenario reports as a
+failure.
 
 `pve_matrix.py recordings` (not in the weekly run) has the cases only the docs' recordings need (see
 "Recordings in the docs"): `sol26-ss20-smp4`, the stored disk `install-sol26-ss20.raw` on SS-20 with
