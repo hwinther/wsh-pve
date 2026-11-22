@@ -371,6 +371,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 | `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
 | `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept ("The firmware reboot on sun4u") | not reported |
+| `0031-sparc64-give-the-solaris-2.5.1-2.6-boot-block-init-program-and-go` | The sun4u boot block of Solaris 2.5.1 and 2.6 (FCode UFS Reader 1.6/1.10) copies ufsboot's ELF segments into place itself, then evaluates `to load-base init-program` with `load-base` at the entry point and `?go`; OpenBIOS's `init-program` recognised no header there and there was no `?go`: `?go:`, `byte-load: exception caught!`. `init-program` looked up by name now takes unrecognised code at `load-base` as the program (as OBP), after clearing `state-valid`; `?go` starts it. Both kernels start ("Solaris 2.5.1 and 2.6 on sun4u: the boot block") | not in OpenBIOS |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -3130,7 +3131,7 @@ directory, the same source as `openbios/Dockerfile` builds):
 | 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free`. With 0024: the installer's `Do you want to format /dev/dsk/c0t0d0?` at 1024 and 2048 MB |
 | 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05). With 0024: the installer at 1024 and 2048 MB; at 1024 MB the mini-root and Web Start install End User to the IDE disk (a fresh QEMU between the two) and the installed system boots to `console login:` |
 | 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free`. With 0024: the installer's `Select a Language` at 1024 and 2048 MB (IDE timeouts and `Interrupt not seen after set_features` on the way) |
-| 2.6 (5/98), 2.5.1 (11/97) | unchanged: `open isn't unique.`, `byte-load: exception caught!` in the boot block |
+| 2.6 (5/98), 2.5.1 (11/97) | in the boot block: `open isn't unique.`, `?go:`, `byte-load: exception caught!`. With 0031: the kernel starts; 2.6 can't mount root from the CD, 2.5.1 traps before its banner ("Solaris 2.5.1 and 2.6 on sun4u: the boot block") |
 
 How each patch moved them (each verified by booting with and without it):
 
@@ -3683,6 +3684,68 @@ the many small translations. Solaris sizes the hme-block pool from the gaps in `
 `available`, and OpenBIOS left the 64-bit heap out of that list (patch 0003). Solaris 8/9's
 `BOP_ALLOC failed` went away with the same patch. Physical allocation order, translation merging
 and byte-granular claims weren't changed, and no failure seen so far needed them.
+
+**Solaris 2.5.1 and 2.6 on sun4u: the boot block (OpenBIOS patch 0031, 2026-11-22).** Both CDs are
+for the hardware class QEMU's sun4u emulates: their mini-roots have `/platform/SUNW,Ultra-5_10` and
+the Ultra 5/10 drivers (`uata` for the cmd646, `dad` for `ide-disk`, `atapicd` for `ide-cdrom`,
+`simba`, `pci`), so an SBus Ultra isn't needed. With the published firmware (pve-qemu-kvm
+11.1.3-4+wsh2, OpenBIOS 0001-0029; the lab's QEMU, 1024 MB, CD on `ide.1`) both stop as before:
+`Evaluating FCode...`, `open isn't unique.` (a harmless redefinition warning that 7 prints too),
+`?go:`, `byte-load: exception caught!`, back at `0 >`.
+
+The cause: their boot block on slice `f` (FCode UFS Reader 1.6 on 2.5.1, 1.10 on 2.6) reads
+`/platform/sun4u/ufsboot` into a buffer of its own, copies the ELF segments to their addresses
+itself, and then evaluates `to load-base init-program` with `load-base` set to the entry point,
+followed by `?go`. OpenBIOS's `init-program` only knows images with a header (ELF, a.out, FCode,
+Forth), so it set nothing up, and OpenBIOS has no `?go` at all: the `evaluate` of `?go` threw, and
+`byte-load` caught it. Solaris 7's boot block (Reader 1.11) hands `init-program` the whole ELF image
+instead, which is why 7 and later never hit this. It is the same family of gap as the sparc32
+patch 0019 for the 2.1-2.4 boot block.
+
+0031 redefines `init-program` in the sparc64 dictionary for callers that look it up by name (the
+copy `load` calls is compiled in and unchanged): it clears `state-valid` (the boot block runs from
+`go` and left it set), lets the loaders look at `load-base` as before, and when none recognises it,
+takes it as code that starts at `load-base`, as OBP does. It adds `?go`, which starts the program
+when `init-program` set one up.
+
+With 0031 the boot block works on both CDs; each then stops further on, in places that have
+nothing to do with the boot block:
+
+| CD | With 0031 |
+| --- | --- |
+| 2.6 (5/98) | ufsboot loads the kernel (`SunOS Release 5.6 Version Generic_105181-05`), then `Cannot assemble drivers for root /pci@1f,0/pci@1,1/ide@3/cdrom@2,0:b`, `vfs_mountroot: cannot mount root` (the same with 512 and 1024 MB; with `-v`, no driver attach line before it) |
+| 2.5.1 (11/97) | ufsboot loads the kernel and starts it; before the banner, `Unhandled Exception 0x30` with the PC in the kernel's `sfmmu_add_nucleus_hblks`, reading the first page past the kernel's data segment (`0x104cc000`, the nucleus hme blocks the kernel puts in the rest of its 4 MB data page) |
+
+What is known about the two (not traced further):
+
+- 2.6: the path's nodes carry what the 2.6 drivers bind to (`pci` by name, `pci108e,5000`,
+  `pci1095,646`, `ide-cdrom`). No driver on the path prints an attach line, so the first one (the
+  sabre's `pci` driver, which 2.6 has under `/platform/sun4u/kernel/drv`) probably fails its
+  attach; its messages name the register sets it maps (`unable to map reg set 0`/`2`) and the
+  properties it needs (`upa-portid`, `bus-range`, `ranges`, `interrupt-map`), and OpenBIOS's sabre
+  node has two `reg` entries. Solaris 10's `pcipsy` attaches with the same node. Next step:
+  compare the node with an Ultra 5's OBP and boot with `kadb` or a firmware trace of the client
+  calls.
+- 2.5.1: QEMU's log shows a fast data access MMU miss on that page, which OpenBIOS's DTLB miss
+  handler answered with a TTE of `-1` (`find_tte()`'s "not found" value is non-zero, so the handler
+  loads it instead of failing), and the access then traps with 0x30 (the all-ones TTE has the
+  no-fault-only bit set). So the page isn't mapped: on OBP the kernel's data page is mapped as one
+  4 MB page by the boot program, here only the claimed part is. Next step: trace ufsboot's `claim`s
+  and `map`s. (The handler loading `-1` is an OpenBIOS bug of its own; fixing it would only change
+  the message.)
+
+So 2.5.1 and 2.6 stay out of the install targets; the boot block is no longer what stops them.
+
+Regression with firmware built from 0001-0029 + 0031 (`openbios/Dockerfile`), bind-mounted over the
+package's in the lab image (pve-qemu-kvm 11.1.3-4+wsh2), copies of the stored disks: the installed
+NetBSD 11.1, OpenBSD 8.0, Solaris 7, 9 and 10 and Tribblix m34 (ZFS boot block) disks boot to their
+login prompts and log in (8 of 8 with the two CDs below; Tribblix 35 min, the others 1.4-8.2 min), and
+the Solaris 10 1/13 DVD and the Solaris 7 CD reach their installers' first questions. Not run with
+0031: Solaris 8, Debian, the NetBSD and OpenBSD CDs, anything through PVE. Again with firmware from
+0001-0031 including 0030 (the firmware reboot), on the published pve-qemu-kvm 11.1.3-4+wsh4:
+`sparc64-reboot.py` on the stored NetBSD 11.1 disk (5.6 min) and Solaris 10 disk (31 min) passed,
+login, a reboot from the guest through 0030 back to the banner and to login again; the 2.6 CD
+reaches `SunOS Release 5.6` and the 2.5.1 CD its `Unhandled Exception 0x30`, as above.
 
 **Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, and
 `debian/rules` (`submodules/pve-qemu.patch`) copies `build/openbios/openbios-sparc64` over
