@@ -985,8 +985,6 @@ TARGETS = {
         "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain) or DHCP",
         "net_modes": ["static", "dhcp"],
         "dhcp_note": "dhclient takes the address, router and name servers; the host name stays as installed (rc.conf)",
-        # the first boot's and the check's power-off spin in the firmware without openbios 0032
-        "matrix_skip": "needs openbios 0032-0033, not in a published pve-qemu-kvm yet: installed on request",
         "minutes": 15,  # 14.9 min through PVE: install 9.6, first boot 3.3, --check 1.8
         "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_FBSD, "with": "--check --export"},
     },
