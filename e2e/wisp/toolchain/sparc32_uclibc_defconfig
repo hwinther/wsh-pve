@@ -1,0 +1,21 @@
+# wisp uClibc-ng toolchain: sparc32, SPARC V8 only, like wisp's own sparc32 kernel (the SS-5
+# etc., e2e/wisp/README.md). Debian's packaged 32-bit sparc glibc and libgcc are V8+
+# (EM_SPARC32PLUS) even with -mcpu=v8, and wisp's sparc32 kernel refuses such a binary; this
+# toolchain's own gcc and uClibc-ng are built for V8 so that a program linked against it can run
+# there (the reason this toolchain exists instead of a packaged cross compiler).
+BR2_sparc=y
+# BR2_sparc_v8 selects GCC's v8 target CPU and uClibc-ng's V8 variant.
+BR2_sparc_v8=y
+
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
+# Buildroot 2025.02.20 defaults to GCC 13.x for this target.
+
+# Static libraries only: no shared libs are needed on the target, and this also keeps the SDK
+# simpler to relocate (see Dockerfile, "make sdk").
+BR2_STATIC_LIBS=y
+
+# Only the SDK is needed.
+BR2_INIT_NONE=y
+# BR2_PACKAGE_BUSYBOX is not set
+# BR2_TARGET_ROOTFS_TAR is not set

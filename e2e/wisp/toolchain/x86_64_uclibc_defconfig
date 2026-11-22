@@ -1,0 +1,16 @@
+# wisp uClibc-ng toolchain: x86_64, as wisp's own x86_64 kernel (pc, e2e/wisp/README.md); the
+# little-endian control for the big-endian, strict-alignment sparc toolchains above.
+BR2_x86_64=y
+
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
+# Buildroot 2025.02.20 defaults to GCC 13.x for this target.
+
+# Static libraries only: no shared libs are needed on the target, and this also keeps the SDK
+# simpler to relocate (see Dockerfile, "make sdk").
+BR2_STATIC_LIBS=y
+
+# Only the SDK is needed.
+BR2_INIT_NONE=y
+# BR2_PACKAGE_BUSYBOX is not set
+# BR2_TARGET_ROOTFS_TAR is not set

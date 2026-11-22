@@ -306,6 +306,40 @@ Found on the way:
   itself (`libgcc-sparc32.c`). A static glibc
   binary for sparc64 (`libc6-dev-sparc64-cross`) runs in the tier-1 kernel.
 
+## A libc toolchain (uClibc-ng)
+
+The toolchain in `e2e/wisp/toolchain/` targets static user programs on sparc32 (SPARC V8,
+`SS-5`) and x86_64. PID 1 uses the kernel's nolibc. Debian's packaged 32-bit SPARC glibc and
+libgcc target V8+ even with `-mcpu=v8`. Linking against those libraries produces an
+`EM_SPARC32PLUS` executable that wisp's sparc32 kernel rejects.
+
+The Dockerfile pins Buildroot LTS 2025.02.20 and the SHA-256 published in
+`buildroot-2025.02.20.tar.gz.sign`. Both defconfigs use Buildroot's internal GCC and uClibc-ng.
+This release's `package/uclibc/Config.in` enables uClibc-ng for `BR2_sparc` and `BR2_x86_64`
+and omits `BR2_sparc64`. For sparc64, the action README documents the packaged static glibc route.
+
+From the repository root, build one SDK image at a time:
+
+```sh
+sh e2e/wisp/toolchain/build.sh sparc32 2025.02.20
+sh e2e/wisp/toolchain/build.sh x86_64 2025.02.20
+```
+
+`make sdk` packages the compiler and sysroot. The Dockerfile relocates them to
+`/opt/wisp-toolchain/<arch>` and puts the compiler on the final image's `PATH`. To export the SDK
+as a tarball, run `sh e2e/wisp/toolchain/build.sh <arch> --export DIR`. The manual
+`publish-wisp-toolchain.yml` workflow builds and publishes a selected image to GHCR.
+
+Both static `hello` binaries printed `WISP-HELLO v=1 checksum=0xed3258f703d97351 status=ok`
+under the published `wisp-test-kit` kernel 7.3.4. Each exited with code 0 and signal 0.
+
+| Target | Machine | SDK image build time | Unstripped hello size | ELF |
+| --- | --- | ---: | ---: | --- |
+| sparc32 | SS-5 | 13 min 44 s | 84,484 bytes | 32-bit MSB SPARC (V8, `EM_SPARC`) |
+| x86_64 | pc | 15 min 52 s | 51,544 bytes | 64-bit LSB x86-64 |
+
+See [the hello smoke test](toolchain/hello/README.md) for the compile and boot commands.
+
 ## Build
 
 ```sh
