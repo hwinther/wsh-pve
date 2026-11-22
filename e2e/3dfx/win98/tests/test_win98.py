@@ -313,5 +313,42 @@ class Verdicts(unittest.TestCase):
         self.assertIn("no verdict", r["tests"]["opengl"]["verdict"])
 
 
+class Pve(unittest.TestCase):
+    def test_des_known_answers(self):
+        # FIPS 46 / the classic worked example, and a weak-key style vector
+        self.assertEqual(w.des_encrypt(bytes.fromhex("133457799BBCDFF1"), bytes.fromhex("0123456789ABCDEF")).hex(),
+                         "85e813540f0ab405")
+        self.assertEqual(w.des_encrypt(bytes.fromhex("0E329232EA6D0D73"), bytes.fromhex("8787878787878787")).hex(),
+                         "0000000000000000")
+
+    def test_vnc_auth_mirrors_the_key_bits(self):
+        challenge = bytes(range(16))
+        # "@" (0x40) mirrored is 0x02, so the key is 02 00 00 00 00 00 00 00
+        key = bytes.fromhex("0200000000000000")
+        self.assertEqual(w.vnc_auth_response("@", challenge),
+                         w.des_encrypt(key, challenge[:8]) + w.des_encrypt(key, challenge[8:]))
+        self.assertEqual(len(w.vnc_auth_response("a-longer-password", challenge)), 16)
+
+    def args(self, display, rtc):
+        import types
+        return types.SimpleNamespace(display=display, memory=512, rtc_base=rtc)
+
+    def test_create_options(self):
+        o = w.pve_create_options(self.args("egl", "2025-04-26T09:59:00"), "w3d9398:9398/disk.raw", "/o/serial.log",
+                                 "/o/qemu.log", "kvm", "pentium3")
+        opt = dict(zip(o[::2], o[1::2]))
+        self.assertEqual(opt["--vga"], "std,mesa=1,mesa-display=egl-headless")
+        self.assertEqual(opt["--scsi0"], "w3d9398:9398/disk.raw,cache=unsafe")
+        self.assertEqual((opt["--kvm"], opt["--cpu"], opt["--startdate"]), ("1", "pentium3", "2025-04-26T09:59:00"))
+        self.assertEqual((opt["--machine"], opt["--vmgenid"]), ("pc-i440fx-11.0", "0"))
+        self.assertIn("-d plugin -D /o/qemu.log", opt["--args"])
+        self.assertIn("-device AC97,id=audio0,bus=pci.0,addr=0x4", opt["--args"])
+        self.assertNotIn("--audio0", opt)
+        o = w.pve_create_options(self.args("vnc", "localtime"), "v", "s", "q", "tcg", "pentium3")
+        opt = dict(zip(o[::2], o[1::2]))
+        self.assertEqual((opt["--vga"], opt["--kvm"], opt["--localtime"]), ("std,mesa=1", "0", "1"))
+        self.assertNotIn("--startdate", opt)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,7 @@ come after that, not before.
 | Idle on sun4u for more guests: Linux and Solaris 7/8. Linux's `arch_cpu_idle()` only touches the NMI watchdog on sun4u (no kernel option changes that), so pve-qemu `wsh/0070` recognises it at its call of `arch_touch_nmi_watchdog()` (the `tlb_type` test and the sun4v branch next to it, both ways gcc lays it out) and halts there at `%pil` 14, as the idle loop calls it with interrupts disabled (the tick and interrupt vector wake a halted CPU whatever `%pil`); `wsh/0071` the idle loop of Solaris 7 3/99 and 8 2/02 (Sun's older compiler lays it out the other way round from 9; not like 9's, as guessed); qtest `wsh/0072` (51 cases). Lab: the wisp kernel (7.3.4) and the Debian 12/13 installer kernels (6.1.27, 6.17.7, 7.0.12) at 5.3-6.0% of a host core instead of 100%, Solaris 7 and 8 at the shell at 2.5-3.0%, CPU-bound work, ten `sleep 1` and the clock as before; NetBSD 9.3/11.1, OpenBSD 8.0 and Solaris 9 still idle (2.5-4.3%), `sparc64` 10/10, `solaris10` 2/2, `qtest-sparc64` as before, the Solaris 7 and 8 disks boot-tested through PVE. New stored disk `install-sol8-sun4u.raw` (`lab.py install sol8-sun4u --check --export`, 52 min through PVE). `submodules/SPARC.md`, "sparc64 (sun4u)", "Idle" | merged | #442 |
 | SS-20 PROM through PVE: `wsh/0061` (auto-boot) and `wsh/0066` (reconfiguration boot) checked on a PVE VM with the published pve-qemu-kvm 11.1.3-4+wsh2 (qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11): SS-20, `ss20_v2.25_rom`, 512 MB, `nvram0`, a copy of the stored `sol26-enduser-ss20prom` disk. One `setenv diag-switch? false` at the first `ok`, then the disk's pending first boot (a reconfiguration boot, no `dbri` panic; the root password, its only first-boot question, answered by the lab) to `login:` in 108-111 s; after `qm stop`/`qm start` the PROM boots Solaris 2.6 to `login:` by itself in 60 s (`le0` up, no `Trap 0x29`); `reboot -- -r` to `login:` in 66-76 s with the DBRI's `/devices` nodes made; three runs passed. New scenario `sun-prom-nvram.py`, case `sol26-ss20prom-nvram` in `pve_matrix.py pve` (weekly); e2e `sparc-profiles.spec.ts` checks the NVRAM persistence without media. No QEMU change; the SS-10 PROM has no PVE profile. `submodules/SPARC.md`, "The SS-20 PROM through PVE" | merged | #443 |
 | wisp-test, a GitHub Action for big-endian testing (`.github/actions/wisp-test`, demo idea 2; `e2e/wisp/README.md`, "Test mode"): builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64 (`sun4u`) or x86_64 (the little-endian control), boots it as `/test` in wisp's tier-1 kernel under QEMU from Ubuntu's packages and passes or fails on its exit code or signal (outputs `result`, `exit-code`, `signal-name`, ...). wisp's PID 1 gains `wisp=test`: it runs `/test` from a second initramfs given with `-initrd`, with the arguments after `--`, and prints `WISP-TEST v=1 exit=N signal=N ms=N`. The kernels and the nolibc headers come as a 7 MB kit (`e2e/wisp/kit.sh`) from the `wisp-test-kit` release, which `wisp-test-action.yml` publishes when dispatched with `publish`; on pull requests it tests the action with the run's own kit: an endianness bug (exit code 1 on sparc) and an alignment bug (`SIGBUS` on sparc) that pass on x86_64, their fixes, and the arguments (`wisp-test-action-required` gate, not required). Lab, `ubuntu:24.04` with 2 CPUs: all 11 cases as expected, 1.6-2.6 s from starting QEMU to its exit, 2.3-3.5 s with the build, 12-32 s for a first run with `apt-get install`; also passes in `ubuntu:26.04`. Found: nolibc programs on sparc need PID 1's `_start` fix too; Ubuntu's 32-bit sparc libgcc and glibc are V8+, which the sparc32 kernel refuses, so no 64-bit division on sparc32 | merged | #447 |
+| 3dfx stage 2 through PVE: the Windows 98 harness gains `--pve CONTAINER` (`win98-test.sh`; `win98_test.py --pve VMID`): the harness runs in the e2e PVE container, `qm create` (`vga: std,mesa=1[,mesa-display=egl-headless]`, the disk copy through a directory storage of the run's own, COM1 and `-d plugin -D <log>` through `args`, which keeps a daemonized QEMU's standard error in the log) and `qm start`; the console is read through the VM's QMP socket (screendump) or PVE's VNC socket (VNC authentication, our own DES; the password set through QMP before each picture, since opening noVNC sets PVE's ticket). The template's device positions keep the new-hardware wizard away: machine version before 11.1 (11.1 adds bridge `pci.4`), `vmgenid: 0`, AC97 at 00:04.0 through `args` (qemu-server's `audio0` sits behind a bridge). Lab, published pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, wsh-openglide 0.5, KVM, `cpu: pentium3`, the i586 guest drivers of `qemu-3dfx-drivers-b94d988`, llvmpipe, `/dev/udmabuf`: egl-headless Glide 2 440-560, Glide 3 640-660, OpenGL 810 frames/s in two runs, every frame as a dmabuf (copies 0.08-0.09 ms Glide, 1.0-1.6 ms OpenGL); read back 1150, 1430 and 440; the scene in the noVNC console with egl-headless, 4 dmabufs open in QEMU. Also: the frame spec (`3dfx-gl-display.spec.ts`) runs in `e2e.yml`, which builds its guest before the suite (`pve-guest-setup.sh` with `PVE_GUEST_FETCH=1` for the submodule, ~40 s; `E2E_3DFX_GUEST=required` fails the spec when that setup failed); GitHub's runners have `/dev/udmabuf`; Proxmox's kernels have `CONFIG_UDMABUF=y`. Found: an older x86-64-v2 drivers zip faults under KVM with PVE's `cpu: pentium3` (`pinsrd`, SSE4.1; the release is i586 now); an OpenGL frame the guest doesn't redraw gives way to the VGA after ~4 s (also without PVE and read back) | branch | |
 
 ## In progress
 
@@ -283,7 +284,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide done, MESA GL in review; the rest ~1 week).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering, Glide gamma as a shader).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -387,11 +388,15 @@ merged; what is left of them is item 2 under "Next".
        no D-Bus client yet) and a real game over time; double buffering instead of holding
        frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
        wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
-       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms refresh cap; whether GitHub's
-       runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
-       `3dfx in Windows 98` workflow has an `egl` display now but installs the published
-       wsh-openglide, so until one with the exports is published its Glide frames are read back.
-       - **PVE: the display of a 3dfx VM (in review).** qemu-server: `vga: ...,mesa=1,mesa-display=`
+       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms
+       refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
+       4 s after its last swap (seen in Windows 98 with a long hold: egl-headless and read back alike,
+       with and without PVE; a held Glide frame stays). Settled since: GitHub's runners have
+       `/dev/udmabuf` (`qemu-3dfx-check.yml` ran the `egl` and `dbus` modes there, all frames as
+       dmabufs, run of 2026-11-22); the published wsh-openglide has had the exports since 0.5 (cut
+       from #425 itself, 2026-11-21; the `3dfx in Windows 98` runs that read Glide back predate it),
+       and the Windows 98 runs through PVE below sent Glide as dmabufs with the published packages.
+       - **PVE: the display of a 3dfx VM (merged, #431).** qemu-server: `vga: ...,mesa=1,mesa-display=`
          `none|egl-headless` (default `none`: no `-display`, frames read back, as before);
          `egl-headless` adds `-display egl-headless` next to PVE's `-vnc`, so noVNC keeps working.
          Refused at create and update without the 3dfx binary (`mesa=1` on the host's
@@ -409,9 +414,10 @@ merged; what is left of them is item 2 under "Next".
          `e2e/3dfx/test.sh` through `qm start` (`e2e/3dfx/pve-guest-setup.sh` puts it in the
          container) and checks the frame in the noVNC console, read back and with egl-headless (4
          open dmabufs against 1); QEMU, run with PVE's command line in the foreground, said "frames
-         to the graphic console as a dmabuf" (944 frames/s). Left: CI runs the frame spec only
-         where the guest was set up (no workflow does that yet), a GPU node, Windows 98 through
-         PVE with egl-headless, the PVE kernel's `CONFIG_UDMABUF` (checked on Ubuntu's only).
+         to the graphic console as a dmabuf" (944 frames/s). Left: a GPU node. Done since (see the
+         Done table): Windows 98 through PVE with egl-headless, the frame spec in CI, and the PVE
+         kernel's `CONFIG_UDMABUF` (`=y` in the published configs of `proxmox-kernel-7.0.14-30-pve`,
+         the default, and `7.3.5-1-pve`).
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.
