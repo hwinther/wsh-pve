@@ -7,7 +7,7 @@
 # amd64 only: VintageHive is published self-contained for linux-x64.
 
 # VintageHive, built from a pinned commit (https://github.com/FoxCouncil/VintageHive, MIT).
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb AS vintagehive
+FROM mcr.microsoft.com/dotnet/sdk:11.0@sha256:65f3c7c6a25a239ab3e6719f2896147e7b68242ff2d8818dd70498bde6ef8bea AS vintagehive
 ARG VINTAGEHIVE_COMMIT=5c2d4f0e8526d54f5f4da3542344d11b7cd49285
 WORKDIR /src
 RUN git init -q . \
