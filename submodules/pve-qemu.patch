@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..862fb69 100644
+index bc240a0..52eef3a 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,79 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,81 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -153,6 +153,8 @@ index bc240a0..862fb69 100644
 +wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
 +wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
 +wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
++wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
++wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -15445,6 +15447,405 @@ index 0000000..1b07aba
 ++    }
 +     return g_test_run();
 + }
+diff --git a/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
+new file mode 100644
+index 0000000..a4884fb
+--- /dev/null
++++ b/debian/patches/wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
+@@ -0,0 +1,142 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: keep SuperSPARC instruction fetches in the PROM in boot mode with the MMU on
++
++Sun's SPARCserver 600MP boot PROM stops QEMU within seconds of power-on,
++before it prints anything: "Trap 0x01 (Instruction Access Fault) while
++interrupts disabled, Error state". Its MMU register test, run in boot mode
++from the PROM with traps disabled, walks a one through the writable bits of
++the MMU control register, the enable bit (bit 0) among them. QEMU translates
++every instruction fetch once the MMU is enabled; with no page tables set up
++yet, the next fetch faults, and so does the fetch of the trap vector.
++
++On the SuperSPARC (Viking) the boot mode bit (bit 13 of the MMU control
++register) sends every instruction fetch to the boot PROM, at
++0xf.f000_0000 plus the low 28 bits of the address, whether the MMU is
++enabled or not. Data accesses are not affected by it and are translated
++when the MMU is on (Linux's arch/sparc/include/asm/viking.h documents the
++bit this way). QEMU applied boot mode only while the MMU was disabled.
++
++Add the CPU feature "boot-mode-ifetch", set on the TI-SuperSparc-* models.
++With it, sparc_cpu_mmu_index() returns MMU_PHYS_IDX for an instruction
++fetch while boot mode is set, and get_physical_address() maps the fetch to
++the PROM as it already does with the MMU off. Data accesses keep the
++translated index. The TLB is already flushed when the boot mode bit
++changes. The microSPARC, TurboSPARC and LEON models are unchanged, and the
++feature can be turned off (-cpu TI-SuperSparc-II,-boot-mode-ifetch).
++OpenBIOS clears boot mode when it enables the MMU (it writes 1 to the
++control register), so it is not affected.
++
++With this the 600MP PROM gets past that test and on to its other CPU
++module tests; it doesn't boot yet (QEMU models none of the SuperSPARC's
++diagnostic store buffer, cache tag or cache data registers, which those
++tests read back).
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             | 29 +++++++++++++++++++++++------
++ 2 files changed, 24 insertions(+), 6 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index f235739634..ca8fe3180e 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -17,3 +17,4 @@ FEATURE(VIS3)
++ FEATURE(IMA)
++ FEATURE(VIS4)
++ FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
+++FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 919b51821c..4e7a2e4d8d 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -448,7 +448,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-50", /* STP1020PGA */
++@@ -461,7 +462,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-51",
++@@ -475,7 +477,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-60", /* STP1020APGA */
++@@ -488,7 +491,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_sfsr_mask = 0xffffffff,
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-61",
++@@ -502,7 +506,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "TI-SuperSparc-II",
++@@ -516,7 +521,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++-        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC,
+++        .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
+++                    CPU_FEATURE_BOOT_MODE_IFETCH,
++     },
++     {
++         .name = "LEON2",
++@@ -567,6 +573,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_DIV] = "div",
++     [CPU_FEATURE_BIT_FSMULD] = "fsmuld",
++     [CPU_FEATURE_BIT_BUSERR_ACCESS_EXC] = "buserr-access-exc",
+++    [CPU_FEATURE_BIT_BOOT_MODE_IFETCH] = "boot-mode-ifetch",
++ #endif
++ };
++ 
++@@ -809,6 +816,14 @@ static int sparc_cpu_mmu_index(CPUState *cs, bool ifetch)
++ #ifndef TARGET_SPARC64
++     if ((env->mmuregs[0] & MMU_E) == 0) { /* MMU disabled */
++         return MMU_PHYS_IDX;
+++    } else if (ifetch && (env->def.features & CPU_FEATURE_BOOT_MODE_IFETCH) &&
+++               (env->mmuregs[0] & env->def.mmu_bm)) {
+++        /*
+++         * SuperSPARC boot mode: instruction fetches go to the boot PROM
+++         * whether the MMU is enabled or not (get_physical_address() maps
+++         * them there); data accesses are translated as usual.
+++         */
+++        return MMU_PHYS_IDX;
++     } else {
++         return env->psrs;
++     }
++@@ -998,6 +1013,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_FSMULD, false),
++     DEFINE_PROP_BIT("buserr-access-exc", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_BUSERR_ACCESS_EXC, false),
+++    DEFINE_PROP_BIT("boot-mode-ifetch", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_BOOT_MODE_IFETCH, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
+diff --git a/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch b/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
+new file mode 100644
+index 0000000..4761fe6
+--- /dev/null
++++ b/debian/patches/wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
+@@ -0,0 +1,245 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test SuperSPARC boot mode with the MMU on
++
++A tiny boot PROM sets up a context table whose context 0 maps virtual 0
++to RAM at 0x01000000, where the test writes a run of nops ending in code
++that stores 0x5a at physical 0x1008. With traps disabled the PROM enables
++the MMU, keeping or clearing boot mode, and then stores 1 at physical
++0x1004 through the MMU bypass ASI. A fetch that still comes from the PROM
++stores 1, a translated fetch runs the code in RAM and stores 0x5a.
++
++On SS-10, SS-20 (TI-SuperSparc-50) and SS-600MP the fetch must come from
++the PROM while boot mode is set. It must be translated on SS-10 with boot
++mode cleared, with the CPU feature turned off (-boot-mode-ifetch), and on
++SS-5 (microSPARC-II). Without the previous patch the SS-10 boot mode case
++fails (the fetch is translated).
++
++sun4m-mmu-ctx-ifetch-test and sun4m-bus-error-trap-test turned the MMU on
++by setting the enable bit in the control register as they read it, which
++kept the SuperSPARC in boot mode; their fetches in context 1 and from the
++unassigned region then came from the PROM. They now write the enable bit
++alone, as OpenBIOS and an operating system do, which clears boot mode.
++---
++ tests/qtest/meson.build                   |   1 +
++ tests/qtest/sun4m-boot-mode-ifetch-test.c | 172 ++++++++++++++++++++++
++ tests/qtest/sun4m-bus-error-trap-test.c   |   2 +-
++ tests/qtest/sun4m-mmu-ctx-ifetch-test.c   |   2 +-
++ 4 files changed, 175 insertions(+), 2 deletions(-)
++ create mode 100644 tests/qtest/sun4m-boot-mode-ifetch-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 7ffd4c67a0..4ba5babeb9 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -209,6 +209,7 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-cs4231-test',
++                 'sun4m-esp-test',
++                 'sun4m-mmu-ctx-ifetch-test',
+++                'sun4m-boot-mode-ifetch-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++diff --git a/tests/qtest/sun4m-boot-mode-ifetch-test.c b/tests/qtest/sun4m-boot-mode-ifetch-test.c
++new file mode 100644
++index 0000000000..96e8dcebf7
++--- /dev/null
+++++ b/tests/qtest/sun4m-boot-mode-ifetch-test.c
++@@ -0,0 +1,172 @@
+++/*
+++ * QTest: SuperSPARC boot mode with the MMU enabled on sun4m
+++ *
+++ * On the SuperSPARC (Viking) the boot mode bit of the MMU control register
+++ * (bit 13) sends every instruction fetch to the boot PROM, whether the MMU
+++ * is enabled or not; data accesses are translated when it is. Sun's
+++ * SPARCserver 600MP boot PROM tests the MMU control register's bits in boot
+++ * mode, the MMU enable bit among them, and goes on fetching from the PROM.
+++ * QEMU translated the fetch once the MMU was on and stopped on the
+++ * instruction access fault ("Trap 0x01 while interrupts disabled").
+++ *
+++ * The test PROM sets up a context table whose context 0 maps virtual 0 to
+++ * RAM at 0x01000000, where the test writes a run of nops ending in code
+++ * that stores 0x5a at physical WRONG_PATH. With traps disabled the PROM
+++ * enables the MMU (keeping or clearing boot mode) and then stores 1 at
+++ * physical PROM_PATH through the MMU bypass ASI. A fetch that still comes
+++ * from the PROM stores 1; a translated fetch runs the code in RAM and
+++ * stores 0x5a. The microSPARC (SS-5) and a SuperSPARC without the
+++ * boot-mode-ifetch feature keep translating.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define CTX_TABLE       0x2000ULL
+++#define CTX0_L1         0x3000ULL
+++#define PROM_PATH       0x1004u     /* markers (physical) */
+++#define WRONG_PATH      0x1008u
+++#define RAM_CODE        0x01000000ULL   /* what virtual 0 maps to */
+++#define PROM_WORDS      0x200
+++#define CODE            0x100           /* word index of the code */
+++#define STUB            0x200           /* word index of the RAM stub */
+++#define NOP             0x01000000
+++
+++static char *write_prom(bool clear_bm)
+++{
+++    const uint32_t code[] = {
+++        0x07000004,             /* sethi %hi(0x1000), %g3 */
+++        0x8610e004,             /* or    %g3, 4, %g3         PROM_PATH */
+++        0x90102100,             /* mov   0x100, %o0 */
+++        0x92102200,             /* mov   0x200, %o1 */
+++        0xd2a20080,             /* sta   %o1, [%o0] 4        context table pointer */
+++        0x90102200,             /* mov   0x200, %o0 */
+++        0xc0a20080,             /* sta   %g0, [%o0] 4        context 0 */
+++        0x81882f80,             /* wr    %g0, 0xf80, %psr    S, PIL 15 */
+++        NOP,
+++        NOP,
+++        NOP,
+++        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x17000008,             /* sethi %hi(0x2000), %o3    boot mode bit */
+++        clear_bm ? 0x942a800b   /* andn  %o2, %o3, %o2 */
+++                 : NOP,
+++        0x9412a001,             /* or    %o2, 1, %o2         MMU on */
+++        0xd4a00080,             /* sta   %o2, [%g0] 4 */
+++        NOP,
+++        NOP,
+++        NOP,
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc8a0c400,             /* sta   %g4, [%g3] 0x20     from the PROM */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[PROM_WORDS] = { 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    /* Reset (trap 0): b 0x400 */
+++    be[0] = cpu_to_be32(0x10800000 | CODE);
+++    be[1] = cpu_to_be32(NOP);
+++    for (i = 0; i < ARRAY_SIZE(code); i++) {
+++        be[CODE + i] = cpu_to_be32(code[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-boot-mode-ifetch-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++/*
+++ * Context 0 maps virtual 0 (16 MB) to RAM_CODE: nops from the code's
+++ * offset on, then a stub that stores 0x5a at WRONG_PATH and stops.
+++ */
+++static void write_tables(QTestState *qts)
+++{
+++    const uint32_t stub[] = {
+++        0x0f000004,             /* sethi %hi(0x1000), %g7 */
+++        0x8e11e008,             /* or    %g7, 8, %g7         WRONG_PATH */
+++        0x8810205a,             /* mov   0x5a, %g4 */
+++        0xc8a1c400,             /* sta   %g4, [%g7] 0x20     fetched from RAM */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[STUB + ARRAY_SIZE(stub)];
+++    int i;
+++
+++    for (i = 0; i < STUB; i++) {
+++        be[i] = cpu_to_be32(NOP);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(stub); i++) {
+++        be[STUB + i] = cpu_to_be32(stub[i]);
+++    }
+++    qtest_memwrite(qts, RAM_CODE, be, sizeof(be));
+++    qtest_writel(qts, CTX_TABLE, (CTX0_L1 >> 4) | 1);
+++    qtest_writel(qts, CTX0_L1, (uint32_t)(RAM_CODE >> 4) | 0x0e);
+++}
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    const char *cpu;
+++    bool clear_bm;
+++    bool from_prom;     /* expected: the fetch after MMU on is from the PROM */
+++} TestCase;
+++
+++static void test_boot_mode_ifetch(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t->clear_bm);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s%s%s -accel tcg -m 64 "
+++                                  "-bios %s -S", t->machine,
+++                                  t->cpu ? " -cpu " : "",
+++                                  t->cpu ? t->cpu : "", prom);
+++
+++    write_tables(qts);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'cont' }");
+++
+++    while (qtest_readl(qts, PROM_PATH) == 0 &&
+++           qtest_readl(qts, WRONG_PATH) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    if (t->from_prom) {
+++        g_assert_cmpuint(qtest_readl(qts, PROM_PATH), ==, 1);
+++        g_assert_cmpuint(qtest_readl(qts, WRONG_PATH), ==, 0);
+++    } else {
+++        g_assert_cmpuint(qtest_readl(qts, WRONG_PATH), ==, 0x5a);
+++        g_assert_cmpuint(qtest_readl(qts, PROM_PATH), ==, 0);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        { "ss10/boot-mode", "SS-10", NULL, false, true },
+++        { "ss20/boot-mode", "SS-20", "TI-SuperSparc-50", false, true },
+++        { "ss600mp/boot-mode", "SS-600MP", NULL, false, true },
+++        { "ss10/boot-mode-cleared", "SS-10", NULL, true, false },
+++        { "ss10/feature-off", "SS-10", "TI-SuperSparc-II,-boot-mode-ifetch",
+++          false, false },
+++        { "ss5/microsparc", "SS-5", NULL, false, false },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-boot-mode-ifetch/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_boot_mode_ifetch);
+++        }
+++    }
+++
+++    return g_test_run();
+++}
++diff --git a/tests/qtest/sun4m-bus-error-trap-test.c b/tests/qtest/sun4m-bus-error-trap-test.c
++index 378a1c3091..6866de3998 100644
++--- a/tests/qtest/sun4m-bus-error-trap-test.c
+++++ b/tests/qtest/sun4m-bus-error-trap-test.c
++@@ -82,7 +82,7 @@ static char *write_prom(const TestCase *t)
++         0x81902000,             /* wr    %g0, 0, %wim */
++         0x81882f80,             /* wr    %g0, 0xf80, %psr    S, PIL 15 */
++         NOP, NOP, NOP,
++-        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x94102000,             /* mov   0, %o2              boot mode off */
++         0x9412a001,             /* or    %o2, 1, %o2         MMU on */
++         0xd4a00080,             /* sta   %o2, [%g0] 4 */
++         0x81882fa0,             /* wr    %g0, 0xfa0, %psr    traps on */
++diff --git a/tests/qtest/sun4m-mmu-ctx-ifetch-test.c b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++index b4fcbd042c..78bb2051db 100644
++--- a/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
+++++ b/tests/qtest/sun4m-mmu-ctx-ifetch-test.c
++@@ -59,7 +59,7 @@ static char *write_prom(bool traps_on)
++         0x01000000,             /* nop */
++         0x01000000,             /* nop */
++         0x01000000,             /* nop */
++-        0xd4800080,             /* lda   [%g0] 4, %o2        MMU control register */
+++        0x94102000,             /* mov   0, %o2              boot mode off */
++         0x9412a001,             /* or    %o2, 1, %o2         MMU on */
++         0xd4a00080,             /* sta   %o2, [%g0] 4 */
++         0x07004004,             /* sethi %hi(0x01001000), %g3 */
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

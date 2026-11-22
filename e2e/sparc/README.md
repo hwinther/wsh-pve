@@ -146,7 +146,7 @@ docker run --rm -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro 
 | `display-x` | `fb-display.py X=1 INPUT=1 IDLE=60`: the 2.6 disks (TCX packages added by `PREPARE`) into the CDE desktop on TCX 8, TCX 24 and cg3 with SS-5 (OpenBIOS, `ss5.bin`: not TCX 24), SS-10 and SS-20 (OpenBIOS) | ~100 min |
 | `idle` | `idle.py`, OpenBIOS unless stated: Solaris 2.6 on SS-5 and SS-20 with `solaris-idle` (below 10% of a core, `sparc_solaris_idle_match` traced) and with `solaris-idle=off` (above 80%), 2.6 with the `pmc` driver on SS-5 with and without `solaris-idle` (below 10%), 2.5.1 on SS-5 with `ss5.bin` (below 10%, traced), SunOS 4.1.4 with `sunos-idle` (below 10%, and `sparc_sunos_idle_match` traced) and with `sunos-idle=off` (above 80%), NetBSD 11.1 (`apc0` attached, below 10%), Solaris 2.6 on SS-20 with 2 and 4 CPUs and `solaris-smp-idle` (below 20%, `sparc_solaris_idle_mp_match` traced) and with 2 CPUs and `solaris-smp-idle=off` (above 150%) | ~45 min |
 | `bench` | `bench.py` with Solaris 2.6 on SS-5 (OpenBIOS) and SS-20 (OpenBIOS and the Sun PROM), one CPU each; numbers only, on an otherwise idle host | ~13 min |
-| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle: halted in its idle loop (below 10% of a core, `sparc64_idle_match` traced) and with `idle-halt=off` (above 80%; both need a package with pve-qemu `wsh/0042`-`0044`); needs `--disks /mnt/os/disks` | ~30 min |
+| `sparc64` | `sun4u` (see "sparc64"): the NetBSD 11.1, NetBSD 9.3, OpenBSD 8.0 and Debian 12 CDs to their installers on the serial console, NetBSD 11.1 on the VGA console with the keyboard, the NetBSD 11.1 install, its disk booted twice with DHCP and an HTTP fetch over `sunhme`, with `virtio-net-pci` and `virtio-blk`, and idle: halted in its idle loop (below 10% of a core, `sparc64_idle_match` traced) and with `idle-halt=off` (above 80%; both need a package with pve-qemu `wsh/0042`-`0044`), and `sparc64-reboot.py`: the disk's `reboot` twice and `reboot -- netbsd` once, each back to the firmware's banner and `login:` in the same QEMU process (needs openbios-sparc64 patch 0030, pve-qemu-kvm 11.1.3-4+wsh3 or later; the firmware drops the boot string, so the second case only checks that such a reboot comes back); needs `--disks /mnt/os/disks` | ~38 min |
 | `benchdisk` | `bench-disk.py` (the bench disk, `--bench`) with Solaris 2.6 on SS-5 (OpenBIOS, `ss5.bin`), SS-10 (OpenBIOS) and SS-20 (OpenBIOS, the Sun PROM), and 2.5.1 on SS-5 (`ss5.bin`); one CPU, 256 MB, QEMU user networking for the `le0` tests; numbers only, on an otherwise idle host | ~65 min |
 | `smp` | `smp-soak.py` (the bench disk, `--bench`, `SOAK=600`) with Solaris 2.6 on SS-20 (OpenBIOS) with 2 and 4 CPUs and on SS-10 with 2 CPUs; needs a package with pve-qemu patch 0019 (before it 2.6 hung with more than one CPU) | ~50 min |
 | `stopa` | `stop-a.py`: Stop-A on Solaris 2.6 at the console login (SS-5, SS-10, SS-20) and at dtlogin, then `boot` instead of `go`, the chord the wrong way round; SunOS 4.1.4, NetBSD 11.1 (its debugger, `c`), the firmware's own prompt; all OpenBIOS. Needs OpenBIOS with `openbios/patches/0008` (before it Stop-A powered the VM off) | ~30 min |
@@ -1176,8 +1176,21 @@ qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 | the profile's API checks of `sparc-profiles.spec.ts` as `qm create`/`qm showcmd` (serial0, cg3, TCX and `nvram0` started frozen in QEMU; the refusals; an SS-20 with 2 CPUs changed to SS-600MP) | 17/17 passed | |
 | unit tests (`test_targets.py`) | passed | |
 
-Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, a framebuffer console
-(OpenBIOS draws on cg3 and TCX on the SS-600MP; 4.1.2 there was not run).
+Again with the published packages only (the same container, `PACKAGES=repo`, built `--no-cache`:
+pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7 and pve-manager 9.2.32+wsh11, which have the
+SS-600MP profile), `pve_matrix.py install --only install-sunos412-ss600mp` into an empty `--disks`,
+2026-11-22: passed in 6.2 min (install 143 s, first boot 150 s, check 51 s). It is the source of the
+gallery's `sunos412-*-ss600mp` recordings ("Recordings in the docs").
+
+On the cg3 (the stored disk in the lab's own QEMU, `fb-bell.py GUEST=sunos4 MACHINE=SS-600MP
+VGA=cg3`, console on the framebuffer and the Sun keyboard): `boot disk:a -s` boots 4.1.2 to its
+single-user shell, which answers, and BEL comes back (passed, 96 s). The kernel prints `No default
+frame buffer found` and attaches no `cgthree`, so the text on the screen is the PROM's terminal
+(OpenBIOS) drawing what the kernel hands the romvec, not a SunOS frame buffer driver; the first
+keys typed after the shell came up were lost once. So the gallery has the serial console only.
+
+Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, multi-user on the
+framebuffer console, TCX.
 
 The rows "with openbios 0019-0022" ran the lab image of the published package with a patched
 `openbios-sparc32` mounted over `/usr/share/kvm/openbios-sparc32`, one run each (the 2.3 install
@@ -2403,6 +2416,7 @@ assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't nee
 | `sol26-smp4-ss20.cast` | `pve_matrix.py recordings`: `sol26-ss20-smp4/1-solaris-boot-disk` | `--max-idle 1 --speed 1` |
 | `sol22-install-ss10.cast`, `sol22-boot-ss10.cast` | `pve_matrix.py recordings`: `sol22-install-ss10/1-solaris-install-serial`, `2-solaris-boot-disk` | `--speed 2`, `--speed 1` |
 | `sunos413-install-ss10.cast`, `sunos413-boot-ss10.cast` | `lab.py install sunos413-ss10 --check --out <runs>/install-sunos413-ss10/1-install-sunos413-ss10`: `install`, `check` | `--max-idle 1 --speed 1` |
+| `sunos412-install-ss600mp.cast`, `sunos412-boot-ss600mp.cast` | `pve_matrix.py install --only install-sunos412-ss600mp` (no stored disk): `install-sunos412-ss600mp/1-install-sunos412-ss600mp/install`, `.../check` | `--max-idle 1 --speed 1` |
 | `sol21-install-ss10.cast`, `sol21-boot-ss10.cast` | `lab.py install sol21-ss10 --check --out <runs>/install-sol21-ss10/1-install-sol21-ss10`: `install`, `check` | `--speed 2`, `--speed 1` |
 | `openbsd80-install-sun4u.cast`, `openbsd80-boot-sun4u.cast` | `lab.py install openbsd80-sun4u --check --export <dir> --out <runs>/install-openbsd80-sun4u/1-install-openbsd80-sun4u`: `install`, `check` | `--speed 3`, `--speed 2` |
 | `openbsd59-install-ss5.cast`, `openbsd59-boot-ss5.cast` | `install` (no stored disk): `install-openbsd59-ss5/1-install-openbsd59-ss5/install`, `.../check` | `--speed 2`, `--speed 1` |
@@ -2693,8 +2707,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
-| `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u") | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
-| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Debian 7, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
+| `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u"). The `sparc64` matrix runs it on the NetBSD 11.1 disk (`nb111-reboot-sparc64`, `nb111-reboot-bootstr-sparc64` with `REBOOT=reboot -- netbsd`) | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
+| `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
 | `debian-install-sparc.py`, `debian-firstboot.py`, `debian-boot-disk.py` with `ARCH=sparc64` | Debian 7.11 on sun4u from CD 1 with a preseed answer CD on the secondary IDE slave, its first boot and check ("Debian GNU/Linux 7 on sun4u") | install ~85 min, first boot ~3.5 min, check ~3 min |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the

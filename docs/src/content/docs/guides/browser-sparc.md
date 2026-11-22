@@ -16,7 +16,7 @@ Sun disk or other Sun or Oracle software is part of it, and none ever will be.
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `qemu-system-sparc.wasm`, `.js` | 12.8 MB, 0.4 MB | Upstream QEMU 11.1.3 with this project's sparc patches (pve-qemu's `wsh/` series: all 65 apply to upstream as they are), built with Emscripten for a wasm64 host. QEMU has no code generator for WebAssembly, so it runs the guest's code with TCI, its TCG interpreter |
+| `qemu-system-sparc.wasm`, `.js` | 12.8 MB, 0.4 MB | Upstream QEMU 11.1.3 with this project's sparc patches (pve-qemu's `wsh/` series: all of them apply to upstream as they are) and the page's own `web/patches/` (the timer fix under "How fast"), built with Emscripten for a wasm64 host. QEMU has no code generator for WebAssembly, so it runs the guest's code with TCI, its TCG interpreter |
 | `openbios-sparc32` | 0.4 MB | OpenBIOS from the published `pve-qemu-kvm` package, the firmware a PVE sparc32 VM uses |
 | `wisp-sparc32-kernel` | 2.4 MB | wisp's tier-1 sparc32 kernel: Linux 7.3 `tinyconfig` with a one-program initramfs (PID 1 built with nolibc) |
 | `wisp-ss5-128m.state`, `.log` | 4.8 MB | The machine saved at wisp's first prompt, and the console output up to there (see below) |
@@ -68,23 +68,38 @@ Measured with Chromium on a desktop PC, the page served from `localhost`:
 | --- | --- |
 | From the snapshot to a running prompt | 0.8 s after QEMU starts |
 | Boot from OpenBIOS (`?cold`) to the prompt | 162-167 s: OpenBIOS's first line at 18 s, its SBus probe 69-105 s, Linux starts at 127 s |
-| `bench` (4,096 rounds of the CRC loop) | 31-35 s; the guest reports 11.1 s, the published package under TCG 0.37 s |
-| `mandel` | 2-6 s with its output; the guest reports 0.27-0.30 s |
+| `bench` (4,096 rounds of the CRC loop) | 31-47 s, and the guest reports the same within 2% (11.1 s before the timer fix below); the published package under TCG 0.37 s |
+| `mandel` | 2-9 s with its output, and the guest reports within 5% of it (0.27-0.53 s before the timer fix: the terminal's drawing kept the page's thread busy) |
 
 So the guest runs about 100 times slower than QEMU's TCG on a PC, and about 5 times slower than
 QEMU's interpreter built natively (OpenBIOS from reset to `bootpath:` took 26 s there, `SPARC.md`,
 "TCI (QEMU's TCG interpreter)"): the interpreter compiled to WebAssembly with 64-bit memory and
-Asyncify. The guest's clock also runs behind the wall clock, about 3 times (`bench` above, and
-`info`'s uptime); not looked into yet. Output and input are immediate once the machine is idle.
+Asyncify. Output and input are immediate once the machine is idle.
+
+**The guest's clock.** It keeps to the wall clock (`info`'s uptime, `bench`'s time). Builds before
+`web/patches/slavio-timer-missed-ticks.patch` let it fall behind, about 3 times in the first
+measurements, and almost stop while the page was busy: Linux on the SS-5 counts the system
+timer's 100 Hz interrupts to keep time, and QEMU raised the next one only when its main loop came
+round. That loop sleeps in `poll()`, whose timeout Emscripten runs as a `setTimeout()` on the
+page's main thread, so anything else on that thread (the terminal, the browser) wakes it late, the
+timer then runs several periods at once, and all but one of their interrupts were lost. The patch
+counts them and raises the interrupt again each time the guest clears it, so a late main loop now
+delivers the ticks in a burst; natively nothing changes. The build checks it: `clock-check.py`
+holds up a native QEMU with `SIGSTOP`, and the workflow runs the page in headless Chrome with its
+main thread kept busy (`web/scripts/browser-clock-check.mjs`). Right after such a busy spell the
+shell takes a few seconds to answer while the guest works through the ticks it was owed.
 
 ## Building it
 
 `web/Dockerfile` builds the files from Debian packages only: Emscripten 6.0.5 from Debian sid,
 QEMU's and its libraries' sources from Debian source packages (`apt-get source`: QEMU 11.1.3,
 glib 2.84, pixman, libffi 3.5.2, pcre2, zlib), Debian's kernel source and xterm.js, and OpenBIOS
-from this project's apt repository. The `Browser SPARC` workflow
-(`.github/workflows/browser-sparc.yml`, run by hand) builds them and can publish them as the
-assets of the `browser-sparc` release, which every Pages deploy copies next to the page.
+from this project's apt repository. QEMU gets pve-qemu's `wsh/` patches and then the page's own
+in `web/patches/`, each with its reason at the top (so far one: the timer fix above); they go into
+the native QEMU that makes the snapshot too, since a migration stream only loads into the same
+device models. The `Browser SPARC` workflow (`.github/workflows/browser-sparc.yml`, run by hand)
+builds them, checks the guest's clock in headless Chrome, and can publish them as the assets of
+the `browser-sparc` release, which every Pages deploy copies next to the page.
 
 To run it locally:
 

@@ -221,6 +221,15 @@ MATRICES["sparc64"] = [
       "TRACE_EXPECT": "NetBSD idle loop"}),
     ("nb111-noidle-spins-sparc64", "sparc64-idle.py", NB111_64, None,
      {"GUEST": "netbsd", "WAIT": "pkill makemandb; sleep 2", "MACHINE": "sun4u,idle-halt=off", "CPU_ABOVE": "80"}),
+    # reboot from the guest: the firmware's boot service resets the machine (openbios-sparc64 patch
+    # 0030, pve-qemu-kvm 11.1.3-4+wsh3 or later; before it the boot service returned and the machine
+    # didn't reset), the banner comes back in the same QEMU process and the disk boots to login: again, twice.
+    # The second case passes a boot string (reboot -- netbsd): the firmware drops it and boots its
+    # boot device again (submodules/SPARC.md, "The firmware reboot on sun4u"), so this only checks
+    # that a reboot with one comes back too
+    ("nb111-reboot-sparc64", "sparc64-reboot.py", NB111_64, None, {"GUEST": "netbsd", "REBOOTS": "2"}),
+    ("nb111-reboot-bootstr-sparc64", "sparc64-reboot.py", NB111_64, None,
+     {"GUEST": "netbsd", "REBOOT": "reboot -- netbsd", "REBOOTS": "1"}),
 ]
 
 # Solaris 10 on sun4u: NEEDS THE SUN DVD on the lab host (/mnt/os/iso/sol-10-u11-ga-sparc-dvd.iso,

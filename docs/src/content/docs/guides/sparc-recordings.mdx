@@ -99,10 +99,34 @@ after.
   poster="npt:0:10"
 />
 
+### SunOS 4.1.2 on SPARCserver 600MP
+
+The oldest Sun release the lab runs: SunOS 4.1.2 (Solaris 1.0.1), the first release for sun4m, on
+its first sun4m machine, the SPARCserver 600MP (`machine: SS-600MP`, [The SPARCserver
+600MP](/guides/sparc/#the-sparcserver-600mp)). It needs pve-qemu patches wsh/0063-0065 (the 600MP's
+VMEbus registers and the buffer memory its network chip works in) and OpenBIOS patch 0028 (the
+device names 4.1.2 looks for), in pve-qemu-kvm 11.1.3-3+wsh13 and later. The same install as the
+later SunOS 4 releases: the mini-root on the swap slice, suninstall's Quick install, then the check
+boot (login, the system state, `halt`). Its `getty` sends even parity in bit 7, which the lab masks
+before the terminal. SS-600MP, OpenBIOS, one CPU, 64 MB for the install, 256 MB after. Recorded
+2026-11-22 with pve-qemu-kvm 11.1.3-4+wsh4 (install 2.4 min, check 0.9 min).
+
+<LabCast
+  src="/recordings/sunos412-install-ss600mp.cast"
+  caption="SunOS 4.1.2 install from CD, SPARCserver 600MP with OpenBIOS under PVE, serial console"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos412-boot-ss600mp.cast"
+  caption="SunOS 4.1.2 booting the installed disk, SPARCserver 600MP with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
 ### SunOS 4.1.3 on SS-10
 
-The oldest SunOS the lab runs: SunOS 4.1.3 (Solaris 1.1, kernel built July 1992), the first SunOS 4
-for the SS-10, from its own CD. Its generic sun4m kernel probes for VME controllers that the SS-10
+SunOS 4.1.3 (Solaris 1.1, kernel built July 1992), the first SunOS 4 for the SS-10, from its own
+CD. Its generic sun4m kernel probes for VME controllers that the SS-10
 doesn't have and expects the SuperSPARC's trap for that bus error, which pve-qemu patch wsh/0049
 gives it (pve-qemu-kvm 11.1.3-2+wsh31). The same install as 4.1.3_U1B: the mini-root on the swap
 slice, suninstall's Quick install, then the check boot (login, the system state, `halt`). SS-10,
