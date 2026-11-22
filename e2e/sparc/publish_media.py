@@ -20,7 +20,7 @@ from these, all in the PVE test container (pve.Dockerfile):
                                               openbsd59-ss5, redhat62-ss5
   lab.py install <target> --check --out <runs>/install-<target>/1-install-<target>
                                               the same layout for one target: sol21-ss10, openbsd80-sun4u,
-                                              sunos413-ss10
+                                              sunos413-ss10, sunos412-ss600mp
   pve_matrix.py recordings                    sol26-ss20-smp4, sol22-install-ss10
   lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5
                                               (a route out: pve_matrix.py passes none)
@@ -52,6 +52,8 @@ CASTS = [
     ("install-sunos413u1b-ss5/1-install-sunos413u1b-ss5/check", "sunos413-boot-ss5.cast", 1, 1),
     ("install-sunos413-ss10/1-install-sunos413-ss10/install", "sunos413-install-ss10.cast", 1, 1),
     ("install-sunos413-ss10/1-install-sunos413-ss10/check", "sunos413-boot-ss10.cast", 1, 1),
+    ("install-sunos412-ss600mp/1-install-sunos412-ss600mp/install", "sunos412-install-ss600mp.cast", 1, 1),
+    ("install-sunos412-ss600mp/1-install-sunos412-ss600mp/check", "sunos412-boot-ss600mp.cast", 1, 1),
     ("install-openbsd59-ss5/1-install-openbsd59-ss5/install", "openbsd59-install-ss5.cast", 1, 2),
     ("install-openbsd59-ss5/1-install-openbsd59-ss5/check", "openbsd59-boot-ss5.cast", 1, 1),
     ("install-redhat62-ss5/1-install-redhat62-ss5/install", "redhat62-install-ss5.cast", 1, 1),

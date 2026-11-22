@@ -2,7 +2,8 @@
 # Builds wisp, the tiny test system, for one or more architectures:
 #   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
 # Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, init (PID 1),
-# config, config-t2, sizes.
+# config, config-t2, sizes, and sysroot.tar.xz (the UAPI and nolibc headers init was built with,
+# for the wisp-test action's kit: kit.sh).
 #
 # Kernel: `make tinyconfig` plus config/common.config and config/<arch>.config, with the initramfs
 # (an uncompressed cpio of /init and /dev/console) linked into the image. kernel-t2, for the tier-2
@@ -96,6 +97,7 @@ EOF
 	c1=$HERE/config/common.config c2=$HERE/config/$arch.config
 	build_kernel "$KB" kernel config "$c1" "$c2"
 	cp "$B/init" "$O/init"
+	tar -C "$SYSROOT" -cJf "$O/sysroot.tar.xz" include
 	t2_size=-
 	if [ "$TIER2" = 1 ]; then
 		build_kernel "$B/kbuild-t2" kernel-t2 config-t2 "$c1" "$c2" \
