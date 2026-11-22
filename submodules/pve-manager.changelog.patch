@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..ff813a56 100644
+index f305ba44..b7a69755 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,77 @@
+@@ -1,10 +1,84 @@
++pve-manager (9.2.32+wsh11) trixie; urgency=medium
++
++  * feat(sparc): SS-600MP profile in PVE, and SunOS 4.1.2 as an
++    automated target (#438)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 00:16:03 +0000
++
 +pve-manager (9.2.32+wsh10) trixie; urgency=medium
 +
 +  * feat(3dfx): choose the display of a 3dfx VM in PVE (egl-headless
