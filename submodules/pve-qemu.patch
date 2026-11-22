@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index 7b0cba5..71f61c4 100644
+index 7b0cba5..7b2774e 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -72,3 +72,68 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -72,3 +72,70 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -142,6 +142,8 @@ index 7b0cba5..71f61c4 100644
 +wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in.patch
 +wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it.patch
 +wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi.patch
++wsh/0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis.patch
++wsh/0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -13448,6 +13450,135 @@ index 0000000..e6741d1
 ++    qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
 ++    qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 ++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis.patch b/debian/patches/wsh/0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis.patch
+new file mode 100644
+index 0000000..e5b79f7
+--- /dev/null
++++ b/debian/patches/wsh/0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis.patch
+@@ -0,0 +1,34 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/pci-host/sabre: reset the PCI control/status
++ registers
++
++sabre_reset() left the PCI control/status registers (0x2000-0x202f) as
++the guest had last written them. Solaris writes the PBM's error bits
++back there to clear them, so once the machine was reset under a running
++Solaris (its reboot through the firmware's client interface boot
++service) the next boot read them as set and warned "pcipsy0: SERR
++asserted on pci bus". A power-on leaves them clear: clear them on every
++reset.
++---
++ hw/pci-host/sabre.c | 8 ++++++++
++ 1 file changed, 8 insertions(+)
++
++diff --git a/hw/pci-host/sabre.c b/hw/pci-host/sabre.c
++index 4296c87244..0a5df97d19 100644
++--- a/hw/pci-host/sabre.c
+++++ b/hw/pci-host/sabre.c
++@@ -353,6 +353,14 @@ static void sabre_reset(DeviceState *d)
++     s->irq_request = NO_IRQ_REQUEST;
++     s->pci_irq_in = 0ULL;
++ 
+++    /*
+++     * The PCI control/status registers as a power-on leaves them. They
+++     * kept what the guest last wrote, and Solaris writes its error bits
+++     * back there: after a reset its next boot warned "pcipsy0: SERR
+++     * asserted on pci bus".
+++     */
+++    memset(s->pci_control, 0, sizeof(s->pci_control));
+++
++     if (s->nr_resets++ == 0) {
++         /* Power on reset */
++         s->reset_control = POR;
+diff --git a/debian/patches/wsh/0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a.patch b/debian/patches/wsh/0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a.patch
+new file mode 100644
+index 0000000..f584fbd
+--- /dev/null
++++ b/debian/patches/wsh/0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a.patch
+@@ -0,0 +1,83 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sabre's PCI control registers
++ after a reset
++
++sun4u-sabre-reset-test writes every word of the sabre's PCI
++control/status registers, resets the machine and checks that they read
++as at power-on again. Without the previous patch they kept what was
++written.
++---
++ tests/qtest/meson.build              |  2 +-
++ tests/qtest/sun4u-sabre-reset-test.c | 50 ++++++++++++++++++++++++++++
++ 2 files changed, 51 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-sabre-reset-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 015945acf8..ab74842ffd 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -222,7 +222,7 @@ qtests_sparc64 = \
++   qtests_filter + \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++    'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test',
++-   'sun4u-sabre-irq-test']
+++   'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-sabre-reset-test.c b/tests/qtest/sun4u-sabre-reset-test.c
++new file mode 100644
++index 0000000000..bc6ea30643
++--- /dev/null
+++++ b/tests/qtest/sun4u-sabre-reset-test.c
++@@ -0,0 +1,50 @@
+++/*
+++ * QTest: the sabre's PCI control/status registers after a reset on sun4u
+++ *
+++ * The sabre kept its PCI control/status registers across a system reset,
+++ * with what the guest had last written there. Solaris writes its error
+++ * bits back to clear them; after a reboot (the firmware resets the
+++ * machine) the next boot read them as set and warned "pcipsy0: SERR
+++ * asserted on pci bus". A reset must leave them as a power-on does.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
+++#define PCI_CONTROL     (SABRE_CONFIG + 0x2000)
+++#define PCI_CONTROL_END (SABRE_CONFIG + 0x2030)
+++
+++static void test_pci_control_reset(void)
+++{
+++    QTestState *qts = qtest_init("-machine sun4u -nodefaults");
+++    uint64_t addr;
+++
+++    /* As at power-on */
+++    for (addr = PCI_CONTROL; addr < PCI_CONTROL_END; addr += 4) {
+++        g_assert_cmphex(qtest_readl(qts, addr), ==, 0);
+++    }
+++
+++    /* What a guest writes: error bits and its own settings */
+++    for (addr = PCI_CONTROL; addr < PCI_CONTROL_END; addr += 4) {
+++        qtest_writel(qts, addr, 0xffffffff);
+++        g_assert_cmphex(qtest_readl(qts, addr), ==, 0xffffffff);
+++    }
+++
+++    qtest_system_reset(qts);
+++
+++    for (addr = PCI_CONTROL; addr < PCI_CONTROL_END; addr += 4) {
+++        g_assert_cmphex(qtest_readl(qts, addr), ==, 0);
+++    }
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++    qtest_add_func("/sun4u/sabre/pci-control-reset", test_pci_control_reset);
 ++    return g_test_run();
 ++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
