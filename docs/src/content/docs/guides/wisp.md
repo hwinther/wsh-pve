@@ -59,7 +59,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `disk`, `net`, `smp` | the tier-2 checks below, on the devices QEMU was started with |
 | `banner` | the logo |
 | `clear` | clears the screen |
-| `poweroff`, `reboot` | power off or restart (`reboot` not on sun4u, where OpenBIOS doesn't restart) |
+| `poweroff`, `reboot` | power off or restart (`reboot` on sun4u needs a package whose OpenBIOS has patch 0030; before it the kernel panics with "Reboot failed!") |
 
 The console stays in the kernel's canonical mode: the TTY line discipline echoes and edits the line
 (Backspace, Ctrl-U, Ctrl-W, Ctrl-C). `run.py --shell` drives the shell over the serial console on

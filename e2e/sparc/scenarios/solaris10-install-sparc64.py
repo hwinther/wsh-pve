@@ -17,9 +17,9 @@ boots with sparc64-boot-disk.py GUEST=solaris10 (the first boot asks for the key
   MEM        MiB                                                        (1024)
 
 Through Proxmox VE (`lab.py install sol10-sun4u`, attach mode) the hardware comes from the VM's config
-and the scenario stops the VM itself at the end: the installer's reboot doesn't come back (OpenBIOS has
-no client-interface reboot), so `install` ejects the DVD, boots the disk and runs
-solaris10-firstboot.py.
+and the scenario stops the VM itself at the installer's reboot: at the firmware's banner (openbios-sparc64
+with patch 0030 resets the machine) or, with older firmware, where Solaris says the reboot call returned;
+`install` then ejects the DVD, boots the disk and runs solaris10-firstboot.py.
 
 Needs pve-qemu-kvm with openbios-sparc64 from openbios/ (patches 0003-0011) and the cmd646 fix
 (wsh/0021). About 80 min on one host core: ~13 min to the first installer screens, ~60 min of package
@@ -204,8 +204,8 @@ def run(m, v):
         m.snap("panic")
         raise AssertionError("kernel panic during the install")
     m.snap("installation succeeded")
-    # boot blocks, boot archive, sync; Auto Reboot is the default: the firmware comes back, or (without
-    # a client-interface reboot in the firmware) Solaris says the reboot call returned
+    # boot blocks, boot archive, sync; Auto Reboot is the default: the firmware comes back (openbios
+    # 0030), or (without a client-interface reboot in the firmware) Solaris says the reboot call returned
     i = m.expect_any([r"OpenBIOS for Sparc64", r"reboot call returned"], 3600)
     m.metrics["install_s"] = round(time.time() - t0, 1)
     m.metrics["rebooted"] = i == 0

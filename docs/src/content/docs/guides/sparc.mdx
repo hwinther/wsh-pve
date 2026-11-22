@@ -712,13 +712,17 @@ first boot about 19, check 8-9).
    DHCP for `hme0`, or a static address (host name, IP address, subnet, netmask, default route),
    mark a time zone, set the root password, choose CD/DVD as the media, select the disk `c0t0d0`.
    The package copy takes about an hour.
-3. At the end the installer tries to reboot and stops with `prom_reboot: reboot call returned!`
-   (the firmware has no working reboot for Solaris yet). Stop the VM, eject the DVD or put `ide0`
-   first in the boot order, and start it again.
+3. At the end the installer reboots the VM, which would boot the DVD again: stop the VM at the
+   firmware's banner, eject the DVD or put `ide0` first in the boot order, and start it again.
+   With an `openbios-sparc64` without patch 0030 (pve-qemu-kvm 11.1.3-3+wsh13 and older) the
+   reboot doesn't come back: Solaris stops with `prom_reboot: reboot call returned!`; stop the
+   VM there.
 4. The first boot takes about 14 minutes (it imports its service descriptions), asks for the
    keyboard layout (F2 keeps US-English) and comes to `console login:`. `hme0` gets its address by
-   DHCP or has the static one. `init 5` powers the VM off (it takes 3 to 6 minutes). Don't use `reboot` or `init 6`: they go through the same
-   firmware call as the installer's reboot. Stop and start the VM instead.
+   DHCP or has the static one. `init 5` powers the VM off (it takes 3 to 6 minutes). `reboot` and
+   `init 6` restart the VM and it boots the disk again (the firmware clears the memory first, a
+   few seconds); with packages before patch 0030 they don't come back (as the installer's reboot),
+   so stop and start the VM instead.
 
 The guest's system MAC address (the one in the IDPROM, which Solaris and NetBSD use for `hme0`) is
 the MAC address of the VM's first `sunhme` network device, as set in the VM's hardware, so DHCP
@@ -742,12 +746,13 @@ find-device`, `" nofdthree" device-name`, `device-end`, then `boot disk`); later
 - The installers ask what they ask on the SS-5 (see [Installing SunOS / Solaris](#installing-sunos--solaris));
   the disk is `c0t0d0`, and the 64-bit question defaults to 64-bit and 32-bit support.
 - Solaris 8's Installation CD copies a mini-root to the disk's swap slice and reboots into it. The
-  reboot doesn't come back on sun4u: Solaris prints `prom_reboot: reboot call returned!` and stops
-  at the firmware prompt (`0 >`). Stop the VM, start it again and type `boot disk:b` at the prompt
-  (set `auto-boot?` to false first, or be quick: otherwise the CD boots again). A `reset-all` at the
-  prompt isn't enough: the mini-root then panics.
-- At the end the same happens: stop the VM at `0 >`, eject the media, put `ide0` first in the boot
-  order and start it. As with Solaris 10, don't use `reboot` or `init 6`; `init 5` powers off.
+  firmware resets but doesn't keep the reboot's boot string (`disk:b`), so set `auto-boot?` to false
+  before the install (otherwise the CD boots again) and type `boot disk:b` at `0 >` after the
+  reset. With packages before patch 0030 the reboot doesn't come back (`prom_reboot: reboot call
+  returned!`, `0 >`): stop and start the VM, then `boot disk:b`; a `reset-all` isn't enough there.
+- At the end: stop the VM at the firmware's banner, eject the media, put `ide0` first in the boot
+  order and start it. As with Solaris 10, `reboot` and `init 6` work with patch 0030; `init 5`
+  powers off.
 
 `wsh-lab install sol9-sun4u --vmid N --check` and `wsh-lab install sol8-sun4u --vmid N --check` (the
 [lab install targets](/guides/lab-install/)) do all of it with a static address; measured in the
@@ -775,8 +780,10 @@ in about one of three long runs. With the fixes, measured in the sparc lab and t
 4. `init 5`, eject the CD (or put `ide0` first in the boot order) and start the VM: the installed
    system's first boot imports the service descriptions again (99 of them; `console login:` after
    about 70 minutes). Only the first boot does that: later boots reach `console login:` in 12-14
-   minutes. Change root's password and lock the live CD's `jack` account. Don't use `reboot`: stop
-   and start the VM. `init 5` itself takes several minutes.
+   minutes. Change root's password and lock the live CD's `jack` account. `reboot` goes through
+   the same firmware call as Solaris's and should restart the VM with patch 0030, but hasn't been
+   tried on Tribblix; stopping and starting the VM is the tested way. `init 5` itself takes several
+   minutes.
 
 `wsh-lab install tribblix-m34-sun4u --vmid N --check` automates this on a VM it creates with the
 sparc64 profile, with a known root password and a static address. Several services time out on the
@@ -814,7 +821,7 @@ on sun4u".
 - A Solaris disk installed on SS-5 doesn't boot on SS-10/SS-20: install on the machine type the VM
   will keep.
 - sparc64: NetBSD and OpenBSD 8.0 install and run (OpenBSD's ntpd needs 11.1.3-2+wsh30 or later); the Debian installer
-  starts but its install doesn't end in a working system; Solaris 10 installs and boots, but doesn't reboot (see
+  starts but its install doesn't end in a working system; Solaris 10 installs, boots and (with OpenBIOS patch 0030) reboots (see
   [Solaris 10](#solaris-10)); older Solaris releases don't boot on sun4u. One layout only (see
   [the sparc64 profile](#the-sparc64-profile)); no network boot.
 

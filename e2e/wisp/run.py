@@ -17,6 +17,8 @@ against the value every architecture must produce for that loop count.
 With --shell, the kernel gets wisp=shell and PID 1 starts its interactive shell instead: run.py
 answers the prompts with a fixed script (help typed with a Backspace, info, bench, crc 64,
 mandel, poweroff; shell.py) and checks the answers, including every row of the Mandelbrot set.
+With --shell --reboot the script ends with reboot instead: the kernel restarts the machine
+(the firmware's restart on sun4u) and, with -no-reboot, QEMU exits.
 
 With --tier2, each machine boots kernel-t2 once per tier-2 profile (tier2.py): raw disk images on
 the machine's disk controllers, a NIC on QEMU's user-mode network, or more than one CPU. Besides
@@ -360,6 +362,8 @@ def main(argv=None):
     ap.add_argument("--log-dir", help="write each run's timestamped console log here")
     ap.add_argument("--shell", action="store_true",
                     help="boot with wisp=shell and drive the interactive shell (shell.py)")
+    ap.add_argument("--reboot", action="store_true",
+                    help="with --shell: end the script with reboot instead of poweroff")
     ap.add_argument("--tier2", action="store_true",
                     help="boot kernel-t2 with each machine's disks, NIC and CPUs (tier2.py)")
     ap.add_argument("--image-dir", default=None,
@@ -405,6 +409,8 @@ def run_one(args, arch, machine, profile, image_root):
             extra = tier2.qemu_args(profile, images.paths)
             append_extra = tier2.kernel_args(profile, arch)
             script = shell.tier2_script(profile)
+        if args.reboot:
+            script = shell.reboot_script(script)
         cmd = qemu_command(arch, args.qemu_dir, kernel, machine, args.memory, args.loops,
                            args.firmware, extra=extra, interactive=args.shell,
                            append_extra=append_extra)
@@ -413,7 +419,8 @@ def run_one(args, arch, machine, profile, image_root):
             os.makedirs(args.log_dir, exist_ok=True)
             tag = "-".join(x for x in (arch, args.label, machine,
                                        profile["name"] if profile else "",
-                                       "shell" if args.shell else "", str(n)) if x)
+                                       "shell" if args.shell else "",
+                                       "reboot" if args.reboot else "", str(n)) if x)
             log_path = os.path.join(args.log_dir, f"{tag}.log")
         if args.shell:
             raw = shell.drive(cmd, script, args.timeout)

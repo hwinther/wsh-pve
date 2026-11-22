@@ -535,10 +535,11 @@ sparc64 profile (`-boot order=d|c`).
   `DHCP=no`: host name, address and netmask typed into the installer's screens (no default route);
   the handlers match the screen title, and the network's confirmation screen must show the three
   values. The installer asks for the root password itself, so the target says `root_password: True`
-  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. When the installer's reboot
-  returns (`prom_reboot: reboot call returned!`), the scenario stops the VM (`qm stop`, after
-  "syncing file systems... done"); `install` then ejects the DVD and sets `boot: order=ide0`, as
-  for the other targets. A panic before the language prompt (seen once in six DVD boots through PVE:
+  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. At the installer's reboot
+  the scenario stops the VM (`qm stop`, after "syncing file systems... done"): at the firmware's
+  banner (openbios-sparc64 with patch 0030 resets the machine) or, with older firmware, when the
+  reboot returns (`prom_reboot: reboot call returned!`); `install` then ejects the DVD and sets
+  `boot: order=ide0`, as for the other targets. A panic before the language prompt (seen once in six DVD boots through PVE:
   `BAD TRAP: type=4e` with the PC in the firmware, from `prom_finddevice` in `vfs_mountroot`) fails
   the scenario at once with "before the installer"; the target's `retry_on` matches that, and
   `install` runs the install phase once more (evidence in `install-retry1/`): nothing is on the
@@ -885,18 +886,21 @@ does differently on sun4u (`ARCH` sparc64 from the VM's config, `DISK=c0t0d0`):
   unchanged.
 - **Answers:** the 64-bit question's default on sun4u is 1 (64-bit and 32-bit support), kept; the
   format question and the layout name `c0t0d0`.
-- **Reboots:** Solaris's reboot returns from OpenBIOS on sun4u (`prom_reboot: reboot call
-  returned!`, a panic, `EXIT`, `0 >`). After the installer's last Return the scenario waits for that
-  prompt (Solaris has synced the disk by then) and stops the VM (`m.stop()`, i.e. `qm stop`), as
-  `solaris10-install-sparc64.py` does; `install` ejects the media and sets `boot: order=ide0`.
-  After 8's mini-root copy it calls `lab.PveMachine.power_cycle()`: `qm stop`, then `qm start` with
-  the serial console connected while it starts, the same terminal, step log and recordings
-  (a marker "power cycle N" in the cast, `power_cycles` in `result.json`'s metrics, the second
-  `qm start`'s output in `qm-start-2.log`). The VM's `args: -prom-env auto-boot?=false` (the
-  target's `prom_env`) stops OpenBIOS at `0 >`, where the scenario boots `disk:b`. Only a VM the lab
-  started is power-cycled; outside PVE (the lab's own QEMU) the scenario fails there with a
-  message. `reset-all` at the prompt doesn't do: OpenBIOS keeps the RAM's contents, and the
-  mini-root's kernel panicked in `page_free` (SPARC.md).
+- **Reboots:** with openbios-sparc64 patch 0030 Solaris's reboot resets the machine (the firmware's
+  banner; `submodules/SPARC.md`, "The firmware reboot on sun4u"). After the installer's last
+  Return the scenario stops the VM at that banner (`m.stop()`, i.e. `qm stop`; Solaris has synced
+  the disk by then, and 9 would boot the DVD again), as `solaris10-install-sparc64.py` does;
+  `install` ejects the media and sets `boot: order=ide0`. After 8's mini-root copy the firmware
+  resets and stops at `0 >` (the VM's `args: -prom-env auto-boot?=false`, the target's
+  `prom_env`), where the scenario boots `disk:b` (`resets` in `result.json`'s metrics counts the
+  resets). With firmware before 0030 the reboot returns (`prom_reboot: reboot call returned!`, a
+  panic, `EXIT`, `0 >`): the scenario stops the VM at that prompt at the end, and after 8's
+  mini-root copy calls `lab.PveMachine.power_cycle()`: `qm stop`, then `qm start` with the serial
+  console connected while it starts, the same terminal, step log and recordings (a marker "power
+  cycle N" in the cast, `power_cycles` in `result.json`'s metrics, the second `qm start`'s output
+  in `qm-start-2.log`). Only a VM the lab started is power-cycled; outside PVE (the lab's own QEMU)
+  the scenario fails there with a message. Before 0030 a `reset-all` at the prompt didn't do
+  either: the RAM kept its contents, and the mini-root's kernel panicked in `page_free`.
 - **Media:** End User needs only Software 1 of 2 (the one `at: "scenario"` medium), put into `ide2`
   live when the mini-root's Web Start asks for the first Software disc.
 
@@ -2606,6 +2610,7 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `openbsd-install-sparc.py` | OpenBSD/sparc 5.9 on sun4m (SS-5, `MACHINE=SS-20`): `cd59.iso` on target 6, the sets CD on 5 (`SETS_ISO`, or written from the release's directory `SETS_DIR`), the same rules, `-nographic` ("OpenBSD 5.9 on sun4m") | ~3-4 min |
 | `openbsd-firstboot.py`, `openbsd-boot-disk.py` | either architecture (`ARCH=sparc` for sun4m; from the VM with `--pve`): the install targets' first boot (marker, host name, network, user, ntpd check) and check boot | sparc64 ~4-6 min, sparc 1-5 min |
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
+| `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u") | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
