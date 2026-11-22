@@ -910,6 +910,7 @@ on the host at once, 2026-11-19):
 | `install sol9-sun4u --check` (0025) | passed: the first boot reconfigures (`Configuring /dev and /devices`) without a panic, root/`wshlab`, the marker, `SunOS sol9-sun4u 5.9 Generic_118558-34 sun4u`, `/` 1126422 KB on `c0t0d0s0`, `hme0` 10.0.2.15/24, `boot: order=ide0`, `ide2` empty | 70.0 min (install 3559 s, first boot 401 s, check 215 s) |
 | `install sol8-sun4u --check` (0025) | passed: one power cycle after the mini-root copy, Software 1 of 2 swapped in, `SunOS sol8-sun4u 5.8 Generic_108528-13 sun4u`, `/` 738902 KB, no `fdthree` warning in any phase | 56.9 min (2752 s, 378 s, 264 s) |
 | `install sol8-sun4u --check` (the package's firmware) | passed; the `fdthree` warning in the install and first boot, as before | 53.4 min (2536 s, 382 s, 267 s) |
+| `pve_matrix.py install --only install-sol8-sun4u` (pve-qemu-kvm 11.1.3-3+wsh13, qemu-server 9.2.20+wsh6, pve-manager 9.2.32+wsh10; 2026-11-22) | passed: one power cycle, `SunOS sol8-sun4u 5.8 Generic_108528-13 sun4u`; the stored disk `install-sol8-sun4u.raw` and its sidecar | 52.4 min (2489 s, 375 s, 262 s) |
 | `install sol9-sun4u --check --export` (0025), a second run | passed, the same checks; the disk and its sidecar exported | 67.2 min (3393 s, 405 s, 217 s) |
 | `matrix.py sparc64` (0025) | 9 of 9 passed: NetBSD 11.1 and 9.3, OpenBSD 8.0 and Debian 12 CDs, NetBSD 11.1 on `std` VGA, install, disk, virtio and idle | 18 min (the cases added up) |
 | `matrix.py solaris10` (0025) | 2 of 2 passed: the DVD and the installed disk | 12 min (the cases added up) |
@@ -2363,8 +2364,8 @@ driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then l
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 
 On sun4u (`scenarios/sparc64-idle.py`) the guests idle through the `idle-halt` machine option (pve-qemu
-`wsh/0042`-`0044`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
-shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`). The stored install disks
+`wsh/0042`-`0044` and `0070`-`0072`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
+shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`, `Solaris 7/8`, `Linux`). The stored install disks
 (`/mnt/os/disks/install-*-sun4u.raw`, `install-netbsd*-sparc64.raw`) take `PASSWORD=wshlab`; each guest
 does something for a while after boot, which `WAIT` ends or waits out before the measurement:
 
@@ -2373,7 +2374,7 @@ does something for a while after boot, which `WAIT` ends or waits out before the
 | NetBSD 9.3, 11.1 | `GUEST=netbsd`, `WAIT=pkill makemandb; sleep 2` (the copied disk rebuilds its manual page index at every boot) |
 | OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
 | Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
-| Solaris 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
+| Solaris 7, 8, 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
 | Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
 
 `LOAD` needs a POSIX shell, so it is for the BSDs only; on Solaris the scenario's `awk` job reads
