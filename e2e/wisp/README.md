@@ -69,7 +69,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `banner` | the logo with the architecture and kernel release |
 | `clear` | clears the screen (`ESC [H ESC [2J`) |
 | `poweroff` | powers the machine off, as the batch run does |
-| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. On sun4u Linux restarts through the firmware's `boot` service, which needs openbios-sparc64 with patch 0030 (`openbios/patches/`); with older firmware the kernel panics with "Reboot failed!" and, with `panic=-1`, tries again for ever |
+| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. On sun4u Linux restarts through the firmware's `boot` service, which needs openbios-sparc64 with patch 0030 (`openbios/patches/`, in the published pve-qemu-kvm since 11.1.3-4+wsh3); with older firmware the kernel panics with "Reboot failed!" and, with `panic=-1`, tries again for ever |
 
 ```
 wisp:sparc32> crc 64
@@ -298,9 +298,9 @@ filter, so its `wisp-boot-required` check always reports; a `changes` job skips 
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
 main that change `e2e/wisp/` and by hand. After the batch runs, `run.py --arch all --shell` boots
 the four architectures once more and drives the interactive shell (about 2 to 3 s each), and
-`--shell --reboot` the PC and sparc32 once more with `reboot` at the end (sparc64 joins once the
-published package's `openbios-sparc64` has patch 0030). Then tier
-2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
+`--shell --reboot` the four architectures once more with `reboot` at the end (on sparc64 the
+restart goes through the firmware: openbios-sparc64 patch 0030, in the published package since
+11.1.3-4+wsh3). Then tier 2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
 disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), and `--shell
 --tier2` on the four architectures.
 
