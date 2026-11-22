@@ -674,7 +674,7 @@ The self-hosted runner (label `sparc-lab`) holds what the lab needs and git does
 
 | Path | Content |
 | --- | --- |
-| `/mnt/os/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
+| `/mnt/os/iso` | install media: SunOS 4.1.4, Solaris 2.4–10, and under `other-os/` NetBSD, OpenBSD (8.0 sparc64; 5.8 and 5.9 sparc), FreeBSD (12.4 sparc64), Debian (12 sparc64, 4.0r9 sparc netinst), Alpine, Red Hat Linux 6.2, Tribblix, NeXTSTEP 3.3 (SPARC/PA-RISC), OPENSTEP 4.2 (User and Developer) |
 | `/mnt/os/floppy` | floppy images (MS-DOS 6.22, FreeDOS 1.4) |
 | `/mnt/os/disks` | installed disks the matrices boot (sun4m and sun4u), the bench disk and its build disk, and the Sun-labelled disk templates |
 | `/mnt/os/sun-reference/src` | SunOS 4.1.4 and Solaris 2.6 source, for reference only |
