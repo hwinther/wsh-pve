@@ -1,0 +1,51 @@
+name: Publish wisp toolchain image
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture"
+        required: true
+        type: choice
+        options:
+          - sparc32
+          - x86_64
+      tag:
+        description: "Image tag (e.g. a Buildroot version such as 2025.02.20)"
+        required: true
+        type: string
+
+permissions:
+  # for ghcr.io (docker registry):
+  packages: write
+
+jobs:
+  publish-docker-image:
+    runs-on: ubuntu-latest
+    # Buildroot builds its own gcc, binutils and uClibc-ng from source for the chosen
+    # architecture: a cold build is tens of minutes, generous here on purpose.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the docker image
+        working-directory: e2e/wisp/toolchain
+        env:
+          ARCH: ${{ inputs.arch }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          ./build.sh "$ARCH" "$TAG"
+
+      - name: Push the docker image
+        env:
+          ARCH: ${{ inputs.arch }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          docker push "ghcr.io/hwinther/wsh-pve/wisp-toolchain-$ARCH:$TAG"

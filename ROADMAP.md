@@ -684,6 +684,20 @@ merged; what is left of them is item 2 under "Next".
      the NetBSD-on-sparc64-under-PVE cast stays out (no matching first boot).
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
      a libc under wisp (Buildroot with uClibc-ng).
+- **wisp libc toolchain (uClibc-ng via Buildroot):** Buildroot 2025.02.20 SDKs built and tested with static hello under wisp on sparc32 V8 and x86_64.
+- **wisp-netbsd:** a NetBSD sibling of wisp as a second, independent OS test of the same QEMU
+  machines (sparc/sun4m V8, sparc64, amd64). NetBSD's `build.sh` cross-builds kernel and userland
+  from a Linux container without root; the kernel carries a ramdisk root (as NetBSD's install
+  kernels do), and PID 1 is a small static C program against NetBSD's own libc, which is V8 on
+  sparc, printing the same markers so `run.py` can drive it. verify: how the kernel is best loaded
+  on sparc32 (QEMU `-kernel` with OpenBIOS, or a small disk image / netboot). Not FreeBSD or
+  OpenBSD (no 32-bit sparc), not illumos (x86_64 only, needs an illumos build host).
+  - PID 1, first step: link it statically against NetBSD's libc (simplest; expect a few hundred kB
+    against today's tens of kB with nolibc, to be measured).
+  - Later, once it runs and kernel size and boot time are measured: consider dropping libc for
+    our own small syscall stubs (a "nolibc for NetBSD": about a dozen calls in assembler per
+    arch, sparc, sparc64 and amd64; NetBSD keeps old syscalls backward compatible). The kernel
+    config is likely the bigger size and boot-time lever, so look there first.
 
 ## Known and not fixed
 
