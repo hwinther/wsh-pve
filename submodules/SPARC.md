@@ -3659,7 +3659,11 @@ package's in the lab image (pve-qemu-kvm 11.1.3-4+wsh2), copies of the stored di
 NetBSD 11.1, OpenBSD 8.0, Solaris 7, 9 and 10 and Tribblix m34 (ZFS boot block) disks boot to their
 login prompts and log in (8 of 8 with the two CDs below; Tribblix 35 min, the others 1.4-8.2 min), and
 the Solaris 10 1/13 DVD and the Solaris 7 CD reach their installers' first questions. Not run with
-0031: Solaris 8, Debian, the NetBSD and OpenBSD CDs, anything through PVE.
+0031: Solaris 8, Debian, the NetBSD and OpenBSD CDs, anything through PVE. Again with firmware from
+0001-0031 including 0030 (the firmware reboot), on the published pve-qemu-kvm 11.1.3-4+wsh4:
+`sparc64-reboot.py` on the stored NetBSD 11.1 disk (5.6 min) and Solaris 10 disk (31 min) passed,
+login, a reboot from the guest through 0030 back to the banner and to login again; the 2.6 CD
+reaches `SunOS Release 5.6` and the 2.5.1 CD its `Unhandled Exception 0x30`, as above.
 
 **Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, and
 `debian/rules` (`submodules/pve-qemu.patch`) copies `build/openbios/openbios-sparc64` over

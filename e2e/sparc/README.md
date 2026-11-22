@@ -544,7 +544,9 @@ sparc64 profile (`-boot order=d|c`).
   `DHCP=no`: host name, address and netmask typed into the installer's screens (no default route);
   the handlers match the screen title, and the network's confirmation screen must show the three
   values. The installer asks for the root password itself, so the target says `root_password: True`
-  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. At the installer's reboot
+  and `install` passes `ROOT_PASSWORD` (masked) to the install phase. With `--ip dhcp`, `install`
+  sets `DHCP=yes`: the installer's `DHCP for hme0` screen says yes, then only the IPv6 and
+  confirmation screens follow (no host name or address screens). At the installer's reboot
   the scenario stops the VM (`qm stop`, after "syncing file systems... done"): at the firmware's
   banner (openbios-sparc64 with patch 0030 resets the machine) or, with older firmware, when the
   reboot returns (`prom_reboot: reboot call returned!`); `install` then ejects the DVD and sets
@@ -557,9 +559,13 @@ sparc64 profile (`-boot order=d|c`).
   installer's password, the marker, the optional user (`useradd`, `passwd`: Solaris 10 applies
   `MINNONALPHA=1` from `/etc/default/passwd` to root too and refuses `wshlab`, so the rule is
   relaxed for that one call and the file put back), `/etc/defaultrouter`
-  and DNS, `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
+  and DNS (with `--ip dhcp`: `/etc/dhcp.hme0` checked, the host name written to `/etc/nodename`
+  and as `inet <name>` to `/etc/hostname.hme0`, so dhcpagent asks the server for it and Solaris 10
+  falls back to nodename when the server sends none; the installer leaves the name `unknown`),
+  `init 5` (158-188 s in the three runs that passed, 356 s once: `svc:/network/inetd-upgrade` times out on the way down).
 - **check:** `solaris10-boot-disk.py` with the usual `COMMANDS` (`prtvtoc` of `c0t0d0s2`, the
-  target's `device`) and `CHECK`.
+  target's `device`) and `CHECK`; with `--ip dhcp` also the target's `dhcp_check`: the `DHCP` flag
+  on `hme0`, the router from `dhcpinfo -i hme0 Router` and `is alive` from a ping of it.
 - `pve_matrix.py install` gives an install case the sum of the target's phase timeouts plus 10
   minutes when that is more than twice `--timeout` (Solaris 10: 4.75 h instead of 2 h).
 
@@ -576,6 +582,16 @@ TCG, published packages pve-qemu-kvm 11.1.3-2+wsh13, qemu-server 9.2.15+wsh6, pv
 | `install sol10-sun4u --vmid 103 --check` with the vmbr1 options and `--user lab` as above | passed: `passwd: password successfully changed for lab`, `default 10.77.0.1` in the check | 110.7 min (4907 s, 1167 s, 548 s) |
 | unit tests (`test_targets.py` with the Solaris 10 handlers and the retry, `test_dos.py`, `test_vgatext.py`, `test_freedos.py`) | 71 passed, 1 skipped | 17 s |
 | `pve_matrix.py pve` and `matrix.py smoke` on the branch | 5/5 and 3/3 passed | |
+
+`--ip dhcp`, 2026-11-22, the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh4
+(openbios 0030), qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11; dnsmasq on `vmbr0` with
+10.0.2.2/24 as router and name server, a lease range from 10.0.2.15 (the addresses of QEMU's user
+network); other agents' guests on the host:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol10-sun4u --vmid 9501 --check --ip dhcp` | passed: the installer took a lease (for net0's MAC) during system identification, its reboot came back at the firmware's banner (0030); the first boot found `/etc/dhcp.hme0` (host name `unknown` until it wrote `/etc/nodename`); in the check `Hostname: sol10-sun4u` (the client sent the name, dnsmasq echoed it in option 12), `hme0` `<UP,BROADCAST,RUNNING,MULTICAST,DHCP,IPv4>` 10.0.2.25/24, `default 10.0.2.2`, `router=10.0.2.2`, `10.0.2.2 is alive` | 119.8 min (install 5378 s, first boot 1266 s, check 526 s) |
+| unit tests (`test_targets.py`, with the DHCP variable and check regex) | 116 passed | <1 s |
 
 ### Run it
 

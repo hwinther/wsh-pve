@@ -125,6 +125,7 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
+PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -970,9 +971,10 @@ TARGETS = {
         # (ifconfig -a is in the check's commands already; the console line takes 256 characters)
         "dhcp_check": {"commands": "r=`/sbin/dhcpinfo -i hme0 Router`; echo router=$r; ping $r 30",
                        "expect": [r"<[A-Z0-9,]*\bDHCP\b", r"(?m)^router=\d+\.\d+\.\d+\.\d+", r"is alive"]},
-        "minutes": 110,  # 108.5-110.7 min: install ~81, first boot ~19, --check ~9
-        "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17,
-                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user"},
+        "minutes": 110,  # 108.5-110.7 min static: install ~81, first boot ~19, --check ~9; 119.8 with --ip dhcp
+        "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_WSH4,
+                   "with": "--check; --check --bridge --ip --gateway --dns --domain --user (2026-11-17);"
+                           " --check --ip dhcp"},
     },
     # Solaris 9 9/05 and 8 2/02 on sun4u: the Web Start installs of sol9-ss5/sol8-ss5
     # (solaris-webstart-serial.py) with the IDE disk (c0t0d0) and its sun4u answers (64-bit and 32-bit
