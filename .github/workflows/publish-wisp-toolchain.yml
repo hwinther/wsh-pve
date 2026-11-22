@@ -9,10 +9,9 @@ on:
         type: choice
         options:
           - sparc32
-          - sparc64
           - x86_64
       tag:
-        description: "Image tag (e.g. a Buildroot version such as 2024.02.9)"
+        description: "Image tag (e.g. a Buildroot version such as 2025.02.20)"
         required: true
         type: string
 

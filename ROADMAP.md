@@ -683,7 +683,7 @@ merged; what is left of them is item 2 under "Next".
      the NetBSD-on-sparc64-under-PVE cast stays out (no matching first boot).
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
      a libc under wisp (Buildroot with uClibc-ng).
-- **wisp libc toolchain (uClibc-ng via Buildroot):** files prepared, first build and test pending.
+- **wisp libc toolchain (uClibc-ng via Buildroot):** Buildroot 2025.02.20 SDKs built and tested with static hello under wisp on sparc32 V8 and x86_64.
 - **wisp-netbsd:** a NetBSD sibling of wisp as a second, independent OS test of the same QEMU
   machines (sparc/sun4m V8, sparc64, amd64). NetBSD's `build.sh` cross-builds kernel and userland
   from a Linux container without root; the kernel carries a ramdisk root (as NetBSD's install

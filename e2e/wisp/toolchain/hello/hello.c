@@ -11,10 +11,8 @@
  * instruction wide enough; the compiler calls libgcc's __udivdi3 and friends, which this
  * toolchain's own gcc builds correctly for V8, unlike Debian's packaged 32-bit sparc libgcc).
  *
- * Meant to run under wisp's test mode (wisp=test, /test from a second initramfs; see
- * .github/actions/wisp-test/README.md, "How it works") once this toolchain exists and packs it,
- * the way that action packs a nolibc binary today. Not built or run by anything in this
- * repository yet (e2e/wisp/README.md, "A libc toolchain (uClibc-ng)").
+ * Under wisp=test, PID 1 runs this binary as /test from an external initramfs.
+ * See the adjacent README for the build command and expected console output.
  */
 #include <stdint.h>
 #include <stdio.h>

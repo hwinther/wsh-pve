@@ -3,19 +3,15 @@
 #   build.sh <arch> [tag]            docker build; tags the image
 #                                     ghcr.io/hwinther/wsh-pve/wisp-toolchain-<arch>:<tag>
 #                                     (tag defaults to "latest"; a Buildroot version such as
-#                                     2024.02.9 is a good tag once BUILDROOT_VERSION is filled in)
+#                                     2025.02.20 identifies the pinned release)
 #   build.sh <arch> --export <dir>   also builds the image, then copies /opt/wisp-toolchain/<arch>
 #                                     out of it as <dir>/wisp-toolchain-<arch>.tar.xz
 #
-# <arch>: sparc32, sparc64 or x86_64 (each needs its own <arch>_uclibc_defconfig in this
-# directory). BUILDROOT_VERSION and BUILDROOT_SHA256 are still REPLACE-ME placeholders in
-# Dockerfile; pass them with BUILD_ARGS, e.g.:
-#   BUILD_ARGS='--build-arg BUILDROOT_VERSION=2024.02.9 --build-arg BUILDROOT_SHA256=...' \
-#       ./build.sh sparc32
+# <arch>: sparc32 or x86_64.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-ALL="sparc32 sparc64 x86_64"
+ALL="sparc32 x86_64"
 BUILD_ARGS=${BUILD_ARGS:-}
 
 log() { printf '%s\n' "wisp-toolchain: $*" >&2; }

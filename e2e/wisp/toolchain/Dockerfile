@@ -9,15 +9,12 @@
 #       -t wisp-toolchain-sparc32 e2e/wisp/toolchain
 #   (build.sh wraps this and tags the image for GHCR; see build.sh)
 #
-# BUILDROOT_VERSION and BUILDROOT_SHA256 below are placeholders: REPLACE-ME. The maintainer picks
-# a released Buildroot version from https://buildroot.org/downloads/ and its tarball's SHA-256
-# (the matching buildroot-<version>.tar.gz.sign/.sha256 files there) and fills in both; this file
-# does not guess either value, and building it unchanged fails (a 404, or a checksum mismatch).
+# SHA-256 from Buildroot's buildroot-2025.02.20.tar.gz.sign release manifest.
 
 FROM debian:13 AS build
 ARG WISP_ARCH
-ARG BUILDROOT_VERSION=REPLACE-ME
-ARG BUILDROOT_SHA256=REPLACE-ME
+ARG BUILDROOT_VERSION=2025.02.20
+ARG BUILDROOT_SHA256=44904ee44ac6750e06135454ed5cbcb8ea9354e6d5b7e2b2668581bd8b6ba1b6
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Mandatory packages for a Buildroot build (the Buildroot manual, "System requirements"): a C and
@@ -41,7 +38,7 @@ RUN wget -q "https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.
     && mv "buildroot-${BUILDROOT_VERSION}" buildroot \
     && rm "buildroot-${BUILDROOT_VERSION}.tar.gz"
 
-# One of sparc32_uclibc_defconfig, sparc64_uclibc_defconfig, x86_64_uclibc_defconfig (this
+# One of sparc32_uclibc_defconfig, x86_64_uclibc_defconfig (this
 # directory), picked by WISP_ARCH.
 COPY ${WISP_ARCH}_uclibc_defconfig /buildroot-defconfig
 WORKDIR /buildroot-src/buildroot
@@ -56,19 +53,14 @@ WORKDIR /buildroot-src/buildroot
 RUN make BR2_DEFCONFIG=/buildroot-defconfig defconfig \
     && make sdk
 
-# verify: the sdk tarball's exact name and directory (Buildroot has used output/images/ with a
-# toolchain-name-sdk.tar.gz-shaped file in recent releases, but the exact name depends on
-# BUILDROOT_VERSION); the glob below is written to tolerate small naming differences, but check
-# it once a version is chosen.
+# The SDK is output/images/$(GNU_TARGET_NAME)_sdk-buildroot.tar.gz in 2025.02.20.
 RUN mkdir -p "/opt/wisp-toolchain/${WISP_ARCH}" \
-    && sdk_tarball=$(ls output/images/*sdk*.tar.gz 2>/dev/null | head -n 1) \
-    && if [ -z "$sdk_tarball" ]; then sdk_tarball=$(ls output/images/*.tar.gz | head -n 1); fi \
-    && tar -xzf "$sdk_tarball" -C "/opt/wisp-toolchain/${WISP_ARCH}" --strip-components=1 \
+    && tar -xzf output/images/*_sdk-buildroot.tar.gz -C "/opt/wisp-toolchain/${WISP_ARCH}" --strip-components=1 \
     && "/opt/wisp-toolchain/${WISP_ARCH}/relocate-sdk.sh"
 
 FROM debian:13-slim AS final
 ARG WISP_ARCH
-ARG BUILDROOT_VERSION=REPLACE-ME
+ARG BUILDROOT_VERSION=2025.02.20
 COPY --from=build /opt/wisp-toolchain/${WISP_ARCH} /opt/wisp-toolchain/${WISP_ARCH}
 ENV PATH="/opt/wisp-toolchain/${WISP_ARCH}/bin:${PATH}"
 LABEL org.opencontainers.image.description="wisp uClibc-ng toolchain (Buildroot ${BUILDROOT_VERSION}, ${WISP_ARCH})" \

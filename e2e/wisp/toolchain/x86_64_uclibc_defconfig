@@ -4,9 +4,13 @@ BR2_x86_64=y
 
 BR2_TOOLCHAIN_BUILDROOT=y
 BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
-# A recent stable gcc: left at Buildroot's own default; see sparc32_uclibc_defconfig's comment
-# on BR2_GCC_VERSION_* and why it is not pinned here yet.
+# Buildroot 2025.02.20 defaults to GCC 13.x for this target.
 
 # Static libraries only: no shared libs are needed on the target, and this also keeps the SDK
 # simpler to relocate (see Dockerfile, "make sdk").
 BR2_STATIC_LIBS=y
+
+# Only the SDK is needed.
+BR2_INIT_NONE=y
+# BR2_PACKAGE_BUSYBOX is not set
+# BR2_TARGET_ROOTFS_TAR is not set
