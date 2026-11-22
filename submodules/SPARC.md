@@ -3801,7 +3801,9 @@ after each, in one QEMU process; QEMU is the published 11.1.3-3+wsh13 unless "+0
 | NetBSD 11.1 (`install-netbsd111-sparc64`), `reboot` x3 | 0030 | passed (8 s, ~80 s) |
 | OpenBSD 8.0 (`install-openbsd80-sun4u`), `reboot` x3 | 0030 | passed (21-70 s, ~250 s) |
 | wisp, Linux 7.3 on sun4u: `run.py --shell --reboot` x3, `--shell --tier2 --reboot`; without `-no-reboot` | 0030 | passed: QEMU exits 0 on the reset; without `-no-reboot` wisp boots again |
-| the same with the published firmware | package | failed as before: `Reboot failed!` panics in a loop |
+| the same with the published firmware | package (11.1.3-3+wsh13) | failed as before: `Reboot failed!` panics in a loop |
+| wisp, `run.py --arch all --shell --reboot` as the workflow runs it (sparc64 added to that run) | published 11.1.3-4+wsh4 (0030) | passed on all four: sparc64 at the prompt in 3.2 s, QEMU's exit 0 after `reboot` at 3.6 s; `--repeat 3` on sparc64 2.6-2.8 s each; without `-no-reboot` the shell is back 2.9 s after `reboot` (a second banner, no panic) |
+| `matrix.py sparc64`: `nb111-reboot-sparc64` (`reboot` x2), `nb111-reboot-bootstr-sparc64` (`reboot -- netbsd` x1) | published 11.1.3-4+wsh4 (0030) | passed: banner 12-17 s after `reboot`, `login:` again after 84-99 s; the boot string case boots `disk:a` again (`Trying disk:a...`: the string is dropped) |
 | `install sol8-sun4u --check` through PVE (the PVE test container, qemu-server 9.2.20+wsh6) | 0030 | passed in 54.8 min (install 2622 s, first boot 375 s, check 265 s): two firmware resets (the mini-root reboot, the end), no power cycle |
 | `matrix.py sparc64`, `matrix.py solaris10` | 0001-0030, +0068 | 10/10, 2/2 |
 | wisp sun4u batch, `--shell`, `--tier2`, `--shell --tier2` | 0030 | all passed |
