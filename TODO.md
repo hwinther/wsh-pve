@@ -6,10 +6,7 @@ This is a collection pve UI extensions that cover the edge cases I've encountere
 - Add sb16, adlib and pcspk to audio device selector (this will only work in combination with spice for now)
 - Add cirrus as an explicit choice to VGA driver selector (while this can already be achieved through windows version in OS selection below version 6 (win2k, winxp) I prefer to define this explicitly)
 
-TODO
+TODO (the project's open work is tracked in [ROADMAP.md](ROADMAP.md))
 
-- Create a public apt package repository
-- Setup CI to deploy to the apt repo
 - Add VNC audio support
-- Add support for selecting in UI and using other architectures such as sparc64
 - Add support for adding/changing hookscripts in UI
