@@ -108,9 +108,18 @@ jobs:
       compose_up_timeout_seconds: 300
       image_artifacts_json: |
         {"PVE_IMAGE":"pve-e2e-image"}
+      # Before the suite: the Glide guest of tests/3dfx-gl-display.spec.ts into the running PVE
+      # container (3dfx/pve-guest-setup.sh: Debian's kernel and the guest built there with apt, about
+      # a minute; PVE_GUEST_FETCH fetches the public qemu-3dfx submodule, which the checkout lacks).
+      # A failed setup doesn't stop the suite: E2E_3DFX_GUEST=required makes that one spec fail.
+      playwright_run_command: >-
+        { PVE_GUEST_FETCH=1 sh 3dfx/pve-guest-setup.sh wsh-pve-e2e ||
+        echo "::warning title=3dfx guest::pve-guest-setup.sh failed: 3dfx-gl-display.spec.ts will fail"; } &&
+        npx playwright test
       # The tests also exec into the container (qm showcmd, /etc/pve) via the runner's Docker socket.
       playwright_env: |
         PVE_URL=https://localhost:8006
+        E2E_3DFX_GUEST=required
 
   # A real boot through PVE with the pull request's qemu-server (e2e/README.md, "Booting a guest
   # through PVE"): the suite only checks that QEMU accepts the command, and the start-up bugs fixed

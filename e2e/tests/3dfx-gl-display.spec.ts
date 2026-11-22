@@ -25,7 +25,8 @@ import {
 // Needs the guest, a qemu-server with mesa-display, a 3dfx binary with the dmabuf scanout and, for
 // the dmabuf, a wsh-openglide that exports one plus a render node or /dev/udmabuf (the container is
 // privileged, so it sees the host's). Skipped without the guest or packages; the dmabuf check is
-// skipped on a node with neither device.
+// skipped on a node with neither device. In CI (e2e.yml) the guest is set up before the run, and
+// GitHub's runners have /dev/udmabuf, so both parts run there.
 
 const GUEST = '/root/3dfx-guest'
 const VMID = 9310
@@ -137,7 +138,13 @@ test('3dfx VM: the Glide frame in the noVNC console, read back and with egl-head
   test.skip(!(await qemuServerHasMesaDisplay()), 'the installed qemu-server has no mesa-display yet')
   test.skip(!(await qemu3dfxHasGlDisplay()), 'the installed 3dfx binary has no dmabuf scanout yet')
   const guest = await pveExec(['sh', '-c', `test -s ${GUEST}/glide.initrd && test -s ${GUEST}/vmlinuz`])
-  test.skip(guest.code !== 0, `no Glide guest in ${GUEST} (e2e/3dfx/pve-guest-setup.sh)`)
+  // e2e.yml sets the guest up before the run and sets E2E_3DFX_GUEST=required: there a missing guest
+  // (a failed setup) fails the test instead of skipping it
+  test.skip(
+    guest.code !== 0 && process.env.E2E_3DFX_GUEST !== 'required',
+    `no Glide guest in ${GUEST} (e2e/3dfx/pve-guest-setup.sh)`,
+  )
+  expect(guest.code, `no Glide guest in ${GUEST}: e2e/3dfx/pve-guest-setup.sh failed (see its output)`).toBe(0)
 
   await login(page)
   // the default: no -display, the frames read back into the console
