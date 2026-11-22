@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..edbfc57 100644
+index bc240a0..862fb69 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,77 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,79 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -151,6 +151,8 @@ index bc240a0..edbfc57 100644
 +wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
 +wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
 +wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
++wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
++wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -15303,6 +15305,146 @@ index 0000000..5b6c3f9
 + 
 +             for (i = 0; i < nc; i++) {
 +                 IdleTest *t = &tests[n++];
+diff --git a/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch b/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
+new file mode 100644
+index 0000000..54277e1
+--- /dev/null
++++ b/debian/patches/wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset.patch
+@@ -0,0 +1,52 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64: drop the translated code on a reset
++
++After a reset (a reboot asks the firmware for one) openbios-sparc64
++clears the RAM below its own with 8-byte stores, so that the next system
++finds it zeroed as after a power-on. A store to a page that still has
++translated blocks on it invalidates the ones it overlaps, and taking a
++block off its page's list costs time in proportion to how many the page
++holds. After Debian 7's Linux 3.2 had run for a few minutes QEMU held
++600 000 to 1 600 000 blocks, many of them on a few pages, and the clear
++crawled there: most of the RAM in a minute or two, then a few bytes to
++a few KB a second around the pages the kernel had used (perf: 86% of
++the time in tb_page_remove()). A reboot after a minute at the shell
++(512 MB) reached the firmware's banner 336 s after the kernel's
++"Restarting system"; the installer's reboot after 85 minutes (1024 MB)
++took about 5 minutes.
++
++Queue a TB flush for the CPU in main_cpu_reset() on every reset after
++the power-on one; it runs before the CPU executes again. The same reboot
++then reaches the banner 2 s after "Restarting system", and the system
++boots to its login prompt.
++---
++ hw/sparc64/sparc64.c | 9 +++++++++
++ 1 file changed, 9 insertions(+)
++
++diff --git a/hw/sparc64/sparc64.c b/hw/sparc64/sparc64.c
++index 16f4aa05..e2e686a2 100644
++--- a/hw/sparc64/sparc64.c
+++++ b/hw/sparc64/sparc64.c
++@@ -30,6 +30,7 @@
++ #include "hw/sparc/sparc64.h"
++ #include "qemu/timer.h"
++ #include "system/reset.h"
+++#include "exec/tb-flush.h"
++ #include "trace.h"
++ 
++ 
++@@ -126,6 +127,14 @@ static void main_cpu_reset(void *opaque)
++         env->pc = s->prom_addr + 0x20ULL;
++     } else {
++         env->pc = s->prom_addr + 0x40ULL;
+++        /*
+++         * Drop the code translated for the system before. The firmware
+++         * clears the RAM after a reset, and a store to a page that still
+++         * has translated blocks invalidates them one by one, each at a
+++         * cost that grows with their number on the page: after a Linux
+++         * guest had run for a minute, the clear took over five minutes.
+++         */
+++        queue_tb_flush(CPU(s->cpu));
++     }
++     env->npc = env->pc + 4;
++ }
+diff --git a/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch b/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
+new file mode 100644
+index 0000000..1b07aba
+--- /dev/null
++++ b/debian/patches/wsh/0113-tests-qtest-test-the-TB-flush-on-a-sun4u-reset.patch
+@@ -0,0 +1,76 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the TB flush on a sun4u reset
++
++sun4u-sabre-reset-test gets a case that runs the firmware under TCG,
++resets the machine with system_reset and checks that "info jit" counts
++one more TB flush once the CPU runs again. The power-on reset flushes
++nothing.
++
++Against the binary without the patch before, the count stays where it
++was and the case fails.
++---
++ tests/qtest/sun4u-sabre-reset-test.c | 41 ++++++++++++++++++++++++++++
++ 1 file changed, 41 insertions(+)
++
++diff --git a/tests/qtest/sun4u-sabre-reset-test.c b/tests/qtest/sun4u-sabre-reset-test.c
++index bc6ea306..0a3aead7 100644
++--- a/tests/qtest/sun4u-sabre-reset-test.c
+++++ b/tests/qtest/sun4u-sabre-reset-test.c
++@@ -7,6 +7,12 @@
++  * machine) the next boot read them as set and warned "pcipsy0: SERR
++  * asserted on pci bus". A reset must leave them as a power-on does.
++  *
+++ * A reset after the power-on one also drops the code translated for the
+++ * system before (a TB flush): the firmware clears the RAM after a reset,
+++ * and with the old translations still there each store to a page full of
+++ * them took long enough that the clear ran for minutes after a
+++ * Linux guest had run for a while.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -42,9 +48,44 @@ static void test_pci_control_reset(void)
++     qtest_quit(qts);
++ }
++ 
+++/* The "TB flush count" of "info jit" */
+++static uint64_t tb_flushes(QTestState *qts)
+++{
+++    g_autofree char *jit = qtest_hmp(qts, "info jit");
+++    const char *p = strstr(jit, "TB flush count");
+++
+++    g_assert_nonnull(p);
+++    return g_ascii_strtoull(p + strlen("TB flush count"), NULL, 10);
+++}
+++
+++static void test_reset_tb_flush(void)
+++{
+++    QTestState *qts = qtest_init("-machine sun4u -accel tcg -nodefaults");
+++    gint64 end;
+++    uint64_t n0, n;
+++
+++    /* The firmware runs and translates code; the power-on reset flushes nothing */
+++    g_usleep(300 * 1000);
+++    n0 = tb_flushes(qts);
+++
+++    qtest_system_reset(qts);
+++
+++    /* The flush is queued for the CPU, done before it runs again */
+++    end = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
+++    while ((n = tb_flushes(qts)) == n0 && g_get_monotonic_time() < end) {
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_cmpuint(n, ==, n0 + 1);
+++
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++     qtest_add_func("/sun4u/sabre/pci-control-reset", test_pci_control_reset);
+++    if (qtest_has_accel("tcg")) {
+++        qtest_add_func("/sun4u/reset/tb-flush", test_reset_tb_flush);
+++    }
++     return g_test_run();
++ }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
