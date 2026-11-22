@@ -1176,8 +1176,21 @@ qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 | the profile's API checks of `sparc-profiles.spec.ts` as `qm create`/`qm showcmd` (serial0, cg3, TCX and `nvram0` started frozen in QEMU; the refusals; an SS-20 with 2 CPUs changed to SS-600MP) | 17/17 passed | |
 | unit tests (`test_targets.py`) | passed | |
 
-Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, a framebuffer console
-(OpenBIOS draws on cg3 and TCX on the SS-600MP; 4.1.2 there was not run).
+Again with the published packages only (the same container, `PACKAGES=repo`, built `--no-cache`:
+pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7 and pve-manager 9.2.32+wsh11, which have the
+SS-600MP profile), `pve_matrix.py install --only install-sunos412-ss600mp` into an empty `--disks`,
+2026-11-22: passed in 6.2 min (install 143 s, first boot 150 s, check 51 s). It is the source of the
+gallery's `sunos412-*-ss600mp` recordings ("Recordings in the docs").
+
+On the cg3 (the stored disk in the lab's own QEMU, `fb-bell.py GUEST=sunos4 MACHINE=SS-600MP
+VGA=cg3`, console on the framebuffer and the Sun keyboard): `boot disk:a -s` boots 4.1.2 to its
+single-user shell, which answers, and BEL comes back (passed, 96 s). The kernel prints `No default
+frame buffer found` and attaches no `cgthree`, so the text on the screen is the PROM's terminal
+(OpenBIOS) drawing what the kernel hands the romvec, not a SunOS frame buffer driver; the first
+keys typed after the shell came up were lost once. So the gallery has the serial console only.
+
+Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, multi-user on the
+framebuffer console, TCX.
 
 The rows "with openbios 0019-0022" ran the lab image of the published package with a patched
 `openbios-sparc32` mounted over `/usr/share/kvm/openbios-sparc32`, one run each (the 2.3 install
@@ -2330,6 +2343,7 @@ assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't nee
 | `sol26-smp4-ss20.cast` | `pve_matrix.py recordings`: `sol26-ss20-smp4/1-solaris-boot-disk` | `--max-idle 1 --speed 1` |
 | `sol22-install-ss10.cast`, `sol22-boot-ss10.cast` | `pve_matrix.py recordings`: `sol22-install-ss10/1-solaris-install-serial`, `2-solaris-boot-disk` | `--speed 2`, `--speed 1` |
 | `sunos413-install-ss10.cast`, `sunos413-boot-ss10.cast` | `lab.py install sunos413-ss10 --check --out <runs>/install-sunos413-ss10/1-install-sunos413-ss10`: `install`, `check` | `--max-idle 1 --speed 1` |
+| `sunos412-install-ss600mp.cast`, `sunos412-boot-ss600mp.cast` | `pve_matrix.py install --only install-sunos412-ss600mp` (no stored disk): `install-sunos412-ss600mp/1-install-sunos412-ss600mp/install`, `.../check` | `--max-idle 1 --speed 1` |
 | `sol21-install-ss10.cast`, `sol21-boot-ss10.cast` | `lab.py install sol21-ss10 --check --out <runs>/install-sol21-ss10/1-install-sol21-ss10`: `install`, `check` | `--speed 2`, `--speed 1` |
 | `openbsd80-install-sun4u.cast`, `openbsd80-boot-sun4u.cast` | `lab.py install openbsd80-sun4u --check --export <dir> --out <runs>/install-openbsd80-sun4u/1-install-openbsd80-sun4u`: `install`, `check` | `--speed 3`, `--speed 2` |
 | `openbsd59-install-ss5.cast`, `openbsd59-boot-ss5.cast` | `install` (no stored disk): `install-openbsd59-ss5/1-install-openbsd59-ss5/install`, `.../check` | `--speed 2`, `--speed 1` |
