@@ -90,6 +90,14 @@ MATRICES = {
                              "scsi3": "local:0,import-from={template},format=raw",
                              "scsi4": "local:0,import-from={bench},format=raw,ro=1"},
          None, "sol26-enduser-ss20-installed.raw", [("smp-soak.py", {"SMP": "2", "SOAK": "0"})]),
+        # The Sun SS-20 PROM with an NVRAM volume (qemu-server nvram0, pve-qemu wsh/0059), 512 MB, the
+        # stored Solaris 2.6 SS-20 PROM disk (its first boot still pending: a reconfiguration boot and
+        # the root password screen) imported to target 3. sun-prom-nvram.py: `setenv diag-switch?
+        # false` once at ok, then the first boot; after `qm stop`/`qm start` the PROM must boot the disk
+        # by itself (wsh/0061: the lance DMA), then `reboot -- -r` (wsh/0066: dbri) to login again.
+        ("sol26-ss20prom-nvram", {**SPARC32, "machine": "SS-20", "bios": "ss20_v2.25_rom", "memory": 512,
+                                  "nvram0": "local:1", "scsi3": "local:0,import-from={template},format=raw"},
+         None, "sol26-enduser-ss20prom-installed.raw", [("sun-prom-nvram.py", {})]),
         # x86_64 baseline under TCG: the console on VGA (OCR + send-key), a serial port next to it
         ("alpine-x86_64", {"kvm": 0, "memory": 1024, "ostype": "l26", "serial0": "socket", "vga": "std",
                            "ide2": "{iso},media=cdrom"},

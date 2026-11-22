@@ -121,7 +121,7 @@ Once the packages have been installed on a PVE host, the proxmox frontend will h
   * Sound on the SS-5 (CS4231, `audio0: device=cs4231`); none on the SS-10/SS-20 or sun4u.
   * Add the network device before installing Solaris: the installer configures the interfaces it finds.
   * An installed VM with known login details from one command on a node: the [lab install targets](https://debian.wshosting.no/guides/lab-install/) (`wsh-lab` package) cover SunOS 4.1.4, Solaris 2.4-10, NetBSD, Red Hat Linux 6.2 and more. Sun software and disks with it installed are not published.
-  * Installs take a long time under emulation and keep a host core at 100% meanwhile; pin the VM to a slow core or use a test node. Once installed, SunOS 4.1.4 and Solaris 2.5.1-9 on sun4m stop the CPU when idle; sun4u guests don't yet.
+  * Installs take a long time under emulation and keep a host core at 100% meanwhile; pin the VM to a slow core or use a test node. Once installed, SunOS 4.1.4 and Solaris 2.5.1-9 on sun4m and NetBSD, OpenBSD, Solaris 7-10, Tribblix and Linux on sun4u stop the CPU when idle (sun4u: the kernel builds in `submodules/SPARC.md`).
 
 * Floppy disk support: a dedicated `floppy` storage content type (stored in `template/floppy` next to the iso folder) with upload/listing in the UI, up to two floppy drives per VM (A:/B:) with boot-from-floppy and live media swap. Enable the **Floppy image** content type on a storage first (Datacenter → Storage → edit), or the storage list in **Add → Floppy Drive** stays empty - see the [floppy reference](https://debian.wshosting.no/reference/floppy/)
 
