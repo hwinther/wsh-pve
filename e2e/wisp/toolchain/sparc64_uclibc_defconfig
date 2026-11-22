@@ -1,0 +1,15 @@
+# wisp uClibc-ng toolchain: sparc64, as wisp's own sparc64 kernel (sun4u, e2e/wisp/README.md).
+# SPARC V9 (64-bit); unlike sparc32, there is no V8-only restriction here.
+BR2_sparc64=y
+
+BR2_TOOLCHAIN_BUILDROOT=y
+# verify: that the chosen Buildroot release offers uClibc-ng for sparc64 at all (its
+# toolchain/toolchain-buildroot/Config.in lists the architectures per C library); if it does
+# not, the packaged gcc-sparc64-linux-gnu with static glibc stays the sparc64 route.
+BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
+# A recent stable gcc: left at Buildroot's own default; see sparc32_uclibc_defconfig's comment
+# on BR2_GCC_VERSION_* and why it is not pinned here yet.
+
+# Static libraries only: no shared libs are needed on the target, and this also keeps the SDK
+# simpler to relocate (see Dockerfile, "make sdk").
+BR2_STATIC_LIBS=y

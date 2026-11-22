@@ -1,0 +1,24 @@
+# wisp uClibc-ng toolchain: sparc32, SPARC V8 only, like wisp's own sparc32 kernel (the SS-5
+# etc., e2e/wisp/README.md). Debian's packaged 32-bit sparc glibc and libgcc are V8+
+# (EM_SPARC32PLUS) even with -mcpu=v8, and wisp's sparc32 kernel refuses such a binary; this
+# toolchain's own gcc and uClibc-ng are built for V8 so that a program linked against it can run
+# there (the reason this toolchain exists instead of a packaged cross compiler).
+BR2_sparc=y
+# verify: the exact "Target Architecture Variant" symbol for plain SPARC V8 (as opposed to
+# leon2/leon3). Buildroot's arch/Config.in.sparc names these after the GCC -mcpu value; check
+# with "make menuconfig" (System Configuration > Target Architecture Variant) once
+# BUILDROOT_VERSION is chosen, since Kconfig symbol names are not guaranteed stable across
+# releases.
+BR2_sparc_v8=y
+
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
+# A recent stable gcc: left unset here, so Buildroot picks its own default gcc version for the
+# chosen BUILDROOT_VERSION rather than naming a BR2_GCC_VERSION_* symbol whose exact spelling
+# (e.g. BR2_GCC_VERSION_13_X) depends on a release that is itself still a placeholder (see
+# Dockerfile, BUILDROOT_VERSION). verify and pin a BR2_GCC_VERSION_* line here if a specific gcc
+# is wanted once a Buildroot version is settled.
+
+# Static libraries only: no shared libs are needed on the target, and this also keeps the SDK
+# simpler to relocate (see Dockerfile, "make sdk").
+BR2_STATIC_LIBS=y

@@ -683,6 +683,7 @@ merged; what is left of them is item 2 under "Next".
      the NetBSD-on-sparc64-under-PVE cast stays out (no matching first boot).
   10. *Doom on sparc*: fbDOOM on the cg3/TCX framebuffer, then in the browser through Wasm; needs the
      a libc under wisp (Buildroot with uClibc-ng).
+- **wisp libc toolchain (uClibc-ng via Buildroot):** files prepared, first build and test pending.
 
 ## Known and not fixed
 

@@ -306,6 +306,50 @@ Found on the way:
   itself (`libgcc-sparc32.c`). A static glibc
   binary for sparc64 (`libc6-dev-sparc64-cross`) runs in the tier-1 kernel.
 
+## A libc toolchain (uClibc-ng)
+
+wisp's own PID 1 stays on the kernel's nolibc (see "Test mode" above for why: no `qsort`, no
+locale, no threads, no C++) and that is not changing. `e2e/wisp/toolchain/` is an addition for
+*user* programs that need a real C library instead: bigger test programs than nolibc can build,
+and later small network services. It does not touch `init.c`, `build.sh` or the kernel configs
+above.
+
+Why uClibc-ng and not a packaged compiler: for sparc64 and x86_64, Debian and Ubuntu already ship
+a cross compiler with a real libc (`gcc-sparc64-linux-gnu`/`libc6-dev-sparc64-cross`,
+`.github/actions/wisp-test/README.md`, "Your own toolchain") and that keeps working. For
+sparc32, wisp's kernel is SPARC V8 (as a real SPARCstation 5), and Debian's and Ubuntu's packaged
+32-bit sparc glibc and libgcc are V8+ (`EM_SPARC32PLUS`, V9 instructions such as `bne %icc`) even
+when built with `-mcpu=v8`; the sparc32 kernel refuses such a binary (`ENOEXEC`), which is why
+nolibc there has no libgcc either (see "Test mode", "Limits" in the action's README). Buildroot,
+building its own gcc and uClibc-ng from source for a chosen target, can be told to generate V8
+only, so this is the only way to get a non-trivial libc program running on wisp's sparc32.
+
+What is there:
+
+- `Dockerfile`: multi-stage. The `build` stage (`debian:13`) installs the packages the Buildroot
+  manual lists as mandatory for a build, downloads a Buildroot release tarball and builds the
+  toolchain with `make sdk` (a relocatable SDK: the toolchain is built at one path inside the
+  image and then moved to `/opt/wisp-toolchain/<arch>/`, a different one, see the Dockerfile's
+  comment on why `sdk` and not `toolchain`). The final stage (`debian:13-slim`) ships only that
+  toolchain, on `PATH`.
+- `sparc32_uclibc_defconfig`, `sparc64_uclibc_defconfig`, `x86_64_uclibc_defconfig`: one
+  Buildroot defconfig per architecture, matching wisp's own kernels (V8 only for sparc32,
+  uClibc-ng, static libraries only; no shared libraries are needed for static test binaries and
+  small services).
+- `build.sh <arch> [tag]`: builds the image and tags it for GHCR; `build.sh <arch> --export DIR`
+  also copies the toolchain itself out of the image as a `.tar.xz`, for use without Docker.
+- `hello/`: a small C program built against the toolchain's libc (`printf`, `snprintf`,
+  `malloc`/`free`, `qsort`, `strtol`, a struct with 64-bit fields and 64-bit division), meant to
+  run under wisp's test mode above the same way the wisp-test action's nolibc programs do.
+- `.github/workflows/publish-wisp-toolchain.yml`: `workflow_dispatch`, builds one architecture's
+  image and pushes it to GHCR as `ghcr.io/hwinther/wsh-pve/wisp-toolchain-<arch>:<tag>`.
+
+**Not yet done**: `BUILDROOT_VERSION` and `BUILDROOT_SHA256` in `Dockerfile` are placeholders
+(`REPLACE-ME`); nothing has downloaded Buildroot, built the toolchain or run `hello` yet. A few
+defconfig options are marked `verify` (the sparc32 V8 variant symbol, and the exact `make sdk`
+output path) because Buildroot's Kconfig symbol names and output layout can move between
+releases; check them against the Buildroot version once it is chosen, before the first build.
+
 ## Build
 
 ```sh
