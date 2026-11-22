@@ -102,6 +102,8 @@ maintains the patches.
 | `0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su` | Linux on sun4u spun in its idle loop at 100% of a host core: `arch_cpu_idle()` only touches the NMI watchdog there (it yields to the hypervisor on sun4v), and no kernel option changes that. The translator recognises `arch_cpu_idle()` at its call of `arch_touch_nmi_watchdog()` by the `tlb_type` test next to it and the start of the sun4v branch, as gcc lays it out either way round (Linux 6.1 and 7.3: `be` to the sun4v branch; 6.17 and 7.0: `bne` around it), and halts the CPU there at `%pil` 14 (interrupts disabled, as the idle loop calls it), with nothing pending and `TIF_NEED_RESCHED` clear; the tick, stick and interrupt vector wake it whatever `%pil`, and the interrupt is taken when the loop enables interrupts. The window around a call grows to 24 words before it; words on another page read as 0 ("sparc64 (sun4u)", "Idle") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an` | Solaris 7 and 8 spun in `idle()` on sun4u: Sun's older compiler lays the loop out the other way round from 9 and 10 (`be` to the call through `idle_cpu`, `swtch()` first). The translator recognises that layout too and halts at the call as for Solaris 9 and 10 (`-trace sparc64_idle_match`: `Solaris 7/8`) | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop` | qtest `sun4u-idle-test` for 0070-0071: the Solaris 7/8 layout with the cases of the others, and Linux 7.3, 6.1 and 7.0's `arch_cpu_idle()` in a loop that disables interrupts to level 14 round it: it must halt there, not with `TIF_NEED_RESCHED` set, without `PSTATE.IE`, at level 0 or 15, and a 1 ms tick must wake it at level 14 and be taken when the loop enables interrupts; 51 cases | ours | not in QEMU |
+| `0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-` | Sun's SS-600MP boot PROM stopped QEMU within seconds (`Trap 0x01 (Instruction Access Fault) while interrupts disabled`): its MMU register test, run from the PROM in boot mode with traps disabled, sets the MMU enable bit, and QEMU translated the next instruction fetch. On the SuperSPARC the boot mode bit (bit 13 of the MMU control register) sends every instruction fetch to the PROM whether the MMU is on or not, and data accesses are translated. New CPU feature `boot-mode-ifetch`, on the `TI-SuperSparc-*` models only: an instruction fetch in boot mode uses the physical MMU index, which maps it to the PROM as with the MMU off; `-cpu TI-SuperSparc-II,-boot-mode-ifetch` turns it off. OpenBIOS clears boot mode when it turns the MMU on, so it isn't affected. The PROM then loops in its later tests ("Older Sun releases on sun4m", "Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o` | qtest `sun4m-boot-mode-ifetch-test` for 0120: a PROM turns the MMU on with traps disabled while context 0 maps virtual 0 to RAM holding other code; the next fetch must come from the PROM in boot mode on SS-10, SS-20 (`TI-SuperSparc-50`) and SS-600MP, and from RAM with boot mode cleared, with `-boot-mode-ifetch` and on SS-5. `sun4m-mmu-ctx-ifetch-test` and `sun4m-bus-error-trap-test` now write the MMU enable bit alone (clearing boot mode, as OpenBIOS and an OS do) | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -882,6 +884,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -1908,7 +1911,8 @@ What it would take for the rest:
   register (`lda [0] 4`, `>> 15 & 3`), reads 0 (`cpuid mid err`). The kernel expects the module ID
   there, as on the 600MP's Ross modules (it skips the checks when those bits are all ones); on the
   SuperSPARC they are other control bits, and QEMU has no Ross CPU model. So SMP needs the Ross
-  module (the RT625 model that Sun's own 600MP PROM needs too): not done.
+  module, or one of the cheaper ways in "Sun's own SS-600MP boot PROM" below: not done. (Sun's
+  600MP PROM doesn't need a Ross module after all; see that paragraph.)
   **Through PVE (2026-11-22):** qemu-server's and pve-manager's SS-600MP profile ("Supported
   profiles"), built from this branch, with the published pve-qemu-kvm 11.1.3-3+wsh14 (it has
   `wsh/0063`-`0065` and openbios 0028; +wsh13 was the first), in the PVE test container from
@@ -1921,6 +1925,84 @@ What it would take for the rest:
   OpenBIOS the SS-600MP draws its banner and prompt on cg3 and on TCX; 4.1.2 itself was run on the
   serial console only. So `sunos412-ss600mp` is an automated target (e2e/sparc/README.md, "Older Sun
   releases").
+- **Sun's own SS-600MP boot PROM (2026-11-22, lab):** the lab's PROM archive
+  has one 600MP image (512 KB, "sparcsystem 600 bootprom selftest v5.6"). Its strings name the CPU
+  modules it knows: the Cypress/Ross 605 (`ross605`, the CY7C601/CY7C605 modules the 600MP first
+  shipped with), the Ross 625 (hyperSPARC) and the TI SuperSPARC with or without its MXCC (`viking`,
+  TMS390Z50/Z55), each with its own register and cache tests. So the PROM doesn't need a Ross model:
+  QEMU's SuperSPARC is one of its modules, and what stops it is its power-on self test (POST).
+  1. **Published pve-qemu-kvm 11.1.3-4+wsh4** (the lab image), `-M SS-600MP -bios <600MP PROM>`,
+     256 MB: nothing on ttya or cg3, and within seconds QEMU stops with `Trap 0x01 (Instruction
+     Access Fault) while interrupts disabled, Error state` (`pc f0000010`, the PROM's trap table;
+     the fault itself at `f002c454`). The same with `-cpu TI-SuperSparc-40`, `-50`, `-51` and `-60`.
+     `-d in_asm`: the PROM's MMU register test, run from the PROM in boot mode with traps off,
+     writes a walking one through the writable bits of the MMU control register (ASI 4, register 0,
+     mask `0x14783`). Bit 0 turns the MMU on, QEMU translates the next instruction fetch with no
+     context table set up, and the fetch of the trap vector faults too. On the SuperSPARC the boot
+     mode bit (bit 13) sends every instruction fetch to the PROM whether the MMU is on or not; data
+     accesses are translated (Linux's `asm/viking.h`). QEMU kept fetches in the PROM only with the
+     MMU off. pve-qemu `wsh/0120` (the CPU feature `boot-mode-ifetch` on the `TI-SuperSparc-*`
+     models) and its qtest `wsh/0121`.
+  2. **With `wsh/0120`** the PROM runs on, still silent (its POST routine prints to ttya only while
+     bit 2 of the system control register at `0xf.f1f0_0000` is set, which QEMU never sets; probably
+     the 600MP's diagnostic switch, not checked), and never leaves its CPU module tests. The next
+     test writes and reads back the SuperSPARC store buffer's diagnostic registers (ASI `0x30` tags
+     and `0x31` data as doublewords, then `0x32` control), which QEMU doesn't keep (reads give 0). On
+     a mismatch the PROM's error path sets a flag in its scratch area at NVRAM offset `0x1834`, and
+     the test loop then repeats the failing test (loop on error), with no message and no progress
+     (about 10 minutes in the same test, cg3 blank).
+  3. **Lab-only experiments** (not carried): with those three registers stored, the default
+     `TI-SuperSparc-II` (with MXCC) next fails on the MXCC's stream data registers (ASI 2,
+     `0x01c0_0000` on, which QEMU takes on stores but reads as 0); with `-cpu TI-SuperSparc-50` (no
+     MXCC) it passes them and fails the I-cache tag RAM test (ASI `0x0c`, "wrong i$ stag"). With
+     the four cache tag and data ASIs (`0x0c`-`0x0f`) stored too it leaves the CPU module tests and
+     fails the board's counter-timer tests at `0xf.f130_0000` ("Can not toggle timer/counter bits",
+     "Limit bit not set"), still silent and looping. The PROM's strings list more SuperSPARC tests
+     after those (TLB RAM, MMU table walk, probe and flush, TLB lock, table walk ECC and parity
+     errors, cache flash clear, MRU and lock, read miss and write hit) and board tests (ECC memory,
+     I/O cache tags, VME loopback, register size checks of the lance, ESP and others); how many of
+     them run without the diagnostic switch isn't known. Not tried: Cypress or Ross modules (QEMU
+     has none), more than one CPU, the VME or I/O cache as the PROM sees them.
+
+  **Cause:** not the CPU module type, not the MBus module IDs, and so far not the 600MP's VME,
+  IOMMU or lebuffer: the PROM checks the SuperSPARC's diagnostic internals (boot mode, store
+  buffer, cache RAMs, MXCC) and the board's counters in its POST, where QEMU models only what an
+  operating system uses, and it loops on the first failure. The SS-20 PROM's POST, by comparison,
+  passes on QEMU with `-cpu TI-SuperSparc-50` (no MXCC, "SS-10 and SS-20").
+  **Scope:**
+  - *Sun's PROM on a SuperSPARC SS-600MP:* medium to large. The diagnostic registers as storage are
+    small each (the store buffer; the cache tag and data RAMs need the TMS390Z50 geometry), the
+    counter tests are unknown, and each step needs a lab loop like the one above; tests that check
+    cache behaviour through those registers (miss and hit, MRU, lock, flash clear) need a cache
+    model behind them, which is large. A way to skip or shorten the POST wasn't found.
+  - *A Ross or Cypress CPU model* (RT620/RT625 hyperSPARC or CY7C601/CY7C605): large. QEMU had
+    name-only definitions ("Cypress CY7C601", "CY7C611", "Ross RT620", "Ross RT625": IU and MMU
+    versions, nothing else) until it removed them in 2013 (`6a4e177114`, "only half
+    implemented"); there is no Ross MMU control register layout (module ID in bits 15-18 on the
+    RT625), no instruction cache control register (ICCR) and no Ross cache or flush ASIs. MAME's
+    `sun4.cpp` lists the sun4m machines and has SPARCstation 10/20 entries but no hyperSPARC or
+    Ross code (a code search), TME emulates sun2, sun3 and sun4c, and no qemu-devel thread with
+    such a model was found; LEMU wasn't checked. Such a model also faces the PROM's Ross
+    register and cache tests, so by itself it doesn't boot Sun's PROM either.
+  - *What either would unlock:* Sun's PROM on the 600MP only after its POST passes. SunOS 4.1.2's
+    second CPU needs the module ID in bits 15-16 of the MMU control register, or those bits all
+    ones, where the kernel skips the check. On the SuperSPARC those bits are AC and TC
+    (alternate and table walk cacheable), which a Sun PROM may set on a module with an MXCC;
+    whether OpenBIOS setting them on machine ID 66 is enough is a lead, not tested (with 2 CPUs
+    and the bits forced in a lab build, the 4.1.2 CD's MUNIX kernel lists `mod1` and reaches the
+    installer menu but prints no `cpu1 at Mbus` line; the installed GENERIC kernel, which starts
+    CPU 1, wasn't run). Older SunOS: 4.1.2 is the first release with sun4m (machine ID 66
+    above), and the lab has 4.0.3C (sun4c) and nothing from 4.1.1, so nothing to gain. Solaris
+    2.6's "This hardware platform is not supported" under OpenBIOS already runs on the
+    SuperSPARC, so a CPU model isn't the obvious cause; not investigated.
+  Regression for `wsh/0120`-`0121` (a local build of 11.1.3 with the whole series, lab):
+  `make check-qtest-sparc` 32 passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as
+  before), `sun4m-boot-mode-ifetch-test` 6/6 (its SS-10 boot mode case fails without 0120);
+  `sun4m-mmu-ctx-ifetch-test` and `sun4m-bus-error-trap-test` had kept boot mode on while turning
+  the MMU on and now write the enable bit alone. The stored `sol26-ss20` disk boots to `console
+  login:` under OpenBIOS and under the SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`, `boot
+  disk3`), whose output to its `ok` prompt is byte for byte the same as with the published build;
+  OpenBIOS on the SS-600MP reaches its prompt and boots the SunOS 4.1.2 CD to the installer menu.
 - **qemu-server profiles:** nothing new is needed for the targets added (SS-5 `ss5.bin`, SS-20
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
@@ -4193,12 +4275,14 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - SS-600MP (SunOS 4.1.2, "Older Sun releases on sun4m"): needs pve-qemu-kvm 11.1.3-3+wsh13 or later
   (`wsh/0063`-`0065`, openbios 0028); the ESP is under OpenBIOS's `dma` node and the lance under its
-  `lebuffer`, the command line is the same as for the other machines. OpenBIOS only and one CPU: the
-  real machine's Ross RT625 modules aren't modelled, and Sun's 600MP PROM and 4.1.2's start of a
-  second CPU need one; both refusals say so. 4.1.2 boots with up to 2 GB; 1024 MB is offered, the
-  wizard presets 256 (`defaultMemory` in pve-manager). The displays are the default list (OpenBIOS
-  draws on cg3 and TCX; the target uses `serial0`), no `audio0` (no sound chip), and `nvram0` as on
-  the other OpenBIOS machines (accepted, on the M48T08).
+  `lebuffer`, the command line is the same as for the other machines. OpenBIOS only and one CPU:
+  4.1.2's start of a second CPU wants a module ID in the MMU control register as on the real
+  machine's Ross modules, which QEMU doesn't model, and Sun's 600MP PROM loops in its power-on self
+  test (it knows the SuperSPARC, but checks diagnostic registers QEMU doesn't keep; "Sun's own
+  SS-600MP boot PROM"); both refusals say so (their text names the Ross RT625). 4.1.2 boots
+  with up to 2 GB; 1024 MB is offered, the wizard presets 256 (`defaultMemory` in pve-manager). The
+  displays are the default list (OpenBIOS draws on cg3 and TCX; the target uses `serial0`), no
+  `audio0` (no sound chip), and `nvram0` as on the other OpenBIOS machines (accepted, on the M48T08).
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
 - CPUs: sockets x cores, one by default. 2-4 only on SS-10/SS-20 with OpenBIOS and only with
