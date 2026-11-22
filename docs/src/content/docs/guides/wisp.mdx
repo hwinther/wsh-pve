@@ -58,6 +58,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `bench` | the batch run's compute loop with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds |
 | `mandel` | an ASCII Mandelbrot set (78 x 20) in fixed-point 32-bit integer math |
+| `endian` | a byte-order guessing game: guess the 32-bit word *this machine* reads from a round's four bytes (the answer depends on the architecture under test) |
 | `disk`, `net`, `smp` | the tier-2 checks below, on the devices QEMU was started with |
 | `banner` | the logo |
 | `clear` | clears the screen |
