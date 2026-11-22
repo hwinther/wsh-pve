@@ -968,7 +968,7 @@ pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
 | `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
 
 Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
-and 2.6 or 2.5.1 on sun4u (their boot blocks stop in OpenBIOS: `submodules/SPARC.md`).
+and 2.6 or 2.5.1 on sun4u (with OpenBIOS 0031 their boot blocks work, then the kernels stop: 2.6 at the root mount, 2.5.1 before its banner; `submodules/SPARC.md`, "Solaris 2.5.1 and 2.6 on sun4u: the boot block").
 
 ### Solaris 2.4 and 2.5.1
 
