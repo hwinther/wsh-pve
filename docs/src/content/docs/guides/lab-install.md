@@ -103,9 +103,11 @@ tested with 2.6, not with them, so `lab.py install` refuses it).
 `sol10-sun4u` runs Solaris 10's text installer on the serial console with a static address on
 `hme0` (host name `sol10-sun4u`, no DHCP: `--ip dhcp` is refused), the time zone the installer
 lists first (Africa/Algiers), auto-layout (`/` 6.6 GB, swap 1 GB, the rest `/export/home`) and the
-root password from `--root-password`. Its reboot at the end doesn't come back (`prom_reboot: reboot
-call returned!`: OpenBIOS has no reboot for Solaris yet), so the tool stops the VM there, ejects the
-DVD and boots the disk. Don't use `reboot` or `init 6` in the guest either; stop and start the VM.
+root password from `--root-password`. At its reboot at the end the tool stops the VM (at the
+firmware's banner; with an `openbios-sparc64` before patch 0030 the reboot doesn't come back,
+`prom_reboot: reboot call returned!`, and the tool stops it there), ejects the DVD and boots the
+disk. In the installed guest `reboot` and `init 6` restart the VM with patch 0030; before it, stop
+and start the VM instead.
 Once in six DVD boots the kernel panicked before the installer's first question (a trap in the
 firmware); the tool then runs the install once more, since nothing is on the disk yet.
 With pve-qemu-kvm before `wsh/0034` every sun4u guest has the MAC address 52:54:00:12:34:56
@@ -115,15 +117,16 @@ whatever `net0` says, so two of them on one network clash; with it the guest use
 `sol9-sun4u` and `sol8-sun4u` are the Web Start installs of `sol9-ss5` and `sol8-ss5` on sun4u: the
 same answers on the serial console (static address on `hme0`, no name service, time zone MET, the root
 password from `--root-password`), End User with 64-bit support, auto-layout on `c0t0d0`. As for
-Solaris 10, a reboot doesn't come back on sun4u (`prom_reboot: reboot call returned!`): the tool
-stops the VM at the firmware prompt after the install and boots the disk. Solaris 8's Installation CD
-copies a mini-root to the disk and reboots into it; there the tool stops the VM and starts it again
-(a power cycle through PVE; a firmware reset isn't enough, OpenBIOS keeps the old memory contents)
-and boots the mini-root's slice at the prompt (`args: -prom-env auto-boot?=false` during the install
-only, as for the sun4m Solaris 8 targets). The first boot of an installed Solaris 9 panics in the
+Solaris 10, the tool stops the VM at the reboot after the install (at the firmware's banner, or at
+`0 >` after `prom_reboot: reboot call returned!` with an `openbios-sparc64` before patch 0030) and
+boots the disk. Solaris 8's Installation CD copies a mini-root to the disk and reboots into it; the
+firmware resets and stops at its prompt (`args: -prom-env auto-boot?=false` during the install
+only, as for the sun4m Solaris 8 targets), where the tool boots the mini-root's slice. Before patch
+0030 the tool power-cycles the VM through PVE there (the reboot returned, and a firmware reset kept
+the old memory contents). The first boot of an installed Solaris 9 panics in the
 floppy driver with an `openbios-sparc64` without patch 0025 (OpenBIOS's floppy node, which QEMU's
-sun4u can't back); `pve-qemu-kvm` 11.1.3-2+wsh25 and later have it. Don't use `reboot` or `init 6` in these guests: stop and start
-the VM.
+sun4u can't back); `pve-qemu-kvm` 11.1.3-2+wsh25 and later have it. `reboot` and `init 6` in these
+guests need patch 0030; before it, stop and start the VM.
 
 `sol7-sun4u` runs the interactive installer of Solaris 2.6 and 7 (suninstall) on sun4u with the
 sun4m targets' answers: a static address on `hme0`, no name service, time zone MET, End User with
@@ -526,8 +529,8 @@ What it does:
    Solaris 10 labels a blank disk itself) and the CD in its drive, tagged `wsh-lab`.
 3. Starts it and answers the installer on the serial console (the lab's scenario for that release;
    Red Hat 6.2 and Debian 4.0 read most answers from the kickstart or preseed CD the tool adds for this step only).
-   The install ends with `halt`, which powers the VM off (Solaris 10: the tool stops the VM when the
-   installer's reboot doesn't come back; Red Hat: when the install reboots).
+   The install ends with `halt`, which powers the VM off (Solaris 8, 9 and 10 on sun4u: the tool
+   stops the VM at the installer's reboot; Red Hat: when the install reboots).
 4. Ejects the CD (the drive stays, empty) and sets the boot order to the disk.
 5. Boots the installed system once: answers the first-boot questions with the root password, writes
    `/etc/wsh-lab-target`, adds the optional user, shuts down with `init 5`.

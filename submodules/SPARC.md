@@ -95,6 +95,8 @@ maintains the patches.
 | `0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in` | SunOS 4.1.2 on `-M SS-600MP` stopped before its banner (`Unhandled Exception 0x00000029`, `pc f80a6054`): its early setup for the 600MP reads and writes the VMEbus interface registers at physical `0xf.df01_0000` (offsets 0, 4 and 8: control, AFSR, AFAR) through the MMU bypass ASI 0x2f, where QEMU had nothing (a bypass load keeps trap 0x29 with 0049). An unimplemented device over that page (reads 0, writes ignored), on the SS-600MP only; no VMEbus model, so the VME spaces stay empty and the kernel's VME probes find nothing ("Older Sun releases on sun4m") | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
 | `0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it` | The 600MP's lance works in a buffer memory of its own, the `lebuffer` at SBus slot f offset `0x40000` (128 KB, up to the lance at `0x60000`), not through a DMA engine; QEMU gave the machine the SS-10's `ledma` and DVMA, and SunOS 4.1.2 knows only the lebuffer (a lance directly on the SBus it refuses: `le0: not used - unsupported SBus card for this architecture!`). A `lebuffer-size` property on the sparc32 DMA device: the lance's addresses (modulo the size) go to a RAM region in an address space of its own, which the board maps through an alias at `0xe.f004_0000`, and its interrupt goes straight to the board, past the ledma's interrupt enable; set on the SS-600MP only (with openbios 0028's `lebuffer` node) | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
 | `0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi` | qtest `sun4m-ss600mp-test` for 0063-0064: the VME registers' unimplemented device (reads 0), the lebuffer's RAM and address space, the lance initialized from an init block in it (station address), sending from a descriptor there, handing it back and interrupting without the ledma's enable; the SS-10 unchanged | ours | not in QEMU |
+| `0068-hw-pci-host-sabre-reset-the-PCI-control-status-regis` | `sabre_reset()` left the PCI control/status registers (`0x2000`-`0x202f`) as the guest last wrote them; Solaris writes its error bits back there, and after a reset (its reboot, OpenBIOS 0030) every boot warned `pcipsy0: SERR asserted on pci bus`. They are cleared on reset, as at power-on ("The firmware reboot on sun4u") | ours | not in QEMU |
+| `0069-tests-qtest-test-the-sabre-s-PCI-control-registers-a` | qtest `sun4u-sabre-reset-test` for 0068 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -340,7 +342,6 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0009-sparc64-name-upa-and-ebus-children-like-obp` | The sabre was `pci@1fe,0` and the ebus children `su@0`, `8042@0`, ...; OBP (and Solaris, which builds the same names and looks the console path up among them) has `pci@1f,0` and `su@14,3f8`. Solaris 10 never opened its console driver and its installer ignored all input on ttya. The root prints the UPA port id; the ebus node has its own two-cell space,offset `encode-unit`/`decode-unit` | not fixed; see `upstream/openbios-sparc64-node-names.md` |
 | `0010-sparc64-pathres-interposed-package-gets-the-device-my-unit` | An interposed package (disk-label) answered `my-unit` with 0 0, so NetBSD's ofwboot passed target 0 for the CD-ROM and, with 0011's tree, the kernel rooted on `wd0`. It now answers with the unit of the device it sits on (generic code, applied to sparc64 only here) | not fixed; see `upstream/openbios-sparc64-ide-tree.md` |
 | `0011-sparc64-put-ide-drives-under-the-controller` | Drives directly under the IDE controller as OBP has them (`ide@3/disk@0,0`, `cdrom@2,0`, target = 2 × channel + unit), with `compatible` `ide-disk`/`ide-cdrom`: the Solaris 10 installer accepts its DVD and the installed disk mounts root | as 0010 |
-| `0012-…boot-service.patch.wip` | Client-interface `boot` (Solaris' reboot) resets the machine instead of returning. Resets at the `ok` prompt, but Solaris's `reboot` then hangs the VM, so it stays `.wip` (the Dockerfile only applies `*.patch`) | — |
 | `0013-sparc64-ofmem-keep-the-upper-bits-of-physical-addresses-in-align_ptr` | `align_ptr()` masked with a 32-bit `size_t`, so the firmware's heap broke once it sat above 4 GB (it is at the top of RAM): from about 4.3 GB OpenBIOS stopped before its banner (`Unhandled Exception 0x0000000000000030`; at 8192 MB `out of malloc memory (28)!` first). Generic code, applied to sparc64 only here | not fixed; see `upstream/openbios-sparc64-ram-above-4g.md` |
 | `0014-sparc64-ofmem-find-claim-memory-whose-1-1-virtual-range-is-free` | A client `claim` with an alignment took the top of RAM and mapped it 1:1 without checking the virtual side; with 4 GB that is the firmware's own range, the claim failed and NetBSD stopped after its loader (`Can't claim two pages of memory.`). It now searches below `0xff000000` and lower while the virtual range is taken. Generic code, applied to sparc64 only here | as 0013 |
 | `0015-sparc64-return-the-whole-physical-address-in-phys-lo` | `claim`, `SUNW,retain` and `translate` cut `phys.lo` to 32 bits, but 64-bit NetBSD and Solaris read `phys.lo` alone. With 6 and 8 GB NetBSD's kernel sat above 4 GB, `ofwboot` mapped the truncated addresses, and once memory filled up the kernel stopped (`trap type 0x10`, `panic: illegal instruction`). `phys.lo` now carries the whole address | as 0013 |
@@ -349,6 +350,7 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
 | `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 | `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
+| `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept ("The firmware reboot on sun4u") | not reported |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -2949,8 +2951,8 @@ cmd646 patch below, 1024 MB, 16 GB disk on `ide.0`, DVD on `ide.1`, `sunhme` on 
   This is an intermittent kernel panic around the IDE interrupt path. paulsheer reports similar
   crashes ("not stable", within an hour). Not found.
 - **Reboot.** After the install, `rebooting...` ends in `panic - kernel: prom_reboot: reboot call
-  returned!`: OpenBIOS's client-interface `boot` service only prints `BOOT` and returns. A fix (reset
-  the machine) is written but not tested yet.
+  returned!`: OpenBIOS's client-interface `boot` service only prints `BOOT` and returns. Fixed since
+  by OpenBIOS 0030 ("The firmware reboot on sun4u").
 - **The installed disk.** OpenBIOS loads the boot block and the boot archive from `disk@0,0:a`, and
   the kernel starts (`SunOS Release 5.10`). Then `Cannot load drivers for
   /pci@1f,0/pci@1,1/ide@3/disk@0,0:a`, `Cannot assemble drivers for root`, `vfs_mountroot: cannot
@@ -2984,7 +2986,8 @@ from the package as installed in the lab image (no own builds), Solaris 10 1/13 
   tree). On the installed disk, `reboot` prints `syncing file systems... done` and `rebooting...`,
   then nothing for 900 s: the VM hangs (1 of 1). `reset-all` at the `ok` prompt does reset the
   machine (the banner comes back, 1 of 1). Resetting from inside the client interface call is what
-  fails; not traced further. So 0012 stays `.wip`.
+  fails; not traced further. So 0012 stayed `.wip`; traced and replaced by 0030 ("The firmware
+  reboot on sun4u").
 - **System MAC:** with `-device sunhme,mac=52:54:00:aa:bb:cc`, Solaris's `hme0` shows `ether
   52:54:0:12:34:56`. QEMU's sun4u writes the MAC of the onboard NIC into the IDPROM. The onboard NIC
   is the first `-nic`/`-net nic` of the default model, created at PCI 01.1 on bus A. A NIC added with
@@ -3270,8 +3273,9 @@ console; installs driven by a scratch wrapper around `solaris-webstart-serial.py
 Installs with 2048 MB and of 9 (original), 8 1/01 and 7 weren't run. What else stood in the way,
 none of it from 0024:
 
-- **The reboot** returns from the firmware (0012, `.wip`): Solaris prints `prom_reboot: reboot call
-  returned!`, panics on it, dumps and exits to `0 >`. For 8's mini-root step that is where the
+- **The reboot** returns from the firmware (0012, `.wip`; fixed since by 0030, "The firmware reboot
+  on sun4u"): Solaris prints `prom_reboot: reboot call returned!`, panics on it, dumps and exits to
+  `0 >`. For 8's mini-root step that is where the
   install continues: `boot disk:b` after `reset-all` panicked the mini-root's kernel (`page_free` ←
   `add_physmem` ← `kphysm_init`; OpenBIOS doesn't clear RAM on reset and the old contents are still
   there), while a fresh QEMU boots `disk:b` and the install goes on. An install target for 8 would
@@ -3312,7 +3316,9 @@ CD on `ide2`, `sunhme`, serial console), End User, through PVE with `lab.py inst
   ebus0 addr 0-ffffffff not configured`). With 0025 the installed 9 9/05's first, reconfiguring boot
   goes through without the rename, and none of the installs prints `Out of range register
   specification from device node <fdthree>` any more.
-- **The reboot** (no firmware change; 0012 stays `.wip`): Solaris's reboot returns (`prom_reboot:
+- **The reboot** (no firmware change then; 0030 has fixed it since, "The firmware reboot on sun4u",
+  and the scenario stops the VM at the firmware's banner and resets for the mini-root instead of
+  power-cycling): Solaris's reboot returns (`prom_reboot:
   reboot call returned!`), the kernel panics and exits to `0 >`. `solaris-webstart-serial.py` waits
   for that prompt (Solaris has synced by then) and, at the end of the install, stops the VM there as
   `sol10-sun4u` does; `install` then ejects the media and boots `ide0`. For 8's reboot into the
@@ -3550,6 +3556,88 @@ valid is accepted.
   (NetBSD, OpenBSD, Solaris 9/10; Tribblix about 22% with `fmd` off; "Idle" above), before them 100%
   for as long as the VM ran.
 - Live migration, backup, snapshots with RAM: not tested for sparc64.
+
+### The firmware reboot on sun4u (OpenBIOS 0030, pve-qemu `wsh/0068`-`0069`, 2026-11-22)
+
+Every system that runs on QEMU's sun4u reboots through the client interface's `boot` service, with
+a boot string: Solaris 7 to 10 (`reboot`, `init 6`, `uadmin`, the installers' reboots: `mdboot()`
+→ `prom_reboot()`), Linux (`machine_restart()` → `prom_reboot()`) and NetBSD/OpenBSD (`OF_boot()`).
+None of them expects it to return. OpenBIOS's `boot` printed `BOOT` and returned: Solaris panicked
+with `prom_reboot: reboot call returned!` and exited to `0 >`, Linux panicked with `Reboot
+failed!` (with `panic=-1` it tried again for ever, which is why wisp's shell refused `reboot` on
+sun4u). OpenBIOS 0012 (`.wip`) made `boot` call `reset-all`, which writes the sabre's reset control
+register (`0x1fe0000f020`, bit 29); QEMU then resets the machine (`qemu_system_reset_request`) and
+the CPU starts the firmware at its reset vector (`prom_addr + 0x20` on QEMU's first reset, `+ 0x40`
+after that). The reset itself worked; the firmware and the next system didn't survive what QEMU's
+reset leaves behind. `cpu_reset()` clears `CPUSPARCState` only up to `end_reset_fields`: SOFTINT,
+the interrupt receive register, the timers' NPT bits, the MMU registers and the TLBs are kept, and
+QEMU never clears RAM on a reset (the TLBs the firmware clears itself). What went wrong, in the
+order the lab found it (scenario `sparc64-reboot.py`, the stored disks, standalone QEMU from the
+published 11.1.3-3+wsh13):
+
+- **A pending soft interrupt.** Solaris 10's `mdboot()` raises the PIL (`spl6`) and the client
+  interface runs with interrupts off (0016), so a level 6 soft interrupt was still set in SOFTINT
+  when the machine reset. `entry` enables interrupts early, the level 6 trap went to `handler_irq`
+  (the firmware's `bug`) and the firmware stopped before its banner: `Unhandled Exception
+  0x0000000000000006`, PC at the instruction after `entry`'s `wrpr ..., %pstate`. That is 0012's
+  hang (its earlier test saw no output in 900 s; here the exception was printed). An interrupt
+  vector received but not taken would have blocked every later interrupt in the same way
+  (`cpu_check_irqs()` returns while the busy bit is set). 0030 clears SOFTINT and the interrupt
+  receive register in `entry`, before interrupts are on.
+- **TICK.NPT.** A power-on reset sets it; the guests clear it. `softint_irq` doesn't re-arm the
+  firmware's 100 Hz timer while NPT is set, so after a power-on the firmware takes one timer
+  interrupt and no more. After a guest's reboot the timer kept firing: into the MMU miss handler at
+  TL 1, whose level 14 vector only retries without clearing SOFTINT, so the CPU spun there
+  (NetBSD's `ofwboot` hung after its banner; `info registers`: PC on the `call` into the miss
+  handler, `tl: 1`, `pstate: 16`), or into the next kernel before it had its own handler (NetBSD's
+  kernel stopped in ddb: `kernel trap 30: data access exception`, `tt=4e`). 0030 sets NPT again in
+  `entry`. At `ok` neither of these is set (the firmware never clears NPT), which is why
+  `reset-all` there worked.
+- **The RAM.** Solaris expects the zeroed RAM of a power-on: after a reset Solaris 10 panicked in
+  `kphysm_init` (`panic[cpu0]/thread=180e000: prom page locked`, `kphysm_erase` ←
+  `diff_memlists` ← `kphysm_init` ← `startup_memlist`) and Solaris 9 in `startup_memlist`, on the
+  page structures of the system before; Solaris 8's mini-root panicked in `page_free` after
+  `reset-all` (above, "Solaris 8 and 9 install targets on sun4u"). 0030 marks the power-on vector
+  (`%l7` 0 at `0x20`, 1 at the others, stored in `sparc64_warm_reset`) and, after any later reset,
+  `openbios()` clears the RAM below the firmware's own (the top of RAM, from `entry.S`), except a
+  kernel and an initrd QEMU loaded with `-kernel`/`-initrd`: QEMU writes those back on every reset
+  (the first version cleared them too, and wisp without `-no-reboot` stopped with `Unhandled
+  Exception 0x10` at `0x40004000` after `Kernel already loaded`). It costs a few seconds per reset
+  (1 GB), none at power-on.
+- **The sabre's PCI control/status registers** (`0x2000`-`0x202f`) kept what Solaris last wrote,
+  its error bits among them, and every Solaris boot after a reset warned `WARNING: pcipsy0: SERR
+  asserted on pci bus` (harmless; never on a power-on). pve-qemu `wsh/0068` clears them in
+  `sabre_reset()`, qtest `sun4u-sabre-reset-test` (`wsh/0069`).
+
+The boot string isn't kept (as on sparc32, "Known gaps"): the firmware boots its boot device again,
+so Solaris 8's `reboot -- disk:b` into its mini-root still needs `auto-boot?` false and `boot disk:b`
+at `0 >`, but no power cycle any more. QEMU's own reset path (QMP `system_reset`, PVE's Reset)
+goes through the same firmware entry, so it gets the same clean state.
+
+Results (2026-11-22, lab host, up to five guests at once; "reboots" = `sparc64-reboot.py` with
+`REBOOTS=3` on a copy of the stored disk, the firmware's banner back and the login prompt again
+after each, in one QEMU process; QEMU is the published 11.1.3-3+wsh13 unless "+0068"):
+
+| Run | Firmware, QEMU | Result |
+| --- | --- | --- |
+| Solaris 10 1/13 (`install-sol10-sun4u`), `reboot` x3 | 0030 | passed: banner 17-19 s after `reboot`, `console login:` again after 390-451 s; `SERR asserted` on each boot after a reset |
+| Solaris 9 9/05 (`install-sol9-sun4u`), `reboot` x3 | 0030 | passed (10-13 s to the banner, ~180 s to login); `SERR` after each reset |
+| Solaris 9 9/05, `reboot` x3 | 0001-0030, +0068 | passed, no `SERR` warning |
+| Solaris 7 3/99 (`install-sol7-sun4u`, 2048 MB), `reboot` x3 | 0001-0030 | passed (10-13 s, ~207 s) |
+| NetBSD 11.1 (`install-netbsd111-sparc64`), `reboot` x3 | 0030 | passed (8 s, ~80 s) |
+| OpenBSD 8.0 (`install-openbsd80-sun4u`), `reboot` x3 | 0030 | passed (21-70 s, ~250 s) |
+| wisp, Linux 7.3 on sun4u: `run.py --shell --reboot` x3, `--shell --tier2 --reboot`; without `-no-reboot` | 0030 | passed: QEMU exits 0 on the reset; without `-no-reboot` wisp boots again |
+| the same with the published firmware | package | failed as before: `Reboot failed!` panics in a loop |
+| `install sol8-sun4u --check` through PVE (the PVE test container, qemu-server 9.2.20+wsh6) | 0030 | passed in 54.8 min (install 2622 s, first boot 375 s, check 265 s): two firmware resets (the mini-root reboot, the end), no power cycle |
+| `matrix.py sparc64`, `matrix.py solaris10` | 0001-0030, +0068 | 10/10, 2/2 |
+| wisp sun4u batch, `--shell`, `--tier2`, `--shell --tier2` | 0030 | all passed |
+| `make check-qtest-sparc64` | 0001-0030 in `pc-bios`, +0068-0069 | 20 OK (`sun4u-sabre-reset-test`, `prom-env-test`, `boot-serial-test` among them), 2 skipped, `qmp-test` fails as before (the PVE patches) |
+
+Before 0030's RAM clear, with only the SOFTINT and NPT fixes, Solaris 9 and 10 reached their
+kernels after a reset and panicked in `startup_memlist`/`kphysm_init`; NetBSD and OpenBSD passed.
+Not tried: Tribblix (illumos uses the same `prom_reboot()`), Solaris 8 from an installed disk
+(no stored disk; its installer's two resets passed), Debian (no installed disk), a reboot with
+more than 3 GB of RAM (the clear covers it, not measured).
 
 ## sparc64: niagara (sun4v)
 
