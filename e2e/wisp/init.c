@@ -33,6 +33,7 @@
  * "wisp=test" runs /test instead, a program that an external initramfs (QEMU's -initrd) adds
  * next to this one, with PID 1's arguments, then prints "WISP-TEST v=1 exit=N signal=N ms=N"
  * and powers off: the wisp-test GitHub Action (.github/actions/wisp-test).
+ * "wisp=run" also announces startup and uses WISP-RUN for the service lifecycle.
  *
  * The same file builds against glibc on the host ("cc -o init-host init.c"),
  * where it is not PID 1: tests/test_shell.py drives that build.
@@ -1236,13 +1237,14 @@ static void shell(void)
 /* Test mode ----------------------------------------------------------------------------------- */
 
 /*
- * wisp=test: run /test (from an external initramfs given with -initrd, which the kernel unpacks
+ * wisp=test and wisp=run: run /test (from an external initramfs given with -initrd, which the kernel unpacks
  * over the built-in one) with PID 1's arguments (what follows "--" on the kernel command line)
  * and environment, wait for it, print one line with how it ended and power off. The wisp-test
  * GitHub Action (.github/actions/wisp-test) reads the line.
  */
-static void test_mode(int argc, char **argv, char **envp)
+static void payload_mode(int argc, char **argv, char **envp, int run)
 {
+	const char *marker = run ? "WISP-RUN" : "WISP-TEST";
 	char *targv[64];
 	unsigned long t0, t1;
 	int i, n = 0, status = 0;
@@ -1252,28 +1254,30 @@ static void test_mode(int argc, char **argv, char **envp)
 	for (i = 1; i < argc && n < 63; i++)
 		targv[n++] = argv[i];
 	targv[n] = NULL;
+	if (run)
+		printf("%s v=1 start\n", marker);
 	fflush(stdout);
 	t0 = clock_ms(CLOCK_MONOTONIC);
 	pid = fork();
 	if (pid == 0) {
 		execve("/test", targv, envp);
-		printf("WISP-TEST-ERROR exec /test failed: errno %d\n", errno);
+		printf("%s-ERROR exec /test failed: errno %d\n", marker, errno);
 		fflush(stdout);
 		_exit(127);
 	}
 	if (pid < 0) {
-		printf("WISP-TEST-ERROR fork failed: errno %d\n", errno);
+		printf("%s-ERROR fork failed: errno %d\n", marker, errno);
 		power(LINUX_REBOOT_CMD_POWER_OFF);
 	}
 	/* PID 1 also reaps whatever /test leaves behind; only /test itself counts */
 	do
 		w = waitpid(-1, &status, 0);
-	while (w > 0 && w != pid);
+	while ((w > 0 && w != pid) || (w < 0 && errno == EINTR));
 	t1 = clock_ms(CLOCK_MONOTONIC);
 	if (w != pid)
-		printf("WISP-TEST-ERROR waitpid failed: errno %d\n", errno);
+		printf("%s-ERROR waitpid failed: errno %d\n", marker, errno);
 	else
-		printf("WISP-TEST v=1 exit=%d signal=%d ms=%lu\n",
+		printf("%s v=1 exit=%d signal=%d ms=%lu\n", marker,
 		       WIFEXITED(status) ? WEXITSTATUS(status) : -1,
 		       WIFSIGNALED(status) ? WTERMSIG(status) : 0, t1 - t0);
 	power(LINUX_REBOOT_CMD_POWER_OFF);
@@ -1302,8 +1306,8 @@ int main(int argc, char **argv, char **envp)
 		sh_loops = loops;
 		shell();
 	}
-	if (mode && strcmp(mode, "test") == 0)
-		test_mode(argc, argv, envp);
+	if (mode && (!strcmp(mode, "test") || !strcmp(mode, "run")))
+		payload_mode(argc, argv, envp, !strcmp(mode, "run"));
 
 	printf("WISP-INFO uname: %s %s %s\n", u.sysname, u.release, u.machine);
 	printf("WISP-INFO cpus: %d memory: %lu kB pid: %d\n", cpus, mem_kb(0), getpid());

@@ -224,6 +224,70 @@ size and boot time. Of the tier-2 growth on sparc32, the IP stack would have bee
 (see "Network"); `config/tier2/common.config` also turns off what `CONFIG_NET` and `CONFIG_BLOCK`
 switch on by default and nothing uses (wireless, PTP, partition tables, extra I/O schedulers, swap).
 
+## Network tier and run mode
+
+`TIER_NET=1` builds `out/<arch>/kernel-net` and saves its resolved `config-net`. It layers
+`config/tier-net/common.config` on the tier-2 fragments, reusing their packet sockets and NIC
+drivers (LANCE on SS-5, e1000 on pc, HME on sun4u). The fragment adds IPv4, kernel DHCP and Unix
+sockets. IPv6, netfilter and wireless are disabled. With `ip=dhcp` the kernel configures the NIC
+from QEMU user networking before starting PID 1.
+
+`wisp=run` starts a service supplied as `/test` in an external initramfs. As in `wisp=test`,
+arguments after `--` and the environment reach the child. PID 1 prints `WISP-RUN v=1 start`,
+reaps children while the service is running, reports its exit code, signal and elapsed
+milliseconds, then powers off.
+
+To build and run from the repository root with a local or remote Docker daemon, use one container
+for the kernels, QEMU and the Python HTTP client. The SDK containers stream the static executables
+into it. Choose an unused container name.
+
+```sh
+docker build -f e2e/wisp/Dockerfile -t wispnet-demo:local .
+vm=wispnet-http-demo
+docker run -d --name "$vm" -e TIER_NET=1 wispnet-demo:local sleep infinity
+docker exec "$vm" ./build.sh sparc32 x86_64
+for arch in sparc32 x86_64; do
+    case "$arch" in
+        sparc32) cc=sparc-buildroot-linux-uclibc-gcc ;;
+        x86_64)  cc=x86_64-buildroot-linux-uclibc-gcc ;;
+    esac
+    sdk=ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20
+    docker run --rm -i "$sdk" sh -ec '"$1" -static -Os -s -x c - -o /tmp/test && cat /tmp/test' sh "$cc" \
+        < e2e/wisp/services/httpd/httpd.c | docker exec -i "$vm" sh -c "cat >/tmp/httpd-$arch"
+    docker exec "$vm" python3 service.py --arch "$arch" --binary "/tmp/httpd-$arch"
+done
+```
+
+`service.py` packs the binary as executable `/test` and forwards a free loopback TCP port to guest
+port 8080. After the listening marker, it checks two HTTP 200 replies containing the guest's Linux
+release, machine and request counters 1 and 2. It then checks the reply to `GET /quit`, PID 1's
+successful exit marker and QEMU's exit status.
+
+For sun4u, build the same service with the Debian cross compiler and static glibc. Run these
+commands in the same shell:
+
+```sh
+docker exec "$vm" ./build.sh sparc64
+docker exec "$vm" sh -ec 'apt-get update -qq && apt-get install -y --no-install-recommends libc6-dev-sparc64-cross'
+docker exec "$vm" sparc64-linux-gnu-gcc -static -Os -s services/httpd/httpd.c -o /tmp/httpd-sparc64
+docker exec "$vm" python3 service.py --arch sparc64 --binary /tmp/httpd-sparc64
+```
+
+After the runs, `docker rm -f "$vm"` removes the builder and its temporary build trees.
+
+Measured with Linux 7.3.4 and QEMU 11.1.3 (TCG, `pve-qemu-kvm_11.1.3-3+wsh11`). Sizes are
+bytes for kernels built with the same PID 1. Listening time is one wall-clock measurement per
+machine, from starting QEMU through DHCP and service startup to the serial readiness marker.
+
+| Target and machine | Service libc | `kernel-t2` | `kernel-net` | Increase | To listening | `uname` machine in both HTTP replies |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| sparc32, SS-5 | uClibc-ng | 3,311,560 | 3,766,312 | 454,752 | 2.730 s | `sparc` |
+| x86_64, pc | uClibc-ng | 1,836,032 | 2,024,448 | 188,416 | 4.217 s | `x86_64` |
+| sparc64, sun4u | glibc | 4,117,384 | 4,583,432 | 466,048 | 2.694 s | `sparc64` |
+
+All three returned HTTP 200 for both root requests (`request=1`, then `request=2`) and
+`bye` for `/quit`. Each printed `WISP-RUN v=1 exit=0 signal=0` and powered off.
+
 ## Test mode: the wisp-test action
 
 `wisp=test` on the kernel command line makes PID 1 run `/test` instead of the batch run: a program
