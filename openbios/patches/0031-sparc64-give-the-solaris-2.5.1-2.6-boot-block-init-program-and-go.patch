@@ -1,0 +1,104 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: give the Solaris 2.5.1/2.6 boot block
+ init-program for code at load-base, and ?go
+
+The sun4u boot block of Solaris 2.5.1 and 2.6 (FCode UFS Reader 1.6 and
+1.10, on slice f of the CDs) reads ufsboot into a buffer of its own,
+copies its ELF segments to their addresses itself, and then evaluates
+"to load-base init-program" with load-base set to the entry point,
+followed by "?go". OpenBIOS's init-program only knows images with a
+header (ELF, a.out, FCode, Forth), so it set nothing up, and there was
+no "?go" at all: the boot block stopped with "?go:" and "byte-load:
+exception caught!" before ufsboot ran. The boot block of Solaris 7 and
+later hands init-program the ELF image itself and isn't affected.
+
+Redefine init-program in the sparc64 dictionary for callers that look it
+up by name (the copy that "load" calls is compiled in already and stays
+as it was): clear state-valid, which a client started with "go" (the
+boot block itself) left set, let the loaders look at load-base as
+before, and if none of them recognised it, take it as code that starts
+at load-base, as OBP does. Add "?go", which starts the program if
+init-program set one up.
+---
+ arch/sparc64/boot.c     |  9 +++++++++
+ arch/sparc64/boot.h     |  1 +
+ arch/sparc64/init.fs    | 24 ++++++++++++++++++++++++
+ arch/sparc64/openbios.c |  1 +
+ 4 files changed, 35 insertions(+)
+
+diff --git a/arch/sparc64/boot.c b/arch/sparc64/boot.c
+index 2534f13..031346b 100644
+--- a/arch/sparc64/boot.c
++++ b/arch/sparc64/boot.c
+@@ -21,6 +21,15 @@ char *boot_device;
+ 
+ extern int sparc64_of_client_interface( int *params );
+ 
++/* init-program for code that a client program has put in memory itself,
++   starting at load-base (the Solaris 2.5.1 and 2.6 boot block, see init.fs) */
++void init_program_at_load_base(void)
++{
++	feval("load-base load-state >ls.entry !");
++	arch_init_program();
++	feval("-1 state-valid !");
++}
++
+ /* ( path len -- path len ) */
+ 
+ void boot(void)
+diff --git a/arch/sparc64/boot.h b/arch/sparc64/boot.h
+index 84a6db1..6e7e0f1 100644
+--- a/arch/sparc64/boot.h
++++ b/arch/sparc64/boot.h
+@@ -21,6 +21,7 @@ extern uint64_t qemu_cmdline;
+ extern uint64_t cmdline_size;
+ extern char *boot_device;
+ extern void boot(void);
++extern void init_program_at_load_base(void);
+ 
+ // sys_info.c
+ extern uint64_t qemu_mem_size;
+diff --git a/arch/sparc64/init.fs b/arch/sparc64/init.fs
+index 2ffcf5a..1dae9a6 100644
+--- a/arch/sparc64/init.fs
++++ b/arch/sparc64/init.fs
+@@ -60,3 +60,27 @@ device-end
+   -1 value vga-driver-fcode
+   " QEMU,VGA.bin" $encode-file to vga-driver-fcode
+ [THEN]
++
++\ The boot block of Solaris 2.5.1 and 2.6 for sun4u (FCode UFS Reader 1.6
++\ and 1.10) reads ufsboot to a buffer of its own, copies its ELF segments
++\ to their addresses itself, and then evaluates "to load-base init-program"
++\ with load-base set to the entry point, and "?go". The firmware's loaders
++\ recognise none of that code, and OpenBIOS had no "?go", so the boot block
++\ stopped with "?go:" and "byte-load: exception caught!". (The boot block of
++\ Solaris 7 and later hands init-program the whole ELF image instead.)
++\
++\ init-program by name (what "load" calls is bound already and unchanged):
++\ what the loaders recognise at load-base as before, otherwise code that
++\ starts at load-base, as OBP does. state-valid is cleared first: a client
++\ running from "go" (the boot block itself) left it set.
++: init-program ( -- )
++  0 state-valid !
++  init-program
++  state-valid @ 0= if
++    \ bound by openbios.c
++    s" (init-program-at-load-base)" $find if execute else 2drop then
++  then
++;
++
++\ Start the program that init-program set up, if there is one
++: ?go ( -- ) state-valid @ if go then ;
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index 55bb3bb..af51d3a 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -850,6 +850,7 @@ arch_init( void )
+         fword("eval");
+ 
+ 	bind_func("platform-boot", boot );
++	bind_func("(init-program-at-load-base)", init_program_at_load_base );
+ }
+ 
+ unsigned long isa_io_base;

@@ -109,6 +109,9 @@ come after that, not before.
 | wisp-test, a GitHub Action for big-endian testing (`.github/actions/wisp-test`, demo idea 2; `e2e/wisp/README.md`, "Test mode"): builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64 (`sun4u`) or x86_64 (the little-endian control), boots it as `/test` in wisp's tier-1 kernel under QEMU from Ubuntu's packages and passes or fails on its exit code or signal (outputs `result`, `exit-code`, `signal-name`, ...). wisp's PID 1 gains `wisp=test`: it runs `/test` from a second initramfs given with `-initrd`, with the arguments after `--`, and prints `WISP-TEST v=1 exit=N signal=N ms=N`. The kernels and the nolibc headers come as a 7 MB kit (`e2e/wisp/kit.sh`) from the `wisp-test-kit` release, which `wisp-test-action.yml` publishes when dispatched with `publish`; on pull requests it tests the action with the run's own kit: an endianness bug (exit code 1 on sparc) and an alignment bug (`SIGBUS` on sparc) that pass on x86_64, their fixes, and the arguments (`wisp-test-action-required` gate, not required). Lab, `ubuntu:24.04` with 2 CPUs: all 11 cases as expected, 1.6-2.6 s from starting QEMU to its exit, 2.3-3.5 s with the build, 12-32 s for a first run with `apt-get install`; also passes in `ubuntu:26.04`. Found: nolibc programs on sparc need PID 1's `_start` fix too; Ubuntu's 32-bit sparc libgcc and glibc are V8+, which the sparc32 kernel refuses, so no 64-bit division on sparc32 | merged | #447 |
 | FreeBSD 12.4 on sun4u (the last release with sparc64; media from ftp-archive.freebsd.org, checksums checked): disc1 and bootonly boot to bsdinstall on ttya in 59 s, no interrupt storm (FreeBSD bug 239068's `vec2016`, the cmd646, doesn't recur); install target `freebsd124-sun4u` (`bsdinstall script` from the installer's shell, kernel and base, VTOC8 on `ada0`; first boot with static or DHCP on `hme0`; check with `vmstat -i`), 14.9 min through PVE with `--check --export` (the lab's QEMU and firmware mounted over the published package's; `matrix_skip` until a package has them). OpenBIOS 0040 (the MMU miss handlers no longer enable interrupts at TL 1: `shutdown -p now` spun there on FreeBSD's pending tick) and 0041 (the trap-state walk skips TL 0, where the fetch used the client's primary context: every FreeBSD reboot and `ofwdump` panicked); pve-qemu `wsh/0100` halts FreeBSD's idle loop (at TL 1, no 100 us poll) and qtest `wsh/0101` (63 cases): idle 105-107% -> 8.7% of a host core, clock, `sleep 1` and CPU-bound work unchanged | in review | |
 | Debian 7.11 "wheezy" on sun4u, the first installed Linux disk on sparc64: lab target `debian7-sun4u` (the sparc64 profile, 512 MB, CD 1 on `ide2`, a preseed answer CD on `ide3` loaded by `preseed/early_command` from SILO's boot line, everything from CD 1: no network, no apt cache; the base system with SSH). SILO 1.4.14 boots the installed kernel and initrd under OpenBIOS unchanged; Linux 3.2 gets DHCP or a static address on `sunhme`, `poweroff` ends QEMU. pve-qemu `wsh/0110`-`0111`: Linux 3.2's `cpu_idle()` (at `%pil` 0) recognised, 100% to 0.1% of a host core at the shell. `wsh/0112`-`0113`: a TB flush on every sun4u reset after the power-on one, as OpenBIOS 0030's RAM clear crawled through pages full of Linux's translated blocks (a reboot took 5-6 minutes to the banner, now 2 s). Through PVE: `pve_matrix.py install` installed and exported it in 68.5 min with the published packages (pve-qemu-kvm 11.1.3-4+wsh4), and boot-tested the stored disk (175 s); stored as `install-debian7-sun4u.raw`. Ubuntu 9.04 server reaches its installer (not installed). Not fixed: Linux 3.2 under TCG retranslates constantly (install ~85 min), and a boot stall seen twice in 25 boots with the halt, in none of 10 without (`submodules/SPARC.md`, "Debian 7 on sun4u") | in review | |
+| 3dfx stage 2 through PVE: the Windows 98 harness gains `--pve CONTAINER` (`win98-test.sh`; `win98_test.py --pve VMID`): the harness runs in the e2e PVE container, `qm create` (`vga: std,mesa=1[,mesa-display=egl-headless]`, the disk copy through a directory storage of the run's own, COM1 and `-d plugin -D <log>` through `args`, which keeps a daemonized QEMU's standard error in the log) and `qm start`; the console is read through the VM's QMP socket (screendump) or PVE's VNC socket (VNC authentication, our own DES; the password set through QMP before each picture, since opening noVNC sets PVE's ticket). The template's device positions keep the new-hardware wizard away: machine version before 11.1 (11.1 adds bridge `pci.4`), `vmgenid: 0`, AC97 at 00:04.0 through `args` (qemu-server's `audio0` sits behind a bridge). Lab, published pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, wsh-openglide 0.5, KVM, `cpu: pentium3`, the i586 guest drivers of `qemu-3dfx-drivers-b94d988`, llvmpipe, `/dev/udmabuf`: egl-headless Glide 2 440-560, Glide 3 640-660, OpenGL 810 frames/s in two runs, every frame as a dmabuf (copies 0.08-0.09 ms Glide, 1.0-1.6 ms OpenGL); read back 1150, 1430 and 440; the scene in the noVNC console with egl-headless, 4 dmabufs open in QEMU. Also: the frame spec (`3dfx-gl-display.spec.ts`) runs in `e2e.yml`, which builds its guest before the suite (`pve-guest-setup.sh` with `PVE_GUEST_FETCH=1` for the submodule, ~40 s; `E2E_3DFX_GUEST=required` fails the spec when that setup failed); GitHub's runners have `/dev/udmabuf`; Proxmox's kernels have `CONFIG_UDMABUF=y`. Found: an older x86-64-v2 drivers zip faults under KVM with PVE's `cpu: pentium3` (`pinsrd`, SSE4.1; the release is i586 now); an OpenGL frame the guest doesn't redraw gives way to the VGA after ~4 s (also without PVE and read back) | merged | #450 |
+| `sol10-sun4u` with `--ip dhcp`: the installer's DHCP screen answered yes (`/etc/dhcp.hme0`), the first boot keeps the host name in `/etc/nodename` and `inet <name>` in `/etc/hostname.hme0` (dhcpagent asks the server for it; Solaris 10 falls back to nodename), `--check` also needs the `DHCP` flag on `hme0`, the router from `dhcpinfo` and a ping of it. Through PVE (published pve-qemu-kvm 11.1.3-4+wsh4, with openbios 0030: the installer's reboot came back at the firmware banner), dnsmasq on the bridge in 10.0.2.0/24: passed in 119.8 min, `hme0` 10.0.2.25 by DHCP, `default 10.0.2.2`, `10.0.2.2 is alive`, host name `sol10-sun4u` (sent by the client and echoed by the server). `e2e/sparc/README.md`, "The Solaris 10 install target" | in review | |
+| Solaris 2.5.1/2.6 boot block on sun4u: their FCode boot block (UFS Reader 1.6/1.10) copies ufsboot's ELF segments into place itself, then evaluates `to load-base init-program` with `load-base` at the entry point and `?go`; OpenBIOS's `init-program` recognised nothing there and had no `?go` (`?go:`, `byte-load: exception caught!`). openbios 0031: `init-program` looked up by name takes unrecognised code at `load-base` as the program (as OBP), `?go` starts it. Both CDs are Ultra 5/10 media (their mini-roots have `SUNW,Ultra-5_10`, `uata`, `dad`, `atapicd`), so QEMU's machine class fits. With 0031 both kernels start and stop further on: 2.6 can't assemble the root drivers for the CD (`vfs_mountroot`), 2.5.1 traps before its banner on an unmapped page of its nucleus data (item 2 under "Next"). `submodules/SPARC.md`, "Solaris 2.5.1 and 2.6 on sun4u: the boot block" | in review | |
 
 ## In progress
 
@@ -127,8 +130,12 @@ merged; what is left of them is item 2 under "Next".
    - after the firmware reboot (Done): Tribblix's reboot not tried; the reboot's boot string is
      still dropped (Solaris 8's mini-root needs `auto-boot?` false and `boot disk:b`; the `sparc64`
      matrix case `nb111-reboot-bootstr-sparc64` only checks that such a reboot comes back);
-   - `sol10-sun4u` with `--ip dhcp` is not tested through the tool; Solaris 2.5.1/2.6 boot-block
-     exceptions;
+   - Solaris 2.5.1 and 2.6 (Ultra 5/10 media, so QEMU's machine class fits): with openbios 0031
+     (Done) their boot block starts ufsboot and the kernels run, then stop. 2.5.1 traps before its
+     banner (`Unhandled Exception 0x30` in `sfmmu_add_nucleus_hblks`, on the unmapped page past its
+     data segment that OBP would map as part of a 4 MB page; next: trace ufsboot's `claim`/`map`).
+     2.6 can't mount root from the CD (`Cannot assemble drivers for root .../cdrom@2,0:b`, no attach
+     line; suspect: the sabre's `pci` driver failing its attach on OpenBIOS's two-entry `reg`);
    - Tribblix: with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first
      attempts that ZFS retries, no data errors; a UFS install, `ROOT_FS=ufs`, hasn't been booted);
      the live CD's package catalogue is older than its packages (a Tribblix issue); 257 minutes
@@ -285,7 +292,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide done, MESA GL in review; the rest ~1 week).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering, Glide gamma as a shader).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -389,11 +396,15 @@ merged; what is left of them is item 2 under "Next".
        no D-Bus client yet) and a real game over time; double buffering instead of holding
        frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
        wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
-       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms refresh cap; whether GitHub's
-       runners have `/dev/udmabuf` (`qemu-3dfx-check.yml` runs the new modes only then); the
-       `3dfx in Windows 98` workflow has an `egl` display now but installs the published
-       wsh-openglide, so until one with the exports is published its Glide frames are read back.
-       - **PVE: the display of a 3dfx VM (in review).** qemu-server: `vga: ...,mesa=1,mesa-display=`
+       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms
+       refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
+       4 s after its last swap (seen in Windows 98 with a long hold: egl-headless and read back alike,
+       with and without PVE; a held Glide frame stays). Settled since: GitHub's runners have
+       `/dev/udmabuf` (`qemu-3dfx-check.yml` ran the `egl` and `dbus` modes there, all frames as
+       dmabufs, run of 2026-11-22); the published wsh-openglide has had the exports since 0.5 (cut
+       from #425 itself, 2026-11-21; the `3dfx in Windows 98` runs that read Glide back predate it),
+       and the Windows 98 runs through PVE below sent Glide as dmabufs with the published packages.
+       - **PVE: the display of a 3dfx VM (merged, #431).** qemu-server: `vga: ...,mesa=1,mesa-display=`
          `none|egl-headless` (default `none`: no `-display`, frames read back, as before);
          `egl-headless` adds `-display egl-headless` next to PVE's `-vnc`, so noVNC keeps working.
          Refused at create and update without the 3dfx binary (`mesa=1` on the host's
@@ -411,9 +422,10 @@ merged; what is left of them is item 2 under "Next".
          `e2e/3dfx/test.sh` through `qm start` (`e2e/3dfx/pve-guest-setup.sh` puts it in the
          container) and checks the frame in the noVNC console, read back and with egl-headless (4
          open dmabufs against 1); QEMU, run with PVE's command line in the foreground, said "frames
-         to the graphic console as a dmabuf" (944 frames/s). Left: CI runs the frame spec only
-         where the guest was set up (no workflow does that yet), a GPU node, Windows 98 through
-         PVE with egl-headless, the PVE kernel's `CONFIG_UDMABUF` (checked on Ubuntu's only).
+         to the graphic console as a dmabuf" (944 frames/s). Left: a GPU node. Done since (see the
+         Done table): Windows 98 through PVE with egl-headless, the frame spec in CI, and the PVE
+         kernel's `CONFIG_UDMABUF` (`=y` in the published configs of `proxmox-kernel-7.0.14-30-pve`,
+         the default, and `7.3.5-1-pve`).
      - **Stage 3: the streaming client (~3-4 weeks).** A D-Bus listener in the Wolf/Sunshine
        container imports the dmabuf into the encoder; input through the D-Bus Keyboard/Mouse
        interfaces.

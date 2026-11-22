@@ -6,7 +6,8 @@
 #
 #   e2e/3dfx/pve-guest-setup.sh [CONTAINER]     (default: $PVE_CONTAINER, else wsh-pve-e2e)
 #
-# Runs on the Docker host, from the repository root (submodules/qemu-3dfx checked out). In the
+# Runs on the Docker host, from the repository root (submodules/qemu-3dfx checked out, or fetched
+# here with PVE_GUEST_FETCH=1, as e2e.yml does before the Playwright run). In the
 # container it installs gcc, the i386 libc, cpio and linux-image-amd64 with apt (network needed) and
 # leaves:
 #
@@ -21,8 +22,13 @@ set -eu
 container=${1:-${PVE_CONTAINER:-wsh-pve-e2e}}
 top=$(cd "$(dirname "$0")/../.." && pwd)
 q3=submodules/qemu-3dfx
+if [ ! -f "$top/$q3/wrappers/3dfx/dso/glidedso.c" ] && [ "${PVE_GUEST_FETCH:-}" = 1 ]; then
+    # CI (e2e.yml): the checkout has no submodules; qemu-3dfx's is public, over https
+    echo "pve-guest-setup: fetching $q3 (PVE_GUEST_FETCH=1)"
+    git -C "$top" submodule update --init --depth 1 "$q3"
+fi
 [ -f "$top/$q3/wrappers/3dfx/dso/glidedso.c" ] || {
-    echo "pve-guest-setup: $q3 isn't checked out (git submodule update --init $q3)" >&2
+    echo "pve-guest-setup: $q3 isn't checked out (git submodule update --init $q3, or PVE_GUEST_FETCH=1)" >&2
     exit 2
 }
 
