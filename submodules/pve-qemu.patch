@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..6db4390 100644
+index bc240a0..68d84b0 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,83 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,85 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -157,6 +157,8 @@ index bc240a0..6db4390 100644
 +wsh/0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u.patch
 +wsh/0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-.patch
 +wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
++wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
++wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -16313,6 +16315,817 @@ index 0000000..4761fe6
 +         0x9412a001,             /* or    %o2, 1, %o2         MMU on */
 +         0xd4a00080,             /* sta   %o2, [%g0] 4 */
 +         0x07004004,             /* sethi %hi(0x01001000), %g3 */
+diff --git a/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
+new file mode 100644
+index 0000000..c5b21aa
+--- /dev/null
++++ b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
+@@ -0,0 +1,425 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: raise pi and pmi when the codec gets
++ there
++
++The APC takes its samples up to 50 ms ahead of the codec's clock, and it
++set PI (next buffer taken) and PMI (pipe empty) at that moment. A buffer
++that fits in one audio callback, or an interrupt that the guest takes
++late, then showed both bits in one interrupt. On the real chip PMI
++follows PI by the time the buffer takes to play.
++
++SunOS 4.1.4's audio_4231_cintr looks at PMI before PI and acts on PMI
++only after a PI has found no next buffer to load. With both set at once
++it skips the PMI, the PI ends playback, and the PMI has been cleared
++with it: the last buffers are never marked played and a process in
++AUDIO_DRAIN sleeps for ever. SimCity for HyperLook's audiomixer does
++that after a few sound effects, and OpenWindows stops taking input
++("xnews: Warning: input queue lock broken!").
++
++The samples are still taken ahead, but PI is now raised when the codec
++clock gets to the start of the buffer and PMI when it has played the
++last one, from a timer. PMI also waits until the driver has cleared an
++enabled PI, and is not raised when a next buffer was loaded before the
++pipe ran dry. PD (next registers free) shows with the PI and not when
++the samples are taken, so that a driver that loads on PD gets one PI
++for each buffer. After a gap the codec goes on from the end of what it
++still had to play. Turning the DMA off and a reset drop what was due;
++a pause holds it.
++
++With the PI at its right time a driver loads the next buffer only when
++the codec starts on the last one, and a buffer shorter than the audio
++callback's period (10 ms) was then taken too late every time: 5 ms of
++sound, 5 ms of nothing. So a buffer loaded while the codec still plays
++the end of the one before is taken at once, and the codec's clock
++starts when its first samples are taken, not when playback is turned
++on.
++
++The times of a PI or PMI still due are migrated in a subsection, sent
++only while one is due, and the timer is set again after the load:
++without it a migration or loadvm in that window would lose the PMI and
++bring the same hang back. A stream without the subsection loads as
++before, with nothing due.
++
++Tested in a sparc-softmmu build on Linux: sun4m-cs4231-test passes with
++the cases of the next commit, and its short-buffer case fails without
++this change (PI and PMI together). In SunOS 4.1.4 on the SS-5 with a wav
++audiodev, a program that writes 1, 40 or 100 bytes to /dev/audio and
++calls AUDIO_DRAIN, or 4000 bytes and then 1 or 40, hung at once without
++this change and runs every round with it; 200, 512 and 4000 bytes run
++in both. Two seconds of sound written 40 bytes at a time play in 2.01
++to 2.03 s, and in 2.01 s in pieces of 80 to 16000 bytes; without this
++change the pieces of 160 bytes and more took 1.89 to 1.96 s and the
++shorter ones hung. SimCity for HyperLook was played for some minutes
++with sound on a Windows host with an earlier version of this change,
++which still had the gaps after short buffers.
++Not tested: SimCity with this version, NetBSD, Solaris, and a migration
++from a build without this change.
++
++Origin: https://github.com/hwinther/lemu/commit/ff412bc835386f6a30ff4492886e934a54c0f9b0
++---
++ hw/audio/cs4231.c | 211 ++++++++++++++++++++++++++++++++++++++++------
++ 1 file changed, 186 insertions(+), 25 deletions(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index ac0fd73..1208461 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -49,6 +49,16 @@
++  * the driver turns the DMA off, so that the audiodev still plays what was
++  * taken: turning it off at once drops the last 50 ms of every sound.
++  *
+++ * The interrupts are not raised when the samples are taken but when the
+++ * codec clock gets to that point, as on the real chip: PI when the
+++ * codec starts on the next buffer, PMI when it has played the last one.
+++ * PMI also waits until the driver has cleared the PI before it. SunOS
+++ * 4.1.4's audio_4231_cintr looks at PMI before PI and acts on PMI only
+++ * after a PI has found no next buffer to load; when both come in one
+++ * interrupt it drops the PMI, the last buffers are never marked played,
+++ * and a process in AUDIO_DRAIN (SimCity's audiomixer) sleeps for ever.
+++ * Taking a short buffer ahead would raise both at once.
+++ *
++  * Capture is not done: its registers keep what is written, and the
++  * capture pipe always reads as empty.
++  */
++@@ -154,6 +164,10 @@ struct CSState {
++     int64_t play_start;     /* QEMU_CLOCK_VIRTUAL ns */
++     uint64_t play_units;    /* taken since play_start */
++     int64_t play_drain;     /* the voice stays on until then */
+++    int64_t play_end;       /* what was taken has been played by then */
+++    int64_t pi_at;          /* PI is due then, or -1 */
+++    int64_t pmi_at;         /* PMI is due then, or -1 */
+++    QEMUTimer *irq_timer;   /* raises them when they are due */
++ };
++ 
++ #define CS_RAP(s) ((s)->regs[CS_IAR] & CS_MAXDREG)
++@@ -200,8 +214,15 @@ static uint32_t cs_read_csr(CSState *s)
++     if (csr & APC_INTS) {
++         csr |= APC_IP;
++     }
++-    if (!s->play_next) {
+++    /*
+++     * The next registers are free when the codec gets to the buffer
+++     * taken from them, with its PI: a driver that loads on PD would
+++     * otherwise load one more before that PI, and lose a PI.
+++     */
+++    if (!s->play_next && s->pi_at < 0) {
++         csr |= APC_PD;
+++    }
+++    if (!s->play_next) {
++         if (s->regs[CS_PC] == 0) {
++             csr |= APC_PM;
++         }
++@@ -225,19 +246,80 @@ static void cs_update_irq(CSState *s)
++     qemu_set_irq(s->irq, level);
++ }
++ 
++-/* The current playback buffer is done: take the next one, if any. */
+++/* units a second: one sample of each channel, two for ADPCM */
+++static uint64_t cs_play_rate(CSState *s)
+++{
+++    return s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
+++}
+++
+++/* Raise the PI and PMI that are due, and set the timer for the others */
+++static void cs_play_irqs(CSState *s)
+++{
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++    int64_t next = INT64_MAX;
+++    uint32_t csr = s->regs[CS_CSR];
+++    bool pi_pending;
+++
+++    /* paused: nothing moves on until the driver lets it go again */
+++    if (cs_play_go(s)) {
+++        if (s->pi_at >= 0) {
+++            if (now >= s->pi_at) {
+++                s->regs[CS_CSR] |= APC_PI;
+++                s->pi_at = -1;
+++            } else {
+++                next = s->pi_at;
+++            }
+++        }
+++        /* PMI after the driver has taken the PI before it */
+++        pi_pending = s->pi_at >= 0 ||
+++                     ((s->regs[CS_CSR] & APC_PI) &&
+++                      (csr & APC_IE) && (csr & APC_PIE));
+++        /* a buffer loaded in time keeps the pipe from running empty */
+++        if (s->pmi_at >= 0 && !pi_pending && !s->play_next) {
+++            if (now >= s->pmi_at) {
+++                s->regs[CS_CSR] |= APC_PMI;
+++                s->pmi_at = -1;
+++                trace_cs4231_play_empty();
+++            } else {
+++                next = MIN(next, s->pmi_at);
+++            }
+++        }
+++    }
+++    if (next != INT64_MAX) {
+++        timer_mod(s->irq_timer, next);
+++    } else {
+++        timer_del(s->irq_timer);
+++    }
+++    cs_update_irq(s);
+++}
+++
+++static void cs_irq_timer(void *opaque)
+++{
+++    cs_play_irqs(opaque);
+++}
+++
+++/*
+++ * The current playback buffer is done: take the next one, if any. The
+++ * codec gets to this point when it has played what was taken before.
+++ */
++ static void cs_play_next(CSState *s)
++ {
+++    int64_t at = MAX(s->play_end, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+++
++     if (s->play_next) {
++         s->regs[CS_PVA] = s->regs[CS_PNVA];
++         s->regs[CS_PC] = s->regs[CS_PNC];
++         s->play_next = false;
++-        s->regs[CS_CSR] |= APC_PI;
+++        /* loaded before the pipe ran empty: no PMI, the PI then */
+++        s->pmi_at = -1;
+++        if (s->pi_at < 0) {
+++            s->pi_at = at;
+++        }
++         trace_cs4231_play_next(s->regs[CS_PVA], s->regs[CS_PC]);
++     } else {
++-        s->regs[CS_CSR] |= APC_PMI;
++-        trace_cs4231_play_empty();
+++        s->pmi_at = at;
++     }
+++    cs_play_irqs(s);
++ }
++ 
++ /* Playback stopped: let the audiodev play what was taken ahead */
++@@ -253,7 +335,9 @@ static void cs_play_update(CSState *s)
++     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++ 
++     if (run && !s->play_running) {
++-        s->play_start = now;
+++        /* the codec goes on after what it still has to play */
+++        s->play_start = MAX(now, s->play_end);
+++        s->play_end = s->play_start;
++         s->play_units = 0;
++     } else if (!run && s->play_running) {
++         cs_play_stopped(s, now);
++@@ -355,29 +439,24 @@ static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
++     }
++ }
++ 
++-/* The audiodev has room for avail bytes: feed it from the DMA buffers. */
++-static void cs_audio_callback(void *opaque, int avail)
+++/* Feed the audiodev, which has room for room bytes, from the DMA buffers. */
+++static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
++ {
++-    CSState *s = opaque;
++     uint8_t in[1024];
++     int16_t out[2048];
++     uint32_t unit_in, unit_out;
++-
++-    uint32_t room = MAX(avail, 0);
++     uint64_t rate, due, budget;
++-    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++    int64_t ahead;
++ 
++-    if (!s->play_running) {
++-        /* stopped: the voice is on only to play out the last samples */
++-        if (now >= s->play_drain) {
++-            audio_be_set_active_out(s->audio_be, s->voice, false);
++-        }
++-        return;
+++    /* the codec starts when it asks for its first samples: now */
+++    if (s->play_units == 0 && now > s->play_start) {
+++        s->play_start = now;
+++        s->play_end = now;
++     }
++-    /* units a second: one sample of each channel, two for ADPCM */
++-    rate = s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
++-    due = muldiv64(now - s->play_start,
++-                   rate, NANOSECONDS_PER_SECOND) + rate / 20;
+++    /* up to 50 ms ahead of the codec, which may start in the future */
+++    rate = cs_play_rate(s);
+++    ahead = now - s->play_start + NANOSECONDS_PER_SECOND / 20;
+++    due = ahead > 0 ? muldiv64(ahead, rate, NANOSECONDS_PER_SECOND) : 0;
++     budget = due > s->play_units ? due - s->play_units : 0;
++ 
++     cs_play_units(s, &unit_in, &unit_out);
++@@ -391,7 +470,6 @@ static void cs_audio_callback(void *opaque, int avail)
++                 break;
++             }
++             cs_play_next(s);
++-            cs_update_irq(s);
++             continue;
++         }
++         if (pc < unit_in) {
++@@ -419,10 +497,11 @@ static void cs_audio_callback(void *opaque, int avail)
++             room -= units * unit_out;
++             budget -= units;
++             s->play_units += units;
+++            s->play_end = s->play_start +
+++                muldiv64(s->play_units, NANOSECONDS_PER_SECOND, rate);
++         }
++         if (s->regs[CS_PC] == 0) {
++             cs_play_next(s);
++-            cs_update_irq(s);
++         }
++     }
++     /* after a gap the clock starts again with the next buffer */
++@@ -431,6 +510,22 @@ static void cs_audio_callback(void *opaque, int avail)
++     }
++ }
++ 
+++/* The audiodev has room for avail bytes */
+++static void cs_audio_callback(void *opaque, int avail)
+++{
+++    CSState *s = opaque;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    if (!s->play_running) {
+++        /* stopped: the voice is on only to play out the last samples */
+++        if (now >= s->play_drain) {
+++            audio_be_set_active_out(s->audio_be, s->voice, false);
+++        }
+++        return;
+++    }
+++    cs_play_feed(s, MAX(avail, 0), now);
+++}
+++
++ /* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
++ static uint8_t cs_dac_level(uint8_t reg)
++ {
++@@ -490,6 +585,10 @@ static void cs_reset(DeviceState *d)
++     s->play_next = false;
++     s->play_running = false;
++     s->play_drain = 0;
+++    s->play_end = 0;
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
+++    timer_del(s->irq_timer);
++     cs_play_setup(s);
++     cs_play_update(s);
++ }
++@@ -530,7 +629,8 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++ {
++     CSState *s = opaque;
++     uint32_t saddr, csr;
++-    bool was_go;
+++    bool was_go, feed;
+++    int64_t now;
++ 
++     saddr = addr >> 2;
++     trace_cs4231_mem_writel_reg(saddr, s->regs[saddr], val);
++@@ -583,8 +683,12 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++             /* playback DMA off: drop what it still had */
++             s->regs[CS_PC] = 0;
++             s->play_next = false;
+++            s->pi_at = -1;
+++            s->pmi_at = -1;
++         }
++         cs_play_update(s);
+++        /* a PMI may have waited for this PI to be cleared */
+++        cs_play_irqs(s);
++         break;
++     case CS_PC:
++         s->regs[saddr] = val;
++@@ -594,7 +698,22 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++         /* the count loads the next buffer; a count of 0 unloads it */
++         s->regs[saddr] = val;
++         s->play_next = val != 0;
+++        now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++        feed = s->play_next && s->regs[CS_PC] == 0 && now < s->play_end;
++         cs_play_update(s);
+++        /*
+++         * Loaded while the codec still plays the end of the last buffer:
+++         * take it now, for the codec to go on without a gap. At the next
+++         * audio callback a buffer shorter than the callback's period
+++         * would be late every time. The PI comes when the codec gets to
+++         * it. After the pipe ran dry the codec asks again at the next
+++         * callback, as after PEN.
+++         */
+++        if (feed && s->voice && s->play_running) {
+++            cs_play_feed(s, UINT32_MAX, now);
+++        }
+++        /* a PMI still due waits while a next buffer is loaded */
+++        cs_play_irqs(s);
++         break;
++     default:
++         s->regs[saddr] = val;
++@@ -608,6 +727,17 @@ static const MemoryRegionOps cs_mem_ops = {
++     .endianness = DEVICE_BIG_ENDIAN,
++ };
++ 
+++/* without the subsection nothing is due */
+++static int cs_pre_load(void *opaque)
+++{
+++    CSState *s = opaque;
+++
+++    s->play_end = 0;
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
+++    return 0;
+++}
+++
++ static int cs_post_load(void *opaque, int version_id)
++ {
++     CSState *s = opaque;
++@@ -616,19 +746,47 @@ static int cs_post_load(void *opaque, int version_id)
++     s->play_drain = 0;
++     cs_play_setup(s);
++     cs_play_update(s);
+++    /* a PI or PMI still due: set the timer again */
+++    cs_play_irqs(s);
++     return 0;
++ }
++ 
+++/* A PI or PMI still due must come after a migration, or AUDIO_DRAIN hangs */
+++static bool cs_irqs_needed(void *opaque)
+++{
+++    CSState *s = opaque;
+++
+++    return s->pi_at >= 0 || s->pmi_at >= 0;
+++}
+++
+++static const VMStateDescription vmstate_cs4231_irqs = {
+++    .name = "cs4231/irqs",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = cs_irqs_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_INT64(play_end, CSState),
+++        VMSTATE_INT64(pi_at, CSState),
+++        VMSTATE_INT64(pmi_at, CSState),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const VMStateDescription vmstate_cs4231 = {
++     .name ="cs4231",
++     .version_id = 2,
++     .minimum_version_id = 1,
+++    .pre_load = cs_pre_load,
++     .post_load = cs_post_load,
++     .fields = (const VMStateField[]) {
++         VMSTATE_UINT32_ARRAY(regs, CSState, CS_REGS),
++         VMSTATE_UINT8_ARRAY(dregs, CSState, CS_DREGS),
++         VMSTATE_BOOL_V(play_next, CSState, 2),
++         VMSTATE_END_OF_LIST()
+++    },
+++    .subsections = (const VMStateDescription * const []) {
+++        &vmstate_cs4231_irqs,
+++        NULL
++     }
++ };
++ 
++@@ -641,6 +799,9 @@ static void cs4231_init(Object *obj)
++                           CS_SIZE);
++     sysbus_init_mmio(dev, &s->iomem);
++     sysbus_init_irq(dev, &s->irq);
+++    s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cs_irq_timer, s);
+++    s->pi_at = -1;
+++    s->pmi_at = -1;
++ }
++ 
++ static void cs4231_realize(DeviceState *dev, Error **errp)
+diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
+new file mode 100644
+index 0000000..9009ba5
+--- /dev/null
++++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
+@@ -0,0 +1,374 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the cs4231's pi and pmi for a short
++ buffer on sun4m
++
++short-buffer plays one buffer of 40 bytes (5 ms): the first interrupt
++must be PI alone, PMI must not come while PI is not cleared, and must
++come at once when it is. short-tail plays 800 bytes and then 40: the
++PI for the short buffer must come when the long one has played, without
++PMI, and PMI a few ms after that PI is cleared.
++
++load-on-pd loads a third buffer as soon as PD shows, without waiting
++for a PI: there must be three PIs for the three buffers and one PMI.
++short-chain loads 20 buffers of 40 bytes, each at the PI of the one
++before: they must play in their 100 ms.
++migrate saves the machine to a file while the PI of a 40 byte buffer is
++set and PMI waits behind it, loads it in a second QEMU and clears the
++PI there: PMI must still come.
++
++playback now also expects the second PI and the PMI no earlier than
++80 ms after the interrupt before them: they come when the codec has
++played the 100 ms buffer, not when the samples are taken.
++
++SunOS 4.1.4's driver needs PI and PMI in two interrupts, see the
++previous commit.
++
++Tested: all seven pass, three runs. Without the previous commit
++short-buffer fails: PI and PMI are set together (0x00408000). Against
++earlier versions of the previous commit load-on-pd fails without its PD
++change (two PIs for three buffers), migrate without its subsection (PMI
++never comes), and short-chain without the take at load (the pipe runs
++empty after the second buffer).
++
++Origin: https://github.com/hwinther/lemu/commit/fefb0f0f55b3321b2efa52c9a0ae8f2e17c953a2
++---
++ tests/qtest/sun4m-cs4231-test.c | 299 +++++++++++++++++++++++++++++++-
++ 1 file changed, 297 insertions(+), 2 deletions(-)
++
++diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
++index 8875e1b..21904ca 100644
++--- a/tests/qtest/sun4m-cs4231-test.c
+++++ b/tests/qtest/sun4m-cs4231-test.c
++@@ -20,6 +20,7 @@
++ #include "qemu/osdep.h"
++ #include "libqtest.h"
++ #include "qemu/bswap.h"
+++#include "qobject/qdict.h"
++ 
++ /* SPARCstation 5 */
++ #define CS_BASE         0x6c000000ULL
++@@ -197,7 +198,7 @@ static void test_playback(void)
++ 
++     /* It takes the second one when the first has played: about 100 ms */
++     t2 = wait_csr(qts, APC_PI, 300);
++-    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, >=, 80);
++     g_assert_cmpint(t2, <=, 130);
++     g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==,
++                     BUF_DVMA + BUF2_OFFSET);
++@@ -207,7 +208,7 @@ static void test_playback(void)
++ 
++     /* No third buffer: the pipe runs empty when the second has played */
++     t2 = wait_csr(qts, APC_PMI, 300);
++-    g_assert_cmpint(t2, >=, 40);
+++    g_assert_cmpint(t2, >=, 80);
++     g_assert_cmpint(t2, <=, 130);
++     csr = qtest_readl(qts, APC_CSR);
++     g_assert_cmphex(csr & (APC_IP | APC_PM | APC_PD), ==,
++@@ -260,12 +261,306 @@ static void test_stop_reset(void)
++     qtest_quit(qts);
++ }
++ 
+++/*
+++ * A short sound, as SimCity's audiomixer writes them: one buffer of 40
+++ * bytes (5 ms). SunOS's interrupt handler looks at PMI before PI and acts
+++ * on PMI only after a PI has found nothing more to load, so the two must
+++ * come in two interrupts: PI first, PMI only after PI has been cleared
+++ * and the codec has played the buffer. Before the fix both were set in
+++ * the same audio callback.
+++ */
+++#define SHORT_LEN       40
+++
+++static void test_short_buffer(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++
+++    /* The first interrupt: PI alone */
+++    for (ms = 0; ms < 100; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (csr & (APC_PI | APC_PMI)) {
+++            break;
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_cmpint(ms, <, 100);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++
+++    /* While the driver has not cleared PI, no PMI, however long */
+++    qtest_clock_step(qts, 50 * 1000 * 1000);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PMI);
+++
+++    /*
+++     * PI cleared, nothing more loaded: the buffer has long been played,
+++     * so PMI comes at once, as an interrupt of its own
+++     */
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_cmpint(wait_csr(qts, APC_PMI, 20), ==, 0);
+++    csr = qtest_readl(qts, APC_CSR);
+++    g_assert_cmphex(csr & (APC_IP | APC_PI | APC_PM), ==, APC_IP | APC_PM);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A long buffer and then a short one: the short one's PI comes when the
+++ * codec gets to it, and its PMI not before the codec has played it.
+++ */
+++static void test_short_tail(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[BUF_LEN];
+++    int64_t t_pi, t_pmi;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, SHORT_LEN);
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++
+++    /* PI for the 5 ms buffer when the 100 ms one has played, PMI apart */
+++    t_pi = wait_csr(qts, APC_PI, 300);
+++    g_assert_cmpint(t_pi, >=, 80);
+++    g_assert_false(qtest_readl(qts, APC_CSR) & APC_PMI);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    t_pmi = wait_csr(qts, APC_PMI, 100);
+++    g_assert_cmpint(t_pmi, >=, 3);
+++    g_assert_cmpint(t_pmi, <=, 20);
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A driver that loads the next buffer as soon as the next registers are
+++ * free (PD), without waiting for the PI: 800 bytes, then 40, then 40 more
+++ * when PD shows. Each buffer taken must give a PI of its own, so PD must
+++ * not show before the PI of the buffer that was taken.
+++ */
+++static void test_load_on_pd(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[BUF_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++    int npi = 0, npmi = 0;
+++    bool loaded = false;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOPTE_TABLE + 4, ((BUF_RAM + BUF2_OFFSET) >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM + BUF2_OFFSET, buf, SHORT_LEN);
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    npi++;
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++
+++    for (ms = 0; ms < 400; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (!loaded && (csr & APC_PD) && !(csr & APC_PI)) {
+++            /* the same 40 bytes once more */
+++            qtest_writel(qts, APC_PNVA, BUF_DVMA + BUF2_OFFSET);
+++            qtest_writel(qts, APC_PNC, SHORT_LEN);
+++            loaded = true;
+++        }
+++        if (csr & APC_PI) {
+++            npi++;
+++            qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++        }
+++        if (csr & APC_PMI) {
+++            npmi++;
+++            qtest_writel(qts, APC_CSR, APC_PMI | APC_ENABLES);
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_true(loaded);
+++    g_assert_cmpint(npi, ==, 3);
+++    g_assert_cmpint(npmi, ==, 1);
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A stream of short buffers, each loaded when the PI for the one before
+++ * comes: 20 times 40 bytes are 100 ms of sound and must play in that
+++ * time, one after the other. Taken only at the audio callbacks, every
+++ * 10 ms, each 5 ms buffer was followed by 5 ms of nothing.
+++ */
+++#define CHAIN_BUFS      20
+++
+++static void test_short_chain(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int64_t ms;
+++    int loaded = 1;
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, SHORT_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++
+++    for (ms = 0; ms < 400; ms++) {
+++        csr = qtest_readl(qts, APC_CSR);
+++        if (csr & APC_PMI) {
+++            break;
+++        }
+++        if (csr & APC_PI) {
+++            /* never with the PMI: that is short-buffer's case */
+++            qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++            if (loaded < CHAIN_BUFS) {
+++                qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++                qtest_writel(qts, APC_PNC, SHORT_LEN);
+++                loaded++;
+++            }
+++        }
+++        qtest_clock_step(qts, 1000 * 1000);
+++    }
+++    g_assert_cmpint(loaded, ==, CHAIN_BUFS);
+++    g_assert_cmpint(ms, >=, 95);
+++    g_assert_cmpint(ms, <=, 125);
+++    qtest_quit(qts);
+++}
+++
+++static void migrate_to_file(QTestState *qts, const char *uri)
+++{
+++    QDict *rsp;
+++    const char *status;
+++    int i;
+++
+++    qtest_qmp_assert_success(qts, "{'execute': 'migrate',"
+++                             " 'arguments': {'uri': %s}}", uri);
+++    for (i = 0; i < 3000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-migrate'}");
+++        status = qdict_haskey(rsp, "status") ? qdict_get_str(rsp, "status")
+++                                             : "";
+++        if (!strcmp(status, "completed")) {
+++            qobject_unref(rsp);
+++            return;
+++        }
+++        g_assert_cmpstr(status, !=, "failed");
+++        qobject_unref(rsp);
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/*
+++ * A migration in the middle of a short sound: the 40 bytes have been
+++ * taken and PI is set, the driver has not cleared it yet, and PMI waits
+++ * behind it. On the other side the PI is cleared, and PMI must still
+++ * come: SunOS's AUDIO_DRAIN sleeps until it does.
+++ */
+++static void test_migrate(void)
+++{
+++    g_autofree char *path = NULL;
+++    g_autofree char *uri = NULL;
+++    QTestState *src, *dst;
+++    uint8_t buf[SHORT_LEN];
+++    uint32_t csr;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.mig", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    uri = g_strdup_printf("file:%s", path);
+++
+++    src = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(src, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(src, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(src, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(src, BUF_RAM, buf, sizeof(buf));
+++    codec_write(src, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(src, APC_PNVA, BUF_DVMA);
+++    qtest_writel(src, APC_PNC, SHORT_LEN);
+++    qtest_writel(src, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(src, CS_ICONF, CS_PEN);
+++    wait_csr(src, APC_PI, 100);
+++    csr = qtest_readl(src, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++    migrate_to_file(src, uri);
+++    qtest_quit(src);
+++
+++    dst = qtest_initf("-machine SS-5,audiodev=snd0 -audiodev none,id=snd0 "
+++                      "-incoming %s", uri);
+++    qtest_qmp_eventwait(dst, "RESUME");
+++    csr = qtest_readl(dst, APC_CSR);
+++    g_assert_cmphex(csr & (APC_PI | APC_PMI), ==, APC_PI);
+++    g_assert_true(level_pending(dst, CS_LEVEL));
+++
+++    /* The driver clears the PI; the buffer plays out, then PMI */
+++    qtest_writel(dst, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_cmpint(wait_csr(dst, APC_PMI, 100), <=, 20);
+++    g_assert_true(level_pending(dst, CS_LEVEL));
+++    qtest_quit(dst);
+++    unlink(path);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++ 
++     qtest_add_func("sun4m-cs4231/playback", test_playback);
++     qtest_add_func("sun4m-cs4231/stop-reset", test_stop_reset);
+++    qtest_add_func("sun4m-cs4231/short-buffer", test_short_buffer);
+++    qtest_add_func("sun4m-cs4231/short-tail", test_short_tail);
+++    qtest_add_func("sun4m-cs4231/load-on-pd", test_load_on_pd);
+++    qtest_add_func("sun4m-cs4231/short-chain", test_short_chain);
+++    qtest_add_func("sun4m-cs4231/migrate", test_migrate);
++ 
++     return g_test_run();
++ }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
