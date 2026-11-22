@@ -740,6 +740,147 @@ test.describe('the SPARCstation LX (its own PROM, serial console)', () => {
   })
 })
 
+// The SPARCserver 600MP with OpenBIOS (submodules/SPARC.md, "Supported profiles"), for SunOS 4.1.2:
+// OpenBIOS only and one CPU (Sun's 600MP PROM and 4.1.2's start of a second CPU need a Ross RT625
+// module, which QEMU doesn't have), at most 1024 MB (the wizard presets 256), no sound. CI runs
+// against the published packages: the profile needs a qemu-server that has it (probed once, skipped
+// otherwise; an older one refuses the machine name itself), and QEMU starting it a pve-qemu-kvm with
+// wsh/0063-0065 (the lebuffer).
+test.describe('the SPARCserver 600MP (OpenBIOS, one CPU)', () => {
+  let hasSs600mp = false
+  let qemuHasLebuffer = false
+
+  test.beforeAll(async () => {
+    hasSs600mp = (await pveExec(['grep', '-q', "'SS-600MP'", '/usr/share/perl5/PVE/QemuServer/Machine.pm'])).code === 0
+    const dma = await pveExec(['sh', '-c', 'qemu-system-sparc -device sparc32-dma,help 2>&1 | grep -q lebuffer-size'])
+    qemuHasLebuffer = dma.code === 0
+  })
+
+  const SS600MP = {
+    arch: 'sparc',
+    machine: 'SS-600MP',
+    memory: 256,
+    net0: 'lance,bridge=vmbr0',
+    ostype: 'other',
+    scsi3: 'local:0.0625,format=raw',
+    scsi6: `${ISO},media=cdrom`,
+  }
+
+  for (const [name, extra, display] of [
+    ['vga serial0 (the lab target)', { serial0: 'socket', vga: 'serial0' }, '-nographic'],
+    ['no display set: cg3', {}, '-vga cg3'],
+    ['tcx', { vga: 'tcx' }, '-vga tcx'],
+  ] as const) {
+    test(`SS-600MP, OpenBIOS, 256 MB, ${name}: qm showcmd, and QEMU accepts it`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the SS-600MP
+      test.skip(!hasSs600mp, 'the installed qemu-server has no SS-600MP profile yet')
+      const vmid = await createVm({ ...SS600MP, name: 'sparc-ss600mp', ...extra })
+      const mac = MAC.exec(await vmConfFile(vmid))?.[1]
+
+      const cmd = await showcmd(vmid)
+      expect(cmd).toMatch(/^\/usr\/bin\/qemu-system-sparc \\$/m)
+      expect(cmd).toContain("-machine 'accel=tcg,type=SS-600MP+pve0'")
+      expect(cmd).toContain('-m 256')
+      expect(cmd).toContain("-smp '1,sockets=1,cores=1,maxcpus=1'")
+      expect(cmd).toContain(display)
+      expect(cmd).toContain(`-net 'nic,model=lance,macaddr=${mac}`)
+      expect(cmd).toContain("-device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,")
+      expect(cmd).toMatch(/-device 'scsi-cd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,[^']*physical_block_size=512'/)
+      // OpenBIOS is the default firmware (no -bios), the CPU the machine's own SuperSPARC (no -cpu)
+      for (const absent of ['-bios', '-cpu', 'usb-tablet', 'virtio-balloon', 'vmgenid', 'isa-serial', 'audiodev'])
+        expect(cmd).not.toContain(absent)
+
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published pve-qemu-kvm has wsh/0063-0065
+      test.skip(!qemuHasLebuffer, 'the installed pve-qemu-kvm has no SS-600MP lebuffer (wsh/0064), QEMU not started')
+      const qemu = await qemuAccepts(vmid)
+      expect(qemu.code, qemu.output).toBe(0)
+    })
+  }
+
+  const ROSS = "a Ross RT625 module, which QEMU doesn't have"
+  const refusals: { name: string; params: Record<string, number | string>; message: string }[] = [
+    {
+      message:
+        "sparc: firmware (bios) 'ss5.bin' is not supported on SS-600MP (Sun's 600MP PROM needs a Ross RT625 CPU module, which QEMU doesn't have), use one of: openbios-sparc32",
+      name: 'a Sun PROM (ss5.bin)',
+      params: { ...SS600MP, bios: 'ss5.bin' },
+    },
+    {
+      message: "sparc: firmware (bios) 'ss20_v2.25_rom' is not supported on SS-600MP (Sun's 600MP PROM needs",
+      name: 'the SS-20 PROM',
+      params: { ...SS600MP, bios: 'ss20_v2.25_rom' },
+    },
+    {
+      message: `sparc: SS-600MP with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2 (SunOS 4.1.2 starts a second CPU only on ${ROSS})`,
+      name: 'two sockets',
+      params: { ...SS600MP, sockets: 2 },
+    },
+    {
+      message: 'sparc: SS-600MP with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 4',
+      name: 'four cores',
+      params: { ...SS600MP, cores: 4 },
+    },
+    {
+      message: 'sparc: SS-600MP takes at most 1024 MB of memory, not 2048',
+      name: 'more than 1024 MB',
+      params: { ...SS600MP, memory: 2048 },
+    },
+    {
+      message:
+        'sparc: audio0 is not supported on SS-600MP, the machine has no sound chip; only SS-5 has sound (device cs4231)',
+      name: 'audio (no sound chip)',
+      params: { ...SS600MP, audio0: 'device=cs4231,driver=none' },
+    },
+    {
+      message: "sparc: machine 'SS-4' is not supported, use one of: LX, SS-10, SS-20, SS-5, SS-600MP",
+      name: 'a machine without a profile lists the SS-600MP',
+      params: { machine: 'SS-4', memory: 256 },
+    },
+  ]
+
+  for (const c of refusals) {
+    test(`create refused: ${c.name}`, async () => {
+      // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the SS-600MP
+      test.skip(!hasSs600mp, 'the installed qemu-server has no SS-600MP profile yet')
+      const vmid = Number(await pve.get<string>('/cluster/nextid'))
+      const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
+      expect(refused.message).toContain(c.message)
+      const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
+      expect(code, 'no config is left behind').not.toBe(0)
+    })
+  }
+
+  test('create refused by an older qemu-server: the machine name itself', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- only meaningful while the published qemu-server predates the profile
+    test.skip(hasSs600mp, 'the installed qemu-server has the SS-600MP profile')
+    const vmid = Number(await pve.get<string>('/cluster/nextid'))
+    const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { vmid, ...SS600MP })
+    // qemu-server 9.2.20+wsh6: "machine.type: value does not match the regex pattern"
+    expect(refused.message).toContain('machine')
+    expect(refused.message).toContain('does not match the regex pattern')
+  })
+
+  test('update: an SS-20 with two CPUs becomes an SS-600MP only with one CPU', async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has the SS-600MP
+    test.skip(!hasSs600mp, 'the installed qemu-server has no SS-600MP profile yet')
+    const vmid = await createVm({
+      arch: 'sparc',
+      cores: 2,
+      machine: 'SS-20',
+      memory: 512,
+      name: 'sparc-ss600mp-update',
+    })
+    const config = `/nodes/${NODE}/qemu/${vmid}/config`
+    expect((await pve.refused('PUT', config, { machine: 'SS-600MP' })).message).toContain(
+      'sparc: SS-600MP with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2',
+    )
+    await pve.put(config, { delete: 'cores', machine: 'SS-600MP' })
+    const conf = await vmConfFile(vmid)
+    for (const line of ['machine: SS-600MP', 'memory: 512']) expect(conf).toContain(line)
+    expect(await showcmd(vmid)).toContain("type=SS-600MP+pve0'")
+  })
+})
+
 test.describe('backup and restore', () => {
   /** Fills the first 4 MB of the VM's scsi3 disk with random data, returns the image's sha256. */
   async function fillDisk(vmid: number): Promise<string> {
@@ -1114,15 +1255,18 @@ test.describe('the lab runs the same machines', () => {
 })
 
 test.describe('web UI', () => {
-  /** The sparc32 machines the installed pve-manager offers (the LX since its profile). */
+  /** The sparc32 machines the installed pve-manager offers (the SS-600MP and LX since their profiles). */
   let machinesOffered = ['Default (SS-5)', 'SS-10', 'SS-20']
   let uiHasLx = false
+  let uiHasSs600mp = false
   /** Whether the installed pve-manager hides EFI Disk and TPM State on sparc. */
   let uiHidesFwDisks = false
 
   test.beforeAll(async () => {
     const js = '/usr/share/pve-manager/js/pvemanagerlib.js'
     uiHasLx = (await pveExec(['grep', '-q', 'SPARCstation LX PROM', js])).code === 0
+    uiHasSs600mp = (await pveExec(['grep', '-q', "'SS-600MP'", js])).code === 0
+    if (uiHasSs600mp) machinesOffered = [...machinesOffered, 'SS-600MP']
     if (uiHasLx) machinesOffered = [...machinesOffered, 'LX']
     uiHidesFwDisks = await pveManagerHidesSparcFwDisks()
   })
@@ -1246,6 +1390,60 @@ test.describe('web UI', () => {
     expect(cmd).toContain('type=LX+pve0')
     expect(cmd).toContain('-bios lx.bin')
     expect(cmd).toContain('-nographic')
+  })
+
+  test('create wizard: SS-600MP, OpenBIOS only, one CPU, 256 MB preset and 1024 at most', async ({ page }) => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published pve-manager has the SS-600MP
+    test.skip(!uiHasSs600mp, 'the installed pve-manager has no SS-600MP profile yet')
+    const vmid = Number(await pve.get<string>('/cluster/nextid'))
+    const wizard = await openWizard(page, 'sparc-ui-ss600mp')
+
+    await pickCombo(page, wizard, 'vCPU Architecture', 'SPARC (32-bit)')
+    await next(wizard)
+    await wizard.getByText('Do not use any media').click()
+    await pickCombo(page, wizard, 'Type', 'Other')
+    await next(wizard)
+
+    // System: from the SS-5 PROM, picking SS-600MP goes back to OpenBIOS, its only firmware
+    await pickCombo(page, wizard, 'BIOS', 'SPARCstation 5 PROM')
+    await pickCombo(page, wizard, 'Machine', 'SS-600MP')
+    await expect(wizard.getByLabel(fieldLabel('BIOS'))).toHaveValue('Default (OpenBIOS)')
+    expect(await comboOptions(page, wizard, 'BIOS')).toEqual(['Default (OpenBIOS)'])
+    await pickCombo(page, wizard, 'Graphic card', 'Serial terminal 0')
+    await next(wizard)
+
+    await expect(wizard.getByText('scsi3', { exact: true })).toBeVisible()
+    await next(wizard)
+
+    // CPU: one; Memory: preset to 256 MB (what SunOS 4.1.2 was tested with), capped at 1024
+    await expect(wizard.getByLabel(fieldLabel('Sockets'))).toBeDisabled()
+    await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeDisabled()
+    await next(wizard)
+    const memory = wizard.getByLabel(fieldLabel('Memory (MiB)'))
+    await expect(memory).toHaveValue('256')
+    await memory.fill('2048')
+    await expect(wizard.getByRole('button', { name: 'Next' })).toBeDisabled()
+    await memory.fill('1024')
+    await expect(wizard.getByRole('button', { name: 'Next' })).toBeEnabled()
+    await memory.fill('256')
+    await next(wizard)
+
+    await expect(wizard.getByLabel(fieldLabel('Model'))).toHaveValue(/Lance/)
+    await next(wizard)
+
+    await wizard.getByRole('button', { name: 'Finish' }).click()
+    await expect.poll(async () => (await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])).code).toBe(0)
+    await expect.poll(async () => (await vmConfFile(vmid)).includes('lock: create'), { timeout: 30_000 }).toBe(false)
+
+    const conf = await vmConfFile(vmid)
+    for (const line of ['arch: sparc', 'machine: SS-600MP', 'memory: 256', 'serial0: socket', 'vga: serial0'])
+      expect(conf).toMatch(new RegExp(`^${line}$`, 'm'))
+    expect(conf).not.toMatch(/^(bios|cpu): /m)
+    expect(conf).not.toMatch(/^(sockets|cores): (?!1$)/m)
+    const cmd = await showcmd(vmid)
+    expect(cmd).toContain('type=SS-600MP+pve0')
+    expect(cmd).toContain('-nographic')
+    expect(arg(cmd, '-bios')).toBeUndefined()
   })
 
   test("Hardware: the LX's display editor offers a serial console or none", async ({ page }) => {

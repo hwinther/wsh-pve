@@ -1,0 +1,8 @@
+# Build context is the repository root (submodules included), so send only what the image uses.
+*
+!web/scripts/
+!submodules/pve-qemu.patch
+!repo/conf/wsh-pve.gpg.key
+!e2e/wisp/
+e2e/wisp/out/
+e2e/wisp/build/

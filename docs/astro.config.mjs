@@ -30,6 +30,7 @@ export default defineConfig({
             { label: "Dial-up modem", slug: "guides/dialup" },
             { label: "Retro net", slug: "guides/retronet" },
             { label: "wisp (tiny test system)", slug: "guides/wisp" },
+            { label: "Browser SPARC", slug: "guides/browser-sparc" },
           ],
         },
         {

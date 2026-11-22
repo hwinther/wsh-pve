@@ -34,6 +34,7 @@ config change and on start) with a message naming the allowed values, and the wi
 | SS-20 | OpenBIOS | the machine's | 1 (default) to 4 | up to 512 MB |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | 1 | up to 512 MB |
 | LX | `lx.bin` only (see [The SPARCstation LX](#the-sparcstation-lx)) | the machine's | 1 | up to 128 MB |
+| SS-600MP | OpenBIOS only (see [The SPARCserver 600MP](#the-sparcserver-600mp)) | the machine's | 1 | up to 1024 MB |
 
 CPUs are sockets × cores (any split; Solaris sees each as a CPU module of its own, see
 [More than one CPU](#more-than-one-cpu)). Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
@@ -59,6 +60,26 @@ network device, `lance`. The LX takes a serial console on `serial0` (its default
 - No OpenBIOS, no sound (its DBRI isn't emulated), one CPU, at most 128 MB (the microSPARC-I's
   limit). A disk installed on another SPARCstation doesn't boot on the LX (its SCSI controller is in
   another SBus slot): install on the LX.
+
+### The SPARCserver 600MP
+
+`machine: SS-600MP` is the first sun4m machine, for SunOS 4.1.2 (its first release), under OpenBIOS.
+It needs `pve-qemu-kvm` 11.1.3-3+wsh13 or later (the 600MP's VMEbus registers and the buffer memory
+its network chip works in, and the device names 4.1.2 looks for) and a qemu-server and pve-manager
+with the SS-600MP profile. The lab target `sunos412-ss600mp` installs it (see [Lab
+install](/guides/lab-install/)).
+
+- **OpenBIOS only, one CPU:** the real machine has Ross RT625 CPU modules, which QEMU doesn't
+  emulate (it gives the machine a SuperSPARC). Sun's own 600MP boot PROM needs one, and so does
+  4.1.2's start of a second CPU (CPU 1 panics), so a Sun PROM or more than one CPU is refused with
+  that reason, and the wizard offers neither.
+- **Memory:** 4.1.2 boots with 256 MB to 2 GB; up to 1024 MB is allowed, the wizard presets 256.
+- **Console:** 4.1.2 was tested on the serial console (`vga: serial0`; its `getty` sends even
+  parity in bit 7, so set your terminal to 7 bits). OpenBIOS also draws on cg3 and TCX; 4.1.2 on a
+  framebuffer wasn't tried.
+- No sound (the machine has no sound chip), one network device (the built-in lance). The disk is
+  found under OpenBIOS's `dma` node on this machine only, so install on the SS-600MP rather than
+  moving a disk from another machine type (not tried).
 
 ### Installing Sun boot PROMs with wsh-sun-proms
 
@@ -124,7 +145,7 @@ Hardware editors offer only it.
 
 ## Recommended hardware layout
 
-- **Machine** — `SS-5`, `SS-10` or `SS-20` for sparc, `sun4u` for sparc64 (see [Machine](/reference/machine/)). With packages up to 11.1.3-2+wsh7, Solaris on `SS-5` runs most user programs 4-10 times slower than on `SS-20` (or `SS-10`); packages with the SS-5 TLB fix (pve-qemu patch 0017) run them equally fast on all three, existing SS-5 installs included. An `SS-20` needs its own install on that machine type.
+- **Machine** — `SS-5`, `SS-10` or `SS-20` for sparc (the LX and SS-600MP are for their own guests, above), `sun4u` for sparc64 (see [Machine](/reference/machine/)). With packages up to 11.1.3-2+wsh7, Solaris on `SS-5` runs most user programs 4-10 times slower than on `SS-20` (or `SS-10`); packages with the SS-5 TLB fix (pve-qemu patch 0017) run them equally fast on all three, existing SS-5 installs included. An `SS-20` needs its own install on that machine type.
 - **BIOS / firmware** — OpenBIOS is the easiest and most reliable choice. Of the Sun PROMs, `ss5.bin` runs on SS-5 and `ss20_v2.25_rom` on SS-20 (see [BIOS](/reference/bios/)); the SS-10 PROM doesn't run on QEMU's SS-10 and isn't offered.
 - **Processor / memory** — one CPU by default; up to 4 on SS-10 and SS-20 with OpenBIOS (see [More than one CPU](#more-than-one-cpu)), one on SS-5, on SS-20 with the Sun PROM and on sparc64 (QEMU's sun4u has one). RAM: at most 256 MB on SS-5 (QEMU refuses more); on SS-10 and SS-20 at most 512 MB (Solaris 2.6 panics at boot with more). The CPU model follows the machine and BIOS (see [Processors](/reference/processors/)).
 - **Disk** — sparc: SCSI bus only. sparc64: the built-in IDE (see [the sparc64 profile](#the-sparc64-profile));
@@ -766,7 +787,8 @@ on sun4u".
   512 MB on SS-10/SS-20.
 - Of the Sun PROMs only `ss5.bin` (SS-5), `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) and
   `lx.bin` (LX, serial console only) are supported; the SS-10 PROM doesn't run on QEMU's
-  SS-10.
+  SS-10, and the SS-600MP's needs a Ross RT625 CPU module QEMU doesn't have (OpenBIOS and one CPU
+  only there).
 - With `pve-qemu-kvm` up to 11.1.3-2+wsh25, a BEL on a cg3/TCX console with OpenBIOS hangs Solaris and SunOS with
   the screen inverted (bash's completion bell); see [The bell on a framebuffer
   console](#the-bell-on-a-framebuffer-console) for the workaround.

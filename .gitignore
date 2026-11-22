@@ -6,3 +6,4 @@ repo/incoming/*
 repo/pool/*
 repo-incoming/*
 docs/src/data/packages.json
+web/dist/

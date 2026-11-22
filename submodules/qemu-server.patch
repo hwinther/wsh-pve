@@ -1569,7 +1569,7 @@ index 5efe7736..58c48918 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..5f05d1d8 100644
+index 960af5a9..e8234376 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1591,7 +1591,7 @@ index 960af5a9..5f05d1d8 100644
          type => 'string',
          pattern =>
 -            '(pc|pc(-i440fx)?-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|q35|pc-q35-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|virt(?:-\d+(\.\d+)+)?(\+pve\d+)?)',
-+            '(pc|pc(-i440fx)?-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|q35|pc-q35-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|virt(?:-\d+(\.\d+)+)?(\+pve\d+)?|(?:sun4[a-z]|SS-\d{1,2}|LX)(?:\+pve\d+)?)',
++            '(pc|pc(-i440fx)?-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|q35|pc-q35-\d+(\.\d+)+(\+pve\d+)?(\.pxe)?|virt(?:-\d+(\.\d+)+)?(\+pve\d+)?|(?:sun4[a-z]|SS-\d{1,2}|SS-600MP|LX)(?:\+pve\d+)?)',
          maxLength => 40,
          format_description => 'machine type',
          optional => 1,
@@ -1636,7 +1636,7 @@ index 960af5a9..5f05d1d8 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +166,488 @@ sub default_machine_for_arch {
+@@ -135,6 +166,514 @@ sub default_machine_for_arch {
      return $machine;
  }
  
@@ -1650,6 +1650,8 @@ index 960af5a9..5f05d1d8 100644
 +# SS-20 have a DBRI, which QEMU doesn't emulate.
 +# 'displays': the displays (vga) the machine takes, the first being the default; without it cg3 (the
 +# default), tcx, none, serial0 and serial1.
++# 'why': per refusal ('firmware', 'cpus', 'audio'), why the machine takes no other firmware, no more
++# CPUs or no audio0, for the message; without it the generic one.
 +# pve-manager mirrors this table in PVE.qemu.Architecture.sparc32Profiles (www/manager6/qemu/Architecture.js).
 +our $SPARC32_PROFILES = {
 +    'SS-5' => {
@@ -1685,6 +1687,24 @@ index 960af5a9..5f05d1d8 100644
 +        'max-memory' => 128,
 +        displays => [qw(serial0 none)],
 +        firmware => { 'lx.bin' => { 'max-cpus' => 1 } },
++    },
++    # The SPARCserver 600MP with OpenBIOS, for SunOS 4.1.2 (its first release), which needs
++    # pve-qemu-kvm with wsh patches 0063-0065 and openbios patch 0028 (11.1.3-3+wsh13): the VMEbus
++    # interface registers its kernel sets up before the banner, the lance's own buffer memory (the
++    # lebuffer) and the node names 4.1.2 looks for (dma, lebuffer). QEMU gives it the SS-10's
++    # SuperSPARC; the real machine has Ross RT625 modules, which QEMU doesn't model: Sun's own 600MP
++    # PROM needs one, and so does 4.1.2's start of a second CPU (CPU 1 panics in check_cpuid), so
++    # OpenBIOS and one CPU only. 4.1.2 installs with 64 MB and boots with 256 MB to 2 GB under QEMU;
++    # 1024 MB is the most offered. No sound chip (SPARC.md, "Older Sun releases on sun4m").
++    'SS-600MP' => {
++        'max-memory' => 1024,
++        firmware => { 'openbios-sparc32' => { 'max-cpus' => 1 } },
++        why => {
++            firmware => "Sun's 600MP PROM needs a Ross RT625 CPU module, which QEMU doesn't have",
++            cpus => "SunOS 4.1.2 starts a second CPU only on a Ross RT625 module, which QEMU"
++                . " doesn't have",
++            audio => 'the machine has no sound chip',
++        },
 +    },
 +};
 +our $SPARC32_DEFAULT_FIRMWARE = 'openbios-sparc32';
@@ -1761,6 +1781,7 @@ index 960af5a9..5f05d1d8 100644
 +        my $hint = '';
 +        $hint = " (the SS-10 PROM doesn't run on QEMU's SS-10; ss20_v2.25_rom runs on SS-20)"
 +            if $bios eq 'ss10_v2.25_rom';
++        $hint = " ($profile->{why}->{firmware})" if $profile->{why} && $profile->{why}->{firmware};
 +        die "sparc: firmware (bios) '$bios' is not supported on $machine$hint, use one of: "
 +            . $join->(keys $profile->{firmware}->%*) . "\n";
 +    }
@@ -1783,6 +1804,7 @@ index 960af5a9..5f05d1d8 100644
 +            if $bios ne $SPARC32_DEFAULT_FIRMWARE
 +            && defined($openbios_max)
 +            && $openbios_max > $max_cpus;
++        $hint = " ($profile->{why}->{cpus})" if $profile->{why} && $profile->{why}->{cpus};
 +        die "sparc: $machine with firmware $bios takes at most $max_cpus "
 +            . ($max_cpus == 1 ? 'CPU' : 'CPUs')
 +            . " (sockets x cores), not $cpus$hint\n";
@@ -1817,9 +1839,13 @@ index 960af5a9..5f05d1d8 100644
 +        if PVE::QemuServer::Agent::parse_guest_agent($conf->{agent})->{enabled};
 +
 +    if (my $audio = PVE::QemuServer::conf_has_audio($conf)) {
++        my $no_audio =
++            $profile->{why} && $profile->{why}->{audio}
++            ? $profile->{why}->{audio}
++            : "its sound chip (DBRI) isn't emulated";
 +        my $chip = $profile->{audio}
-+            or die "sparc: audio0 is not supported on $machine, its sound chip (DBRI) isn't"
-+            . " emulated; only SS-5 has sound (device cs4231)\n";
++            or die "sparc: audio0 is not supported on $machine, $no_audio; only SS-5 has sound"
++            . " (device cs4231)\n";
 +        die "sparc: audio device '$audio->{dev}' is not supported on $machine, use $chip"
 +            . " (built in)\n"
 +            if $audio->{dev} ne $chip;
@@ -2125,7 +2151,7 @@ index 960af5a9..5f05d1d8 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +682,7 @@ my sub machine_base_type {
+@@ -169,6 +708,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -2133,7 +2159,7 @@ index 960af5a9..5f05d1d8 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +819,44 @@ sub machine_version_cmp {
+@@ -305,11 +845,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -2142,7 +2168,7 @@ index 960af5a9..5f05d1d8 100644
 +    my $version = get_machine_version($machine_type, $vmid);
 +
 +The version (C<major.minor+pveN>) that C<$machine_type> runs at, for the checks that depend on it.
-+QEMU's sparc machines (sun4m's C<SS-5>, C<SS-10>, C<SS-20> and C<LX>, and C<sun4u>) have no
++QEMU's sparc machines (sun4m's C<SS-5>, C<SS-10>, C<SS-20>, C<SS-600MP> and C<LX>, and C<sun4u>) have no
 +versioned variants: they run at the version of the QEMU binary, which is also what
 +C<config_to_command> uses for them. For those this is the version of the QEMU that runs VM C<$vmid> (QMP C<query-version>), or of the
 +installed QEMU when no VMID is given. Dies if there is no version, rather than letting C<min_version>
@@ -2154,7 +2180,7 @@ index 960af5a9..5f05d1d8 100644
 +    my ($machine_type, $vmid) = @_;
 +
 +    my $qemu_version;
-+    if (defined($machine_type) && $machine_type =~ m/^(?:SS-\d+|sun4[a-z]|LX)(?:\+pve\d+)?$/) {
++    if (defined($machine_type) && $machine_type =~ m/^(?:SS-\d+(?:MP)?|sun4[a-z]|LX)(?:\+pve\d+)?$/) {
 +        if (defined($vmid)) {
 +            my $res = PVE::QemuServer::Monitor::mon_cmd($vmid, 'query-version');
 +            $qemu_version = "$res->{qemu}->{major}.$res->{qemu}->{minor}.$res->{qemu}->{micro}";
@@ -2180,7 +2206,7 @@ index 960af5a9..5f05d1d8 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +866,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +892,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -2203,7 +2229,7 @@ index 960af5a9..5f05d1d8 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +1052,7 @@ sub get_power_state_flags {
+@@ -508,6 +1078,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -2211,7 +2237,7 @@ index 960af5a9..5f05d1d8 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +1060,7 @@ sub get_power_state_flags {
+@@ -515,6 +1086,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -3211,12 +3237,12 @@ index 00000000..0025a125
 +  -machine 'accel=tcg,type=LX+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-machine-error.conf b/src/test/cfg2cmd/sparc32-machine-error.conf
 new file mode 100644
-index 00000000..d8aab610
+index 00000000..40478b87
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-machine-error.conf
 @@ -0,0 +1,5 @@
 +# TEST: a machine without a profile is refused
-+# EXPECT_ERROR: sparc: machine 'SS-4' is not supported, use one of: LX, SS-10, SS-20, SS-5
++# EXPECT_ERROR: sparc: machine 'SS-4' is not supported, use one of: LX, SS-10, SS-20, SS-5, SS-600MP
 +arch: sparc
 +machine: SS-4
 +memory: 256
@@ -4038,6 +4064,104 @@ index 00000000..0adc2b09
 +  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
 +  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:01,netdev=net0' \
 +  -machine 'accel=tcg,type=SS-5+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-audio-error.conf b/src/test/cfg2cmd/sparc32-ss600mp-audio-error.conf
+new file mode 100644
+index 00000000..128f79a9
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-audio-error.conf
+@@ -0,0 +1,6 @@
++# TEST: audio is refused on the SS-600MP (no sound chip)
++# EXPECT_ERROR: sparc: audio0 is not supported on SS-600MP, the machine has no sound chip; only SS-5 has sound (device cs4231)
++arch: sparc
++audio0: device=cs4231,driver=none
++machine: SS-600MP
++memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-memory-error.conf b/src/test/cfg2cmd/sparc32-ss600mp-memory-error.conf
+new file mode 100644
+index 00000000..58599d3d
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-memory-error.conf
+@@ -0,0 +1,5 @@
++# TEST: more than 1024 MB on the SS-600MP is refused
++# EXPECT_ERROR: sparc: SS-600MP takes at most 1024 MB of memory, not 2048
++arch: sparc
++machine: SS-600MP
++memory: 2048
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf b/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf
+new file mode 100644
+index 00000000..6a02a383
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf
+@@ -0,0 +1,12 @@
++# TEST: sparc32 SPARCserver 600MP with OpenBIOS (SunOS 4.1.2's profile): one CPU, 256 MB, the console on ttya, the lance MAC from net0
++arch: sparc
++boot: order=scsi3
++machine: SS-600MP
++memory: 256
++name: sunos412-ss600mp
++net0: lance=BC:24:11:B2:46:09,bridge=vmbr0
++ostype: other
++scsi3: local:8006/vm-8006-disk-0.raw,size=3G
++scsi6: local:iso/zero.iso,media=cdrom,size=112M
++serial0: socket
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf.cmd b/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf.cmd
+new file mode 100644
+index 00000000..4cb1976e
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-openbios.conf.cmd
+@@ -0,0 +1,27 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sunos412-ss600mp \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 256 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -object '{"id":"throttle-drive-scsi6","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,bootindex=100,write-cache=on' \
++  -blockdev '{"driver":"throttle","file":{"cache":{"direct":false,"no-flush":false},"driver":"raw","file":{"aio":"io_uring","cache":{"direct":false,"no-flush":false},"driver":"file","filename":"/var/lib/vz/template/iso/zero.iso","node-name":"e0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"f0c8688164cff17ba74310f48bf3731","read-only":true},"node-name":"drive-scsi6","read-only":true,"throttle-group":"throttle-drive-scsi6"}' \
++  -device 'scsi-cd,channel=0,scsi-id=6,lun=0,drive=drive-scsi6,id=scsi6,device_id=drive-scsi6,physical_block_size=512' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:09,netdev=net0' \
++  -machine 'accel=tcg,type=SS-600MP+pve0'
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-prom-error.conf b/src/test/cfg2cmd/sparc32-ss600mp-prom-error.conf
+new file mode 100644
+index 00000000..eb5c9031
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-prom-error.conf
+@@ -0,0 +1,6 @@
++# TEST: the SS-600MP runs OpenBIOS only (Sun's 600MP PROM needs a Ross RT625 module)
++# EXPECT_ERROR: sparc: firmware (bios) 'ss5.bin' is not supported on SS-600MP (Sun's 600MP PROM needs a Ross RT625 CPU module, which QEMU doesn't have), use one of: openbios-sparc32
++arch: sparc
++bios: ss5.bin
++machine: SS-600MP
++memory: 256
+diff --git a/src/test/cfg2cmd/sparc32-ss600mp-smp-error.conf b/src/test/cfg2cmd/sparc32-ss600mp-smp-error.conf
+new file mode 100644
+index 00000000..3e87debd
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss600mp-smp-error.conf
+@@ -0,0 +1,6 @@
++# TEST: the SS-600MP takes one CPU (SunOS 4.1.2 starts a second only on a Ross RT625 module)
++# EXPECT_ERROR: sparc: SS-600MP with firmware openbios-sparc32 takes at most 1 CPU (sockets x cores), not 2 (SunOS 4.1.2 starts a second CPU only on a Ross RT625 module, which QEMU doesn't have)
++arch: sparc
++machine: SS-600MP
++memory: 256
++sockets: 2
 diff --git a/src/test/cfg2cmd/sparc32-tpmstate-error.conf b/src/test/cfg2cmd/sparc32-tpmstate-error.conf
 new file mode 100644
 index 00000000..8f0d1658
@@ -5494,15 +5618,15 @@ index 332d7802..e802993f 100755
          if (!$err) {
 diff --git a/src/test/run_machine_version_tests.pl b/src/test/run_machine_version_tests.pl
 new file mode 100644
-index 00000000..049450bd
+index 00000000..62df4d53
 --- /dev/null
 +++ b/src/test/run_machine_version_tests.pl
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,98 @@
 +#!/usr/bin/perl
 +
 +# The version a machine type runs at (PVE::QemuServer::Machine::get_machine_version) and the checks
 +# built on it. A running VM's machine type comes from QMP 'query-machines': the sparc machines
-+# (sun4m's SS-5/SS-10/SS-20, sun4u) have no version in it, they run at the QEMU version.
++# (sun4m's SS-5/SS-10/SS-20/SS-600MP/LX, sun4u) have no version in it, they run at the QEMU version.
 +
 +use strict;
 +use warnings;
@@ -5541,6 +5665,8 @@ index 00000000..049450bd
 +    ['SS-5+pve0', 100, '10.1+pve0'],
 +    ['SS-5', undef, '11.1+pve0'],
 +    ['SS-20+pve0', undef, '11.1+pve0'],
++    ['SS-600MP+pve0', undef, '11.1+pve0'],
++    ['SS-600MP+pve0', 100, '10.1+pve0'],
 +    ['sun4u+pve0', undef, '11.1+pve0'],
 +    ['sun4u+pve0', 100, '10.1+pve0'],
 +    ['pc', undef, undef],
