@@ -147,6 +147,9 @@ GUESTS = {
     "solaris10": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "lab12345", "POWEROFF": "init 5",
                   "FIRSTBOOT": r"Configure Keyboard Layout",
                   "COMMANDS": "uname -a ;; prtconf | head -2 ;; df -h /"},
+    # Solaris 7, 8 and 9 (the sun4u install targets' disks; root's password is the install's)
+    "solaris": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "", "POWEROFF": "init 5",
+                "COMMANDS": "uname -a ;; prtconf | head -2 ;; df -k /"},
 }
 
 
