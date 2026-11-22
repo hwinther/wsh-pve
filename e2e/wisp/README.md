@@ -69,7 +69,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `banner` | the logo with the architecture and kernel release |
 | `clear` | clears the screen (`ESC [H ESC [2J`) |
 | `poweroff` | powers the machine off, as the batch run does |
-| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. On sun4u Linux restarts through the firmware's `boot` service, which needs openbios-sparc64 with patch 0030 (`openbios/patches/`); with older firmware the kernel panics with "Reboot failed!" and, with `panic=-1`, tries again for ever |
+| `reboot` | restarts the machine: QEMU exits with `-no-reboot`, or boots wisp again without it. On sun4u Linux restarts through the firmware's `boot` service, which needs openbios-sparc64 with patch 0030 (`openbios/patches/`, in the published pve-qemu-kvm since 11.1.3-4+wsh3); with older firmware the kernel panics with "Reboot failed!" and, with `panic=-1`, tries again for ever |
 
 ```
 wisp:sparc32> crc 64
@@ -212,6 +212,78 @@ size and boot time. Of the tier-2 growth on sparc32, the IP stack would have bee
 (see "Network"); `config/tier2/common.config` also turns off what `CONFIG_NET` and `CONFIG_BLOCK`
 switch on by default and nothing uses (wireless, PTP, partition tables, extra I/O schedulers, swap).
 
+## Test mode: the wisp-test action
+
+`wisp=test` on the kernel command line makes PID 1 run `/test` instead of the batch run: a program
+that QEMU's `-initrd` adds as a second, uncompressed initramfs, which the kernel unpacks next to
+the built-in one (`CONFIG_BLK_DEV_INITRD`, already set; the kernels are the same tier-1 kernels).
+PID 1 prints the banner, starts `/test` with its own arguments (what follows `--` on the kernel
+command line) and environment, waits for it (reaping anything else it leaves behind), prints one
+line and powers off:
+
+```
+WISP-TEST v=1 exit=1 signal=0 ms=88
+WISP-TEST v=1 exit=-1 signal=10 ms=72
+```
+
+`exit` is the exit code (`-1` when a signal killed it), `signal` the signal (sparc numbers:
+`SIGBUS` is 10) and `ms` the time from `fork` to `waitpid`. If `/test` can't be started, a
+`WISP-TEST-ERROR exec /test failed: errno N` line comes first (2: missing or dynamic, 8: a format
+the kernel refuses) and `exit` is 127.
+
+`.github/actions/wisp-test` is a GitHub Action built on it, for other projects' endianness and
+alignment bugs: it builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64 or x86_64,
+packs it as `/test`, boots it under QEMU from Ubuntu's packages and passes or fails on the exit
+status (its README has the inputs and the limits). It needs no kernel build: it downloads a kit
+(`kit.sh`: the three tier-1 kernels and the UAPI and nolibc headers, which `build.sh` now keeps
+in `out/<arch>/sysroot.tar.xz`), 7 MB, from the `wisp-test-kit` release, which
+`.github/workflows/wisp-test-action.yml` publishes when dispatched with `publish`. That workflow
+also tests the action on pull requests that touch `e2e/wisp/` or the action, with the kit built in
+the run: an endianness bug (`examples/endian.c`, exit code 1 on sparc) and an alignment bug
+(`examples/align.c`, `SIGBUS` on sparc) that pass on x86_64, their fixes (`-DFIXED`) that pass
+everywhere, and the arguments on sparc (`tests/args.c`).
+
+Measured 2026-11-22 on the lab host (load 8 to 10 on 14 threads) in a fresh `ubuntu:24.04`
+container limited to 2 CPUs, with the action's script and a locally built kit: all 11 cases of the
+self-test gave the result they should.
+
+| case | want | result | QEMU start to exit s | whole script s |
+| --- | --- | --- | --- | --- |
+| endian bug sparc32 (first run: `apt-get install`) | fail | exit code 1 | 2.2 | 16.1 |
+| endian bug x86_64 (installs `qemu-system-x86`) | pass | exit code 0 | 1.8 | 11.7 |
+| endian fixed sparc32 | pass | exit code 0 | 2.3 | 3.0 |
+| endian bug sparc64 | fail | exit code 1 | 2.4 | 3.1 |
+| endian fixed sparc64 | pass | exit code 0 | 2.3 | 3.0 |
+| align bug x86_64 | pass | exit code 0 | 1.6 | 2.3 |
+| align bug sparc32 | fail | `SIGBUS` | 2.6 | 3.5 |
+| align bug sparc64 | fail | `SIGBUS` | 2.3 | 3.0 |
+| align fixed sparc32 | pass | exit code 0 | 2.3 | 3.0 |
+| args sparc32 | pass | exit code 0 | 2.2 | 2.9 |
+| args sparc64 | pass | exit code 0 | 2.6 | 3.3 |
+
+Earlier passes took 1.4 to 3.7 s per boot (load 8 to 11) and 13 to 32 s for the first run. The
+sparc cases also pass in `ubuntu:26.04` (QEMU 10.2.1, gcc 15) as in 24.04 (QEMU 8.2.2, gcc 13).
+The kit's download (`kit-url`) was not tested, as the release doesn't exist yet.
+
+Found on the way:
+
+- A program built with nolibc on sparc needs the same `_start` fix as PID 1: the action renames
+  nolibc's (`-D_start=wisp_nolibc_start`) and links its own (`start-sparc.c`).
+- gcc reads a `uint32_t` through a misaligned pointer byte by byte on sparc by itself when it can
+  see the misalignment (a pointer into an aligned array at a constant odd offset), so the
+  alignment example hides the offset in a `volatile`; otherwise the bug doesn't show.
+- The first CI run failed both x86_64 cases with `SIGILL` at the first number `printf` formatted:
+  the `ubuntu-latest` runner (Ubuntu 26.04) installs the amd64v3 variant of the packages, and that
+  gcc defaults to `-march=x86-64-v3` (`with-arch-64=x86-64-v3`), so the program had BMI2
+  instructions (`shlx`) that QEMU's default `qemu64` CPU doesn't have. Reproduced in `ubuntu:26.04`
+  with `APT::Architecture-Variants "amd64v3"`; the action now builds x86_64 with `-march=x86-64`
+  (`-cpu max` in QEMU passed as well, but a fixed baseline doesn't depend on the runner).
+- Ubuntu's 32-bit sparc libgcc and glibc (`lib32gcc-*-dev-sparc64-cross`,
+  `libc6-dev-sparc-sparc64-cross`) are V8+ (`EM_SPARC32PLUS`, V9 instructions such as `bne %icc`
+  and `return`), even with `-mcpu=v8`, and the sparc32 kernel refuses such a binary (`ENOEXEC`).
+  So nolibc on sparc32 stays without libgcc: no 64-bit division (`__udivdi3`). A static glibc
+  binary for sparc64 (`libc6-dev-sparc64-cross`) runs in the tier-1 kernel.
+
 ## Build
 
 ```sh
@@ -236,7 +308,8 @@ and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/` an
    `config/tier2/<arch>.config` on top (where fragments set the same option, the later one counts,
    and the check in step 3 checks the result). `TIER2=0` skips it.
 
-Output in `out/<arch>/`: `kernel`, `kernel-t2`, `init`, `config`, `config-t2` and `sizes`. The tier-1
+Output in `out/<arch>/`: `kernel`, `kernel-t2`, `init`, `config`, `config-t2`, `sizes` and
+`sysroot.tar.xz` (the headers `init` was built with, for the wisp-test kit). The tier-1
 kernel is uniprocessor; `kernel-t2` is SMP on x86 and sparc32 (see "Tier 2").
 
 ## Run
@@ -298,9 +371,9 @@ filter, so its `wisp-boot-required` check always reports; a `changes` job skips 
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
 main that change `e2e/wisp/` and by hand. After the batch runs, `run.py --arch all --shell` boots
 the four architectures once more and drives the interactive shell (about 2 to 3 s each), and
-`--shell --reboot` the PC and sparc32 once more with `reboot` at the end (sparc64 joins once the
-published package's `openbios-sparc64` has patch 0030). Then tier
-2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
+`--shell --reboot` the four architectures once more with `reboot` at the end (on sparc64 the
+restart goes through the firmware: openbios-sparc64 patch 0030, in the published package since
+11.1.3-4+wsh3). Then tier 2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
 disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), and `--shell
 --tier2` on the four architectures.
 
@@ -320,6 +393,8 @@ disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), an
 - The kernels (`out/`, both tiers) are cached, keyed on the files that make them: `Dockerfile`,
   `build.sh`, `init.c` and `config/` (with `config/tier2/`). A change to `run.py`, `tier2.py`, the
   tests or the docs reuses them.
+- `.github/workflows/wisp-test-action.yml` tests the wisp-test action (see "Test mode") with tier-1
+  kernels from the same cache, restored only; on a miss it builds the three it needs itself.
 - The unit tests run first. The job summary has `run.py`'s tables. The artifact `wisp-boot-<pr|published>`
   has `results.jsonl` and the console logs.
 
@@ -464,8 +539,9 @@ builds it, from Debian packages only:
   (4.8 MB); the page starts with `-incoming file:...` and has a running prompt in under a second,
   where a boot from OpenBIOS takes 162-167 s in Chromium.
 
-Measured in Chromium: `bench` takes 31-35 s of wall time (the guest reports 11.1 s: its clock runs
-about 3 times behind), against 0.37 s under TCG in the published package; `mandel`'s 20 rows match
-`tests/mandel.txt`. The page's console is a character device registered in Emscripten's file system
+Measured in Chromium: `bench` takes 31-47 s of wall time, against 0.37 s under TCG in the published
+package; `mandel`'s 20 rows match `tests/mandel.txt`. The guest's clock keeps to the wall clock since
+`web/patches/slavio-timer-missed-ticks.patch` (before it, lost timer ticks put it about 3 times
+behind; the guide, "How fast"). The page's console is a character device registered in Emscripten's file system
 that QEMU opens with `-chardev pipe`; COOP/COEP come from a small service worker of the page's own,
 since GitHub Pages can't send headers. Details: the guide.

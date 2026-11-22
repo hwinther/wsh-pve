@@ -4,9 +4,9 @@ name: Browser SPARC
 # /browser-sparc/): qemu-system-sparc for WebAssembly (wasm64, TCG interpreter; upstream QEMU from
 # Debian's source package with the wsh sparc patches), OpenBIOS from the published pve-qemu-kvm,
 # wisp's sparc32 kernel, Debian's xterm.js and the snapshot the page resumes from (web/Dockerfile;
-# the docs guide "Browser SPARC"). The result is an artifact; with `publish`, it also replaces the
-# assets of the `browser-sparc` release, which repo-update.yml copies into the Pages site on its
-# next deploy.
+# the docs guide "Browser SPARC"), then checks the guest's clock in headless Chrome. The result is
+# an artifact; with `publish`, it also replaces the assets of the `browser-sparc` release, which
+# repo-update.yml copies into the Pages site on its next deploy.
 #
 # By hand only: the build takes a while (Emscripten builds glib and QEMU) and its inputs change
 # rarely (the wsh patches, the Debian packages, wisp).
@@ -49,6 +49,20 @@ jobs:
           name: browser-sparc
           path: web/dist/
           retention-days: 14
+
+      # The page in headless Chrome (the runner's own): the guest's clock against the wall clock,
+      # idle and with the page's thread kept busy (web/patches/slavio-timer-missed-ticks.patch).
+      # The build has already run the native check (clock-check.py in web/Dockerfile). After the
+      # upload, so that a failing build can still be looked at; before publishing, so that a failing
+      # build is never published.
+      - name: Clock check in the browser
+        timeout-minutes: 20
+        run: |
+          mkdir -p "$RUNNER_TEMP/page" "$RUNNER_TEMP/pw"
+          cp docs/public/browser-sparc/* web/dist/* "$RUNNER_TEMP/page/"
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright-core@1.64.1
+          cd "$RUNNER_TEMP/pw"
+          CHANNEL=chrome node "$GITHUB_WORKSPACE/web/scripts/browser-clock-check.mjs" "$RUNNER_TEMP/page" 30
 
       - name: Publish to the browser-sparc release
         if: inputs.publish

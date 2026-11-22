@@ -1,0 +1,96 @@
+name: wisp-test
+description: >-
+  Run a C program on big-endian, strict-alignment Linux (sparc32, also sparc64 and x86_64 as a
+  little-endian control) in wisp, a tiny kernel booted under QEMU, and pass or fail on its exit
+  status. Catches endianness and alignment bugs in seconds.
+
+inputs:
+  sources:
+    description: "C files to build with nolibc (whitespace-separated, globs allowed, relative to the working directory). Give this or binary"
+    required: false
+    default: ""
+  binary:
+    description: "A static binary for the architecture, instead of sources"
+    required: false
+    default: ""
+  arch:
+    description: "sparc32 (big-endian, SPARC V8, SS-5), sparc64 (big-endian, sun4u) or x86_64 (little-endian, pc)"
+    required: false
+    default: sparc32
+  cflags:
+    description: "More compiler flags, after the default -O2 (e.g. -DFIXED -Wall -Werror)"
+    required: false
+    default: ""
+  args:
+    description: "Arguments for the program (whitespace-separated, no quoting)"
+    required: false
+    default: ""
+  timeout:
+    description: "Seconds for the whole boot, from starting QEMU to its exit"
+    required: false
+    default: "60"
+  machine:
+    description: "QEMU machine (-M) instead of the default: SS-5 for sparc32 (also SS-10, SS-20, SS-4, SPARCClassic, SPARCbook), sun4u, pc"
+    required: false
+    default: ""
+  qemu-args:
+    description: "More QEMU arguments (whitespace-separated), e.g. -m 256 or -cpu"
+    required: false
+    default: ""
+  kit:
+    description: "A wisp-test kit directory or wisp-test-kit.tar.xz to use instead of downloading kit-url"
+    required: false
+    default: ""
+  kit-url:
+    description: "Where to download the kit (kernels and nolibc headers) from"
+    required: false
+    default: "https://github.com/hwinther/wsh-pve/releases/download/wisp-test-kit/wisp-test-kit.tar.xz"
+  kit-sha256:
+    description: "The kit tarball's SHA-256; checked when set"
+    required: false
+    default: ""
+  install:
+    description: "apt-get install QEMU and the cross compiler when they are missing"
+    required: false
+    default: "true"
+
+outputs:
+  result:
+    description: "pass (exit code 0), fail (non-zero exit code or killed by a signal) or error (build, boot or timeout)"
+    value: ${{ steps.run.outputs.result }}
+  exit-code:
+    description: "The program's exit code (empty when it was killed or never ran)"
+    value: ${{ steps.run.outputs.exit-code }}
+  signal:
+    description: "The signal that killed the program, 0 if none (sparc numbers: SIGBUS is 10)"
+    value: ${{ steps.run.outputs.signal }}
+  signal-name:
+    description: "The signal's name, e.g. SIGBUS"
+    value: ${{ steps.run.outputs.signal-name }}
+  seconds:
+    description: "Seconds from starting QEMU to its exit"
+    value: ${{ steps.run.outputs.seconds }}
+  log:
+    description: "Path of the console log"
+    value: ${{ steps.run.outputs.log }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run in wisp
+      id: run
+      shell: bash
+      env:
+        WISP_SOURCES: ${{ inputs.sources }}
+        WISP_BINARY: ${{ inputs.binary }}
+        WISP_ARCH: ${{ inputs.arch }}
+        WISP_CFLAGS: ${{ inputs.cflags }}
+        WISP_ARGS: ${{ inputs.args }}
+        WISP_TIMEOUT: ${{ inputs.timeout }}
+        WISP_MACHINE: ${{ inputs.machine }}
+        WISP_QEMU_ARGS: ${{ inputs.qemu-args }}
+        WISP_KIT: ${{ inputs.kit }}
+        WISP_KIT_URL: ${{ inputs.kit-url }}
+        WISP_KIT_SHA256: ${{ inputs.kit-sha256 }}
+        WISP_INSTALL: ${{ inputs.install }}
+      run: bash "$GITHUB_ACTION_PATH/wisp-test.sh"
