@@ -16748,10 +16748,10 @@ index 0000000..c5b21aa
 + static void cs4231_realize(DeviceState *dev, Error **errp)
 diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 new file mode 100644
-index 0000000..6b9b11f
+index 0000000..0e61408
 --- /dev/null
 +++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,396 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the cs4231's pi and pmi for a short
 + buffer on sun4m
@@ -16790,10 +16790,9 @@ index 0000000..6b9b11f
 + 1 file changed, 320 insertions(+), 2 deletions(-)
 +
 +diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
-+index 8875e1b..21904ca 100644
 +--- a/tests/qtest/sun4m-cs4231-test.c
 ++++ b/tests/qtest/sun4m-cs4231-test.c
-+@@ -20,6 +20,7 @@
++@@ -19,6 +19,7 @@
 + #include "qemu/osdep.h"
 + #include "libqtest.h"
 + #include "qemu/bswap.h"
@@ -16801,7 +16800,7 @@ index 0000000..6b9b11f
 + 
 + /* SPARCstation 5 */
 + #define CS_BASE         0x6c000000ULL
-+@@ -197,7 +198,7 @@ static void test_playback(void)
++@@ -196,7 +197,7 @@
 + 
 +     /* It takes the second one when the first has played: about 100 ms */
 +     t2 = wait_csr(qts, APC_PI, 300);
@@ -16810,7 +16809,7 @@ index 0000000..6b9b11f
 +     g_assert_cmpint(t2, <=, 130);
 +     g_assert_cmphex(qtest_readl(qts, APC_PVA) & 0xfffff000, ==,
 +                     BUF_DVMA + BUF2_OFFSET);
-+@@ -207,7 +208,7 @@ static void test_playback(void)
++@@ -206,7 +207,7 @@
 + 
 +     /* No third buffer: the pipe runs empty when the second has played */
 +     t2 = wait_csr(qts, APC_PMI, 300);
@@ -16819,7 +16818,7 @@ index 0000000..6b9b11f
 +     g_assert_cmpint(t2, <=, 130);
 +     csr = qtest_readl(qts, APC_CSR);
 +     g_assert_cmphex(csr & (APC_IP | APC_PM | APC_PD), ==,
-+@@ -260,12 +261,329 @@ static void test_stop_reset(void)
++@@ -259,12 +260,329 @@
 +     qtest_quit(qts);
 + }
 + 
