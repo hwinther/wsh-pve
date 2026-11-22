@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..321ee6d 100644
+index bc240a0..edbfc57 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,75 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,77 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -149,6 +149,8 @@ index bc240a0..321ee6d 100644
 +wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su.patch
 +wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an.patch
 +wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop.patch
++wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
++wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -14927,6 +14929,380 @@ index 0000000..385d8a7
 +                 qtest_add_data_func(name, t, test_idle);
 +             }
 +         }
+diff --git a/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch b/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
+new file mode 100644
+index 0000000..07d53d6
+--- /dev/null
++++ b/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
+@@ -0,0 +1,207 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt the CPU in Linux 3.2's idle loop on sun4u
++
++Debian 7's Linux 3.2 spins in its idle loop on sun4u and keeps a host
++core busy for as long as the VM runs. Its idle loop is older than the
++generic one the Linux layouts so far follow: cpu_idle() in
++arch/sparc/kernel/process_64.c spins with interrupts enabled (%pil 0)
++while need_resched() is clear, and its sparc64_yield() only touches the
++NMI watchdog on sun4u (it yields to the hypervisor on sun4v, after
++clearing TIF_POLLING_NRFLAG).
++
++The translator now also recognises that loop at its call of
++touch_nmi_watchdog(), as gcc 4.6 lays it out in Debian's sparc64 and
++sparc64-smp kernels: the test of tlb_type against hypervisor (3), the
++be,pn to the sun4v branch with mov 14, %o0 (TIF_POLLING_NRFLAG) in its
++delay slot, the call, the branch back to the top and the sun4v branch's
++call of clear_bit() with &current_thread_info()->flags. The Linux helper
++takes the interrupt level the loop runs the call at, 14 for the later
++kernels and 0 for 3.2, and halts the CPU there when TIF_NEED_RESCHED is
++clear in the flags at %g6 + 8, PSTATE.IE is set and nothing is pending,
++after the same 100 us of spinning as for the other guests. The CPU goes
++on at the call after the next interrupt.
++
++An idle Debian 7 at the shell then uses 0.1% of a host core instead of
++100% (the kernel is tickless when idle, CONFIG_NO_HZ); a CPU-bound job
++(13.4 s with the halt, 12.8 and 12.9 s without), ten "sleep 1" (10.4 s)
++and two minutes of CPU and file load take as long as before, and the
++guest clock keeps time.
++---
++ hw/sparc64/sun4u.c          |  3 +-
++ target/sparc/helper.h       |  2 +-
++ target/sparc/sparc64_idle.c | 31 +++++++++++++-------
++ target/sparc/translate.c    | 58 ++++++++++++++++++++++++++++++++++---
++ 4 files changed, 78 insertions(+), 16 deletions(-)
++
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index 1901d47a..8e17e9cd 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -909,7 +909,8 @@ static void sun4u_class_init(ObjectClass *oc, const void *data)
++                                    sun4u_set_idle_halt);
++     object_class_property_set_description(oc, "idle-halt",
++         "Halt the CPU while a known guest kernel (NetBSD, OpenBSD, Solaris, "
++-        "illumos, Linux) is idle, instead of spinning (default: on)");
+++        "illumos, Linux 3.2 and later) is idle, instead of spinning "
+++        "(default: on)");
++ }
++ 
++ static const TypeInfo sun4u_type = {
++diff --git a/target/sparc/helper.h b/target/sparc/helper.h
++index 76857387..6cb1b0d8 100644
++--- a/target/sparc/helper.h
+++++ b/target/sparc/helper.h
++@@ -14,7 +14,7 @@ DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
++ DEF_HELPER_2(wrgl, void, env, tl)
++ #ifndef CONFIG_USER_ONLY
++ DEF_HELPER_5(sparc64_idle, void, env, tl, tl, tl, tl)
++-DEF_HELPER_3(sparc64_idle_linux, void, env, tl, tl)
+++DEF_HELPER_4(sparc64_idle_linux, void, env, tl, tl, tl)
++ #endif
++ DEF_HELPER_2(wrpstate, void, env, tl)
++ DEF_HELPER_1(done, void, env)
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index 69ad8e5a..d484a1d7 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -68,8 +68,19 @@
++  *     round again as soon as it has enabled interrupts; the word is
++  *     need_resched()'s, the flags of current_thread_info() at %g6 + 8.
++  *
++- * Linux is halted at %pil 14 by helper_sparc64_idle_linux(), as sun4v's
++- * cpu_yield and x86's mwait wait with interrupts disabled. The tick and
+++ *   Linux 3.2 cpu_idle() (Debian 7), which spins with interrupts enabled:
+++ *       while (!need_resched() && !cpu_is_offline(cpu)) {
+++ *           if (tlb_type != hypervisor)
+++ *               touch_nmi_watchdog();         <- here
+++ *           else
+++ *               ... clear TIF_POLLING_NRFLAG, sun4v_cpu_yield() ...
+++ *       }
+++ *     The word is the same as in later kernels; the call is made at
+++ *     %pil 0, as in the BSDs' and Solaris's loops.
+++ *
+++ * Linux is halted at %pil 14 (3.2: at %pil 0) by
+++ * helper_sparc64_idle_linux(), as sun4v's cpu_yield and x86's mwait wait
+++ * with interrupts disabled. The tick and
++  * stick compare interrupts and the interrupt vector wake a halted CPU
++  * whatever %pil (hw/sparc64/sparc64.c), and the CPU goes on at the call;
++  * the interrupt is taken when the idle loop enables interrupts again.
++@@ -173,23 +184,23 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++     cpu_loop_exit(cs);
++ }
++ 
++-#define LINUX_PIL_NORMAL_MAX    14      /* local_irq_disable() */
++ #define LINUX_TIF_NEED_RESCHED  (1 << 3)
++ 
++ /*
++- * Linux, at the call in arch_cpu_idle() (pc); flags_addr is
++- * current_thread_info()->flags. Halt until the next interrupt when
++- * interrupts are disabled as the idle loop disables them, none is pending
++- * and need_resched() is clear, and go on at the call then: whatever %pil,
++- * the tick, stick and interrupt vector set cs->halted to 0.
+++ * Linux, at the call in arch_cpu_idle() or, in 3.2, cpu_idle() (pc);
+++ * flags_addr is current_thread_info()->flags. Halt until the next
+++ * interrupt when %pil is what the idle loop runs the call at (14, as
+++ * local_irq_disable() writes; 0 in 3.2), none is pending and need_resched()
+++ * is clear, and go on at the call then: whatever %pil, the tick, stick and
+++ * interrupt vector set cs->halted to 0.
++  */
++ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++-                                target_ulong flags_addr)
+++                                target_ulong flags_addr, target_ulong pil)
++ {
++     CPUState *cs = env_cpu(env);
++     uint64_t flags;
++ 
++-    if (!(env->pstate & PS_IE) || env->psrpil != LINUX_PIL_NORMAL_MAX ||
+++    if (!(env->pstate & PS_IE) || env->psrpil != pil ||
++         env->tl || cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++         (env->ivec_status & 0x20) || env->softint || env->pil_in) {
++         return;
++diff --git a/target/sparc/translate.c b/target/sparc/translate.c
++index 10299b17..3f5aa5d9 100644
++--- a/target/sparc/translate.c
+++++ b/target/sparc/translate.c
++@@ -6651,10 +6651,59 @@ static bool s64_idle_linux(const uint32_t *w, target_ulong pc,
++     return false;
++ }
++ 
+++#define S64_MOV14_O0    0x9010200e      /* mov 14, %o0 (TIF_POLLING_NRFLAG) */
+++#define S64_ADD8_O1     0x92026008      /* add %o1, 8, %o1 (&ti->flags) */
+++
+++/*
+++ * Linux 3.2 cpu_idle() (Debian 7's sparc64 and sparc64-smp kernels, gcc
+++ * 4.6; w[S64_IDLE_BEFORE] is the call). It spins with interrupts enabled
+++ * at %pil 0, sparc64_yield() inlined:
+++ *
+++ *     while (!need_resched() && !cpu_is_offline(cpu)) {
+++ *         if (tlb_type != hypervisor)
+++ *             touch_nmi_watchdog();       <- here
+++ *         else {
+++ *             clear_thread_flag(TIF_POLLING_NRFLAG); ... sun4v_cpu_yield();
+++ *         }
+++ *     }
+++ *
+++ *        cmp   %r, 3                      (hypervisor; tlb_type loaded
+++ *        be,pn %icc sun4v                  before, or in another block)
+++ *         mov  14, %o0                    (TIF_POLLING_NRFLAG)
+++ *        call  touch_nmi_watchdog         <- here
+++ *         nop
+++ *        b     top
+++ *         nop
+++ *  sun4v: call clear_bit
+++ *         add  %o1, 8, %o1                (&current_thread_info()->flags)
+++ *
+++ * The word is need_resched()'s, as in later kernels.
+++ */
+++static bool s64_idle_linux32(const uint32_t *w, target_ulong pc,
+++                             S64IdleWord *iw)
+++{
+++    const uint32_t *c = w + S64_IDLE_BEFORE;
+++    target_ulong t, top, bit;
+++    int r;
+++
+++    if (!s64_cmp3(c[-3], &r) ||
+++        !s64_bcc(c[-2], pc - 8, S64_BE, &t) || t != pc + 16 ||
+++        c[-1] != S64_MOV14_O0 || !s64_call(c[0], pc, &t) ||
+++        c[1] != S64_NOP || !s64_bcc(c[2], pc + 8, S64_BA, &top) ||
+++        top == pc + 8 || c[3] != S64_NOP ||
+++        !s64_call(c[4], pc + 16, &bit) || c[5] != S64_ADD8_O1) {
+++        return false;
+++    }
+++    iw->reg = 6;
+++    iw->off = 8;
+++    return true;
+++}
+++
++ typedef struct Sparc64IdleLoop {
++     const char *kernel;
++     bool (*match)(const uint32_t *w, target_ulong pc, S64IdleWord *iw);
++-    bool irqs_off;      /* at %pil 14: helper_sparc64_idle_linux() */
+++    bool linux_loop;    /* helper_sparc64_idle_linux(), at %pil pil */
+++    int pil;
++ } Sparc64IdleLoop;
++ 
++ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++@@ -6662,7 +6711,8 @@ static const Sparc64IdleLoop sparc64_idle_loops[] = {
++     { "OpenBSD", s64_idle_openbsd },
++     { "Solaris", s64_idle_solaris },
++     { "Solaris 7/8", s64_idle_solaris7 },
++-    { "Linux", s64_idle_linux, true },
+++    { "Linux", s64_idle_linux, true, 14 },
+++    { "Linux 3.2", s64_idle_linux32, true, 0 },
++ };
++ 
++ /*
++@@ -6714,9 +6764,9 @@ static void gen_sparc64_idle(DisasContext *dc, CPUSPARCState *env,
++         translator_io_start(&dc->base);
++         addr = tcg_temp_new();
++         tcg_gen_addi_tl(addr, gen_load_gpr(dc, iw.reg), iw.off);
++-        if (l->irqs_off) {
+++        if (l->linux_loop) {
++             gen_helper_sparc64_idle_linux(tcg_env, tcg_constant_tl(dc->pc),
++-                                          addr);
+++                                          addr, tcg_constant_tl(l->pil));
++         } else {
++             gen_helper_sparc64_idle(tcg_env, tcg_constant_tl(dc->pc), addr,
++                                     tcg_constant_tl(iw.indirect),
+diff --git a/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch b/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
+new file mode 100644
+index 0000000..5b6c3f9
+--- /dev/null
++++ b/debian/patches/wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u.patch
+@@ -0,0 +1,155 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the Linux 3.2 idle loop on sun4u
++
++sun4u-idle-test gets the layout of Linux 3.2's cpu_idle() as gcc 4.6
++compiled Debian 7's sparc64 kernel: need_resched() tested at the top,
++the test of tlb_type against hypervisor with the be,pn to the sun4v
++branch and mov 14, %o0 in its delay slot, the call of
++touch_nmi_watchdog() and the sun4v branch's clear_bit() call. The loop
++runs at interrupt level 0: the CPU must halt there, and not with
++TIF_NEED_RESCHED set, without PSTATE.IE, at level 14 (where the later
++kernels' loop halts) or at level 15; with a tick every millisecond the
++tick must wake the CPU and the loop must run far fewer rounds than with
++idle-halt=off.
++
++Against the binary without the patch before, the idle case of the new
++layout fails.
++---
++ tests/qtest/sun4u-idle-test.c | 75 +++++++++++++++++++++++++++++++++--
++ 1 file changed, 71 insertions(+), 4 deletions(-)
++
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index 3b8ebb91..151465b8 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -18,6 +18,10 @@
++  * the tick must wake it at level 14 and be taken when the loop enables
++  * interrupts.
++  *
+++ * Linux 3.2's cpu_idle() (Debian 7) spins with interrupts enabled at
+++ * level 0, as the BSDs do: the CPU must halt there, not at level 14 or
+++ * 15, not with need_resched() set or interrupts disabled.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -53,7 +57,8 @@
++ 
++ #define NOP             0x01000000
++ 
++-enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX73, LINUX61, LINUX70 };
+++enum { NETBSD, OPENBSD, SOLARIS, TRIBBLIX, SOLARIS7, LINUX32, LINUX73, LINUX61,
+++       LINUX70 };
++ 
++ #define IS_LINUX(k)     ((k) >= LINUX73)
++ 
++@@ -96,6 +101,15 @@ static uint32_t brnz_o0_to(int from, int to)
++            (((d >> 14) & 3) << 20) | (d & 0x3fff);
++ }
++ 
+++/* brz %g1 */
+++static uint32_t brz_g1_to(int from, int to)
+++{
+++    int d = to - from;
+++
+++    return (1 << 25) | (3 << 22) | (1 << 14) |
+++           (((d >> 14) & 3) << 20) | (d & 0x3fff);
+++}
+++
++ #define BA      8
++ #define BNE     9
++ #define BE      1
++@@ -217,6 +231,40 @@ static int write_linux(uint32_t *p, int k, uint32_t pil)
++     return aci + n;
++ }
++ 
+++/*
+++ * Linux 3.2's cpu_idle() at LOOP, as gcc 4.6 lays out Debian 7's kernel,
+++ * at the interrupt level the PROM set (0 in Linux): FUNC stands in for
+++ * touch_nmi_watchdog() and counts the round, and for schedule() when
+++ * need_resched() is set; FUNC + 3 for clear_bit() in the sun4v branch
+++ */
+++static int write_linux32(uint32_t *p)
+++{
+++    int n = 0;
+++
+++    p[n++] = 0xc259a008;                /* top: ldx [%g6 + 8], %g1 */
+++    p[n++] = 0x82086008;                /* and %g1, 8, %g1 */
+++    p[n] = brz_g1_to(LOOP + n, LOOP + 8); n++;
+++    p[n++] = 0x92100006;                /*  mov %g6, %o1 */
+++    p[n] = call_to(LOOP + n, FUNC); n++;         /* schedule() */
+++    p[n++] = NOP;
+++    p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    p[n++] = 0x03000002;                /* sethi %hi(0x800), %g1 */
+++    p[n++] = 0xc2006070;                /* ld [%g1 + 0x70], %g1 tlb_type */
+++    p[n++] = 0x80a06003;                /* cmp %g1, 3 (hypervisor) */
+++    p[n] = bpcc_icc_to(BE, LOOP + n, LOOP + n + 6); n++;     /* be,pn */
+++    p[n++] = 0x9010200e;                /*  mov 14, %o0 */
+++    p[n] = call_to(LOOP + n, FUNC); n++;         /* touch_nmi_watchdog */
+++    p[n++] = NOP;
+++    p[n] = bpcc_xcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    p[n] = call_to(LOOP + n, FUNC + 3); n++;     /* sun4v: clear_bit */
+++    p[n++] = 0x92026008;                /*  add %o1, 8, %o1 */
+++    p[n] = bcc_to(BA, LOOP + n, LOOP); n++;
+++    p[n++] = NOP;
+++    return n;
+++}
+++
++ /* Lay the loop of kernel k out at LOOP; returns its length */
++ static int write_loop(uint32_t *p, int k, uint32_t pil)
++ {
++@@ -225,6 +273,9 @@ static int write_loop(uint32_t *p, int k, uint32_t pil)
++     if (IS_LINUX(k)) {
++         return write_linux(p, k, pil);
++     }
+++    if (k == LINUX32) {
+++        return write_linux32(p);
+++    }
++ 
++     switch (k) {
++     case NETBSD:
++@@ -475,7 +526,7 @@ static void test_idle(const void *data)
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++-        "netbsd", "openbsd", "solaris", "tribblix", "solaris7",
+++        "netbsd", "openbsd", "solaris", "tribblix", "solaris7", "linux-3.2",
++         "linux-7.3", "linux-6.1", "linux-7.0"
++     };
++     static const IdleCase cases[] = {
++@@ -501,6 +552,19 @@ int main(int argc, char **argv)
++         { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 14, true, true },
++     };
+++    /*
+++     * Linux 3.2 runs its idle loop at pil 0, as the BSDs do; work is
+++     * TIF_NEED_RESCHED. Not at pil 14, where later kernels halt.
+++     */
+++    static const IdleCase linux32_cases[] = {
+++        { "idle", "sun4u", 0, PS_PEF_PRIV_IE, 0, false, true },
+++        { "off", "sun4u,idle-halt=off", 0, PS_PEF_PRIV_IE, 0, false, false },
+++        { "work", "sun4u", 1, PS_PEF_PRIV_IE, 0, false, false },
+++        { "noint", "sun4u", 0, PS_PEF_PRIV, 0, false, false },
+++        { "pil14", "sun4u", 0, PS_PEF_PRIV_IE, 14, false, false },
+++        { "pil15", "sun4u", 0, PS_PEF_PRIV_IE, 15, false, false },
+++        { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
+++    };
++     static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(linux_cases)];
++     int k, i, n = 0;
++ 
++@@ -508,8 +572,11 @@ int main(int argc, char **argv)
++ 
++     if (qtest_has_accel("tcg")) {
++         for (k = 0; k < ARRAY_SIZE(kernels); k++) {
++-            const IdleCase *c = IS_LINUX(k) ? linux_cases : cases;
++-            int nc = IS_LINUX(k) ? ARRAY_SIZE(linux_cases) : ARRAY_SIZE(cases);
+++            const IdleCase *c = IS_LINUX(k) ? linux_cases :
+++                                k == LINUX32 ? linux32_cases : cases;
+++            int nc = IS_LINUX(k) ? ARRAY_SIZE(linux_cases) :
+++                     k == LINUX32 ? ARRAY_SIZE(linux32_cases) :
+++                     ARRAY_SIZE(cases);
++ 
++             for (i = 0; i < nc; i++) {
++                 IdleTest *t = &tests[n++];
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

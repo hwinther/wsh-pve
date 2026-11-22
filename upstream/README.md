@@ -100,10 +100,11 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0063-0065 | sun4m SS-600MP: SunOS 4.1.2 sets up the VMEbus interface registers at `0xf.df01_0000` (MMU bypass) before its banner and stops on the access error (`Unhandled Exception 0x00000029`), where QEMU has nothing; and its lance has the SS-10's ledma and DVMA instead of the 600MP's `lebuffer`, the buffer memory it works in, so 4.1.2 finds no network interface. An unimplemented device over the VME registers (0063); a `lebuffer-size` property on `sparc32-dma`, 128 KB at slot f `0x40000` on the SS-600MP, the lance's DMA in its own address space and its interrupt past the ledma's enable (0064); qtest `sun4m-ss600mp-test` (0065). With OpenBIOS 0028 4.1.2 installs and boots. Not tried on plain QEMU 11.1.3 (the code is the same there) | wsh-pve | may send | not searched (added 2026-11-21) | [qemu-sun4m-ss600mp-vme-lebuffer.md](qemu-sun4m-ss600mp-vme-lebuffer.md) |
 | 0068, 0069 | sun4u: the sabre keeps its PCI control/status registers across a system reset, with the error bits Solaris writes back to clear them; after a reset (a reboot through OpenBIOS 0030) Solaris warns `pcipsy0: SERR asserted on pci bus`. Cleared on reset, qtest `sun4u-sabre-reset-test`. Not tried on plain QEMU 11.1.3 (the code is the same there) | wsh-pve | may send | not searched (added 2026-11-22) | none (`submodules/SPARC.md`, "The firmware reboot on sun4u") |
 | 0070-0072 | sun4u idle for more guests (on 0042-0044): Linux 6.1-7.3, whose `arch_cpu_idle()` only touches the NMI watchdog on sun4u, halted in it at `%pil` 14 as the idle loop calls it (the tick and interrupt vector wake a halted CPU whatever `%pil`); Solaris 7 and 8, whose `idle()` the older Sun compiler lays out the other way round; with qtest cases | wsh-pve, after LEMU's SunOS idle (0012-0013) | built on LEMU: not for QEMU | a feature | |
+| 0110, 0111 | sun4u idle for Debian 7's Linux 3.2 (on 0042-0044, 0070): its `cpu_idle()` spins at `%pil` 0 and only touches the NMI watchdog on sun4u; recognised at that call, halted at `%pil` 0; qtest cases in `sun4u-idle-test` | wsh-pve, after LEMU's SunOS idle (0012-0013) | built on LEMU: not for QEMU | a feature | |
 
 Counts: may send 40 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0065, 0068-0069); LEMU origin 13 (0002-0006,
-0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 17 (0014-0016, 0023-0025, 0027, 0030-0033,
-0042-0044, 0070-0072).
+0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 19 (0014-0016, 0023-0025, 0027, 0030-0033,
+0042-0044, 0070-0072, 0110-0111).
 
 Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pages), needed for
 `niagara` above 1 GB; the patch is by the unix0.cc author
