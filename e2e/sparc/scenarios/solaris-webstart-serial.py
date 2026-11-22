@@ -18,7 +18,8 @@ of sol8-ss20, sol9-ss20, sol8-ss5 and sol9-ss5 (attach mode, a PVE VM); the VM n
      32-bit, the software group (SOFTWARE), its default packages, auto-layout on c0t3d0. Solaris 8
      asks for Software 2 of 2 after the first CD's packages.
   3. At the end it asks for Return to reboot; the reboot stops at `0 >` and this scenario powers the
-     VM off there (`power-off`). The first boot is solaris-firstboot.py's.
+     VM off there (`power-off`; on sun4u it stops the VM at the firmware's banner). The first boot is
+     solaris-firstboot.py's.
 
 Under the Sun PROM (sol8-ss5-prom: BIOS ss5.bin, no auto-boot? change) the PROM honours the reboot's
 boot string and boots the mini-root's slice by itself (mini_root() only waits for it), and the reboot
@@ -29,12 +30,16 @@ On sun4u (sol8-sun4u, sol9-sun4u: ARCH sparc64 from the VM's config, the IDE dis
 CD on the IDE) the same answers, with three differences:
 
   - the 64-bit question defaults to "64-bit and 32-bit support"; that default is kept;
-  - a reboot doesn't come back: OpenBIOS's client-interface `boot` returns, Solaris panics on it
-    (`prom_reboot: reboot call returned!`) and exits to `0 >`. After the mini-root copy (Solaris 8)
-    the VM is power-cycled through PVE (lab.PveMachine.power_cycle(): `qm stop`, `qm start`) and the
-    mini-root booted at `0 >` (`disk:b`, auto-boot? false): `reset-all` isn't enough, OpenBIOS keeps
-    the RAM's contents and the mini-root's kernel then panics in `page_free`. At the end the VM is
-    stopped at `0 >` instead of `power-off`, as solaris10-install-sparc64.py does;
+  - a reboot resets the machine (openbios-sparc64 with patch 0030: the firmware's banner comes back)
+    and, as on sun4m, the boot string is dropped: after the mini-root copy (Solaris 8) the firmware
+    stops at `0 >` (auto-boot? false) and the mini-root is booted there (`disk:b`). At the end the VM
+    is stopped as soon as the banner shows (Solaris has synced by then; 9 has auto-boot? true and
+    would boot the DVD again). With firmware before 0030 the reboot doesn't come back: the
+    client-interface `boot` returns, Solaris panics on it (`prom_reboot: reboot call returned!`) and
+    exits to `0 >`. The VM is then power-cycled through PVE for the mini-root
+    (lab.PveMachine.power_cycle(): `qm stop`, `qm start`; `reset-all` wasn't enough, the boot
+    program's bss kept the old RAM contents and the mini-root's kernel panicked in `page_free`) and
+    stopped at `0 >` at the end, as solaris10-install-sparc64.py does;
   - with auto-boot? false the CD is booted at `0 >` (`cdrom:f`, _sparc32.prom_boot); without it the
     VM's boot order boots it.
 
@@ -60,8 +65,11 @@ from _sparc32 import DEFAULTS as BASE, ESP, prom_boot, qemu_args as sparc32_args
 DEFAULTS = {**BASE, "VGA": "none", "HOSTNAME": "solaris", "IP": "10.0.2.15", "NETMASK": "255.255.255.0",
             "TIMEZONE": "MET", "ROOT_PASSWORD": "", "SOFTWARE": "2", "SWAPS": "", "DISK": "c0t3d0",
             "PROMPT_TIMEOUT": "3600"}
-# Solaris's reboot on sun4u: the firmware's `boot` service returns, the kernel panics and exits to `0 >`
+# Solaris's reboot on sun4u with openbios-sparc64 before patch 0030: the firmware's `boot` service
+# returns, the kernel panics and exits to `0 >`
 REBOOT_RETURNED = r"reboot call returned"
+# ... and with 0030 the machine resets: the firmware's banner
+SUN4U_BANNER = r"OpenBIOS for Sparc64"
 # A Sun PROM (ss5.bin) after a reboot with a boot string: it boots that device ("Boot device:
 # /iommu/.../sd@3,0:b  File and args:") instead of stopping at a prompt
 SUN_PROM_BOOT = r"Boot device: \S+"
@@ -257,8 +265,8 @@ def sun_prom(v):
 def mini_root(m, v):
     """The Solaris 8 Installation CD: the boot disk becomes a swap slice at cylinder 0 (the default
     512 MB) with a mini-root on it, and the reboot into it ends at the OpenBIOS prompt (auto-boot?
-    false), where the mini-root's slice is booted by path. On sun4u the reboot ends in a panic at
-    `0 >`, and the VM is power-cycled first (the docstring)."""
+    false), where the mini-root's slice is booted by path. On sun4u with firmware before openbios 0030
+    the reboot ends in a panic at `0 >`, and the VM is power-cycled first (the docstring)."""
     answer(m, "y", "format the boot disk")
     for rx, reply, title in [(r"Enter a swap slice size between .*\[\?\]", "", "swap slice size"),
                              (r"Can the swap slice start at the beginning of the disk\s+\[y,n,\?,q\]", "y", None),
@@ -267,7 +275,7 @@ def mini_root(m, v):
         m.quiet(1, 60)
         answer(m, reply, title)
     m.expect(r"Rebooting to continue the installation", 1800)
-    seen = m.expect_any([r"0 >", REBOOT_RETURNED, SUN_PROM_BOOT], 900)
+    seen = m.expect_any([r"0 >", REBOOT_RETURNED, SUN_PROM_BOOT, SUN4U_BANNER], 900)
     if seen == 2:
         # a Sun PROM (ss5.bin) takes the reboot's boot string and boots the mini-root's slice itself
         m.snap("the Sun PROM boots the mini-root")
@@ -280,6 +288,10 @@ def mini_root(m, v):
         if not hasattr(m, "power_cycle"):
             raise RuntimeError("the mini-root needs a fresh machine: run this through PVE (lab.py install)")
         m.power_cycle()
+        m.expect(r"0 >", 300)
+    elif seen == 3:
+        # sun4u, openbios 0030: the machine reset, and the firmware stops at `0 >` (auto-boot? false)
+        m.metrics["resets"] = m.metrics.get("resets", 0) + 1
         m.expect(r"0 >", 300)
     m.snap("OpenBIOS prompt after the mini-root copy")
     m.send(f"boot {'disk:b' if sun4u(v) else ESP + '/sd@3,0:b'}\r")
@@ -337,9 +349,16 @@ def run(m, v):
         m.snap("Sun PROM prompt after the installation")
         m.stop()
         return
-    # The reboot stops at the OpenBIOS prompt (auto-boot? false; sun4u: after the panic on the returned
-    # reboot call, once Solaris has synced): power off there; the first boot is solaris-firstboot.py's
-    returned = m.expect_any([r"0 >", REBOOT_RETURNED], 1800) == 1
+    # The reboot stops at the OpenBIOS prompt (auto-boot? false; sun4u before openbios 0030: after the
+    # panic on the returned reboot call, once Solaris has synced): power off there; the first boot is
+    # solaris-firstboot.py's. sun4u with 0030: the machine resets, and the VM is stopped at the banner
+    seen = m.expect_any([r"0 >", REBOOT_RETURNED, SUN4U_BANNER], 1800)
+    if seen == 2:
+        m.metrics["resets"] = m.metrics.get("resets", 0) + 1
+        m.snap("the firmware's banner after the installation")
+        m.stop()  # through PVE: `qm stop` (the lab started the VM)
+        return
+    returned = seen == 1
     if returned:
         m.expect(r"0 >", 300)
         m.quiet(1, 30)

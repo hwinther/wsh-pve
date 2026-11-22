@@ -25,6 +25,12 @@ LOOP = re.compile(r"crc32 0x([0-9a-f]{8}) after (\d+) rounds \(\d+ KiB\) in (\d+
 SCRIPT = ("hepl\x7f\x7flp", "info", "bench", "crc 64", "mandel", "poweroff")
 
 
+def reboot_script(script):
+    """A script that ends with reboot instead of poweroff (run.py --reboot): QEMU runs with
+    -no-reboot, so the machine's reset ends it as the power-off does."""
+    return script[:-1] + ("reboot",)
+
+
 def tier2_script(profile):
     """SCRIPT with the tier-2 commands for a profile's devices (tier2.py) before the poweroff:
     disk and net take their devices from the kernel command line, smp runs with more than one
@@ -154,6 +160,11 @@ def check_answers(arch, script, answers, crc_for, default_loops):
         elif name == "poweroff":
             if "powering off" not in text:
                 problems.append("poweroff: no answer")
+        elif name == "reboot":
+            if "restarting" not in text:
+                problems.append("reboot: no answer")
+            if "Reboot failed" in text or "Kernel panic" in text:
+                problems.append("reboot: the kernel panicked instead of restarting")
     return problems, numbers
 
 

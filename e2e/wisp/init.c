@@ -967,17 +967,6 @@ static void cmd_poweroff(const char *arg)
 static void cmd_reboot(const char *arg)
 {
 	(void)arg;
-#if defined(__sparc__) && defined(__arch64__)
-	/*
-	 * Linux restarts a sun4u through the firmware's "boot" service, which
-	 * OpenBIOS doesn't carry out: the kernel panics ("Reboot failed!") and,
-	 * with panic=-1, tries again for ever.
-	 */
-	if (getpid() == 1) {
-		printf("  reboot: not with OpenBIOS on sun4u, use poweroff\n");
-		return;
-	}
-#endif
 	printf("  restarting\n");
 	power(LINUX_REBOOT_CMD_RESTART);
 }

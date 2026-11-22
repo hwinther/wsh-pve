@@ -7,7 +7,10 @@ name: Wisp boot
 # Voyager need OpenBIOS patch 0027 (in the published pve-qemu-kvm since 11.1.3-3+wsh9); the
 # firmware is the published package's in both QEMU modes below. run.py --shell then boots the
 # four architectures once more with wisp=shell and drives the interactive shell over the serial
-# console (help, info, bench, crc, mandel, poweroff).
+# console (help, info, bench, crc, mandel, poweroff), and run.py --shell --reboot ends the script
+# with reboot instead (QEMU exits on the reset with -no-reboot). sparc64 is left out of the reboot
+# run until the published package's openbios-sparc64 has patch 0030 (the restart through the
+# firmware's boot service): before it the kernel panics with "Reboot failed!".
 #
 # Tier 2 (run.py --tier2, kernel-t2): every machine again with a raw disk image on each of its
 # disk controllers (pc: IDE and virtio-blk; sun4m: ESP SCSI; sun4u: cmd646 IDE and virtio-blk), a
@@ -158,6 +161,8 @@ jobs:
             2> "$RUNNER_TEMP/wisp/table-sparc32.md" || rc=1
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-shell.md" || rc=1
+          docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch x86_64 --arch i386 --arch sparc32 \
+            --shell --reboot "${args[@]}" 2> "$RUNNER_TEMP/wisp/table-reboot.md" || rc=1
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --tier2 "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-tier2.md" || rc=1
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch sparc32 "${sparc32[@]}" --tier2 \
@@ -183,6 +188,10 @@ jobs:
             echo "### Interactive shell (wisp=shell)"
             echo
             cat "$RUNNER_TEMP/wisp/table-shell.md" 2>/dev/null || echo "(no table)"
+            echo
+            echo "### Interactive shell, reboot"
+            echo
+            cat "$RUNNER_TEMP/wisp/table-reboot.md" 2>/dev/null || echo "(no table)"
             echo
             echo "### Tier 2: disk, network, SMP"
             echo
