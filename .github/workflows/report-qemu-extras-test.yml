@@ -4,6 +4,8 @@ name: Optional-extras report test
 # runs when a pve-qemu build lacks an extra, which is rare. This runs it without such a build:
 # - unit: scripts/test-report-qemu-extras.sh, offline cases for create, update, already reported,
 #   close, absent and a bad state
+# - unit: scripts/test-check-qemu-extras.sh, the sun-proms check on fake roots with fake PROMs
+#   installed by wsh-sun-proms (packages/wsh-lab/sun-proms) or by hand
 # - dry-run: the script against this repository's real open issues, with the chosen extra
 #   simulated as missing; it prints the gh commands and the issue body it would write. The job's
 #   token can only read issues, so nothing is opened or changed.
@@ -27,6 +29,9 @@ on:
     paths:
       - "scripts/report-qemu-extras.sh"
       - "scripts/test-report-qemu-extras.sh"
+      - "scripts/check-qemu-extras.sh"
+      - "scripts/test-check-qemu-extras.sh"
+      - "packages/wsh-lab/sun-proms/**"
       - ".github/workflows/report-qemu-extras-test.yml"
 
 permissions: {}
@@ -49,6 +54,9 @@ jobs:
 
       - name: scripts/test-report-qemu-extras.sh
         run: scripts/test-report-qemu-extras.sh
+
+      - name: scripts/test-check-qemu-extras.sh
+        run: scripts/test-check-qemu-extras.sh
 
   dry-run:
     name: Dry run against the open issues
