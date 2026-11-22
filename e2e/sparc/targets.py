@@ -123,9 +123,9 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
-# Debian 13 on sun4u: the lab image of the published pve-qemu-kvm (wsh/0070 Linux idle, openbios 0030 reboot);
-# the scenarios ran against the lab's own QEMU, not yet through PVE
-PACKAGES_2026_11_22_DEB13 = {"pve-qemu-kvm": "11.1.3-4+wsh4"}
+# Debian 13 on sun4u through PVE: the published packages (pve-qemu-kvm with wsh/0070 Linux idle and openbios 0030)
+PACKAGES_2026_11_22_DEB13 = {"pve-qemu-kvm": "11.1.3-4+wsh8", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
+                             "libpve-storage-perl": "9.1.18+wsh2"}
 
 MEDIA = {
     "solaris_2.6_598_sparc.iso": {
@@ -1260,11 +1260,14 @@ TARGETS = {
         "network": "enp2s0 (sunhme): a static address (10.0.2.15/24 unless --ip/--netmask) with --gateway and"
                    " --dns, which must reach deb.debian.org (or --apt-proxy), or only --apt-proxy at an address"
                    " on the guest's network (no router, no name server); --domain",
-        "minutes": 180,
+        # 177 min through PVE (install 166, first boot 6.4, --check 4.7), 154 min for the install with the
+        # lab's own QEMU; the base system over the network is most of it
+        "minutes": 177,
         "matrix_skip": "takes 2.5-3 h (the base system over the network under TCG), too much of the sparc lab"
-                       " job's 240 minutes: installed on request",
+                       " job's 240 minutes and left out of the monthly reinstall: installed on request (--reinstall),"
+                       " its stored disk boot-tested otherwise (~5 min)",
         "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_DEB13,
-                   "with": "lab scenarios with the lab's QEMU (install, disk boot); lab.py install not yet run"},
+                   "with": "--check --gateway --dns --export; boot-test of the stored disk"},
     },
     "debian40-ss20": {
         **DEBIAN_UNATTENDED,
