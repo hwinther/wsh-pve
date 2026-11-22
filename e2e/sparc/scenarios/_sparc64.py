@@ -147,7 +147,8 @@ GUESTS = {
                 "LOGIN_SHELL": "exec /bin/sh",
                 "COMMANDS": "uname -a ;; sysctl hw.ncpu hw.physmem ;; df -h /"},
     "debian": {"PROMPT": r"login: ?$", "USER": "root", "PASSWORD": "lab", "POWEROFF": "poweroff",
-               "COMMANDS": "uname -a ;; nproc; free -m ;; lsblk ;; ip -br addr"},
+               # also on Debian 7 (wheezy: its ip has no -br)
+               "COMMANDS": "uname -a ;; nproc; free -m ;; lsblk ;; ip addr show eth0"},
     # solaris10-install-sparc64.py's disk; its first boot asks for the keyboard layout
     "solaris10": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "lab12345", "POWEROFF": "init 5",
                   "FIRSTBOOT": r"Configure Keyboard Layout",

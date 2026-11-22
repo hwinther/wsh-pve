@@ -113,10 +113,13 @@ def image(fmt, ip, netmask, gateway=None, dns=(), domain=None, hostname=None, pr
     if fmt == "preseed":
         return iso9660({"PRESEED.CFG": preseed(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
                         "WSHLAB": PRESEED_LOADER.encode()}, "WSH_LAB_PRESEED")
+    if fmt == "preseed-wheezy":
+        return iso9660({"PRESEED.CFG": preseed_wheezy(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
+                        "WSHLAB": PRESEED_LOADER_WHEEZY.encode()}, "WSH_LAB_PRESEED")
     raise ValueError(f"answer format {fmt!r}")
 
 
-FORMATS = ("kickstart", "preseed")
+FORMATS = ("kickstart", "preseed", "preseed-wheezy")
 
 
 # --- OpenBSD 5.9 sets CD -----------------------------------------------------------------------------
@@ -312,6 +315,99 @@ d-i passwd/root-login boolean true
 d-i passwd/root-password-crypted password *
 d-i passwd/make-user boolean false
 tasksel tasksel/first multiselect
+popularity-contest popularity-contest/participate boolean false
+d-i finish-install/reboot_in_progress note
+d-i preseed/late_command string {late}
+"""
+
+
+# --- Debian GNU/Linux 7 "wheezy" (sparc, sun4u) ------------------------------------------------------
+
+# What preseed/early_command on SILO's boot line runs on wheezy (_debian7.boot_line): the answer CD is
+# the secondary IDE slave (/dev/sr1, the drive after the install CD), mounted by the early command; this
+# script loads the preseed file, unmounts the CD and deletes its device, so cdrom-detect and apt-cdrom
+# see only Debian's CD.
+PRESEED_LOADER_WHEEZY = """# lab.py install (wsh-pve e2e/sparc answer_media.PRESEED_LOADER_WHEEZY): run by preseed/early_command
+set -e
+debconf-set-selections /mnt/preseed.cfg
+dev=
+while read d m rest; do [ "$m" != /mnt ] || dev=$d; done < /proc/mounts
+umount -l /mnt  # lazy: this script is still open on it ("Device or resource busy")
+echo 1 > "/sys/block/${dev#/dev/}/device/delete"
+logger -t wsh-lab "preseed loaded from $dev; $dev removed"
+"""
+
+
+def preseed_wheezy(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
+    """Debian 7 (wheezy) debian-installer's preseed file for `lab.py install debian7-sun4u` (README.md,
+    "Debian GNU/Linux 7 on sun4u"): everything from CD 1 (no network mirror, so no router, name server
+    or proxy is needed; `proxy` is refused), the network static on eth0 (a router and name servers only
+    when given), the first (blank) disk with /boot (ext2) first, then / (ext3) and swap, the base
+    system with openssh-server and no other task (tasksel's "SSH server"), SILO on the disk, reboot.
+
+    Root gets the hash `*` and the late command empties it, so nothing secret is on the image: the first
+    boot logs in on ttyS0 without one and sets it (debian-firstboot.py, GUEST debian7). The late command
+    also comments out the `deb cdrom:` line in sources.list (the CD is ejected after the install)."""
+    dns = list(dns or [])
+    for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
+                      *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
+        if val is not None and not re.fullmatch(r"[A-Za-z0-9._/+-]+", val):
+            raise ValueError(f"preseed {what} {val!r}")
+    if proxy:
+        raise ValueError("preseed (wheezy): the install takes everything from CD 1, there is nothing to proxy")
+    recipe = ("wshlab :: "
+              "64 500 128 ext2 $primary{ } $bootable{ } method{ format } format{ } use_filesystem{ } filesystem{ ext2 } mountpoint{ /boot } . "
+              "1500 10000 1000000000 ext3 $primary{ } method{ format } format{ } use_filesystem{ } filesystem{ ext3 } mountpoint{ / } . "
+              "256 512 512 linux-swap $primary{ } method{ swap } format{ } .")
+    late = ("in-target passwd -d root; in-target sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list")
+    return f"""\
+# lab.py install (wsh-pve e2e/sparc answer_media.preseed_wheezy): Debian GNU/Linux 7 (wheezy), sparc
+d-i preseed/early_command string
+d-i debian-installer/locale string en_US
+d-i debian-installer/language string en
+d-i debian-installer/country string US
+d-i keyboard-configuration/xkb-keymap select us
+d-i hw-detect/load_firmware boolean false
+d-i netcfg/enable boolean true
+d-i netcfg/choose_interface select eth0
+d-i netcfg/disable_autoconfig boolean true
+d-i netcfg/disable_dhcp boolean true
+d-i netcfg/get_ipaddress string {ip}
+d-i netcfg/get_netmask string {netmask}
+d-i netcfg/get_gateway string {gateway or ""}
+d-i netcfg/no_default_route boolean true
+d-i netcfg/get_nameservers string {" ".join(dns)}
+d-i netcfg/confirm_static boolean true
+d-i netcfg/get_hostname string {hostname or "debian"}
+d-i netcfg/get_domain string {domain or ""}
+d-i netcfg/hostname string {hostname or "debian"}
+d-i apt-setup/use_mirror boolean false
+d-i apt-setup/no_mirror boolean true
+d-i apt-setup/cdrom/set-first boolean false
+d-i apt-setup/cdrom/set-next boolean false
+d-i apt-setup/cdrom/set-failed boolean false
+d-i apt-setup/non-free boolean false
+d-i apt-setup/contrib boolean false
+d-i apt-setup/services-select multiselect
+d-i apt-setup/security_host string
+d-i clock-setup/utc boolean true
+d-i clock-setup/ntp boolean false
+d-i time/zone string {timezone}
+d-i partman-auto/disk string /dev/sda
+d-i partman-auto/method string regular
+d-i partman-auto/expert_recipe string {recipe}
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+d-i partman-basicfilesystems/no_mount_point boolean false
+d-i base-installer/kernel/image string linux-image-sparc64
+d-i passwd/root-login boolean true
+d-i passwd/root-password-crypted password *
+d-i passwd/make-user boolean false
+tasksel tasksel/first multiselect ssh-server
+d-i pkgsel/include string openssh-server
+d-i pkgsel/upgrade select none
 popularity-contest popularity-contest/participate boolean false
 d-i finish-install/reboot_in_progress note
 d-i preseed/late_command string {late}

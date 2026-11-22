@@ -2714,6 +2714,8 @@ serial console unless stated.
 | OpenBSD 8.0 | yes (`bsd.rd`), installer prompt in ~1 min | not tried | yes: base, comp, man, game from the CD, ~17 min after the questions (kernel relink included); through PVE 9-12 min (target `openbsd80-sun4u`) | with openbios 0023 (pve-qemu-kvm 11.1.3-2+wsh22 and later; before, the GENERIC kernel panics in its first firmware calls, below): `login:` in ~4 min (first boot, key generation), on ttya and on the VGA screen, DHCP on `hme0`, `halt -p` ends QEMU (exit 0); disk timeouts once ntpd ran (below) until pve-qemu `wsh/0045`; the target keeps ntpd on since |
 | Debian 12.0 ports netinst | yes: GRUB menu (no timeout, Return boots), then "Select a language" in 52 s | not tried | no: partitioning (Sun label) and DHCP work, then the base system fails: `dpkg-deb` segfaults in `libc.so.6` while unpacking (below) | |
 | FreeBSD 12.4 | yes: bsdinstall's console-type question in 59 s (`bootonly` and `disc1`); no interrupt storm (FreeBSD bug 239068) | not tried | yes: `bsdinstall script` from the installer's shell, kernel and base from disc1, ~10 min (target `freebsd124-sun4u`) | `login:` in 84-120 s, DHCP on `hme0`; `shutdown -p now` ends QEMU (exit 0) with openbios 0040, the reboot needs 0041, idle needs pve-qemu `wsh/0100` ("FreeBSD 12.4 on sun4u") |
+| Debian 7.11 (wheezy) netinst and CD 1 | yes: SILO 1.4.14 from the CD (`Trying cdrom:f...`), Return at `boot:`, then "Select a language" (Linux 3.2.0-4) | not tried | yes, from CD 1 with a preseed file (target `debian7-sun4u`): the base system with SSH, 84 min to the reset in the lab's own QEMU, nothing fetched | yes: SILO boots `/vmlinuz` and its initrd, `login:` 152-164 s from QEMU start, DHCP and static on `eth0` (`sunhme`), `poweroff` ends QEMU (exit 0); `reboot` with pve-qemu `wsh/0112` ("Debian 7 on sun4u" below) |
+| Ubuntu 9.04 server (jaunty) | yes: SILO 1.4.14, Return at `boot:`, then "Choose language" 31 s later (Linux 2.6.28-6; the boot is `quiet`) | not tried | not tried | |
 
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
 
@@ -2941,7 +2943,8 @@ disassembled from the stored disks with `objdump`, `mdb -k` and QEMU's `x/i`):
 | Solaris 9, 10; Tribblix m34 (illumos) | `idle()` with one CPU: `(*idle_cpu)()` while `CPU->cpu_disp->disp_nrunnable == 0` | nothing: `idle_cpu` becomes `cpu_halt` only if the CPU module has `cpu_halt_cpu()`, which only the SPARC64-VI module (`opl_olympus`, the `sleep` instruction) has; on UltraSPARC-II/IIi it stays `generic_idle_cpu` (`retl; nop`) |
 | Solaris 7 3/99, 8 2/02 | `idle()` as in 9 and 10 | nothing, as on 9 and 10 |
 | FreeBSD 12.4 | `sched_idletd()` (ULE): `cpu_idle(busy)` while `tdq_load` is 0, `tdq_cpu_idle` set round it | nothing: `cpu_idle()` is empty on sparc64 (`retl; nop`); the kernel runs at TL 1 |
-| Linux 6.1-7.3 (wisp; Debian 12 and 13 installers) | the generic `do_idle()`: with interrupts disabled (`%pil` 14) and `need_resched()` clear it calls `arch_cpu_idle()`, enables interrupts and goes round again | nothing: `arch_cpu_idle()` calls `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No kernel option helps: sparc64 has no cpuidle driver, `idle=poll` spins elsewhere, and `nohz` takes away clock interrupts, not the spin. No installed disk (Debian's install fails); measured with `-kernel` |
+| Linux 6.1-7.3 (wisp; Debian 12 and 13 installers) | the generic `do_idle()`: with interrupts disabled (`%pil` 14) and `need_resched()` clear it calls `arch_cpu_idle()`, enables interrupts and goes round again | nothing: `arch_cpu_idle()` calls `sun4v_cpu_yield` on sun4v; on sun4u it only touches the NMI watchdog. No kernel option helps: sparc64 has no cpuidle driver, `idle=poll` spins elsewhere, and `nohz` takes away clock interrupts, not the spin. No installed disk (Debian 12's install fails); measured with `-kernel` |
+| Linux 3.2 (Debian 7, installed disk and installer) | `cpu_idle()` in `arch/sparc/kernel/process_64.c`, with interrupts enabled (`%pil` 0): `while (!need_resched() && !cpu_is_offline(cpu)) sparc64_yield(cpu);` | nothing: `sparc64_yield()` clears `TIF_POLLING_NRFLAG` and calls `sun4v_cpu_yield` on sun4v; on sun4u it only calls `touch_nmi_watchdog()` (pve-qemu `wsh/0110`) |
 
 None of them uses `sir` or an `%asr` write to idle. The clock-divider power management of the
 UltraSPARC-IIe/IIIi (Energy Star) slows the clock rather than stopping it, and QEMU emulates a IIi (not
@@ -2965,6 +2968,7 @@ the word that says there is work:
 | Linux 6.1.27, Debian 12 installer (0070) | `call arch_touch_nmi_watchdog` (0x42c280) | the same | gcc 12: `... be,pn %icc sun4v; nop; call; nop; call touch_softlockup_watchdog; nop; wrpr %g0, 0, %pil; return; nop`, then the sun4v branch |
 | Linux 6.17.7 and 7.0.12, Debian 13 installers of 2025-11 and 2026-06 (0070) | `call arch_touch_nmi_watchdog` (0x43a9a0, 0x43aa40) | the same | gcc 15: `... bne,pn %icc sun4u; nop;` the sun4v branch (16 words, `return; nop` at its end), `sun4u: call; nop; call touch_softlockup_watchdog; nop; return; nop` |
 | FreeBSD 12.4 (0100) | `call cpu_idle` (0xc068f230) | `tdq_load` (`[%l1 + 0x88]`) | gcc 4.2: `st %g1, [%tdq + 0x8c]; membar; ld [%tdq + 0x88]; cmp; be idle; ...; clr [%tdq + 0x8c]; b top; nop; idle:` five words, the call, `clr [%tdq + 0x8c]` after it; halted at TL 1 and without the 100 us poll ("FreeBSD 12.4 on sun4u") |
+| Linux 3.2.78, Debian 7's `3.2.0-4-sparc64` (installed and installer kernel, the same image) and `-smp` (0110) | `call touch_nmi_watchdog` in `cpu_idle()` (0x42ab58; `-smp` 0x42ad7c) | the same, at `%pil` 0 | gcc 4.6: `cmp %r, 3; be,pn %icc sun4v; mov 14, %o0; call; nop; b %xcc top; nop; sun4v: call clear_bit; add %o1, 8, %o1` (the `tlb_type` load right before in the uniprocessor kernel, elsewhere in `-smp`) |
 
 At the call the helper halts the CPU when the word is 0, `PSTATE.IE` is set, `%pil` and `%tl` are 0, and
 no interrupt, interrupt vector, `%softint` bit or `pil_in` line is pending, after spinning 100 us as on
@@ -3901,8 +3905,122 @@ after each, in one QEMU process; QEMU is the published 11.1.3-3+wsh13 unless "+0
 Before 0030's RAM clear, with only the SOFTINT and NPT fixes, Solaris 9 and 10 reached their
 kernels after a reset and panicked in `startup_memlist`/`kphysm_init`; NetBSD and OpenBSD passed.
 Not tried: Tribblix (illumos uses the same `prom_reboot()`), Solaris 8 from an installed disk
-(no stored disk; its installer's two resets passed), Debian (no installed disk), a reboot with
-more than 3 GB of RAM (the clear covers it, not measured).
+(no stored disk; its installer's two resets passed), a reboot with more than 3 GB of RAM (the clear
+covers it, not measured). Debian 7 (Linux 3.2) reboots, but the RAM clear took minutes after Linux
+had run until pve-qemu `wsh/0112` ("Debian 7 on sun4u" below).
+
+### Debian 7 on sun4u (pve-qemu `wsh/0110`-`0113`, 2026-11-22)
+
+Debian GNU/Linux 7.11 "wheezy" (2016-06-04), the last official Debian release for sparc: a 32-bit
+userland on the sparc64 kernel (Linux 3.2.78, `3.2.0-4-sparc64`, gcc 4.6.3) and SILO 1.4.14 as the
+boot loader. Media from cdimage.debian.org's archive (`7.11.0/sparc/iso-cd/`): the netinst (181 MB)
+and CD 1 (680 MB), checked against the release's `SHA256SUMS` and `SHA512SUMS`, whose signatures
+check with `gpgv` against debian-keyring's role keys (the Debian CD signing key). The lab's own QEMU
+(the published pve-qemu-kvm 11.1.3-4+wsh3 unless said otherwise), `_sparc64.py`'s layout (IDE disk
+and CD, `sunhme`), 512 MB (1024 MB for the first install), serial console. Installed as the lab
+target `debian7-sun4u` (e2e/sparc/README.md, "Debian GNU/Linux 7 on sun4u").
+
+- **Boot from the CD.** OpenBIOS loads SILO's first stage from the CD (`Trying cdrom:f...`, `Not a
+  bootable ELF image`, `Loading a.out image...`), SILO prints `EXT2 superblock magic is wrong` twice
+  (it probes the ISO 9660 partition) and its `boot:` prompt; `install` loads `/boot/sparc64` and
+  `/boot/initrd.gz`. Linux 3.2 finds the CMD646 (`pata_cmd64x`, UDMA/33), the disk and CD, `sunhme`
+  (`eth0`) and the serial console (`OF stdout device is: /pci@1f,0/pci@1,1/ebus@1/su@14,3f8`). The
+  netinst and CD 1 both reach "Select a language". The QEMU wiki's "requires -nographic" for 7.8 is
+  about the display: with `-vga none` (a serial console) nothing else is needed.
+- **Install.** A preseed file on a second CD (the secondary IDE slave, `sr1`), loaded by
+  `preseed/early_command` from SILO's boot line, answers everything: static `eth0`, no network mirror,
+  partman's recipe on the blank disk (it writes the Sun label: `/boot` ext2, `/` ext3, swap), the
+  kernel, tasksel's "SSH server". 84 minutes from the boot line to the reset in the first run (1024
+  MB, a host load of 4-17): partitioning after 9 min, the base system 20-56 min (the kernel at 48),
+  extra packages and the initramfs until 71, `apt-setup`, the SSH task and SILO until 84. Nothing
+  crashed: no `dpkg-deb` segfault as with Debian 12's 64-bit userland (above), no soft lockup. Through
+  PVE (`lab.py install debian7-sun4u --check --export`, published packages, 512 MB, a host load of
+  2-4) the install took 61.6 minutes, all of it 68.5 with the first boot and the check; 182 packages
+  (the base system and OpenSSH; no "standard system utilities" task).
+- **SILO under OpenBIOS.** The historic reports (CRC errors in 2008, initrd read errors in 2013)
+  don't happen here: SILO reads `/etc/silo.conf` from `/boot` on `sda1`, uncompresses the kernel
+  ("Allocated 64 Megs of memory at 0x40000000 for kernel"), loads the 10 MB initrd ("Loading initial
+  ramdisk (10109674 bytes at 0x4400000 phys, 0x40C00000 virt)") and boots `root=/dev/sda2 ro` by
+  itself after its 10 s timeout. No OpenBIOS change was needed.
+- **The installed system.** `login:` on `ttyS0` 152-164 s from QEMU start (126-150 s from SILO);
+  `sshd` on port 22; static and DHCP on `eth0` (QEMU's user network: 10.0.2.15, router 10.0.2.2,
+  name server 10.0.2.3); `apt-get update` from `archive.debian.org` (`KEYEXPIRED` warning; "Happy
+  Meal out of receive descriptors, packet dropped" once under that load); `poweroff` ends QEMU with
+  exit code 0 after 15 s.
+- **GRUB on Debian 9/10 ports** ("canonicalise devname failed" in a 2021 report): not tried; wheezy
+  uses SILO, so nothing was learned about it here.
+- **Ubuntu 9.04 server sparc** (`ubuntu-9.04-server-sparc.iso` from old-releases.ubuntu.com's ports
+  tree, checked against the release's `MD5SUMS` and `SHA1SUMS`; their signing key, `FBB75451`, is no
+  longer in Debian's `ubuntu-keyring`, so the signatures weren't checked): the same SILO and
+  debian-installer, "Choose language" 31 s after Return at SILO. Its installer kernel (2.6.28-6)
+  spins at 100% with 0110 too: its idle loop isn't the 3.2 layout, and the kernel is stripped, so it
+  wasn't looked at. Not installed, no target.
+
+**The firmware's RAM clear after a reboot (`wsh/0112`-`0113`).** `reboot` goes through OpenBIOS 0030
+(above): the reset works, but the banner came late. 336 s after the kernel's `Restarting system`
+for a reboot after a minute at the shell (512 MB), about 5 minutes for the installer's reboot after
+85 minutes (1024 MB). `info registers` at intervals: the PC in 0030's clear loop (`stxa %g0, [..]
+ASI_PHYS_USE_EC`), most of the RAM cleared in a minute or two, then 30 bytes to a few KB a second
+around 77-80 MB (pages the kernel had used). `perf` on QEMU: 86% in `tb_page_remove()`, 7% in
+`tb_invalidate_phys_page_range__locked()`. `info jit` before the reboot: 614 000 translated blocks
+after a minute at the shell, 1 600 000 after ten minutes, the 1 GB code buffer flushed twice. A
+store to a page with translated code invalidates the blocks it overlaps, and taking one off its
+page's list walks that list, so a page that holds many costs in proportion to their number squared.
+NetBSD, OpenBSD and Solaris didn't show it (their reboots took 8-70 s), presumably fewer blocks
+per page. `wsh/0112` queues a TB flush in `main_cpu_reset()` on every reset after the power-on one
+(the firmware is about to overwrite the RAM anyway): the same reboot reaches the banner 2 s after
+`Restarting system` and `login:` 172 s after it. qtest `wsh/0113` (`sun4u-sabre-reset-test`,
+`/sun4u/reset/tb-flush`: one more TB flush in `info jit` after `system_reset`; fails without
+0112).
+
+**Translated code under Linux 3.2 (not followed).** The same numbers say that QEMU retranslates
+Linux 3.2's code all the time: `info jit` after the first install showed 1 200 000 blocks in the
+buffer but only 4 093 of the 524 288 hash buckets used (0.19% occupancy), 3 990 000 invalidations
+and 23 buffer flushes; a boot to `login:` alone fills the 1 GB buffer once or twice. Writes to pages
+that hold code drop their blocks, and the code is translated again. That likely makes the install
+and the boots slow (the base system took 36 minutes); where the writes come from (the kernel's own
+pages, D-cache aliasing work on spitfire, page reuse) wasn't traced. Whether it also explains the
+soft lockups in `dpkg-deb` that a 2023 debian-sparc report shows on QEMU sun4u (Debian 12's 64-bit
+userland) is open.
+
+**Idle (`wsh/0110`-`0111`).** Linux 3.2 spins in `cpu_idle()` with interrupts enabled, a loop the
+Linux layouts of 0070 don't match (that one is the generic `do_idle()` of later kernels, at `%pil`
+14; table above). 0110 recognises 3.2's call of `touch_nmi_watchdog()` by the `tlb_type` test, the
+`be,pn` to the sun4v branch with `mov 14, %o0` (`TIF_POLLING_NRFLAG`) in its delay slot and the sun4v
+branch's `clear_bit()` call, and halts there at `%pil` 0 when `TIF_NEED_RESCHED` is clear (the Linux
+helper now takes the `%pil` the loop runs at: 14 for 0070's kernels, 0 for 3.2). `-trace
+sparc64_idle_match` shows `Linux 3.2 idle loop: call at 0x42ab58`. The kernel is tickless when idle
+(`CONFIG_NO_HZ=y`, `HZ=250`), so a halted CPU stays halted until a timer or a device needs it.
+qtest `wsh/0111` (`sun4u-idle-test`, `linux-3.2`: idle, off, work, noint, pil14, pil15, tick; the
+idle case fails without 0110; 58 cases in all pass).
+
+Measured with `scenarios/sparc64-idle.py` (`GUEST=debian PASSWORD=wshlab MEM=512 LOAD=120`) on copies
+of the first-booted disk, one QEMU at a time on the lab host (14 threads, 1-minute load 3.5-4.7 from
+other agents' work at every start and end): "before" the published pve-qemu-kvm 11.1.3-4+wsh3 (no
+0070, which wouldn't match 3.2 anyway), "with" a `qemu-system-sparc64` built from the 11.1.3-4 series
+with `wsh/0001`-`0072` and 0110-0112, "off" that one with `-M sun4u,idle-halt=off`. Host CPU over 60 s
+at the shell after 30 s, the guest clock over that minute, the awk job, ten `sleep 1` and the rounds of
+two minutes of the job plus a 64 MB write/read (host seconds):
+
+| Run | Host CPU | Clock drift | Job s | 10 x `sleep 1` s | Load rounds | Boot to `login:` s |
+| --- | --- | --- | --- | --- | --- | --- |
+| before | 100.0% | 0.0 s | 12.8 | 10.5 | 9 | 168 |
+| with (`TRACE=sparc64_idle_match,sparc64_idle`: 1092 halts in the run) | 0.1% | 0.0 s | 13.4 | 10.4 | 9 | 236 (an 80 s stall, below) |
+| off | 100.0% | 0.0 s | 12.9 | 10.5 | 9 | 141 |
+
+A quick check at the shell before that: 100.0% with the package, 0.1% with the build (`cpu_use`, 60 s).
+
+**A boot stall seen twice with the halt (not explained).** Two boots with the halt sat silent for
+80-95 s right after the kernel's one-off `hrtimer: interrupt took 50-67 ms` (Linux's hrtimer hang
+detection), before init started udevd: the "with" run above and a boot after a firmware reset with
+the build (`udevd` at 157 s, `sched: RT throttling activated` before it). 21 more boots with the halt
+(tick, idle and interrupt vector traces on in 16 of them) didn't stall, nor did 10 boots without it
+(the package, or `idle-halt=off`); the hrtimer message came once more with the halt, without a stall,
+and never without it. Linux 3.2's
+hrtimer code had a bug of this shape (after a detected hang a timer cancel could program the clock
+event to a far timer and block all timers until it fired; "hrtimer: Prevent all reprogramming if
+hang detected", upstream 2013); whether Debian's 3.2.78 has the fix, and why the halt would make the
+hang detection more likely, wasn't checked.
 
 ### FreeBSD 12.4 on sun4u (OpenBIOS 0040-0041, pve-qemu `wsh/0100`-`0101`, 2026-11-22)
 

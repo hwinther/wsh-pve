@@ -1993,6 +1993,79 @@ Not tried: DHCP (d-i's default; `--ip dhcp` is refused for now), `--vlan`, SS-10
 SS-20 PROM, more than one CPU, tasks beyond the base system, the netinst on sun4u (Etch's sparc64
 kernel; the sun4u profile's IDE and `sunhme` were not tried with it).
 
+### Debian GNU/Linux 7 on sun4u
+
+`debian7-sun4u` installs Debian GNU/Linux 7.11 "wheezy", the last official Debian release for sparc
+(32-bit userland, the sparc64 kernel Linux 3.2.0-4, SILO), on the sparc64 profile: sun4u, OpenBIOS,
+512 MB, `vga: serial0`, a blank 8 GiB disk on `ide0`, CD 1 (`debian-7.11.0-sparc-CD-1.iso`) on
+`ide2`, `sunhme` (`eth0`). It is the first installed Linux disk on sparc64 here (Debian 12's install
+fails, `submodules/SPARC.md`, "sparc64 (sun4u)"). Everything comes from CD 1, so the install needs no
+router, name server or apt cache, and `pve_matrix.py install` installs it like the BSD targets.
+
+1. **Install** (the `unattended` method, `debian-install-sparc.py` with `ARCH=sparc64`; the same
+   scenarios as Debian 4.0, `_debian.py` picks the machine by `ARCH`). `install.Unattended` writes the
+   answer CD (`answer_media.preseed_wheezy()` and the loader `wshlab`) and puts it on `ide3`, the
+   secondary slave: Linux's `sr1`, after CD 1 on the secondary master (`sr0`). OpenBIOS boots CD 1
+   (`Trying cdrom:f...`, SILO 1.4.14) and the scenario types at SILO's `boot:`
+   (`_debian.boot_line64()`):
+   `install priority=critical locale=en_US preseed/early_command="modprobe pata_cmd64x;modprobe sr_mod;modprobe isofs;until mount -r -t iso9660 /dev/sr1 /mnt;do sleep 1;done;sh /mnt/wshlab"`.
+   `wshlab` loads `preseed.cfg` with `debconf-set-selections`, unmounts the CD (`umount -l`: plain
+   `umount` fails with "Device or resource busy", the script itself is open on it, and d-i shows
+   "Failed to run preseeded command") and deletes its device, so `cdrom-detect` and `apt-setup` see
+   only CD 1. The preseed file: static `eth0` (a router and name servers only when given), no
+   network mirror (`apt-setup/use_mirror false`, no security or updates services), the disk with
+   partman-auto's recipe (`/boot` ext2 128 MB first, `/` ext3, swap 385 MB; partman writes the Sun
+   label), the kernel `linux-image-sparc64`, root's hash `*`, no user, tasksel's "SSH server" and
+   `openssh-server`, SILO on the disk. The scenario stops the VM at the kernel's `Restarting system`
+   (with the published package the firmware's RAM clear after that reset took minutes, see below).
+2. **First boot** (`debian-firstboot.py`): OpenBIOS boots SILO from the disk (`Trying disk:a...`),
+   SILO loads `/vmlinuz` and `/initrd.img` (10 MB) by itself after its 10 s timeout, root logs in on
+   `ttyS0` without a password (the installer's `T0:23:respawn:/sbin/getty -L ttyS0 9600 vt102`),
+   `passwd root`, the marker, the optional user, `poweroff`.
+3. **Check** (`debian-boot-disk.py`): the target's commands (`uname -a`, `hostname`, the marker,
+   `/etc/debian_version` `7.11`, `df -k`, `/proc/partitions`, `ifconfig`, `route -n`, `resolv.conf`,
+   `sources.list`, `netstat -ltn`, `pgrep -l sshd`), `poweroff`.
+
+What the installed system does (lab QEMU, published pve-qemu-kvm 11.1.3-4+wsh3 unless said otherwise):
+
+- `login:` 126-150 s after SILO (152-164 s from QEMU start); `sshd` listens on port 22.
+- **DHCP:** with `iface eth0 inet dhcp` in `/etc/network/interfaces`, `ifup eth0` gets 10.0.2.15
+  from QEMU's user network (`DHCPOFFER from 10.0.2.2`), the default route via 10.0.2.2 and
+  `nameserver 10.0.2.3`; with `deb http://archive.debian.org/debian wheezy main`, `apt-get -o
+  Acquire::Check-Valid-Until=false update` fetched 11.5 MB (the expired archive keys give a
+  `KEYEXPIRED` warning, as for etch). Under that load `sunhme` logged "Happy Meal out of receive
+  descriptors, packet dropped" once.
+- **`poweroff`** ends QEMU with exit code 0, 15 s after the command.
+- **`reboot`** works through OpenBIOS 0030's firmware reset, but with the published package the
+  firmware's RAM clear after the reset crawled: QEMU still held 600 000-1 600 000 translated blocks
+  from Linux, and each store to a page full of them is slow (`submodules/SPARC.md`, "Debian 7 on
+  sun4u"). The installer's final reset (1024 MB, after 85 minutes) reached the banner after about 5
+  minutes, a `reboot` after a minute at the shell (512 MB) after 336 s. With
+  pve-qemu `wsh/0112` (a TB flush on every reset after the power-on one) the banner comes 2 s after
+  `Restarting system` and `login:` 172 s after it.
+- **Idle:** see "Idle" below (pve-qemu `wsh/0110`).
+
+The boot-test VM has a new MAC, which wheezy's udev (`70-persistent-net.rules`) names `eth1`, so the
+boot test runs with the network down, as for etch; the check doesn't need it.
+
+Tested 2026-11-22 on the lab host. Lab runs with the published pve-qemu-kvm 11.1.3-4+wsh3 (the lab
+image), PVE runs in the PVE test container built `--no-cache` from the published packages
+(pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11, libpve-storage-perl
+9.1.18+wsh2), one install at a time, other agents' work on the host (1-minute load 2-17):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| CD 1 and the netinst, `serve`, Return at SILO | "Select a language" on ttya | ~60 s |
+| the install by hand through `serve` (1024 MB, the first preseed loader) | installed; d-i showed "Failed to run preseeded command" (the loader's plain `umount`), the answers were loaded anyway and the install went on; the reset's firmware banner after about 5 minutes (RAM clear) | 84 min to the reset |
+| that disk: SILO, `login:`, DHCP, `apt-get update`, `poweroff`, `reboot` | as described above | |
+| `debian-firstboot.py ARCH=sparc64 ROOT_PASSWORD=wshlab USER=lab`, then `debian-boot-disk.py ARCH=sparc64` with the target's commands, on copies | passed; `7.11`, `/boot` 120 MB ext2 on `sda1`, `/` 7.5 GB on `sda2`, swap on `sda4`, `sshd` on port 22 | 197 s, 179 s |
+| `debian-install-sparc.py ARCH=sparc64` (the final loader), the lab's own QEMU, to the kernel | `-boot d`, the boot line typed, `Kernel command line: ... early_command`, no preseed error (stopped there: one install at a time) | 2 min |
+| `pve_matrix.py install --only install-debian7-sun4u`, empty `--disks` (`lab.py install debian7-sun4u --check --export`) | passed and exported (`install-debian7-sun4u.raw`, 8 GiB, 836 MB allocated); the answer CD in `ide3` and gone afterwards, `boot: order=ide0` | 68.5 min (install 3693 s, first boot 219 s, check 176 s) |
+| the same again, the disk stored | `boot-test debian7-sun4u` passed | 175 s |
+
+Not tried: `--ip dhcp` (refused, as for etch), `--user` through PVE (the first boot's `useradd` ran in
+the lab), `--vlan`, VGA, more memory, the netinst with a network mirror, `reboot` through PVE.
+
 ### The Tribblix install target
 
 `tribblix-m34-sun4u` installs Tribblix m34 for SPARC (illumos) from its live CD
@@ -2455,8 +2528,8 @@ driver installed from the 2.6 CD by the steps there. `modinfo | grep pmc` then l
 Management prototype v1.1)` and `prtconf -D` shows `power-management, instance #0 (driver name: pmc)`.
 
 On sun4u (`scenarios/sparc64-idle.py`) the guests idle through the `idle-halt` machine option (pve-qemu
-`wsh/0042`-`0044`, `0070`-`0072` and `0100`-`0101`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
-shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`, `Solaris 7/8`, `FreeBSD`, `Linux`). The stored install disks
+`wsh/0042`-`0044`, `0070`-`0072`, `0110`-`0111` and `0114`-`0115`, on by default; `-M sun4u,idle-halt=off` turns it off); `TRACE=sparc64_idle_match`
+shows which loop matched (`NetBSD`, `OpenBSD`, `Solaris`, `Solaris 7/8`, `Linux`, `Linux 3.2`, `FreeBSD`). The stored install disks
 (`/mnt/os/disks/install-*-sun4u.raw`, `install-netbsd*-sparc64.raw`) take `PASSWORD=wshlab`; each guest
 does something for a while after boot, which `WAIT` ends or waits out before the measurement:
 
@@ -2465,6 +2538,7 @@ does something for a while after boot, which `WAIT` ends or waits out before the
 | NetBSD 9.3, 11.1 | `GUEST=netbsd`, `WAIT=pkill makemandb; sleep 2` (the copied disk rebuilds its manual page index at every boot) |
 | OpenBSD 8.0 | `GUEST=openbsd`, `WAIT=while pgrep -f reorder_kernel >/dev/null; do sleep 5; done` (the kernel relink after boot) |
 | FreeBSD 12.4 | `GUEST=freebsd`, `PASSWORD=wshlab` (the target's disk after its first boot; the scenario runs its commands in `sh`, as root's csh ends a here-document only at the quoted word), no `WAIT` |
+| Debian 7 (`install-debian7-sun4u.raw`) | `GUEST=debian`, `PASSWORD=wshlab` (nothing to wait for; the scenario's `LOAD` works too) |
 | Solaris 10 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `` WAIT=svcadm disable -s sendmail webconsole; while svcs -H -o state \| grep '[*]' >/dev/null \|\| [ `svcs -H -o state milestone/multi-user` != online ]; do sleep 5; done ``, `SETTLE=180` (SMF goes on starting services for minutes after the login prompt) |
 | Solaris 7, 8, 9 | `GUEST=solaris10`, `MEM=1024`, `TIMEOUT=1800`, `WAIT=/etc/init.d/sendmail stop`, `SETTLE=60` |
 | Tribblix m34 | `GUEST=tribblix`, `MEM=2048`, `TIMEOUT=2400`, `WAIT=svcadm disable network/routing/route:default; svcadm disable -s fmd; zpool clear rpool; pkill rcm_daemon;` and the Solaris 10 loop, `SETTLE=180` (`route:default` times out again and again without a router; FMA marks the ZFS disk DEGRADED and `rcm_daemon` spins, so without `fmd` off the guest is never idle) |
@@ -2702,6 +2776,7 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `sparc64-boot-disk.py` | boots an installed disk (`GUEST=...`), logs in, runs `COMMANDS` (each output checked against `CHECK`), powers off and checks that QEMU ended; `BOOTS` times | ~1.5 min a boot |
 | `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u"). The `sparc64` matrix runs it on the NetBSD 11.1 disk (`nb111-reboot-sparc64`, `nb111-reboot-bootstr-sparc64` with `REBOOT=reboot -- netbsd`) | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, FreeBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
+| `debian-install-sparc.py`, `debian-firstboot.py`, `debian-boot-disk.py` with `ARCH=sparc64` | Debian 7.11 on sun4u from CD 1 with a preseed answer CD on the secondary IDE slave, its first boot and check ("Debian GNU/Linux 7 on sun4u") | install ~85 min, first boot ~3.5 min, check ~3 min |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
 defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`

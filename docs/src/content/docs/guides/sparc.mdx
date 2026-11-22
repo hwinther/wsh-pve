@@ -635,6 +635,7 @@ Tested with the `pve-qemu-kvm` 11.1.3-2+wsh7 package (details: `submodules/SPARC
 | OpenBSD 8.0 | with 11.1.3-2+wsh22 or later (OpenBIOS patch 0023): installs from `install80.iso` (about 10 minutes; `wsh-lab install openbsd80-sun4u` does it through Proxmox) and the installed system boots to its login, gets its address on `hme0` (static or DHCP) and powers off with `halt -p`. ntpd needs 11.1.3-2+wsh30 or later (tested again on 11.1.3-3+wsh6, where it syncs within about 5 minutes): before, the IDE disk timed out (`wd0: timeout`) and the guest stopped answering, mostly once ntpd ran with a reachable NTP server (5 of 6 boots), rarely without it (a NIC interrupt could cost the disk its interrupts; QEMU patch 0045). Before +wsh22 the installed kernel stops in the firmware (`Unhandled Exception 0x30`: the firmware overwrote a value on the kernel's stack) |
 | FreeBSD 12.4 | the last release with sparc64: the `bootonly` and `disc1` CDs boot to bsdinstall on the serial console; installed from disc1 (about 10 minutes; `wsh-lab install freebsd124-sun4u` does it through Proxmox), the installed system boots, gets its address on `hme0` (static or DHCP), reboots and powers off. Needs OpenBIOS patches 0040 and 0041, not in a package yet: without them `shutdown -p now` leaves the VM on and every reboot panics (`fast instruction access mmu miss`) |
 | Debian 12 (ports netinst) | the installer boots and partitions; installing the base system fails (a program crashes while unpacking) |
+| Debian 7.11 (wheezy) | installs from CD 1 (the base system with SSH, about 70-85 minutes; `wsh-lab install debian7-sun4u` does it through Proxmox, unattended) and the installed system boots through SILO to its login on the serial console, gets its address on `eth0` (static or DHCP) and powers off. `reboot` works; with packages before pve-qemu patch `wsh/0112` the firmware takes about 5 minutes to come back after it |
 | Solaris 10 1/13 | with 11.1.3-2+wsh13 or later: installs to the IDE disk (about 80 minutes; `wsh-lab install sol10-sun4u` does it through Proxmox) and the installed system boots, gets its address and powers off; no reboot (see below) |
 | Solaris 8 and 9 | 8 2/02 and 9 9/05 install to the IDE disk with Web Start on the serial console and the installed system boots (1024 MB, End User, 64-bit; `wsh-lab install sol8-sun4u` and `sol9-sun4u` do it through Proxmox, see [Solaris 8 and 9](#solaris-8-and-9-on-sun4u)): 8 needs 11.1.3-2+wsh23 or later (OpenBIOS patch 0024; before, the kernel panicked early with `pp is NULL or free`), 9 11.1.3-2+wsh25 or later, which has OpenBIOS patch 0025 (without it the installed system's first boot panics in the floppy driver). 8 1/01 and the original 9 DVD reach their installers too; not installed |
 | Solaris 2.5.1-7 | 7 (3/99) reaches its installer with 11.1.3-2+wsh23 or later (not installed: a lab target would need suninstall on a Sun-labelled IDE disk); 2.5.1 and 2.6 stop in the boot block. On sparc32 Solaris 2.2-9 install on the SS-5, SS-10 and SS-20 |
@@ -674,7 +675,13 @@ Patches `wsh/0070`-`0072` (not in a package yet) add Linux and Solaris 7 and 8:
 | Solaris 7 3/99 and 8 2/02, at the shell | 100% / 2.5-3% |
 | Linux 6.1 to 7.3: the Debian 12 and 13 installers at their first question, the wisp test kernel at its prompt | 100% / 5-6% |
 
-Patch `wsh/0100` (not in a package yet) adds FreeBSD 12.4, whose kernel runs its idle loop at trap
+Patches `wsh/0110`-`0111` (not in a package yet) add Debian 7's Linux 3.2:
+
+| Guest | Host CPU idle, before / with the idle halt |
+| --- | --- |
+| Debian 7.11 (Linux 3.2), at the shell | 100% / 0.1% (the kernel stops its tick when idle) |
+
+Patch `wsh/0114` (not in a package yet) adds FreeBSD 12.4, whose kernel runs its idle loop at trap
 level 1:
 
 | Guest | Host CPU idle, before / with the idle halt |
