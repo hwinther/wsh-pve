@@ -32,6 +32,7 @@ export default defineConfig({
             { label: "Retro net", slug: "guides/retronet" },
             { label: "wisp (tiny test system)", slug: "guides/wisp" },
             { label: "Browser SPARC", slug: "guides/browser-sparc" },
+            { label: "The emulation ladder", slug: "guides/emulation-ladder" },
           ],
         },
         {

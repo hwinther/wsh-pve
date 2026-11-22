@@ -656,7 +656,8 @@ merged; what is left of them is item 2 under "Next".
      post at the self-test's failing and passing runs. uClibc-ng for sparc32 is left for later
      (Buildroot, as item 10).
   3. *The emulation ladder*: one compute loop native, under KVM, TCG, TCI and TCI-in-Wasm, and nested
-     (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab.
+     (sparc in x86 in Wasm), as a chart or short video, with the TCI numbers from the lab. The page exists (guide "The emulation ladder"); native, KVM and the
+     nested rung are not measured yet.
   4. *ASCII Mandelbrot or a ray tracer on the serial console* of all three architectures at once,
      recorded with asciinema and timed. wisp's shell has the Mandelbrot (`mandel` with `wisp=shell`).
      Recorded 2026-11-22: `wisp-mandel-ss5.cast`, `-sun4u.cast` and `-pc.cast` (boot, `mandel`,
