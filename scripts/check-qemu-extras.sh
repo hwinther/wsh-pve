@@ -5,7 +5,9 @@
 #   3dfx              /usr/bin/qemu-system-x86_64-3dfx, QEMU with qemu-3dfx (its "featuring qemu-3dfx@" banner)
 #   openbios          openbios-sparc32 and QEMU,cgthree.bin built from openbios/, not QEMU's prebuilt images
 #   openbios-sparc64  openbios-sparc64 built from openbios/ (Solaris 10 on sun4u), not QEMU's prebuilt image
-#   sun-proms         ss5.bin, ss10_v2.25_rom, ss20_v2.25_rom and lx.bin from the private submodules/sparc
+#   sun-proms         ss5.bin, ss10_v2.25_rom, ss20_v2.25_rom and lx.bin in /usr/share/kvm (from the private
+#                     submodules/sparc, or with --root installed by wsh-sun-proms: the detail names
+#                     the source of each, from dpkg and wsh-sun-proms's record)
 #
 #   scripts/check-qemu-extras.sh --deb build/repo/pve-qemu-kvm_<version>_amd64.deb [options]
 #   scripts/check-qemu-extras.sh --root /          (the installed package)
@@ -185,14 +187,44 @@ check_openbios_sparc64() {
     detail="${detail%; }"
 }
 
+# Where each PROM in /usr/share/kvm of an installed root came from: wsh-sun-proms (its record,
+# var/lib/wsh-sun-proms/installed.tsv, names the file with the same sha256), the package dpkg lists
+# it in (--root / only), or neither. Prints "<source>: <file>" lines.
+# shellcheck disable=SC2329
+prom_sources() {
+    local f src owner record="$root/var/lib/wsh-sun-proms/installed.tsv"
+    for f in "$@"; do
+        # the record's directory is /usr/share/kvm, or the root's own path to it (--dir under a root)
+        if [ -f "$record" ] && awk -F'\t' -v n="$f" -v s="$(sha "$kvm/$f")" -v d="$kvm" \
+            '$1 == n && $2 == s && ($4 == "/usr/share/kvm" || $4 == d) { found = 1 } END { exit !found }' "$record"; then
+            src=wsh-sun-proms
+        elif [ "$root" = "" ] && owner=$(dpkg-query -S "/usr/share/kvm/$f" 2> /dev/null); then
+            src="${owner%%:*}"
+        else
+            src="not recorded"
+        fi
+        echo "$src: $f"
+    done
+}
+
 # shellcheck disable=SC2329
 check_sun_proms() {
-    local f missing=()
-    for f in $PROMS; do [ -s "$kvm/$f" ] || missing+=("$f"); done
+    local f missing=() present=() src sources=""
+    for f in $PROMS; do
+        if [ -s "$kvm/$f" ]; then present+=("$f"); else missing+=("$f"); fi
+    done
     if [ ${#missing[@]} -eq 0 ]; then
         status=yes detail="${PROMS// /, }"
     else
         status=no detail="no ${missing[*]}"
+    fi
+    # with --root, from where (one group per source: "pve-qemu-kvm: ss5.bin, lx.bin; wsh-sun-proms: ...")
+    if [ -z "$deb" ] && [ ${#present[@]} -gt 0 ]; then
+        while IFS= read -r src; do
+            sources+="${sources:+; }$src"
+        done < <(prom_sources "${present[@]}" | awk -F': ' '{ g[$1] = g[$1] (g[$1] == "" ? "" : ", ") $2; if (!($1 in o)) { o[$1] = ++n; k[n] = $1 } }
+            END { for (i = 1; i <= n; i++) print k[i] ": " g[k[i]] }')
+        detail+=" (${sources})"
     fi
 }
 

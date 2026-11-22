@@ -1,0 +1,153 @@
+.TH WSH-SUN-PROMS 1 "" "wsh-lab" "User Commands"
+.SH NAME
+wsh-sun-proms \- install Sun boot PROM images you are entitled to use, from a source you provide
+.SH SYNOPSIS
+.B wsh-sun-proms install \-\-source
+.I SRC
+.RB [ \-\-type " dir|archive|git|http]"
+.RB [ \-\-ref
+.IR REF ]
+.RB [ \-\-force ]
+.RB [ \-\-dry\-run ]
+.RI [ NAME " ...]"
+.br
+.B wsh-sun-proms status
+.RB [ \-\-json ]
+.br
+.B wsh-sun-proms verify
+.RB [ \-\-all ]
+.RB [ \-\-json ]
+.RI [ NAME " ...]"
+.br
+.B wsh-sun-proms remove
+.RB [ \-\-force ]
+.RB [ \-\-dry\-run ]
+.RI [ NAME " ...]"
+.PP
+Each command also takes
+.BI \-\-dir " DIR" ,
+.BI \-\-manifest " FILE"
+and
+.BI \-\-state " FILE" .
+.SH DESCRIPTION
+.B wsh-sun-proms
+copies Sun boot PROM images from a source you provide into the directory QEMU loads firmware from,
+.I /usr/share/kvm
+by default, under the names the sparc32 profiles of qemu-server and the PVE UI use
+.RB ( "bios: ss5.bin" ", " ss20_v2.25_rom ", " lx.bin ).
+Every file is checked against a manifest of known images (name, size, SHA-256 and the machine that
+runs it,
+.IR /usr/share/wsh-lab/sun-proms/manifest.json ).
+No images come with the tool, and it has no default source.
+.SH COMMANDS
+.TP
+.B install
+Installs every known PROM found in
+.I SRC
+(or only the
+.IR NAME s
+given), mode 0644, owner root. A file is found by its name, or by its SHA-256 under any name. A file
+already there with the right content is left as it is, so running it again changes nothing. A file
+whose name is known but whose content differs, a name the manifest doesn't know, and a different file
+already in the directory are refused unless
+.BR \-\-force .
+What was installed is recorded in
+.I /var/lib/wsh-sun-proms/installed.tsv
+(the file, its SHA-256 and the source without credentials).
+.TP
+.B status
+Lists the known PROMs with their machine, whether each is there and matches the manifest, and where
+it came from: a package (asked from dpkg), this tool (with the source and date), or neither.
+.TP
+.B verify
+Like
+.BR status ,
+and exits 1 when a PROM there doesn't match the manifest, when none is there, or when one of the
+.IR NAME s
+(with
+.BR \-\-all :
+any known PROM) is missing.
+.TP
+.B remove
+Removes the PROMs this tool installed. A file that changed since, or that the tool didn't install,
+is kept unless
+.BR \-\-force ;
+a file that belongs to a package is always kept.
+.SH SOURCES
+.TP
+.I a directory
+searched with its subdirectories.
+.TP
+.I a tar or zip archive
+read in memory; nothing is extracted.
+.TP
+.I a git repository
+a URL that starts with
+.BR ssh:// ,
+.BR git@ ,
+.B git+
+or
+.BR file:// ,
+an https URL that ends in
+.BR .git ,
+a bare repository on disk, or any URL with
+.BR "\-\-type git" .
+It is cloned shallowly into a temporary directory with git and your own git configuration, so a
+private repository works with the credentials you already use (an SSH key, a credential helper).
+The clone is deleted afterwards. Needs git.
+.TP
+.I an https URL
+of an archive, or a base URL under which each PROM is found by its name
+.RI ( URL/ss5.bin ).
+user:password in the URL is sent as basic authentication and not recorded. Plain http is refused
+except to this host.
+.SH OPTIONS
+.TP
+.BI \-\-dir " DIR"
+Where the PROMs go (default
+.IR /usr/share/kvm ,
+or
+.BR $WSH_SUN_PROMS_DIR ).
+QEMU on a PVE node only looks in
+.IR /usr/share/kvm .
+.TP
+.BI \-\-manifest " FILE"
+Another manifest (or
+.BR $WSH_SUN_PROMS_MANIFEST ),
+e.g. for tests.
+.TP
+.BI \-\-state " FILE"
+Another record (or
+.BR $WSH_SUN_PROMS_STATE ).
+.TP
+.BI \-\-ref " REF"
+The branch or tag of a git source.
+.TP
+.B \-\-force
+install: also unknown or differing files, and replace a different file. remove: also files this tool
+didn't install.
+.TP
+.BR \-\-dry\-run ", " \-n
+Show what would change, change nothing.
+.SH EXAMPLES
+.nf
+wsh-sun-proms install \-\-source /root/proms
+wsh-sun-proms install \-\-source git@git.example.org:me/proms.git
+wsh-sun-proms install \-\-source /root/proms.tar.gz lx.bin
+wsh-sun-proms status
+wsh-sun-proms verify \-\-all
+.fi
+.SH EXIT STATUS
+0 on success, 1 when something was refused, missing or doesn't match, 2 on a usage error.
+.SH NOTES
+A file in the directory that dpkg lists as part of a package is left to dpkg: with the right content
+it counts as installed and
+.B status
+names the package; it is never removed, and replaced only with
+.BR \-\-force .
+When an upgrade drops a file from its package, dpkg deletes it: run
+.B wsh-sun-proms install
+again afterwards.
+.SH SEE ALSO
+.BR wsh-lab (1),
+.BR qm (1)

@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
 # The build tree is assembled by packages/wsh-lab/build.sh: lab/ (the lab's files from e2e/sparc),
-# bin/, man/, player/ and a generated debian/changelog. Nothing is compiled; dh_install copies
+# bin/, man/, sun-proms/ (wsh-sun-proms), player/ and a generated debian/changelog. Nothing is compiled; dh_install copies
 # (debian/wsh-lab.install) and dh_python3 byte-compiles the private directory at install time
 # (py3compile in postinst, py3clean in prerm), so no stray __pycache__ is left behind.
 
