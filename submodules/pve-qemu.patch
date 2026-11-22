@@ -6362,7 +6362,7 @@ index 0000000..720c02c
 +     return 0;
 diff --git a/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 new file mode 100644
-index 0000000..37dc275
+index 0000000..34a1204
 --- /dev/null
 +++ b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 @@ -0,0 +1,311 @@
@@ -13469,7 +13469,7 @@ index 0000000..e6741d1
 ++}
 diff --git a/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
 new file mode 100644
-index 0000000..16c9626
+index 0000000..12f0079
 --- /dev/null
 +++ b/debian/patches/wsh/0066-hw-sparc-sun4m-give-the-DBRI-registers-that-take-its.patch
 @@ -0,0 +1,341 @@
@@ -16748,7 +16748,7 @@ index 0000000..c5b21aa
 + static void cs4231_realize(DeviceState *dev, Error **errp)
 diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 new file mode 100644
-index 0000000..0e61408
+index 0000000..a66322c
 --- /dev/null
 +++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 @@ -0,0 +1,396 @@
