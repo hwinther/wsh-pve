@@ -691,6 +691,12 @@ merged; what is left of them is item 2 under "Next".
   sparc, printing the same markers so `run.py` can drive it. verify: how the kernel is best loaded
   on sparc32 (QEMU `-kernel` with OpenBIOS, or a small disk image / netboot). Not FreeBSD or
   OpenBSD (no 32-bit sparc), not illumos (x86_64 only, needs an illumos build host).
+  - PID 1, first step: link it statically against NetBSD's libc (simplest; expect a few hundred kB
+    against today's tens of kB with nolibc, to be measured).
+  - Later, once it runs and kernel size and boot time are measured: consider dropping libc for
+    our own small syscall stubs (a "nolibc for NetBSD": about a dozen calls in assembler per
+    arch, sparc, sparc64 and amd64; NetBSD keeps old syscalls backward compatible). The kernel
+    config is likely the bigger size and boot-time lever, so look there first.
 
 ## Known and not fixed
 
