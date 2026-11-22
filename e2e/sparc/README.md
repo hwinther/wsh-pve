@@ -680,8 +680,10 @@ again only when asked:
   under the stored disk's name that isn't ours fails the case. The summary counts skipped cases
   separately.
 
-`matrix_skip` thus marks the targets an unattended run shouldn't install: Tribblix (3.5-4.3 h, too
-much of the 240-minute job). `--export` accepts the network options, so a Debian disk can also be
+`matrix_skip` thus marks the targets an unattended run shouldn't install: Tribblix (3.5-4.3 h) and
+`debian13-sun4u` (2.5-3 h, its packages fetched over the network, and only with the apt cache), both too
+much of the 240-minute job and left out of the monthly `--reinstall all` (720 minutes); they are
+installed on request (`--reinstall <target>`), their stored disks boot-tested otherwise. `--export` accepts the network options, so a Debian disk can also be
 made by hand on a node with a route out (`lab.py install debian40-ss5 --vmid N --check --export
 /mnt/os/disks --gateway G --dns D`); the matrix boot-tests a stored disk without any network (the
 check needs none).
@@ -2009,6 +2011,62 @@ Not tried: DHCP (d-i's default; `--ip dhcp` is refused for now), `--vlan`, SS-10
 SS-20 PROM, more than one CPU, tasks beyond the base system, the netinst on sun4u (Etch's sparc64
 kernel; the sun4u profile's IDE and `sunhme` were not tried with it).
 
+### Debian 13 on sun4u
+
+`debian13-sun4u` (sun4u, OpenBIOS, 1024 MB, `vga: serial0`) installs Debian 13 from the debian-ports sparc64
+netinst (`debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso`, the snapshot of 2026-06-11, Linux 7.0.12) onto a
+blank 8 GiB disk on `ide0`, the netinst on `ide2`, `sunhme` (`enp2s0`). Ports have sid only: the base system,
+the kernel, the SSH server and GRUB come from `deb.debian.org/debian-ports` (or `--apt-proxy`), so the
+network is static with `--gateway` and `--dns`, as for Debian 4.0. `matrix_skip`: 2.5-3 hours.
+
+1. **Install** (`unattended`, `debian13-install-sparc64.py`): the answer CD (`answer_media.preseed_ports()`
+   and the loader `wshlab`) goes on `ide3`, Linux's `sr1` behind the netinst's `sr0`. At the netinst's GRUB
+   menu (no timeout) the scenario types `c`, then `linux /install/vmlinux priority=critical
+   locale=en_US.UTF-8 keymap=us preseed/early_command="modprobe pata_cmd64x;...;sh /mnt/wshlab" --- quiet`,
+   `initrd /install/initrd.gz` and `boot` (`_debian13.boot_options()`). The early command mounts the
+   answer CD, `wshlab` loads `preseed.cfg` with `debconf-set-selections`, unmounts it and deletes its drive
+   (`/sys/block/sr1/device/delete`). Then nothing is asked: static network, the ports mirror (signed: the
+   netinst brings debian-ports-archive-keyring), partman's "atomic" recipe on a Sun label it writes
+   (`/boot` ext2, `/` ext4, swap), tasksel `ssh-server` only, GRUB on the disk, the reboot (OpenBIOS 0030),
+   where the scenario stops the VM. Root gets the hash `*` and the late command empties it.
+2. **First boot** (`debian13-firstboot.py`): GRUB's menu (5 s) boots the disk; root logs in on ttyS0 without
+   a password, `chpasswd` sets it (no echo), the marker, the optional user (`useradd -m`, `bash`), `poweroff`.
+3. **Check** (`debian13-boot-disk.py`): logs in with the password and records `uname -a`, the marker,
+   `/etc/debian_version`, `df -k`, `lsblk`, `ip -br addr`, `ip route`, `resolv.conf`, `sources.list` and
+   `systemctl is-active ssh`.
+
+Found on the way:
+
+- **GRUB escapes quotes in `$options`:** typed through the menu's own `set options=...; boot_one`, GRUB split
+  the variable at the spaces and passed `preseed/early_command=\"modprobe` to the kernel, and the command
+  failed ("exit code 2"). Typed on the `linux` line, GRUB's quoting keeps it one word, which the kernel
+  unquotes.
+- **user-setup and `!`:** `passwd/root-password-crypted password !` means "not preseeded" to user-setup,
+  which then asks for a password; `*` doesn't.
+- `quiet` hides the kernel banner; the scenario waits for the installer's syslog start.
+- The netinst's GRUB and the installed one print `call-method color!: exception -21` and fail
+  `block-size`/`#blocks` on OpenBIOS; harmless. The installed GRUB needs openbios 0009 and 0011
+  (`submodules/SPARC.md`, "Debian 13 on sun4u").
+- **OSC strings on the console:** systemd 258's shell prompt wraps every command in OSC 3008 context
+  strings (`ESC ] 3008;start=...ESC \`), so a command's output no longer started its line in the lab's
+  text and `shell()` waited for `END-OF-COMMAND` forever. `lab.py` now strips OSC and DCS strings like
+  the CSI sequences, holding back one that a read cuts off (`Machine._strip()`).
+
+**In the matrix:** `matrix_skip` like Tribblix: neither the weekly install matrix (240 minutes) nor the
+monthly `--reinstall all` (720 minutes) installs it; it is installed on request (`pve_matrix.py install
+--reinstall debian13-sun4u`, which also needs the apt cache, `matrix_needs`), and otherwise the stored
+disk `install-debian13-sun4u.raw` (in `--disks`) is boot-tested, without any network.
+
+Tested 2026-11-22 on the lab host (TCG, one install at a time, other matrices on the host):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `debian13-install-sparc64.py` with the lab's own QEMU (published pve-qemu-kvm 11.1.3-4+wsh4), `NET=user`, `GATEWAY=10.0.2.2 DNS=10.0.2.3` | passed; then `debian13-firstboot.py` and `debian13-boot-disk.py` on the disk: passed | 153.9 min; 5.0 and 4.6 min |
+| `install debian13-sun4u --vmid 9913 --check --gateway 10.0.2.2 --dns 1.1.1.1 --export <disks>` (the PVE test container from the published packages: pve-qemu-kvm 11.1.3-4+wsh8, qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11; its `vmbr0` given 10.0.2.2 and NATed out by hand) | passed and exported; the check: `ssh` active, `enp2s0` 10.0.2.15/24, the route via 10.0.2.2 | 177.4 min (install 9947 s, first boot 385 s, check 285 s) |
+| `boot-test debian13-sun4u` of the stored disk | passed (GRUB, `login:`, the check commands, `poweroff`) | 4.9 min |
+
+Not tried: `--apt-proxy` (the pinhole), DHCP (`--ip dhcp` is refused; the hand install used it and got
+its lease), `--user` through PVE (the lab run added one), the VGA console.
 ### Debian GNU/Linux 7 on sun4u
 
 `debian7-sun4u` installs Debian GNU/Linux 7.11 "wheezy", the last official Debian release for sparc
@@ -2793,6 +2851,8 @@ works: disk on the built-in IDE's primary master, CD-ROM on its secondary master
 | `sparc64-reboot.py` | boots an installed disk (`GUEST=netbsd`, `openbsd`, `solaris10`, `solaris` for 7/8/9), logs in and reboots from the guest (`REBOOT`, default `reboot`; `init 6` works too) `REBOOTS` times in the same QEMU process: each time the firmware's banner must come back and the disk boot to the login prompt again; a returned reboot call, `0 >` or no banner fails it (with `info registers` in the step log). Needs openbios-sparc64 with patch 0030 (`submodules/SPARC.md`, "The firmware reboot on sun4u"). The `sparc64` matrix runs it on the NetBSD 11.1 disk (`nb111-reboot-sparc64`, `nb111-reboot-bootstr-sparc64` with `REBOOT=reboot -- netbsd`) | NetBSD ~1.5 min a reboot, Solaris 3-8 min |
 | `sparc64-idle.py` | the sparc64 `idle.py`: QEMU's host CPU use at the shell, the guest clock, ten `sleep 1`, the time of an `awk` loop (`JOB`), and `LOAD` seconds of CPU and file load; `WAIT` first ends or waits out what the guest does after boot; NetBSD, OpenBSD, FreeBSD, Solaris 9/10 and Tribblix (see "Idle") | ~4 min (Solaris ~15, Tribblix ~35) |
 | `debian-install-sparc.py`, `debian-firstboot.py`, `debian-boot-disk.py` with `ARCH=sparc64` | Debian 7.11 on sun4u from CD 1 with a preseed answer CD on the secondary IDE slave, its first boot and check ("Debian GNU/Linux 7 on sun4u") | install ~85 min, first boot ~3.5 min, check ~3 min |
+| `debian13-install-sparc64.py` | Debian 13 (debian-ports sid) from the sparc64 netinst with a preseed file on an answer CD (IDE secondary slave, `sr1`): the kernel options typed on the netinst's GRUB `linux` line, preseed/early_command loads the file; stops the VM when the install reboots, fails at the first question box ("Debian 13 on sun4u") | ~2.5 h |
+| `debian13-firstboot.py`, `debian13-boot-disk.py` | boot the installed Debian 13 disk through GRUB to `login:` on ttyS0; the first sets root's password (chpasswd), the marker and a user, the second records `COMMANDS` (and checks `CHECK`); both `poweroff` | ~4 min |
 
 The disks are `netbsd111-sparc64-installed.raw` (NetBSD 11.1, `netbsd-install-sparc64.py` with the
 defaults, by hand through `serve` with the same answers) and `openbsd80-sparc64-installed.raw`

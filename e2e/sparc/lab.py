@@ -38,7 +38,11 @@ import time
 
 import recording
 
-ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]")
+# OSC and DCS strings too (ESC ] ... and ESC P ..., ended by BEL or ESC \): systemd 258's shell prompt
+# on Debian 13 wraps every command in OSC 3008 context strings, which put text before the output's
+# first character on its line
+ANSI = re.compile(rb"\x1b[]P][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]")
+ANSI_UNFINISHED = re.compile(rb"\x1b(?:[]P][^\x07\x1b]*\x1b?|\[[0-9;?]*[ -/]*|[()])?\Z")
 
 
 class QemuDied(Exception):
@@ -199,7 +203,17 @@ class Machine:
             data = bytes(b & 0x7F for b in data)  # SERIAL_7BIT: the guest sends parity in bit 7
         self.cast.output(data)
         self.stream.feed(data)
-        self.text += ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
+        self.text += self._strip(data)
+
+    def _strip(self, data):
+        """`data` without escape sequences and CRs, for self.text. A sequence that one read cuts off
+        (an OSC string is a few hundred bytes) is held back and finished with the next read."""
+        data = getattr(self, "_esc_tail", b"") + data
+        self._esc_tail = b""
+        cut = ANSI_UNFINISHED.search(data)
+        if cut and len(data) - cut.start() < 4096:
+            data, self._esc_tail = data[:cut.start()], data[cut.start():]
+        return ANSI.sub(b"", data).replace(b"\r", b"").decode("latin-1")
 
     def _check_alive(self):
         code = self.proc.poll()

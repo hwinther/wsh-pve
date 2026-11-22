@@ -113,13 +113,16 @@ def image(fmt, ip, netmask, gateway=None, dns=(), domain=None, hostname=None, pr
     if fmt == "preseed":
         return iso9660({"PRESEED.CFG": preseed(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
                         "WSHLAB": PRESEED_LOADER.encode()}, "WSH_LAB_PRESEED")
+    if fmt == "preseed-ports":
+        return iso9660({"PRESEED.CFG": preseed_ports(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
+                        "WSHLAB": PRESEED_PORTS_LOADER.encode()}, "WSH_LAB_PRESEED")
     if fmt == "preseed-wheezy":
         return iso9660({"PRESEED.CFG": preseed_wheezy(ip, netmask, gateway, dns, domain, hostname, proxy).encode(),
                         "WSHLAB": PRESEED_LOADER_WHEEZY.encode()}, "WSH_LAB_PRESEED")
     raise ValueError(f"answer format {fmt!r}")
 
 
-FORMATS = ("kickstart", "preseed", "preseed-wheezy")
+FORMATS = ("kickstart", "preseed", "preseed-ports", "preseed-wheezy")
 
 
 # --- OpenBSD 5.9 sets CD -----------------------------------------------------------------------------
@@ -316,6 +319,111 @@ d-i passwd/root-password-crypted password *
 d-i passwd/make-user boolean false
 tasksel tasksel/first multiselect
 popularity-contest popularity-contest/participate boolean false
+d-i finish-install/reboot_in_progress note
+d-i preseed/late_command string {late}
+"""
+
+
+# --- Debian 13 (debian-ports sparc64) -----------------------------------------------------------------
+
+# Run by preseed/early_command (_debian13.boot_options mounts the answer CD on /mnt first). It loads the
+# preseed file and takes the answer CD out of the kernel's sight, so that cdrom-detect sees only the
+# netinst and the installed system has no CD-ROM it never had in the VM.
+PRESEED_PORTS_LOADER = """# lab.py install (wsh-pve e2e/sparc answer_media.PRESEED_PORTS_LOADER): run by preseed/early_command
+log() { logger -t wsh-lab "$*"; }
+if ! debconf-set-selections /mnt/preseed.cfg; then
+  log "debconf-set-selections /mnt/preseed.cfg failed"
+  exit 1
+fi
+dev=
+while read d m rest; do [ "$m" != /mnt ] || dev=$d; done < /proc/mounts
+umount /mnt || umount -l /mnt || log "umount /mnt failed"
+if [ -n "$dev" ] && echo 1 > "/sys/block/${dev#/dev/}/device/delete"; then
+  log "preseed loaded from $dev; $dev removed"
+else
+  log "preseed loaded from ${dev:-?}; the drive is still there"
+fi
+exit 0
+"""
+
+PORTS_MIRROR = ("deb.debian.org", "/debian-ports")  # sparc64 is a port: sid ("unstable") only
+
+
+def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
+    """Debian 13's debian-installer (the debian-ports sparc64 netinst) preseed file for `lab.py install
+    debian13-sun4u` (README.md, "Debian 13 on sun4u"): the network static on the first interface (the
+    netinst fetches the base system from deb.debian.org/debian-ports, so the router and a name server
+    must reach it, or an --apt-proxy by address replaces both, as for etch), unstable from the ports
+    mirror (checked against debian-ports-archive-keyring, which the netinst brings), the first (blank)
+    disk with partman's "atomic" recipe on a Sun label (partman writes it), the standard system
+    utilities left out and the SSH server in (tasksel's ssh-server), GRUB on the disk, reboot at the end.
+
+    Root gets the hash `*` here (no password works; user-setup takes `!` for "not preseeded" and asks)
+    and the late command empties it, so nothing secret is
+    on the image: the first boot logs in on ttyS0 without one and sets it (debian13-firstboot.py).
+    sshd doesn't let an empty password in (PermitEmptyPasswords no). The late command also takes a
+    `deb cdrom:` line out of sources.list (the netinst writes none when it has a mirror) and, without a
+    router or name server, what netcfg wrote for them. No user is made (passwd/make-user false)."""
+    dns = list(dns or [])
+    for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
+                      *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
+        if val is not None and not re.fullmatch(r"[A-Za-z0-9._/+-]+", val):
+            raise ValueError(f"preseed {what} {val!r}")
+    if proxy is not None and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?", proxy):
+        raise ValueError(f"preseed proxy {proxy!r}: an http(s)://host[:port] URL")
+    if (not gateway or not dns) and not (proxy and re.fullmatch(r"https?://\d+\.\d+\.\d+\.\d+(:[0-9]{1,5})?/?", proxy)):
+        raise ValueError("preseed: the netinst needs a router (--gateway) and a name server (--dns), or a proxy"
+                         " by address (--apt-proxy http://A.B.C.D:PORT)")
+    host, directory = PORTS_MIRROR
+    late = "in-target passwd -d root; in-target sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list"
+    if not gateway:
+        late += "; in-target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces"
+    if not dns:
+        late += "; in-target sed -i '/^nameserver /d' /etc/resolv.conf"
+    return f"""\
+# lab.py install (wsh-pve e2e/sparc answer_media.preseed_ports): Debian 13 (debian-ports), sparc64
+d-i debian-installer/locale string en_US.UTF-8
+d-i keyboard-configuration/xkb-keymap select us
+d-i netcfg/choose_interface select auto
+d-i netcfg/disable_autoconfig boolean true
+d-i netcfg/get_ipaddress string {ip}
+d-i netcfg/get_netmask string {netmask}
+d-i netcfg/get_gateway string {gateway or ""}
+d-i netcfg/get_nameservers string {" ".join(dns)}
+d-i netcfg/confirm_static boolean true
+d-i netcfg/get_hostname string {hostname or "debian"}
+d-i netcfg/get_domain string {domain or ""}
+d-i netcfg/hostname string {hostname or "debian"}
+d-i hw-detect/load_firmware boolean false
+d-i mirror/country string manual
+d-i mirror/http/hostname string {host}
+d-i mirror/http/directory string {directory}
+d-i mirror/http/proxy string {proxy or ""}
+d-i mirror/suite string unstable
+d-i mirror/udeb/suite string unstable
+d-i apt-setup/services-select multiselect
+d-i apt-setup/non-free-firmware boolean false
+d-i apt-setup/non-free boolean false
+d-i apt-setup/contrib boolean false
+d-i apt-setup/cdrom/set-first boolean false
+d-i clock-setup/utc boolean true
+d-i clock-setup/ntp boolean false
+d-i time/zone string {timezone}
+d-i partman-auto/disk string /dev/sda
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+d-i passwd/root-login boolean true
+d-i passwd/root-password-crypted password *
+d-i passwd/make-user boolean false
+tasksel tasksel/first multiselect ssh-server
+d-i pkgsel/upgrade select none
+popularity-contest popularity-contest/participate boolean false
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/bootdev string default
 d-i finish-install/reboot_in_progress note
 d-i preseed/late_command string {late}
 """
