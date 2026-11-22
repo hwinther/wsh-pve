@@ -77,13 +77,15 @@ def grub_boot_cd(m, options, timeout=600):
 
 def boot_disk(m, timeout=900):
     """The installed disk to the kernel: OpenBIOS boots GRUB's boot block from the disk (`boot-device`
-    disk), GRUB shows its menu for 5 s and boots the first entry; Return takes it at once."""
-    if m.expect_any([r"GNU GRUB", KERNEL], timeout) == 0:
-        m.expect(r"automatically in|Press enter to boot", 120)
-        m.snap("GRUB")
-        m.send("\r")
-        m.expect(KERNEL, 300)
-    m.snap("kernel banner")
+    disk), GRUB shows its menu for 5 s and boots the first entry; Return takes it at once. The kernel
+    runs with `quiet` (no banner): GRUB's own "Loading Linux" line is the sign it took the entry."""
+    m.expect(r"GNU GRUB", timeout)
+    m.expect(r"automatically in|Press enter to boot", 120)
+    m.snap("GRUB")
+    m.send("\r")
+    m.expect(r"Loading Linux \d", 300)
+    m.expect(r"Loading initial ramdisk", 600)
+    m.snap("kernel and initrd loaded")
 
 
 def login(m, password="", timeout=900):

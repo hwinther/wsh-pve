@@ -2327,6 +2327,18 @@ class Debian13(unittest.TestCase):
         self.assertIn("/device/delete", loader)  # the installed system must not keep the answer CD's drive
         self.assertNotIn("set -e", loader)  # every step logs; only a failed load fails early_command
 
+    def test_osc_context_strings_are_stripped(self):
+        """systemd 258's prompt wraps commands in OSC 3008 strings; split over reads, they must still
+        leave the command's output at the start of its line (the scenarios' END-OF-COMMAND)."""
+        import lab
+        data = (b"root@debian13-sun4u:~# true; echo END-OF-COMMAND\r\n\x1b[?2004l\r\x1b]3008;start=0dbe;type=command"
+                b";cwd=/root\x1b\\END-OF-COMMAND\r\n\x1b]3008;end=0dbe;exit=success\x07\x1b[?2004hroot@x:~# ")
+        for size in (1, 7, 64, len(data)):
+            m = lab.Machine.__new__(lab.Machine)
+            text = "".join(m._strip(data[i:i + size]) for i in range(0, len(data), size))
+            self.assertIn("\nEND-OF-COMMAND\n", text, size)
+            self.assertNotIn("3008", text)
+
 
 if __name__ == "__main__":
     unittest.main()
