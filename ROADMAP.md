@@ -496,10 +496,11 @@ merged; what is left of them is item 2 under "Next".
   boots on one CPU in the lab with pve-qemu `wsh/0063`-`0065` (the VMEbus interface registers, the
   lance's own buffer memory) and openbios 0028 (the `dma` and `lebuffer` node names it knows), merged
   (#430, published in 11.1.3-3+wsh13); `sunos412-ss600mp` is an automated target with qemu-server's SS-600MP
-  profile (in review, see "Done"). More CPUs, and Sun's own SS-600MP boot PROM, need the
-  Ross module (the RT625 cache controller and MMU, and the module ID in its control register), which
-  QEMU doesn't emulate, and under OpenBIOS Solaris 2.6 refuses the platform (`submodules/SPARC.md`).
-  A Ross RT625 model would be a larger QEMU piece; not planned. OpenBIOS 0019-0022 run the Solaris
+  profile (in review, see "Done"). More CPUs need the module ID that 4.1.2 reads from the MMU
+  control register (a Ross module, which QEMU doesn't emulate, or a cheaper lead below), and under
+  OpenBIOS Solaris 2.6 refuses the platform (`submodules/SPARC.md`). Sun's own SS-600MP boot PROM
+  knows the SuperSPARC and doesn't need a Ross model; it stops in its power-on self test ("Sun's
+  SS-600MP boot PROM" below). OpenBIOS 0019-0022 run the Solaris
   2.1-2.4 boot program: 2.2 (SS-10), 2.3 and 2.4 (SS-5 and SS-20) are install targets under OpenBIOS
   since pve-qemu-kvm 11.1.3-2+wsh22 (`sol22-ss10`, `sol23-ss5`, `sol23-ss20`, `sol24-ss5`,
   `sol24-ss20`; 2.3 and 2.4 on the SS-20 also run with 2 and 4 CPUs); 2.1 stops in QEMU after its
@@ -587,6 +588,24 @@ merged; what is left of them is item 2 under "Next".
   MiSTer-devel/SunSparcStation20_MiSTer (`docs/rom-disassembly/ss20-obp-2.25/`), read but not
   verified on QEMU; it would mean changes to QEMU's sun4m and isn't small (`submodules/SPARC.md`,
   "SMP").
+- **Sun's SS-600MP boot PROM, and a second CPU under SunOS 4.1.2: scoped** (2026-11-22,
+  `submodules/SPARC.md`, "Sun's own SS-600MP boot PROM"). The 600MP PROM knows the Cypress/Ross
+  605, the Ross 625 and the SuperSPARC (with or without MXCC), so QEMU's SuperSPARC is a module it
+  supports. On the published 11.1.3-4+wsh4 it stops QEMU within seconds (`Trap 0x01`, an
+  instruction fetch translated in boot mode with the MMU on): pve-qemu `wsh/0120`-`0121` (lab
+  build, not published) fix that. It then loops silently in its power-on self test, which reads
+  back SuperSPARC diagnostic registers QEMU doesn't keep.
+  - **Steps for the PROM, in order:**
+    1. Keep the SuperSPARC store buffer diagnostic registers (ASI 0x30-0x32): small.
+    2. Read back the MXCC stream data registers, or run the PROM with `TI-SuperSparc-50`: small.
+    3. Keep the I- and D-cache tag and data RAMs (ASI 0x0c-0x0f) with the TMS390Z50 geometry: small to medium.
+    4. Pass the board's counter-timer tests ("Can not toggle timer/counter bits", "Limit bit not set"): not analysed.
+    5. Whatever follows: the PROM lists TLB, table walk, cache behaviour and ECC tests, and board tests (ECC memory, I/O cache, VME loopback). The cache behaviour tests need a cache model: large.
+    6. Something to see progress by: the POST prints only with bit 2 of the system control register set (probably the diagnostic switch), which QEMU never sets.
+    - Overall medium to large, with no way found to skip the POST.
+  - **A Ross or Cypress CPU model** (RT620/RT625 or CY7C601/CY7C605): large (MMU control layout with the module ID, ICCR, Ross cache and flush ASIs, the hyperSPARC instruction buffer). Nothing to start from: QEMU dropped name-only definitions in 2013, and none was found in MAME, TME or a qemu-devel search (LEMU not checked). It would face the PROM's Ross tests too, so it isn't the way to Sun's PROM.
+  - **Cheaper lead for 4.1.2's second CPU:** the kernel skips its module ID check when bits 15-16 of the MMU control register read all ones (AC and TC on the SuperSPARC). Try OpenBIOS setting them on machine ID 66 on the installed GENERIC kernel with `-smp 2`: small if it holds, not tested.
+  - **Unlocks:** Sun's PROM only when its POST passes. No older SunOS (4.1.2 is the first sun4m release). Solaris 2.6's refusal under OpenBIOS isn't explained by the CPU module and isn't investigated.
 - **SMP on sparc64 (sun4u): scoped, parked** (2026-11-22). Today `sun4u` refuses more than one CPU.
   - **What is missing in QEMU 11.1.3:**
     - `hw/sparc64/sun4u.c` sets `max_cpus = 1` ("XXX for now"; niagara is the same) and creates one CPU.
@@ -650,6 +669,7 @@ merged; what is left of them is item 2 under "Next".
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
+| Sun's SS-600MP boot PROM doesn't get through its power-on self test | Without `wsh/0120` QEMU stops on `Trap 0x01` within seconds; with it the PROM loops silently on the SuperSPARC store buffer test, whose diagnostic registers QEMU doesn't keep. Scope and steps in "Later" ("Sun's SS-600MP boot PROM"); qemu-server offers OpenBIOS only on the SS-600MP |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install unless the VM has `machine: SS-5,esp-irq-latency=500` | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. The opt-in delay (`wsh/0040`) is in pve-qemu-kvm 11.1.3-2+wsh24, qemu-server 9.2.19+wsh2 and pve-manager 9.2.31+wsh2 (the UI field); off by default, as it costs about 2 ms per disk command (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"; the sparc guide, "SCSI interrupt delay") |
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
