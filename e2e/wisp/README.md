@@ -272,6 +272,12 @@ Found on the way:
 - gcc reads a `uint32_t` through a misaligned pointer byte by byte on sparc by itself when it can
   see the misalignment (a pointer into an aligned array at a constant odd offset), so the
   alignment example hides the offset in a `volatile`; otherwise the bug doesn't show.
+- The first CI run failed both x86_64 cases with `SIGILL` at the first number `printf` formatted:
+  the `ubuntu-latest` runner (Ubuntu 26.04) installs the amd64v3 variant of the packages, and that
+  gcc defaults to `-march=x86-64-v3` (`with-arch-64=x86-64-v3`), so the program had BMI2
+  instructions (`shlx`) that QEMU's default `qemu64` CPU doesn't have. Reproduced in `ubuntu:26.04`
+  with `APT::Architecture-Variants "amd64v3"`; the action now builds x86_64 with `-march=x86-64`
+  (`-cpu max` in QEMU passed as well, but a fixed baseline doesn't depend on the runner).
 - Ubuntu's 32-bit sparc libgcc and glibc (`lib32gcc-*-dev-sparc64-cross`,
   `libc6-dev-sparc-sparc64-cross`) are V8+ (`EM_SPARC32PLUS`, V9 instructions such as `bne %icc`
   and `return`), even with `-mcpu=v8`, and the sparc32 kernel refuses such a binary (`ENOEXEC`).

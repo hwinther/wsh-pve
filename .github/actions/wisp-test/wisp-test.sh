@@ -59,7 +59,10 @@ sparc64)
 	CC=sparc64-linux-gnu-gcc CC_PKG=gcc-sparc64-linux-gnu ARCH_CFLAGS="-m64" EM=43 START=1 ;;
 x86_64)
 	QEMU=qemu-system-x86_64 QEMU_PKG=qemu-system-x86 DEF_MACHINE=pc MEM=128
-	CC=x86_64-linux-gnu-gcc CC_PKG=gcc-x86-64-linux-gnu ARCH_CFLAGS="-m64" EM=62 START=0
+	# -march=x86-64: the baseline QEMU's default CPU (qemu64) runs. Ubuntu 26.04's amd64v3
+	# packages (what ubuntu-latest installs on a capable CPU) have a gcc that defaults to
+	# x86-64-v3, whose BMI2/AVX2 instructions qemu64 answers with SIGILL.
+	CC=x86_64-linux-gnu-gcc CC_PKG=gcc-x86-64-linux-gnu ARCH_CFLAGS="-m64 -march=x86-64" EM=62 START=0
 	[ "$(uname -m)" != x86_64 ] || { CC=gcc CC_PKG=gcc; } ;;
 *)
 	die "unknown arch '$ARCH' (sparc32, sparc64 or x86_64)" ;;

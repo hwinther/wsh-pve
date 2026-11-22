@@ -98,6 +98,10 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
   sparc32 (256 on sparc64; more with `qemu-args: -m 256`, the SS-5's maximum).
 - **Emulated speed**: QEMU translates the guest's code (TCG), which is several times slower than
   the runner's CPU, and the boot costs 2 to 4 s of the `timeout`. Raise it for long tests.
+- **x86_64 builds for the baseline**: the action adds `-march=x86-64`, the level QEMU's default
+  `qemu64` CPU runs (Ubuntu 26.04's amd64v3 gcc defaults to `x86-64-v3`, which gets `SIGILL`
+  there). A `binary` built for a newer level needs `qemu-args: -cpu max` (TCG emulates up to
+  x86-64-v3, not AVX-512).
 - **ubuntu-latest on x86_64**: the action uses `apt-get` and `sudo`. On other runners, install
   `qemu-system-sparc` (or `qemu-system-x86`) and `gcc-sparc64-linux-gnu` yourself and set
   `install: false`.
