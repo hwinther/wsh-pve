@@ -20,8 +20,12 @@ DEVICES = {
 RESULT = "WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1"
 
 
-def measure(path):
-    """Return the tone duration in ms and frequency in mHz for each channel."""
+def wav_device(arch, path):
+    return ["-audiodev", f"wav,id=snd0,path={str(path).replace(',', ',,')}", *DEVICES[arch]]
+
+
+def read_pcm(path):
+    """Read QEMU's little-endian stereo PCM capture."""
     capture = bytearray(path.read_bytes())
     # QEMU 11 can leave both lengths zero even after a clean guest power-off.
     # Complete its canonical PCM header in memory, preserving the original evidence.
@@ -39,9 +43,15 @@ def measure(path):
         data = wav.readframes(frames)
         if len(data) != frames * 4:
             raise ValueError("truncated capture")
+    return rate, data
+
+
+def measure(path):
+    """Measure the first tone on each channel, allowing a short DMA tail."""
+    rate, data = read_pcm(path)
     results = []
-    for channel in range(channels):
-        first = last = None
+    for channel in range(2):
+        first = last = tail_start = tail_end = None
         first_rise = last_rise = rises = sign = active = 0
         for i, frame in enumerate(struct.iter_unpack("<hh", data)):
             value = frame[channel]
@@ -49,6 +59,11 @@ def measure(path):
                 continue
             if first is None:
                 first = i
+            if last is not None and (i - last - 1) * 1000 > rate * 10:
+                if tail_start is None:
+                    tail_start = i
+                tail_end = i
+                continue
             last = i
             active += 1
             current = 1 if value > 0 else -1
@@ -66,6 +81,12 @@ def measure(path):
         mhz = ((rises - 1) * rate * 1000 + interval // 2) // interval if interval else 0
         if not (900 <= ms <= 1100 and 426800 <= mhz <= 453200 and active * 10 >= span * 9):
             raise ValueError(f"channel {channel}: {ms} ms, {mhz} mHz, {active}/{span} active frames")
+        if tail_start is not None:
+            tail = tail_end - tail_start + 1
+            if tail * 1000 > rate * 50:
+                raise ValueError(f"channel {channel}: unexpected {tail}-frame tail")
+            print(f"channel {channel}: {tail}-frame tail after "
+                  f"{(tail_start - last - 1) * 1000 / rate:.1f} ms of silence")
         results.append((ms, mhz))
     return results
 
@@ -76,8 +97,7 @@ def check(arch, dest):
     log = wav.with_suffix(".log")
     cmd = run.qemu_command(arch, interactive=True, firmware=os.getenv("WISP_FIRMWARE"),
                            kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
-                           extra=["-audiodev", f"wav,id=snd0,path={str(wav).replace(',', ',,')}",
-                                  *DEVICES[arch]])
+                           extra=wav_device(arch, wav))
     wav.unlink(missing_ok=True)
     raw = shell.drive(cmd, ["soundtest 440 1000", "poweroff"], timeout=60)
     log.write_text(raw["text"])
