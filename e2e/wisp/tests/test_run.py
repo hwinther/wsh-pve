@@ -125,6 +125,12 @@ class Command(unittest.TestCase):
         self.assertIn("-no-reboot", cmd)
         self.assertEqual(cmd[-2:], ["-append", "console=ttyS0 panic=-1"])
 
+    def test_aarch64_virt(self):
+        cmd = run.qemu_command("aarch64", kernel="/k", machine="virt")
+        self.assertEqual(cmd[:7], ["qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a57",
+                                   "-m", "256"])
+        self.assertIn("console=ttyAMA0 earlycon=pl011,0x09000000", cmd[-1])
+
     def test_overrides(self):
         cmd = run.qemu_command("sparc32", qemu_dir="/q", kernel="/k", machine="SS-20", memory=64,
                                loops=8, firmware="/fw")

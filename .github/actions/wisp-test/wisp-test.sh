@@ -4,10 +4,10 @@
 # action.yml runs this script; it also runs on its own on a Debian or Ubuntu host. Settings come
 # from the environment (the action's inputs, see README.md):
 #
-#   WISP_ARCH        sparc32 (default), sparc64 or x86_64
+#   WISP_ARCH        sparc32 (default), sparc64, x86_64 or aarch64
 #   WISP_SOURCES     C files to build (whitespace-separated, globs allowed), or
 #   WISP_BINARY      a static binary for the architecture instead
-#   WISP_LIBC        nolibc (default) or uclibc (sparc32 and x86_64)
+#   WISP_LIBC        nolibc (default) or uclibc (sparc32, x86_64 and aarch64)
 #   WISP_TOOLCHAIN   local SDK tarball instead of downloading WISP_TOOLCHAIN_URL
 #   WISP_TOOLCHAIN_URL     SDK tarball URL (default: wisp-toolchain release for WISP_ARCH)
 #   WISP_TOOLCHAIN_SHA256  the SDK tarball's SHA-256, checked when set
@@ -82,7 +82,7 @@ nolibc) ;;
 uclibc)
 	case "$ARCH" in
 	sparc32) SDK_PREFIX=sparc-buildroot-linux-uclibc ;;
-	x86_64) SDK_PREFIX=x86_64-buildroot-linux-uclibc ;;
+	aarch64|x86_64) SDK_PREFIX=$ARCH-buildroot-linux-uclibc ;;
 	*) die "no uClibc-ng SDK for $ARCH; see 'Your own toolchain' in the action README" ;;
 	esac ;;
 *) die "unknown libc '$LIBC' (nolibc or uclibc)" ;;
@@ -90,7 +90,13 @@ esac
 
 # Per architecture: QEMU binary and its package, machine, memory (MiB), compiler and its package,
 # compiler flags, ELF machine number, whether nolibc's _start needs replacing (start-sparc.c).
+console=ttyS0
+cpu=()
 case "$ARCH" in
+aarch64)
+	QEMU=qemu-system-aarch64 QEMU_PKG=qemu-system-arm DEF_MACHINE=virt MEM=256
+	CC=aarch64-linux-gnu-gcc CC_PKG=gcc-aarch64-linux-gnu ARCH_CFLAGS= EM=183 START=0
+	cpu=(-cpu cortex-a57) console="ttyAMA0 earlycon=pl011,0x09000000" ;;
 sparc32)
 	QEMU=qemu-system-sparc QEMU_PKG=qemu-system-sparc DEF_MACHINE=SS-5 MEM=128
 	CC=sparc64-linux-gnu-gcc CC_PKG=gcc-sparc64-linux-gnu ARCH_CFLAGS="-m32 -mcpu=v8" EM=2 START=1 ;;
@@ -105,7 +111,7 @@ x86_64)
 	CC=x86_64-linux-gnu-gcc CC_PKG=gcc-x86-64-linux-gnu ARCH_CFLAGS="-m64 -march=x86-64" EM=62 START=0
 	[ "$(uname -m)" != x86_64 ] || { CC=gcc CC_PKG=gcc; } ;;
 *)
-	die "unknown arch '$ARCH' (sparc32, sparc64 or x86_64)" ;;
+	die "unknown arch '$ARCH' (sparc32, sparc64, x86_64 or aarch64)" ;;
 esac
 [ -n "$SOURCES" ] || [ -n "$BINARY" ] || die "give sources or binary"
 [ -z "$SOURCES" ] || [ -z "$BINARY" ] || die "give sources or binary, not both"
@@ -244,7 +250,7 @@ cpio_entry() { # name mode file|-
 } > "$WORK/test.cpio"
 
 # Boot
-append="console=ttyS0 panic=-1 quiet wisp=$MODE"
+append="console=$console panic=-1 quiet wisp=$MODE"
 net=()
 export WISP_PORT=''
 if [ "$NETWORK" = true ]; then
@@ -252,6 +258,7 @@ if [ "$NETWORK" = true ]; then
 	case "$ARCH" in
 	sparc32) nic=lance; append+=" esp_scsi.esp_bus_reset_settle=0 lpj=2000000" ;;
 	sparc64) nic=sunhme ;;
+	aarch64) nic=virtio-net-pci ;;
 	x86_64) nic=e1000 ;;
 	esac
 	net=(-nic "user,model=$nic")
@@ -266,7 +273,7 @@ fi
 output port "$WISP_PORT"
 [ -z "$ARGS" ] || append="$append -- $ARGS"
 # shellcheck disable=SC2206
-cmd=("$QEMU" -M "${MACHINE:-$DEF_MACHINE}" -m "$MEM" -display none -serial stdio -monitor none
+cmd=("$QEMU" -M "${MACHINE:-$DEF_MACHINE}" "${cpu[@]}" -m "$MEM" -display none -serial stdio -monitor none
 	-no-reboot -nodefaults -kernel "$KIT/$ARCH/$kernel" "${net[@]}" -initrd "$WORK/test.cpio"
 	-append "$append" $QEMU_ARGS)
 log "${cmd[*]}"
@@ -288,7 +295,7 @@ output seconds "$secs"
 line=$(tr -d '\r' < "$LOG" | grep -oE "WISP-${MODE^^} v=1 exit=-?[0-9]+ signal=[0-9]+ ms=[0-9]+" | tail -n 1 || true)
 err=$(tr -d '\r' < "$LOG" | grep -oE "WISP-${MODE^^}-ERROR .*" | head -n 1 || true)
 signame() {
-	if [ "$ARCH" = x86_64 ]; then
+	if [[ $ARCH == x86_64 || $ARCH == aarch64 ]]; then
 		case $1 in 4) echo SIGILL ;; 5) echo SIGTRAP ;; 6) echo SIGABRT ;; 7) echo SIGBUS ;;
 		8) echo SIGFPE ;; 9) echo SIGKILL ;; 11) echo SIGSEGV ;; 31) echo SIGSYS ;; *) echo "signal $1" ;; esac
 	else

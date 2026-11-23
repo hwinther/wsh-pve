@@ -7,11 +7,11 @@
 #   build.sh <arch> --export <dir>   also builds the image, then copies /opt/wisp-toolchain/<arch>
 #                                     out of it as <dir>/wisp-toolchain-<arch>.tar.xz
 #
-# <arch>: sparc32 or x86_64.
+# <arch>: sparc32, x86_64 or aarch64.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-ALL="sparc32 x86_64"
+ALL="sparc32 x86_64 aarch64"
 BUILD_ARGS=${BUILD_ARGS:-}
 
 log() { printf '%s\n' "wisp-toolchain: $*" >&2; }
