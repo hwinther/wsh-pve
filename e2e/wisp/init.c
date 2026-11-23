@@ -57,6 +57,11 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <linux/fb.h>
+/* nolibc uses 64-bit time_t on 32-bit targets. Select the evdev wire layout. */
+#if defined(NOLIBC) && __SIZEOF_LONG__ == 4
+#define __USE_TIME_BITS64
+#endif
+#include <linux/input.h>
 #include <linux/ioctl.h>
 #include <linux/reboot.h>
 #include <linux/sysinfo.h>
@@ -811,22 +816,29 @@ static int smp_check(unsigned int loops, const char *prefix)
 
 static const char mandel_chars[] = " .:-=+*#%@";
 
+static int mandel_count(int cx, int cy)
+{
+	int x = 0, y = 0, n;
+
+	for (n = 0; n < MANDEL_ITER; n++) {
+		int x2 = (x * x) >> 12;
+		int y2 = (y * y) >> 12;
+
+		if (x2 + y2 > 4 << 12)
+			break;
+		y = ((x * y) >> 11) + cy;
+		x = x2 - y2 + cx;
+	}
+	return n;
+}
+
 static void mandel_row(int row, char *out)
 {
-	int col, n, x, y, x2, y2, cx, cy;
+	int col, cy = (2 * row - (MANDEL_ROWS - 1)) * MANDEL_DY;
 
-	cy = (2 * row - (MANDEL_ROWS - 1)) * MANDEL_DY;
 	for (col = 0; col < MANDEL_COLS; col++) {
-		cx = MANDEL_X0 + col * MANDEL_DX;
-		x = y = 0;
-		for (n = 0; n < MANDEL_ITER; n++) {
-			x2 = (x * x) >> 12;
-			y2 = (y * y) >> 12;
-			if (x2 + y2 > 4 << 12)
-				break;
-			y = ((x * y) >> 11) + cy;
-			x = x2 - y2 + cx;
-		}
+		int n = mandel_count(MANDEL_X0 + col * MANDEL_DX, cy);
+
 		out[col] = n == MANDEL_ITER ? '@' : mandel_chars[n * 9 / MANDEL_ITER];
 	}
 	out[MANDEL_COLS] = '\0';
@@ -996,6 +1008,8 @@ static void cmd_help(const char *arg)
 	       "  bench           the CRC-32 compute loop (%u rounds) with its time\n"
 	       "  crc <n>         the loop's checksum after n rounds\n"
 	       "  fbtest          draw eight colour bars on /dev/fb0\n"
+	       "  keytest         read keyboard presses until Esc or a 10-second timeout\n"
+	       "  mandel fb       draw the Mandelbrot set on /dev/fb0\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
 	       "  endian          a byte-order guessing game\n"
 	       "  disk [dev..]    write, sync and read back a pattern on a raw disk\n"
@@ -1067,13 +1081,13 @@ static unsigned int channel_mask(struct fb_bitfield field)
 	return (~0U >> (32 - field.length)) << field.offset;
 }
 
-static void cmd_fbtest(void)
+static void draw_fb(int mandel)
 {
 	struct fb_var_screeninfo v = { 0 };
 	struct fb_fix_screeninfo f = { 0 };
 	unsigned short red[8], green[8], blue[8];
 	struct fb_cmap cmap = { 0, 8, red, green, blue, NULL };
-	unsigned int pixels[8], x, y, i, bytes;
+	unsigned int pixels[8], x, y, i, bytes, sum = 0;
 	int fd, tty, drawn = 0;
 
 	mount_dev();
@@ -1113,10 +1127,20 @@ static void cmd_fbtest(void)
 	}
 	/* Row writes also work on SBus devices with private mmap offsets. */
 	for (y = 0; y < v.yres; y++) {
+		int cy = -4712 + (int)(9424 * y / v.yres);
+
 		for (x = 0; x < v.xres; x++) {
-			i = x * 8 / v.xres;
-			if (!x || !y || x == v.xres - 1 || y == v.yres - 1)
+			if (mandel) {
+				int cx = MANDEL_X0 + (int)(12288 * x / v.xres);
+				int n = mandel_count(cx, cy);
+
+				sum += n;
+				i = n == MANDEL_ITER ? 0 : 1 + (n - 1) % 7;
+			} else if (!x || !y || x == v.xres - 1 || y == v.yres - 1) {
 				i = 7;
+			} else {
+				i = x * 8 / v.xres;
+			}
 			if (bytes == 1)
 				((unsigned char *)buf)[x] = pixels[i];
 			else if (bytes == 2) {
@@ -1132,8 +1156,14 @@ static void cmd_fbtest(void)
 	}
 	drawn = 1;
 out:
-	printf("WISP-FB v=1 dev=/dev/fb0 xres=%u yres=%u bpp=%u visual=%u line=%u drawn=%d\n",
-	       v.xres, v.yres, v.bits_per_pixel, f.visual, f.line_length, drawn);
+	if (mandel && drawn)
+		printf("WISP-FBMANDEL v=1 xres=%u yres=%u bpp=%u iter=%u sum=%u\n",
+		       v.xres, v.yres, v.bits_per_pixel, MANDEL_ITER, sum);
+	else if (mandel)
+		printf("WISP-FBMANDEL error drawing /dev/fb0\n");
+	else
+		printf("WISP-FB v=1 dev=/dev/fb0 xres=%u yres=%u bpp=%u visual=%u line=%u drawn=%d\n",
+		       v.xres, v.yres, v.bits_per_pixel, f.visual, f.line_length, drawn);
 	if (fd >= 0)
 		close(fd);
 }
@@ -1144,13 +1174,71 @@ static void cmd_mandel(const char *arg)
 	unsigned long t0 = clock_ms(CLOCK_MONOTONIC);
 	int r;
 
-	(void)arg;
+	if (!strcmp(arg, "fb")) {
+		draw_fb(1);
+		return;
+	}
 	for (r = 0; r < MANDEL_ROWS; r++) {
 		mandel_row(r, row);
 		printf(" %s\n", row);
 	}
 	printf("  %d x %d points, %d iterations, %lu ms\n", MANDEL_COLS, MANDEL_ROWS, MANDEL_ITER,
 	       clock_ms(CLOCK_MONOTONIC) - t0);
+}
+
+/* Small fixed machine configurations, with devtmpfs naming devices in probe order. */
+static int keyboard_fd(void)
+{
+	char path[32], name[80];
+	unsigned long keys;
+	int i, fd;
+
+	mount_dev();
+	for (i = 0; i < 32; i++) {
+		snprintf(path, sizeof(path), "/dev/input/event%d", i);
+		fd = open(path, O_RDONLY | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+		/* KEY_A fits in the first native word, including on big-endian SPARC. */
+		keys = 0;
+		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), &keys) > 0 &&
+		    (keys & (1UL << KEY_A)) && ioctl(fd, EVIOCGNAME(sizeof(name)), name) > 0) {
+			printf("WISP-KEYBOARD dev=%s name=%s\n", path, name);
+			return fd;
+		}
+		close(fd);
+	}
+	return -1;
+}
+
+static void cmd_keytest(void)
+{
+	struct input_event ev;
+	struct pollfd pfd;
+	unsigned long start, elapsed;
+	int fd = keyboard_fd();
+
+	if (fd < 0) {
+		printf("keytest: keyboard unavailable\n");
+		return;
+	}
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	start = clock_ms(CLOCK_MONOTONIC);
+	while ((elapsed = clock_ms(CLOCK_MONOTONIC) - start) < 10000) {
+		if (poll(&pfd, 1, 10000 - elapsed) <= 0)
+			break;
+		if (read(fd, &ev, sizeof(ev)) != sizeof(ev))
+			break;
+		if (ev.type != EV_KEY || ev.value != 1)
+			continue;
+		printf("WISP-KEY v=1 code=%u value=1\n", ev.code);
+		if (ev.code == KEY_ESC)
+			goto done;
+	}
+	printf("keytest: timed out or input stopped\n");
+done:
+	close(fd);
 }
 
 /* disk, net, smp: the tier-2 checks, with the kernel command line's devices by default */
@@ -1202,7 +1290,7 @@ static void cmd_reboot(const char *arg)
  */
 static const char command_names[] =
 	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0"
-	"endian\0fbtest\0";
+	"endian\0fbtest\0keytest\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -1228,7 +1316,8 @@ static void run_command(const char *cmd, const char *arg)
 	case 11: cmd_net(arg); break;
 	case 12: cmd_smp(arg); break;
 	case 13: cmd_endian(arg); break;
-	case 14: cmd_fbtest(); break;
+	case 14: draw_fb(0); break;
+	case 15: cmd_keytest(); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }

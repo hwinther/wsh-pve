@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive fbtest on serial and verify the visible pixels through QMP."""
+"""Verify framebuffer images and keyboard input through serial and QMP."""
 import argparse
 import asyncio
 import json
@@ -8,8 +8,10 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 
 import run
+from shell import MANDEL_ITER, MANDEL_X0, mandel_count
 
 DISPLAYS = {"sparc32": ("cg3", "tcx"), "sparc64": ("std",), "x86_64": ("std",)}
 RGB = [bytes(255 if index & bit else 0 for bit in (4, 2, 1)) for index in range(8)]
@@ -17,7 +19,21 @@ MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32
                   rb"visual=(\d+) line=(\d+) drawn=1\r?\n")
 
 
-def check_ppm(data, width, height):
+def mandel_image(width, height):
+    """Return the sum of the iteration counts and the packed visible RGB rows."""
+    xs = [MANDEL_X0 + 12288 * x // width for x in range(width)]
+    rows = []
+    checksum = 0
+    palette = [RGB[0]] + [RGB[1 + (n - 1) % 7] for n in range(1, MANDEL_ITER)] + [RGB[0]]
+    for y in range(height):
+        cy = -4712 + 9424 * y // height
+        counts = [mandel_count(cx, cy) for cx in xs]
+        checksum += sum(counts)
+        rows.append(b"".join(palette[n] for n in counts))
+    return checksum & 0xffffffff, rows
+
+
+def check_ppm(data, width, height, rows=None):
     header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+255\n", data)
     if not header or tuple(map(int, header.groups())) != (width, height):
         raise ValueError(f"expected a {width}x{height} P6 screendump")
@@ -27,7 +43,7 @@ def check_ppm(data, width, height):
     border = RGB[7] * width
     interior = RGB[7] + b"".join(RGB[x * 8 // width] for x in range(1, width - 1)) + RGB[7]
     for y in range(height):
-        expected = border if y in (0, height - 1) else interior
+        expected = rows[y] if rows is not None else (border if y in (0, height - 1) else interior)
         row = pixels[y * width * 3:(y + 1) * width * 3]
         if row != expected:
             x = next(i for i, (a, b) in enumerate(zip(row, expected)) if a != b) // 3
@@ -44,6 +60,32 @@ async def qmp(reader, writer, command, **arguments):
             return
         if "event" not in reply:
             raise RuntimeError(f"{command}: {reply}")
+
+
+async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
+    proc.stdin.write(b"keytest\n")
+    # Inject only after the keyboard is open.
+    while True:
+        line = await until(b"\n")
+        if b"WISP-KEYBOARD dev=" in line:
+            break
+        if arch == "sparc64" and line.strip() == b"keytest: keyboard unavailable":
+            # OpenBIOS omits the mouse child required by Linux's EBus i8042 probe.
+            await until(prompt)
+            print(f"{arch}/{display} keyboard unavailable (OpenBIOS EBus)", flush=True)
+            return
+        if b"keytest:" in line:
+            raise RuntimeError(line.decode().strip())
+    keys = ("a", "b", "ret", "esc")
+    for key in keys:
+        await qmp(reader, writer, "send-key", keys=[{"type": "qcode", "data": key}],
+                  **{"hold-time": 30})
+        await asyncio.sleep(0.06)
+    answer = await until(prompt)
+    codes = [int(n) for n in re.findall(rb"^WISP-KEY v=1 code=(\d+) value=1\r?$", answer, re.M)]
+    if codes != [30, 48, 28, 1]:
+        raise ValueError(f"sent {keys}, received {answer!r}")
+    print(f"{arch}/{display} sent {keys}, received {codes}", flush=True)
 
 
 async def exercise(proc, arch, display, monitor, ppm, log):
@@ -72,16 +114,34 @@ async def exercise(proc, arch, display, monitor, ppm, log):
         if "QMP" not in json.loads(await reader.readline()):
             raise RuntimeError("missing QMP greeting")
         await qmp(reader, writer, "qmp_capabilities")
-        # DRM may defer copying the fbdev shadow buffer to VGA memory.
-        for attempt in range(10):
-            await qmp(reader, writer, "screendump", filename=str(ppm))
-            try:
-                check_ppm(ppm.read_bytes(), width, height)
-                break
-            except ValueError:
-                if attempt == 9:
-                    raise
-                await asyncio.sleep(0.1)
+
+        async def check_screen(path, rows=None):
+            # DRM may defer copying the fbdev shadow buffer to VGA memory.
+            for attempt in range(10):
+                await qmp(reader, writer, "screendump", filename=str(path))
+                try:
+                    check_ppm(path.read_bytes(), width, height, rows)
+                    break
+                except ValueError:
+                    if attempt == 9:
+                        raise
+                    await asyncio.sleep(0.1)
+            print(f"{path.name}: all {width * height} pixels passed", flush=True)
+
+        await check_screen(ppm)
+        start = time.monotonic()
+        proc.stdin.write(b"mandel fb\n")
+        answer = await until(prompt)
+        elapsed = time.monotonic() - start
+        checksum, rows = mandel_image(width, height)
+        expected = (f"WISP-FBMANDEL v=1 xres={width} yres={height} bpp={bpp} "
+                    f"iter={MANDEL_ITER} sum={checksum}")
+        if expected.encode() not in answer.splitlines():
+            raise ValueError(f"expected {expected!r}, received {answer!r}")
+        print(f"{arch}/{display} {expected} ({elapsed:.2f} s)", flush=True)
+        await check_screen(ppm.with_name(ppm.stem + "-mandel.ppm"), rows)
+
+        await check_keyboard(proc, arch, display, reader, writer, until, prompt)
     finally:
         writer.close()
         await writer.wait_closed()
@@ -89,7 +149,6 @@ async def exercise(proc, arch, display, monitor, ppm, log):
     log.write(await proc.stdout.read())
     if await proc.wait():
         raise RuntimeError(f"{arch}/{display}: QEMU exited with {proc.returncode}")
-    print(f"{ppm}: all {width * height} pixels passed")
 
 
 async def boot(arch, display, dest, timeout):

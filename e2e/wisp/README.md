@@ -64,6 +64,8 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
 | `fbtest` | draw eight colour bars and a white border on `/dev/fb0` and print the mode on serial (framebuffer tier) |
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
+| `mandel fb` | draw the set at the native framebuffer resolution and print its iteration checksum on serial |
+| `keytest` | print Linux input codes for keyboard presses until Esc or a ten-second timeout (framebuffer tier) |
 | `endian` | a small guessing game about the thing this lab tests for: a round's four bytes as they sit in memory, low address first; the right answer is the 32-bit word *this machine's* CPU reads from them, so it depends on the architecture under test (unchanged on sparc, byte-swapped on x86). `endian <hex>` guesses it, `endian` alone shows the round again. Three wrong guesses end the game; a right one scores a point and deals another round |
 | `disk [dev ...]` | the tier-2 disk check (see "Tier 2") on each device, by default the ones in `wisp_disk=` (else `sda`); prints its `WISP-DISK` line |
 | `net [if]` | the tier-2 network check on the interface (default `wisp_net=`, else `eth0`); prints its `WISP-NET` line |
@@ -303,6 +305,22 @@ framebuffer console cursor, then writes a white border around eight vertical RGB
 uses the driver's channel offsets and lengths. Row writes support SBus framebuffers with
 device-specific mmap offsets. The `WISP-FB` line reports the mode and whether the writes succeeded.
 
+At the same prompt, `mandel fb` computes one point per visible pixel using the text command's
+4.12 fixed-point recurrence and 32-iteration limit. Points that reach the limit are black.
+Escaped points cycle through the seven non-black bar colours. The `sum` in `WISP-FBMANDEL`
+is the unsigned 32-bit sum of all per-pixel iteration counts.
+
+`keytest` scans evdev nodes for a keyboard that supports the A key, prints its device name,
+then reports each press (including Esc) on serial. SS-5 uses the existing Sun Zilog serial
+driver's serio port and `sunkbd`. The pc uses `atkbd` on i8042. In separate boots with `console=tty0`,
+typing `poweroff` on the framebuffer VT shut down the pc and SS-5.
+
+The sun4u kernel also includes i8042 and `atkbd`. OpenBIOS exposes the EBus controller
+and its `kb_ps2` child, but its device tree has no `kdmouse` or `mouse` child. Linux 7.3.4's
+`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`. The observed shell result is
+`keytest: keyboard unavailable`, and typing `poweroff` on the framebuffer VT had no effect.
+The test records this specific sun4u result and checks the key codes if a keyboard is present.
+
 From `e2e/wisp` inside the build image:
 
 ```sh
@@ -310,11 +328,11 @@ TIER_FB=1 ./build.sh sparc32 sparc64 x86_64
 python3 framebuffer.py
 ```
 
-`framebuffer.py` drives the shell over serial, issues a QMP `screendump` while PID 1 waits at
-the prompt, checks every RGB pixel against the guest's reported dimensions and the expected
-pattern, then powers off. The PPM and serial log for each machine/display go in
-`out/framebuffer/`. Use `--arch sparc32` to run both SS-5 displays or `--output DIR` to choose
-an evidence directory. CI includes the PPMs and logs in the boot artifact.
+`framebuffer.py` checks the colour bars and Mandelbrot image pixel by pixel using QMP
+screendumps. It checks the iteration sum independently, then sends A, B, Enter and Esc
+through QMP and checks for Linux key codes 30, 48, 28 and 1 in order. Both PPMs and the
+serial log for each machine/display go in `out/framebuffer/`. Use `--arch sparc32` to run
+both SS-5 displays. CI includes the images and logs in the boot artifact's `framebuffer.tar.gz`.
 
 SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. Both PCI machines use `DRM_BOCHS` with
 `DRM_FBDEV_EMULATION` and QEMU's standard VGA. On pc, a comparison build with
@@ -322,13 +340,15 @@ SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. Both PCI machines use `DRM_BOCHS` wi
 mode (`vga=0x317`). With identical base options and PID 1, the compressed Bochs image was
 4,096 bytes smaller.
 
-Measured with Linux 7.3.4 and QEMU 11.1.3 under TCG. Kernel sizes are bytes.
+Measured with Linux 7.3.4 and QEMU 11.1.3 under TCG. Kernel sizes are bytes. Disabling
+unused mouse drivers in this tier kept all three framebuffer images smaller than the
+colour-bar-only builds.
 
 | Architecture and machine | Display | `kernel-t2` | `kernel-fb` | Increase | Verified screendump |
 | --- | --- | ---: | ---: | ---: | --- |
-| sparc32, SS-5 | cg3 and tcx | 3,311,560 | 3,463,156 | 151,596 | 1024x768, 8 bpp, both passed |
-| sparc64, sun4u | std | 4,117,384 | 4,696,192 | 578,808 | 1280x800, 32 bpp, passed |
-| x86_64, pc | std | 1,836,032 | 2,032,640 | 196,608 | 1280x800, 32 bpp, passed |
+| sparc32, SS-5 | cg3 and tcx | 3,315,656 | 3,397,612 | 81,956 | 1024x768, 8 bpp, both passed |
+| sparc64, sun4u | std | 4,125,576 | 4,654,240 | 528,664 | 1280x800, 32 bpp, passed |
+| x86_64, pc | std | 1,836,032 | 2,016,256 | 180,224 | 1280x800, 32 bpp, passed |
 
 ## Updating the size budget
 

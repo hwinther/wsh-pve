@@ -110,7 +110,9 @@ jobs:
         id: kernels
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: e2e/wisp/out
+          path: |
+            e2e/wisp/out
+            !e2e/wisp/out/framebuffer/**
           key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
 
       - name: Build the wisp image
@@ -175,14 +177,18 @@ jobs:
             2> "$RUNNER_TEMP/wisp/table-tier2-shell.md" || rc=1
           exit "$rc"
 
-      - name: Verify framebuffer screendumps
+      - name: Verify colour bars, Mandelbrot screendumps and keyboard input
         run: |
-          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$RUNNER_TEMP/wisp:/results")
+          # e2e/wisp/out belongs to root (the kernel build's container): write the evidence to RUNNER_TEMP
+          mkdir -p "$RUNNER_TEMP/wisp/framebuffer"
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$RUNNER_TEMP/wisp/framebuffer:/results")
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
-          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
-            'PATH=/qemu:$PATH python3 framebuffer.py --output /results/framebuffer'
+          rc=0
+          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec 'PATH=/qemu:$PATH python3 framebuffer.py --output /results' || rc=1
+          tar -czf "$RUNNER_TEMP/wisp/framebuffer.tar.gz" -C "$RUNNER_TEMP/wisp" framebuffer
+          exit "$rc"
 
       - name: Boot the HTTP service
         run: |

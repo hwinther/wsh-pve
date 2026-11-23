@@ -1,6 +1,6 @@
 {
-  "i386":    {"kernel_bytes": 1135104, "kernel_t2_bytes": 1675776, "kernel_net_bytes": 1851904, "init_bytes": 24996},
-  "sparc32": {"kernel_bytes": 2453624, "kernel_t2_bytes": 3311560, "kernel_net_bytes": 3766312, "kernel_fb_bytes": 3463156, "init_bytes": 20288},
-  "sparc64": {"kernel_bytes": 3109128, "kernel_t2_bytes": 4117384, "kernel_net_bytes": 4583432, "kernel_fb_bytes": 4696192, "init_bytes": 20360},
-  "x86_64":  {"kernel_bytes": 1291264, "kernel_t2_bytes": 1836032, "kernel_net_bytes": 2024448, "kernel_fb_bytes": 2032640, "init_bytes": 21168}
+  "i386":    {"kernel_bytes": 1135104, "kernel_t2_bytes": 1679872, "kernel_net_bytes": 1851904, "init_bytes": 24996},
+  "sparc32": {"kernel_bytes": 2453624, "kernel_t2_bytes": 3315656, "kernel_net_bytes": 3766312, "kernel_fb_bytes": 3397612, "init_bytes": 21608},
+  "sparc64": {"kernel_bytes": 3109128, "kernel_t2_bytes": 4125576, "kernel_net_bytes": 4583432, "kernel_fb_bytes": 4654240, "init_bytes": 21672},
+  "x86_64":  {"kernel_bytes": 1291264, "kernel_t2_bytes": 1836032, "kernel_net_bytes": 2024448, "kernel_fb_bytes": 2016256, "init_bytes": 25264}
 }
