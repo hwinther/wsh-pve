@@ -12,6 +12,7 @@ controller, a NIC on QEMU's user-mode network and more than one CPU (see "Tier 2
 | Architecture | QEMU | Machine | Kernel console |
 | --- | --- | --- | --- |
 | `x86_64` | `qemu-system-x86_64` | `pc` | 8250, `ttyS0` |
+| `aarch64` | `qemu-system-aarch64` | `virt`, Cortex-A57, 256 MiB | PL011, `ttyAMA0` |
 | `i386` | `qemu-system-i386` | `pc` | 8250, `ttyS0` |
 | `sparc32` | `qemu-system-sparc` | `SS-5` (also `SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX` and `Voyager` with `--machine`; `LX` and `Voyager` need OpenBIOS patch 0027, in the published package since 11.1.3-3+wsh9) | ESCC (zs), `ttyS0` |
 | `sparc64` | `qemu-system-sparc64` | `sun4u` | 16550 "su" on the EBus, `ttyS0` |
@@ -154,6 +155,7 @@ images afterwards):
 | Machine | Disks (driver, guest device) | NIC (driver) | CPUs |
 | --- | --- | --- | --- |
 | `pc` (x86_64, i386) | PIIX3 IDE, `-drive if=ide` (`ata_piix`, `sda`); virtio-blk, `-device virtio-blk-pci` (`virtio_blk`, `vda`) | `e1000` (`e1000`); `virtio-net-pci` (`virtio_net`), in a second boot | 1, 2, 4 |
+| `virt` | virtio-scsi PCI (`sda`), virtio-blk PCI (`vda`) | virtio-net PCI | 1, 2, 4 |
 | `SS-10`, `SS-20` | ESP, `-drive if=scsi` (`sun_esp`, `sda`) | `lance` (`sunlance`) | 1, 2, 4 |
 | `SS-5`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager` | ESP, `-drive if=scsi` (`sun_esp`, `sda`) | `lance` (`sunlance`) | 1 |
 | `sun4u` | cmd646 IDE, `-drive if=ide` (`pata_cmd64x`, `sda`); virtio-blk on the PCI bus (`vda`) | `sunhme` (`sunhme`) | 1 |
@@ -202,6 +204,8 @@ WISP-SMP v=1 cpus=2 loops=4096 crc=0x35a46014 wall_ms=369 pinned=yes percpu=0:0x
 
 The SMP decision per architecture:
 
+- **aarch64**: Linux arm64 requires SMP even in tier 1. QEMU starts one CPU by default.
+  Tier 2 starts two and four through PSCI.
 - **x86_64 and i386**: SMP in `kernel-t2` (`CONFIG_SMP`, up to 8 CPUs, found through ACPI), tested
   with `-smp 2` and `-smp 4`. QEMU runs x86 vCPUs in parallel threads (MTTCG): the wall time of 2
   or 4 loops is about one loop.
@@ -232,7 +236,7 @@ switch on by default and nothing uses (wireless, PTP, partition tables, extra I/
 
 `TIER_NET=1` builds `out/<arch>/kernel-net` and saves its resolved `config-net`. It layers
 `config/tier-net/common.config` on the tier-2 fragments, reusing their packet sockets and NIC
-drivers (LANCE on SS-5, e1000 on pc, HME on sun4u). The fragment adds IPv4, kernel DHCP and Unix
+drivers (LANCE on SS-5, e1000 on pc, HME on sun4u, virtio-net on virt). The fragment adds IPv4, kernel DHCP and Unix
 sockets. IPv6, netfilter and wireless are disabled. With `ip=dhcp` the kernel configures the NIC
 from QEMU user networking before starting PID 1.
 
@@ -295,7 +299,7 @@ All three returned HTTP 200 for both root requests (`request=1`, then `request=2
 ## Framebuffer tier
 
 `TIER_FB=1` builds `out/<arch>/kernel-fb` and saves its resolved `config-fb` for sparc32,
-sparc64 and x86_64. The build applies the framebuffer fragments directly to tier 2. They enable
+sparc64, x86_64 and aarch64. The build applies the framebuffer fragments directly to tier 2. They enable
 fbdev, the framebuffer console and a single 8x8 font. Linux 7.3.4 also needs `CONFIG_PROC_FS`
 to register the framebuffer character device. Without it, the driver binds and fbcon displays
 text, but fbdev fails to create device 0 with error -19.
@@ -335,7 +339,7 @@ through QMP and checks for Linux key codes 30, 48, 28 and 1 in order. Both PPMs 
 serial log for each machine/display go in `out/framebuffer/`. Use `--arch sparc32` to run
 both SS-5 displays. CI includes the images and logs in the boot artifact's `framebuffer.tar.gz`.
 
-SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. Both PCI machines use `DRM_BOCHS` with
+SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. The pc and sun4u use `DRM_BOCHS` with
 `DRM_FBDEV_EMULATION` and QEMU's standard VGA. On pc, a comparison build with
 `SYSFB_SIMPLEFB` and `DRM_SIMPLEDRM` also passed the pixel check in the 1024x768 16-bit VESA
 mode (`vga=0x317`). With identical base options and PID 1, the compressed Bochs image was
@@ -362,11 +366,11 @@ the two sample bytes explicitly on both SPARC and x86.
 The sound drivers live in `kernel-fb` with the display hardware used by games. ALSA's OSS
 PCM and mixer interfaces keep setup to a few ioctls and allow a game to stream samples with
 `write`. Both codecs accept the selected format directly, so the kernel omits the OSS
-conversion plugins. AC97 uses a single PCI controller driver on pc and sun4u. Linux 7.3's
+conversion plugins. AC97 uses a single PCI controller driver on pc, sun4u and virt. Linux 7.3's
 ES1370 driver would also pull in raw MIDI.
 
 From this directory, run `python3 sound.py` after a `TIER_FB=1` build. Select one machine
-with `--arch x86_64`, `--arch sparc32` or `--arch sparc64`. The runner attaches
+with `--arch x86_64`, `--arch sparc32`, `--arch sparc64` or `--arch aarch64`. The runner attaches
 `-audiodev wav,id=snd0,path=<capture.wav>` and the machine options below, waits for the
 serial shell, sends `soundtest 440 1000`, then powers off. It checks the serial result and
 QEMU exit status. On each WAV channel it measures the first tone (900–1100 ms), ending at a
@@ -482,9 +486,9 @@ The 28,482-byte `DEMO1` lump has a 13-byte header, 7,117 four-byte commands and 
 marker. Each boot checks that independent count, the reported FPS, the successful data mount,
 centered integer-scaled pixels and game colours in a QMP capture during playback, the
 successful child exit on serial and QEMU's exit. A matching count
-checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc and
-SS-5 cg3 on relevant PRs, with sound effects enabled on pc. It caches
-both verified archives and writes serial logs, PPMs, the pc WAV and timing report under `RUNNER_TEMP`.
+checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc, virt and
+SS-5 cg3 on relevant PRs, with sound effects enabled on pc and virt. It caches
+both verified archives and writes serial logs, PPMs, WAV captures and timing report under `RUNNER_TEMP`.
 
 To reproduce on a Docker daemon, run the following from the repository root with a POSIX
 shell, Python 3.11+ and unused container names. Set `DOCKER_HOST` to the lab daemon before
@@ -501,9 +505,9 @@ archive=$1
 docker build -f "$w/Dockerfile" -t wispdoom-runner .
 docker run -d --name "$vm" wispdoom-runner sleep infinity
 docker exec "$vm" sh -ec 'apt-get update -qq && apt-get install -y patch libc6-dev-sparc64-cross'
-docker exec -e TIER_FB=1 -e TIER2=0 "$vm" sh build.sh sparc32 x86_64 sparc64
+docker exec -e TIER_FB=1 -e TIER2=0 "$vm" sh build.sh sparc32 x86_64 sparc64 aarch64
 tar -C "$inputs" -cf - freedoom1.wad | docker exec -i "$vm" tar -C /tmp -xf -
-for arch in sparc32 x86_64 sparc64; do
+for arch in sparc32 x86_64 sparc64 aarch64; do
     sdk=$vm
     if [ "$arch" != sparc64 ]; then
         sdk=wispdoom-build-$arch
@@ -529,8 +533,8 @@ docker image rm wispdoom-runner
 
 In the wisp build environment, run `TIER_NET=1 TIER_FB=1 ./build.sh all` with tier 2 enabled (the
 default). Each `out/<arch>/sizes` gives the kernel, tier-2 kernel, network kernel and init
-sizes in bytes, plus `kernel_fb_bytes` on the three framebuffer architectures. Run
-`python3 size_budget.py` from this directory to check all four architectures.
+sizes in bytes, plus `kernel_fb_bytes` on the four framebuffer architectures. Run
+`python3 size_budget.py` from this directory to check all five architectures.
 Growth above 5% fails the boot workflow. A reduction greater than 5% prints a notice.
 After reviewing an intentional change, copy the new measured byte count for each affected
 field into `size-budget.json` and rerun the check.
@@ -555,7 +559,7 @@ WISP-TEST v=1 exit=-1 signal=10 ms=72
 the kernel refuses) and `exit` is 127.
 
 `.github/actions/wisp-test` is a GitHub Action built on it, for other projects' endianness and
-alignment bugs: it builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64 or x86_64,
+alignment bugs: it builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64, x86_64 or aarch64,
 packs it as `/test`, boots it under QEMU from Ubuntu's packages and passes or fails on the exit
 status (its README has the inputs and the limits). It needs no kernel build: it downloads a kit
 (`kit.sh`: the tier-1 and network kernels for each action architecture and the UAPI and nolibc
@@ -620,13 +624,13 @@ Found on the way:
 ## A libc toolchain (uClibc-ng)
 
 The toolchain in `e2e/wisp/toolchain/` targets static user programs on sparc32 (SPARC V8,
-`SS-5`) and x86_64. PID 1 uses the kernel's nolibc. Debian's packaged 32-bit SPARC glibc and
+`SS-5`), x86_64 and aarch64. PID 1 uses the kernel's nolibc. Debian's packaged 32-bit SPARC glibc and
 libgcc target V8+ even with `-mcpu=v8`. Linking against those libraries produces an
 `EM_SPARC32PLUS` executable that wisp's sparc32 kernel rejects.
 
 The Dockerfile pins Buildroot LTS 2025.02.20 and the SHA-256 published in
-`buildroot-2025.02.20.tar.gz.sign`. Both defconfigs use Buildroot's internal GCC and uClibc-ng.
-This release's `package/uclibc/Config.in` enables uClibc-ng for `BR2_sparc` and `BR2_x86_64`
+`buildroot-2025.02.20.tar.gz.sign`. The defconfigs use Buildroot's internal GCC and uClibc-ng.
+This release's `package/uclibc/Config.in` enables uClibc-ng for `BR2_sparc`, `BR2_x86_64` and `BR2_aarch64`
 and omits `BR2_sparc64`. For sparc64, the action README documents the packaged static glibc route.
 
 From the repository root, build one SDK image at a time:
@@ -634,6 +638,7 @@ From the repository root, build one SDK image at a time:
 ```sh
 sh e2e/wisp/toolchain/build.sh sparc32 2025.02.20
 sh e2e/wisp/toolchain/build.sh x86_64 2025.02.20
+sh e2e/wisp/toolchain/build.sh aarch64 2025.02.20
 ```
 
 `make sdk` packages the compiler and sysroot. The Dockerfile relocates them to
@@ -657,10 +662,10 @@ See [the hello smoke test](toolchain/hello/README.md) for the compile and boot c
 
 ```sh
 docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
-docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all     # or x86_64 i386 sparc32 sparc64
+docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all     # or x86_64 i386 sparc32 sparc64 aarch64
 ```
 
-The image is Debian 13 with Debian's cross compilers (`gcc-sparc64-linux-gnu`, `gcc-i686-linux-gnu`),
+The image is Debian 13 with Debian's cross compilers (`gcc-sparc64-linux-gnu`, `gcc-i686-linux-gnu`, `gcc-aarch64-linux-gnu`),
 `linux-source-7.3` from trixie-backports (nolibc supports sparc since 6.16; trixie itself has 6.12)
 and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/` and per architecture:
 
@@ -672,14 +677,14 @@ and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/` an
    initramfs, ELF, printk, TTY, no SMP, no modules) and `config/<arch>.config` (serial driver and
    console; PCI and ACPI on the PC; PCI on sun4u for the EBus), and stops if `olddefconfig` dropped any
    line of the fragments;
-4. builds the image (`bzImage`, or `arch/sparc/boot/image` for sparc) with the initramfs linked in;
+4. builds the image (`bzImage` on x86, `arch/sparc/boot/image` on sparc, `Image` on arm64) with the initramfs linked in;
 5. does steps 3 and 4 again for `kernel-t2` with `config/tier2/common.config` and
    `config/tier2/<arch>.config` on top (where fragments set the same option, the later one counts,
    and the check in step 3 checks the result). `TIER2=0` skips it.
 
 Output in `out/<arch>/`: `kernel`, `kernel-t2`, `init`, `config`, `config-t2`, `sizes` and
 `sysroot.tar.xz` (the headers `init` was built with, for the wisp-test kit). The tier-1
-kernel is uniprocessor; `kernel-t2` is SMP on x86 and sparc32 (see "Tier 2").
+kernel is uniprocessor except on arm64; `kernel-t2` is SMP on x86, arm64 and sparc32 (see "Tier 2").
 
 ## Run
 
@@ -725,7 +730,7 @@ checked under QEMU only.
 ### A TCI build
 
 `qemu-tci.sh <qemu source> <build dir> [targets]` configures and builds QEMU with
-`--enable-tcg-interpreter` for the four targets inside the wisp image (pve-qemu's `qemu` tree with its
+`--enable-tcg-interpreter` for the five targets inside the wisp image (pve-qemu's `qemu` tree with its
 `debian/patches` applied, or upstream QEMU 11.1). `MODE=tcg` builds the same tree without the
 interpreter, for a comparison where only the backend differs. Point `run.py --qemu-dir` at the build
 directory and pass `--firmware /usr/share/kvm` (the image sets `WISP_FIRMWARE` to it) so it finds
@@ -733,26 +738,26 @@ OpenBIOS and SeaBIOS.
 
 ## CI
 
-`.github/workflows/wisp-boot.yml` boots all four architectures, then sparc32 on the other seven
+`.github/workflows/wisp-boot.yml` boots all five architectures, then sparc32 on the other seven
 machines (`SS-20`, `SS-10`, `SS-4`, `SPARCClassic`, `SPARCbook`, `LX`, `Voyager`), on a
 GitHub-hosted runner (TCG) and fails when any run fails. It runs on every pull request (no `paths`
 filter, so its `wisp-boot-required` check always reports; a `changes` job skips the boot when the pull
 request touches neither `e2e/wisp/`, `submodules/pve-qemu.patch` nor the pve-qemu pin), on pushes to
 main that change `e2e/wisp/` and by hand. After the batch runs, `run.py --arch all --shell` boots
-the four architectures once more and drives the interactive shell (about 2 to 3 s each), and
-`--shell --reboot` the four architectures once more with `reboot` at the end (on sparc64 the
+the five architectures once more and drives the interactive shell (about 2 to 3 s each), and
+`--shell --reboot` the five architectures once more with `reboot` at the end (on sparc64 the
 restart goes through the firmware: openbios-sparc64 patch 0030, in the published package since
-11.1.3-4+wsh3). Then tier 2: `run.py --tier2` on the four architectures and the seven other sparc32 machines (21 boots: every
-disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), and `--shell
---tier2` on the four architectures.
+11.1.3-4+wsh3). Then tier 2: `run.py --tier2` on the five architectures and the seven other sparc32 machines (24 boots: every
+disk controller, every NIC, 2 and 4 CPUs on the PC, virt, the SS-10 and the SS-20), and `--shell
+--tier2` on the five architectures.
 
 - Which QEMU: a pull request that changes `submodules/pve-qemu.patch`, the pve-qemu pin,
   `qemu-tci.sh` or the workflow gets QEMU built from its own tree: pve-qemu with `pve-qemu.patch`, its
   `qemu` submodule and `debian/patches/series` applied with `quilt push -a --fuzz=0` (what
-  dpkg-source does), then `MODE=tcg ./qemu-tci.sh` for the four targets, and `run.py --qemu-dir`. The
+  dpkg-source does), then `MODE=tcg ./qemu-tci.sh` for the five targets, and `run.py --qemu-dir`. The
   firmware stays the published package's. Every other run boots the published `pve-qemu-kvm` in the
-  image. No workflow builds a pve-qemu-kvm package on a pull request, so the four binaries are built
-  here instead of the whole package. With 4 jobs on the lab host that took 4 minutes, the kernels 7
+  image. No workflow builds a pve-qemu-kvm package on a pull request, so the five binaries are built
+  here instead of the whole package. Before aarch64, with 4 jobs on the lab host that took 4 minutes, the kernels 7
   (14 since tier 2 added `kernel-t2`).
 - The machines: the LX and the Voyager boot only with OpenBIOS patch 0027, which the published
   package has since 11.1.3-3+wsh9. Since the firmware is the published package's in both modes, a
@@ -763,11 +768,44 @@ disk controller, every NIC, 2 and 4 CPUs on the PC, the SS-10 and the SS-20), an
   `build.sh`, `init.c` and `config/` (with `config/tier2/`). A change to `run.py`, `tier2.py`, the
   tests or the docs reuses them.
 - `.github/workflows/wisp-test-action.yml` tests the wisp-test action (see "Test mode") with tier-1
-  kernels from the same cache, restored only; on a miss it builds the three it needs itself.
+  kernels from the same cache, restored only; on a miss it builds the four it needs itself.
+- Before the first aarch64 SDK publication, a separate CI job builds and caches the SDK image
+  for the HTTP service and fbDOOM. After publication, the boot job uses the image from GHCR.
 - The unit tests run first. The job summary has `run.py`'s tables. The artifact `wisp-boot-<pr|published>`
   has `results.jsonl` and the console logs.
 
 ## Results
+
+### aarch64 on virt
+
+Measured 2026-11-23 with Linux 7.3.4 and the published `pve-qemu-kvm` 11.1.3-4+wsh12
+under TCG on the shared lab host. QEMU boots the uncompressed arm64 `Image` directly.
+Its device tree describes the PL011 UART, interrupt controller, architectural timer and PSCI.
+Linux uses PSCI for reset and power-off. The median time to the prompt across ten boots
+per CPU model was 0.520 s with `cortex-a57` and 0.642 s with `max`, so wisp uses the A57.
+PID 1 is 25,336 bytes with its ELF segments aligned to the kernel's 4 KiB pages.
+
+| Kernel | Bytes | Boot to shell prompt | Checks on virt |
+| --- | ---: | ---: | --- |
+| `kernel` | 3,063,816 | 1.062 s | 4,096 rounds, CRC `0x35a46014`, shell and reboot passed. Batch powered off in 1.78 s. |
+| `kernel-t2` | 4,128,776 | 2.092 s | Both raw disks passed host verification. All eight echoes returned (mean RTT 836 µs). Two and four pinned CPUs each returned the reference CRC. |
+| `kernel-net` | 4,601,864 | 0.828 s | The uClibc-ng HTTP service listened after 0.676 s with DHCP. Both requests returned HTTP 200 with counters 1 and 2, then `/quit` returned `bye` and the service exited 0. |
+| `kernel-fb` | 4,921,352 | 0.917 s | Bochs PCI, 1280×800×32. All pixels in both screendumps matched, Mandelbrot sum 11,378,479. The virtio keyboard delivered 30, 48, 28, 1. AC97 measured 440.005 Hz for 1,000 ms on both channels. |
+
+Times in the table are individual shell runs. Tier 2 had both disks, a NIC and two CPUs.
+The network shell used DHCP and the framebuffer shell had its display and keyboard attached.
+
+The uClibc-ng fbDOOM executable mounted its squashfs disk on virtio-scsi.
+At 1× scaling, DEMO1 completed 7,117 gametics and exited cleanly in both runs.
+Without sound it reported 827 realtics (301.20 FPS), with 0.86 s to game start and
+26.49 s to power-off. With sound it reported 962 realtics (258.93 FPS), with 1.06 s
+to game start and 30.42 s to power-off. The WAV contained four effect bursts in 26.36 s.
+CI runs the sound-enabled demo once.
+
+The format-2 kit passed the action's fixed endian example with nolibc. With the relocated
+aarch64 SDK it passed the hello checksum (`0xed3258f703d97351`) and the forwarded HTTP check.
+
+### Earlier architecture measurements
 
 Measured 2026-11-21 on the lab host (14 threads, shared with other jobs; 1-minute load average 4.2
 to 5.7 during the runs), kernel 7.3.4, loop of 4096 rounds, one guest at a time, two passes (values

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Packs the kit of the wisp-test action (.github/actions/wisp-test) from build.sh's output:
-#   ./kit.sh <tarball> [arch...]        (default: sparc32 sparc64 x86_64)
+#   ./kit.sh <tarball> [arch...]        (default: sparc32 sparc64 x86_64 aarch64)
 #
 # wisp-test-kit/VERSION                 format=2, kernel release, commit, date
 # wisp-test-kit/<arch>/kernel           the tier-1 kernel; its PID 1 runs /test with wisp=test
@@ -15,7 +15,7 @@ OUT=${OUT:-$HERE/out}
 [ $# -ge 1 ] || { echo "usage: $0 <tarball> [arch...]" >&2; exit 2; }
 tarball=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 shift
-[ $# -gt 0 ] || set -- sparc32 sparc64 x86_64
+[ $# -gt 0 ] || set -- sparc32 sparc64 x86_64 aarch64
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT

@@ -26,7 +26,9 @@ NET_ECHOES = 8
 
 
 def family(arch, machine=None):
-    """pc, sun4m or sun4u."""
+    """QEMU machine family for the device profile."""
+    if arch == "aarch64":
+        return "virt"
     if arch in ("x86_64", "i386"):
         return "pc"
     if arch == "sparc64":
@@ -35,8 +37,12 @@ def family(arch, machine=None):
 
 
 # Per family: the device profiles. A disk is (kind, name in the guest): ide (the PC's PIIX3 or
-# sun4u's cmd646), scsi (sun4m's ESP) or virtio (virtio-blk-pci). nic is a -nic model.
+# sun4u's cmd646), scsi (sun4m's ESP) or a PCI virtio-blk or virtio-scsi controller. nic is a -nic model.
 PROFILES = {
+    "virt": (
+        {"name": "virtio-scsi+blk+net", "disks": (("virtio-scsi", "sda"), ("virtio", "vda")),
+         "nic": "virtio-net-pci"},
+    ),
     "pc": (
         {"name": "ide+virtio-blk+e1000", "disks": (("ide", "sda"), ("virtio", "vda")),
          "nic": "e1000"},
@@ -53,7 +59,7 @@ PROFILES = {
 
 # CPU counts for the SMP runs, per architecture, and on sparc32 per machine: only the SS-10 and the
 # SS-20 take more than one CPU (up to four); QEMU's sun4u has one.
-SMP = {"x86_64": (2, 4), "i386": (2, 4), "sparc32": (2, 4), "sparc64": ()}
+SMP = {"x86_64": (2, 4), "i386": (2, 4), "sparc32": (2, 4), "sparc64": (), "aarch64": (2, 4)}
 SMP_MACHINES = {"sparc32": ("SS-10", "SS-20")}
 
 
@@ -84,7 +90,11 @@ def qemu_args(profile, images):
     """QEMU arguments for a profile's devices; images: one path per disk."""
     args = []
     for i, ((kind, _name), path) in enumerate(zip(profile["disks"], images)):
-        if kind == "virtio":
+        if kind == "virtio-scsi":
+            args += ["-device", "virtio-scsi-pci,id=scsi0", "-drive",
+                     f"file={path},format=raw,if=none,id=wd{i}",
+                     "-device", f"scsi-hd,bus=scsi0.0,drive=wd{i}"]
+        elif kind == "virtio":
             args += ["-drive", f"file={path},format=raw,if=none,id=wd{i}",
                      "-device", f"virtio-blk-pci,drive=wd{i}"]
         else:

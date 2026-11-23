@@ -4,7 +4,7 @@ set -eu
 arch=$1 archive=$2 output=$3
 case "$arch" in
     sparc32) prefix=sparc-buildroot-linux-uclibc- ;;
-    x86_64) prefix=x86_64-buildroot-linux-uclibc- ;;
+    aarch64|x86_64) prefix=$arch-buildroot-linux-uclibc- ;;
     sparc64) prefix=sparc64-linux-gnu- ;;
     *) echo "unknown architecture $arch" >&2; exit 2 ;;
 esac

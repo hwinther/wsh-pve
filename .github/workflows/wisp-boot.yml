@@ -2,28 +2,28 @@ name: Wisp boot
 
 # A boot smoke test for QEMU changes with wisp, the tiny test system (e2e/wisp/README.md): a Linux 7.3
 # tinyconfig kernel with a nolibc PID 1 boots with -kernel on x86_64 and i386 (pc), sparc32 (SS-5,
-# then SS-20, SS-10, SS-4, SPARCClassic, SPARCbook, LX and Voyager) and sparc64 (sun4u) under TCG,
+# then SS-20, SS-10, SS-4, SPARCClassic, SPARCbook, LX and Voyager), sparc64 (sun4u) and aarch64 (virt) under TCG,
 # and run.py checks the result line, the CRC and the power-off. About 3 s per boot. The LX and the
 # Voyager need OpenBIOS patch 0027 (in the published pve-qemu-kvm since 11.1.3-3+wsh9); the
 # firmware is the published package's in both QEMU modes below. run.py --shell then boots the
-# four architectures once more with wisp=shell and drives the interactive shell over the serial
+# five architectures once more with wisp=shell and drives the interactive shell over the serial
 # console (help, info, bench, crc, mandel, poweroff), and run.py --shell --reboot ends the script
-# with reboot instead on the four architectures (QEMU exits on the reset with -no-reboot). On
+# with reboot instead on the five architectures (QEMU exits on the reset with -no-reboot). On
 # sparc64 Linux restarts through the firmware's boot service, which needs openbios-sparc64 with
 # patch 0030 (in the published pve-qemu-kvm since 11.1.3-4+wsh3): before it the kernel panics with
 # "Reboot failed!".
 #
 # Tier 2 (run.py --tier2, kernel-t2): every machine again with a raw disk image on each of its
 # disk controllers (pc: IDE and virtio-blk; sun4m: ESP SCSI; sun4u: cmd646 IDE and virtio-blk), a
-# NIC on QEMU's user-mode network (pc: e1000 and virtio-net; sun4m: lance; sun4u: hme) and, on pc,
+# NIC on QEMU's user-mode network (pc: e1000 and virtio-net; sun4m: lance; sun4u: hme) and, on pc, virt,
 # SS-10 and SS-20, 2 and 4 CPUs: a pattern written and read back on each disk (and checked in the
 # image afterwards), ARP and ICMP echo with 10.0.2.2, and the compute loop on every CPU. Then the
 # shell once more per architecture with its disk, net and smp commands.
 #
 # Which QEMU: on a pull request that changes the pve-qemu build (submodules/pve-qemu.patch, the
-# pve-qemu pin, e2e/wisp/qemu-tci.sh or this workflow), qemu-system-{x86_64,i386,sparc,sparc64}
+# pve-qemu pin, e2e/wisp/qemu-tci.sh or this workflow), qemu-system-{x86_64,i386,sparc,sparc64,aarch64}
 # built from that pull request's patched pve-qemu tree (e2e/wisp/qemu-tci.sh with MODE=tcg: the
-# tree dpkg-source would build, only the four targets: 4 minutes with -j4 on the lab host) instead of a
+# tree dpkg-source would build, only the five wisp targets) instead of a
 # full package build (no workflow builds pve-qemu-kvm on a pull request);
 # the firmware (SeaBIOS, OpenBIOS) is the published package's. Otherwise, and on push and dispatch,
 # the published pve-qemu-kvm from the wisp image.
@@ -85,8 +85,53 @@ jobs:
             ^e2e/wisp/qemu-tci\.sh$
             ^\.github/workflows/wisp-boot\.yml$
 
-  boot:
+  # Before the first publication, keep the cold Buildroot build off the kernel/QEMU runner.
+  arm-sdk:
     needs: [changes]
+    if: ${{ needs.changes.outputs.wisp == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      SDK: ghcr.io/hwinther/wsh-pve/wisp-toolchain-aarch64:2025.02.20
+    outputs:
+      local: ${{ steps.registry.outputs.local }}
+    steps:
+      - name: Look for the published SDK
+        id: registry
+        run: docker manifest inspect "$SDK" >/dev/null || echo "local=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the SDK recipe
+        if: steps.registry.outputs.local == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache the locally built image
+        id: cache
+        if: steps.registry.outputs.local == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/wisp-aarch64-sdk.tar
+          key: wisp-aarch64-sdk-${{ hashFiles('e2e/wisp/toolchain/Dockerfile', 'e2e/wisp/toolchain/aarch64_uclibc_defconfig') }}
+
+      - name: Build the SDK for this run
+        if: steps.registry.outputs.local == 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          docker build --build-arg WISP_ARCH=aarch64 -t "$SDK" e2e/wisp/toolchain
+          docker save -o "$RUNNER_TEMP/wisp-aarch64-sdk.tar" "$SDK"
+
+      - name: Pass the SDK to the boot job
+        if: steps.registry.outputs.local == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wisp-aarch64-sdk
+          path: ${{ runner.temp }}/wisp-aarch64-sdk.tar
+          retention-days: 1
+
+  boot:
+    needs: [changes, arm-sdk]
     if: ${{ needs.changes.outputs.wisp == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -190,6 +235,17 @@ jobs:
           tar -czf "$RUNNER_TEMP/wisp/framebuffer.tar.gz" -C "$RUNNER_TEMP/wisp" framebuffer
           exit "$rc"
 
+      - name: Download the locally built aarch64 SDK
+        if: needs.arm-sdk.outputs.local == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wisp-aarch64-sdk
+          path: ${{ runner.temp }}
+
+      - name: Load the locally built SDK
+        if: needs.arm-sdk.outputs.local == 'true'
+        run: docker load -i "$RUNNER_TEMP/wisp-aarch64-sdk.tar"
+
       - name: Boot the HTTP service
         run: |
           src=e2e/wisp/services/httpd/httpd.c
@@ -197,10 +253,10 @@ jobs:
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
-          for arch in sparc32 x86_64 sparc64; do
+          for arch in sparc32 x86_64 sparc64 aarch64; do
             case "$arch" in
               sparc32) cc=sparc-buildroot-linux-uclibc-gcc ;;
-              x86_64) cc=x86_64-buildroot-linux-uclibc-gcc ;;
+              aarch64|x86_64) cc=$arch-buildroot-linux-uclibc-gcc ;;
               sparc64)
                 sudo apt-get update -qq
                 sudo apt-get install -y --no-install-recommends gcc-sparc64-linux-gnu libc6-dev-sparc64-cross
@@ -223,7 +279,7 @@ jobs:
             ${{ runner.temp }}/doom-inputs/*.zip
           key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
 
-      - name: Run the squashfs Freedoom timedemo on pc and SS-5
+      - name: Run the squashfs Freedoom timedemo on pc, SS-5 and virt
         run: |
           set -o pipefail
           inputs="$RUNNER_TEMP/doom-inputs"
@@ -234,13 +290,13 @@ jobs:
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
-          for arch in x86_64 sparc32; do
+          for arch in x86_64 sparc32 aarch64; do
             sdk="ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20"
             docker run --rm -v "$PWD/e2e/wisp/doom:/doom:ro" -v "$inputs:/inputs" "$sdk" sh -ec '
               apt-get update -qq
               apt-get install -y --no-install-recommends make patch >/dev/null
               sh /doom/build.sh "$1" /inputs/fbDOOM-*.tar.gz "/inputs/fbdoom-$1"' sh "$arch"
-            options=(--display std --sound)
+            options=(--sound)
             if [ "$arch" = sparc32 ]; then options=(--display cg3); fi
             docker run --rm "${mounts[@]}" "$IMAGE" sh -ec 'PATH=/qemu:$PATH exec python3 doom.py "$@"' \
               sh --arch "$arch" "${options[@]}" --binary "/inputs/fbdoom-$arch" \
@@ -257,12 +313,12 @@ jobs:
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
-          # pc and sun4u only: the SS-5 needs openbios 0034 (the interrupt Linux can use) and
+          # pc, sun4u and virt: the SS-5 needs openbios 0034 (the interrupt Linux can use) and
           # pve-qemu wsh/0124 (the codec's INT bit). A pull request builds QEMU with wsh/0124, but
           # the firmware is always the published package's, which lacks 0034, so the CS4231 stops
           # after its first DMA buffer. Add sparc32 once a published package has both.
           docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
-            'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --output /results' | tee "$results/metrics.txt"
+            'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --arch aarch64 --output /results' | tee "$results/metrics.txt"
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
@@ -271,7 +327,7 @@ jobs:
           {
             echo "## Wisp boot ($QEMU_FROM QEMU)"
             echo
-            echo "### x86_64, i386 (pc), sparc32 (SS-5), sparc64 (sun4u)"
+            echo "### x86_64, i386 (pc), sparc32 (SS-5), sparc64 (sun4u), aarch64 (virt)"
             echo
             cat "$RUNNER_TEMP/wisp/table-all.md" 2>/dev/null || echo "(no table)"
             echo
@@ -313,7 +369,7 @@ jobs:
   wisp-boot-required:
     name: wisp-boot-required
     if: ${{ always() }}
-    needs: [changes, boot]
+    needs: [changes, arm-sdk, boot]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

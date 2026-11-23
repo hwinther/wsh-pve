@@ -90,6 +90,15 @@ class Model(unittest.TestCase):
         self.assertEqual(tier2.kernel_args(sun4m[2], "sparc32"),
                          ["esp_scsi.esp_bus_reset_settle=0", "lpj=2000000", "wisp_smp=1"])
 
+    def test_virt_devices(self):
+        devices, two, four = tier2.profiles("aarch64", "virt")
+        self.assertEqual([two["smp"], four["smp"]], [2, 4])
+        args = tier2.qemu_args(devices, ["a.img", "b.img"])
+        self.assertIn("scsi-hd,bus=scsi0.0,drive=wd0", args)
+        self.assertIn("virtio-blk-pci,drive=wd1", args)
+        self.assertIn("user,model=virtio-net-pci", args)
+        self.assertEqual(tier2.kernel_args(devices), ["wisp_disk=sda,vda", "wisp_net=eth0"])
+
     def test_command_line_and_script(self):
         p = tier2.shell_profile("x86_64", "pc")
         cmd = run.qemu_command("x86_64", kernel="/k", interactive=True,

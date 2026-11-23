@@ -1,7 +1,7 @@
 name: wisp-test
 description: >-
-  Run a C program on big-endian, strict-alignment Linux (sparc32, also sparc64 and x86_64 as a
-  little-endian control) in wisp, a tiny kernel booted under QEMU, and pass or fail on its exit
+  Run a C program on big-endian, strict-alignment Linux (sparc32 or sparc64, with x86_64 and aarch64 as
+  little-endian controls) in wisp, a tiny kernel booted under QEMU, and pass or fail on its exit
   status. Catches endianness and alignment bugs in seconds.
 
 inputs:
@@ -34,11 +34,11 @@ inputs:
     required: false
     default: ""
   arch:
-    description: "sparc32 (big-endian, SPARC V8, SS-5), sparc64 (big-endian, sun4u) or x86_64 (little-endian, pc)"
+    description: "sparc32 (big-endian, SPARC V8, SS-5), sparc64 (big-endian, sun4u), x86_64 (little-endian, pc), or aarch64 (little-endian, virt)"
     required: false
     default: sparc32
   libc:
-    description: "C library for sources: nolibc or uclibc (sparc32 and x86_64)"
+    description: "C library for sources: nolibc or uclibc (sparc32, x86_64 and aarch64)"
     required: false
     default: nolibc
   toolchain:
