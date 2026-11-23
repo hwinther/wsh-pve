@@ -108,6 +108,8 @@ maintains the patches.
 | `0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o` | qtest `sun4m-boot-mode-ifetch-test` for 0120: a PROM turns the MMU on with traps disabled while context 0 maps virtual 0 to RAM holding other code; the next fetch must come from the PROM in boot mode on SS-10, SS-20 (`TI-SuperSparc-50`) and SS-600MP, and from RAM with boot mode cleared, with `-boot-mode-ifetch` and on SS-5. `sun4m-mmu-ctx-ifetch-test` and `sun4m-bus-error-trap-test` now write the MMU enable bit alone (clearing boot mode, as OpenBIOS and an OS do) | ours | not in QEMU |
 | `0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets` | SunOS 4.1.4 hung in AUDIO_DRAIN after short sounds (SimCity for HyperLook, then OpenWindows: `xnews: Warning: input queue lock broken!`): the APC set PI and PMI together when it took the samples, up to 50 ms ahead of the codec; `audio_4231_cintr` checks PMI first and lost it. PI now comes when the codec reaches the buffer and PMI when it has played the last one (from a timer, after an enabled PI is cleared, and not when a next buffer was loaded); PD shows with the PI; a buffer loaded while the codec still plays the one before is taken at once. A new vmstate subsection `cs4231/irqs` carries a PI or PMI still due and is sent only then, so older streams load | ours, on LEMU's CS4231 (0028); from [hwinther/lemu `ff412bc835`](https://github.com/hwinther/lemu/commit/ff412bc835386f6a30ff4492886e934a54c0f9b0) | not in QEMU |
 | `0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short` | `sun4m-cs4231-test` for 0122: `short-buffer`, `short-tail`, `load-on-pd`, `short-chain` and `migrate` cases (7 in all), and `playback` expects the second PI and the PMI when the codec has played the buffer. Applies with line offsets of -1 (our 0030 changes the test's header). `migrate` waits for the destination with `query-status` until `running` (`wait_running()`, 10 s at most): on 11.1.3 the destination resumes after `-incoming` before the test's QMP client has negotiated, so the RESUME event was lost and the case hung; LEMU took the same change into its commit | ours, from [hwinther/lemu `c92620599a`](https://github.com/hwinther/lemu/commit/c92620599a8b19e90b671e47f1b04a3a2646c22d) | not in QEMU |
+| `0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the-` | Linux's `snd_cs4231_sbus_interrupt()` returns `IRQ_NONE` unless INT (bit 0 of the codec status register, offset 8) is set, before it reads and clears the APC CSR; the model kept that register at 0, so with openbios 0034 the APC interrupt was never cleared and QEMU stopped (`Trap 0x02 (Illegal Instruction) while interrupts disabled`). INT and PI in I24 are now set where `cs_play_irqs()` raises the APC's PI and PMI: they follow the APC interrupt, not the codec's own counter (I14/I15, IEN in I10), which isn't modelled. A write to I24 clears the bits written as 0 and INT when none of PI/CI/TI is left; a write to the status register clears INT. The interrupt line still follows the APC CSR alone (SunOS and Solaris never clear INT). No vmstate change: the bits are in `regs` and `dregs`. Written to the LEMU maintainer's requirements ("Audio", "Linux") | ours, on LEMU's CS4231 (0028, 0122); offered to LEMU, not taken yet | not in QEMU (LEMU-origin code, not proposed) |
+| `0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24` | `sun4m-cs4231-test` case `codec-int` for 0124 (8 cases in all): INT and I24's PI clear before playback, set at the APC's PI; clearing the APC's PI alone drops the line and leaves INT; writing I24 with PI kept leaves both, writing 0 clears both; PMI sets them again, a status write clears INT while the line stays up until PMI is cleared. Fails without 0124 (`'codec_int(qts)' should be TRUE`) | ours, on LEMU's CS4231; offered to LEMU, not taken yet | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -846,24 +848,37 @@ fixed:
 - An SS-5 without an audiodev didn't start (0031). The first fix opened no voice without an
   audiodev; LEMU's review kept the default backend, with a warning when there is none.
 
-Linux (7.3.4, wisp's `soundtest` on `kernel-fb`, lab 2026-11-23, published 11.1.3-4+wsh11) needs two
-more things, and has only one of them:
+Linux (7.3.4, wisp's `soundtest` on `kernel-fb`, lab 2026-11-23) plays with openbios 0034 and
+pve-qemu 0124 together; the published 11.1.3-4+wsh11 has neither:
 
 - The interrupt. With 0018's `intr` 9 Linux takes a software interrupt (openbios 0034): SBus level 5
   stays masked, `cs4231` counts 0 interrupts, the first 8,192-byte buffer plays (46 ms) and
   `soundtest` fails with EIO. With 0034 (`0x39`) the interrupt arrives.
 - The codec's INT bit. `snd_cs4231_sbus_interrupt()` returns `IRQ_NONE` unless bit 0 of the codec
-  status register (offset 8) is set, before it reads or clears the APC CSR. QEMU's CS4231 (0028)
-  keeps that register at 0, so the APC interrupt is never cleared, the level interrupt comes back at
-  once (the trace repeats `cs4231_mem_readl_reg read reg 2: 0x00000000` with the mask set and
-  cleared), and after a few thousand rounds QEMU stops with `Trap 0x02 (Illegal Instruction) while
+  status register (offset 8) is set, before it reads or clears the APC CSR. Before 0124 the model
+  kept that register at 0, so the APC interrupt was never cleared, the level interrupt came back at
+  once (the trace repeated `cs4231_mem_readl_reg read reg 2: 0x00000000` with the mask set and
+  cleared), and after a few thousand rounds QEMU stopped with `Trap 0x02 (Illegal Instruction) while
   interrupts disabled` in the kernel's trap entry (`tsetup_patch2`, nested faults from
-  `do_sparc_fault`). With the check taken out of a local kernel build, the same firmware plays
-  `soundtest 440 1000` correctly: 440.005 Hz, 1000 ms on both channels, 23 `cs4231` interrupts.
-  SunOS and Solaris never read that register. The fix belongs in the CS4231 model (it is LEMU's
-  code: through LEMU): set INT, with PI in I24, when the APC raises its playback interrupt, and
-  clear them when the driver writes I24. Until then, Linux playback on the SS-5 needs a QEMU with
-  that change as well as openbios 0034, and with 0034 alone it stops QEMU instead of failing with EIO.
+  `do_sparc_fault`). 0124 sets INT and I24's PI with the APC's PI and PMI; Linux clears them by
+  writing I24 at the end of its handler. The interrupt line follows the APC alone: SunOS and Solaris
+  don't clear INT (a SunOS 4.1.4 trace has no access to the status register or I24; Solaris wasn't
+  traced).
+
+With both, the unchanged `kernel-fb` reports `WISP-SOUND ... ok=1`, `/proc/interrupts` (a local
+debug print, not in the repository) shows 23 `cs4231` interrupts, and the trace has 24 status reads
+(23 with INT set, one 0) and 23 raises of SBus level 5 (`slavio_set_irq ... irq 11 -> pil 9 level 1`):
+no storm. The tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. `sound.py` still fails
+(1039-1042 ms, 424 Hz, five runs): some 150 frames of old samples follow the tone after about 36 ms.
+Linux stops the DMA when its last period has played (it zeroes the counts, then pauses and clears
+`PDMA_GO`); by then the APC has taken part of the next ring period, which 0032 plays out after the
+stop. SunOS and Solaris stop at PMI, with nothing taken ahead. ROADMAP, "Known and not fixed".
+
+SunOS 4.1.4 and Solaris 2.6 with 0124, with 0034 and with the published firmware (3 s of u-law at
+400 Hz, then 40 bytes with `dd`): the same as before, 3.05-3.08 s and 3.24-3.28 s command time, no
+gap (half periods 55-56 samples; 53-57 at Solaris' join of the two sounds), no `interrupt not
+serviced`, clean power-off. On SunOS the trailing 40 bytes are in the WAV in some runs and not in
+others (3.005 or 3.000 s), with 0124 (two of five runs) and without it (two of three).
 
 Not done or not tested: capture (the capture pipe reads as empty, so a recording program gets no
 data); ADPCM (plays silence); Solaris 7 and later and NetBSD (not run); Sun's demo `.au` files and

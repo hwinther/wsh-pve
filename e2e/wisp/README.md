@@ -389,22 +389,28 @@ The pc and sun4u reported:
 WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1
 ```
 
-On the SS-5, playback needs two fixes, and the CI step leaves the SS-5 out until both are in
-the published package. On `11.1.3-4+wsh10` and `+wsh11`, Linux 7.3.4 registers the Sun CS4231
-and the first 8192-byte buffer reaches the WAV. Playback then stops with
-`WISP-SOUND v=1 ok=0 errno=5`, and `cs4231` counts no interrupts in `/proc/interrupts`:
+On the SS-5, playback needs two fixes, OpenBIOS 0034 and pve-qemu `wsh/0124`, and the CI step
+leaves the SS-5 out until a published package has both. On `11.1.3-4+wsh10` and `+wsh11`, Linux
+7.3.4 registers the Sun CS4231 and the first 8192-byte buffer reaches the WAV. Playback then
+stops with `WISP-SOUND v=1 ok=0 errno=5`, and `cs4231` counts no interrupts in
+`/proc/interrupts`:
 
 - The packaged OpenBIOS gives the codec `intr 9`. Linux reads values below `0x20` as
   software interrupts, so SBus level 5 stays masked. OpenBIOS patch 0034
   (`openbios/patches/`) gives the codec `0x39`, as the SS-5's own PROM does. The interrupt
   then arrives.
 - Linux's SBus handler ignores the interrupt unless the codec's status register has its INT
-  bit. QEMU's CS4231 never sets that bit, so the APC interrupt is never cleared. With 0034
+  bit. QEMU's CS4231 didn't set that bit, so the APC interrupt was never cleared: with 0034
   alone, the interrupt repeats until QEMU stops with `Trap 0x02 (Illegal Instruction) while
-  interrupts disabled`. This half needs a change in QEMU's CS4231 model.
+  interrupts disabled`. pve-qemu `wsh/0124` sets INT, and PI in the codec's I24, with the APC's
+  playback interrupts; Linux clears them by writing I24.
 
-A lab build with 0034 and a kernel without the INT check played 440.005 Hz for 1000 ms on both
-channels. See `submodules/SPARC.md`, "Audio".
+With both, in a lab build, the unchanged `kernel-fb` reports `ok=1`, with 23 `cs4231` interrupts,
+and the tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. `sound.py` still fails on
+the SS-5 (1039-1042 ms, 424 Hz): about 36 ms after the tone the WAV has some 150 frames of old
+ring-buffer samples. Linux stops the DMA when its last period has played, and by then QEMU's
+APC has taken up to 50 ms of the next period, which it plays out after the stop (pve-qemu 0032).
+See `submodules/SPARC.md`, "Audio".
 
 ## Freedoom framebuffer timedemo
 

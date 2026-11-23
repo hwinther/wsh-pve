@@ -15,6 +15,10 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
   commits on `feat/sparc-fixes` at `5fe502d848`. Written in LEMU first and carried here with `Origin:` lines;
   LEMU took 0123's `migrate` wait into its test commit (now `c92620599a`), so both are equal; the
   branch is LEMU PR #1. Not sent to tenox7/lemu.
+- `wsh/0124`-`0125` (the codec's INT status bit and I24's PI with the APC's playback interrupts,
+  for Linux's `snd-sun-cs4231`): ours, written here on LEMU's CS4231 (0028, 0122) to the LEMU
+  maintainer's requirements, and offered to LEMU. Not taken yet: no LEMU commit, no branch in the
+  fork.
 - `feat/openbios-fixes`: the OpenBIOS patches and the one QEMU patch that goes with them (`wsh/0030`
   with OpenBIOS 0018), at `86c3a500ec`. Not sent yet.
 
@@ -92,6 +96,8 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes | ours | tests/qtest: test a cdb sent byte by byte after a message out on sun4m | [`5fe502d848`](https://github.com/hwinther/lemu/commit/5fe502d848) | feat/sparc-fixes | equal |
 | wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets | built on LEMU | hw/audio/cs4231: raise pi and pmi when the codec gets there | [`ff412bc835`](https://github.com/hwinther/lemu/commit/ff412bc835) | fix/cs4231-pi-pmi | equal |
 | wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short | built on LEMU | tests/qtest: test the cs4231's pi and pmi for a short buffer on sun4m | [`c92620599a`](https://github.com/hwinther/lemu/commit/c92620599a) | fix/cs4231-pi-pmi | equal (applies with line offsets) |
+| wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the- | ours, on LEMU's CS4231 | hw/audio/cs4231: set the codec's int and pi with the apc's playback interrupts | none | none | offered to LEMU, not taken yet |
+| wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24 | ours, on LEMU's CS4231 | tests/qtest: test the cs4231's int status bit and i24 pi on sun4m | none | none | offered to LEMU, not taken yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|

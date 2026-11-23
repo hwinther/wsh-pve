@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..68d84b0 100644
+index bc240a0..0adbaa8 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,85 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,87 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -159,6 +159,8 @@ index bc240a0..68d84b0 100644
 +wsh/0121-tests-qtest-test-SuperSPARC-boot-mode-with-the-MMU-o.patch
 +wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
 +wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
++wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the-.patch
++wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -17145,6 +17147,283 @@ index 0000000..a66322c
 ++    qtest_add_func("sun4m-cs4231/load-on-pd", test_load_on_pd);
 ++    qtest_add_func("sun4m-cs4231/short-chain", test_short_chain);
 ++    qtest_add_func("sun4m-cs4231/migrate", test_migrate);
++ 
++     return g_test_run();
++ }
+diff --git a/debian/patches/wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the-.patch b/debian/patches/wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the-.patch
+new file mode 100644
+index 0000000..54ff5f3
+--- /dev/null
++++ b/debian/patches/wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the-.patch
+@@ -0,0 +1,127 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/cs4231: set the codec's int and pi with the apc's
++ playback interrupts
++
++Linux's SBus driver (sound/sparc/cs4231.c, snd_cs4231_sbus_interrupt)
++returns IRQ_NONE unless INT, bit 0 of the codec status register, is
++set, and it checks that before it reads and clears the APC CSR. The
++model kept that register at 0. With firmware that routes the codec's
++interrupt to Linux (OpenBIOS with "intr" 0x39), the APC's PI was never
++cleared, the level interrupt came back at once, and after a few
++thousand rounds QEMU stopped with "Trap 0x02 (Illegal Instruction)
++while interrupts disabled".
++
++INT and PI in I24 are now set where cs_play_irqs() raises the APC's
++playback interrupts, PI and PMI. They follow the APC interrupt, not
++the codec's own playback counter (I14/I15, IEN in I10), which the
++model does not have. PMI sets them too: Linux enables the pipe empty
++interrupt, and a PMI after the last PI's flags were cleared would be
++ignored in the same way. A write to I24 clears the bits written as 0,
++and INT when none of PI, CI and TI is left; Linux does that at the end
++of its handler. A write to the status register clears INT.
++
++The interrupt line still follows the APC CSR only. SunOS and Solaris
++never clear I24, so INT stays set under them and must not drive it.
++
++No vmstate change: the bits are in regs and dregs, which are migrated.
++
++Tested in a sparc-softmmu build on Linux: sun4m-cs4231-test passes
++with the case of the next commit, which fails without this change;
++the other sun4m and sun4u qtests pass. On an SS-5 with OpenBIOS
++"intr" 0x39, an unmodified Linux 7.3.4 (snd-sun-cs4231) plays 1000 ms
++of 440 Hz through a wav audiodev with 23 codec interrupts: 24 status
++reads, 23 of them with INT, and 23 raises of the SBus level, no storm.
++SunOS 4.1.4 and Solaris 2.6 play 3 s of u-law as before, without
++gaps, with that firmware and with "intr" 9.
++Not tested: capture, NetBSD, Solaris 7 and later, a migration with
++INT set.
++---
++ hw/audio/cs4231.c | 32 +++++++++++++++++++++++++++++++-
++ 1 file changed, 31 insertions(+), 1 deletion(-)
++
++diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
++index 1208461..91ac83e 100644
++--- a/hw/audio/cs4231.c
+++++ b/hw/audio/cs4231.c
++@@ -59,6 +59,14 @@
++  * and a process in AUDIO_DRAIN (SimCity's audiomixer) sleeps for ever.
++  * Taking a short buffer ahead would raise both at once.
++  *
+++ * The codec's own interrupt flags, INT in the status register and PI in
+++ * I24, are set with the APC's playback interrupts (PI and PMI), not by
+++ * the codec's playback counter (I14/I15, IEN in I10), which is not
+++ * modelled. Linux reads INT before it looks at the APC CSR and ignores
+++ * the interrupt without it; it clears the flags by writing I24. SunOS
+++ * and Solaris never clear them, so they do not drive the interrupt
+++ * line, which follows the APC CSR only.
+++ *
++  * Capture is not done: its registers keep what is written, and the
++  * capture pipe always reads as empty.
++  */
++@@ -129,9 +137,13 @@
++ #define CS_PFMT     8       /* playback format and rate */
++ #define CS_ICONF    9       /* interface configuration */
++ #define CS_MODE     12      /* mode and ID */
+++#define CS_IRQSTAT  24      /* alternate feature status: PI, CI, TI */
++ #define CS_DAC_MUTE 0x80
++ #define CS_PEN      0x01    /* playback on (in CS_ICONF) */
++ #define CS_MODE2    0x40
+++#define CS_IRQ_PI   0x10    /* playback interrupt (in CS_IRQSTAT) */
+++#define CS_IRQ_ALL  0x70    /* PI, CI and TI */
+++#define CS_INT      0x01    /* an interrupt flag is set (in CS_STATUS) */
++ 
++ /* Playback formats, bits 7-5 of CS_PFMT */
++ #define CS_FMT_U8       0
++@@ -252,6 +264,13 @@ static uint64_t cs_play_rate(CSState *s)
++     return s->play_freq / (s->play_fmt == CS_FMT_ADPCM ? 2 : 1);
++ }
++ 
+++/* The codec's flags for an APC playback interrupt; see the top */
+++static void cs_codec_play_irq(CSState *s)
+++{
+++    s->dregs[CS_IRQSTAT] |= CS_IRQ_PI;
+++    s->regs[CS_STATUS] |= CS_INT;
+++}
+++
++ /* Raise the PI and PMI that are due, and set the timer for the others */
++ static void cs_play_irqs(CSState *s)
++ {
++@@ -265,6 +284,7 @@ static void cs_play_irqs(CSState *s)
++         if (s->pi_at >= 0) {
++             if (now >= s->pi_at) {
++                 s->regs[CS_CSR] |= APC_PI;
+++                cs_codec_play_irq(s);
++                 s->pi_at = -1;
++             } else {
++                 next = s->pi_at;
++@@ -278,6 +298,7 @@ static void cs_play_irqs(CSState *s)
++         if (s->pmi_at >= 0 && !pi_pending && !s->play_next) {
++             if (now >= s->pmi_at) {
++                 s->regs[CS_CSR] |= APC_PMI;
+++                cs_codec_play_irq(s);
++                 s->pmi_at = -1;
++                 trace_cs4231_play_empty();
++             } else {
++@@ -661,12 +682,21 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++             s->dregs[CS_RAP(s)] = val;
++             cs_play_update(s);
++             break;
+++        case CS_IRQSTAT:
+++            /* 0s clear the flags; INT goes when none is left */
+++            s->dregs[CS_IRQSTAT] &= val;
+++            if (!(s->dregs[CS_IRQSTAT] & CS_IRQ_ALL)) {
+++                s->regs[CS_STATUS] &= ~CS_INT;
+++            }
+++            break;
++         default:
++             s->dregs[CS_RAP(s)] = val;
++             break;
++         }
++         break;
++-    case CS_STATUS: // Read only
+++    case CS_STATUS:
+++        /* a write clears INT; the other bits are read only */
+++        s->regs[CS_STATUS] &= ~CS_INT;
++         break;
++     case CS_CSR:
++         csr = s->regs[CS_CSR];
+diff --git a/debian/patches/wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24.patch b/debian/patches/wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24.patch
+new file mode 100644
+index 0000000..1321f5c
+--- /dev/null
++++ b/debian/patches/wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24.patch
+@@ -0,0 +1,138 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the cs4231's int status bit and i24 pi on
++ sun4m
++
++codec-int plays one buffer of 800 bytes. INT (bit 0 of the codec
++status register, read as a byte, as Linux does) and PI in I24 must be
++clear before playback and set at the APC's PI. Clearing PI in the APC
++CSR alone, as SunOS does, must drop the interrupt line and leave INT
++set. Writing I24 with PI set must keep both, writing 0 must clear
++both. When the pipe runs empty, PMI must set them again; a write to
++the status register must clear INT, and the line must stay up until
++PMI is cleared in the APC.
++
++See the previous commit for why Linux needs INT.
++
++Tested: all eight cases of sun4m-cs4231-test pass. Without the previous
++commit codec-int fails: 'codec_int(qts)' should be TRUE.
++---
++ tests/qtest/sun4m-cs4231-test.c | 78 +++++++++++++++++++++++++++++++++
++ 1 file changed, 78 insertions(+)
++
++diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
++index 05bd37b..796440a 100644
++--- a/tests/qtest/sun4m-cs4231-test.c
+++++ b/tests/qtest/sun4m-cs4231-test.c
++@@ -30,6 +30,7 @@
++ /* Codec and APC registers */
++ #define CS_IAR          (CS_BASE + 0x00)
++ #define CS_IDR          (CS_BASE + 0x04)
+++#define CS_STATUS       (CS_BASE + 0x08)
++ #define APC_CSR         (CS_BASE + 0x10)
++ #define APC_PVA         (CS_BASE + 0x30)
++ #define APC_PC          (CS_BASE + 0x34)
++@@ -51,6 +52,9 @@
++ #define CS_ICONF        9
++ #define CS_PFMT_ULAW_8K 0x20            /* u-law, mono, 24.576 MHz / 3072 */
++ #define CS_PEN          0x01
+++#define CS_IRQSTAT      24
+++#define CS_IRQ_PI       0x10
+++#define CS_INT          0x01            /* in CS_STATUS */
++ 
++ /* The buffers in RAM and their DVMA addresses through the IOMMU */
++ #define IOPTE_TABLE     0x200000ULL
++@@ -74,6 +78,18 @@ static void codec_write(QTestState *qts, uint8_t reg, uint8_t val)
++     qtest_writeb(qts, CS_IDR, val);
++ }
++ 
+++static uint8_t codec_read(QTestState *qts, uint8_t reg)
+++{
+++    qtest_writeb(qts, CS_IAR, reg);
+++    return qtest_readb(qts, CS_IDR);
+++}
+++
+++/* Linux reads the status register as a byte */
+++static bool codec_int(QTestState *qts)
+++{
+++    return qtest_readb(qts, CS_STATUS) & CS_INT;
+++}
+++
++ static bool level_pending(QTestState *qts, int level)
++ {
++     return qtest_readl(qts, INTCTL_CPU0) & (1u << level);
++@@ -572,6 +588,67 @@ static void test_migrate(void)
++     unlink(path);
++ }
++ 
+++/*
+++ * The codec's INT status bit and I24's PI come with the APC's playback
+++ * interrupts: Linux ignores an interrupt without INT. Writing I24 clears
+++ * the flags written as 0 and INT with the last one; writing the status
+++ * register clears INT. They do not drive the interrupt line: SunOS never
+++ * clears them, and the line follows the APC CSR alone.
+++ */
+++static void test_codec_int(void)
+++{
+++    QTestState *qts;
+++    uint8_t buf[BUF_LEN];
+++
+++    qts = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(qts, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(qts, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(qts, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(qts, BUF_RAM, buf, sizeof(buf));
+++
+++    codec_write(qts, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(qts, APC_PNVA, BUF_DVMA);
+++    qtest_writel(qts, APC_PNC, BUF_LEN);
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    g_assert_false(codec_int(qts));
+++    g_assert_cmphex(codec_read(qts, CS_IRQSTAT), ==, 0);
+++
+++    /* The APC's PI sets INT and I24's PI */
+++    codec_write(qts, CS_ICONF, CS_PEN);
+++    wait_csr(qts, APC_PI, 100);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    g_assert_true(codec_int(qts));
+++    g_assert_cmphex(codec_read(qts, CS_IRQSTAT) & CS_IRQ_PI, ==, CS_IRQ_PI);
+++
+++    /* PI cleared in the APC only, as SunOS does: the line goes, INT stays */
+++    qtest_writel(qts, APC_CSR, APC_PI | APC_ENABLES);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    g_assert_true(codec_int(qts));
+++
+++    /* A 1 written to I24's PI keeps it; a 0 clears it, and INT with it */
+++    codec_write(qts, CS_IRQSTAT, CS_IRQ_PI);
+++    g_assert_true(codec_int(qts));
+++    g_assert_cmphex(codec_read(qts, CS_IRQSTAT) & CS_IRQ_PI, ==, CS_IRQ_PI);
+++    codec_write(qts, CS_IRQSTAT, 0);
+++    g_assert_false(codec_int(qts));
+++    g_assert_cmphex(codec_read(qts, CS_IRQSTAT), ==, 0);
+++
+++    /* No next buffer: PMI sets them again; a status write clears INT */
+++    wait_csr(qts, APC_PMI, 300);
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    g_assert_true(codec_int(qts));
+++    g_assert_cmphex(codec_read(qts, CS_IRQSTAT) & CS_IRQ_PI, ==, CS_IRQ_PI);
+++    qtest_writeb(qts, CS_STATUS, 0);
+++    g_assert_false(codec_int(qts));
+++    /* the line still follows the APC */
+++    g_assert_true(level_pending(qts, CS_LEVEL));
+++    qtest_writel(qts, APC_CSR, APC_PMI | APC_ENABLES);
+++    g_assert_false(level_pending(qts, CS_LEVEL));
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++@@ -583,6 +660,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-cs4231/load-on-pd", test_load_on_pd);
++     qtest_add_func("sun4m-cs4231/short-chain", test_short_chain);
++     qtest_add_func("sun4m-cs4231/migrate", test_migrate);
+++    qtest_add_func("sun4m-cs4231/codec-int", test_codec_int);
 + 
 +     return g_test_run();
 + }
