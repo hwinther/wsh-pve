@@ -14,7 +14,9 @@
 # front-buffer read counts only with softpipe). The same scenes again offscreen (glide-render --egl:
 # the EGL platform qemu-3dfx asks for when the VM has no SDL window), with no X server and DISPLAY
 # unset, on Mesa's surfaceless EGL platform; there the front buffer counts with both drivers and the
-# frame is also read the way qemu-3dfx reads it (getOffscreenFrame). Then glide-render runs in a
+# frame is also read the way qemu-3dfx reads it (getOffscreenFrame), and, with /dev/udmabuf or a
+# render node, as a GL display gets it (glide-render --dmabuf: the exported dmabuf, without and with
+# a gamma ramp, against that read). Then glide-render runs in a
 # working directory it can't write to: it must still render (no exit from the library), and with
 # OPENGLIDE_DIR the library's OpenGLid.ini and OpenGLid.log go there. With OUTDIR, the window or
 # offscreen frame of each run is saved there as a PPM. Then `apt purge` must leave nothing of the
@@ -92,6 +94,22 @@ for driver in llvmpipe softpipe; do
 		fi
 	done
 done
+# The dmabuf a GL display gets (qemu-3dfx with egl-headless or dbus,gl=on), without and with a gamma
+# ramp, against the frame read back: llvmpipe exports through /dev/udmabuf (docker run --device
+# /dev/udmabuf), a GPU driver through its render node
+if [ -e /dev/udmabuf ] || ls /dev/dri/renderD* > /dev/null 2>&1; then
+	for mode in "glide2x-dmabuf:--egl --dmabuf" "glide3x-dmabuf:--egl --dmabuf --glide3"; do
+		name=${mode%%:*}
+		args=${mode#*:}
+		step "glide-render $name with llvmpipe, no X server"
+		# shellcheck disable=SC2086 # args is a list of words
+		if ! env -u DISPLAY LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe "$RENDER" $args; then
+			failed="$failed $name/llvmpipe"
+		fi
+	done
+else
+	echo "info: no /dev/udmabuf and no render node: the dmabuf scanout isn't checked"
+fi
 [ -s OpenGLid.log ] || fail "the library wrote no OpenGLid.log into the working directory"
 
 # Where the files go (patches/0001-openglide-dir-no-exit.patch). Up to 0.1 the library's

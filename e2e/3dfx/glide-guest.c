@@ -24,7 +24,8 @@
  * frame into the console). With GLIDE_GUEST_EXTRA=1 (the headless run), after the hold it also
  * draws into the front buffer without a swap and prints "GLIDE-GUEST: FRONTDRAW", then sets a gamma
  * of 2.0, draws and swaps the scene and prints "GLIDE-GUEST: GAMMA", each held for a few seconds for
- * a screendump on the host. Copyright 2026 WsHosting ENK, GPL-3.
+ * a screendump on the host. GLIDE_GUEST_BENCH_GAMMA=1 keeps that gamma for the bench (its frames
+ * then go through the host's gamma path). Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <errno.h>
 #include <stdint.h>
@@ -99,7 +100,7 @@ static void finish(const char *verdict, int hold)
 int main(void)
 {
 	char verdict[64];
-	int front = 0, bench = 0, extra = 0;
+	int front = 0, bench = 0, extra = 0, bench_gamma = 0;
 	const char *env = getenv("GLIDE_GUEST_FRONT"); /* the kernel passes unknown key=value as env */
 	if (env && !strcmp(env, "1"))
 		front = 1;
@@ -109,6 +110,9 @@ int main(void)
 	env = getenv("GLIDE_GUEST_BENCH");
 	if (env)
 		bench = atoi(env);
+	env = getenv("GLIDE_GUEST_BENCH_GAMMA");
+	if (env && !strcmp(env, "1"))
+		bench_gamma = 1;
 
 	mkdir("/dev", 0755);
 	if (mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) && errno != EBUSY)
@@ -201,7 +205,8 @@ int main(void)
 		sleep(3);
 		g = 1.0f;
 		memcpy(&gu, &g, sizeof(gu));
-		grGammaCorrectionValue(gu);
+		if (!bench_gamma || bench <= 0)
+			grGammaCorrectionValue(gu);
 	}
 	if (bench > 0) {
 		struct timespec t0, t1;

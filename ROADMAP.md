@@ -117,6 +117,8 @@ come after that, not before.
 | wisp network tier (`kernel-net`, README "Network tier and run mode"): IPv4, kernel DHCP and Unix sockets layered on tier 2's packet sockets and NIC drivers; `wisp=run` starts a service supplied as `/test`, reporting its exit code, signal and elapsed time, then powers off; a demo static HTTP service (nolibc/uClibc-ng on sparc32 and x86_64, glibc on sparc64) answers two requests and `/quit` over QEMU user networking. The wisp-test action gained `mode` (test/run), `network`, `forward`, `ready` and `check` inputs and a format 2 `wisp-test-kit` (adds `kernel-net`); `size_budget.py` checks kernel and init size growth against `size-budget.json` | merged | #469, #470 |
 | wisp framebuffer tier (`kernel-fb`, README "Framebuffer tier"): fbdev and a framebuffer console on cg3/TCX (`SS-5`) and DRM_BOCHS (sun4u, pc); `fbtest` draws colour bars and a white border, checked pixel by pixel against QMP screendumps (`framebuffer.py`). `mandel fb` draws the Mandelbrot set at the native resolution with an iteration checksum, and `keytest` reports keyboard presses through evdev (not on sun4u: OpenBIOS's EBus 8042 node has no mouse child, so Linux's sparc i8042 probe returns -ENODEV) | merged | #471, #472 |
 | Freedoom framebuffer timedemo (`doom.py`, README "Freedoom framebuffer timedemo"): fbDOOM (GPL-2.0) with Freedoom Phase 1 0.13.0 (BSD-3-Clause) runs `DEMO1 -timedemo` on the framebuffer tier; 7,117 gametics checked (count, FPS, a nonblank QMP capture and the child's exit) on SS-5 cg3 and tcx, pc and sun4u; wisp boot CI runs the complete demo on pc and SS-5 cg3 on relevant PRs | merged | #473 |
+| wisp data disk: read-only squashfs (XZ) in `kernel-fb`; PID 1 mounts `wisp_data=<dev>` on `/data` and runs `wisp_run=<path>` from it, so fbDOOM and the Freedoom WAD leave the initramfs (`CONFIG_RD_XZ` on the SS-5 dropped); fbDOOM scales the 320x200 frame by an integer factor and centres it (`doom.py --scale`: 1 for the CI timedemo, 0 for the largest factor). DEMO1 still gives 7,117 gametics on SS-5 (cg3, tcx), pc and sun4u | merged | #476 |
+| 3dfx stage 2, third slice: Glide frames with a gamma ramp stay dmabufs (wsh-openglide 0.6: the dmabuf copy applies the ramp in a shader pass, in an EGL context of its own that shares OpenGLide's renderbuffers, readback only if that pass can't be had), and the dmabuf copies of wsh-openglide and mesapt are finished with an `EGL_KHR_fence_sync` fence instead of `glFinish` (`glFinish` without it). Tests: `glide-render --egl --dmabuf` in the package test (the mapped dmabuf equals the read frame, without and with ramps), `e2e/3dfx` expects the Glide gamma phase as a dmabuf and probes its Gouraud triangle, `GLIDE_GUEST_BENCH_GAMMA=1`. Lab, llvmpipe: 707 (egl-headless) and 1590 (dbus,gl=on) frames/s with gamma 2.0 as dmabufs against 1150 and 833 read back; the fences changed nothing measurable there (ROADMAP, Stage 2, "Third slice") | in review | |
 
 ## In progress
 
@@ -297,7 +299,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering, Glide gamma as a shader).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -396,12 +398,48 @@ merged; what is left of them is item 2 under "Next".
        the pbuffer's pixel format into the `GL_RGBA8` renderbuffer by drawing (no renderbuffer
        format gave its memcpy path, and desktop GL has no BGRA8 one), where Glide's
        renderbuffer-to-renderbuffer blit is a 0.06 ms memcpy. On a GPU it is a GPU blit.
+       Third slice (in review): Glide gamma ramps as dmabufs, and EGL fences for the copies.
+       wsh-openglide 0.6 (`0003-egl-dmabuf-scanout.patch`): with a ramp set, `getOffscreenScanout`
+       copies through it instead of refusing: in a second EGL context that shares OpenGLide's
+       objects (its renderbuffers) but not its state, so nothing of OpenGLide's (texture units,
+       enables, blend, viewport, client arrays) is saved or touched, the front buffer goes into a
+       texture and is drawn into the scanout buffer through a 256x1 lookup texture (mesapt's GLSL
+       1.20 shader), unflipped (`y0_top` as before); the plain blit stays for frames without a
+       ramp, and the readback's CPU lookup is unchanged. Only when that pass can't be had (no
+       context, no shader) is a ramp frame refused and read back; qemu-3dfx's `fxdisp.c` needed no
+       change (it reads back whatever the scanout refuses). The copies of wsh-openglide and mesapt
+       (the guest's frame before mesapt's context reads it, and each copy before the display reads
+       it) are finished with an `EGL_KHR_fence_sync` fence and `eglClientWaitSyncKHR` (flush bit,
+       no timeout), `glFinish` without the extension; a wait in the GL stream (`eglWaitSyncKHR`)
+       is left for a GPU node, since a context reading another's rendering needs it done and the
+       software renderers can't be relied on to wait in the stream. llvmpipe has the extension,
+       so the fences are used (QEMU's log says which). Tested (lab, TCG, llvmpipe,
+       `/dev/udmabuf`): the package test's new `glide-render --egl --dmabuf` maps the exported
+       dmabuf and compares it with `getOffscreenFrame`, all 307200 pixels equal without a ramp,
+       with gamma 2.0 (`#0000b5` top left), with a Glide 3 table of a different ramp per channel
+       (`#00ff40`) and after the reset; `e2e/3dfx` `egl`, `dbus` and `dbus` with
+       `DBUS_DELAY_MS=2`: every Glide frame as a dmabuf ("0 frames read back instead"), the gamma
+       phase's too, its probes `#0000b5` and, new, `#939294` in the Gouraud triangle (a frame
+       upside down fails); `egl` with `QEMU_3DFX_DMABUF=0` and `vnc` read back with the same
+       colours; the Mesa guest unchanged. Measured (640x480, the test scene; `GLIDE_GUEST_BENCH=3000`
+       with the new `GLIDE_GUEST_BENCH_GAMMA=1`, which keeps gamma 2.0 for the bench):
+
+       | Glide guest, gamma 2.0 | before (0.5: ramp frames read back) | after (0.6: dmabuf) |
+       | --- | --- | --- |
+       | egl-headless + VNC | 1150 frames/s, 0.39 ms read, egl-headless's update 7.1 ms | 707 frames/s, 0.44 ms copy, update 0.54 ms |
+       | dbus,gl=on, listener replies at once | 833 frames/s, 0.40 ms read | 1590 frames/s, 0.42 ms copy, update 0.04 ms |
+       | VNC, `-display none` | 1120 frames/s, 0.39 ms read (unchanged) | |
+
+       With egl-headless the readback still wins on llvmpipe (egl-headless reads the dmabuf back for
+       VNC anyway), as for MESA GL. The gamma pass costs 0.44 ms against the plain blit's 0.07 ms
+       (two `eglMakeCurrent`, the front buffer into a texture, a draw through the lookup), and its
+       first frame builds the shader (about 40 ms once, estimated from the averages). The fences changed nothing measurable on
+       llvmpipe: Glide's plain copy 0.07 ms before and after, mesapt's copy 1.1-1.8 ms before and
+       1.1-1.4 ms after, within the lab's run-to-run spread.
        Left: a real GPU render node (modifiers other than
-       linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
+       linear, and a wait for the fences in the GL stream, `EGL_KHR_wait_sync`, instead of on the CPU); Windows 98 with dbus,gl=on (the harness has
        no D-Bus client yet) and a real game over time; double buffering instead of holding
-       frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
-       wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
-       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms
+       frames while a D-Bus client reads (it would also replace mesapt's hold copy); the D-Bus listener's 30 ms
        refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
        4 s after its last swap (seen in Windows 98 with a long hold: egl-headless and read back alike,
        with and without PVE; a held Glide frame stays). Settled since: GitHub's runners have
