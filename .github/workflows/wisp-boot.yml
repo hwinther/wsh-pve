@@ -111,7 +111,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: e2e/wisp/out
-          key: wisp-kernels-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+          key: wisp-kernels-net-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
 
       - name: Build the wisp image
         run: |
@@ -122,8 +122,11 @@ jobs:
       - name: Build the kernels
         if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
         run: |
-          docker run --rm -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" ./build.sh all
+          docker run --rm -e TIER_NET=1 -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" ./build.sh all
           cat e2e/wisp/out/*/sizes
+
+      - name: Check kernel and init sizes
+        run: python3 e2e/wisp/size_budget.py
 
       # The tree dpkg-source builds: pve-qemu at the pull request's pin with pve-qemu.patch, its qemu
       # submodule, and every patch of debian/patches/series applied without fuzz
@@ -171,6 +174,31 @@ jobs:
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell --tier2 "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-tier2-shell.md" || rc=1
           exit "$rc"
+
+      - name: Boot the HTTP service
+        run: |
+          src=e2e/wisp/services/httpd/httpd.c
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$RUNNER_TEMP/wisp:/results")
+          if [ "$QEMU_FROM" = pr ]; then
+            mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
+          fi
+          for arch in sparc32 x86_64 sparc64; do
+            case "$arch" in
+              sparc32) cc=sparc-buildroot-linux-uclibc-gcc ;;
+              x86_64) cc=x86_64-buildroot-linux-uclibc-gcc ;;
+              sparc64)
+                sudo apt-get update -qq
+                sudo apt-get install -y --no-install-recommends gcc-sparc64-linux-gnu libc6-dev-sparc64-cross
+                sparc64-linux-gnu-gcc -static -Os -s "$src" -o "$RUNNER_TEMP/wisp/httpd-$arch" ;;
+            esac
+            if [ "$arch" != sparc64 ]; then
+              sdk="ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20"
+              docker run --rm -i "$sdk" sh -ec '"$1" -static -Os -s -x c - -o /tmp/test && cat /tmp/test' sh "$cc" \
+                < "$src" > "$RUNNER_TEMP/wisp/httpd-$arch"
+            fi
+            docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
+              'PATH=/qemu:$PATH python3 service.py --arch "$1" --binary "/results/httpd-$1"' sh "$arch"
+          done
 
       - name: Summary
         if: ${{ !cancelled() }}

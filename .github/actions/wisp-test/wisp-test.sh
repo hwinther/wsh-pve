@@ -13,6 +13,11 @@
 #   WISP_TOOLCHAIN_SHA256  the SDK tarball's SHA-256, checked when set
 #   WISP_CFLAGS      more compiler flags (default optimisation: -O2)
 #   WISP_ARGS        arguments for the program (whitespace-separated, no quoting)
+#   WISP_MODE        test (default) or run
+#   WISP_NETWORK     true to boot kernel-net with DHCP
+#   WISP_FORWARD     guest TCP port to expose on loopback as WISP_PORT
+#   WISP_READY       optional console regex for WISP_CHECK
+#   WISP_CHECK       runner shell command whose exit status decides the result
 #   WISP_TIMEOUT     seconds for the whole boot (default 60)
 #   WISP_MACHINE     QEMU -M (default SS-5, sun4u, pc)
 #   WISP_QEMU_ARGS   more QEMU arguments (whitespace-separated)
@@ -23,7 +28,7 @@
 #   WISP_WORK        work directory (default $RUNNER_TEMP/wisp-test or /tmp/wisp-test)
 #
 # Exit code 0 when the program exited with 0, 1 otherwise. In GitHub Actions also sets the outputs
-# result (pass, fail or error), exit-code, signal, signal-name, seconds and log, and writes a line
+# result (pass, fail or error), exit-code, signal, signal-name, seconds, port and log, and writes a line
 # to the job summary.
 set -euo pipefail
 
@@ -45,7 +50,11 @@ KIT_SHA256=${WISP_KIT_SHA256:-}
 INSTALL=${WISP_INSTALL:-true}
 WORK=${WISP_WORK:-${RUNNER_TEMP:-/tmp}/wisp-test}
 HERE=$(cd "$(dirname "$0")" && pwd)
-KIT_FORMAT=1
+MODE=${WISP_MODE:-test}
+NETWORK=${WISP_NETWORK:-false}
+FORWARD=${WISP_FORWARD:-}
+READY=${WISP_READY:-}
+CHECK=${WISP_CHECK:-}
 
 log() { printf 'wisp-test: %s\n' "$*" >&2; }
 die() {
@@ -55,6 +64,18 @@ die() {
 	exit 2
 }
 output() { [ -z "${GITHUB_OUTPUT:-}" ] || printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+
+case "$MODE" in test|run) ;; *) die "unknown mode '$MODE'" ;; esac
+case "$NETWORK" in true|false) ;; *) die "network must be true or false" ;; esac
+if [ -n "$FORWARD" ]; then
+	[ "$NETWORK" = true ] || die "forward requires network"
+	[[ "$FORWARD" =~ ^[0-9]{1,5}$ ]] && (( 10#$FORWARD >= 1 && 10#$FORWARD <= 65535 )) || die "invalid guest TCP port"
+	FORWARD=$((10#$FORWARD))
+fi
+if [ -n "$READY" ]; then
+	[ -n "$CHECK" ] || die "ready requires check"
+	if [[ "" =~ $READY ]]; then :; elif [ "$?" = 2 ]; then die "invalid ready regex"; fi
+fi
 
 case "$LIBC" in
 nolibc) ;;
@@ -103,6 +124,7 @@ command -v "$QEMU" >/dev/null || need+=("$QEMU_PKG")
 if [ -z "$KIT" ] || { [ "$LIBC" = uclibc ] && [ -n "$SOURCES" ] && [ -z "$TOOLCHAIN" ]; }; then
 	command -v curl >/dev/null || need+=(curl ca-certificates)
 fi
+[ -z "$FORWARD" ] || command -v python3 >/dev/null || need+=(python3)
 command -v xz >/dev/null || need+=(xz-utils)
 if [ ${#need[@]} -gt 0 ]; then
 	[ "$INSTALL" = true ] || die "missing: ${need[*]} (install is off)"
@@ -132,8 +154,11 @@ if [ -f "$KIT" ]; then
 fi
 [ -f "$KIT/VERSION" ] || die "no VERSION in the kit ($KIT)"
 fmt=$(sed -n 's/^format=//p' "$KIT/VERSION")
-[ "$fmt" = "$KIT_FORMAT" ] || die "kit format '$fmt', this action reads format $KIT_FORMAT"
-[ -f "$KIT/$ARCH/kernel" ] || die "the kit has no $ARCH kernel"
+case "$fmt" in 1|2) ;; *) die "unsupported kit format '$fmt' (expected 1 or 2)" ;; esac
+if [ "$fmt" = 1 ] && [ "$MODE" = run ]; then die "run mode requires a format 2 kit"; fi
+kernel=kernel
+if [ "$NETWORK" = true ]; then kernel=kernel-net; fi
+[ -f "$KIT/$ARCH/$kernel" ] || die "the kit has no $ARCH/$kernel (network requires a format 2 kit)"
 log "kit: $(tr '\n' ' ' < "$KIT/VERSION")"
 
 # The program
@@ -219,25 +244,49 @@ cpio_entry() { # name mode file|-
 } > "$WORK/test.cpio"
 
 # Boot
-append="console=ttyS0 panic=-1 quiet wisp=test"
+append="console=ttyS0 panic=-1 quiet wisp=$MODE"
+net=()
+export WISP_PORT=''
+if [ "$NETWORK" = true ]; then
+	append+=" ip=dhcp"
+	case "$ARCH" in
+	sparc32) nic=lance; append+=" esp_scsi.esp_bus_reset_settle=0 lpj=2000000" ;;
+	sparc64) nic=sunhme ;;
+	x86_64) nic=e1000 ;;
+	esac
+	net=(-nic "user,model=$nic")
+	if [ -n "$FORWARD" ]; then
+		WISP_PORT=$(python3 -c 'import socket
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])')
+		net[1]+=",hostfwd=tcp:127.0.0.1:$WISP_PORT-:$FORWARD"
+	fi
+fi
+output port "$WISP_PORT"
 [ -z "$ARGS" ] || append="$append -- $ARGS"
 # shellcheck disable=SC2206
 cmd=("$QEMU" -M "${MACHINE:-$DEF_MACHINE}" -m "$MEM" -display none -serial stdio -monitor none
-	-no-reboot -nodefaults -kernel "$KIT/$ARCH/kernel" -initrd "$WORK/test.cpio"
+	-no-reboot -nodefaults -kernel "$KIT/$ARCH/$kernel" "${net[@]}" -initrd "$WORK/test.cpio"
 	-append "$append" $QEMU_ARGS)
 log "${cmd[*]}"
 [ -z "${GITHUB_ACTIONS:-}" ] || echo "::group::Console ($ARCH)"
 t0=$(date +%s%N)
 rc=0
-timeout --kill-after=5 "$TIMEOUT" "${cmd[@]}" < /dev/null | tee "$LOG" || rc=$?
+if [ -n "$CHECK" ]; then
+	timeout --kill-after=5 "$TIMEOUT" bash "$HERE/check.sh" "$MODE" "$LOG" "$WORK/check-status" "${cmd[@]}" || rc=$?
+	cat "$LOG"
+else
+	timeout --kill-after=5 "$TIMEOUT" "${cmd[@]}" < /dev/null | tee "$LOG" || rc=$?
+fi
 t1=$(date +%s%N)
 [ -z "${GITHUB_ACTIONS:-}" ] || echo "::endgroup::"
 secs=$(awk -v d=$((t1 - t0)) 'BEGIN { printf "%.1f", d / 1e9 }')
 output seconds "$secs"
 
 # The result line PID 1 prints (e2e/wisp/init.c, test_mode)
-line=$(tr -d '\r' < "$LOG" | grep -oE 'WISP-TEST v=1 exit=-?[0-9]+ signal=[0-9]+ ms=[0-9]+' | tail -n 1 || true)
-err=$(tr -d '\r' < "$LOG" | grep -oE 'WISP-TEST-ERROR .*' | head -n 1 || true)
+line=$(tr -d '\r' < "$LOG" | grep -oE "WISP-${MODE^^} v=1 exit=-?[0-9]+ signal=[0-9]+ ms=[0-9]+" | tail -n 1 || true)
+err=$(tr -d '\r' < "$LOG" | grep -oE "WISP-${MODE^^}-ERROR .*" | head -n 1 || true)
 signame() {
 	if [ "$ARCH" = x86_64 ]; then
 		case $1 in 4) echo SIGILL ;; 5) echo SIGTRAP ;; 6) echo SIGABRT ;; 7) echo SIGBUS ;;
@@ -250,7 +299,7 @@ signame() {
 }
 code='' sig=0 name=''
 if [ -n "$err" ]; then
-	result=error why=${err#WISP-TEST-ERROR }
+	result=error why=${err#*-ERROR }
 	case "$why" in
 	*"errno 2") why="$why (a dynamic binary? it must be static)" ;;
 	*"errno 8") why="$why (a format this kernel doesn't run)" ;;
@@ -271,6 +320,18 @@ elif [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
 	result=error why="timed out after $TIMEOUT s"
 else
 	result=error why="no result line (QEMU exit code $rc)"
+fi
+if [ -n "$CHECK" ] && [ -z "$err" ]; then
+	if [ -f "$WORK/check-status" ]; then
+		status=$(cat "$WORK/check-status")
+		result=pass
+		[ "$status" = 0 ] || result=fail
+		why="runner check exited with $status"
+	elif [ "$rc" != 124 ] && [ "$rc" != 137 ]; then
+		result=error why="guest stopped before the runner check"
+	else
+		result=error why="timed out after $TIMEOUT s"
+	fi
 fi
 output result "$result"
 output exit-code "$code"

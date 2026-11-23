@@ -25,9 +25,12 @@ jobs:
           cflags: -Iinclude -Wall
 ```
 
-The program is PID 1's child in a system that has nothing else: no shell, no files but `/test`
+By default the program is PID 1's child in a system that has nothing else: no shell, no files but `/test`
 itself, no network. Its stdout and stderr go to the serial console, which is the step's log.
 Exit code 0 passes; any other exit code, or a signal, fails the step.
+
+For a network service, the runner can wait for a serial readiness message and check a forwarded
+TCP port before stopping QEMU. See the [HTTP service example](examples/httpd.md).
 
 ## Inputs
 
@@ -42,6 +45,11 @@ Exit code 0 passes; any other exit code, or a signal, fails the step.
 | `toolchain-sha256` | | Expected SHA-256 of the local or downloaded SDK tarball |
 | `cflags` | | More compiler flags, after the default `-O2` (`-DFIXED`, `-Iinclude`, `-Wall -Werror`) |
 | `args` | | Arguments for the program, whitespace-separated, no quoting |
+| `mode` | `test` | PID 1 runs the payload with `wisp=test` or `wisp=run`. Run mode emits the WISP-RUN start and exit markers |
+| `network` | `false` | Boot the format 2 kit's `kernel-net` with QEMU user networking and `ip=dhcp`. Format 1 kits still work in default test mode with networking off |
+| `forward` | | Guest TCP port (1–65535) to forward to a free port on runner loopback. Requires `network: true` |
+| `ready` | | Bash extended regex matched against serial lines from the run start marker (test mode uses the banner). With no regex the check starts at that marker |
+| `check` | | Bash command on the runner. Exit 0 passes, any other status fails. QEMU stops after the check. The timeout includes readiness and the check |
 | `timeout` | `60` | Seconds from starting QEMU to its exit; a test that runs longer is an `error` |
 | `machine` | | QEMU `-M` instead of the default: `SS-10`, `SS-20`, `SS-4`, `SPARCClassic`, `SPARCbook` for sparc32 |
 | `qemu-args` | | More QEMU arguments, whitespace-separated (`-m 256`) |
@@ -54,8 +62,9 @@ Exit code 0 passes; any other exit code, or a signal, fails the step.
 
 | Output | What it is |
 | --- | --- |
-| `result` | `pass` (exit code 0), `fail` (another exit code, or a signal) or `error` (the build, the boot or the timeout) |
-| `exit-code` | The program's exit code; empty if it was killed or never ran |
+| `result` | `pass` or `fail` from the runner check when supplied, otherwise from the guest exit status. Build, boot and timeout errors produce `error` |
+| `port` | Runner loopback TCP port, also available as `WISP_PORT` to the check. The forward closes when QEMU stops |
+| `exit-code` | The program's exit code when PID 1 reports it. Empty when killed or stopped by the check |
 | `signal` | The number of the signal that killed it, `0` if none. sparc numbers differ from x86: `SIGBUS` is 10 there, 7 on x86 |
 | `signal-name` | `SIGBUS`, `SIGSEGV`, `SIGILL`, ... |
 | `seconds` | From starting QEMU to its exit |
@@ -69,7 +78,7 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
 
 1. QEMU (`qemu-system-sparc`, whose package also has `qemu-system-sparc64` and OpenBIOS, or
    `qemu-system-x86`) and, for nolibc source builds, the cross compiler (`gcc-sparc64-linux-gnu`) come from Ubuntu's archive.
-2. The kit, a 7 MB download, holds wisp's tier-1 kernel per architecture and the headers wisp's
+2. The format 2 kit holds wisp's tier-1 and network kernels per architecture and the headers wisp's
    PID 1 is built with: the kernel's UAPI headers and nolibc (`tools/include/nolibc`, the C library
    of the kernel's own selftests, headers only). `e2e/wisp/kit.sh` packs it; the self-test workflow
    publishes it to the `wisp-test-kit` release.
@@ -121,7 +130,7 @@ release's `wisp-toolchain-<arch>.tar.xz.sha256` file. See the [local example](ex
 - **sparc32 is V8**, as on a real SPARCstation 5: no V9 instructions. Ubuntu's 32-bit sparc libgcc
   and glibc are V8+ (`EM_SPARC32PLUS`, V9 code) even with `-mcpu=v8`, and the sparc32 kernel
   refuses such a binary; the action stops with a message when given one.
-- **Nothing else in the system**: no files except `/test`, no `/proc`, `/sys` or `/dev` beyond
+- **Default guest environment**: no files except `/test`, no `/proc`, `/sys` or `/dev` beyond
   `/dev/console`, no network, one CPU (wisp's tier-1 kernel is uniprocessor), 128 MB of memory on
   sparc32 (256 on sparc64; more with `qemu-args: -m 256`, the SS-5's maximum).
 - **Emulated speed**: QEMU translates the guest's code (TCG), which is several times slower than
