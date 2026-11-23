@@ -56,6 +56,7 @@
 #include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <linux/fb.h>
 #include <linux/ioctl.h>
 #include <linux/reboot.h>
 #include <linux/sysinfo.h>
@@ -994,6 +995,7 @@ static void cmd_help(const char *arg)
 	       "  info, uname     architecture, kernel, CPUs, memory, uptime\n"
 	       "  bench           the CRC-32 compute loop (%u rounds) with its time\n"
 	       "  crc <n>         the loop's checksum after n rounds\n"
+	       "  fbtest          draw eight colour bars on /dev/fb0\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
 	       "  endian          a byte-order guessing game\n"
 	       "  disk [dev..]    write, sync and read back a pattern on a raw disk\n"
@@ -1057,6 +1059,83 @@ static void cmd_crc(const char *arg)
 		return;
 	}
 	run_loop(n);
+}
+
+/* Binary RGB order: black, blue, green, cyan, red, magenta, yellow, white. */
+static unsigned int channel_mask(struct fb_bitfield field)
+{
+	return (~0U >> (32 - field.length)) << field.offset;
+}
+
+static void cmd_fbtest(void)
+{
+	struct fb_var_screeninfo v = { 0 };
+	struct fb_fix_screeninfo f = { 0 };
+	unsigned short red[8], green[8], blue[8];
+	struct fb_cmap cmap = { 0, 8, red, green, blue, NULL };
+	unsigned int pixels[8], x, y, i, bytes;
+	int fd, tty, drawn = 0;
+
+	mount_dev();
+	fd = open_wait("/dev/fb0", O_RDWR);
+	if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &v) < 0 ||
+	    ioctl(fd, FBIOGET_FSCREENINFO, &f) < 0)
+		goto out;
+	bytes = v.bits_per_pixel / 8;
+	if ((v.bits_per_pixel != 8 && v.bits_per_pixel != 16 && v.bits_per_pixel != 32) ||
+	    !v.xres || !v.yres || v.xres > sizeof(buf) / bytes ||
+	    v.xres + v.xoffset > f.line_length / bytes)
+		goto out;
+
+	for (i = 0; i < 8; i++) {
+		red[i] = i & 4 ? 65535 : 0;
+		green[i] = i & 2 ? 65535 : 0;
+		blue[i] = i & 1 ? 65535 : 0;
+		if (f.visual == FB_VISUAL_PSEUDOCOLOR && bytes == 1)
+			pixels[i] = i;
+		else if (f.visual == FB_VISUAL_TRUECOLOR)
+			pixels[i] = (red[i] ? channel_mask(v.red) : 0) |
+				    (green[i] ? channel_mask(v.green) : 0) |
+				    (blue[i] ? channel_mask(v.blue) : 0);
+		else
+			goto out;
+	}
+	if (f.visual == FB_VISUAL_PSEUDOCOLOR && ioctl(fd, FBIOPUTCMAP, &cmap) < 0)
+		goto out;
+	/* Keep fbcon's software cursor from repainting its cell over the image. */
+	tty = open("/dev/tty0", O_WRONLY);
+	if (tty >= 0) {
+		/* Best effort: a visible cursor only costs one cell of the image. */
+		ssize_t n = write(tty, "\033[?25l", 6);
+
+		(void)n;
+		close(tty);
+	}
+	/* Row writes also work on SBus devices with private mmap offsets. */
+	for (y = 0; y < v.yres; y++) {
+		for (x = 0; x < v.xres; x++) {
+			i = x * 8 / v.xres;
+			if (!x || !y || x == v.xres - 1 || y == v.yres - 1)
+				i = 7;
+			if (bytes == 1)
+				((unsigned char *)buf)[x] = pixels[i];
+			else if (bytes == 2) {
+				unsigned short pixel = pixels[i];
+
+				memcpy((unsigned char *)buf + x * 2, &pixel, 2);
+			} else
+				buf[x] = pixels[i];
+		}
+		if (lseek(fd, (y + v.yoffset) * f.line_length + v.xoffset * bytes, SEEK_SET) < 0 ||
+		    write(fd, buf, v.xres * bytes) != (long)(v.xres * bytes))
+			goto out;
+	}
+	drawn = 1;
+out:
+	printf("WISP-FB v=1 dev=/dev/fb0 xres=%u yres=%u bpp=%u visual=%u line=%u drawn=%d\n",
+	       v.xres, v.yres, v.bits_per_pixel, f.visual, f.line_length, drawn);
+	if (fd >= 0)
+		close(fd);
 }
 
 static void cmd_mandel(const char *arg)
@@ -1123,7 +1202,7 @@ static void cmd_reboot(const char *arg)
  */
 static const char command_names[] =
 	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0"
-	"endian\0";
+	"endian\0fbtest\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -1149,6 +1228,7 @@ static void run_command(const char *cmd, const char *arg)
 	case 11: cmd_net(arg); break;
 	case 12: cmd_smp(arg); break;
 	case 13: cmd_endian(arg); break;
+	case 14: cmd_fbtest(); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }

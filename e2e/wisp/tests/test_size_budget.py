@@ -31,3 +31,17 @@ class SizeBudget(unittest.TestCase):
                         self.assertIn(message, output.getvalue())
                     else:
                         self.assertEqual(output.getvalue(), "")
+
+    def test_framebuffer_measurement_required_when_budgeted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            arch = out / "sparc32"
+            arch.mkdir()
+            budget = dict.fromkeys(size_budget.FIELDS, 100)
+            values = " ".join(f"{key}=100" for key in budget)
+            budget["kernel_fb_bytes"] = 100
+            for extra, ok in [("", False), (" kernel_fb_bytes=105", True),
+                              (" kernel_fb_bytes=106", False)]:
+                with self.subTest(extra=extra), contextlib.redirect_stdout(io.StringIO()):
+                    (arch / "sizes").write_text(f"arch=sparc32 {values}{extra}")
+                    self.assertEqual(size_budget.check(out, {"sparc32": budget}), ok)

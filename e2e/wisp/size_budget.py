@@ -16,7 +16,8 @@ def check(out, budgets):
             values = dict(pair.split("=", 1) for pair in sizes.read_text().split())
             if values["arch"] != arch:
                 raise ValueError(f"expected arch={arch}")
-            for field in FIELDS:
+            fields = (*FIELDS, "kernel_fb_bytes") if "kernel_fb_bytes" in budget else FIELDS
+            for field in fields:
                 actual, limit = int(values[field]), budget[field]
                 if min(actual, limit) <= 0:
                     raise ValueError(f"invalid {field}")
