@@ -1,7 +1,7 @@
 name: wisp-test action
 
 # The self-test of the wisp-test action (.github/actions/wisp-test): builds the action's kit (wisp's
-# tier-1 kernels for sparc32, sparc64 and x86_64, whose PID 1 runs /test with wisp=test, plus the
+# tier-1 and network kernels for sparc32, sparc64 and x86_64, whose PID 1 runs /test with wisp=test, plus the
 # nolibc headers; e2e/wisp/kit.sh), then runs the action on its example programs with the kit from
 # this run. Each case states the result it must give: the buggy examples pass on x86_64 and fail on
 # sparc (an exit code for the endianness bug, SIGBUS for the alignment bug), the fixed ones pass
@@ -67,20 +67,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test service inputs
+        run: bash .github/actions/wisp-test/tests/network.sh
+
       # The kernels wisp-boot.yml caches (same key; restored only, so this job never saves a
-      # partial set under it). On a miss, the three tier-1 kernels the kit needs are built here.
+      # partial set under it). On a miss, the tier-1 and network kernels the kit needs are built here.
       - name: Restore the kernels
         id: kernels
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: e2e/wisp/out
-          key: wisp-kernels-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+          key: wisp-kernels-net-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
 
       - name: Build the kernels
         if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
         run: |
           docker build --pull -f e2e/wisp/Dockerfile -t wsh-wisp:ci .
-          docker run --rm -e JOBS="$(nproc)" -e TIER2=0 -v "$PWD/e2e/wisp:/wisp" wsh-wisp:ci \
+          docker run --rm -e JOBS="$(nproc)" -e TIER2=0 -e TIER_NET=1 -v "$PWD/e2e/wisp:/wisp" wsh-wisp:ci \
             ./build.sh sparc32 sparc64 x86_64
 
       - name: Pack the kit
@@ -227,8 +230,51 @@ jobs:
           LOG: ${{ steps.hello.outputs.log }}
         run: grep -F 'WISP-HELLO v=1 checksum=0xed3258f703d97351 status=ok' "$LOG"
 
+  service:
+    needs: [kit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [sparc32, x86_64, sparc64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the kit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wisp-test-kit
+          path: ${{ runner.temp }}/kit
+
+      - name: Build with packaged glibc
+        if: matrix.arch == 'sparc64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-sparc64-linux-gnu libc6-dev-sparc64-cross
+          sparc64-linux-gnu-gcc -static -Os -s e2e/wisp/services/httpd/httpd.c -o httpd-sparc64
+
+      - name: Check the HTTP service
+        uses: $/.github/actions/wisp-test
+        with:
+          arch: ${{ matrix.arch }}
+          libc: ${{ matrix.arch == 'sparc64' && 'nolibc' || 'uclibc' }}
+          binary: ${{ matrix.arch == 'sparc64' && 'httpd-sparc64' || '' }}
+          sources: ${{ matrix.arch != 'sparc64' && 'e2e/wisp/services/httpd/httpd.c' || '' }}
+          kit: ${{ runner.temp }}/kit/wisp-test-kit.tar.xz
+          mode: run
+          network: 'true'
+          forward: '8080'
+          ready: '^WISP-HTTPD listening port=8080$'
+          check: curl -fsS "http://127.0.0.1:$WISP_PORT/"
+
   publish:
-    needs: [kit, test]
+    needs: [kit, test, service]
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -249,7 +295,7 @@ jobs:
         run: |
           tar -xJOf kit/wisp-test-kit.tar.xz wisp-test-kit/VERSION > version.txt
           printf '%s\n' \
-            "The kit of the wisp-test action (\`.github/actions/wisp-test\`): wisp's tier-1 kernels for" \
+            "The kit of the wisp-test action (\`.github/actions/wisp-test\`): wisp's tier-1 and network kernels for" \
             "sparc32, sparc64 and x86_64 and the nolibc headers, built and tested by" \
             "\`.github/workflows/wisp-test-action.yml\` from \`${SHA}\`." \
             "" '```' "$(cat version.txt)" "$(cat kit/wisp-test-kit.tar.xz.sha256)" '```' > release-notes.md
@@ -266,7 +312,7 @@ jobs:
   wisp-test-action-required:
     name: wisp-test-action-required
     if: ${{ always() }}
-    needs: [changes, kit, test]
+    needs: [changes, kit, test, service]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

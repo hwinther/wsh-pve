@@ -288,6 +288,15 @@ machine, from starting QEMU through DHCP and service startup to the serial readi
 All three returned HTTP 200 for both root requests (`request=1`, then `request=2`) and
 `bye` for `/quit`. Each printed `WISP-RUN v=1 exit=0 signal=0` and powered off.
 
+### Updating the size budget
+
+In the wisp build environment, run `TIER_NET=1 ./build.sh all` with tier 2 enabled (the
+default). Each `out/<arch>/sizes` gives the kernel, tier-2 kernel, network kernel and init
+sizes in bytes. Run `python3 size_budget.py` from this directory to check all four architectures.
+Growth above 5% fails the boot workflow. A reduction greater than 5% prints a notice.
+After reviewing an intentional change, copy the new measured byte count for each affected
+field into `size-budget.json` and rerun the check.
+
 ## Test mode: the wisp-test action
 
 `wisp=test` on the kernel command line makes PID 1 run `/test` instead of the batch run: a program
@@ -311,8 +320,8 @@ the kernel refuses) and `exit` is 127.
 alignment bugs: it builds a C program against nolibc for sparc32 (V8, `SS-5`), sparc64 or x86_64,
 packs it as `/test`, boots it under QEMU from Ubuntu's packages and passes or fails on the exit
 status (its README has the inputs and the limits). It needs no kernel build: it downloads a kit
-(`kit.sh`: the three tier-1 kernels and the UAPI and nolibc headers, which `build.sh` now keeps
-in `out/<arch>/sysroot.tar.xz`), 7 MB, from the `wisp-test-kit` release, which
+(`kit.sh`: the tier-1 and network kernels for each action architecture and the UAPI and nolibc
+headers from `out/<arch>/sysroot.tar.xz`) from the `wisp-test-kit` release, which
 `.github/workflows/wisp-test-action.yml` publishes when dispatched with `publish`. That workflow
 also tests the action on pull requests that touch `e2e/wisp/` or the action, with the kit built in
 the run: an endianness bug (`examples/endian.c`, exit code 1 on sparc) and an alignment bug

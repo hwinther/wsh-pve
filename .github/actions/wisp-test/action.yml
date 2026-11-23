@@ -5,6 +5,26 @@ description: >-
   status. Catches endianness and alignment bugs in seconds.
 
 inputs:
+  mode:
+    description: "test or run (WISP-TEST or WISP-RUN markers)"
+    required: false
+    default: "test"
+  network:
+    description: "Use kernel-net with QEMU user networking and DHCP"
+    required: false
+    default: "false"
+  forward:
+    description: "Guest TCP port to forward to an available runner loopback port"
+    required: false
+    default: ""
+  ready:
+    description: "Console line regex to wait for before starting check"
+    required: false
+    default: ""
+  check:
+    description: "Bash command on the runner. Its status determines the result"
+    required: false
+    default: ""
   sources:
     description: "C files to build with the selected libc (whitespace-separated, globs allowed, relative to the working directory). Give this or binary"
     required: false
@@ -71,8 +91,11 @@ inputs:
     default: "true"
 
 outputs:
+  port:
+    description: "Forwarded TCP port on the runner (WISP_PORT for check)"
+    value: ${{ steps.run.outputs.port }}
   result:
-    description: "pass (exit code 0), fail (non-zero exit code or killed by a signal) or error (build, boot or timeout)"
+    description: "pass or fail from the runner check or guest program, or error on build, boot or timeout"
     value: ${{ steps.run.outputs.result }}
   exit-code:
     description: "The program's exit code (empty when it was killed or never ran)"
@@ -99,6 +122,11 @@ runs:
       env:
         WISP_SOURCES: ${{ inputs.sources }}
         WISP_BINARY: ${{ inputs.binary }}
+        WISP_MODE: ${{ inputs.mode }}
+        WISP_NETWORK: ${{ inputs.network }}
+        WISP_FORWARD: ${{ inputs.forward }}
+        WISP_READY: ${{ inputs.ready }}
+        WISP_CHECK: ${{ inputs.check }}
         WISP_ARCH: ${{ inputs.arch }}
         WISP_LIBC: ${{ inputs.libc }}
         WISP_TOOLCHAIN: ${{ inputs.toolchain }}
