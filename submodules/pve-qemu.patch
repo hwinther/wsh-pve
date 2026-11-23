@@ -17554,10 +17554,10 @@ index 0000000..cdcac43
 +     qtest_writel(qts, APC_CSR, APC_PMI | APC_ENABLES);
 diff --git a/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch b/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
 new file mode 100644
-index 0000000..ff45c39
+index 0000000..e51dff7
 --- /dev/null
 +++ b/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,351 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/audio/cs4231: drop what the apc took past the codec on a
 + stop
@@ -17582,14 +17582,26 @@ index 0000000..ff45c39
 +(cs_play_out(), at each audio callback). The take-ahead itself is
 +unchanged: the APC's address and count, PI, PD, PM and PMI move as
 +before. When the pipe runs empty the FIFO is still played to its end,
-+with the voice on for 200 ms as before. When the driver stops playback
-+(PDMA_GO cleared, PEN cleared in I9, or the count zeroed while playback
-+ran), cs_play_drop() drops what lies past the codec's position, and
-+the codec's end moves to now: the real chip has a FIFO of a few
-+samples and never plays them either. At a stop after PMI the codec is
-+past everything taken, and nothing is dropped. A pause (PPAUSE) drops
-+nothing: the APC goes on from its address when it is let go again, so
-+dropping would skip those samples. A format change empties the FIFO.
++with the voice on for 200 ms as before. When the driver stops the DMA
++(PDMA_GO cleared, or the count zeroed while playback ran),
++cs_play_drop() drops what lies past the codec's position, and the
++codec's end moves to now: the real chip has a FIFO of a few samples
++and never plays them either. At a stop after PMI the codec is past
++everything taken, and nothing is dropped. A pause (PPAUSE) or PEN off
++drops nothing: SunOS 4.1.4 pauses and turns PEN off as soon as the APC
++shows the pipe empty, which is when it has taken the last buffer, up to
++50 ms before the codec has played it (dropping there cut a 5 ms sound
++after 3 ms), and after a pause the APC goes on from its address. A
++format change empties the FIFO.
++
++The playback address and count registers now read as the codec's
++position: what the APC has taken from the current buffer past the
++codec is subtracted from the address and added to the count
++(cs_play_back()). Linux takes its playback position from the address
++and finishes a drain when that passes the end of its data; read 50 ms
++ahead, it sometimes stopped at the interrupt for its last period, and
++the drop then cut the last 22 ms of the tone. The registers are written
++as before.
 +
 +No vmstate change: the FIFO is not migrated. What it holds, at most
 +50 ms, was in the audiodev before, which is not migrated either.
@@ -17598,18 +17610,21 @@ index 0000000..ff45c39
 +with the case of the next commit, which fails without this change
 +(720 frames in the wav file where the codec had played 320). On an SS-5
 +with OpenBIOS "intr" 0x39 an unmodified Linux 7.3.4 plays 1000 ms of
-+440 Hz followed by 22 ms of the silence it pads its last period with,
-+and nothing after it (before: 36 ms of silence and 153-154 frames of
-+old samples).
++440 Hz followed by 22 ms of the silence it pads its last period with
++(five runs), then at most 110 frames (2.5 ms; none in one run, 8 to 15
++in three) that the codec plays between the period's interrupt and
++Linux's stop under TCG. Before: 36 ms of silence and 153-154 frames of
++old samples. SunOS 4.1.4 and Solaris 2.6 still play 2.56 s of u-law
++and a 40-byte sound after it without a gap.
 +---
-+ hw/audio/cs4231.c | 116 +++++++++++++++++++++++++++++++++++-----------
-+ 1 file changed, 90 insertions(+), 26 deletions(-)
++ hw/audio/cs4231.c | 153 ++++++++++++++++++++++++++++++++++++++--------
++ 1 file changed, 127 insertions(+), 26 deletions(-)
 +
 +diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
-+index 9edab14..963c473 100644
++index 9edab14..b56b382 100644
 +--- a/hw/audio/cs4231.c
 ++++ b/hw/audio/cs4231.c
-+@@ -44,10 +44,16 @@
++@@ -44,10 +44,18 @@
 +  * FIFO, and SunOS loads the next buffer only after PI, so taking a whole
 +  * buffer at once would leave the pipe empty.
 +  *
@@ -17621,16 +17636,18 @@ index 0000000..ff45c39
 ++ * audiodev when the codec clock gets to it. At the end of the last buffer
 ++ * (the pipe ran empty, PMI) all of it is still played: the voice stays on
 ++ * for CS_DRAIN_NS after playback stops, and turning it off at once would
-++ * drop the last 50 ms of every sound. When the driver stops playback
-++ * before the codec got there (it turns the DMA or PEN off, or zeroes the
-++ * count), what lies past the codec's position is dropped, as on the real
-++ * chip, whose FIFO holds a few samples: Linux stops when its last period
-++ * has played, with the APC up to 50 ms into the next period of its ring,
-++ * and those old samples must not be heard.
+++ * drop the last 50 ms of every sound. When the driver stops the DMA
+++ * before the codec got there (it turns PDMA_GO off or zeroes the count),
+++ * what lies past the codec's position is dropped, as on the real chip,
+++ * whose FIFO holds a few samples: Linux stops when its last period has
+++ * played, with the APC up to 50 ms into the next period of its ring, and
+++ * those old samples must not be heard. A pause or PEN off drops nothing:
+++ * SunOS pauses and turns PEN off as soon as the pipe shows empty, which
+++ * is when the APC has taken the last buffer, not when it has been played.
 +  *
 +  * The interrupts are not raised when the samples are taken but when the
 +  * codec clock gets to that point, as on the real chip: PI when the
-+@@ -91,6 +97,7 @@
++@@ -91,6 +99,7 @@
 + 
 + #define CS_SIZE 0x40
 + #define CS_DRAIN_NS (200 * SCALE_MS)   /* well past the 50 ms taken ahead */
@@ -17638,16 +17655,25 @@ index 0000000..ff45c39
 + #define CS_REGS 16
 + #define CS_DREGS 32
 + #define CS_MAXDREG (CS_DREGS - 1)
-+@@ -178,6 +185,8 @@ struct CSState {
++@@ -178,6 +187,9 @@ struct CSState {
 +     uint64_t play_units;    /* taken since play_start */
 +     int64_t play_drain;     /* the voice stays on until then */
 +     int64_t play_end;       /* what was taken has been played by then */
 ++    int16_t fifo[CS_FIFO / 2];  /* taken, converted, not yet played */
 ++    uint32_t fifo_len;      /* bytes in fifo; it ends at play_end */
+++    uint32_t buf_taken;     /* bytes taken from the current buffer */
 +     int64_t pi_at;          /* PI is due then, or -1 */
 +     int64_t pmi_at;         /* PMI is due then, or -1 */
 +     QEMUTimer *irq_timer;   /* raises them when they are due */
-+@@ -461,11 +470,10 @@ static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
++@@ -331,6 +343,7 @@ static void cs_play_next(CSState *s)
++     if (s->play_next) {
++         s->regs[CS_PVA] = s->regs[CS_PNVA];
++         s->regs[CS_PC] = s->regs[CS_PNC];
+++        s->buf_taken = 0;
++         s->play_next = false;
++         /* loaded before the pipe ran empty: no PMI, the PI then */
++         s->pmi_at = -1;
++@@ -461,11 +474,10 @@ static void cs_convert(CSState *s, const uint8_t *in, int16_t *out,
 +     }
 + }
 + 
@@ -17661,9 +17687,11 @@ index 0000000..ff45c39
 +     uint32_t unit_in, unit_out;
 +     uint64_t rate, due, budget;
 +     int64_t ahead;
-+@@ -499,24 +507,18 @@ static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
++@@ -498,25 +510,21 @@ static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
++             /* a partial sample at the end of a buffer: skip it */
 +             s->regs[CS_PVA] += pc;
 +             s->regs[CS_PC] = 0;
+++            s->buf_taken += pc;
 +         } else {
 +-            units = MIN(pc / unit_in, room / unit_out);
 ++            units = MIN(pc / unit_in, (CS_FIFO - s->fifo_len) / unit_out);
@@ -17686,10 +17714,11 @@ index 0000000..ff45c39
 +             s->regs[CS_PVA] += units * unit_in;
 +             s->regs[CS_PC] -= units * unit_in;
 +-            room -= units * unit_out;
+++            s->buf_taken += units * unit_in;
 +             budget -= units;
 +             s->play_units += units;
 +             s->play_end = s->play_start +
-+@@ -532,20 +534,64 @@ static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
++@@ -532,20 +540,84 @@ static void cs_play_feed(CSState *s, uint32_t room, int64_t now)
 +     }
 + }
 + 
@@ -17736,6 +17765,26 @@ index 0000000..ff45c39
 ++    s->play_end = MIN(s->play_end, now);
 ++}
 ++
+++/*
+++ * Bytes of the current buffer that the APC has taken but the codec has
+++ * not got to: the address and count registers read as the codec's
+++ * position, as on the real chip with its small FIFO. Linux takes its
+++ * playback position from the address, and finishes a drain when that
+++ * passes the end of its data; read 50 ms ahead it stopped in the middle
+++ * of its last period.
+++ */
+++static uint32_t cs_play_back(CSState *s)
+++{
+++    uint32_t unit_in, unit_out;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    if (!s->voice) {
+++        return 0;
+++    }
+++    cs_play_units(s, &unit_in, &unit_out);
+++    return MIN(cs_fifo_ahead(s, now, unit_out) * unit_in, s->buf_taken);
+++}
+++
 + /* The audiodev has room for avail bytes */
 + static void cs_audio_callback(void *opaque, int avail)
 + {
@@ -17761,7 +17810,7 @@ index 0000000..ff45c39
 + }
 + 
 + /* DAC attenuation is 1.5 dB a step; the mixer wants 0-255 */
-+@@ -579,14 +625,20 @@ static void cs_play_setup(CSState *s)
++@@ -579,14 +651,20 @@ static void cs_play_setup(CSState *s)
 +     static const int divide[8] = { 3072, 1536, 896, 768, 448, 384, 512, 2560 };
 +     uint8_t val = s->dregs[CS_PFMT];
 +     struct audsettings as;
@@ -17783,15 +17832,31 @@ index 0000000..ff45c39
 +     trace_cs4231_play_format(as.freq, as.nchannels, s->play_fmt);
 +     if (!s->audio_be) {
 +         return;
-+@@ -608,6 +660,7 @@ static void cs_reset(DeviceState *d)
++@@ -608,6 +686,8 @@ static void cs_reset(DeviceState *d)
 +     s->play_running = false;
 +     s->play_drain = 0;
 +     s->play_end = 0;
 ++    s->fifo_len = 0;
+++    s->buf_taken = 0;
 +     s->pi_at = -1;
 +     s->pmi_at = -1;
 +     timer_del(s->irq_timer);
-+@@ -651,7 +704,7 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++@@ -638,6 +718,14 @@ static uint64_t cs_mem_read(void *opaque, hwaddr addr,
++         ret = cs_read_csr(s);
++         trace_cs4231_mem_readl_reg(saddr, ret);
++         break;
+++    case CS_PVA:
+++        ret = s->regs[CS_PVA] - cs_play_back(s);
+++        trace_cs4231_mem_readl_reg(saddr, ret);
+++        break;
+++    case CS_PC:
+++        ret = s->regs[CS_PC] + cs_play_back(s);
+++        trace_cs4231_mem_readl_reg(saddr, ret);
+++        break;
++     default:
++         ret = s->regs[saddr];
++         trace_cs4231_mem_readl_reg(saddr, ret);
++@@ -651,7 +739,7 @@ static void cs_mem_write(void *opaque, hwaddr addr,
 + {
 +     CSState *s = opaque;
 +     uint32_t saddr, csr;
@@ -17800,20 +17865,7 @@ index 0000000..ff45c39
 +     int64_t now;
 + 
 +     saddr = addr >> 2;
-+@@ -680,8 +733,12 @@ static void cs_mem_write(void *opaque, hwaddr addr,
-+             cs_play_update(s);
-+             break;
-+         case CS_ICONF:
-++            was_on = s->dregs[CS_ICONF] & CS_PEN;
-+             s->dregs[CS_RAP(s)] = val;
-+             cs_play_update(s);
-++            if (was_on && !(val & CS_PEN)) {
-++                cs_play_drop(s, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
-++            }
-+             break;
-+         case CS_IRQSTAT:
-+             /* 0s clear the flags; INT goes when none is left */
-+@@ -720,14 +777,20 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++@@ -720,14 +808,25 @@ static void cs_mem_write(void *opaque, hwaddr addr,
 +             s->play_next = false;
 +             s->pi_at = -1;
 +             s->pmi_at = -1;
@@ -17823,9 +17875,14 @@ index 0000000..ff45c39
 +         /* a PMI may have waited for this PI to be cleared */
 +         cs_play_irqs(s);
 +         break;
+++    case CS_PVA:
+++        s->regs[saddr] = val;
+++        s->buf_taken = 0;
+++        break;
 +     case CS_PC:
 ++        was_on = s->play_running;
 +         s->regs[saddr] = val;
+++        s->buf_taken = 0;
 +         cs_play_update(s);
 ++        if (was_on && !s->play_running) {
 ++            /* the count zeroed in the middle of a buffer: a stop */
@@ -17834,7 +17891,7 @@ index 0000000..ff45c39
 +         break;
 +     case CS_PNC:
 +         /* the count loads the next buffer; a count of 0 unloads it */
-+@@ -745,7 +808,7 @@ static void cs_mem_write(void *opaque, hwaddr addr,
++@@ -745,7 +844,7 @@ static void cs_mem_write(void *opaque, hwaddr addr,
 +          * callback, as after PEN.
 +          */
 +         if (feed && s->voice && s->play_running) {
@@ -17843,11 +17900,12 @@ index 0000000..ff45c39
 +         }
 +         /* a PMI still due waits while a next buffer is loaded */
 +         cs_play_irqs(s);
-+@@ -779,6 +842,7 @@ static int cs_post_load(void *opaque, int version_id)
++@@ -779,6 +878,8 @@ static int cs_post_load(void *opaque, int version_id)
 + 
 +     s->play_running = false;
 +     s->play_drain = 0;
 ++    s->fifo_len = 0;
+++    s->buf_taken = 0;
 +     cs_play_setup(s);
 +     cs_play_update(s);
 +     /* a PI or PMI still due: set the timer again */

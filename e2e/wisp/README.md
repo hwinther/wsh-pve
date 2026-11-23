@@ -411,9 +411,10 @@ and the tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. The origi
 whole-capture measurement gave 1039–1042 ms at 424 Hz. The WAV contained about 150 frames
 of old ring-buffer samples starting 36 ms after the tone. Linux stops the DMA when its last period has played, and by then QEMU's
 APC had taken up to 50 ms of the next period, which it played out after the stop (pve-qemu 0032).
-pve-qemu `wsh/0128` holds what the APC takes until the codec gets to it and drops what lies past
-the codec's position when the driver stops. With it, in a lab build, the WAV ends 22 ms after the
-tone (the silence Linux pads its last period with) and `sound.py` reports no tail.
+pve-qemu `wsh/0128` holds what the APC takes until the codec gets to it, shows the codec's position
+in the DMA address, and drops what lies past it when the driver stops. With it, in five lab runs, the
+1000 ms tone is followed by the 22 ms of silence Linux pads its last period with and then at most
+110 frames (2.5 ms; none in one run): what the codec plays until Linux's stop under TCG.
 See `submodules/SPARC.md`, "Audio".
 
 ## Freedoom framebuffer timedemo
