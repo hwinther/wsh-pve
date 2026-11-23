@@ -71,7 +71,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/shots"
-          docker run --rm \
+          # the dmabuf scanout check needs /dev/udmabuf (llvmpipe's exports; GitHub's runners have it)
+          dev=()
+          [ ! -e /dev/udmabuf ] || dev=(--device /dev/udmabuf)
+          docker run --rm "${dev[@]}" \
             -v "$PWD/build/wsh-openglide:/deb:ro" -v "$PWD/packages/wsh-openglide/test.sh:/test.sh:ro" \
             -v "$RUNNER_TEMP/shots:/shots" \
             debian:trixie sh /test.sh "/deb/wsh-openglide_${VERSION}_amd64.deb" /deb/glide-render /shots

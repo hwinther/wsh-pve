@@ -33,7 +33,9 @@
 # and VNC: the console has GL, so the Glide frames go to it as a dmabuf (wsh-openglide's scanout
 # buffer, imported by egl-headless, which reads it for VNC and screendump) instead of being read back,
 # and so do the MESA GL frames (mesapt's own scanout buffer, the gamma phase's too: its copy applies
-# the ramp); the Glide guest's gamma phase is read back (wsh-openglide's copy doesn't apply a ramp);
+# the ramp), and with a wsh-openglide from 0.6 the Glide guest's gamma phase too (its copy applies
+# the ramp in a shader pass; an older one reads that phase back, which the test then expects); the
+# gamma phase is also probed in the Gouraud triangle, so a frame upside down fails;
 # QEMU's log must say which way each went; the frame is checked as the VNC server sends it (QEMU's
 # screendump has no surface during a GL scanout). With QEMU_3DFX_DMABUF=0 in the environment both
 # guests must be read back instead.
@@ -342,9 +344,19 @@ run_guest() {
 			grep -q "^$tag: $key" "$serial" || continue
 			phases_done="$phases_done $key"
 			sleep 1 # the guest holds it for 3 s
-			got=none
-			! screendump "$OUT/$name-$key.ppm" || got=$(ppm_pixel "$OUT/$name-$key.ppm" 10 10)
-			if [ "$got" != none ] && near "$got" "$want"; then
+			# want: RRGGBB at the top left (10, 10), or RRGGBB@X/Y probes separated by commas
+			got=none good=0
+			if screendump "$OUT/$name-$key.ppm"; then
+				got="" good=1
+				for probe in $(printf '%s' "$want" | tr , ' '); do
+					xy=10/10
+					case $probe in *@*) xy=${probe#*@} ;; esac
+					px=$(ppm_pixel "$OUT/$name-$key.ppm" "${xy%/*}" "${xy#*/}")
+					got="$got${got:+,#}$px"
+					near "$px" "${probe%@*}" || good=0
+				done
+			fi
+			if [ "$good" = 1 ]; then
 				phases_report="$phases_report ok:$key(#$got)"
 			else
 				phases_report="$phases_report FAIL:$key(#$got,want#$want)"
@@ -408,7 +420,8 @@ for guest in $GUESTS; do
 		knows_dir=no
 		! strings "$libglide" | grep -qx OPENGLIDE_DIR || knows_dir=yes
 		# Headless: front-buffer drawing (dark green) and a gamma of 2.0 (the clear's 0x80 blue to
-		# 0xb5), when the library applies gamma offscreen
+		# 0xb5, the Gouraud triangle's grey centre 0x55 to 0x93: the frame is the right way up), when
+		# the library applies gamma offscreen
 		phases="" append=""
 		if [ "$MODE" != sdl ]; then
 			append="GLIDE_GUEST_EXTRA=1"
@@ -420,7 +433,7 @@ for guest in $GUESTS; do
 				echo "info: this qemu-3dfx shows front-buffer drawing only at the next call (not checked)"
 			fi
 			if strings "$libglide" | grep -q EGLSetGamma; then
-				phases="$phases GAMMA:0000b5"
+				phases="$phases GAMMA:0000b5,939393@320/407"
 			else
 				echo "info: this wsh-openglide applies no gamma offscreen (not checked)"
 			fi
@@ -436,8 +449,8 @@ for guest in $GUESTS; do
 		else
 			echo "info: this wsh-openglide predates OPENGLIDE_DIR (its files go into QEMU's working directory, /)"
 		fi
-		# egl-headless, dbus,gl=on: the frames as a dmabuf (the gamma phase's frames are read
-		# back, which wsh-openglide's copy into the dmabuf doesn't apply)
+		# egl-headless, dbus,gl=on: the frames as a dmabuf, the gamma phase's too with a wsh-openglide
+		# whose copy applies the ramp (0.6, the gamma pass); an older one reads that phase back
 		if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && [ "${QEMU_3DFX_DMABUF:-}" = 0 ]; then
 			grep -q 'glidept: offscreen .* read back (QEMU_3DFX_DMABUF=0)' "$OUT/glide-qemu.log" \
 				|| fail "glide: QEMU_3DFX_DMABUF=0, but the frames weren't read back"
@@ -450,11 +463,19 @@ for guest in $GUESTS; do
 					|| fail "glide: no frame reached the console as a dmabuf"
 				case "$phases" in
 				*GAMMA*)
-					grep -q 'busy, [1-9][0-9]* frames read back instead' "$OUT/glide-qemu.log" \
-						|| fail "glide: the gamma phase's frames weren't read back"
+					if strings "$libglide" | grep -q 'the gamma pass'; then
+						grep -q 'glidept: dmabuf scanout: .* busy, 0 frames read back instead' "$OUT/glide-qemu.log" \
+							|| fail "glide: not every frame reached the console as a dmabuf (the gamma phase's neither?)"
+						grep 'EGL offscreen: the scanout copies are finished with' "$OUT/glide-qemu.log" || true
+						echo "ok: glide: every frame to the console as a dmabuf, the gamma phase's too"
+					else
+						grep -q 'busy, [1-9][0-9]* frames read back instead' "$OUT/glide-qemu.log" \
+							|| fail "glide: the gamma phase's frames weren't read back"
+						echo "ok: glide: frames to the console as a dmabuf (this wsh-openglide reads a gamma ramp's back)"
+					fi
 					;;
+				*) echo "ok: glide: frames to the console as a dmabuf" ;;
 				esac
-				echo "ok: glide: frames to the console as a dmabuf (with a gamma ramp read back)"
 				if [ "$MODE" = dbus ]; then
 					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
 						"$OUT/glide-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
@@ -489,6 +510,7 @@ for guest in $GUESTS; do
 				grep -q 'mesapt: dmabuf scanout: [1-9][0-9]* frames copied.* busy, 0 frames read back instead' \
 					"$OUT/mesa-qemu.log" || fail "mesa: not every frame reached the console as a dmabuf"
 				echo "ok: mesa: frames to the console as a dmabuf (the gamma phase's too)"
+				grep "mesapt: dmabuf scanout: the guest.s frames and the copies are finished with" "$OUT/mesa-qemu.log" || true
 				if [ "$MODE" = dbus ]; then
 					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
 						"$OUT/mesa-dbus.log" || fail "mesa: the D-Bus listener got no 640x480 frame as a dmabuf"

@@ -2,7 +2,7 @@
  * glide-render: render a known Glide scene through the host Glide library that qemu-3dfx loads
  * (libglide2x.so / libglide3x.so from wsh-openglide) and check its pixels. No guest, no QEMU.
  *
- *   glide-render [--glide3] [--own-window | --egl] [--no-front] [--ppm FILE]
+ *   glide-render [--glide3] [--own-window | --egl [--dmabuf]] [--no-front] [--ppm FILE]
  *   glide-render --check-window WINDOW-ID [--ppm FILE]
  *   glide-render --check-ppm FILE
  *
@@ -27,6 +27,9 @@
  * qemu-3dfx passes when the VM has no SDL window), grSstWinOpen() no window, and the frame is read
  * a third way, with getOffscreenFrame() (what qemu-3dfx copies into the VM's console). The front
  * buffer is a framebuffer object's attachment there, so its read counts with every driver.
+ * --dmabuf (with --egl) also checks the frame as a GL display gets it: through the dmabuf the
+ * library exports (getOffscreenDmabuf, getOffscreenScanout), mapped and compared with the read,
+ * without and with a gamma ramp (check_dmabuf).
  *
  * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
  * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx). --check-ppm
@@ -37,6 +40,10 @@
  * Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <dlfcn.h>
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <stddef.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -225,9 +232,124 @@ static int check_window(const char *id, const char *ppm)
 	return failed ? 1 : 0;
 }
 
+/* --dmabuf (with --egl): the frame as qemu-3dfx hands it to a GL display, through the dmabuf the
+ * library exports (getOffscreenDmabuf) and fills (getOffscreenScanout), mapped here and compared
+ * with getOffscreenFrame()'s read of the same frame, pixel for pixel (both rows bottom up): without
+ * a gamma ramp (a blit), with grGammaCorrectionValue(2.0) and, for Glide 3, a table of a different
+ * ramp per channel (grLoadGammaTable; the copy is a shader pass then, the read applies the ramp on
+ * the CPU), and once more without a ramp. Needs a render node or /dev/udmabuf. */
+#define FOURCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
+
+static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, int stride, uint32_t fourcc, int fd,
+			  int (*frame)(void *, int, int, int), int (*scanout)(void))
+{
+	static uint8_t bgrx[W * H * 4];
+	struct dma_buf_sync sync = {0};
+	/* the dmabuf's bytes for red, green, blue */
+	int ri = 0, gi = 1, bi = 2, diffs = 0, maxd = 0;
+	if (fourcc == FOURCC('A', 'R', '2', '4') || fourcc == FOURCC('X', 'R', '2', '4'))
+		ri = 2, bi = 0;
+	if (!scanout()) {
+		fprintf(stderr, "FAIL: dmabuf %s: getOffscreenScanout refused the frame\n", what);
+		return 1;
+	}
+	if (!frame(bgrx, W, H, W * 4)) {
+		fprintf(stderr, "FAIL: dmabuf %s: getOffscreenFrame\n", what);
+		return 1;
+	}
+	sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+	ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+	for (int y = 0; y < H; y++)
+		for (int x = 0; x < W; x++) {
+			const uint8_t *d = map + (size_t)y * stride + x * 4, *f = bgrx + ((size_t)y * W + x) * 4;
+			int dr = abs(d[ri] - f[2]), dg = abs(d[gi] - f[1]), db = abs(d[bi] - f[0]);
+			int m = dr > dg ? (dr > db ? dr : db) : (dg > db ? dg : db);
+			if (m) {
+				if (!diffs)
+					fprintf(stderr, "dmabuf %s: first difference at (%d, %d) from the bottom: "
+						"dmabuf #%02x%02x%02x, read #%02x%02x%02x\n", what, x, y,
+						d[ri], d[gi], d[bi], f[2], f[1], f[0]);
+				diffs++;
+				maxd = m > maxd ? m : maxd;
+			}
+		}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+	/* the clear colour at the top left (the last row in memory), for the log */
+	const uint8_t *tl = map + (size_t)(H - 1) * stride;
+	printf("dmabuf %s: top left #%02x%02x%02x, %d of %d pixels differ from the read (max %d)\n", what,
+	       tl[ri], tl[gi], tl[bi], diffs, W * H, maxd);
+	if (diffs)
+		fprintf(stderr, "FAIL: dmabuf %s: the dmabuf isn't the frame getOffscreenFrame reads\n", what);
+	uint32_t got = ((uint32_t)tl[ri] << 16) | ((uint32_t)tl[gi] << 8) | tl[bi];
+	if (abs((int)(got >> 16) - (int)(want >> 16)) > 1 || abs((int)((got >> 8) & 0xff) - (int)((want >> 8) & 0xff)) > 1 ||
+	    abs((int)(got & 0xff) - (int)(want & 0xff)) > 1) {
+		fprintf(stderr, "FAIL: dmabuf %s: top left #%06x, not #%06x\n", what, got, want);
+		diffs++;
+	}
+	return diffs ? 1 : 0;
+}
+
+static int check_dmabuf(void)
+{
+	int (*dmabuf)(int *, int *, int *, unsigned int *, unsigned long *) = sym("getOffscreenDmabuf", 0);
+	int (*scanout)(void) = sym("getOffscreenScanout", 0);
+	void (*gamma)(float) = sym("grGammaCorrectionValue", 1);
+	void (*table)(uint32_t, uint32_t *, uint32_t *, uint32_t *) = glide3 ? sym("grLoadGammaTable", 0) : NULL;
+	int fd = -1, stride = 0, offset = 0, failed = 0;
+	unsigned int fourcc = 0;
+	unsigned long modifier = 0;
+	if (!dmabuf || !scanout) {
+		fprintf(stderr, "FAIL: the library has no getOffscreenDmabuf/getOffscreenScanout\n");
+		return 1;
+	}
+	if (!dmabuf(&fd, &stride, &offset, &fourcc, &modifier)) {
+		fprintf(stderr, "FAIL: getOffscreenDmabuf (no render node and no /dev/udmabuf?)\n");
+		return 1;
+	}
+	printf("dmabuf: fd %d, stride %d, offset %d, fourcc %.4s, modifier 0x%lx\n", fd, stride, offset,
+	       (const char *)&fourcc, modifier);
+	if (modifier != 0 || (fourcc != FOURCC('A', 'B', '2', '4') && fourcc != FOURCC('X', 'B', '2', '4') &&
+			      fourcc != FOURCC('A', 'R', '2', '4') && fourcc != FOURCC('X', 'R', '2', '4'))) {
+		printf("info: not a linear 32-bit RGB dmabuf, not mapped\n");
+		close(fd);
+		return 0;
+	}
+	size_t len = (size_t)offset + (size_t)stride * H;
+	uint8_t *map = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+	if (map == MAP_FAILED) {
+		perror("FAIL: mmap of the dmabuf");
+		close(fd);
+		return 1;
+	}
+	failed += dmabuf_compare("without a ramp", 0x000080, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
+	gamma(2.0f);
+	failed += dmabuf_compare("gamma 2.0", 0x0000b5, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
+	if (table) {
+		/* red gamma 2.0, green inverted, blue halved */
+		static uint32_t r[256], g[256], b[256];
+		for (int i = 0; i < 256; i++) {
+			uint32_t k = 0; /* round(255 * sqrt(i / 255)) = round(sqrt(255 * i)) */
+			while ((2 * k + 1) * (2 * k + 1) <= 4u * 255 * i)
+				k++;
+			r[i] = k;
+			g[i] = 255 - i;
+			b[i] = i / 2;
+		}
+		table(256, r, g, b);
+		failed += dmabuf_compare("a table per channel", 0x00ff40, map + offset, stride, fourcc, fd, gr.getOffscreenFrame,
+					 scanout);
+	}
+	gamma(1.0f);
+	failed += dmabuf_compare("the ramp reset", 0x000080, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
+	munmap(map, len);
+	close(fd);
+	return failed;
+}
+
 int main(int argc, char **argv)
 {
-	int own_window = 0, no_front = 0, egl = 0;
+	int own_window = 0, no_front = 0, egl = 0, dmabuf = 0;
 	const char *ppm = NULL, *window_id = NULL, *check = NULL;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--glide3"))
@@ -238,6 +360,8 @@ int main(int argc, char **argv)
 			egl = 1;
 		else if (!strcmp(argv[i], "--check-ppm") && i + 1 < argc)
 			check = argv[++i];
+		else if (!strcmp(argv[i], "--dmabuf"))
+			dmabuf = 1;
 		else if (!strcmp(argv[i], "--no-front"))
 			no_front = 1;
 		else if (!strcmp(argv[i], "--ppm") && i + 1 < argc)
@@ -257,8 +381,8 @@ int main(int argc, char **argv)
 		return check_window(window_id, ppm);
 	if (check)
 		return check_ppm(check);
-	if (egl && own_window) {
-		fprintf(stderr, "--egl and --own-window exclude each other\n");
+	if ((egl && own_window) || (dmabuf && !egl)) {
+		fprintf(stderr, "--egl and --own-window exclude each other, --dmabuf needs --egl\n");
 		return 2;
 	}
 	const char *soname = glide3 ? "libglide3x.so" : "libglide2x.so";
@@ -383,6 +507,8 @@ int main(int argc, char **argv)
 			failed += scene_check("offscreen frame", rgb_px, 1);
 			if (ppm)
 				write_rgb_ppm(ppm);
+			if (dmabuf)
+				failed += check_dmabuf();
 		}
 	} else if (!own_window) {
 		XSync(dpy, False);
