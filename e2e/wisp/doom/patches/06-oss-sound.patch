@@ -1,0 +1,205 @@
+Mix DMX sound effects into non-blocking little-endian OSS stereo output.
+
+--- a/fbdoom/Makefile
++++ b/fbdoom/Makefile
+@@ -18,6 +18,7 @@
+ #CFLAGS+=-fsanitize=address
+ OBJS+=$(OBJDIR)/i_video_fbdev.o
+ OBJS+=$(OBJDIR)/i_input_tty.o
++OBJS+=$(OBJDIR)/i_oss.o
+ 
+ CC=$(CROSS_COMPILE)gcc  # gcc or g++
+ CFLAGS+=-ggdb3 -Os
+--- a/fbdoom/i_sound.c
++++ b/fbdoom/i_sound.c
+@@ -63,6 +63,7 @@
+ // Sound modules
+ 
+ extern void I_InitTimidityConfig(void);
++extern sound_module_t sound_oss_module;
+ extern sound_module_t sound_sdl_module;
+ extern sound_module_t sound_pcsound_module;
+ extern music_module_t music_sdl_module;
+@@ -94,6 +95,8 @@
+ #ifdef FEATURE_SOUND
+     &sound_sdl_module,
+     &sound_pcsound_module,
++#else
++    &sound_oss_module,
+ #endif
+     NULL,
+ };
+--- /dev/null
++++ b/fbdoom/i_oss.c
+@@ -0,0 +1,171 @@
++#include <errno.h>
++#include <fcntl.h>
++#include <linux/soundcard.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
++
++#include "i_sound.h"
++#include "w_wad.h"
++#include "z_zone.h"
++
++enum { RATE = 44100, CHANNELS = 8, FRAMES = 2048 };
++static struct voice {
++    const byte *pcm;
++    unsigned count, pos, rate, phase;
++    int lump, left, right;
++} voices[CHANNELS];
++static int dsp = -1;
++static boolean prefix;
++
++static boolean init(boolean use_prefix)
++{
++    int fmt = AFMT_S16_LE, channels = 2, rate = RATE;
++    int fragments = (8 << 16) | 10;  /* Eight 1024-byte fragments. */
++    int mixer, level = 0x6464;
++
++    prefix = use_prefix;
++    dsp = open("/dev/dsp", O_WRONLY | O_NONBLOCK);
++    if (dsp < 0 || ioctl(dsp, SNDCTL_DSP_SETFMT, &fmt) < 0 || fmt != AFMT_S16_LE ||
++        ioctl(dsp, SNDCTL_DSP_CHANNELS, &channels) < 0 || channels != 2 ||
++        ioctl(dsp, SNDCTL_DSP_SPEED, &rate) < 0 || rate != RATE) {
++        fprintf(stderr, "fbdoom: OSS playback unavailable on /dev/dsp\n");
++        if (dsp >= 0)
++            close(dsp);
++        return false;
++    }
++    ioctl(dsp, SNDCTL_DSP_SETFRAGMENT, &fragments);
++    mixer = open("/dev/mixer", O_RDWR);
++    if (mixer >= 0) {
++        ioctl(mixer, SOUND_MIXER_WRITE_PCM, &level);
++        level = 0x6464;
++        ioctl(mixer, SOUND_MIXER_WRITE_VOLUME, &level);
++        close(mixer);
++    }
++    return true;
++}
++
++static int lumpnum(sfxinfo_t *sfx)
++{
++    char name[9];
++    if (sfx->link)
++        sfx = sfx->link;
++    snprintf(name, sizeof(name), "%s%s", prefix ? "ds" : "", sfx->name);
++    return W_CheckNumForName(name);
++}
++
++static boolean playing(int ch)
++{
++    return ch >= 0 && ch < CHANNELS && voices[ch].pcm != NULL;
++}
++
++static void stop(int ch)
++{
++    if (!playing(ch))
++        return;
++    voices[ch].pcm = NULL;
++    /* A cached lump can be playing on several channels. */
++    for (int i = 0; i < CHANNELS; i++)
++        if (playing(i) && voices[i].lump == voices[ch].lump)
++            return;
++    W_ReleaseLumpNum(voices[ch].lump);
++}
++
++static void shutdown_sound(void)
++{
++    for (int ch = 0; ch < CHANNELS; ch++)
++        stop(ch);
++    close(dsp);
++}
++
++static void params(int ch, int vol, int sep)
++{
++    voices[ch].left = vol * (254 - sep) / 127;
++    voices[ch].right = vol * sep / 127;
++}
++
++static int start(sfxinfo_t *sfx, int ch, int vol, int sep)
++{
++    if (ch < 0 || ch >= CHANNELS)
++        return -1;
++    stop(ch);
++    int lump = sfx->lumpnum;
++    if (lump < 0 || W_LumpLength(lump) < 8)
++        return -1;
++    const byte *d = W_CacheLumpNum(lump, PU_STATIC);
++    struct voice *v = &voices[ch];
++    v->lump = lump;
++    v->pcm = d;
++    unsigned count = d[4] | d[5] << 8 | d[6] << 16 | (unsigned)d[7] << 24;
++    v->rate = d[2] | d[3] << 8;
++    if (d[0] != 3 || d[1] != 0 || !v->rate || count <= 32 ||
++        count > (unsigned)W_LumpLength(lump) - 8) {
++        stop(ch);
++        return -1;
++    }
++    /* DMX ignores 16 padding samples at either end. */
++    v->pcm = d + 24;
++    v->count = count - 32;
++    v->phase = v->pos = 0;
++    params(ch, vol, sep);
++    return ch;
++}
++
++static void update(void)
++{
++    static byte output[FRAMES * 4];
++    static int offset, pending;
++    audio_buf_info space;
++
++    if (!pending) {
++        if (ioctl(dsp, SNDCTL_DSP_GETOSPACE, &space) < 0)
++            return;
++        int frames = space.bytes / 4;
++        if (frames <= 0)
++            return;
++        if (frames > FRAMES)
++            frames = FRAMES;
++        int mix[FRAMES][2] = {{0}};
++        for (int ch = 0; ch < CHANNELS; ch++) {
++            struct voice *v = &voices[ch];
++            if (!playing(ch))
++                continue;
++            for (int i = 0; i < frames; i++) {
++                int sample = v->pcm[v->pos] - 128;
++                mix[i][0] += sample * v->left;
++                mix[i][1] += sample * v->right;
++                v->phase += v->rate;
++                while (v->phase >= RATE) {
++                    v->phase -= RATE;
++                    v->pos++;
++                }
++                if (v->pos >= v->count) {
++                    stop(ch);
++                    break;
++                }
++            }
++        }
++        for (int i = 0; i < frames; i++)
++            for (int side = 0; side < 2; side++) {
++                int s = mix[i][side];
++                uint16_t pcm = s < -32768 ? -32768 : s > 32767 ? 32767 : s;
++                output[4*i + 2*side] = pcm;
++                output[4*i + 2*side + 1] = pcm >> 8;
++            }
++        pending = frames * 4;
++        offset = 0;
++    }
++    ssize_t n = write(dsp, output + offset, pending);
++    if (n > 0) {
++        offset += n;
++        pending -= n;
++    } else if (n < 0 && errno != EAGAIN && errno != EINTR) {
++        pending = 0;
++    }
++}
++
++static snddevice_t devices[] = { SNDDEVICE_SB };
++sound_module_t sound_oss_module = {
++    devices, 1, init, shutdown_sound, lumpnum, update, params, start, stop, playing, NULL
++};

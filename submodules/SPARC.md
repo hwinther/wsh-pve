@@ -868,7 +868,7 @@ pve-qemu 0124 together; the published 11.1.3-4+wsh11 has neither:
 With both, the unchanged `kernel-fb` reports `WISP-SOUND ... ok=1`, `/proc/interrupts` (a local
 debug print, not in the repository) shows 23 `cs4231` interrupts, and the trace has 24 status reads
 (23 with INT set, one 0) and 23 raises of SBus level 5 (`slavio_set_irq ... irq 11 -> pil 9 level 1`):
-no storm. The tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. `sound.py` still fails
+no storm. The tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. The original whole-capture check failed
 (1039-1042 ms, 424 Hz, five runs): some 150 frames of old samples follow the tone after about 36 ms.
 Linux stops the DMA when its last period has played (it zeroes the counts, then pauses and clears
 `PDMA_GO`); by then the APC has taken part of the next ring period, which 0032 plays out after the

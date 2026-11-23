@@ -1,12 +1,41 @@
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from doom import build_disk, check_frame
+from doom import build_disk, check_effects, check_frame
+
+
+class DemoSound(unittest.TestCase):
+    def capture(self, runs):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "demo.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setparams((2, 2, 1000, 0, "NONE", ""))
+            for level, frames in runs:
+                wav.writeframes(struct.pack("<hh", level, -level) * frames)
+        return path
+
+    def test_separate_effects(self):
+        path = self.capture([(6500, 100), (600, 300)] * 3)
+        self.assertEqual(check_effects(path, 1.2), (3, 1.2))
+        with self.assertRaisesRegex(ValueError, "duration"):
+            check_effects(path, 20)
+        long_capture = self.capture([(6500, 500), (0, 1000)] * 3)
+        with self.assertRaisesRegex(ValueError, "duration"):
+            check_effects(long_capture, 1)
+
+    def test_reject_silence_continuous_sound_and_clicks(self):
+        for runs in ([(0, 1200)], [(6500, 1200)], [(30000, 1), (0, 399)] * 3,
+                     [(6500, 180), (0, 20)] * 6):
+            with self.subTest(runs=runs), self.assertRaisesRegex(ValueError, "bursts"):
+                check_effects(self.capture(runs), 1.2)
 
 
 class GameFrame(unittest.TestCase):
@@ -69,15 +98,15 @@ class DataDisk(unittest.TestCase):
             self.assertEqual((root / "demo.rsp").read_text().split(),
                              ["-iwad", "/data/freedoom1.wad", "-nosound", "-timedemo", "demo1"])
 
-    def test_scale_in_response_file(self):
+    def test_sound_and_scale_in_response_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             (directory / "input").write_bytes(b"ELF fixture")
             (directory / "wad").write_bytes(b"IWAD fixture")
-            disk = build_disk(directory, directory / "input", directory / "wad", 1)
+            disk = build_disk(directory, directory / "input", directory / "wad", 1, with_sound=True)
             root = directory / "extracted"
             subprocess.run(["unsquashfs", "-no-progress", "-d", root, disk], check=True,
                            stdout=subprocess.DEVNULL)
             self.assertEqual((root / "demo.rsp").read_text().split(),
-                             ["-iwad", "/data/freedoom1.wad", "-nosound", "-scaling", "1",
+                             ["-iwad", "/data/freedoom1.wad", "-nomusic", "-scaling", "1",
                               "-timedemo", "demo1"])

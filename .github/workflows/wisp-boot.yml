@@ -240,11 +240,11 @@ jobs:
               apt-get update -qq
               apt-get install -y --no-install-recommends make patch >/dev/null
               sh /doom/build.sh "$1" /inputs/fbDOOM-*.tar.gz "/inputs/fbdoom-$1"' sh "$arch"
-            display=std
-            if [ "$arch" = sparc32 ]; then display=cg3; fi
-            docker run --rm "${mounts[@]}" "$IMAGE" sh -ec '
-              PATH=/qemu:$PATH python3 doom.py --arch "$1" --display "$2" --binary "/inputs/fbdoom-$1" \
-                --wad /inputs/freedoom1.wad --output /results' sh "$arch" "$display" | tee -a "$results/metrics.txt"
+            options=(--display std --sound)
+            if [ "$arch" = sparc32 ]; then options=(--display cg3); fi
+            docker run --rm "${mounts[@]}" "$IMAGE" sh -ec 'PATH=/qemu:$PATH exec python3 doom.py "$@"' \
+              sh --arch "$arch" "${options[@]}" --binary "/inputs/fbdoom-$arch" \
+              --wad /inputs/freedoom1.wad --output /results | tee -a "$results/metrics.txt"
           done
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
 
@@ -260,9 +260,7 @@ jobs:
           # pc and sun4u only: the SS-5 needs openbios 0034 (the interrupt Linux can use) and
           # pve-qemu wsh/0124 (the codec's INT bit). A pull request builds QEMU with wsh/0124, but
           # the firmware is always the published package's, which lacks 0034, so the CS4231 stops
-          # after its first DMA buffer. Add sparc32 once a published package has both and
-          # the stale samples the APC plays out after Linux stops it no longer fail sound.py (README,
-          # "Sound")
+          # after its first DMA buffer. Add sparc32 once a published package has both.
           docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
             'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --output /results' | tee "$results/metrics.txt"
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"

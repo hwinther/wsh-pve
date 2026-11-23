@@ -369,7 +369,8 @@ From this directory, run `python3 sound.py` after a `TIER_FB=1` build. Select on
 with `--arch x86_64`, `--arch sparc32` or `--arch sparc64`. The runner attaches
 `-audiodev wav,id=snd0,path=<capture.wav>` and the machine options below, waits for the
 serial shell, sends `soundtest 440 1000`, then powers off. It checks the serial result and
-QEMU exit status. On each WAV channel it measures the span of audible samples (900–1100 ms),
+QEMU exit status. On each WAV channel it measures the first tone (900–1100 ms), ending at a
+silence longer than 10 ms. It reports up to 50 ms of trailing samples separately. The tone check
 requires at least 90% of that span above the silence threshold, and measures the interval
 between rising crossings (440 Hz ±3%). QEMU 11 can leave the RIFF and data lengths zero.
 The reader fills them in memory. The original WAVs and serial logs are in `out/sound/`
@@ -406,9 +407,9 @@ stops with `WISP-SOUND v=1 ok=0 errno=5`, and `cs4231` counts no interrupts in
   playback interrupts; Linux clears them by writing I24.
 
 With both, in a lab build, the unchanged `kernel-fb` reports `ok=1`, with 23 `cs4231` interrupts,
-and the tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. `sound.py` still fails on
-the SS-5 (1039-1042 ms, 424 Hz): about 36 ms after the tone the WAV has some 150 frames of old
-ring-buffer samples. Linux stops the DMA when its last period has played, and by then QEMU's
+and the tone in the WAV is 440.005 Hz for 1000.00 ms on both channels. The original
+whole-capture measurement gave 1039–1042 ms at 424 Hz. The WAV contains about 150 frames
+of old ring-buffer samples starting 36 ms after the tone. Linux stops the DMA when its last period has played, and by then QEMU's
 APC has taken up to 50 ms of the next period, which it plays out after the stop (pve-qemu 0032).
 See `submodules/SPARC.md`, "Audio".
 
@@ -427,7 +428,19 @@ reports `mounted=0 errno=N` and powers off before starting the payload.
 `wisp_run=/data/fbdoom` selects the executable directly, so DOOM needs no external
 initramfs or launcher. The default executable is still `/test` for external initramfs
 callers. DOOM passes `-- @/data/demo.rsp` to keep the OpenBIOS arguments short.
-The response file supplies `-iwad /data/freedoom1.wad -nosound -timedemo demo1`.
+The default response file selects `-iwad /data/freedoom1.wad -nosound -timedemo demo1`.
+Add `--sound` to the same `doom.py` command to attach the machine's audio device,
+select `-nomusic` and save a WAV alongside the timedemo log and screendump.
+The check requires at least three bursts with 20 ms of loud audio separated by 30 ms of
+quiet audio. It measures stereo RMS in 10 ms windows and compares capture duration
+to measured playback time. Both modes check the same 7,117 gametics.
+
+Paired 1× runs with Linux 7.3.4 and published pve-qemu-kvm 11.1.3-3+wsh11 under TCG:
+
+| Machine | FPS without sound | FPS with effects | Captured bursts | WAV duration |
+| --- | ---: | ---: | ---: | ---: |
+| pc | 252.63 | 229.16 | 5 | 29.90 s |
+| sun4u | 58.01 | 55.21 | 51 | 127.62 s |
 
 fbDOOM centers the largest integer multiple of 320×200 that fits the screen. It
 expands each row once and copies it vertically, using palette indices on cg3/TCX
@@ -470,8 +483,8 @@ marker. Each boot checks that independent count, the reported FPS, the successfu
 centered integer-scaled pixels and game colours in a QMP capture during playback, the
 successful child exit on serial and QEMU's exit. A matching count
 checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc and
-SS-5 cg3 on relevant PRs. It caches
-both verified archives and writes the serial logs, PPMs and timing report under `RUNNER_TEMP`.
+SS-5 cg3 on relevant PRs, with sound effects enabled on pc. It caches
+both verified archives and writes serial logs, PPMs, the pc WAV and timing report under `RUNNER_TEMP`.
 
 To reproduce on a Docker daemon, run the following from the repository root with a POSIX
 shell, Python 3.11+ and unused container names. Set `DOCKER_HOST` to the lab daemon before

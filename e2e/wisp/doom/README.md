@@ -19,6 +19,7 @@ compiler. It applies the following diffs in order and links a stripped static bi
 | 03-framebuffer | Mount devtmpfs when needed, install the indexed palette or convert to native bitfields, and center the integer-scaled frame (the largest factor that fits, or fbDOOM's `-scaling N`; `doom.py --scale` passes it) using the device stride. Copy each expanded row vertically. Mark frame 70 for QMP. |
 | 04-keyboard | Read the VT keyboard type as one byte, probe the correct descriptor and skip polling an unavailable keyboard. |
 | 05-response-file | Enable and bound the upstream response-file parser so the OpenBIOS boot arguments stay short. |
+| 06-oss-sound | Mix eight DMX effect channels with integer resampling, volume and stereo separation. Stream 44.1 kHz signed little-endian stereo to OSS from the game loop. |
 
 The [wisp timedemo instructions](../README.md#freedoom-framebuffer-timedemo) cover building
 the XZ squashfs data disk, booting and interpreting the measurements.
