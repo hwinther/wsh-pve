@@ -390,8 +390,8 @@ The pc and sun4u reported:
 WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1
 ```
 
-On the SS-5, playback needs two fixes, OpenBIOS 0034 and pve-qemu `wsh/0124`, and the CI step
-leaves the SS-5 out until a published package has both. On `11.1.3-4+wsh10` and `+wsh11`, Linux
+On the SS-5, playback needs two fixes, OpenBIOS 0034 and pve-qemu `wsh/0124`; both are in the
+published `11.1.3-4+wsh12`, and the CI sound step includes the SS-5 since then. On `11.1.3-4+wsh10` and `+wsh11`, Linux
 7.3.4 registers the Sun CS4231 and the first 8192-byte buffer reaches the WAV. Playback then
 stops with `WISP-SOUND v=1 ok=0 errno=5`, and `cs4231` counts no interrupts in
 `/proc/interrupts`:
