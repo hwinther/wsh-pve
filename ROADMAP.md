@@ -120,6 +120,7 @@ come after that, not before.
 | wisp data disk: read-only squashfs (XZ) in `kernel-fb`; PID 1 mounts `wisp_data=<dev>` on `/data` and runs `wisp_run=<path>` from it, so fbDOOM and the Freedoom WAD leave the initramfs (`CONFIG_RD_XZ` on the SS-5 dropped); fbDOOM scales the 320x200 frame by an integer factor and centres it (`doom.py --scale`: 1 for the CI timedemo, 0 for the largest factor). DEMO1 still gives 7,117 gametics on SS-5 (cg3, tcx), pc and sun4u | merged | #476 |
 | wisp sound: ALSA with OSS PCM emulation in `kernel-fb` (AC97 on pc and sun4u, the SBus CS4231 on the SS-5); `soundtest` plays a square wave to `/dev/dsp` and `sound.py` checks QEMU's `-audiodev wav` capture (level, duration, frequency): 440 Hz for 1 s on pc and sun4u. The SS-5 stops after the first DMA buffer (see Known and not fixed); CI runs pc and sun4u | merged | #478 |
 | 3dfx stage 2, third slice: Glide frames with a gamma ramp stay dmabufs (wsh-openglide 0.6: the dmabuf copy applies the ramp in a shader pass, in an EGL context of its own that shares OpenGLide's renderbuffers, readback only if that pass can't be had), and the dmabuf copies of wsh-openglide and mesapt are finished with an `EGL_KHR_fence_sync` fence instead of `glFinish` (`glFinish` without it). Tests: `glide-render --egl --dmabuf` in the package test (the mapped dmabuf equals the read frame, without and with ramps), `e2e/3dfx` expects the Glide gamma phase as a dmabuf and probes its Gouraud triangle, `GLIDE_GUEST_BENCH_GAMMA=1`. Lab, llvmpipe: 707 (egl-headless) and 1590 (dbus,gl=on) frames/s with gamma 2.0 as dmabufs against 1150 and 833 read back; the fences changed nothing measurable there (ROADMAP, Stage 2, "Third slice") | in review | |
+| 3dfx stage 2 on a GPU node: an NVIDIA GTX 1080 test node (driver 580, `nvidia_drm modeset=Y`; with `modeset=N` the export fails and every frame is read back) sends every Glide and MESA GL frame as a block-linear dmabuf to egl-headless on the GPU, gamma pass and fences included, also through PVE (`mesa-display=egl-headless`). TCG, 3000 frames: Glide 3502 frames/s egl-headless against 956 read back (llvmpipe 1150), with gamma 2.0 2516 against 775, MESA GL 1018 against 678; through PVE 3748 frames/s, 0.10 ms a copy. Harness: the D-Bus listener and `glide-render --dmabuf` import non-linear dmabufs through EGL and read them with `glReadPixels` (or say the probes are skipped), and the `egl`/`dbus` gate looks for the scanout's printf format, as the published binary holds the "as a dmabuf (no readback)" constant only in overlapping pieces (ROADMAP, Stage 2, "GPU node") | in review | |
 
 ## In progress
 
@@ -300,7 +301,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98 and on an NVIDIA GPU node; left: AMD/Intel GPU nodes, double buffering).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -437,8 +438,37 @@ merged; what is left of them is item 2 under "Next".
        first frame builds the shader (about 40 ms once, estimated from the averages). The fences changed nothing measurable on
        llvmpipe: Glide's plain copy 0.07 ms before and after, mesapt's copy 1.1-1.8 ms before and
        1.1-1.4 ms after, within the lab's run-to-run spread.
-       Left: a real GPU render node (modifiers other than
-       linear, and a wait for the fences in the GL stream, `EGL_KHR_wait_sync`, instead of on the CPU); Windows 98 with dbus,gl=on (the harness has
+       GPU node (in review): an NVIDIA GTX 1080 test node (proprietary driver 580, TCG) with the
+       published pve-qemu-kvm 11.1.3-4+wsh11 and wsh-openglide 0.6. It needs `nvidia_drm modeset=Y`:
+       with `modeset=N` NVIDIA's GBM backend doesn't start and its EGL advertises
+       `EGL_MESA_image_dma_buf_export`, but `eglExportDMABUFImageMESA` fails (`EGL_BAD_MATCH`), so
+       QEMU's display ends up on Mesa's llvmpipe and every frame is read back (correct frames, no
+       crash). With `modeset=Y` the export works (`AB24`, stride 2560, NVIDIA's block-linear
+       modifier `0x300000000cdb014`), egl-headless runs on the GPU and imports the block-linear
+       buffers, every Glide and MESA GL frame goes as a dmabuf, the copies are finished with an
+       `EGL_KHR_fence_sync` fence, and the Glide gamma pass runs on the GPU with the right colours;
+       a PVE VM with `vga: std,mesa=1,mesa-display=egl-headless` passes (VNC, 6/6 probes). Measured
+       (3000 frames, TCG, frames/s): Glide egl-headless 3502 (the lab's llvmpipe 1150, the GPU read
+       back 956), Glide with gamma 2.0 egl-headless 2516 (llvmpipe 707, GPU read back 775), MESA GL
+       egl-headless 1018 (GPU read back 678); through PVE 200000 Glide frames at 3748 frames/s, all
+       as dmabufs, 0.10 ms a copy (0.28 ms with the gamma pass). So on a GPU egl-headless is the
+       faster choice, unlike on llvmpipe. The harness learned block-linear buffers: the D-Bus
+       listener and `glide-render --dmabuf` import a dmabuf that isn't linear through EGL
+       (`EGL_EXT_image_dma_buf_import_modifiers`, `glReadPixels`) instead of mapping it, and say
+       "pixel probes skipped" / "not verified" where that import fails (on the GTX 1080 both
+       imports work: `glide-render --dmabuf` finds all 307200 pixels equal to `getOffscreenFrame`
+       without and with ramps, and `e2e/3dfx` `dbus` passes with its probes); the `egl`/`dbus` gate of
+       `e2e/3dfx/test.sh` looks for the scanout's printf format, since the published binary holds
+       "...as a dmabuf (no readback)" only in overlapping pieces (glib's inline `g_strdup` becomes a
+       memcpy of two overlapping loads), so those modes no longer skip against published packages.
+       Containers on that node: `docker --gpus all` failed (`nvidia-container-cli`, a driver
+       installed with `nvidia-installer`), so the tests ran with the NVIDIA devices and EGL/GBM
+       libraries and their glvnd/GBM json files mounted by hand, `--security-opt
+       apparmor=unconfined` (the host's `docker-default` profile denies the AF_UNIX sockets of Xvfb
+       and QEMU's monitor) and `--init` (QEMU's `-daemonize` leaves a zombie otherwise).
+       Left: AMD and Intel GPU nodes (untested); a wait for the fences in the GL stream
+       (`EGL_KHR_wait_sync`) instead of on the CPU; `docker --gpus all` on a node whose driver came
+       from `nvidia-installer` (the NVIDIA container toolkit's driver RPC failed); Windows 98 with dbus,gl=on (the harness has
        no D-Bus client yet) and a real game over time; double buffering instead of holding
        frames while a D-Bus client reads (it would also replace mesapt's hold copy); the D-Bus listener's 30 ms
        refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
@@ -466,7 +496,8 @@ merged; what is left of them is item 2 under "Next".
          `e2e/3dfx/test.sh` through `qm start` (`e2e/3dfx/pve-guest-setup.sh` puts it in the
          container) and checks the frame in the noVNC console, read back and with egl-headless (4
          open dmabufs against 1); QEMU, run with PVE's command line in the foreground, said "frames
-         to the graphic console as a dmabuf" (944 frames/s). Left: a GPU node. Done since (see the
+         to the graphic console as a dmabuf" (944 frames/s). Left: AMD and Intel GPU nodes (an
+         NVIDIA one passes, Stage 2's "GPU node"). Done since (see the
          Done table): Windows 98 through PVE with egl-headless, the frame spec in CI, and the PVE
          kernel's `CONFIG_UDMABUF` (`=y` in the published configs of `proxmox-kernel-7.0.14-30-pve`,
          the default, and `7.3.5-1-pve`).
