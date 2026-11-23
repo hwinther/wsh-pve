@@ -63,6 +63,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `bench` | the compute loop of the batch run (`loops=`, default 4096 rounds) with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
 | `fbtest` | draw eight colour bars and a white border on `/dev/fb0` and print the mode on serial (framebuffer tier) |
+| `soundtest [hz] [ms]` | play a square wave through `/dev/dsp` (framebuffer tier, default 440 Hz for 1000 ms) |
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
 | `mandel fb` | draw the set at the native framebuffer resolution and print its iteration checksum on serial |
 | `keytest` | print Linux input codes for keyboard presses until Esc or a ten-second timeout (framebuffer tier) |
@@ -350,6 +351,51 @@ colour-bar-only builds.
 | sparc32, SS-5 | cg3 and tcx | 3,315,656 | 3,397,612 | 81,956 | 1024x768, 8 bpp, both passed |
 | sparc64, sun4u | std | 4,125,576 | 4,654,240 | 528,664 | 1280x800, 32 bpp, passed |
 | x86_64, pc | std | 1,836,032 | 2,016,256 | 180,224 | 1280x800, 32 bpp, passed |
+
+## Sound on the framebuffer tier
+
+`soundtest [hz] [ms]` accepts 1–22,050 Hz and 1–10,000 ms. It sets the PCM and available
+master mixer levels, writes signed 16-bit little-endian stereo at 44,100 frames/s and drains
+the device before reporting success. An integer phase accumulator sets the pitch. PID 1 writes
+the two sample bytes explicitly on both SPARC and x86.
+
+The sound drivers live in `kernel-fb` with the display hardware used by games. ALSA's OSS
+PCM and mixer interfaces keep setup to a few ioctls and allow a game to stream samples with
+`write`. Both codecs accept the selected format directly, so the kernel omits the OSS
+conversion plugins. AC97 uses a single PCI controller driver on pc and sun4u. Linux 7.3's
+ES1370 driver would also pull in raw MIDI.
+
+From this directory, run `python3 sound.py` after a `TIER_FB=1` build. Select one machine
+with `--arch x86_64`, `--arch sparc32` or `--arch sparc64`. The runner attaches
+`-audiodev wav,id=snd0,path=<capture.wav>` and the machine options below, waits for the
+serial shell, sends `soundtest 440 1000`, then powers off. It checks the serial result and
+QEMU exit status. On each WAV channel it measures the span of audible samples (900–1100 ms),
+requires at least 90% of that span above the silence threshold, and measures the interval
+between rising crossings (440 Hz ±3%). QEMU 11 can leave the RIFF and data lengths zero.
+The reader fills them in memory. The original WAVs and serial logs are in `out/sound/`
+locally and in the CI artifact's `sound/` directory.
+
+Paired Linux 7.3.4 builds and captures with published pve-qemu-kvm 11.1.3-4+wsh10:
+
+| Machine | Linux driver | QEMU option | `kernel-fb` before → after (bytes) | Growth | Captured tone |
+| --- | --- | --- | ---: | ---: | --- |
+| pc (x86_64) | `SND_INTEL8X0` | `-device AC97,audiodev=snd0` | 2,028,544 → 2,098,176 | +69,632 | 440.005 Hz, 1000 ms |
+| sun4u (sparc64) | `SND_INTEL8X0` | `-device AC97,audiodev=snd0` | 4,687,392 → 4,918,296 | +230,904 | 440.005 Hz, 1000 ms |
+| SS-5 (sparc32) | `SND_SUN_CS4231` | `-machine audiodev=snd0` | 3,438,612 → 3,565,840 | +127,228 | 440.074 Hz, 46 ms (failed) |
+
+The pc and sun4u reported:
+
+```text
+WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1
+```
+
+On SS-5 use the repository's pve-qemu build with APC DMA playback. On the published
+`11.1.3-4+wsh10` package, Linux 7.3.4 registers the Sun CS4231 and the first 8192-byte
+buffer reaches the WAV. Playback then stops with `WISP-SOUND v=1 ok=0 errno=5`.
+The trace shows a pending APC playback interrupt and no second buffer. OpenBIOS advertises
+`intr=9`, which Linux sun4m maps to a software interrupt. Its SBus interrupt at processor
+level 9 uses `0x39`. Linux's CS4231 handler also requires the codec's global interrupt
+status bit before acknowledging the APC. End-to-end SS-5 playback remains blocked.
 
 ## Freedoom framebuffer timedemo
 

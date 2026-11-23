@@ -231,8 +231,8 @@ class HostInit(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.binary = os.path.join(cls.tmp.name, "init-host")
-        subprocess.run([CC, "-O2", "-Wall", "-Wextra", "-Werror", '-DWISP_ARCH="host"', "-o",
-                        cls.binary, INIT_C], check=True)
+        subprocess.run([CC, "-O2", "-D_FORTIFY_SOURCE=2", "-Wall", "-Wextra", "-Werror",
+                        '-DWISP_ARCH="host"', "-o", cls.binary, INIT_C], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -279,6 +279,12 @@ class HostInit(unittest.TestCase):
         proc = self.start({"wisp": "shell"}, ["mandel", "poweroff"])
         lines = shell.split_transcript(proc.stdout.decode(), echo=False)[0][1]
         self.assertEqual([x[1:] for x in lines[:20]], golden_mandel())
+
+    def test_soundtest_invalid_arguments(self):
+        args = ["0", "22051", "440 0", "440 10001", "1x", "440 1 extra", "9" * 32]
+        proc = self.start({"wisp": "shell"}, ["soundtest " + arg for arg in args] + ["poweroff"])
+        answers = shell.split_transcript(proc.stdout.decode(), echo=False)
+        self.assertEqual([a[1] for a in answers[:-1]], [["WISP-SOUND v=1 ok=0 errno=22"]] * len(args))
 
     def test_line_editing_and_errors(self):
         script = ["  \x1b[Acrc\x08\x08\x08", "crc", "crc 0", "crc 1000001", "nosuch arg", "",
