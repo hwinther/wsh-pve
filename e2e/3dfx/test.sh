@@ -57,7 +57,8 @@
 # <guest>-serial.log, <guest>-qemu.log and <guest>-window.ppm (<guest>-screendump.ppm and the phases'
 # <guest>-<PHASE>.ppm with VNC). GALLIUM_DRIVER picks Mesa's renderer (llvmpipe by default; with
 # softpipe the Glide guest's front-buffer read counts too). GLIDE_GUEST_BENCH=<n> has each guest draw
-# <n> more frames after the check and report its frame rate. Exit 0 when every guest reports PASS and
+# <n> more frames after the check and report its frame rate (GLIDE_GUEST_BENCH_GAMMA=1: the Glide
+# guest's with its gamma ramp of 2.0 still set, headless). Exit 0 when every guest reports PASS and
 # its window (or screendump) matches; 77 when the binary has no qemu-3dfx (the optional extra is
 # missing) or, with VNC, can't render Glide offscreen yet (a binary that renders Glide but not MESA GL
 # offscreen skips the Mesa guests headless).
@@ -425,6 +426,8 @@ for guest in $GUESTS; do
 		phases="" append=""
 		if [ "$MODE" != sdl ]; then
 			append="GLIDE_GUEST_EXTRA=1"
+			# GLIDE_GUEST_BENCH_GAMMA=1: the bench with the gamma phase's ramp still set
+			[ "${GLIDE_GUEST_BENCH_GAMMA:-}" != 1 ] || append="$append GLIDE_GUEST_BENCH_GAMMA=1"
 			# The front-buffer timer came with the OpenGL offscreen code (stage 1b); an older binary
 			# (the published one, in wsh-openglide.yml) shows such a frame only at the next call
 			if strings "$QEMU" | grep -q 'rendering offscreen, EGL'; then
