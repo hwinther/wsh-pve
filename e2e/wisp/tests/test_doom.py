@@ -28,6 +28,17 @@ class GameFrame(unittest.TestCase):
                 check_frame(header + pixels)
             pixels[index] ^= 1
 
+    def test_requested_scale(self):
+        # A 1x frame centred on a 642x402 screen, checked at the scale asked for.
+        width = 642
+        row = bytes(3 * 161) + bytes(range(240)) * 4 + bytes(3 * 161)
+        border = bytes(3 * width)
+        pixels = border * 101 + row * 200 + border * 101
+        header = b"P6\n642 402\n255\n"
+        self.assertEqual(check_frame(header + pixels, 1), 1)
+        with self.assertRaisesRegex(ValueError, "doesn't fit"):
+            check_frame(header + pixels, 3)
+
     def test_firmware_colours_in_margin(self):
         margin = bytes(range(48))
         row = margin + bytes(320 * 3) + margin
@@ -57,3 +68,16 @@ class DataDisk(unittest.TestCase):
             self.assertEqual((root / "freedoom1.wad").read_bytes(), wad.read_bytes())
             self.assertEqual((root / "demo.rsp").read_text().split(),
                              ["-iwad", "/data/freedoom1.wad", "-nosound", "-timedemo", "demo1"])
+
+    def test_scale_in_response_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "input").write_bytes(b"ELF fixture")
+            (directory / "wad").write_bytes(b"IWAD fixture")
+            disk = build_disk(directory, directory / "input", directory / "wad", 1)
+            root = directory / "extracted"
+            subprocess.run(["unsquashfs", "-no-progress", "-d", root, disk], check=True,
+                           stdout=subprocess.DEVNULL)
+            self.assertEqual((root / "demo.rsp").read_text().split(),
+                             ["-iwad", "/data/freedoom1.wad", "-nosound", "-scaling", "1",
+                              "-timedemo", "demo1"])

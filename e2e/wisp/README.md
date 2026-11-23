@@ -408,7 +408,7 @@ The 28,482-byte `DEMO1` lump has a 13-byte header, 7,117 four-byte commands and 
 marker. Each boot checks that independent count, the reported FPS, the successful data mount,
 centered integer-scaled pixels and game colours in a QMP capture during playback, the
 successful child exit on serial and QEMU's exit. A matching count
-checks playback length across byte orders. Wisp boot CI runs the complete demo on pc and
+checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc and
 SS-5 cg3 on relevant PRs. It caches
 both verified archives and writes the serial logs, PPMs and timing report under `RUNNER_TEMP`.
 

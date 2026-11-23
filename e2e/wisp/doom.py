@@ -20,14 +20,19 @@ GAMETICS = 7117
 TIMED = re.compile(rb"timed (\d+) gametics in (\d+) realtics \(([\d.]+) fps\)")
 
 
-def check_frame(data):
+def check_frame(data, scale=None):
+    """Check the game frame in a screendump; scale None means the largest integer factor that fits."""
     header, dimensions, maximum, pixels = data.split(b"\n", 3)
     width, height = map(int, dimensions.split())
     if (header != b"P6" or maximum != b"255" or width < 320 or height < 200
             or len(pixels) != width * height * 3):
         raise ValueError("invalid QEMU screendump")
     # Count colours inside the game frame. Firmware text can survive in the margins.
-    scale = min(width // 320, height // 200)
+    largest = min(width // 320, height // 200)
+    if scale is None:
+        scale = largest
+    elif not 1 <= scale <= largest:
+        raise ValueError(f"scale {scale} doesn't fit {width}x{height}")
     left = (width - 320 * scale) // 2
     top = (height - 200 * scale) // 2
     colours = set()
@@ -45,7 +50,7 @@ def check_frame(data):
     raise ValueError("missing game image in the centre of the screendump")
 
 
-async def check(proc, monitor, ppm, log, boot_time):
+async def check(proc, monitor, ppm, log, boot_time, want_scale=None):
     mounted = exited = False
     started = scale = None
     result = None
@@ -68,7 +73,7 @@ async def check(proc, monitor, ppm, log, boot_time):
             finally:
                 writer.close()
                 await writer.wait_closed()
-            scale = check_frame(ppm.read_bytes())
+            scale = check_frame(ppm.read_bytes(), want_scale)
         elif started and (match := TIMED.fullmatch(line)):
             tics, real = map(int, match.groups()[:2])
             fps = float(match[3])
@@ -83,7 +88,7 @@ async def check(proc, monitor, ppm, log, boot_time):
     return (*result, started, scale)
 
 
-async def boot(arch, display, disk, dest, timeout):
+async def boot(arch, display, disk, dest, timeout, scale=None):
     machine = run.ARCHES[arch][1][1]
     stem = dest / f"{machine}-{display}"
     ppm = stem.with_suffix(".ppm")
@@ -104,7 +109,7 @@ async def boot(arch, display, disk, dest, timeout):
                                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             tics, real, fps, started, scale = await asyncio.wait_for(
-                check(proc, monitor, ppm, log, start), timeout)
+                check(proc, monitor, ppm, log, start, scale), timeout)
         finally:
             if proc.returncode is None:
                 proc.kill()
@@ -113,14 +118,16 @@ async def boot(arch, display, disk, dest, timeout):
               f"{time.monotonic() - start:.2f} s wall, {started:.2f} s boot-to-start, {scale}x, {ppm}", flush=True)
 
 
-def build_disk(directory, executable, wad):
+def build_disk(directory, executable, wad, scale=None):
     root = directory / "data"
     root.mkdir()
     binary = root / "fbdoom"
     shutil.copyfile(executable, binary)
     binary.chmod(0o755)
     shutil.copyfile(wad, root / "freedoom1.wad")
-    (root / "demo.rsp").write_text("-iwad /data/freedoom1.wad -nosound -timedemo demo1\n")
+    # fbDOOM's own -scaling; without it, the largest integer factor that fits the screen
+    scaling = f" -scaling {scale}" if scale else ""
+    (root / "demo.rsp").write_text(f"-iwad /data/freedoom1.wad -nosound{scaling} -timedemo demo1\n")
     disk = directory / "doom.squashfs"
     subprocess.run(["mksquashfs", root, disk, "-comp", "xz", "-no-xattrs", "-all-root",
                     "-noappend", "-quiet", "-no-progress"], check=True)
@@ -135,6 +142,9 @@ def main():
     parser.add_argument("--wad", required=True, type=Path)
     parser.add_argument("--output", type=Path, default=Path(run.HERE) / "out/doom")
     parser.add_argument("--timeout", type=float, default=900)
+    parser.add_argument("--scale", type=int, default=1,
+                        help="fbDOOM's frame scale: 1 (default, the fast timedemo check), 2, ...; "
+                             "0 for the largest integer factor that fits, as when playing")
     args = parser.parse_args()
     displays = framebuffer.DISPLAYS[args.arch]
     if args.display and args.display not in displays:
@@ -142,9 +152,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
-        disk = build_disk(directory, args.binary, args.wad)
+        scale = args.scale or None
+        disk = build_disk(directory, args.binary, args.wad, scale)
         for display in [args.display] if args.display else displays:
-            asyncio.run(boot(args.arch, display, disk, args.output.resolve(), args.timeout))
+            asyncio.run(boot(args.arch, display, disk, args.output.resolve(), args.timeout, scale))
 
 
 if __name__ == "__main__":
