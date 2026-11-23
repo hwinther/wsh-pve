@@ -313,12 +313,10 @@ jobs:
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
-          # pc, sun4u and virt: the SS-5 needs openbios 0034 (the interrupt Linux can use) and
-          # pve-qemu wsh/0124 (the codec's INT bit). A pull request builds QEMU with wsh/0124, but
-          # the firmware is always the published package's, which lacks 0034, so the CS4231 stops
-          # after its first DMA buffer. Add sparc32 once a published package has both.
+          # pc, sun4u, virt and the SS-5; the SS-5 needs openbios 0034 and pve-qemu wsh/0124, published
+          # in 11.1.3-4+wsh12; sound.py measures the tone as its first non-silent run
           docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
-            'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --arch aarch64 --output /results' | tee "$results/metrics.txt"
+            'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --arch aarch64 --arch sparc32 --output /results' | tee "$results/metrics.txt"
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
