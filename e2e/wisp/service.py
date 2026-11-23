@@ -17,7 +17,7 @@ import run
 import tier2
 
 
-MACHINES = {"sparc32": "sparc", "x86_64": "x86_64", "sparc64": "sparc64"}
+MACHINES = {"sparc32": "sparc", "x86_64": "x86_64", "sparc64": "sparc64", "aarch64": "aarch64"}
 LOOPBACK = "127.0.0.1"
 
 

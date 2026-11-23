@@ -52,6 +52,8 @@ DEFAULT_LOOPS = 4096
 # arch -> QEMU binary, machine arguments, memory (MiB), console argument
 ARCHES = {
     "x86_64": ("qemu-system-x86_64", ["-M", "pc"], 128, "console=ttyS0"),
+    "aarch64": ("qemu-system-aarch64", ["-M", "virt", "-cpu", "cortex-a57"], 256,
+                "console=ttyAMA0 earlycon=pl011,0x09000000"),
     "i386": ("qemu-system-i386", ["-M", "pc"], 128, "console=ttyS0"),
     "sparc32": ("qemu-system-sparc", ["-M", "SS-5"], 128, "console=ttyS0"),
     "sparc64": ("qemu-system-sparc64", ["-M", "sun4u"], 256, "console=ttyS0"),
@@ -134,7 +136,7 @@ def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, lo
     if qemu_dir:
         binary = os.path.join(qemu_dir, binary)
     if machine:
-        machine_args = ["-M", machine]
+        machine_args = ["-M", machine, *machine_args[2:]]
     append = f"{console} panic=-1"
     if loops:
         append += f" loops={loops}"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds wisp, the tiny test system, for one or more architectures:
-#   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
+#   ./build.sh [x86_64|i386|sparc32|sparc64|aarch64|all]...
 # Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, optional kernel-net and kernel-fb,
 # init (PID 1), resolved configs, sizes, and sysroot.tar.xz (the UAPI and nolibc headers init was built with,
 # for the wisp-test action's kit: kit.sh).
@@ -14,7 +14,7 @@
 #
 # Environment: KSRC (an unpacked kernel tree; default: unpack /usr/src/linux-source-*.tar.xz into
 # build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 skips
-# kernel-t2), TIER_FB (default 0; 1 adds kernel-fb on SS-5, sun4u and x86_64 pc),
+# kernel-t2), TIER_FB (default 0; 1 adds kernel-fb on SS-5, sun4u, x86_64 pc and aarch64 virt),
 # TIER_NET (default 0; 1 adds kernel-net with the tier-2 drivers and IPv4).
 set -eu
 
@@ -23,7 +23,7 @@ BUILD=${BUILD:-$HERE/build}
 OUT=${OUT:-$HERE/out}
 JOBS=${JOBS:-4}
 TIER2=${TIER2:-1}
-ALL="x86_64 i386 sparc32 sparc64"
+ALL="x86_64 i386 sparc32 sparc64 aarch64"
 
 log() { printf '%s\n' "wisp: $*" >&2; }
 
@@ -45,6 +45,10 @@ kernel_source() {
 # the compiler and flags for init.
 arch_vars() {
 	case "$1" in
+	aarch64)
+		KARCH=arm64 KCROSS=aarch64-linux-gnu- IMAGE=arch/arm64/boot/Image TARGET=Image
+		# Match the kernel page size instead of padding init to the 64 KiB linker default.
+		UCC=aarch64-linux-gnu-gcc UCFLAGS="-Wl,-z,max-page-size=4096" ;;
 	x86_64)
 		KARCH=x86_64 KCROSS= IMAGE=arch/x86/boot/bzImage TARGET=bzImage
 		UCC=gcc UCFLAGS="-m64" ;;
@@ -116,7 +120,7 @@ EOF
 	fb_size_field=
 	if [ "${TIER_FB:-0}" = 1 ] && [ "$arch" != i386 ]; then
 		case "$arch" in
-		sparc32) driver=sparc32 ;;
+		sparc32|aarch64) driver=$arch ;;
 		sparc64|x86_64) driver=bochs ;;
 		esac
 		build_kernel "$B/kbuild-t2" kernel-fb config-fb "$c1" "$c2" \
