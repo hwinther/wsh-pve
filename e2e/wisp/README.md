@@ -62,6 +62,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `info`, `uname` | architecture, kernel (`uname`), CPUs, memory total and free, uptime, PID |
 | `bench` | the compute loop of the batch run (`loops=`, default 4096 rounds) with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
+| `fbtest` | draw eight colour bars and a white border on `/dev/fb0` and print the mode on serial (framebuffer tier) |
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
 | `endian` | a small guessing game about the thing this lab tests for: a round's four bytes as they sit in memory, low address first; the right answer is the 32-bit word *this machine's* CPU reads from them, so it depends on the architecture under test (unchanged on sparc, byte-swapped on x86). `endian <hex>` guesses it, `endian` alone shows the round again. Three wrong guesses end the game; a right one scores a point and deals another round |
 | `disk [dev ...]` | the tier-2 disk check (see "Tier 2") on each device, by default the ones in `wisp_disk=` (else `sda`); prints its `WISP-DISK` line |
@@ -288,11 +289,53 @@ machine, from starting QEMU through DHCP and service startup to the serial readi
 All three returned HTTP 200 for both root requests (`request=1`, then `request=2`) and
 `bye` for `/quit`. Each printed `WISP-RUN v=1 exit=0 signal=0` and powered off.
 
-### Updating the size budget
+## Framebuffer tier
 
-In the wisp build environment, run `TIER_NET=1 ./build.sh all` with tier 2 enabled (the
+`TIER_FB=1` builds `out/<arch>/kernel-fb` and saves its resolved `config-fb` for sparc32,
+sparc64 and x86_64. The build applies the framebuffer fragments directly to tier 2. They enable
+fbdev, the framebuffer console and a single 8x8 font. Linux 7.3.4 also needs `CONFIG_PROC_FS`
+to register the framebuffer character device. Without it, the driver binds and fbcon displays
+text, but fbdev fails to create device 0 with error -19.
+
+At the serial shell, `fbtest` reads the visible mode and stride from `/dev/fb0`, hides the
+framebuffer console cursor, then writes a white border around eight vertical RGB bars. On an
+8-bit pseudocolour display it installs an eight-entry palette. For 16- and 32-bit truecolour it
+uses the driver's channel offsets and lengths. Row writes support SBus framebuffers with
+device-specific mmap offsets. The `WISP-FB` line reports the mode and whether the writes succeeded.
+
+From `e2e/wisp` inside the build image:
+
+```sh
+TIER_FB=1 ./build.sh sparc32 sparc64 x86_64
+python3 framebuffer.py
+```
+
+`framebuffer.py` drives the shell over serial, issues a QMP `screendump` while PID 1 waits at
+the prompt, checks every RGB pixel against the guest's reported dimensions and the expected
+pattern, then powers off. The PPM and serial log for each machine/display go in
+`out/framebuffer/`. Use `--arch sparc32` to run both SS-5 displays or `--output DIR` to choose
+an evidence directory. CI includes the PPMs and logs in the boot artifact.
+
+SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. Both PCI machines use `DRM_BOCHS` with
+`DRM_FBDEV_EMULATION` and QEMU's standard VGA. On pc, a comparison build with
+`SYSFB_SIMPLEFB` and `DRM_SIMPLEDRM` also passed the pixel check in the 1024x768 16-bit VESA
+mode (`vga=0x317`). With identical base options and PID 1, the compressed Bochs image was
+4,096 bytes smaller.
+
+Measured with Linux 7.3.4 and QEMU 11.1.3 under TCG. Kernel sizes are bytes.
+
+| Architecture and machine | Display | `kernel-t2` | `kernel-fb` | Increase | Verified screendump |
+| --- | --- | ---: | ---: | ---: | --- |
+| sparc32, SS-5 | cg3 and tcx | 3,311,560 | 3,463,156 | 151,596 | 1024x768, 8 bpp, both passed |
+| sparc64, sun4u | std | 4,117,384 | 4,696,192 | 578,808 | 1280x800, 32 bpp, passed |
+| x86_64, pc | std | 1,836,032 | 2,032,640 | 196,608 | 1280x800, 32 bpp, passed |
+
+## Updating the size budget
+
+In the wisp build environment, run `TIER_NET=1 TIER_FB=1 ./build.sh all` with tier 2 enabled (the
 default). Each `out/<arch>/sizes` gives the kernel, tier-2 kernel, network kernel and init
-sizes in bytes. Run `python3 size_budget.py` from this directory to check all four architectures.
+sizes in bytes, plus `kernel_fb_bytes` on the three framebuffer architectures. Run
+`python3 size_budget.py` from this directory to check all four architectures.
 Growth above 5% fails the boot workflow. A reduction greater than 5% prints a notice.
 After reviewing an intentional change, copy the new measured byte count for each affected
 field into `size-budget.json` and rerun the check.

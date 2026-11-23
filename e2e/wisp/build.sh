@@ -1,8 +1,8 @@
 #!/bin/sh
 # Builds wisp, the tiny test system, for one or more architectures:
 #   ./build.sh [x86_64|i386|sparc32|sparc64|all]...
-# Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, optional kernel-net, init (PID 1),
-# config, config-t2, sizes, and sysroot.tar.xz (the UAPI and nolibc headers init was built with,
+# Output per architecture in out/<arch>/: kernel (initramfs built in), kernel-t2, optional kernel-net and kernel-fb,
+# init (PID 1), resolved configs, sizes, and sysroot.tar.xz (the UAPI and nolibc headers init was built with,
 # for the wisp-test action's kit: kit.sh).
 #
 # Kernel: `make tinyconfig` plus config/common.config and config/<arch>.config, with the initramfs
@@ -14,7 +14,8 @@
 #
 # Environment: KSRC (an unpacked kernel tree; default: unpack /usr/src/linux-source-*.tar.xz into
 # build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 skips
-# kernel-t2), TIER_NET (default 0; 1 adds kernel-net with the tier-2 drivers and IPv4).
+# kernel-t2), TIER_FB (default 0; 1 adds kernel-fb on SS-5, sun4u and x86_64 pc),
+# TIER_NET (default 0; 1 adds kernel-net with the tier-2 drivers and IPv4).
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -73,7 +74,7 @@ build_one() {
 	SYSROOT=$B/sysroot
 	O=$OUT/$arch
 	mkdir -p "$KB" "$SYSROOT" "$O"
-	rm -f "$O/kernel-t2" "$O/config-t2" "$O/kernel-net" "$O/config-net"
+	rm -f "$O/kernel-t2" "$O/config-t2" "$O/kernel-net" "$O/config-net" "$O/kernel-fb" "$O/config-fb"
 
 	log "$arch: headers"
 	kmake headers_install INSTALL_HDR_PATH="$SYSROOT"
@@ -112,11 +113,22 @@ EOF
 			"$HERE/config/tier-net/common.config"
 		net_size_field=" kernel_net_bytes=$(wc -c < "$O/kernel-net")"
 	fi
+	fb_size_field=
+	if [ "${TIER_FB:-0}" = 1 ] && [ "$arch" != i386 ]; then
+		case "$arch" in
+		sparc32) driver=sparc32 ;;
+		sparc64|x86_64) driver=bochs ;;
+		esac
+		build_kernel "$B/kbuild-t2" kernel-fb config-fb "$c1" "$c2" \
+			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config" \
+			"$HERE/config/tier-fb/common.config" "$HERE/config/tier-fb/$driver.config"
+		fb_size_field=" kernel_fb_bytes=$(wc -c < "$O/kernel-fb")"
+	fi
 	kernel_size=$(wc -c < "$O/kernel")
 	init_size=$(wc -c < "$O/init")
 	release=$(cat "$B/kbuild/include/config/kernel.release")
-	printf 'arch=%s release=%s kernel_bytes=%s kernel_t2_bytes=%s init_bytes=%s%s\n' \
-		"$arch" "$release" "$kernel_size" "$t2_size" "$init_size" "$net_size_field" | tee "$O/sizes"
+	printf 'arch=%s release=%s kernel_bytes=%s kernel_t2_bytes=%s init_bytes=%s%s%s\n' \
+		"$arch" "$release" "$kernel_size" "$t2_size" "$init_size" "$net_size_field" "$fb_size_field" | tee "$O/sizes"
 }
 
 # build_kernel <kbuild dir> <image name> <config name> <fragments...>: tinyconfig plus the fragments

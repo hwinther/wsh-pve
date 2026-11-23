@@ -111,7 +111,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: e2e/wisp/out
-          key: wisp-kernels-net-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
 
       - name: Build the wisp image
         run: |
@@ -122,7 +122,7 @@ jobs:
       - name: Build the kernels
         if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
         run: |
-          docker run --rm -e TIER_NET=1 -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" ./build.sh all
+          docker run --rm -e TIER_NET=1 -e TIER_FB=1 -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" ./build.sh all
           cat e2e/wisp/out/*/sizes
 
       - name: Check kernel and init sizes
@@ -174,6 +174,15 @@ jobs:
           docker run --rm "${mounts[@]}" "$IMAGE" ./run.py --arch all --shell --tier2 "${args[@]}" \
             2> "$RUNNER_TEMP/wisp/table-tier2-shell.md" || rc=1
           exit "$rc"
+
+      - name: Verify framebuffer screendumps
+        run: |
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$RUNNER_TEMP/wisp:/results")
+          if [ "$QEMU_FROM" = pr ]; then
+            mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
+          fi
+          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
+            'PATH=/qemu:$PATH python3 framebuffer.py --output /results/framebuffer'
 
       - name: Boot the HTTP service
         run: |
