@@ -10,8 +10,15 @@ as pixels (Scanout, Update: a display without GL) are taken too. On SIGTERM it p
 
   dbus-listener.py ADDR OUT [DELAY_MS]
 
-Needs python3-gi (Gio); the dmabufs must be mappable (llvmpipe's, through /dev/udmabuf, are).
+A linear dmabuf (llvmpipe's, through /dev/udmabuf) is mapped and read as it is. One with another
+modifier (e.g. NVIDIA's block-linear layout) is imported through EGL instead (libEGL's device
+platform, EGL_EXT_image_dma_buf_import_modifiers) into a GL texture and read with glReadPixels;
+where that fails the listener says "pixel probes skipped", writes no frame and only counts them.
+DBUS_LISTENER_IMPORT=egl imports linear dmabufs through EGL too (that path, tested on llvmpipe).
+
+Needs python3-gi (Gio), and libEGL.so.1 for a dmabuf that isn't linear.
 """
+import ctypes
 import mmap
 import os
 import signal
@@ -64,17 +71,165 @@ DELAY = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 FOURCC = {b"XB24": (0, 1, 2), b"AB24": (0, 1, 2), b"XR24": (2, 1, 0), b"AR24": (2, 1, 0)}
 PIXMAN_X8R8G8B8, PIXMAN_A8R8G8B8 = 0x20020888, 0x20028888
 
+# DRM_FORMAT_MOD_LINEAR and DRM_FORMAT_MOD_INVALID (no explicit modifier): mapped as they are
+LINEAR = (0, 0x00ffffffffffffff)
+FORCE_EGL = os.environ.get("DBUS_LISTENER_IMPORT") == "egl"
+
+
+class EglImport:
+    """A dmabuf imported into a GL texture on an EGL device display, read with glReadPixels"""
+
+    def __init__(self):
+        self.egl = ctypes.CDLL("libEGL.so.1")
+        e = self.egl
+        vp, i, u = ctypes.c_void_p, ctypes.c_int, ctypes.c_uint
+        e.eglGetProcAddress.restype = vp
+        e.eglGetProcAddress.argtypes = [ctypes.c_char_p]
+        e.eglInitialize.argtypes = [vp, vp, vp]
+        e.eglQueryString.restype = ctypes.c_char_p
+        e.eglQueryString.argtypes = [vp, i]
+        e.eglBindAPI.argtypes = [u]
+        e.eglChooseConfig.argtypes = [vp, vp, vp, i, vp]
+        e.eglCreateContext.restype = vp
+        e.eglCreateContext.argtypes = [vp] * 4
+        e.eglMakeCurrent.argtypes = [vp] * 4
+        e.eglGetError.restype = i
+        self.query_devices = self.proc("eglQueryDevicesEXT", i, i, vp, vp)
+        self.platform_display = self.proc("eglGetPlatformDisplayEXT", vp, u, vp, vp)
+        self.create_image = self.proc("eglCreateImageKHR", vp, vp, vp, u, vp, vp)
+        self.destroy_image = self.proc("eglDestroyImageKHR", i, vp, vp)
+        self.image_target = self.proc("glEGLImageTargetTexture2DOES", None, u, vp)
+        self.gen_textures = self.proc("glGenTextures", None, i, vp)
+        self.bind_texture = self.proc("glBindTexture", None, u, u)
+        self.tex_parameteri = self.proc("glTexParameteri", None, u, u, i)
+        self.gen_framebuffers = self.proc("glGenFramebuffers", None, i, vp)
+        self.bind_framebuffer = self.proc("glBindFramebuffer", None, u, u)
+        self.framebuffer_texture = self.proc("glFramebufferTexture2D", None, u, u, u, u, i)
+        self.check_framebuffer = self.proc("glCheckFramebufferStatus", u, u)
+        self.pixel_storei = self.proc("glPixelStorei", None, u, i)
+        self.read_pixels = self.proc("glReadPixels", None, i, i, i, i, u, u, vp)
+        self.gl_error = self.proc("glGetError", u)
+        self.dpy = self.image = self.devices = self.buf = None
+        self.tex = ctypes.c_uint(0)
+        self.fbo = ctypes.c_uint(0)
+
+    def proc(self, name, res, *args):
+        addr = self.egl.eglGetProcAddress(name.encode())
+        if not addr:
+            raise OSError("no %s" % name)
+        return ctypes.CFUNCTYPE(res, *args)(addr)
+
+    def context(self, dpy):
+        """Whether dpy has a current GL context (without a surface) that imports dmabufs"""
+        e = self.egl
+        if not e.eglInitialize(dpy, None, None):
+            return False
+        exts = (e.eglQueryString(dpy, 0x3055) or b"").split()  # EGL_EXTENSIONS
+        if (b"EGL_EXT_image_dma_buf_import_modifiers" not in exts
+                or b"EGL_KHR_surfaceless_context" not in exts or not e.eglBindAPI(0x30A2)):
+            return False
+        cfg = ctypes.c_void_p(0)  # EGL_NO_CONFIG_KHR
+        if b"EGL_KHR_no_config_context" not in exts:
+            n = ctypes.c_int(0)
+            # EGL_SURFACE_TYPE EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE EGL_OPENGL_BIT
+            attrs = (ctypes.c_int * 5)(0x3033, 0x1, 0x3040, 0x8, 0x3038)
+            if (not e.eglChooseConfig(dpy, attrs, ctypes.byref(cfg), 1, ctypes.byref(n))
+                    or not n.value):
+                return False
+        ctx = e.eglCreateContext(dpy, cfg, None, (ctypes.c_int * 1)(0x3038))
+        return bool(ctx and e.eglMakeCurrent(dpy, None, None, ctx))
+
+    def attach(self, fd, w, h, stride, fourcc, modifier):
+        """Import the dmabuf fd (the caller still closes it), on the first device that takes it"""
+        # EGL_WIDTH, EGL_HEIGHT, EGL_LINUX_DRM_FOURCC_EXT, plane 0's FD, OFFSET, PITCH,
+        # MODIFIER_LO, MODIFIER_HI
+        attrs = (ctypes.c_int * 17)(0x3057, w, 0x3056, h, 0x3271, fourcc, 0x3272, fd, 0x3273, 0,
+                                    0x3274, stride, 0x3443, modifier & 0xffffffff, 0x3444,
+                                    modifier >> 32, 0x3038)
+        self.detach()
+        if self.devices is None:
+            n = ctypes.c_int(0)
+            devs = (ctypes.c_void_p * 16)()
+            if not self.query_devices(16, devs, ctypes.byref(n)):
+                raise OSError("eglQueryDevicesEXT failed")
+            self.devices = list(devs[:n.value])
+        tried = []
+        while True:
+            if self.dpy is not None:
+                # EGL_LINUX_DMA_BUF_EXT
+                self.image = self.create_image(self.dpy, None, 0x3270, None, attrs)
+                if self.image:
+                    break
+                tried.append("eglCreateImage 0x%04x" % self.egl.eglGetError())
+                self.dpy = None
+                self.tex.value = 0
+            if not self.devices:
+                raise OSError("no EGL device imports it: %s" % (", ".join(tried) or "no device"))
+            # EGL_PLATFORM_DEVICE_EXT
+            dpy = self.platform_display(0x313F, self.devices.pop(0), None)
+            if dpy and self.context(dpy):
+                self.dpy = dpy
+            else:
+                tried.append("a device without a context")
+        if not self.tex.value:
+            self.gen_textures(1, ctypes.byref(self.tex))
+            self.gen_framebuffers(1, ctypes.byref(self.fbo))
+        self.bind_texture(0x0DE1, self.tex.value)  # GL_TEXTURE_2D
+        self.tex_parameteri(0x0DE1, 0x2801, 0x2600)  # MIN_FILTER NEAREST
+        self.tex_parameteri(0x0DE1, 0x2800, 0x2600)  # MAG_FILTER NEAREST
+        self.image_target(0x0DE1, self.image)
+        self.bind_framebuffer(0x8D40, self.fbo.value)  # GL_FRAMEBUFFER
+        self.framebuffer_texture(0x8D40, 0x8CE0, 0x0DE1, self.tex.value, 0)  # COLOR_ATTACHMENT0
+        status = self.check_framebuffer(0x8D40)
+        if status != 0x8CD5:  # GL_FRAMEBUFFER_COMPLETE
+            raise OSError("framebuffer incomplete (0x%04x)" % status)
+        self.buf = (ctypes.c_ubyte * (w * h * 4))()
+
+    def read(self, w, h):
+        """The frame as RGBA rows, the dmabuf's first row first (as a mapped one)"""
+        self.pixel_storei(0x0D05, 1)  # GL_PACK_ALIGNMENT
+        self.read_pixels(0, 0, w, h, 0x1908, 0x1401, self.buf)  # GL_RGBA, GL_UNSIGNED_BYTE
+        err = self.gl_error()
+        if err:
+            raise OSError("glReadPixels 0x%04x" % err)
+        return memoryview(self.buf).cast("B")
+
+    def detach(self):
+        if self.image:
+            self.destroy_image(self.dpy, self.image)
+            self.image = None
+
+
+egl = None  # an EglImport, once a dmabuf needs one
+
 st = {"scanouts": 0, "updates": 0, "pixels": 0, "formats": set(), "first": None, "last": None}
 cur = {"map": None, "w": 0, "h": 0, "stride": 0, "rgb": (2, 1, 0), "flip": False, "dirty": False,
-       "pix": None}
+       "pix": None, "egl": False, "skip": False}
+notes = set()
+
+
+def note(msg):
+    if msg not in notes:
+        notes.add(msg)
+        print("dbus-listener: " + msg, flush=True)
 
 
 def write_frame():
     if not cur["dirty"] or not cur["w"]:
         return True
     cur["dirty"] = False
+    if cur["skip"]:
+        return True
     w, h, stride = cur["w"], cur["h"], cur["stride"]
-    src = cur["map"] if cur["map"] is not None else cur["pix"]
+    if cur["egl"]:
+        try:
+            src = egl.read(w, h)
+        except OSError as e:
+            note("the imported dmabuf can't be read (%s): pixel probes skipped" % e)
+            cur["skip"] = True
+            return True
+    else:
+        src = cur["map"] if cur["map"] is not None else cur["pix"]
     r, g, b = cur["rgb"]
     fb = bytearray(w * h * 3)
     for y in range(h):
@@ -104,8 +259,25 @@ def method(conn, sender, path, iface, name, params, inv):
                           (code.decode(errors="replace"), w, h, stride, modifier, y0_top))
         if cur["map"] is not None:
             cur["map"].close()
-        cur.update(map=mmap.mmap(fd, stride * h, mmap.MAP_SHARED, mmap.PROT_READ), w=w, h=h,
-                   stride=stride, rgb=FOURCC.get(code, (2, 1, 0)), flip=y0_top, dirty=True)
+        cur.update(map=None, w=w, h=h, stride=stride, rgb=FOURCC.get(code, (2, 1, 0)), flip=y0_top,
+                   dirty=True, egl=False, skip=False)
+        if modifier in LINEAR and not FORCE_EGL:
+            cur["map"] = mmap.mmap(fd, stride * h, mmap.MAP_SHARED, mmap.PROT_READ)
+        else:
+            global egl
+            try:
+                egl = egl or EglImport()
+                egl.attach(fd, w, h, stride, fourcc, modifier)
+                # glReadPixels: RGBA rows, tightly packed
+                cur.update(egl=True, stride=w * 4, rgb=(0, 1, 2))
+                note("modifier 0x%x: the dmabuf imported through EGL, read with glReadPixels" %
+                     modifier)
+            except OSError as e:
+                cur["skip"] = True
+                if os.path.exists(OUT):
+                    os.remove(OUT)  # not an older frame (the VGA's) in its place
+                note("modifier 0x%x: the EGL import failed (%s): frames not mapped, pixel probes "
+                     "skipped" % (modifier, e))
         os.close(fd)
     elif name == "UpdateDMABUF":
         st["updates"] += 1
@@ -119,7 +291,7 @@ def method(conn, sender, path, iface, name, params, inv):
             w, h, stride, fmt, data = args
             if cur["map"] is not None:
                 cur["map"].close()
-            cur.update(map=None, w=w, h=h, stride=stride, flip=False,
+            cur.update(map=None, w=w, h=h, stride=stride, flip=False, egl=False, skip=False,
                        pix=bytearray(bytes(data)), rgb=(2, 1, 0))
             st["formats"].add("pixels 0x%x %dx%d" % (fmt, w, h))
         else:
