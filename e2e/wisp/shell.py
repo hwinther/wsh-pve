@@ -62,6 +62,20 @@ MANDEL_X0, MANDEL_DX, MANDEL_DY = -9216, 158, 248
 MANDEL_CHARS = " .:-=+*#%@"
 
 
+def mandel_count(cx, cy):
+    x = y = n = 0
+    while n < MANDEL_ITER:
+        # Python's >> on a negative number rounds down, as gcc's arithmetic shift does
+        x2 = (x * x) >> 12
+        y2 = (y * y) >> 12
+        if x2 + y2 > 4 << 12:
+            break
+        y = ((x * y) >> 11) + cy
+        x = x2 - y2 + cx
+        n += 1
+    return n
+
+
 def mandel_rows():
     """The rows init.c's mandel prints (without the leading space): the same integer math."""
     rows = []
@@ -70,16 +84,7 @@ def mandel_rows():
         out = []
         for col in range(MANDEL_COLS):
             cx = MANDEL_X0 + col * MANDEL_DX
-            x = y = n = 0
-            while n < MANDEL_ITER:
-                # Python's >> on a negative number rounds down, as gcc's arithmetic shift does
-                x2 = (x * x) >> 12
-                y2 = (y * y) >> 12
-                if x2 + y2 > 4 << 12:
-                    break
-                y = ((x * y) >> 11) + cy
-                x = x2 - y2 + cx
-                n += 1
+            n = mandel_count(cx, cy)
             out.append("@" if n == MANDEL_ITER else MANDEL_CHARS[n * 9 // MANDEL_ITER])
         rows.append("".join(out))
     return rows
