@@ -54,7 +54,10 @@ two more exports, `getOffscreenDmabuf()` (a third renderbuffer exported once thr
 reading the frame back. Since wsh-openglide 0.6 a frame with a gamma ramp stays a dmabuf too: the
 copy is then a shader pass (front buffer into a texture, drawn through a 256x1 lookup texture) in a
 second EGL context that shares OpenGLide's objects, and the copies are finished with an EGL fence
-(`EGL_KHR_fence_sync`, a client wait) where the driver has one, `glFinish` otherwise. Two things in it are not qemu-3dfx's and might interest QEMU or Mesa
+(`EGL_KHR_fence_sync`, a client wait) where the driver has one, `glFinish` otherwise. On an
+NVIDIA GPU (proprietary driver, `nvidia_drm modeset=1`) the exported buffer has a block-linear
+modifier and the GL display imports it as such; without modesetting the export fails and the frames
+are read back (ROADMAP, Stage 2, "GPU node"). Two things in it are not qemu-3dfx's and might interest QEMU or Mesa
 people, should the owner want to mention them: QEMU's egl-headless took every dmabuf as top down
 (`egl_scanout_dmabuf()` passed `false` for `y0_top`), and an EGL platform display is one handle per
 process, so a library that calls `eglTerminate` on Mesa's surfaceless display also destroys the

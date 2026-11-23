@@ -28,8 +28,8 @@
  * a third way, with getOffscreenFrame() (what qemu-3dfx copies into the VM's console). The front
  * buffer is a framebuffer object's attachment there, so its read counts with every driver.
  * --dmabuf (with --egl) also checks the frame as a GL display gets it: through the dmabuf the
- * library exports (getOffscreenDmabuf, getOffscreenScanout), mapped and compared with the read,
- * without and with a gamma ramp (check_dmabuf).
+ * library exports (getOffscreenDmabuf, getOffscreenScanout), mapped (or, when it isn't linear,
+ * imported through EGL) and compared with the read, without and with a gamma ramp (check_dmabuf).
  *
  * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
  * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx). --check-ppm
@@ -238,6 +238,153 @@ static int check_window(const char *id, const char *ppm)
  * a gamma ramp (a blit), with grGammaCorrectionValue(2.0) and, for Glide 3, a table of a different
  * ramp per channel (grLoadGammaTable; the copy is a shader pass then, the read applies the ramp on
  * the CPU), and once more without a ramp. Needs a render node or /dev/udmabuf. */
+/* A dmabuf that isn't linear (e.g. NVIDIA's block-linear layout) can't be read through a mapping:
+ * it is imported (EGL_EXT_image_dma_buf_import_modifiers) on the library's own EGL display into a
+ * texture of a context of ours and read with glReadPixels into egl_pixels (RGBA, the dmabuf's first
+ * row first, as a mapping would have it). The library's context is made current again after each
+ * read. libEGL is dlopen()ed (glide-render links nothing but libX11 and libdl), so the EGL and GL
+ * types and enums are spelled out here. */
+typedef void *(*egl_proc_t)(const char *);
+static struct {
+	void *(*get_current_display)(void);
+	void *(*get_current_surface)(int);
+	void *(*get_current_context)(void);
+	unsigned (*make_current)(void *, void *, void *, void *);
+	int (*bind_api)(unsigned);
+	int (*query_api)(void);
+	void *(*create_context)(void *, void *, void *, const int *);
+	int (*destroy_context)(void *, void *);
+	void *(*create_image)(void *, void *, unsigned, void *, const int *);
+	int (*destroy_image)(void *, void *);
+	int (*get_error)(void);
+	const char *(*query_string)(void *, int);
+	void (*image_target)(unsigned, void *);
+	void (*gen_textures)(int, unsigned *);
+	void (*bind_texture)(unsigned, unsigned);
+	void (*tex_parameteri)(unsigned, unsigned, int);
+	void (*gen_framebuffers)(int, unsigned *);
+	void (*bind_framebuffer)(unsigned, unsigned);
+	void (*framebuffer_texture)(unsigned, unsigned, unsigned, unsigned, int);
+	unsigned (*check_framebuffer)(unsigned);
+	void (*pixel_storei)(unsigned, int);
+	void (*read_pixels)(int, int, int, int, unsigned, unsigned, void *);
+	void *dpy, *ctx, *image;
+	unsigned tex, fbo;
+} ei;
+static uint8_t *egl_pixels;
+
+static int egl_switch(int ours, void **saved)
+{
+	if (ours) {
+		saved[0] = ei.get_current_display();
+		saved[1] = ei.get_current_surface(0x3059); /* EGL_DRAW */
+		saved[2] = ei.get_current_surface(0x305A); /* EGL_READ */
+		saved[3] = ei.get_current_context();
+		saved[4] = (void *)(intptr_t)ei.query_api();
+		return ei.bind_api(0x30A2) && ei.make_current(ei.dpy, NULL, NULL, ei.ctx); /* EGL_OPENGL_API */
+	}
+	ei.bind_api((unsigned)(intptr_t)saved[4]);
+	return ei.make_current(saved[0], saved[1], saved[2], saved[3]);
+}
+
+/* 0 and why when the dmabuf can't be imported */
+static const char *egl_import(int fd, int stride, int offset, uint32_t fourcc, uint64_t modifier)
+{
+	void *egl = dlopen("libEGL.so.1", RTLD_NOW), *saved[5];
+	egl_proc_t gpa = egl ? (egl_proc_t)dlsym(egl, "eglGetProcAddress") : NULL;
+	static char why[128];
+	if (!gpa)
+		return "no libEGL.so.1";
+	/* the core EGL functions from the library, the rest (extensions, GL) through eglGetProcAddress */
+#define EI(f, name) *(void **)&ei.f = dlsym(egl, name) ? dlsym(egl, name) : gpa(name)
+	EI(get_current_display, "eglGetCurrentDisplay");
+	EI(get_current_surface, "eglGetCurrentSurface");
+	EI(get_current_context, "eglGetCurrentContext");
+	EI(make_current, "eglMakeCurrent");
+	EI(bind_api, "eglBindAPI");
+	EI(query_api, "eglQueryAPI");
+	EI(create_context, "eglCreateContext");
+	EI(destroy_context, "eglDestroyContext");
+	EI(create_image, "eglCreateImageKHR");
+	EI(destroy_image, "eglDestroyImageKHR");
+	EI(get_error, "eglGetError");
+	EI(query_string, "eglQueryString");
+	EI(image_target, "glEGLImageTargetTexture2DOES");
+	EI(gen_textures, "glGenTextures");
+	EI(bind_texture, "glBindTexture");
+	EI(tex_parameteri, "glTexParameteri");
+	EI(gen_framebuffers, "glGenFramebuffers");
+	EI(bind_framebuffer, "glBindFramebuffer");
+	EI(framebuffer_texture, "glFramebufferTexture2D");
+	EI(check_framebuffer, "glCheckFramebufferStatus");
+	EI(pixel_storei, "glPixelStorei");
+	EI(read_pixels, "glReadPixels");
+#undef EI
+	if (!ei.get_current_display || !ei.make_current || !ei.create_image || !ei.image_target || !ei.read_pixels ||
+	    !ei.query_api || !ei.check_framebuffer)
+		return "libEGL lacks an entry point";
+	ei.dpy = ei.get_current_display();
+	const char *exts = ei.dpy ? ei.query_string(ei.dpy, 0x3055) : NULL; /* EGL_EXTENSIONS */
+	if (!exts || !strstr(exts, "EGL_EXT_image_dma_buf_import_modifiers") || !strstr(exts, "EGL_KHR_surfaceless_context") ||
+	    !strstr(exts, "EGL_KHR_no_config_context"))
+		return "the library's EGL display imports no dmabuf with a modifier (or needs a surface or config)";
+	static const int none[] = {0x3038};
+	ei.ctx = ei.create_context(ei.dpy, NULL, NULL, none);
+	if (!ei.ctx || !egl_switch(1, saved)) {
+		snprintf(why, sizeof(why), "no context of our own (0x%04x)", ei.get_error());
+		return why;
+	}
+	/* EGL_WIDTH, EGL_HEIGHT, EGL_LINUX_DRM_FOURCC_EXT, plane 0's FD, OFFSET, PITCH, MODIFIER_LO, _HI */
+	const int attrs[] = {0x3057, W, 0x3056, H, 0x3271, (int)fourcc, 0x3272, fd, 0x3273, offset, 0x3274, stride,
+			     0x3443, (int)(modifier & 0xffffffff), 0x3444, (int)(modifier >> 32), 0x3038};
+	ei.image = ei.create_image(ei.dpy, NULL, 0x3270, NULL, attrs); /* EGL_LINUX_DMA_BUF_EXT */
+	unsigned status = 0;
+	if (ei.image) {
+		ei.gen_textures(1, &ei.tex);
+		ei.bind_texture(0x0DE1, ei.tex);		/* GL_TEXTURE_2D */
+		ei.tex_parameteri(0x0DE1, 0x2801, 0x2600); /* MIN_FILTER NEAREST */
+		ei.tex_parameteri(0x0DE1, 0x2800, 0x2600); /* MAG_FILTER NEAREST */
+		ei.image_target(0x0DE1, ei.image);
+		ei.gen_framebuffers(1, &ei.fbo);
+		ei.bind_framebuffer(0x8D40, ei.fbo);				  /* GL_FRAMEBUFFER */
+		ei.framebuffer_texture(0x8D40, 0x8CE0, 0x0DE1, ei.tex, 0); /* COLOR_ATTACHMENT0 */
+		status = ei.check_framebuffer(0x8D40);
+	} else
+		snprintf(why, sizeof(why), "eglCreateImage 0x%04x", ei.get_error());
+	egl_switch(0, saved);
+	if (!ei.image)
+		return why;
+	if (status != 0x8CD5) { /* GL_FRAMEBUFFER_COMPLETE */
+		snprintf(why, sizeof(why), "framebuffer incomplete (0x%04x)", status);
+		return why;
+	}
+	egl_pixels = malloc((size_t)W * H * 4);
+	return egl_pixels ? NULL : "out of memory";
+}
+
+static int egl_read(void)
+{
+	void *saved[5];
+	if (!egl_switch(1, saved))
+		return 0;
+	ei.pixel_storei(0x0D05, 1);					      /* GL_PACK_ALIGNMENT */
+	ei.read_pixels(0, 0, W, H, 0x1908, 0x1401, egl_pixels); /* GL_RGBA, GL_UNSIGNED_BYTE */
+	return egl_switch(0, saved);
+}
+
+static void egl_release(void)
+{
+	void *saved[5];
+	if (ei.image && egl_switch(1, saved)) {
+		ei.destroy_image(ei.dpy, ei.image);
+		egl_switch(0, saved);
+	}
+	if (ei.ctx)
+		ei.destroy_context(ei.dpy, ei.ctx);
+	free(egl_pixels);
+	egl_pixels = NULL;
+}
+
 #define FOURCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 
 static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, int stride, uint32_t fourcc, int fd,
@@ -256,6 +403,14 @@ static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, i
 	if (!frame(bgrx, W, H, W * 4)) {
 		fprintf(stderr, "FAIL: dmabuf %s: getOffscreenFrame\n", what);
 		return 1;
+	}
+	if (egl_pixels) {
+		/* imported, not mapped: read now that the copy is finished (glReadPixels gives RGBA) */
+		if (!egl_read()) {
+			fprintf(stderr, "FAIL: dmabuf %s: the imported dmabuf can't be read\n", what);
+			return 1;
+		}
+		map = egl_pixels, stride = W * 4, ri = 0, bi = 2;
 	}
 	sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
 	ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
@@ -309,14 +464,30 @@ static int check_dmabuf(void)
 	}
 	printf("dmabuf: fd %d, stride %d, offset %d, fourcc %.4s, modifier 0x%lx\n", fd, stride, offset,
 	       (const char *)&fourcc, modifier);
-	if (modifier != 0 || (fourcc != FOURCC('A', 'B', '2', '4') && fourcc != FOURCC('X', 'B', '2', '4') &&
-			      fourcc != FOURCC('A', 'R', '2', '4') && fourcc != FOURCC('X', 'R', '2', '4'))) {
-		printf("info: not a linear 32-bit RGB dmabuf, not mapped\n");
+	if (fourcc != FOURCC('A', 'B', '2', '4') && fourcc != FOURCC('X', 'B', '2', '4') &&
+	    fourcc != FOURCC('A', 'R', '2', '4') && fourcc != FOURCC('X', 'R', '2', '4')) {
+		printf("info: not a 32-bit RGB dmabuf (fourcc %.4s): not verified\n", (const char *)&fourcc);
 		close(fd);
 		return 0;
 	}
 	size_t len = (size_t)offset + (size_t)stride * H;
-	uint8_t *map = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+	uint8_t *map;
+	/* DRM_FORMAT_MOD_LINEAR, or DRM_FORMAT_MOD_INVALID (none given): mapped; another modifier (or
+	 * GLIDE_RENDER_IMPORT=egl, that path with llvmpipe): imported through EGL */
+	const char *env = getenv("GLIDE_RENDER_IMPORT");
+	if ((modifier != 0 && modifier != 0x00ffffffffffffffUL) || (env && !strcmp(env, "egl"))) {
+		const char *why = egl_import(fd, stride, offset, fourcc, modifier);
+		if (why) {
+			printf("info: modifier 0x%lx: not verified (the EGL import failed: %s)\n", modifier, why);
+			egl_release();
+			close(fd);
+			return 0;
+		}
+		printf("dmabuf: modifier 0x%lx, imported through EGL and read with glReadPixels\n", modifier);
+		map = egl_pixels;
+		offset = 0;
+	} else
+		map = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
 	if (map == MAP_FAILED) {
 		perror("FAIL: mmap of the dmabuf");
 		close(fd);
@@ -342,7 +513,10 @@ static int check_dmabuf(void)
 	}
 	gamma(1.0f);
 	failed += dmabuf_compare("the ramp reset", 0x000080, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
-	munmap(map, len);
+	if (egl_pixels)
+		egl_release();
+	else
+		munmap(map, len);
 	close(fd);
 	return failed;
 }

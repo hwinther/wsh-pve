@@ -40,11 +40,12 @@
 # screendump has no surface during a GL scanout). With QEMU_3DFX_DMABUF=0 in the environment both
 # guests must be read back instead.
 # GLIDE_DISPLAY=dbus does the same with `-display dbus,gl=on` on a dbus-daemon of its own and no VNC:
-# dbus-listener.py registers on console 0, maps each dmabuf QEMU sends and writes the newest frame,
-# which is what the probes are checked in (DBUS_DELAY_MS delays its replies, during which QEMU keeps
-# the console gl-blocked and qemu-3dfx holds frames back). QEMU's EGL display needs a render node, or
-# /dev/udmabuf for Mesa's surfaceless platform (docker run --device /dev/udmabuf); without either the
-# run is skipped (77).
+# dbus-listener.py registers on console 0, maps each dmabuf QEMU sends (or, with a modifier that
+# isn't linear, imports it through EGL) and writes the newest frame, which is what the probes are
+# checked in; where it can do neither it says so and the probes are skipped (DBUS_DELAY_MS delays
+# its replies, during which QEMU keeps the console gl-blocked and qemu-3dfx holds frames back).
+# QEMU's EGL display needs a render node, or /dev/udmabuf for Mesa's surfaceless platform (docker
+# run --device /dev/udmabuf); without either the run is skipped (77).
 #
 # /src is this repository with submodules/qemu-3dfx checked out (the guest wrapper's source and the
 # mesapt headers, at the commit the published binary was built from). Without a .deb argument ("-")
@@ -126,8 +127,10 @@ if [ "$MODE" != sdl ] && ! grep -aq 'offscreen %dx%d, frames to' "$QEMU"; then
 	exit 77
 fi
 # egl: QEMU's own EGL display needs a render node, or (the 3dfx binary since stage 2) Mesa's
-# surfaceless platform, whose llvmpipe passes dmabufs through /dev/udmabuf
-if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && ! grep -aq 'as a dmabuf (no readback)' "$QEMU"; then
+# surfaceless platform, whose llvmpipe passes dmabufs through /dev/udmabuf. The gate is the
+# printf format of the scanout's log line: the constant "...as a dmabuf (no readback)" is copied
+# with an inlined memcpy (glib's g_strdup), so the binary may hold it only in overlapping pieces
+if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && ! grep -aq 'dmabuf scanout: fourcc %' "$QEMU"; then
 	echo "SKIP: $QEMU has no dmabuf scanout for qemu-3dfx yet"
 	exit 77
 fi
@@ -268,6 +271,10 @@ screendump() {
 	sleep 0.2
 	[ -s "$1" ]
 }
+# dbus: the listener couldn't map or import the frames' dmabuf (a modifier without an EGL import):
+# it says so and writes no frame until the console has pixels again (the VGA once the window has
+# closed), so the frame's and the phases' probes are skipped, not failed
+dbus_unmapped() { [ "$MODE" = dbus ] && grep -q 'pixel probes skipped' "$OUT/$name-dbus.log" 2> /dev/null; }
 ppm_size() { head -c 20 "$1" | tr '\n' ' ' | awk '{ print $2 "x" $3 }'; }
 # ppm_pixel FILE X Y: the pixel's colour as rrggbb, from a P6 image as QEMU's screendump writes it
 # (three header lines: "P6", "<width> <height>", "255")
@@ -337,6 +344,8 @@ run_guest() {
 				fi
 			elif screendump "$OUT/$name-screendump.ppm" && "$work/glide-render" --check-ppm "$OUT/$name-screendump.ppm"; then
 				window_ok=yes
+			elif dbus_unmapped; then
+				window_ok=skipped
 			fi
 		fi
 		for phase in $phases; do
@@ -347,6 +356,10 @@ run_guest() {
 			sleep 1 # the guest holds it for 3 s
 			# want: RRGGBB at the top left (10, 10), or RRGGBB@X/Y probes separated by commas
 			got=none good=0
+			if dbus_unmapped; then
+				phases_report="$phases_report skipped:$key"
+				continue
+			fi
 			if screendump "$OUT/$name-$key.ppm"; then
 				got="" good=1
 				for probe in $(printf '%s' "$want" | tr , ' '); do
@@ -387,7 +400,11 @@ run_guest() {
 	if [ "$MODE" = sdl ]; then
 		[ "$window_ok" = yes ] || fail "$name: the VM's window doesn't show the frame (${window_ok:-never captured})"
 	else
-		[ "$window_ok" = yes ] || fail "$name: the VM's console (screendump) doesn't show the frame (${window_ok:-never captured})"
+		if [ "$window_ok" = skipped ]; then
+			echo "NOTICE: $name: the D-Bus listener couldn't read the frames' dmabuf: pixel probes skipped"
+		else
+			[ "$window_ok" = yes ] || fail "$name: the VM's console (screendump) doesn't show the frame (${window_ok:-never captured})"
+		fi
 		grep -q "$prefix: offscreen [0-9]" "$qlog" || fail "$name: QEMU didn't render offscreen"
 		# after the window: the VGA's picture (the Glide guest's 720x400 text mode, the Mesa guest's
 		# cleared 640x480 VBE mode), not the frame (its dark blue clear at the top left)
@@ -480,9 +497,10 @@ for guest in $GUESTS; do
 				*) echo "ok: glide: frames to the console as a dmabuf" ;;
 				esac
 				if [ "$MODE" = dbus ]; then
-					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
+					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*[XA]B24 640x480" \
 						"$OUT/glide-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
-					echo "ok: glide: the D-Bus listener mapped the frames' dmabuf"
+					echo "ok: glide: the D-Bus listener got the frames' dmabuf"
+					grep "dbus-listener: modifier" "$OUT/glide-dbus.log" || true
 				fi
 			else
 				echo "info: this wsh-openglide exports no dmabuf (the frames are read back)"
@@ -515,9 +533,10 @@ for guest in $GUESTS; do
 				echo "ok: mesa: frames to the console as a dmabuf (the gamma phase's too)"
 				grep "mesapt: dmabuf scanout: the guest.s frames and the copies are finished with" "$OUT/mesa-qemu.log" || true
 				if [ "$MODE" = dbus ]; then
-					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*XB24 640x480" \
+					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*[XA]B24 640x480" \
 						"$OUT/mesa-dbus.log" || fail "mesa: the D-Bus listener got no 640x480 frame as a dmabuf"
-					echo "ok: mesa: the D-Bus listener mapped the frames' dmabuf"
+					echo "ok: mesa: the D-Bus listener got the frames' dmabuf"
+					grep "dbus-listener: modifier" "$OUT/mesa-dbus.log" || true
 				fi
 			fi
 		else
