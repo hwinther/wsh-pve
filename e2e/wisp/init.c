@@ -65,6 +65,7 @@
 #include <linux/input.h>
 #include <linux/ioctl.h>
 #include <linux/reboot.h>
+#include <linux/soundcard.h>
 #include <linux/sysinfo.h>
 
 #ifndef WISP_ARCH
@@ -1009,6 +1010,7 @@ static void cmd_help(const char *arg)
 	       "  bench           the CRC-32 compute loop (%u rounds) with its time\n"
 	       "  crc <n>         the loop's checksum after n rounds\n"
 	       "  fbtest          draw eight colour bars on /dev/fb0\n"
+	       "  soundtest [hz] [ms]  play a square wave (default 440 Hz, 1000 ms)\n"
 	       "  keytest         read keyboard presses until Esc or a 10-second timeout\n"
 	       "  mandel fb       draw the Mandelbrot set on /dev/fb0\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
@@ -1212,6 +1214,99 @@ static int keyboard_fd(void)
 	return -1;
 }
 
+/* Consume one optional, bounded decimal argument. */
+static int sound_arg(const char **arg, int fallback, int limit)
+{
+	const char *p = *arg;
+	int n = 0;
+
+	while (*p == ' ')
+		p++;
+	if (!*p)
+		return fallback;
+	while (*p >= '0' && *p <= '9') {
+		n = n * 10 + (*p++ - '0');
+		if (n > limit)
+			return -1;
+	}
+	while (*p == ' ')
+		p++;
+	*arg = p;
+	return n;
+}
+
+static void cmd_soundtest(const char *arg)
+{
+	const int rate = 44100;
+	int hz = sound_arg(&arg, 440, rate / 2);
+	int ms = sound_arg(&arg, 1000, 10000);
+	int frames, done = 0, phase = 0, fd = -1, err = EINVAL;
+	int fmt = AFMT_S16_LE, speed = rate, channels = 2;
+	int mask, level = 0x6464;
+	unsigned char samples[1024];
+
+	if (hz <= 0 || ms <= 0 || *arg)
+		goto fail;
+	frames = rate * ms / 1000;
+	mount_dev();
+	fd = open("/dev/mixer", O_RDWR);
+	if (fd < 0 || ioctl(fd, SOUND_MIXER_READ_DEVMASK, &mask) < 0 ||
+	    ioctl(fd, SOUND_MIXER_WRITE_PCM, &level) < 0)
+		goto io_error;
+	level = 0x6464;
+	if ((mask & SOUND_MASK_VOLUME) && ioctl(fd, SOUND_MIXER_WRITE_VOLUME, &level) < 0)
+		goto io_error;
+	close(fd);
+	fd = open("/dev/dsp", O_WRONLY);
+	if (fd < 0 || ioctl(fd, SNDCTL_DSP_SETFMT, &fmt) < 0 ||
+	    ioctl(fd, SNDCTL_DSP_CHANNELS, &channels) < 0 ||
+	    ioctl(fd, SNDCTL_DSP_SPEED, &speed) < 0)
+		goto io_error;
+	if (fmt != AFMT_S16_LE || channels != 2 || speed != rate)
+		goto fail;
+	while (done < frames) {
+		int n = frames - done, i, off = 0;
+
+		if (n > (int)sizeof(samples) / 4)
+			n = sizeof(samples) / 4;
+		for (i = 0; i < n; i++) {
+			/* +/-8192 in little-endian byte order on both channels. */
+			samples[4*i] = samples[4*i+2] = 0;
+			samples[4*i+1] = samples[4*i+3] = phase < rate / 2 ? 0x20 : 0xe0;
+			phase += hz;
+			if (phase >= rate)
+				phase -= rate;
+		}
+		while (off < n * 4) {
+			ssize_t written = write(fd, samples + off, n * 4 - off);
+
+			if (written < 0 && errno == EINTR)
+				continue;
+			if (written < 0)
+				goto io_error;
+			if (!written) {
+				err = EIO;
+				goto fail;
+			}
+			off += written;
+		}
+		done += n;
+	}
+	if (ioctl(fd, SNDCTL_DSP_SYNC, 0) < 0)
+		goto io_error;
+	close(fd);
+	printf("WISP-SOUND v=1 dev=/dev/dsp rate=%d fmt=s16le ch=2 hz=%d ms=%d frames=%d ok=1\n",
+	       rate, hz, ms, frames);
+	return;
+
+io_error:
+	err = errno;
+fail:
+	if (fd >= 0)
+		close(fd);
+	printf("WISP-SOUND v=1 ok=0 errno=%d\n", err);
+}
+
 static void cmd_keytest(void)
 {
 	struct input_event ev;
@@ -1291,7 +1386,7 @@ static void cmd_reboot(const char *arg)
  */
 static const char command_names[] =
 	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0"
-	"endian\0fbtest\0keytest\0";
+	"endian\0fbtest\0keytest\0soundtest\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -1319,6 +1414,7 @@ static void run_command(const char *cmd, const char *arg)
 	case 13: cmd_endian(arg); break;
 	case 14: draw_fb(0); break;
 	case 15: cmd_keytest(); break;
+	case 16: cmd_soundtest(arg); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }

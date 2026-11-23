@@ -248,6 +248,22 @@ jobs:
           done
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Capture and measure the soundtest tone
+        run: |
+          set -o pipefail
+          results="$RUNNER_TEMP/wisp/sound"
+          mkdir -p "$results"
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$results:/results")
+          if [ "$QEMU_FROM" = pr ]; then
+            mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
+          fi
+          # pc and sun4u only: on the SS-5 the CS4231 stops after its first DMA buffer, because
+          # OpenBIOS gives the codec node an interrupt Linux maps to a software interrupt
+          # (README, "Sound"); add sparc32 once the firmware fix is in the package
+          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
+            'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --output /results' | tee "$results/metrics.txt"
+          cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
