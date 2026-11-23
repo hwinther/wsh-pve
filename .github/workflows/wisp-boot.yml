@@ -179,14 +179,15 @@ jobs:
 
       - name: Verify colour bars, Mandelbrot screendumps and keyboard input
         run: |
-          mkdir -p e2e/wisp/out/framebuffer
-          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$PWD/e2e/wisp/out/framebuffer:/wisp/out/framebuffer")
+          # e2e/wisp/out belongs to root (the kernel build's container): write the evidence to RUNNER_TEMP
+          mkdir -p "$RUNNER_TEMP/wisp/framebuffer"
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$RUNNER_TEMP/wisp/framebuffer:/results")
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
           rc=0
-          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec 'PATH=/qemu:$PATH python3 framebuffer.py' || rc=1
-          tar -czf "$RUNNER_TEMP/wisp/framebuffer.tar.gz" -C e2e/wisp/out framebuffer
+          docker run --rm "${mounts[@]}" "$IMAGE" sh -ec 'PATH=/qemu:$PATH python3 framebuffer.py --output /results' || rc=1
+          tar -czf "$RUNNER_TEMP/wisp/framebuffer.tar.gz" -C "$RUNNER_TEMP/wisp" framebuffer
           exit "$rc"
 
       - name: Boot the HTTP service
