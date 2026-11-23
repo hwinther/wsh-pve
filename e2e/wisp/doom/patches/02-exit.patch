@@ -1,0 +1,28 @@
+Return success after a timedemo and fail promptly on engine errors.
+
+--- a/fbdoom/g_game.c
++++ b/fbdoom/g_game.c
+@@ -2262,8 +2262,9 @@
+         timingdemo = false;
+         demoplayback = false;
+ 
+-	I_Error ("timed %i gametics in %i realtics (%f fps)",
++	printf ("timed %i gametics in %i realtics (%f fps)\n",
+                  gametic, realtics, fps);
++        exit(0);
+     } 
+ 	 
+     if (demoplayback) 
+--- a/fbdoom/i_system.c
++++ b/fbdoom/i_system.c
+@@ -460,9 +460,7 @@
+ 
+     exit(-1);
+ #else
+-    while (true)
+-    {
+-    }
++    exit(EXIT_FAILURE);
+ #endif
+ }
+ 

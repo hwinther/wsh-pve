@@ -1,0 +1,93 @@
+Enable the upstream response-file reader to keep the firmware command line short.
+
+--- a/fbdoom/m_argv.c
++++ b/fbdoom/m_argv.c
+@@ -74,9 +74,8 @@
+ 
+ static void LoadResponseFile(int argv_index)
+ {
+-#if ORIGCODE
+     FILE *handle;
+-    int size;
++    long size;
+     char *infile;
+     char *file;
+     char *response_filename;
+@@ -91,10 +90,7 @@
+ 
+     if (handle == NULL)
+     {
+-        printf ("\nNo such response file!");
+-#if ORIGCODE
+-        exit(1);
+-#endif
++        I_Error("Cannot open response file %s", response_filename);
+     }
+ 
+     printf("Found response file %s!\n", response_filename);
+@@ -106,7 +102,11 @@
+     // at the end of the response file, in which case a '\0' will be
+     // needed.
+ 
++    if (size < 0 || size > 65535 || myargc >= MAXARGVS)
++        I_Error("Response file too large");
+     file = malloc(size + 1);
++    if (!file)
++        I_Error("Cannot allocate response file");
+ 
+     i = 0;
+ 
+@@ -114,7 +114,7 @@
+     {
+         k = fread(file + i, 1, size - i, handle);
+ 
+-        if (k < 0)
++        if (k == 0)
+         {
+             I_Error("Failed to read full contents of '%s'", response_filename);
+         }
+@@ -127,6 +127,8 @@
+     // Create new arguments list array
+ 
+     newargv = malloc(sizeof(char *) * MAXARGVS);
++    if (!newargv)
++        I_Error("Cannot allocate response arguments");
+     newargc = 0;
+     memset(newargv, 0, sizeof(char *) * MAXARGVS);
+ 
+@@ -145,7 +147,7 @@
+     {
+         // Skip past space characters to the next argument
+ 
+-        while(k < size && isspace((int)infile[k]))
++        while(k < size && isspace((unsigned char)infile[k]))
+         {
+             ++k;
+         }
+@@ -154,6 +156,9 @@
+         {
+             break;
+         }
++
++        if (newargc + (myargc - argv_index - 1) >= MAXARGVS - 1)
++            I_Error("Too many response arguments");
+ 
+         // If the next argument is enclosed in quote marks, treat
+         // the contents as a single argument.  This allows long filenames
+@@ -190,7 +195,7 @@
+ 
+             newargv[newargc++] = &infile[k];
+ 
+-            while(k < size && !isspace((int)infile[k]))
++            while(k < size && !isspace((unsigned char)infile[k]))
+             {
+                 ++k;
+             }
+@@ -225,7 +230,6 @@
+         printf("'%s'\n", myargv[k]);
+     }
+ #endif
+-#endif
+ }
+ 
+ //
