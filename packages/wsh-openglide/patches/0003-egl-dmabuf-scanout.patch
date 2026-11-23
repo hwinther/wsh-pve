@@ -11,10 +11,15 @@ both EGL displays share, with no copy through system memory:
   node; without the extension it returns 0 and says why.
 - getOffscreenScanout() blits the front buffer into it (unscaled and unflipped, which llvmpipe
   does as a memory copy; the rows stay bottom up, which the host program tells its display), and
-  finishes the GL work, so the display can read it from its own context and thread at once. It
-  refuses (returns 0) while a gamma ramp is set: the caller reads that frame back with
-  getOffscreenFrame(), which applies the ramp. A buffer of its own, so that the next swap can't
-  change a frame the display still reads.
+  finishes the GL work (an EGL fence waited on, EGL_KHR_fence_sync, else glFinish), so the display
+  can read it from its own context and thread at once. A buffer of its own, so that the next swap
+  can't change a frame the display still reads.
+- While a gamma ramp is set (grGammaCorrectionValue, grLoadGammaTable) the copy applies it, in the
+  same rows: a context of its own that shares OpenGLide's objects (so none of OpenGLide's state is
+  touched) copies the front buffer into a texture and draws it into the scanout buffer through a
+  256x1 lookup texture (a GLSL 1.20 shader, the same lookup getOffscreenFrame applies on the CPU).
+  Only if that pass can't be had (no context, no shader) does getOffscreenScanout() refuse (returns
+  0) a frame with a ramp: the caller then reads it back with getOffscreenFrame().
 
 The scanout buffer goes with the window (EGLFinaliseWindow). Nothing changes for a host program
 that doesn't call the new exports.
@@ -28,7 +33,7 @@ For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit ups
 after 0002-egl-offscreen.patch.
 ---
 diff --git a/openglide/platform/linux/egl.cpp b/openglide/platform/linux/egl.cpp
-index f3237c2..2067eb9 100644
+index f3237c2..a6cb3a7 100644
 --- a/openglide/platform/linux/egl.cpp
 +++ b/openglide/platform/linux/egl.cpp
 @@ -22,6 +22,8 @@
@@ -40,15 +45,43 @@ index f3237c2..2067eb9 100644
  #include <EGL/egl.h>
  #include <EGL/eglext.h>
  
-@@ -77,6 +79,7 @@ static EGLContext egl_ctx = EGL_NO_CONTEXT;
+@@ -75,8 +77,12 @@ FBO_FUNCS(FBO_DECL)
+ static EGLDisplay egl_dpy = EGL_NO_DISPLAY;
+ static EGLContext egl_ctx = EGL_NO_CONTEXT;
  static EGLSurface egl_pbuf = EGL_NO_SURFACE;
++static EGLConfig egl_cfg;
  static GLuint fbo, rb_color[2], rb_depth;
  static int fbo_w, fbo_h;
 +static void destroy_scanout(void);
++static void destroy_gamma_ctx(void);
++static int fence_state; /* finish_gl: 0 not decided yet, 1 an EGL fence, -1 glFinish */
  
  static bool has_ext(const char *list, const char *ext)
  {
-@@ -258,6 +261,7 @@ void EGLFinaliseWindow(void)
+@@ -162,12 +168,13 @@ static bool create_fbo(int width, int height)
+ //* program reads (getOffscreenFrame), on the CPU, only while it isn't the identity.
+ //*************************************************
+ static unsigned char gamma_lut[3][256];
+-static bool gamma_on;
++static bool gamma_on, gamma_lut_dirty;
+ 
+ static void gamma_ramp(const unsigned short *r, const unsigned short *g, const unsigned short *b)
+ {
+     const unsigned short *ramp[3] = { r, g, b };
+     gamma_on = false;
++    gamma_lut_dirty = true;
+     for (int c = 0; c < 3; c++)
+         for (int i = 0; i < 256; i++) {
+             gamma_lut[c][i] = (unsigned char)(ramp[c]? (ramp[c][i] >> 8):i);
+@@ -223,6 +230,7 @@ bool EGLInitialiseWindow(int width, int height)
+         EGLFinaliseWindow();
+         return false;
+     }
++    egl_cfg = cfg;
+     /* No version or profile asked for: a compatibility context, which OpenGLide's fixed-function
+      * rendering needs */
+     egl_ctx = eglCreateContext(egl_dpy, cfg, EGL_NO_CONTEXT, NULL);
+@@ -258,6 +266,7 @@ void EGLFinaliseWindow(void)
      if (egl_dpy == EGL_NO_DISPLAY)
          return;
      if (egl_ctx != EGL_NO_CONTEXT && eglGetCurrentContext() == egl_ctx) {
@@ -56,7 +89,13 @@ index f3237c2..2067eb9 100644
          if (fbo) {
              pBindFramebuffer(E_FRAMEBUFFER, 0);
              pDeleteFramebuffers(1, &fbo);
-@@ -270,7 +274,10 @@ void EGLFinaliseWindow(void)
+@@ -266,11 +275,16 @@ void EGLFinaliseWindow(void)
+         }
+         eglMakeCurrent(egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+     }
++    destroy_gamma_ctx();
++    fence_state = 0;
+     if (egl_ctx != EGL_NO_CONTEXT)
          eglDestroyContext(egl_dpy, egl_ctx);
      if (egl_pbuf != EGL_NO_SURFACE)
          eglDestroySurface(egl_dpy, egl_pbuf);
@@ -68,7 +107,7 @@ index f3237c2..2067eb9 100644
      egl_dpy = EGL_NO_DISPLAY;
      egl_ctx = EGL_NO_CONTEXT;
      egl_pbuf = EGL_NO_SURFACE;
-@@ -364,4 +371,141 @@ extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
+@@ -364,4 +378,360 @@ extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
      return 1;
  }
  
@@ -81,14 +120,230 @@ index f3237c2..2067eb9 100644
 +//* framebuffer blit of the front buffer, unscaled and unflipped (llvmpipe then copies memory), so
 +//* the rows are in OpenGL's order, bottom up: the display is told so (QEMU's y0_top). A separate
 +//* buffer, not the front buffer itself, so that the next swap can't change a frame the display
-+//* still reads. While a gamma ramp is set the copy is refused (it would need a shader), and the
-+//* host program reads that frame back with getOffscreenFrame instead.
++//* still reads. While a gamma ramp is set the copy is a shader pass instead (scan_gamma: the
++//* front buffer through a 256-entry lookup per channel, the same lookup as getOffscreenFrame
++//* applies), in the same rows; only if that pass can't be had is the copy refused, and the host
++//* program reads that frame back with getOffscreenFrame.
 +//*************************************************
 +static GLuint fbo_scan, rb_scan;
 +static EGLImageKHR scan_img = EGL_NO_IMAGE_KHR;
 +
++//*************************************************
++//* The GL work so far finished, before another context or the display reads its result: an EGL
++//* fence (EGL_KHR_fence_sync) waited on, else glFinish. Same rendering context, same thread.
++//*************************************************
++static PFNEGLCREATESYNCKHRPROC pCreateSyncKHR;
++static PFNEGLCLIENTWAITSYNCKHRPROC pClientWaitSyncKHR;
++static PFNEGLDESTROYSYNCKHRPROC pDestroySyncKHR;
++
++static void finish_gl(void)
++{
++    if (!fence_state) {
++        if (has_ext(eglQueryString(egl_dpy, EGL_EXTENSIONS), "EGL_KHR_fence_sync")) {
++            pCreateSyncKHR = (PFNEGLCREATESYNCKHRPROC) eglGetProcAddress("eglCreateSyncKHR");
++            pClientWaitSyncKHR = (PFNEGLCLIENTWAITSYNCKHRPROC) eglGetProcAddress("eglClientWaitSyncKHR");
++            pDestroySyncKHR = (PFNEGLDESTROYSYNCKHRPROC) eglGetProcAddress("eglDestroySyncKHR");
++        }
++        fence_state = (pCreateSyncKHR && pClientWaitSyncKHR && pDestroySyncKHR)? 1:-1;
++        fprintf(stderr, "Info: EGL offscreen: the scanout copies are finished with %s\n",
++            (fence_state > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)");
++    }
++    if (fence_state > 0) {
++        EGLSyncKHR sync = pCreateSyncKHR(egl_dpy, EGL_SYNC_FENCE_KHR, NULL);
++        if (sync != EGL_NO_SYNC_KHR) {
++            EGLint r = pClientWaitSyncKHR(egl_dpy, sync, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, EGL_FOREVER_KHR);
++            pDestroySyncKHR(egl_dpy, sync);
++            if (r == EGL_CONDITION_SATISFIED_KHR)
++                return;
++        }
++    }
++    glFinish();
++}
++
++//*************************************************
++//* Gamma in the scanout copy. The pass runs in a context of its own (gamma_ctx), which shares
++//* OpenGLide's objects (the front buffer and the scanout buffer are renderbuffers) but has its own
++//* state, so none of OpenGLide's (bound textures and units, enables, blend, depth, viewport,
++//* client arrays) has to be saved and put back; it costs two eglMakeCurrent per frame with a ramp,
++//* and finishing OpenGLide's rendering first, as another context reads it. The front buffer is
++//* copied into a texture, then a triangle over the whole scanout buffer is drawn through a 256x1
++//* lookup texture (a GLSL 1.20 shader, mesapt's in qemu-3dfx), unflipped: the rows stay bottom up.
++//*************************************************
++#define SHADER_FUNCS(X) \
++    X(void, ActiveTexture, (GLenum)) \
++    X(void, AttachShader, (GLuint, GLuint)) \
++    X(void, BindAttribLocation, (GLuint, GLuint, const char *)) \
++    X(void, CompileShader, (GLuint)) \
++    X(GLuint, CreateProgram, (void)) \
++    X(GLuint, CreateShader, (GLenum)) \
++    X(void, DeleteProgram, (GLuint)) \
++    X(void, DeleteShader, (GLuint)) \
++    X(void, EnableVertexAttribArray, (GLuint)) \
++    X(void, GetProgramiv, (GLuint, GLenum, GLint *)) \
++    X(GLint, GetUniformLocation, (GLuint, const char *)) \
++    X(void, LinkProgram, (GLuint)) \
++    X(void, ShaderSource, (GLuint, GLsizei, const char *const *, const GLint *)) \
++    X(void, Uniform1i, (GLint, GLint)) \
++    X(void, UseProgram, (GLuint)) \
++    X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void *))
++SHADER_FUNCS(FBO_DECL)
++
++#define E_FRAGMENT_SHADER 0x8B30
++#define E_VERTEX_SHADER   0x8B31
++#define E_LINK_STATUS     0x8B82
++#define E_TEXTURE0        0x84C0
++#define E_CLAMP_TO_EDGE   0x812F
++
++static EGLContext gamma_ctx = EGL_NO_CONTEXT;
++static GLuint gamma_read_fbo, gamma_draw_fbo, gamma_prog, gamma_tex[2]; /* frame, lookup */
++static bool gamma_failed;
++
++static void destroy_gamma_ctx(void)
++{
++    // the program and textures are shared objects: deleted with OpenGLide's context current
++    if (gamma_prog && egl_ctx != EGL_NO_CONTEXT && eglGetCurrentContext() == egl_ctx) {
++        pDeleteProgram(gamma_prog);
++        glDeleteTextures(2, gamma_tex);
++    }
++    if (gamma_ctx != EGL_NO_CONTEXT)
++        eglDestroyContext(egl_dpy, gamma_ctx);
++    gamma_ctx = EGL_NO_CONTEXT;
++    gamma_read_fbo = gamma_draw_fbo = gamma_prog = gamma_tex[0] = gamma_tex[1] = 0;
++    gamma_failed = false;
++}
++
++/* With gamma_ctx current: its framebuffers, the program and the textures; false when they
++ * can't be had */
++static bool gamma_init(void)
++{
++#define SHADER_LOAD(ret, name, args) \
++    p##name = (ret (*) args) eglGetProcAddress("gl" #name); \
++    if (!p##name) { fprintf(stderr, "Error: EGL offscreen: no gl%s for the gamma pass\n", #name); return false; }
++    SHADER_FUNCS(SHADER_LOAD)
++    /* a triangle over the whole viewport; t: the texel centres of the frame, unflipped */
++    static const char *vs =
++        "#version 120\n"
++        "attribute vec2 p;\n"
++        "varying vec2 t;\n"
++        "void main() { t = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }\n";
++    /* an 8-bit channel value v as the centre of lut's texel v */
++    static const char *fs =
++        "#version 120\n"
++        "uniform sampler2D frame, lut;\n"
++        "varying vec2 t;\n"
++        "void main() {\n"
++        "    vec3 c = texture2D(frame, t).rgb * (255.0 / 256.0) + (0.5 / 256.0);\n"
++        "    gl_FragColor = vec4(texture2D(lut, vec2(c.r, 0.5)).r,\n"
++        "        texture2D(lut, vec2(c.g, 0.5)).g, texture2D(lut, vec2(c.b, 0.5)).b, 1.0);\n"
++        "}\n";
++    static const GLfloat tri[] = { -1, -1, 3, -1, -1, 3 };
++    GLuint sh[2];
++    GLint linked = 0;
++
++    pGenFramebuffers(1, &gamma_read_fbo);
++    pBindFramebuffer(E_READ_FRAMEBUFFER, gamma_read_fbo);
++    pFramebufferRenderbuffer(E_READ_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_color[1]);
++    glReadBuffer(E_COLOR_ATTACHMENT0);
++    pGenFramebuffers(1, &gamma_draw_fbo);
++    pBindFramebuffer(E_DRAW_FRAMEBUFFER, gamma_draw_fbo);
++    pFramebufferRenderbuffer(E_DRAW_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan);
++    glDrawBuffer(E_COLOR_ATTACHMENT0);
++    if (pCheckFramebufferStatus(E_READ_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE ||
++        pCheckFramebufferStatus(E_DRAW_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE) {
++        fprintf(stderr, "Error: EGL offscreen: the gamma pass's framebuffers are incomplete\n");
++        return false;
++    }
++    gamma_prog = pCreateProgram();
++    sh[0] = pCreateShader(E_VERTEX_SHADER);
++    sh[1] = pCreateShader(E_FRAGMENT_SHADER);
++    pShaderSource(sh[0], 1, &vs, NULL);
++    pShaderSource(sh[1], 1, &fs, NULL);
++    for (int i = 0; i < 2; i++) {
++        pCompileShader(sh[i]);
++        pAttachShader(gamma_prog, sh[i]);
++        pDeleteShader(sh[i]);
++    }
++    pBindAttribLocation(gamma_prog, 0, "p");
++    pLinkProgram(gamma_prog);
++    pGetProgramiv(gamma_prog, E_LINK_STATUS, &linked);
++    if (!linked) {
++        fprintf(stderr, "Error: EGL offscreen: the gamma pass's shader doesn't link\n");
++        return false;
++    }
++    /* the program, the textures and the triangle stay bound: nothing else draws in gamma_ctx */
++    pUseProgram(gamma_prog);
++    pUniform1i(pGetUniformLocation(gamma_prog, "frame"), 0);
++    pUniform1i(pGetUniformLocation(gamma_prog, "lut"), 1);
++    glGenTextures(2, gamma_tex);
++    for (int i = 0; i < 2; i++) {
++        pActiveTexture(E_TEXTURE0 + i);
++        glBindTexture(GL_TEXTURE_2D, gamma_tex[i]);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, E_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, E_CLAMP_TO_EDGE);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, i? 256:fbo_w, i? 1:fbo_h, 0, GL_RGBA,
++                     GL_UNSIGNED_BYTE, NULL);
++    }
++    pVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, tri);
++    pEnableVertexAttribArray(0);
++    glViewport(0, 0, fbo_w, fbo_h);
++    gamma_lut_dirty = true;
++    return true;
++}
++
++/* The front buffer into the scanout buffer through the gamma ramp, finished; called with
++ * OpenGLide's context current, which it is again after. false: read this frame back */
++static bool scan_gamma(void)
++{
++    bool ok = false;
++
++    if (gamma_failed)
++        return false;
++    finish_gl();  // OpenGLide's frame done: gamma_ctx reads it
++    if (gamma_ctx == EGL_NO_CONTEXT) {
++        gamma_ctx = eglCreateContext(egl_dpy, egl_cfg, egl_ctx, NULL);
++        if (gamma_ctx == EGL_NO_CONTEXT) {
++            fprintf(stderr, "Error: EGL offscreen: no context for the gamma pass (0x%04x), frames with "
++                "a gamma ramp are read back\n", eglGetError());
++            gamma_failed = true;
++            return false;
++        }
++    }
++    if (!eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, gamma_ctx)) {
++        eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, egl_ctx);
++        return false;
++    }
++    if (!gamma_prog && !gamma_init()) {
++        fprintf(stderr, "Info: EGL offscreen: no gamma pass, frames with a gamma ramp are read back\n");
++        gamma_failed = true;
++        goto out;
++    }
++    pActiveTexture(E_TEXTURE0 + 1);
++    if (gamma_lut_dirty) {
++        unsigned char lut[256 * 4];
++        for (int i = 0; i < 256; i++) {
++            lut[i * 4] = gamma_lut[0][i];
++            lut[i * 4 + 1] = gamma_lut[1][i];
++            lut[i * 4 + 2] = gamma_lut[2][i];
++            lut[i * 4 + 3] = 0xff;
++        }
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, lut);
++        gamma_lut_dirty = false;
++    }
++    pActiveTexture(E_TEXTURE0);
++    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, fbo_w, fbo_h);
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++    finish_gl();  // the display reads the scanout buffer at once
++    ok = true;
++out:
++    eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, egl_ctx);
++    return ok;
++}
++
 +static void destroy_scanout(void)
 +{
++    destroy_gamma_ctx();
 +    if (scan_img != EGL_NO_IMAGE_KHR) {
 +        PFNEGLDESTROYIMAGEKHRPROC destroyImage =
 +            (PFNEGLDESTROYIMAGEKHRPROC) eglGetProcAddress("eglDestroyImageKHR");
@@ -183,17 +438,20 @@ index f3237c2..2067eb9 100644
 +//*************************************************
 +//* The front buffer (what a window would show) into the scanout buffer, finished, so that the
 +//* display can read it from another context (and thread) at once. Called on the thread that opened
-+//* the Glide window. Returns 1, or 0 when there is no scanout buffer or a gamma ramp is set (the
-+//* caller then reads the frame back with getOffscreenFrame).
++//* the Glide window. With a gamma ramp set the copy applies it (scan_gamma). Returns 1, or 0 when
++//* there is no scanout buffer, or a ramp is set and the gamma pass can't be had (the caller then
++//* reads the frame back with getOffscreenFrame, which applies the ramp).
 +//*************************************************
 +extern "C" int getOffscreenScanout(void)
 +{
 +    GLint read_buf;
 +    GLboolean scissor;
 +
-+    if (!fbo || !fbo_scan || gamma_on)
++    if (!fbo || !fbo_scan || (gamma_on && gamma_failed))
 +        return 0;
 +    RenderDrawTriangles();
++    if (gamma_on)
++        return scan_gamma()? 1:0;
 +    glGetIntegerv(GL_READ_BUFFER, &read_buf);
 +    scissor = glIsEnabled(GL_SCISSOR_TEST);
 +    if (scissor)
@@ -205,7 +463,7 @@ index f3237c2..2067eb9 100644
 +    glReadBuffer(read_buf);
 +    if (scissor)
 +        glEnable(GL_SCISSOR_TEST);
-+    glFinish();
++    finish_gl();
 +    return 1;
 +}
 +
