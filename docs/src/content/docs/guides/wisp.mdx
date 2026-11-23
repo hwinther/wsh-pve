@@ -40,6 +40,32 @@ and tier 2, on pull requests that touch wisp or the QEMU build, and on main; the
 - **The devices the QEMU patches touch** (tier 2): a raw disk on each disk controller, a NIC on
   QEMU's user-mode network and more than one CPU, each with its own result line.
 
+## Modes
+
+PID 1 reads `wisp=` from the kernel command line and picks one of three modes; the default (no
+`wisp=`) is the batch compute-loop run described above.
+
+| `wisp=` | What PID 1 does | Marker |
+| --- | --- | --- |
+| `shell` | starts the interactive shell on the serial console (see "Interactive mode" below) | none |
+| `test` | runs `/test` from a second initramfs once, waits for it, prints its exit status and powers off | `WISP-TEST` |
+| `run` | runs `/test` as a service, reaping any children it leaves behind, then reports its exit | `WISP-RUN` |
+
+`test` and `run` both expect `/test` from a second, uncompressed initramfs that QEMU's `-initrd`
+adds next to the built-in one; arguments after `--` on the kernel command line and the environment
+reach it. `test` mode prints one line and powers off:
+
+```
+WISP-TEST v=1 exit=1 signal=0 ms=88
+WISP-TEST v=1 exit=-1 signal=10 ms=72
+```
+
+`exit` is the exit code (`-1` when a signal killed it), `signal` the signal (sparc numbers:
+`SIGBUS` is 10) and `ms` the time from `fork` to `waitpid`. `run` mode prints `WISP-RUN v=1
+start`, keeps reaping children while the service runs, then reports its exit code, signal and
+elapsed milliseconds before powering off; it is how the network demo below starts a long-running
+service instead of a one-shot test.
+
 ## Interactive mode
 
 `wisp=shell` on the kernel command line starts a small shell on the serial console instead of the
@@ -58,6 +84,9 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `bench` | the batch run's compute loop with its CRC, time and KiB/s |
 | `crc <n>` | the loop's CRC after `n` rounds |
 | `mandel` | an ASCII Mandelbrot set (78 x 20) in fixed-point 32-bit integer math |
+| `fbtest` | draw colour bars on `/dev/fb0` and print the mode (framebuffer tier only) |
+| `mandel fb` | draw the Mandelbrot set at the framebuffer's native resolution (framebuffer tier only) |
+| `keytest` | print key codes from a keyboard until Esc or a ten-second timeout (framebuffer tier only) |
 | `endian` | a byte-order guessing game: guess the 32-bit word *this machine* reads from a round's four bytes (the answer depends on the architecture under test) |
 | `disk`, `net`, `smp` | the tier-2 checks below, on the devices QEMU was started with |
 | `banner` | the logo |
@@ -149,6 +178,208 @@ published `pve-qemu-kvm`. `run.py` prints one JSON object per run and a table: s
 QEMU to the kernel's first line, to PID 1, to the result line and to power-off, the loop time and
 QEMU's peak RSS. `qemu-tci.sh` builds a TCI QEMU for the same targets; `run.py --qemu-dir` runs the
 system under it.
+
+## Kernel tiers
+
+Four kernels build from the same `init.c` and PID 1; which ones `build.sh` makes depends on its
+environment variables.
+
+| Tier | Build flag | Kernel file | Adds |
+| --- | --- | --- | --- |
+| 1 | (default) | `kernel` | the batch run and, with `wisp=shell`, the interactive shell |
+| 2 | (default; `TIER2=0` skips it) | `kernel-t2` | the block layer, SCSI/IDE/virtio disk drivers, devtmpfs, each machine's NIC driver, packet sockets, and SMP where the machine has more than one CPU |
+| network | `TIER_NET=1` | `kernel-net` | IPv4, kernel DHCP (`ip=dhcp`) and Unix sockets on top of tier 2; IPv6, netfilter and wireless stay off |
+| framebuffer | `TIER_FB=1` | `kernel-fb` | fbdev, the framebuffer console and a single 8x8 font on top of tier 2 |
+
+Tier 1 and tier 2 sizes are in the table at the top of this page. The network tier's own
+measurement added, on top of its `kernel-t2`:
+
+| Architecture (machine) | `kernel-t2` | `kernel-net` | Increase |
+| --- | ---: | ---: | ---: |
+| sparc32 (SS-5) | 3,311,560 bytes | 3,766,312 bytes | 454,752 bytes |
+| x86_64 (pc) | 1,836,032 bytes | 2,024,448 bytes | 188,416 bytes |
+| sparc64 (sun4u) | 4,117,384 bytes | 4,583,432 bytes | 466,048 bytes |
+
+The framebuffer tier's own measurement (a different build, so its `kernel-t2` baseline differs
+slightly) added:
+
+| Architecture (machine) | `kernel-t2` | `kernel-fb` | Increase |
+| --- | ---: | ---: | ---: |
+| sparc32 (SS-5) | 3,315,656 bytes | 3,397,612 bytes | 81,956 bytes |
+| sparc64 (sun4u) | 4,125,576 bytes | 4,654,240 bytes | 528,664 bytes |
+| x86_64 (pc) | 1,836,032 bytes | 2,016,256 bytes | 180,224 bytes |
+
+See "Network" and "Framebuffer" below for what each tier is for and how it is tested.
+
+## Network
+
+`TIER_NET=1` builds `kernel-net`, layering a network config fragment on the tier-2 fragments and
+reusing their packet sockets and NIC drivers (LANCE on SS-5, e1000 on `pc`, HME on `sun4u`). The
+fragment adds IPv4, kernel DHCP and Unix sockets; IPv6, netfilter and wireless stay off. With
+`ip=dhcp` on the kernel command line, the kernel configures the NIC from QEMU's user-mode network
+(the `10.0.2.x` range) before PID 1 starts, so a `wisp=run` service gets a usable interface
+without any networking code of its own.
+
+The demo is a small HTTP service (`e2e/wisp/services/httpd/httpd.c`) started with `wisp=run`.
+`service.py` packs the binary as `/test`, forwards a free loopback TCP port to the guest's port
+8080, and after the serial listening marker checks two HTTP 200 replies containing the guest's
+Linux release, machine name and request counters 1 and 2. It then checks the reply to `GET
+/quit`, PID 1's exit marker and QEMU's exit status. sparc64 builds the same source with Debian's
+cross `gcc` and a static glibc instead of uClibc-ng.
+
+Measured with Linux 7.3.4 and QEMU 11.1.3 (TCG):
+
+| Target (machine) | Service libc | To listening | `uname` machine in the HTTP replies |
+| --- | --- | ---: | --- |
+| sparc32 (SS-5) | uClibc-ng | 2.730 s | `sparc` |
+| x86_64 (pc) | uClibc-ng | 4.217 s | `x86_64` |
+| sparc64 (sun4u) | glibc | 2.694 s | `sparc64` |
+
+All three returned HTTP 200 for both root requests and `bye` for `/quit`, then printed
+`WISP-RUN v=1 exit=0 signal=0` and powered off.
+
+## Framebuffer
+
+`TIER_FB=1` builds `kernel-fb` for sparc32, sparc64 and x86_64, applying the framebuffer
+fragments directly to tier 2: fbdev, the framebuffer console and a single 8x8 font. SS-5 uses
+`FB_SBUS` with the `cg3` and `tcx` drivers; both PCI machines (`sun4u` and `pc`) use `DRM_BOCHS`
+with `DRM_FBDEV_EMULATION` on QEMU's standard VGA display.
+
+The shell's `fbtest` draws eight colour bars with a white border on `/dev/fb0` and reports the
+mode; `mandel fb` draws the Mandelbrot set at the framebuffer's native resolution and reports its
+iteration checksum; `keytest` prints key codes from a keyboard until Esc or a ten-second timeout.
+On sun4u the keyboard doesn't work yet: OpenBIOS's EBus device tree has no `kdmouse`/`mouse` node
+for the `kb_ps2` child, and Linux's `i8042-sparcio` driver needs both IRQs, so it returns
+`-ENODEV` and `keytest` reports the keyboard unavailable.
+
+| Architecture (machine) | Display | `kernel-t2` | `kernel-fb` | Increase | Verified screendump |
+| --- | --- | ---: | ---: | ---: | --- |
+| sparc32 (SS-5) | cg3 and tcx | 3,315,656 bytes | 3,397,612 bytes | 81,956 bytes | 1024x768, 8 bpp, both passed |
+| sparc64 (sun4u) | std | 4,125,576 bytes | 4,654,240 bytes | 528,664 bytes | 1280x800, 32 bpp, passed |
+| x86_64 (pc) | std | 1,836,032 bytes | 2,016,256 bytes | 180,224 bytes | 1280x800, 32 bpp, passed |
+
+`framebuffer.py` checks the colour bars and the Mandelbrot image pixel by pixel from QEMU
+screendumps, checks the iteration sum, then sends key presses through QMP and checks for the
+right Linux key codes.
+
+## fbDOOM with Freedoom
+
+`doom.py` packs a static fbDOOM as `/test` with Freedoom Phase 1 in an external initramfs and
+starts it with `wisp=run -- @/demo.rsp`, a response file holding `-iwad /freedoom1.wad -nosound
+-scaling 1 -timedemo demo1`. All three machines render the same centered 320x200 frame; the
+timedemo skips keyboard setup entirely, including on sun4u.
+
+Timedemo results (FPS is 35 x gametics / realtics; wall time includes firmware, Linux boot, the
+game and power-off):
+
+| Machine and display | Gametics | Realtics | FPS | Wall (s) |
+| --- | ---: | ---: | ---: | ---: |
+| SS-5 cg3 | 7117 | 886 | 281.15 | 32.19 |
+| SS-5 tcx | 7117 | 886 | 281.15 | 32.21 |
+| pc std | 7117 | 972 | 256.27 | 30.18 |
+| sun4u std | 7117 | 4830 | 51.57 | 141.93 |
+
+Each boot checks the demo's own command count (7,117), the reported FPS, a nonblank QMP capture
+during playback and the successful exit and power-off. The game code (fbDOOM) is GPL-2.0 and
+Freedoom is BSD-3-Clause; only the official Freedoom data is used, not id Software's WADs.
+
+## A real C library (uClibc-ng)
+
+PID 1 itself stays on the kernel's nolibc, but a toolchain in `e2e/wisp/toolchain/` builds static
+user programs against a real C library: uClibc-ng via Buildroot for sparc32 (SPARC V8, the same
+target as `SS-5`) and x86_64. Debian's packaged 32-bit SPARC glibc and libgcc target V8+ even with
+`-mcpu=v8`, which wisp's sparc32 kernel refuses, so sparc64 instead uses Debian's cross `gcc` with
+a static glibc (`libc6-dev-sparc64-cross`); Buildroot's uClibc-ng config has no sparc64 target.
+
+The Buildroot SDK images are published to GHCR
+(`ghcr.io/hwinther/wsh-pve/wisp-toolchain-<arch>:2025.02.20`), and the manual
+`publish-wisp-toolchain.yml` workflow also uploads `wisp-toolchain-<arch>.tar.xz` and its
+`.sha256` file to the `wisp-toolchain` GitHub release; the wisp-test action (below) downloads this
+SDK for `libc: uclibc` source builds without Docker.
+
+| Target (machine) | SDK image build time | Unstripped `hello` size | ELF |
+| --- | ---: | ---: | --- |
+| sparc32 (SS-5) | 13 min 44 s | 84,484 bytes | 32-bit MSB SPARC (V8, `EM_SPARC`) |
+| x86_64 (pc) | 15 min 52 s | 51,544 bytes | 64-bit LSB x86-64 |
+
+Both `hello` binaries printed `WISP-HELLO v=1 checksum=0xed3258f703d97351 status=ok` and exited
+with code 0 under the published `wisp-test-kit` kernel.
+
+## The wisp-test GitHub Action
+
+`.github/actions/wisp-test` is a GitHub Action built on wisp, for other projects' endianness and
+alignment bugs: it builds a C program for sparc32 (big-endian, V8, `SS-5`), sparc64 or x86_64,
+boots it under QEMU from Ubuntu's packages with `wisp=test` (or `wisp=run` for a service), and
+passes or fails on the exit status. It needs no kernel build: `kit.sh` downloads a kit of the
+tier-1 and network kernels and the nolibc headers from the `wisp-test-kit` release.
+
+### Inputs
+
+| Input | Default | What it is |
+| --- | --- | --- |
+| `sources` | | C files to build with the selected libc, whitespace-separated, globs allowed. Give this or `binary` |
+| `binary` | | A static binary for the architecture, built by you (any C library) |
+| `arch` | `sparc32` | `sparc32` (big-endian, V8, `SS-5`), `sparc64` (big-endian, V9, `sun4u`) or `x86_64` (little-endian, `pc`: the control, where a byte-order bug passes) |
+| `libc` | `nolibc` | C library for source builds. Use `uclibc` on sparc32 or x86_64 for uClibc-ng |
+| `toolchain` | | Local uClibc-ng SDK tarball to use instead of downloading it |
+| `toolchain-url` | the architecture's tarball in the `wisp-toolchain` release | URL to download for a uClibc-ng build |
+| `toolchain-sha256` | | Expected SHA-256 of the local or downloaded SDK tarball |
+| `cflags` | | More compiler flags, after the default `-O2` |
+| `args` | | Arguments for the program, whitespace-separated, no quoting |
+| `mode` | `test` | PID 1 runs the payload with `wisp=test` or `wisp=run` (the `WISP-TEST` or `WISP-RUN` marker) |
+| `network` | `false` | Boot the network tier's `kernel-net` with QEMU user networking and `ip=dhcp` |
+| `forward` | | Guest TCP port to forward to a free port on runner loopback. Requires `network: true` |
+| `ready` | | Bash extended regex matched against serial lines from the run start marker |
+| `check` | | Bash command on the runner. Exit 0 passes, any other status fails; QEMU stops after the check |
+| `timeout` | `60` | Seconds from starting QEMU to its exit |
+| `machine` | | QEMU `-M` instead of the default |
+| `qemu-args` | | More QEMU arguments, whitespace-separated |
+| `kit` | | A kit directory or tarball to use instead of downloading `kit-url` |
+| `kit-url` | the `wisp-test-kit` release of this repository | Where the kit comes from |
+| `kit-sha256` | | The kit tarball's SHA-256; checked when set |
+| `install` | `true` | `apt-get install` QEMU and the cross compiler when missing |
+
+### Outputs
+
+| Output | What it is |
+| --- | --- |
+| `result` | `pass` or `fail`, from the runner `check` when supplied, otherwise the guest exit status; build, boot and timeout errors give `error` |
+| `port` | Runner loopback TCP port, also available as `WISP_PORT` to the check. The forward closes when QEMU stops |
+| `exit-code`, `signal`, `signal-name` | The program's exit code and the signal that killed it, if any |
+| `seconds`, `log` | Seconds from starting QEMU to its exit, and the console log's path |
+
+### Examples
+
+A big-endian unit test with nolibc:
+
+```yaml
+jobs:
+  big-endian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hwinther/wsh-pve/.github/actions/wisp-test@<full commit SHA> # pin a commit
+        with:
+          sources: tests/byteorder_test.c src/parse.c
+          cflags: -Iinclude -Wall
+```
+
+An HTTP service check, with uClibc-ng, run mode, networking and a forwarded port:
+
+```yaml
+- uses: hwinther/wsh-pve/.github/actions/wisp-test@<full commit SHA> # pin a commit
+  with:
+    arch: sparc32
+    sources: e2e/wisp/services/httpd/httpd.c
+    libc: uclibc
+    mode: run
+    network: 'true'
+    forward: '8080'
+    ready: '^WISP-HTTPD listening port=8080$'
+    check: curl -fsS "http://127.0.0.1:$WISP_PORT/"
+```
 
 ## TCG against TCI
 
