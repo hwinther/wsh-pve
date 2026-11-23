@@ -1105,7 +1105,10 @@ static void cmd_fbtest(void)
 	/* Keep fbcon's software cursor from repainting its cell over the image. */
 	tty = open("/dev/tty0", O_WRONLY);
 	if (tty >= 0) {
-		write(tty, "\033[?25l", 6);
+		/* Best effort: a visible cursor only costs one cell of the image. */
+		ssize_t n = write(tty, "\033[?25l", 6);
+
+		(void)n;
 		close(tty);
 	}
 	/* Row writes also work on SBus devices with private mmap offsets. */
