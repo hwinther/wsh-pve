@@ -17,8 +17,12 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
   branch is LEMU PR #1. Not sent to tenox7/lemu.
 - `wsh/0124`-`0125` (the codec's INT status bit and I24's PI with the APC's playback interrupts,
   for Linux's `snd-sun-cs4231`): ours, written here on LEMU's CS4231 (0028, 0122) to the LEMU
-  maintainer's requirements, and offered to LEMU. Not taken yet: no LEMU commit, no branch in the
-  fork.
+  maintainer's requirements. LEMU took both unchanged onto a local branch `fix/cs4231-codec-int`
+  (on top of `fix/cs4231-pi-pmi`, not pushed): `9fbdd5b68a` and `0e81145602`, so they are equal.
+- `wsh/0126`-`0129`: ours, on LEMU's CS4231, after the LEMU maintainer's review of 0124: a write
+  to the status register also clears PI, CI and TI in I24 (0126, qtest 0127), and a stop in the
+  middle of a buffer drops what the APC took past the codec's position instead of playing it out
+  (0128, qtest 0129). Offered to LEMU, not taken yet.
 - `feat/openbios-fixes`: the OpenBIOS patches and the one QEMU patch that goes with them (`wsh/0030`
   with OpenBIOS 0018), at `86c3a500ec`. Not sent yet.
 
@@ -96,8 +100,12 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes | ours | tests/qtest: test a cdb sent byte by byte after a message out on sun4m | [`5fe502d848`](https://github.com/hwinther/lemu/commit/5fe502d848) | feat/sparc-fixes | equal |
 | wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets | built on LEMU | hw/audio/cs4231: raise pi and pmi when the codec gets there | [`ff412bc835`](https://github.com/hwinther/lemu/commit/ff412bc835) | fix/cs4231-pi-pmi | equal |
 | wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short | built on LEMU | tests/qtest: test the cs4231's pi and pmi for a short buffer on sun4m | [`c92620599a`](https://github.com/hwinther/lemu/commit/c92620599a) | fix/cs4231-pi-pmi | equal (applies with line offsets) |
-| wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the- | ours, on LEMU's CS4231 | hw/audio/cs4231: set the codec's int and pi with the apc's playback interrupts | none | none | offered to LEMU, not taken yet |
-| wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24 | ours, on LEMU's CS4231 | tests/qtest: test the cs4231's int status bit and i24 pi on sun4m | none | none | offered to LEMU, not taken yet |
+| wsh/0124-hw-audio-cs4231-set-the-codec-s-int-and-pi-with-the- | ours, on LEMU's CS4231 | hw/audio/cs4231: set the codec's int and pi with the apc's playback interrupts | `9fbdd5b68a` (LEMU local, not pushed) | fix/cs4231-codec-int (LEMU local) | equal (taken unchanged) |
+| wsh/0125-tests-qtest-test-the-cs4231-s-int-status-bit-and-i24 | ours, on LEMU's CS4231 | tests/qtest: test the cs4231's int status bit and i24 pi on sun4m | `0e81145602` (LEMU local, not pushed) | fix/cs4231-codec-int (LEMU local) | equal (taken unchanged) |
+| wsh/0126-hw-audio-cs4231-clear-i24-s-pi-ci-and-ti-on-a-status | ours, on LEMU's CS4231 | hw/audio/cs4231: clear i24's pi, ci and ti on a status register write | none | none | offered to LEMU, not taken yet |
+| wsh/0127-tests-qtest-test-that-a-cs4231-status-write-clears-i | ours, on LEMU's CS4231 | tests/qtest: test that a cs4231 status write clears i24 on sun4m | none | none | offered to LEMU, not taken yet |
+| wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code | ours, on LEMU's CS4231 | hw/audio/cs4231: drop what the apc took past the codec on a stop | none | none | offered to LEMU, not taken yet |
+| wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu | ours, on LEMU's CS4231 | tests/qtest: test a cs4231 stop in the middle of a buffer on sun4m | none | none | offered to LEMU, not taken yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|
