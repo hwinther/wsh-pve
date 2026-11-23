@@ -53,6 +53,7 @@
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -1405,21 +1406,40 @@ static void shell(void)
 
 /* Test mode ----------------------------------------------------------------------------------- */
 
-/*
- * wisp=test and wisp=run: run /test (from an external initramfs given with -initrd, which the kernel unpacks
- * over the built-in one) with PID 1's arguments (what follows "--" on the kernel command line)
- * and environment, wait for it, print one line with how it ended and power off. The wisp-test
- * GitHub Action (.github/actions/wisp-test) reads the line.
- */
+static int mount_data(const char *device)
+{
+	int fd;
+
+	mount_dev();
+	fd = open_wait(device, O_RDONLY);
+	if (fd < 0)
+		return -1;
+	close(fd);
+	if (mkdir("/data", 0755) < 0 && errno != EEXIST)
+		return -1;
+	return mount(device, "/data", "squashfs", MS_RDONLY, NULL);
+}
+
+/* Run wisp_run (default /test) with the arguments following "--". */
 static void payload_mode(int argc, char **argv, char **envp, int run)
 {
 	const char *marker = run ? "WISP-RUN" : "WISP-TEST";
+	const char *device = env(envp, "wisp_data");
+	const char *program = env(envp, "wisp_run");
 	char *targv[64];
 	unsigned long t0, t1;
 	int i, n = 0, status = 0;
 	pid_t pid, w;
 
-	targv[n++] = "/test";
+	if (device) {
+		if (mount_data(device) < 0) {
+			printf("WISP-DATA v=1 dev=%s fs=squashfs mounted=0 errno=%d\n",
+			       device, errno);
+			power(LINUX_REBOOT_CMD_POWER_OFF);
+		}
+		printf("WISP-DATA v=1 dev=%s fs=squashfs mounted=1\n", device);
+	}
+	targv[n++] = program ? (char *)program : "/test";
 	for (i = 1; i < argc && n < 63; i++)
 		targv[n++] = argv[i];
 	targv[n] = NULL;
@@ -1429,8 +1449,8 @@ static void payload_mode(int argc, char **argv, char **envp, int run)
 	t0 = clock_ms(CLOCK_MONOTONIC);
 	pid = fork();
 	if (pid == 0) {
-		execve("/test", targv, envp);
-		printf("%s-ERROR exec /test failed: errno %d\n", marker, errno);
+		execve(targv[0], targv, envp);
+		printf("%s-ERROR exec %s failed: errno %d\n", marker, targv[0], errno);
 		fflush(stdout);
 		_exit(127);
 	}

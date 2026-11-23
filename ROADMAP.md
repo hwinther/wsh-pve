@@ -724,7 +724,7 @@ merged; what is left of them is item 2 under "Next".
 - **wisp libc toolchain (uClibc-ng via Buildroot):** Buildroot 2025.02.20 SDKs built and tested with static hello under wisp on sparc32 V8 and x86_64.
 - wisp-test can build with uClibc-ng from release SDK tarballs on sparc32 and x86_64.
 - **wisp framebuffer tier:** PID 1 draws colour bars and a fixed-point Mandelbrot image on SS-5, sun4u and pc. QMP tests compare every pixel and inject keyboard presses for the evdev check.
-- Freedoom Phase 1 runs on all four wisp framebuffer profiles, with a 7,117-tic fbDOOM benchmark.
+- Freedoom Phase 1 runs from a read-only squashfs disk on all four wisp framebuffer profiles, with integer scaling and a 7,117-tic fbDOOM benchmark.
 - **wisp network tier:** `kernel-net` and `wisp=run` run a static HTTP service reached through QEMU port forwarding.
 - **wisp-netbsd:** a NetBSD sibling of wisp as a second, independent OS test of the same QEMU
   machines (sparc/sun4m V8, sparc64, amd64). NetBSD's `build.sh` cross-builds kernel and userland

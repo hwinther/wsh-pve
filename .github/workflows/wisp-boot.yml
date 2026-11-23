@@ -223,7 +223,7 @@ jobs:
             ${{ runner.temp }}/doom-inputs/*.zip
           key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
 
-      - name: Run the Freedoom timedemo on pc and SS-5
+      - name: Run the squashfs Freedoom timedemo on pc and SS-5
         run: |
           set -o pipefail
           inputs="$RUNNER_TEMP/doom-inputs"

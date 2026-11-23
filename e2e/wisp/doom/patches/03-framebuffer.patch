@@ -1,4 +1,4 @@
-Draw centered rows using the device stride, palette or native truecolour pixels.
+Center integer-scaled rows using the device stride, palette or native truecolour pixels.
 
 --- a/fbdoom/i_video_fbdev.c
 +++ b/fbdoom/i_video_fbdev.c
@@ -117,7 +117,7 @@ Draw centered rows using the device stride, palette or native truecolour pixels.
  }
  
  void I_ShutdownGraphics (void)
-@@ -402,48 +370,40 @@
+@@ -402,48 +370,43 @@
  
  void I_FinishUpdate (void)
  {
@@ -161,10 +161,13 @@ Draw centered rows using the device stride, palette or native truecolour pixels.
 +        byte *out = row;
 +        for (int x = 0; x < SCREENWIDTH; x++) {
 +            byte index = I_VideoBuffer[y * SCREENWIDTH + x];
++            if (bytes == 1) {
++                memset(out, index, fb_scaling);
++                out += fb_scaling;
++                continue;
++            }
 +            for (int n = 0; n < fb_scaling; n++) {
-+                if (bytes == 1)
-+                    *out = index;
-+                else if (bytes == 2) {
++                if (bytes == 2) {
 +                    uint16_t pixel = pixels[index];
 +                    memcpy(out, &pixel, 2);
 +                } else
@@ -197,7 +200,7 @@ Draw centered rows using the device stride, palette or native truecolour pixels.
  }
  
  //
-@@ -464,33 +424,25 @@
+@@ -464,33 +427,25 @@
  
  void I_SetPalette (byte* palette)
  {
@@ -249,7 +252,7 @@ Draw centered rows using the device stride, palette or native truecolour pixels.
  }
  
  // Given an RGB value, find the closest matching palette index.
-@@ -501,16 +453,16 @@
+@@ -501,16 +456,16 @@
      int i;
      col_t color;
  

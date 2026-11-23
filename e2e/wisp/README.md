@@ -340,7 +340,8 @@ SS-5 uses `FB_SBUS`, `FB_CG3` and `FB_TCX`. Both PCI machines use `DRM_BOCHS` wi
 mode (`vga=0x317`). With identical base options and PID 1, the compressed Bochs image was
 4,096 bytes smaller.
 
-Measured with Linux 7.3.4 and QEMU 11.1.3 under TCG. Kernel sizes are bytes. Disabling
+Framebuffer and keyboard measurements before the DOOM data disk, with Linux 7.3.4 and
+QEMU 11.1.3 under TCG. Kernel sizes are bytes. Disabling
 unused mouse drivers in this tier kept all three framebuffer images smaller than the
 colour-bar-only builds.
 
@@ -352,35 +353,63 @@ colour-bar-only builds.
 
 ## Freedoom framebuffer timedemo
 
-`doom.py` packs static fbDOOM as `/test` with Freedoom Phase 1 and a response file in an
-external newc initramfs. PID 1 starts it with `wisp=run -- @/demo.rsp`. The file supplies
-`-iwad /freedoom1.wad -nosound -scaling 1 -timedemo demo1`. All machines render the same
-centered 320×200 frame using the engine's default 6 MiB zone. An interactive boot uses the
-VT keyboard on pc and SS-5. The timedemo skips keyboard setup, including on sun4u.
+`doom.py` builds a raw squashfs disk with `mksquashfs -comp xz` (squashfs-tools).
+It contains the static `fbdoom` executable, `freedoom1.wad` and `demo.rsp`. QEMU
+attaches it through ESP SCSI on SS-5 and IDE on pc and sun4u, with snapshot writes.
+The framebuffer tier inherits these disk drivers from tier 2 and adds the squashfs
+reader with XZ compression. Tier 2's raw disk checks need no filesystem.
 
-The SS-5 direct loader puts the initrd at 8 MiB. In a physical-memory comparison across
-OpenBIOS startup, data at and above 16 MiB changed. Adding the XZ decoder increased the
-sparc32 framebuffer kernel from 3,397,612 to 3,413,996 bytes. An XZ initramfs with a CRC32
-check fits the whole WAD and executable in about 7 MiB.
-The short firmware command line also avoids an early SS-5 boot failure. The pc and sun4u
-use the uncompressed cpio. The game code is GPL-2.0 and Freedoom is BSD-3-Clause. Only
-the official Freedoom data is used. [Archive pins and patch descriptions](doom/README.md)
+In either `wisp=test` or `wisp=run`, `wisp_data=/dev/sda` asks PID 1 to wait up to
+ten seconds for the device, then mount it read-only at `/data`. PID 1 reports
+`WISP-DATA v=1 dev=/dev/sda fs=squashfs mounted=1` on serial. A mount failure
+reports `mounted=0 errno=N` and powers off before starting the payload.
+`wisp_run=/data/fbdoom` selects the executable directly, so DOOM needs no external
+initramfs or launcher. The default executable is still `/test` for external initramfs
+callers. DOOM passes `-- @/data/demo.rsp` to keep the OpenBIOS arguments short.
+The response file supplies `-iwad /data/freedoom1.wad -nosound -timedemo demo1`.
 
-Measured on the lab daemon with Linux 7.3.4 and QEMU 11.1.3 under TCG. FPS is
-`35 × gametics / realtics`. Wall time includes firmware, Linux boot, the game and power-off.
+fbDOOM centers the largest integer multiple of 320×200 that fits the screen. It
+expands each row once and copies it vertically, using palette indices on cg3/TCX
+and native pixels on bochs. The engine uses its default 6 MiB zone. Interactive
+boots use the VT keyboard on pc and SS-5. Timedemos skip keyboard setup.
+The game code is GPL-2.0 and Freedoom is BSD-3-Clause. [Archive pins and patches](doom/README.md)
 
-| Machine and display | Gametics | Realtics | FPS | Wall (s) | Screendump in `out/doom/` |
-| --- | ---: | ---: | ---: | ---: | --- |
-| SS-5 cg3 | 7117 | 886 | 281.15 | 32.19 | `SS-5-cg3.ppm` |
-| SS-5 tcx | 7117 | 886 | 281.15 | 32.21 | `SS-5-tcx.ppm` |
-| pc std | 7117 | 972 | 256.27 | 30.18 | `pc-std.ppm` |
-| sun4u std | 7117 | 4830 | 51.57 | 141.93 | `sun4u-std.ppm` |
+Framebuffer kernel sizes with Linux 7.3.4, including PID 1, in bytes:
+
+| Architecture | Before | With data disk | Change |
+| --- | ---: | ---: | ---: |
+| sparc32 | 3,413,996 | 3,438,612 | +24,616 |
+| sparc64 | 4,654,240 | 4,687,392 | +33,152 |
+| x86_64 | 2,016,256 | 2,028,544 | +12,288 |
+
+i386 has no framebuffer tier. The SS-5 external initramfs previously needed `CONFIG_RD_XZ`
+to fit the compressed payload into the direct-boot window. The data disk removes that
+requirement. With squashfs XZ enabled, the SS-5 kernel measured 3,438,612 bytes both
+with and without `CONFIG_RD_XZ`. The framebuffer tier now inherits the common disabled setting.
+
+Linux 7.3.4 and QEMU 11.1.3 under TCG, one paired run per display. Each pair used the
+same CPU affinity for both runs. The four pairs ran concurrently while the size-budget
+build used a separate CPU set. Each cell gives the original initramfs run at 1× followed
+by the squashfs run at the indicated scale. All eight runs completed 7,117 gametics.
+FPS is `35 × gametics / realtics`. Wall time runs from starting QEMU through power-off.
+Boot-to-start ends at PID 1's `WISP-RUN v=1 start`, before fbDOOM opens the WAD.
+
+| Machine and display | New frame | Realtics | FPS | Wall (s) | Boot-to-start (s) | Screendump |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| SS-5 cg3 | 3×, 960×600 | 1112 → 3049 | 224.01 → 81.70 | 39.43 → 99.20 | 7.16 → 8.52 | `SS-5-cg3.ppm` |
+| SS-5 tcx | 3×, 960×600 | 1139 → 3107 | 218.70 → 80.17 | 40.21 → 100.05 | 7.18 → 7.71 | `SS-5-tcx.ppm` |
+| pc std | 4×, 1280×800 | 1125 → 6467 | 221.42 → 38.52 | 34.59 → 190.79 | 2.29 → 2.63 | `pc-std.ppm` |
+| sun4u std | 4×, 1280×800 | 8151 → 16034 | 30.56 → 15.54 | 237.44 → 464.06 | 4.06 → 3.70 | `sun4u-std.ppm` |
+
+The comparison saved PPMs and matching serial logs under `out/doom/before/` and
+`out/doom/after/`. Every data-disk run printed `WISP-DATA v=1 dev=/dev/sda fs=squashfs mounted=1`.
 
 The 28,482-byte `DEMO1` lump has a 13-byte header, 7,117 four-byte commands and one end
-marker. Each boot checks that independent count, the reported FPS, a nonblank QMP capture
-during playback, the successful child exit on serial and QEMU's exit. A matching count
-checks playback length across byte orders. Wisp boot CI runs the complete demo on pc and
-SS-5 cg3 on relevant PRs because the two guest runs together took about a minute. It caches
+marker. Each boot checks that independent count, the reported FPS, the successful data mount,
+centered integer-scaled pixels and game colours in a QMP capture during playback, the
+successful child exit on serial and QEMU's exit. A matching count
+checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc and
+SS-5 cg3 on relevant PRs. It caches
 both verified archives and writes the serial logs, PPMs and timing report under `RUNNER_TEMP`.
 
 To reproduce on a Docker daemon, run the following from the repository root with a POSIX
