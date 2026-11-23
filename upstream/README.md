@@ -105,10 +105,11 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0114, 0115 | sun4u idle for FreeBSD 12.4 (on 0042-0044): ULE's `sched_idletd()` calls `cpu_idle()`, empty on sparc64; recognised at that call, halted at TL 1 (FreeBSD's kernel runs there) and at the first idle call (its loop never ends the 100 us poll); qtest cases in `sun4u-idle-test` | wsh-pve, after LEMU's SunOS idle (0012-0013) | built on LEMU: not for QEMU | a feature | |
 | 0120, 0121 | sparc32: in boot mode with the MMU enabled, QEMU translates instruction fetches; on the SuperSPARC the boot mode bit (MMU control bit 13) sends every fetch to the boot PROM whether the MMU is on or not (data accesses are translated), and Sun's SS-600MP PROM stops QEMU (`Trap 0x01 ... while interrupts disabled`) in its MMU register test. CPU feature `boot-mode-ifetch` on the `TI-SuperSparc-*` models; qtest `sun4m-boot-mode-ifetch-test`, and two older qtests clear boot mode when they turn the MMU on. Not tried on plain QEMU 11.1.3 (the code is the same there) | wsh-pve | may send | not searched (added 2026-11-22) | |
 | 0122, 0123 | CS4231: PI and PMI raised in one interrupt; SunOS 4.1.4 checks PMI first, loses it and hangs in AUDIO_DRAIN after a short sound. PI and PMI at the codec's time, vmstate subsection `cs4231/irqs`, and qtest cases. From the LEMU fork branch `fix/cs4231-pi-pmi` (`ff412bc835`, `c92620599a`, [lemu-port.md](lemu-port.md)) | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
+| 0124, 0125 | CS4231: Linux's SBus handler (`snd_cs4231_sbus_interrupt()`) ignores the interrupt unless the codec status register has INT (bit 0), which the model never set, so with OpenBIOS 0034 the APC interrupt was never cleared and QEMU stopped after an interrupt storm. INT and I24's PI set with the APC's playback interrupts (the line still follows the APC CSR only), cleared by writes to I24 and the status register; qtest case `codec-int`. Ours, offered to LEMU, not taken yet ([lemu-port.md](lemu-port.md)) | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
 
 Counts: may send 44 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0065, 0068-0069, 0112-0113, 0120-0121); LEMU origin 13 (0002-0006,
-0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 23 (0014-0016, 0023-0025, 0027, 0030-0033,
-0042-0044, 0070-0072, 0110-0111, 0114-0115, 0122-0123).
+0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 25 (0014-0016, 0023-0025, 0027, 0030-0033,
+0042-0044, 0070-0072, 0110-0111, 0114-0115, 0122-0125).
 
 Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pages), needed for
 `niagara` above 1 GB; the patch is by the unix0.cc author
