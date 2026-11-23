@@ -31,6 +31,10 @@ class DemoSound(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duration"):
             check_effects(long_capture, 1)
 
+    def test_two_effects_are_enough(self):
+        path = self.capture([(6500, 100), (600, 300)] * 2 + [(600, 400)])
+        self.assertEqual(check_effects(path, 1.2)[0], 2)
+
     def test_reject_silence_continuous_sound_and_clicks(self):
         for runs in ([(0, 1200)], [(6500, 1200)], [(30000, 1), (0, 399)] * 3,
                      [(6500, 180), (0, 20)] * 6):

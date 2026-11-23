@@ -112,7 +112,9 @@ def check_effects(path, play_seconds):
         elif loud >= 2 and not in_burst:
             bursts += 1
             in_burst = True
-    if bursts < 3:
+    # Two is enough: on a fast runner the accelerated demo merges effects (2 seen on a
+    # GitHub runner, 4-5 on the lab); silence, one continuous sound and clicks give 0 or 1
+    if bursts < 2:
         raise ValueError(f"expected several sound effects, found {bursts} bursts")
     return bursts, duration
 
