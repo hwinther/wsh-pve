@@ -242,6 +242,19 @@ class HostInit(unittest.TestCase):
         return subprocess.run([self.binary], input="".join(c + "\n" for c in script).encode(),
                               env=env, capture_output=True, timeout=60, check=False)
 
+    def test_payload_path_and_missing_data(self):
+        for mode in ("test", "run"):
+            with self.subTest(mode=mode):
+                env = {"wisp": mode, "wisp_run": "/bin/true"}
+                marker = f"WISP-{mode.upper()} v=1".encode()
+                proc = self.start(env, [])
+                self.assertIn(marker + b" exit=0 signal=0", proc.stdout)
+                device = os.path.join(self.tmp.name, "missing")
+                proc = self.start(dict(env, wisp_data=device), [])
+                self.assertIn(f"WISP-DATA v=1 dev={device} fs=squashfs mounted=0 errno=2".encode(),
+                              proc.stdout)
+                self.assertNotIn(marker, proc.stdout)
+
     def test_batch_mode(self):
         proc = self.start({"loops": "64"}, [])
         self.assertEqual(proc.returncode, 0)

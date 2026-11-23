@@ -16,9 +16,9 @@ compiler. It applies the following diffs in order and links a stripped static bi
 | --- | --- |
 | 01-byte-order | Swap signed 16- and 32-bit WAD fields on big-endian targets. |
 | 02-exit | Print the timed line and exit successfully on completion. Propagate engine errors to PID 1. |
-| 03-framebuffer | Mount devtmpfs when needed, install the indexed palette or convert to native bitfields, and center the frame using the device stride. Mark frame 70 for QMP. |
+| 03-framebuffer | Mount devtmpfs when needed, install the indexed palette or convert to native bitfields, and center the largest integer-scaled frame using the device stride. Copy each expanded row vertically. Mark frame 70 for QMP. |
 | 04-keyboard | Read the VT keyboard type as one byte, probe the correct descriptor and skip polling an unavailable keyboard. |
 | 05-response-file | Enable and bound the upstream response-file parser so the OpenBIOS boot arguments stay short. |
 
-The [wisp timedemo instructions](../README.md#freedoom-framebuffer-timedemo) cover packaging,
-booting and interpreting the measurements.
+The [wisp timedemo instructions](../README.md#freedoom-framebuffer-timedemo) cover building
+the XZ squashfs data disk, booting and interpreting the measurements.

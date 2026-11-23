@@ -4,7 +4,6 @@
 import argparse
 import asyncio
 import json
-import lzma
 import os
 from pathlib import Path
 import re
@@ -28,26 +27,37 @@ def check_frame(data):
             or len(pixels) != width * height * 3):
         raise ValueError("invalid QEMU screendump")
     # Count colours inside the game frame. Firmware text can survive in the margins.
-    left = (width - 320) // 2
-    top = (height - 200) // 2
+    scale = min(width // 320, height // 200)
+    left = (width - 320 * scale) // 2
+    top = (height - 200 * scale) // 2
     colours = set()
-    for y in range(top, top + 200):
+    for y in range(top, top + 200 * scale, scale):
         start = (y * width + left) * 3
-        colours.update(pixels[i:i+3] for i in range(start, start + 320 * 3, 3))
-        if len(colours) >= 16:
-            return
+        row = pixels[start:start + 320 * scale * 3]
+        samples = [row[i:i+3] for i in range(0, len(row), scale * 3)]
+        if (row != b"".join(pixel * scale for pixel in samples)
+                or any(pixels[start + n * width * 3:start + n * width * 3 + len(row)] != row
+                       for n in range(1, scale))):
+            raise ValueError("incorrect framebuffer scaling")
+        colours.update(samples)
+    if len(colours) >= 16:
+        return scale
     raise ValueError("missing game image in the centre of the screendump")
 
 
-async def check(proc, monitor, ppm, log):
-    started = captured = exited = False
+async def check(proc, monitor, ppm, log, boot_time):
+    mounted = exited = False
+    started = scale = None
     result = None
     async for raw in proc.stdout:
         log.write(raw)
         log.flush()
         line = raw.strip()
-        if line == b"WISP-RUN v=1 start":
-            started = True
+        if line == b"WISP-DATA v=1 dev=/dev/sda fs=squashfs mounted=1":
+            mounted = True
+            print(line.decode(), flush=True)
+        elif mounted and line == b"WISP-RUN v=1 start":
+            started = time.monotonic() - boot_time
         elif started and line == b"fbdoom: frame 70":
             reader, writer = await asyncio.open_unix_connection(monitor)
             try:
@@ -58,8 +68,7 @@ async def check(proc, monitor, ppm, log):
             finally:
                 writer.close()
                 await writer.wait_closed()
-            check_frame(ppm.read_bytes())
-            captured = True
+            scale = check_frame(ppm.read_bytes())
         elif started and (match := TIMED.fullmatch(line)):
             tics, real = map(int, match.groups()[:2])
             fps = float(match[3])
@@ -69,35 +78,53 @@ async def check(proc, monitor, ppm, log):
         elif result and re.fullmatch(rb"WISP-RUN v=1 exit=0 signal=0 ms=\d+", line):
             exited = True
     rc = await proc.wait()
-    if rc or not (captured and exited):
-        raise RuntimeError(f"QEMU exit {rc}, screenshot {captured}, clean demo exit {exited}; see {log.name}")
-    return result
+    if rc or not (scale and exited):
+        raise RuntimeError(f"QEMU exit {rc}, screenshot scale {scale}, clean demo exit {exited}; see {log.name}")
+    return (*result, started, scale)
 
 
-async def boot(arch, display, archive, dest, timeout):
+async def boot(arch, display, disk, dest, timeout):
     machine = run.ARCHES[arch][1][1]
     stem = dest / f"{machine}-{display}"
     ppm = stem.with_suffix(".ppm")
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
+        controller = "scsi" if arch == "sparc32" else "ide"
         cmd = run.qemu_command(
             arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
             memory=128 if arch == "sparc32" else 256,
             firmware=os.getenv("WISP_FIRMWARE"),
-            append_extra=["quiet", "wisp=run", "--", "@/demo.rsp"],
-            extra=["-accel", "tcg", "-initrd", str(archive), "-vga", display,
+            append_extra=["quiet", "wisp=run", "wisp_data=/dev/sda", "wisp_run=/data/fbdoom",
+                          "--", "@/data/demo.rsp"],
+            extra=["-accel", "tcg", "-drive",
+                   f"file={disk},format=raw,if={controller},index=0,snapshot=on", "-vga", display,
                    "-qmp", f"unix:{monitor},server=on,wait=off"])
         start = time.monotonic()
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=subprocess.DEVNULL,
                                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
-            tics, real, fps = await asyncio.wait_for(check(proc, monitor, ppm, log), timeout)
+            tics, real, fps, started, scale = await asyncio.wait_for(
+                check(proc, monitor, ppm, log, start), timeout)
         finally:
             if proc.returncode is None:
                 proc.kill()
                 await proc.communicate()
         print(f"{machine}/{display}: {tics} gametics, {real} realtics, {fps:.2f} FPS, "
-              f"{time.monotonic() - start:.2f} s wall, {ppm}", flush=True)
+              f"{time.monotonic() - start:.2f} s wall, {started:.2f} s boot-to-start, {scale}x, {ppm}", flush=True)
+
+
+def build_disk(directory, executable, wad):
+    root = directory / "data"
+    root.mkdir()
+    binary = root / "fbdoom"
+    shutil.copyfile(executable, binary)
+    binary.chmod(0o755)
+    shutil.copyfile(wad, root / "freedoom1.wad")
+    (root / "demo.rsp").write_text("-iwad /data/freedoom1.wad -nosound -timedemo demo1\n")
+    disk = directory / "doom.squashfs"
+    subprocess.run(["mksquashfs", root, disk, "-comp", "xz", "-no-xattrs", "-all-root",
+                    "-noappend", "-quiet", "-no-progress"], check=True)
+    return disk
 
 
 def main():
@@ -115,25 +142,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
-        test = directory / "test"
-        shutil.copyfile(args.binary, test)
-        test.chmod(0o755)
-        shutil.copyfile(args.wad, directory / "freedoom1.wad")
-        # A long direct-boot command line crashes SS-5 before PID 1 starts.
-        (directory / "demo.rsp").write_text("-iwad /freedoom1.wad -nosound -scaling 1 -timedemo demo1\n")
-        archive = directory / "doom.cpio"
-        with archive.open("wb") as out:
-            subprocess.run(["cpio", "--quiet", "-o", "-H", "newc"], cwd=directory,
-                           input=b"test\nfreedoom1.wad\ndemo.rsp\n", stdout=out, check=True)
-        if args.arch == "sparc32":
-            compressed = archive.with_suffix(".cpio.xz")
-            with archive.open("rb") as src, lzma.open(compressed, "wb", check=lzma.CHECK_CRC32) as out:
-                shutil.copyfileobj(src, out)
-            if compressed.stat().st_size > 8 * 1024 * 1024:
-                raise ValueError("SS-5 direct-boot initrd exceeds 8 MiB")
-            archive = compressed
+        disk = build_disk(directory, args.binary, args.wad)
         for display in [args.display] if args.display else displays:
-            asyncio.run(boot(args.arch, display, archive, args.output.resolve(), args.timeout))
+            asyncio.run(boot(args.arch, display, disk, args.output.resolve(), args.timeout))
 
 
 if __name__ == "__main__":
