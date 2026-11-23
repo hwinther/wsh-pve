@@ -1,0 +1,39 @@
+Read the one-byte VT keyboard type on either byte order and correct the fallback fd.
+
+--- a/fbdoom/i_input_tty.c
++++ b/fbdoom/i_input_tty.c
+@@ -234,7 +234,7 @@
+ 
+ int tty_is_kbd(int fd)
+ {
+-    int data = 0;
++    unsigned char data = 0;
+ 
+     if (ioctl(fd, KDGKBTYPE, &data) != 0)
+         return 0;
+@@ -305,7 +305,7 @@
+        might point to a console. This is not especially likely. */
+     if (files_to_try[i] == NULL) {
+         for (kb = 0; kb < 3; kb++) {
+-            if (tty_is_kbd(i)) {
++            if (tty_is_kbd(kb)) {
+                 found = 1;
+                 break;
+             }
+@@ -313,6 +313,7 @@
+     }
+ 
+     if (!found) {
++        kb = -1;
+         printf("Unable to find a file descriptor associated with "\
+                 "the keyboard.\n" \
+                 "Perhaps you're not using a virtual terminal?\n");
+@@ -434,7 +435,7 @@
+ 
+     // put event-grabbing stuff in here
+     
+-    while (kbd_read(&pressed, &key))
++    while (kb >= 0 && kbd_read(&pressed, &key))
+     {
+         if (key == 0x0E) {
+             kbd_shutdown();

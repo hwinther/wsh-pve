@@ -1,0 +1,19 @@
+Use compiler byte order for signed WAD fields and renderer tables.
+
+--- a/fbdoom/i_swap.h
++++ b/fbdoom/i_swap.h
+@@ -42,8 +42,13 @@
+ #define SYS_BIG_ENDIAN
+ #endif
+ 
++#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#define SHORT(x) ((signed short) __builtin_bswap16(x))
++#define LONG(x)  ((signed int) __builtin_bswap32(x))
++#define SYS_BIG_ENDIAN
++
+ #else
+-	
++
+ #define SHORT(x)  ((signed short) (x))
+ #define LONG(x)   ((signed int) (x))
+ 

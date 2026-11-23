@@ -215,6 +215,39 @@ jobs:
               'PATH=/qemu:$PATH python3 service.py --arch "$1" --binary "/results/httpd-$1"' sh "$arch"
           done
 
+      - name: Cache fbDOOM and Freedoom downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/doom-inputs/*.tar.gz
+            ${{ runner.temp }}/doom-inputs/*.zip
+          key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
+
+      - name: Run the Freedoom timedemo on pc and SS-5
+        run: |
+          set -o pipefail
+          inputs="$RUNNER_TEMP/doom-inputs"
+          results="$RUNNER_TEMP/wisp/doom"
+          mkdir -p "$results"
+          python3 e2e/wisp/doom/fetch.py "$inputs"
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$inputs:/inputs:ro" -v "$results:/results")
+          if [ "$QEMU_FROM" = pr ]; then
+            mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
+          fi
+          for arch in x86_64 sparc32; do
+            sdk="ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20"
+            docker run --rm -v "$PWD/e2e/wisp/doom:/doom:ro" -v "$inputs:/inputs" "$sdk" sh -ec '
+              apt-get update -qq
+              apt-get install -y --no-install-recommends make patch >/dev/null
+              sh /doom/build.sh "$1" /inputs/fbDOOM-*.tar.gz "/inputs/fbdoom-$1"' sh "$arch"
+            display=std
+            if [ "$arch" = sparc32 ]; then display=cg3; fi
+            docker run --rm "${mounts[@]}" "$IMAGE" sh -ec '
+              PATH=/qemu:$PATH python3 doom.py --arch "$1" --display "$2" --binary "/inputs/fbdoom-$1" \
+                --wad /inputs/freedoom1.wad --output /results' sh "$arch" "$display" | tee -a "$results/metrics.txt"
+          done
+          cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summary
         if: ${{ !cancelled() }}
         run: |

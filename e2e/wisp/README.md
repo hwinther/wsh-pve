@@ -350,6 +350,78 @@ colour-bar-only builds.
 | sparc64, sun4u | std | 4,125,576 | 4,654,240 | 528,664 | 1280x800, 32 bpp, passed |
 | x86_64, pc | std | 1,836,032 | 2,016,256 | 180,224 | 1280x800, 32 bpp, passed |
 
+## Freedoom framebuffer timedemo
+
+`doom.py` packs static fbDOOM as `/test` with Freedoom Phase 1 and a response file in an
+external newc initramfs. PID 1 starts it with `wisp=run -- @/demo.rsp`. The file supplies
+`-iwad /freedoom1.wad -nosound -scaling 1 -timedemo demo1`. All machines render the same
+centered 320×200 frame using the engine's default 6 MiB zone. An interactive boot uses the
+VT keyboard on pc and SS-5. The timedemo skips keyboard setup, including on sun4u.
+
+The SS-5 direct loader puts the initrd at 8 MiB. In a physical-memory comparison across
+OpenBIOS startup, data at and above 16 MiB changed. Adding the XZ decoder increased the
+sparc32 framebuffer kernel from 3,397,612 to 3,413,996 bytes. An XZ initramfs with a CRC32
+check fits the whole WAD and executable in about 7 MiB.
+The short firmware command line also avoids an early SS-5 boot failure. The pc and sun4u
+use the uncompressed cpio. The game code is GPL-2.0 and Freedoom is BSD-3-Clause. Only
+the official Freedoom data is used. [Archive pins and patch descriptions](doom/README.md)
+
+Measured on the lab daemon with Linux 7.3.4 and QEMU 11.1.3 under TCG. FPS is
+`35 × gametics / realtics`. Wall time includes firmware, Linux boot, the game and power-off.
+
+| Machine and display | Gametics | Realtics | FPS | Wall (s) | Screendump in `out/doom/` |
+| --- | ---: | ---: | ---: | ---: | --- |
+| SS-5 cg3 | 7117 | 886 | 281.15 | 32.19 | `SS-5-cg3.ppm` |
+| SS-5 tcx | 7117 | 886 | 281.15 | 32.21 | `SS-5-tcx.ppm` |
+| pc std | 7117 | 972 | 256.27 | 30.18 | `pc-std.ppm` |
+| sun4u std | 7117 | 4830 | 51.57 | 141.93 | `sun4u-std.ppm` |
+
+The 28,482-byte `DEMO1` lump has a 13-byte header, 7,117 four-byte commands and one end
+marker. Each boot checks that independent count, the reported FPS, a nonblank QMP capture
+during playback, the successful child exit on serial and QEMU's exit. A matching count
+checks playback length across byte orders. Wisp boot CI runs the complete demo on pc and
+SS-5 cg3 on relevant PRs because the two guest runs together took about a minute. It caches
+both verified archives and writes the serial logs, PPMs and timing report under `RUNNER_TEMP`.
+
+To reproduce on a Docker daemon, run the following from the repository root with a POSIX
+shell, Python 3.11+ and unused container names. Set `DOCKER_HOST` to the lab daemon before
+starting. Tar streams carry the inputs and evidence across the Docker connection.
+
+```sh
+set -eu
+w=e2e/wisp
+inputs=$w/out/doom-inputs
+vm=wispdoom-run
+python3 "$w/doom/fetch.py" "$inputs"
+set -- "$inputs"/fbDOOM-*.tar.gz
+archive=$1
+docker build -f "$w/Dockerfile" -t wispdoom-runner .
+docker run -d --name "$vm" wispdoom-runner sleep infinity
+docker exec "$vm" sh -ec 'apt-get update -qq && apt-get install -y patch libc6-dev-sparc64-cross'
+docker exec -e TIER_FB=1 -e TIER2=0 "$vm" sh build.sh sparc32 x86_64 sparc64
+tar -C "$inputs" -cf - freedoom1.wad | docker exec -i "$vm" tar -C /tmp -xf -
+for arch in sparc32 x86_64 sparc64; do
+    sdk=$vm
+    if [ "$arch" != sparc64 ]; then
+        sdk=wispdoom-build-$arch
+        docker run -d --name "$sdk" "ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20" sleep infinity
+        docker exec "$sdk" sh -ec 'apt-get update -qq && apt-get install -y make patch'
+    fi
+    tar -C "$w" -cf - doom | docker exec -i "$sdk" tar -C /tmp -xf -
+    docker exec -i "$sdk" sh -c 'cat >/tmp/src.tgz' < "$archive"
+    docker exec "$sdk" sh /tmp/doom/build.sh "$arch" /tmp/src.tgz "/tmp/fbdoom-$arch"
+    if [ "$sdk" != "$vm" ]; then
+        docker exec "$sdk" tar -C /tmp -cf - "fbdoom-$arch" | docker exec -i "$vm" tar -C /tmp -xf -
+        docker rm -f "$sdk" >/dev/null
+    fi
+    docker exec "$vm" python3 doom.py --arch "$arch" --binary "/tmp/fbdoom-$arch" --wad /tmp/freedoom1.wad
+done
+mkdir -p "$w/out/doom"
+docker exec "$vm" tar -C /wisp/out/doom -cf - . | tar -C "$w/out/doom" -xf -
+docker rm -f "$vm"
+docker image rm wispdoom-runner
+```
+
 ## Updating the size budget
 
 In the wisp build environment, run `TIER_NET=1 TIER_FB=1 ./build.sh all` with tier 2 enabled (the
