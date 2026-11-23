@@ -27,7 +27,7 @@ LOOP = re.compile(r"crc32 0x([0-9a-f]{8}) after (\d+) rounds \(\d+ KiB\) in (\d+
 # wrong guess (check_answers checks its reply against the model's answer for the arch under test).
 SCRIPT = ("hepl\x7f\x7flp", "info", "bench", "crc 64", "mandel", "endian", "endian 0", "poweroff")
 
-# Architectures this lab boots as big-endian; the rest (x86_64, i386) are little-endian.
+# Architectures this lab boots as big-endian; the rest (x86_64, i386, aarch64) are little-endian.
 BIG_ENDIAN_ARCHES = ("sparc32", "sparc64")
 
 
