@@ -70,7 +70,7 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..058050f 100644
+index bc240a0..94c612a 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
 @@ -73,3 +73,91 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
@@ -164,7 +164,7 @@ index bc240a0..058050f 100644
 +wsh/0126-hw-audio-cs4231-clear-i24-s-pi-ci-and-ti-on-a-status.patch
 +wsh/0127-tests-qtest-test-that-a-cs4231-status-write-clears-i.patch
 +wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
-+wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu.patch
++wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -17554,10 +17554,10 @@ index 0000000..cdcac43
 +     qtest_writel(qts, APC_CSR, APC_PMI | APC_ENABLES);
 diff --git a/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch b/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
 new file mode 100644
-index 0000000..e51dff7
+index 0000000..36ac1e2
 --- /dev/null
 +++ b/debian/patches/wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
-@@ -0,0 +1,351 @@
+@@ -0,0 +1,423 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/audio/cs4231: drop what the apc took past the codec on a
 + stop
@@ -17603,12 +17603,21 @@ index 0000000..e51dff7
 +the drop then cut the last 22 ms of the tone. The registers are written
 +as before.
 +
-+No vmstate change: the FIFO is not migrated. What it holds, at most
-+50 ms, was in the audiodev before, which is not migrated either.
++A new vmstate subsection "cs4231/fifo" carries the FIFO, the codec's
++end (play_end) and what was taken from the current buffer, and is sent
++only while the FIFO holds samples, so older streams load and streams
++without it load as before. Without it, after a migration 20 ms into a
++100 ms buffer, the destination's address and count read the APC's
++position instead of the codec's (560 bytes further on), the codec
++started again at once, PMI came 10 ms after the migration instead of
++80, and the samples taken ahead were lost (240 of 640 frames reached
++the audiodev). Before this change the same migration also lost 187
++frames and gave PMI 43 ms early: the samples were in the audiodev then.
 +
 +Tested in a sparc-softmmu build on Linux: sun4m-cs4231-test passes
-+with the case of the next commit, which fails without this change
-+(720 frames in the wav file where the codec had played 320). On an SS-5
++with the cases of the next commit, which fail without this change
++(mid-stop: 720 frames in the wav file where the codec had played 320;
++migrate-fifo: the address read 0xff0002d1 instead of 0xff0000a1). On an SS-5
 +with OpenBIOS "intr" 0x39 an unmodified Linux 7.3.4 plays 1000 ms of
 +440 Hz followed by 22 ms of the silence it pads its last period with
 +(five runs), then at most 110 frames (2.5 ms; none in one run, 8 to 15
@@ -17617,11 +17626,11 @@ index 0000000..e51dff7
 +old samples. SunOS 4.1.4 and Solaris 2.6 still play 2.56 s of u-law
 +and a 40-byte sound after it without a gap.
 +---
-+ hw/audio/cs4231.c | 153 ++++++++++++++++++++++++++++++++++++++--------
-+ 1 file changed, 127 insertions(+), 26 deletions(-)
++ hw/audio/cs4231.c | 191 +++++++++++++++++++++++++++++++++++++++-------
++ 1 file changed, 165 insertions(+), 26 deletions(-)
 +
 +diff --git a/hw/audio/cs4231.c b/hw/audio/cs4231.c
-+index 9edab14..b56b382 100644
++index 9edab14..19bd06a 100644
 +--- a/hw/audio/cs4231.c
 ++++ b/hw/audio/cs4231.c
 +@@ -44,10 +44,18 @@
@@ -17900,24 +17909,87 @@ index 0000000..e51dff7
 +         }
 +         /* a PMI still due waits while a next buffer is loaded */
 +         cs_play_irqs(s);
-+@@ -779,6 +878,8 @@ static int cs_post_load(void *opaque, int version_id)
++@@ -768,6 +867,8 @@ static int cs_pre_load(void *opaque)
++     CSState *s = opaque;
 + 
-+     s->play_running = false;
-+     s->play_drain = 0;
++     s->play_end = 0;
 ++    s->fifo_len = 0;
 ++    s->buf_taken = 0;
++     s->pi_at = -1;
++     s->pmi_at = -1;
++     return 0;
++@@ -776,10 +877,20 @@ static int cs_pre_load(void *opaque)
++ static int cs_post_load(void *opaque, int version_id)
++ {
++     CSState *s = opaque;
+++    uint32_t fifo_len = s->fifo_len;
++ 
+++    if (fifo_len > CS_FIFO || fifo_len % 2) {
+++        return -EINVAL;
+++    }
++     s->play_running = false;
++     s->play_drain = 0;
+++    /* it compares the layout with the defaults here and would empty it */
 +     cs_play_setup(s);
+++    s->fifo_len = fifo_len;
+++    if (fifo_len) {
+++        /* the codec still has these to play, also when the pipe is empty */
+++        s->play_drain = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + CS_DRAIN_NS;
+++    }
 +     cs_play_update(s);
 +     /* a PI or PMI still due: set the timer again */
-diff --git a/debian/patches/wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu.patch b/debian/patches/wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu.patch
++     cs_play_irqs(s);
++@@ -807,6 +918,33 @@ static const VMStateDescription vmstate_cs4231_irqs = {
++     }
++ };
++ 
+++/*
+++ * Samples the APC took ahead of the codec: without them the codec would
+++ * start again at once after a migration, so PI and PMI would come early,
+++ * the address and count would read the APC's position, and up to 50 ms
+++ * of sound would be lost
+++ */
+++static bool cs_fifo_needed(void *opaque)
+++{
+++    CSState *s = opaque;
+++
+++    return s->fifo_len > 0;
+++}
+++
+++static const VMStateDescription vmstate_cs4231_fifo = {
+++    .name = "cs4231/fifo",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = cs_fifo_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_INT64(play_end, CSState),
+++        VMSTATE_UINT32(buf_taken, CSState),
+++        VMSTATE_UINT32(fifo_len, CSState),
+++        VMSTATE_INT16_ARRAY(fifo, CSState, CS_FIFO / 2),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const VMStateDescription vmstate_cs4231 = {
++     .name ="cs4231",
++     .version_id = 2,
++@@ -821,6 +959,7 @@ static const VMStateDescription vmstate_cs4231 = {
++     },
++     .subsections = (const VMStateDescription * const []) {
++         &vmstate_cs4231_irqs,
+++        &vmstate_cs4231_fifo,
++         NULL
++     }
++ };
+diff --git a/debian/patches/wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam.patch b/debian/patches/wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam.patch
 new file mode 100644
-index 0000000..6bcc96a
+index 0000000..5e1875f
 --- /dev/null
-+++ b/debian/patches/wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu.patch
-@@ -0,0 +1,117 @@
++++ b/debian/patches/wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam.patch
+@@ -0,0 +1,207 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
-+Subject: [PATCH] tests/qtest: test a cs4231 stop in the middle of a buffer on
-+ sun4m
++Subject: [PATCH] tests/qtest: test cs4231 stops and migration with samples
++ taken ahead
 +
 +mid-stop plays one buffer of 800 bytes (100 ms at 8000 Hz) into a wav
 +audiodev and stops 40 ms after the buffer's PI the way Linux does:
@@ -17926,18 +17998,26 @@ index 0000000..6bcc96a
 +those 40 ms (320 frames, +-16) and nothing that the APC had taken past
 +it. playback still checks that a stop at PMI plays every sample.
 +
-+Tested: all nine cases of sun4m-cs4231-test pass. Without the previous
++migrate-fifo migrates 20 ms into such a buffer, with up to 50 ms taken
++ahead of the codec. The address and count must read the codec's
++position (about 160 bytes in) on both sides, PMI must come 75-90 ms
++after the migration, and the destination's wav audiodev must get the
++other 80 ms (620-660 frames). The qtest clock starts at 0 in each
++process, so the destination's is stepped to the source's first, as
++the virtual clock goes on under TCG and KVM.
++
++Tested: all ten cases of sun4m-cs4231-test pass. Without the previous
 +commit mid-stop fails: assertion failed (sound <= (STOP_MS + 2) * 8):
-+(720 <= 336).
++(720 <= 336), and migrate-fifo fails on the source's count.
 +---
-+ tests/qtest/sun4m-cs4231-test.c | 81 +++++++++++++++++++++++++++++++++
-+ 1 file changed, 81 insertions(+)
++ tests/qtest/sun4m-cs4231-test.c | 163 ++++++++++++++++++++++++++++++++
++ 1 file changed, 163 insertions(+)
 +
 +diff --git a/tests/qtest/sun4m-cs4231-test.c b/tests/qtest/sun4m-cs4231-test.c
-+index 38f854a..06118e2 100644
++index 38f854a..94427b8 100644
 +--- a/tests/qtest/sun4m-cs4231-test.c
 ++++ b/tests/qtest/sun4m-cs4231-test.c
-+@@ -654,6 +654,86 @@ static void test_codec_int(void)
++@@ -654,6 +654,167 @@ static void test_codec_int(void)
 +     qtest_quit(qts);
 + }
 + 
@@ -18021,14 +18101,96 @@ index 0000000..6bcc96a
 ++    unlink(wav);
 ++}
 ++
+++/*
+++ * A migration while the APC has taken samples ahead of the codec: 20 ms
+++ * into a 100 ms buffer it has taken up to 70 ms of it. On the other side
+++ * the address and count must read as before (the codec's position), the
+++ * codec must play the rest of the buffer, what was taken ahead included,
+++ * and PMI must come when it has, 80 ms later.
+++ */
+++static void test_migrate_fifo(void)
+++{
+++    g_autofree char *path = NULL;
+++    g_autofree char *uri = NULL;
+++    g_autofree char *wav = NULL;
+++    QTestState *src, *dst;
+++    uint8_t buf[BUF_LEN];
+++    uint32_t pva, pc;
+++    int64_t t, now;
+++    gsize sound;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.mig", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    uri = g_strdup_printf("file:%s", path);
+++    fd = g_file_open_tmp("sun4m-cs4231-XXXXXX.wav", &wav, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++
+++    src = qtest_init("-machine SS-5,audiodev=snd0 "
+++                     "-audiodev none,id=snd0");
+++    qtest_writel(src, IOPTE_TABLE, (BUF_RAM >> 4) | 0x2);
+++    qtest_writel(src, IOMMU_BASE + 4, IOPTE_TABLE >> 4);
+++    qtest_writel(src, IOMMU_BASE, 0x1);
+++    memset(buf, ULAW_POS, sizeof(buf));
+++    qtest_memwrite(src, BUF_RAM, buf, sizeof(buf));
+++    codec_write(src, CS_PFMT, CS_PFMT_ULAW_8K);
+++    qtest_writel(src, APC_PNVA, BUF_DVMA);
+++    qtest_writel(src, APC_PNC, BUF_LEN);
+++    qtest_writel(src, APC_CSR, APC_PI | APC_PMI | APC_ENABLES);
+++    codec_write(src, CS_ICONF, CS_PEN);
+++    wait_csr(src, APC_PI, 100);
+++    qtest_writel(src, APC_CSR, APC_PI | APC_ENABLES);
+++    qtest_clock_step(src, 20 * 1000 * 1000);
+++
+++    /* The codec's position, about 160 bytes in, not the APC's */
+++    now = qtest_clock_step(src, 1);
+++    pva = qtest_readl(src, APC_PVA);
+++    pc = qtest_readl(src, APC_PC);
+++    g_assert_cmphex(pva + pc, ==, BUF_DVMA + BUF_LEN);
+++    g_assert_cmpuint(pc, >=, BUF_LEN - 180);
+++    g_assert_cmpuint(pc, <=, BUF_LEN - 150);
+++    migrate_to_file(src, uri);
+++    qtest_quit(src);
+++
+++    dst = qtest_initf("-machine SS-5,audiodev=snd0 "
+++                      "-audiodev wav,id=snd0,path=%s,out.frequency=8000,"
+++                      "out.channels=2,out.format=s16 -incoming %s", wav, uri);
+++    wait_running(dst);
+++    /*
+++     * Under TCG and KVM the virtual clock goes on from the source's; the
+++     * qtest clock starts at 0 in each process, so set it
+++     */
+++    qtest_clock_step(dst, now - qtest_clock_step(dst, 1));
+++    g_assert_cmphex(qtest_readl(dst, APC_PVA), ==, pva);
+++    g_assert_cmphex(qtest_readl(dst, APC_PC), ==, pc);
+++
+++    /* PMI when the codec has played the other 80 ms */
+++    t = wait_csr(dst, APC_PMI, 200);
+++    g_assert_cmpint(t, >=, 75);
+++    g_assert_cmpint(t, <=, 90);
+++    qtest_writel(dst, APC_CSR, APC_PMI | APC_ENABLES);
+++    qtest_clock_step(dst, 300 * 1000 * 1000);
+++    qtest_quit(dst);
+++
+++    /* All of those 80 ms reached the audiodev, 640 frames */
+++    sound = wav_sound_frames(wav);
+++    g_assert_cmpuint(sound, >=, 620);
+++    g_assert_cmpuint(sound, <=, 660);
+++    unlink(wav);
+++    unlink(path);
+++}
+++
 + int main(int argc, char **argv)
 + {
 +     g_test_init(&argc, &argv, NULL);
-+@@ -666,6 +746,7 @@ int main(int argc, char **argv)
++@@ -666,6 +827,8 @@ int main(int argc, char **argv)
 +     qtest_add_func("sun4m-cs4231/short-chain", test_short_chain);
 +     qtest_add_func("sun4m-cs4231/migrate", test_migrate);
 +     qtest_add_func("sun4m-cs4231/codec-int", test_codec_int);
 ++    qtest_add_func("sun4m-cs4231/mid-stop", test_mid_stop);
+++    qtest_add_func("sun4m-cs4231/migrate-fifo", test_migrate_fifo);
 + 
 +     return g_test_run();
 + }

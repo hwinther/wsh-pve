@@ -105,7 +105,7 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0126-hw-audio-cs4231-clear-i24-s-pi-ci-and-ti-on-a-status | ours, on LEMU's CS4231 | hw/audio/cs4231: clear i24's pi, ci and ti on a status register write | none | none | offered to LEMU, not taken yet |
 | wsh/0127-tests-qtest-test-that-a-cs4231-status-write-clears-i | ours, on LEMU's CS4231 | tests/qtest: test that a cs4231 status write clears i24 on sun4m | none | none | offered to LEMU, not taken yet |
 | wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code | ours, on LEMU's CS4231 | hw/audio/cs4231: drop what the apc took past the codec on a stop | none | none | offered to LEMU, not taken yet |
-| wsh/0129-tests-qtest-test-a-cs4231-stop-in-the-middle-of-a-bu | ours, on LEMU's CS4231 | tests/qtest: test a cs4231 stop in the middle of a buffer on sun4m | none | none | offered to LEMU, not taken yet |
+| wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam | ours, on LEMU's CS4231 | tests/qtest: test cs4231 stops and migration with samples taken ahead | none | none | offered to LEMU, not taken yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|
