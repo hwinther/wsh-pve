@@ -1,6 +1,6 @@
 diff --git a/qemu-0/hw/3dfx/fxdisp.c b/qemu-0/hw/3dfx/fxdisp.c
 new file mode 100644
-index 0000000..14b2b48
+index 0000000..afa92f1
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.c
 @@ -0,0 +1,551 @@
@@ -49,8 +49,8 @@ index 0000000..14b2b48
 + *    pass-through's context.
 + *  - readback otherwise (no GL display, as PVE's VNC console; no export, as for a multisampled
 + *    MESA GL window; QEMU_3DFX_DMABUF=0) and for the frames the user can't copy into the buffer
-+ *    (wsh-openglide while a gamma ramp is set; mesapt copies through the ramp with a shader, and
-+ *    reads back only when that shader can't be built):
++ *    (a gamma ramp: wsh-openglide and mesapt copy through it with a shader, and read back only
++ *    when that shader can't be built, as a wsh-openglide before 0.6 always does):
 + *    the frame is read with glReadPixels on the vCPU thread, and the bottom half copies it into a
 + *    console surface of fxdisp's own (flipping it, OpenGL's rows are bottom up, and applying the
 + *    guest's gamma ramp when it set one) and marks the console updated.
@@ -332,7 +332,7 @@ index 0000000..14b2b48
 +            fx->scanouts++;
 +            return;
 +        }
-+        /* not this frame (a gamma ramp): read back */
++        /* not this frame (a gamma ramp, and no shader for it): read back */
 +    }
 +    if (fx->read(fx->opaque, fx->pix, fx->w, fx->h, fx->w * 4)) {
 +        fx->ready = FXDISP_PIXELS;
@@ -1002,10 +1002,10 @@ index 051c953..2c64a33 100644
      void (*stat)(void);
 diff --git a/qemu-1/hw/mesa/mglcntx_egl.c b/qemu-1/hw/mesa/mglcntx_egl.c
 new file mode 100644
-index 0000000..8593587
+index 0000000..38a7a00
 --- /dev/null
 +++ b/qemu-1/hw/mesa/mglcntx_egl.c
-@@ -0,0 +1,1445 @@
+@@ -0,0 +1,1479 @@
 +/*
 + * QEMU MESA GL Pass-Through: EGL offscreen context
 + *
@@ -1351,8 +1351,9 @@ index 0000000..8593587
 + * would be names in the guest's namespace, which the guest may fill with names it never had from
 + * glGen* (legacy GL allows that), and the blit depends on state the guest owns (scissor test,
 + * read buffer, read and draw framebuffer bindings, GL_FRAMEBUFFER_SRGB), all of which would have
-+ * to be saved and put back every frame. The price is two eglMakeCurrent and a glFinish in the
-+ * guest's context per frame (its rendering must be done before another context reads it).
++ * to be saved and put back every frame. The price is two eglMakeCurrent and a wait for the
++ * guest's rendering per frame (it must be done before another context reads it): an EGL fence
++ * in the guest's context, waited on (scan_finish), or glFinish without EGL_KHR_fence_sync.
 + *
 + * The copy is a framebuffer blit of the back buffer (the front one when single-buffered),
 + * unscaled and unflipped (llvmpipe copies memory), so its rows are bottom up, as fxdisp tells the
@@ -1380,6 +1381,10 @@ index 0000000..8593587
 +    int w, h, staged;
 +    GLuint prog, tex, lut;  /* gamma: the program, the frame's copy, the lookup (256 x 1) */
 +    int tex_w, tex_h, lut_dirty, gamma_failed;
++    int fence;              /* scan_finish: 0 not decided yet, 1 an EGL fence, -1 glFinish */
++    PFNEGLCREATESYNCKHRPROC create_sync;
++    PFNEGLCLIENTWAITSYNCKHRPROC client_wait;
++    PFNEGLDESTROYSYNCKHRPROC destroy_sync;
 +} scan;
 +
 +static void egl_current_save(EglCurrent *c)
@@ -1667,6 +1672,37 @@ index 0000000..8593587
 +    return 1;
 +}
 +
++/* The GL work so far in the current context finished, before another context or the display reads
++ * what it rendered: an EGL fence (EGL_KHR_fence_sync) waited on, else glFinish. A wait on the CPU
++ * (eglClientWaitSyncKHR), not in the GL stream (eglWaitSyncKHR): a context that reads another's
++ * rendering needs it done, and Mesa's software renderers don't all wait in the stream */
++static void scan_finish(void)
++{
++    MESA_PFN(PFNGLFINISHPROC, glFinish);
++
++    if (!scan.fence) {
++        if (has_ext(egl.QueryString(e.dpy, EGL_EXTENSIONS), "EGL_KHR_fence_sync")) {
++            scan.create_sync = (PFNEGLCREATESYNCKHRPROC) egl.GetProcAddress("eglCreateSyncKHR");
++            scan.client_wait = (PFNEGLCLIENTWAITSYNCKHRPROC) egl.GetProcAddress("eglClientWaitSyncKHR");
++            scan.destroy_sync = (PFNEGLDESTROYSYNCKHRPROC) egl.GetProcAddress("eglDestroySyncKHR");
++        }
++        scan.fence = (scan.create_sync && scan.client_wait && scan.destroy_sync)? 1:-1;
++        DPRINTF("dmabuf scanout: the guest's frames and the copies are finished with %s",
++            (scan.fence > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)");
++    }
++    if (scan.fence > 0) {
++        EGLSyncKHR sync = scan.create_sync(e.dpy, EGL_SYNC_FENCE_KHR, NULL);
++        if (sync != EGL_NO_SYNC_KHR) {
++            EGLint r = scan.client_wait(e.dpy, sync, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, EGL_FOREVER_KHR);
++            scan.destroy_sync(e.dpy, sync);
++            if (r == EGL_CONDITION_SATISFIED_KHR)
++                return;
++        }
++    }
++    if (p_glFinish)
++        p_glFinish();
++}
++
 +/* Makes scan.ctx current for a copy of the guest's frame, the guest's rendering done (another
 + * context reads it); 0, with nothing changed, when the guest's window isn't current */
 +static int scan_begin(EglCurrent *cur)
@@ -1676,7 +1712,7 @@ index 0000000..8593587
 +    egl_current_save(cur);
 +    if ((cur->draw != e.surf) || !p_glFinish)
 +        return 0;
-+    p_glFinish();
++    scan_finish();
 +    if (!egl.MakeCurrent(e.dpy, e.surf, e.surf, scan.ctx)) {
 +        egl_current_restore(cur);
 +        return 0;
@@ -1688,9 +1724,7 @@ index 0000000..8593587
 + * destination), the guest's context back */
 +static void scan_end(const EglCurrent *cur)
 +{
-+    MESA_PFN(PFNGLFINISHPROC, glFinish);
-+
-+    p_glFinish();
++    scan_finish();
 +    egl_current_restore(cur);
 +}
 +

@@ -113,6 +113,7 @@ come after that, not before.
 | 3dfx stage 2 through PVE: the Windows 98 harness gains `--pve CONTAINER` (`win98-test.sh`; `win98_test.py --pve VMID`): the harness runs in the e2e PVE container, `qm create` (`vga: std,mesa=1[,mesa-display=egl-headless]`, the disk copy through a directory storage of the run's own, COM1 and `-d plugin -D <log>` through `args`, which keeps a daemonized QEMU's standard error in the log) and `qm start`; the console is read through the VM's QMP socket (screendump) or PVE's VNC socket (VNC authentication, our own DES; the password set through QMP before each picture, since opening noVNC sets PVE's ticket). The template's device positions keep the new-hardware wizard away: machine version before 11.1 (11.1 adds bridge `pci.4`), `vmgenid: 0`, AC97 at 00:04.0 through `args` (qemu-server's `audio0` sits behind a bridge). Lab, published pve-qemu-kvm 11.1.3-4+wsh4, qemu-server 9.2.20+wsh7, wsh-openglide 0.5, KVM, `cpu: pentium3`, the i586 guest drivers of `qemu-3dfx-drivers-b94d988`, llvmpipe, `/dev/udmabuf`: egl-headless Glide 2 440-560, Glide 3 640-660, OpenGL 810 frames/s in two runs, every frame as a dmabuf (copies 0.08-0.09 ms Glide, 1.0-1.6 ms OpenGL); read back 1150, 1430 and 440; the scene in the noVNC console with egl-headless, 4 dmabufs open in QEMU. Also: the frame spec (`3dfx-gl-display.spec.ts`) runs in `e2e.yml`, which builds its guest before the suite (`pve-guest-setup.sh` with `PVE_GUEST_FETCH=1` for the submodule, ~40 s; `E2E_3DFX_GUEST=required` fails the spec when that setup failed); GitHub's runners have `/dev/udmabuf`; Proxmox's kernels have `CONFIG_UDMABUF=y`. Found: an older x86-64-v2 drivers zip faults under KVM with PVE's `cpu: pentium3` (`pinsrd`, SSE4.1; the release is i586 now); an OpenGL frame the guest doesn't redraw gives way to the VGA after ~4 s (also without PVE and read back) | merged | #450 |
 | `sol10-sun4u` with `--ip dhcp`: the installer's DHCP screen answered yes (`/etc/dhcp.hme0`), the first boot keeps the host name in `/etc/nodename` and `inet <name>` in `/etc/hostname.hme0` (dhcpagent asks the server for it; Solaris 10 falls back to nodename), `--check` also needs the `DHCP` flag on `hme0`, the router from `dhcpinfo` and a ping of it. Through PVE (published pve-qemu-kvm 11.1.3-4+wsh4, with openbios 0030: the installer's reboot came back at the firmware banner), dnsmasq on the bridge in 10.0.2.0/24: passed in 119.8 min, `hme0` 10.0.2.25 by DHCP, `default 10.0.2.2`, `10.0.2.2 is alive`, host name `sol10-sun4u` (sent by the client and echoed by the server). `e2e/sparc/README.md`, "The Solaris 10 install target" | merged | #451 |
 | Solaris 2.5.1/2.6 boot block on sun4u: their FCode boot block (UFS Reader 1.6/1.10) copies ufsboot's ELF segments into place itself, then evaluates `to load-base init-program` with `load-base` at the entry point and `?go`; OpenBIOS's `init-program` recognised nothing there and had no `?go` (`?go:`, `byte-load: exception caught!`). openbios 0031: `init-program` looked up by name takes unrecognised code at `load-base` as the program (as OBP), `?go` starts it. Both CDs are Ultra 5/10 media (their mini-roots have `SUNW,Ultra-5_10`, `uata`, `dad`, `atapicd`), so QEMU's machine class fits. With 0031 both kernels start and stop further on: 2.6 can't assemble the root drivers for the CD (`vfs_mountroot`), 2.5.1 traps before its banner on an unmapped page of its nucleus data (item 2 under "Next"). `submodules/SPARC.md`, "Solaris 2.5.1 and 2.6 on sun4u: the boot block" | merged | #451 |
+| 3dfx stage 2, third slice: Glide frames with a gamma ramp stay dmabufs (wsh-openglide 0.6: the dmabuf copy applies the ramp in a shader pass, in an EGL context of its own that shares OpenGLide's renderbuffers, readback only if that pass can't be had), and the dmabuf copies of wsh-openglide and mesapt are finished with an `EGL_KHR_fence_sync` fence instead of `glFinish` (`glFinish` without it). Tests: `glide-render --egl --dmabuf` in the package test (the mapped dmabuf equals the read frame, without and with ramps), `e2e/3dfx` expects the Glide gamma phase as a dmabuf and probes its Gouraud triangle, `GLIDE_GUEST_BENCH_GAMMA=1`. Lab, llvmpipe: 707 (egl-headless) and 1590 (dbus,gl=on) frames/s with gamma 2.0 as dmabufs against 1150 and 833 read back; the fences changed nothing measurable there (ROADMAP, Stage 2, "Third slice") | in review | |
 
 ## In progress
 
@@ -293,7 +294,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering, Glide gamma as a shader).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98; left: a GPU node, double buffering).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -392,12 +393,48 @@ merged; what is left of them is item 2 under "Next".
        the pbuffer's pixel format into the `GL_RGBA8` renderbuffer by drawing (no renderbuffer
        format gave its memcpy path, and desktop GL has no BGRA8 one), where Glide's
        renderbuffer-to-renderbuffer blit is a 0.06 ms memcpy. On a GPU it is a GPU blit.
+       Third slice (in review): Glide gamma ramps as dmabufs, and EGL fences for the copies.
+       wsh-openglide 0.6 (`0003-egl-dmabuf-scanout.patch`): with a ramp set, `getOffscreenScanout`
+       copies through it instead of refusing: in a second EGL context that shares OpenGLide's
+       objects (its renderbuffers) but not its state, so nothing of OpenGLide's (texture units,
+       enables, blend, viewport, client arrays) is saved or touched, the front buffer goes into a
+       texture and is drawn into the scanout buffer through a 256x1 lookup texture (mesapt's GLSL
+       1.20 shader), unflipped (`y0_top` as before); the plain blit stays for frames without a
+       ramp, and the readback's CPU lookup is unchanged. Only when that pass can't be had (no
+       context, no shader) is a ramp frame refused and read back; qemu-3dfx's `fxdisp.c` needed no
+       change (it reads back whatever the scanout refuses). The copies of wsh-openglide and mesapt
+       (the guest's frame before mesapt's context reads it, and each copy before the display reads
+       it) are finished with an `EGL_KHR_fence_sync` fence and `eglClientWaitSyncKHR` (flush bit,
+       no timeout), `glFinish` without the extension; a wait in the GL stream (`eglWaitSyncKHR`)
+       is left for a GPU node, since a context reading another's rendering needs it done and the
+       software renderers can't be relied on to wait in the stream. llvmpipe has the extension,
+       so the fences are used (QEMU's log says which). Tested (lab, TCG, llvmpipe,
+       `/dev/udmabuf`): the package test's new `glide-render --egl --dmabuf` maps the exported
+       dmabuf and compares it with `getOffscreenFrame`, all 307200 pixels equal without a ramp,
+       with gamma 2.0 (`#0000b5` top left), with a Glide 3 table of a different ramp per channel
+       (`#00ff40`) and after the reset; `e2e/3dfx` `egl`, `dbus` and `dbus` with
+       `DBUS_DELAY_MS=2`: every Glide frame as a dmabuf ("0 frames read back instead"), the gamma
+       phase's too, its probes `#0000b5` and, new, `#939294` in the Gouraud triangle (a frame
+       upside down fails); `egl` with `QEMU_3DFX_DMABUF=0` and `vnc` read back with the same
+       colours; the Mesa guest unchanged. Measured (640x480, the test scene; `GLIDE_GUEST_BENCH=3000`
+       with the new `GLIDE_GUEST_BENCH_GAMMA=1`, which keeps gamma 2.0 for the bench):
+
+       | Glide guest, gamma 2.0 | before (0.5: ramp frames read back) | after (0.6: dmabuf) |
+       | --- | --- | --- |
+       | egl-headless + VNC | 1150 frames/s, 0.39 ms read, egl-headless's update 7.1 ms | 707 frames/s, 0.44 ms copy, update 0.54 ms |
+       | dbus,gl=on, listener replies at once | 833 frames/s, 0.40 ms read | 1590 frames/s, 0.42 ms copy, update 0.04 ms |
+       | VNC, `-display none` | 1120 frames/s, 0.39 ms read (unchanged) | |
+
+       With egl-headless the readback still wins on llvmpipe (egl-headless reads the dmabuf back for
+       VNC anyway), as for MESA GL. The gamma pass costs 0.44 ms against the plain blit's 0.07 ms
+       (two `eglMakeCurrent`, the front buffer into a texture, a draw through the lookup), and its
+       first frame builds the shader (about 40 ms once, estimated from the averages). The fences changed nothing measurable on
+       llvmpipe: Glide's plain copy 0.07 ms before and after, mesapt's copy 1.1-1.8 ms before and
+       1.1-1.4 ms after, within the lab's run-to-run spread.
        Left: a real GPU render node (modifiers other than
-       linear, and an EGL fence instead of `glFinish`); Windows 98 with dbus,gl=on (the harness has
+       linear, and a wait for the fences in the GL stream, `EGL_KHR_wait_sync`, instead of on the CPU); Windows 98 with dbus,gl=on (the harness has
        no D-Bus client yet) and a real game over time; double buffering instead of holding
-       frames while a D-Bus client reads (it would also replace mesapt's hold copy); gamma in
-       wsh-openglide's copy (a shader pass, as mesapt's), so Glide ramp frames stay dmabufs too;
-       an EGL fence in place of mesapt's `glFinish` in the guest's context; the D-Bus listener's 30 ms
+       frames while a D-Bus client reads (it would also replace mesapt's hold copy); the D-Bus listener's 30 ms
        refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
        4 s after its last swap (seen in Windows 98 with a long hold: egl-headless and read back alike,
        with and without PVE; a held Glide frame stays). Settled since: GitHub's runners have
