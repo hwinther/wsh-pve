@@ -1,0 +1,37 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: mark the CS4231 "intr" as an SBus interrupt, 0x39
+
+Patch 0018 made the SS-5's SUNW,CS4231 "intr" 9, the processor level of
+its SBus level 5. Linux reads "intr" as Sun's PROMs encode it: 0x30-0x3f
+is an SBus interrupt, 0x20-0x2f an on-board one, and anything below 0x20
+a software interrupt, with the processor level in the low four bits
+(sun4m_build_device_irq()). It took 9 for software interrupt 9: it
+unmasked the CPU's soft interrupt and left SBus level 5 masked in the
+system interrupt mask, so the codec's first period played and the APC's
+interrupt never reached the driver (soundtest: EIO after one buffer).
+
+The SS-5's own PROM gives the node "intr" 0x39, and OpenBIOS already
+encodes its on-board devices this way (the ESP's 0x24). Give the codec
+0x39. SunOS 4 takes the low four bits and still waits at level 9;
+Solaris takes "interrupts", which stays 5.
+---
+diff --git a/drivers/sbus.c b/drivers/sbus.c
+index 81a22bf..93a541d 100644
+--- a/drivers/sbus.c
++++ b/drivers/sbus.c
+@@ -252,10 +252,12 @@ ob_cs4231_init(unsigned int slot)
+     fword("property");
+ 
+     /*
+-     * SBus level 5 ("interrupts" below) is processor level 9 on sun4m, as
+-     * the SS-5's own PROM has it: "intr" is the processor level.
++     * SBus level 5 ("interrupts" below) is processor level 9 on sun4m. As
++     * in the SS-5's own PROM, "intr" says both: 0x30 marks an SBus
++     * interrupt and the low four bits are the processor level. Linux takes
++     * a bare 9 for a software interrupt; SunOS 4 uses the low four bits.
+      */
+-    PUSH(9);
++    PUSH(0x39);
+     fword("encode-int");
+     PUSH(0);
+     fword("encode-int");

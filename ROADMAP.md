@@ -779,7 +779,7 @@ merged; what is left of them is item 2 under "Next".
 | 3dfx Glide: a guest LFB read that drains queued calls comes back shifted | glidept puts the pixels after the drained calls' data, the guest wrappers (Linux, Windows, DJGPP) copy from the start; a read after a swap or a direct call is right. Upstream (qemu-3dfx) material; `e2e/3dfx` reports it without counting it |
 | 3dfx with an SDL window: the second or third 3D window in one VM ends QEMU with an X error | Seen in the Windows 98 test on Xvfb (`BadRequest` when Glide 3 followed Glide 2, `BadLength` when OpenGL followed both); each test alone passes. Headless (offscreen) not affected |
 | sun4u keyboard under wisp | OpenBIOS's EBus 8042 node has no mouse child, so Linux's sparc i8042 probe returns `-ENODEV` (#472); fix would be an OpenBIOS patch adding the node |
-| SS-5 sound under wisp stops after the first DMA buffer | The APC's playback interrupt stays pending: OpenBIOS gives the CS4231 node `intr 9`, which Linux's sun4m code maps to a software interrupt (Sun's PROM gives `0x39`, SBus level 5) (#478); needs an OpenBIOS change |
+| SS-5 sound under wisp stops after the first DMA buffer | Two causes (SPARC.md, "Audio"): OpenBIOS gives the CS4231 node `intr 9`, which Linux maps to a software interrupt, leaving SBus level 5 masked (openbios 0034 gives `0x39` as Sun's PROM does: in review); and Linux's handler ignores the interrupt unless the codec's status register has its INT bit, which QEMU's CS4231 (LEMU's code) never sets, so with 0034 alone the interrupt repeats until QEMU stops. Needs the CS4231 change through LEMU, then a package with both, then the SS-5 in wisp-boot's sound step |
 
 ## The lab host
 

@@ -389,13 +389,22 @@ The pc and sun4u reported:
 WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1
 ```
 
-On SS-5 use the repository's pve-qemu build with APC DMA playback. On the published
-`11.1.3-4+wsh10` package, Linux 7.3.4 registers the Sun CS4231 and the first 8192-byte
-buffer reaches the WAV. Playback then stops with `WISP-SOUND v=1 ok=0 errno=5`.
-The trace shows a pending APC playback interrupt and no second buffer. OpenBIOS advertises
-`intr=9`, which Linux sun4m maps to a software interrupt. Its SBus interrupt at processor
-level 9 uses `0x39`. Linux's CS4231 handler also requires the codec's global interrupt
-status bit before acknowledging the APC. End-to-end SS-5 playback remains blocked.
+On the SS-5, playback needs two fixes, and the CI step leaves the SS-5 out until both are in
+the published package. On `11.1.3-4+wsh10` and `+wsh11`, Linux 7.3.4 registers the Sun CS4231
+and the first 8192-byte buffer reaches the WAV. Playback then stops with
+`WISP-SOUND v=1 ok=0 errno=5`, and `cs4231` counts no interrupts in `/proc/interrupts`:
+
+- The packaged OpenBIOS gives the codec `intr 9`. Linux reads values below `0x20` as
+  software interrupts, so SBus level 5 stays masked. OpenBIOS patch 0034
+  (`openbios/patches/`) gives the codec `0x39`, as the SS-5's own PROM does. The interrupt
+  then arrives.
+- Linux's SBus handler ignores the interrupt unless the codec's status register has its INT
+  bit. QEMU's CS4231 never sets that bit, so the APC interrupt is never cleared. With 0034
+  alone, the interrupt repeats until QEMU stops with `Trap 0x02 (Illegal Instruction) while
+  interrupts disabled`. This half needs a change in QEMU's CS4231 model.
+
+A lab build with 0034 and a kernel without the INT check played 440.005 Hz for 1000 ms on both
+channels. See `submodules/SPARC.md`, "Audio".
 
 ## Freedoom framebuffer timedemo
 
