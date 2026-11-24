@@ -123,9 +123,14 @@ EOF
 		sparc32|aarch64) driver=$arch ;;
 		sparc64|x86_64) driver=bochs ;;
 		esac
+		# sun4u adds its virtio keyboard (config/tier-fb/sparc64.config) to the shared Bochs fragment
+		set -- "$HERE/config/tier-fb/$driver.config"
+		if [ "$driver" != "$arch" ] && [ -f "$HERE/config/tier-fb/$arch.config" ]; then
+			set -- "$@" "$HERE/config/tier-fb/$arch.config"
+		fi
 		build_kernel "$B/kbuild-t2" kernel-fb config-fb "$c1" "$c2" \
 			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config" \
-			"$HERE/config/tier-fb/common.config" "$HERE/config/tier-fb/$driver.config"
+			"$HERE/config/tier-fb/common.config" "$@"
 		fb_size_field=" kernel_fb_bytes=$(wc -c < "$O/kernel-fb")"
 	fi
 	kernel_size=$(wc -c < "$O/kernel")

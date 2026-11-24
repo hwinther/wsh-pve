@@ -8,7 +8,9 @@ import unittest
 import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from doom import build_disk, check_effects, check_frame
+from doom import (RESPONSE, build_disk, check_effects, check_frame, check_overlay, parse_sums, play_command,
+                  response, status_bar_differs)
+import framebuffer
 
 
 class DemoSound(unittest.TestCase):
@@ -114,3 +116,80 @@ class DataDisk(unittest.TestCase):
             self.assertEqual((root / "demo.rsp").read_text().split(),
                              ["-iwad", "/data/freedoom1.wad", "-nomusic", "-scaling", "1",
                               "-timedemo", "demo1"])
+
+
+def frame(width, height, scale, paint=None):
+    """A P6 screendump with a game-coloured frame centred at `scale`; paint() may override pixels."""
+    left, top = (width - 320 * scale) // 2, (height - 200 * scale) // 2
+    pixels = bytearray(width * height * 3)
+    for y in range(200 * scale):
+        for x in range(320 * scale):
+            i = ((top + y) * width + left + x) * 3
+            pixels[i:i + 3] = bytes([(x // scale) % 200, (y // scale) % 7 * 30, 50])
+    if paint:
+        paint(pixels, width, left, top)
+    return f"P6\n{width} {height}\n255\n".encode() + bytes(pixels)
+
+
+class Play(unittest.TestCase):
+    def test_response_files(self):
+        self.assertEqual(response().split(), ["-iwad", "/data/freedoom1.wad", "-nosound", "-timedemo", "demo1"])
+        self.assertEqual(response(None, True, play=True, fps=True).split(),
+                         ["-iwad", "/data/freedoom1.wad", "-nomusic", "-fps"])
+        self.assertEqual(response(3, play=True).split()[-2:], ["-scaling", "3"])
+        self.assertEqual(RESPONSE, {False: "demo.rsp", True: "play.rsp"})
+
+    def test_sums(self):
+        digest = "a" * 64
+        self.assertEqual(parse_sums(f"{digest}  kernel-fb-x86_64\n{digest} *fbdoom-x86_64\n"),
+                         {"kernel-fb-x86_64": digest, "fbdoom-x86_64": digest})
+        with self.assertRaisesRegex(ValueError, "bad SHA256SUMS"):
+            parse_sums("xyz  kernel-fb-x86_64\n")
+
+    def test_play_command(self):
+        cmd = play_command("sparc64", "std", "/k", "/d.sqfs", ("vnc", 3), "pa", "/q", "tcg")
+        self.assertEqual(cmd[cmd.index("-vnc") + 1], "0.0.0.0:3")
+        self.assertEqual(cmd[cmd.index("-display") + 1], "none")
+        self.assertIn("virtio-keyboard-pci", cmd)
+        self.assertIn("pa,id=snd0", cmd)
+        self.assertIn("@/data/play.rsp", cmd[cmd.index("-append") + 1])
+        local = play_command("x86_64", "std", "/k", "/d", ("local", "gtk"), accelerator="kvm")
+        self.assertEqual(local[local.index("-display") + 1], "gtk")
+        self.assertNotIn("-vnc", local)
+        self.assertEqual(local[local.index("-accel") + 1], "kvm")
+        self.assertNotIn("virtio-keyboard-pci", local)
+
+    def test_keyboards(self):
+        self.assertEqual(framebuffer.display_args("std", "x86_64"), ["-vga", "std"])
+        self.assertEqual(framebuffer.display_args("std", "sparc64")[-1], "virtio-keyboard-pci")
+        self.assertEqual(framebuffer.display_args("bochs-display", "aarch64")[-1], "virtio-keyboard-pci")
+
+    def overlay(self, scale, colours=((0, 0, 0), (255, 255, 255))):
+        s = max(2, scale)
+
+        def paint(pixels, width, left, top):
+            for y in range(7 * s):
+                for x in range(5 * s):
+                    on = 1 <= x // s <= 3 and 1 <= y // s <= 5 and (x // s + y // s) % 2
+                    i = ((top + s + y) * width + left + s + x) * 3
+                    pixels[i:i + 3] = bytes(colours[on])
+        return frame(320 * scale + 8, 200 * scale + 8, scale, paint)
+
+    def test_overlay(self):
+        for scale in (1, 3):
+            data = self.overlay(scale)
+            check_overlay(data, scale)
+            self.assertEqual(check_frame(data, scale), scale)  # the box keeps the integer scaling
+        with self.assertRaisesRegex(ValueError, "two colours"):
+            check_overlay(frame(648, 408, 2), 2)
+        with self.assertRaisesRegex(ValueError, "contrast"):
+            check_overlay(self.overlay(2, ((90, 90, 90), (120, 120, 120))), 2)
+
+    def test_status_bar(self):
+        title = frame(320, 200, 1)
+
+        def bar(pixels, width, left, top):
+            i = ((top + 190) * width + left + 10) * 3
+            pixels[i:i + 3] = bytes([255, 255, 255])
+        self.assertFalse(status_bar_differs(title, title, 1))
+        self.assertTrue(status_bar_differs(title, frame(320, 200, 1, bar), 1))

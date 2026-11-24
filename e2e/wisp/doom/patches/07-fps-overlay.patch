@@ -1,0 +1,152 @@
+Count frames shown per second and draw the number in the scaled frame with -fps or the ` key.
+
+--- a/fbdoom/i_input_tty.c
++++ b/fbdoom/i_input_tty.c
+@@ -442,6 +442,14 @@
+             I_Quit();
+         }
+ 
++        // ` (KEY_GRAVE, left of 1 on PC, Sun and virtio keyboards) toggles the FPS overlay
++        if (key == 0x29) {
++            extern void I_ToggleFPS(void);
++            if (!pressed)
++                I_ToggleFPS();
++            continue;
++        }
++
+         UpdateShiftStatus(pressed, key);
+ 
+         // process event
+--- a/fbdoom/i_video_fbdev.c
++++ b/fbdoom/i_video_fbdev.c
+@@ -47,6 +47,8 @@
+ #include <sys/socket.h>
+ #include <linux/fb.h>
+ #include <sys/mount.h>
++#include <stdio.h>
++#include <time.h>
+ #include "i_system.h"
+ #include <sys/ioctl.h>
+ 
+@@ -113,6 +115,94 @@
+ static struct fb_fix_screeninfo fix;
+ static uint32_t pixels[256];
+ 
++// FPS overlay: frames shown per second, drawn into the scaled frame, never into DOOM's buffer.
++static int fps_on, fps_palette = 1;
++static unsigned fps_value, fps_frames;
++static uint32_t fps_fg, fps_bg;
++static struct timespec fps_start;
++// 3x5 digits, three bits per row, top row first
++static const uint16_t fps_font[10] = {
++    075557, 026227, 071747, 071717, 055711, 074717, 074757, 071111, 075757, 075717,
++};
++
++void I_ToggleFPS (void)
++{
++    fps_on = !fps_on;
++    fps_frames = fps_value = 0;
++    clock_gettime(CLOCK_MONOTONIC, &fps_start);
++}
++
++static void fps_fill(int left, int x, int y, int w, int h, uint32_t colour)
++{
++    int bytes = fb.bits_per_pixel / 8;
++    for (int row = y; row < y + h; row++) {
++        byte *out = I_VideoBuffer_FB + (size_t)row * fix.line_length + left + x * bytes;
++        if (bytes == 1) {
++            memset(out, colour, w);
++            continue;
++        }
++        for (int n = 0; n < w; n++, out += bytes) {
++            if (bytes == 2) {
++                uint16_t pixel = colour;
++                memcpy(out, &pixel, 2);
++            } else
++                memcpy(out, &colour, 4);
++        }
++    }
++}
++
++static uint32_t fps_nearest(int r, int g, int b)
++{
++    int best = 0, best_diff = INT_MAX;
++    for (int i = 0; i < 256; i++) {
++        int diff = (r - colors[i].r) * (r - colors[i].r) + (g - colors[i].g) * (g - colors[i].g) +
++                   (b - colors[i].b) * (b - colors[i].b);
++        if (diff < best_diff) {
++            best = i;
++            best_diff = diff;
++        }
++    }
++    return best;
++}
++
++// Count the frame; once a second print and store the rate; draw it in the frame's top-left corner.
++static void fps_frame(int left)
++{
++    struct timespec now;
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    long ms = (now.tv_sec - fps_start.tv_sec) * 1000L + (now.tv_nsec - fps_start.tv_nsec) / 1000000L;
++    fps_frames++;
++    if (ms >= 1000) {
++        fps_value = (fps_frames * 1000UL + ms / 2) / ms;
++        fps_frames = 0;
++        fps_start = now;
++        printf("fbdoom: fps %u\n", fps_value);
++        fflush(stdout);
++    }
++    if (fps_palette) {
++        // white on black: the nearest palette entries, or composed from the bitfields
++        if (fix.visual == FB_VISUAL_TRUECOLOR) {
++            fps_fg = (((1u << fb.red.length) - 1) << fb.red.offset) |
++                     (((1u << fb.green.length) - 1) << fb.green.offset) |
++                     (((1u << fb.blue.length) - 1) << fb.blue.offset);
++            fps_bg = 0;
++        } else {
++            fps_fg = fps_nearest(255, 255, 255);
++            fps_bg = fps_nearest(0, 0, 0);
++        }
++        fps_palette = 0;
++    }
++    char text[12];
++    int digits = snprintf(text, sizeof text, "%u", fps_value);
++    int s = fb_scaling < 2 ? 2 : fb_scaling;
++    fps_fill(left, s, s, (4 * digits + 1) * s, 7 * s, fps_bg);
++    for (int i = 0; i < digits; i++)
++        for (int y = 0; y < 5; y++)
++            for (int x = 0; x < 3; x++)
++                if (fps_font[text[i] - '0'] >> (14 - 3 * y - x) & 1)
++                    fps_fill(left, (2 + 4 * i + x) * s, (2 + y) * s, s, s, fps_fg);
++}
++
+ void I_InitGraphics (void)
+ {
+     int i;
+@@ -169,6 +259,9 @@
+ 
+ 	screenvisible = true;
+ 
++    if (M_CheckParm("-fps"))
++        I_ToggleFPS();
++
+     extern void I_InitInput(void);
+     if (!M_CheckParm("-timedemo"))
+         I_InitInput();
+@@ -398,6 +491,8 @@
+         for (int n = 1; n < fb_scaling; n++)
+             memcpy(row + n * fix.line_length, row, width * bytes);
+     }
++    if (fps_on)
++        fps_frame(left);
+     if (lseek(fd_fb, (off_t)top * fix.line_length, SEEK_SET) < 0 ||
+         write(fd_fb, I_VideoBuffer_FB, size) != (ssize_t)size)
+         I_Error("Writing framebuffer");
+@@ -446,6 +541,7 @@
+     }
+     if (fix.visual == FB_VISUAL_PSEUDOCOLOR && ioctl(fd_fb, FBIOPUTCMAP, &cmap) < 0)
+         I_Error("Setting framebuffer palette");
++    fps_palette = 1;
+ }
+ 
+ // Given an RGB value, find the closest matching palette index.
