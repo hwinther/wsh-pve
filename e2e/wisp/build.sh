@@ -132,8 +132,8 @@ EOF
 		sparc32|aarch64) driver=$arch ;;
 		sparc64|x86_64) driver=bochs ;;
 		esac
-		# sun4u (virtio keyboard and mouse) and the pc (PS/2 mouse) add their own fragment
-		# (config/tier-fb/<arch>.config) to the shared Bochs one
+		# An architecture on the shared Bochs fragment may add its own (config/tier-fb/<arch>.config):
+		# sun4u's virtio keyboard for wisp-vm
 		set -- "$HERE/config/tier-fb/$driver.config"
 		if [ "$driver" != "$arch" ] && [ -f "$HERE/config/tier-fb/$arch.config" ]; then
 			set -- "$@" "$HERE/config/tier-fb/$arch.config"

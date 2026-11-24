@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from framebuffer import check_ppm, mandel_image, mouse_events
+from framebuffer import check_ppm, input_device, mandel_image, mouse_events
 
 
 class Mouse(unittest.TestCase):
@@ -23,6 +23,28 @@ class Mouse(unittest.TestCase):
                        self.answer.replace(b"272 value=0", b"273 value=0")):
             with self.subTest(answer=answer), self.assertRaises(ValueError):
                 mouse_events(answer)
+
+    def test_exact_motion(self):
+        # PS/2 and virtio deliver QMP's move unchanged; the SS-5's split adds up to (10, 5) too
+        self.assertEqual(mouse_events(self.answer, (10, 5)), self.events)
+        with self.assertRaises(ValueError):
+            mouse_events(self.answer.replace(b"value=-2", b"value=-1"), (10, 5))
+
+
+class InputDevice(unittest.TestCase):
+    def test_machine_devices(self):
+        line = b"WISP-KEYBOARD dev=/dev/input/event0 name=AT Translated Set 2 keyboard\r\n"
+        self.assertEqual(input_device(line, "keyboard", "sparc64"), "AT Translated Set 2 keyboard")
+        mouse = b"WISP-MOUSE dev=/dev/input/event1 name=ImExPS/2 Generic Explorer Mouse\n"
+        self.assertEqual(input_device(mouse, "mouse", "sparc64"), "ImExPS/2 Generic Explorer Mouse")
+
+    def test_fallback_device_refused(self):
+        # sun4u with a virtio keyboard next to the PS/2 one picked the virtio one first
+        for line, kind in ((b"WISP-KEYBOARD dev=/dev/input/event0 name=QEMU Virtio Keyboard\n", "keyboard"),
+                           (b"WISP-MOUSE dev=/dev/input/event1 name=QEMU Virtio Mouse\n", "mouse"),
+                           (b"WISP-MOUSE dev=/dev/input/event1\n", "mouse")):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                input_device(line, kind, "sparc64")
 
 
 class Screendump(unittest.TestCase):

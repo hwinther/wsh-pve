@@ -321,38 +321,45 @@ is the unsigned 32-bit sum of all per-pixel iteration counts.
 
 `keytest` scans evdev nodes for a keyboard that supports the A key, prints its device name,
 then reports each press (including Esc) on serial. SS-5 uses the existing Sun Zilog serial
-driver's serio port and `sunkbd`. The pc uses `atkbd` on i8042. In separate boots with `console=tty0`,
-typing `poweroff` on the framebuffer VT shut down the pc and SS-5.
+driver's serio port and `sunkbd`. The pc and sun4u use `atkbd` on i8042, virt a virtio keyboard.
+In separate boots with `console=tty0`, typing `poweroff` on the framebuffer VT shut down the pc and
+SS-5.
 
-The sun4u kernel also includes i8042 and `atkbd`. With the published firmware, OpenBIOS exposes
-the EBus controller and its `kb_ps2` child, but no `kdmouse` or `mouse` child. Linux 7.3.4's
-`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`, so the PS/2 keyboard stays unused.
-sun4u's `kernel-fb` therefore also has `CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`), and
-the framebuffer runs add `-device virtio-keyboard-pci`, as on virt; `keytest` then finds the virtio
-keyboard and the test checks its key codes like the others (see "Play DOOM").
-
-Two fixes make the PS/2 keyboard itself work:
+sun4u's PS/2 keyboard and mouse sit on the EBus 8042. Without help, OpenBIOS exposes the
+controller and its `kb_ps2` child, but no `kdmouse` or `mouse` child. Linux 7.3.4's
+`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`, so neither PS/2 device is usable.
+Two fixes make them work:
 
 - OpenBIOS patch 0035 (`openbios/patches/`) and `-prom-env ps2-mouse?=true`: with the option, 0035
   adds the `kdmouse` child and gives the node the layout Linux reads (the keyboard child's
   translated address as the port base, and each child's interrupt). The option is off by default:
-  Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once that probe succeeds. `framebuffer.py`
-  sets it on sun4u, and older firmware ignores it.
+  Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once that probe succeeds.
+  `framebuffer.display_args()` sets it on sun4u for `framebuffer.py` and `doom.py` (the timedemo and
+  `--play`); older firmware ignores it. 0035 is in pve-qemu-kvm 11.1.3-4+wsh15 and later.
 - `linux-patches/0001`, which `build.sh` applies to the unpacked kernel tree: with both children
   found, Linux's sparc OF driver, also named `i8042`, stays registered, and the core driver then
   fails with `Driver 'i8042' is already registered, aborting...`. The patch renames the OF
   driver `i8042-sparc`. It changes no kernel size in the tables here.
 
-With both, and `WISP_FIRMWARE` set to a copy of `/usr/share/kvm` that has the 0035
-`openbios-sparc64` (built with `openbios/Dockerfile`), a sun4u boot without the virtio keyboard
-logs `serio: i8042 KBD port at 0x1fe02000060,0x1fe02000064`, and `keytest` received key codes 30,
-48, 28 and 1. The virtio keyboard stays in the framebuffer runs until a published package has 0035.
+With both, a sun4u boot with pve-qemu-kvm 11.1.3-4+wsh17 logs
+`serio: i8042 KBD port at 0x1fe02000060,0x1fe02000064 irq 6` and the AUX port at IRQ 7, then
+`AT Translated Set 2 keyboard` and `ImExPS/2 Generic Explorer Mouse`. The sun4u framebuffer runs
+use these PS/2 devices since that package (see "The sun4u keyboard").
 
-**Mouse.** The pc uses `psmouse` on i8042. On the SS-5, `sunzilog` registers the ESCC mouse
+`keytest` takes the first keyboard it finds, so `framebuffer.py` also checks the device name in the
+`WISP-KEYBOARD` line against the machine's own keyboard (`INPUT_DEVICES`): `AT Translated Set 2
+keyboard` on the pc and sun4u, `Sun Type 5 keyboard` on the SS-5 and `QEMU Virtio Keyboard` on virt.
+Before this check, a sun4u run with both a virtio and the PS/2 keyboard passed on the virtio one
+(`event0`), which hid whether the PS/2 keyboard worked.
+
+**Mouse.** The pc and sun4u use `psmouse` on i8042 (`config/tier-fb/bochs.config`, no laptop
+protocol extensions). On the SS-5, `sunzilog` registers the ESCC mouse
 port (`zs/serio1`) as `SERIO_RS232` with protocol `SERIO_SUN`, so `sermouse` binds at boot.
-The sun4u and virt machines use `virtio-mouse-pci` alongside the virtio keyboard.
-`framebuffer.py` waits for `mousetest` to open evdev, moves right and down with QMP, then
-clicks left and right. It checks the net direction on both axes and the button transitions.
+virt uses `virtio-mouse-pci` alongside the virtio keyboard.
+`framebuffer.py` waits for `mousetest` to open evdev, checks the device name as for the keyboard
+(`ImExPS/2 Generic Explorer Mouse`, `Sun Mouse`, `QEMU Virtio Mouse`), moves right and down with
+QMP, then clicks left and right. It checks the button transitions and the net motion: exactly
+(+10, +5) on the pc, sun4u and virt, and only the direction on the SS-5.
 For a move of (+10, +5), pc, sun4u and virt each reported X +10 and Y +5. On both cg3
 and tcx the SS-5 reported X +5, +5 and Y +5, +2, −2. All four reported `BTN_LEFT`
 (272) press and release, then `BTN_RIGHT` (273) press, which ends `mousetest`.
@@ -582,8 +589,8 @@ docker image rm wispdoom-runner
 ## Play DOOM
 
 `doom.py --play` boots the same data disk without `-timedemo`: fbDOOM starts at Freedoom's title
-screen with the machine's display and keyboard (pc `std`, SS-5 `cg3` or `tcx`, sun4u `std` with a
-virtio keyboard, virt `bochs-display` with a virtio keyboard), at the largest integer scale that fits
+screen with the machine's display and keyboard (pc `std`, SS-5 `cg3` or `tcx`, sun4u `std` with its
+PS/2 keyboard, virt `bochs-display` with a virtio keyboard), at the largest integer scale that fits
 (`--scale 0`, the default here; `--scale N` as for the timedemo). The screen goes to VNC on
 0.0.0.0:590N (`--vnc :N`, `:0` by default), or to a gtk or sdl window with `--local` when QEMU has
 one and there is a desktop session. The pc uses KVM when the host is x86_64 and `/dev/kvm` can be
@@ -664,12 +671,37 @@ from Freedoom's release by the pin. VNC answered `RFB 003.008` on the published 
 
 ### The sun4u keyboard
 
-Linux can't use sun4u's own PS/2 keyboard under the published OpenBIOS (no mouse node on the EBus;
-OpenBIOS 0035 adds it, see "Framebuffer tier"), so `kernel-fb` on sparc64 also has `CONFIG_VIRTIO_INPUT`
-(`config/tier-fb/sparc64.config`, layered on the shared Bochs fragment) and QEMU gets
-`-device virtio-keyboard-pci`, as on virt. `framebuffer.py`'s key test now checks sun4u's key codes
-too. The sun4u `kernel-fb` grew by 208 bytes (4,918,296 to 4,918,504). With
-it, `framebuffer.py --arch sparc64` received key codes 30, 48, 28 and 1.
+sun4u's framebuffer runs use the machine's own PS/2 keyboard and mouse on the EBus 8042, through
+OpenBIOS 0035 with `-prom-env ps2-mouse?=true` (see "Framebuffer tier"; in pve-qemu-kvm
+11.1.3-4+wsh15 and later). `framebuffer.display_args()` passes the option on sun4u instead of the
+`virtio-keyboard-pci` and `virtio-mouse-pci` devices it used before, so `framebuffer.py`, the
+`doom.py` timedemo and `doom.py --play` all get the PS/2 devices. The PS/2 mouse options
+(`psmouse` without the laptop protocol extensions) moved from the pc's own fragment to the shared
+Bochs one (`config/tier-fb/bochs.config`), which both machines use; the pc's resolved `config-fb`
+and image are unchanged.
+
+`kernel-fb` on sparc64 keeps `CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`) for
+`wsh-lab wisp-vm`: qemu-server sets no OpenBIOS variables for a sun4u VM, so such a VM has no
+`kdmouse` node and keeps a virtio keyboard in `args` ("Doom in a PVE VM").
+
+Measured 2026-11-24 with Linux 7.3.4 and pve-qemu-kvm 11.1.3-4+wsh17 under TCG, both builds in
+the same image:
+
+| Architecture and machine | `kernel-fb` before | After | Growth |
+| --- | ---: | ---: | ---: |
+| sparc64, sun4u | 4,918,504 | 4,919,504 | +1,000 |
+| x86_64, pc | 2,102,272 | 2,102,272 | 0 (same resolved config) |
+| sparc32, SS-5 | 3,565,860 | 3,565,860 | 0 (same resolved config) |
+| aarch64, virt | 4,921,352 | 4,921,352 | 0 (same resolved config) |
+
+`framebuffer.py` passed on all five displays with the device-name check. sun4u: `keytest` opened
+`event0` (`AT Translated Set 2 keyboard`) and received 30, 48, 28 and 1; `mousetest` opened `event1`
+(`ImExPS/2 Generic Explorer Mouse`) and received X +10, Y +5, `BTN_LEFT` press and release and
+`BTN_RIGHT` press, as on the pc. The DEMO1 timedemo with `-fps` on sun4u completed 7,117 gametics
+(10,421 realtics, 23.90 FPS, 4.11 s to game start). `doom.py --play --check`, with and without
+`--fps`, started E1M1 with the PS/2 keyboard and quit with Backspace (`exit=0`); the first `--fps`
+run failed earlier, before any key, on the overlay screendump (three colours in the FPS box),
+and the rerun passed.
 
 ### Prebuilt artefacts: the wisp-fb release
 
