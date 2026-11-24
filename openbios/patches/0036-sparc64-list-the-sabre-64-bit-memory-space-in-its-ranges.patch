@@ -1,0 +1,33 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: list the sabre's 64-bit memory space in its ranges,
+ as OBP does
+
+The sabre's "ranges" had three entries: configuration, I/O and 32-bit
+memory space. OBP on the Ultra 5/10 lists the 64-bit memory space as
+well, over the same window, and the pci (psycho/sabre) driver of
+Solaris 2.6 refuses a ranges property with fewer than four entries: its
+attach fails without a message, nothing below the host bridge attaches,
+and the CD boot stops with "Cannot assemble drivers for root
+/pci@1f,0/pci@1,1/ide@3/cdrom@2,0:b". Solaris 7 and later, Linux and the
+BSDs take the bridge with either list.
+
+Add the fourth entry, 64-bit memory space over the 32-bit window.
+---
+ arch/sparc64/openbios.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index cba23dc..63b8e62 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -69,7 +69,9 @@ static const struct hwdef hwdefs[] = {
+                 { .type = CONFIGURATION_SPACE, .parentaddr = 0, .childaddr = APB_SPECIAL_BASE + 0x1000000ULL, .len = 0x1000000 },
+                 { .type = IO_SPACE, .parentaddr = 0, .childaddr = APB_SPECIAL_BASE + 0x2000000ULL, .len = 0x1000000 },
+                 { .type = MEMORY_SPACE_32, .parentaddr = 0, .childaddr = APB_MEM_BASE, .len = 0xf0000000 },
+-                { .type = 0, .parentaddr = 0, .childaddr = 0, .len = 0 }
++                /* OBP lists the 64-bit memory space as well, over the same
++                   window: Solaris 2.6's pci driver refuses fewer than four */
++                { .type = MEMORY_SPACE_64, .parentaddr = 0, .childaddr = APB_MEM_BASE, .len = 0xf0000000 }
+             },
+             .irqs = { 0, 1, 2, 3 },
+         },

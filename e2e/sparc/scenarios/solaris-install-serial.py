@@ -74,9 +74,21 @@ def disks(m, v):
     # `disk` alias, "c0t3d0 ... boot disk"); otherwise mark the first entry. A CD that answers as a
     # disk is listed too (c0t6d0).
     disk = re.escape(v["DISK"])
-    if not re.search(rf"\[X\] {disk}", m.screen_text()):
+    entry = re.search(rf"\[([X ])\] {disk}", m.screen_text())
+    if entry or f2_cursor is None:
+        if not entry or entry[1] != "X":
+            m.send("\r")
+        m.expect(rf"\[X\] {disk}", 60, screen=True)
+        return
+    # Console messages written over the list hide the entry (sun4u: hme0's `Link Up` while Solaris
+    # 2.6 and 2.5.1 show this screen; the installer doesn't redraw on Ctrl-L): take it as the
+    # installer drew it. Return marks the highlighted entry, which is the first.
+    drawn = list(re.finditer(rf"\[([X ])\] {disk}", m.serial_since(f2_cursor, 100000)["text"]))
+    if not drawn:
+        raise Timeout(f"no {disk} on the disk screen; screen:\n{m.screen_text()}")
+    if drawn[-1][1] != "X":
         m.send("\r")
-    m.expect(rf"\[X\] {disk}", 60, screen=True)
+        m.quiet(2, 60)
 
 
 def date(m, v):
@@ -111,6 +123,42 @@ SCREENS = [
 ]
 TITLE = r"^\S (.+?) (?:─{4}|q{4})"  # an installer screen's title line: "─ Host Name ────"
 LAST = r"Reboot After Installation|Begin Installing Solaris"
+# The same title line in the serial output (escape sequences removed, SO/SI kept): the line-drawing
+# `q`s are in the alternate character set ("\x0eq\x0fHost Name \x0eqqqq")
+RAW_TITLE = r"\x0eq\x0f([^\x0e\n]+?) \x0eq{4}"
+# Console messages that the kernel writes over a screen (sun4u: hme0's link messages)
+CONSOLE_NOISE = r"(?:\s|SUNW,hme\d+: [^\n]*|WARNING: [^\n]*)*"
+# Where the serial output stood when F2 last went to the installer (the main loop sets it)
+f2_cursor = None
+
+
+def press_f2(m):
+    global f2_cursor
+    f2_cursor = m.serial_cursor()
+    m.key("f2")
+
+
+def drawn_title(m):
+    """The title of the last screen the installer drew since the last F2, from the serial output, or
+    None. Console messages can scroll a screen's title off the terminal (sun4u: hme0's `Link Up`
+    lines under Solaris 2.6), but the stream still has the screen being drawn."""
+    title, cursor = None, f2_cursor
+    if cursor is None:
+        return None
+    while True:
+        r = m.serial_wait(RAW_TITLE, cursor, timeout=0)
+        if not r["matched"]:
+            return title
+        title, cursor = r["groups"][0], r["cursor"]
+
+
+def only_console_noise(m):
+    """True when everything since the last F2 is console messages: the screen is still the old one
+    (scrolled), not output of the installer's own."""
+    if f2_cursor is None:
+        return False
+    text = m.serial_since(f2_cursor, 100000)["text"]
+    return re.fullmatch(CONSOLE_NOISE, text) is not None
 
 
 def next_screen(m, old, timeout=600):
@@ -121,6 +169,10 @@ def next_screen(m, old, timeout=600):
         screen = m.screen_text()
         if screen != old and re.search(TITLE, screen, re.M):
             return screen
+        if old is not None and not re.search(TITLE, screen, re.M):
+            title = drawn_title(m)
+            if title:  # drawn, then scrolled away: what is left of it, under its title
+                return f"─ {title} ────\n{screen}"
         if time.time() > end:
             raise RuntimeError(f"the installer didn't move on from:\n{old}")
         time.sleep(1)
@@ -140,10 +192,14 @@ def press_on(m, old, retry, tries=3):
             return next_screen(m, old, retry)
         except RuntimeError:
             now = re.search(TITLE, m.screen_text(), re.M)
-            if attempt == tries - 1 or not now or now.group(1) != title:
+            if attempt == tries - 1 or (now and now.group(1) != title):
                 raise
+            if not now and not only_console_noise(m):
+                # no screen up: the installer is writing outside one (after the last Confirm
+                # Information, its preinstall phase took over 180 s with Solaris 2.6 on sun4u)
+                continue
             m.snap(f"{title}: no reaction to F2, again")
-            m.key("f2")
+            press_f2(m)
 
 
 # Solaris 2.3 (and older): sysidtool asks one question per screen, a sentence at the top, a box with a
@@ -280,6 +336,8 @@ def old_install_end(m):
 
 
 def run(m, v):
+    global f2_cursor
+    f2_cursor = None
     prom_boot(m, v, "cdrom")
     m.expect(r"SunOS Release 5\.\d", 900)
     m.snap("kernel banner")
@@ -300,6 +358,7 @@ def run(m, v):
             i = m.expect_any(prompts, 900)
         m.snap(["Select a Language", "Select a Locale", "terminal type"][i])
         if i == 2:
+            f2_cursor = m.serial_cursor()  # the first screen comes after this answer
             m.send("3\r")  # DEC VT100
             break
         m.send(["0\r", "\r"][i])
@@ -313,20 +372,26 @@ def run(m, v):
             break
         if re.search(OLD, screen):
             return old_install(m, v, screen)
+        title = drawn_title(m)
+        if title:  # sun4u: a console message scrolled it off (`interrupt level 12 not serviced`)
+            screen = f"─ {title} ────\n{screen}"
+            break
         if time.time() > end:
             raise RuntimeError(f"no installer screen after the terminal type:\n{screen}")
         time.sleep(1)
 
-    screen = None
+    first = True
     while True:
-        screen = next_screen(m, screen) if screen is None else press_on(m, screen, int(v["KEY_RETRY"]))
+        if not first:
+            screen = press_on(m, screen, int(v["KEY_RETRY"]))
+        first = False
         title = re.search(TITLE, screen, re.M).group(1)
         m.snap(title)
         for rx, action in SCREENS:
             if re.search(rx, screen, re.M):
                 action(m, v)
                 break
-        m.key("f2")
+        press_f2(m)
         if re.search(LAST, screen):
             break
 
@@ -352,7 +417,8 @@ def halt_sun4u(m):
     power-off for Solaris), and the VM is stopped there, as solaris-webstart-serial.py does after a
     sun4u install."""
     m.send("sync; halt\r")
-    m.expect(r"0 > ", 600)
+    # the prompt shows the stack depth in hex: Solaris 2.6 returns with 14 cells on it (`e > `)
+    m.expect(r"(?m)^[0-9a-f]+ > ", 600)
     m.quiet(1, 30)
     m.snap("OpenBIOS prompt after the installation")
     m.stop()
