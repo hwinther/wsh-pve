@@ -212,7 +212,7 @@ test('display: D-Bus display with refresh, and the D-Bus audio driver', async ({
   await win.getByRole('button', { name: 'OK' }).click()
   await expect(win).toBeHidden()
   // the dialog sorts the keys
-  expect(await vmConfFile(VMID)).toMatch(/^vga: std,dbus-refresh=14,display=dbus$/m)
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,dbus-refresh=14,display=dbus,mesa=0$/m)
   expect(await showcmd(VMID)).toContain(
     `-display 'dbus,addr=unix:path=/run/wsh-dbus-display/${VMID}.sock,refresh-ms=14'`,
   )
@@ -224,7 +224,8 @@ test('display: D-Bus display with refresh, and the D-Bus audio driver', async ({
   await page.locator('.x-boundlist:visible li', { hasText: 'SPICE' }).first().click()
   await expect(win.getByLabel('D-Bus display')).toBeHidden()
   await expect(win.getByLabel('D-Bus refresh (ms)')).toBeHidden()
-  await win.getByRole('button', { name: 'Cancel' }).click()
+  // PVE's edit windows have OK and Reset, no Cancel: close it
+  await win.locator('.x-tool-close').click()
   await expect(win).toBeHidden()
 
   // Add, Audio Device, with the D-Bus driver
