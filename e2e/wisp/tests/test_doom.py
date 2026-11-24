@@ -150,7 +150,8 @@ class Play(unittest.TestCase):
         cmd = play_command("sparc64", "std", "/k", "/d.sqfs", ("vnc", 3), "pa", "/q", "tcg")
         self.assertEqual(cmd[cmd.index("-vnc") + 1], "0.0.0.0:3")
         self.assertEqual(cmd[cmd.index("-display") + 1], "none")
-        self.assertIn("virtio-keyboard-pci", cmd)
+        self.assertEqual(cmd[cmd.index("-prom-env") + 1], "ps2-mouse?=true")
+        self.assertNotIn("virtio-keyboard-pci", cmd)
         self.assertIn("pa,id=snd0", cmd)
         self.assertIn("@/data/play.rsp", cmd[cmd.index("-append") + 1])
         local = play_command("x86_64", "std", "/k", "/d", ("local", "gtk"), accelerator="kvm")
@@ -161,9 +162,13 @@ class Play(unittest.TestCase):
 
     def test_input_devices(self):
         self.assertEqual(framebuffer.display_args("std", "x86_64"), ["-vga", "std"])
-        for display, arch in (("std", "sparc64"), ("bochs-display", "aarch64")):
-            self.assertEqual(framebuffer.display_args(display, arch)[2:],
-                             ["-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci"])
+        # sun4u: the 8042's PS/2 keyboard and mouse (openbios-sparc64 0035)
+        self.assertEqual(framebuffer.display_args("std", "sparc64"),
+                         ["-vga", "std", "-prom-env", "ps2-mouse?=true"])
+        self.assertEqual(framebuffer.display_args("bochs-display", "aarch64"),
+                         ["-device", "bochs-display", "-device", "virtio-keyboard-pci",
+                          "-device", "virtio-mouse-pci"])
+        self.assertEqual(framebuffer.display_args("cg3", "sparc32"), ["-vga", "cg3"])
 
     def overlay(self, scale, colours=((0, 0, 0), (255, 255, 255))):
         s = max(2, scale)
