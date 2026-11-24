@@ -113,6 +113,11 @@ jobs:
             -v "$RUNNER_TEMP/out:/out" debian:trixie sh /src/packages/wsh-qemu-rdp/test.sh \
             "/deb/wsh-qemu-rdp_${VERSION}_amd64.deb" /out
 
+      # The container writes as root, some files 0600 (QEMU's screendumps): readable for the upload
+      - name: Make the results readable
+        if: ${{ always() }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
+
       - name: Summary
         if: ${{ always() }}
         run: |
