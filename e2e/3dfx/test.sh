@@ -9,6 +9,10 @@
 #     through the glidept device into the host's libglide2x.so (wsh-openglide). QEMU is started the
 #     way qemu-server starts it, with -daemonize (QEMU then runs in /) and OPENGLIDE_DIR set to a
 #     directory of the VM's: OpenGLide's OpenGLid.ini and OpenGLid.log must land there, not in /.
+#   - glide-dso: the same glide-guest linked dynamically against the Linux guest library of the
+#     drivers release (scripts/build-3dfx-linux-glide.sh: libglide.so.2 and libglide2x.so), which
+#     its initramfs has in /usr/lib with ldconfig's cache, Debian's i386 loader and libc; the guest
+#     says which file its Glide came from. In the default guests with SDL and VNC.
 #   - mesa: /init is mesa-guest (mesa-guest.c, which speaks the mesapt device's protocol itself: there
 #     is no Linux guest wrapper for it upstream), through the mesapt device into the host's libGL.
 #
@@ -80,8 +84,8 @@ export DEBIAN_FRONTEND=noninteractive GALLIUM_DRIVER="${GALLIUM_DRIVER:-llvmpipe
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 case "$MODE" in
-sdl) GUESTS=${GUESTS:-glide mesa} ;;
-vnc) GUESTS=${GUESTS:-glide mesa mesa-msaa mesa-noegl} ;;
+sdl) GUESTS=${GUESTS:-glide glide-dso mesa} ;;
+vnc) GUESTS=${GUESTS:-glide glide-dso mesa mesa-msaa mesa-noegl} ;;
 egl) GUESTS=${GUESTS:-glide mesa} ;;
 dbus) GUESTS=${GUESTS:-glide mesa} ;;
 *) fail "GLIDE_DISPLAY is sdl, vnc, egl or dbus, not '$MODE'" ;;
@@ -172,6 +176,32 @@ gcc -m32 -static -O2 -Wall -I"$Q3/qemu-1/hw/mesa" -I"$TESTS" -D__REV__="\"$rev-\
 for g in glide mesa; do
 	(cd "$work/$g" && echo init | cpio -o -H newc --quiet) > "$work/$g.initrd"
 done
+# glide-dso: the same glide-guest, linked dynamically (-lglide2x, as Glide 2 programs were) against
+# the Linux guest library of the drivers release (scripts/build-3dfx-linux-glide.sh, with the host
+# binary's revision), installed in its initramfs as its README says: /usr/lib/libglide.so.2 and the
+# libglide2x.so symlink, found through ldconfig's cache; Debian's i386 loader and libc next to it
+case " $GUESTS " in
+*" glide-dso "*)
+	bash "$SRC/scripts/build-3dfx-linux-glide.sh" "$Q3" "$rev" "$work/linux-glide"
+	r=$work/glide-dso
+	mkdir -p "$r/usr/lib" "$r/etc"
+	cp -P "$work/linux-glide/libglide.so.2" "$work/linux-glide/libglide2x.so" "$r/usr/lib/"
+	gcc -m32 -fPIE -pie -O2 -Wall -DGLIDE_GUEST_DSO -I"$TESTS" -o "$r/init" "$SRC/e2e/3dfx/glide-guest.c" \
+		-L"$work/linux-glide" -lglide2x
+	needed=$(objdump -p "$r/init" | awk '$1 == "NEEDED" { print $2 }' | paste -sd ' ')
+	[ "$needed" = "libglide.so.2 libc.so.6" ] || fail "glide-dso: /init needs '$needed', not libglide.so.2 and libc.so.6"
+	! objdump -T "$r/init" | grep -q ' \.text.* grGlideInit$' || fail "glide-dso: /init has its own grGlideInit"
+	interp=$(readelf -lW "$r/init" | sed -n 's/.*Requesting program interpreter: \(.*\)]$/\1/p')
+	mkdir -p "$r$(dirname "$interp")"
+	cp -L "$interp" "$r$interp"
+	cp -L "$(gcc -m32 -print-file-name=libc.so.6)" "$r/usr/lib/libc.so.6"
+	echo /usr/lib > "$r/etc/ld.so.conf"
+	ldconfig -r "$r"
+	strings "$r/etc/ld.so.cache" | grep -qx /usr/lib/libglide.so.2 || fail "glide-dso: ldconfig's cache has no libglide.so.2"
+	(cd "$r" && find . | cpio -o -H newc --quiet) > "$work/glide-dso.initrd"
+	echo "glide-dso: /init $interp, needs $needed; initrd $(wc -c < "$work/glide-dso.initrd") bytes"
+	;;
+esac
 cc -O2 -Wall -o "$work/glide-render" "$TESTS/glide-render.c" -ldl -lX11
 kernel=$(find /boot -name 'vmlinuz-*' | sort -V | tail -n 1)
 echo "kernel $kernel, initrds $(wc -c < "$work/glide.initrd") and $(wc -c < "$work/mesa.initrd") bytes"
@@ -442,7 +472,7 @@ run_guest() {
 
 for guest in $GUESTS; do
 	case $guest in
-	glide)
+	glide | glide-dso)
 		# OpenGLide's files (OpenGLid.ini, OpenGLid.log): in OPENGLIDE_DIR, as qemu-server sets it,
 		# when the installed library knows it (wsh-openglide after 0.1); never in / (QEMU's working
 		# directory once it daemonizes)
@@ -474,7 +504,13 @@ for guest in $GUESTS; do
 			fi
 		fi
 		(cd "$work" && export OPENGLIDE_DIR="$ogl" GUEST_APPEND="$append" &&
-			run_guest glide GLIDE-GUEST glide glidept "$phases" -daemonize)
+			run_guest "$guest" GLIDE-GUEST "$guest" glidept "$phases" -daemonize)
+		if [ "$guest" = glide-dso ]; then
+			# the serial console ends its lines with CR LF
+			tr -d '\r' < "$OUT/glide-dso-serial.log" | grep -qx 'glide-guest: Glide from /usr/lib/libglide\.so\.2' \
+				|| fail "glide-dso: the guest didn't take Glide from /usr/lib/libglide.so.2"
+			echo "ok: glide-dso: the guest's Glide came from /usr/lib/libglide.so.2 (the drivers release's Linux library)"
+		fi
 		step "glide: OpenGLide's files"
 		ls -l "$ogl" /OpenGLid.* 2> /dev/null || true
 		if [ "$knows_dir" = yes ]; then
@@ -487,24 +523,24 @@ for guest in $GUESTS; do
 		# egl-headless, dbus,gl=on: the frames as a dmabuf, the gamma phase's too with a wsh-openglide
 		# whose copy applies the ramp (0.6, the gamma pass); an older one reads that phase back
 		if { [ "$MODE" = egl ] || [ "$MODE" = dbus ]; } && [ "${QEMU_3DFX_DMABUF:-}" = 0 ]; then
-			grep -q 'glidept: offscreen .* read back (QEMU_3DFX_DMABUF=0)' "$OUT/glide-qemu.log" \
+			grep -q 'glidept: offscreen .* read back (QEMU_3DFX_DMABUF=0)' "$OUT/$guest-qemu.log" \
 				|| fail "glide: QEMU_3DFX_DMABUF=0, but the frames weren't read back"
 			echo "ok: glide: QEMU_3DFX_DMABUF=0: frames read back"
 		elif [ "$MODE" = egl ] || [ "$MODE" = dbus ]; then
 			if strings "$libglide" | grep -q getOffscreenDmabuf; then
-				grep -q 'glidept: offscreen .* as a dmabuf' "$OUT/glide-qemu.log" \
+				grep -q 'glidept: offscreen .* as a dmabuf' "$OUT/$guest-qemu.log" \
 					|| fail "glide: egl-headless, but the frames weren't scanned out as a dmabuf"
-				grep -q 'glidept: dmabuf scanout: [1-9][0-9]* frames copied' "$OUT/glide-qemu.log" \
+				grep -q 'glidept: dmabuf scanout: [1-9][0-9]* frames copied' "$OUT/$guest-qemu.log" \
 					|| fail "glide: no frame reached the console as a dmabuf"
 				case "$phases" in
 				*GAMMA*)
 					if strings "$libglide" | grep -q 'the gamma pass'; then
-						grep -q 'glidept: dmabuf scanout: .* busy, 0 frames read back instead' "$OUT/glide-qemu.log" \
+						grep -q 'glidept: dmabuf scanout: .* busy, 0 frames read back instead' "$OUT/$guest-qemu.log" \
 							|| fail "glide: not every frame reached the console as a dmabuf (the gamma phase's neither?)"
-						grep 'EGL offscreen: the scanout copies are finished with' "$OUT/glide-qemu.log" || true
+						grep 'EGL offscreen: the scanout copies are finished with' "$OUT/$guest-qemu.log" || true
 						echo "ok: glide: every frame to the console as a dmabuf, the gamma phase's too"
 					else
-						grep -q 'busy, [1-9][0-9]* frames read back instead' "$OUT/glide-qemu.log" \
+						grep -q 'busy, [1-9][0-9]* frames read back instead' "$OUT/$guest-qemu.log" \
 							|| fail "glide: the gamma phase's frames weren't read back"
 						echo "ok: glide: frames to the console as a dmabuf (this wsh-openglide reads a gamma ramp's back)"
 					fi
@@ -514,15 +550,15 @@ for guest in $GUESTS; do
 				# two buffers (a qemu-3dfx and a wsh-openglide from 0.8 with getOffscreenDmabufAt):
 				# frames go on being copied while the display still reads the last one
 				if grep -aq 'double-buffered (the frame the display reads' "$QEMU" && strings "$libglide" | grep -q getOffscreenDmabufAt; then
-					grep -q 'glidept: dmabuf scanout: double-buffered (' "$OUT/glide-qemu.log" \
+					grep -q 'glidept: dmabuf scanout: double-buffered (' "$OUT/$guest-qemu.log" \
 						|| fail "glide: the frames weren't double-buffered"
 					echo "ok: glide: double-buffered"
 				fi
 				if [ "$MODE" = dbus ]; then
 					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*[XA]B24 640x480" \
-						"$OUT/glide-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
+						"$OUT/$guest-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
 					echo "ok: glide: the D-Bus listener got the frames' dmabuf"
-					grep "dbus-listener: modifier" "$OUT/glide-dbus.log" || true
+					grep "dbus-listener: modifier" "$OUT/$guest-dbus.log" || true
 				fi
 			else
 				echo "info: this wsh-openglide exports no dmabuf (the frames are read back)"
