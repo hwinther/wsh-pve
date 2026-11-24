@@ -1,0 +1,158 @@
+#!/bin/sh
+# The helper of wsh-qemu-rdp@<vmid>.service (the wsh-qemu-rdp package), installed as
+# /usr/lib/wsh-qemu-rdp/wsh-qemu-rdp-unit:
+#
+#   wsh-qemu-rdp-unit prepare VMID   as root (ExecStartPre=+): reads /etc/wsh-qemu-rdp/<vmid>.conf,
+#                                    writing it at the first start (127.0.0.1, port 20000 + VMID,
+#                                    user "rdp", a generated password), and puts the certificate,
+#                                    key and credentials qemu-rdp gets into the runtime directory
+#                                    /run/wsh-qemu-rdp/<vmid>, readable by the service user only
+#   wsh-qemu-rdp-unit run VMID       as the service user (ExecStart): runs qemu-rdp on the VM's
+#                                    D-Bus display bus, /run/wsh-dbus-display/<vmid>.sock
+#
+# The configuration is KEY=value lines (the value runs to the end of the line, no quotes; # starts a
+# comment line): LISTEN, PORT, RDP_USER, RDP_PASSWORD, CERT, KEY, LOG (see the file it writes).
+# Without CERT and KEY, the node's self-signed certificate is used, made at the first start in
+# /var/lib/wsh-qemu-rdp (RSA 3072, 10 years, the node's host name). WSH_QEMU_RDP_CONF_DIR,
+# WSH_QEMU_RDP_STATE_DIR, WSH_QEMU_RDP_RUN_DIR and WSH_QEMU_RDP_BUS_DIR move the directories (tests).
+set -eu
+CONF_DIR=${WSH_QEMU_RDP_CONF_DIR:-/etc/wsh-qemu-rdp}
+STATE_DIR=${WSH_QEMU_RDP_STATE_DIR:-/var/lib/wsh-qemu-rdp}
+RUN_DIR=${WSH_QEMU_RDP_RUN_DIR:-/run/wsh-qemu-rdp}
+BUS_DIR=${WSH_QEMU_RDP_BUS_DIR:-/run/wsh-dbus-display}
+SERVICE_USER=${WSH_QEMU_RDP_USER:-wsh-qemu-rdp}
+QEMU_RDP=${QEMU_RDP:-/usr/bin/qemu-rdp}
+
+die() { echo "wsh-qemu-rdp: $*" >&2; exit 1; }
+
+cmd=${1:-}
+vmid=${2:-}
+case $vmid in
+'' | *[!0-9]* | 0*) die "usage: wsh-qemu-rdp-unit prepare|run VMID" ;;
+esac
+conf="$CONF_DIR/$vmid.conf"
+dir="$RUN_DIR/$vmid"
+
+# The value of KEY in the VM's configuration (the last line that sets it), without a CR at its end
+get() {
+	sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$conf" | tail -n 1 | tr -d '\r'
+}
+
+default_port() {
+	# 20000 + VMID stays below PVE's migration (60000-60050) and SPICE (61000-61999) ports
+	[ "$vmid" -lt 40000 ] && echo $((20000 + vmid))
+}
+
+write_conf() {
+	port=$(default_port || true)
+	password=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c 1-24)
+	[ "${#password}" -eq 24 ] || die "couldn't generate a password"
+	mkdir -p "$CONF_DIR"
+	chmod 0755 "$CONF_DIR"
+	(
+		umask 077
+		cat > "$conf.new" <<CONF
+# qemu-rdp for VM $vmid (wsh-qemu-rdp@$vmid.service), written at its first start. It is read at
+# every start: after a change, systemctl restart wsh-qemu-rdp@$vmid.
+#
+# LISTEN: the address qemu-rdp listens on. 127.0.0.1 keeps it to this node (reach it through an SSH
+# tunnel); 0.0.0.0 (or ::) opens it to every network the node is on, guarded by the password below.
+LISTEN=127.0.0.1
+# PORT: 20000 + VMID by default (set it for a VMID of 40000 or more)
+$( [ -n "$port" ] && echo "PORT=$port" || echo "PORT=" )
+# The RDP login (NLA): any user name and password; the client's domain is ignored
+RDP_USER=rdp
+RDP_PASSWORD=$password
+# CERT and KEY: a TLS certificate and its private key (PEM) instead of the node's self-signed one
+# ($STATE_DIR/cert.pem)
+#CERT=
+#KEY=
+# LOG: qemu-rdp's log level (error, warn, info, debug or trace; default warn)
+#LOG=info
+CONF
+	)
+	mv "$conf.new" "$conf"
+	echo "wsh-qemu-rdp: wrote $conf (RDP user rdp, a generated password)"
+}
+
+node_cert() {
+	mkdir -p "$STATE_DIR"
+	chmod 0700 "$STATE_DIR"
+	[ -s "$STATE_DIR/cert.pem" ] && [ -s "$STATE_DIR/key.pem" ] && return
+	name=$(hostname -f 2> /dev/null || hostname)
+	short=$(hostname)
+	(
+		umask 077
+		openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes -batch \
+			-subj "/CN=$name" -addext "subjectAltName=DNS:$name,DNS:$short" \
+			-keyout "$STATE_DIR/key.pem.new" -out "$STATE_DIR/cert.pem.new" 2> /dev/null
+	) || die "openssl couldn't make the self-signed certificate"
+	mv "$STATE_DIR/key.pem.new" "$STATE_DIR/key.pem"
+	mv "$STATE_DIR/cert.pem.new" "$STATE_DIR/cert.pem"
+	echo "wsh-qemu-rdp: made a self-signed certificate for $name, $STATE_DIR/cert.pem, SHA-256 fingerprint" \
+		"$(openssl x509 -in "$STATE_DIR/cert.pem" -noout -fingerprint -sha256 | sed 's/.*=//')"
+}
+
+prepare() {
+	[ -e "$conf" ] || write_conf
+	listen=$(get LISTEN)
+	port=$(get PORT)
+	user=$(get RDP_USER)
+	password=$(get RDP_PASSWORD)
+	cert=$(get CERT)
+	key=$(get KEY)
+	log=$(get LOG)
+	: "${listen:=127.0.0.1}"
+	[ -n "$port" ] || port=$(default_port) || die "$conf: set PORT (no default for a VMID of 40000 or more)"
+	case $port in '' | *[!0-9]*) die "$conf: PORT=$port is not a port number" ;; esac
+	[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "$conf: PORT=$port is not a port number"
+	case $listen in
+	*[!0-9A-Fa-f.:]*) die "$conf: LISTEN=$listen is not an IP address" ;;
+	*:*) bind="[$listen]:$port" ;;
+	*) bind="$listen:$port" ;;
+	esac
+	[ -n "$user" ] && [ -n "$password" ] || die "$conf: RDP_USER and RDP_PASSWORD are needed (qemu-rdp refuses every client without them)"
+	case $log in '' | error | warn | info | debug | trace) ;; *) die "$conf: LOG=$log is not a log level" ;; esac
+	if [ -n "$cert$key" ]; then
+		[ -n "$cert" ] && [ -n "$key" ] || die "$conf: CERT and KEY go together"
+		[ -r "$cert" ] && [ -r "$key" ] || die "$conf: can't read $cert or $key"
+	else
+		node_cert
+		cert="$STATE_DIR/cert.pem"
+		key="$STATE_DIR/key.pem"
+	fi
+	[ -d "$dir" ] || die "$dir is missing (the unit's RuntimeDirectory)"
+	(
+		umask 077
+		cp "$cert" "$dir/cert.pem"
+		cp "$key" "$dir/key.pem"
+		printf '%s\n%s\n' "$user" "$password" > "$dir/credentials"
+		printf '%s\n' "$bind" > "$dir/bind"
+		printf '%s\n' "$log" > "$dir/log"
+	)
+	chown "$SERVICE_USER" "$dir/cert.pem" "$dir/key.pem" "$dir/credentials" "$dir/bind" "$dir/log"
+	chmod 0400 "$dir/cert.pem" "$dir/key.pem" "$dir/credentials"
+	echo "wsh-qemu-rdp: VM $vmid on $bind (RDP user $user)"
+}
+
+run() {
+	bind=$(cat "$dir/bind")
+	log=$(cat "$dir/log")
+	[ -z "$log" ] || export QEMURDP_LOG="$log"
+	socket="$BUS_DIR/$vmid.sock"
+	# the bus's unit is active as soon as dbus-daemon runs; its socket follows
+	i=0
+	while [ ! -S "$socket" ]; do
+		i=$((i + 1))
+		[ "$i" -le 100 ] || die "no D-Bus display bus at $socket (is the VM's vga set to display=dbus?)"
+		sleep 0.1
+	done
+	exec "$QEMU_RDP" --dbus-address "unix:path=$socket" serve --bind-address "$bind" \
+		--cert "$dir/cert.pem" --key "$dir/key.pem" --credentials-file "$dir/credentials"
+}
+
+case $cmd in
+prepare) prepare ;;
+run) run ;;
+*) die "usage: wsh-qemu-rdp-unit prepare|run VMID" ;;
+esac

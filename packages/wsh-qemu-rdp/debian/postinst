@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+# The running instances (one per VM) pick up the new qemu-rdp; their clients reconnect
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+	systemctl try-restart 'wsh-qemu-rdp@*.service' || true
+fi
+
+exit 0
