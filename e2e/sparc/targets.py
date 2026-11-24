@@ -1338,8 +1338,9 @@ TARGETS = {
         "media": [{"name": "debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso", "drive": "ide2"}],
         "install": {"scenario": "debian13-install-sparc64.py", "vars": {}, "timeout": 14400,
                     "answers": {"format": "preseed-ports", "drive": "ide3"}},
-        "firstboot": {"scenario": "debian13-firstboot.py", "vars": {}, "timeout": 1800},
-        "check": {"scenario": "debian13-boot-disk.py", "vars": {}, "timeout": 1800,
+        # an hour: the boot alone took 23 min through PVE on a busy host (_debian13.SLOW_BOOT_OPTIONS)
+        "firstboot": {"scenario": "debian13-firstboot.py", "vars": {}, "timeout": 3600},
+        "check": {"scenario": "debian13-boot-disk.py", "vars": {}, "timeout": 3600,
                   "commands": "uname -a; hostname; cat /etc/wsh-lab-target; cat /etc/debian_version; df -k;"
                               " lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT; ip -br addr; ip route; cat /etc/resolv.conf;"
                               " cat /etc/apt/sources.list; systemctl is-active ssh"},

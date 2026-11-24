@@ -9,6 +9,7 @@ the console on ttya, which Linux calls ttyS0). README.md, "Debian 13 on sun4u".
                Attached to a PVE VM, the VM has it already (`lab.py install` puts it on ide3)
 """
 import os
+import re
 import time
 
 import _redhat
@@ -21,6 +22,15 @@ ANSWERS_DEV = "/dev/sr1"
 PROMPT = r":~# ?$"  # root's bash prompt in its home, `root@<host>:~# `
 GRUB_MENU = r"Press enter to boot the selected OS"
 KERNEL = r"Linux version \d+\.\d+"
+# systemd gives a device 90 s to show up and a unit 90 s to start (wall clock). Under TCG udev's coldplug
+# alone takes about that long on an idle host (the swap partition's by-uuid link came after 90 s through
+# PVE), and with the host busy /boot's device, ttyS0 and journald's start all time out: local-fs.target
+# fails, systemd stops in emergency mode and `login:` never comes (README.md, "Debian 13 on sun4u").
+# The boot scenarios pass these on GRUB's `linux` line (boot_disk); the install writes the same into
+# the installed system (answer_media.PORTS_SYSTEMD_TIMEOUTS)
+SLOW_BOOT_TIMEOUT_S = 600
+SLOW_BOOT_OPTIONS = (f"systemd.default_timeout_start_sec={SLOW_BOOT_TIMEOUT_S}"
+                     f" systemd.default_device_timeout_sec={SLOW_BOOT_TIMEOUT_S}")
 
 # A Linux root shell on ttyS0 behaves as Red Hat's does
 shell = _redhat.shell
@@ -75,22 +85,82 @@ def grub_boot_cd(m, options, timeout=600):
     m.send("boot\r")
 
 
-def boot_disk(m, timeout=900):
+def _compact(text):
+    """Screen text without blanks, GRUB's line-wrap backslashes and the editor box's `|`, to find a
+    long line again."""
+    return re.sub(r"[\s\\|]", "", text)
+
+
+def _cursor_line_is(m, pattern, wait):
+    """Whether the terminal line under the cursor matches `pattern` once the screen has settled (GRUB
+    redraws after a cursor key, slowly under TCG): the cursor and its line unchanged for 1.5 s, at most
+    `wait` seconds."""
+    end, last, since = time.time() + wait, None, time.time()
+    while True:
+        with m.cond:
+            now = (m.screen.cursor.y, m.screen.cursor.x, m.screen.display[m.screen.cursor.y])
+        if now != last:
+            last, since = now, time.time()
+        elif time.time() - since >= 1.5 or time.time() > end:
+            return bool(re.match(pattern, now[2]))
+        time.sleep(0.25)
+
+
+def grub_append(m, options, timeout=120):
+    """Append `options` to the `linux` line of GRUB's highlighted entry and boot it. The installed
+    GRUB's entry ends with `linux ... quiet`, `echo 'Loading initial ramdisk ...'` and `initrd ...`: `e`
+    opens the editor, Down to its last line, Up twice, Ctrl-E to the end of the `linux` line, the options,
+    then Ctrl-X boots the edited entry (the disk's grub.cfg stays as it is). The screen is checked
+    (blanks and wrap marks removed) for `quiet` followed by the options before booting."""
+    m.send("e")
+    m.expect(r"Emacs-like screen editing", timeout, screen=True)
+    for _ in range(20):
+        m.key("down")
+    # Up until the cursor's line is the `linux` line (the editor has an empty line after `initrd`; its
+    # lines are inside a box, `|` first)
+    for _ in range(6):
+        m.key("up")
+        if _cursor_line_is(m, r"[|\s]*linux\s", 30):
+            break
+    else:
+        raise AssertionError(f"no `linux` line in GRUB's editor; screen:\n{m.screen_text()}")
+    m.send("\x05")  # Ctrl-E: end of line
+    m.send(" " + options)
+    want = _compact("quiet " + options)
+    end = time.time() + timeout
+    while want not in _compact(m.screen_text()):
+        if time.time() > end:
+            raise AssertionError(f"GRUB's linux line doesn't end with {options!r}; screen:\n{m.screen_text()}")
+        time.sleep(1)
+    m.snap("GRUB: kernel options added")
+    with m.cond:
+        m.pos = len(m.text)  # past the editor, whose `echo 'Loading ...'` lines boot_disk waits for
+    m.send("\x18")  # Ctrl-X: boot
+
+
+def boot_disk(m, timeout=900, options=SLOW_BOOT_OPTIONS):
     """The installed disk to the kernel: OpenBIOS boots GRUB's boot block from the disk (`boot-device`
-    disk), GRUB shows its menu for 5 s and boots the first entry; Return takes it at once. The kernel
-    runs with `quiet` (no banner): GRUB's own "Loading Linux" line is the sign it took the entry."""
+    disk), GRUB shows its menu for 5 s and boots the first entry; Return takes it at once, or with
+    `options` (SLOW_BOOT_OPTIONS by default) the entry is edited to pass them to the kernel first
+    (grub_append). The kernel runs with `quiet` (no banner): GRUB's own "Loading Linux" line is the
+    sign it took the entry."""
     m.expect(r"GNU GRUB", timeout)
     m.expect(r"automatically in|Press enter to boot", 120)
     m.snap("GRUB")
-    m.send("\r")
+    if options:
+        grub_append(m, options)
+    else:
+        m.send("\r")
     m.expect(r"Loading Linux \d", 300)
     m.expect(r"Loading initial ramdisk", 600)
     m.snap("kernel and initrd loaded")
 
 
-def login(m, password="", timeout=900):
+def login(m, password="", timeout=1800):
     """Wait for `login:` on ttyS0 (systemd's serial-getty on the console) and log in as root
-    (`password`, none by default)."""
+    (`password`, none by default). From the initrd to `login:` takes 3.5-4.5 min on an idle host and
+    15-20 min on one with three times as many runnable threads as cores (SLOW_BOOT_OPTIONS keeps
+    systemd waiting meanwhile)."""
     m.expect(r"login: ?$", timeout)
     m.snap("login prompt")
     time.sleep(1)

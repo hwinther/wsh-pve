@@ -2955,6 +2955,13 @@ boot-test it and reinstall it only on request.
 - **Idle.** The installed kernel is 7.0.12+deb14, the one `wsh/0070` was written against: QEMU at 6.9% and
   6.5% of a host core over 60 and 120 s at the shell (guest load average 0.09, host 0.5-1.3), against
   100.5% for this kernel without the halt ("Idle, more guests" above; not measured again here).
+- **systemd's timeouts on a busy host** (2026-11-24, pve-qemu-kvm 11.1.3-4+wsh13). The stored disk's boot test
+  failed on a busy lab host and passes on an idle one: systemd's 90 s for a device and for a unit's start are
+  wall-clock time, udev's coldplug under TCG takes about that long when idle, and with the host loaded
+  `/boot`'s device timed out and systemd stopped in emergency mode. Not a QEMU or OpenBIOS fault; the boot
+  scenarios pass longer timeouts on GRUB's `linux` line, new installs get them in a drop-in (e2e/sparc/README.md,
+  "Debian 13 on sun4u"). At that load (32-43 on 14 cores) one boot in 9 also lost an IDE interrupt during
+  `poweroff` (`READ DMA` timed out with the drive `DRDY`, then every PIO command); not investigated.
 
 **Hardware layout.** OpenBIOS "boots" = loads the guest from it with `-boot c`/`-boot d` (its `disk`
 and `cdrom` aliases). Guest = the driver attaches and the device works (disk: read and write 10 MB
