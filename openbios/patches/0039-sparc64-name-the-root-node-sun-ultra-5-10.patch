@@ -1,0 +1,37 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: name the root node SUNW,Ultra-5_10, as OBP does on
+ the machine QEMU's sun4u models
+
+The root node was "OpenBiosTeam,OpenBIOS". Solaris installs the
+platform-specific packages by the root node's name: the Solaris 2.6
+installer adds the UltraSPARC-IIi links (the cpu module for this CPU)
+only when that name is a platform it knows, such as SUNW,Ultra-5_10.
+Without them the installed system stopped right after the boot block
+with "krtld: error during initial load/link phase". QEMU's sun4u is an
+Ultra 5/10 in all that matters here (sabre, simba, the CMD646 IDE, the
+ebus), and the Solaris 2.5.1 and 2.6 CDs for it are Ultra 5/10 media.
+
+Name the root node as OBP names an Ultra 5/10. Solaris looks for its
+kernel under /platform/<name> first and falls back to /platform/sun4u,
+so systems installed under the old name keep booting.
+---
+ arch/sparc64/tree.fs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/sparc64/tree.fs b/arch/sparc64/tree.fs
+index 814de6c..aac21fc 100644
+--- a/arch/sparc64/tree.fs
++++ b/arch/sparc64/tree.fs
+@@ -98,6 +98,12 @@ finish-device
+ " /options" find-device
+   " disk" encode-string " boot-from" property
+ 
++" /" find-device
++  \ The name OBP gives the root of an Ultra 5/10, the machine QEMU's sun4u is modelled on: Solaris
++  \ installs its platform packages by this name (2.6's installer adds the UltraSPARC-IIi links
++  \ only for a platform it knows), and boots from /platform/<name> with sun4u as the fallback
++  " SUNW,Ultra-5_10" encode-string " name" property
++
+ " /openprom" find-device
+   " OBP 3.10.24 1999/01/01 01:01" encode-string " version" property
+   \ OBP has it: the Solaris 2.5.1 boot program loads the kernel's text and

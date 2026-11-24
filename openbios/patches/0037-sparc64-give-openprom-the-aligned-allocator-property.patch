@@ -1,0 +1,27 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: give /openprom the aligned-allocator property
+
+OBP has an empty "aligned-allocator" property in /openprom, and the
+sparc32 tree has it too. The Solaris 2.5.1 boot program (ufsboot) on
+sun4u looks for it before it honours the kernel's page size hint:
+without it the kernel's text and data are claimed and mapped only as
+large as the segments, not as whole 4 MB pages. The kernel then puts
+its nucleus hme blocks in the rest of its 4 MB data page, and its first
+access there (sfmmu_add_nucleus_hblks) is a data access fault
+("Unhandled Exception 0x30") before the banner. The boot program of
+2.6 and later always aligns on sun4u and isn't affected.
+---
+ arch/sparc64/tree.fs | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/sparc64/tree.fs b/arch/sparc64/tree.fs
+index fc653ac..814de6c 100644
+--- a/arch/sparc64/tree.fs
++++ b/arch/sparc64/tree.fs
+@@ -100,3 +100,6 @@ finish-device
+ 
+ " /openprom" find-device
+   " OBP 3.10.24 1999/01/01 01:01" encode-string " version" property
++  \ OBP has it: the Solaris 2.5.1 boot program loads the kernel's text and
++  \ data as whole 4 MB pages (its pagesize hint) only when it is there
++  0 0 " aligned-allocator" property
