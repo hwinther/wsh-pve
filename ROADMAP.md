@@ -623,16 +623,17 @@ merged; what is left of them is item 2 under "Next".
        (the NVIDIA node was busy), a client in an LXC (uid mapping onto `wsh-display`), migration
        of a VM with the D-Bus display (the bus is per node; not tried), the GL scanout's cursor
        (not blended into VNC's picture).
-     - Left for stage 3: 3b, the Wolf app in an LXC on the node (the socket directory
-       bind-mounted, its user mapped into `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the
-       dmabuf import); 3c, a `qemudbussrc` (a GStreamer source for the console: `ScanoutDMABUF`/
+     - Left for stage 3: 3b (optional, approved, after 3a), qemu-rdp (Marc-André Lureau's
+       qemu-display project: D-Bus to RDP with rdpsnd audio), the quickest way to remote sound
+       from sparc32 guests and a stopgap next to Moonlight (LEMU's `-rdp` is the alternative
+       without sound); 3c, a `qemudbussrc` (a GStreamer source for the console: `ScanoutDMABUF`/
        `UpdateDMABUF` imported as dmabufs, `Scanout`/`Update`/`ScanoutMap` as system memory,
        answering each update promptly since QEMU keeps a GL console blocked until then, plus the
        `AudioOutListener` PCM) and the input bridge (Moonlight's keyboard, mouse and absolute
        pointer to `org.qemu.Display1.Keyboard`/`Mouse` on `Console_0`, `IsAbsolute` decides); 3d,
-       end-to-end Moonlight runs with numbers (latency, frame pacing against `dbus-refresh`). Quickest first step for remote sound from sparc32 guests:
-       qemu-rdp (Marc-André Lureau's qemu-display project: D-Bus to RDP, with rdpsnd audio). LEMU's
-       `-rdp` is the alternative without sound.
+       the Wolf app in an LXC on the node (the socket directory bind-mounted, its user mapped into
+       `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the dmabuf import), the docs, and
+       end-to-end Moonlight runs with numbers (latency, frame pacing against `dbus-refresh`).
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
      services (instant messaging first; later a Battle.net-compatible server and a period IRC
