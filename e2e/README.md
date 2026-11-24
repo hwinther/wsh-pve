@@ -147,8 +147,9 @@ records). The results are described in the
 The test media that CI downloads from third-party mirrors, pinned by URL and checksum, are kept in
 the repository's Actions cache: the Alpine virt CDs of the `boot` job (`pve/boot-media.sh`), the
 NetBSD CDs of `sparc-lab-netbsd.yml` (`sparc/targets.py`, fetched and checked by
-`sparc/fetch_media.py`) and the fbDOOM and Freedoom archives of `wisp-boot.yml`
-(`wisp/doom/fetch.py`). Only runs on main save them (push, schedule, dispatch); a pull request
+`sparc/fetch_media.py`), the fbDOOM and Freedoom archives of `wisp-boot.yml`
+(`wisp/doom/fetch.py`) and the FreeDOS 1.4 Floppy Edition zip of `3dfx-dos.yml`, `sparc-lab-dos.yml`
+and `audio-matrix.yml` (below). Only runs on main save them (push, schedule, dispatch); a pull request
 restores main's entry (a pull request can read its base branch's caches) and never saves its own
 copy, so the 10 GB cache holds each medium once instead of once per pull request, and the mirrors
 see a download only when the cache has no entry. Each job restores the entry, then runs the fetch
@@ -162,6 +163,21 @@ after 7 days unused) downloads, checks and saves that medium. Its jobs must use 
 `path` as the jobs that restore the entries (the cache version depends on the path). A pull request
 that changes a pin downloads the new medium on each run until it is merged and main has saved it.
 A new workflow that downloads media follows the same pattern and gets a job in `media-cache.yml`.
+
+The FreeDOS zip (`FD14-FloppyEdition.zip`) is one entry for its three workflows. Its URL, size and
+sha256 are pinned once, in `sparc/targets_dos.py` (`FREEDOS_ZIP`): the lab test
+(`sparc/tests/test_freedos.py`), the 3dfx DOS harness (`3dfx/dos/dos_test.py`) and the audio matrix
+(`audio/audio_matrix.py`) import it, and their images carry `targets_dos.py` and `fetch_media.py` at
+the same relative path as in the repository. Each job runs `python3 e2e/sparc/fetch_media.py --key
+FD14-FloppyEdition.zip` for the key (`freedos-fd14-floppy-` and the first 16 hex digits of the
+sha256, so a new pin is a new entry), restores `${{ runner.temp }}/freedos`, runs `fetch_media.py
+"$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip`, saves on main, and gives the harness the zip as
+`FREEDOS_ZIP` (`dos-test.sh --freedos-zip`; a read-only mount for the lab and the audio node). A
+harness checks a given `FREEDOS_ZIP` and never downloads over it; without one it downloads the pinned
+zip into its `FREEDOS_CACHE` as before. `sparc/tests/test_fetch_media.py` checks that the pin has no
+second copy and that the four workflows use the same key and path. `sparc-lab-dos.yml` runs on
+GitHub-hosted runners (no lab host media), on pull requests and by hand, so on main only a dispatch
+or `media-cache.yml` saves the entry.
 
 ## Running
 

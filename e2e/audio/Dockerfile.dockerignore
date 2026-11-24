@@ -1,0 +1,10 @@
+# Build context is the repository root, so send only what the image uses.
+*
+!e2e/audio/audtest.asm
+!e2e/audio/guest-init.sh
+!e2e/audio/build-guests.sh
+!e2e/audio/audio_matrix.py
+!e2e/audio/wavcheck.py
+!e2e/audio/test_wavcheck.py
+!e2e/sparc/targets_dos.py
+!e2e/sparc/fetch_media.py

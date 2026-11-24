@@ -1,8 +1,10 @@
 # The DOS Glide test (e2e/3dfx/dos-test.sh): the test program built with DJGPP in the image that
 # builds the qemu-3dfx guest drivers (djgpp.Dockerfile), then a Debian 13 with the published
 # pve-qemu-kvm's qemu-system-x86_64-3dfx, wsh-openglide (Glide on the host), Mesa (llvmpipe, EGL for
-# the offscreen console), mtools (the FreeDOS floppy) and the harness. FreeDOS is downloaded by the
-# harness at run time (by URL and sha256), the guest drivers are passed in.
+# the offscreen console), mtools (the FreeDOS floppy) and the harness, with the FreeDOS pins and their
+# download from e2e/sparc (targets_dos.py, fetch_media.py). The FreeDOS zip is passed in (dos-test.sh
+# --freedos-zip; CI restores it from the Actions cache) or downloaded by the harness at run time (by URL
+# and sha256); the guest drivers are passed in.
 #
 # Build context: the repository root, with submodules/qemu-3dfx checked out.
 #   docker build -f e2e/3dfx/dos/Dockerfile -t wsh-3dfx-dos .
@@ -40,5 +42,6 @@ RUN echo "packages: $WSH_PACKAGES" && gpg --dearmor < /tmp/wsh-pve.gpg.key > /us
 COPY packages/wsh-openglide/tests/scene.h /w3d/packages/wsh-openglide/tests/scene.h
 COPY e2e/3dfx/win98/win98_test.py /w3d/e2e/3dfx/win98/win98_test.py
 COPY e2e/3dfx/dos/ /w3d/e2e/3dfx/dos/
+COPY e2e/sparc/targets_dos.py e2e/sparc/fetch_media.py /w3d/e2e/sparc/
 COPY --from=build /glidedos/bin/ /w3d/bin/
 ENTRYPOINT ["python3", "/w3d/e2e/3dfx/dos/dos_test.py"]
