@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+# The files the unit wrote: each VM's configuration (with its RDP password) and the node's
+# self-signed certificate
+if [ "$1" = purge ]; then
+	rm -rf /etc/wsh-qemu-rdp /var/lib/wsh-qemu-rdp
+fi
+
+exit 0
