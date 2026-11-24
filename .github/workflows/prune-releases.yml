@@ -1,15 +1,15 @@
 name: Prune old releases
 
 # Keeps the newest KEEP releases of each package (pve-qemu, pve-manager, qemu-server, pve-storage,
-# wsh-lab, wsh-openglide, qemu-3dfx-drivers) and deletes the older ones with their assets. The git
+# wsh-lab, wsh-openglide, wsh-qemu-rdp, qemu-3dfx-drivers) and deletes the older ones with their assets. The git
 # tags stay (`gh release delete` without --cleanup-tag), so every published version can still be
 # traced to its commit. Never deleted: the release GitHub marks as latest, the qemu-3dfx-drivers
 # release that matches main's submodules/qemu-3dfx pin (the drivers are only rebuilt when the pin
 # moves, so that one is often old), and any release whose tag doesn't match one of the patterns
 # below (e.g. `media`, which holds the docs recordings).
 #
-# The apt repository doesn't need old releases: repo-update.yml takes the newest wsh-lab and
-# wsh-openglide release and the patched packages' newest builds. Run by hand only; dry_run (the
+# The apt repository doesn't need old releases: repo-update.yml takes the newest wsh-lab,
+# wsh-openglide and wsh-qemu-rdp release and the patched packages' newest builds. Run by hand only; dry_run (the
 # default) lists what would go in the job summary and deletes nothing.
 
 on:
@@ -63,7 +63,7 @@ jobs:
 
           deleted=0
           for pattern in '^pve-qemu-[0-9]' '^pve-manager-[0-9]' '^qemu-server-[0-9]' '^pve-storage-[0-9]' \
-            '^wsh-lab-[0-9]' '^wsh-openglide-[0-9]' '^qemu-3dfx-drivers-[0-9a-f]+$'; do
+            '^wsh-lab-[0-9]' '^wsh-openglide-[0-9]' '^wsh-qemu-rdp-[0-9]' '^qemu-3dfx-drivers-[0-9a-f]+$'; do
             # Newest first; the first KEEP stay, and so do the protected ones
             mapfile -t tags < <(jq -r --arg re "$pattern" \
               '[.[] | select(.tagName | test($re))] | sort_by(.createdAt) | reverse | .[].tagName' <<< "$releases")

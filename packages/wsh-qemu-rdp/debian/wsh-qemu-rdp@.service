@@ -1,0 +1,53 @@
+[Unit]
+Description=RDP server (qemu-rdp) for the D-Bus display of VM %i
+Documentation=https://debian.wshosting.no/reference/display/#rdp-qemu-rdp
+# The VM's bus (qemu-server starts it before QEMU and stops it at the VM's cleanup): this unit stops
+# with it, and, once enabled, starts with it (WantedBy below). qemu-rdp waits for QEMU on the bus.
+BindsTo=wsh-dbus-display@%i.service
+After=wsh-dbus-display@%i.service
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=exec
+Slice=qemu.slice
+User=wsh-qemu-rdp
+Group=wsh-display
+# /run/wsh-qemu-rdp/<vmid>: the certificate, key and credentials this start uses (0700, the user's)
+RuntimeDirectory=wsh-qemu-rdp/%i
+RuntimeDirectoryMode=0700
+# As root, unsandboxed: /etc/wsh-qemu-rdp/<vmid>.conf (written with a generated password at the
+# first start) and the node's self-signed certificate, copied into the runtime directory
+ExecStartPre=+/usr/lib/wsh-qemu-rdp/wsh-qemu-rdp-unit prepare %i
+ExecStart=/usr/lib/wsh-qemu-rdp/wsh-qemu-rdp-unit run %i
+# qemu-rdp ends when QEMU leaves the bus (a VM that stopped without its bus, or a crash): it starts
+# again and waits for the next QEMU
+Restart=always
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=wsh-dbus-display@%i.service
