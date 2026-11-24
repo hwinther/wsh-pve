@@ -47,25 +47,27 @@ Without it a Glide guest gets no Glide device. The Mesa/OpenGL pass-through does
 
 ### Choosing the display (3DFX/Mesa display)
 
-A VM with 3DFX/Mesa enabled and a VNC console (no `server`) gets one of two QEMU displays next to its VNC server, set with the `mesa-display` property of `vga`, or **Hardware > Display > 3DFX/Mesa display** in the web UI (shown while **Enable 3DFX/Mesa** is checked):
+A VM with 3DFX/Mesa enabled and a VNC console (no `server`) gets one of three QEMU displays next to its VNC server, set with the `mesa-display` property of `vga`, or **Hardware > Display > 3DFX/Mesa display** in the web UI (shown while **Enable 3DFX/Mesa** is checked):
 
 ```sh
 qm set 120 --vga std,mesa=1                            # Default (read back): no -display
 qm set 120 --vga std,mesa=1,mesa-display=egl-headless  # egl-headless (dmabuf)
+qm set 120 --vga std,mesa=1,mesa-display=dbus          # D-Bus with OpenGL (dmabuf)
 ```
 
 | `mesa-display` | QEMU gets | Glide frames | OpenGL frames |
 | --- | --- | --- | --- |
 | `none` (default) | `-vnc ...` only | read back into the console | read back |
 | `egl-headless` | `-display egl-headless -vnc ...` | a dmabuf, which egl-headless reads into the console for VNC | read back |
+| `dbus` | `-display dbus,addr=unix:path=/run/wsh-dbus-display/<vmid>.sock,gl=on -vnc ...` | a dmabuf to the D-Bus client; QEMU reads it into the console for VNC once per display refresh | a dmabuf likewise |
 
 PVE's console (noVNC) works with both. Which to use:
 
 - **Without a GPU (Mesa's software renderer): the default.** egl-headless reads every frame back for VNC anyway, on QEMU's main loop, which costs more than the readback: the test scene ran at 830 to 1070 frames per second with egl-headless against 1440 to 1790 read back, and in Windows 98 at 960 to 970 against 1540 to 1700. Run through PVE (`qm start`, TCG), the test's Glide guest drew 944 frames per second with egl-headless.
 - **With a GPU: egl-headless**, since a `glReadPixels` on the vCPU thread stalls a GPU's pipeline and the dmabuf way doesn't. On an NVIDIA GTX 1080 the test's Glide guest drew 3.7 times as many frames per second with egl-headless as read back; see [NVIDIA GPU nodes](#nvidia-gpu-nodes) for what the node needs. AMD and Intel GPUs are untested.
-- `dbus,gl=on`, where a client takes the dmabuf itself, is not offered: QEMU refuses a VNC server next to it ("Display vnc is incompatible with the GL context"), so the PVE console would go, and nothing in PVE reads the D-Bus display yet (stage 3, the streaming client, in the ROADMAP).
+- **For a streaming client on the node: `dbus`.** QEMU's D-Bus display with GL (`dbus,gl=on`), on a bus of the VM's own, hands each frame to its client as a dmabuf (the stage 3 streaming client in the ROADMAP; until then the test's listener, `e2e/3dfx/dbus-listener.py`). Upstream QEMU refuses a VNC server next to it ("Display vnc is incompatible with the GL context"); pve-qemu's `wsh/0130` lets the D-Bus console read the GL scanout back into the console's surface for VNC, as egl-headless does, but once per display refresh (30 ms, or `dbus-refresh`) instead of once per frame, so PVE's console stays. `dbus-refresh=<ms>` sets how often QEMU refreshes the display while a client listens (`wsh/0131`; QEMU's default 30 ms is about 33 updates a second). The bus, its access rules and the audio driver `dbus` are the same as without 3DFX/Mesa: see the [display reference](/reference/display/#d-bus-display).
 
-What the node needs for egl-headless:
+What the node needs for egl-headless (and for `dbus`, the same):
 
 - **A GPU's render node** (`/dev/dri/renderD*`), or on a node without one **`/dev/udmabuf`**, through which Mesa's software renderer exports and imports the dmabufs. Without either QEMU can't start egl-headless (Mesa has no `EGL_MESA_image_dma_buf_export`, "egl: render node init failed"), so qemu-server refuses to start the VM: `vga: mesa-display=egl-headless needs a GPU render node (/dev/dri/renderD*) or /dev/udmabuf on the node`.
 - `/dev/udmabuf` comes from the kernel's `udmabuf` driver. Proxmox's kernels build it in (`CONFIG_UDMABUF=y` in the published configs of `proxmox-kernel-7.0.14-30-pve`, the default, and of the opt-in `7.3.5-1-pve`), as do Ubuntu's, including the kernels of GitHub's hosted runners, so the device is there from boot; check with `ls -l /dev/udmabuf`. Where it's a module, load it now and at every boot: `modprobe udmabuf` and `echo udmabuf > /etc/modules-load.d/udmabuf.conf`.

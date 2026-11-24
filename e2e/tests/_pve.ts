@@ -175,6 +175,30 @@ export async function qemu3dfxHasGlDisplay(): Promise<boolean> {
   return installedHas('/usr/bin/qemu-system-x86_64-3dfx', "using Mesa's surfaceless EGL platform")
 }
 
+/**
+ * Whether the installed qemu-server has the D-Bus display (vga: display=dbus, mesa-display=dbus,
+ * audio0 driver dbus, the wsh-dbus-display@ unit). TODO: remove with the skips once published.
+ */
+export async function qemuServerHasDbusDisplay(): Promise<boolean> {
+  return installedHas('/usr/share/perl5/PVE/QemuServer/DBusDisplay.pm', 'wsh-dbus-display')
+}
+
+/**
+ * Whether the installed pve-manager has the "D-Bus display" field in the Display dialog.
+ * TODO: remove with the skips once a pve-manager with it is published.
+ */
+export async function pveManagerHasDbusDisplay(): Promise<boolean> {
+  return installedHas('/usr/share/pve-manager/js/pvemanagerlib.js', "name: 'dbus-refresh'")
+}
+
+/**
+ * Whether the installed QEMU takes -display dbus,refresh-ms= and VNC next to dbus,gl=on (pve-qemu
+ * wsh/0130-0131). TODO: remove with the skips once a pve-qemu-kvm with them is published.
+ */
+export async function qemuHasDbusRefresh(): Promise<boolean> {
+  return installedHas('/usr/bin/qemu-system-x86_64', 'refresh-ms must be at most')
+}
+
 /** The VM's config file as pmxcfs stores it. */
 export async function vmConfFile(vmid: number): Promise<string> {
   const { code, output } = await pveExec(['cat', `/etc/pve/qemu-server/${vmid}.conf`])

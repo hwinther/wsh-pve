@@ -76,6 +76,17 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   when the guest is missing. `3dfx/win98-test.sh --pve CONTAINER` runs the Windows 98 test through PVE
   in the same container (`qm create`/`qm start`; see the 3dfx guide).
 
+- `tests/dbus-display.spec.ts`: QEMU's D-Bus display next to VNC (`vga: ...,display=dbus`,
+  `mesa-display=dbus`, `dbus-refresh`, `audio0: driver=dbus`): the commands (x86, SS-5 with the
+  CS4231, sun4u, the 3dfx binary with `gl=on`), the refusals, and a real `qm start` that checks the
+  VM's bus (`wsh-dbus-display@<vmid>`, `/run/wsh-dbus-display/<vmid>.sock`, group `wsh-display`),
+  `busctl tree org.qemu`, the VNC socket, that `nobody` can't connect, that the VM outlives a killed
+  bus and that the stop removes it. Skipped with a qemu-server without it; the start also needs a
+  pve-qemu-kvm with `refresh-ms` (`wsh/0131`). What a client gets (frames, refresh rate, sound) is
+  measured with `3dfx/dbus-listener.py` (`DBUS_LISTENER_AUDIO=1` adds an `AudioOutListener`), and
+  `3dfx/test.sh` with `GLIDE_DISPLAY=dbus DBUS_PICTURE=vnc` checks the Glide and Mesa frames in the
+  picture VNC serves next to `dbus,gl=on`.
+
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
 command a real start would reject fails without running a guest.

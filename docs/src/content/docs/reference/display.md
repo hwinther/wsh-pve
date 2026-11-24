@@ -41,6 +41,56 @@ qm set 120 --vga std,mesa=1,mesa-display=egl-headless
 
 In the web UI it is **Hardware > Display > 3DFX/Mesa display**, shown for x86 VMs while **Enable 3DFX/Mesa** is checked and the graphic card has a VNC console. Refused without `mesa=1`, with a `server` and with `none` or `serial*`; refused at start on a node with neither a render node nor `/dev/udmabuf`. When to use which and what the node needs: [Choosing the display](/guides/3dfx/#choosing-the-display-3dfxmesa-display).
 
+## D-Bus display
+
+`display=dbus` gives QEMU its D-Bus display (`-display dbus`) next to the VNC console: QEMU exports
+the screen, the sound (with the audio driver `dbus`) and keyboard and mouse input over D-Bus, for a
+client on the same node, such as a streaming server. The VNC console (noVNC) stays as it is.
+
+```sh
+qm set 130 --vga std,display=dbus
+qm set 130 --vga std,display=dbus,dbus-refresh=14 --audio0 device=AC97,driver=dbus
+qm set 120 --vga std,mesa=1,mesa-display=dbus   # 3DFX/Mesa: the D-Bus display with OpenGL
+```
+
+- **Its own bus.** QEMU owns the fixed name `org.qemu` on its bus, so each VM gets a bus of its own:
+  qemu-server starts `wsh-dbus-display@<vmid>.service`, a `dbus-daemon`, before QEMU, and QEMU
+  connects to `unix:path=/run/wsh-dbus-display/<vmid>.sock`
+  (`-display dbus,addr=unix:path=...`). The stop (or the cleanup after QEMU exits) stops it and
+  removes the socket. The directory is `root:wsh-display 0750` (the socket in it is `0777`, as
+  dbus-daemon makes it), so only root and the group reach the socket; the bus's policy
+  (`/usr/share/qemu-server/dbus-display.conf`) lets root own `org.qemu` and lets root and the
+  members of the group `wsh-display` (created by the qemu-server package) connect and call it.
+  Nobody else may connect. A client in a container gets the directory bind-mounted and a member of
+  that group (as the host sees its user).
+- **Without GL** (`display=dbus`) it works with every graphic card that has a picture: `std`,
+  `cirrus`, `vmware`, `virtio`, and on sparc `tcx` and `cg3` (SS-5 and the other sparc32 machines)
+  and sun4u's `std`. The client gets the console's pixels (`Scanout`/`Update`, or a shared memory
+  map).
+- **With GL** (`mesa-display=dbus`, the 3dfx binary): `-display dbus,gl=on`; the Glide and OpenGL
+  frames reach the client as dmabufs, and the VNC console gets them read back (once per display
+  refresh, by QEMU's own patch, as egl-headless does). It needs what egl-headless needs: a GPU's
+  render node or `/dev/udmabuf`; see [Choosing the display](/guides/3dfx/#choosing-the-display-3dfxmesa-display).
+- **`dbus-refresh`** (milliseconds, 1 to 1000): how often QEMU looks at the screen for changes and
+  updates the client while one listens. QEMU's default is 30 ms, about 33 updates a second; 14
+  suits a 70 Hz guest mode. A VGA's changes reach the client at most that often.
+- **Sound**: `audio0: ...,driver=dbus` adds `-audiodev dbus` and ties it to the display
+  (`audiodev=`); the client registers an `AudioOutListener` and gets the PCM.
+- **The client goes or the bus goes**: QEMU keeps running when the client disconnects or is
+  killed, and also when the `dbus-daemon` dies; the D-Bus display is then gone until the VM is
+  restarted, while VNC goes on.
+
+In the web UI it is **Hardware > Display > D-Bus display** and **D-Bus refresh (ms)**, and the audio
+device's **Backend Driver > D-Bus**. Refused: `dbus-refresh` or the audio driver `dbus` without the
+D-Bus display; the D-Bus display with a `server` (SDL), with `qxl*`, `virtio-gl`, `none` or
+`serial*`, and together with `mesa-display=egl-headless` (QEMU has one display next to VNC).
+
+To look at a running VM's bus as root:
+
+```sh
+busctl --address=unix:path=/run/wsh-dbus-display/130.sock tree org.qemu
+```
+
 ## VGA retrace
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input

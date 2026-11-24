@@ -16,6 +16,12 @@ platform, EGL_EXT_image_dma_buf_import_modifiers) into a GL texture and read wit
 where that fails the listener says "pixel probes skipped", writes no frame and only counts them.
 DBUS_LISTENER_IMPORT=egl imports linear dmabufs through EGL too (that path, tested on llvmpipe).
 
+DBUS_LISTENER_AUDIO=1 also registers an AudioOutListener (org.qemu.Display1.Audio) and counts the
+PCM QEMU writes to it (-audiodev dbus, -display dbus,audiodev=...): the stream's format, the bytes,
+the seconds of sound they make and their peak sample, in the summary line "dbus-listener: audio
+...". The summary also gives the pixel updates per second (a display without GL: the console's
+refresh interval, -display dbus,refresh-ms=N, bounds it while the guest's screen changes).
+
 Needs python3-gi (Gio), and libEGL.so.1 for a dmabuf that isn't linear.
 """
 import ctypes
@@ -74,6 +80,26 @@ PIXMAN_X8R8G8B8, PIXMAN_A8R8G8B8 = 0x20020888, 0x20028888
 # DRM_FORMAT_MOD_LINEAR and DRM_FORMAT_MOD_INVALID (no explicit modifier): mapped as they are
 LINEAR = (0, 0x00ffffffffffffff)
 FORCE_EGL = os.environ.get("DBUS_LISTENER_IMPORT") == "egl"
+AUDIO = os.environ.get("DBUS_LISTENER_AUDIO") == "1"
+
+AUDIO_XML = """
+<node>
+  <interface name="org.qemu.Display1.AudioOutListener">
+    <method name="Init">
+      <arg type="t" direction="in"/><arg type="y" direction="in"/><arg type="b" direction="in"/>
+      <arg type="b" direction="in"/><arg type="u" direction="in"/><arg type="y" direction="in"/>
+      <arg type="u" direction="in"/><arg type="u" direction="in"/><arg type="b" direction="in"/>
+    </method>
+    <method name="Fini"><arg type="t" direction="in"/></method>
+    <method name="SetEnabled"><arg type="t" direction="in"/><arg type="b" direction="in"/></method>
+    <method name="SetVolume">
+      <arg type="t" direction="in"/><arg type="b" direction="in"/><arg type="ay" direction="in"/>
+    </method>
+    <method name="Write"><arg type="t" direction="in"/><arg type="ay" direction="in"/></method>
+    <property name="Interfaces" type="as" access="read"/>
+  </interface>
+</node>
+"""
 
 
 class EglImport:
@@ -202,7 +228,8 @@ class EglImport:
 
 egl = None  # an EglImport, once a dmabuf needs one
 
-st = {"scanouts": 0, "updates": 0, "pixels": 0, "formats": set(), "first": None, "last": None}
+st = {"scanouts": 0, "updates": 0, "pixels": 0, "formats": set(), "first": None, "last": None,
+      "bursts": 0, "prev": 0.0}
 cur = {"map": None, "w": 0, "h": 0, "stride": 0, "rgb": (2, 1, 0), "flip": False, "dirty": False,
        "pix": None, "egl": False, "skip": False}
 notes = set()
@@ -286,17 +313,23 @@ def method(conn, sender, path, iface, name, params, inv):
             GLib.timeout_add(DELAY, lambda: inv.return_value(None) and False)
             return
     elif name in ("Scanout", "Update"):
-        args = params.unpack()
+        # the updates of one console refresh come together: a gap of 2 ms starts the next refresh
+        if now - st["prev"] > 0.002:
+            st["bursts"] += 1
+        st["prev"] = now
+        # the pixels as bytes: unpack() would make a list of ints of them, too slow for a frame
+        n = params.n_children()
+        args = [params.get_child_value(i).unpack() for i in range(n - 1)]
+        data = params.get_child_value(n - 1).get_data_as_bytes().get_data()
         if name == "Scanout":
-            w, h, stride, fmt, data = args
+            w, h, stride, fmt = args
             if cur["map"] is not None:
                 cur["map"].close()
             cur.update(map=None, w=w, h=h, stride=stride, flip=False, egl=False, skip=False,
-                       pix=bytearray(bytes(data)), rgb=(2, 1, 0))
+                       pix=bytearray(data), rgb=(2, 1, 0))
             st["formats"].add("pixels 0x%x %dx%d" % (fmt, w, h))
         else:
-            x, y, w, h, stride, fmt, data = args
-            data = bytes(data)
+            x, y, w, h, stride, fmt = args
             for r in range(h):
                 o = (y + r) * cur["stride"] + x * 4
                 cur["pix"][o:o + w * 4] = data[r * stride:r * stride + w * 4]
@@ -309,11 +342,78 @@ def prop(conn, sender, path, iface, name):
     return GLib.Variant("as", [])
 
 
+aud = {"streams": {}, "bytes": 0, "writes": 0, "peak": 0, "bps": 0, "formats": set()}
+
+
+def audio_method(conn, sender, path, iface, name, params, inv):
+    args = params.unpack() if name != "Write" else (params.get_child_value(0).unpack(),)
+    if name == "Init":
+        sid, bits, signed, flt, freq, nch, bpf, bps, be = args
+        aud["streams"][sid] = (bits, signed, be)
+        aud["bps"] = aud["bps"] or bps
+        aud["formats"].add("%d-bit %s %d Hz %d ch" % (bits, "signed" if signed else "unsigned",
+                                                      freq, nch))
+    elif name == "Write":
+        sid = args[0]
+        data = params.get_child_value(1).get_data_as_bytes().get_data()
+        aud["writes"] += 1
+        aud["bytes"] += len(data)
+        bits, signed, be = aud["streams"].get(sid, (16, True, False))
+        if bits == 16 and signed:
+            n = len(data) // 2
+            samples = memoryview(data[:n * 2]).cast("h") if not be else []
+            if n and samples:
+                aud["peak"] = max(aud["peak"], max(abs(min(samples)), max(samples)))
+    inv.return_value(None)
+
+
+def register_audio(bus):
+    """RegisterOutListener without blocking the main loop: QEMU sets up its side of the
+    connection (and its proxies of our listeners) while the call is open, and our side answers
+    only while the loop runs"""
+    ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    fds = Gio.UnixFDList.new()
+    fds.append(theirs.fileno())
+
+    def connected(_, res):
+        aconn = Gio.DBusConnection.new_finish(res)
+        aconn.register_object("/org/qemu/Display1/AudioOutListener",
+                              Gio.DBusNodeInfo.new_for_xml(AUDIO_XML).interfaces[0],
+                              audio_method, prop, None)
+        aconn.start_message_processing()
+        audio_conn.append(aconn)
+        print("dbus-listener: registered an AudioOutListener", flush=True)
+
+    def registered(_, res):
+        # QEMU sets up the connection and its proxy (a call to us) before its reply leaves:
+        # the reply can come late or not at all, while the listener works
+        try:
+            bus.call_with_unix_fd_list_finish(res)
+        except GLib.Error as e:
+            note("RegisterOutListener: %s (the listener works anyway)" % e.message)
+        theirs.close()
+
+    bus.call_with_unix_fd_list("org.qemu", "/org/qemu/Display1/Audio", "org.qemu.Display1.Audio",
+                               "RegisterOutListener", GLib.Variant("(h)", (0,)), None,
+                               Gio.DBusCallFlags.NONE, -1, fds, None, registered)
+    stream = Gio.Socket.new_from_fd(ours.detach()).connection_factory_create_connection()
+    Gio.DBusConnection.new(stream, None, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
+                           Gio.DBusConnectionFlags.DELAY_MESSAGE_PROCESSING, None, None,
+                           connected)
+    return False
+
+
 def stats(*_):
     secs = (st["last"] - st["first"]) if st["first"] else 0
-    print("dbus-listener: %d dmabuf scanouts, %d dmabuf updates (%.1f per s), %d pixel updates; "
-          "formats: %s" % (st["scanouts"], st["updates"], st["updates"] / secs if secs else 0,
-                           st["pixels"], "; ".join(sorted(st["formats"])) or "none"), flush=True)
+    print("dbus-listener: %d dmabuf scanouts, %d dmabuf updates (%.1f per s), %d pixel updates "
+          "in %d refreshes (%.1f per s); formats: %s" % (
+              st["scanouts"], st["updates"], st["updates"] / secs if secs else 0, st["pixels"],
+              st["bursts"], st["bursts"] / secs if secs else 0,
+              "; ".join(sorted(st["formats"])) or "none"), flush=True)
+    if AUDIO:
+        print("dbus-listener: audio %d writes, %d bytes (%.2f s), peak %d; formats: %s" %
+              (aud["writes"], aud["bytes"], aud["bytes"] / aud["bps"] if aud["bps"] else 0,
+               aud["peak"], "; ".join(sorted(aud["formats"])) or "none"), flush=True)
     os._exit(0)
 
 
@@ -344,6 +444,9 @@ conn = Gio.DBusConnection.new_sync(stream, None, Gio.DBusConnectionFlags.AUTHENT
 conn.register_object("/org/qemu/Display1/Listener",
                      Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0], method, prop, None)
 conn.connect("closed", lambda *a: stats())
+audio_conn = []
+if AUDIO:
+    GLib.idle_add(register_audio, bus)
 GLib.timeout_add(100, write_frame)
 print("dbus-listener: registered on console 0, replies to UpdateDMABUF after %d ms" % DELAY,
       flush=True)

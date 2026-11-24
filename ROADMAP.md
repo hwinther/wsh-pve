@@ -125,6 +125,7 @@ come after that, not before.
 | SS-5 sound under wisp (Linux `snd-sun-cs4231`): OpenBIOS 0034 gives the CS4231 node `intr 0x39`, as Sun's PROM does, so Linux routes SBus level 5 instead of a software interrupt (#478); pve-qemu `wsh/0124` sets the codec's INT status bit and I24's PI with the APC's playback interrupts, which Linux's handler needs before it clears the APC (with 0034 alone the interrupt repeated until QEMU stopped), qtest `wsh/0125` (written to LEMU's requirements, offered to LEMU). Lab: the unchanged `kernel-fb` plays `soundtest 440 1000` (`ok=1`, 23 interrupts, 440.005 Hz for 1000 ms in the WAV); SunOS 4.1.4 and Solaris 2.6 still play. Left: `sound.py` sees ~150 frames of old ring samples ~36 ms after the tone (the APC's 50 ms take-ahead played out after Linux's stop), and the SS-5 joins wisp-boot's sound step once a published package has both (SPARC.md, "Audio") | in review | |
 | CS4231 follow-ups from the LEMU maintainer's review of `wsh/0124`: a write to the codec status register clears PI, CI and TI in I24 as well as INT, as the datasheet and QEMU's ISA model do (pve-qemu `wsh/0126`, qtest `wsh/0127`); the SS-5 no longer plays old samples after Linux stops the DMA: what the APC takes (up to 50 ms ahead of the codec) waits in a FIFO in the model until the codec clock gets to it, the DMA address and count read as the codec's position, a DMA stop in the middle of a buffer drops what lies past it, and the end of the pipe (PMI) still plays everything as `wsh/0032` (`wsh/0128`, qtest `wsh/0129` `mid-stop`, `migrate-fifo`). A vmstate subsection `cs4231/fifo` carries the FIFO only while it holds samples. LEMU took 0124/0125 unchanged onto a local branch; 0126-0129 offered. Lab: `sound.py --arch sparc32` gives the 1000 ms tone, Linux's 22 ms of padding and at most 110 frames (2.5 ms) after it (before: 153-154 frames after 36 ms of silence); SunOS 4.1.4 and Solaris 2.6 play to the end; wisp batch and `--shell` on the eight sparc32 machines; `sun4m-cs4231-test` 10/10 (SPARC.md, "Audio") | in review | |
 | 3dfx stage 2 on a GPU node: an NVIDIA GTX 1080 test node (driver 580, `nvidia_drm modeset=Y`; with `modeset=N` the export fails and every frame is read back) sends every Glide and MESA GL frame as a block-linear dmabuf to egl-headless on the GPU, gamma pass and fences included, also through PVE (`mesa-display=egl-headless`). TCG, 3000 frames: Glide 3502 frames/s egl-headless against 956 read back (llvmpipe 1150), with gamma 2.0 2516 against 775, MESA GL 1018 against 678; through PVE 3748 frames/s, 0.10 ms a copy. Harness: the D-Bus listener and `glide-render --dmabuf` import non-linear dmabufs through EGL and read them with `glReadPixels` (or say the probes are skipped), and the `egl`/`dbus` gate looks for the scanout's printf format, as the published binary holds the "as a dmabuf (no readback)" constant only in overlapping pieces (ROADMAP, Stage 2, "GPU node") | in review | |
+| 3dfx/streaming stage 3a, the D-Bus display from PVE: pve-qemu `wsh/0130` (VNC next to `-display dbus,gl=on`: the D-Bus console reads GL scanouts back into the console's surface once per refresh for the listeners without GL), `wsh/0131` (`-display dbus,refresh-ms=N`), `wsh/0132` (qtests); qemu-server `vga: ...,display=dbus` (also sparc32 cg3/tcx and sun4u), `mesa-display=dbus` (with GL), `dbus-refresh`, `audio0: driver=dbus`, a bus per VM (`wsh-dbus-display@<vmid>`, `/run/wsh-dbus-display/<vmid>.sock`, group `wsh-display`), VNC kept; pve-manager fields. Lab: the 3dfx Glide and Mesa guests pass in VNC's picture through `dbus,gl=on` while the D-Bus client maps the dmabufs; 33.6/61.6/125 refreshes/s at 30/14/5 ms; QEMU survives the client and the bus being killed; 1 s of AC97 and CS4231 sound reached an `AudioOutListener` (ROADMAP, Stage 3, "Stage 3a") | in review | |
 | 3dfx stage 2, fourth slice: a held OpenGL frame stays on the console (the OpenGL wrapper's display timer, `DispTimerMS`, gave it back to the VGA about 4 s after the last swap; offscreen that deferred deactivation is now ignored, `WM_ACTIVATE`, `wglDeleteContext` and the detach still hand back), double buffering for the dmabuf scanout (two exported buffers per window: wsh-openglide 0.8 `getOffscreenDmabufAt`/`getOffscreenScanoutAt` and mesapt's own; frames go on being copied into the second buffer while a D-Bus client reads the first and go as soon as it replies, mesapt's hold copy is gone), and on a GPU the hop from the game's context to ours waits in the GL stream (`EGL_KHR_wait_sync`; `QEMU_3DFX_WAIT_SYNC`). Tests: the Mesa guest's `MESA_GUEST_HOLD` (held 7 s, then deactivated), `glide-render --dmabuf` checks the second buffer and that the first keeps its frame, `e2e/3dfx` checks double buffering. Lab and an NVIDIA GTX 1080 test node: with a busy D-Bus client more frames reach it (`DBUS_DELAY_MS=2`, MESA GL: 2958 updates against 1649 on the lab, 710 against 445 on the GPU node), egl-headless unchanged; the wait in the stream saves 0.05-0.15 ms a copy on the GPU (ROADMAP, Stage 2, "Fourth slice") | in review | |
 | Solaris 2.6 and 2.5.1 on sun4u: traced with QEMU's gdbstub. 2.6's PCI host bridge driver (psycho and sabre in one) refuses a `ranges` property with fewer than four entries and fails its attach silently, so nothing below the sabre attached and the CD's root couldn't be mounted: openbios 0036 adds the 64-bit memory space as OBP has it. 2.5.1's boot program loads the kernel as whole 4 MB pages only when `/openprom` has `aligned-allocator` (the kernel's nucleus hme blocks live in the rest of its data page; without the property that page was unmapped, `Unhandled Exception 0x30`): openbios 0037; then 2.5.1 panicked on the firmware's locked translations (`map_prom: locked translation is not global`; 2.6 and later panic on global ones): openbios 0038 lists them without the lock bit. The installed 2.6 stopped in krtld: its installer adds the platform packages (the UltraSPARC-IIi cpu module link) by the root node's name, so openbios 0039 names the root `SUNW,Ultra-5_10` as OBP does. Install targets `sol26-sun4u` (28 min) and `sol251-sun4u` (67 min, with the Maintenance Update) pass `--check --export` through PVE with 0036-0039 mounted (suninstall, IDE disk, 1024 MB; `matrix_skip` until a package has 0036-0039; their stored disks are parked outside the stored disks until then); the install scenario reads its screens from the serial stream when console messages scroll them away, waits out a slow preinstall phase, and takes any stack depth at OpenBIOS's prompt. Regression: the 11 stored sun4u disks (Solaris 7-10, Tribblix, NetBSD 11.1 and 9.3, OpenBSD 8.0, FreeBSD 12.4, Debian 7 and 13) boot-test 11/11 through PVE with 0036-0039, and wisp on sun4u passes (SPARC.md, "Solaris 2.6 and 2.5.1 on sun4u: the kernels") | in review | |
 | sun4u keyboard under wisp (Linux i8042 on the ebus 8042): OpenBIOS 0035 adds the option `ps2-mouse?` (default false); set, the 8042 gets the `kdmouse` child Linux's sparc i8042 probe needs (it returned `-ENODEV` without it), each child its interrupt (the mouse to the sabre's INO `0x2a`, QEMU's ISA IRQ 12) and a `ranges` so the keyboard child translates to the port window. Off by default because Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once the probe succeeds. Linux 7.3 also needed its sparc OF driver renamed (`e2e/wisp/linux-patches/0001`, applied by `build.sh`: "Driver 'i8042' is already registered" without it). Lab: `framebuffer.py --arch sparc64` with the 0035 firmware passes the keytest (30, 48, 28, 1), wisp batch, shell, reboot and tier 2 on sun4u pass; boot tests of the stored sun4u disks pass with the default (NetBSD 11.1/9.3, OpenBSD 8.0, FreeBSD 12.4, Debian 7.11, Solaris 7/8/9/10, Tribblix; Debian 13 fails the same way with the published firmware); with the option set the `sparc64` matrix, NetBSD 11.1/9.3, OpenBSD 8.0, FreeBSD 12.4 and Solaris 8/9/10 pass and Debian 7.11 panics as above (Tribblix and Solaris 7 not run with it). The framebuffer runs keep the virtio keyboard on sun4u (#487) until a published package has 0035 (wisp README, "Framebuffer tier") | in review | |
@@ -557,10 +558,10 @@ merged; what is left of them is item 2 under "Next".
          start on a node with neither a render node nor `/dev/udmabuf`, where QEMU would stop anyway
          (Mesa then has no `EGL_MESA_image_dma_buf_export`: "egl: render node init failed").
          QEMU runs as root in its systemd scope, with no device policy, so `/dev/udmabuf` (root:kvm
-         0660) needs no udev rule; Ubuntu kernels build it in (`CONFIG_UDMABUF=y`). `dbus,gl=on` is
-         not offered: QEMU refuses VNC next to it ("Display vnc is incompatible with the GL
-         context"), so PVE's console would go, and nothing in PVE consumes the D-Bus display until
-         stage 3. pve-manager: **3DFX/Mesa display** in the Display dialog, under **Enable
+         0660) needs no udev rule; Ubuntu kernels build it in (`CONFIG_UDMABUF=y`). `dbus,gl=on` was
+         not offered here: QEMU refused VNC next to it ("Display vnc is incompatible with the GL
+         context"), so PVE's console would have gone; stage 3a adds it as `mesa-display=dbus`, with
+         a QEMU patch that keeps VNC (below). pve-manager: **3DFX/Mesa display** in the Display dialog, under **Enable
          3DFX/Mesa** and only while it's checked. Tested (lab PVE container, no GPU, `/dev/udmabuf`,
          TCG): cfg2cmd and unit tests, the e2e Playwright tests (`qm showcmd`, refusals, the
          dialog) and `e2e/tests/3dfx-gl-display.spec.ts`, which boots the Glide guest of
@@ -578,7 +579,60 @@ merged; what is left of them is item 2 under "Next".
      - D-Bus display, found so far: `-display dbus` is in the package already and works without GL
        on VGA, cirrus, cg3 and TCX; its 30 ms refresh cap needs a small QEMU patch; the bus name
        `org.qemu` is fixed, so one dbus-daemon per VM; a dmabuf streamer must run on the same
-       kernel (the host or an LXC). Quickest first step for remote sound from sparc32 guests:
+       kernel (the host or an LXC).
+     - **Stage 3a: the D-Bus display from PVE (in review).** pve-qemu `wsh/0130`: with
+       `-display dbus,gl=on` a listener without GL (VNC) is accepted; the D-Bus console's own
+       listener reads the GL scanout (texture or dmabuf, imported into QEMU's EGL context, `y0_top`
+       honoured) into the console's surface at the display refresh after a GL update, only while
+       such a listener exists, and tells only the listeners without GL
+       (`qemu_console_update_2d()`, new in `ui/console.c`), so D-Bus clients get no extra updates.
+       Once per refresh, not per frame as egl-headless. `wsh/0131`: `-display dbus,refresh-ms=N`
+       (1-3000; each client's listener gets that interval). `wsh/0132`: qtests (the option in
+       `query-display-options`, a listener registered on such a display). The 3dfx port
+       (`wsh/0099`) applies unchanged. qemu-server: `vga: ...,display=dbus` (std, cirrus, vmware,
+       virtio, tcx, cg3; sparc32 and sun4u included), `mesa-display=dbus` (the same with `gl=on`,
+       3dfx binary, render node or `/dev/udmabuf`), `dbus-refresh=<ms>`, `audio0: driver=dbus`
+       (`-audiodev dbus`, tied with `audiodev=`), `-vnc` kept. The VM's bus: the systemd unit
+       `wsh-dbus-display@<vmid>` (a `dbus-daemon` with `/usr/share/qemu-server/dbus-display.conf`,
+       shipped by qemu-server, which also creates the group `wsh-display`) on
+       `/run/wsh-dbus-display/<vmid>.sock` (directory `root:wsh-display 0750`, which keeps others
+       from the socket dbus-daemon makes 0777; root owns `org.qemu`, root and the group may connect and call it), started before QEMU, stopped
+       at the cleanup. pve-manager: **D-Bus display** and **D-Bus refresh (ms)** in the Display
+       dialog, `D-Bus` among the audio drivers. Tested (lab, TCG, llvmpipe, `/dev/udmabuf`): the
+       qtests; cfg2cmd (5 commands, 7 refusals) and unit tests (`run_dbus_display_tests.pl`, the
+       unit start/stop mocked); `e2e/3dfx` `GLIDE_DISPLAY=dbus DBUS_PICTURE=vnc` with the 3dfx
+       binary built from the series: Glide and Mesa guests pass every probe (frame, front buffer,
+       gamma, held frame, VGA back) in the picture VNC serves while the D-Bus listener maps every
+       dmabuf; without GL, a guest changing VGA text memory every few ms gave the listener 33.6
+       refreshes/s by default, 61.6 with `refresh-ms=14`, 125 with 5 (loaded host); QEMU kept
+       running and VNC answering after the client and then the dbus-daemon were SIGKILLed; sound:
+       wisp's `soundtest 440 1000` (framebuffer kernels) put 1.01-1.02 s of 44.1 kHz stereo on an
+       `AudioOutListener` from AC97 (x86) and from the SS-5's CS4231. Through PVE (the e2e container
+       with these qemu-server and pve-manager debs and the series' QEMU binaries, `/dev/udmabuf`):
+       `qm start` of an x86 (`std,display=dbus,dbus-refresh=14`, AC97 on `dbus`), an SS-5 (`cg3`,
+       CS4231 on `dbus`), a sun4u (`std`) and a 3dfx (`mesa-display=dbus`, surfaceless EGL) VM:
+       each bus active before QEMU, `busctl tree org.qemu` shows `Console_0` (and `Audio`), PVE's
+       VNC socket answers; a member of `wsh-display` (not root) registered the test listener on
+       the x86 VM (pixels, the audio stream's `Init`) and on the 3dfx VM (the VGA as dmabufs);
+       `nobody` can't connect, the group can't own `org.qemu`; the bus killed, the VM and VNC go
+       on; `qm stop` stops the bus and removes the socket. The Playwright specs
+       (`e2e/tests/dbus-display.spec.ts`, the UI test in `ui-hardware.spec.ts`) were written but
+       not run (no Playwright on the lab; their steps were run by hand there). Found: QEMU blocks its main
+       loop while it sets up a listener's peer connection (it calls the client's properties
+       synchronously), so a client must keep its own main loop running across `RegisterListener`
+       and `RegisterOutListener` (the test listener registers the audio asynchronously); the
+       `RegisterOutListener` reply can come late. Not verified: a GPU node with `dbus,gl=on`
+       (the NVIDIA node was busy), a client in an LXC (uid mapping onto `wsh-display`), migration
+       of a VM with the D-Bus display (the bus is per node; not tried), the GL scanout's cursor
+       (not blended into VNC's picture).
+     - Left for stage 3: 3b, the Wolf app in an LXC on the node (the socket directory
+       bind-mounted, its user mapped into `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the
+       dmabuf import); 3c, a `qemudbussrc` (a GStreamer source for the console: `ScanoutDMABUF`/
+       `UpdateDMABUF` imported as dmabufs, `Scanout`/`Update`/`ScanoutMap` as system memory,
+       answering each update promptly since QEMU keeps a GL console blocked until then, plus the
+       `AudioOutListener` PCM) and the input bridge (Moonlight's keyboard, mouse and absolute
+       pointer to `org.qemu.Display1.Keyboard`/`Mouse` on `Console_0`, `IsAbsolute` decides); 3d,
+       end-to-end Moonlight runs with numbers (latency, frame pacing against `dbus-refresh`). Quickest first step for remote sound from sparc32 guests:
        qemu-rdp (Marc-André Lureau's qemu-display project: D-Bus to RDP, with rdpsnd audio). LEMU's
        `-rdp` is the alternative without sound.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
