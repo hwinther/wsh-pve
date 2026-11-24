@@ -38,10 +38,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # The optional packages wsh-lab (wsh-lab.yml) and wsh-openglide (wsh-openglide.yml) aren't
-      # built here: the .deb of the newest <package>-* release of each goes into repo/incoming, which
-      # `make repo-update` includes along with the other packages' debs. Before a package's first
-      # release the repository is built without it.
+      # The optional packages wsh-lab (wsh-lab.yml), wsh-openglide (wsh-openglide.yml) and
+      # wsh-qemu-rdp (wsh-qemu-rdp.yml) aren't built here: the .deb of the newest <package>-* release
+      # of each goes into repo/incoming, which `make repo-update` includes along with the other
+      # packages' debs. Before a package's first release the repository is built without it.
       - name: Fetch the newest optional packages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           releases=$(gh release list -R "$REPO" --limit 1000 --json tagName,createdAt)
-          for spec in wsh-lab:all wsh-openglide:amd64; do
+          for spec in wsh-lab:all wsh-openglide:amd64 wsh-qemu-rdp:amd64; do
             pkg=${spec%%:*}
             arch=${spec#*:}
             tag=$(jq -r --arg p "$pkg-" \

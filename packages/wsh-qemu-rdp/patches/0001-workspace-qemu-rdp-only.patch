@@ -1,0 +1,35 @@
+Build only qemu-rdp and the crates it uses
+
+The workspace also builds qemu-rdw, qemu-vnc, qemu-vte and xtask, and patches crates.io with two git
+repositories for them (rust-vnc, rdw). qemu-rdp needs none of them: with the workspace cut down to
+keycodemap, qemu-display and qemu-rdp, `cargo vendor` takes every crate from crates.io. build.sh
+lets cargo drop the unused packages from Cargo.lock and checks that it changed nothing else.
+
+For wsh-pve (packages/wsh-qemu-rdp), against qemu-display at the commit upstream.env pins.
+---
+diff --git a/Cargo.toml b/Cargo.toml
+index da783bb..698be63 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -2,13 +2,8 @@
+ members = [
+     "keycodemap",
+     "qemu-display",
+-    "qemu-rdw",
+-    "qemu-vnc",
+-    "qemu-vte",
+     "qemu-rdp",
+-    "xtask",
+ ]
+-default-members = ["qemu-rdw"]
+ resolver = "2"
+ 
+ [workspace.package]
+@@ -23,7 +18,3 @@ zbus = { version = "5.0", features = ["p2p", "serde_bytes"] }
+ pixman-sys = "0.1"
+ qemu-display = { path = "qemu-display", version = "0.2" }
+ keycodemap = { path = "keycodemap", version = "0.1" }
+-
+-[patch.crates-io]
+-vnc = { git = "https://github.com/elmarco/rust-vnc", branch = "server" }
+-rdw4 = { git = "https://gitlab.gnome.org/malureau/rdw.git" }

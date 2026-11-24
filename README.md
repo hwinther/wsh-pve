@@ -81,6 +81,8 @@ Run `make wsh-lab` for the optional `wsh-lab` package (the sparc lab, `e2e/sparc
 
 Run `make wsh-openglide` for the optional `wsh-openglide` package: OpenGLide from [kjliew/qemu-xtra](https://github.com/kjliew/qemu-xtra) at a pinned commit, the `libglide2x.so`/`libglide3x.so` host libraries that the Glide half of the 3dfx pass-through loads (see [3DFX / Mesa passthrough](https://debian.wshosting.no/guides/3dfx/)). The `wsh-openglide package` workflow builds it, renders a Glide 2 and a Glide 3 test scene through the installed libraries under Xvfb and checks the pixels (`packages/wsh-openglide/test.sh`), and publishes it.
 
+Run `make wsh-qemu-rdp` for the optional `wsh-qemu-rdp` package: qemu-rdp from Marc-André Lureau's [qemu-display](https://gitlab.com/marcandre.lureau/qemu-display) at a pinned commit (its crates from crates.io), an RDP server with sound for a VM's D-Bus display, and the unit `wsh-qemu-rdp@<vmid>` (see [RDP (qemu-rdp)](https://debian.wshosting.no/reference/display/#rdp-qemu-rdp) and `packages/wsh-qemu-rdp/README.md`). The `wsh-qemu-rdp package` workflow builds it, serves an x86 and an SS-5 guest through it to FreeRDP and checks the login, picture, input and sound (`packages/wsh-qemu-rdp/test.sh`), and publishes it.
+
 Run `make 3dfx-drivers` to build the qemu-3dfx guest drivers (Windows/DOS), and `make pve-qemu-bundle` for the `pve-qemu-kvm` package with the 3dfx/Mesa pass-through binary (`qemu-system-x86_64-3dfx`, from `make pve-qemu-3dfx`).
 
 ### Optional extras
