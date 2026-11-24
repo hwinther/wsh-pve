@@ -217,6 +217,27 @@ Transfer the files into the guest and install the ones for your Windows version:
 
 The wrappers are built for a Pentium-class guest CPU: everything compiled is built with `-march=pentium` (x87 math, no MMX, SSE or later), and the build fails if a DLL, EXE or the DOS objects contain an MMX, SSE or later instruction (`scripts/check-3dfx-drivers-isa.sh` in wsh-pve). The MinGW runtime the DLLs link in is Debian's, built for the Pentium Pro, so a few of its routines (number formatting, among others) use CMOV; every CPU model from `pentium2` on has it. A `cpu: pentium3` VM runs them with or without KVM. Upstream qemu-3dfx builds them for x86-64-v2 (SSE2 to SSE4.2, POPCNT), and so did the `qemu-3dfx-drivers` releases until November 2026: a VM without KVM stops at the first Glide call with "This program has performed an illegal operation" with those unless its CPU model has the extensions, e.g. `pentium3,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt`. A zip built for the Pentium says "built for i586" in its `VERSION.txt`.
 
+### Linux guests
+
+The same release has `qemu-3dfx-linux-glide-<shortsha>.tar.gz`: qemu-3dfx's Linux guest wrapper built as a shared library for old i386 Linux guests (Glide 2.x only). It extracts to one folder:
+
+- `libglide.so.2`: the Glide 2.x library (soname `libglide.so.2`), the Glide 2.43 API of qemu-3dfx's wrapper
+- `libglide2x.so`: a symlink to it, the name 3dfx's Linux Glide 2 shipped under and that programs and Mesa's old 3dfx (fxMesa) driver were linked against
+- `README.txt`: the revision and these steps
+
+Install it as root in the guest, after removing any other `libglide.so.2` or `libglide2x.so` (3dfx's own Glide):
+
+```sh
+cp -P libglide.so.2 libglide2x.so /usr/lib/
+ldconfig
+```
+
+A program that loads Glide under another file name gets a symlink of that name to `libglide.so.2`. The wrapper maps the glidept device's MMIO page and shared memory through `/dev/mem`, so the Glide program runs as root (or setuid root, as 3dfx's Glide needed too); no kernel module is needed. The library is built for the Pentium (`-march=pentium`, no CMOV, MMX or SSE) and needs nothing newer than glibc 2.0 (only `libc.so.6`, every symbol at `GLIBC_2.0`; checked by `scripts/build-3dfx-linux-glide.sh` in wsh-pve), so distributions from the glibc 2 era (1997 on) can load it; libc5 systems can't. The revision rule is the same as for the Windows drivers.
+
+It covers programs that call Glide 2 directly, and OpenGL programs through an old Mesa built with the 3dfx driver against Glide 2. Glide 3 (`libglide3.so.3`, which later Mesa 3dfx drivers used) and OpenGL have no Linux guest wrapper in qemu-3dfx, so a Linux game whose renderer needs those gets no acceleration from it. A modern Linux guest should not use the 3DFX/Mesa option at all: virtio-gpu with virgl (`vga: virtio-gl`) gives it OpenGL.
+
+`e2e/3dfx/test.sh` in wsh-pve tests the library: its `glide-dso` guest links the test scene against `libglide.so.2`, loads it from `/usr/lib` through ldconfig's cache, and passes the same scene and probe checks as the statically linked guest. That guest's userland is Debian 13's i386 libc; the library itself has not been run on an old distribution.
+
 ## Further reading
 
 - The [qemu-3dfx project](https://github.com/hwinther/qemu-3dfx)
