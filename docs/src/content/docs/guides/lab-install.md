@@ -769,6 +769,50 @@ later, edit the same files (`/etc/hostname.le0`, `hostname.hme0` on Solaris 10, 
 `/etc/sysconfig/network-scripts/ifcfg-eth0`, `/etc/hosts` and `/etc/resolv.conf`. On Debian 4.0:
 `/etc/network/interfaces`, `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf`.
 
+## wisp in a VM (wisp-vm)
+
+`wsh-lab wisp-vm` creates a VM with wisp, the project's tiny Linux test system
+([wisp guide](../wisp/)), or with Freedoom in fbDOOM, from the project's published files. Nothing is
+installed into the VM: it boots a kernel with `-kernel` in the VM's `args` (root only, so run it as
+root on the node) and, for DOOM, a read-only squashfs data disk.
+
+```sh
+wsh-lab wisp-vm x86_64 --vmid 900 --start           # the wisp shell on the serial console
+wsh-lab wisp-vm sparc64 --vmid 901 --tier fb        # the framebuffer kernel; the shell stays on serial
+wsh-lab wisp-vm sparc32 --vmid 902 --doom --start   # Freedoom: Console in the web UI to play
+wsh-lab wisp-vm aarch64 --doom --fps                # the next free VMID, the FPS overlay on
+wsh-lab wisp-vm stop --vmid 902                     # also start, destroy
+```
+
+| Architecture | Profile | DOOM display and keyboard | Data disk |
+| --- | --- | --- | --- |
+| `x86_64` | pc, 256 MB, KVM when the node has it | `vga: std`, the PS/2 keyboard | `ide0` |
+| `sparc32` | SS-5, OpenBIOS, 128 MB | `vga: cg3` (`--display tcx`), the Sun keyboard | `scsi0` |
+| `sparc64` | sun4u, OpenBIOS, 256 MB | `vga: std`, a virtio keyboard (in `args`) | `ide0` |
+| `aarch64` | virt, 256 MB, virtio-scsi | `vga: std`, a virtio keyboard (in `args`) | `scsi0` |
+
+- **Shell** (the default): the tier-1 kernel from the `wisp-test-kit` release, `vga: serial0`, so the
+  web UI's Console is the serial shell (xterm.js), as is `qm terminal <vmid>`. `help` lists the
+  commands, `poweroff` stops the VM.
+- **`--tier fb`**: `kernel-fb` from the `wisp-fb` release with the framebuffer on the noVNC Console;
+  the shell is on serial (`fbtest`, `mandel fb` and `keytest` draw on and read from the Console).
+- **`--doom`**: `kernel-fb` and fbdoom from `wisp-fb`, `freedoom1.wad` from Freedoom's 0.13.0
+  release, and a squashfs data disk with the three of them, imported to `--storage` (`local`) as the
+  VM's first disk. It needs `mksquashfs`: `apt install squashfs-tools`. The game starts at the title
+  screen: Console, then the keyboard (arrows, Ctrl to fire, space to open). `` ` `` toggles the FPS
+  overlay, Backspace quits and the VM powers off.
+
+Every download is checked: the kit against its `.sha256`, the `wisp-fb` files against the release's
+`SHA256SUMS`, the Freedoom archive against the SHA-256 pinned in the tool (the same as
+`e2e/wisp/doom/fetch.py`). They are kept in `/var/lib/wsh-lab/wisp` (`--dir`) and reused while
+their checksums match; each VM boots its own copy of the kernel (`/var/lib/wsh-lab/wisp/vm-<vmid>/`),
+so a newer release doesn't change an existing VM. `--kit-from`, `--fb-from` and `--wad` take a local
+directory or file instead of a download (for a node without internet access).
+
+`wisp-vm` refuses a VMID that exists already, and `start`, `stop` and `destroy` act only on VMs with
+its tag (`wsh-lab-wisp`); `destroy` removes the VM, its data disk and its kernel copy. The files live
+on the node that runs it, so `--node` must name that node. The VMs need no network and have no NIC.
+
 ## Licence keys
 
 None of the current targets needs one. Later targets that do (Windows) will read keys from a local
