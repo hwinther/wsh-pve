@@ -907,6 +907,29 @@ gap (half periods 55-56 samples; 53-57 at Solaris' join of the two sounds), no `
 serviced`, clean power-off. On SunOS the trailing 40 bytes are in the WAV in some runs and not in
 others (3.005 or 3.000 s), with 0124 (two of five runs) and without it (two of three).
 
+`dd` never closes its output file, so `/dev/audio` is closed at exit, and SunOS 4.1.4 does not
+play everything still queued then. A SunOS `trace` of `dd if=p of=/dev/audio bs=40` ends with
+`close` of fds 0-2 and `exit`; the audio device is fd 4. Lab, 2026-11-24: 16,000 bytes of u-law with
+a block number in each 40-byte block, a `wav` audiodev at 8000 Hz stereo s16, the blocks decoded
+from the file. The WAV data length and the first-to-last non-silent span are the same in every run:
+the `wav` backend gets only what the codec plays. At 44.1 kHz (the lab's `AUDIO=wav`, a plain tone)
+0001-0138 gave the same: 1764.9 ms with `dd bs=40`, 1999.9 ms with 400 x 40 and 1 x 16,000 bytes
+and `close()`.
+
+| Writer | QEMU | Blocks in the WAV | WAV | Guest time |
+| --- | --- | --- | --- | --- |
+| `dd bs=40` | 0001-0138; 0122 and 0126 without 0128; 0122 alone; LEMU `c92620599a` | 0-352 (47 lost, 1,880 bytes) | 1765.0 ms | 1.7 s (`time`) |
+| `dd bs=40` | without 0122 | 0-351 (48 lost) | 1760.0 ms | 3.5 s |
+| 400 x 40 bytes, `close()` | 0001-0138; 0122 alone; LEMU | all 400 | 2000.0 ms | 2014-2015 ms |
+| 100 x 160, 1 x 16,000, `close()` | 0001-0138 | all 400 | 2000.0 ms | 2015 ms |
+| 400 x 40 bytes, exit without `close()` | 0001-0138; LEMU | 0-352 (47 lost) | 1765.0 ms | writes 9 ms |
+| 1 x 16,000 bytes, exit without `close()` | 0001-0138 | none | 0 | writes 4 ms |
+
+The model plays every buffer it is given: the trace has 353 buffer loads in the `dd` runs, then
+SunOS pauses the APC, reads the counts and clears PEN. With `close()` the call returns when the
+sound has played and the APC runs to PMI. The trailing 40 bytes above are written with `dd` too,
+which may be why they are missing in some runs (not traced).
+
 Not done or not tested: capture (the capture pipe reads as empty, so a recording program gets no
 data); ADPCM (plays silence); Solaris 7 and later and NetBSD (not run); Sun's demo `.au` files and
 LEMU's `/usr/demo/SOUND/play` (not on our disks; LEMU measured `spacemusic.au` at 6.00 s, peak
