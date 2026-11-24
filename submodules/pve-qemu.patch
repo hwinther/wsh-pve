@@ -176,10 +176,10 @@ index bc240a0..fb1c12c 100644
 +wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
-index 0000000..d6a13d7
+index 0000000..a269638
 --- /dev/null
 +++ b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,33 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] esp.c: return to disconnected mode on SCSI bus reset
 +
@@ -198,6 +198,7 @@ index 0000000..d6a13d7
 +Fixes: 6f8ce26bb0 ("esp.c: only allow ESP commands permitted in the current asc_mode")
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/6d455e60aae1c1cc5c16e010b6a591215e88510c
 +---
 +diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
 +index 933271431b..9e8d0d6cfa 100644
@@ -1151,10 +1152,10 @@ index 0000000..2942f46
 + }
 diff --git a/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch b/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
 new file mode 100644
-index 0000000..c76c8a7
+index 0000000..c6c2190
 --- /dev/null
 +++ b/debian/patches/wsh/0007-tests-qtest-am53c974-check-that-Select-with-ATN-work.patch
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,107 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: am53c974: check that Select with ATN works after
 + a SCSI bus reset
@@ -1171,6 +1172,7 @@ index 0000000..c76c8a7
 +esp_bus_reset() fix.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/5c9249aa96000a6163c819ce5caea034071c0229
 +---
 + tests/qtest/am53c974-test.c | 68 +++++++++++++++++++++++++++++++++++++
 + 1 file changed, 68 insertions(+)
@@ -1445,10 +1447,10 @@ index 0000000..0030741
 + #ifdef CONFIG_VNC
 diff --git a/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch b/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
 new file mode 100644
-index 0000000..24d21b9
+index 0000000..37b095a
 --- /dev/null
 +++ b/debian/patches/wsh/0011-hw-misc-slavio_misc-give-the-sun4m-APC-its-16-bytes-.patch
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,365 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/misc/slavio_misc: give the sun4m APC its 16 bytes of
 + registers
@@ -1491,6 +1493,7 @@ index 0000000..24d21b9
 +halts it.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/12f2249c1700f8229b95e374b0140a168b471f60
 +---
 + hw/misc/slavio_misc.c        |  72 ++++++++++++++--
 + hw/misc/trace-events         |   4 +-
@@ -2240,10 +2243,10 @@ index 0000000..47fef7c
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop.patch b/debian/patches/wsh/0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop.patch
 new file mode 100644
-index 0000000..2d3472f
+index 0000000..635fd76
 --- /dev/null
 +++ b/debian/patches/wsh/0014-target-sparc-halt-the-CPU-in-the-Solaris-idle-loop.patch
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,409 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: halt the CPU in the Solaris idle loop
 +
@@ -2281,6 +2284,7 @@ index 0000000..2d3472f
 +With pmc installed, its APC write halts the CPU first, as before.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/40a1cb142f999e7b14a378c46c5021318f9f96fe
 +---
 + target/sparc/cpu.h          |   4 +
 + target/sparc/helper.h       |   1 +
@@ -2654,10 +2658,10 @@ index 0000000..2d3472f
 +     if (!decode(dc, insn)) {
 diff --git a/debian/patches/wsh/0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def.patch b/debian/patches/wsh/0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def.patch
 new file mode 100644
-index 0000000..531cfa9
+index 0000000..f36193f
 --- /dev/null
 +++ b/debian/patches/wsh/0015-hw-sparc-sun4m-add-the-solaris-idle-option-on-by-def.patch
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,61 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/sparc/sun4m: add the solaris-idle option, on by default
 +
@@ -2668,6 +2672,7 @@ index 0000000..531cfa9
 +without an interrupt.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/0f1aa5f0c7db339ae500c242633eb09ee33016f0
 +---
 + hw/sparc/sun4m.c | 21 +++++++++++++++++++++
 + 1 file changed, 21 insertions(+)
@@ -2720,10 +2725,10 @@ index 0000000..531cfa9
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
 new file mode 100644
-index 0000000..b2ea595
+index 0000000..a3e245c
 --- /dev/null
 +++ b/debian/patches/wsh/0016-tests-qtest-test-the-Solaris-idle-halt-on-sun4m.patch
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,208 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris idle halt on sun4m
 +
@@ -2740,6 +2745,7 @@ index 0000000..b2ea595
 +idle case also checks that the helper reads RAM, as the loop does.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/60a4acb01432442dacd13f28be9debbad18d6b55
 +---
 + tests/qtest/meson.build               |   3 +-
 + tests/qtest/sun4m-solaris-idle-test.c | 165 ++++++++++++++++++++++++++
@@ -2933,10 +2939,10 @@ index 0000000..b2ea595
 ++}
 diff --git a/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch b/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch
 new file mode 100644
-index 0000000..80048cf
+index 0000000..d6ee76a
 --- /dev/null
 +++ b/debian/patches/wsh/0017-target-sparc-flush-the-TLB-on-a-no-fault-bit-change-.patch
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,143 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: flush the TLB on a no-fault bit change only when needed
 +
@@ -2978,6 +2984,7 @@ index 0000000..80048cf
 +nbench don't change.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/7f7081ce3982a139a1e1e042f320f644386dcbce
 +---
 + target/sparc/cpu.h         |  6 ++++++
 + target/sparc/ldst_helper.c | 24 +++++++++++++++++++-----
@@ -3081,10 +3088,10 @@ index 0000000..80048cf
 + sun4m_cpu_reset_interrupt(unsigned int level) "Reset CPU IRQ %d"
 diff --git a/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch b/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
 new file mode 100644
-index 0000000..b292844
+index 0000000..2003ad5
 --- /dev/null
 +++ b/debian/patches/wsh/0018-tests-qtest-test-no-fault-mode-and-the-TLB-on-sun4m.patch
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,180 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test no-fault mode and the TLB on sun4m
 +
@@ -3100,6 +3107,7 @@ index 0000000..b292844
 +through the entry made in no-fault mode.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/7475a0c20a9ef6fc87c1956346b65f33f54b89ae
 +---
 + tests/qtest/meson.build              |   2 +-
 + tests/qtest/sun4m-mmu-nofault-test.c | 139 +++++++++++++++++++++++++++
@@ -3266,10 +3274,10 @@ index 0000000..b292844
 ++}
 diff --git a/debian/patches/wsh/0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-.patch b/debian/patches/wsh/0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-.patch
 new file mode 100644
-index 0000000..9bed5de
+index 0000000..34f2da8
 --- /dev/null
 +++ b/debian/patches/wsh/0019-target-sparc-let-a-write-to-psr-in-a-delay-slot-end-.patch
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: let a write to %psr in a delay slot end the TB
 +
@@ -3308,6 +3316,7 @@ index 0000000..9bed5de
 +the guest regression runs pass as before.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/bfdff3fd83ef5758dae3c3b414269cc1c0d7c315
 +---
 + target/sparc/translate.c | 27 ++++++++++++++++++++++++---
 + 1 file changed, 24 insertions(+), 3 deletions(-)
@@ -3366,10 +3375,10 @@ index 0000000..9bed5de
 + 
 diff --git a/debian/patches/wsh/0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl.patch b/debian/patches/wsh/0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl.patch
 new file mode 100644
-index 0000000..891365d
+index 0000000..bbfee52
 --- /dev/null
 +++ b/debian/patches/wsh/0020-tests-qtest-test-an-interrupt-let-in-from-a-delay-sl.patch
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,199 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test an interrupt let in from a delay slot on sun4m
 +
@@ -3386,6 +3395,7 @@ index 0000000..891365d
 +with and without it.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/74085832a529c714c47a0c288f690f5973901491
 +---
 + tests/qtest/meson.build                 |   3 +-
 + tests/qtest/sun4m-pil-delay-slot-test.c | 156 ++++++++++++++++++++++++
@@ -3570,10 +3580,10 @@ index 0000000..891365d
 ++}
 diff --git a/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
 new file mode 100644
-index 0000000..52d882e
+index 0000000..935802d
 --- /dev/null
 +++ b/debian/patches/wsh/0021-ide-cmd646-latch-the-interrupt-status-bits-until-the.patch
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,111 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] ide/cmd646: latch the interrupt status bits until the
 + guest clears them
@@ -3617,6 +3627,7 @@ index 0000000..52d882e
 +INTRQ.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/07e0dfbcee1692b8a8c468294eedcad015870a88
 +---
 + hw/ide/cmd646.c      | 20 +++++++++++++++-----
 + include/hw/ide/pci.h |  1 +
@@ -3686,10 +3697,10 @@ index 0000000..52d882e
 +     MemoryRegion data_bar[2];
 diff --git a/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
 new file mode 100644
-index 0000000..0f10d3b
+index 0000000..4f1d9b9
 --- /dev/null
 +++ b/debian/patches/wsh/0022-tests-qtest-test-the-cmd646-interrupt-status-latch-o.patch
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,289 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the cmd646 interrupt status latch on
 + sun4u
@@ -3714,6 +3725,7 @@ index 0000000..0f10d3b
 +cmd646_reset() reset-drops-intrq fails. With the patch all three pass.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/198b8baf64d78dd19df6905f6e24a7a7ba9f36ac
 +---
 + tests/qtest/meson.build         |   2 +-
 + tests/qtest/sun4u-cmd646-test.c | 239 ++++++++++++++++++++++++++++++++
@@ -3980,10 +3992,10 @@ index 0000000..0f10d3b
 ++}
 diff --git a/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
 new file mode 100644
-index 0000000..2c256f1
+index 0000000..3d6e536
 --- /dev/null
 +++ b/debian/patches/wsh/0023-target-sparc-halt-idle-CPUs-in-the-Solaris-multiproc.patch
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,718 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: halt idle CPUs in the Solaris multiprocessor idle loop
 +
@@ -4044,6 +4056,7 @@ index 0000000..2c256f1
 +instead, lat_pipe with 2 CPUs took 15% longer.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/887eaf11557390b9835c4552e4fc9ae7d6aae184
 +---
 + target/sparc/cpu.c          |   7 +
 + target/sparc/cpu.h          |  14 ++
@@ -4703,10 +4716,10 @@ index 0000000..2c256f1
 + }
 diff --git a/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch b/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
 new file mode 100644
-index 0000000..862301a
+index 0000000..3300947
 --- /dev/null
 +++ b/debian/patches/wsh/0024-hw-sparc-sun4m-add-the-solaris-smp-idle-option-on-by.patch
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,65 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/sparc/sun4m: add the solaris-smp-idle option, on by default
 +
@@ -4716,6 +4729,7 @@ index 0000000..862301a
 +loop).
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/bc5b5b9d15880fde39fcc981d4c420a511fedd3d
 +---
 + hw/sparc/sun4m.c | 26 ++++++++++++++++++++++++++
 + 1 file changed, 26 insertions(+)
@@ -4773,10 +4787,10 @@ index 0000000..862301a
 + static void ss5_class_init(ObjectClass *oc, const void *data)
 diff --git a/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
 new file mode 100644
-index 0000000..047dfae
+index 0000000..ebcf476
 --- /dev/null
 +++ b/debian/patches/wsh/0025-tests-qtest-test-the-Solaris-multiprocessor-idle-hal.patch
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,253 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the Solaris multiprocessor idle halt on sun4m
 +
@@ -4794,6 +4808,7 @@ index 0000000..047dfae
 +idle case also checks that the helper reads RAM, as the loop does.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/c8f869e97c44a4f8cd46a4c0891e2460dce0df1c
 +---
 + tests/qtest/meson.build                   |   3 +-
 + tests/qtest/sun4m-solaris-smp-idle-test.c | 209 ++++++++++++++++++++++
@@ -5139,10 +5154,10 @@ index 0000000..bc46d35
 + static bool do_fc(DisasContext *dc, int rd, int32_t c)
 diff --git a/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch b/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
 new file mode 100644
-index 0000000..58048e2
+index 0000000..171e74c
 --- /dev/null
 +++ b/debian/patches/wsh/0027-tests-qtest-test-ld-and-st-fsr-with-any-rd-on-sun4m.patch
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,171 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test ld and st %fsr with any rd on sun4m
 +
@@ -5157,6 +5172,7 @@ index 0000000..58048e2
 +(illegal instruction); rd 0 passes with and without it.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/dbac43854d51e2a63d7fd21eddd380160a2401ba
 +---
 + tests/qtest/meson.build         |   3 +-
 + tests/qtest/sun4m-fsr-rd-test.c | 130 ++++++++++++++++++++++++++++++++
@@ -6143,10 +6159,10 @@ index 0000000..15b0bda
 +     if (hwdef->dbri_base) {
 diff --git a/debian/patches/wsh/0031-hw-audio-cs4231-start-without-sound-when-there-is-no.patch b/debian/patches/wsh/0031-hw-audio-cs4231-start-without-sound-when-there-is-no.patch
 new file mode 100644
-index 0000000..a571d9b
+index 0000000..099427c
 --- /dev/null
 +++ b/debian/patches/wsh/0031-hw-audio-cs4231-start-without-sound-when-there-is-no.patch
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,91 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/audio/cs4231: start without sound when there is no audio
 + backend
@@ -6179,6 +6195,7 @@ index 0000000..a571d9b
 +opened no voice at all without an audiodev, which keeps that kit silent.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/27f149cdbc6bf4b7047bde1c38db2a3cdda590aa
 +---
 + hw/audio/cs4231.c | 22 ++++++++++++++++------
 + 1 file changed, 16 insertions(+), 6 deletions(-)
@@ -6239,10 +6256,10 @@ index 0000000..a571d9b
 +     cs_play_setup(s);
 diff --git a/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
 new file mode 100644
-index 0000000..720c02c
+index 0000000..18782b8
 --- /dev/null
 +++ b/debian/patches/wsh/0032-hw-audio-cs4231-play-out-the-last-samples-when-playb.patch
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,133 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/audio/cs4231: play out the last samples when playback stops
 +
@@ -6261,6 +6278,7 @@ index 0000000..720c02c
 +soon as the pipe is empty.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/32332b27cb5cad227423d2e6241b9da32564a45d
 +---
 + hw/audio/cs4231.c | 35 +++++++++++++++++++++++++++++++----
 + 1 file changed, 31 insertions(+), 4 deletions(-)
@@ -6377,10 +6395,10 @@ index 0000000..720c02c
 +     return 0;
 diff --git a/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
 new file mode 100644
-index 0000000..34a1204
+index 0000000..9f8591a
 --- /dev/null
 +++ b/debian/patches/wsh/0033-tests-qtest-test-CS4231-playback-through-the-APC-DMA.patch
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,312 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test CS4231 playback through the APC DMA on sun4m
 +
@@ -6396,6 +6414,7 @@ index 0000000..34a1204
 +buffers and that the reset bit clears the APC.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/289850600d83a7e8e28901255e72a7910910bc6c
 +---
 + tests/qtest/meson.build         |   3 +-
 + tests/qtest/sun4m-cs4231-test.c | 270 ++++++++++++++++++++++++++++++++
@@ -6694,10 +6713,10 @@ index 0000000..34a1204
 ++}
 diff --git a/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
 new file mode 100644
-index 0000000..67af41c
+index 0000000..de1b0b8
 --- /dev/null
 +++ b/debian/patches/wsh/0034-hw-sparc64-sun4u-take-the-IDPROM-MAC-address-from-a-.patch
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,116 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/sparc64/sun4u: take the IDPROM MAC address from a -device NIC
 +
@@ -6720,6 +6739,7 @@ index 0000000..67af41c
 +onboard NIC, or with no NIC at all, the IDPROM is what it was.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/5e278d30befc7792cf50271a925c11afd1f65361
 +---
 + hw/sparc64/sun4u.c | 71 ++++++++++++++++++++++++++++++++++++++++++++++
 + 1 file changed, 71 insertions(+)
@@ -6815,10 +6835,10 @@ index 0000000..67af41c
 +     object_property_add_child(OBJECT(ebus), TYPE_FW_CFG, OBJECT(dev));
 diff --git a/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
 new file mode 100644
-index 0000000..aa771e2
+index 0000000..470cebf
 --- /dev/null
 +++ b/debian/patches/wsh/0035-tests-qtest-test-the-IDPROM-MAC-address-on-sun4u.patch
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,170 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the IDPROM MAC address on sun4u
 +
@@ -6834,6 +6854,7 @@ index 0000000..aa771e2
 +52:54:00:12:34:56); with it all five pass.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/7808238754a35b137e5f473285d3b0d55fc41bae
 +---
 + tests/qtest/meson.build         |   3 +-
 + tests/qtest/sun4u-idprom-test.c | 128 ++++++++++++++++++++++++++++++++
@@ -6990,10 +7011,10 @@ index 0000000..aa771e2
 ++}
 diff --git a/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
 new file mode 100644
-index 0000000..03070b2
+index 0000000..ef1a2f4
 --- /dev/null
 +++ b/debian/patches/wsh/0036-target-sparc-write-softint-under-the-BQL.patch
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,81 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] target/sparc: write %softint under the BQL
 +
@@ -7017,6 +7038,7 @@ index 0000000..03070b2
 +cpu_check_irqs() needs it anyway.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/0ae4d73dc7a2621fc2b3b3bb972486b91fc7d9c5
 +---
 + target/sparc/int64_helper.c | 14 ++++++++++++--
 + 1 file changed, 12 insertions(+), 2 deletions(-)
@@ -7076,10 +7098,10 @@ index 0000000..03070b2
 +     }
 diff --git a/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
 new file mode 100644
-index 0000000..3d5f1b8
+index 0000000..8c7deaa
 --- /dev/null
 +++ b/debian/patches/wsh/0037-tests-qtest-test-that-a-tick-during-a-softint-write-.patch
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,165 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test that a tick during a %softint write is kept on sun4u
 +
@@ -7096,6 +7118,7 @@ index 0000000..3d5f1b8
 +can't fail spuriously.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/4c9bf5fb471ccdf1521616c7c16a123727f9fab5
 +---
 + tests/qtest/meson.build          |   2 +-
 + tests/qtest/sun4u-softint-test.c | 123 +++++++++++++++++++++++++++++++
@@ -7246,10 +7269,10 @@ index 0000000..3d5f1b8
 ++}
 diff --git a/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
 new file mode 100644
-index 0000000..b7388d2
+index 0000000..459ead6
 --- /dev/null
 +++ b/debian/patches/wsh/0038-esp-don-t-count-the-message-out-bytes-as-part-of-the.patch
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] esp: don't count the message out bytes as part of the CDB
 +
@@ -7269,6 +7292,7 @@ index 0000000..b7388d2
 +Count only the bytes after cmdfifo_cdb_offset.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/dbfd1374f2c055024f601367b19ae543438aa0f3
 +---
 + hw/scsi/esp.c | 3 ++-
 + 1 file changed, 2 insertions(+), 1 deletion(-)
@@ -7289,10 +7313,10 @@ index 0000000..b7388d2
 + static void esp_dma_ti_check(ESPState *s)
 diff --git a/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
 new file mode 100644
-index 0000000..cb98dd6
+index 0000000..35272e2
 --- /dev/null
 +++ b/debian/patches/wsh/0039-tests-qtest-test-a-CDB-sent-byte-by-byte-after-a-mes.patch
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,193 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test a CDB sent byte by byte after a message out on sun4m
 +
@@ -7308,6 +7332,7 @@ index 0000000..cb98dd6
 +phase.
 +
 +Forwarded: https://github.com/tenox7/lemu/pull/1
++Applied-Upstream: https://github.com/tenox7/lemu/commit/294d6ca3a871fe6c82b615421f2c17e3c7e8d1d0
 +---
 + tests/qtest/meson.build      |   3 +-
 + tests/qtest/sun4m-esp-test.c | 151 +++++++++++++++++++++++++++++++++++
