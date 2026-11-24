@@ -237,6 +237,10 @@ export async function showcmd(vmid: number): Promise<string> {
  * `keepDisplay` keeps the command's own `-display` (the SDL display of a VM with a `server`) instead of
  * `-display none`, with SDL's dummy video driver: QEMU then sets up the SDL display without an X server,
  * so this checks that the binary has it and takes the options, not that the display works.
+ *
+ * A D-Bus display (`-display dbus,addr=...`) is kept with `p2p=yes` in place of the VM's bus, which
+ * doesn't exist here: QEMU then waits for a client instead of connecting, and `-audiodev dbus` (which
+ * QEMU refuses without the D-Bus display) and `refresh-ms` are checked too.
  */
 export async function qemuAccepts(
   vmid: number,
@@ -251,6 +255,7 @@ cmd=$(qm showcmd ${vmid} | tail -n 1)
 eval "set -- $cmd"
 bin=$1; shift
 args=""
+dbus=""
 while [ $# -gt 0 ]; do
   case "$1" in
     # A serial port's socket chardev is kept: the device or -serial that uses it needs it.
@@ -263,14 +268,19 @@ while [ $# -gt 0 ]; do
         args="$args -netdev 'hubport,id=$id,hubid=0'"; shift 2; continue ;; esac ;;
     -net) case "$2" in *type=tap*) shift 2; continue ;; esac ;;
     -daemonize) shift; continue ;;
+    -display) case "$2" in dbus*)
+        dbus=1
+        args="$args -display '$(printf %s "$2" | sed 's/addr=[^,]*/p2p=yes/')'"; shift 2; continue ;; esac ;;
   esac
   args="$args '$(printf %s "$1" | sed "s/'/'\\\\''/g")'"
   shift
 done
 eval "set -- $args"
+nodisplay="${noDisplay}"
+[ -n "$dbus" ] && nodisplay=""
 rm -f /tmp/e2e-${vmid}.pid
 set +e
-${display} timeout 20 "$bin" "$@" -S ${noDisplay} -monitor none -serial none -daemonize -pidfile /tmp/e2e-${vmid}.pid
+${display} timeout 20 "$bin" "$@" -S $nodisplay -monitor none -serial none -daemonize -pidfile /tmp/e2e-${vmid}.pid
 rc=$?
 [ -f /tmp/e2e-${vmid}.pid ] && kill "$(cat /tmp/e2e-${vmid}.pid)"
 exit $rc
