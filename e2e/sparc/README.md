@@ -2108,6 +2108,19 @@ Found on the way:
   strings (`ESC ] 3008;start=...ESC \`), so a command's output no longer started its line in the lab's
   text and `shell()` waited for `END-OF-COMMAND` forever. `lab.py` now strips OSC and DCS strings like
   the CSI sequences, holding back one that a read cuts off (`Machine._strip()`).
+- **systemd's 90 s timeouts on a busy host:** the boot test of the stored disk failed on a busy lab host
+  (`no 'login: ?$' within 900s`, 17.1 min) and passed on an idle one. systemd gives a device 90 s to show up
+  and a unit 90 s to start, both in wall-clock time. Under TCG, udev's coldplug alone takes about that long:
+  on an idle host, through PVE, the swap partition's `/dev/disk/by-uuid` link came after the 90 s (`Timed out
+  waiting for device`, swap left off) and `/boot`'s just in time. With the host busy, `/boot`'s device times
+  out too, `local-fs.target` fails and systemd stops in emergency mode ("Enter root password for system
+  maintenance"), so `login:` never comes; with more load ttyS0's device and journald's start time out as
+  well. The boot scenarios now edit GRUB's entry at the menu (`e`, to the `linux` line, `Ctrl-E`) and append
+  `systemd.default_timeout_start_sec=600 systemd.default_device_timeout_sec=600` (`_debian13.grub_append`;
+  the disk's `grub.cfg` stays as it is), and wait up to 30 min for `login:`; the install's late command
+  writes the same timeouts into `/etc/systemd/system.conf.d/wsh-lab-tcg.conf`, for disks installed from now
+  on (the stored disk predates it). Units with their own `TimeoutSec=90s` (`systemd-modules-load`,
+  `systemd-journal-flush`) can still fail on a busy host; the boot gets past them.
 
 **In the matrix:** `matrix_skip` like Tribblix: neither the weekly install matrix (240 minutes) nor the
 monthly `--reinstall all` (720 minutes) installs it; it is installed on request (`pve_matrix.py install
@@ -2121,6 +2134,22 @@ Tested 2026-11-22 on the lab host (TCG, one install at a time, other matrices on
 | `debian13-install-sparc64.py` with the lab's own QEMU (published pve-qemu-kvm 11.1.3-4+wsh4), `NET=user`, `GATEWAY=10.0.2.2 DNS=10.0.2.3` | passed; then `debian13-firstboot.py` and `debian13-boot-disk.py` on the disk: passed | 153.9 min; 5.0 and 4.6 min |
 | `install debian13-sun4u --vmid 9913 --check --gateway 10.0.2.2 --dns 1.1.1.1 --export <disks>` (the PVE test container from the published packages: pve-qemu-kvm 11.1.3-4+wsh8, qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11; its `vmbr0` given 10.0.2.2 and NATed out by hand) | passed and exported; the check: `ssh` active, `enp2s0` 10.0.2.15/24, the route via 10.0.2.2 | 177.4 min (install 9947 s, first boot 385 s, check 285 s) |
 | `boot-test debian13-sun4u` of the stored disk | passed (GRUB, `login:`, the check commands, `poweroff`) | 4.9 min |
+
+The boot test on a busy host, 2026-11-24 (the stored disk's copies; pve-qemu-kvm 11.1.3-4+wsh13, qemu-server
+9.2.20+wsh7, pve-manager 9.2.32+wsh12; the lab host has 14 cores):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `debian13-boot-disk.py` with the lab's own QEMU, host idle (load 0-1) | passed; no systemd timeout; `login:` 209 s after the initrd | 4.6 min |
+| `boot-test debian13-sun4u` through PVE, host idle | passed, but the swap device timed out (swap off); `login:` 261 s after the initrd | 5.8 min |
+| the same VM booted again while other jobs loaded the host (load 19-34) | `/boot`'s device, swap, ttyS0 and journald's start timed out; emergency mode, no `login:` | stopped after 21 min |
+| with the GRUB options, the lab's own QEMU, host load 3-14 | passed; `/boot`'s device found at 147 s, swap at 188 s (kernel time), no timeout | 6.7 min |
+| all at once with 8 CPU-bound loops (host load 32-43): 4 boots without the options, 4 with them, 1 `boot-test` through PVE with them | without: 4 of 4 `no 'login: ?$' within 900s` (`/boot` and swap timed out, `local-fs.target` failed); with: 4 of 4 reached `login:`, 15-16.5 min after the initrd, 3 passed; the PVE boot test passed (`login:` 20 min after the initrd) | 15.5 min; 19.5-22.8 min; 27.5 min |
+
+The one that reached `login:` and failed was a different fault: during `poweroff` a `READ DMA` on the IDE disk
+timed out with the drive's status `DRDY` (the command done, its interrupt never seen), libata fell back to
+PIO, every further command timed out the same way, ext4 aborted its journal and `poweroff` didn't finish in
+600 s. Once in 9 boots, only at that load; not investigated further (ROADMAP.md, "Known and not fixed").
 
 Not tried: `--apt-proxy` (the pinhole), DHCP (`--ip dhcp` is refused; the hand install used it and got
 its lease), `--user` through PVE (the lab run added one), the VGA console.

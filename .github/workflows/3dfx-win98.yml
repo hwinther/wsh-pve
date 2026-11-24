@@ -42,6 +42,9 @@ on:
           - kvm
           - tcg
         default: auto
+      hold:
+        description: "Seconds each frame is held without a swap; from 6 it is checked again 1.5 s before the end (a held frame must stay)"
+        default: "9"
       template:
         description: "The installed Windows 98 SE disk on the runner (raw; empty: the WSH_WIN98_TEMPLATE variable)"
         default: ""
@@ -74,6 +77,7 @@ jobs:
       TESTS: ${{ inputs.tests || 'auto' }}
       DISPLAY_MODE: ${{ inputs.display || 'vnc' }}
       ACCEL: ${{ inputs.accel || 'auto' }}
+      HOLD: ${{ inputs.hold || '9' }}
       TEMPLATE: ${{ inputs.template || vars.WSH_WIN98_TEMPLATE }}
       RUNS: ${{ inputs.runs_dir || vars.WSH_LAB_RUNS_DIR }}
       KEEP: ${{ inputs.keep_evidence && '1' || '' }}
@@ -130,7 +134,8 @@ jobs:
           fi
           mkdir -p "$RUN_DIR/out" "$RUN_DIR/private"
           e2e/3dfx/win98-test.sh --template "$TEMPLATE" --out "$RUN_DIR/out" --private "$RUN_DIR/private" \
-            --image "$IMAGE" "${qbin[@]}" -- --tests "$TESTS" --display "$DISPLAY_MODE" --accel "$ACCEL"
+            --image "$IMAGE" "${qbin[@]}" -- --tests "$TESTS" --display "$DISPLAY_MODE" --accel "$ACCEL" \
+            --hold "$HOLD"
 
       - name: Summary
         if: ${{ !cancelled() && steps.template.outputs.run == 'true' }}

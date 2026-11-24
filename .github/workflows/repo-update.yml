@@ -170,7 +170,7 @@ jobs:
           fi
 
       # Browser SPARC (/browser-sparc/): the page itself is in docs/public/browser-sparc/; its binary
-      # files (QEMU for WebAssembly, OpenBIOS, wisp's sparc32 kernel, xterm.js; built by
+      # files (QEMU for WebAssembly, firmware, wisp's kernels and snapshots, xterm.js; built by
       # web/Dockerfile, see browser-sparc.yml) are the assets of the `browser-sparc` release, kept out
       # of git like the recordings. Without them the page says it can't load; the deploy goes on.
       - name: Fetch the Browser SPARC files

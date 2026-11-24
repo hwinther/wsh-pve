@@ -25,8 +25,11 @@ render node), or with an SDL window on an X display (--display sdl, Xvfb). The t
 (QEMU writes it to a file); on "<TAG>: FRAME" the harness takes a screendump of the console
 (headless: where qemu-3dfx shows the frame) or a capture of the SDL window and checks the probes of
 packages/wsh-openglide/tests/scene.h, the scene every 3dfx test draws; on "<TAG>: CLOSED" it
-checks that the console shows Windows again (not the scene). A test passes when the guest program
-reports PASS (its own read-back matched), the console showed the frame, and Windows came back.
+checks that the console shows Windows again (not the scene). With --hold 6 or more the frame is
+checked a second time 1.5 s before the hold ends: a frame the program holds without a swap must
+stay (the OpenGL wrapper's display timer gave it back to the VGA about 4 s after the last swap). A
+test passes when the guest program reports PASS (its own read-back matched), the console showed the
+frame (both times with a long hold), and Windows came back.
 
 With --pve VMID the harness runs on a PVE node (the e2e PVE container: e2e/3dfx/win98-test.sh --pve)
 and PVE starts the VM instead: `qm create` with the same devices (`cpu: pentium3`, `scsihw: lsi`,
@@ -472,13 +475,19 @@ OFFSCREEN_RE = re.compile(r"(glidept|mesapt): offscreen closed after ([\d.]+) s:
 DMABUF_RE = re.compile(r"[^\n]*\n(glidept|mesapt): dmabuf scanout: (\d+) frames copied to the dmabuf in ([\d.]+) ms "
                        r"average, the display's update ([\d.]+) ms a frame, (\d+) held while the display was busy, "
                        r"(\d+) frames read back instead")
+# On the line after that, with two scanout buffers (qemu-3dfx and wsh-openglide from Stage 2's fourth slice)
+DOUBLE_RE = re.compile(r"[^\n]*\n(glidept|mesapt): dmabuf scanout: double-buffered, (\d+) of the held frames "
+                       r"replaced")
+# mesapt, offscreen: the display timer fired without a swap and the frame stays (once per pause)
+HELD_RE = re.compile(r"offscreen: no swap for (\d+) ms, the frame stays")
 
 
 def offscreen_stats(qemu_log):
     """The offscreen windows QEMU reported on closing them (qemu-3dfx's glidept and mesapt lines), in
     order: device, seconds open, swaps, swaps per second, reads, read ms average, frames to the
     console, ms from read to console; with a dmabuf scanout also the frames copied to the dmabuf, the
-    copy's ms average, the display's ms per frame and the frames read back instead."""
+    copy's ms average, the display's ms per frame and the frames read back instead, and whether it
+    was double-buffered (with how many held frames a newer one replaced)."""
     out = []
     for m in OFFSCREEN_RE.finditer(qemu_log):
         o = {"device": m.group(1), "open_s": float(m.group(2)), "swaps": int(m.group(3)),
@@ -488,6 +497,10 @@ def offscreen_stats(qemu_log):
         if d and d.group(1) == o["device"]:
             o.update({"dmabuf_frames": int(d.group(2)), "dmabuf_ms": float(d.group(3)),
                       "display_ms": float(d.group(4)), "held": int(d.group(5)), "read_back": int(d.group(6))})
+            db = DOUBLE_RE.match(qemu_log, d.end())
+            o["double_buffered"] = bool(db and db.group(1) == o["device"])
+            if o["double_buffered"]:
+                o["replaced"] = int(db.group(2))
         out.append(o)
     return out
 
@@ -1020,6 +1033,7 @@ def run_vm(args, scene, raw):
                            "lines": []}
     by_tag = {TESTS[t][0]: t for t in args.tests}
     desktop = None
+    held_due = {}  # test -> when to check its frame again, late in a long hold
     deadline = t_start + args.timeout
     status = "running"
     while True:
@@ -1047,6 +1061,8 @@ def run_vm(args, scene, raw):
                 r["start_s"] = now
             elif text == "FRAME":
                 r["frame_s"] = now
+                if args.hold >= 6:
+                    held_due[t] = time.monotonic() + args.hold - 1.5
                 time.sleep(1)
                 r["frame"] = frame_check(args, scene, mon, priv, t)
                 log(f"{t}: frame in the console: {'ok' if r['frame']['ok'] else 'NO'} "
@@ -1060,6 +1076,14 @@ def run_vm(args, scene, raw):
                 log(f"{t}: after the 3D window: {r['after']}")
             elif verdict_of(text):
                 r["guest"] = verdict_of(text)
+        for t, due in list(held_due.items()):
+            if time.monotonic() >= due:
+                del held_due[t]
+                r = res["tests"][t]
+                h = r["held"] = frame_check(args, scene, mon, priv, f"{t}-held")
+                h["at_s"] = round(time.monotonic() - t_start - r["frame_s"], 1)
+                log(f"{t}: frame still in the console {h['at_s']} s after FRAME: "
+                    f"{'ok' if h['ok'] else 'NO'} ({h.get('size', '')} {h.get('mismatches', '')})")
         ended = vm.exited()
         if ended:
             status = ended
@@ -1080,7 +1104,9 @@ def run_vm(args, scene, raw):
     res["total_s"] = round(time.monotonic() - t_start, 1)
     res["powered_off"] = "shutdown_s" in res and clean and not status.startswith("timeout")
     with open(os.path.join(out, "qemu.log"), errors="replace") as f:
-        res["offscreen"] = offscreen_stats(f.read())
+        qlog = f.read()
+    res["offscreen"] = offscreen_stats(qlog)
+    res["display_timer_held"] = len(HELD_RE.findall(qlog))
     if not args.pve:
         for name in ("OpenGLid.log", "OpenGLid.err"):
             if os.path.exists(os.path.join(vm.ogl, name)):
@@ -1098,6 +1124,8 @@ def evaluate(res, tests):
             why.append(f"guest: {r['guest'] or 'no verdict'}")
         if not r["frame"] or not r["frame"]["ok"]:
             why.append("the console didn't show the frame" if r["frame"] else "no frame")
+        if r.get("held") and not r["held"]["ok"]:
+            why.append(f"the held frame was gone {r['held'].get('at_s', '?')} s after FRAME")
         if r["after"] is None or r["after"]["ok"] is False:
             why.append("Windows didn't come back in the console" if r["after"] else "never closed")
         r["verdict"] = "PASS" if not why else "FAIL: " + "; ".join(why)
@@ -1113,15 +1141,19 @@ def summary_md(res, info):
              f"{', started by PVE (VM %d)' % res['pve_vmid'] if res.get('pve_vmid') else ''}", "",
              f"Boot to desktop {res.get('boot_s', '?')} s, total {res['total_s']} s, end: {res['status']}"
              f"{', powered off by Windows' if res.get('powered_off') else ''}", "",
-             "| Test | Verdict | Guest | Console frame | Windows back | Frame rate |", "|---|---|---|---|---|---|"]
+             "| Test | Verdict | Guest | Console frame | Held frame | Windows back | Frame rate |",
+             "|---|---|---|---|---|---|---|"]
     for t, r in res["tests"].items():
         fr = r["frame"] or {}
         af = r["after"] or {}
         bench = r["bench"]
         rate = "%s fps (%d frames in %d ms)" % (bench["fps"], bench["frames"], bench["ms"]) if bench else "-"
         back = "ok" if af.get("ok") else ("n/a" if af and af.get("ok") is None else "no")
+        hf = r.get("held")
+        held = "-" if not hf else f"{'ok' if hf.get('ok') else 'no'} at {hf.get('at_s', '?')} s"
         lines.append(f"| {t} | {r.get('verdict', '')} | {r['guest'] or '-'} | "
-                     f"{'ok' if fr.get('ok') else 'no'} {fr.get('size', '')} | {back} {af.get('size', '')} | {rate} |")
+                     f"{'ok' if fr.get('ok') else 'no'} {fr.get('size', '')} | {held} | {back} {af.get('size', '')} | "
+                     f"{rate} |")
     if res.get("offscreen"):
         lines += ["", "QEMU's offscreen windows (qemu-3dfx's own figures):", "",
                   "| Device | Open | Swaps | Reads | Read average | Read to console | As a dmabuf |",
@@ -1129,8 +1161,13 @@ def summary_md(res, info):
         for o in res["offscreen"]:
             dmabuf = (f"{o['dmabuf_frames']} frames, copy {o['dmabuf_ms']} ms, display {o['display_ms']} ms, "
                       f"{o['read_back']} read back" if "dmabuf_frames" in o else "-")
+            if o.get("double_buffered"):
+                dmabuf += f", double-buffered ({o['replaced']} held frames replaced)"
             lines.append(f"| {o['device']} | {o['open_s']} s | {o['swaps']} ({o['swaps_per_s']}/s) | {o['reads']} | "
                          f"{o['read_ms']} ms | {o['console_ms']} ms | {dmabuf} |")
+    if res.get("display_timer_held"):
+        lines += ["", f"QEMU kept a held OpenGL frame when the display timer fired {res['display_timer_held']} "
+                  "time(s) (\"offscreen: no swap for ... the frame stays\")."]
     return "\n".join(lines) + "\n"
 
 
@@ -1151,7 +1188,8 @@ def main(argv=None):
                     "localtime or a date")
     ap.add_argument("--qemu", default="/usr/bin/qemu-system-x86_64-3dfx")
     ap.add_argument("--bin", default="/w3d/bin", help="the built test programs (build.sh)")
-    ap.add_argument("--hold", type=int, default=5, help="seconds each frame stays up")
+    ap.add_argument("--hold", type=int, default=5, help="seconds each frame stays up; from 6 the frame is checked "
+                    "again 1.5 s before the end")
     ap.add_argument("--bench", type=int, default=2000, help="frames drawn after the check, for a frame rate")
     ap.add_argument("--delay", type=int, default=10, help="seconds w3drun waits after the desktop is up")
     ap.add_argument("--test-timeout", type=int, default=300, help="per test program, in the guest")

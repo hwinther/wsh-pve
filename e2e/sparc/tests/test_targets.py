@@ -2463,6 +2463,20 @@ class Debian13(unittest.TestCase):
         self.assertIn("mount -r -t iso9660 /dev/sr1 /mnt", line)
         self.assertIn("modprobe pata_cmd64x", line)
 
+    def test_slow_boot_options(self):
+        """The kernel options the boot scenarios add on GRUB's linux line and the drop-in the install writes
+        give systemd the same timeouts."""
+        sys.path.insert(0, os.path.join(HERE, "scenarios"))
+        import _debian13
+        import answer_media
+        s = _debian13.SLOW_BOOT_TIMEOUT_S
+        self.assertEqual(_debian13.SLOW_BOOT_OPTIONS.split(),
+                         [f"systemd.default_timeout_start_sec={s}", f"systemd.default_device_timeout_sec={s}"])
+        text = answer_media.PORTS_SYSTEMD_TIMEOUTS[2]
+        self.assertIn(f"DefaultTimeoutStartSec={s}s", text)
+        self.assertIn(f"DefaultDeviceTimeoutSec={s}s", text)
+        self.assertEqual(_debian13._compact("|  quiet systemd.a\\|\n|=1   |"), "quietsystemd.a=1")
+
     def test_preseed_ports(self):
         import answer_media
         ps = answer_media.preseed_ports("10.77.0.60", "255.255.255.0", "10.77.0.1", ["10.77.0.1"], "lab.test",
@@ -2477,9 +2491,16 @@ class Debian13(unittest.TestCase):
                      "d-i passwd/root-password-crypted password *", "d-i passwd/make-user boolean false",
                      "tasksel tasksel/first multiselect ssh-server",
                      "d-i preseed/late_command string in-target passwd -d root; in-target sed -i"
-                     " 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list"):
+                     " 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list; mkdir -p /target/etc/systemd/system.conf.d;"
+                     " printf '[Manager]\\nDefaultTimeoutStartSec=600s\\nDefaultDeviceTimeoutSec=600s\\n'"
+                     " > /target/etc/systemd/system.conf.d/wsh-lab-tcg.conf"):
             self.assertIn(line, lines)
         self.assertNotIn("allow_unauthenticated", ps)  # the netinst brings debian-ports-archive-keyring
+        # the drop-in printf writes, as sh runs it
+        import subprocess
+        printf = re.search(r"printf '[^']*'", next(line for line in lines if "late_command" in line)).group(0)
+        conf = subprocess.run(["sh", "-c", printf], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(conf, "[Manager]\nDefaultTimeoutStartSec=600s\nDefaultDeviceTimeoutSec=600s\n")
         lines = answer_media.preseed_ports("10.0.2.15", "255.255.255.0", proxy="http://10.0.2.2:3142").splitlines()
         self.assertIn("d-i mirror/http/proxy string http://10.0.2.2:3142", lines)
         late = next(line for line in lines if "late_command" in line)

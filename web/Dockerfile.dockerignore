@@ -5,5 +5,6 @@
 !submodules/pve-qemu.patch
 !repo/conf/wsh-pve.gpg.key
 !e2e/wisp/
+!docs/public/browser-sparc/machines.json
 e2e/wisp/out/
 e2e/wisp/build/
