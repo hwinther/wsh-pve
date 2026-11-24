@@ -1590,6 +1590,12 @@ int main(int argc, char **argv, char **envp)
 
 	wisp_envp = envp;
 	up = clock_ms(CLOCK_BOOTTIME);
+	/*
+	 * Only errors from the kernel on the console from here on (the shell lowers it further).
+	 * printf writes a line in pieces, and a kernel message between two of them ("tsc: Marking
+	 * TSC unstable ..." on 4 CPUs) splits the result line.
+	 */
+	syscall(__NR_syslog, 8 /* SYSLOG_ACTION_CONSOLE_LEVEL */, 0, 4);
 	printf("WISP-BANNER wsh-pve wisp v1\n");
 
 	memset(&u, 0, sizeof(u));
