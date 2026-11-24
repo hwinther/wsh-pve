@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify framebuffer images and keyboard input through serial and QMP."""
+"""Verify framebuffer images, keyboard input and mouse input through serial and QMP."""
 import argparse
 import asyncio
 import json
@@ -21,14 +21,11 @@ MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32
 
 
 def display_args(display, arch=None):
-    """The display's QEMU options and the machine's keyboard where it has none of its own."""
-    if display == "bochs-display":
-        return ["-device", display, "-device", "virtio-keyboard-pci"]
-    if arch == "sparc64":
-        # Linux probes sun4u's EBus i8042 only with openbios-sparc64 0035 and ps2-mouse?=true,
-        # which no published package has yet, so a virtio keyboard
-        return ["-vga", display, "-device", "virtio-keyboard-pci"]
-    return ["-vga", display]
+    """Display and input devices for the selected machine."""
+    args = ["-device" if display == "bochs-display" else "-vga", display]
+    if display == "bochs-display" or arch == "sparc64":
+        args += ["-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci"]
+    return args
 
 
 def mandel_image(width, height):
@@ -95,6 +92,36 @@ async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
     print(f"{arch}/{display} sent {keys}, received {codes}", flush=True)
 
 
+def mouse_events(answer):
+    events = [tuple(map(int, match)) for match in re.findall(
+        rb"^WISP-MOUSE-EV type=(\d+) code=(\d+) value=(-?\d+)\r?$", answer, re.M)]
+    motion = [sum(v for t, c, v in events if t == 2 and c == axis) for axis in (0, 1)]
+    buttons = [(c, v) for t, c, v in events if t == 1]
+    if min(motion) <= 0 or buttons != [(272, 1), (272, 0), (273, 1)]:
+        raise ValueError(f"unexpected mouse motion or buttons: {answer!r}")
+    return events
+
+
+async def check_mouse(proc, arch, display, reader, writer, until, prompt):
+    proc.stdin.write(b"mousetest\n")
+    while True:
+        line = await until(b"\n")
+        if b"WISP-MOUSE dev=" in line:
+            break
+        if b"mousetest:" in line:
+            raise RuntimeError(line.decode().strip())
+    await qmp(reader, writer, "input-send-event", events=[
+        {"type": "rel", "data": {"axis": axis, "value": value}}
+        for axis, value in (("x", 10), ("y", 5))])
+    for button in ("left", "right"):
+        for down in (True, False):
+            await qmp(reader, writer, "input-send-event", events=[
+                {"type": "btn", "data": {"button": button, "down": down}}])
+            await asyncio.sleep(0.06)
+    events = mouse_events(await until(prompt))
+    print(f"{arch}/{display} {line.decode().strip()} events={events}", flush=True)
+
+
 async def exercise(proc, arch, display, monitor, ppm, log):
     async def until(marker):
         try:
@@ -149,6 +176,7 @@ async def exercise(proc, arch, display, monitor, ppm, log):
         await check_screen(ppm.with_name(ppm.stem + "-mandel.ppm"), rows)
 
         await check_keyboard(proc, arch, display, reader, writer, until, prompt)
+        await check_mouse(proc, arch, display, reader, writer, until, prompt)
     finally:
         writer.close()
         await writer.wait_closed()

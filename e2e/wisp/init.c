@@ -1012,6 +1012,7 @@ static void cmd_help(const char *arg)
 	       "  fbtest          draw eight colour bars on /dev/fb0\n"
 	       "  soundtest [hz] [ms]  play a square wave (default 440 Hz, 1000 ms)\n"
 	       "  keytest         read keyboard presses until Esc or a 10-second timeout\n"
+	       "  mousetest       read mouse events until right click or a 10-second timeout\n"
 	       "  mandel fb       draw the Mandelbrot set on /dev/fb0\n"
 	       "  mandel          the Mandelbrot set in fixed-point integer math\n"
 	       "  endian          a byte-order guessing game\n"
@@ -1190,10 +1191,12 @@ static void cmd_mandel(const char *arg)
 }
 
 /* Small fixed machine configurations, with devtmpfs naming devices in probe order. */
-static int keyboard_fd(void)
+static int input_fd(int mouse)
 {
 	char path[32], name[80];
-	unsigned long keys;
+	const unsigned int word_bits = sizeof(unsigned long) * 8;
+	unsigned int button = mouse ? BTN_LEFT : KEY_A;
+	unsigned long types, keys[BTN_LEFT / (sizeof(unsigned long) * 8) + 1];
 	int i, fd;
 
 	mount_dev();
@@ -1202,11 +1205,13 @@ static int keyboard_fd(void)
 		fd = open(path, O_RDONLY | O_NONBLOCK);
 		if (fd < 0)
 			continue;
-		/* KEY_A fits in the first native word, including on big-endian SPARC. */
-		keys = 0;
-		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), &keys) > 0 &&
-		    (keys & (1UL << KEY_A)) && ioctl(fd, EVIOCGNAME(sizeof(name)), name) > 0) {
-			printf("WISP-KEYBOARD dev=%s name=%s\n", path, name);
+		memset(keys, 0, sizeof(keys));
+		if ((!mouse || (ioctl(fd, EVIOCGBIT(0, sizeof(types)), &types) > 0 &&
+				(types & (1UL << EV_REL)))) &&
+		    ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) > 0 &&
+		    (keys[button / word_bits] & (1UL << (button % word_bits))) &&
+		    ioctl(fd, EVIOCGNAME(sizeof(name)), name) > 0) {
+			printf("WISP-%s dev=%s name=%s\n", mouse ? "MOUSE" : "KEYBOARD", path, name);
 			return fd;
 		}
 		close(fd);
@@ -1307,15 +1312,15 @@ fail:
 	printf("WISP-SOUND v=1 ok=0 errno=%d\n", err);
 }
 
-static void cmd_keytest(void)
+static void cmd_inputtest(int mouse)
 {
 	struct input_event ev;
 	struct pollfd pfd;
 	unsigned long start, elapsed;
-	int fd = keyboard_fd();
+	int fd = input_fd(mouse);
 
 	if (fd < 0) {
-		printf("keytest: keyboard unavailable\n");
+		printf("%s\n", mouse ? "mousetest: mouse unavailable" : "keytest: keyboard unavailable");
 		return;
 	}
 	pfd.fd = fd;
@@ -1326,13 +1331,19 @@ static void cmd_keytest(void)
 			break;
 		if (read(fd, &ev, sizeof(ev)) != sizeof(ev))
 			break;
-		if (ev.type != EV_KEY || ev.value != 1)
-			continue;
-		printf("WISP-KEY v=1 code=%u value=1\n", ev.code);
-		if (ev.code == KEY_ESC)
-			goto done;
+		if (mouse) {
+			if (ev.type == EV_KEY || ev.type == EV_REL || ev.type == EV_ABS)
+				printf("WISP-MOUSE-EV type=%u code=%u value=%d\n",
+				       ev.type, ev.code, ev.value);
+			if (ev.type == EV_KEY && ev.code == BTN_RIGHT && ev.value == 1)
+				goto done;
+		} else if (ev.type == EV_KEY && ev.value == 1) {
+			printf("WISP-KEY v=1 code=%u value=1\n", ev.code);
+			if (ev.code == KEY_ESC)
+				goto done;
+		}
 	}
-	printf("keytest: timed out or input stopped\n");
+	printf("%s: timed out or input stopped\n", mouse ? "mousetest" : "keytest");
 done:
 	close(fd);
 }
@@ -1386,7 +1397,7 @@ static void cmd_reboot(const char *arg)
  */
 static const char command_names[] =
 	"help\0info\0uname\0bench\0crc\0mandel\0banner\0clear\0poweroff\0reboot\0disk\0net\0smp\0"
-	"endian\0fbtest\0keytest\0soundtest\0";
+	"endian\0fbtest\0keytest\0soundtest\0mousetest\0";
 
 static void run_command(const char *cmd, const char *arg)
 {
@@ -1413,8 +1424,9 @@ static void run_command(const char *cmd, const char *arg)
 	case 12: cmd_smp(arg); break;
 	case 13: cmd_endian(arg); break;
 	case 14: draw_fb(0); break;
-	case 15: cmd_keytest(); break;
+	case 15: cmd_inputtest(0); break;
 	case 16: cmd_soundtest(arg); break;
+	case 17: cmd_inputtest(1); break;
 	default: printf("  %s: unknown command, try help\n", cmd);
 	}
 }
