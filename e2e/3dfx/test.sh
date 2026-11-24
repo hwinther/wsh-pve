@@ -15,6 +15,14 @@
 #     says which file its Glide came from. In the default guests with SDL and VNC.
 #   - mesa: /init is mesa-guest (mesa-guest.c, which speaks the mesapt device's protocol itself: there
 #     is no Linux guest wrapper for it upstream), through the mesapt device into the host's libGL.
+#   - demo: /init is wshdemo (e2e/3dfx/demo, its Linux build against the same libglide.so.2 as
+#     glide-dso, in the same kind of initramfs), run with `-check -bench DEMO_BENCH -hold 6`: it draws
+#     a fixed frame of each of its parts (a textured lit cube with a depth-tested wall, a fogged
+#     tunnel with alpha blending, a plasma uploaded as a texture every frame), reads each back and
+#     checks its probes (WSHDEMO: CHECK part=... PASS), prints each part's frame rate (WSHDEMO: BENCH
+#     ...), then holds the last frame and prints its probes (WSHDEMO: PROBE x y rrggbb), which the
+#     host checks in the console. Headless only (vnc, egl, dbus); in the default headless guests.
+#     DEMO_ARGS replaces its arguments (e.g. "-check -res 800x600 -hold 6"; keep -check and -hold).
 #
 #   docker run --rm -v "$PWD:/src:ro" -v "$PWD/build/wsh-openglide:/deb:ro" -v "$OUT:/out" \
 #     debian:trixie sh /src/e2e/3dfx/test.sh /deb/wsh-openglide_<version>_amd64.deb /out
@@ -85,9 +93,9 @@ step() { printf '\n== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 case "$MODE" in
 sdl) GUESTS=${GUESTS:-glide glide-dso mesa} ;;
-vnc) GUESTS=${GUESTS:-glide glide-dso mesa mesa-msaa mesa-noegl} ;;
-egl) GUESTS=${GUESTS:-glide mesa} ;;
-dbus) GUESTS=${GUESTS:-glide mesa} ;;
+vnc) GUESTS=${GUESTS:-glide glide-dso mesa mesa-msaa mesa-noegl demo} ;;
+egl) GUESTS=${GUESTS:-glide mesa demo} ;;
+dbus) GUESTS=${GUESTS:-glide mesa demo} ;;
 *) fail "GLIDE_DISPLAY is sdl, vnc, egl or dbus, not '$MODE'" ;;
 esac
 mkdir -p "$OUT"
@@ -181,8 +189,12 @@ done
 # binary's revision), installed in its initramfs as its README says: /usr/lib/libglide.so.2 and the
 # libglide2x.so symlink, found through ldconfig's cache; Debian's i386 loader and libc next to it
 case " $GUESTS " in
-*" glide-dso "*)
+*" glide-dso "* | *" demo "*)
 	bash "$SRC/scripts/build-3dfx-linux-glide.sh" "$Q3" "$rev" "$work/linux-glide"
+	;;
+esac
+case " $GUESTS " in
+*" glide-dso "*)
 	r=$work/glide-dso
 	mkdir -p "$r/usr/lib" "$r/etc"
 	cp -P "$work/linux-glide/libglide.so.2" "$work/linux-glide/libglide2x.so" "$r/usr/lib/"
@@ -200,6 +212,26 @@ case " $GUESTS " in
 	strings "$r/etc/ld.so.cache" | grep -qx /usr/lib/libglide.so.2 || fail "glide-dso: ldconfig's cache has no libglide.so.2"
 	(cd "$r" && find . | cpio -o -H newc --quiet) > "$work/glide-dso.initrd"
 	echo "glide-dso: /init $interp, needs $needed; initrd $(wc -c < "$work/glide-dso.initrd") bytes"
+	;;
+esac
+# demo: wshdemo's Linux build (e2e/3dfx/demo/build-linux.sh: i586, glibc 2.0 symbols, its own _start)
+# as /init, with the same library, loader and libc as glide-dso
+case " $GUESTS " in
+*" demo "*)
+	[ "$MODE" != sdl ] || fail "demo: headless only (GLIDE_DISPLAY=vnc, egl or dbus)"
+	bash "$SRC/e2e/3dfx/demo/build-linux.sh" "$work/demo-bin" "$work/linux-glide"
+	r=$work/demo
+	mkdir -p "$r/usr/lib" "$r/etc"
+	cp -P "$work/linux-glide/libglide.so.2" "$work/linux-glide/libglide2x.so" "$r/usr/lib/"
+	cp "$work/demo-bin/wshdemo" "$r/init"
+	interp=$(readelf -lW "$r/init" | sed -n 's/.*Requesting program interpreter: \(.*\)]$/\1/p')
+	mkdir -p "$r$(dirname "$interp")"
+	cp -L "$interp" "$r$interp"
+	cp -L "$(gcc -m32 -print-file-name=libc.so.6)" "$r/usr/lib/libc.so.6"
+	echo /usr/lib > "$r/etc/ld.so.conf"
+	ldconfig -r "$r"
+	(cd "$r" && find . | cpio -o -H newc --quiet) > "$work/demo.initrd"
+	echo "demo: /init wshdemo ($(wc -c < "$r/init") bytes), initrd $(wc -c < "$work/demo.initrd") bytes"
 	;;
 esac
 cc -O2 -Wall -o "$work/glide-render" "$TESTS/glide-render.c" -ldl -lX11
@@ -335,6 +367,29 @@ near() {
 		[ "$d" -ge -24 ] && [ "$d" -le 24 ] || return 1
 	done
 }
+# frame_ok TAG PPM: the frame in a capture of the console. The test scene's probes (glide-render),
+# or for the demo (TAG WSHDEMO) the probes it printed for its held frame ("WSHDEMO: PROBE x y rrggbb")
+frame_ok() {
+	if [ "$1" != WSHDEMO ]; then
+		"$work/glide-render" --check-ppm "$2"
+		return
+	fi
+	n=0 bad=0
+	for p in $(tr -d '\r' < "$serial" | sed -n 's/^WSHDEMO: PROBE \([0-9]*\) \([0-9]*\) \([0-9a-f]\{6\}\)$/\1:\2:\3/p'); do
+		x=${p%%:*} y=${p#*:} want=${p##*:}
+		y=${y%%:*}
+		got=$(ppm_pixel "$2" "$x" "$y")
+		n=$((n + 1))
+		if near "$got" "$want"; then
+			echo "ok   console ($x,$y) got #$got want #$want"
+		else
+			echo "FAIL console ($x,$y) got #$got want #$want"
+			bad=$((bad + 1))
+		fi
+	done
+	echo "demo: $n probes in the console ($(ppm_size "$2")), $bad mismatches"
+	[ "$n" -gt 0 ] && [ "$bad" = 0 ]
+}
 
 # run_guest NAME TAG INITRD PREFIX PHASES [QEMU-ARGS...]: boot the guest INITRD, follow its console
 # until QEMU ends, capture the VM's window (or, headless, a screendump of its console) once the guest
@@ -387,7 +442,7 @@ run_guest() {
 				if [ -n "$win" ] && "$work/glide-render" --check-window "$win" --ppm "$OUT/$name-window.ppm"; then
 					window_ok=yes
 				fi
-			elif screendump "$OUT/$name-screendump.ppm" && "$work/glide-render" --check-ppm "$OUT/$name-screendump.ppm"; then
+			elif screendump "$OUT/$name-screendump.ppm" && frame_ok "$tag" "$OUT/$name-screendump.ppm"; then
 				window_ok=yes
 			elif dbus_unmapped; then
 				window_ok=skipped
@@ -465,6 +520,7 @@ run_guest() {
 		[ -z "$phases_failed" ] || fail "$name: the console's colour is wrong in:$phases_failed"
 	fi
 	grep "^$tag: BENCH" "$serial" || true
+	grep "^$tag: CHECK" "$serial" || true
 	grep -o "$prefix: offscreen window .*" "$qlog" || true
 	grep -o "$prefix: offscreen closed.*" "$qlog" || true
 	grep -o "$prefix: dmabuf scanout.*" "$qlog" || true
@@ -651,6 +707,15 @@ for guest in $GUESTS; do
 		grep -q "^mesapt: .*the guest's OpenGL fails" "$OUT/mesa-noegl-qemu.log" \
 			|| fail "mesa-noegl: QEMU didn't say why the guest's OpenGL fails"
 		echo "ok: no EGL: the guest's OpenGL failed, QEMU kept running"
+		;;
+	demo)
+		# the kernel passes what follows "--" to /init as its arguments
+		GUEST_APPEND="-- ${DEMO_ARGS:--check -bench ${DEMO_BENCH:-300} -hold 6}"
+		run_guest demo WSHDEMO demo glidept ""
+		GUEST_APPEND=""
+		checks=$(tr -d '\r' < "$OUT/demo-serial.log" | grep -c '^WSHDEMO: CHECK part=[a-z]* PASS' || true)
+		[ "$checks" = 3 ] || fail "demo: $checks of its 3 parts passed their check"
+		echo "ok: demo: cube, tunnel and plasma passed their checks, the held frame's probes matched in the console"
 		;;
 	*) fail "unknown guest '$guest'" ;;
 	esac

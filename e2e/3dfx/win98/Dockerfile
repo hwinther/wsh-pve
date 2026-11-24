@@ -28,7 +28,11 @@ RUN echo "packages: $WSH_PACKAGES" && gpg --dearmor < /tmp/wsh-pve.gpg.key > /us
     && rm -rf /var/lib/apt/lists/*
 COPY packages/wsh-openglide/tests/scene.h /w3d/packages/wsh-openglide/tests/scene.h
 COPY e2e/3dfx/win98/ /w3d/e2e/3dfx/win98/
+COPY e2e/3dfx/demo/ /w3d/e2e/3dfx/demo/
+COPY scripts/check-3dfx-drivers-isa.sh /w3d/scripts/check-3dfx-drivers-isa.sh
 # The test programs (w3drun.exe, glidetst.exe, gltest.exe)
 RUN sh /w3d/e2e/3dfx/win98/build.sh /w3d/bin
+# The demo (e2e/3dfx/demo), for the optional demo-* tests: WSHDEMO.EXE
+RUN sh /w3d/e2e/3dfx/demo/build-win.sh /w3d/bin
 WORKDIR /w3d/e2e/3dfx/win98
 ENTRYPOINT ["python3", "/w3d/e2e/3dfx/win98/win98_test.py"]

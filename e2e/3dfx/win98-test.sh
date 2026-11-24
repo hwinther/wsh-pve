@@ -27,7 +27,8 @@
 #                     and --openglide are installed in the container. Display vnc or egl only.
 #   --vmid N          the VM's ID with --pve (default 9398; must be free)
 #
-# Harness options after --: --tests glide2,glide3,opengl (default auto), --display sdl (starts Xvfb)
+# Harness options after --: --tests glide2,glide3,opengl (default auto; the demo's demo-glide2,
+# demo-glide3 and demo-opengl only when named), --display sdl (starts Xvfb)
 # or egl (QEMU's egl-headless display, which takes the Glide frames as a dmabuf; /dev/udmabuf is
 # passed to the container when it exists, for Mesa's software renderer on a host without a GPU),
 # --accel tcg|kvm, --cpu, --bench N, --timeout S; see win98_test.py --help. /dev/kvm is passed to
