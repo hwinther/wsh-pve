@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..2ed3c29 100644
+index 9da9d72..f5f5669 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,141 @@
+@@ -1,10 +1,148 @@
++pve-qemu-kvm (11.1.3-4+wsh20) trixie; urgency=medium
++
++  * fix(pve-qemu): stop the sun4u sunhme receiving after a reset (lost
++    IDE interrupts at Debian 13 power-off) (#517)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 22:06:05 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh19) trixie; urgency=medium
 +
 +  * fix(pve-qemu): build wsh/0130's D-Bus GL readback only with OpenGL
