@@ -796,8 +796,16 @@ wsh-lab wisp-vm stop --vmid 902                     # also start, destroy
 | --- | --- | --- | --- |
 | `x86_64` | pc, 256 MB, KVM when the node has it | `vga: std`, the PS/2 keyboard | `ide0` |
 | `sparc32` | SS-5, OpenBIOS, 128 MB | `vga: cg3` (`--display tcx`), the Sun keyboard | `scsi0` |
-| `sparc64` | sun4u, OpenBIOS, 256 MB | `vga: std`, a virtio keyboard (in `args`) | `ide0` |
+| `sparc64` | sun4u, OpenBIOS, 256 MB | `vga: std`, the PS/2 keyboard and mouse (`-prom-env` in `args`) | `ide0` |
 | `aarch64` | virt, 256 MB, virtio-scsi | `vga: std`, a virtio keyboard (in `args`) | `scsi0` |
+
+On sun4u, Linux can use the machine's PS/2 keyboard and mouse only when OpenBIOS has the option
+`ps2-mouse?` set. qemu-server has no setting for OpenBIOS variables, so `wisp-vm` puts
+`-prom-env 'ps2-mouse?=true'` into the VM's `args`, next to `-kernel`. The option needs
+pve-qemu-kvm 11.1.3-4+wsh15 or later: `wisp-vm` looks for it in the node's
+`/usr/share/kvm/openbios-sparc64` and, with older firmware, gives the VM a virtio keyboard instead
+and says so. It sets the option only for its own framebuffer and DOOM VMs. OpenBIOS leaves it off
+by default because Debian 7's Linux 3.2 panics with it, so don't copy the line into other sun4u VMs.
 
 - **Shell** (the default): the tier-1 kernel from the `wisp-test-kit` release, `vga: serial0`, so the
   web UI's Console is the serial shell (xterm.js), as is `qm terminal <vmid>`. `help` lists the
