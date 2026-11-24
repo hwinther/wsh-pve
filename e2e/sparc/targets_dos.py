@@ -24,10 +24,14 @@ PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+
 X86_DOS = {"ostype": "other", "machine": "pc", "cpu": "pentium", "kvm": 0, "memory": 32, "balloon": 0,
            "tablet": 0, "vga": "std", "net0": "ne2k_pci", "boot": "order=floppy0;ide0"}
 
-# The FreeDOS 1.4 Floppy Edition (GPL and other free licences), for CI and as a free target.
+# The FreeDOS 1.4 Floppy Edition (GPL and other free licences), for CI and as a free target. The only pin
+# of the zip: tests/test_freedos.py, the 3dfx DOS test (e2e/3dfx/dos/dos_test.py) and the audio matrix
+# (e2e/audio/audio_matrix.py) import it, fetch_media.py downloads and checks it, and "cache" names its
+# Actions cache entry (fetch_media.py --key; e2e/README.md, "Downloaded media in the Actions cache").
 FREEDOS_ZIP = {"url": "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/"
                       "FD14-FloppyEdition.zip",
-               "sha256": "45b1fa7c52dd996c3bfa5e352ffcd410781b952a6ad629f15a4c9ec4bbaefc5a", "size": 23624258}
+               "sha256": "45b1fa7c52dd996c3bfa5e352ffcd410781b952a6ad629f15a4c9ec4bbaefc5a", "size": 23624258,
+               "cache": "freedos-fd14-floppy"}
 
 MEDIA = {
     "msdos622-disk1.img": {

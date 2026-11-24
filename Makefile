@@ -118,6 +118,7 @@ pve-manager:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-e RUST_BACKTRACE=full \
+		-e DEB_BUILD_OPTIONS \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
 		bash -c 'git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-manager_*.deb /build/repo/'; \

@@ -12,6 +12,8 @@ name: Media cache
 #   alpine  e2e.yml, job boot (pins and key in e2e/pve/boot-media.sh)
 #   netbsd  sparc-lab-netbsd.yml, job netbsd (pins in e2e/sparc/targets.py, MEDIA)
 #   doom    wisp-boot.yml, job boot; wisp-fb.yml restores it too (pins in e2e/wisp/doom/fetch.py)
+#   freedos 3dfx-dos.yml, sparc-lab-dos.yml and audio-matrix.yml, one entry for the three (pin in
+#           e2e/sparc/targets_dos.py, FREEDOS_ZIP; key from fetch_media.py --key)
 
 on:
   workflow_dispatch:
@@ -24,6 +26,7 @@ on:
     paths:
       - "e2e/pve/boot-media.sh"
       - "e2e/sparc/targets.py"
+      - "e2e/sparc/targets_dos.py"
       - "e2e/sparc/fetch_media.py"
       - "e2e/wisp/doom/fetch.py"
       - ".github/workflows/media-cache.yml"
@@ -112,6 +115,42 @@ jobs:
         with:
           path: ${{ runner.temp }}/netbsd-cd
           key: netbsd-cd-${{ matrix.iso }}
+
+  freedos:
+    name: FreeDOS 1.4 Floppy Edition (3dfx DOS, sparc lab DOS, audio matrix)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache key
+        id: key
+        run: echo "key=$(python3 e2e/sparc/fetch_media.py --key FD14-FloppyEdition.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the entry
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Download and check
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip
+
+      - name: Save
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.key.outputs.key }}
 
   doom:
     name: fbDOOM and Freedoom archives (wisp boot)

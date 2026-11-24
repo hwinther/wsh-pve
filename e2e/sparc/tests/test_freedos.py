@@ -12,8 +12,9 @@ The screens are read from the VGA text buffer (vgatext.py) the whole way; no OCR
 
   WSH_LAB_GUEST_TESTS=1  required: without it the test is skipped (it installs a guest and may download)
 
-  FREEDOS_ZIP     FD14-FloppyEdition.zip; without it the pinned one (targets_dos.FREEDOS_ZIP) is
-                  downloaded and its sha256 checked, into FREEDOS_CACHE (default /tmp/wsh-lab-freedos)
+  FREEDOS_ZIP     FD14-FloppyEdition.zip (CI: the one the workflow restored from the Actions cache or
+                  fetched); checked against targets_dos.FREEDOS_ZIP, never downloaded over. Without it
+                  fetch_media.py downloads the pinned one into FREEDOS_CACHE (default /tmp/wsh-lab-freedos)
   FREEDOS_ACCEL   tcg (default) or kvm
   FREEDOS_OUT     where the evidence goes (default: a temporary directory, removed when the test passes)
 """
@@ -24,12 +25,12 @@ import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 import zipfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
+import fetch_media  # noqa: E402
 import lab  # noqa: E402
 import targets_dos  # noqa: E402
 
@@ -51,16 +52,12 @@ def sha256(path):
 
 def freedos_disks():
     """The seven 1.44 MB images (boot disk first), each checked against targets_dos.MEDIA."""
-    z = targets_dos.FREEDOS_ZIP
     cache = os.environ.get("FREEDOS_CACHE", "/tmp/wsh-lab-freedos")
+    if os.environ.get("FREEDOS_ZIP"):
+        zpath = fetch_media.checked(os.environ["FREEDOS_ZIP"], fetch_media.FREEDOS_ZIP_NAME)
+    else:
+        zpath = fetch_media.fetch(fetch_media.FREEDOS_ZIP_NAME, cache)
     os.makedirs(cache, exist_ok=True)
-    zpath = os.environ.get("FREEDOS_ZIP") or os.path.join(cache, os.path.basename(z["url"]))
-    if not os.path.exists(zpath) or sha256(zpath) != z["sha256"]:
-        with urllib.request.urlopen(z["url"], timeout=300) as r, open(zpath + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
-        os.replace(zpath + ".part", zpath)
-    if sha256(zpath) != z["sha256"]:
-        raise RuntimeError(f"{z['url']}: sha256 isn't {z['sha256']}")
     out = []
     with zipfile.ZipFile(zpath) as zf:
         for name in ["freedos14-boot.img"] + [f"freedos14-disk{n}.img" for n in range(1, 7)]:

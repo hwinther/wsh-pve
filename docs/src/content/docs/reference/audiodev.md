@@ -148,7 +148,7 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
 `e2e/audio/` in the repository, run by the `x86 audio matrix` workflow on GitHub-hosted runners
 (weekly, on demand and on pull requests that touch it) against the published packages:
 
-- **DOS**: FreeDOS 1.4's boot floppy (downloaded by URL and sha256) with its start-up files
+- **DOS**: FreeDOS 1.4's boot floppy (by URL and sha256; CI keeps the zip in the Actions cache) with its start-up files
   replaced, so it runs `AUDTEST.COM`, a small program written for the test (`audtest.asm`, built
   with nasm). It plays 1000 Hz on the SB16 (8-bit PCM by DMA), 440 Hz on the OPL2 and 750 Hz on the
   PC speaker, one after the other, then powers off through ACPI.

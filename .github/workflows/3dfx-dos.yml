@@ -1,8 +1,8 @@
 name: 3dfx in DOS
 
 # The qemu-3dfx Glide pass-through from DOS (e2e/3dfx/dos-test.sh), with free software only: FreeDOS
-# 1.4's boot floppy (the Floppy Edition, downloaded by the harness and checked against its pinned
-# sha256), FreeDOS's CWSDPMI, HIMEMX and JEMM386 from the same floppies, our DJGPP test program
+# 1.4's boot floppy (the Floppy Edition, from the Actions cache, saved by main only, and checked against
+# its pin by e2e/sparc/fetch_media.py and the harness), FreeDOS's CWSDPMI, HIMEMX and JEMM386 from the same floppies, our DJGPP test program
 # (e2e/3dfx/dos/glidedos.c, built in the DJGPP image) and qemu-3dfx's DOS wrapper GLIDE2X.DXE from
 # the qemu-3dfx-drivers release the published binary names. The published pve-qemu-kvm's
 # qemu-system-x86_64-3dfx boots it headless, as PVE runs a `vga: std,mesa=1` VM, once per memory
@@ -22,6 +22,8 @@ on:
       - main
     paths:
       - "e2e/3dfx/**"
+      - "e2e/sparc/targets_dos.py"
+      - "e2e/sparc/fetch_media.py"
       - "packages/wsh-openglide/tests/scene.h"
       - "scripts/check-3dfx-drivers-isa.sh"
       - "submodules/qemu-3dfx"
@@ -51,6 +53,33 @@ jobs:
       - name: The qemu-3dfx submodule (the DXE import library's source)
         run: git submodule update --init --depth 1 submodules/qemu-3dfx
 
+      # The FreeDOS zip comes from the Actions cache, which only main fills (here on the schedule and
+      # on dispatch, and daily in media-cache.yml): a pull request restores main's entry and never
+      # saves its own copy (e2e/README.md, "Downloaded media in the Actions cache"). fetch_media.py
+      # checks the restored zip against its pin (e2e/sparc/targets_dos.py, FREEDOS_ZIP) and downloads
+      # it only when it is missing or not the pinned one; the same key and path as sparc-lab-dos.yml,
+      # audio-matrix.yml and media-cache.yml's freedos job (one entry for the three)
+      - name: FreeDOS cache key
+        id: freedos-key
+        run: echo "key=$(python3 e2e/sparc/fetch_media.py --key FD14-FloppyEdition.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the FreeDOS zip
+        id: freedos-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
+
+      - name: Download and check the FreeDOS zip
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip
+
+      - name: Save the FreeDOS zip (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.freedos-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
+
       - name: Login to GitHub Container Registry (the DJGPP image)
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -64,7 +93,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dos"
           rc=0
-          e2e/3dfx/dos-test.sh --out "$RUNNER_TEMP/dos" --image "wsh-3dfx-dos:gh-${GITHUB_RUN_ID}" || rc=$?
+          e2e/3dfx/dos-test.sh --out "$RUNNER_TEMP/dos" --image "wsh-3dfx-dos:gh-${GITHUB_RUN_ID}" \
+            --freedos-zip "$RUNNER_TEMP/freedos/FD14-FloppyEdition.zip" || rc=$?
           if [ "$rc" = 77 ]; then
             echo "::notice title=3dfx in DOS not tested::the published pve-qemu-kvm has no qemu-system-x86_64-3dfx, or it can't show Glide headless"
             exit 0

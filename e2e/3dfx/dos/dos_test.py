@@ -6,8 +6,9 @@ DOS wrapper GLIDE2X.DXE, end to end, with free software only.
         [--profiles none,xms,emm386] [--accel auto|tcg|kvm] [--cpu pentium3] [--bench N] [--hold S] [--demo-bench N]
         [--pve VMID]
 
-The guest is the boot floppy of the FreeDOS 1.4 Floppy Edition (downloaded once by URL and sha256
-into FREEDOS_CACHE, the same pins as e2e/sparc/targets_dos.py), with mtools putting onto a copy of it:
+The guest is the boot floppy of the FreeDOS 1.4 Floppy Edition (the zip given by FREEDOS_ZIP, or
+downloaded once into FREEDOS_CACHE; the pins are e2e/sparc/targets_dos.py's, downloaded and checked by
+e2e/sparc/fetch_media.py), with mtools putting onto a copy of it:
 
   - FDCONFIG.SYS, which loads the memory managers of the profile and runs GLIDE.BAT instead of the
     installer; GLIDE.BAT sends the console to COM1 (CTTY COM1), runs the test program and powers the
@@ -59,20 +60,19 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.request
 import zipfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "win98"))
+# the FreeDOS pins and their download (the image has both files at the same relative path)
+sys.path.append(os.path.join(HERE, "..", "..", "sparc"))
 import win98_test as w3d  # noqa: E402  (the scene, PPM, probes, monitors and QEMU's figures)
+import fetch_media  # noqa: E402
+import targets_dos  # noqa: E402
 
-# The FreeDOS 1.4 Floppy Edition, the same pins as e2e/sparc/targets_dos.py (FREEDOS_ZIP, MEDIA)
-FREEDOS_ZIP = {"url": "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/"
-                      "FD14-FloppyEdition.zip",
-               "sha256": "45b1fa7c52dd996c3bfa5e352ffcd410781b952a6ad629f15a4c9ec4bbaefc5a"}
-FREEDOS_BOOT = {"zip": "144m/x86BOOT.img",
-                "sha256": "552f7cbb0625960c050a3e682a4d2121cc2ffdfa9dc9d592ccd49edf179333dc"}
+# The FreeDOS 1.4 Floppy Edition: the zip (targets_dos.FREEDOS_ZIP) and its boot floppy (MEDIA)
+FREEDOS_BOOT = targets_dos.MEDIA["freedos14-boot.img"]
 FREEDOS_DISKS = [f"144m/x86DSK{n:02d}.img" for n in range(1, 7)]
 # Files from the package archive (CWSDPMI 7b, HIMEMX, JEMM): the sha256 of those a FreeDOS 1.4
 # installation from these floppies puts into C:\FREEDOS\BIN
@@ -116,16 +116,17 @@ def mtools(*cmd, check=True):
 # --- FreeDOS ---------------------------------------------------------------------------------------
 
 def freedos_zip(cache):
+    """The Floppy Edition zip: FREEDOS_ZIP (checked, never downloaded over), else the pinned one in
+    `cache`, downloaded when it isn't there. `cache` exists afterwards (freedos_files keeps the
+    floppy and the package files there)."""
     os.makedirs(cache, exist_ok=True)
-    zpath = os.path.join(cache, os.path.basename(FREEDOS_ZIP["url"]))
-    if not os.path.exists(zpath) or sha256(zpath) != FREEDOS_ZIP["sha256"]:
-        log(f"downloading {FREEDOS_ZIP['url']}")
-        with urllib.request.urlopen(FREEDOS_ZIP["url"], timeout=300) as r, open(zpath + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
-        os.replace(zpath + ".part", zpath)
-    if sha256(zpath) != FREEDOS_ZIP["sha256"]:
-        raise SystemExit(f"dos-test: {FREEDOS_ZIP['url']}: sha256 isn't {FREEDOS_ZIP['sha256']}")
-    return zpath
+    try:
+        if os.environ.get("FREEDOS_ZIP"):
+            return fetch_media.checked(os.environ["FREEDOS_ZIP"], fetch_media.FREEDOS_ZIP_NAME)
+        log(f"FreeDOS zip in {cache} (downloaded when it isn't the pinned one)")
+        return fetch_media.fetch(fetch_media.FREEDOS_ZIP_NAME, cache)
+    except RuntimeError as e:
+        raise SystemExit(f"dos-test: {e}")
 
 
 def slicer_extract(data, name, want):
