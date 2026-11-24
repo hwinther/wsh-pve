@@ -79,6 +79,21 @@ wsh-lab \- install and drive sparc guests in Proxmox VE VMs, unattended
 .IR 10min ]
 .RB [ \-\-remove ]
 .br
+.B wsh-lab wisp-vm
+.RB { x86_64 | sparc32 | sparc64 | aarch64 }
+.RB [ \-\-tier
+.BR shell | fb ]
+.RB [ \-\-doom ]
+.RB [ \-\-fps ]
+.RB [ \-\-vmid
+.IR N ]
+.RB [ \-\-start ]
+.br
+.B wsh-lab wisp-vm
+.RB { start | stop | destroy }
+.B \-\-vmid
+.I N
+.br
 .B wsh-lab
 .RB { serve | ctl | cast }
 .RI ...
@@ -266,11 +281,50 @@ every
 .B sync
 refuses a storage that has a description file.
 .PP
+.B wisp-vm
+creates a VM with wisp, the project's tiny Linux test system, from its published files (each
+checked by SHA-256): the wisp shell with the tier-1 kernel of the
+.I wisp-test-kit
+release on the serial console
+.RI ( "vga: serial0" ),
+the framebuffer kernel of the
+.I wisp-fb
+release with
+.BR "\-\-tier fb" ,
+or with
+.B \-\-doom
+Freedoom in fbDOOM on a squashfs data disk (Freedoom from its own release, by a pinned SHA-256;
+building the disk needs squashfs-tools), played on the VM's noVNC console. The kernel boots from the
+VM's
+.I args
+(root only). The profile is the machine's: pc, SS-5 with OpenBIOS, sun4u or virt. It refuses an
+existing VMID;
+.BR start ,
+.B stop
+and
+.B destroy
+act only on VMs with its tag
+.IR wsh-lab-wisp .
+.B \-\-kit\-from
+and
+.B \-\-fb\-from
+take a local directory instead of the release,
+.B \-\-wad
+a local Freedoom zip or WAD.
+.PP
 No install media are included or downloaded: Sun and Oracle software is never part of the project.
 .SH FILES
 .TP
 .I /usr/share/wsh-lab/
 the lab (lab.py, install.py, targets.py, ...) and its scenarios
+.TP
+.I /var/lib/wsh-lab/wisp/
+the downloads of
+.B wisp-vm
+and each of its VMs' kernel
+.RI ( vm\-<vmid>/ );
+not removed by
+.B apt purge
 .TP
 .I /var/lib/wsh-lab/installs/
 the evidence of each install (logs, screenshots, recordings); not removed by

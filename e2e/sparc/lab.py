@@ -18,6 +18,8 @@ Mirror storage:   lab.py mirror sync /mnt/nas/media --storage mirror [--prune]  
                   lab.py mirror link <file> [--root DIR | --as NAME] | lab.py mirror list
                   lab.py mirror init|plan|apply|import|tidy --storage mirror   (from wsh-mirror.yaml)
                   lab.py mirror timer --storage mirror --interval 10min [--remove]
+wisp in a PVE VM: lab.py wisp-vm x86_64|sparc32|sparc64|aarch64 [--tier fb] [--doom] [--vmid N] [--start]
+                  lab.py wisp-vm start|stop|destroy --vmid N   (see wisp_vm.py)
 
 The wsh-lab package installs it as `wsh-lab` (wsh-lab install ..., wsh-lab targets, ...), with the
 scenarios in /usr/share/wsh-lab/scenarios.
@@ -1238,11 +1240,14 @@ def main():
     import mirror  # a mirror storage of symlinks (mirror.py): `mirror link|sync|list|init|plan|apply|...`
 
     mirror.add_commands(sub)
+    import wisp_vm  # wisp (e2e/wisp) and fbDOOM in a PVE VM (wisp_vm.py): `wisp-vm`
+
+    wisp_vm.add_commands(sub)
     a = p.parse_args()
     if getattr(a, "qemu_args", None) and a.qemu_args[0] == "--":
         a.qemu_args = a.qemu_args[1:]
     cmds = {"run": cmd_run, "serve": cmd_serve, "ctl": cmd_ctl, "cast": cmd_cast, **install.COMMANDS,
-            **mirror.COMMANDS}
+            **mirror.COMMANDS, **wisp_vm.COMMANDS}
     return cmds[a.cmd](a)
 
 
