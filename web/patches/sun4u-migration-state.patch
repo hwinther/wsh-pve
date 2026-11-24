@@ -1,0 +1,135 @@
+sun4u: migrate the sabre's interrupt state and the CPU's SOFTINT and interrupt vector
+
+Browser SPARC only so far (web/scripts/build-qemu.sh applies web/patches/*.patch after the wsh
+series, to the WebAssembly build and to the native build that makes the snapshots). Generic: no
+browser code, a candidate for pve-qemu's wsh series and upstream.
+
+The sun4u page starts from a migration stream of the machine at wisp's prompt, saved by a native
+QEMU. Resumed, the machine ran (the CPU in Linux's idle loop, timers going) but no interrupt from
+the on-board devices reached the CPU, so the serial console stayed silent: neither the echo of a
+key nor the next prompt came. The sabre host bridge had no VMState at all, so the interrupt
+mapping registers came back with their valid bits clear (the guest's IMR writes from boot were
+lost), the request it was waiting to have cleared was forgotten, and the PCI control and reset
+registers were back at their reset values.
+
+This gives the sabre a VMState (the PCI and OBIO interrupt mapping registers, the lines that are
+up, the outstanding request, the PCI control registers and the reset status) and the sparc64 CPU a
+subsection with SOFTINT (where Linux takes its tick/stick timer interrupts) and the interrupt
+vector it holds (ivec_status, ivec_data), sent only when one is set; after loading it the CPU's
+pending interrupt is worked out again. The sun4u IOMMU still has no VMState (wisp's shell does no
+DMA); a machine with a disk would need it as well.
+
+Checked natively: the snapshot resumes to a prompt and clock-check.py (QEMU stopped 10 s out of 15)
+gives 1.000; without the patch the console never answers after the resume.
+
+diff --git a/hw/pci-host/sabre.c b/hw/pci-host/sabre.c
+index 0a5df97d..41ad085f 100644
+--- a/hw/pci-host/sabre.c
++++ b/hw/pci-host/sabre.c
+@@ -37,6 +37,7 @@
+ #include "qapi/error.h"
+ #include "qemu/log.h"
+ #include "qemu/module.h"
++#include "migration/vmstate.h"
+ #include "system/runstate.h"
+ #include "trace.h"
+ 
+@@ -507,6 +508,30 @@ static char *sabre_ofw_unit_address(const SysBusDevice *dev)
+                (uint32_t)(s->special_base & 0xffffffff));
+ }
+ 
++/*
++ * The interrupt mapping and clear state, the PCI control registers and the
++ * reset status. Without them a migrated machine had every interrupt mapping
++ * register disabled again (the guest's IMR writes were lost) and no
++ * interrupt from the on-board devices, the serial console among them,
++ * reached the CPU.
++ */
++static const VMStateDescription vmstate_sabre = {
++    .name = "sabre",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT64(pci_irq_in, SabreState),
++        VMSTATE_UINT32_ARRAY(pci_control, SabreState, 16),
++        VMSTATE_UINT32_ARRAY(pci_irq_map, SabreState, 8),
++        VMSTATE_UINT32_ARRAY(pci_err_irq_map, SabreState, 4),
++        VMSTATE_UINT32_ARRAY(obio_irq_map, SabreState, 32),
++        VMSTATE_UINT32(irq_request, SabreState),
++        VMSTATE_UINT32(reset_control, SabreState),
++        VMSTATE_UINT32(nr_resets, SabreState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ static const Property sabre_properties[] = {
+     DEFINE_PROP_UINT64("special-base", SabreState, special_base, 0),
+     DEFINE_PROP_UINT64("mem-base", SabreState, mem_base, 0),
+@@ -519,6 +544,7 @@ static void sabre_class_init(ObjectClass *klass, const void *data)
+ 
+     dc->realize = sabre_realize;
+     device_class_set_legacy_reset(dc, sabre_reset);
++    dc->vmsd = &vmstate_sabre;
+     device_class_set_props(dc, sabre_properties);
+     dc->fw_name = "pci";
+     sbc->explicit_ofw_unit_address = sabre_ofw_unit_address;
+diff --git a/target/sparc/machine.c b/target/sparc/machine.c
+index bbb5980d..2bbd4ba7 100644
+--- a/target/sparc/machine.c
++++ b/target/sparc/machine.c
+@@ -268,6 +268,43 @@ static int cpu_pre_save(void *opaque)
+     return 0;
+ }
+ 
++#ifdef TARGET_SPARC64
++/*
++ * The CPU's interrupt state on sun4u: SOFTINT (the tick and stick compare
++ * matches, where Linux takes its timer interrupt, and the software
++ * interrupts) and the interrupt vector the CPU holds until the guest
++ * answers it (ivec_status, ivec_data). Sent only when one is set.
++ */
++static bool sparc64_irq_needed(void *opaque)
++{
++    SPARCCPU *cpu = opaque;
++
++    return cpu->env.softint || cpu->env.ivec_status;
++}
++
++static int sparc64_irq_post_load(void *opaque, int version_id)
++{
++    SPARCCPU *cpu = opaque;
++
++    cpu_check_irqs(&cpu->env);
++    return 0;
++}
++
++static const VMStateDescription vmstate_sparc64_irq = {
++    .name = "cpu/sparc64_irq",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .needed = sparc64_irq_needed,
++    .post_load = sparc64_irq_post_load,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(env.softint, SPARCCPU),
++        VMSTATE_UINT64(env.ivec_status, SPARCCPU),
++        VMSTATE_UINT64_ARRAY(env.ivec_data, SPARCCPU, 3),
++        VMSTATE_END_OF_LIST()
++    }
++};
++#endif
++
+ /* 32-bit SPARC retains migration compatibility with older versions
+  * of QEMU; 64-bit SPARC has had a migration break since then, so the
+  * versions are different.
+@@ -388,6 +425,11 @@ const VMStateDescription vmstate_sparc_cpu = {
+         &vmstate_solaris_idle_mp,
+         NULL
+     },
++#else
++    .subsections = (const VMStateDescription * const []) {
++        &vmstate_sparc64_irq,
++        NULL
++    },
+ #endif
+ 
+ };

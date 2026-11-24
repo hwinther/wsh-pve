@@ -6,7 +6,7 @@
     <title>Browser SPARC</title>
     <meta
       name="description"
-      content="A SPARCstation 5 emulated in the browser: QEMU built for WebAssembly, OpenBIOS and wisp's Linux shell on the serial console."
+      content="A SPARCstation 5 emulated in the browser, and a sun4u, a PC and an Arm virt machine: QEMU built for WebAssembly and wisp's Linux shell on the serial console."
     />
     <link rel="icon" href="../favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="xterm.css" />
@@ -88,6 +88,30 @@
         opacity: 0.5;
         cursor: default;
       }
+      nav#arches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 12px 0 0;
+        font-size: 0.9rem;
+      }
+      nav#arches a {
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--panel);
+        text-decoration: none;
+      }
+      nav#arches a[aria-current="page"] {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--panel);
+      }
+      #machine {
+        margin: 8px 0 0;
+        font-size: 0.9rem;
+        min-height: 1.5em;
+      }
       .term-wrap {
         background: var(--term-bg);
         border: 1px solid var(--border);
@@ -115,12 +139,19 @@
       <p>
         A SPARCstation 5 emulated in this page: QEMU built for WebAssembly with its TCG interpreter,
         OpenBIOS as the firmware, and <a href="../guides/wisp/">wisp</a>, a one-program Linux, with its
-        shell on the serial console. Nothing leaves the browser.
-        <a href="../guides/browser-sparc/">How it works</a>.
+        shell on the serial console. wisp's other machines run the same way: pick one below. Nothing
+        leaves the browser. <a href="../guides/browser-sparc/">How it works</a>.
       </p>
+      <nav id="arches" aria-label="Machine">
+        <a data-arch="sparc32" href="./">SPARCstation 5 (sparc32)</a>
+        <a data-arch="sparc64" href="?arch=sparc64">Sun Ultra (sparc64)</a>
+        <a data-arch="x86_64" href="?arch=x86_64">PC (x86_64)</a>
+        <a data-arch="aarch64" href="?arch=aarch64">Arm virt (aarch64)</a>
+      </nav>
+      <p id="machine"></p>
       <div class="bar">
         <span id="status" role="status" aria-live="polite">Starting...</span>
-        <a id="mode" href="?cold">Boot from OpenBIOS instead (a few minutes)</a>
+        <a id="mode" href="?cold">Boot from the firmware instead (minutes)</a>
         <button id="restart" type="button" disabled>Restart</button>
       </div>
       <div class="term-wrap"><div id="terminal"></div></div>
@@ -128,7 +159,7 @@
         Try <code>help</code>, <code>info</code>, <code>bench</code>, <code>mandel</code> and
         <code>banner</code>; <code>poweroff</code> stops the machine. The emulated CPU runs in QEMU's
         interpreter compiled to WebAssembly, roughly 100 times slower than QEMU on a PC, so
-        <code>bench</code> takes about half a minute.
+        <code>bench</code> takes about 40 seconds on each of the machines.
       </p>
     </main>
     <script src="xterm.js"></script>

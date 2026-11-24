@@ -2,12 +2,15 @@
 # Builds QEMU's libraries for the wasm64 Emscripten host from Debian source packages (apt-get source,
 # upstream sources only: --skip-patches), the way QEMU's tests/docker/dockerfiles/emsdk-wasm64-cross.docker
 # builds them from upstream tarballs: zlib, libffi, pcre2 (glib's regex; the emsdk image lets glib's
-# meson fetch it as a subproject instead), pixman and glib, static, into $TARGET.
+# meson fetch it as a subproject instead), pixman and glib, static, into $TARGET; and libfdt (from
+# dtc's Debian source package, device-tree-compiler), which the Arm virt machine needs: QEMU's own
+# dtc subproject is a git wrap, which Debian's tarball doesn't carry and --disable-download won't fetch.
 #
 #   build-deps.sh <work dir>
 #
 # Environment: TARGET (install prefix, default /builddeps/target), JOBS (default: nproc), and the
-# source package of each library as <package>[=<version>|/<suite>] (ZLIB, LIBFFI, PCRE2, PIXMAN, GLIB).
+# source package of each library as <package>[=<version>|/<suite>] (ZLIB, LIBFFI, PCRE2, PIXMAN, GLIB,
+# DTC).
 set -eu
 
 WORK=$1
@@ -18,6 +21,7 @@ LIBFFI=${LIBFFI:-libffi=3.5.2-4}
 PCRE2=${PCRE2:-pcre2/trixie}
 PIXMAN=${PIXMAN:-pixman/trixie}
 GLIB=${GLIB:-glib2.0/trixie}
+DTC=${DTC:-device-tree-compiler/trixie}
 
 export CFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1"
 export CXXFLAGS="$CFLAGS"
@@ -123,6 +127,31 @@ meson setup _build --prefix="$TARGET" --cross-file="$WORK/cross.meson" --default
 # As in the emsdk image: Emscripten lacks these in the final link, which meson doesn't detect.
 sed -i -E '/#define HAVE_POSIX_SPAWN 1/d; /#define HAVE_PTHREAD_GETNAME_NP 1/d' _build/config.h
 meson install -C _build >/dev/null
+
+# libfdt: its meson.build always builds a shared library as well, which Emscripten refuses, so the
+# library's sources (the list in libfdt/Makefile.libfdt) are compiled straight into a static one.
+# QEMU looks for it with meson's find_library(), which only searches the compiler's own library
+# directories, so the archive goes into Emscripten's wasm64 sysroot as well.
+source_pkg "$DTC"
+cd libfdt
+srcs=$(sed -n '/^LIBFDT_SRCS/,/[^\\]$/p' Makefile.libfdt | sed 's/^LIBFDT_SRCS *= *//; s/\\//')
+for c in $srcs; do emcc $CFLAGS -I. -c "$c" -o "${c%.c}.o"; done
+# shellcheck disable=SC2046
+emar rcs "$TARGET/lib/libfdt.a" $(for c in $srcs; do echo "${c%.c}.o"; done)
+cp "$TARGET/lib/libfdt.a" "$(em-config CACHE)/sysroot/lib/wasm64-emscripten/"
+cp fdt.h libfdt.h libfdt_env.h "$TARGET/include/"
+dtcver=$(sed -n "s/^ *version: *'\([0-9.]*\)'.*/\1/p" ../meson.build | head -n 1)
+cat > "$TARGET/lib/pkgconfig/libfdt.pc" <<EOF
+prefix=$TARGET
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: libfdt
+Description: Flat Device Tree manipulation
+Version: ${dtcver:-1.7.2}
+Libs: -L\${libdir} -lfdt
+Cflags: -I\${includedir}
+EOF
 
 log "done:"
 cat "$TARGET/versions" >&2

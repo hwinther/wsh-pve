@@ -1081,33 +1081,37 @@ host (36 boots, 2026-11-21).
 - CI boots the published package or a pull request's QEMU binaries (see "CI"); a pull request that
   changes `openbios/**` is not checked with its own firmware, and TCI is not run in CI.
 
-## Browser SPARC: wisp in a WebAssembly qemu-system-sparc
+## Browser SPARC: wisp in a WebAssembly QEMU
 
 The docs site's Browser SPARC page (`/browser-sparc/`, guide "Browser SPARC") runs this kernel's
 interactive mode in the browser: `qemu-system-sparc -M SS-5 -m 128` built for WebAssembly, OpenBIOS,
-and `console=ttyS0 wisp=shell` with the serial console in an xterm.js terminal. `web/Dockerfile`
-builds it, from Debian packages only:
+and `console=ttyS0 wisp=shell` with the serial console in an xterm.js terminal; `?arch=sparc64`,
+`x86_64` and `aarch64` run the other three machines of the table above the same way (sun4u with
+OpenBIOS, pc with SeaBIOS, virt with no firmware; `docs/public/browser-sparc/machines.json` has
+their options). `web/Dockerfile` builds it, from Debian packages only:
 
 - QEMU 11.1.3 from Debian's source package (`apt-get source qemu`, the release tarball without
   Debian's patches) plus pve-qemu's `wsh/` patches from `submodules/pve-qemu.patch`: all 65 apply
   to upstream with no fuzz. pve-qemu's Proxmox Backup additions need libraries that aren't built for
   Emscripten, so it is not the package's tree. Configured as QEMU's CI wasm64 jobs (`--static
-  --cpu=wasm64 --disable-tools --enable-tcg-interpreter`) for `sparc-softmmu` only, without optional
+  --cpu=wasm64 --disable-tools --enable-tcg-interpreter`) for `sparc-softmmu`, `sparc64-softmmu`,
+  `x86_64-softmmu` and `aarch64-softmmu` in one tree, one WebAssembly module each, without optional
   features.
 - Emscripten 6.0.5 from Debian sid (QEMU's CI uses emsdk 4.0.10; trixie's 3.1.69 is older than
   QEMU's wasm64 support was written against). Two differences from the emsdk build: Emscripten 6 no
   longer defines `EMSCRIPTEN`, which QEMU tests (passed in `EMCC_CFLAGS`), and Debian's `+ds` tarball
   has no Python wheels, firmware or device trees (meson, pycotap and qemu.qmp from Debian packages,
   `--disable-install-blobs`, device trees compiled with `dtc`).
-- zlib, libffi 3.5.2, pcre2, pixman and glib 2.84 built with `emcc` from Debian source packages
+- zlib, libffi 3.5.2, pcre2, pixman, glib 2.84 and libfdt (for the Arm virt machine) built with
+  `emcc` from Debian source packages
   (`web/scripts/build-deps.sh`, as the emsdk image builds them from upstream tarballs; pcre2 is built
   separately where the emsdk image lets glib's meson fetch it).
-- This kernel (tier 1, `TIER2=0 ./build.sh sparc32`), OpenBIOS from the published `pve-qemu-kvm`,
-  and xterm.js from Debian's `libjs-xterm`.
-- A snapshot: `web/scripts/make-snapshot.py` boots the same machine on a native
-  `qemu-system-sparc` built from the same tree, waits for the prompt and migrates it to a file
-  (4.8 MB); the page starts with `-incoming file:...` and has a running prompt in under a second,
-  where a boot from OpenBIOS takes 162-167 s in Chromium.
+- This kernel (tier 1, `TIER2=0 ./build.sh sparc32 sparc64 x86_64 aarch64`), OpenBIOS and SeaBIOS
+  from the published `pve-qemu-kvm`, and xterm.js from Debian's `libjs-xterm`.
+- A snapshot per machine: `web/scripts/make-snapshot.py` boots it on a native QEMU built from the
+  same tree, waits for the prompt and migrates it to a file; the page starts with
+  `-incoming file:...` and has a running prompt in about a second, where a boot from the SS-5's
+  OpenBIOS takes 162-167 s in Chromium (the guide has every machine's numbers).
 
 Measured in Chromium: `bench` takes 31-47 s of wall time, against 0.37 s under TCG in the published
 package; `mandel`'s 20 rows match `tests/mandel.txt`. The guest's clock keeps to the wall clock since
