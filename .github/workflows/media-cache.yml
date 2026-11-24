@@ -1,0 +1,189 @@
+name: Media cache
+
+# Keeps the Actions cache entries of the downloaded test media present on main, so pull requests
+# restore them instead of downloading from the third-party mirrors again (e2e/README.md,
+# "Downloaded media in the Actions cache"). Only runs on main save media; a pull request restores
+# main's entry and never saves its own copy. Here each entry is looked up without downloading it;
+# on a miss (a new pin, or an entry GitHub evicted after 7 days without use) the medium is
+# downloaded, checked against its pin and saved. No tests.
+#
+# Each job uses the same key and path as the workflow that restores the entry (the cache version
+# depends on the path); change both together:
+#   alpine  e2e.yml, job boot (pins and key in e2e/pve/boot-media.sh)
+#   netbsd  sparc-lab-netbsd.yml, job netbsd (pins in e2e/sparc/targets.py, MEDIA)
+#   doom    wisp-boot.yml, job boot; wisp-fb.yml restores it too (pins in e2e/wisp/doom/fetch.py)
+#   freedos 3dfx-dos.yml, sparc-lab-dos.yml and audio-matrix.yml, one entry for the three (pin in
+#           e2e/sparc/targets_dos.py, FREEDOS_ZIP; key from fetch_media.py --key)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * *"
+  # A new pin is cached as soon as it lands
+  push:
+    branches:
+      - main
+    paths:
+      - "e2e/pve/boot-media.sh"
+      - "e2e/sparc/targets.py"
+      - "e2e/sparc/targets_dos.py"
+      - "e2e/sparc/fetch_media.py"
+      - "e2e/wisp/doom/fetch.py"
+      - ".github/workflows/media-cache.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  alpine:
+    name: Alpine virt CDs (e2e boot)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache key
+        id: key
+        run: echo "key=$(sh e2e/pve/boot-media.sh key)" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the entry
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/iso
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Download and check
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: sh e2e/pve/boot-media.sh fetch "$RUNNER_TEMP/iso"
+
+      - name: Save
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/iso
+          key: ${{ steps.key.outputs.key }}
+
+  netbsd:
+    name: NetBSD CD (${{ matrix.iso }})
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The CDs of sparc-lab-netbsd.yml's matrix
+        iso:
+          - NetBSD-11.1-sparc64.iso
+          - NetBSD-9.3-sparc64.iso
+          - NetBSD-9.3-sparc.iso
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Look up the entry
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
+          lookup-only: true
+
+      - name: Download and check
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        env:
+          ISO: ${{ matrix.iso }}
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/netbsd-cd" "$ISO"
+
+      - name: Save
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
+
+  freedos:
+    name: FreeDOS 1.4 Floppy Edition (3dfx DOS, sparc lab DOS, audio matrix)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache key
+        id: key
+        run: echo "key=$(python3 e2e/sparc/fetch_media.py --key FD14-FloppyEdition.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the entry
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Download and check
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip
+
+      - name: Save
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.key.outputs.key }}
+
+  doom:
+    name: fbDOOM and Freedoom archives (wisp boot)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Look up the entry
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/doom-inputs/*.tar.gz
+            ${{ runner.temp }}/doom-inputs/*.zip
+          key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
+          lookup-only: true
+
+      - name: Download and check
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: python3 e2e/wisp/doom/fetch.py "$RUNNER_TEMP/doom-inputs"
+
+      - name: Save
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/doom-inputs/*.tar.gz
+            ${{ runner.temp }}/doom-inputs/*.zip
+          key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}

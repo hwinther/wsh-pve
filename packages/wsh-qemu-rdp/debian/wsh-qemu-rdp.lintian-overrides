@@ -1,0 +1,7 @@
+# The postinst restarts the running instances of the template unit (one per VM) after an upgrade:
+# deb-systemd-invoke takes unit names, and the instances can't be known at build time, so it calls
+# `systemctl try-restart 'wsh-qemu-rdp@*.service'` (only when systemd runs).
+wsh-qemu-rdp: maintainer-script-calls-systemctl [postinst:*]
+# Each instance belongs to one VM's D-Bus display bus (qemu-server's wsh-dbus-display@<vmid>):
+# enabled, it starts with that bus and nothing else, which is what WantedBy= on it does
+wsh-qemu-rdp: systemd-service-file-refers-to-unusual-wantedby-target wsh-dbus-display@%i.service [usr/lib/systemd/system/wsh-qemu-rdp@.service]

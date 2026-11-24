@@ -1,0 +1,5 @@
+# The user of wsh-qemu-rdp@<vmid>.service: a member of wsh-display, the group that may use a VM's
+# D-Bus display bus (qemu-server creates it too; created here if qemu-server isn't there yet)
+g wsh-display - -
+u wsh-qemu-rdp - "qemu-rdp, RDP server for the D-Bus display" /nonexistent /usr/sbin/nologin
+m wsh-qemu-rdp wsh-display

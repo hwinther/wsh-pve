@@ -1,0 +1,53 @@
+qemu-rdp: relative mouse motion for a guest without an absolute pointer
+
+qemu-rdp passed every pointer position the client sent to QEMU as SetAbsPosition, which QEMU refuses
+while the guest's mouse is relative ("Mouse is not absolute"): a PS/2 mouse without a USB tablet (a
+Windows 9x VM) or the Sun mouse of a SPARCstation, where only the buttons then arrived.
+
+- While the D-Bus Mouse's IsAbsolute is false, a position goes to QEMU as RelMotion, the difference
+  to the client's previous position (the guest's own acceleration applies, as with VNC's relative
+  mode).
+- A client in relative mouse mode (RelMove) gets RelMotion too, and the middle button is passed on.
+
+For wsh-pve (packages/wsh-qemu-rdp), against qemu-display at the commit upstream.env pins.
+---
+diff --git a/qemu-rdp/src/server/input.rs b/qemu-rdp/src/server/input.rs
+index a38a4d8..85e320c 100644
+--- a/qemu-rdp/src/server/input.rs
++++ b/qemu-rdp/src/server/input.rs
+@@ -34,6 +34,8 @@ impl RdpServerInputHandler for InputHandler {
+ }
+ 
+ async fn input_receive_task(mut rx: Receiver<InputEvent>, console: Console) {
++    // The last position the client sent, for a guest without an absolute pointer
++    let mut last: Option<(u16, u16)> = None;
+     loop {
+         let res = match rx.recv().await {
+             Some(InputEvent::Keyboard(ev)) => match ev {
+@@ -52,8 +54,25 @@ async fn input_receive_task(mut rx: Receiver<InputEvent>, console: Console) {
+             Some(InputEvent::Mouse(ev)) => match ev {
+                 MouseEvent::Move { x, y } => {
+                     tracing::trace!(?x, ?y);
+-                    console.mouse.set_abs_position(x.into(), y.into()).await
++                    // A guest with only a relative pointer (a PS/2 or Sun mouse, no USB tablet)
++                    // refuses SetAbsPosition: it gets the motion since the last position instead
++                    let previous = last.replace((x, y));
++                    if console.mouse.is_absolute().await.unwrap_or(true) {
++                        console.mouse.set_abs_position(x.into(), y.into()).await
++                    } else if let Some((px, py)) = previous {
++                        let (dx, dy) = (i32::from(x) - i32::from(px), i32::from(y) - i32::from(py));
++                        if dx != 0 || dy != 0 {
++                            console.mouse.rel_motion(dx, dy).await
++                        } else {
++                            Ok(())
++                        }
++                    } else {
++                        Ok(())
++                    }
+                 }
++                MouseEvent::RelMove { x, y } => console.mouse.rel_motion(x, y).await,
++                MouseEvent::MiddlePressed => console.mouse.press(MouseButton::Middle).await,
++                MouseEvent::MiddleReleased => console.mouse.release(MouseButton::Middle).await,
+                 MouseEvent::RightPressed => console.mouse.press(MouseButton::Right).await,
+                 MouseEvent::RightReleased => console.mouse.release(MouseButton::Right).await,
+                 MouseEvent::LeftPressed => console.mouse.press(MouseButton::Left).await,

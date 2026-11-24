@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..72f7e78 100644
+index bc240a0..fb1c12c 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,98 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,100 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -168,6 +168,8 @@ index bc240a0..72f7e78 100644
 +wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
 +wsh/0131-ui-dbus-add-display-dbus-refresh-ms-N.patch
 +wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch
++wsh/0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-.patch
++wsh/0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu.patch
 +wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch
 +wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
 +wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
@@ -18203,10 +18205,10 @@ index 0000000..5e1875f
 + }
 diff --git a/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
 new file mode 100644
-index 0000000..00bcd8f
+index 0000000..7100279
 --- /dev/null
 +++ b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,440 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] ui/dbus: read GL scanouts back for VNC next to -display
 + dbus,gl=on
@@ -18242,6 +18244,10 @@ index 0000000..00bcd8f
 +The EGL work saves and restores the current context, as a GL device's
 +own context (virglrenderer's) may be current on the main loop.
 +dpy_gl_release_dmabuf now releases the texture the import made.
++
++The readback is built only with CONFIG_OPENGL, and the dmabuf release
++with CONFIG_OPENGL and CONFIG_GBM both (meson finds GBM without
++OpenGL too): with --disable-opengl the D-Bus console is upstream's.
 +
 +Tested on Linux with the 3dfx binary's surfaceless EGL (llvmpipe and
 +/dev/udmabuf): qemu-3dfx's Glide guest through dbus,gl=on with a VNC
@@ -18336,7 +18342,7 @@ index 0000000..00bcd8f
 +                              DisplaySurface *surface)
 + {
 +diff --git a/ui/dbus-console.c b/ui/dbus-console.c
-+index e1ac068..6eb9d19 100644
++index e1ac068..6d5d4b0 100644
 +--- a/ui/dbus-console.c
 ++++ b/ui/dbus-console.c
 +@@ -28,6 +28,9 @@
@@ -18518,7 +18524,7 @@ index 0000000..00bcd8f
 +     dbus_display_console_set_size(ddc, width, height);
 + }
 + 
-++#ifdef CONFIG_GBM
+++#if defined(CONFIG_OPENGL) && defined(CONFIG_GBM)
 ++static void
 ++dbus_gl_release_dmabuf(DisplayChangeListener *dcl,
 ++                       QemuDmaBuf *dmabuf)
@@ -18958,6 +18964,604 @@ index 0000000..e2e9417
 +     qtest_add_func("/dbus-display/keyboard", test_dbus_display_keyboard);
 +     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
 +         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
+diff --git a/debian/patches/wsh/0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-.patch b/debian/patches/wsh/0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-.patch
+new file mode 100644
+index 0000000..0db198f
+--- /dev/null
++++ b/debian/patches/wsh/0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-.patch
+@@ -0,0 +1,244 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc64: migrate the sabre, the IOMMU, the ebus and the
++ CPU's interrupts
++
++Nothing in sun4u's interrupt path had migration state: the sabre host
++bridge had no VMState at all, nor did the sun4u IOMMU, the ebus or the
++sabre's own PCI function, and the sparc64 CPU's section leaves out
++SOFTINT and the interrupt vector it holds. After a migration, or a
++loadvm (which resets the machine before it loads the state), the
++machine ran (the CPU in the guest's idle loop, its timers going) but no
++interrupt from the on-board devices reached the CPU: the interrupt
++mapping registers came back with their valid bits clear (the guest's
++IMR writes from boot were lost), the request the sabre was waiting to
++have cleared was forgotten, and the serial console never answered
++again. With a disk the IOMMU came back off, so the IDE controller's DMA
++would have gone to the DVMA address taken as a physical address; and
++the ebus's BAR0 (which OpenBSD reads) was unmapped, its command
++register back at reset.
++
++This gives the sabre a VMState (the PCI and OBIO interrupt mapping
++registers, the lines that are up, the outstanding request, the PCI
++control registers and the reset status), the IOMMU one (its registers),
++the ebus and the sabre's PCI function vmstate_pci_device (their PCI
++configuration space, as the simbas behind the sabre already have), and
++the sparc64 CPU a subsection "cpu/sparc64_irq" with SOFTINT (where
++Linux takes its tick and stick timer interrupts), the interrupt vector
++(ivec_status, ivec_data) and idle_halted (wsh/0042's halt in the idle
++loop of a guest that polls for work itself), sent only when one is set.
++After loading it the CPU's pending interrupt is worked out again.
++
++sun4u has no versioned machine types, so there is no compat property,
++and the streams are not compatible either way. A stream from a QEMU
++without this no longer loads ("Unknown section or instance 'PCIHost'":
++the sabre's section was the generic PCI host bridge's, with nothing of
++the sabre's in it); resumed, such a stream gave a machine without
++interrupts anyway. A stream from this QEMU does not load into an older
++one ("Unknown section or instance 'sun4u-iommu'"); a live migration to
++an older QEMU fails and the source keeps running.
++
++The browser build (web/) carried the sabre and CPU parts as its own
++patch since its sun4u snapshot needed them; this takes them into the
++series with the IOMMU, the ebus, the sabre's PCI function and
++idle_halted added.
++
++Tested on Linux, qemu-system-sparc64 from the pve-qemu tree, each guest
++saved with savevm and restored by loadvm, by a migration to a file
++loaded with -incoming into a new process and by -loadvm in a new
++process: wisp's shell (Linux 7.3.4) answers, its uptime advancing and
++crc 64 right; Debian 7 (Linux 3.2) and FreeBSD 12.4 from an IDE disk
++answer, sleep 2 takes 2-3 s, disk reads give the same md5 as at boot
++and a ping to the user network's gateway gets every reply. Without
++this patch the console is silent after each restore. Through PVE,
++Debian 7 passes qm snapshot --vmstate 1 with qm rollback, and qm
++suspend --todisk with qm start. "info pci" and the memory map are the
++same on both sides of a migration. The next patch adds a qtest.
++---
++ hw/pci-host/sabre.c      | 28 +++++++++++++++++++++++++
++ hw/sparc64/sun4u.c       |  6 ++++++
++ hw/sparc64/sun4u_iommu.c | 18 ++++++++++++++++
++ target/sparc/machine.c   | 45 ++++++++++++++++++++++++++++++++++++++++
++ 4 files changed, 97 insertions(+)
++
++diff --git a/hw/pci-host/sabre.c b/hw/pci-host/sabre.c
++index 0a5df97d19..ea08e2eda8 100644
++--- a/hw/pci-host/sabre.c
+++++ b/hw/pci-host/sabre.c
++@@ -37,6 +37,7 @@
++ #include "qapi/error.h"
++ #include "qemu/log.h"
++ #include "qemu/module.h"
+++#include "migration/vmstate.h"
++ #include "system/runstate.h"
++ #include "trace.h"
++ 
++@@ -485,6 +486,8 @@ static void sabre_pci_class_init(ObjectClass *klass, const void *data)
++      * host-facing part, which can't be device_add'ed, yet.
++      */
++     dc->user_creatable = false;
+++    /* Its PCI configuration space, as the simbas behind it migrate theirs */
+++    dc->vmsd = &vmstate_pci_device;
++ }
++ 
++ static const TypeInfo sabre_pci_info = {
++@@ -507,6 +510,30 @@ static char *sabre_ofw_unit_address(const SysBusDevice *dev)
++                (uint32_t)(s->special_base & 0xffffffff));
++ }
++ 
+++/*
+++ * The interrupt mapping and clear state, the PCI control registers and the
+++ * reset status. Without them a migrated machine had every interrupt mapping
+++ * register disabled again (the guest's IMR writes were lost) and no
+++ * interrupt from the on-board devices, the serial console among them,
+++ * reached the CPU.
+++ */
+++static const VMStateDescription vmstate_sabre = {
+++    .name = "sabre",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT64(pci_irq_in, SabreState),
+++        VMSTATE_UINT32_ARRAY(pci_control, SabreState, 16),
+++        VMSTATE_UINT32_ARRAY(pci_irq_map, SabreState, 8),
+++        VMSTATE_UINT32_ARRAY(pci_err_irq_map, SabreState, 4),
+++        VMSTATE_UINT32_ARRAY(obio_irq_map, SabreState, 32),
+++        VMSTATE_UINT32(irq_request, SabreState),
+++        VMSTATE_UINT32(reset_control, SabreState),
+++        VMSTATE_UINT32(nr_resets, SabreState),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const Property sabre_properties[] = {
++     DEFINE_PROP_UINT64("special-base", SabreState, special_base, 0),
++     DEFINE_PROP_UINT64("mem-base", SabreState, mem_base, 0),
++@@ -519,6 +546,7 @@ static void sabre_class_init(ObjectClass *klass, const void *data)
++ 
++     dc->realize = sabre_realize;
++     device_class_set_legacy_reset(dc, sabre_reset);
+++    dc->vmsd = &vmstate_sabre;
++     device_class_set_props(dc, sabre_properties);
++     dc->fw_name = "pci";
++     sbc->explicit_ofw_unit_address = sabre_ofw_unit_address;
++diff --git a/hw/sparc64/sun4u.c b/hw/sparc64/sun4u.c
++index 8e17e9cd9d..d8c2062719 100644
++--- a/hw/sparc64/sun4u.c
+++++ b/hw/sparc64/sun4u.c
++@@ -439,6 +439,12 @@ static void ebus_class_init(ObjectClass *klass, const void *data)
++     k->revision = 0x01;
++     k->class_id = PCI_CLASS_BRIDGE_OTHER;
++     device_class_set_props(dc, ebus_properties);
+++    /*
+++     * Its PCI configuration space: without it a migrated machine had the
+++     * command register and BAR0 (which OpenBSD reads) back at their reset
+++     * values, BAR0 unmapped.
+++     */
+++    dc->vmsd = &vmstate_pci_device;
++ }
++ 
++ static const TypeInfo ebus_info = {
++diff --git a/hw/sparc64/sun4u_iommu.c b/hw/sparc64/sun4u_iommu.c
++index fe9d47b822..51d4a8bb80 100644
++--- a/hw/sparc64/sun4u_iommu.c
+++++ b/hw/sparc64/sun4u_iommu.c
++@@ -30,6 +30,7 @@
++ #include "system/address-spaces.h"
++ #include "qemu/log.h"
++ #include "qemu/module.h"
+++#include "migration/vmstate.h"
++ #include "trace.h"
++ 
++ 
++@@ -306,12 +307,29 @@ static void iommu_realize(DeviceState *ds, Error **errp)
++     sysbus_init_mmio(sbd, &s->iomem);
++ }
++ 
+++/*
+++ * The control, TSB base and flush registers. Without them a migrated
+++ * machine had the IOMMU off again, and the DMA of a PCI device (the IDE
+++ * controller, the NIC) went to its DVMA address taken as a physical
+++ * address instead of through the guest's TSB.
+++ */
+++static const VMStateDescription vmstate_iommu = {
+++    .name = "sun4u-iommu",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT64_ARRAY(regs, IOMMUState, IOMMU_NREGS),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static void iommu_class_init(ObjectClass *klass, const void *data)
++ {
++     DeviceClass *dc = DEVICE_CLASS(klass);
++ 
++     device_class_set_legacy_reset(dc, iommu_reset);
++     dc->realize = iommu_realize;
+++    dc->vmsd = &vmstate_iommu;
++ }
++ 
++ static const TypeInfo iommu_info = {
++diff --git a/target/sparc/machine.c b/target/sparc/machine.c
++index bbb5980d66..c27a80ea6d 100644
++--- a/target/sparc/machine.c
+++++ b/target/sparc/machine.c
++@@ -268,6 +268,46 @@ static int cpu_pre_save(void *opaque)
++     return 0;
++ }
++ 
+++#ifdef TARGET_SPARC64
+++/*
+++ * The CPU's interrupt state on sun4u: SOFTINT (the tick and stick compare
+++ * matches, where Linux takes its timer interrupt, and the software
+++ * interrupts), the interrupt vector the CPU holds until the guest answers
+++ * it (ivec_status, ivec_data) and whether the CPU is halted in the idle
+++ * loop of a guest that polls for work itself (idle_halted, see
+++ * sparc64_idle.c). Sent only when one of them is set.
+++ */
+++static bool sparc64_irq_needed(void *opaque)
+++{
+++    SPARCCPU *cpu = opaque;
+++
+++    return cpu->env.softint || cpu->env.ivec_status || cpu->env.idle_halted;
+++}
+++
+++static int sparc64_irq_post_load(void *opaque, int version_id)
+++{
+++    SPARCCPU *cpu = opaque;
+++
+++    cpu_check_irqs(&cpu->env);
+++    return 0;
+++}
+++
+++static const VMStateDescription vmstate_sparc64_irq = {
+++    .name = "cpu/sparc64_irq",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = sparc64_irq_needed,
+++    .post_load = sparc64_irq_post_load,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT32(env.softint, SPARCCPU),
+++        VMSTATE_UINT64(env.ivec_status, SPARCCPU),
+++        VMSTATE_UINT64_ARRAY(env.ivec_data, SPARCCPU, 3),
+++        VMSTATE_BOOL(env.idle_halted, SPARCCPU),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++#endif
+++
++ /* 32-bit SPARC retains migration compatibility with older versions
++  * of QEMU; 64-bit SPARC has had a migration break since then, so the
++  * versions are different.
++@@ -388,6 +428,11 @@ const VMStateDescription vmstate_sparc_cpu = {
++         &vmstate_solaris_idle_mp,
++         NULL
++     },
+++#else
+++    .subsections = (const VMStateDescription * const []) {
+++        &vmstate_sparc64_irq,
+++        NULL
+++    },
++ #endif
++ 
++ };
+diff --git a/debian/patches/wsh/0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu.patch b/debian/patches/wsh/0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu.patch
+new file mode 100644
+index 0000000..47fab3f
+--- /dev/null
++++ b/debian/patches/wsh/0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu.patch
+@@ -0,0 +1,342 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sabre's, the IOMMU's and the ebus's
++ migration on sun4u
++
++sun4u-migration-test saves the machine to a file with one QEMU and loads
++it into another with -incoming:
++
++sabre: the interrupt mapping registers of the IDE controller, the serial
++console and a pciB slot enabled, a PCI control register written, an IDE
++request outstanding and the NIC's interrupt waiting behind it. On the
++other side the registers read as on the source, and when the guest
++clears the IDE request the NIC's comes, then the next IDE interrupt.
++
++iommu: the control and TSB base registers read as written.
++
++pci-config: the ebus's BAR0, command register and interrupt line, and
++the interrupt line of the sabre's own PCI function, read as written
++(simba A's bus numbers are set first, as the firmware does).
++
++The sabre's interrupt lines are driven from the test and its requests
++intercepted, as in sun4u-sabre-irq-test. The CPU's subsection is not
++covered: the qtest accelerator runs no guest code.
++
++Tested: the three cases pass; without the previous patch each fails
++(sabre: an IMR reads 0x7e0 instead of 0x800007e0, iommu: the control
++register reads 0, pci-config: BAR0 reads 0).
++---
++ tests/qtest/meson.build            |   3 +-
++ tests/qtest/sun4u-migration-test.c | 290 +++++++++++++++++++++++++++++
++ 2 files changed, 292 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-migration-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 4ba5babeb9..996c71aa45 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -224,7 +224,8 @@ qtests_sparc64 = \
++   qtests_filter + \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++    'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test',
++-   'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test']
+++   'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test',
+++   'sun4u-migration-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-migration-test.c b/tests/qtest/sun4u-migration-test.c
++new file mode 100644
++index 0000000000..da15cbec60
++--- /dev/null
+++++ b/tests/qtest/sun4u-migration-test.c
++@@ -0,0 +1,290 @@
+++/*
+++ * QTest: the sabre's, the IOMMU's and the ebus's state across a migration
+++ * on sun4u
+++ *
+++ * The sabre host bridge, the sun4u IOMMU and the PCI functions of the ebus
+++ * and of the sabre had no migration state. After a migration (or a loadvm,
+++ * which resets the machine first) the interrupt mapping registers were back
+++ * at their reset values with their valid bits clear, the outstanding
+++ * interrupt request was forgotten and the IOMMU was off: no interrupt from
+++ * the on-board devices reached the CPU (the serial console stayed silent),
+++ * DMA went to the DVMA address taken as a physical address, and the ebus's
+++ * BAR0 was unmapped.
+++ *
+++ * The machine is saved to a file by one QEMU and loaded by another with
+++ * -incoming. The sabre's interrupt lines are driven from the test, and its
+++ * requests go to the test instead of the CPU.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qobject/qdict.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
+++#define IMR_ENABLED     0x80000000
+++
+++/* ino 0x20: the IDE controller, an OBIO interrupt */
+++#define INO_HDD         0x20
+++#define OBIO_IMR_HDD    (SABRE_CONFIG + 0x1004)
+++#define OBIO_CLR_HDD    (SABRE_CONFIG + 0x1804)
+++/* ino 0x2b: the serial console, an OBIO interrupt */
+++#define OBIO_IMR_SER    (SABRE_CONFIG + 0x1000 + 0xb * 8 + 4)
+++/* ino 0x10: INTA of slot 0 of pciB, where the NIC goes */
+++#define INO_NIC         0x10
+++#define PCI_IMR_SLOT4   (SABRE_CONFIG + 0xc00 + 4 * 8 + 4)
+++#define PCI_CLR_NIC     (SABRE_CONFIG + 0x1400 + INO_NIC * 8 + 4)
+++#define PCI_CONTROL     (SABRE_CONFIG + 0x2000)
+++#define PCI_CONTROL_VAL 0x00000103
+++
+++/* PCI configuration space, little-endian: byte accesses only */
+++#define PCI_CONFIG      0x1fe01000000ULL
+++#define DEVFN_SABRE     0x00                /* 00:00.0, the sabre's own */
+++#define DEVFN_SIMBA_A   0x09                /* 00:01.1 */
+++#define DEVFN_EBUS      0x08                /* 01:01.0 */
+++#define EBUS_BAR0       0x20000000
+++
+++/* The IOMMU, at 0x200 in the sabre's registers */
+++#define IOMMU_CTRL      (SABRE_CONFIG + 0x200)
+++#define IOMMU_BASE      (SABRE_CONFIG + 0x208)
+++#define IOMMU_CTRL_VAL  0x0000000000070005ULL   /* TSB size 7, 64K, MMU_EN */
+++#define IOMMU_BASE_VAL  0x0000000000ffe000ULL
+++
+++static char sabre[64];
+++
+++static void find_sabre(QTestState *qts)
+++{
+++    int i;
+++
+++    for (i = 0; i < 64; i++) {
+++        QDict *rsp;
+++        bool found;
+++
+++        snprintf(sabre, sizeof(sabre), "/machine/unattached/device[%d]", i);
+++        rsp = qtest_qmp(qts, "{ 'execute': 'qom-get', 'arguments': "
+++                        "{ 'path': %s, 'property': 'type' } }", sabre);
+++        found = qdict_haskey(rsp, "return") &&
+++                !strcmp(qdict_get_str(rsp, "return"), "sabre");
+++        qobject_unref(rsp);
+++        if (found) {
+++            return;
+++        }
+++    }
+++    g_assert_not_reached();
+++}
+++
+++static uint64_t cfg_addr(int bus, int devfn, int reg)
+++{
+++    return PCI_CONFIG + (bus << 16) + (devfn << 8) + reg;
+++}
+++
+++static uint32_t cfg_read(QTestState *qts, int bus, int devfn, int reg,
+++                         int len)
+++{
+++    uint32_t val = 0;
+++    int i;
+++
+++    for (i = 0; i < len; i++) {
+++        val |= qtest_readb(qts, cfg_addr(bus, devfn, reg + i)) << (8 * i);
+++    }
+++    return val;
+++}
+++
+++static void cfg_write(QTestState *qts, int bus, int devfn, int reg,
+++                      uint32_t val, int len)
+++{
+++    int i;
+++
+++    for (i = 0; i < len; i++) {
+++        qtest_writeb(qts, cfg_addr(bus, devfn, reg + i), val >> (8 * i));
+++    }
+++}
+++
+++static void line(QTestState *qts, int ino, int level)
+++{
+++    qtest_set_irq_in(qts, sabre, "pbm-irq", ino, level);
+++}
+++
+++static void migrate_to_file(QTestState *qts, const char *uri)
+++{
+++    QDict *rsp;
+++    const char *status;
+++    int i;
+++
+++    qtest_qmp_assert_success(qts, "{'execute': 'migrate',"
+++                             " 'arguments': {'uri': %s}}", uri);
+++    for (i = 0; i < 3000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-migrate'}");
+++        status = qdict_haskey(rsp, "status") ? qdict_get_str(rsp, "status")
+++                                             : "";
+++        if (!strcmp(status, "completed")) {
+++            qobject_unref(rsp);
+++            return;
+++        }
+++        g_assert_cmpstr(status, !=, "failed");
+++        qobject_unref(rsp);
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/*
+++ * The destination loads the file and resumes before our QMP client has
+++ * connected, so its RESUME event is lost: poll the status instead.
+++ */
+++static void wait_running(QTestState *qts)
+++{
+++    QDict *rsp;
+++    bool running;
+++    int i;
+++
+++    for (i = 0; i < 1000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-status'}");
+++        running = !strcmp(qdict_get_str(rsp, "status"), "running");
+++        qobject_unref(rsp);
+++        if (running) {
+++            return;
+++        }
+++        g_usleep(10 * 1000);
+++    }
+++    g_error("destination not running 10 s after -incoming");
+++}
+++
+++/* Saves src to a file, quits it and loads the file into a new QEMU */
+++static QTestState *migrate(QTestState *src)
+++{
+++    g_autofree char *path = NULL;
+++    g_autofree char *uri = NULL;
+++    QTestState *dst;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4u-migration-XXXXXX.mig", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    uri = g_strdup_printf("file:%s", path);
+++    migrate_to_file(src, uri);
+++    qtest_quit(src);
+++
+++    dst = qtest_initf("-machine sun4u -nodefaults -incoming %s", uri);
+++    wait_running(dst);
+++    unlink(path);
+++    return dst;
+++}
+++
+++/*
+++ * The guest's interrupt mapping and PCI control registers, an outstanding
+++ * IDE request and a NIC interrupt waiting behind it. On the other side the
+++ * registers read as on the source, and when the guest clears the IDE
+++ * request the NIC's comes.
+++ */
+++static void test_sabre(void)
+++{
+++    static const uint64_t regs[] = {
+++        OBIO_IMR_HDD, OBIO_IMR_SER, PCI_IMR_SLOT4, PCI_CONTROL
+++    };
+++    uint32_t val[ARRAY_SIZE(regs)];
+++    QTestState *src, *dst;
+++    int i;
+++
+++    src = qtest_init("-machine sun4u -nodefaults");
+++    find_sabre(src);
+++    qtest_irq_intercept_out_named(src, sabre, "ivec-irq");
+++    qtest_writel(src, OBIO_IMR_HDD, IMR_ENABLED);
+++    qtest_writel(src, OBIO_IMR_SER, IMR_ENABLED);
+++    qtest_writel(src, PCI_IMR_SLOT4, IMR_ENABLED);
+++    qtest_writel(src, PCI_CONTROL, PCI_CONTROL_VAL);
+++    for (i = 0; i < ARRAY_SIZE(regs); i++) {
+++        val[i] = qtest_readl(src, regs[i]);
+++    }
+++    for (i = 0; i < 3; i++) {
+++        g_assert_cmphex(val[i] & IMR_ENABLED, ==, IMR_ENABLED);
+++    }
+++    g_assert_cmphex(val[3], ==, PCI_CONTROL_VAL);
+++    line(src, INO_HDD, 1);
+++    g_assert_true(qtest_get_irq(src, INO_HDD));
+++    line(src, INO_NIC, 1);
+++    g_assert_false(qtest_get_irq(src, INO_NIC));
+++
+++    dst = migrate(src);
+++    find_sabre(dst);
+++    qtest_irq_intercept_out_named(dst, sabre, "ivec-irq");
+++    for (i = 0; i < ARRAY_SIZE(regs); i++) {
+++        g_assert_cmphex(qtest_readl(dst, regs[i]), ==, val[i]);
+++    }
+++
+++    /* The guest handles the IDE interrupt: the NIC's request comes */
+++    line(dst, INO_HDD, 0);
+++    qtest_writel(dst, OBIO_CLR_HDD, 0);
+++    g_assert_true(qtest_get_irq(dst, INO_NIC));
+++
+++    /* and once that is cleared, the next IDE interrupt gets through */
+++    line(dst, INO_NIC, 0);
+++    qtest_writel(dst, PCI_CLR_NIC, 0);
+++    g_assert_false(qtest_get_irq(dst, INO_NIC));
+++    line(dst, INO_HDD, 1);
+++    g_assert_true(qtest_get_irq(dst, INO_HDD));
+++    qtest_quit(dst);
+++}
+++
+++/* The IOMMU's control and TSB base registers */
+++static void test_iommu(void)
+++{
+++    QTestState *src, *dst;
+++
+++    src = qtest_init("-machine sun4u -nodefaults");
+++    qtest_writeq(src, IOMMU_CTRL, IOMMU_CTRL_VAL);
+++    qtest_writeq(src, IOMMU_BASE, IOMMU_BASE_VAL);
+++    g_assert_cmphex(qtest_readq(src, IOMMU_CTRL), ==, IOMMU_CTRL_VAL);
+++
+++    dst = migrate(src);
+++    g_assert_cmphex(qtest_readq(dst, IOMMU_CTRL), ==, IOMMU_CTRL_VAL);
+++    g_assert_cmphex(qtest_readq(dst, IOMMU_BASE), ==, IOMMU_BASE_VAL);
+++    qtest_quit(dst);
+++}
+++
+++/*
+++ * The PCI configuration space of the ebus (its BAR0, which OpenBSD reads,
+++ * its command register and interrupt line) and of the sabre's own PCI
+++ * function, as the firmware leaves them
+++ */
+++static void test_pci_config(void)
+++{
+++    QTestState *src, *dst;
+++    uint32_t cmd;
+++
+++    src = qtest_init("-machine sun4u -nodefaults");
+++    /* simba A's bus numbers, so that bus 1 can be reached */
+++    cfg_write(src, 0, DEVFN_SIMBA_A, PCI_PRIMARY_BUS, 0x010100, 3);
+++    cfg_write(src, 1, DEVFN_EBUS, PCI_BASE_ADDRESS_0, EBUS_BAR0, 4);
+++    cmd = cfg_read(src, 1, DEVFN_EBUS, PCI_COMMAND, 2) | PCI_COMMAND_MEMORY;
+++    cfg_write(src, 1, DEVFN_EBUS, PCI_COMMAND, cmd, 2);
+++    cfg_write(src, 1, DEVFN_EBUS, PCI_INTERRUPT_LINE, 0x05, 1);
+++    cfg_write(src, 0, DEVFN_SABRE, PCI_INTERRUPT_LINE, 0x05, 1);
+++    g_assert_cmphex(cfg_read(src, 1, DEVFN_EBUS, PCI_BASE_ADDRESS_0, 4), ==,
+++                    EBUS_BAR0);
+++
+++    dst = migrate(src);
+++    g_assert_cmphex(cfg_read(dst, 1, DEVFN_EBUS, PCI_BASE_ADDRESS_0, 4), ==,
+++                    EBUS_BAR0);
+++    g_assert_cmphex(cfg_read(dst, 1, DEVFN_EBUS, PCI_COMMAND, 2), ==, cmd);
+++    g_assert_cmphex(cfg_read(dst, 1, DEVFN_EBUS, PCI_INTERRUPT_LINE, 1), ==,
+++                    0x05);
+++    g_assert_cmphex(cfg_read(dst, 0, DEVFN_SABRE, PCI_INTERRUPT_LINE, 1), ==,
+++                    0x05);
+++    qtest_quit(dst);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-migration/sabre", test_sabre);
+++    qtest_add_func("sun4u-migration/iommu", test_iommu);
+++    qtest_add_func("sun4u-migration/pci-config", test_pci_config);
+++
+++    return g_test_run();
+++}
 diff --git a/debian/patches/wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch b/debian/patches/wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch
 new file mode 100644
 index 0000000..fef619f
@@ -19079,7 +19683,7 @@ index 0000000..fef619f
 + 
 diff --git a/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch b/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
 new file mode 100644
-index 0000000..288dde6
+index 0000000..6736933
 --- /dev/null
 +++ b/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
 @@ -0,0 +1,348 @@
@@ -19107,12 +19711,12 @@ index 0000000..288dde6
 +index 4ba5bab..24f8d6c 100644
 +--- a/tests/qtest/meson.build
 ++++ b/tests/qtest/meson.build
-+@@ -224,7 +224,8 @@ qtests_sparc64 = \
-+   qtests_filter + \
++@@ -225,7 +225,8 @@ qtests_sparc64 = \
 +   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
 +    'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test',
-+-   'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test']
-++   'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test',
++    'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test',
++-   'sun4u-migration-test']
+++   'sun4u-migration-test',
 ++   'sun4u-sunhme-reset-test']
 + 
 + qtests_npcm7xx = \

@@ -57,6 +57,16 @@ jobs:
           docker run --rm -e TIER2=0 -e TIER_FB=1 -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" \
             ./build.sh sparc32 sparc64 x86_64 aarch64
 
+      # The fbDOOM and Freedoom archives wisp-boot.yml caches (same key and paths; restored only, main
+      # saves them); fetch.py below checks them and downloads only what is missing
+      - name: Restore the fbDOOM and Freedoom downloads
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/doom-inputs/*.tar.gz
+            ${{ runner.temp }}/doom-inputs/*.zip
+          key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
+
       - name: Build fbDOOM and run the timedemo with -fps
         run: |
           set -o pipefail

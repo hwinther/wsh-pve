@@ -63,9 +63,9 @@ test('dbus-refresh and audio driver dbus go to the D-Bus display', async () => {
   })
   const cmd = await showcmd(vmid)
   expect(cmd).toContain(busArg(vmid, ',refresh-ms=14,audiodev=dbus-backend0'))
-  expect(cmd).toContain("-audiodev 'dbus,id=dbus-backend0'")
+  expect(cmd).toContain("-audiodev 'dbus,id=dbus-backend0,out.frequency=48000'")
   expect(cmd).toContain('AC97,id=audiodev0')
-  // QEMU without wsh/0131 doesn't know refresh-ms; qemuAccepts drops the -display for its own
+  // QEMU without wsh/0131 doesn't know refresh-ms
   if (await qemuHasDbusRefresh()) {
     const qemu = await qemuAccepts(vmid)
     expect(qemu.code, qemu.output).toBe(0)

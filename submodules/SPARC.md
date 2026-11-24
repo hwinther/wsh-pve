@@ -114,6 +114,8 @@ maintains the patches.
 | `0127-tests-qtest-test-that-a-cs4231-status-write-clears-i` | `codec-int` reads I24 after the status write at PMI: PI, CI and TI clear. Fails without 0126 (`codec_read(qts, CS_IRQSTAT) & CS_IRQ_ALL == 0`: `0x10 == 0`) | ours, on LEMU's CS4231; offered to LEMU, not taken yet | not in QEMU |
 | `0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code` | The APC takes up to 50 ms ahead of the codec's clock and the model wrote those samples into the audiodev at once, so 0032's play-out after a stop played all of them. Linux stops in the middle of a buffer (when its last period has played it zeroes the counts and turns the DMA off), with the APC up to 50 ms into the next period of its ring: ~150 frames of old samples followed the tone ("Audio", "Linux"). With a `wav` audiodev most of them were in the file before the stop, so they cannot be taken back in the audiodev. What the APC takes now waits in a FIFO in the model (16 KB, converted) and goes to the audiodev when the codec clock gets to it; the take-ahead itself (address, count, PI, PD, PM, PMI) is unchanged. A driver stop of the DMA (PDMA_GO cleared, or the count zeroed while playing) drops what lies past the codec's position; the end of the pipe (PMI) still plays everything, as 0032. A pause or PEN off drops nothing: SunOS 4.1.4 pauses and turns PEN off as soon as the APC shows the pipe empty, up to 50 ms before the codec has played the last buffer (dropping there cut its trailing 5 ms sound after 3 ms). The playback address and count now read as the codec's position (what the APC took from the current buffer past the codec is subtracted from the address, added to the count): Linux finishes a drain when its position, read from the address, passes the end of its data, and read 50 ms ahead it sometimes stopped at its last period's interrupt, so the drop cut 22 ms of the tone. A vmstate subsection `cs4231/fifo` (the FIFO, the codec's end and what was taken from the current buffer) is sent only while the FIFO holds samples, so older streams load; without it a migration 20 ms into a 100 ms buffer read the address 560 bytes further on, PMI came 10 ms after it instead of 80, and 400 of 640 frames were lost (before 0128 the same migration lost 187 frames and PMI came 43 ms early) | ours, on LEMU's CS4231 (0028, 0032); offered to LEMU, not taken yet | not in QEMU (LEMU-origin code, not proposed) |
 | `0129-tests-qtest-test-cs4231-stops-and-migration-with-sam` | `sun4m-cs4231-test` cases `mid-stop` and `migrate-fifo` (10 cases in all). `migrate-fifo` migrates 20 ms into a 100 ms buffer with samples taken ahead: the address and count read the codec's position on both sides, PMI comes 75-90 ms later (80) and the destination's `wav` audiodev gets the other 80 ms (640 frames); the qtest clock starts at 0 in each process, so the destination's is stepped to the source's. `mid-stop`: one 100 ms buffer into a `wav` audiodev, stopped 40 ms after its PI as Linux stops (next count and address, count and address to 0, then the CSR without `PDMA_GO`); the file must hold 320 frames (+-16) and nothing past them. `playback` still checks that a stop at PMI plays every sample. Fails without 0128 (720 frames) | ours, on LEMU's CS4231; offered to LEMU, not taken yet | not in QEMU |
+| `0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-` | Nothing in sun4u's interrupt path was in the migration stream: the sabre had no VMState of its own (only the generic PCI host bridge's, with none of its registers), nor had the sun4u IOMMU, the ebus or the sabre's PCI function, and the sparc64 CPU's section leaves out SOFTINT and the interrupt vector. After a migration, a `loadvm` (which resets the machine first) or a `-loadvm`/`-incoming` in a new QEMU the guest ran but took no interrupt from the on-board devices: the interrupt mapping registers came back disabled, the outstanding request was forgotten and the serial console never answered (wisp, Debian 7); the IOMMU came back off (a disk's DMA to the DVMA address taken as physical) and the ebus's BAR0 unmapped. Now the sabre migrates its interrupt mapping registers, the lines that are up, the outstanding request, the PCI control registers and the reset status; the IOMMU its registers; the ebus and the sabre's PCI function their PCI configuration space; the CPU, in subsection `cpu/sparc64_irq` (sent when one is set), SOFTINT, `ivec_status`/`ivec_data` and 0042's `idle_halted`. sun4u has no versioned machine types: streams from older packages no longer load (`Unknown section or instance 'PCIHost'`; they resumed without interrupts anyway), and newer streams don't load into older QEMUs. Began as the browser build's `web/patches/sun4u-migration-state.patch` (sabre and CPU), now taken from the series ("Snapshots and migration on sun4u") | ours | not in QEMU |
+| `0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu` | qtest `sun4u-migration-test` for 0133, the machine saved to a file and loaded with `-incoming` into a new QEMU: `sabre` (enabled IMRs and a PCI control register read as on the source; with an IDE request outstanding and the NIC's waiting behind it, clearing the IDE request brings the NIC's), `iommu` (control and TSB base), `pci-config` (the ebus's BAR0, command register and interrupt line, the sabre function's interrupt line); each fails without 0133. The CPU subsection isn't covered (the qtest accelerator runs no guest code) | ours | not in QEMU |
 | `0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the` | A write of the ETX and ERX bits to the sunhme's global reset register only cleared the bits again: the receiver kept taking frames into the old ring and the pending status kept the line up. Linux resets both when it takes the interface down, then frees the ring's buffers and its interrupt; a frame arriving after that (50 ms to 6 s after the reset in the traces) still went into the released ring and raised an interrupt nobody handled, the sabre waited for its clear and held back every other interrupt: Debian 13 lost its IDE interrupts at power-off (`READ DMA` timeouts with the drive `DRDY`), or panicked in `happy_meal_interrupt` when the interface came up again. An ERX reset now clears the receiver's DMA enable (ERX configuration bit 0, which the drivers set with the ring), no frame is taken while it is clear, and each reset drops its engine's status bits and updates the line ("sparc64 (sun4u)", "The lost IDE interrupt at Debian 13's power-off") | ours | not fixed |
 | `0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset` | qtest `sun4u-sunhme-reset-test` for 0135: a sunhme in slot 0 of pciB set up as the firmware and a driver would (bridge window, BAR, a 32-entry ring in RAM), frames from a socket netdev, the sabre's request for ino 0x10 intercepted; `rx`, `no-rx-after-reset` (a frame after a global reset raises nothing and leaves the ring alone, with DMA enabled again the next goes into descriptor 1) and `reset-drops-status`. The last two fail without 0135 | ours | not in QEMU |
 | `0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue` | A PCI interrupt-map register written without the valid bit dropped the outstanding request only when the request's ino equalled the slot number (0-7), not when it was one of the slot's four inos: a request of ino 0x10 (the NIC on pciB) stayed when slot 4 was disabled, and the sabre then waited for a clear the guest doesn't send for a disabled interrupt. Now the request's slot (`irq_request >> 2`) is compared, as the OBIO branch compares the ino. Found by reading `sabre.c` while tracing the lost IDE interrupt; Linux 7.0 leaves the NIC's map register valid when it frees the interrupt, so it wasn't that, and no other guest was traced for it | ours | not fixed; see `upstream/qemu-sabre-pci-interrupt-replaces-request.md` |
@@ -4098,7 +4100,10 @@ valid is accepted.
   `sun4v`/`niagara`. Idle: with pve-qemu `wsh/0042`-`0044` an idle guest takes 3-9% of a host core
   (NetBSD, OpenBSD, Solaris 9/10; Tribblix about 22% with `fmd` off; "Idle" above), before them 100%
   for as long as the VM ran.
-- Live migration, backup, snapshots with RAM: not tested for sparc64.
+- Snapshots with RAM (`qm snapshot --vmstate 1`, `qm rollback`) and `qm suspend --todisk` work with
+  pve-qemu `wsh/0133` ("Snapshots and migration on sun4u"); before it the guest resumed without
+  interrupts. Live migration between nodes: not tested (single node), and qemu-server's migration
+  still reads `-cpu` from the running VM ("Backup and restore"). Backup of a running guest: not tested.
 
 ### The firmware reboot on sun4u (OpenBIOS 0030, pve-qemu `wsh/0068`-`0069`, 2026-11-22)
 
@@ -4388,36 +4393,81 @@ LOAD=120`, one QEMU at a time, load average 2.4-6.1 on 14 threads): "before" pve
 The rest (8.7%) is the 1000 wakes a second and FreeBSD's own work after each; the CPU-bound job takes
 as long with the halt as without (the "before" job ran at a higher host load).
 
-### The lost IDE interrupt at Debian 13's power-off (pve-qemu `wsh/0135`-`0138`, 2026-11-24)
+### Snapshots and migration on sun4u (pve-qemu `wsh/0133`-`0134`, 2026-11-24)
 
+A sun4u guest came back from every saved state without interrupts: after `loadvm`, `-loadvm` in a new
+QEMU, an incoming migration or (through PVE) `qm rollback` of a snapshot with RAM and `qm start` after
+`qm suspend --todisk`, the CPU ran (the guest's idle loop, its timers) but the serial console never
+answered again. The sabre host bridge had no migration state of its own (its section was the generic
+PCI host bridge's, which holds none of its registers), so its interrupt mapping registers came back
+disabled and the request it waited to have cleared was forgotten; the sun4u IOMMU came back off; the
+ebus's and the sabre's own PCI configuration space were lost (the ebus's BAR0 unmapped); and the CPU
+section leaves out SOFTINT and the interrupt vector. The browser build met the same with its sun4u
+snapshot and carried a patch of its own for the sabre and the CPU (guide "Browser SPARC").
+
+pve-qemu `wsh/0133` migrates all of them: the sabre's interrupt mapping registers, the lines that are
+up, the outstanding request, the PCI control registers and the reset status (section `sabre`); the
+IOMMU's registers (`sun4u-iommu`); the ebus's and the sabre function's PCI configuration space; the
+CPU's SOFTINT, `ivec_status`/`ivec_data` and `wsh/0042`'s `idle_halted` in subsection
+`cpu/sparc64_irq`, sent only when one is set (in the runs below only FreeBSD's streams had it). sun4u
+has no versioned machine types; the streams aren't compatible either way: an older package's state no
+longer loads (`Unknown section or instance 'PCIHost'`; it resumed without interrupts anyway) and a
+newer one doesn't load into an older QEMU (`Unknown section or instance 'sun4u-iommu'`), so a live
+migration to an older QEMU fails and the source keeps running. The browser build now takes the fix
+from the series (`web/patches/` keeps only the SS-5 timer patch). qtest `wsh/0134`
+(`sun4u-migration-test`): `sabre`, `iommu`, `pci-config`, each failing without 0133.
+
+Lab, `qemu-system-sparc64` built from the pinned pve-qemu tree with the series up to 0132 ("before",
+the published 11.1.3-4+wsh17's sources) and with 0133-0134 ("after"), one script
+(savevm, `loadvm`, a migration to a file loaded with `-incoming` by a new QEMU, then `-loadvm` in a
+new QEMU), the guest checked after each restore: the console answers, `sleep 2` takes 2-3 s, a raw
+read of a disk region the guest never writes gives the stored disk's md5 (DMA through the IOMMU), and
+a ping to the user network's gateway (10.0.2.2) gets every reply:
+
+| Guest | Before | After |
+| --- | --- | --- |
+| wisp's shell (Linux 7.3.4, `-kernel`) | console silent after all three restores | 3 of 3: uptime advancing, `crc 64` right |
+| Debian 7.11 (Linux 3.2, IDE disk, `sunhme`) | console silent after all three | 3 of 3: the same md5 of a tar of `/bin`, `/sbin` and `/lib/modules` (caches dropped) as at boot, ping 0% loss |
+| FreeBSD 12.4 (IDE disk, `hme0`) | console silent after all three | 3 of 3: 16 MB read raw from `ada0` with the stored disk's md5, ping 0% loss |
+
+`info pci` and the memory map are the same on both sides of a migration (before: the ebus's BAR0 not
+mapped on the destination).
+
+Through PVE (the e2e container built from the published packages with the test build of
+pve-qemu-kvm over them, the Debian 7 disk as a qcow2 volume, `serial0: socket`, `net0: sunhme` on
+`vmbr0`): `qm snapshot --vmstate 1`, `qm rollback --start 1`, then `qm suspend --todisk 1` and
+`qm start` ("Resumed VM, removing state"); after each the console answers, `sleep 2` takes 2 s and
+the raw read of `sda` matches the stored disk. With the published 11.1.3-4+wsh17 in the same
+container the commands succeed as well, but the console is silent after the rollback and after the
+resume. `qm suspend` right after `qm rollback --start` waited for the config lock and timed out once
+(`can't lock file`); 20 s later it went through.
+
+The sparc64 qtests (`meson test --suite qtest-sparc64`, 24): with 0133-0134 21 pass, 2 skipped and
+`qmp-test` fails in its `oob` case (`capabilities && !qlist_empty(capabilities)`), which fails the
+same way on the tree without them; there `sun4u-migration-test` fails as well.
+### The lost IDE interrupt at Debian 13's power-off (pve-qemu `wsh/0135`-`0138`, 2026-11-24)
 **Seen:** one of 9 Debian 13 boots on a busy host (load 32-43 on 14 cores, "Debian 13 on sun4u" above) lost
 the disk during `poweroff`: `ata1.00: failed command: READ DMA`, `status: { DRDY }` (the command done, no
 interrupt seen) every 30 s, then the same for PIO, until ext4 aborted its journal. Not the cmd646, the idle
 halt or the sabre's earlier bug: the IDE interrupt never reached the CPU because the sabre was still waiting
 for the guest to clear an interrupt of the NIC that Linux no longer handled.
-
 **Reproduction** (lab, the published pve-qemu-kvm 11.1.3-4+wsh17 in the lab image, copies of the stored
 `install-debian13-sun4u.raw`, 1024 MB, `sunhme` on pciB with `-netdev user,restrict=on`). An investigation
 scenario (not in the repo) logs in and then, for 300-600 s, reads the IDE disk with `dd iflag=direct` at
 random offsets, pings the user network's gateway (`ping -f` bursts or `-i 0.05`) and takes `enp2s0` down and
 up every 3 s; afterwards it checks the kernel log for libata timeouts and powers off. Results with the
 published QEMU:
-
 | Host | Runs | Failed |
-| --- | --- | --- |
 | idle (load 0-15, other agents' jobs) | 7 | 2: both a panic in `happy_meal_interrupt` when the interface came up |
 | 8 CPU-bound loops beside 4 guests (load 17-34) | 4 | 3: the same panic |
 | 6 loops beside 6 guests, 3 of them on the fix (load 13-21) | 3 | 2: one panic, one lost IDE interrupt after the last `down` (`WRITE DMA` timed out with `DRDY` every 30 s, as at the power-off) |
-
 Without the interface going down and up (`dd` and `ping -f` only) 1 run of 1 passed; the down/up loop makes
 the window come up some 100-200 times a run instead of once at power-off.
-
 **Mechanism** (QEMU trace `sabre_*`, `sparc64_cpu_ivec_raise_irq`, `sunhme_update_irq`, `sunhme_seb_write`
 with `-msg timestamp=on`). Linux 7.0's `happy_meal_close()` resets the sunhme (a write of `ETX|ERX` = 3 to
 the global reset register), releases the ring and frees its interrupt; it leaves the interrupt map register
 of the NIC's slot valid. QEMU's sunhme only acknowledged the reset: the receiver stayed on, so the next frame
 went into the old ring and set `RXTOHOST` with the interrupt unmasked. One idle-host run:
-
 ```
 19:02:52.102114 sunhme_seb_write addr 0x0 value 0x3          interface down: global reset
 19:02:52.155378 sunhme_update_irq ... seb: 0x10000  level: 1   a frame 53 ms later: RXTOHOST
@@ -4430,7 +4480,6 @@ went into the old ring and set `RXTOHOST` with the interrupt unmasked. One idle-
                                                                happy_meal_interrupt runs before the
                                                                rings are set up, NULL dereference
 ```
-
 Linux took the vector, found no handler for it and doesn't clear an interrupt it didn't handle
 (`handle_fasteoi_irq()`, `IRQCHIP_EOI_IF_HANDLED`). The sabre keeps one request to the CPU at a time
 (`wsh/0045`) and makes the next only when the guest clears the current one, so the IDE controller's
@@ -4439,9 +4488,7 @@ the clear. In the run that lost the disk the frame came 6 s after the last `down
 (as at power-off), and from then on every IDE interrupt waited, 2.5 minutes until the run was stopped. On
 real hardware each ino has its own state in the sabre, so a NIC interrupt left uncleared blocks only the
 NIC; and the reset stops the receiver.
-
 **Ruled out on the way:**
-
 - **The cmd646** (`hw/ide/cmd646.c`, our latch `wsh/0021`): in every trace the controller raised its line at
   the end of the command; the sabre made no request for it.
 - **The idle halt** (`wsh/0042`-`0044`, `0070`-`0072`, `0110`, `0114`): an interrupt vector sets
@@ -4457,7 +4504,6 @@ NIC; and the reset stops the receiver.
   any trace (the map register is written only with the valid bit, at each open), so not this; fixed anyway in
   `wsh/0137` with a qtest (`wsh/0138`), as the drop is what keeps a guest that does disable an interrupt from
   hanging the sabre the same way.
-
 **Fix** (`wsh/0135`): an ERX reset clears the receiver's DMA enable (bit 0 of the ERX configuration register;
 Linux writes `0x70011` there when it sets the ring up) and the model takes no frame while it is clear; each
 reset drops the status bits of its engine (`HOSTTOTX`, `TXALL` for ETX, `RXTOHOST`, `NORXD` for ERX) and
@@ -4466,11 +4512,9 @@ without 0135). The sabre's one-request-at-a-time model stays: any device that in
 gone can still hold back the others. Modelling the sabre's per-ino state as the hardware has it (and the
 CPU's NACK and the sabre's retry for a vector sent while the CPU is busy) would remove that, at the cost of a
 change in the sabre, the CPU's interrupt receive register and the migration stream; not attempted.
-
 **Results with the fix** (the same scenario, `qemu-system-sparc64` built from the series with 0135-0138,
 firmware from the published package; two more variants with frames sent to the guest from the host side
 every 2 ms through a `hostfwd` UDP port, so that one arrives after nearly every reset):
-
 | Variant | Host | Published 11.1.3-4+wsh17 | With 0135 |
 | --- | --- | --- | --- |
 | down/up every 3 s, `ping` | idle | 7 runs, 2 failed | not run |
@@ -4478,7 +4522,6 @@ every 2 ms through a `hostfwd` UDP port, so that one arrives after nearly every 
 | the same, both binaries in one batch | 6 loops (load 13-21) | 3 runs, 2 failed | 3 runs, 0 failed (0135 alone) |
 | down/up every 3 s, host-side frames, then down and 25 MB read | idle | 2 runs, 2 failed (panic at the first close or open) | 2 runs, 0 failed |
 | down once, host-side frames, 25 MB read (the power-off case) | idle | 2 runs, 2 failed (one lost IDE interrupt, `READ DMA` with `DRDY`; one panic in the close) | 2 runs, 0 failed |
-
 18 runs on the published package, 11 failed (9 panics, 2 lost IDE interrupts); 11 with the fix, none. In the 7
 fixed runs traced with the sunhme events no NIC request was left uncleared after a reset. Debian 13's network still works
 (ping through each `up`, Linux sets ERX DMA again), and the stored disks of NetBSD 11.1, OpenBSD 8.0, FreeBSD
@@ -4954,6 +4997,9 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
 - `qm snapshot --vmstate 1` and `qm rollback` work (SS-5 OpenBIOS and SS-20 PROM tested). Before
   this they failed with `could not read commandline of running machine` (no `-cpu`), then with
   `unable to parse value of 'runningmachine'` (`SS-5+pve0` didn't match the machine regex).
+  On sun4u, with Debian 7 running, they and `qm suspend --todisk 1` with `qm start` work since
+  pve-qemu `wsh/0133`; before it the guest came back without interrupts ("Snapshots and migration
+  on sun4u").
 - Not tested: live migration (`QemuMigrate` still reads `-cpu` from the running VM, which fails
   without one), and backups while a guest OS writes.
 

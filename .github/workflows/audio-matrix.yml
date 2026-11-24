@@ -2,6 +2,7 @@ name: x86 audio matrix
 
 # Which sound devices of the published pve-qemu-kvm make sound in which guest, and whether the
 # published qemu-server's `audio0:` wires them up (e2e/audio/audio_matrix.py): a FreeDOS boot floppy
+# (from the Floppy Edition zip in the Actions cache, which main saves and pull requests restore)
 # running our own AUDTEST.COM (SB16, AdLib, PC speaker) and a Debian kernel + initramfs playing a tone
 # with aplay (AC97, ES1370, Intel HDA, virtio-sound, USB audio), recorded with QEMU's `wav` backend
 # and checked for the expected tones. Directly on QEMU and through qemu-server (`audio0: driver=wav`:
@@ -22,6 +23,8 @@ on:
       - main
     paths:
       - "e2e/audio/**"
+      - "e2e/sparc/targets_dos.py"
+      - "e2e/sparc/fetch_media.py"
       - "e2e/pve/**"
       - ".github/workflows/audio-matrix.yml"
 
@@ -52,10 +55,37 @@ jobs:
         working-directory: e2e/audio
         run: python3 -m unittest -v test_wavcheck.py
 
+      # The FreeDOS zip comes from the Actions cache, which only main fills (here on the schedule and on dispatch, and daily in
+      # media-cache.yml): a pull request restores main's entry and never saves its own copy
+      # (e2e/README.md, "Downloaded media in the Actions cache"). fetch_media.py checks the restored zip
+      # against its pin (e2e/sparc/targets_dos.py, FREEDOS_ZIP) and downloads it only when it is
+      # missing or not the pinned one; the same key and path as 3dfx-dos.yml,
+      # sparc-lab-dos.yml and media-cache.yml's freedos job (one entry for the three)
+      - name: FreeDOS cache key
+        id: freedos-key
+        run: echo "key=$(python3 e2e/sparc/fetch_media.py --key FD14-FloppyEdition.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the FreeDOS zip
+        id: freedos-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
+
+      - name: Download and check the FreeDOS zip
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip
+
+      - name: Save the FreeDOS zip (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.freedos-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
+
       - name: Build the images (published packages)
         run: |
           docker build -f e2e/pve/Dockerfile -t wsh-pve-e2e:audio .
-          docker build -f e2e/audio/Dockerfile --build-arg PVE_IMAGE=wsh-pve-e2e:audio -t wsh-audio e2e/audio
+          docker build -f e2e/audio/Dockerfile --build-arg PVE_IMAGE=wsh-pve-e2e:audio -t wsh-audio .
           docker run --rm --entrypoint sh wsh-audio -c \
             'dpkg-query -W pve-qemu-kvm qemu-server pve-manager; cat /audio/guests/versions.txt'
 
@@ -65,7 +95,7 @@ jobs:
           # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml; /dev/kvm (when the
           # runner has it) comes with --privileged and speeds up the Linux guests
           docker run -d --name "$NAME" --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
-            -v "$RUN_DIR:/runs" wsh-audio
+            -v "$RUN_DIR:/runs" -v "$RUNNER_TEMP/freedos:/freedos:ro" wsh-audio
           for _ in $(seq 1 60); do
             docker exec "$NAME" test -f /run/pve-e2e-ready && break
             sleep 5
@@ -73,7 +103,7 @@ jobs:
           docker exec "$NAME" test -f /run/pve-e2e-ready
 
       - name: Run the matrix
-        run: docker exec "$NAME" python3 audio_matrix.py all --out /runs
+        run: docker exec -e FREEDOS_ZIP=/freedos/FD14-FloppyEdition.zip "$NAME" python3 audio_matrix.py all --out /runs
 
       - name: Summary
         if: ${{ !cancelled() }}

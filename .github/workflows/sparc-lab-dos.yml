@@ -5,8 +5,9 @@ name: sparc lab DOS
 # from its seven floppies under the published pve-qemu-kvm (TCG), driven on the VGA text screen with
 # the disk swaps, booted from the disk and checked (tests/test_freedos.py), then the memory profiles
 # booted from copies of that disk and measured with our own test programs (tests/test_dos_profiles.py:
-# MEM, EMS frame, VGA retrace, the 3C0h read, Sound Blaster and audio). The FreeDOS zip is
-# downloaded by the test and checked against its pinned sha256; nothing from the lab host is used.
+# MEM, EMS frame, VGA retrace, the 3C0h read, Sound Blaster and audio). The FreeDOS zip comes from
+# the Actions cache (saved by main only; pull requests restore main's entry), and fetch_media.py and
+# the test check it against its pin (targets_dos.py, FREEDOS_ZIP); nothing from the lab host is used.
 
 on:
   workflow_dispatch:
@@ -36,24 +37,52 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Unit tests (VGA text reader, DOS catalogue and parsers)
+      - name: Unit tests (VGA text reader, DOS catalogue and parsers, media fetch and the FreeDOS pin)
         working-directory: e2e/sparc
-        run: python3 -m unittest -v tests/test_vgatext.py tests/test_dos.py tests/test_targets.py tests/test_dos_profiles.py
+        run: python3 -m unittest -v tests/test_vgatext.py tests/test_dos.py tests/test_targets.py tests/test_dos_profiles.py tests/test_fetch_media.py
+
+      # The FreeDOS zip comes from the Actions cache, which only main fills (here on dispatch, and daily in
+      # media-cache.yml): a pull request restores main's entry and never saves its own copy
+      # (e2e/README.md, "Downloaded media in the Actions cache"). fetch_media.py checks the restored zip
+      # against its pin (e2e/sparc/targets_dos.py, FREEDOS_ZIP) and downloads it only when it is
+      # missing or not the pinned one; the same key and path as 3dfx-dos.yml,
+      # audio-matrix.yml and media-cache.yml's freedos job (one entry for the three)
+      - name: FreeDOS cache key
+        id: freedos-key
+        run: echo "key=$(python3 e2e/sparc/fetch_media.py --key FD14-FloppyEdition.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the FreeDOS zip
+        id: freedos-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
+
+      - name: Download and check the FreeDOS zip
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/freedos" FD14-FloppyEdition.zip
+
+      - name: Save the FreeDOS zip (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.freedos-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/freedos
+          key: ${{ steps.freedos-key.outputs.key }}
 
       - name: Build the lab image
         run: docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
 
       - name: Install FreeDOS from floppies in the lab
         run: |
-          mkdir -p "$RUNNER_TEMP/freedos"
-          docker run --rm -v "$RUNNER_TEMP/freedos:/out" -e FREEDOS_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
+          mkdir -p "$RUNNER_TEMP/freedos-install"
+          docker run --rm -v "$RUNNER_TEMP/freedos-install:/out" -e FREEDOS_OUT=/out -e WSH_LAB_GUEST_TESTS=1 \
+            -v "$RUNNER_TEMP/freedos:/freedos:ro" -e FREEDOS_ZIP=/freedos/FD14-FloppyEdition.zip \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_freedos.py
 
       - name: FreeDOS memory profiles on copies of the installed disk
         run: |
-          docker run --rm -v "$RUNNER_TEMP/freedos:/out" -e FREEDOS_DISK=/out/c.raw -e WSH_LAB_GUEST_TESTS=1 \
+          docker run --rm -v "$RUNNER_TEMP/freedos-install:/out" -e FREEDOS_DISK=/out/c.raw -e WSH_LAB_GUEST_TESTS=1 \
             --entrypoint python3 wsh-sparc-lab -m unittest -v tests/test_dos_profiles.py
-          cat "$RUNNER_TEMP/freedos/dosprof/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/freedos-install/dosprof/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the evidence
         if: failure()
@@ -61,8 +90,8 @@ jobs:
         with:
           name: freedos-evidence
           path: |
-            ${{ runner.temp }}/freedos
-            !${{ runner.temp }}/freedos/**/*.raw
-            !${{ runner.temp }}/freedos/**/*.sock
-            !${{ runner.temp }}/freedos/**/*.wav
+            ${{ runner.temp }}/freedos-install
+            !${{ runner.temp }}/freedos-install/**/*.raw
+            !${{ runner.temp }}/freedos-install/**/*.sock
+            !${{ runner.temp }}/freedos-install/**/*.wav
           retention-days: 7

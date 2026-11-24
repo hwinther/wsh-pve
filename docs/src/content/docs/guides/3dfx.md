@@ -176,6 +176,47 @@ The guest drivers are built for the Pentium (see [Installing the guest drivers](
 
 With an SDL window on Xvfb (`--display sdl`) the frame is scaled into the window, which keeps the desktop's size (1024x768); Xvfb's screen has to be larger than that, or SDL makes the window smaller and crops the frame. There each test passed on its own, but in one VM the second or third 3D window ended QEMU with an X error (`BadRequest`, `BadLength`); not looked into further.
 
+## DOS games
+
+The guest drivers include two Glide 2 wrappers for DOS programs: `glide2x.dxe` (with `glide3x.dxe` for Glide 3), a DJGPP module, and `glide2x.ovl`, built with Open Watcom for games that run under a DOS extender such as DOS/4GW. They talk to the same glidept device as the Windows wrappers, so the host side, the revision pairing and the frames in the VM's console are the same.
+
+How the wrappers reach the device: they map its MMIO page (physical `0xfbdff000`), the shared FIFO and data area (`0xfb500000`, 3 MB) and the linear frame buffer (`0xfb000000`) by their physical addresses through the DPMI host (DPMI function 0800h, "physical address mapping") and pass every Glide call and its data through that shared memory; QEMU never reads a pointer of the guest's, so paging, VCPI or a memory manager in the guest don't matter to it. No driver is loaded in DOS. Then they do the same handshake as the Windows wrappers: one built from another qemu-3dfx commit than the host binary is refused, and the program gets no Glide device.
+
+### GLIDE2X.DXE (DJGPP games)
+
+Tested in pure DOS: FreeDOS 1.4, booted from its floppy, passes with no memory manager, with HIMEMX, and with HIMEMX and JEMM386 (expanded memory on); see the test below. A DJGPP program needs a DPMI host: CWSDPMI, which FreeDOS installs (`C:\FREEDOS\BIN\CWSDPMI.EXE`, part of its base packages) and which a DJGPP program finds next to itself or on the `PATH`. CWSDPMI runs as a VCPI client under JEMM386 or EMM386 and takes the memory itself without one. Under Windows 9x the DOS box's DPMI host is Windows' own; that is not tested.
+
+- Copy `GLIDE2X.DXE` (and `GLIDE3X.DXE` for a Glide 3 game) into the game's directory, or into a directory named in the `LD_LIBRARY_PATH` environment variable (DJGPP's `dlopen()` looks there).
+- Make sure `CWSDPMI.EXE` is on the `PATH` or next to the game. Without a `C:` drive CWSDPMI says "cannot open swap file c:\cwsdpmi.swp" and carries on.
+- The wrapper reads a `glide.cfg` in the current directory, if there is one, and hands it to the host.
+- Only `GLIDE2X.DXE` is tested; `GLIDE3X.DXE` is built the same way but no test program uses it yet.
+
+A DJGPP program links with the import library `dxe3gen -Y` makes next to the DXE (`libfxgl2.a`, `libfxgl3.a`; not in the release, `e2e/3dfx/dos/build.sh` in wsh-pve builds it): its stubs load the DXE at the first Glide call. The DXE finds the program's DJGPP runtime by looking for the start-up code of DJGPP 2.0x's `crt0` in the program's code, so a program linked with another start-up code doesn't get a Glide device.
+
+### GLIDE2X.OVL (DOS/4GW games): not tested
+
+`glide2x.ovl` is a 32-bit LE dynamic library (OS/2 format, the `__DLLstart_` entry point, no imports), which the game's DOS extender has to load: Glide 2 DOS games built with Watcom ship DOS/4GW for that. The OVL also relies on that extender: it opens and reads `glide.cfg` with 32-bit pointers through INT 21h, the extender's extended DOS interface, which a plain DPMI host such as CWSDPMI doesn't translate, and it uses the linear address DPMI returns as a pointer, which needs a data segment based at 0 (DOS/4GW's flat model). DOS/4GW isn't free software, no free DOS extender in Debian or FreeDOS loads LE libraries, and the DJGPP image wsh-pve builds the drivers in carries only Open Watcom's Linux tools (`binl64`: the compiler and linker), without DOS/4GW or Watcom's DOS C library, so there is no free way to load the OVL in a test. Upstream's install notes put it into `C:\WINDOWS` of a Windows 9x guest, for DOS games in its DOS box; that isn't tested either.
+
+### The DOS test
+
+`e2e/3dfx/dos-test.sh` (in wsh-pve) runs the DXE end to end with free software only. Its test program, `GLIDEDOS.EXE` (`e2e/3dfx/dos/glidedos.c`, built with DJGPP in the image that builds the guest drivers and linked with `libfxgl2.a`), draws the scene the other tests draw, reads it back through the pass-through with `grLfbReadRegion`, checks the probes and reports on COM1, as the Windows 98 test programs do. The guest is the boot floppy of the FreeDOS 1.4 Floppy Edition (downloaded once, or given with `--freedos-zip`, and checked against its sha256) with, written onto a copy by mtools, a `FDCONFIG.SYS` that loads the memory managers of the run and starts `GLIDE.BAT` instead of the installer, the test program, the release's `GLIDE2X.DXE`, and FreeDOS's own `CWSDPMI.EXE`, `HIMEMX.EXE` and `JEMM386.EXE`, which are not on the boot floppy: the harness takes them out of the package archive on the Floppy Edition's other floppies and checks them against the files a FreeDOS installation from those floppies has. `GLIDE.BAT` sends the console to COM1 (`CTTY COM1`), so DOS's, CWSDPMI's and the program's messages all reach the log, shows what the memory managers set up, runs the program and powers the VM off. QEMU runs headless, as PVE runs a `vga: std,mesa=1` VM; when the frame is up the harness checks the probes in QEMU's screendump of the console, and once the Glide window has closed that the console shows DOS's text screen again.
+
+```bash
+e2e/3dfx/dos-test.sh --out out                                   # the published binary, three memory profiles
+e2e/3dfx/dos-test.sh --out out -- --profiles emm386 --accel tcg  # harness options after --
+e2e/3dfx/dos-test.sh --out out --pve wsh-pve-e2e                 # PVE starts the VM (qm create with floppy0, qm start)
+```
+
+The `3dfx in DOS` workflow runs it on a GitHub-hosted runner for pull requests that touch the 3dfx tests or the qemu-3dfx pin, by hand and weekly. Results (November 2026, pve-qemu-kvm 11.1.3-4+wsh17, `qemu-3dfx-drivers-b94d988`, wsh-openglide 0.8, `cpu: pentium3`, 64 MB, Mesa's llvmpipe, read back, 300 frames of the test scene):
+
+| Memory managers | QEMU, KVM | QEMU, TCG | PVE (`qm start`, KVM) |
+| --- | --- | --- | --- |
+| none (CWSDPMI takes the memory raw) | pass, 1590 frames/s | pass, 1580-1840 frames/s | pass, 1720 frames/s |
+| HIMEMX (XMS) | pass, 1560 frames/s | pass, 1460-1550 frames/s | pass, 1750 frames/s |
+| HIMEMX and JEMM386 (EMS, CWSDPMI as a VCPI client) | pass, 1300 frames/s | pass, 1260-1560 frames/s | pass, 1270 frames/s |
+
+In each run the program's own read-back of the back and front buffers matched, the console had the frame (qemu-3dfx read each frame in 0.14 to 0.17 ms) and DOS's text screen came back after the window closed. Under TCG the rate is about the same as under KVM: the guest does little more than copy the calls into the FIFO. The first read of the back buffer, with the frame's calls still queued, comes back shifted, as from the Linux guest (see `e2e/3dfx/glide-guest.c`); the test reports it without counting it. A DXE built with another revision gets no Glide device: the program says `ERROR no Glide device` and DOS carries on.
+
 ## How the host binary is built
 
 The 3dfx binary is built from the same QEMU tree as the rest of `pve-qemu-kvm` (Proxmox's patches and the WSH ones), plus qemu-3dfx's Glide and Mesa devices and a port of its QEMU patch (upstream's targets QEMU 9.2; the port is `submodules/pve-qemu-qemu-3dfx.patch` in wsh-pve). The host binary, the release notes and the `qemu-3dfx-drivers-<shortsha>` release of a build all name the commit the `qemu-3dfx` submodule is pinned to.
@@ -216,6 +257,27 @@ Transfer the files into the guest and install the ones for your Windows version:
 - Copy `OPENGL32.DLL` into each game's installation folder
 
 The wrappers are built for a Pentium-class guest CPU: everything compiled is built with `-march=pentium` (x87 math, no MMX, SSE or later), and the build fails if a DLL, EXE or the DOS objects contain an MMX, SSE or later instruction (`scripts/check-3dfx-drivers-isa.sh` in wsh-pve). The MinGW runtime the DLLs link in is Debian's, built for the Pentium Pro, so a few of its routines (number formatting, among others) use CMOV; every CPU model from `pentium2` on has it. A `cpu: pentium3` VM runs them with or without KVM. Upstream qemu-3dfx builds them for x86-64-v2 (SSE2 to SSE4.2, POPCNT), and so did the `qemu-3dfx-drivers` releases until November 2026: a VM without KVM stops at the first Glide call with "This program has performed an illegal operation" with those unless its CPU model has the extensions, e.g. `pentium3,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt`. A zip built for the Pentium says "built for i586" in its `VERSION.txt`.
+
+### Linux guests
+
+The same release has `qemu-3dfx-linux-glide-<shortsha>.tar.gz`: qemu-3dfx's Linux guest wrapper built as a shared library for old i386 Linux guests (Glide 2.x only). It extracts to one folder:
+
+- `libglide.so.2`: the Glide 2.x library (soname `libglide.so.2`), the Glide 2.43 API of qemu-3dfx's wrapper
+- `libglide2x.so`: a symlink to it, the name 3dfx's Linux Glide 2 shipped under and that programs and Mesa's old 3dfx (fxMesa) driver were linked against
+- `README.txt`: the revision and these steps
+
+Install it as root in the guest, after removing any other `libglide.so.2` or `libglide2x.so` (3dfx's own Glide):
+
+```sh
+cp -P libglide.so.2 libglide2x.so /usr/lib/
+ldconfig
+```
+
+A program that loads Glide under another file name gets a symlink of that name to `libglide.so.2`. The wrapper maps the glidept device's MMIO page and shared memory through `/dev/mem`, so the Glide program runs as root (or setuid root, as 3dfx's Glide needed too); no kernel module is needed. The library is built for the Pentium (`-march=pentium`, no CMOV, MMX or SSE) and needs nothing newer than glibc 2.0 (only `libc.so.6`, every symbol at `GLIBC_2.0`; checked by `scripts/build-3dfx-linux-glide.sh` in wsh-pve), so distributions from the glibc 2 era (1997 on) can load it; libc5 systems can't. The revision rule is the same as for the Windows drivers.
+
+It covers programs that call Glide 2 directly, and OpenGL programs through an old Mesa built with the 3dfx driver against Glide 2. Glide 3 (`libglide3.so.3`, which later Mesa 3dfx drivers used) and OpenGL have no Linux guest wrapper in qemu-3dfx, so a Linux game whose renderer needs those gets no acceleration from it. A modern Linux guest should not use the 3DFX/Mesa option at all: virtio-gpu with virgl (`vga: virtio-gl`) gives it OpenGL.
+
+`e2e/3dfx/test.sh` in wsh-pve tests the library: its `glide-dso` guest links the test scene against `libglide.so.2`, loads it from `/usr/lib` through ldconfig's cache, and passes the same scene and probe checks as the statically linked guest. That guest's userland is Debian 13's i386 libc; the library itself has not been run on an old distribution.
 
 ## Further reading
 

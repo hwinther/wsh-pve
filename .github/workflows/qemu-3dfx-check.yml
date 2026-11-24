@@ -25,6 +25,7 @@ on:
       - "scripts/refresh-qemu-3dfx-patch.sh"
       - "scripts/qemu-3dfx-promotion.sh"
       - "scripts/check-qemu-extras.sh"
+      - "scripts/build-3dfx-linux-glide.sh"
       - "packages/wsh-openglide/**"
       - "e2e/3dfx/**"
       - ".github/workflows/qemu-3dfx-check.yml"
@@ -95,13 +96,14 @@ jobs:
           echo "deb=wsh-openglide_${WSH_OPENGLIDE_VERSION}_amd64.deb" | tee -a "$GITHUB_OUTPUT"
           echo "rev=$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD)" | tee -a "$GITHUB_OUTPUT"
 
-      # Glide, MESA GL and MESA GL with a multisampled pixel format, each rendered offscreen into the
+      # Glide (statically linked, and glide-dso through the Linux guest library libglide.so.2), MESA GL
+      # and MESA GL with a multisampled pixel format, each rendered offscreen into the
       # console and checked in its screendump (with the guests' front-buffer and gamma phases)
       - name: Pass-through, headless (VNC, no X server)
         env:
           DEB: ${{ steps.openglide.outputs.deb }}
           QEMU3DFX_REV: ${{ steps.openglide.outputs.rev }}
-          GUESTS: glide mesa mesa-msaa mesa-noegl
+          GUESTS: glide glide-dso mesa mesa-msaa mesa-noegl
         run: |
           mkdir -p "$RUNNER_TEMP/e2e-vnc"
           docker run --rm -e QEMU3DFX_REV -e QEMU_BIN=/qbin/qemu-system-x86_64-3dfx -e GLIDE_DISPLAY=vnc -e GUESTS \

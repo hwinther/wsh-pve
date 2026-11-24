@@ -44,7 +44,8 @@ libraries fit), mount the binary there:
 `docker run ... -v $PWD/build/qemu-system-sparc:/usr/local/bin/qemu-system-sparc:ro wsh-sparc-lab ...`.
 The firmware still comes from the package (`LAB_FIRMWARE`). `qemu.cmd` doesn't show which binary
 ran; the version line in `qemu-system-sparc --version` does (a local build has no
-`pve-qemu-kvm_...` suffix).
+`pve-qemu-kvm_...` suffix). `pr-qemu.sh` and `pr-qemu.Dockerfile` do this for both sparc emulators
+and the OpenBIOS images of a pull request (see "Before merge" under "NetBSD install targets").
 
 ## Run a scenario
 
@@ -453,7 +454,8 @@ findings).
   `ECHO`, `BUSY`: programs that count loop iterations, `dos_tools.py com --name busy|busyk`); numbers
   and the comparison with `POWER.EXE` in the DOS guide, "Idle".
 - **CI** (`.github/workflows/sparc-lab-dos.yml`, GitHub-hosted): the unit tests, then
-  `tests/test_freedos.py` in the lab image: FreeDOS downloaded by sha256, installed from its seven
+  `tests/test_freedos.py` in the lab image: FreeDOS from the Actions cache (`fetch_media.py`, checked by
+  sha256; `e2e/README.md`, "Downloaded media in the Actions cache"), installed from its seven
   floppies, booted from the disk, marker and idle checked. No Microsoft media.
 
 Tested in the PVE test container on the lab host (TCG, published packages pve-qemu-kvm
@@ -1508,13 +1510,76 @@ memory, SS-10, and the sets other than these two.
 runs `tests/test_netbsd.py` in the lab image on GitHub-hosted runners, one job per target:
 `netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20`
 (`NETBSD_TARGET`; without it the test runs `netbsd111-sparc64`). Each job downloads its CD from the
-URL in `targets.MEDIA` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for 9.3; cached between
-runs), checks its size, sha256 and sha512 (the release's `images/SHA512`), and runs the target's
+URL in `targets.MEDIA` with `fetch_media.py` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for
+9.3; cached between runs, saved by main only and restored by pull requests: `e2e/README.md`,
+"Downloaded media in the Actions cache"), checks its size, sha256 and sha512 (the release's
+`images/SHA512`), and runs the target's
 three scenarios with the lab's own QEMU (TCG; sun4u, or the SS-5/SS-20 with `_sparc32`'s machine):
 install, first boot (password, marker, host name, a static address and router), check (logs in
 with the password, requires the marker and `inet 10.0.2.15/24`). On the lab host the 11.1 sun4u
 run took 623 s; the jobs' limits are 60 min (11.1 sun4u), 90 min (9.3 sun4u, whose sysinst is
 twice as slow) and 45 min (9.3 on the SS-5 and SS-20).
+
+**Before merge.** `sparc lab NetBSD` installs under the published pve-qemu-kvm, so a QEMU or OpenBIOS
+change would first meet these installs after it is merged and built. `sparc lab PR QEMU`
+(`.github/workflows/sparc-lab-pr-qemu.yml`) runs the same four targets on pull requests that change
+`submodules/pve-qemu.patch`, the pve-qemu pin or `openbios/`, with that pull request's sources
+instead of the package (no workflow builds pve-qemu-kvm on a pull request):
+
+1. `qemu-system-sparc` and `qemu-system-sparc64` from its pve-qemu tree: the pin with
+   `pve-qemu.patch` applied, its `qemu` submodule (`--depth 1`), and `pr-qemu.sh` in the lab image,
+   which pushes every patch of `debian/patches/series` with quilt and no fuzz (a patch that doesn't
+   apply fails the job, naming it) and builds only `--target-list=sparc-softmmu,sparc64-softmmu`
+   (Proxmox's patches included; the configure options are not the package's: no GTK, SDL, OpenGL,
+   docs). The compiler runs through ccache, cached per pull request, so a later push rebuilds only
+   what its patches touch. `--version` says `wsh-pr-<commit>`.
+2. `openbios-sparc32`, `openbios-sparc64` and `QEMU,cgthree.bin` from `openbios/Dockerfile`. The
+   package build keeps QEMU's `openbios-sparc64` when its build fails (all patches go in with one
+   `git apply`, so one that doesn't apply drops the image with a warning); here any missing image
+   fails the job.
+3. `pr-qemu.Dockerfile` puts them into the lab image: the binaries in `/usr/local/bin` (before the
+   package's `/usr/bin`; the build fails if a binary misses a library of the image), the three
+   images over the package's in `LAB_FIRMWARE`. The Sun PROMs stay the package's.
+4. `tests/test_netbsd.py` for `netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and
+   `netbsd93-sparc-ss20`, as in `sparc lab NetBSD` (same CD cache, same limits).
+
+What was built is in the run summary and in `versions.txt` (the `sparc-pr-qemu` artifact, and in
+each job's evidence): the commit, both `--version` lines, the pve-qemu pin and QEMU version, the
+patch's sha256, the series' length and last patch, the OpenBIOS commit and its patches, and the
+images' sha256. On GitHub-hosted runners, like `sparc lab NetBSD`, so fork pull requests run it with
+a read-only token and no secrets, and the `sparc-lab` runner still never runs pull request code. Not
+a required check (it runs only when its paths change).
+
+By hand, from the repository root (the pve-qemu tree prepared as in the workflow's "Prepare the
+pve-qemu tree" step):
+
+```sh
+docker build -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+mkdir -p build/sparc-pr/firmware
+docker build --output type=local,dest=build/sparc-pr/firmware -f openbios/Dockerfile openbios
+docker run --rm -v "$PWD:/src" -w /src --entrypoint sh wsh-sparc-lab \
+  e2e/sparc/pr-qemu.sh submodules/pve-qemu build/pr-qemu build/sparc-pr/bin
+# versions.txt is what the workflow writes; any file does for a local image
+echo local > build/sparc-pr/versions.txt
+docker build -f e2e/sparc/pr-qemu.Dockerfile -t wsh-sparc-lab:pr build/sparc-pr
+docker run --rm -e WSH_LAB_GUEST_TESTS=1 -e NETBSD_TARGET=netbsd93-sparc --entrypoint python3 wsh-sparc-lab:pr \
+  -m unittest -v tests/test_netbsd.py
+```
+
+Tried on the lab host (14 vCPUs, busy with other builds and guests: load 10-22), 2026-11-24, the
+workflow's steps by hand with main's `pve-qemu.patch` (166 patches, last `wsh/0132`) and
+`openbios/` (38 patches); the four installs ran at once with the host's copies of the CDs
+(`NETBSD_ISO`):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| lab image, OpenBIOS (all three images), QEMU cold (empty ccache, 1,360 compiles) | built; `QEMU emulator version 11.1.3 (wsh-pr-<commit>)`, binaries in `/usr/local/bin`, the images' sha256 in `versions.txt` | 220 s, 107 s, 169 s |
+| QEMU again, warm ccache | 1,358 of 1,360 compiles from the cache | 78 s |
+| QEMU with one patch changed (`wsh/0021`, `hw/ide/cmd646.c`) | 3 compiles, the rest from the cache | 172 s (busier host) |
+| the four installs with main's build | 4/4 passed | `netbsd111-sparc64` 16.4 min (install 649 s, first boot 156 s, check 171 s); `netbsd93-sparc64` 31.3 min (1595 s, 132 s, 144 s); `netbsd93-sparc` 6.1 min (203 s, 86 s, 76 s); `netbsd93-sparc-ss20` 6.0 min (195 s, 88 s, 75 s) |
+| a context line of `wsh/0021` changed (the series doesn't apply) | failed in `pr-qemu.sh`: `1 out of 3 hunks FAILED`, `the series doesn't apply: ../debian/patches/wsh/0021-... fails` | 68 s |
+| a context line of OpenBIOS `0039-sparc64-...` changed | `openbios/Dockerfile` built (exit 0, `WARNING: openbios-sparc64 not built`); the step failed: `openbios-sparc64 was not built` | 36 s |
+| `wsh/0021` changed so that the cmd646 never raises INTRQ (applies and builds) | `netbsd93-sparc` passed (5.4 min); `netbsd111-sparc64` failed: `wd0c: device timeout`, then `waiting for devices: atabus0 atabus1 wd0` until `no 'Terminal type' within 900s` | 15 min (the scenario's 900 s for `Terminal type`) |
 
 ### The OpenBSD 8.0 install target
 

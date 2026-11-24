@@ -32,8 +32,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Whether this PR touches the image or the suite (changed), and qemu-server or the boot test
-  # (boot). Both always true on push and dispatch.
+  # Whether this PR touches the image or the suite (changed); the packages the boot test starts, or
+  # the boot test itself (boot); and which of the boot job's builds it needs besides qemu-server:
+  # pve-manager (manager) and QEMU (qemu). All always true on push and dispatch.
   changes:
     runs-on: ubuntu-latest
     permissions:
@@ -41,6 +42,8 @@ jobs:
     outputs:
       changed: ${{ steps.changed.outputs.changed }}
       boot: ${{ steps.boot.outputs.changed }}
+      manager: ${{ steps.manager.outputs.changed }}
+      qemu: ${{ steps.qemu.outputs.changed }}
     steps:
       - name: Changed files
         id: changed
@@ -58,9 +61,30 @@ jobs:
         with:
           patterns: |
             ^submodules/qemu-server\.patch$
-            ^e2e/pve/boot-test\.sh$
-            ^e2e/pve/Dockerfile$
+            ^submodules/qemu-server$
+            ^submodules/pve-manager\.patch$
+            ^submodules/pve-manager$
+            ^submodules/pve-qemu\.patch$
+            ^submodules/pve-qemu$
+            ^e2e/pve/
             ^\.github/workflows/e2e\.yml$
+
+      - name: Changed files (boot, pve-manager)
+        id: manager
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^submodules/pve-manager\.patch$
+            ^submodules/pve-manager$
+
+      - name: Changed files (boot, QEMU)
+        id: qemu
+        uses: hwinther/reusable-workflows/.github/actions/changed-files@9c35353ba10990931ef9a24642ff1d0ecf0b82f8 # v2.42.0
+        with:
+          patterns: |
+            ^submodules/pve-qemu\.patch$
+            ^submodules/pve-qemu$
+            ^e2e/pve/build-qemu\.sh$
 
   build:
     needs: [changes]
@@ -121,78 +145,129 @@ jobs:
         PVE_URL=https://localhost:8006
         E2E_3DFX_GUEST=required
 
-  # A real boot through PVE with the pull request's qemu-server (e2e/README.md, "Booting a guest
+  # A real boot through PVE with the pull request's packages (e2e/README.md, "Booting a guest
   # through PVE"): the suite only checks that QEMU accepts the command, and the start-up bugs fixed
-  # in #248 passed that. Builds qemu-server from submodules/qemu-server.patch, installs it over the
-  # published packages (PACKAGES=mixed) and boots an Alpine virt CD on x86_64 and aarch64 with
-  # qm create/qm start until the serial console shows the login prompt. Pull requests and dispatch
-  # only: on main, build-deb.yml builds and publishes the package itself.
+  # in #248 passed that. Builds qemu-server from submodules/qemu-server.patch (always) and
+  # pve-manager from pve-manager.patch (when that changes), installs them over the published
+  # packages (PACKAGES=mixed), and when the pve-qemu build changes copies qemu-system-x86_64 and
+  # -aarch64 built from the pull request's tree over the published ones (e2e/pve/build-qemu.sh).
+  # Then e2e/pve/boot-test.sh creates VMs through the API and starts an Alpine virt CD with
+  # qm start on x86_64 (i440fx, q35, q35 with OVMF; KVM when the runner has it) and aarch64 (virt,
+  # AAVMF, TCG) until the serial console shows the login prompt. Pull requests and dispatch only:
+  # on main, build-deb.yml builds and publishes the packages itself.
   boot:
     needs: [changes]
     if: ${{ needs.changes.outputs.boot == 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
-      # Test media, pinned (dl-cdn.alpinelinux.org, v3.24 latest-releases.yaml)
-      ALPINE_X86_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.4-x86_64.iso
-      ALPINE_X86_SHA256: 157d353f8e54252cad2d9812a0d56bb7fa2231fc154a110e1d180d7480ef8b4f
-      ALPINE_ARM_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-virt-3.24.4-aarch64.iso
-      ALPINE_ARM_SHA256: cf88d8ba67389d20d9ed307366b52e487c15d7d3ee3233b62b95f709daa1d430
       CONTAINER: wsh-pve-boot
+      IMAGE: wsh-pve-e2e:boot
+      BUILD_MANAGER: ${{ needs.changes.outputs.manager }}
+      BUILD_QEMU: ${{ needs.changes.outputs.qemu }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Cache the ISOs
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The test media (pinned in e2e/pve/boot-media.sh) come from the Actions cache, which only
+      # main fills (here on dispatch, and daily in media-cache.yml): a pull request restores main's
+      # entry and never saves its own copy (e2e/README.md, "Downloaded media in the Actions cache")
+      - name: Cache key of the ISOs
+        id: iso-key
+        run: echo "key=$(sh e2e/pve/boot-media.sh key)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the ISOs
+        id: iso-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/iso
-          key: alpine-virt-iso-${{ env.ALPINE_X86_SHA256 }}-${{ env.ALPINE_ARM_SHA256 }}
+          key: ${{ steps.iso-key.outputs.key }}
 
       - name: Download and check the ISOs
-        run: |
-          dir="$RUNNER_TEMP/iso"
-          mkdir -p "$dir"
-          get() {
-            if [ ! -f "$dir/$1" ] || ! echo "$3  $dir/$1" | sha256sum -c --quiet; then
-              curl -fsSL --retry 3 -o "$dir/$1" "$2"
-            fi
-            echo "$3  $dir/$1" | sha256sum -c
-          }
-          get alpine-virt-x86_64.iso "$ALPINE_X86_URL" "$ALPINE_X86_SHA256"
-          get alpine-virt-aarch64.iso "$ALPINE_ARM_URL" "$ALPINE_ARM_SHA256"
+        run: sh e2e/pve/boot-media.sh fetch "$RUNNER_TEMP/iso"
 
-      - name: Build qemu-server with the pull request's patch
+      - name: Save the ISOs (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.iso-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/iso
+          key: ${{ steps.iso-key.outputs.key }}
+
+      - name: Build the pull request's packages
         run: |
           # https instead of ssh: no ssh keys here (as in build-deb.yml)
           sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
           git submodule update --init submodules/qemu-server
+          if [ "$BUILD_MANAGER" = true ]; then git submodule update --init submodules/pve-manager; fi
           git checkout -- .gitmodules
           sudo make qemu-server VERBOSE=2 DOCKER=docker DOCKER_ARG='--user root'
           cp build/repo/qemu-server_*.deb e2e/pve/debs/
+          if [ "$BUILD_MANAGER" = true ]; then
+            # without pve-manager's own tests (build-deb.yml runs them): this job is about starting guests
+            sudo make pve-manager VERBOSE=2 DOCKER=docker DOCKER_ARG='--user root' DEB_BUILD_OPTIONS=nocheck
+            cp build/repo/pve-manager_*.deb e2e/pve/debs/
+          fi
           ls -l e2e/pve/debs/
 
-      - name: Build the PVE image with it
+      - name: Build the PVE image with them
         run: |
-          DOCKER_BUILDKIT=1 docker build -f e2e/pve/Dockerfile --build-arg PACKAGES=mixed -t wsh-pve-e2e:boot .
-          docker run --rm --entrypoint dpkg-query wsh-pve-e2e:boot -W qemu-server pve-qemu-kvm pve-edk2-firmware-aarch64 \
-            | tee -a "$GITHUB_STEP_SUMMARY" || true
-          want=$(dpkg-deb -f e2e/pve/debs/qemu-server_*.deb Version)
-          have=$(docker run --rm --entrypoint dpkg-query wsh-pve-e2e:boot -W -f '${Version}' qemu-server)
-          if [ "$have" != "$want" ]; then
-            echo "::error::the image has qemu-server $have, not the one just built ($want)"
-            exit 1
-          fi
+          DOCKER_BUILDKIT=1 docker build -f e2e/pve/Dockerfile --build-arg PACKAGES=mixed -t "$IMAGE" .
+          # The image must carry each package just built, not the published one
+          for deb in e2e/pve/debs/*.deb; do
+            pkg=$(dpkg-deb -f "$deb" Package)
+            want=$(dpkg-deb -f "$deb" Version)
+            have=$(docker run --rm --entrypoint dpkg-query "$IMAGE" -W -f '${Version}' "$pkg")
+            if [ "$have" != "$want" ]; then
+              echo "::error::the image has $pkg $have, not the one just built ($want)"
+              exit 1
+            fi
+          done
+
+      # No workflow builds the pve-qemu-kvm package on a pull request: the two binaries the boot test
+      # starts, from the tree dpkg-source would build (pve-qemu at the pull request's pin with
+      # pve-qemu.patch and debian/patches), over the published package's
+      - name: Build QEMU from this pull request
+        if: ${{ env.BUILD_QEMU == 'true' }}
+        run: |
+          sed -i -e 's|git@github.com:|https://github.com/|' .gitmodules
+          git submodule update --init submodules/pve-qemu
+          git checkout -- .gitmodules
+          patch -d submodules/pve-qemu -p1 -s -i ../pve-qemu.patch
+          git -C submodules/pve-qemu submodule update --init qemu
+          # build/ belongs to root after the package builds (docker as root)
+          sudo mkdir -p build/boot-qemu
+          sudo chown "$(id -u):$(id -g)" build/boot-qemu
+          docker run --rm --entrypoint sh -e JOBS="$(nproc)" -v "$PWD:/src" "$IMAGE" \
+            /src/e2e/pve/build-qemu.sh /src/submodules/pve-qemu /src/build/boot-qemu
+          printf 'FROM %s\nCOPY qemu-system-x86_64 qemu-system-aarch64 /usr/bin/\n' "$IMAGE" \
+            | docker build -t "$IMAGE" -f - build/boot-qemu
+          docker run --rm --entrypoint qemu-system-x86_64 "$IMAGE" --version | grep 'pve-qemu-kvm_boot-test'
+
+      - name: Packages under test
+        run: |
+          {
+            echo '| Package | Version | From |'
+            echo '|---|---|---|'
+            for pkg in qemu-server pve-manager pve-qemu-kvm pve-edk2-firmware-ovmf pve-edk2-firmware-aarch64; do
+              ver=$(docker run --rm --entrypoint dpkg-query "$IMAGE" -W -f '${Version}' "$pkg")
+              from=published
+              if ls e2e/pve/debs/"${pkg}"_*.deb >/dev/null 2>&1; then from='this pull request'; fi
+              if [ "$pkg" = pve-qemu-kvm ] && [ "$BUILD_QEMU" = true ]; then
+                from='published, with qemu-system-x86_64 and -aarch64 from this pull request'
+              fi
+              echo "| $pkg | $ver | $from |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Start the PVE node
         run: |
           # privileged with systemd as PID 1, like e2e/docker-compose.e2e.yml
           docker run -d --name "$CONTAINER" --hostname pve --privileged --tmpfs /run --tmpfs /run/lock \
-            -v "$RUNNER_TEMP/iso:/var/lib/vz/template/iso:ro" wsh-pve-e2e:boot
+            -v "$RUNNER_TEMP/iso:/var/lib/vz/template/iso:ro" "$IMAGE"
           for _ in $(seq 1 60); do
             if docker exec "$CONTAINER" test -f /run/pve-e2e-ready; then
               exit 0
@@ -203,29 +278,39 @@ jobs:
           docker logs "$CONTAINER" 2>&1 | tail -n 50
           exit 1
 
-      - name: Boot Alpine on x86_64
+      # Every case runs; a failed one fails the step at the end
+      - name: Boot Alpine through PVE
         run: |
-          set -o pipefail
-          docker exec -i "$CONTAINER" sh -s -- x86_64 9001 local:iso/alpine-virt-x86_64.iso 300 \
-            < e2e/pve/boot-test.sh | tee "$RUNNER_TEMP/boot-x86_64.txt"
-          { echo '### x86_64'; grep -E '^(seen|x86_64):' "$RUNNER_TEMP/boot-x86_64.txt"; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Boot Alpine on aarch64
-        run: |
-          set -o pipefail
-          if ! docker exec "$CONTAINER" sh -c 'test -x /usr/bin/qemu-system-aarch64 && test -f /usr/share/pve-edk2-firmware/AAVMF_CODE.fd'; then
-            echo "::notice::no qemu-system-aarch64 or AAVMF firmware in the image: aarch64 boot skipped"
-            echo '### aarch64: skipped (no qemu-system-aarch64 or AAVMF)' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          printf '\n| Case | Result | Reached |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          failed=""
+          # case, VM ID, ISO, timeout (s)
+          while read -r case vmid iso timeout; do
+            out="$RUNNER_TEMP/boot-$case.txt"
+            if docker exec -i "$CONTAINER" sh -s -- "$case" "$vmid" "local:iso/$iso" "$timeout" \
+              < e2e/pve/boot-test.sh > "$out" 2>&1; then
+              result=$(sed -n "s/^$case: //p" "$out")
+            else
+              failed="$failed $case"
+              result="failed: $(sed -n '0,/^::error::/s/^::error:://p' "$out")"
+            fi
+            cat "$out"
+            echo "| $case | $result | $(sed -n 's/^seen: //p' "$out" | paste -sd, -) |" >> "$GITHUB_STEP_SUMMARY"
+          done <<'CASES'
+          i440fx 9001 alpine-virt-x86_64.iso 300
+          q35 9002 alpine-virt-x86_64.iso 300
+          ovmf 9003 alpine-virt-x86_64.iso 300
+          aarch64 9004 alpine-virt-aarch64.iso 600
+          CASES
+          if [ -n "$failed" ]; then
+            echo "::error::no login prompt through PVE for:$failed"
+            exit 1
           fi
-          docker exec -i "$CONTAINER" sh -s -- aarch64 9002 local:iso/alpine-virt-aarch64.iso 600 \
-            < e2e/pve/boot-test.sh | tee "$RUNNER_TEMP/boot-aarch64.txt"
-          { echo '### aarch64'; grep -E '^(seen|aarch64):' "$RUNNER_TEMP/boot-aarch64.txt"; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the serial logs
         if: ${{ failure() }}
         run: |
           mkdir -p "$RUNNER_TEMP/boot-logs"
+          cp "$RUNNER_TEMP"/boot-*.txt "$RUNNER_TEMP/boot-logs/" 2>/dev/null || true
           docker cp "$CONTAINER:/tmp/." "$RUNNER_TEMP/boot-logs/" || true
           docker exec "$CONTAINER" journalctl --no-pager -n 300 > "$RUNNER_TEMP/boot-logs/journal.txt" 2>&1 || true
 

@@ -118,6 +118,7 @@ pve-manager:
 		-e DEBEMAIL="$(GIT_EMAIL)" \
 		-e DEBFULLNAME="$(GIT_AUTHOR)" \
 		-e RUST_BACKTRACE=full \
+		-e DEB_BUILD_OPTIONS \
 		-v /run/systemd/journal/socket:/run/systemd/journal/socket \
 		$(DOCKER_BUILD_IMAGE) \
 		bash -c 'git config --global --add safe.directory /src/submodules/pve-manager && make distclean && make deb; rc=$$?; if [ $$rc -ne 0 ]; then echo "BUILD FAILED (rc=$$rc)"; if [ "$(DEBUG_SHELL)" = "1" ]; then echo "Dropping to shell inside container"; exec /bin/bash; fi; fi; cp -f pve-manager_*.deb /build/repo/'; \
@@ -466,6 +467,24 @@ clean-qemu-3dfx:
 	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a; \
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
+# qemu-3dfx's Linux guest wrapper (wrappers/3dfx/dso, Glide 2.x) as the shared library of an old i386
+# Linux guest, into build/linux-glide: libglide.so.2, the libglide2x.so symlink and README.txt.
+# scripts/build-3dfx-linux-glide.sh builds it for the Pentium against glibc 2.0's symbol versions
+# and checks both, in a plain Debian 13 image with gcc-multilib.
+.PHONY: 3dfx-linux-glide
+3dfx-linux-glide:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rev=$$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD); \
+	rm -rf build/linux-glide && mkdir -p build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm \
+		-v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx:ro \
+		-v $(CURRENT_DIR)/scripts:/src/scripts:ro \
+		-v $(CURRENT_DIR)/build/linux-glide:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/scripts/build-3dfx-linux-glide.sh /src/submodules/qemu-3dfx $$rev /out"; \
+	ls -la build/linux-glide
+
 # The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
 # checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
 # version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
@@ -493,6 +512,22 @@ wsh-openglide:
 	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-openglide:/out" \
 		-e WSH_OPENGLIDE_VERSION -e WSH_OPENGLIDE_COMMIT -e WSH_OPENGLIDE_EPOCH \
 		wsh-openglide-build /src/packages/wsh-openglide/build.sh /out
+
+# The optional wsh-qemu-rdp package (packages/wsh-qemu-rdp): qemu-rdp, the RDP server of Marc-André
+# Lureau's qemu-display, at the pinned commit (packages/wsh-qemu-rdp/upstream.env) with its crates
+# from crates.io (cargo vendor), and the unit wsh-qemu-rdp@<vmid> that serves a VM's D-Bus display;
+# built in a plain Debian 13 image into build/wsh-qemu-rdp/ with lintian at the end. Its version
+# comes from git (packages/wsh-qemu-rdp/version.sh), so it needs the full history and no changelog.
+# JOBS limits cargo's parallel jobs. packages/wsh-qemu-rdp/test.sh tests the result.
+.PHONY: wsh-qemu-rdp
+wsh-qemu-rdp:
+	$(Q)eval "$$(packages/wsh-qemu-rdp/version.sh | sed 's/^/export /')"; \
+	$(ECHO) "INFO: building wsh-qemu-rdp $$WSH_QEMU_RDP_VERSION"; \
+	$(DOCKER) build -f packages/wsh-qemu-rdp/build.Dockerfile -t wsh-qemu-rdp-build packages/wsh-qemu-rdp && \
+	mkdir -p build/wsh-qemu-rdp && \
+	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-qemu-rdp:/out" \
+		-e WSH_QEMU_RDP_VERSION -e WSH_QEMU_RDP_COMMIT -e WSH_QEMU_RDP_EPOCH -e JOBS \
+		wsh-qemu-rdp-build /src/packages/wsh-qemu-rdp/build.sh /out
 
 .PHONY: repo-update
 repo-update:
@@ -551,6 +586,7 @@ help:
 	@echo "  repo-update:             Update local Debian repository with new packages"
 	@echo "  wsh-lab:                 Build the optional wsh-lab package (the sparc lab) into build/wsh-lab"
 	@echo "  wsh-openglide:           Build the optional wsh-openglide package (Glide host libraries for 3dfx) into build/wsh-openglide"
+	@echo "  wsh-qemu-rdp:            Build the optional wsh-qemu-rdp package (RDP server for the D-Bus display) into build/wsh-qemu-rdp"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERBOSE:                 Set to 1 or 2 to enable verbose output"
