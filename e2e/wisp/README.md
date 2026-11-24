@@ -320,12 +320,29 @@ then reports each press (including Esc) on serial. SS-5 uses the existing Sun Zi
 driver's serio port and `sunkbd`. The pc uses `atkbd` on i8042. In separate boots with `console=tty0`,
 typing `poweroff` on the framebuffer VT shut down the pc and SS-5.
 
-The sun4u kernel also includes i8042 and `atkbd`. OpenBIOS exposes the EBus controller
-and its `kb_ps2` child, but its device tree has no `kdmouse` or `mouse` child. Linux 7.3.4's
+The sun4u kernel also includes i8042 and `atkbd`. With the published firmware, OpenBIOS exposes
+the EBus controller and its `kb_ps2` child, but no `kdmouse` or `mouse` child. Linux 7.3.4's
 `i8042-sparcio.h` requires both IRQs and returns `-ENODEV`, so the PS/2 keyboard stays unused.
 sun4u's `kernel-fb` therefore also has `CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`), and
 the framebuffer runs add `-device virtio-keyboard-pci`, as on virt; `keytest` then finds the virtio
 keyboard and the test checks its key codes like the others (see "Play DOOM").
+
+Two fixes make the PS/2 keyboard itself work:
+
+- OpenBIOS patch 0035 (`openbios/patches/`) and `-prom-env ps2-mouse?=true`: with the option, 0035
+  adds the `kdmouse` child and gives the node the layout Linux reads (the keyboard child's
+  translated address as the port base, and each child's interrupt). The option is off by default:
+  Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once that probe succeeds. `framebuffer.py`
+  sets it on sun4u, and older firmware ignores it.
+- `linux-patches/0001`, which `build.sh` applies to the unpacked kernel tree: with both children
+  found, Linux's sparc OF driver, also named `i8042`, stays registered, and the core driver then
+  fails with `Driver 'i8042' is already registered, aborting...`. The patch renames the OF
+  driver `i8042-sparc`. It changes no kernel size in the tables here.
+
+With both, and `WISP_FIRMWARE` set to a copy of `/usr/share/kvm` that has the 0035
+`openbios-sparc64` (built with `openbios/Dockerfile`), a sun4u boot without the virtio keyboard
+logs `serio: i8042 KBD port at 0x1fe02000060,0x1fe02000064`, and `keytest` received key codes 30,
+48, 28 and 1. The virtio keyboard stays in the framebuffer runs until a published package has 0035.
 
 From `e2e/wisp` inside the build image:
 
@@ -620,8 +637,8 @@ from Freedoom's release by the pin. VNC answered `RFB 003.008` on the published 
 
 ### The sun4u keyboard
 
-Linux can't use sun4u's own PS/2 keyboard under OpenBIOS (no mouse node on the EBus, see
-"Framebuffer tier"), so `kernel-fb` on sparc64 also has `CONFIG_VIRTIO_INPUT`
+Linux can't use sun4u's own PS/2 keyboard under the published OpenBIOS (no mouse node on the EBus;
+OpenBIOS 0035 adds it, see "Framebuffer tier"), so `kernel-fb` on sparc64 also has `CONFIG_VIRTIO_INPUT`
 (`config/tier-fb/sparc64.config`, layered on the shared Bochs fragment) and QEMU gets
 `-device virtio-keyboard-pci`, as on virt. `framebuffer.py`'s key test now checks sun4u's key codes
 too. The sun4u `kernel-fb` grew by 208 bytes (4,918,296 to 4,918,504). With
@@ -811,7 +828,9 @@ docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all     # or x86_64
 
 The image is Debian 13 with Debian's cross compilers (`gcc-sparc64-linux-gnu`, `gcc-i686-linux-gnu`, `gcc-aarch64-linux-gnu`),
 `linux-source-7.3` from trixie-backports (nolibc supports sparc since 6.16; trixie itself has 6.12)
-and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/` and per architecture:
+and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/`, applies each
+`linux-patches/*.patch` once (listed in `build/linux/.wisp-patches`; a `KSRC` tree is used as it
+is) and per architecture:
 
 1. installs the kernel's UAPI headers and the nolibc headers into a sysroot;
 2. builds `init.c` with `-static -nostdlib -nostdinc -Os` (sparc32: `sparc64-linux-gnu-gcc -m32

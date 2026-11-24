@@ -1,0 +1,44 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] Input: i8042 - give the sparc OF driver a name of its own
+
+On sparc, i8042_platform_init() registers sparc_i8042_driver, a
+platform driver that binds the firmware's "8042" node and reads the
+port base and the two interrupts from its keyboard and mouse children.
+It is named "i8042". When that probe finds both children,
+i8042_platform_init() returns 0 with the driver still registered, and
+i8042_init() then registers i8042_driver, also a platform driver named
+"i8042". driver_register() refuses the second one:
+
+  Error: Driver 'i8042' is already registered, aborting...
+
+and i8042_init() gives up, so no sun4u machine with a PS/2 8042 and
+both children gets a keyboard. (Without the mouse child the probe
+returns -ENODEV first and the clash never shows.) The JavaStation path
+doesn't register the OF driver and is not affected. Kernels that
+still used platform_create_bundle() added the core's "i8042" platform
+device first, the OF driver took it by name, and sparc_i8042_probe()
+followed its NULL of_node: Debian 7's 3.2 panics there.
+
+Name the OF driver "i8042-sparc". It matches by of_match_table, so
+the name only has to differ from the core driver's.
+
+Seen under QEMU's sun4u with OpenBIOS that has the 8042 kdmouse child
+(wsh-pve openbios patch 0035, ps2-mouse? true): with this change the
+keyboard registers ("serio: i8042 KBD port at
+0x1fe02000060,0x1fe02000064") and evdev reports the keys.
+---
+ drivers/input/serio/i8042-sparcio.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/input/serio/i8042-sparcio.h b/drivers/input/serio/i8042-sparcio.h
+--- a/drivers/input/serio/i8042-sparcio.h
++++ b/drivers/input/serio/i8042-sparcio.h
+@@ -97,7 +97,7 @@
+ 
+ static struct platform_driver sparc_i8042_driver = {
+ 	.driver = {
+-		.name = "i8042",
++		.name = "i8042-sparc",
+ 		.of_match_table = sparc_i8042_match,
+ 	},
+ 	.probe		= sparc_i8042_probe,

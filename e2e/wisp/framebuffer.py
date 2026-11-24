@@ -25,7 +25,8 @@ def display_args(display, arch=None):
     if display == "bochs-display":
         return ["-device", display, "-device", "virtio-keyboard-pci"]
     if arch == "sparc64":
-        # Linux can't probe sun4u's EBus i8042 under OpenBIOS (no mouse node), so a virtio keyboard
+        # Linux probes sun4u's EBus i8042 only with openbios-sparc64 0035 and ps2-mouse?=true,
+        # which no published package has yet, so a virtio keyboard
         return ["-vga", display, "-device", "virtio-keyboard-pci"]
     return ["-vga", display]
 
@@ -162,9 +163,12 @@ async def boot(arch, display, dest, timeout):
     stem = dest / f"{machine}-{display}"
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
+        extra = [*display_args(display, arch), "-qmp", f"unix:{monitor},server=on,wait=off"]
+        if arch == "sparc64":
+            # openbios-sparc64 0035: the 8042's mouse child; older firmware ignores the variable
+            extra += ["-prom-env", "ps2-mouse?=true"]
         cmd = run.qemu_command(arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
-                               firmware=os.getenv("WISP_FIRMWARE"), interactive=True,
-                               extra=[*display_args(display, arch), "-qmp", f"unix:{monitor},server=on,wait=off"])
+                               firmware=os.getenv("WISP_FIRMWARE"), interactive=True, extra=extra)
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE,
                                                     stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.STDOUT)
