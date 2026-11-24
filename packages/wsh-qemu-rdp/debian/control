@@ -1,0 +1,42 @@
+Source: wsh-qemu-rdp
+Section: net
+Priority: optional
+Maintainer: WsHosting ENK <debian@wsh.no>
+Build-Depends: debhelper-compat (= 13),
+               cargo-web,
+               dh-sequence-installsysusers,
+               libopus-dev,
+               libpixman-1-dev,
+               pkg-config,
+               rustc-web,
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://gitlab.com/marcandre.lureau/qemu-display
+Vcs-Browser: https://github.com/hwinther/wsh-pve/tree/main/packages/wsh-qemu-rdp
+Vcs-Git: https://github.com/hwinther/wsh-pve.git
+
+Package: wsh-qemu-rdp
+Architecture: any
+Depends: openssl,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: qemu-server (>= 9.2.20+wsh8),
+Description: RDP server for the D-Bus display of Proxmox VE VMs (qemu-rdp)
+ qemu-rdp from Marc-André Lureau's qemu-display project: an RDP server
+ (IronRDP) that serves the screen, keyboard, mouse and sound of a QEMU
+ started with -display dbus. With the wsh-pve qemu-server, a VM gets that
+ display with 'vga: <type>,display=dbus' (sound with 'audio0: ...,driver=dbus'),
+ on a D-Bus bus of its own (wsh-dbus-display@<vmid>.service).
+ .
+ The unit wsh-qemu-rdp@<vmid>.service runs qemu-rdp for one VM, as the
+ unprivileged user wsh-qemu-rdp (group wsh-display), started and stopped with
+ the VM's bus once enabled (systemctl enable --now wsh-qemu-rdp@<vmid>).
+ /etc/wsh-qemu-rdp/<vmid>.conf, written at the first start, holds the address
+ (127.0.0.1 by default), the port (20000 + VMID by default) and the RDP user
+ and password (generated); without a certificate of your own, the node gets a
+ self-signed one. Clients log in with NLA (CredSSP over TLS).
+ .
+ RemoteFX and bitmap codecs (no H.264), sound through rdpsnd (PCM, or Opus for
+ clients that take it), resizing the guest's screen from the client, text
+ clipboard. Mouse movement needs an absolute pointer in the guest (PVE's USB
+ tablet); without one only the buttons arrive.
