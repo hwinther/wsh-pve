@@ -261,6 +261,28 @@ class QemuLog(unittest.TestCase):
         self.assertEqual(st[2]["frames_to_console"], 250)
         self.assertEqual(w.offscreen_stats("glidept: DLL loaded - glide2x.dll\n"), [])
 
+    DMABUF_LOG = ("mesapt: offscreen closed after 12.0 s: 2010 swaps (167.5 per s), 2010 reads of 0.00 ms average "
+                  "(0 after the last call), 2010 frames to the console, 0.60 ms after their read on average\n"
+                  "mesapt: dmabuf scanout: 2010 frames copied to the dmabuf in 1.02 ms average, the display's update "
+                  "0.80 ms a frame, 3 held while the display was busy, 0 frames read back instead\n"
+                  "mesapt: dmabuf scanout: double-buffered, 1 of the held frames replaced by a newer one before they "
+                  "went\n"
+                  "glidept: offscreen closed after 5.0 s: 300 swaps (60.0 per s), 300 reads of 0.00 ms average "
+                  "(0 after the last call), 300 frames to the console, 0.50 ms after their read on average\n"
+                  "glidept: dmabuf scanout: 300 frames copied to the dmabuf in 0.07 ms average, the display's update "
+                  "0.50 ms a frame, 0 held while the display was busy, 0 frames read back instead\n")
+
+    def test_offscreen_stats_double_buffered(self):
+        st = w.offscreen_stats(self.DMABUF_LOG)
+        self.assertEqual([(s["device"], s["dmabuf_frames"], s["double_buffered"]) for s in st],
+                         [("mesapt", 2010, True), ("glidept", 300, False)])
+        self.assertEqual(st[0]["replaced"], 1)
+        self.assertNotIn("replaced", st[1])
+
+    def test_display_timer_held(self):
+        log = "mesapt: offscreen: no swap for 2000 ms, the frame stays (the display timer gives the console back\n"
+        self.assertEqual(len(w.HELD_RE.findall(log * 2)), 2)
+
     def test_select_tests(self):
         stage1 = b"...glidept: offscreen %dx%d, frames to %s..."
         stage1b = b"...%s: offscreen %dx%d, frames to %s...no SDL window: rendering offscreen, EGL %d.%d..."
@@ -302,6 +324,14 @@ class Verdicts(unittest.TestCase):
             r = self.result(**kw)
             self.assertFalse(w.evaluate(r, ["glide2"]), kw)
             self.assertTrue(r["tests"]["glide2"]["verdict"].startswith("FAIL: "))
+
+    def test_held_frame(self):
+        r = self.result()
+        r["tests"]["glide2"]["held"] = {"ok": True, "at_s": 7.6}
+        self.assertTrue(w.evaluate(r, ["glide2"]))
+        r["tests"]["glide2"]["held"] = {"ok": False, "at_s": 7.6}
+        self.assertFalse(w.evaluate(r, ["glide2"]))
+        self.assertIn("held frame was gone 7.6 s", r["tests"]["glide2"]["verdict"])
 
     def test_sdl_after_not_checked(self):
         r = self.result(after=None)
