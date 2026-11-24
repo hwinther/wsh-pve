@@ -1,5 +1,5 @@
 # wisp, the tiny test system: a kernel and a one-program initramfs (PID 1 built with the kernel's nolibc)
-# for x86_64, i386, sparc32 and sparc64, and the published pve-qemu-kvm to boot them.
+# for x86_64, i386, sparc32, sparc64 and aarch64, and the published pve-qemu-kvm to boot them.
 #
 # Build context: the repository root (for the keyrings).
 #   docker build -f e2e/wisp/Dockerfile -t wsh-wisp .
@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sources.list.d/backports.list \
     && apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg python3 make bc bison flex \
-        cpio rsync squashfs-tools xz-utils libelf-dev libssl-dev gcc libc6-dev gcc-sparc64-linux-gnu gcc-i686-linux-gnu time \
+        cpio rsync squashfs-tools xz-utils libelf-dev libssl-dev gcc libc6-dev gcc-sparc64-linux-gnu gcc-i686-linux-gnu gcc-aarch64-linux-gnu time \
     && apt-get install --no-install-recommends --assume-yes -t trixie-backports linux-source-7.3 \
     && rm -rf /var/lib/apt/lists/*
 

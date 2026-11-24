@@ -14,6 +14,7 @@ import shell
 
 DEVICES = {
     "sparc32": ["-machine", "audiodev=snd0"],
+    "aarch64": ["-device", "AC97,audiodev=snd0"],
     "x86_64": ["-device", "AC97,audiodev=snd0"],
     "sparc64": ["-device", "AC97,audiodev=snd0"],
 }
