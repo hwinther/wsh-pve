@@ -212,7 +212,7 @@ test('display: D-Bus display with refresh, and the D-Bus audio driver', async ({
   await win.getByRole('button', { name: 'OK' }).click()
   await expect(win).toBeHidden()
   // the dialog sorts the keys
-  expect(await vmConfFile(VMID)).toMatch(/^vga: std,dbus-refresh=14,display=dbus$/m)
+  expect(await vmConfFile(VMID)).toMatch(/^vga: std,dbus-refresh=14,display=dbus,mesa=0$/m)
   expect(await showcmd(VMID)).toContain(
     `-display 'dbus,addr=unix:path=/run/wsh-dbus-display/${VMID}.sock,refresh-ms=14'`,
   )
