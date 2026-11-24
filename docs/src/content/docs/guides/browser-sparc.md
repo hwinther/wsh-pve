@@ -77,6 +77,9 @@ it through proxied system calls, so the device's handlers run next to the termin
 `write()` goes to xterm.js, `read()` takes what was typed, and `poll()` says whether input is
 waiting. QEMU's main loop sleeps in `poll()` and typing wakes it, so an idle machine costs little.
 The guest's line discipline does the echo and the line editing (Backspace, Ctrl-U, Ctrl-W, Ctrl-C).
+What is typed before wisp's first prompt waits in the page and goes to the guest at that prompt:
+the snapshot's transcript shows a prompt before QEMU has started, and keys sent then reached the
+serial port before loading the snapshot replaced its state, so the shell lost the first of them.
 
 **Cross-origin isolation.** QEMU runs its threads (main loop, vCPU) as Web Workers sharing one
 `SharedArrayBuffer`, which browsers allow only in a page served with the
