@@ -113,7 +113,7 @@ jobs:
           path: |
             e2e/wisp/out
             !e2e/wisp/out/framebuffer/**
-          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**', 'e2e/wisp/linux-patches/**') }}
 
       - name: Build the wisp image
         run: |

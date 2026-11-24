@@ -316,11 +316,26 @@ then reports each press (including Esc) on serial. SS-5 uses the existing Sun Zi
 driver's serio port and `sunkbd`. The pc uses `atkbd` on i8042. In separate boots with `console=tty0`,
 typing `poweroff` on the framebuffer VT shut down the pc and SS-5.
 
-The sun4u kernel also includes i8042 and `atkbd`. OpenBIOS exposes the EBus controller
-and its `kb_ps2` child, but its device tree has no `kdmouse` or `mouse` child. Linux 7.3.4's
-`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`. The observed shell result is
-`keytest: keyboard unavailable`, and typing `poweroff` on the framebuffer VT had no effect.
-The test records this specific sun4u result and checks the key codes if a keyboard is present.
+The sun4u kernel also includes i8042 and `atkbd`. Two fixes are needed for the keyboard:
+
+- OpenBIOS patch 0035 (`openbios/patches/`) and `-prom-env ps2-mouse?=true`: the EBus `8042`
+  node has only its `kb_ps2` child. Linux 7.3.4's `i8042-sparcio.h` needs a `kdmouse` or `mouse`
+  child too, and returns `-ENODEV` without it. It also takes the keyboard child's translated
+  address as the port base and each child's interrupt. With the option, 0035 adds the child and
+  gives the node that layout. The option is off by default: Debian 7's Linux 3.2 panics in
+  `sparc_i8042_probe()` once that probe succeeds. `framebuffer.py` sets it on sun4u, and older
+  firmware ignores it.
+- `linux-patches/0001`, which `build.sh` applies to the unpacked kernel tree: with both children
+  found, Linux's sparc OF driver, also named `i8042`, stays registered, and the core driver then
+  fails with `Driver 'i8042' is already registered, aborting...`. The patch renames the OF
+  driver `i8042-sparc`. It changes no kernel size in the tables here.
+
+With both, the sun4u keytest passes: `serio: i8042 KBD port at 0x1fe02000060,0x1fe02000064`,
+then key codes 30, 48, 28 and 1. That run needs `WISP_FIRMWARE` set to a copy of `/usr/share/kvm`
+that has the 0035 `openbios-sparc64` (built with `openbios/Dockerfile`). The published
+package's firmware doesn't have 0035 yet, and with it the result is still `keytest: keyboard
+unavailable`. `framebuffer.py` accepts that one sun4u result, so CI, which boots the published
+firmware, passes. It checks the key codes whenever a keyboard is present.
 
 From `e2e/wisp` inside the build image:
 
@@ -662,7 +677,9 @@ docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./build.sh all     # or x86_64
 
 The image is Debian 13 with Debian's cross compilers (`gcc-sparc64-linux-gnu`, `gcc-i686-linux-gnu`),
 `linux-source-7.3` from trixie-backports (nolibc supports sparc since 6.16; trixie itself has 6.12)
-and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/` and per architecture:
+and the published `pve-qemu-kvm`. `build.sh` unpacks the kernel into `build/`, applies each
+`linux-patches/*.patch` once (listed in `build/linux/.wisp-patches`; a `KSRC` tree is used as it
+is) and per architecture:
 
 1. installs the kernel's UAPI headers and the nolibc headers into a sysroot;
 2. builds `init.c` with `-static -nostdlib -nostdinc -Os` (sparc32: `sparc64-linux-gnu-gcc -m32

@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sources.list.d/backports.list \
     && apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg python3 make bc bison flex \
-        cpio rsync squashfs-tools xz-utils libelf-dev libssl-dev gcc libc6-dev gcc-sparc64-linux-gnu gcc-i686-linux-gnu time \
+        cpio rsync squashfs-tools xz-utils libelf-dev libssl-dev gcc libc6-dev gcc-sparc64-linux-gnu gcc-i686-linux-gnu time patch \
     && apt-get install --no-install-recommends --assume-yes -t trixie-backports linux-source-7.3 \
     && rm -rf /var/lib/apt/lists/*
 

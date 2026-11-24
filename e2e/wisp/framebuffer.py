@@ -70,7 +70,9 @@ async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
         if b"WISP-KEYBOARD dev=" in line:
             break
         if arch == "sparc64" and line.strip() == b"keytest: keyboard unavailable":
-            # OpenBIOS omits the mouse child required by Linux's EBus i8042 probe.
+            # Linux's sparc i8042 probe needs the 8042's kdmouse child, which openbios-sparc64
+            # has with openbios/patches/0035 and ps2-mouse?=true only. CI boots the published
+            # package's firmware, so this stays accepted until a published package has 0035.
             await until(prompt)
             print(f"{arch}/{display} keyboard unavailable (OpenBIOS EBus)", flush=True)
             return
@@ -156,9 +158,12 @@ async def boot(arch, display, dest, timeout):
     stem = dest / f"{machine}-{display}"
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
+        extra = ["-vga", display, "-qmp", f"unix:{monitor},server=on,wait=off"]
+        if arch == "sparc64":
+            # openbios-sparc64 0035: the 8042's mouse child; older firmware ignores the variable
+            extra += ["-prom-env", "ps2-mouse?=true"]
         cmd = run.qemu_command(arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
-                               firmware=os.getenv("WISP_FIRMWARE"), interactive=True,
-                               extra=["-vga", display, "-qmp", f"unix:{monitor},server=on,wait=off"])
+                               firmware=os.getenv("WISP_FIRMWARE"), interactive=True, extra=extra)
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE,
                                                     stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.STDOUT)
