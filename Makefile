@@ -494,6 +494,22 @@ wsh-openglide:
 		-e WSH_OPENGLIDE_VERSION -e WSH_OPENGLIDE_COMMIT -e WSH_OPENGLIDE_EPOCH \
 		wsh-openglide-build /src/packages/wsh-openglide/build.sh /out
 
+# The optional wsh-qemu-rdp package (packages/wsh-qemu-rdp): qemu-rdp, the RDP server of Marc-André
+# Lureau's qemu-display, at the pinned commit (packages/wsh-qemu-rdp/upstream.env) with its crates
+# from crates.io (cargo vendor), and the unit wsh-qemu-rdp@<vmid> that serves a VM's D-Bus display;
+# built in a plain Debian 13 image into build/wsh-qemu-rdp/ with lintian at the end. Its version
+# comes from git (packages/wsh-qemu-rdp/version.sh), so it needs the full history and no changelog.
+# JOBS limits cargo's parallel jobs. packages/wsh-qemu-rdp/test.sh tests the result.
+.PHONY: wsh-qemu-rdp
+wsh-qemu-rdp:
+	$(Q)eval "$$(packages/wsh-qemu-rdp/version.sh | sed 's/^/export /')"; \
+	$(ECHO) "INFO: building wsh-qemu-rdp $$WSH_QEMU_RDP_VERSION"; \
+	$(DOCKER) build -f packages/wsh-qemu-rdp/build.Dockerfile -t wsh-qemu-rdp-build packages/wsh-qemu-rdp && \
+	mkdir -p build/wsh-qemu-rdp && \
+	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-qemu-rdp:/out" \
+		-e WSH_QEMU_RDP_VERSION -e WSH_QEMU_RDP_COMMIT -e WSH_QEMU_RDP_EPOCH -e JOBS \
+		wsh-qemu-rdp-build /src/packages/wsh-qemu-rdp/build.sh /out
+
 .PHONY: repo-update
 repo-update:
 	$(Q)if [ $$(id -u) -eq 0 ]; then \
@@ -551,6 +567,7 @@ help:
 	@echo "  repo-update:             Update local Debian repository with new packages"
 	@echo "  wsh-lab:                 Build the optional wsh-lab package (the sparc lab) into build/wsh-lab"
 	@echo "  wsh-openglide:           Build the optional wsh-openglide package (Glide host libraries for 3dfx) into build/wsh-openglide"
+	@echo "  wsh-qemu-rdp:            Build the optional wsh-qemu-rdp package (RDP server for the D-Bus display) into build/wsh-qemu-rdp"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERBOSE:                 Set to 1 or 2 to enable verbose output"

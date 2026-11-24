@@ -55,6 +55,13 @@ const PACKAGE_DEFS = [
     releaseName: "wsh-openglide",
     patch: null,
   },
+  // Optional, built by wsh-qemu-rdp.yml (qemu-rdp, the RDP server for the D-Bus display): its
+  // version comes from git too, its release tags are wsh-qemu-rdp-<version>.
+  {
+    name: "wsh-qemu-rdp",
+    releaseName: "wsh-qemu-rdp",
+    patch: null,
+  },
 ];
 
 function parsePackagesFile(filePath) {
