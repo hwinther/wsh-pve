@@ -1,0 +1,31 @@
+qemu-rdp: the commit for --version from QEMU_RDP_GIT_HASH
+
+build.rs asks git for the commit that `qemu-rdp --version` prints; the package is built from a tree
+without .git, where it printed none. QEMU_RDP_GIT_HASH, when set, is used instead (build.sh sets it
+to the pinned commit).
+
+For wsh-pve (packages/wsh-qemu-rdp), against qemu-display at the commit upstream.env pins.
+---
+diff --git a/qemu-rdp/build.rs b/qemu-rdp/build.rs
+index cd488ef..d7fec33 100644
+--- a/qemu-rdp/build.rs
++++ b/qemu-rdp/build.rs
+@@ -5,10 +5,14 @@ use std::{path::PathBuf, process::Command};
+ 
+ fn main() {
+     let _ = rerun_if_git_changes();
+-    println!(
+-        "cargo:rustc-env=GIT_HASH={}",
+-        get_commit_hash().unwrap_or_default()
+-    );
++    // A build from a source tree without git (a distribution package) passes the commit in
++    // QEMU_RDP_GIT_HASH
++    println!("cargo::rerun-if-env-changed=QEMU_RDP_GIT_HASH");
++    let hash = std::env::var("QEMU_RDP_GIT_HASH")
++        .ok()
++        .filter(|h| !h.is_empty())
++        .or_else(get_commit_hash);
++    println!("cargo:rustc-env=GIT_HASH={}", hash.unwrap_or_default());
+ }
+ 
+ #[must_use]

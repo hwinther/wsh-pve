@@ -1,0 +1,51 @@
+.TH QEMU-RDP 1 "2026" "wsh-qemu-rdp" "User Commands"
+.SH NAME
+qemu-rdp \- RDP server for QEMU's D-Bus display
+.SH SYNOPSIS
+.B qemu-rdp
+[\fB\-\-dbus\-address\fR \fIADDRESS\fR]
+.B serve
+[\fB\-\-bind\-address\fR \fIIP\fR:\fIPORT\fR]
+[\fB\-\-cert\fR \fIFILE\fR \fB\-\-key\fR \fIFILE\fR]
+[\fB\-\-credentials\-file\fR \fIFILE\fR]
+[\fB\-\-codecs\fR \fISPEC\fR]
+.SH DESCRIPTION
+.B qemu-rdp
+serves the console of a QEMU started with \fB\-display dbus\fR (the bus name org.qemu) to RDP
+clients: the screen (RemoteFX and bitmap codecs), keyboard and mouse, the sound of
+\fB\-audiodev dbus\fR through rdpsnd (PCM or Opus, 48 kHz), resizing and a text clipboard. Clients
+log in with NLA (CredSSP over TLS) with the one user name and password the server has; without
+them every client is refused.
+.PP
+On Proxmox VE with the wsh-pve qemu-server, run it through the unit
+\fBwsh-qemu-rdp@\fIvmid\fB.service\fR instead (\fBsystemctl enable \-\-now wsh-qemu-rdp@\fIvmid\fR), which
+reads \fI/etc/wsh-qemu-rdp/<vmid>.conf\fR (written with a generated password at its first start) and
+connects to the VM's bus, \fI/run/wsh-dbus-display/<vmid>.sock\fR.
+.SH OPTIONS
+.TP
+.BR \-d ", " \-\-dbus\-address " " \fIADDRESS\fR
+The D-Bus address of QEMU's display (default: the session bus).
+.TP
+.BR \-b ", " \-\-bind\-address " " \fIIP\fR:\fIPORT\fR
+The address to listen on (default 0.0.0.0:3389).
+.TP
+.BR \-c ", " \-\-cert " " \fIFILE\fR ", " \-k ", " \-\-key " " \fIFILE\fR
+The TLS certificate and private key (PEM); without them, server-cert.pem and server-key.pem in
+\fI$XDG_CONFIG_HOME/qemu-rdp\fR.
+.TP
+.BR \-\-credentials\-file " " \fIFILE\fR
+The user name on the first line, the password on the second (a wsh-pve addition). They can also be
+set with the D-Bus method SetCredentials of org.QemuDisplay.RDP, where the bus lets qemu-rdp own
+that name.
+.TP
+.BR \-\-codecs " " \fISPEC\fR
+IronRDP's codec configuration.
+.TP
+.B \-\-print\-capabilities
+Print the program's capabilities as JSON.
+.SH ENVIRONMENT
+.TP
+.B QEMURDP_LOG
+The log filter (error, warn (default), info, debug, trace).
+.SH SEE ALSO
+https://gitlab.com/marcandre.lureau/qemu-display
