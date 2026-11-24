@@ -10,7 +10,10 @@ Runs inside the image of e2e/audio/Dockerfile (the e2e PVE node plus the guests)
 
   --only ID[,ID]   run only these cases (see CASES / END_CASES / PVE_CASES / PVE_WAV_SERVER /
                    PVE_WAV_STOP)
-  FREEDOS_CACHE    where the FreeDOS zip is kept (default /var/cache/audio-freedos)
+  FREEDOS_ZIP      the FreeDOS 1.4 Floppy Edition zip to use (CI: the one the workflow restored from
+                   the Actions cache), checked against its pin and never downloaded over
+  FREEDOS_CACHE    otherwise, where the pinned zip is downloaded to and kept (default
+                   /var/cache/audio-freedos); pins and download: e2e/sparc/targets_dos.py, fetch_media.py
 
 Guests (built by build-guests.sh, nothing installed):
   dos    FreeDOS 1.4's boot floppy with its FDCONFIG.SYS replaced so it runs AUDIO.BAT, which runs
@@ -53,22 +56,22 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.request
 import zipfile
 
 import wavcheck
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# the FreeDOS pins and their download: e2e/sparc in the repository, /sparc next to /audio in the image
+sys.path.append(os.path.join(HERE, "..", "sparc"))
+import fetch_media  # noqa: E402
+import targets_dos  # noqa: E402
+
 GUESTS = os.environ.get("AUDIO_GUESTS", os.path.join(HERE, "guests"))
 QEMU = "qemu-system-x86_64"
 
-# The FreeDOS 1.4 Floppy Edition, the same pins as e2e/sparc/targets_dos.py (FREEDOS_ZIP and MEDIA
+# The FreeDOS 1.4 Floppy Edition (e2e/sparc/targets_dos.py, FREEDOS_ZIP and MEDIA
 # "freedos14-boot.img"): only its boot floppy is used.
-FREEDOS_ZIP = {"url": "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/"
-                      "FD14-FloppyEdition.zip",
-               "sha256": "45b1fa7c52dd996c3bfa5e352ffcd410781b952a6ad629f15a4c9ec4bbaefc5a"}
-FREEDOS_BOOT = {"zip": "144m/x86BOOT.img",
-                "sha256": "552f7cbb0625960c050a3e682a4d2121cc2ffdfa9dc9d592ccd49edf179333dc"}
+FREEDOS_BOOT = targets_dos.MEDIA["freedos14-boot.img"]
 
 # What AUDTEST plays (audtest.asm) and what the Linux guest plays (build-guests.sh)
 SB16, OPL, SPK, LINUX = 1000, 440, 750, 660
@@ -227,14 +230,11 @@ def freedos_boot_floppy():
     boot = os.path.join(cache, "freedos14-boot.img")
     if os.path.exists(boot) and sha256(boot) == FREEDOS_BOOT["sha256"]:
         return boot
-    zpath = os.path.join(cache, os.path.basename(FREEDOS_ZIP["url"]))
-    if not os.path.exists(zpath) or sha256(zpath) != FREEDOS_ZIP["sha256"]:
-        log(f"downloading {FREEDOS_ZIP['url']}")
-        with urllib.request.urlopen(FREEDOS_ZIP["url"], timeout=300) as r, open(zpath + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
-        os.replace(zpath + ".part", zpath)
-    if sha256(zpath) != FREEDOS_ZIP["sha256"]:
-        raise RuntimeError(f"{FREEDOS_ZIP['url']}: sha256 isn't {FREEDOS_ZIP['sha256']}")
+    if os.environ.get("FREEDOS_ZIP"):
+        zpath = fetch_media.checked(os.environ["FREEDOS_ZIP"], fetch_media.FREEDOS_ZIP_NAME)
+    else:
+        log(f"FreeDOS zip in {cache} (downloaded when it isn't the pinned one)")
+        zpath = fetch_media.fetch(fetch_media.FREEDOS_ZIP_NAME, cache)
     with zipfile.ZipFile(zpath) as zf, zf.open(FREEDOS_BOOT["zip"]) as src, open(boot, "wb") as dst:
         shutil.copyfileobj(src, dst)
     if sha256(boot) != FREEDOS_BOOT["sha256"]:

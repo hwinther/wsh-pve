@@ -454,7 +454,8 @@ findings).
   `ECHO`, `BUSY`: programs that count loop iterations, `dos_tools.py com --name busy|busyk`); numbers
   and the comparison with `POWER.EXE` in the DOS guide, "Idle".
 - **CI** (`.github/workflows/sparc-lab-dos.yml`, GitHub-hosted): the unit tests, then
-  `tests/test_freedos.py` in the lab image: FreeDOS downloaded by sha256, installed from its seven
+  `tests/test_freedos.py` in the lab image: FreeDOS from the Actions cache (`fetch_media.py`, checked by
+  sha256; `e2e/README.md`, "Downloaded media in the Actions cache"), installed from its seven
   floppies, booted from the disk, marker and idle checked. No Microsoft media.
 
 Tested in the PVE test container on the lab host (TCG, published packages pve-qemu-kvm

@@ -12,6 +12,9 @@
 #                     instead of the published pve-qemu-kvm's; it is installed over the published one
 #   --drivers ZIP     the guest drivers (default: gh release download qemu-3dfx-drivers-<rev>, the
 #                     revision the binary names; needs gh and a token, GH_TOKEN in CI)
+#   --freedos-zip ZIP the FreeDOS 1.4 Floppy Edition (FD14-FloppyEdition.zip), checked against its pin
+#                     (e2e/sparc/targets_dos.py); default: downloaded into OUT/.freedos-cache. CI gives
+#                     the one it restored from the Actions cache (e2e/sparc/fetch_media.py)
 #   --image NAME      the test image's tag (default wsh-3dfx-dos:local); --no-build uses it as it is
 #   --docker CMD      docker or podman (default docker)
 #   --pve CONTAINER   PVE starts the VM: run the harness in this PVE container (e2e/pve/Dockerfile,
@@ -27,13 +30,14 @@
 set -euo pipefail
 
 top=$(cd "$(dirname "$0")/../.." && pwd)
-out="" qbin="" drivers="" image="wsh-3dfx-dos:local" build=1 docker=docker pve="" vmid=9397
+out="" qbin="" drivers="" fdzip="" image="wsh-3dfx-dos:local" build=1 docker=docker pve="" vmid=9397
 die() { echo "dos-test.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --out) out=${2:?}; shift 2 ;;
         --qemu-bin) qbin=${2:?}; shift 2 ;;
         --drivers) drivers=${2:?}; shift 2 ;;
+        --freedos-zip) fdzip=${2:?}; shift 2 ;;
         --image) image=${2:?}; shift 2 ;;
         --no-build) build=0; shift ;;
         --docker) docker=${2:?}; shift 2 ;;
@@ -46,6 +50,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$out" ] || die "--out is required"
 [ -z "$qbin" ] || [ -x "$qbin" ] || die "no executable $qbin"
+[ -z "$fdzip" ] || [ -r "$fdzip" ] || die "no FreeDOS zip at $fdzip"
 [ -f "$top/submodules/qemu-3dfx/wrappers/3dfx/dxe/glidedxe.c" ] \
     || die "submodules/qemu-3dfx isn't checked out (git submodule update --init submodules/qemu-3dfx)"
 mkdir -p "$out"
@@ -108,8 +113,16 @@ if [ -n "$pve" ]; then
         apt-get update -qq 2>&1 | grep -v enterprise.proxmox.com; apt-get install --no-install-recommends --assume-yes -qq mtools > /dev/null; }'
     dname=$(basename "$drivers")
     [ "$drivers" = "$out/$dname" ] || cp "$drivers" "$out/$dname"
+    fdenv=()
+    if [ -n "$fdzip" ]; then
+        # where the PVE container sees it, like the drivers
+        mkdir -p "$out/.freedos-cache"
+        fdzip=$(cd "$(dirname "$fdzip")" && pwd)/$(basename "$fdzip")
+        [ "$fdzip" = "$out/.freedos-cache/$(basename "$fdzip")" ] || cp "$fdzip" "$out/.freedos-cache/"
+        fdenv=(FREEDOS_ZIP="$out/.freedos-cache/$(basename "$fdzip")")
+    fi
     status=0
-    in_pve env FREEDOS_CACHE="$out/.freedos-cache" python3 /root/glidedos/e2e/3dfx/dos/dos_test.py --pve "$vmid" \
+    in_pve env FREEDOS_CACHE="$out/.freedos-cache" "${fdenv[@]}" python3 /root/glidedos/e2e/3dfx/dos/dos_test.py --pve "$vmid" \
         --drivers "$out/$dname" --bin /root/glidedos/bin --out "$out" "$@" || status=$?
     in_pve chmod -R a+rX "$out" || true
     exit "$status"
@@ -117,10 +130,16 @@ fi
 
 dname=$(basename "$drivers")
 mounts+=(-v "$drivers:/dos-in/$dname:ro")
+fdenv=()
+if [ -n "$fdzip" ]; then
+    fdzip=$(cd "$(dirname "$fdzip")" && pwd)/$(basename "$fdzip")
+    mounts+=(-v "$fdzip:/dos-in/freedos/$(basename "$fdzip"):ro")
+    fdenv=(-e "FREEDOS_ZIP=/dos-in/freedos/$(basename "$fdzip")")
+fi
 devices=()
 [ ! -e /dev/kvm ] || devices=(--device /dev/kvm)
 status=0
-"$docker" run --rm "${devices[@]}" "${mounts[@]}" -e FREEDOS_CACHE=/dos-out/.freedos-cache --entrypoint sh "$image" -c \
+"$docker" run --rm "${devices[@]}" "${mounts[@]}" -e FREEDOS_CACHE=/dos-out/.freedos-cache "${fdenv[@]}" --entrypoint sh "$image" -c \
     "${install}exec python3 /w3d/e2e/3dfx/dos/dos_test.py --drivers \"/dos-in/$dname\" --bin /w3d/bin \
     --out /dos-out \"\$@\"" dos-test "$@" || status=$?
 # the container wrote as root: the summary and logs readable for the caller (an artifact upload)
