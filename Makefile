@@ -467,6 +467,24 @@ clean-qemu-3dfx:
 	mv submodules/qemu-3dfx/wrappers/3dfx/build build/3dfx && rm -f build/3dfx/Makefile build/3dfx/*.a; \
 	mv submodules/qemu-3dfx/wrappers/mesa/build build/mesa && rm -f build/mesa/Makefile build/mesa/*.a
 
+# qemu-3dfx's Linux guest wrapper (wrappers/3dfx/dso, Glide 2.x) as the shared library of an old i386
+# Linux guest, into build/linux-glide: libglide.so.2, the libglide2x.so symlink and README.txt.
+# scripts/build-3dfx-linux-glide.sh builds it for the Pentium against glibc 2.0's symbol versions
+# and checks both, in a plain Debian 13 image with gcc-multilib.
+.PHONY: 3dfx-linux-glide
+3dfx-linux-glide:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rev=$$(git -C submodules/qemu-3dfx rev-parse --short=7 HEAD); \
+	rm -rf build/linux-glide && mkdir -p build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm \
+		-v $(CURRENT_DIR)/submodules/qemu-3dfx:/src/submodules/qemu-3dfx:ro \
+		-v $(CURRENT_DIR)/scripts:/src/scripts:ro \
+		-v $(CURRENT_DIR)/build/linux-glide:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/scripts/build-3dfx-linux-glide.sh /src/submodules/qemu-3dfx $$rev /out"; \
+	ls -la build/linux-glide
+
 # The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
 # checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
 # version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
