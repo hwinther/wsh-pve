@@ -20,18 +20,17 @@ the first boot that sets root's password, the marker, the host name and a static
                  (the release's images/SHA512) are checked
   NETBSD_OUT     where the evidence goes (default: a temporary directory, removed when the test passes)
 """
-import hashlib
 import os
 import shutil
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
+import fetch_media  # noqa: E402
 import lab  # noqa: E402
 import targets  # noqa: E402
 
@@ -45,37 +44,13 @@ TARGET = os.environ.get("NETBSD_TARGET") or "netbsd111-sparc64"
 GUEST_TESTS = os.environ.get("WSH_LAB_GUEST_TESTS") == "1"
 
 
-def digests(path):
-    """(sha256, sha512) of the file, in one read."""
-    h256, h512 = hashlib.sha256(), hashlib.sha512()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h256.update(block)
-            h512.update(block)
-    return h256.hexdigest(), h512.hexdigest()
-
-
-def tested(path, med):
-    """Whether `path` is the medium of targets.MEDIA: its size, sha256 and (where pinned) sha512."""
-    if not os.path.exists(path) or os.path.getsize(path) != med["size"]:
-        return False
-    h256, h512 = digests(path)
-    return h256 == med["sha256"] and med.get("sha512", h512) == h512
-
-
 def netbsd_iso(name):
-    """The target's CD, checked against targets.MEDIA[name]."""
-    med = targets.MEDIA[name]
+    """The target's CD, checked against targets.MEDIA[name] (fetch_media.py downloads the pinned one)."""
     path = os.environ.get("NETBSD_ISO")
     if not path:
-        cache = os.environ.get("NETBSD_CACHE", "/tmp/wsh-lab-netbsd")
-        os.makedirs(cache, exist_ok=True)
-        path = os.path.join(cache, name)
-        if not tested(path, med):
-            with urllib.request.urlopen(med["url"], timeout=600) as r, open(path + ".part", "wb") as f:
-                shutil.copyfileobj(r, f, 1 << 20)
-            os.replace(path + ".part", path)
-    if not tested(path, med):
+        return fetch_media.fetch(name, os.environ.get("NETBSD_CACHE", "/tmp/wsh-lab-netbsd"))
+    med = targets.MEDIA[name]
+    if not fetch_media.tested(path, med):
         raise RuntimeError(f"{path}: not the tested {name} (size {med['size']}, sha256 {med['sha256']},"
                            f" sha512 {med.get('sha512', '-')})")
     return path

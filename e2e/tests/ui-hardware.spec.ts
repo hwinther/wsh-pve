@@ -241,5 +241,5 @@ test('display: D-Bus display with refresh, and the D-Bus audio driver', async ({
   expect(await vmConfFile(VMID)).toMatch(/^audio0: device=AC97,driver=dbus$/m)
   const cmd = await showcmd(VMID)
   expect(cmd).toContain(',refresh-ms=14,audiodev=dbus-backend0')
-  expect(cmd).toContain("-audiodev 'dbus,id=dbus-backend0'")
+  expect(cmd).toContain("-audiodev 'dbus,id=dbus-backend0,out.frequency=48000'")
 })

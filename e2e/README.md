@@ -160,8 +160,8 @@ scratch container, not committed); `qemuAccepts` is the suite's check, run with 
 | aarch64 socket on a `pci-serial` instead of `-serial` (the PL011) | passes | aarch64 fails: no firmware output, login on `ttyS0` |
 | x86 socket on COM2 (`isa-serial,index=1`) instead of COM1 | passes | `i440fx` and `q35` fail: no SeaBIOS output, login on `ttyS1` |
 
-The ISOs (Alpine 3.24.4 `virt`, x86_64 and aarch64) are pinned by URL and sha256 in e2e.yml and
-cached on the sha256. The job summary lists the packages under test and each case's result.
+The ISOs (Alpine 3.24.4 `virt`, x86_64 and aarch64) are pinned by URL and sha256 in `pve/boot-media.sh` and
+come from the Actions cache (next section). The job summary lists the packages under test and each case's result.
 `e2e-required` includes the job, so a failed boot blocks the merge.
 
 ```bash
@@ -179,6 +179,27 @@ through each sound device, recorded with QEMU's `wav` backend and checked by `au
 directly and through qemu-server (`audio0: driver=wav`, `qm showcmd`, then a real `qm start` that
 records). The results are described in the
 [audio reference](../docs/src/content/docs/reference/audiodev.md).
+
+## Downloaded media in the Actions cache
+
+The test media that CI downloads from third-party mirrors, pinned by URL and checksum, are kept in
+the repository's Actions cache: the Alpine virt CDs of the `boot` job (`pve/boot-media.sh`), the
+NetBSD CDs of `sparc-lab-netbsd.yml` (`sparc/targets.py`, fetched and checked by
+`sparc/fetch_media.py`) and the fbDOOM and Freedoom archives of `wisp-boot.yml`
+(`wisp/doom/fetch.py`). Only runs on main save them (push, schedule, dispatch); a pull request
+restores main's entry (a pull request can read its base branch's caches) and never saves its own
+copy, so the 10 GB cache holds each medium once instead of once per pull request, and the mirrors
+see a download only when the cache has no entry. Each job restores the entry, then runs the fetch
+script, which checks what was restored and downloads only what is missing or not the pinned
+medium, then saves only on main and only when the restore missed (`actions/cache/restore` and
+`actions/cache/save` instead of `actions/cache`).
+
+`media-cache.yml` keeps main's entries present: daily, on dispatch, and when a pin changes on main,
+it looks up each entry without downloading it, and on a miss (a new pin, or an entry GitHub evicted
+after 7 days unused) downloads, checks and saves that medium. Its jobs must use the same key and
+`path` as the jobs that restore the entries (the cache version depends on the path). A pull request
+that changes a pin downloads the new medium on each run until it is merged and main has saved it.
+A new workflow that downloads media follows the same pattern and gets a job in `media-cache.yml`.
 
 ## Running
 
