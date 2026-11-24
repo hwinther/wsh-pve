@@ -271,8 +271,24 @@ jobs:
               'PATH=/qemu:$PATH python3 service.py --arch "$1" --binary "/results/httpd-$1"' sh "$arch"
           done
 
-      - name: Cache fbDOOM and Freedoom downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The two archives fetch.py pins come from the Actions cache, which only main fills (here on
+      # push and dispatch, and daily in media-cache.yml): a pull request restores main's entry and
+      # never saves its own copy (e2e/README.md, "Downloaded media in the Actions cache")
+      - name: Restore the fbDOOM and Freedoom downloads
+        id: doom-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/doom-inputs/*.tar.gz
+            ${{ runner.temp }}/doom-inputs/*.zip
+          key: wisp-doom-downloads-${{ hashFiles('e2e/wisp/doom/fetch.py') }}
+
+      - name: Download and check fbDOOM and Freedoom
+        run: python3 e2e/wisp/doom/fetch.py "$RUNNER_TEMP/doom-inputs"
+
+      - name: Save the fbDOOM and Freedoom downloads (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.doom-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/doom-inputs/*.tar.gz
@@ -285,7 +301,6 @@ jobs:
           inputs="$RUNNER_TEMP/doom-inputs"
           results="$RUNNER_TEMP/wisp/doom"
           mkdir -p "$results"
-          python3 e2e/wisp/doom/fetch.py "$inputs"
           mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$inputs:/inputs:ro" -v "$results:/results")
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")

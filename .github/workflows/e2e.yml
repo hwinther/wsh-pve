@@ -59,6 +59,7 @@ jobs:
           patterns: |
             ^submodules/qemu-server\.patch$
             ^e2e/pve/boot-test\.sh$
+            ^e2e/pve/boot-media\.sh$
             ^e2e/pve/Dockerfile$
             ^\.github/workflows/e2e\.yml$
 
@@ -135,11 +136,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # Test media, pinned (dl-cdn.alpinelinux.org, v3.24 latest-releases.yaml)
-      ALPINE_X86_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.4-x86_64.iso
-      ALPINE_X86_SHA256: 157d353f8e54252cad2d9812a0d56bb7fa2231fc154a110e1d180d7480ef8b4f
-      ALPINE_ARM_URL: https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-virt-3.24.4-aarch64.iso
-      ALPINE_ARM_SHA256: cf88d8ba67389d20d9ed307366b52e487c15d7d3ee3233b62b95f709daa1d430
       CONTAINER: wsh-pve-boot
     steps:
       - name: Checkout
@@ -147,24 +143,29 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Cache the ISOs
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The test media (pinned in e2e/pve/boot-media.sh) come from the Actions cache, which only
+      # main fills (here on dispatch, and daily in media-cache.yml): a pull request restores main's
+      # entry and never saves its own copy (e2e/README.md, "Downloaded media in the Actions cache")
+      - name: Cache key of the ISOs
+        id: iso-key
+        run: echo "key=$(sh e2e/pve/boot-media.sh key)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the ISOs
+        id: iso-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/iso
-          key: alpine-virt-iso-${{ env.ALPINE_X86_SHA256 }}-${{ env.ALPINE_ARM_SHA256 }}
+          key: ${{ steps.iso-key.outputs.key }}
 
       - name: Download and check the ISOs
-        run: |
-          dir="$RUNNER_TEMP/iso"
-          mkdir -p "$dir"
-          get() {
-            if [ ! -f "$dir/$1" ] || ! echo "$3  $dir/$1" | sha256sum -c --quiet; then
-              curl -fsSL --retry 3 -o "$dir/$1" "$2"
-            fi
-            echo "$3  $dir/$1" | sha256sum -c
-          }
-          get alpine-virt-x86_64.iso "$ALPINE_X86_URL" "$ALPINE_X86_SHA256"
-          get alpine-virt-aarch64.iso "$ALPINE_ARM_URL" "$ALPINE_ARM_SHA256"
+        run: sh e2e/pve/boot-media.sh fetch "$RUNNER_TEMP/iso"
+
+      - name: Save the ISOs (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.iso-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/iso
+          key: ${{ steps.iso-key.outputs.key }}
 
       - name: Build qemu-server with the pull request's patch
         run: |
