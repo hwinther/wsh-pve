@@ -75,6 +75,12 @@ The additional backend drivers support both local and remote audio output.
 - **alsa**: ALSA (local sound)
 - **pa**: PulseAudio (local sound)
 - **pipewire**: PipeWire (local sound)
+- **dbus**: D-Bus, to the client of the VM's D-Bus display (a streaming server on the node). Needs
+  `vga: ...,display=dbus` (or `mesa-display=dbus`); qemu-server adds `-audiodev dbus` and ties it
+  to the display (`-display dbus,...,audiodev=dbus-backend0`). Tested with AC97 on x86 and the
+  SS-5's CS4231 (`soundtest` of the wisp framebuffer kernels: 1 s of a 440 Hz tone reached the
+  client's `AudioOutListener` from both). See the
+  [display reference](/reference/display/#d-bus-display).
 
 ### The wav file
 

@@ -46,6 +46,9 @@
 # isn't linear, imports it through EGL) and writes the newest frame, which is what the probes are
 # checked in; where it can do neither it says so and the probes are skipped (DBUS_DELAY_MS delays
 # its replies, during which QEMU keeps the console gl-blocked and qemu-3dfx holds frames back).
+# With a QEMU that takes VNC next to dbus,gl=on (pve-qemu wsh/0130: the D-Bus console reads the GL
+# scanouts back for it) the dbus run gets a VNC server too, and DBUS_PICTURE=vnc checks the probes in
+# the picture VNC serves instead of the listener's (the listener still takes every frame).
 # QEMU's EGL display needs a render node, or /dev/udmabuf for Mesa's surfaceless platform (docker
 # run --device /dev/udmabuf); without either the run is skipped (77).
 #
@@ -189,6 +192,12 @@ else
 	if [ "$MODE" = dbus ]; then
 		dbus-daemon --config-file=/usr/share/dbus-1/session.conf --address="unix:path=$work/bus" --fork --nopidfile
 		display="-display dbus,addr=unix:path=$work/bus,gl=on -monitor unix:$work/mon.sock,server=on,wait=off"
+		if grep -aq 'refresh-ms must be at most' "$QEMU"; then
+			display="$display -vnc unix:$work/vnc.sock"
+			echo "dbus,gl=on with a VNC server next to it"
+		elif [ "${DBUS_PICTURE:-}" = vnc ]; then
+			fail "DBUS_PICTURE=vnc, but $QEMU refuses VNC next to dbus,gl=on"
+		fi
 	fi
 fi
 accel=tcg
@@ -259,6 +268,10 @@ EOF
 screendump() {
 	rm -f "$1"
 	# dbus: the newest frame our D-Bus listener got (it writes one at most every 100 ms)
+	if [ "$MODE" = dbus ] && [ "${DBUS_PICTURE:-}" = vnc ]; then
+		python3 "$work/vncgrab.py" "$work/vnc.sock" "$1" && [ -s "$1" ]
+		return
+	fi
 	if [ "$MODE" = dbus ]; then
 		sleep 0.3
 		cp "$work/dbus-frame.ppm" "$1" 2> /dev/null && [ -s "$1" ]
@@ -276,7 +289,7 @@ screendump() {
 # dbus: the listener couldn't map or import the frames' dmabuf (a modifier without an EGL import):
 # it says so and writes no frame until the console has pixels again (the VGA once the window has
 # closed), so the frame's and the phases' probes are skipped, not failed
-dbus_unmapped() { [ "$MODE" = dbus ] && grep -q 'pixel probes skipped' "$OUT/$name-dbus.log" 2> /dev/null; }
+dbus_unmapped() { [ "$MODE" = dbus ] && [ "${DBUS_PICTURE:-}" != vnc ] && grep -q 'pixel probes skipped' "$OUT/$name-dbus.log" 2> /dev/null; }
 ppm_size() { head -c 20 "$1" | tr '\n' ' ' | awk '{ print $2 "x" $3 }'; }
 # ppm_pixel FILE X Y: the pixel's colour as rrggbb, from a P6 image as QEMU's screendump writes it
 # (three header lines: "P6", "<width> <height>", "255")

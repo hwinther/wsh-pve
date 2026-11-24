@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..94c612a 100644
+index bc240a0..6556266 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,91 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,94 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -165,6 +165,9 @@ index bc240a0..94c612a 100644
 +wsh/0127-tests-qtest-test-that-a-cs4231-status-write-clears-i.patch
 +wsh/0128-hw-audio-cs4231-drop-what-the-apc-took-past-the-code.patch
 +wsh/0129-tests-qtest-test-cs4231-stops-and-migration-with-sam.patch
++wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
++wsh/0131-ui-dbus-add-display-dbus-refresh-ms-N.patch
++wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -18194,6 +18197,763 @@ index 0000000..5e1875f
 + 
 +     return g_test_run();
 + }
+diff --git a/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
+new file mode 100644
+index 0000000..00bcd8f
+--- /dev/null
++++ b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
+@@ -0,0 +1,436 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] ui/dbus: read GL scanouts back for VNC next to -display
++ dbus,gl=on
++
++With gl=on the D-Bus display's GL context refused every listener but
++its own, so "-display dbus,gl=on -vnc ..." stopped at the start with
++"Display vnc is incompatible with the GL context". A VM whose display
++has to reach a D-Bus client as dmabufs (a streaming server on the
++host) then had no VNC console, where egl-headless keeps one: it reads
++each GL scanout back into the console's surface and tells the 2D
++listeners.
++
++The D-Bus display now does the same for the listeners without GL. The
++D-Bus console's own listener, which is registered on every console
++whether a client listens or not, keeps the GL scanout it is given (the
++texture, or the dmabuf, imported into QEMU's EGL context the first
++time it is read) and, on a console with GL, refreshes: at a refresh
++after a GL update, and only while the console has a listener without
++GL, it blits the scanout into a framebuffer of its size (flipped when
++the scanout's y0_top says so), reads it into the console's surface and
++calls qemu_console_update_2d(). That is new in ui/console.c: the
++dpy_gfx_update of the console's listeners without dpy_gl_update only,
++so the D-Bus clients don't get a second update for a frame they have
++as a dmabuf, and the surface isn't uploaded to its texture for
++nothing. qemu_console_has_2d_listener() says whether there is such a
++listener. The readback runs at most once per display refresh, not per
++frame as egl-headless does: a guest drawing a thousand frames a second
++costs VNC 33 reads a second (or what refresh-ms, next commit, sets).
++The surface must have the scanout's size and be x8r8g8b8, as the
++devices that scan out GL set it (virtio-gpu, qemu-3dfx); otherwise
++nothing is read. The cursor of a GL scanout isn't blended in.
++
++The EGL work saves and restores the current context, as a GL device's
++own context (virglrenderer's) may be current on the main loop.
++dpy_gl_release_dmabuf now releases the texture the import made.
++
++Tested on Linux with the 3dfx binary's surfaceless EGL (llvmpipe and
++/dev/udmabuf): qemu-3dfx's Glide guest through dbus,gl=on with a VNC
++server next to it, the frame as VNC serves it and as the D-Bus client
++maps it; without GL, VNC and the D-Bus display show the VGA side by
++side as before.
++---
++ include/ui/console.h |   2 +
++ qemu-options.hx      |   5 +-
++ ui/console.c         |  38 +++++++++
++ ui/dbus-console.c    | 192 ++++++++++++++++++++++++++++++++++++++++++-
++ ui/dbus.c            |  11 ++-
++ ui/dbus.h            |   3 +
++ 6 files changed, 248 insertions(+), 3 deletions(-)
++
++diff --git a/include/ui/console.h b/include/ui/console.h
++index 3634956..1464830 100644
++--- a/include/ui/console.h
+++++ b/include/ui/console.h
++@@ -287,6 +287,8 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay);
++ 
++ void qemu_console_update(QemuConsole *con, int x, int y, int w, int h);
++ void qemu_console_update_full(QemuConsole *con);
+++bool qemu_console_has_2d_listener(QemuConsole *con);
+++void qemu_console_update_2d(QemuConsole *con, int x, int y, int w, int h);
++ void qemu_console_set_surface(QemuConsole *con,
++                               DisplaySurface *surface);
++ void qemu_console_text_set_cursor(QemuConsole *con, int x, int y);
++diff --git a/qemu-options.hx b/qemu-options.hx
++index 2d9fc48..192ed52 100644
++--- a/qemu-options.hx
+++++ b/qemu-options.hx
++@@ -2314,7 +2314,10 @@ SRST
++         ``p2p=yes|no`` : Use peer-to-peer connection, accepted via QMP ``add_client``.
++ 
++         ``gl=on|off|core|es`` : Use OpenGL for rendering (the D-Bus interface
++-        will share framebuffers with DMABUF file descriptors).
+++        will share framebuffers with DMABUF file descriptors). A display
+++        without GL next to it, such as ``-vnc``, gets the GL scanouts read
+++        back into the console's surface at each display refresh, as with
+++        ``egl-headless``.
++ 
++     ``sdl``
++         Display video output via SDL (usually in a separate graphics
++diff --git a/ui/console.c b/ui/console.c
++index a8a2a24..5dc8792 100644
++--- a/ui/console.c
+++++ b/ui/console.c
++@@ -760,6 +760,44 @@ void qemu_console_update_full(QemuConsole *con)
++     qemu_console_update(con, 0, 0, w, h);
++ }
++ 
+++/*
+++ * The listeners without GL (VNC) of a console whose display has GL: they show the console's
+++ * surface, and see a GL scanout only if the display reads it back into that surface (the D-Bus
+++ * display does, in ui/dbus-console.c).
+++ */
+++static bool dcl_is_2d(QemuConsole *con, DisplayChangeListener *dcl)
+++{
+++    return dcl->con == con && !dcl->ops->dpy_gl_update;
+++}
+++
+++bool qemu_console_has_2d_listener(QemuConsole *con)
+++{
+++    DisplayChangeListener *dcl;
+++
+++    QLIST_FOREACH(dcl, &con->ds->listeners, next) {
+++        if (dcl_is_2d(con, dcl)) {
+++            return true;
+++        }
+++    }
+++    return false;
+++}
+++
+++/*
+++ * qemu_console_update() for the listeners without GL only: the surface got a GL scanout read
+++ * back for them. The GL listeners show the scanout itself, and the surface's texture isn't used
+++ * while there is one.
+++ */
+++void qemu_console_update_2d(QemuConsole *con, int x, int y, int w, int h)
+++{
+++    DisplayChangeListener *dcl;
+++
+++    QLIST_FOREACH(dcl, &con->ds->listeners, next) {
+++        if (dcl_is_2d(con, dcl) && dcl->ops->dpy_gfx_update) {
+++            dcl->ops->dpy_gfx_update(dcl, x, y, w, h);
+++        }
+++    }
+++}
+++
++ void qemu_console_set_surface(QemuConsole *con,
++                              DisplaySurface *surface)
++ {
++diff --git a/ui/dbus-console.c b/ui/dbus-console.c
++index e1ac068..6eb9d19 100644
++--- a/ui/dbus-console.c
+++++ b/ui/dbus-console.c
++@@ -28,6 +28,9 @@
++ #include "ui/kbd-state.h"
++ #include "trace.h"
++ #include <stdint.h>
+++#ifdef CONFIG_OPENGL
+++#include "ui/egl-helpers.h"
+++#endif
++ 
++ #ifdef G_OS_UNIX
++ #include <gio/gunixfdlist.h>
++@@ -55,6 +58,23 @@ struct _DBusDisplayConsole {
++     guint last_x;
++     guint last_y;
++     Notifier mouse_mode_notifier;
+++
+++#ifdef CONFIG_OPENGL
+++    /*
+++     * A GL scanout, read back into the console's surface for the listeners without GL (VNC
+++     * next to -display dbus,gl=on), as egl-headless does for them: at the console's refresh,
+++     * once per refresh at most, and only while there is such a listener.
+++     */
+++    DisplaySurface *ds;
+++    QemuDmaBuf *scanout_dmabuf;
+++    uint32_t scanout_tex;
+++    uint32_t scanout_width;
+++    uint32_t scanout_height;
+++    bool scanout_y0_top;
+++    bool scanout_dirty;
+++    egl_fb scanout_fb;
+++    egl_fb blit_fb;
+++#endif
++ };
++ 
++ G_DEFINE_TYPE(DBusDisplayConsole,
++@@ -77,6 +97,9 @@ dbus_gfx_switch(DisplayChangeListener *dcl,
++ {
++     DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
++ 
+++#ifdef CONFIG_OPENGL
+++    ddc->ds = new_surface;
+++#endif
++     dbus_display_console_set_size(ddc,
++                                   surface_width(new_surface),
++                                   surface_height(new_surface));
++@@ -88,9 +111,102 @@ dbus_gfx_update(DisplayChangeListener *dcl,
++ {
++ }
++ 
+++#ifdef CONFIG_OPENGL
+++/* The scanout's framebuffers live in QEMU's own EGL context; keep whichever one is current */
+++static EGLContext
+++dbus_console_gl_begin(void)
+++{
+++    EGLContext prev = eglGetCurrentContext();
+++
+++    if (prev != qemu_egl_rn_ctx) {
+++        eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+++                       qemu_egl_rn_ctx);
+++    }
+++    return prev;
+++}
+++
+++static void
+++dbus_console_gl_end(EGLContext prev)
+++{
+++    if (prev != qemu_egl_rn_ctx) {
+++        eglMakeCurrent(qemu_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, prev);
+++    }
+++}
+++
+++static void
+++dbus_console_scanout_reset(DBusDisplayConsole *ddc)
+++{
+++    if (ddc->scanout_fb.framebuffer || ddc->blit_fb.framebuffer) {
+++        EGLContext prev = dbus_console_gl_begin();
+++
+++        egl_fb_destroy(&ddc->scanout_fb);
+++        egl_fb_destroy(&ddc->blit_fb);
+++        dbus_console_gl_end(prev);
+++    }
+++    ddc->scanout_dmabuf = NULL;
+++    ddc->scanout_tex = 0;
+++    ddc->scanout_dirty = false;
+++}
+++
+++/* Main loop: the scanout into the console's surface, and its listeners without GL told */
+++static void
+++dbus_console_read_scanout(DBusDisplayConsole *ddc)
+++{
+++    DisplaySurface *ds = ddc->ds;
+++    uint32_t w = ddc->scanout_width, h = ddc->scanout_height;
+++    EGLContext prev;
+++
+++    /* the device sets a surface of the scanout's size first (virtio-gpu, qemu-3dfx) */
+++    if (!ds || surface_width(ds) != w || surface_height(ds) != h ||
+++        surface_format(ds) != PIXMAN_x8r8g8b8) {
+++        return;
+++    }
+++    prev = dbus_console_gl_begin();
+++    if (!ddc->scanout_fb.framebuffer) {
+++        uint32_t tex = ddc->scanout_tex;
+++
+++#ifdef CONFIG_GBM
+++        if (ddc->scanout_dmabuf) {
+++            egl_dmabuf_import_texture(ddc->scanout_dmabuf);
+++            tex = qemu_dmabuf_get_texture(ddc->scanout_dmabuf);
+++        }
+++#endif
+++        if (!tex) {
+++            dbus_console_gl_end(prev);
+++            return;
+++        }
+++        egl_fb_setup_for_tex(&ddc->scanout_fb, w, h, tex, false);
+++        ddc->scanout_fb.dmabuf = ddc->scanout_dmabuf;
+++    }
+++    if (ddc->blit_fb.width != w || ddc->blit_fb.height != h) {
+++        egl_fb_destroy(&ddc->blit_fb);
+++        egl_fb_setup_new_tex(&ddc->blit_fb, w, h);
+++    }
+++    egl_fb_blit(&ddc->blit_fb, &ddc->scanout_fb, ddc->scanout_y0_top);
+++    egl_fb_read(ds, &ddc->blit_fb);
+++    dbus_console_gl_end(prev);
+++    qemu_console_update_2d(ddc->dcl.con, 0, 0, w, h);
+++}
+++
+++static void
+++dbus_gl_refresh(DisplayChangeListener *dcl)
+++{
+++    DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
+++
+++    if (!ddc->scanout_dirty || !qemu_console_has_2d_listener(dcl->con)) {
+++        return;
+++    }
+++    ddc->scanout_dirty = false;
+++    dbus_console_read_scanout(ddc);
+++}
+++#endif
+++
++ static void
++ dbus_gl_scanout_disable(DisplayChangeListener *dcl)
++ {
+++#ifdef CONFIG_OPENGL
+++    dbus_console_scanout_reset(container_of(dcl, DBusDisplayConsole, dcl));
+++#endif
++ }
++ 
++ static void
++@@ -105,6 +221,14 @@ dbus_gl_scanout_texture(DisplayChangeListener *dcl,
++ {
++     DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
++ 
+++#ifdef CONFIG_OPENGL
+++    dbus_console_scanout_reset(ddc);
+++    ddc->scanout_tex = tex_id;
+++    ddc->scanout_width = backing_width;
+++    ddc->scanout_height = backing_height;
+++    ddc->scanout_y0_top = backing_y_0_top;
+++    ddc->scanout_dirty = true;
+++#endif
++     dbus_display_console_set_size(ddc, w, h);
++ }
++ 
++@@ -119,14 +243,48 @@ dbus_gl_scanout_dmabuf(DisplayChangeListener *dcl,
++     width = qemu_dmabuf_get_width(dmabuf);
++     height = qemu_dmabuf_get_height(dmabuf);
++ 
+++#ifdef CONFIG_OPENGL
+++    if (ddc->scanout_dmabuf != dmabuf) {
+++        dbus_console_scanout_reset(ddc);
+++        ddc->scanout_dmabuf = dmabuf;
+++    }
+++    ddc->scanout_width = width;
+++    ddc->scanout_height = height;
+++    ddc->scanout_y0_top = qemu_dmabuf_get_y0_top(dmabuf);
+++    ddc->scanout_dirty = true;
+++#endif
++     dbus_display_console_set_size(ddc, width, height);
++ }
++ 
+++#ifdef CONFIG_GBM
+++static void
+++dbus_gl_release_dmabuf(DisplayChangeListener *dcl,
+++                       QemuDmaBuf *dmabuf)
+++{
+++    DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
+++
+++    if (ddc->scanout_dmabuf == dmabuf) {
+++        dbus_console_scanout_reset(ddc);
+++    }
+++    if (qemu_dmabuf_get_texture(dmabuf)) {
+++        EGLContext prev = dbus_console_gl_begin();
+++
+++        egl_dmabuf_release_texture(dmabuf);
+++        dbus_console_gl_end(prev);
+++    }
+++}
+++#endif
+++
++ static void
++ dbus_gl_scanout_update(DisplayChangeListener *dcl,
++                        uint32_t x, uint32_t y,
++                        uint32_t w, uint32_t h)
++ {
+++#ifdef CONFIG_OPENGL
+++    DBusDisplayConsole *ddc = container_of(dcl, DBusDisplayConsole, dcl);
+++
+++    ddc->scanout_dirty = true;
+++#endif
++ }
++ 
++ const DisplayChangeListenerOps dbus_console_dcl_ops = {
++@@ -139,6 +297,26 @@ const DisplayChangeListenerOps dbus_console_dcl_ops = {
++     .dpy_gl_update           = dbus_gl_scanout_update,
++ };
++ 
+++#ifdef CONFIG_OPENGL
+++/*
+++ * A console with GL: the same, plus the readback of its GL scanouts for the listeners without
+++ * GL. It refreshes, so the display's refresh timer runs while it is registered.
+++ */
+++const DisplayChangeListenerOps dbus_console_gl_dcl_ops = {
+++    .dpy_name                = "dbus-console",
+++    .dpy_refresh             = dbus_gl_refresh,
+++    .dpy_gfx_switch          = dbus_gfx_switch,
+++    .dpy_gfx_update          = dbus_gfx_update,
+++    .dpy_gl_scanout_disable  = dbus_gl_scanout_disable,
+++    .dpy_gl_scanout_texture  = dbus_gl_scanout_texture,
+++    .dpy_gl_scanout_dmabuf   = dbus_gl_scanout_dmabuf,
+++#ifdef CONFIG_GBM
+++    .dpy_gl_release_dmabuf   = dbus_gl_release_dmabuf,
+++#endif
+++    .dpy_gl_update           = dbus_gl_scanout_update,
+++};
+++#endif
+++
++ static void
++ dbus_display_console_init(DBusDisplayConsole *object)
++ {
++@@ -154,6 +332,11 @@ dbus_display_console_dispose(GObject *object)
++ 
++     qemu_input_led_notifier_remove(&ddc->led_notifier);
++     qemu_console_unregister_listener(&ddc->dcl);
+++#ifdef CONFIG_OPENGL
+++    if (ddc->dcl.ops == &dbus_console_gl_dcl_ops) {
+++        dbus_console_scanout_reset(ddc);
+++    }
+++#endif
++     qemu_remove_mouse_mode_change_notifier(&ddc->mouse_mode_notifier);
++     g_clear_object(&ddc->iface_touch);
++     g_clear_object(&ddc->iface_mouse);
++@@ -621,7 +804,14 @@ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
++         slot->tracking_id = -1;
++     }
++ 
++-    qemu_console_register_listener(con, &ddc->dcl, &dbus_console_dcl_ops);
+++#ifdef CONFIG_OPENGL
+++    if (qemu_console_has_gl(con)) {
+++        qemu_console_register_listener(con, &ddc->dcl, &dbus_console_gl_dcl_ops);
+++    } else
+++#endif
+++    {
+++        qemu_console_register_listener(con, &ddc->dcl, &dbus_console_dcl_ops);
+++    }
++     ddc->mouse_mode_notifier.notify = dbus_mouse_mode_change;
++     qemu_add_mouse_mode_change_notifier(&ddc->mouse_mode_notifier);
++     dbus_mouse_update_is_absolute(ddc);
++diff --git a/ui/dbus.c b/ui/dbus.c
++index 7be0f8e..0560807 100644
++--- a/ui/dbus.c
+++++ b/ui/dbus.c
++@@ -55,9 +55,18 @@ static bool
++ dbus_is_compatible_dcl(DisplayGLCtx *dgc,
++                        DisplayChangeListener *dcl)
++ {
+++    if (!dcl->ops->dpy_gl_update) {
+++        /*
+++         * A listener without GL (VNC) shows the console's surface, where the D-Bus console
+++         * reads the GL scanouts back for it (ui/dbus-console.c), as egl-headless does.
+++         */
+++        return true;
+++    }
+++
++     return
++         dcl->ops == &dbus_gl_dcl_ops ||
++-        dcl->ops == &dbus_console_dcl_ops;
+++        dcl->ops == &dbus_console_dcl_ops ||
+++        dcl->ops == &dbus_console_gl_dcl_ops;
++ }
++ 
++ static void
++diff --git a/ui/dbus.h b/ui/dbus.h
++index d2cc176..3c5df4b 100644
++--- a/ui/dbus.h
+++++ b/ui/dbus.h
++@@ -91,6 +91,9 @@ QemuConsole *
++ dbus_display_console_get_qemu_console(DBusDisplayConsole *ddc);
++ 
++ extern const DisplayChangeListenerOps dbus_console_dcl_ops;
+++#ifdef CONFIG_OPENGL
+++extern const DisplayChangeListenerOps dbus_console_gl_dcl_ops;
+++#endif
++ 
++ #define DBUS_DISPLAY_TYPE_LISTENER dbus_display_listener_get_type()
++ G_DECLARE_FINAL_TYPE(DBusDisplayListener,
+diff --git a/debian/patches/wsh/0131-ui-dbus-add-display-dbus-refresh-ms-N.patch b/debian/patches/wsh/0131-ui-dbus-add-display-dbus-refresh-ms-N.patch
+new file mode 100644
+index 0000000..2ad510c
+--- /dev/null
++++ b/debian/patches/wsh/0131-ui-dbus-add-display-dbus-refresh-ms-N.patch
+@@ -0,0 +1,206 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] ui/dbus: add -display dbus,refresh-ms=N
++
++The D-Bus display's listeners never set an update interval, so the
++console refreshed at GUI_REFRESH_INTERVAL_DEFAULT, 30 ms: a client
++streaming a 70 Hz guest mode got at most 33 updates a second of a
++VGA's screen (the device's dirty memory is looked at once per
++refresh).
++
++refresh-ms=N (1 to 3000, a new member of DisplayDBus and a property of
++the dbus-display object) sets the interval of each client's listener
++when it registers (qemu_console_listener_set_refresh()), so the
++display refreshes that often while a client listens, and at its usual
++pace without one. 0, the default, keeps 30 ms.
++
++Tested with a guest that changes VGA text memory every few
++milliseconds and a client that counts the refreshes its updates come
++in: 33.6 a second by default, 61.6 with refresh-ms=14 and 125 with
++refresh-ms=5 under TCG on a loaded host (the timer is set from the end
++of each refresh, so the rate stays below 1000/N).
++---
++ qapi/ui.json       |  7 ++++++-
++ qemu-options.hx    |  6 ++++++
++ ui/dbus-console.c  |  5 +++++
++ ui/dbus-listener.c |  5 +++++
++ ui/dbus.c          | 29 +++++++++++++++++++++++++++++
++ ui/dbus.h          |  4 ++++
++ 6 files changed, 55 insertions(+), 1 deletion(-)
++
++diff --git a/qapi/ui.json b/qapi/ui.json
++index 614621a..241e60b 100644
++--- a/qapi/ui.json
+++++ b/qapi/ui.json
++@@ -1386,13 +1386,18 @@
++ #
++ # @audiodev: Use the specified DBus audiodev to export audio.
++ #
+++# @refresh-ms: The display's refresh interval in milliseconds while
+++#     a client listens, at most 3000 (default: 30, about 33 Hz; 14
+++#     suits a 70 Hz guest).
+++#
++ # Since: 7.0
++ ##
++ { 'struct'  : 'DisplayDBus',
++   'data'    : { '*rendernode' : 'str',
++                 '*addr': 'str',
++                 '*p2p': 'bool',
++-                '*audiodev': 'str' } }
+++                '*audiodev': 'str',
+++                '*refresh-ms': 'uint32' } }
++ 
++ ##
++ # @DisplayGLMode:
++diff --git a/qemu-options.hx b/qemu-options.hx
++index 192ed52..c6babf0 100644
++--- a/qemu-options.hx
+++++ b/qemu-options.hx
++@@ -2271,6 +2271,7 @@ DEF("display", HAS_ARG, QEMU_OPTION_display,
++ #if defined(CONFIG_DBUS_DISPLAY)
++     "-display dbus[,addr=<dbusaddr>]\n"
++     "             [,gl=on|core|es|off][,rendernode=<file>]\n"
+++    "             [,refresh-ms=<ms>]\n"
++ #endif
++     "-display none\n"
++     "                select display backend type\n"
++@@ -2319,6 +2320,11 @@ SRST
++         back into the console's surface at each display refresh, as with
++         ``egl-headless``.
++ 
+++        ``refresh-ms=<ms>`` : The display's refresh interval while a client
+++        listens (default 30 ms, about 33 Hz): how often the device's screen
+++        is checked for changes and the client updated. 14 suits a 70 Hz
+++        guest mode.
+++
++     ``sdl``
++         Display video output via SDL (usually in a separate graphics
++         window; see the SDL documentation for other possibilities).
++diff --git a/ui/dbus-console.c b/ui/dbus-console.c
++index 6eb9d19..e7d0044 100644
++--- a/ui/dbus-console.c
+++++ b/ui/dbus-console.c
++@@ -721,6 +721,11 @@ QemuConsole *dbus_display_console_get_qemu_console(DBusDisplayConsole *ddc)
++     return ddc->dcl.con;
++ }
++ 
+++uint32_t dbus_display_console_get_refresh_ms(DBusDisplayConsole *ddc)
+++{
+++    return ddc->display->refresh_ms;
+++}
+++
++ DBusDisplayConsole *
++ dbus_display_console_new(DBusDisplay *display, QemuConsole *con)
++ {
++diff --git a/ui/dbus-listener.c b/ui/dbus-listener.c
++index 2e2f6ba..65f3f48 100644
++--- a/ui/dbus-listener.c
+++++ b/ui/dbus-listener.c
++@@ -1281,6 +1281,11 @@ dbus_display_listener_new(const char *bus_name,
++     }
++ #endif
++     qemu_console_register_listener(con, &ddl->dcl, ops);
+++    if (dbus_display_console_get_refresh_ms(console)) {
+++        /* the console's refresh (and the client's updates) at this interval, not 30 ms */
+++        qemu_console_listener_set_refresh(&ddl->dcl,
+++            dbus_display_console_get_refresh_ms(console));
+++    }
++ 
++     return ddl;
++ }
++diff --git a/ui/dbus.c b/ui/dbus.c
++index 0560807..729f35a 100644
++--- a/ui/dbus.c
+++++ b/ui/dbus.c
++@@ -38,6 +38,7 @@
++ #include "qemu/audio.h"
++ #include "audio/audio_int.h" /* FIXME: use QOM dynamic cast instead of drv->name */
++ #include "qapi/error.h"
+++#include "qapi/visitor.h"
++ #include "trace.h"
++ 
++ #include "dbus.h"
++@@ -272,6 +273,12 @@ dbus_display_complete(UserCreatable *uc, Error **errp)
++         return;
++     }
++ 
+++    if (dd->refresh_ms > GUI_REFRESH_INTERVAL_IDLE) {
+++        error_setg(errp, "refresh-ms must be at most %d",
+++                   GUI_REFRESH_INTERVAL_IDLE);
+++        return;
+++    }
+++
++     if (dd->p2p) {
++         /* wait for dbus_display_add_client() */
++         dbus_display = dd;
++@@ -508,6 +515,24 @@ set_gl_mode(Object *o, int val, Error **errp)
++     dd->gl_mode = val;
++ }
++ 
+++static void
+++get_refresh_ms(Object *o, Visitor *v, const char *name, void *opaque,
+++               Error **errp)
+++{
+++    DBusDisplay *dd = DBUS_DISPLAY(o);
+++
+++    visit_type_uint32(v, name, &dd->refresh_ms, errp);
+++}
+++
+++static void
+++set_refresh_ms(Object *o, Visitor *v, const char *name, void *opaque,
+++               Error **errp)
+++{
+++    DBusDisplay *dd = DBUS_DISPLAY(o);
+++
+++    visit_type_uint32(v, name, &dd->refresh_ms, errp);
+++}
+++
++ static void
++ dbus_display_class_init(ObjectClass *oc, const void *data)
++ {
++@@ -517,6 +542,8 @@ dbus_display_class_init(ObjectClass *oc, const void *data)
++     object_class_property_add_bool(oc, "p2p", get_dbus_p2p, set_dbus_p2p);
++     object_class_property_add_str(oc, "addr", get_dbus_addr, set_dbus_addr);
++     object_class_property_add_str(oc, "audiodev", get_audiodev, set_audiodev);
+++    object_class_property_add(oc, "refresh-ms", "uint32",
+++                              get_refresh_ms, set_refresh_ms, NULL, NULL);
++     object_class_property_add_enum(oc, "gl-mode",
++                                    "DisplayGLMode", &DisplayGLMode_lookup,
++                                    get_gl_mode, set_gl_mode);
++@@ -654,6 +681,7 @@ static void
++ dbus_init(DisplayState *ds, DisplayOptions *opts)
++ {
++     DisplayGLMode mode = opts->has_gl ? opts->gl : DISPLAY_GL_MODE_OFF;
+++    g_autofree char *refresh_ms = g_strdup_printf("%u", opts->u.dbus.refresh_ms);
++ 
++     if (opts->u.dbus.addr && opts->u.dbus.p2p) {
++         error_report("dbus: can't accept both addr=X and p2p=yes options");
++@@ -667,6 +695,7 @@ dbus_init(DisplayState *ds, DisplayOptions *opts)
++                           "audiodev", opts->u.dbus.audiodev ?: "",
++                           "gl-mode", DisplayGLMode_str(mode),
++                           "p2p", yes_no(opts->u.dbus.p2p),
+++                          "refresh-ms", refresh_ms,
++                           NULL);
++ }
++ 
++diff --git a/ui/dbus.h b/ui/dbus.h
++index 3c5df4b..31b7f09 100644
++--- a/ui/dbus.h
+++++ b/ui/dbus.h
++@@ -46,6 +46,7 @@ struct DBusDisplay {
++     bool p2p;
++     char *dbus_addr;
++     char *audiodev;
+++    uint32_t refresh_ms; /* the clients' refresh interval, 0: the default */
++     DisplayGLCtx glctx;
++ 
++     GDBusConnection *bus;
++@@ -90,6 +91,9 @@ dbus_display_console_get_index(DBusDisplayConsole *ddc);
++ QemuConsole *
++ dbus_display_console_get_qemu_console(DBusDisplayConsole *ddc);
++ 
+++uint32_t
+++dbus_display_console_get_refresh_ms(DBusDisplayConsole *ddc);
+++
++ extern const DisplayChangeListenerOps dbus_console_dcl_ops;
++ #ifdef CONFIG_OPENGL
++ extern const DisplayChangeListenerOps dbus_console_gl_dcl_ops;
+diff --git a/debian/patches/wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch b/debian/patches/wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch
+new file mode 100644
+index 0000000..e2e9417
+--- /dev/null
++++ b/debian/patches/wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch
+@@ -0,0 +1,97 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test -display dbus,refresh-ms
++
++/dbus-display/refresh-ms starts QEMU with refresh-ms=14 and checks that
++query-display-options returns it; /dbus-display/console/refresh-ms
++registers a listener on such a display, as /dbus-display/console does
++on the default one (the listener's interval is set at its
++registration).
++---
++ tests/qtest/dbus-display-test.c | 46 ++++++++++++++++++++++++++++++---
++ 1 file changed, 42 insertions(+), 4 deletions(-)
++
++diff --git a/tests/qtest/dbus-display-test.c b/tests/qtest/dbus-display-test.c
++index 7838ce7..07bc535 100644
++--- a/tests/qtest/dbus-display-test.c
+++++ b/tests/qtest/dbus-display-test.c
++@@ -226,6 +226,11 @@ test_dbus_p2p_server_setup_thread(gpointer data)
++     return test_dbus_p2p_from_fd(GPOINTER_TO_INT(data));
++ }
++ 
+++enum {
+++    TEST_CONSOLE_MAP = 1,
+++    TEST_CONSOLE_REFRESH = 2,
+++};
+++
++ static void
++ test_dbus_display_console(const void* data)
++ {
++@@ -235,7 +240,8 @@ test_dbus_display_console(const void* data)
++     g_autoptr(GMainLoop) loop = NULL;
++     QTestState *qts = NULL;
++     int pair[2];
++-    TestDBusConsoleRegister test = { 0, .with_map = GPOINTER_TO_INT(data) };
+++    int flags = GPOINTER_TO_INT(data);
+++    TestDBusConsoleRegister test = { 0, .with_map = flags & TEST_CONSOLE_MAP };
++ #ifdef WIN32
++     WSAPROTOCOL_INFOW info;
++     g_autoptr(GVariant) listener = NULL;
++@@ -244,7 +250,13 @@ test_dbus_display_console(const void* data)
++     int idx;
++ #endif
++ 
++-    test_setup(&qts, &conn);
+++    if (flags & TEST_CONSOLE_REFRESH) {
+++        /* a listener that refreshes at 14 ms instead of 30 */
+++        test_setup_args(&qts, &conn,
+++                        "-display dbus,p2p=yes,refresh-ms=14 -name dbus-test");
+++    } else {
+++        test_setup(&qts, &conn);
+++    }
++ 
++     g_assert_cmpint(qemu_socketpair(AF_UNIX, SOCK_STREAM, 0, pair), ==, 0);
++ #ifndef WIN32
++@@ -305,6 +317,28 @@ test_dbus_display_console(const void* data)
++     qtest_quit(qts);
++ }
++ 
+++/* -display dbus,refresh-ms=N is kept in the display options */
+++static void
+++test_dbus_display_refresh_ms(void)
+++{
+++    g_autoptr(GDBusConnection) conn = NULL;
+++    QTestState *qts = NULL;
+++    QDict *resp, *ret;
+++
+++    test_setup_args(&qts, &conn,
+++                    "-display dbus,p2p=yes,refresh-ms=14 -name dbus-test");
+++
+++    resp = qtest_qmp(qts, "{ 'execute': 'query-display-options' }");
+++    ret = qdict_get_qdict(resp, "return");
+++    g_assert(ret);
+++    g_assert_cmpstr(qdict_get_str(ret, "type"), ==, "dbus");
+++    g_assert_cmpint(qdict_get_int(ret, "refresh-ms"), ==, 14);
+++    qobject_unref(resp);
+++
+++    g_clear_object(&conn);
+++    qtest_quit(qts);
+++}
+++
++ static void
++ test_dbus_display_keyboard(void)
++ {
++@@ -460,8 +494,12 @@ main(int argc, char **argv)
++     g_test_init(&argc, &argv, NULL);
++ 
++     qtest_add_func("/dbus-display/vm", test_dbus_display_vm);
++-    qtest_add_data_func("/dbus-display/console", GINT_TO_POINTER(false), test_dbus_display_console);
++-    qtest_add_data_func("/dbus-display/console/map", GINT_TO_POINTER(true), test_dbus_display_console);
+++    qtest_add_data_func("/dbus-display/console", GINT_TO_POINTER(0), test_dbus_display_console);
+++    qtest_add_data_func("/dbus-display/console/map", GINT_TO_POINTER(TEST_CONSOLE_MAP), test_dbus_display_console);
+++    qtest_add_data_func("/dbus-display/console/refresh-ms",
+++                        GINT_TO_POINTER(TEST_CONSOLE_REFRESH),
+++                        test_dbus_display_console);
+++    qtest_add_func("/dbus-display/refresh-ms", test_dbus_display_refresh_ms);
++     qtest_add_func("/dbus-display/keyboard", test_dbus_display_keyboard);
++     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
++         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
