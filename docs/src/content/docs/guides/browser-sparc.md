@@ -30,7 +30,7 @@ Sun PROM, Sun disk or other Sun or Oracle software is part of it, and none ever 
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `qemu-system-sparc.wasm`, `.js` | 12.9 MB, 0.4 MB | Upstream QEMU 11.1.3 with this project's patches (pve-qemu's `wsh/` series: all of them apply to upstream as they are) and the page's own `web/patches/` (see "How fast" and "The snapshot"), built with Emscripten for a wasm64 host. QEMU has no code generator for WebAssembly, so it runs the guest's code with TCI, its TCG interpreter |
+| `qemu-system-sparc.wasm`, `.js` | 12.9 MB, 0.4 MB | Upstream QEMU 11.1.3 with this project's patches (pve-qemu's `wsh/` series: all of them apply to upstream as they are) and the page's own `web/patches/` (see "How fast"), built with Emscripten for a wasm64 host. QEMU has no code generator for WebAssembly, so it runs the guest's code with TCI, its TCG interpreter |
 | `qemu-system-sparc64.wasm`, `.js` | 18.5 MB, 0.4 MB | The same for sun4u |
 | `qemu-system-x86_64.wasm`, `.js` | 36.2 MB, 0.4 MB | The same for the PC (every x86 board and device QEMU builds by default) |
 | `qemu-system-aarch64.wasm`, `.js` | 26.5 MB, 0.4 MB | The same for Arm, with the virt board only (QEMU's `minimal` device set: all of Arm's boards made it 52 MB) |
@@ -67,9 +67,10 @@ from the firmware instead" link (`?cold`) skips the snapshot and boots.
 
 The sun4u snapshot needed a fix in QEMU: its sabre host bridge had no migration state at all, so a
 resumed machine came back with every interrupt mapping register disabled and the serial console
-never answered. `web/patches/sun4u-migration-state.patch` migrates the sabre's interrupt state and
-the sparc64 CPU's SOFTINT and interrupt vector (a generic fix, a candidate for pve-qemu and
-upstream). The PC and Arm virt machines migrate as they are.
+never answered. pve-qemu's `wsh/0133` migrates the sabre's interrupt state, the sun4u IOMMU, the
+PCI configuration space of the ebus and of the sabre's own function, and the sparc64 CPU's SOFTINT
+and interrupt vector (it began as a patch of this page's own, and PVE's snapshots and migrations of
+sun4u VMs need it as well). The PC and Arm virt machines migrate as they are.
 
 **The serial console.** `/dev/wsh-serial` is a character device the page registers in
 Emscripten's file system. The file system lives on the page's main thread and QEMU's threads reach
@@ -143,7 +144,7 @@ QEMU's and its libraries' sources from Debian source packages (`apt-get source`:
 glib 2.84, pixman, libffi 3.5.2, pcre2, zlib, and libfdt from dtc 1.7.2 for the Arm virt machine),
 Debian's kernel source and xterm.js, and OpenBIOS and SeaBIOS from this project's apt repository.
 QEMU gets pve-qemu's `wsh/` patches and then the page's own in `web/patches/`, each with its reason
-at the top (the SS-5 timer fix and the sun4u migration state above); they go into the native QEMU
+at the top (the SS-5 timer fix above); they go into the native QEMU
 that makes the snapshots too, since a migration stream only loads into the same device models. The
 SS-5, sun4u and PC emulators share one build tree with QEMU's default devices; the Arm one has a
 tree of its own with only the virt board. The `Browser SPARC` workflow
