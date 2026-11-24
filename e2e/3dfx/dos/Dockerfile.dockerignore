@@ -10,3 +10,5 @@
 !submodules/qemu-3dfx/qemu-0/hw/3dfx/
 !submodules/qemu-3dfx/wrappers/3dfx/dxe/
 !submodules/qemu-3dfx/wrappers/3dfx/src/
+!e2e/3dfx/demo/
+!scripts/check-3dfx-drivers-isa.sh

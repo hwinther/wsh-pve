@@ -5,15 +5,21 @@
 # which a `cpu: pentium3` guest under TCG faults on; submodules/qemu-3dfx-drivers.patch builds them
 # for the Pentium, and `make 3dfx-drivers` runs this check on the result.
 #
-#   scripts/check-3dfx-drivers-isa.sh FILE...
+#   scripts/check-3dfx-drivers-isa.sh [--no-p6] FILE...
 #
-#   *.dll *.exe *.sys  PE images (MinGW objdump, else objdump)
+#   *.dll *.exe *.sys  PE images (MinGW objdump, else objdump); an *.exe with DJGPP's go32 stub
+#                      is a DJGPP program (DJGPP objdump)
 #   *.o                DJGPP COFF objects, the DXEs' code before dxe3gen links them (DJGPP objdump)
 #   *.obj              Open Watcom OMF objects, the OVL's code (wdis)
 #   *.so *.so.N        i386 ELF shared libraries, the Linux guest wrapper (objdump)
+#   any other ELF      i386 ELF programs (objdump), e.g. the demo's wshdemo
+#   *.s                GCC's assembler output (gcc -S): for DJGPP code, whose read-only data shares
+#                      .text with the code, so that a disassembly reads tables as instructions
 #
 # P6 instructions (CMOV, FCMOV, FCOMI) are counted but allowed: the MinGW runtime (printf, gdtoa,
 # the pseudo-relocation code) that the DLLs link statically is built for i686 by the toolchain.
+# --no-p6 fails on them too, and on ENDBR32 and the long NOPs (P6 hint instructions): for our own
+# code built for a Pentium without that runtime (e2e/3dfx/demo).
 # TZCNT is allowed too: GCC emits `rep bsf` for __builtin_ctz where a zero input is undefined, which
 # objdump shows as tzcnt and a CPU without BMI1 runs as BSF (the same result for a non-zero input).
 # Runs in the djgpp-build image (ghcr.io/hwinther/wsh-pve/djgpp-build), which has all three tools;
@@ -21,6 +27,8 @@
 # Exit status: 0 all clean, 1 a file has such an instruction, 2 a file couldn't be disassembled.
 set -euo pipefail
 
+no_p6=0
+if [ "${1:-}" = --no-p6 ]; then no_p6=1; shift; fi
 [ $# -gt 0 ] || { sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0" >&2; exit 2; }
 
 tool() {
@@ -36,7 +44,13 @@ elf_objdump=$(tool objdump)
 
 # One instruction per line ("mnemonic operands"), lower case; objdump's and wdis's layouts
 disasm() {
+    local kind=$1
     case "$1" in
+        *.exe | *.EXE) if head -c 2048 "$1" | grep -aq go32stub; then kind=djgpp.o; fi ;;
+        *.dll | *.DLL | *.sys | *.SYS | *.o | *.obj | *.so | *.so.[0-9]* | *.s) ;;
+        *) if [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ]; then kind=elf.so; fi ;;
+    esac
+    case "$kind" in
         *.dll | *.DLL | *.exe | *.EXE | *.sys | *.SYS)
             [ -n "$pe_objdump" ] || return 2
             "$pe_objdump" -d --no-show-raw-insn "$1" | sed -n 's/^ *[0-9a-f]\{1,\}:\t//p' ;;
@@ -46,6 +60,9 @@ disasm() {
         *.so | *.so.[0-9]*)
             [ -n "$elf_objdump" ] || return 2
             "$elf_objdump" -d --no-show-raw-insn "$1" | sed -n 's/^ *[0-9a-f]\{1,\}:\t//p' ;;
+        *.s)
+            # instructions are indented by a tab; directives start with a dot, labels end in a colon
+            sed -n 's/^\t\([a-z][a-z0-9]*\)\([ \t]\|$\)/\1 /p' "$1" | sed 's/[ \t]*#.*$//' ;;
         *.obj)
             [ -n "$wdis" ] || return 2
             # "0016  66 BA F8 03<tabs>mov<tabs>dx,0x03f8"; data lines have no tab after the bytes
@@ -67,7 +84,7 @@ for f in "$@"; do
         continue
     fi
     # $1 the mnemonic (after any prefix), the rest the operands
-    result=$(printf '%s\n' "$dis" | awk '
+    result=$(printf '%s\n' "$dis" | awk -v no_p6="$no_p6" '
         {
             gsub(/\t+/, " ")
             n = split($0, w, " ")
@@ -81,13 +98,18 @@ for f in "$@"; do
             if (m ~ /^(emms|femms|popcnt|lzcnt|crc32|movbe|ldmxcsr|stmxcsr|sfence|lfence|mfence|clflush|clflushopt|clwb|movnti|andn|bextr|blsi|blsmsk|blsr|bzhi|pdep|pext|rorx|sarx|shlx|shrx|mulx|adcx|adox|rdrand|rdseed|xgetbv|cmpxchg16b|monitor|mwait)$/) bad = 1
             if (m ~ /^(prefetch|fxsave|fxrstor|xsave|xrstor|pf|pi2f|pmulhrw|pavgusb|pswapd)/) bad = 1
             if (ops ~ /(^|[^a-z0-9_])[xyz]mm[0-9]/ || ops ~ /(^|[^a-z0-9_])mm[0-7]([^0-9]|$)/) bad = 1
-            if (bad) { nbad++; if (nbad <= 10) print "  " $0 }
             if (m ~ /^(cmov|fcmov|fcomi|fucomi)/) p6++
+            if (no_p6 && (m ~ /^(cmov|fcmov|fcomi|fucomi|endbr32)/ || m ~ /^nop[wl]$/)) bad = 1
+            if (bad) { nbad++; if (nbad <= 10) print "  " $0 }
         }
         END { printf "SUMMARY %d %d %d\n", total, nbad, p6 }')
     read -r _ total nbad p6 <<< "$(printf '%s\n' "$result" | tail -n 1)"
     if [ "$nbad" -gt 0 ]; then
-        echo "check-3dfx-drivers-isa: FAIL $f: $nbad of $total instructions use MMX, SSE or later (beyond a Pentium Pro), e.g.:"
+        if [ "$no_p6" = 1 ]; then
+            echo "check-3dfx-drivers-isa: FAIL $f: $nbad of $total instructions are beyond a Pentium (P6 or later, --no-p6), e.g.:"
+        else
+            echo "check-3dfx-drivers-isa: FAIL $f: $nbad of $total instructions use MMX, SSE or later (beyond a Pentium Pro), e.g.:"
+        fi
         printf '%s\n' "$result" | sed '$d'
         status=1
     else
