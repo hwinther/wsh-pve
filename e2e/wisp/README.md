@@ -68,6 +68,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
 | `mandel fb` | draw the set at the native framebuffer resolution and print its iteration checksum on serial |
 | `keytest` | print Linux input codes for keyboard presses until Esc or a ten-second timeout (framebuffer tier) |
+| `mousetest` | print evdev mouse motion and button events until a right-button press or a ten-second timeout (framebuffer tier) |
 | `endian` | a small guessing game about the thing this lab tests for: a round's four bytes as they sit in memory, low address first; the right answer is the 32-bit word *this machine's* CPU reads from them, so it depends on the architecture under test (unchanged on sparc, byte-swapped on x86). `endian <hex>` guesses it, `endian` alone shows the round again. Three wrong guesses end the game; a right one scores a point and deals another round |
 | `disk [dev ...]` | the tier-2 disk check (see "Tier 2") on each device, by default the ones in `wisp_disk=` (else `sda`); prints its `WISP-DISK` line |
 | `net [if]` | the tier-2 network check on the interface (default `wisp_net=`, else `eth0`); prints its `WISP-NET` line |
@@ -344,6 +345,15 @@ With both, and `WISP_FIRMWARE` set to a copy of `/usr/share/kvm` that has the 00
 logs `serio: i8042 KBD port at 0x1fe02000060,0x1fe02000064`, and `keytest` received key codes 30,
 48, 28 and 1. The virtio keyboard stays in the framebuffer runs until a published package has 0035.
 
+**Mouse.** The pc uses `psmouse` on i8042. On the SS-5, `sunzilog` registers the ESCC mouse
+port (`zs/serio1`) as `SERIO_RS232` with protocol `SERIO_SUN`, so `sermouse` binds at boot.
+The sun4u and virt machines use `virtio-mouse-pci` alongside the virtio keyboard.
+`framebuffer.py` waits for `mousetest` to open evdev, moves right and down with QMP, then
+clicks left and right. It checks the net direction on both axes and the button transitions.
+For a move of (+10, +5), pc, sun4u and virt each reported X +10 and Y +5. On both cg3
+and tcx the SS-5 reported X +5, +5 and Y +5, +2, −2. All four reported `BTN_LEFT`
+(272) press and release, then `BTN_RIGHT` (273) press, which ends `mousetest`.
+
 From `e2e/wisp` inside the build image:
 
 ```sh
@@ -373,6 +383,20 @@ colour-bar-only builds.
 | sparc32, SS-5 | cg3 and tcx | 3,315,656 | 3,397,612 | 81,956 | 1024x768, 8 bpp, both passed |
 | sparc64, sun4u | std | 4,125,576 | 4,654,240 | 528,664 | 1280x800, 32 bpp, passed |
 | x86_64, pc | std | 1,836,032 | 2,016,256 | 180,224 | 1280x800, 32 bpp, passed |
+
+The table compares framebuffer kernel sizes in bytes before and after adding mouse support.
+Both builds used Linux 7.3.4. The tests ran with published pve-qemu-kvm 11.1.3-4+wsh14.
+
+| Architecture and machine | Before | With mouse | Growth |
+| --- | ---: | ---: | ---: |
+| x86_64, pc | 2,098,176 | 2,102,272 | +4,096 |
+| sparc32, SS-5 | 3,565,840 | 3,565,860 | +20 |
+| sparc64, sun4u | 4,918,504 | 4,918,504 | 0 |
+| aarch64, virt | 4,921,352 | 4,921,352 | 0 |
+
+PID 1 (`init`, in every tier's initramfs) grew from 25,264 to 29,360 bytes on x86_64 (one more 4 KiB
+page), 23,352 to 25,100 on sparc32 and 23,416 to 25,288 on sparc64; aarch64 stayed at 25,336.
+`size-budget.json` has the new sizes.
 
 ## Sound on the framebuffer tier
 

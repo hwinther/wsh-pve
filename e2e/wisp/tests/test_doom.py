@@ -159,10 +159,11 @@ class Play(unittest.TestCase):
         self.assertEqual(local[local.index("-accel") + 1], "kvm")
         self.assertNotIn("virtio-keyboard-pci", local)
 
-    def test_keyboards(self):
+    def test_input_devices(self):
         self.assertEqual(framebuffer.display_args("std", "x86_64"), ["-vga", "std"])
-        self.assertEqual(framebuffer.display_args("std", "sparc64")[-1], "virtio-keyboard-pci")
-        self.assertEqual(framebuffer.display_args("bochs-display", "aarch64")[-1], "virtio-keyboard-pci")
+        for display, arch in (("std", "sparc64"), ("bochs-display", "aarch64")):
+            self.assertEqual(framebuffer.display_args(display, arch)[2:],
+                             ["-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci"])
 
     def overlay(self, scale, colours=((0, 0, 0), (255, 255, 255))):
         s = max(2, scale)

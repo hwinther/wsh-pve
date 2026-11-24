@@ -3,7 +3,26 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from framebuffer import check_ppm, mandel_image
+from framebuffer import check_ppm, mandel_image, mouse_events
+
+
+class Mouse(unittest.TestCase):
+    def setUp(self):
+        # SS-5 splits X and reports a compensating negative Y delta.
+        self.events = [(2, 0, 5), (2, 0, 5), (2, 1, 5), (2, 1, 2), (2, 1, -2),
+                       (1, 272, 1), (1, 272, 0), (1, 273, 1)]
+        self.answer = b"".join(b"WISP-MOUSE-EV type=%d code=%d value=%d\r\n" % event
+                               for event in self.events)
+
+    def test_split_motion(self):
+        self.assertEqual(mouse_events(self.answer), self.events)
+
+    def test_wrong_direction_missing_axis_or_button(self):
+        for answer in (self.answer.replace(b"value=-2", b"value=-8"),
+                       self.answer.replace(b"type=2 code=1", b"type=2 code=8"),
+                       self.answer.replace(b"272 value=0", b"273 value=0")):
+            with self.subTest(answer=answer), self.assertRaises(ValueError):
+                mouse_events(answer)
 
 
 class Screendump(unittest.TestCase):
