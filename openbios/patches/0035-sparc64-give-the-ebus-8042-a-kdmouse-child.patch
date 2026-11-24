@@ -1,0 +1,243 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: give the ebus 8042 a kdmouse child with ps2-mouse?
+
+The ebus "8042" node has one child, "kb_ps2" (reg 0, no interrupts),
+and one interrupt. Linux's sparc i8042 probe (i8042-sparcio.h) wants a
+keyboard child ("kb_ps2" or "keyboard") and a mouse child ("kdmouse"
+or "mouse") and returns -ENODEV without the mouse, so under QEMU's
+sun4u Linux has no PS/2 keyboard. The probe also takes the keyboard
+child's own resource as the base of the controller's ports (data at
++ 0x60, command at + 0x64) and each child's first interrupt. With
+#size-cells 0 and no ranges, Linux maps a child's reg 1:1
+(use_1to1_mapping()), so reg 0 would be physical address 0, and a
+child without interrupts gets interrupt 0.
+
+New sparc64 option ps2-mouse? (default false). When true, after the
+options are loaded, ob_pc_kbd_add_mouse() gives the node:
+
+- a "kdmouse" child (device_type "mouse"), reg 1;
+- interrupts 1 and 2 on the 8042 (keyboard, mouse), 1 on kb_ps2 and
+  2 on kdmouse, and an ebus interrupt-map entry for interrupt 2 at
+  14,60 to the sabre's INO 0x2a, where QEMU wires the mouse (ISA IRQ
+  12); interrupt 1 stays INO 0x29;
+- #size-cells 1, the children's reg as port number and size (0 and 1,
+  8 bytes), and ranges mapping child address 0 to ebus 14,0, so the
+  keyboard child resolves to the start of the port window.
+
+The 8042's own reg (14,60, 8 bytes), the port numbers and the
+firmware's keyboard (stdin, kb_ps2's methods) stay as they are.
+
+It is off by default because Linux kernels that bind the 8042 through
+platform_create_bundle() panic once the probe succeeds: Debian 7's 3.2
+added the core's "i8042" platform device, the sparc OF driver of the
+same name took it and sparc_i8042_probe() followed its NULL of_node
+(BAD TRAP in sparc_i8042_probe from i8042_init). Newer kernels
+(Debian 12's 6.1, Debian 13's 7.0, 7.3) print "Driver 'i8042' is
+already registered, aborting..." and go on without the keyboard; with
+their OF driver renamed (wsh-pve e2e/wisp/linux-patches/0001) Linux
+7.3 gets the keyboard: "serio: i8042 KBD port at
+0x1fe02000060,0x1fe02000064 irq 6", "AUX port ... irq 7", and evdev
+reports the keys.
+
+With ps2-mouse? false the device tree is the one before, plus the
+option in /options. With it true NetBSD 11.1 and OpenBSD 8.0 take the
+mouse interrupt as well (NetBSD: "pckbc0 at ebus0 addr 60-67 ipl 29
+ipl 2a", "pms0 at pckbc0 (aux slot)"; OpenBSD: "ivec 0x29 ivec 0x2a"),
+Solaris 8, 9 and 10 boot as before.
+---
+ arch/sparc64/openbios.c   |  12 ++++++
+ drivers/pc_kbd.c          | 105 +++++++++++++++++++++++++++++++++++++++++++++-
+ forth/admin/nvram.fs      |   1 +
+ include/drivers/drivers.h |   2 +
+ 4 files changed, 119 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index cba23dc..ad79256 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -834,6 +834,18 @@ arch_init( void )
+         nvconf_init();
+         device_end();
+ 
++#ifdef CONFIG_DRIVER_PC_KBD
++        /* ps2-mouse? true: the ebus 8042 gets the mouse child that Linux's
++           sparc i8042 probe needs. Off by default: Linux kernels that bind
++           the 8042 through platform_create_bundle() (Debian 7's 3.2) panic
++           in sparc_i8042_probe() once that probe succeeds. QEMU wires the
++           mouse, ISA IRQ 12, to the sabre's INO 0x2a. */
++        fword("ps2-mouse?");
++        if (POP()) {
++            ob_pc_kbd_add_mouse("kdmouse", 2, find_dev("/pci"), 0x2a);
++        }
++#endif
++
+         /* Point to the Forth obp-ticks variable */
+         fword("obp-ticks");
+         obp_ticks_pointer = cell2pointer(POP());
+diff --git a/drivers/pc_kbd.c b/drivers/pc_kbd.c
+index a98e57e..d565370 100644
+--- a/drivers/pc_kbd.c
++++ b/drivers/pc_kbd.c
+@@ -10,6 +10,9 @@
+ #include "kernel/kernel.h"
+ #include "drivers/drivers.h"
+ #include "libc/vsprintf.h"
++#include "libc/byteorder.h"
++#include "libc/stdlib.h"
++#include "libc/string.h"
+ 
+ /* ******************************************************************
+  *          simple polling video/keyboard console functions
+@@ -196,6 +199,23 @@ NODE_METHODS(pc_kbd) = {
+     { "read",               pc_kbd_read              },
+ };
+ 
++/* What ob_pc_kbd_add_mouse() needs from ob_pc_kbd_init() */
++static phandle_t pc_kbd_bus, pc_kbd_ctrl, pc_kbd_kbd;
++static uint64_t pc_kbd_base, pc_kbd_offset;
++static int pc_kbd_kintr;
++
++static void
++set_cells_property(phandle_t ph, const char *name, const uint32_t *cells, int n)
++{
++    uint32_t buf[8];
++    int i;
++
++    for (i = 0; i < n; i++) {
++        buf[i] = __cpu_to_be32(cells[i]);
++    }
++    set_property(ph, name, (char *)buf, n * sizeof(buf[0]));
++}
++
+ void
+ ob_pc_kbd_init(const char *path, const char *kdev_name, const char *mdev_name,
+                uint64_t base, uint64_t offset, int kintr, int mintr)
+@@ -203,8 +223,14 @@ ob_pc_kbd_init(const char *path, const char *kdev_name, const char *mdev_name,
+     phandle_t chosen, aliases;
+     char nodebuff[128];
+ 
++    pc_kbd_bus = get_cur_dev();
++    pc_kbd_base = base;
++    pc_kbd_offset = offset;
++    pc_kbd_kintr = kintr;
++
+     fword("new-device");
+-    
++    pc_kbd_ctrl = get_cur_dev();
++
+     push_str("8042");
+     fword("device-type");
+ 
+@@ -278,6 +304,7 @@ ob_pc_kbd_init(const char *path, const char *kdev_name, const char *mdev_name,
+     push_str("address");
+     fword("property");
+ 
++    pc_kbd_kbd = get_cur_dev();
+     BIND_NODE_METHODS(get_cur_dev(), pc_kbd);
+ 
+     PUSH(offset);
+@@ -326,3 +353,79 @@ ob_pc_kbd_init(const char *path, const char *kdev_name, const char *mdev_name,
+ 
+     fword("finish-device");
+ }
++
++/*
++ * Give the 8042 that ob_pc_kbd_init() made (with mdev_name NULL) a mouse
++ * child in the layout Linux's sparc i8042 probe (i8042-sparcio.h) reads:
++ * a keyboard and a mouse child, each with its first interrupt, and the
++ * keyboard child's address translating to the base of the controller's
++ * ports (data at + 0x60, command at + 0x64). The 8042 gets interrupts
++ * kintr and mintr, #size-cells 1 and ranges mapping child address 0 to
++ * the bus address of that base; the children keep their port numbers as
++ * reg (keyboard 0, mouse 1) with a size. Its bus gets an interrupt-map
++ * entry for mintr at the 8042's reg, to imap_node:imap_intr.
++ */
++void
++ob_pc_kbd_add_mouse(const char *mdev_name, int mintr, uint32_t imap_node,
++                    uint32_t imap_intr)
++{
++    uint64_t addr = pc_kbd_base + pc_kbd_offset;
++    uint32_t cells[5];
++    uint32_t *imap;
++    char *prop;
++    int len;
++
++    if (!pc_kbd_ctrl) {
++        return;
++    }
++
++    /* The bus: the mouse interrupt at the 8042's reg */
++    prop = get_property(pc_kbd_bus, "interrupt-map", &len);
++    if (prop && len > 0) {
++        imap = malloc(len + 5 * sizeof(uint32_t));
++        memcpy(imap, prop, len);
++        imap[len / sizeof(uint32_t)] = __cpu_to_be32(addr >> 32);
++        imap[len / sizeof(uint32_t) + 1] = __cpu_to_be32(addr & 0xffffffff);
++        imap[len / sizeof(uint32_t) + 2] = __cpu_to_be32(mintr);
++        imap[len / sizeof(uint32_t) + 3] = __cpu_to_be32(imap_node);
++        imap[len / sizeof(uint32_t) + 4] = __cpu_to_be32(imap_intr);
++        set_property(pc_kbd_bus, "interrupt-map", (char *)imap,
++                     len + 5 * sizeof(uint32_t));
++        free(imap);
++    }
++
++    /* The controller */
++    cells[0] = pc_kbd_kintr;
++    cells[1] = mintr;
++    set_cells_property(pc_kbd_ctrl, "interrupts", cells, 2);
++    set_int_property(pc_kbd_ctrl, "#size-cells", 1);
++    cells[0] = 0;
++    cells[1] = pc_kbd_base >> 32;
++    cells[2] = pc_kbd_base & 0xffffffff;
++    cells[3] = pc_kbd_offset + SER_SIZE;
++    set_cells_property(pc_kbd_ctrl, "ranges", cells, 4);
++
++    /* The keyboard */
++    cells[0] = 0;
++    cells[1] = SER_SIZE;
++    set_cells_property(pc_kbd_kbd, "reg", cells, 2);
++    set_int_property(pc_kbd_kbd, "interrupts", pc_kbd_kintr);
++
++    /* The mouse */
++    activate_dev(pc_kbd_ctrl);
++    fword("new-device");
++
++    push_str(mdev_name);
++    fword("device-name");
++
++    push_str("mouse");
++    fword("device-type");
++
++    cells[0] = 1;
++    cells[1] = SER_SIZE;
++    set_cells_property(get_cur_dev(), "reg", cells, 2);
++    set_int_property(get_cur_dev(), "interrupts", mintr);
++
++    fword("finish-device");
++    device_end();
++}
+diff --git a/forth/admin/nvram.fs b/forth/admin/nvram.fs
+index 7d6bf28..b03204a 100644
+--- a/forth/admin/nvram.fs
++++ b/forth/admin/nvram.fs
+@@ -360,6 +360,7 @@ s" false"    s" ttyb-rts-dtr-off"      bool-config
+ \ ---- SPARC64 ----
+ s" 4000"     s" load-base"          int-config
+ s" false"    s" little-endian?"       bool-config
++s" false"    s" ps2-mouse?"           bool-config
+ [THEN]
+ 
+ \ --- ??? ---
+diff --git a/include/drivers/drivers.h b/include/drivers/drivers.h
+index 8d3e01f..db25faa 100644
+--- a/include/drivers/drivers.h
++++ b/include/drivers/drivers.h
+@@ -119,6 +119,8 @@ int ob_floppy_init(const char *path, const char *dev_name,
+ #ifdef CONFIG_DRIVER_PC_KBD
+ void ob_pc_kbd_init(const char *path, const char *kdev_name, const char *mdev_name,
+                     uint64_t base, uint64_t offset, int kintr, int mintr);
++void ob_pc_kbd_add_mouse(const char *mdev_name, int mintr, uint32_t imap_node,
++                         uint32_t imap_intr);
+ int pc_kbd_dataready(void);
+ unsigned char pc_kbd_readdata(void);
+ #endif

@@ -12,7 +12,7 @@
 # kernels have the same PID 1: init.c, built static against the kernel's own nolibc
 # (tools/include/nolibc) and the kernel's UAPI headers.
 #
-# Environment: KSRC (an unpacked kernel tree; default: unpack /usr/src/linux-source-*.tar.xz into
+# Environment: KSRC (an unpacked kernel tree, used as it is; default: unpack /usr/src/linux-source-*.tar.xz into
 # build/), BUILD (default build/), OUT (default out/), JOBS (default 4), TIER2 (default 1; 0 skips
 # kernel-t2), TIER_FB (default 0; 1 adds kernel-fb on SS-5, sun4u, x86_64 pc and aarch64 virt),
 # TIER_NET (default 0; 1 adds kernel-net with the tier-2 drivers and IPv4).
@@ -39,6 +39,15 @@ kernel_source() {
 		mkdir -p "$KSRC"
 		tar -xJf "$tarball" -C "$KSRC" --strip-components=1
 	fi
+	# linux-patches/*.patch, each once: an unpacked tree from before a patch was added gets it too
+	for p in "$HERE"/linux-patches/*.patch; do
+		[ -e "$p" ] || continue
+		name=$(basename "$p")
+		grep -qxF "$name" "$KSRC/.wisp-patches" 2>/dev/null && continue
+		log "applying $name"
+		patch -d "$KSRC" -p1 -s --forward -i "$p"
+		echo "$name" >> "$KSRC/.wisp-patches"
+	done
 }
 
 # Per architecture: kernel ARCH, kernel CROSS_COMPILE, image path in the build tree and make target,
@@ -123,9 +132,14 @@ EOF
 		sparc32|aarch64) driver=$arch ;;
 		sparc64|x86_64) driver=bochs ;;
 		esac
+		# sun4u adds its virtio keyboard (config/tier-fb/sparc64.config) to the shared Bochs fragment
+		set -- "$HERE/config/tier-fb/$driver.config"
+		if [ "$driver" != "$arch" ] && [ -f "$HERE/config/tier-fb/$arch.config" ]; then
+			set -- "$@" "$HERE/config/tier-fb/$arch.config"
+		fi
 		build_kernel "$B/kbuild-t2" kernel-fb config-fb "$c1" "$c2" \
 			"$HERE/config/tier2/common.config" "$HERE/config/tier2/$arch.config" \
-			"$HERE/config/tier-fb/common.config" "$HERE/config/tier-fb/$driver.config"
+			"$HERE/config/tier-fb/common.config" "$@"
 		fb_size_field=" kernel_fb_bytes=$(wc -c < "$O/kernel-fb")"
 	fi
 	kernel_size=$(wc -c < "$O/kernel")

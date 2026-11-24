@@ -20,6 +20,7 @@ compiler. It applies the following diffs in order and links a stripped static bi
 | 04-keyboard | Read the VT keyboard type as one byte, probe the correct descriptor and skip polling an unavailable keyboard. |
 | 05-response-file | Enable and bound the upstream response-file parser so the OpenBIOS boot arguments stay short. |
 | 06-oss-sound | Mix eight DMX effect channels with integer resampling, volume and stereo separation. Stream 44.1 kHz signed little-endian stereo to OSS from the game loop. |
+| 07-fps-overlay | Count the frames shown per second (`CLOCK_MONOTONIC`) in `I_FinishUpdate` and, with `-fps` or the `` ` `` key (`KEY_GRAVE`, left of 1), draw the number with a 3x5 digit font in the frame's top-left corner after the frame is scaled into the framebuffer buffer (DOOM's 320x200 buffer is untouched), white on black: the nearest palette entries at 8 bpp, composed from the bitfields in truecolour. Print `fbdoom: fps N` once a second while it is on. |
 
 The [wisp timedemo instructions](../README.md#freedoom-framebuffer-timedemo) cover building
 the XZ squashfs data disk, booting and interpreting the measurements.
