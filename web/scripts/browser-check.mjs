@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// The Browser SPARC page in a headless browser, once per machine (?arch=): resumes the snapshot,
+// The Browser SPARC page in a headless browser, once per machine (?arch=): types `mandel` before the
+// resumed machine runs (the page holds the keys until the prompt), resumes the snapshot again,
 // checks wisp's `mandel` against e2e/wisp/tests/mandel.txt, then compares the guest's uptime
 // (wisp's `info`) with the wall clock, first idle and then with the page's main thread kept busy.
 // The busy part is what made the SS-5's clock fall behind: QEMU's main loop sleeps in a poll()
@@ -104,12 +105,33 @@ async function run(page, command, done, timeout = 300000) {
   return { out, t0, t1, ms: t1 - t0 };
 }
 
+// `mandel` typed as soon as the snapshot's transcript (with its prompt) is on the screen, before the
+// machine runs: the page holds the keys until wisp's first prompt. Sent at once, the first ones
+// went to the serial port before the snapshot replaced its state, and the shell got "andel".
+async function earlyInput(page, query) {
+  await page.goto(`${base}?${query}`);
+  await page.waitForFunction(() => window.browserSparc?.times?.qemuStart !== undefined, null,
+    { timeout: 180000, polling: 20 });
+  await page.click("#terminal");
+  const phase = await page.evaluate(() => window.browserSparc.phase);
+  await page.keyboard.type("mandel\r");
+  await page.waitForFunction(
+    () => /points, \d+ iterations|unknown command/.test(window.browserSparc.output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")),
+    null,
+    { timeout: 300000, polling: 100 },
+  );
+  const out = plain(await page.evaluate(() => window.browserSparc.output));
+  return { typedIn: phase, ok: /points, \d+ iterations/.test(out), detail: (/\S*: unknown command/.exec(out) || [""])[0] };
+}
+
 async function checkMachine(arch) {
   const rec = { arch, checks: {} };
   const page = await browser.newPage();
   page.on("pageerror", (e) => console.log(`${arch} page error:`, e.message));
   try {
     const query = arch === "sparc32" ? "" : `arch=${arch}`;
+    const early = await earlyInput(page, query);
+    check(rec, "early input", early.ok, early.detail || `typed while ${early.typedIn}`);
     const st = await start(page, query, 180000);
     rec.snapshot = { resume: st.resume, loadedMs: st.times.loaded, restoredMs: st.times.restored,
       promptAfterQemuStartMs: st.times.prompt - st.times.qemuStart };
