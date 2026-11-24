@@ -5,8 +5,9 @@ name: sparc lab NetBSD
 # scenarios with the lab's own QEMU: sysinst on the serial console, the first boot (root password,
 # marker, host name, static address) and a check boot that logs in with the password
 # (e2e/sparc/tests/test_netbsd.py, NETBSD_TARGET). The CDs come from cdn.netbsd.org (11.1) and
-# archive.netbsd.org (9.3), cached, and the test checks each against its pinned size, sha256 and
-# sha512 (targets.py); nothing from the lab host is used.
+# archive.netbsd.org (9.3), cached (saved by main only; pull requests restore main's entries), and
+# fetch_media.py and the test check each against its pinned size, sha256 and sha512 (targets.py);
+# nothing from the lab host is used.
 #
 # When the installs run: on pull requests that change the files they use (the lab image, lab.py and
 # its modules, targets.py, the NetBSD scenarios and test; other lab changes run only the unit tests),
@@ -51,7 +52,7 @@ jobs:
         with:
           patterns: |
             ^e2e/sparc/Dockerfile(\.dockerignore)?$
-            ^e2e/sparc/(lab|install|mirror|recording|vgatext|targets|targets_dos)\.py$
+            ^e2e/sparc/(lab|install|mirror|recording|vgatext|targets|targets_dos|fetch_media)\.py$
             ^e2e/sparc/lab-requirements\.txt$
             ^e2e/sparc/scenarios/(_netbsd|_sparc32|_sparc64|netbsd-[a-z0-9-]+)\.py$
             ^e2e/sparc/tests/test_netbsd\.py$
@@ -132,10 +133,27 @@ jobs:
         with:
           persist-credentials: false
 
-      # The test checks the cached CD (size, sha256, sha512) and downloads it again when it isn't the
-      # pinned one, so a stale cache costs a download, never a wrong medium
-      - name: Cache the CD
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The CD comes from the Actions cache, which only main fills (here on the schedule and on
+      # dispatch, and daily in media-cache.yml): a pull request restores main's entry and never saves
+      # its own copy (e2e/README.md, "Downloaded media in the Actions cache"). fetch_media.py checks
+      # the restored CD (size, sha256, sha512) and downloads it only when it is missing or not the
+      # pinned one, so a stale cache costs a download, never a wrong medium, and only a checked CD is
+      # saved.
+      - name: Restore the CD
+        id: cd-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
+
+      - name: Download and check the CD
+        env:
+          ISO: ${{ matrix.iso }}
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/netbsd-cd" "$ISO"
+
+      - name: Save the CD (main only)
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.cd-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/netbsd-cd
           key: netbsd-cd-${{ matrix.iso }}

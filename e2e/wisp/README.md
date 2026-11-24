@@ -545,7 +545,8 @@ successful child exit on serial and QEMU's exit. `--fps` adds `-fps` to the resp
 overlay and its serial lines, see "Play DOOM"); the count stays 7,117. A matching count
 checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc, virt and
 SS-5 cg3 on relevant PRs, with sound effects enabled on pc and virt. It caches
-both verified archives and writes serial logs, PPMs, WAV captures and timing report under `RUNNER_TEMP`.
+both verified archives (saved by main only, restored by pull requests: `e2e/README.md`, "Downloaded
+media in the Actions cache") and writes serial logs, PPMs, WAV captures and timing report under `RUNNER_TEMP`.
 
 To reproduce on a Docker daemon, run the following from the repository root with a POSIX
 shell, Python 3.11+ and unused container names. Set `DOCKER_HOST` to the lab daemon before
