@@ -125,6 +125,7 @@ come after that, not before.
 | SS-5 sound under wisp (Linux `snd-sun-cs4231`): OpenBIOS 0034 gives the CS4231 node `intr 0x39`, as Sun's PROM does, so Linux routes SBus level 5 instead of a software interrupt (#478); pve-qemu `wsh/0124` sets the codec's INT status bit and I24's PI with the APC's playback interrupts, which Linux's handler needs before it clears the APC (with 0034 alone the interrupt repeated until QEMU stopped), qtest `wsh/0125` (written to LEMU's requirements, offered to LEMU). Lab: the unchanged `kernel-fb` plays `soundtest 440 1000` (`ok=1`, 23 interrupts, 440.005 Hz for 1000 ms in the WAV); SunOS 4.1.4 and Solaris 2.6 still play. Left: `sound.py` sees ~150 frames of old ring samples ~36 ms after the tone (the APC's 50 ms take-ahead played out after Linux's stop), and the SS-5 joins wisp-boot's sound step once a published package has both (SPARC.md, "Audio") | in review | |
 | CS4231 follow-ups from the LEMU maintainer's review of `wsh/0124`: a write to the codec status register clears PI, CI and TI in I24 as well as INT, as the datasheet and QEMU's ISA model do (pve-qemu `wsh/0126`, qtest `wsh/0127`); the SS-5 no longer plays old samples after Linux stops the DMA: what the APC takes (up to 50 ms ahead of the codec) waits in a FIFO in the model until the codec clock gets to it, the DMA address and count read as the codec's position, a DMA stop in the middle of a buffer drops what lies past it, and the end of the pipe (PMI) still plays everything as `wsh/0032` (`wsh/0128`, qtest `wsh/0129` `mid-stop`, `migrate-fifo`). A vmstate subsection `cs4231/fifo` carries the FIFO only while it holds samples. LEMU took 0124/0125 unchanged onto a local branch; 0126-0129 offered. Lab: `sound.py --arch sparc32` gives the 1000 ms tone, Linux's 22 ms of padding and at most 110 frames (2.5 ms) after it (before: 153-154 frames after 36 ms of silence); SunOS 4.1.4 and Solaris 2.6 play to the end; wisp batch and `--shell` on the eight sparc32 machines; `sun4m-cs4231-test` 10/10 (SPARC.md, "Audio") | in review | |
 | 3dfx stage 2 on a GPU node: an NVIDIA GTX 1080 test node (driver 580, `nvidia_drm modeset=Y`; with `modeset=N` the export fails and every frame is read back) sends every Glide and MESA GL frame as a block-linear dmabuf to egl-headless on the GPU, gamma pass and fences included, also through PVE (`mesa-display=egl-headless`). TCG, 3000 frames: Glide 3502 frames/s egl-headless against 956 read back (llvmpipe 1150), with gamma 2.0 2516 against 775, MESA GL 1018 against 678; through PVE 3748 frames/s, 0.10 ms a copy. Harness: the D-Bus listener and `glide-render --dmabuf` import non-linear dmabufs through EGL and read them with `glReadPixels` (or say the probes are skipped), and the `egl`/`dbus` gate looks for the scanout's printf format, as the published binary holds the "as a dmabuf (no readback)" constant only in overlapping pieces (ROADMAP, Stage 2, "GPU node") | in review | |
+| 3dfx stage 2, fourth slice: a held OpenGL frame stays on the console (the OpenGL wrapper's display timer, `DispTimerMS`, gave it back to the VGA about 4 s after the last swap; offscreen that deferred deactivation is now ignored, `WM_ACTIVATE`, `wglDeleteContext` and the detach still hand back), double buffering for the dmabuf scanout (two exported buffers per window: wsh-openglide 0.8 `getOffscreenDmabufAt`/`getOffscreenScanoutAt` and mesapt's own; frames go on being copied into the second buffer while a D-Bus client reads the first and go as soon as it replies, mesapt's hold copy is gone), and on a GPU the hop from the game's context to ours waits in the GL stream (`EGL_KHR_wait_sync`; `QEMU_3DFX_WAIT_SYNC`). Tests: the Mesa guest's `MESA_GUEST_HOLD` (held 7 s, then deactivated), `glide-render --dmabuf` checks the second buffer and that the first keeps its frame, `e2e/3dfx` checks double buffering. Lab and an NVIDIA GTX 1080 test node: with a busy D-Bus client more frames reach it (`DBUS_DELAY_MS=2`, MESA GL: 2958 updates against 1649 on the lab, 710 against 445 on the GPU node), egl-headless unchanged; the wait in the stream saves 0.05-0.15 ms a copy on the GPU (ROADMAP, Stage 2, "Fourth slice") | in review | |
 | Solaris 2.6 and 2.5.1 on sun4u: traced with QEMU's gdbstub. 2.6's PCI host bridge driver (psycho and sabre in one) refuses a `ranges` property with fewer than four entries and fails its attach silently, so nothing below the sabre attached and the CD's root couldn't be mounted: openbios 0036 adds the 64-bit memory space as OBP has it. 2.5.1's boot program loads the kernel as whole 4 MB pages only when `/openprom` has `aligned-allocator` (the kernel's nucleus hme blocks live in the rest of its data page; without the property that page was unmapped, `Unhandled Exception 0x30`): openbios 0037; then 2.5.1 panicked on the firmware's locked translations (`map_prom: locked translation is not global`; 2.6 and later panic on global ones): openbios 0038 lists them without the lock bit. The installed 2.6 stopped in krtld: its installer adds the platform packages (the UltraSPARC-IIi cpu module link) by the root node's name, so openbios 0039 names the root `SUNW,Ultra-5_10` as OBP does. Install targets `sol26-sun4u` (28 min) and `sol251-sun4u` (67 min, with the Maintenance Update) pass `--check --export` through PVE with 0036-0039 mounted (suninstall, IDE disk, 1024 MB; `matrix_skip` until a package has 0036-0039; their stored disks are parked outside the stored disks until then); the install scenario reads its screens from the serial stream when console messages scroll them away, waits out a slow preinstall phase, and takes any stack depth at OpenBIOS's prompt. Regression: the 11 stored sun4u disks (Solaris 7-10, Tribblix, NetBSD 11.1 and 9.3, OpenBSD 8.0, FreeBSD 12.4, Debian 7 and 13) boot-test 11/11 through PVE with 0036-0039, and wisp on sun4u passes (SPARC.md, "Solaris 2.6 and 2.5.1 on sun4u: the kernels") | in review | |
 | sun4u keyboard under wisp (Linux i8042 on the ebus 8042): OpenBIOS 0035 adds the option `ps2-mouse?` (default false); set, the 8042 gets the `kdmouse` child Linux's sparc i8042 probe needs (it returned `-ENODEV` without it), each child its interrupt (the mouse to the sabre's INO `0x2a`, QEMU's ISA IRQ 12) and a `ranges` so the keyboard child translates to the port window. Off by default because Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once the probe succeeds. Linux 7.3 also needed its sparc OF driver renamed (`e2e/wisp/linux-patches/0001`, applied by `build.sh`: "Driver 'i8042' is already registered" without it). Lab: `framebuffer.py --arch sparc64` with the 0035 firmware passes the keytest (30, 48, 28, 1), wisp batch, shell, reboot and tier 2 on sun4u pass; boot tests of the stored sun4u disks pass with the default (NetBSD 11.1/9.3, OpenBSD 8.0, FreeBSD 12.4, Debian 7.11, Solaris 7/8/9/10, Tribblix; Debian 13 fails the same way with the published firmware); with the option set the `sparc64` matrix, NetBSD 11.1/9.3, OpenBSD 8.0, FreeBSD 12.4 and Solaris 8/9/10 pass and Debian 7.11 panics as above (Tribblix and Solaris 7 not run with it). The framebuffer runs keep the virtio keyboard on sun4u (#487) until a published package has 0035 (wisp README, "Framebuffer tier") | in review | |
 
@@ -304,7 +305,7 @@ merged; what is left of them is item 2 under "Next".
        front-buffer drawing without a swap; a display mode change while OpenGL frames show; the
        guest's OpenGL cursor offscreen; Glide on top of an active OpenGL window; a check through a
        PVE node with a Windows guest (`qm start` with `mesa=1`, the noVNC console).
-     - **Stage 2: dmabuf scanout (Glide and MESA GL done, tested through PVE in Windows 98 and on an NVIDIA GPU node; left: AMD/Intel GPU nodes, double buffering).** When QEMU's
+     - **Stage 2: dmabuf scanout (Glide and MESA GL done, double-buffered, tested through PVE in Windows 98 and on an NVIDIA GPU node; left: AMD/Intel GPU nodes).** When QEMU's
        display has GL (`-display egl-headless`, `-display dbus,gl=on`), a Glide frame goes to the
        console as a dmabuf instead of being read back. wsh-openglide (new
        `packages/wsh-openglide/patches/0003-egl-dmabuf-scanout.patch`): a third renderbuffer of the
@@ -469,18 +470,85 @@ merged; what is left of them is item 2 under "Next".
        libraries and their glvnd/GBM json files mounted by hand, `--security-opt
        apparmor=unconfined` (the host's `docker-default` profile denies the AF_UNIX sockets of Xvfb
        and QEMU's monitor) and `--init` (QEMU's `-daemonize` leaves a zombie otherwise).
-       Left: AMD and Intel GPU nodes (untested); a wait for the fences in the GL stream
-       (`EGL_KHR_wait_sync`) instead of on the CPU; `docker --gpus all` on a node whose driver came
-       from `nvidia-installer` (the NVIDIA container toolkit's driver RPC failed); Windows 98 with dbus,gl=on (the harness has
-       no D-Bus client yet) and a real game over time; double buffering instead of holding
-       frames while a D-Bus client reads (it would also replace mesapt's hold copy); the D-Bus listener's 30 ms
-       refresh cap; an OpenGL frame the guest doesn't redraw gives the console back to the VGA about
-       4 s after its last swap (seen in Windows 98 with a long hold: egl-headless and read back alike,
-       with and without PVE; a held Glide frame stays). Settled since: GitHub's runners have
+       Left: AMD and Intel GPU nodes (untested); `docker --gpus all` on a node whose driver came
+       from `nvidia-installer` (the NVIDIA container toolkit's driver RPC failed); Windows 98 with
+       dbus,gl=on (the harness has no D-Bus client yet) and a real game over time; the D-Bus
+       listener's 30 ms refresh cap; the Windows 98 hold rerun with the fourth slice's packages.
+       Done since (fourth slice, below): the held OpenGL frame, double buffering, the wait in the
+       GL stream. Settled since: GitHub's runners have
        `/dev/udmabuf` (`qemu-3dfx-check.yml` ran the `egl` and `dbus` modes there, all frames as
        dmabufs, run of 2026-11-22); the published wsh-openglide has had the exports since 0.5 (cut
        from #425 itself, 2026-11-21; the `3dfx in Windows 98` runs that read Glide back predate it),
        and the Windows 98 runs through PVE below sent Glide as dmabufs with the published packages.
+       Fourth slice (in review): a held OpenGL frame stays, double buffering, and a wait in the GL
+       stream. The OpenGL frame that went back to the VGA about 4 s after the last swap was
+       upstream's display timer: the guest wrapper passes `DispTimerMS` (2000 ms unless its config
+       says otherwise, `DISPTMR_DEFAULT`), mesapt re-arms a timer at every swap,
+       `glFlush`/`glFinish` and `wglMakeCurrent`, and when it fires `MGLActivateHandler(0, 1)`
+       schedules a deactivation for another `DispTimerMS` later, which ends in `MGLRendererStat(0)`
+       and, offscreen, `fxdisp_renderer(0)`: the VGA. With an SDL window that is upstream's design
+       and stays; offscreen (`MGLEglActive()`) the deferred deactivation is now ignored, and QEMU
+       says so once per pause ("offscreen: no swap for 2000 ms, the frame stays ..."). The console
+       still goes back at the guest's `WM_ACTIVATE` (the wrapper's hook, 0xFD8; Windows also sends
+       it when the active window is destroyed), `wglDeleteContext` and the DLL detach. The Mesa
+       guest of `e2e/3dfx` gains `MESA_GUEST_HOLD=<s>`: the wrapper's default timer, the first frame
+       held for `<s>` seconds (`HELD`, probed at 7 s: the frame's #000080), then the wrapper's
+       `WM_ACTIVATE` with `WA_INACTIVE` (`DEACTIVATED`: the VGA's #000000), then the gamma phase
+       shows frames again; `test.sh` runs it headless when the binary has the message. With the
+       published 11.1.3-4+wsh12 the `HELD` probe found the VGA (#000000), as in Windows 98. Double
+       buffering: `fxdisp.c` takes two exported buffers per window (`fxdisp_dmabuf(..., nbuf)`, the
+       export and scanout callbacks take the buffer's index). A frame is copied into the buffer the
+       console has as long as the display is done with it (egl-headless reads it within its update;
+       switching would cost egl-headless a new import and a D-Bus client a new file descriptor), and
+       into the other one while the console is gl-blocked (a D-Bus client still reads the last
+       frame), each new frame replacing the one waiting there; the waiting frame goes as soon as the
+       client replies (a 1 ms main-loop poll instead of the 50 ms stale timer). wsh-openglide 0.8
+       (`0003-egl-dmabuf-scanout.patch`): `getOffscreenDmabufAt(i, ...)` and
+       `getOffscreenScanoutAt(i)` for two scanout buffers
+       (`getOffscreenDmabuf`/`getOffscreenScanout` are buffer 0; with an older library qemu-3dfx
+       keeps one buffer and the held frames of before). mesapt: two renderbuffers, and the hold copy
+       (`egl_hold`, its stage renderbuffer, `fxdisp_hold`) is gone, as no frame has to wait in the
+       guest's back buffer any more. Readback and the no-GL paths are unchanged. `glide-render --egl
+       --dmabuf` checks the second buffer too (gamma 2.0, all 307200 pixels equal to the read) and
+       that buffer 0 still holds its last frame after a copy into buffer 1; `e2e/3dfx` checks that
+       both guests are double-buffered with egl-headless and dbus,gl=on. A wait in the GL stream:
+       where a context of ours reads another context's frame (mesapt's copy context reading the
+       guest's pbuffer, wsh-openglide's gamma context reading OpenGLide's front buffer) the producer
+       now flushes a fence and the consumer waits for it with `eglWaitSyncKHR` (`EGL_KHR_wait_sync`)
+       instead of the CPU waiting; the copy itself is still finished on the CPU before the display
+       gets it, since the display reads it from a context of its own and QEMU passes it no fence. On
+       when the extension is there and the renderer is not Mesa's llvmpipe or softpipe (which don't
+       all wait in the stream); `QEMU_3DFX_WAIT_SYNC=1` or `0` decides instead; the client wait and
+       `glFinish` stay as fallbacks. Tested (lab: KVM, llvmpipe, `/dev/udmabuf`, under other agents'
+       load; an NVIDIA GTX 1080 test node: TCG, driver 580, `nvidia_drm modeset=Y`, idle, load
+       average about 1): `e2e/3dfx` `egl`, `dbus` (also with `DBUS_DELAY_MS=2` and `10`), `vnc`,
+       `egl` with `QEMU_3DFX_DMABUF=0`, `sdl` on the lab; `egl`, `dbus` with `DBUS_DELAY_MS=2` and
+       `vnc` on the GPU node; the package test (`glide-render --dmabuf`) on the lab. Measured (3000
+       frames of the test scene, `GLIDE_GUEST_BENCH=3000`; before: the published pve-qemu-kvm
+       11.1.3-4+wsh12 and wsh-openglide 0.7, after: this change; frames/s of the guest, then the
+       D-Bus listener's updates):
+
+       | Run | Glide before | Glide after | MESA GL before | MESA GL after |
+       | --- | --- | --- | --- | --- |
+       | lab, dbus,gl=on, listener replies at once | 773 fps, 1489 updates (1557 held) | 923 fps, 1637 updates (1613 waited, 117 replaced) | 182 fps, 2909 updates | 167 fps, 3055 updates |
+       | lab, dbus,gl=on, `DBUS_DELAY_MS=2` | 564 fps, 895 updates (2231 held) | 656 fps, 937 updates (2282 waited, 1486 replaced) | 222 fps, 1649 updates (1532 held) | 169 fps, 2958 updates (2943 waited, 91 replaced) |
+       | lab, dbus,gl=on, `DBUS_DELAY_MS=10` | 1773 fps, 278 updates (2883 held) | 1225 fps, 324 updates (2653 replaced) | 307 fps, 761 updates | 273 fps, 992 updates (2000 replaced) |
+       | GPU node, dbus,gl=on, `DBUS_DELAY_MS=2` | 15787 fps, 300 updates (2886 held) | 2692 fps, 428 updates (2343 replaced) | 2776 fps, 445 updates (2751 held) | 1250 fps, 710 updates (2027 replaced) |
+       | GPU node, egl-headless | 1040 fps | 1552, 1492 fps | 481 fps | 535, 534 fps |
+
+       With a D-Bus client that is busy, more of the guest's frames reach it (the listener's
+       updates), as the newest frame is ready when the client replies instead of up to 50 ms later;
+       the guest's own rate goes down where it used to skip the copies of held frames (on the GPU
+       node a held Glide frame cost nothing, so the guest drew 15787 frames/s of which the client
+       got 300), and with llvmpipe a MESA GL copy costs 2-3 ms. Before, mesapt copied a held frame
+       twice (the hold copy, then the scanout), now once. egl-headless gains nothing from the second
+       buffer and isn't slowed by it (the lab's egl-headless runs, three each: Glide 465-690
+       frames/s before, 306-753 after, MESA GL 204-257 before, 118-247 after, the low ones in one
+       run under the heaviest load). The wait in the GL stream on the GPU node: Glide with gamma 2.0
+       (the gamma pass's hop) 0.33-0.40 ms a copy and 1063-1388 frames/s with the wait, 0.38-0.52 ms
+       and 939-1276 frames/s without (three runs each); MESA GL's copy 0.55-0.61 ms with it,
+       0.61-0.74 ms without. The GPU node's egl-headless Glide rate of #480 (3502 frames/s) wasn't
+       reached on this day with either build (1040 before, 1492-1552 after).
        - **PVE: the display of a 3dfx VM (merged, #431).** qemu-server: `vga: ...,mesa=1,mesa-display=`
          `none|egl-headless` (default `none`: no `-display`, frames read back, as before);
          `egl-headless` adds `-display egl-headless` next to PVE's `-vnc`, so noVNC keeps working.

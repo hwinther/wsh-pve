@@ -57,7 +57,14 @@ second EGL context that shares OpenGLide's objects, and the copies are finished 
 (`EGL_KHR_fence_sync`, a client wait) where the driver has one, `glFinish` otherwise. On an
 NVIDIA GPU (proprietary driver, `nvidia_drm modeset=1`) the exported buffer has a block-linear
 modifier and the GL display imports it as such; without modesetting the export fails and the frames
-are read back (ROADMAP, Stage 2, "GPU node"). Two things in it are not qemu-3dfx's and might interest QEMU or Mesa
+are read back (ROADMAP, Stage 2, "GPU node"). Since wsh-openglide 0.8 there are two scanout
+buffers (`getOffscreenDmabufAt(i, ...)`, `getOffscreenScanoutAt(i)`; the old exports are buffer
+0): `fxdisp.c` copies a frame into the buffer the console has while the display is done with it,
+and into the other one while a D-Bus client still reads the last frame, where it waits for the
+client's reply instead of being held back (the MESA GL pass-through does the same with two
+buffers of its own, and its hold copy is gone). On a GPU, where the gamma pass's context reads
+OpenGLide's frame it waits for it in its GL stream (`EGL_KHR_wait_sync`) rather than on the CPU;
+`QEMU_3DFX_WAIT_SYNC=0` keeps the CPU wait (ROADMAP, Stage 2, "Fourth slice"). Two things in it are not qemu-3dfx's and might interest QEMU or Mesa
 people, should the owner want to mention them: QEMU's egl-headless took every dmabuf as top down
 (`egl_scanout_dmabuf()` passed `false` for `y0_top`), and an EGL platform display is one handle per
 process, so a library that calls `eglTerminate` on Mesa's surfaceless display also destroys the

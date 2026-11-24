@@ -29,7 +29,9 @@
  * buffer is a framebuffer object's attachment there, so its read counts with every driver.
  * --dmabuf (with --egl) also checks the frame as a GL display gets it: through the dmabuf the
  * library exports (getOffscreenDmabuf, getOffscreenScanout), mapped (or, when it isn't linear,
- * imported through EGL) and compared with the read, without and with a gamma ramp (check_dmabuf).
+ * imported through EGL) and compared with the read, without and with a gamma ramp, and, with a
+ * library that has two (getOffscreenDmabufAt, getOffscreenScanoutAt), through the second buffer,
+ * checking that a copy into one leaves the other alone (check_dmabuf).
  *
  * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
  * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx). --check-ppm
@@ -237,7 +239,9 @@ static int check_window(const char *id, const char *ppm)
  * with getOffscreenFrame()'s read of the same frame, pixel for pixel (both rows bottom up): without
  * a gamma ramp (a blit), with grGammaCorrectionValue(2.0) and, for Glide 3, a table of a different
  * ramp per channel (grLoadGammaTable; the copy is a shader pass then, the read applies the ramp on
- * the CPU), and once more without a ramp. Needs a render node or /dev/udmabuf. */
+ * the CPU), and once more without a ramp. Then, with a library that double-buffers (0.8), buffer 1
+ * with gamma 2.0, and buffer 0 again: it must still hold the frame without a ramp, its last copy.
+ * Needs a render node or /dev/udmabuf. */
 /* A dmabuf that isn't linear (e.g. NVIDIA's block-linear layout) can't be read through a mapping:
  * it is imported (EGL_EXT_image_dma_buf_import_modifiers) on the library's own EGL display into a
  * texture of a context of ours and read with glReadPixels into egl_pixels (RGBA, the dmabuf's first
@@ -387,8 +391,10 @@ static void egl_release(void)
 
 #define FOURCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 
+/* the frame into buffer buf (scanout), then the dmabuf (map, or through EGL) against the read;
+ * scanout NULL: no copy, only the dmabuf's top left against want */
 static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, int stride, uint32_t fourcc, int fd,
-			  int (*frame)(void *, int, int, int), int (*scanout)(void))
+			  int (*frame)(void *, int, int, int), int (*scanout)(int), int buf)
 {
 	static uint8_t bgrx[W * H * 4];
 	struct dma_buf_sync sync = {0};
@@ -396,11 +402,11 @@ static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, i
 	int ri = 0, gi = 1, bi = 2, diffs = 0, maxd = 0;
 	if (fourcc == FOURCC('A', 'R', '2', '4') || fourcc == FOURCC('X', 'R', '2', '4'))
 		ri = 2, bi = 0;
-	if (!scanout()) {
+	if (scanout && !scanout(buf)) {
 		fprintf(stderr, "FAIL: dmabuf %s: getOffscreenScanout refused the frame\n", what);
 		return 1;
 	}
-	if (!frame(bgrx, W, H, W * 4)) {
+	if (scanout && !frame(bgrx, W, H, W * 4)) {
 		fprintf(stderr, "FAIL: dmabuf %s: getOffscreenFrame\n", what);
 		return 1;
 	}
@@ -414,7 +420,7 @@ static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, i
 	}
 	sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
 	ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
-	for (int y = 0; y < H; y++)
+	for (int y = 0; scanout && y < H; y++)
 		for (int x = 0; x < W; x++) {
 			const uint8_t *d = map + (size_t)y * stride + x * 4, *f = bgrx + ((size_t)y * W + x) * 4;
 			int dr = abs(d[ri] - f[2]), dg = abs(d[gi] - f[1]), db = abs(d[bi] - f[0]);
@@ -432,8 +438,11 @@ static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, i
 	ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
 	/* the clear colour at the top left (the last row in memory), for the log */
 	const uint8_t *tl = map + (size_t)(H - 1) * stride;
-	printf("dmabuf %s: top left #%02x%02x%02x, %d of %d pixels differ from the read (max %d)\n", what,
-	       tl[ri], tl[gi], tl[bi], diffs, W * H, maxd);
+	if (scanout)
+		printf("dmabuf %s: top left #%02x%02x%02x, %d of %d pixels differ from the read (max %d)\n", what,
+		       tl[ri], tl[gi], tl[bi], diffs, W * H, maxd);
+	else
+		printf("dmabuf %s: top left #%02x%02x%02x (no copy)\n", what, tl[ri], tl[gi], tl[bi]);
 	if (diffs)
 		fprintf(stderr, "FAIL: dmabuf %s: the dmabuf isn't the frame getOffscreenFrame reads\n", what);
 	uint32_t got = ((uint32_t)tl[ri] << 16) | ((uint32_t)tl[gi] << 8) | tl[bi];
@@ -445,16 +454,105 @@ static int dmabuf_compare(const char *what, uint32_t want, const uint8_t *map, i
 	return diffs ? 1 : 0;
 }
 
+/* the one-buffer entry point as buffer 0 */
+static int (*scanout0)(void);
+static int scanout_old(int buf)
+{
+	return buf ? 0 : scanout0();
+}
+
+/* Opens dmabuf fd for reading: mapped (*map, *len) or imported through EGL (egl_pixels; *map NULL);
+ * -1 on failure, 1 when it can't be verified here (said why), 0 */
+static int dmabuf_open(int fd, int stride, int offset, unsigned int fourcc, unsigned long modifier, uint8_t **map,
+		       size_t *len)
+{
+	*len = (size_t)offset + (size_t)stride * H;
+	*map = NULL;
+	/* DRM_FORMAT_MOD_LINEAR, or DRM_FORMAT_MOD_INVALID (none given): mapped; another modifier (or
+	 * GLIDE_RENDER_IMPORT=egl, that path with llvmpipe): imported through EGL */
+	const char *env = getenv("GLIDE_RENDER_IMPORT");
+	if ((modifier != 0 && modifier != 0x00ffffffffffffffUL) || (env && !strcmp(env, "egl"))) {
+		const char *why = egl_import(fd, stride, offset, fourcc, modifier);
+		if (why) {
+			printf("info: modifier 0x%lx: not verified (the EGL import failed: %s)\n", modifier, why);
+			egl_release();
+			return 1;
+		}
+		printf("dmabuf: modifier 0x%lx, imported through EGL and read with glReadPixels\n", modifier);
+		return 0;
+	}
+	*map = mmap(NULL, *len, PROT_READ, MAP_SHARED, fd, 0);
+	if (*map == MAP_FAILED) {
+		perror("FAIL: mmap of the dmabuf");
+		*map = NULL;
+		return -1;
+	}
+	return 0;
+}
+
+static void dmabuf_close(uint8_t *map, size_t len)
+{
+	if (egl_pixels)
+		egl_release();
+	else if (map)
+		munmap(map, len);
+}
+
+/* wsh-openglide 0.8: buffer 1, with gamma 2.0, then buffer 0 unchanged (the frame without a ramp
+ * it got last); fd0 and the rest: buffer 0, already closed for reading */
+static int check_second_buffer(int fd0, int stride0, int offset0, unsigned int fourcc0, unsigned long modifier0)
+{
+	int (*dmabuf_at)(int, int *, int *, int *, unsigned int *, unsigned long *) = sym("getOffscreenDmabufAt", 0);
+	int (*scanout_at)(int) = sym("getOffscreenScanoutAt", 0);
+	void (*gamma)(float) = sym("grGammaCorrectionValue", 1);
+	int fd = -1, stride = 0, offset = 0, failed = 0, rc;
+	unsigned int fourcc = 0;
+	unsigned long modifier = 0;
+	uint8_t *map;
+	size_t len;
+	if (!dmabuf_at || !scanout_at) {
+		printf("info: the library has one scanout buffer (no getOffscreenDmabufAt): no double buffering\n");
+		return 0;
+	}
+	if (!dmabuf_at(1, &fd, &stride, &offset, &fourcc, &modifier)) {
+		fprintf(stderr, "FAIL: getOffscreenDmabufAt(1): no second buffer\n");
+		return 1;
+	}
+	printf("dmabuf 1: fd %d, stride %d, offset %d, fourcc %.4s, modifier 0x%lx\n", fd, stride, offset,
+	       (const char *)&fourcc, modifier);
+	rc = dmabuf_open(fd, stride, offset, fourcc, modifier, &map, &len);
+	if (rc) {
+		close(fd);
+		return rc < 0;
+	}
+	gamma(2.0f);
+	failed += dmabuf_compare("buffer 1, gamma 2.0", 0x0000b5, map ? map + offset : NULL, stride, fourcc, fd,
+				 gr.getOffscreenFrame, scanout_at, 1);
+	gamma(1.0f);
+	dmabuf_close(map, len);
+	close(fd);
+	/* buffer 0 still holds its last frame, the one without a ramp: the copy into buffer 1 didn't
+	 * touch it */
+	rc = dmabuf_open(fd0, stride0, offset0, fourcc0, modifier0, &map, &len);
+	if (rc)
+		return rc < 0;
+	failed += dmabuf_compare("buffer 0 after a copy into buffer 1", 0x000080, map ? map + offset0 : NULL, stride0,
+				 fourcc0, fd0, NULL, NULL, 0);
+	dmabuf_close(map, len);
+	return failed;
+}
+
 static int check_dmabuf(void)
 {
 	int (*dmabuf)(int *, int *, int *, unsigned int *, unsigned long *) = sym("getOffscreenDmabuf", 0);
-	int (*scanout)(void) = sym("getOffscreenScanout", 0);
+	int (*scanout)(int) = scanout_old;
 	void (*gamma)(float) = sym("grGammaCorrectionValue", 1);
 	void (*table)(uint32_t, uint32_t *, uint32_t *, uint32_t *) = glide3 ? sym("grLoadGammaTable", 0) : NULL;
 	int fd = -1, stride = 0, offset = 0, failed = 0;
 	unsigned int fourcc = 0;
 	unsigned long modifier = 0;
-	if (!dmabuf || !scanout) {
+	scanout0 = sym("getOffscreenScanout", 0);
+	if (!dmabuf || !scanout0) {
 		fprintf(stderr, "FAIL: the library has no getOffscreenDmabuf/getOffscreenScanout\n");
 		return 1;
 	}
@@ -470,32 +568,17 @@ static int check_dmabuf(void)
 		close(fd);
 		return 0;
 	}
-	size_t len = (size_t)offset + (size_t)stride * H;
-	uint8_t *map;
-	/* DRM_FORMAT_MOD_LINEAR, or DRM_FORMAT_MOD_INVALID (none given): mapped; another modifier (or
-	 * GLIDE_RENDER_IMPORT=egl, that path with llvmpipe): imported through EGL */
-	const char *env = getenv("GLIDE_RENDER_IMPORT");
-	if ((modifier != 0 && modifier != 0x00ffffffffffffffUL) || (env && !strcmp(env, "egl"))) {
-		const char *why = egl_import(fd, stride, offset, fourcc, modifier);
-		if (why) {
-			printf("info: modifier 0x%lx: not verified (the EGL import failed: %s)\n", modifier, why);
-			egl_release();
-			close(fd);
-			return 0;
-		}
-		printf("dmabuf: modifier 0x%lx, imported through EGL and read with glReadPixels\n", modifier);
-		map = egl_pixels;
-		offset = 0;
-	} else
-		map = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
-	if (map == MAP_FAILED) {
-		perror("FAIL: mmap of the dmabuf");
+	size_t len;
+	uint8_t *map, *m;
+	int rc = dmabuf_open(fd, stride, offset, fourcc, modifier, &map, &len);
+	if (rc) {
 		close(fd);
-		return 1;
+		return rc < 0;
 	}
-	failed += dmabuf_compare("without a ramp", 0x000080, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
+	m = map ? map + offset : NULL;
+	failed += dmabuf_compare("without a ramp", 0x000080, m, stride, fourcc, fd, gr.getOffscreenFrame, scanout, 0);
 	gamma(2.0f);
-	failed += dmabuf_compare("gamma 2.0", 0x0000b5, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
+	failed += dmabuf_compare("gamma 2.0", 0x0000b5, m, stride, fourcc, fd, gr.getOffscreenFrame, scanout, 0);
 	if (table) {
 		/* red gamma 2.0, green inverted, blue halved */
 		static uint32_t r[256], g[256], b[256];
@@ -508,15 +591,13 @@ static int check_dmabuf(void)
 			b[i] = i / 2;
 		}
 		table(256, r, g, b);
-		failed += dmabuf_compare("a table per channel", 0x00ff40, map + offset, stride, fourcc, fd, gr.getOffscreenFrame,
-					 scanout);
+		failed += dmabuf_compare("a table per channel", 0x00ff40, m, stride, fourcc, fd, gr.getOffscreenFrame,
+					 scanout, 0);
 	}
 	gamma(1.0f);
-	failed += dmabuf_compare("the ramp reset", 0x000080, map + offset, stride, fourcc, fd, gr.getOffscreenFrame, scanout);
-	if (egl_pixels)
-		egl_release();
-	else
-		munmap(map, len);
+	failed += dmabuf_compare("the ramp reset", 0x000080, m, stride, fourcc, fd, gr.getOffscreenFrame, scanout, 0);
+	dmabuf_close(map, len);
+	failed += check_second_buffer(fd, stride, offset, fourcc, modifier);
 	close(fd);
 	return failed;
 }

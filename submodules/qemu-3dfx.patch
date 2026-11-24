@@ -1,9 +1,9 @@
 diff --git a/qemu-0/hw/3dfx/fxdisp.c b/qemu-0/hw/3dfx/fxdisp.c
 new file mode 100644
-index 0000000..afa92f1
+index 0000000..0cab264
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.c
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,604 @@
 +/*
 + * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display
 + *
@@ -36,17 +36,21 @@ index 0000000..afa92f1
 + * A frame reaches the console in one of two ways:
 + *
 + *  - dmabuf scanout, when the display has GL (-display egl-headless, -display dbus,gl=on) and the
-+ *    user can export a buffer as a dmabuf (fxdisp_dmabuf(); wsh-openglide's getOffscreenDmabuf,
++ *    user can export a buffer as a dmabuf (fxdisp_dmabuf(); wsh-openglide's getOffscreenDmabufAt,
 + *    mesapt's egl_export in hw/mesa/mglcntx_egl.c):
-+ *    the buffer is exported once when the window opens, each frame is copied into it on the GPU
-+ *    and finished on the vCPU thread, and a bottom half on the main loop hands it to the console
-+ *    (qemu_console_gl_scanout_dmabuf the first time, qemu_console_gl_update for each frame). The
-+ *    display imports it into its own EGL context: no copy through system memory. While the
-+ *    console is gl-blocked (a D-Bus client still reads the last frame) a frame isn't copied, and
-+ *    the newest one follows FXDISP_STALE_MS later (a user whose next frame overwrites the held one,
-+ *    MESA GL, keeps a copy of it: fxdisp_hold). Everything that touches the console's GL state
-+ *    runs on the main loop, where the display's context is current; the vCPU thread has the
-+ *    pass-through's context.
++ *    two buffers are exported when the window opens, each frame is copied into one on the GPU and
++ *    finished on the vCPU thread, and a bottom half on the main loop hands it to the console
++ *    (qemu_console_gl_scanout_dmabuf when the buffer changes, qemu_console_gl_update for each
++ *    frame). The display imports them into its own EGL context: no copy through system memory.
++ *    The frames go into the buffer the console has while the display is done with it
++ *    (egl-headless reads it within its update); while the console is gl-blocked (a D-Bus client
++ *    still reads the last frame) they go into the other one, each replacing the one waiting
++ *    there, and the newest goes to the console as soon as the client is done (polled every
++ *    FXDISP_UNBLOCK_MS): the guest never waits, and never overwrites what the display reads. A user with one buffer (a wsh-openglide before 0.8, which has only
++ *    getOffscreenDmabuf) isn't copied into while the console is gl-blocked; its newest frame
++ *    follows FXDISP_STALE_MS later. Everything that touches the console's GL state runs on the
++ *    main loop, where the display's context is current; the vCPU thread has the pass-through's
++ *    context.
 + *  - readback otherwise (no GL display, as PVE's VNC console; no export, as for a multisampled
 + *    MESA GL window; QEMU_3DFX_DMABUF=0) and for the frames the user can't copy into the buffer
 + *    (a gamma ramp: wsh-openglide and mesapt copy through it with a shader, and read back only
@@ -75,6 +79,7 @@ index 0000000..afa92f1
 +#include "fxdisp.h"
 +
 +#define FXDISP_STALE_MS 50
++#define FXDISP_UNBLOCK_MS 1
 +
 +/* What fxdisp_read left for the bottom half */
 +enum { FXDISP_NONE, FXDISP_PIXELS, FXDISP_DMABUF };
@@ -84,11 +89,12 @@ index 0000000..afa92f1
 +    FxDispRead read;
 +    FxDispExport export_buf;
 +    FxDispScanout scanout;
-+    FxDispHold hold;
++    int nbuf_max;           /* buffers the user can export: 1, or 2 */
 +    void *opaque;
 +    int open;               /* an offscreen window (Glide) or context (MESA GL) is open */
 +    int shown;              /* 3D output selected */
-+    int ready;              /* FXDISP_PIXELS: a frame in pix, FXDISP_DMABUF: in the dmabuf */
++    int ready;              /* FXDISP_PIXELS: a frame in pix, FXDISP_DMABUF: in dmabuf[ready_buf] */
++    int ready_buf;
 +    int dirty;              /* calls since the last frame, none of them a swap (or it was held) */
 +    int stale_armed;        /* the stale timer is pending */
 +    int gamma;              /* lut is not the identity */
@@ -97,17 +103,19 @@ index 0000000..afa92f1
 +    uint8_t lut[3][256];    /* r, g, b */
 +    QemuConsole *con;
 +    DisplaySurface *surface; /* ours, while the console has it */
-+    QemuDmaBuf *dmabuf;     /* the frames' buffer, while frames go as a dmabuf */
++    QemuDmaBuf *dmabuf[2];  /* the frames' buffers, while frames go as a dmabuf */
++    int nbuf;               /* of them exported: 0 (frames read back), 1 or 2 */
++    int disp_buf;           /* the buffer last handed to the console (-1: none yet) */
 +    QemuDmaBuf *scanned;    /* the dmabuf the console scans out (main loop's) */
 +    GSList *dead;           /* dmabufs of closed windows, released by release_bh */
 +    int handback;           /* release_bh gives the console back to the VGA */
 +    QemuConsole *last_con;  /* the console of the last window */
 +    QEMUBH *bh, *release_bh;
-+    QEMUTimer *stale;
++    QEMUTimer *stale, *unblock;
 +    CPUState *cpu;          /* the vCPU whose thread made the last call */
 +    int64_t last_read, opened, scheduled;
 +    uint64_t swaps, reads, read_ns, shown_frames, bh_ns, stale_reads;
-+    uint64_t scanouts, scanout_ns, held, readback_frames, update_ns;
++    uint64_t scanouts, scanout_ns, held, readback_frames, update_ns, replaced;
 +};
 +
 +/* Offscreen unless the display is SDL without GL (the window qemu-3dfx's SDL code renders into,
@@ -165,6 +173,12 @@ index 0000000..afa92f1
 +
 +    if (!fx->open || !ready || !fx->shown || !fx->con)
 +        return;
++    /* Double-buffered: the frame waits in its buffer until the display is done with the last one
++     * (a D-Bus client's reply) */
++    if ((ready == FXDISP_DMABUF) && qemu_console_is_gl_blocked(fx->con)) {
++        timer_mod(fx->unblock, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + FXDISP_UNBLOCK_MS);
++        return;
++    }
 +    fx->ready = FXDISP_NONE;
 +    fx->bh_ns += get_clock() - fx->scheduled;
 +    /* A frame read back (a gamma ramp) while the console scans the dmabuf out: back to a
@@ -181,11 +195,13 @@ index 0000000..afa92f1
 +        qemu_console_set_surface(fx->con, fx->surface);
 +        fx->scanned = NULL;
 +    }
-+    if ((ready == FXDISP_DMABUF) && fx->dmabuf) {
-+        if (fx->scanned != fx->dmabuf) {
-+            qemu_console_gl_scanout_dmabuf(fx->con, fx->dmabuf);
-+            fx->scanned = fx->dmabuf;
++    if ((ready == FXDISP_DMABUF) && fx->dmabuf[fx->ready_buf]) {
++        QemuDmaBuf *d = fx->dmabuf[fx->ready_buf];
++        if (fx->scanned != d) {
++            qemu_console_gl_scanout_dmabuf(fx->con, d);
++            fx->scanned = d;
 +        }
++        fx->disp_buf = fx->ready_buf;
 +        /* the display's work for the frame (egl-headless: a blit and a read into the surface
 +         * for VNC; dbus,gl=on: passing it on) */
 +        t = get_clock();
@@ -236,15 +252,26 @@ index 0000000..afa92f1
 +    g_slist_free(dead);
 +}
 +
-+/* vCPU thread, BQL held: the dmabuf goes, the console lets go of it on the main loop */
++/* Main loop: a frame waits in its buffer while the console is gl-blocked; it goes once the
++ * display is done with the last one */
++static void fxdisp_unblock_timer(void *opaque)
++{
++    fxdisp_bh(opaque);
++}
++
++/* vCPU thread, BQL held: the dmabufs go, the console lets go of them on the main loop */
 +static void fxdisp_drop_dmabuf(FxDisp *fx)
 +{
-+    if (!fx->dmabuf)
++    if (!fx->nbuf)
 +        return;
-+    fx->dead = g_slist_prepend(fx->dead, fx->dmabuf);
-+    fx->dmabuf = NULL;
++    for (int i = 0; i < fx->nbuf; i++)
++        fx->dead = g_slist_prepend(fx->dead, fx->dmabuf[i]);
++    fx->dmabuf[0] = fx->dmabuf[1] = NULL;
++    fx->nbuf = 0;
++    fx->disp_buf = -1;
 +    if (fx->ready == FXDISP_DMABUF)
 +        fx->ready = FXDISP_NONE;
++    timer_del(fx->unblock);
 +    qemu_bh_schedule(fx->release_bh);
 +}
 +
@@ -267,7 +294,6 @@ index 0000000..afa92f1
 +static const char *fxdisp_try_dmabuf(FxDisp *fx)
 +{
 +    const char *env = g_getenv("QEMU_3DFX_DMABUF");
-+    FxDispDmabuf b = { .fd = -1 };
 +    uint32_t fourcc, offset, stride;
 +    int32_t fd;
 +
@@ -277,22 +303,34 @@ index 0000000..afa92f1
 +        return "QEMU_3DFX_DMABUF=0";
 +    if (!qemu_console_has_gl(fx->con))
 +        return "the display has no GL; egl-headless or dbus,gl=on take a dmabuf";
-+    if (!fx->export_buf(fx->opaque, &b) || (b.fd < 0))
-+        return "the renderer can't export a dmabuf, see above";
-+    /* The alpha channel of a frame means nothing to a display */
-+    fourcc = b.fourcc;
-+    if (fourcc == DRM_FORMAT_ABGR8888)
-+        fourcc = DRM_FORMAT_XBGR8888;
-+    else if (fourcc == DRM_FORMAT_ARGB8888)
-+        fourcc = DRM_FORMAT_XRGB8888;
-+    offset = b.offset;
-+    stride = b.stride;
-+    fd = b.fd;
-+    /* rows bottom up, as OpenGL renders them: y0_top (the display flips) */
-+    fx->dmabuf = qemu_dmabuf_new(fx->w, fx->h, &offset, &stride, 0, 0, fx->w, fx->h,
-+                                 fourcc, b.modifier, &fd, 1, false, true);
-+    fprintf(stderr, "%s: dmabuf scanout: fourcc %.4s, modifier 0x%" PRIx64 ", stride %u\n",
-+        fx->tag, (const char *)&fourcc, b.modifier, stride);
++    for (int i = 0; i < fx->nbuf_max; i++) {
++        FxDispDmabuf b = { .fd = -1 };
++        if (!fx->export_buf(fx->opaque, i, &b) || (b.fd < 0)) {
++            if (!i)
++                return "the renderer can't export a dmabuf, see above";
++            break;
++        }
++        /* The alpha channel of a frame means nothing to a display */
++        fourcc = b.fourcc;
++        if (fourcc == DRM_FORMAT_ABGR8888)
++            fourcc = DRM_FORMAT_XBGR8888;
++        else if (fourcc == DRM_FORMAT_ARGB8888)
++            fourcc = DRM_FORMAT_XRGB8888;
++        offset = b.offset;
++        stride = b.stride;
++        fd = b.fd;
++        /* rows bottom up, as OpenGL renders them: y0_top (the display flips) */
++        fx->dmabuf[i] = qemu_dmabuf_new(fx->w, fx->h, &offset, &stride, 0, 0, fx->w, fx->h,
++                                        fourcc, b.modifier, &fd, 1, false, true);
++        fx->nbuf = i + 1;
++        if (!i)
++            fprintf(stderr, "%s: dmabuf scanout: fourcc %.4s, modifier 0x%" PRIx64 ", stride %u\n",
++                fx->tag, (const char *)&fourcc, b.modifier, stride);
++    }
++    fx->disp_buf = -1;
++    fprintf(stderr, "%s: dmabuf scanout: %s\n", fx->tag, (fx->nbuf > 1)?
++        "double-buffered (the frame the display reads is never written to)":
++        "one buffer (frames wait while the display reads it)");
 +    return NULL;
 +}
 +
@@ -315,17 +353,29 @@ index 0000000..afa92f1
 +    if (!fx->con || !fx->shown)
 +        return;
 +    t = get_clock();
-+    if (fx->dmabuf) {
-+        /* The display still reads the last frame (a D-Bus client): the newest frame later */
-+        if (qemu_console_is_gl_blocked(fx->con)) {
-+            if (swap && fx->hold)
-+                fx->hold(fx->opaque);
++    if (fx->nbuf) {
++        int blocked = qemu_console_is_gl_blocked(fx->con), b = 0;
++        if (fx->nbuf > 1) {
++            /* The buffer the display has, as long as it doesn't read it any more (egl-headless
++             * reads it within its update; a buffer switch costs the display a new import, and a
++             * D-Bus client a new file descriptor). While it still reads the last frame (a D-Bus
++             * client) the other one, where the new frame waits, replacing any before it */
++            b = (fx->disp_buf > 0)? 1:0;
++            if (blocked) {
++                b = (fx->disp_buf == 0)? 1:0;
++                fx->held++;
++                if (fx->ready == FXDISP_DMABUF)
++                    fx->replaced++;
++            }
++        } else if (blocked) {
++            /* One buffer, which the display still reads: the newest frame later */
 +            fx->held++;
 +            fxdisp_arm_stale(fx);
 +            return;
 +        }
-+        if (fx->scanout(fx->opaque)) {
++        if (fx->scanout(fx->opaque, b)) {
 +            fx->ready = FXDISP_DMABUF;
++            fx->ready_buf = b;
 +            fx->scheduled = get_clock();
 +            qemu_bh_schedule(fx->bh);
 +            fx->scanout_ns += fx->scheduled - t;
@@ -375,21 +425,19 @@ index 0000000..afa92f1
 +    fx->bh = qemu_bh_new(fxdisp_bh, fx);
 +    fx->release_bh = qemu_bh_new(fxdisp_release_bh, fx);
 +    fx->stale = timer_new_ms(QEMU_CLOCK_REALTIME, fxdisp_stale_timer, fx);
++    fx->unblock = timer_new_ms(QEMU_CLOCK_REALTIME, fxdisp_unblock_timer, fx);
++    fx->disp_buf = -1;
 +    fxdisp_gamma(fx, NULL, NULL, NULL);
 +    return fx;
 +}
 +
-+/* The user can hand its frames over as a dmabuf (both functions on the thread of its context) */
-+void fxdisp_dmabuf(FxDisp *fx, FxDispExport export_buf, FxDispScanout scanout)
++/* The user can hand its frames over as a dmabuf, in nbuf buffers (1, or 2: double-buffered; both
++ * functions on the thread of its context) */
++void fxdisp_dmabuf(FxDisp *fx, FxDispExport export_buf, FxDispScanout scanout, int nbuf)
 +{
 +    fx->export_buf = (export_buf && scanout)? export_buf:NULL;
 +    fx->scanout = scanout;
-+}
-+
-+/* See FxDispHold (on the thread of the user's context) */
-+void fxdisp_hold(FxDisp *fx, FxDispHold hold)
-+{
-+    fx->hold = hold;
++    fx->nbuf_max = (nbuf > 1)? 2:1;
 +}
 +
 +int fxdisp_is_open(FxDisp *fx)
@@ -425,6 +473,7 @@ index 0000000..afa92f1
 +    fx->cpu = NULL;
 +    fx->swaps = fx->reads = fx->read_ns = fx->shown_frames = fx->bh_ns = fx->stale_reads = 0;
 +    fx->scanouts = fx->scanout_ns = fx->held = fx->readback_frames = fx->update_ns = 0;
++    fx->replaced = 0;
 +    fx->opened = fx->last_read = get_clock();
 +    fxdisp_drop_dmabuf(fx);
 +    if (fx->con)
@@ -433,7 +482,7 @@ index 0000000..afa92f1
 +        graphic_hw_passthrough(fx->con, true);
 +    if (!fx->con)
 +        to = g_strdup("nowhere (no graphic console)");
-+    else if (fx->dmabuf)
++    else if (fx->nbuf)
 +        to = g_strdup("the graphic console as a dmabuf (no readback)");
 +    else
 +        to = g_strdup_printf("the graphic console, read back (%s)", why);
@@ -448,7 +497,7 @@ index 0000000..afa92f1
 +
 +    if (!fx->open || ((fx->w == w) && (fx->h == h)))
 +        return;
-+    had_dmabuf = !!fx->dmabuf;
++    had_dmabuf = !!fx->nbuf;
 +    fx->w = w;
 +    fx->h = h;
 +    fx->ready = FXDISP_NONE;
@@ -459,7 +508,7 @@ index 0000000..afa92f1
 +    if (had_dmabuf && fx->con)
 +        fxdisp_try_dmabuf(fx);
 +    fprintf(stderr, "%s: offscreen now %dx%d%s\n", fx->tag, w, h,
-+        (had_dmabuf && !fx->dmabuf)? ", read back from now on":"");
++        (had_dmabuf && !fx->nbuf)? ", read back from now on":"");
 +}
 +
 +/* After a call (vCPU thread, BQL held): take the frame after a swap; with stale set, also when
@@ -497,7 +546,7 @@ index 0000000..afa92f1
 +        fx->last_read = 0;
 +    } else {
 +        fx->ready = FXDISP_NONE;
-+        fxdisp_handback(fx, !!fx->dmabuf);
++        fxdisp_handback(fx, !!fx->nbuf);
 +    }
 +}
 +
@@ -530,7 +579,7 @@ index 0000000..afa92f1
 +        fx->tag, secs, fx->swaps, (secs > 0)? fx->swaps / secs:0, fx->reads,
 +        (fx->reads)? (fx->read_ns / 1e6) / fx->reads:0, fx->stale_reads, fx->shown_frames,
 +        (fx->shown_frames)? (fx->bh_ns / 1e6) / fx->shown_frames:0);
-+    if (fx->dmabuf || fx->scanouts) {
++    if (fx->nbuf || fx->scanouts) {
 +        uint64_t dmabuf_frames = fx->shown_frames - fx->readback_frames;
 +        fprintf(stderr, "%s: dmabuf scanout: %" PRIu64 " frames copied to the dmabuf in %.2f ms "
 +            "average, the display's update %.2f ms a frame, %" PRIu64 " held while the display "
@@ -538,14 +587,18 @@ index 0000000..afa92f1
 +            (fx->scanouts)? (fx->scanout_ns / 1e6) / fx->scanouts:0,
 +            (dmabuf_frames)? (fx->update_ns / 1e6) / dmabuf_frames:0, fx->held,
 +            fx->readback_frames);
++        if (fx->nbuf > 1)
++            fprintf(stderr, "%s: dmabuf scanout: double-buffered, %" PRIu64 " of the held frames "
++                "replaced by a newer one before they went\n", fx->tag, fx->replaced);
 +    }
 +    fx->open = 0;
 +    fx->ready = FXDISP_NONE;
 +    fx->dirty = 0;
 +    fx->stale_armed = 0;
 +    timer_del(fx->stale);
++    timer_del(fx->unblock);
 +    qemu_bh_cancel(fx->bh);
-+    had_dmabuf = !!fx->dmabuf;
++    had_dmabuf = !!fx->nbuf;
 +    fxdisp_drop_dmabuf(fx);
 +    if (fx->con)
 +        fxdisp_handback(fx, had_dmabuf);
@@ -557,10 +610,10 @@ index 0000000..afa92f1
 +}
 diff --git a/qemu-0/hw/3dfx/fxdisp.h b/qemu-0/hw/3dfx/fxdisp.h
 new file mode 100644
-index 0000000..152cdda
+index 0000000..0b1d987
 --- /dev/null
 +++ b/qemu-0/hw/3dfx/fxdisp.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,55 @@
 +/*
 + * QEMU 3Dfx Glide and MESA GL Pass-Through: offscreen display (fxdisp.c)
 + *
@@ -588,28 +641,24 @@ index 0000000..152cdda
 +/* Reads the frame on the thread whose GL context renders it: w x h pixels, 4 bytes each (B G R X
 + * in memory), rows bottom up, stride bytes apart; returns 0 when there is nothing to show */
 +typedef int (*FxDispRead)(void *opaque, void *pix, int w, int h, int stride);
-+/* dmabuf scanout (fxdisp_dmabuf): the buffer the frames go into, one plane of the window's size
-+ * with its rows bottom up (OpenGL's order); fd is the caller's to close */
++/* dmabuf scanout (fxdisp_dmabuf): the buffers the frames go into, one plane of the window's size
++ * each with its rows bottom up (OpenGL's order); fd is the caller's to close */
 +typedef struct FxDispDmabuf {
 +    int fd;
 +    int stride, offset;
 +    uint32_t fourcc;
 +    uint64_t modifier;
 +} FxDispDmabuf;
-+/* Exports that buffer, on the thread of the user's GL context while its window is open: 1, or 0
-+ * when it can't (the frames are then read back) */
-+typedef int (*FxDispExport)(void *opaque, FxDispDmabuf *buf);
-+/* Copies the current frame into it and finishes the GL work: 1, or 0 to have this frame read
++/* Exports buffer i (0, or 1 for a user with two), on the thread of the user's GL context while its
++ * window is open: 1, or 0 when it can't (the frames are then read back) */
++typedef int (*FxDispExport)(void *opaque, int i, FxDispDmabuf *buf);
++/* Copies the current frame into buffer i and finishes the GL work: 1, or 0 to have this frame read
 + * back instead */
-+typedef int (*FxDispScanout)(void *opaque);
-+/* A swap's frame is held back (the display still reads the last one): a user whose next frame
-+ * overwrites it (MESA GL draws into the same pbuffer) keeps a copy for the scanout that follows */
-+typedef void (*FxDispHold)(void *opaque);
++typedef int (*FxDispScanout)(void *opaque, int i);
 +
 +int fxdisp_choose(void);
 +FxDisp *fxdisp_new(const char *, FxDispRead, void *);
-+void fxdisp_dmabuf(FxDisp *, FxDispExport, FxDispScanout);
-+void fxdisp_hold(FxDisp *, FxDispHold);
++void fxdisp_dmabuf(FxDisp *, FxDispExport, FxDispScanout, int);
 +int fxdisp_is_open(FxDisp *);
 +void fxdisp_open(FxDisp *, int, int, int);
 +int fxdisp_shown(FxDisp *);
@@ -621,10 +670,10 @@ index 0000000..152cdda
 +
 +#endif // FXDISP_H
 diff --git a/qemu-0/hw/3dfx/glide2x_impl.c b/qemu-0/hw/3dfx/glide2x_impl.c
-index b5d656c..3e134eb 100644
+index b5d656c..9b59db5 100644
 --- a/qemu-0/hw/3dfx/glide2x_impl.c
 +++ b/qemu-0/hw/3dfx/glide2x_impl.c
-@@ -776,6 +776,10 @@ static void *hDll = 0;
+@@ -776,6 +776,12 @@ static void *hDll = 0;
  #endif
  void __stdcall (*setConfig)(const uint32_t flags, void *magic);
  void __stdcall (*setConfigRes)(const int res, void *swap12);
@@ -632,10 +681,12 @@ index b5d656c..3e134eb 100644
 +int (*glide_offscreen_frame)(void *, int, int, int);
 +int (*glide_offscreen_dmabuf)(int *, int *, int *, uint32_t *, uint64_t *);
 +int (*glide_offscreen_scanout)(void);
++int (*glide_offscreen_dmabuf_at)(int, int *, int *, int *, uint32_t *, uint64_t *);
++int (*glide_offscreen_scanout_at)(int);
  static int SDLSignValid(const uint32_t sign)
  {
      static uint32_t SDLSign;
-@@ -845,6 +849,10 @@ void fini_glide2x(void)
+@@ -845,6 +851,12 @@ void fini_glide2x(void)
  #endif
      }
      hDll = 0;
@@ -643,10 +694,12 @@ index b5d656c..3e134eb 100644
 +    glide_offscreen_frame = 0;
 +    glide_offscreen_dmabuf = 0;
 +    glide_offscreen_scanout = 0;
++    glide_offscreen_dmabuf_at = 0;
++    glide_offscreen_scanout_at = 0;
      for (int i = 0; i < FEnum_zzG2xFuncEnum_max; i++) {
          tblGlide2x[i].impl = 0;
  	tblGlide2x[i].ptr = 0;
-@@ -892,6 +900,11 @@ int init_glide2x(const char *dllname)
+@@ -892,6 +904,14 @@ int init_glide2x(const char *dllname)
      }
      setConfig = (void (*)(const uint32_t, void *))dlsym(hDll, "setConfig");
      setConfigRes = (void (*)(const int, void *))dlsym(hDll, "setConfigRes");
@@ -655,14 +708,17 @@ index b5d656c..3e134eb 100644
 +    glide_offscreen_dmabuf = (hDll)?
 +        (int (*)(int *, int *, int *, uint32_t *, uint64_t *))dlsym(hDll, "getOffscreenDmabuf"):0;
 +    glide_offscreen_scanout = (hDll)? (int (*)(void))dlsym(hDll, "getOffscreenScanout"):0;
++    glide_offscreen_dmabuf_at = (hDll)? (int (*)(int, int *, int *, int *, uint32_t *, uint64_t *))
++        dlsym(hDll, "getOffscreenDmabufAt"):0;
++    glide_offscreen_scanout_at = (hDll)? (int (*)(int))dlsym(hDll, "getOffscreenScanoutAt"):0;
  #endif
      
      if (!hDll) {
 diff --git a/qemu-0/hw/3dfx/glide2x_impl.h b/qemu-0/hw/3dfx/glide2x_impl.h
-index edd5ff1..7365997 100644
+index edd5ff1..8a697e6 100644
 --- a/qemu-0/hw/3dfx/glide2x_impl.h
 +++ b/qemu-0/hw/3dfx/glide2x_impl.h
-@@ -132,6 +132,12 @@ void glide_renderer_stat(const int);
+@@ -132,6 +132,15 @@ void glide_renderer_stat(const int);
  #endif //CONSOLE_H
  void doGlideFunc(int, uint32_t *, uintptr_t *, uintptr_t *, int);
  void conf_glide2x(const uint32_t, const int);
@@ -672,6 +728,9 @@ index edd5ff1..7365997 100644
 +/* and its dmabuf scanout (NULL with a library without it) */
 +extern int (*glide_offscreen_dmabuf)(int *, int *, int *, uint32_t *, uint64_t *);
 +extern int (*glide_offscreen_scanout)(void);
++/* and its second scanout buffer (wsh-openglide 0.8: buffer i, 0 or 1; NULL before) */
++extern int (*glide_offscreen_dmabuf_at)(int, int *, int *, int *, uint32_t *, uint64_t *);
++extern int (*glide_offscreen_scanout_at)(int);
  void cwnd_glide2x(void *, void *, void *);
  int init_glide2x(const char *);
  void fini_glide2x(void);
@@ -741,7 +800,7 @@ index 23bdc7d..2978c1f 100644
                  uint32_t *dataptr = (uint32_t *)(s->fifo_ptr + (MAX_FIFO << 2));
                  uint32_t numData = (s->datacb & 0x03)? ((s->datacb >> 2) + 1):(s->datacb >> 2);
 diff --git a/qemu-0/hw/3dfx/glidewnd.c b/qemu-0/hw/3dfx/glidewnd.c
-index 0c0f143..64601a9 100644
+index 0c0f143..36665fd 100644
 --- a/qemu-0/hw/3dfx/glidewnd.c
 +++ b/qemu-0/hw/3dfx/glidewnd.c
 @@ -23,6 +23,7 @@
@@ -752,7 +811,7 @@ index 0c0f143..64601a9 100644
  
  #define DPRINTF(fmt, ...) \
      do { fprintf(stderr, " " fmt "\n", ## __VA_ARGS__); } while(0)
-@@ -69,6 +70,24 @@ static int cfg_Annotate;
+@@ -69,6 +70,30 @@ static int cfg_Annotate;
  static int cfg_MipMaps;
  static int cfg_traceFifo;
  static int cfg_traceFunc;
@@ -764,20 +823,26 @@ index 0c0f143..64601a9 100644
 +    return (glide_offscreen_frame)? glide_offscreen_frame(pix, w, h, stride):0;
 +}
 +
-+static int glide_fxdisp_export(void *opaque, FxDispDmabuf *b)
++/* Buffer i of two with a wsh-openglide from 0.8, the one buffer before */
++static int glide_fxdisp_export(void *opaque, int i, FxDispDmabuf *b)
 +{
-+    return (glide_offscreen_dmabuf)?
++    if (glide_offscreen_dmabuf_at && glide_offscreen_scanout_at)
++        return glide_offscreen_dmabuf_at(i, &b->fd, &b->stride, &b->offset, &b->fourcc,
++                                         &b->modifier);
++    return (glide_offscreen_dmabuf && !i)?
 +        glide_offscreen_dmabuf(&b->fd, &b->stride, &b->offset, &b->fourcc, &b->modifier):0;
 +}
 +
-+static int glide_fxdisp_scanout(void *opaque)
++static int glide_fxdisp_scanout(void *opaque, int i)
 +{
-+    return (glide_offscreen_scanout)? glide_offscreen_scanout():0;
++    if (glide_offscreen_dmabuf_at && glide_offscreen_scanout_at)
++        return glide_offscreen_scanout_at(i);
++    return (glide_offscreen_scanout && !i)? glide_offscreen_scanout():0;
 +}
  static void *hwnd;
  
  #ifdef CONFIG_DARWIN
-@@ -196,6 +215,9 @@ int stat_window(const int res, void *opaque)
+@@ -196,6 +221,9 @@ int stat_window(const int res, void *opaque)
  {
      int stat, sel, glide_fullscreen;
      window_cb *disp_cb = opaque;
@@ -787,7 +852,7 @@ index 0c0f143..64601a9 100644
      sel = (cfg_scaleX)? scaledRes(cfg_scaleX, ((float)tblRes[res].h) / tblRes[res].w):res;
      stat = 1;
      glide_fullscreen = glide_gui_fullscreen(0, 0);
-@@ -220,6 +242,17 @@ void fini_window(void *opaque)
+@@ -220,6 +248,17 @@ void fini_window(void *opaque)
  {
      window_cb *disp_cb = opaque;
      disp_cb->activate = 0;
@@ -805,7 +870,7 @@ index 0c0f143..64601a9 100644
  #ifdef CONFIG_WIN32
      if (cfg_createWnd)
          DestroyWindow(hwnd);
-@@ -235,10 +268,30 @@ void fini_window(void *opaque)
+@@ -235,10 +274,30 @@ void fini_window(void *opaque)
      cfg_traceFunc = 0;
  }
  
@@ -837,7 +902,7 @@ index 0c0f143..64601a9 100644
      cfg_scaleGuiOff = 0;
      cfg_scaleX = 0;
      cfg_cntxMSAA = 0;
-@@ -294,7 +347,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -294,7 +353,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
          fclose(fp);
      }
  
@@ -846,7 +911,7 @@ index 0c0f143..64601a9 100644
      cfg_scaleGuiOff = (glide_fullscreen || cfg_scaleX)? 1:cfg_scaleGuiOff;
      cfg_scaleX = (!cfg_scaleGuiOff && (gui_height > 480) && (gui_height > tblRes[res].h))?
          (int)((1.f * tblRes[res].w * gui_height) / tblRes[res].h):cfg_scaleX;
-@@ -305,6 +358,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -305,6 +364,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
  #define WRAPPER_FLAG_FRAMEBUFFER_SRGB   0x20
  #define WRAPPER_FLAG_VSYNCOFF           0x40
  #define WRAPPER_FLAG_QEMU               0x80
@@ -854,7 +919,7 @@ index 0c0f143..64601a9 100644
      uint32_t flags = (glide_fullscreen)? WRAPPER_FLAG_QEMU:
          (WRAPPER_FLAG_QEMU | WRAPPER_FLAG_WINDOWED);
      flags |= (cfg_MipMaps)? WRAPPER_FLAG_MIPMAPS:0;
-@@ -312,6 +366,17 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -312,6 +372,17 @@ void init_window(const int res, const char *wndTitle, void *opaque)
      flags |= (cfg_cntxVsyncOff)? WRAPPER_FLAG_VSYNCOFF:0;
      flags |= (cfg_cntxSRGB)? WRAPPER_FLAG_FRAMEBUFFER_SRGB:0;
      flags |= cfg_cntxMSAA;
@@ -872,7 +937,7 @@ index 0c0f143..64601a9 100644
  
      int sel = res;
      if (cfg_scaleX) {
-@@ -323,6 +388,26 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -323,6 +394,27 @@ void init_window(const int res, const char *wndTitle, void *opaque)
  
      disp_cb->activate = 1;
      hwnd = (void *)(uintptr_t)(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w);
@@ -892,14 +957,15 @@ index 0c0f143..64601a9 100644
 +            glide_fx = fxdisp_new("glidept", glide_fxdisp_read, NULL);
 +        /* wsh-openglide with the dmabuf exports: frames as a dmabuf where the display has GL */
 +        fxdisp_dmabuf(glide_fx, (glide_offscreen_dmabuf && glide_offscreen_scanout)?
-+            glide_fxdisp_export:NULL, glide_fxdisp_scanout);
++            glide_fxdisp_export:NULL, glide_fxdisp_scanout,
++            (glide_offscreen_dmabuf_at && glide_offscreen_scanout_at)? 2:1);
 +        fxdisp_open(glide_fx, w, h, 1);
 +        return 0;
 +    }
  #ifdef CONFIG_WIN32
      if (cfg_createWnd)
          hwnd = CreateGlideWindow(wndTitle, tblRes[sel].w, tblRes[sel].h);
-@@ -333,6 +418,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
+@@ -333,6 +425,7 @@ void init_window(const int res, const char *wndTitle, void *opaque)
      glide_prepare_window(((tblRes[sel].h & 0x7FFFU) << 0x10) | tblRes[sel].w,
              (cfg_cntxMSAA > 8)? 16:cfg_cntxMSAA, disp_cb, &cwnd_glide2x);
  #endif	
@@ -907,7 +973,7 @@ index 0c0f143..64601a9 100644
  }
  
  typedef struct {
-@@ -376,7 +462,7 @@ static void profile_stat(void)
+@@ -376,7 +469,7 @@ static void profile_stat(void)
      if (p->last == 0) {
  	p->fcount = 0;
  	p->ftime = 0;
@@ -1002,10 +1068,10 @@ index 051c953..2c64a33 100644
      void (*stat)(void);
 diff --git a/qemu-1/hw/mesa/mglcntx_egl.c b/qemu-1/hw/mesa/mglcntx_egl.c
 new file mode 100644
-index 0000000..38a7a00
+index 0000000..3754ec8
 --- /dev/null
 +++ b/qemu-1/hw/mesa/mglcntx_egl.c
-@@ -0,0 +1,1479 @@
+@@ -0,0 +1,1492 @@
 +/*
 + * QEMU MESA GL Pass-Through: EGL offscreen context
 + *
@@ -1341,9 +1407,10 @@ index 0000000..38a7a00
 +}
 +
 +/*
-+ * dmabuf scanout (fxdisp_dmabuf), with a GL display: each frame is copied into a renderbuffer
-+ * that is exported once as a dmabuf (EGL_MESA_image_dma_buf_export; llvmpipe exports through
-+ * /dev/udmabuf, a GPU driver through its render node), which the display imports.
++ * dmabuf scanout (fxdisp_dmabuf), with a GL display: each frame is copied into one of two
++ * renderbuffers, each exported once as a dmabuf (EGL_MESA_image_dma_buf_export; llvmpipe exports
++ * through /dev/udmabuf, a GPU driver through its render node), which the display imports. fxdisp
++ * picks the one the display doesn't have (double buffering).
 + *
 + * The copy runs in a context of our own (scan.ctx), made current on the guest's window pbuffer
 + * for it, not in the guest's context: it reads the pbuffer's framebuffer 0 directly, so it shares
@@ -1363,10 +1430,9 @@ index 0000000..38a7a00
 + * identical formats, and Mesa's software renderers never get one here, egl_msaa_works, so it is
 + * untested), and frames with a gamma ramp when the shader can't be built.
 + *
-+ * While the display still reads the last frame (a D-Bus client), fxdisp holds a swap's frame back
-+ * and asks for it again later; by then the guest draws its next frame into the same back buffer,
-+ * so egl_hold copies the held frame into a renderbuffer of its own (stage) right away, and the
-+ * scanout that follows copies from there.
++ * While the display still reads the last frame (a D-Bus client), the copy goes into the other
++ * buffer all the same, at the swap, so the frame needs no copy of its own before the guest draws
++ * the next one into the same back buffer (the hold copy of before).
 + */
 +typedef struct {
 +    EGLContext ctx;
@@ -1375,16 +1441,17 @@ index 0000000..38a7a00
 +
 +static struct {
 +    EGLContext ctx;         /* ours: current on e.surf only during the copy */
-+    EGLImageKHR img;        /* the exported renderbuffer */
-+    GLuint fbo, rb;
-+    GLuint stage_fbo, stage_rb; /* the held frame */
-+    int w, h, staged;
++    EGLImageKHR img[2];     /* the exported renderbuffers */
++    GLuint fbo[2], rb[2];
++    int w, h;
 +    GLuint prog, tex, lut;  /* gamma: the program, the frame's copy, the lookup (256 x 1) */
 +    int tex_w, tex_h, lut_dirty, gamma_failed;
 +    int fence;              /* scan_finish: 0 not decided yet, 1 an EGL fence, -1 glFinish */
++    int wait_sync;          /* scan_begin: scan.ctx waits for the guest's frame in its GL stream */
 +    PFNEGLCREATESYNCKHRPROC create_sync;
 +    PFNEGLCLIENTWAITSYNCKHRPROC client_wait;
 +    PFNEGLDESTROYSYNCKHRPROC destroy_sync;
++    PFNEGLWAITSYNCKHRPROC server_wait;
 +} scan;
 +
 +static void egl_current_save(EglCurrent *c)
@@ -1404,9 +1471,11 @@ index 0000000..38a7a00
 +    PFNEGLDESTROYIMAGEKHRPROC destroyImage =
 +        (PFNEGLDESTROYIMAGEKHRPROC) egl.GetProcAddress("eglDestroyImageKHR");
 +
-+    if (scan.img && destroyImage)
-+        destroyImage(e.dpy, scan.img);
-+    scan.img = EGL_NO_IMAGE_KHR;
++    for (int i = 0; i < 2; i++) {
++        if (scan.img[i] && destroyImage)
++            destroyImage(e.dpy, scan.img[i]);
++        scan.img[i] = EGL_NO_IMAGE_KHR;
++    }
 +}
 +
 +/* The buffer's GL objects, with scan.ctx current */
@@ -1416,16 +1485,13 @@ index 0000000..38a7a00
 +    MESA_PFN(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers);
 +
 +    scan_destroy_image();
-+    if (p_glDeleteFramebuffers) {
-+        p_glDeleteFramebuffers(1, &scan.fbo);
-+        p_glDeleteFramebuffers(1, &scan.stage_fbo);
-+    }
-+    if (p_glDeleteRenderbuffers) {
-+        p_glDeleteRenderbuffers(1, &scan.rb);
-+        p_glDeleteRenderbuffers(1, &scan.stage_rb);
-+    }
-+    scan.fbo = scan.rb = scan.stage_fbo = scan.stage_rb = 0;
-+    scan.w = scan.h = scan.staged = 0;
++    if (p_glDeleteFramebuffers)
++        p_glDeleteFramebuffers(2, scan.fbo);
++    if (p_glDeleteRenderbuffers)
++        p_glDeleteRenderbuffers(2, scan.rb);
++    memset(scan.fbo, 0, sizeof(scan.fbo));
++    memset(scan.rb, 0, sizeof(scan.rb));
++    scan.w = scan.h = 0;
 +}
 +
 +/* Window gone: the context takes its objects with it */
@@ -1437,9 +1503,9 @@ index 0000000..38a7a00
 +    memset(&scan, 0, sizeof(scan));
 +}
 +
-+/* fxdisp's export, on the vCPU thread, when the window opens or changes size: a renderbuffer of
-+ * the window's size, exported as a dmabuf */
-+static int egl_export(void *opaque, FxDispDmabuf *b)
++/* fxdisp's export, on the vCPU thread, when the window opens or changes size: renderbuffer i (0
++ * makes both anew) of the window's size, exported as a dmabuf */
++static int egl_export(void *opaque, int i, FxDispDmabuf *b)
 +{
 +    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC,         glBindFramebuffer);
 +    MESA_PFN(PFNGLBINDRENDERBUFFERPROC,        glBindRenderbuffer);
@@ -1468,7 +1534,7 @@ index 0000000..38a7a00
 +    GLenum status;
 +    EglCurrent cur;
 +
-+    if (!e.surf)
++    if (!e.surf || (i < 0) || (i > 1) || (i && ((scan.w != e.w) || (scan.h != e.h))))
 +        return 0;
 +    if (e.cSampleBuf[0]) {
 +        DPRINTF("dmabuf scanout: the window is multisampled, its frames are read back");
@@ -1493,14 +1559,15 @@ index 0000000..38a7a00
 +        DPRINTF("dmabuf scanout: no context for the copy (0x%04x)", egl.GetError());
 +        goto out;
 +    }
-+    scan_free_buffer();
-+    p_glGenRenderbuffers(1, &scan.rb);
-+    p_glBindRenderbuffer(GL_RENDERBUFFER, scan.rb);
++    if (!i)
++        scan_free_buffer();
++    p_glGenRenderbuffers(1, &scan.rb[i]);
++    p_glBindRenderbuffer(GL_RENDERBUFFER, scan.rb[i]);
 +    p_glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, e.w, e.h);
 +    p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-+    p_glGenFramebuffers(1, &scan.fbo);
-+    p_glBindFramebuffer(GL_FRAMEBUFFER, scan.fbo);
-+    p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, scan.rb);
++    p_glGenFramebuffers(1, &scan.fbo[i]);
++    p_glBindFramebuffer(GL_FRAMEBUFFER, scan.fbo[i]);
++    p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, scan.rb[i]);
 +    status = p_glCheckFramebufferStatus(GL_FRAMEBUFFER);
 +    if (status != GL_FRAMEBUFFER_COMPLETE) {
 +        DPRINTF("dmabuf scanout: framebuffer incomplete (0x%04x)", status);
@@ -1513,14 +1580,14 @@ index 0000000..38a7a00
 +    p_glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
 +    p_glReadBuffer((dbl)? GL_BACK:GL_FRONT);
 +    p_glFinish();
-+    scan.img = createImage(e.dpy, scan.ctx, EGL_GL_RENDERBUFFER_KHR,
-+                           (EGLClientBuffer)(uintptr_t)scan.rb, NULL);
-+    if (scan.img == EGL_NO_IMAGE_KHR) {
++    scan.img[i] = createImage(e.dpy, scan.ctx, EGL_GL_RENDERBUFFER_KHR,
++                              (EGLClientBuffer)(uintptr_t)scan.rb[i], NULL);
++    if (scan.img[i] == EGL_NO_IMAGE_KHR) {
 +        DPRINTF("dmabuf scanout: eglCreateImage 0x%04x", egl.GetError());
 +        goto out;
 +    }
-+    if (!exportQuery(e.dpy, scan.img, &fourcc, &planes, &modifier) || (planes != 1) ||
-+        !exportImage(e.dpy, scan.img, &fd, &stride, &offset) || (fd < 0)) {
++    if (!exportQuery(e.dpy, scan.img[i], &fourcc, &planes, &modifier) || (planes != 1) ||
++        !exportImage(e.dpy, scan.img[i], &fd, &stride, &offset) || (fd < 0)) {
 +        DPRINTF("dmabuf scanout: the buffer can't be exported (planes %d, fd %d, 0x%04x)",
 +            planes, fd, egl.GetError());
 +        if (fd >= 0)
@@ -1537,7 +1604,21 @@ index 0000000..38a7a00
 +    scan.lut_dirty = 1;
 +    ok = 1;
 +out:
-+    if (!ok && scan.ctx && (egl.GetCurrentContext() == scan.ctx))
++    /* the second buffer failed: only its own objects go, the first is fxdisp's already */
++    if (!ok && i && scan.ctx && (egl.GetCurrentContext() == scan.ctx)) {
++        PFNEGLDESTROYIMAGEKHRPROC destroyImage =
++            (PFNEGLDESTROYIMAGEKHRPROC) egl.GetProcAddress("eglDestroyImageKHR");
++        MESA_PFN(PFNGLDELETEFRAMEBUFFERSPROC,  glDeleteFramebuffers);
++        MESA_PFN(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers);
++        if (scan.img[1] && destroyImage)
++            destroyImage(e.dpy, scan.img[1]);
++        scan.img[1] = EGL_NO_IMAGE_KHR;
++        if (p_glDeleteFramebuffers)
++            p_glDeleteFramebuffers(1, &scan.fbo[1]);
++        if (p_glDeleteRenderbuffers)
++            p_glDeleteRenderbuffers(1, &scan.rb[1]);
++        scan.fbo[1] = scan.rb[1] = 0;
++    } else if (!ok && scan.ctx && (egl.GetCurrentContext() == scan.ctx))
 +        scan_free_buffer();
 +    egl_current_restore(&cur);
 +    return ok;
@@ -1629,7 +1710,8 @@ index 0000000..38a7a00
 +    return 1;
 +}
 +
-+/* The frame into the renderbuffer through the guest's gamma ramp, with scan.ctx current */
++/* The frame into the bound draw framebuffer (a renderbuffer of ours) through the guest's gamma
++ * ramp, with scan.ctx current */
 +static int scan_gamma(void)
 +{
 +    MESA_PFN(PFNGLACTIVETEXTUREPROC,     glActiveTexture);
@@ -1672,24 +1754,41 @@ index 0000000..38a7a00
 +    return 1;
 +}
 +
++/* How the copies are synchronised, decided at the first (the guest's context current): an EGL fence
++ * (EGL_KHR_fence_sync) or glFinish; and whether scan.ctx waits for the guest's frame in its own GL
++ * stream (EGL_KHR_wait_sync, eglWaitSyncKHR) instead of the CPU waiting for it: on a GPU, not with
++ * Mesa's software renderers (which don't all wait in the stream); QEMU_3DFX_WAIT_SYNC=1 or 0 in
++ * the environment decides instead */
++static void scan_sync_init(void)
++{
++    MESA_PFN(PFNGLGETSTRINGPROC, glGetString);
++    const char *ext = egl.QueryString(e.dpy, EGL_EXTENSIONS), *env = g_getenv("QEMU_3DFX_WAIT_SYNC");
++    const char *r = (p_glGetString)? (const char *)p_glGetString(GL_RENDERER):NULL;
++    int soft = !r || strstr(r, "llvmpipe") || strstr(r, "softpipe");
++
++    if (has_ext(ext, "EGL_KHR_fence_sync")) {
++        scan.create_sync = (PFNEGLCREATESYNCKHRPROC) egl.GetProcAddress("eglCreateSyncKHR");
++        scan.client_wait = (PFNEGLCLIENTWAITSYNCKHRPROC) egl.GetProcAddress("eglClientWaitSyncKHR");
++        scan.destroy_sync = (PFNEGLDESTROYSYNCKHRPROC) egl.GetProcAddress("eglDestroySyncKHR");
++    }
++    scan.fence = (scan.create_sync && scan.client_wait && scan.destroy_sync)? 1:-1;
++    if ((scan.fence > 0) && has_ext(ext, "EGL_KHR_wait_sync"))
++        scan.server_wait = (PFNEGLWAITSYNCKHRPROC) egl.GetProcAddress("eglWaitSyncKHR");
++    scan.wait_sync = scan.server_wait && ((env)? !strcmp(env, "1"):!soft);
++    DPRINTF("dmabuf scanout: the guest's frames and the copies are finished with %s%s",
++        (scan.fence > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)",
++        (scan.wait_sync)? "; the copy waits for the guest's frame in the GL stream (EGL_KHR_wait_sync)":"");
++}
++
 +/* The GL work so far in the current context finished, before another context or the display reads
 + * what it rendered: an EGL fence (EGL_KHR_fence_sync) waited on, else glFinish. A wait on the CPU
-+ * (eglClientWaitSyncKHR), not in the GL stream (eglWaitSyncKHR): a context that reads another's
-+ * rendering needs it done, and Mesa's software renderers don't all wait in the stream */
++ * (eglClientWaitSyncKHR): the display reads the copy from a context of its own at once */
 +static void scan_finish(void)
 +{
 +    MESA_PFN(PFNGLFINISHPROC, glFinish);
 +
-+    if (!scan.fence) {
-+        if (has_ext(egl.QueryString(e.dpy, EGL_EXTENSIONS), "EGL_KHR_fence_sync")) {
-+            scan.create_sync = (PFNEGLCREATESYNCKHRPROC) egl.GetProcAddress("eglCreateSyncKHR");
-+            scan.client_wait = (PFNEGLCLIENTWAITSYNCKHRPROC) egl.GetProcAddress("eglClientWaitSyncKHR");
-+            scan.destroy_sync = (PFNEGLDESTROYSYNCKHRPROC) egl.GetProcAddress("eglDestroySyncKHR");
-+        }
-+        scan.fence = (scan.create_sync && scan.client_wait && scan.destroy_sync)? 1:-1;
-+        DPRINTF("dmabuf scanout: the guest's frames and the copies are finished with %s",
-+            (scan.fence > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)");
-+    }
++    if (!scan.fence)
++        scan_sync_init();
 +    if (scan.fence > 0) {
 +        EGLSyncKHR sync = scan.create_sync(e.dpy, EGL_SYNC_FENCE_KHR, NULL);
 +        if (sync != EGL_NO_SYNC_KHR) {
@@ -1708,14 +1807,33 @@ index 0000000..38a7a00
 +static int scan_begin(EglCurrent *cur)
 +{
 +    MESA_PFN(PFNGLFINISHPROC, glFinish);
++    MESA_PFN(PFNGLFLUSHPROC, glFlush);
++    EGLSyncKHR sync = EGL_NO_SYNC_KHR;
 +
 +    egl_current_save(cur);
 +    if ((cur->draw != e.surf) || !p_glFinish)
 +        return 0;
-+    scan_finish();
++    if (!scan.fence)
++        scan_sync_init();
++    /* A fence after the guest's frame, flushed, which scan.ctx's GL stream waits for; else the
++     * CPU waits for the frame */
++    if (scan.wait_sync && p_glFlush) {
++        sync = scan.create_sync(e.dpy, EGL_SYNC_FENCE_KHR, NULL);
++        if (sync != EGL_NO_SYNC_KHR)
++            p_glFlush();
++    }
++    if (sync == EGL_NO_SYNC_KHR)
++        scan_finish();
 +    if (!egl.MakeCurrent(e.dpy, e.surf, e.surf, scan.ctx)) {
++        if (sync != EGL_NO_SYNC_KHR)
++            scan.destroy_sync(e.dpy, sync);
 +        egl_current_restore(cur);
 +        return 0;
++    }
++    if (sync != EGL_NO_SYNC_KHR) {
++        if (scan.server_wait(e.dpy, sync, 0) != EGL_TRUE)
++            scan.client_wait(e.dpy, sync, 0, EGL_FOREVER_KHR);
++        scan.destroy_sync(e.dpy, sync);
 +    }
 +    return 1;
 +}
@@ -1728,56 +1846,20 @@ index 0000000..38a7a00
 +    egl_current_restore(cur);
 +}
 +
-+/* fxdisp's hold, on the vCPU thread at a swap whose frame can't go yet: the frame into stage */
-+static void egl_hold(void *opaque)
-+{
-+    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC,         glBindFramebuffer);
-+    MESA_PFN(PFNGLBINDRENDERBUFFERPROC,        glBindRenderbuffer);
-+    MESA_PFN(PFNGLBLITFRAMEBUFFERPROC,         glBlitFramebuffer);
-+    MESA_PFN(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer);
-+    MESA_PFN(PFNGLGENFRAMEBUFFERSPROC,         glGenFramebuffers);
-+    MESA_PFN(PFNGLGENRENDERBUFFERSPROC,        glGenRenderbuffers);
-+    MESA_PFN(PFNGLRENDERBUFFERSTORAGEPROC,     glRenderbufferStorage);
-+    EglCurrent cur;
-+
-+    scan.staged = 0;
-+    if (!scan.img || (scan.w != e.w) || (scan.h != e.h) || !scan_begin(&cur))
-+        return;
-+    if (!scan.stage_fbo) {
-+        p_glGenRenderbuffers(1, &scan.stage_rb);
-+        p_glBindRenderbuffer(GL_RENDERBUFFER, scan.stage_rb);
-+        p_glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, scan.w, scan.h);
-+        p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-+        p_glGenFramebuffers(1, &scan.stage_fbo);
-+        p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.stage_fbo);
-+        p_glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-+                                    scan.stage_rb);
-+    }
-+    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.stage_fbo);
-+    p_glBlitFramebuffer(0, 0, scan.w, scan.h, 0, 0, scan.w, scan.h, GL_COLOR_BUFFER_BIT,
-+                        GL_NEAREST);
-+    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.fbo);
-+    scan.staged = 1;
-+    scan_end(&cur);
-+}
-+
-+/* fxdisp's scanout, on the vCPU thread after a swap (or later, for a held frame): the frame (the
-+ * held one, if any: every later swap held its own or cleared it) into the dmabuf, finished; 0 to
-+ * have it read back */
-+static int egl_scanout(void *opaque)
++/* fxdisp's scanout, on the vCPU thread after a swap: the frame into dmabuf i, finished; 0 to have
++ * it read back */
++static int egl_scanout(void *opaque, int i)
 +{
 +    MESA_PFN(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer);
 +    MESA_PFN(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer);
 +    EglCurrent cur;
-+    int ok, staged;
++    int ok;
 +
-+    if (!scan.img || (scan.w != e.w) || (scan.h != e.h) || !p_glBindFramebuffer ||
-+        !p_glBlitFramebuffer || (e.gamma && scan.gamma_failed) || !scan_begin(&cur))
++    if ((i < 0) || (i > 1) || !scan.img[i] || (scan.w != e.w) || (scan.h != e.h) ||
++        !p_glBindFramebuffer || !p_glBlitFramebuffer || (e.gamma && scan.gamma_failed) ||
++        !scan_begin(&cur))
 +        return 0;
-+    staged = scan.staged;
-+    scan.staged = 0;
-+    if (staged)
-+        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, scan.stage_fbo);
++    p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scan.fbo[i]);
 +    if (e.gamma)
 +        ok = scan_gamma();
 +    else {
@@ -1785,8 +1867,6 @@ index 0000000..38a7a00
 +                            GL_NEAREST);
 +        ok = 1;
 +    }
-+    if (staged)
-+        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 +    scan_end(&cur);
 +    return ok;
 +}
@@ -1847,8 +1927,7 @@ index 0000000..38a7a00
 +    e.failed = 0;
 +    if (!e.fx)
 +        e.fx = fxdisp_new("mesapt", egl_read, NULL);
-+    fxdisp_dmabuf(e.fx, egl_export, egl_scanout);
-+    fxdisp_hold(e.fx, egl_hold);
++    fxdisp_dmabuf(e.fx, egl_export, egl_scanout, 2);
 +    egl_reset_ramp();
 +    DPRINTF("no SDL window: rendering offscreen, EGL %d.%d on the %s display (%s)", major, minor,
 +        which, egl.QueryString(e.dpy, EGL_VENDOR));
@@ -2711,10 +2790,33 @@ index c8c6a78..b6aab3c 100644
              DPRINTF("wglGetSwapIntervalEXT() ret %-24u", ret);
              argsp[0] = ret;
 diff --git a/qemu-1/hw/mesa/mglcntx_mingw.c b/qemu-1/hw/mesa/mglcntx_mingw.c
-index c1fbe0c..b9ad731 100644
+index c1fbe0c..8e18cd2 100644
 --- a/qemu-1/hw/mesa/mglcntx_mingw.c
 +++ b/qemu-1/hw/mesa/mglcntx_mingw.c
-@@ -787,7 +787,7 @@ void MGLActivateHandler(const int i, const int d)
+@@ -780,14 +780,28 @@ int CompareAttribArray(const int *attrib)
+ 
+ void MGLActivateHandler(const int i, const int d)
+ {
+-    static int last;
+-
++    static int last, held;
++
++    /* Offscreen (mglcntx_egl.c) the display timer's deactivation (DispTimerMS without a swap,
++     * twice: the wrapper's default is 2 s) would give the console back to the VGA while the game
++     * just holds its frame, which stays on a real card and in a Glide window. The VGA comes back
++     * when the guest deactivates its window (WM_ACTIVATE, also sent when the active window is
++     * destroyed), at wglDeleteContext and at its DLL detach (the game's end). */
++    if (!i && d && MGLEglActive()) {
++        if (!held)
++            DPRINTF("offscreen: no swap for %d ms, the frame stays (the display timer gives the "
++                "console back only in an SDL window)", GetDispTimerMS());
++        held = 1;
++        return;
++    }
++    if (i)
++        held = 0;
+     if (i != last) {
+         last = i;
          DPRINTF_COND(GLFuncTrace(), "wm_activate %s%-32d", (d)? "dfr ":"imm ", i);
          if (i) {
              deactivateGuiRefSched();
@@ -2723,7 +2825,7 @@ index c1fbe0c..b9ad731 100644
          }
          else
              deactivateSched(d);
-@@ -818,7 +818,7 @@ static void deactivateOnce(void)
+@@ -818,7 +832,7 @@ static void deactivateOnce(void)
      if (!GetContextZERO())
          CompareAttribArray(NULL);
      MGLMouseWarp(0);
@@ -2732,7 +2834,7 @@ index c1fbe0c..b9ad731 100644
  }
  static void deactivateOneshot(void *opaque)
  {
-@@ -920,7 +920,7 @@ static void profile_stat(void)
+@@ -920,7 +934,7 @@ static void profile_stat(void)
      if (p->last == 0) {
  	p->fcount = 0;
  	p->ftime = 0;
