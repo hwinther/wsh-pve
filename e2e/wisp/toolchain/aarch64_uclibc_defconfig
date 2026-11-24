@@ -1,0 +1,8 @@
+# QEMU virt, little-endian AArch64. Only the static SDK is needed.
+BR2_aarch64=y
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_UCLIBC=y
+BR2_STATIC_LIBS=y
+BR2_INIT_NONE=y
+# BR2_PACKAGE_BUSYBOX is not set
+# BR2_TARGET_ROOTFS_TAR is not set

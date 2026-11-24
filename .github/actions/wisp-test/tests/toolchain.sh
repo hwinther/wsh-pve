@@ -7,11 +7,11 @@ trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 export WISP_WORK="$tmp/work dir" WISP_KIT="$tmp/kit" WISP_INSTALL=false
 export WISP_SOURCES=hello.c WISP_LIBC=uclibc
-mkdir -p kit/{sparc32,x86_64} bin sdk/bin
-touch hello.c kit/{sparc32,x86_64}/kernel
+mkdir -p kit/{sparc32,x86_64,aarch64} bin sdk/bin
+touch hello.c kit/{sparc32,x86_64,aarch64}/kernel
 echo format=1 > kit/VERSION
 export PATH="$tmp/bin:$PATH"
-touch bin/qemu-system-{sparc,x86_64}
+touch bin/qemu-system-{sparc,x86_64,aarch64}
 chmod +x bin/qemu-system-*
 cat > bin/curl <<'SH'
 #!/usr/bin/env bash
@@ -25,7 +25,7 @@ cat > sdk/relocate-sdk.sh <<'SH'
 #!/bin/sh
 touch "$(dirname "$0")/relocated"
 SH
-for prefix in sparc-buildroot-linux-uclibc x86_64-buildroot-linux-uclibc; do
+for prefix in sparc-buildroot-linux-uclibc x86_64-buildroot-linux-uclibc aarch64-buildroot-linux-uclibc; do
 	cat > "sdk/bin/$prefix-gcc" <<'SH'
 #!/bin/sh
 set -eu
@@ -50,7 +50,7 @@ expect_error() {
 	fi
 }
 
-for arch in sparc32 x86_64; do
+for arch in sparc32 x86_64 aarch64; do
 	expect_error 'build failed' WISP_ARCH="$arch" WISP_CFLAGS=-Wall
 	[ "$(cat url)" = "https://github.com/hwinther/wsh-pve/releases/download/wisp-toolchain/wisp-toolchain-$arch.tar.xz" ]
 	target=$arch

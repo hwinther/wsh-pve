@@ -60,4 +60,18 @@ grep -F 'wisp=run ip=dhcp' invocation
 expect 1 'runner check exited with 23' 'WISP_CHECK=exit 23'
 expect 2 'guest stopped before the runner check' 'WISP_READY=^ready early$' WISP_CHECK=true
 expect 2 'timed out after 1 s' WISP_TIMEOUT=1 'WISP_CHECK=sleep 15'
+# The QEMU stub only needs the ELF header. Patch e_machine in a private copy.
+export WISP_ARCH=aarch64
+mkdir -p kit/aarch64
+touch kit/aarch64/kernel-net
+ln -s qemu-system-x86_64 bin/qemu-system-aarch64
+expect 2 'ELF machine 62, aarch64 is 183'
+cp /bin/true arm-test
+printf '\267\000' | dd of=arm-test bs=1 seek=18 conv=notrunc status=none
+export WISP_BINARY=$tmp/arm-test
+expect 1 'exit code 7'
+grep -Fx virt invocation
+grep -Fx cortex-a57 invocation
+grep -F 'console=ttyAMA0 earlycon=pl011,0x09000000' invocation
+grep -F 'user,model=virtio-net-pci,hostfwd=' invocation
 echo 'network input tests passed'
