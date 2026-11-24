@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..54034824 100644
+index f305ba44..af6ab161 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,90 @@
+@@ -1,10 +1,97 @@
++pve-manager (9.2.32+wsh13) trixie; urgency=medium
++
++  * feat(3dfx): stage 3a, the D-Bus display from PVE (VNC kept, refresh-
++    ms, a bus per VM) (#497)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 15:27:02 +0000
++
 +pve-manager (9.2.32+wsh12) trixie; urgency=medium
 +
 +  * Refresh patches: pve-manager
