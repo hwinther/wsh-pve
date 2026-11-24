@@ -1,0 +1,10 @@
+# Build context is the repository root, so send only what the image uses.
+*
+!proxmox-archive-keyring-trixie.gpg
+!repo/conf/wsh-pve.gpg.key
+!packages/wsh-openglide/tests/scene.h
+!e2e/3dfx/win98/win98_test.py
+!e2e/3dfx/dos/
+!submodules/qemu-3dfx/qemu-0/hw/3dfx/
+!submodules/qemu-3dfx/wrappers/3dfx/dxe/
+!submodules/qemu-3dfx/wrappers/3dfx/src/

@@ -1508,8 +1508,10 @@ memory, SS-10, and the sets other than these two.
 runs `tests/test_netbsd.py` in the lab image on GitHub-hosted runners, one job per target:
 `netbsd111-sparc64`, `netbsd93-sparc64`, `netbsd93-sparc` and `netbsd93-sparc-ss20`
 (`NETBSD_TARGET`; without it the test runs `netbsd111-sparc64`). Each job downloads its CD from the
-URL in `targets.MEDIA` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for 9.3; cached between
-runs), checks its size, sha256 and sha512 (the release's `images/SHA512`), and runs the target's
+URL in `targets.MEDIA` with `fetch_media.py` (`cdn.netbsd.org` for 11.1, `archive.netbsd.org` for
+9.3; cached between runs, saved by main only and restored by pull requests: `e2e/README.md`,
+"Downloaded media in the Actions cache"), checks its size, sha256 and sha512 (the release's
+`images/SHA512`), and runs the target's
 three scenarios with the lab's own QEMU (TCG; sun4u, or the SS-5/SS-20 with `_sparc32`'s machine):
 install, first boot (password, marker, host name, a static address and router), check (logs in
 with the password, requires the marker and `inet 10.0.2.15/24`). On the lab host the 11.1 sun4u
