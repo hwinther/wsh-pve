@@ -24,6 +24,8 @@
 # Glide guest draws into its front buffer without a swap (FRONTDRAW: the frame must reach the console
 # with no further call) and sets a gamma of 2.0 (GAMMA), the Mesa guest sets a gamma ramp of 2.0
 # through wglSetDeviceGammaRamp3DFX (GAMMA); the host checks the console's top left pixel each time.
+# The Mesa guest also runs with the Windows wrapper's display timer and holds its first frame for 6 s
+# (HELD: the frame must still be shown), then deactivates its window (DEACTIVATED: the VGA).
 # Two more headless runs of the Mesa guest: mesa-msaa asks for a 4x multisampled pixel format (QEMU
 # uses one only where the EGL driver gives its frame back, not with Mesa's software renderers, and
 # says so), mesa-noegl has no EGL driver (glvnd finds no vendor): the guest's wglChoosePixelFormat
@@ -496,6 +498,13 @@ for guest in $GUESTS; do
 					;;
 				*) echo "ok: glide: frames to the console as a dmabuf" ;;
 				esac
+				# two buffers (a qemu-3dfx and a wsh-openglide from 0.8 with getOffscreenDmabufAt):
+				# frames go on being copied while the display still reads the last one
+				if grep -aq 'double-buffered (the frame the display reads' "$QEMU" && strings "$libglide" | grep -q getOffscreenDmabufAt; then
+					grep -q 'glidept: dmabuf scanout: double-buffered (' "$OUT/glide-qemu.log" \
+						|| fail "glide: the frames weren't double-buffered"
+					echo "ok: glide: double-buffered"
+				fi
 				if [ "$MODE" = dbus ]; then
 					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*[XA]B24 640x480" \
 						"$OUT/glide-dbus.log" || fail "glide: the D-Bus listener got no 640x480 frame as a dmabuf"
@@ -509,9 +518,27 @@ for guest in $GUESTS; do
 		;;
 	mesa)
 		if [ "$MODE" != sdl ]; then
+			# A held frame (no swap for longer than the Windows wrapper's display timer, twice 2 s)
+			# stays, the window's deactivation (WM_ACTIVATE) gives the console back to the VGA (the
+			# cleared VBE mode's black), the next swap shows the frames again; a binary from before
+			# that fix gave the console back after about 4 s
+			mphases="GAMMA:0000b5"
 			GUEST_APPEND="MESA_GUEST_GAMMA=1"
-			run_guest mesa MESA-GUEST mesa mesapt "GAMMA:0000b5"
+			if grep -aq 'the frame stays (the display timer gives the' "$QEMU"; then
+				mphases="HELD:000080 DEACTIVATED:000000 $mphases"
+				GUEST_APPEND="$GUEST_APPEND MESA_GUEST_HOLD=6"
+			else
+				echo "info: this qemu-3dfx gives the console back to the VGA about 4 s after an OpenGL frame that isn't redrawn (not checked)"
+			fi
+			run_guest mesa MESA-GUEST mesa mesapt "$mphases"
 			GUEST_APPEND=""
+			case "$mphases" in
+			HELD*)
+				grep -q 'offscreen: no swap for 2000 ms, the frame stays' "$OUT/mesa-qemu.log" \
+					|| fail "mesa: QEMU didn't keep the held frame (no display timer message)"
+				echo "ok: mesa: a frame held for 7 s stayed, the window's deactivation gave the console back"
+				;;
+			esac
 			if [ "$MODE" = vnc ]; then
 				:
 			elif [ "${QEMU_3DFX_DMABUF:-}" = 0 ]; then
@@ -531,6 +558,11 @@ for guest in $GUESTS; do
 				grep -q 'mesapt: dmabuf scanout: [1-9][0-9]* frames copied.* busy, 0 frames read back instead' \
 					"$OUT/mesa-qemu.log" || fail "mesa: not every frame reached the console as a dmabuf"
 				echo "ok: mesa: frames to the console as a dmabuf (the gamma phase's too)"
+				if grep -aq 'double-buffered (the frame the display reads' "$QEMU"; then
+					grep -q 'mesapt: dmabuf scanout: double-buffered (' "$OUT/mesa-qemu.log" \
+						|| fail "mesa: the frames weren't double-buffered"
+					echo "ok: mesa: double-buffered"
+				fi
 				grep "mesapt: dmabuf scanout: the guest.s frames and the copies are finished with" "$OUT/mesa-qemu.log" || true
 				if [ "$MODE" = dbus ]; then
 					grep -q "dbus-listener: [1-9][0-9]* dmabuf scanouts, [1-9][0-9]* dmabuf updates.*[XA]B24 640x480" \
