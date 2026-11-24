@@ -150,13 +150,20 @@ jobs:
         with:
           persist-credentials: false
 
-      # The cache entries of sparc-lab-netbsd.yml (same keys; a pull request restores main's). The test
-      # checks the CD (size, sha256, sha512) and downloads it again when it isn't the pinned one.
-      - name: Cache the CD
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The cache entries of sparc-lab-netbsd.yml and media-cache.yml (same keys), which only main
+      # saves: this workflow only restores them (e2e/README.md, "Downloaded media in the Actions
+      # cache"). fetch_media.py checks the CD (size, sha256, sha512) and downloads it only when it is
+      # missing or not the pinned one.
+      - name: Restore the CD
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/netbsd-cd
           key: netbsd-cd-${{ matrix.iso }}
+
+      - name: Download and check the CD
+        env:
+          ISO: ${{ matrix.iso }}
+        run: python3 e2e/sparc/fetch_media.py "$RUNNER_TEMP/netbsd-cd" "$ISO"
 
       - name: Download the build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
