@@ -1,0 +1,193 @@
+name: sparc lab PR QEMU
+
+# The NetBSD installs of sparc-lab-netbsd.yml before merge, for pull requests that change the sparc
+# emulation: QEMU (submodules/pve-qemu.patch, the pve-qemu pin) or OpenBIOS (openbios/). No workflow
+# builds pve-qemu-kvm on a pull request, so instead of the package this builds only what the installs
+# run from the pull request's sources: qemu-system-sparc and qemu-system-sparc64 from its patched
+# pve-qemu tree (e2e/sparc/pr-qemu.sh: the whole debian/patches series applied without fuzz,
+# --target-list=sparc-softmmu,sparc64-softmmu) and openbios-sparc32, openbios-sparc64 and
+# QEMU,cgthree.bin from openbios/Dockerfile. pr-qemu.Dockerfile puts them into the lab image over the
+# package's, and the same four targets install from their CDs: 11.1 and 9.3 on sun4u, 9.3 on an SS-5
+# and an SS-20 (e2e/sparc/tests/test_netbsd.py). What was built (commit, QEMU --version, the series'
+# last patch, the OpenBIOS commit and patches, the images' sha256) is in the run summary and the
+# sparc-pr-qemu artifact (versions.txt). An OpenBIOS patch that doesn't apply fails the build here;
+# the package build only warns and keeps QEMU's image (Makefile, openbios-sparc32).
+#
+# On GitHub-hosted runners, like sparc-lab-netbsd.yml: the NetBSD CDs are public (downloaded from
+# targets.MEDIA and checked, cached), so nothing from the lab host is needed, and the sparc-lab runner
+# never runs pull request code (sparc-lab.yml). So fork pull requests run it like any other, with a
+# read-only token and no secrets. Not a required check: it runs only when its paths change, after
+# merge the package is checked by sparc-lab-netbsd.yml.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "submodules/pve-qemu.patch"
+      - "submodules/pve-qemu"
+      - "openbios/**"
+      - "e2e/sparc/pr-qemu.sh"
+      - "e2e/sparc/pr-qemu.Dockerfile"
+      - ".github/workflows/sparc-lab-pr-qemu.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build QEMU (sparc targets) and OpenBIOS
+    runs-on: ubuntu-latest
+    # On the lab host (14 vCPUs, busy): the lab image 3.7 min, OpenBIOS 1.8 min, QEMU 2.8 min cold
+    # (1,360 compiles) and 1.3 min with a warm ccache; a 4-vCPU runner is slower (not measured)
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      OUT: build/sparc-pr
+      # The suffix of the binaries' --version, so a run's logs show which build ran
+      PKGVERSION: wsh-pr-${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the lab image
+        run: docker build --pull -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+
+      # All three images or a failed job: openbios/Dockerfile leaves openbios-sparc64 out when its
+      # build fails (every patch in openbios/patches applied with one git apply), which the package
+      # build tolerates and this check must not
+      - name: Build OpenBIOS
+        run: |
+          mkdir -p "$OUT/firmware"
+          docker build --output "type=local,dest=$OUT/firmware" -f openbios/Dockerfile openbios
+          for f in openbios-sparc32 openbios-sparc64 "QEMU,cgthree.bin"; do
+            if [ ! -s "$OUT/firmware/$f" ]; then
+              echo "::error title=OpenBIOS::$f was not built: a patch in openbios/patches doesn't apply or the build failed (log above)"
+              exit 1
+            fi
+          done
+
+      # The tree dpkg-source builds: pve-qemu at the pull request's pin with pve-qemu.patch and its
+      # qemu submodule (the series is applied by pr-qemu.sh)
+      - name: Prepare the pve-qemu tree
+        run: |
+          git submodule update --init submodules/pve-qemu
+          patch -d submodules/pve-qemu -p1 -s -i ../pve-qemu.patch
+          git -C submodules/pve-qemu submodule update --init --depth 1 qemu
+
+      # The ccache of the pull request's previous run (caches are per branch): a later push that
+      # changes a few patches rebuilds only what they touch. An unchanged patch reuses its entry.
+      - name: Cache the compiler output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: sparc-pr-qemu-ccache-${{ hashFiles('submodules/pve-qemu.patch', 'e2e/sparc/pr-qemu.sh') }}
+          restore-keys: sparc-pr-qemu-ccache-
+
+      - name: Build qemu-system-sparc and qemu-system-sparc64
+        run: |
+          mkdir -p "$RUNNER_TEMP/ccache"
+          docker run --rm -e JOBS="$(nproc)" -e PKGVERSION -e CCACHE_DIR=/ccache \
+            -v "$PWD:/src" -v "$RUNNER_TEMP/ccache:/ccache" -w /src --entrypoint sh wsh-sparc-lab \
+            e2e/sparc/pr-qemu.sh submodules/pve-qemu build/pr-qemu "$OUT/bin"
+          # the container wrote both as root: the cache step reads one, the next steps write the other
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ccache" "$OUT"
+
+      - name: Record the versions
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          series=submodules/pve-qemu/debian/patches/series
+          openbios_ref=$(sed -n 's/^ARG OPENBIOS_REF=//p' openbios/Dockerfile)
+          patches=(openbios/patches/*.patch)
+          {
+            echo "commit: $COMMIT"
+            sed 's/^/qemu: /' "$OUT/bin/qemu-version.txt"
+            echo "pve-qemu: $(git rev-parse HEAD:submodules/pve-qemu), QEMU $(cat submodules/pve-qemu/qemu/VERSION)"
+            echo "pve-qemu.patch: sha256 $(sha256sum submodules/pve-qemu.patch | cut -d' ' -f1)"
+            echo "series: $(grep -cv '^[[:space:]]*\(#\|$\)' "$series") patches, last $(grep -v '^[[:space:]]*\(#\|$\)' "$series" | tail -n 1)"
+            echo "openbios: $openbios_ref, ${#patches[@]} patches, last ${patches[-1]##*/}"
+            (cd "$OUT/firmware" && sha256sum openbios-sparc32 openbios-sparc64 "QEMU,cgthree.bin" | sed 's/^/firmware: /')
+          } > "$OUT/versions.txt"
+          rm "$OUT/bin/qemu-version.txt"
+          { echo '```'; cat "$OUT/versions.txt"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Pass the build to the installs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sparc-pr-qemu
+          path: build/sparc-pr
+          retention-days: 7
+          if-no-files-found: error
+
+  netbsd:
+    name: NetBSD install (${{ matrix.target }})
+    needs: [build]
+    runs-on: ubuntu-latest
+    # The limits of sparc-lab-netbsd.yml; on the lab host with this build (the four at once on a busy
+    # host) 11.1 sun4u took 16 min, 9.3 sun4u 31 min, 9.3 on the SS-5 and SS-20 6 min each
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: netbsd111-sparc64, iso: NetBSD-11.1-sparc64.iso, timeout: 60 }
+          - { target: netbsd93-sparc64, iso: NetBSD-9.3-sparc64.iso, timeout: 90 }
+          - { target: netbsd93-sparc, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+          - { target: netbsd93-sparc-ss20, iso: NetBSD-9.3-sparc.iso, timeout: 45 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The cache entries of sparc-lab-netbsd.yml (same keys; a pull request restores main's). The test
+      # checks the CD (size, sha256, sha512) and downloads it again when it isn't the pinned one.
+      - name: Cache the CD
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/netbsd-cd
+          key: netbsd-cd-${{ matrix.iso }}
+
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sparc-pr-qemu
+          path: ${{ runner.temp }}/sparc-pr
+
+      - name: Build the lab image with this pull request's QEMU and OpenBIOS
+        run: |
+          docker build --pull -f e2e/sparc/Dockerfile -t wsh-sparc-lab .
+          docker build -f e2e/sparc/pr-qemu.Dockerfile --build-arg LAB_IMAGE=wsh-sparc-lab -t wsh-sparc-lab:pr \
+            "$RUNNER_TEMP/sparc-pr"
+          { echo '```'; cat "$RUNNER_TEMP/sparc-pr/versions.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install ${{ matrix.target }} from its CD in the lab
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/netbsd" "$RUNNER_TEMP/netbsd-cd"
+          cp "$RUNNER_TEMP/sparc-pr/versions.txt" "$RUNNER_TEMP/netbsd/"
+          docker run --rm -v "$RUNNER_TEMP/netbsd:/out" -v "$RUNNER_TEMP/netbsd-cd:/cache" \
+            -e NETBSD_OUT=/out -e NETBSD_CACHE=/cache -e NETBSD_TARGET="$TARGET" -e WSH_LAB_GUEST_TESTS=1 \
+            --entrypoint python3 wsh-sparc-lab:pr -m unittest -v tests/test_netbsd.py
+
+      - name: Keep the evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: netbsd-pr-evidence-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/netbsd
+            !${{ runner.temp }}/netbsd/**/*.raw
+            !${{ runner.temp }}/netbsd/**/*.sock
+          retention-days: 7
