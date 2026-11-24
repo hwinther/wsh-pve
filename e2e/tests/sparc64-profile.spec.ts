@@ -406,7 +406,7 @@ test.describe('web UI', () => {
     await closeWindow(editor('Processors'))
 
     await page.getByText(/^Memory$/).dblclick()
-    await editor('Memory').getByLabel(fieldLabel('Memory (MiB)')).fill('4096')
+    await editor('Memory').getByLabel(fieldLabel('Memory (MiB)')).fill('9216')
     await expect(editor('Memory').getByRole('button', { name: 'OK' })).toBeDisabled()
     await closeWindow(editor('Memory'))
 

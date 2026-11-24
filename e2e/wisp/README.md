@@ -49,7 +49,10 @@ reboot: Power down
 `wisp=shell` on the kernel command line (it reaches PID 1 as an environment variable, like
 `loops=`) starts a small shell on the serial console instead of the batch run. The banner line
 comes first as in batch mode; the shell then lowers the kernel's console log level to emergencies
-only, so kernel messages don't land in the middle of its output. The default (no `wisp=`) is the
+only, so kernel messages don't land in the middle of its output. PID 1 lowers it to errors in
+every mode before its banner: a message between two of printf's writes once split the result line
+on 4 CPUs (`tsc: Marking TSC unstable ...`), and run.py puts a result line split by a whole
+kernel message back together. The default (no `wisp=`) is the
 batch run above, unchanged.
 
 ```sh

@@ -370,7 +370,7 @@ test.describe('OVMF (UEFI)', () => {
   })
 })
 
-// A real sparc32 VM (solaris26-sparc on pve-test3, created 2024-01). Like every sparc VM there, it
+// The config of a real sparc32 VM (solaris26-sparc, created 2024-01). Like every sparc VM, it
 // turns off the tablet and balloon itself: the SS-5 has neither USB nor virtio.
 const SOLARIS26_CONF = [
   'arch: sparc',
