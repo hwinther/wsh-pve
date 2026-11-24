@@ -43,11 +43,25 @@ CURRENT_DIR = $(shell pwd)
 BRANCH_NAME := local_patches
 GIT_AUTHOR = $(shell git log -1 --pretty=format:%an -- Makefile)
 GIT_EMAIL = $(shell git log -1 --pretty=format:%ae -- Makefile)
-GIT_QEMU3DFX_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu-qemu-3dfx.patch)
-GIT_PVEQEMU_SUBJECT = $(shell git log -1 --pretty=format:%s -- submodules/pve-qemu.patch)
 DOCKER_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/pve-build:13
 DJGPP_BUILD_IMAGE = ghcr.io/hwinther/wsh-pve/djgpp-build:13
 DEBIAN_TAG = trixie
+
+# The +wsh entry of submodules/pve-qemu/debian/changelog: one line per commit since the previous
+# build (scripts/wsh-changelog-entries.sh, on the host, which has the history), written by
+# scripts/wsh-changelog-dch.sh in the build image. The pve-qemu and pve-qemu-3dfx targets both use
+# it, so the 3dfx binary's --version and entries match the package's. build-deb.yml does the same
+# for the other packages.
+WSH_PVEQEMU_DCH = entries=$$(scripts/wsh-changelog-entries.sh pve-qemu); \
+	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
+		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
+		-v $(CURRENT_DIR)/scripts:/src/scripts:ro \
+		-w /src/submodules/pve-qemu \
+		-e DEBEMAIL="$(GIT_EMAIL)" \
+		-e DEBFULLNAME="$(GIT_AUTHOR)" \
+		-e WSH_CHANGELOG_ENTRIES="$$entries" \
+		$(DOCKER_BUILD_IMAGE) \
+		bash /src/scripts/wsh-changelog-dch.sh $(DEBIAN_TAG)
 
 # The optional extras of pve-qemu-kvm (3dfx, openbios, sun-proms) never fail its build: debian/rules
 # installs each only when it's there. A target whose extra drops out says so in one line of this form
@@ -182,13 +196,7 @@ pve-qemu:
 	if [ -f "submodules/pve-qemu.changelog.patch" ]; then \
 		cd submodules/pve-qemu && patch -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch || rm ../pve-qemu.changelog.patch && cd ../../; \
 	fi; \
-	$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-		-w /src/submodules/pve-qemu \
-		-e DEBEMAIL="$(GIT_EMAIL)" \
-		-e DEBFULLNAME="$(GIT_AUTHOR)" \
-		$(DOCKER_BUILD_IMAGE) \
-		dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_PVEQEMU_SUBJECT)"; \
+	$(WSH_PVEQEMU_DCH); \
 	$(DOCKER) run $(DOCKER_ARG) $(DOCKER_TTY) --rm --pull always \
 		-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 		-v $(CURRENT_DIR)/.git:/src/.git \
@@ -371,7 +379,7 @@ REV = $(shell cd submodules/qemu-3dfx; git rev-parse HEAD | sed "s/\(.......\).*
 # scripts/refresh-qemu-3dfx-patch.sh) and qemu-3dfx's hw/3dfx and hw/mesa, stamped with its revision
 # the way its scripts/sign_commit does (whose other edits are for older QEMUs). Never fails: without
 # the binary, pve-qemu ships without it. pve-qemu starts over from a fresh submodules/pve-qemu.
-# debian/changelog gets submodules/pve-qemu.changelog.patch and `dch -l +wsh` as in the pve-qemu target,
+# debian/changelog gets submodules/pve-qemu.changelog.patch and the +wsh entry (WSH_PVEQEMU_DCH) as in the pve-qemu target,
 # so the binary's --version (QEMU's pkgversion, from the changelog) names the +wshN of the package it
 # ships in; without the patch every build said +wsh1.
 pve-qemu-3dfx: prepare-qemu-3dfx
@@ -402,13 +410,7 @@ pve-qemu-3dfx: prepare-qemu-3dfx
 		if [ -f submodules/pve-qemu.changelog.patch ] && ! patch -d submodules/pve-qemu -p1 -u --no-backup-if-mismatch --reject-file=/dev/null -i ../pve-qemu.changelog.patch; then \
 			git -C submodules/pve-qemu checkout debian/changelog; \
 		fi; \
-		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
-			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
-			-w /src/submodules/pve-qemu \
-			-e DEBEMAIL="$(GIT_EMAIL)" \
-			-e DEBFULLNAME="$(GIT_AUTHOR)" \
-			$(DOCKER_BUILD_IMAGE) \
-			dch -l +wsh -D $(DEBIAN_TAG) "$(GIT_QEMU3DFX_SUBJECT)"; \
+		$(WSH_PVEQEMU_DCH); \
 		$(DOCKER) run $(DOCKER_ARG) --rm --pull always \
 			-v $(CURRENT_DIR)/submodules/pve-qemu:/src/submodules/pve-qemu \
 			-v $(CURRENT_DIR)/.git:/src/.git \

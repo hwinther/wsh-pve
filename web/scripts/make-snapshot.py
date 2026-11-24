@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Boots wisp's shell on a native qemu-system-sparc and saves the machine at the first prompt as a
-migration stream, for the Browser SPARC page to start from (`-incoming file:...`) instead of booting.
+"""Boots wisp's shell on a native QEMU and saves the machine at the first prompt as a migration
+stream, for the Browser SPARC page to start from (`-incoming file:...`) instead of booting.
 
-    make-snapshot.py <qemu-system-sparc> <openbios-sparc32> <kernel> <out dir> [memory MB]
+    make-snapshot.py <machines.json> <arch> <qemu dir> <files dir> <out dir> [memory MB]
 
-The native QEMU must be built from the same tree as the WebAssembly one (same version, same patches),
-and the machine options must be the page's exactly, including the file paths inside the page's file
-system (/fw, /wisp), since -bios and -kernel are loaded again before the incoming migration replaces
-the RAM. Writes <out dir>/wisp-ss5-<memory>m.state (the stream) and wisp-ss5-<memory>m.log (the
-console transcript up to the prompt, which the page shows in the terminal before it resumes).
+<machines.json> is the page's machine table (docs/public/browser-sparc/machines.json), <arch> one
+of its keys. The native QEMU (<qemu dir>/<qemu>) must be built from the same tree as the
+WebAssembly one (same version, same patches), and the machine options must be the page's exactly,
+including the file paths inside the page's file system (/fw/..., /wisp/...), since the firmware and
+the kernel are loaded again before the incoming migration replaces the RAM. <files dir> holds the
+page's files by their page names (firmware, kernel); they are linked to those paths. Writes
+<out dir>/<snapshot>-<memory>m.state (the stream) and <snapshot>-<memory>m.log (the console
+transcript up to the prompt, which the page shows in the terminal before it resumes).
 Standard library only.
 """
 import json
@@ -21,18 +24,49 @@ import sys
 import tempfile
 import time
 
-PROMPT = "wisp:sparc32>"
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def machine_args(memory):
-    # Keep in step with docs/public/browser-sparc/browser-sparc.js.
+def load_machines(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def prompt(arch):
+    """wisp's shell prompt on <arch>, without its colours."""
+    return f"wisp:{arch}>"
+
+
+def kernel_path(machine):
+    return "/wisp/" + machine["kernel"]
+
+
+def machine_args(machine, memory=None):
+    """The page's QEMU options for one machine, less the console's -chardev (the page's is a pipe,
+    these scripts use a socket). Keep in step with docs/public/browser-sparc/browser-sparc.js."""
     return [
-        "-M", "SS-5", "-m", str(memory), "-nodefaults", "-display", "none", "-monitor", "none",
-        "-serial", "chardev:console",
-        "-bios", "/fw/openbios-sparc32", "-kernel", "/wisp/kernel",
-        "-append", "console=ttyS0 wisp=shell",
+        *machine["args"], "-m", str(memory or machine["memory"]), "-nodefaults",
+        "-display", "none", "-monitor", "none", "-serial", "chardev:console",
+        "-kernel", kernel_path(machine), "-append", machine["append"],
     ]
+
+
+def page_files(machine):
+    """{page file name: path in the page's file system} for the firmware and the kernel."""
+    return {**machine["files"], machine["kernel"]: kernel_path(machine)}
+
+
+def link_files(machine, files_dir):
+    """The page's paths as symlinks to <files dir>, where they are missing (this runs in a build
+    container)."""
+    for name, path in page_files(machine).items():
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.symlink(os.path.abspath(os.path.join(files_dir, name)), path)
+
+
+def snapshot_name(machine, memory=None):
+    return f"{machine['snapshot']}-{memory or machine['memory']}m"
 
 
 def connect(path, deadline):
@@ -69,21 +103,17 @@ class Qmp:
 
 
 def main():
-    qemu, bios, kernel, out = sys.argv[1:5]
-    memory = int(sys.argv[5]) if len(sys.argv) > 5 else 128
+    machines_json, arch, qemu_dir, files_dir, out = sys.argv[1:6]
+    machine = load_machines(machines_json)[arch]
+    memory = int(sys.argv[6]) if len(sys.argv) > 6 else machine["memory"]
     os.makedirs(out, exist_ok=True)
-    name = f"wisp-ss5-{memory}m"
+    name = snapshot_name(machine, memory)
     root = tempfile.mkdtemp(prefix="wsh-snap-")
     try:
-        # The page's paths, /fw/openbios-sparc32 and /wisp/kernel, as symlinks where they are
-        # missing (this runs in a build container).
-        for path, src in (("/fw/openbios-sparc32", bios), ("/wisp/kernel", kernel)):
-            if not os.path.exists(path):
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                os.symlink(os.path.abspath(src), path)
+        link_files(machine, files_dir)
         con = os.path.join(root, "console.sock")
         qmp_path = os.path.join(root, "qmp.sock")
-        args = [qemu] + machine_args(memory) + [
+        args = [os.path.join(qemu_dir, machine["qemu"])] + machine_args(machine, memory) + [
             "-chardev", f"socket,id=console,path={con},server=on,wait=on",
             "-qmp", f"unix:{qmp_path},server=on,wait=off",
         ]
@@ -93,12 +123,12 @@ def main():
         transcript = b""
         s.settimeout(120)
         start = time.monotonic()
-        while PROMPT not in ANSI.sub("", transcript[-300:].decode("utf-8", "replace")):
+        while prompt(arch) not in ANSI.sub("", transcript[-300:].decode("utf-8", "replace")):
             data = s.recv(65536)
             if not data:
                 raise RuntimeError("console closed before the prompt")
             transcript += data
-        print(f"prompt after {time.monotonic() - start:.1f} s", file=sys.stderr)
+        print(f"{arch}: prompt after {time.monotonic() - start:.1f} s", file=sys.stderr)
         time.sleep(0.5)  # let the guest settle in its read()
         q = Qmp(connect(qmp_path, time.monotonic() + 10))
         # Migrated while running (QEMU stops it for the last pass): a machine stopped first would

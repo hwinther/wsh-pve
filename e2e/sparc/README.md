@@ -1012,8 +1012,8 @@ the sparc64 profile with 1024 MB (both kernels are 32-bit), the CD on `ide2` as 
 `as_disk`, unlike 2.5.1 on sun4m) and the SUN2.9G-labelled 3 GiB disk on `ide0`. Their kernels need
 OpenBIOS 0036 (2.6), 0037 and 0038 (2.5.1) on top of 0031, and the installed systems 0039 (the root
 named `SUNW,Ultra-5_10`, so that the installer adds the platform packages; `submodules/SPARC.md`,
-"Solaris 2.6 and 2.5.1 on sun4u: the kernels"). No published `pve-qemu-kvm` has them yet, so both have
-`matrix_skip` and their stored disks are kept out of the stored disks until one does. What the scenario
+"Solaris 2.6 and 2.5.1 on sun4u: the kernels"). `pve-qemu-kvm` 11.1.3-4+wsh15 is the first package
+with them; both targets are in the install matrix (no `matrix_skip`). What the scenario
 needed for them:
 
 - **Console messages over the screens.** Both releases' `hme` driver prints `Using Internal
@@ -1047,9 +1047,20 @@ Through PVE (the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh
 | the same with 0036-0039 | passed: suninstall, the packages, then the CD's Maintenance Update (`Installing SUNWpatch.sun4u`, `Building package data base`, about 47 minutes of the install); `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, `/` 127229 KB (22%), `/usr` 111589 KB (86%), `/export/home` 2184383 KB on `c0t0d0`, `hme0` 10.0.2.15/24; `init 5` ends QEMU; stored disk and sidecar written | 66.8 min (install 3456 s, first boot 311 s, check 223 s) |
 | `boot-test sol26-sun4u` and `boot-test sol251-sun4u` on the stored disks | passed (`console login:` after 3.4 and 3.0 min) | 4.3 and 3.9 min |
 
+With the published packages (the PVE test container built from them: pve-qemu-kvm 11.1.3-4+wsh15, whose
+`/usr/share/kvm/openbios-sparc64` is the patched one, `SUNW,Ultra-5_10` and `aligned-allocator` in it;
+qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh12; nothing mounted over the package; host builds running
+niced beside it, load average 22-43 on 14 cores; 2026-11-24):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `boot-test sol26-sun4u --disk <disks>/install-sol26-sun4u.raw` | passed: banner after 52 s, `console login:` after 4.5 min, `SunOS sol26-sun4u 5.6 Generic_105181-05 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.8 min |
+| `boot-test sol251-sun4u --disk <disks>/install-sol251-sun4u.raw` | passed: banner after 41 s, `console login:` after 4.1 min (the IDE timeouts on the way), `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.3 min |
+
 Not tried: the 9G disk, more or less memory, the network options other than the default static address,
-and a boot of the stored disks with the packaged firmware (which can't work: 0036-0039 are needed by
-the installed systems as by the CDs).
+an install with the published packages (the stored disks were installed with 0036-0039 mounted on
++wsh12), and a boot with firmware older than +wsh15 (which can't work: 0036-0039 are needed by the
+installed systems as by the CDs).
 
 ### Solaris 2.4 and 2.5.1
 
@@ -2097,6 +2108,19 @@ Found on the way:
   strings (`ESC ] 3008;start=...ESC \`), so a command's output no longer started its line in the lab's
   text and `shell()` waited for `END-OF-COMMAND` forever. `lab.py` now strips OSC and DCS strings like
   the CSI sequences, holding back one that a read cuts off (`Machine._strip()`).
+- **systemd's 90 s timeouts on a busy host:** the boot test of the stored disk failed on a busy lab host
+  (`no 'login: ?$' within 900s`, 17.1 min) and passed on an idle one. systemd gives a device 90 s to show up
+  and a unit 90 s to start, both in wall-clock time. Under TCG, udev's coldplug alone takes about that long:
+  on an idle host, through PVE, the swap partition's `/dev/disk/by-uuid` link came after the 90 s (`Timed out
+  waiting for device`, swap left off) and `/boot`'s just in time. With the host busy, `/boot`'s device times
+  out too, `local-fs.target` fails and systemd stops in emergency mode ("Enter root password for system
+  maintenance"), so `login:` never comes; with more load ttyS0's device and journald's start time out as
+  well. The boot scenarios now edit GRUB's entry at the menu (`e`, to the `linux` line, `Ctrl-E`) and append
+  `systemd.default_timeout_start_sec=600 systemd.default_device_timeout_sec=600` (`_debian13.grub_append`;
+  the disk's `grub.cfg` stays as it is), and wait up to 30 min for `login:`; the install's late command
+  writes the same timeouts into `/etc/systemd/system.conf.d/wsh-lab-tcg.conf`, for disks installed from now
+  on (the stored disk predates it). Units with their own `TimeoutSec=90s` (`systemd-modules-load`,
+  `systemd-journal-flush`) can still fail on a busy host; the boot gets past them.
 
 **In the matrix:** `matrix_skip` like Tribblix: neither the weekly install matrix (240 minutes) nor the
 monthly `--reinstall all` (720 minutes) installs it; it is installed on request (`pve_matrix.py install
@@ -2110,6 +2134,22 @@ Tested 2026-11-22 on the lab host (TCG, one install at a time, other matrices on
 | `debian13-install-sparc64.py` with the lab's own QEMU (published pve-qemu-kvm 11.1.3-4+wsh4), `NET=user`, `GATEWAY=10.0.2.2 DNS=10.0.2.3` | passed; then `debian13-firstboot.py` and `debian13-boot-disk.py` on the disk: passed | 153.9 min; 5.0 and 4.6 min |
 | `install debian13-sun4u --vmid 9913 --check --gateway 10.0.2.2 --dns 1.1.1.1 --export <disks>` (the PVE test container from the published packages: pve-qemu-kvm 11.1.3-4+wsh8, qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh11; its `vmbr0` given 10.0.2.2 and NATed out by hand) | passed and exported; the check: `ssh` active, `enp2s0` 10.0.2.15/24, the route via 10.0.2.2 | 177.4 min (install 9947 s, first boot 385 s, check 285 s) |
 | `boot-test debian13-sun4u` of the stored disk | passed (GRUB, `login:`, the check commands, `poweroff`) | 4.9 min |
+
+The boot test on a busy host, 2026-11-24 (the stored disk's copies; pve-qemu-kvm 11.1.3-4+wsh13, qemu-server
+9.2.20+wsh7, pve-manager 9.2.32+wsh12; the lab host has 14 cores):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `debian13-boot-disk.py` with the lab's own QEMU, host idle (load 0-1) | passed; no systemd timeout; `login:` 209 s after the initrd | 4.6 min |
+| `boot-test debian13-sun4u` through PVE, host idle | passed, but the swap device timed out (swap off); `login:` 261 s after the initrd | 5.8 min |
+| the same VM booted again while other jobs loaded the host (load 19-34) | `/boot`'s device, swap, ttyS0 and journald's start timed out; emergency mode, no `login:` | stopped after 21 min |
+| with the GRUB options, the lab's own QEMU, host load 3-14 | passed; `/boot`'s device found at 147 s, swap at 188 s (kernel time), no timeout | 6.7 min |
+| all at once with 8 CPU-bound loops (host load 32-43): 4 boots without the options, 4 with them, 1 `boot-test` through PVE with them | without: 4 of 4 `no 'login: ?$' within 900s` (`/boot` and swap timed out, `local-fs.target` failed); with: 4 of 4 reached `login:`, 15-16.5 min after the initrd, 3 passed; the PVE boot test passed (`login:` 20 min after the initrd) | 15.5 min; 19.5-22.8 min; 27.5 min |
+
+The one that reached `login:` and failed was a different fault: during `poweroff` a `READ DMA` on the IDE disk
+timed out with the drive's status `DRDY` (the command done, its interrupt never seen), libata fell back to
+PIO, every further command timed out the same way, ext4 aborted its journal and `poweroff` didn't finish in
+600 s. Once in 9 boots, only at that load; not investigated further (ROADMAP.md, "Known and not fixed").
 
 Not tried: `--apt-proxy` (the pinhole), DHCP (`--ip dhcp` is refused; the hand install used it and got
 its lease), `--user` through PVE (the lab run added one), the VGA console.

@@ -348,6 +348,15 @@ exit 0
 
 PORTS_MIRROR = ("deb.debian.org", "/debian-ports")  # sparc64 is a port: sid ("unstable") only
 
+# systemd's timeouts in the installed system, a drop-in the late command writes (directory, file,
+# printf text): 90 s for a device to show up and for a unit to start are too short under TCG. On an
+# idle host udev's coldplug alone took about that long; on a busy one /boot's device, ttyS0 and journald
+# timed out and the boot stopped in emergency mode without `login:` (README.md, "Debian 13 on sun4u").
+# The boot scenarios pass the same as kernel options for disks installed before
+# (_debian13.SLOW_BOOT_OPTIONS)
+PORTS_SYSTEMD_TIMEOUTS = ("/etc/systemd/system.conf.d", "wsh-lab-tcg.conf",
+                          r"[Manager]\nDefaultTimeoutStartSec=600s\nDefaultDeviceTimeoutSec=600s\n")
+
 
 def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
     """Debian 13's debian-installer (the debian-ports sparc64 netinst) preseed file for `lab.py install
@@ -363,7 +372,8 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
     on the image: the first boot logs in on ttyS0 without one and sets it (debian13-firstboot.py).
     sshd doesn't let an empty password in (PermitEmptyPasswords no). The late command also takes a
     `deb cdrom:` line out of sources.list (the netinst writes none when it has a mirror) and, without a
-    router or name server, what netcfg wrote for them. No user is made (passwd/make-user false)."""
+    router or name server, what netcfg wrote for them, and writes systemd's longer timeouts
+    (PORTS_SYSTEMD_TIMEOUTS). No user is made (passwd/make-user false)."""
     dns = list(dns or [])
     for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
                       *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
@@ -380,6 +390,8 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
         late += "; in-target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces"
     if not dns:
         late += "; in-target sed -i '/^nameserver /d' /etc/resolv.conf"
+    confdir, conf, text = PORTS_SYSTEMD_TIMEOUTS
+    late += f"; mkdir -p /target{confdir}; printf '{text}' > /target{confdir}/{conf}"
     return f"""\
 # lab.py install (wsh-pve e2e/sparc answer_media.preseed_ports): Debian 13 (debian-ports), sparc64
 d-i debian-installer/locale string en_US.UTF-8

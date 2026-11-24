@@ -1,5 +1,7 @@
-// Browser SPARC: boots wisp's shell on qemu-system-sparc (WebAssembly, TCG interpreter) with its
-// serial console in xterm.js.
+// Browser SPARC: boots wisp's shell on QEMU (WebAssembly, TCG interpreter) with its serial console
+// in xterm.js. The SS-5 (qemu-system-sparc) by default; ?arch= picks one of wisp's other machines
+// from machines.json (sparc64 sun4u, x86_64 pc, aarch64 virt), each a QEMU module of its own, so
+// a machine's page downloads only its own emulator, firmware, kernel and snapshot.
 //
 // The console: QEMU opens /dev/wsh-serial with `-chardev pipe` (one path, read and write). That
 // path is a character device this script registers in Emscripten's file system before QEMU starts.
@@ -9,12 +11,10 @@
 // in poll(); typing wakes it through the device node's listener queue (Emscripten's asynchronous
 // poll for threads).
 
-const MACHINE = "SS-5";
 const params = new URLSearchParams(location.search);
-const MEMORY_MB = Math.min(256, Math.max(16, parseInt(params.get("mem"), 10) || 128));
-const APPEND = "console=ttyS0 wisp=shell";
-const PROMPT = "wisp:sparc32>";
 const DEVICE = "/dev/wsh-serial";
+// Set by main() from machines.json before QEMU starts.
+let PROMPT = "";
 
 const statusEl = document.getElementById("status");
 const restartEl = document.getElementById("restart");
@@ -22,6 +22,7 @@ const restartEl = document.getElementById("restart");
 // For tests and the curious: timings in ms from the start of the page's script.
 const state = (window.browserSparc = {
   phase: "starting",
+  arch: null,
   t0: performance.now(),
   times: {},
   output: "",
@@ -180,6 +181,18 @@ function watchIncoming(FS, done) {
   }, 50);
 }
 
+// The machine picker (links in index.html, one per key of machines.json) and the line about the
+// machine that runs.
+function showMachine(arch, machine) {
+  for (const link of document.querySelectorAll("#arches a")) {
+    if (link.dataset.arch === arch) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  const el = document.getElementById("machine");
+  if (el) el.textContent = `${machine.name} (${machine.detail})`;
+  if (arch !== "sparc32") document.title = `Browser SPARC: ${machine.name}`;
+}
+
 async function main() {
   if (!(await ensureIsolated())) {
     setStatus(
@@ -196,50 +209,74 @@ async function main() {
   term.onData((data) => serial.type(data));
   term.focus();
 
-  setStatus("Downloading QEMU, OpenBIOS and the wisp kernel...");
+  // The machine: its QEMU, options, firmware and kernel (machines.json, which the build's snapshot
+  // scripts read too).
+  const machines = await (await fetch("machines.json")).json();
+  const arch = Object.hasOwn(machines, params.get("arch")) ? params.get("arch") : "sparc32";
+  const machine = machines[arch];
+  state.arch = arch;
+  PROMPT = `wisp:${arch}>`;
+  showMachine(arch, machine);
+  const memoryMb = Math.min(
+    machine.maxMemory,
+    Math.max(16, parseInt(params.get("mem"), 10) || machine.memory),
+  );
+  const kernelPath = `/wisp/${machine.kernel}`;
+  const firmware = Object.keys(machine.files);
+
+  setStatus(`Downloading QEMU, ${firmware.length ? "the firmware, " : ""}and the wisp kernel...`);
   // The snapshot: the machine saved at wisp's first prompt by a native QEMU built from the same
   // tree (web/scripts/make-snapshot.py), with the console transcript up to there. Optional: without
-  // it (or with ?cold) the page boots from OpenBIOS.
-  const snapName = `wisp-ss5-${MEMORY_MB}m`;
+  // it (or with ?cold) the page boots from the firmware.
+  const snapName = `${machine.snapshot}-${memoryMb}m`;
   const optional = (url) =>
     fetch(url)
       .then((r) => (r.ok ? r.arrayBuffer().then((b) => new Uint8Array(b)) : null))
       .catch(() => null);
-  const [factory, bios, kernel, snapState, snapLog] = await Promise.all([
-    import("./qemu-system-sparc.js").then((m) => m.default),
-    fetchBytes("openbios-sparc32", "OpenBIOS"),
-    fetchBytes("wisp-sparc32-kernel", "wisp kernel"),
+  const [factory, kernel, snapState, snapLog, ...firmwareBytes] = await Promise.all([
+    import(`./${machine.qemu}.js`).then((m) => m.default),
+    fetchBytes(machine.kernel, "wisp kernel"),
     params.has("cold") ? null : optional(`${snapName}.state`),
     params.has("cold") ? null : optional(`${snapName}.log`),
+    ...firmware.map((name) => fetchBytes(name, name)),
   ]);
   const resume = Boolean(snapState && snapLog);
   state.resume = resume;
   const modeEl = document.getElementById("mode");
-  if (!resume) {
-    modeEl.href = location.pathname;
+  const withArch = (query) => {
+    const q = new URLSearchParams(query);
+    if (arch !== "sparc32") q.set("arch", arch);
+    const text = q.toString();
+    return location.pathname + (text ? `?${text}` : "");
+  };
+  if (resume) {
+    modeEl.href = withArch("cold");
+  } else {
+    modeEl.href = withArch("");
     modeEl.textContent = "Start from the snapshot";
     modeEl.hidden = !snapState && !params.has("cold");
   }
   mark("loaded");
 
+  // Keep in step with machine_args() in web/scripts/make-snapshot.py: a snapshot only loads into
+  // the machine it was taken on.
   const args = [
-    "-M", MACHINE,
-    "-m", String(MEMORY_MB),
+    ...machine.args,
+    "-m", String(memoryMb),
     "-nodefaults",
     "-display", "none",
     "-monitor", "none",
     "-chardev", `pipe,id=console,path=${DEVICE}`,
     "-serial", "chardev:console",
-    "-bios", "/fw/openbios-sparc32",
-    "-kernel", "/wisp/kernel",
-    "-append", APPEND,
+    "-kernel", kernelPath,
+    "-append", machine.append,
   ];
   if (resume) {
     args.push("-incoming", "file:/snap/state");
     term.write(snapLog);
     setStatus("Resuming the machine from a snapshot taken at wisp's prompt...");
   } else {
-    setStatus("Booting: OpenBIOS, then Linux (this takes a few minutes)...");
+    setStatus(`Booting: ${firmware.length ? "the firmware, then " : ""}Linux (this can take minutes)...`);
   }
   state.args = args;
   mark("qemuStart");
@@ -267,8 +304,8 @@ async function main() {
       (module) => {
         module.FS.mkdir("/fw");
         module.FS.mkdir("/wisp");
-        module.FS.writeFile("/fw/openbios-sparc32", bios);
-        module.FS.writeFile("/wisp/kernel", kernel);
+        firmware.forEach((name, i) => module.FS.writeFile(machine.files[name], firmwareBytes[i]));
+        module.FS.writeFile(kernelPath, kernel);
         serial.install(module);
         if (resume) {
           module.FS.mkdir("/snap");

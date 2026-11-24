@@ -1,0 +1,54 @@
+{
+  "sparc32": {
+    "name": "SPARCstation 5",
+    "detail": "sparc32, sun4m, OpenBIOS",
+    "qemu": "qemu-system-sparc",
+    "args": ["-M", "SS-5", "-bios", "/fw/openbios-sparc32"],
+    "memory": 128,
+    "maxMemory": 256,
+    "files": { "openbios-sparc32": "/fw/openbios-sparc32" },
+    "kernel": "wisp-sparc32-kernel",
+    "append": "console=ttyS0 wisp=shell",
+    "snapshot": "wisp-ss5"
+  },
+  "sparc64": {
+    "name": "Sun Ultra (sun4u)",
+    "detail": "sparc64, UltraSPARC IIi, OpenBIOS",
+    "qemu": "qemu-system-sparc64",
+    "args": ["-M", "sun4u", "-bios", "/fw/openbios-sparc64"],
+    "memory": 256,
+    "maxMemory": 512,
+    "files": { "openbios-sparc64": "/fw/openbios-sparc64" },
+    "kernel": "wisp-sparc64-kernel",
+    "append": "console=ttyS0 wisp=shell",
+    "snapshot": "wisp-sun4u"
+  },
+  "x86_64": {
+    "name": "PC",
+    "detail": "x86_64, i440FX, SeaBIOS",
+    "qemu": "qemu-system-x86_64",
+    "args": ["-M", "pc", "-L", "/fw", "-bios", "/fw/bios-256k.bin"],
+    "memory": 128,
+    "maxMemory": 512,
+    "files": {
+      "bios-256k.bin": "/fw/bios-256k.bin",
+      "linuxboot_dma.bin": "/fw/linuxboot_dma.bin",
+      "kvmvapic.bin": "/fw/kvmvapic.bin"
+    },
+    "kernel": "wisp-x86_64-kernel",
+    "append": "console=ttyS0 wisp=shell",
+    "snapshot": "wisp-pc"
+  },
+  "aarch64": {
+    "name": "Arm virt",
+    "detail": "aarch64, Cortex-A57, no firmware",
+    "qemu": "qemu-system-aarch64",
+    "args": ["-M", "virt", "-cpu", "cortex-a57"],
+    "memory": 256,
+    "maxMemory": 512,
+    "files": {},
+    "kernel": "wisp-aarch64-kernel",
+    "append": "console=ttyAMA0 wisp=shell",
+    "snapshot": "wisp-virt"
+  }
+}
