@@ -24,6 +24,7 @@ on:
       - "e2e/sparc/scenarios/**"
       - "e2e/sparc/tests/test_targets.py"
       - "e2e/sparc/tests/test_mirror.py"
+      - "e2e/sparc/tests/test_wisp_vm.py"
       - ".github/workflows/wsh-lab.yml"
   push:
     branches:
@@ -35,6 +36,7 @@ on:
       - "e2e/sparc/scenarios/**"
       - "e2e/sparc/tests/test_targets.py"
       - "e2e/sparc/tests/test_mirror.py"
+      - "e2e/sparc/tests/test_wisp_vm.py"
       - ".github/workflows/wsh-lab.yml"
 
 permissions: {}
