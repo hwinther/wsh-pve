@@ -91,6 +91,79 @@ To look at a running VM's bus as root:
 busctl --address=unix:path=/run/wsh-dbus-display/130.sock tree org.qemu
 ```
 
+## RDP (qemu-rdp)
+
+The optional package `wsh-qemu-rdp` serves a VM's D-Bus display over RDP, with sound: any RDP
+client (FreeRDP, Remmina, Windows' Remote Desktop Connection) gets the screen, keyboard, mouse and
+the guest's audio through rdpsnd. It is [qemu-rdp](https://gitlab.com/marcandre.lureau/qemu-display)
+from Marc-André Lureau's qemu-display project (IronRDP; RemoteFX and bitmap codecs, no H.264), at a
+pinned commit with a few changes of ours (`packages/wsh-qemu-rdp` in wsh-pve). It is a stopgap
+until the Moonlight streaming path; it needs no GPU.
+
+```sh
+apt install wsh-qemu-rdp
+qm set 130 --vga std,display=dbus --audio0 device=AC97,driver=dbus   # sparc32 SS-5: cg3 and cs4231
+systemctl enable --now wsh-qemu-rdp@130
+cat /etc/wsh-qemu-rdp/130.conf                                        # address, port, user, password
+```
+
+- **One unit per VM.** `wsh-qemu-rdp@<vmid>.service` runs qemu-rdp on the VM's bus
+  (`/run/wsh-dbus-display/<vmid>.sock`) as the user `wsh-qemu-rdp`, a member of `wsh-display`
+  (the package creates both), with systemd's sandboxing. It is bound to the bus's unit
+  `wsh-dbus-display@<vmid>`: enabled, it starts whenever qemu-server starts the bus (`qm start`) and
+  stops with it (`qm stop`, and the cleanup after QEMU exits). `systemctl enable --now` starts it at
+  once if the VM runs. The enablement is per node: after a migration, enable it on the new node.
+  qemu-server isn't changed for it: the VM's `vga` needs only `display=dbus` (or `mesa-display=dbus`).
+- **Configuration**: `/etc/wsh-qemu-rdp/<vmid>.conf` (root, `0600`), written at the first start and
+  read at each start (`systemctl restart wsh-qemu-rdp@<vmid>` after a change):
+  - `LISTEN` (default `127.0.0.1`) and `PORT` (default 20000 + VMID; set it for a VMID of 40000 or
+    more). By default only the node itself can connect: use an SSH tunnel
+    (`ssh -L 20130:127.0.0.1:20130 root@node`, then connect to `localhost:20130`), or set
+    `LISTEN=0.0.0.0` to open it to the node's networks.
+  - `RDP_USER` (`rdp`) and `RDP_PASSWORD` (24 random letters and digits, generated): the login.
+  - `CERT` and `KEY`: a TLS certificate and key (PEM) of your own. Without them the node gets a
+    self-signed certificate (RSA 3072, ten years, the node's host name) in `/var/lib/wsh-qemu-rdp`
+    at the first start; its SHA-256 fingerprint is in the unit's journal, to compare with what the
+    client shows the first time.
+  - `LOG`: qemu-rdp's log level (`error`, `warn` by default, `info`, `debug`, `trace`), in the journal.
+- **Authentication and encryption**: qemu-rdp offers only NLA (CredSSP, with NTLM, over TLS); the
+  client must send the configured user name and password before it gets a picture, and a client
+  without NLA (plain RDP or TLS-only security) is refused. One user name and password per VM; the
+  domain is ignored. Without a password qemu-rdp would refuse every client, so the unit won't start
+  without one. qemu-rdp has no other access control (no per-user accounts, no client certificates),
+  hence the default of listening on the node only.
+- **Sound**: with `audio0: ...,driver=dbus` the guest's playback goes to the client through rdpsnd,
+  as Opus where the client offers it (FreeRDP does) or PCM, at 48 kHz: qemu-server gives the
+  audio driver `dbus` `out.frequency=48000` and QEMU resamples the guest's rate to it (qemu-rdp
+  passes QEMU's samples on unconverted and has only 48 kHz formats; at QEMU's default 44.1 kHz it
+  dropped every buffer). Tested with AC97 on x86 and the SS-5's CS4231. No recording (the guest's
+  microphone).
+- **Mouse**: with an absolute pointer in the guest (PVE's default USB tablet, `tablet: 1`, or
+  virtio's) the client's pointer positions are passed as they are. With only a relative mouse (a
+  PS/2 mouse with `tablet: 0`, Windows 9x and DOS VMs, the SPARCstation's Sun mouse), the change
+  from the last position is passed (our patch; upstream passed nothing then), and the guest's own
+  pointer acceleration applies, so its pointer drifts from the client's as with VNC's relative mode.
+  The buttons and the wheel work either way.
+- **Resize**: when the guest changes its mode, the client's window follows (firmware text mode to
+  the kernel's framebuffer, for instance). A client that asks for a size of its own (FreeRDP's
+  `/dynamic-resolution`) passes it to QEMU as the display's size hint, which only a guest driver
+  that reads it acts on (virtio-gpu's; not tested).
+- **Speed**: in the tests (TCG, no GPU, client on the same node), a key typed in FreeRDP reached
+  the guest's serial line in 15-17 ms, and a full-screen picture change reached the client's window
+  within about 0.2 s; RemoteFX at that screen came through pixel for pixel.
+- **Not there**: H.264/AVC (RemoteFX and bitmaps only, so a full-screen game moves a lot of data;
+  fine on a LAN, heavy over the Internet), USB redirection (in newer qemu-rdp, from crates not on
+  crates.io yet), audio recording, multiple monitors, the clipboard: the VM's bus lets QEMU answer
+  calls but not call qemu-rdp's clipboard object (the policy allows method calls to `org.qemu`
+  only), and QEMU would need a clipboard agent in the VM too.
+
+To test a VM's server from the node itself (FreeRDP 3 from Debian, `freerdp3-x11`):
+
+```sh
+xfreerdp3 /v:127.0.0.1:20130 /u:rdp /p:"$(sed -n 's/^RDP_PASSWORD=//p' /etc/wsh-qemu-rdp/130.conf)" \
+  /cert:tofu /sound
+```
+
 ## VGA retrace
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input

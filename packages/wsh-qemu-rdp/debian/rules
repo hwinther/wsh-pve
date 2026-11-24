@@ -1,0 +1,37 @@
+#!/usr/bin/make -f
+# The build tree is assembled by packages/wsh-qemu-rdp/build.sh: qemu-display at the pinned commit
+# (upstream.env) with our patches, its crates in vendor/ (cargo vendor, .cargo/config.toml points
+# cargo at them), the unit helper wsh-qemu-rdp-unit, this debian/ and a generated debian/changelog.
+# cargo builds offline from vendor/ with the versions in Cargo.lock (--locked).
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+# no build path in the binary (panic messages carry source paths)
+export RUSTFLAGS = --remap-path-prefix=$(CURDIR)=/usr/src/wsh-qemu-rdp $(foreach f,$(LDFLAGS),-C link-arg=$(f))
+JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --offline --locked -p qemu-rdp $(if $(JOBS),-j $(JOBS))
+
+# qemu-rdp has no tests of its own; packages/wsh-qemu-rdp/test.sh tests the package
+override_dh_auto_test:
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/qemu-rdp debian/wsh-qemu-rdp/usr/bin/qemu-rdp
+	install -D -m 0755 wsh-qemu-rdp-unit debian/wsh-qemu-rdp/usr/lib/wsh-qemu-rdp/wsh-qemu-rdp-unit
+
+override_dh_auto_clean:
+	rm -rf target debian/cargo-home
+
+# dh_clean deletes *.orig files, and every vendored crate has a Cargo.toml.orig that its
+# .cargo-checksum.json lists
+override_dh_clean:
+	dh_clean -Xvendor/
+
+# A template unit: nothing to enable or start at install time (one instance per VM, by hand)
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
