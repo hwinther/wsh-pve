@@ -153,12 +153,39 @@ def qemu_command(arch, qemu_dir=None, kernel=None, machine=None, memory=None, lo
     return cmd
 
 
+# A kernel message as the console prints it: "subsys: text" or, with CONFIG_PRINTK_TIME,
+# "[    1.234567] subsys: text", up to the end of the line.
+KERNEL_MESSAGE = re.compile(r" (?:\[ *\d+\.\d+\] )?[A-Za-z][\w.-]*: .*$")
+
+
+def unsplice(text, following):
+    """A result line with a kernel message spliced into it, put back together, or None.
+
+    nolibc's printf writes a line in several pieces, and the kernel writes its messages straight
+    to the console, each up to a newline. One that lands between two pieces leaves
+    "WISP-RESULT v=1 ... loops=4096 tsc: Marking TSC unstable ..." with the rest of the fields
+    ("crc=... status=ok") on the following line. The joined line still has to parse, so a real
+    bad field is still an error. init.c keeps such messages off the console in the first place;
+    this covers what gets through (errors, or a kernel older than the init). following: the
+    console lines after text; further whole kernel messages among them are skipped."""
+    pos = text.find(RESULT_PREFIX)
+    if pos < 0:
+        return None
+    m = KERNEL_MESSAGE.search(text, pos + len(RESULT_PREFIX) - 1)
+    if not m:
+        return None
+    for line in following:
+        if not KERNEL_MESSAGE.fullmatch(" " + line.strip()):
+            return text[:m.start()] + " " + line.strip()
+    return None
+
+
 def scan_console(lines):
     """Times of the markers in [(t, text), ...]: {name: t} plus 'result' (the parsed line)."""
     times = {}
     result = None
     poweroff_failed = False
-    for t, text in lines:
+    for i, (t, text) in enumerate(lines):
         for name, pattern in MARKERS:
             if name not in times and pattern.search(text):
                 times[name] = t
@@ -167,6 +194,14 @@ def scan_console(lines):
                 result = parse_result(text)
             except ValueError as exc:
                 times["result_error"] = str(exc)
+                joined = unsplice(text, [line for _, line in lines[i + 1:i + 6]])
+                if joined is not None:
+                    try:
+                        result = parse_result(joined)
+                        del times["result_error"]
+                        times["result_note"] = "kernel message inside the result line"
+                    except ValueError:
+                        pass
         if text.startswith("WISP-POWEROFF-FAILED"):
             poweroff_failed = True
     return times, result, poweroff_failed
@@ -223,6 +258,8 @@ def evaluate(arch, raw, loops):
     for name in ("t_kernel", "t_banner", "t_result"):
         rec[name] = round(times[name], 3) if name in times else None
     rec["t_exit"] = round(raw["t_exit"], 3)
+    if "result_note" in times:
+        rec["result_note"] = times["result_note"]
     problems = []
     if result is None:
         problems.append(times.get("result_error", "no result line"))
