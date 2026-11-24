@@ -34,7 +34,12 @@ without GL (the Glide device's choice, `fxdisp_choose()`, `QEMU_3DFX_OFFSCREEN=1
   `mesa_renderer_stat()` calls (and `mesa_gui_fullscreen()`, which the blitter and the frame
   counter call) go through `MGLRendererStat()`/`MGLGuiFullscreen()`, which switch the console's
   pass-through instead of the SDL window when offscreen, so the VGA comes back when the guest
-  deactivates its window or ends its context;
+  deactivates its window or ends its context. The display timer's deferred deactivation
+  (`DispTimerMS`, 2 s by default in the guest wrapper, twice over: `dispTimerProc()`, then
+  `deactivateSched(1)`) is ignored offscreen (a later change, ROADMAP "Stage 2", "Fourth slice"):
+  it gave the console back to the VGA about 4 s after the last swap of a game that holds its frame,
+  where a Glide frame stays; `WM_ACTIVATE` (which Windows also sends when the active window is
+  destroyed), `wglDeleteContext` and the DLL detach still do it;
 - `wglSetDeviceGammaRamp3DFX` (which the guest's `OPENGL32.DLL` also routes `SetDeviceGammaRamp`
   to) is kept and applied when fxdisp copies a frame (a lookup table on the CPU, only while it
   isn't the identity), as the X server's ramp is with GLX;
