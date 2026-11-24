@@ -1,4 +1,5 @@
 {
+  "aarch64": {"kernel_bytes": 3063816, "kernel_t2_bytes": 4128776, "kernel_net_bytes": 4601864, "kernel_fb_bytes": 4921352, "init_bytes": 25336},
   "i386":    {"kernel_bytes": 1135104, "kernel_t2_bytes": 1679872, "kernel_net_bytes": 1851904, "init_bytes": 24996},
   "sparc32": {"kernel_bytes": 2457720, "kernel_t2_bytes": 3315656, "kernel_net_bytes": 3766312, "kernel_fb_bytes": 3565840, "init_bytes": 23352},
   "sparc64": {"kernel_bytes": 3109128, "kernel_t2_bytes": 4125576, "kernel_net_bytes": 4583432, "kernel_fb_bytes": 4918296, "init_bytes": 23416},

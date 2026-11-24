@@ -13,10 +13,17 @@ import time
 import run
 from shell import MANDEL_ITER, MANDEL_X0, mandel_count
 
-DISPLAYS = {"sparc32": ("cg3", "tcx"), "sparc64": ("std",), "x86_64": ("std",)}
+DISPLAYS = {"sparc32": ("cg3", "tcx"), "sparc64": ("std",), "x86_64": ("std",),
+            "aarch64": ("bochs-display",)}
 RGB = [bytes(255 if index & bit else 0 for bit in (4, 2, 1)) for index in range(8)]
 MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32) "
                   rb"visual=(\d+) line=(\d+) drawn=1\r?\n")
+
+
+def display_args(display):
+    if display == "bochs-display":
+        return ["-device", display, "-device", "virtio-keyboard-pci"]
+    return ["-vga", display]
 
 
 def mandel_image(width, height):
@@ -158,7 +165,7 @@ async def boot(arch, display, dest, timeout):
     stem = dest / f"{machine}-{display}"
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
-        extra = ["-vga", display, "-qmp", f"unix:{monitor},server=on,wait=off"]
+        extra = [*display_args(display), "-qmp", f"unix:{monitor},server=on,wait=off"]
         if arch == "sparc64":
             # openbios-sparc64 0035: the 8042's mouse child; older firmware ignores the variable
             extra += ["-prom-env", "ps2-mouse?=true"]

@@ -1,7 +1,7 @@
 name: wisp-test action
 
 # The self-test of the wisp-test action (.github/actions/wisp-test): builds the action's kit (wisp's
-# tier-1 and network kernels for sparc32, sparc64 and x86_64, whose PID 1 runs /test with wisp=test, plus the
+# tier-1 and network kernels for sparc32, sparc64, x86_64 and aarch64, whose PID 1 runs /test with wisp=test, plus the
 # nolibc headers; e2e/wisp/kit.sh), then runs the action on its example programs with the kit from
 # this run. Each case states the result it must give: the buggy examples pass on x86_64 and fail on
 # sparc (an exit code for the endianness bug, SIGBUS for the alignment bug), the fixed ones pass
@@ -84,7 +84,7 @@ jobs:
         run: |
           docker build --pull -f e2e/wisp/Dockerfile -t wsh-wisp:ci .
           docker run --rm -e JOBS="$(nproc)" -e TIER2=0 -e TIER_NET=1 -v "$PWD/e2e/wisp:/wisp" wsh-wisp:ci \
-            ./build.sh sparc32 sparc64 x86_64
+            ./build.sh sparc32 sparc64 x86_64 aarch64
 
       - name: Pack the kit
         env:
@@ -112,6 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { name: endian fixed aarch64, arch: aarch64, sources: examples/endian.c, cflags: -DFIXED, want: pass }
           - { name: endian bug x86_64, arch: x86_64, sources: examples/endian.c, want: pass }
           - { name: endian bug sparc32, arch: sparc32, sources: examples/endian.c, want: fail, exit: '1' }
           - { name: endian fixed sparc32, arch: sparc32, sources: examples/endian.c, cflags: -DFIXED, want: pass }
@@ -179,7 +180,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [sparc32, x86_64]
+        arch: [sparc32, x86_64, aarch64]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -296,7 +297,7 @@ jobs:
           tar -xJOf kit/wisp-test-kit.tar.xz wisp-test-kit/VERSION > version.txt
           printf '%s\n' \
             "The kit of the wisp-test action (\`.github/actions/wisp-test\`): wisp's tier-1 and network kernels for" \
-            "sparc32, sparc64 and x86_64 and the nolibc headers, built and tested by" \
+            "sparc32, sparc64, x86_64 and aarch64 and the nolibc headers, built and tested by" \
             "\`.github/workflows/wisp-test-action.yml\` from \`${SHA}\`." \
             "" '```' "$(cat version.txt)" "$(cat kit/wisp-test-kit.tar.xz.sha256)" '```' > release-notes.md
           if gh release view wisp-test-kit -R "$REPO" >/dev/null 2>&1; then

@@ -16,6 +16,7 @@ import time
 import framebuffer
 import run
 import sound
+import tier2
 
 # 13-byte vanilla 1.9 header, 7,117 four-byte ticcmds, then DEMOMARKER.
 GAMETICS = 7117
@@ -111,7 +112,9 @@ def check_effects(path, play_seconds):
         elif loud >= 2 and not in_burst:
             bursts += 1
             in_burst = True
-    if bursts < 3:
+    # Two is enough: on a fast runner the accelerated demo merges effects (2 seen on a
+    # GitHub runner, 4-5 on the lab); silence, one continuous sound and clicks give 0 or 1
+    if bursts < 2:
         raise ValueError(f"expected several sound effects, found {bursts} bursts")
     return bursts, duration
 
@@ -128,15 +131,16 @@ async def boot(arch, display, disk, dest, timeout, scale=None, with_sound=False)
     ppm = stem.with_suffix(".ppm")
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
-        controller = "scsi" if arch == "sparc32" else "ide"
+        # Each machine's first tier-2 disk is sda, where PID 1 mounts the payload.
+        disk_profile = {"disks": tier2.PROFILES[tier2.family(arch)][0]["disks"][:1]}
+        drive = tier2.qemu_args(disk_profile, [disk])
         cmd = run.qemu_command(
             arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
             memory=128 if arch == "sparc32" else 256,
             firmware=os.getenv("WISP_FIRMWARE"),
             append_extra=["quiet", "wisp=run", "wisp_data=/dev/sda", "wisp_run=/data/fbdoom",
                           "--", "@/data/demo.rsp"],
-            extra=[*audio, "-accel", "tcg", "-drive",
-                   f"file={disk},format=raw,if={controller},index=0,snapshot=on", "-vga", display,
+            extra=[*audio, "-accel", "tcg", "-snapshot", *drive, *framebuffer.display_args(display),
                    "-qmp", f"unix:{monitor},server=on,wait=off"])
         start = time.monotonic()
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=subprocess.DEVNULL,

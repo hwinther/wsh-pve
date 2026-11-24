@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..4fef638 100644
+index 9da9d72..f7859af 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,92 @@
+@@ -1,10 +1,99 @@
++pve-qemu-kvm (11.1.3-4+wsh13) trixie; urgency=medium
++
++  * fix(sparc32): CS4231 status write clears I24, no stale samples after
++    a stop (#485)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 00:11:56 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh12) trixie; urgency=medium
 +
 +  * fix(sparc32): Linux sound on the SS-5 (OpenBIOS intr 0x39, CS4231

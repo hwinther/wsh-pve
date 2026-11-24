@@ -38,8 +38,8 @@ TCP port before stopping QEMU. See the [HTTP service example](examples/httpd.md)
 | --- | --- | --- |
 | `sources` | | C files to build with the selected libc, whitespace-separated, globs allowed, relative to the working directory. Give this or `binary` |
 | `binary` | | A static binary for the architecture, built by you (any C library, see "Your own toolchain") |
-| `arch` | `sparc32` | `sparc32` (big-endian, V8, `SS-5`), `sparc64` (big-endian, V9, `sun4u`) or `x86_64` (little-endian, `pc`: the control, where a byte-order bug passes) |
-| `libc` | `nolibc` | C library for source builds. Use `uclibc` on sparc32 or x86_64 for uClibc-ng |
+| `arch` | `sparc32` | `sparc32` (big-endian, V8, `SS-5`), `sparc64` (big-endian, V9, `sun4u`), `x86_64` (little-endian, `pc`), or `aarch64` (little-endian, `virt`) |
+| `libc` | `nolibc` | C library for source builds. Use `uclibc` on sparc32, x86_64 or aarch64 for uClibc-ng |
 | `toolchain` | | Local uClibc-ng SDK tarball to use instead of downloading it |
 | `toolchain-url` | the architecture's tarball in the `wisp-toolchain` release | URL to download for a uClibc-ng build |
 | `toolchain-sha256` | | Expected SHA-256 of the local or downloaded SDK tarball |
@@ -77,7 +77,7 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
 ## How it works
 
 1. QEMU (`qemu-system-sparc`, whose package also has `qemu-system-sparc64` and OpenBIOS, or
-   `qemu-system-x86`) and, for nolibc source builds, the cross compiler (`gcc-sparc64-linux-gnu`) come from Ubuntu's archive.
+   `qemu-system-x86`) and, for nolibc source builds, the cross compiler (`gcc-sparc64-linux-gnu`) come from Ubuntu's archive. On aarch64 the packages are `qemu-system-arm` and `gcc-aarch64-linux-gnu`. The virt machine boots the raw kernel Image and uses its PL011 serial console.
 2. The format 2 kit holds wisp's tier-1 and network kernels per architecture and the headers wisp's
    PID 1 is built with: the kernel's UAPI headers and nolibc (`tools/include/nolibc`, the C library
    of the kernel's own selftests, headers only). `e2e/wisp/kit.sh` packs it; the self-test workflow
@@ -100,7 +100,7 @@ The step fails unless the result is `pass`. To expect a failure (a known bug), s
 
 On an x86_64 Linux runner, set `libc: uclibc` to compile with the released Buildroot SDK.
 The action extracts and relocates the SDK, then links your program statically. The SDK includes
-uClibc-ng and libgcc for sparc32 V8 or x86_64. The same wisp kernel runs the resulting binary.
+uClibc-ng and libgcc for sparc32 V8, x86_64 or aarch64. The same wisp kernel runs the resulting binary.
 
 ```yaml
 - uses: hwinther/wsh-pve/.github/actions/wisp-test@<full commit SHA>
@@ -110,7 +110,7 @@ uClibc-ng and libgcc for sparc32 V8 or x86_64. The same wisp kernel runs the res
     sources: tests/sort.c
 ```
 
-The self-test runs `e2e/wisp/toolchain/hello/hello.c` on both targets. It exercises `qsort`,
+The self-test runs `e2e/wisp/toolchain/hello/hello.c` on each target with a published SDK. It exercises `qsort`,
 `snprintf` and 64-bit division. To pin the SDK, set `toolchain-sha256` to the digest in the
 release's `wisp-toolchain-<arch>.tar.xz.sha256` file. See the [local example](examples/uclibc.md).
 

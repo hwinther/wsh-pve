@@ -38,8 +38,7 @@ RUN wget -q "https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.
     && mv "buildroot-${BUILDROOT_VERSION}" buildroot \
     && rm "buildroot-${BUILDROOT_VERSION}.tar.gz"
 
-# One of sparc32_uclibc_defconfig, x86_64_uclibc_defconfig (this
-# directory), picked by WISP_ARCH.
+# Pick the architecture-specific defconfig from this directory.
 COPY ${WISP_ARCH}_uclibc_defconfig /buildroot-defconfig
 WORKDIR /buildroot-src/buildroot
 
