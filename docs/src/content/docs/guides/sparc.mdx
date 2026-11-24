@@ -217,7 +217,10 @@ Details: `submodules/SPARC.md`, "Audio".
 
 - **Applied right away:** changing, ejecting or inserting the CD-ROM's ISO; the network device's
   bridge, VLAN tag, Disconnect, rate limit and firewall; disk resize; snapshots, backups, clone and
-  move disk.
+  move disk. On sparc64, a snapshot with RAM (and Hibernate, `qm suspend --todisk`) needs a
+  `pve-qemu-kvm` later than 11.1.3-4+wsh17 (QEMU patch `wsh/0133`): with older packages the guest
+  comes back from the saved state without interrupts (a silent console, no disk or network), and
+  their saved states don't load into the newer QEMU. Live migration of a sparc VM is not tested.
 - **Applied at the next start** (shown as pending): a new network model or MAC address, adding or
   removing a disk, memory, the number of CPUs. Nothing is hot-pluggable on SPARC: the lance is built into the machine,
   sun4u's IDE and PCI buses have no hotplug.

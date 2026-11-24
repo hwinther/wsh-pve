@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index a6b9c65d..c881a7ae 100644
+index a6b9c65d..55c40aae 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,65 @@
+@@ -1,10 +1,72 @@
++qemu-server (9.2.20+wsh9) trixie; urgency=medium
++
++  * feat(qemu-rdp): RDP server with sound for the D-Bus display (stage
++    3b) (#505)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 19:27:51 +0000
++
 +qemu-server (9.2.20+wsh8) trixie; urgency=medium
 +
 +  * feat(3dfx): stage 3a, the D-Bus display from PVE (VNC kept, refresh-
