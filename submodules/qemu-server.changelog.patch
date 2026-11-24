@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index a6b9c65d..30358208 100644
+index a6b9c65d..c881a7ae 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,58 @@
+@@ -1,10 +1,65 @@
++qemu-server (9.2.20+wsh8) trixie; urgency=medium
++
++  * feat(3dfx): stage 3a, the D-Bus display from PVE (VNC kept, refresh-
++    ms, a bus per VM) (#497)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 15:27:02 +0000
++
 +qemu-server (9.2.20+wsh7) trixie; urgency=medium
 +
 +  * feat(sparc): SS-600MP profile in PVE, and SunOS 4.1.2 as an
