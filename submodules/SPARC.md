@@ -2777,6 +2777,34 @@ serial console unless stated.
 | Debian 7.11 (wheezy) netinst and CD 1 | yes: SILO 1.4.14 from the CD (`Trying cdrom:f...`), Return at `boot:`, then "Select a language" (Linux 3.2.0-4) | not tried | yes, from CD 1 with a preseed file (target `debian7-sun4u`): the base system with SSH, 84 min to the reset in the lab's own QEMU, nothing fetched | yes: SILO boots `/vmlinuz` and its initrd, `login:` 152-164 s from QEMU start, DHCP and static on `eth0` (`sunhme`), `poweroff` ends QEMU (exit 0); `reboot` with pve-qemu `wsh/0112` ("Debian 7 on sun4u" below) |
 | Ubuntu 9.04 server (jaunty) | yes: SILO 1.4.14, Return at `boot:`, then "Choose language" 31 s later (Linux 2.6.28-6; the boot is `quiet`) | not tried | not tried | |
 
+**X on std VGA (measured).** NetBSD 11.1/sparc64 ran ctwm 4.1.0 and xterm 397 at 1024×768,
+8-bit PseudoColor (X.Org 1.21.1.25, wsfb 0.4.0, pixman 0.46.4). The run used one TCG CPU,
+1024 MB and OpenBIOS 1.1 from pve-qemu-kvm 11.1.3-2+wsh16 on 2026-11-23/24 UTC.
+
+| Test | Result |
+| --- | --- |
+| Warm `startx` to visible xterm | 29.03 s from sending the command on serial to the first QMP frame with the cyan xterm. The preceding frame at 28.82 s still lacked the window. |
+| Scroll 2,000 lines (134,000 bytes) | 0.38 s in a 100×56 xterm with the 6×13 font, 4.00 s on the 85×34 wscons VGA console. Guest `time -p` reported 0.35 and 3.93 s real, respectively. |
+| Guest CPU while scrolling | One-second `vmstat` intervals averaged 61% user, 39% system, 0% idle across 30 consecutive xterm scrolls (5 samples). One console scroll averaged 17%, 83%, 0% (3 samples). Both exclude the initial since-boot report. |
+| `x11perf` 1.2, one 3 s trial per test | 238,000 10×10 rectangles/s, 11,900 filled 100-pixel circles/s, 472,000 characters/s in 80-character lines (6×13), 3,320 scrolls/s and 2,930 window-to-window copies/s (both 500×500). |
+| Move a window | A QMP relative-pointer drag on the ctwm title bar moved xterm's left edge from 2 to 170 pixels. Its top stayed at 23 pixels (`xwininfo`). |
+
+To reproduce, boot a writable overlay of the installed disk and mount the install CD read-only.
+Extract `sparc64/binary/sets/x*.tgz` into `/` with `tar -xzpf` for each set. Boot with
+`-M sun4u -m 1024 -vga std` and leave OpenBIOS output on the screen. With output on `ttya`,
+`genfb0` probed but opening `/dev/ttyE0` returned “Device not configured”. With VGA as console,
+`wsdisplay0` attached to `genfb0` and a separate getty on `com0` provided serial control.
+Set `Driver "wsfb"` and `Option "device" "/dev/ttyE0"` in the Xorg Device section, reference it
+from the Screen section, then run `startx` with a client script that starts ctwm and xterm.
+
+For scrolling, number the lines 0001 through 2000, pad each to 66 printable characters and
+end each with a newline. Time `cat` between serial markers with a host monotonic clock.
+In xterm, include the reply to a trailing cursor-position query (`ESC [ 6 n`) so buffered output
+is consumed. On wscons, direct the same file to the active `/dev/ttyE0` and time through command
+completion. Run `x11perf -repeat 1 -time 3 -rect10 -fcircle100 -ftext -scroll500 -copywinwin500`.
+For a separate full-frame workload, the [wisp framebuffer timedemo](../e2e/wisp/README.md#freedoom-framebuffer-timedemo)
+measured 15.54 FPS on sun4u at 4× scaling (1280×800) under Linux.
+
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
 
 ```
