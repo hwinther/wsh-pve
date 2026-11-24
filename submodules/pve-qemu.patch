@@ -6048,7 +6048,7 @@ index 0000000..3a1e670
 +                                    sun4m_set_sunos_idle);
 diff --git a/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
 new file mode 100644
-index 0000000..6e022d2
+index 0000000..15b0bda
 --- /dev/null
 +++ b/debian/patches/wsh/0030-hw-sparc-sun4m-raise-the-SS-5-s-cs4231-at-SBus-level.patch
 @@ -0,0 +1,89 @@
@@ -6067,7 +6067,7 @@ index 0000000..6e022d2
 +Raise interrupt bit 11, SBus level 5, as the real machine. The frame
 +buffer (cg3 or TCX) is at SBus level 5 too, so both go through an OR
 +gate, as the keyboard and mouse do. OpenBIOS gives the node "intr" 9
-+to match (wsh-pve openbios patch 0016).
++to match (wsh-pve openbios patch 0018).
 +---
 + hw/sparc/sun4m.c | 29 +++++++++++++++++++++++------
 + 1 file changed, 23 insertions(+), 6 deletions(-)
@@ -6133,7 +6133,7 @@ index 0000000..6e022d2
 +-         * OpenBIOS gives the node "intr" 5, so the guest's handler is at
 +-         * interrupt level 5: interrupt bit 9 (SBus level 3) raises it.
 ++         * SBus level 5, processor level 9, as the real SS-5 and its PROM
-++         * have it. OpenBIOS (wsh patch 0016) gives the node "interrupts" 5
+++         * have it. OpenBIOS (wsh patch 0018) gives the node "interrupts" 5
 ++         * and "intr" 9 to match: Solaris takes the first, SunOS 4 the second.
 +          */
 +-        sysbus_connect_irq(s, 0, slavio_irq[9]);
