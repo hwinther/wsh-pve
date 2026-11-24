@@ -33,6 +33,20 @@ on:
 
 permissions: {}
 
+# One run per package at a time, all of its jobs. Two merges close together used to build the same
+# package at once: both read the same changelog, chose the same +wshN version and published
+# different content under it. A queued run starts when the one before it has pushed its changelog
+# commit, checks out the branch's tip (in each job) and so gets the next number. The whole run
+# queues, not only the build job: build-3dfx versions its tree from the same changelog (dch, as the
+# Makefile's pve-qemu-3dfx target does), and while it ran outside the queue a run that started
+# during the previous run's build stamped the previous run's version into qemu-system-x86_64-3dfx
+# (pve-qemu-kvm 11.1.3-4+wsh16's binary said +wsh15). Of several queued runs GitHub keeps the
+# newest, which is the one that builds everything. Literal group name: in a called workflow,
+# github.workflow is the caller's.
+concurrency:
+  group: build-deb-${{ inputs.package }}
+  cancel-in-progress: false
+
 jobs:
   # pve-qemu's 3dfx extra (qemu-system-x86_64-3dfx) compiles third-party code (qemu-3dfx's hw/3dfx and
   # hw/mesa), so it is built here, in a job with no WORKFLOW_TOKEN and no stored credentials, and the
@@ -101,14 +115,8 @@ jobs:
     # build-3dfx is skipped for the other packages, and its failure must not stop pve-qemu
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # One build per package at a time. Two merges close together used to build the same package at
-    # once: both read the same changelog, chose the same +wshN version and published different
-    # content under it. A queued build starts when the one before it has pushed its changelog
-    # commit, checks out the branch's tip (below) and so gets the next number. Of several queued
-    # builds GitHub keeps the newest, which is the one that builds everything.
-    concurrency:
-      group: build-deb-${{ inputs.package }}
-      cancel-in-progress: false
+    # One run per package at a time: the workflow's concurrency group (a job-level group of the same
+    # name would deadlock with it)
     permissions:
       # gh release create (GITHUB_TOKEN); the changelog push uses WORKFLOW_TOKEN
       contents: write
@@ -272,9 +280,10 @@ jobs:
             | tee -a "$RUNNER_TEMP/make.log"
           set +o pipefail
 
-          # build-3dfx versioned its tree the way the pve-qemu target does (changelog patch, dch), so
-          # the 3dfx binary's --version names this package's version, unless a build pushed its
-          # changelog commit between build-3dfx's checkout and this job's (a queued build)
+          # build-3dfx versioned its tree the way the pve-qemu target does (changelog patch, dch), in
+          # the same queued run, so the 3dfx binary's --version names this package's version. A
+          # guard: the version is read from the binary (the artifact is data from a job that ran
+          # third-party code, so this job computes its own version and doesn't take one from it).
           if [ "$PACKAGE" = pve-qemu ] && [ -s build/pve-qemu-3dfx/qemu-system-x86_64 ]; then
             want="pve-qemu-kvm_$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' submodules/pve-qemu/debian/changelog)"
             got=$(grep -aoE 'pve-qemu-kvm_[0-9A-Za-z.+~:-]+' build/pve-qemu-3dfx/qemu-system-x86_64 | head -n 1 || true)
