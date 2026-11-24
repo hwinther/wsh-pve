@@ -238,7 +238,9 @@ jobs:
           git checkout -- .gitmodules
           patch -d submodules/pve-qemu -p1 -s -i ../pve-qemu.patch
           git -C submodules/pve-qemu submodule update --init qemu
-          mkdir -p build/boot-qemu
+          # build/ belongs to root after the package builds (docker as root)
+          sudo mkdir -p build/boot-qemu
+          sudo chown "$(id -u):$(id -g)" build/boot-qemu
           docker run --rm --entrypoint sh -e JOBS="$(nproc)" -v "$PWD:/src" "$IMAGE" \
             /src/e2e/pve/build-qemu.sh /src/submodules/pve-qemu /src/build/boot-qemu
           printf 'FROM %s\nCOPY qemu-system-x86_64 qemu-system-aarch64 /usr/bin/\n' "$IMAGE" \
