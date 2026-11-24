@@ -18199,10 +18199,10 @@ index 0000000..5e1875f
 + }
 diff --git a/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
 new file mode 100644
-index 0000000..00bcd8f
+index 0000000..7100279
 --- /dev/null
 +++ b/debian/patches/wsh/0130-ui-dbus-read-GL-scanouts-back-for-VNC-next-to-displa.patch
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,440 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] ui/dbus: read GL scanouts back for VNC next to -display
 + dbus,gl=on
@@ -18238,6 +18238,10 @@ index 0000000..00bcd8f
 +The EGL work saves and restores the current context, as a GL device's
 +own context (virglrenderer's) may be current on the main loop.
 +dpy_gl_release_dmabuf now releases the texture the import made.
++
++The readback is built only with CONFIG_OPENGL, and the dmabuf release
++with CONFIG_OPENGL and CONFIG_GBM both (meson finds GBM without
++OpenGL too): with --disable-opengl the D-Bus console is upstream's.
 +
 +Tested on Linux with the 3dfx binary's surfaceless EGL (llvmpipe and
 +/dev/udmabuf): qemu-3dfx's Glide guest through dbus,gl=on with a VNC
@@ -18332,7 +18336,7 @@ index 0000000..00bcd8f
 +                              DisplaySurface *surface)
 + {
 +diff --git a/ui/dbus-console.c b/ui/dbus-console.c
-+index e1ac068..6eb9d19 100644
++index e1ac068..6d5d4b0 100644
 +--- a/ui/dbus-console.c
 ++++ b/ui/dbus-console.c
 +@@ -28,6 +28,9 @@
@@ -18514,7 +18518,7 @@ index 0000000..00bcd8f
 +     dbus_display_console_set_size(ddc, width, height);
 + }
 + 
-++#ifdef CONFIG_GBM
+++#if defined(CONFIG_OPENGL) && defined(CONFIG_GBM)
 ++static void
 ++dbus_gl_release_dmabuf(DisplayChangeListener *dcl,
 ++                       QemuDmaBuf *dmabuf)
