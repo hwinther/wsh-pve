@@ -88,8 +88,14 @@ function makeTerminal() {
   return term;
 }
 
+// Keys typed before wisp's first prompt wait in `held` and go to the guest when it prints that
+// prompt. Sent earlier, they were lost: on a resume the snapshot's transcript (and its prompt) is on
+// the screen before QEMU has even started, QEMU's serial port takes the bytes while it still waits
+// for the snapshot, and loading the snapshot then replaces the port's state with the saved one; on
+// a cold boot the firmware or the kernel takes them before the shell reads.
 function serialDevice(term) {
   const input = [];
+  let held = "";
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let node = null;
@@ -100,6 +106,11 @@ function serialDevice(term) {
   const POLLIN = 1;
   const POLLOUT = 4;
   const EAGAIN = 6; // Emscripten's errno value
+  const send = (text) => {
+    for (const b of encoder.encode(text)) input.push(b);
+    // Wakes QEMU's main loop if it sleeps in poll() on the device.
+    if (node && node.notifyListeners) node.notifyListeners(POLLIN);
+  };
 
   const ops = {
     open(stream) {
@@ -142,6 +153,13 @@ function serialDevice(term) {
             ? `Running, resumed from a snapshot of a booted machine in ${took}.`
             : `Running. Booted to the prompt in ${took}.`,
         );
+        if (held) {
+          // after this write has returned, as typing does
+          const keys = held;
+          held = "";
+          state.heldKeys = keys.length;
+          setTimeout(() => send(keys), 0);
+        }
       }
       return length;
     },
@@ -158,10 +176,16 @@ function serialDevice(term) {
       FS.mkdev(DEVICE, dev);
       node = FS.lookupPath(DEVICE).node;
     },
+    // What the page itself sends, at once (the Return that asks for a fresh prompt).
+    send,
+    // What is typed: held until the first prompt.
     type(text) {
-      for (const b of encoder.encode(text)) input.push(b);
-      // Wakes QEMU's main loop if it sleeps in poll() on the device.
-      if (node && node.notifyListeners) node.notifyListeners(POLLIN);
+      if (promptSeen) {
+        send(text);
+        return;
+      }
+      if (!held) setStatus(`${statusEl.textContent} What you type is sent at the prompt.`);
+      held += text;
     },
   };
 }
@@ -314,7 +338,7 @@ async function main() {
             mark("restored");
             // Ask the shell for a fresh prompt: it is waiting in read() at the one in the
             // transcript. The prompt it prints marks the machine as running.
-            serial.type("\r");
+            serial.send("\r");
           });
         }
       },
