@@ -109,27 +109,65 @@ QEMU when `pve-qemu.patch` or the pin changes (`wisp/README.md`, "CI").
 `pve/Dockerfile` (build context: the repository root) installs `pve-manager`, `qemu-server`,
 `pve-qemu-kvm`, `libpve-storage-perl` and `pve-cluster` from Proxmox, with the WSH builds pinned over them. It runs systemd
 as PID 1 in a privileged container (pmxcfs mounts `/etc/pve` with FUSE), with only pve-cluster,
-pvedaemon and pveproxy, a directory storage and an empty `vmbr0` bridge. No guest is ever started.
+pvedaemon and pveproxy, a directory storage and an empty `vmbr0` bridge. The suite never starts a guest (the boot job below does).
 
 - `--build-arg PACKAGES=repo` (default): the packages published at debian.wshosting.no.
 - `--build-arg PACKAGES=local`: the `.deb` files in `pve/debs/` (the build-deb artifacts).
 - `--build-arg PACKAGES=mixed`: the published packages, with the `.deb` files in `pve/debs/`
-  installed over them (the boot job below: a pull request's qemu-server).
+  installed over them (the boot job below: a pull request's qemu-server and pve-manager).
 
 ## Booting a guest through PVE (`boot`)
 
 The suite never runs a guest, so a start-up bug that only shows once the firmware runs passes it
-(the three fixed in #248 did). On a pull request that changes `submodules/qemu-server.patch` (or
-`pve/boot-test.sh`, `pve/Dockerfile`, `e2e.yml`), e2e.yml's `boot` job builds that qemu-server
-(`make qemu-server`), builds the image with `PACKAGES=mixed` and runs `pve/boot-test.sh` in it:
-`qm create` and `qm start` of an Alpine `virt` CD on x86_64 (i440fx, SeaBIOS, KVM when the runner
-has it) and on aarch64 (virt, OVMF with an efidisk, TCG; skipped when the image has no
-`qemu-system-aarch64` or no `AAVMF_CODE.fd`), passing when the serial console shows the login
-prompt. The ISOs are pinned by URL and sha256 in e2e.yml and cached. `e2e-required` includes the
-job, so a failed boot blocks the merge.
+(the three fixed in #248 did). e2e.yml's `boot` job starts guests through PVE with the pull
+request's packages, on a pull request that changes `submodules/qemu-server.patch`,
+`submodules/pve-manager.patch` or `submodules/pve-qemu.patch` (or one of their pins, `pve/` or
+`e2e.yml`):
+
+- qemu-server is always built from the pull request (`make qemu-server`), pve-manager when its
+  patch or pin changes (`make pve-manager` with `DEB_BUILD_OPTIONS=nocheck`); the image is built
+  with `PACKAGES=mixed` and must carry both.
+- When the pve-qemu build changes, `pve/build-qemu.sh` builds `qemu-system-x86_64` and
+  `qemu-system-aarch64` from the pull request's tree (pve-qemu at its pin with `pve-qemu.patch` and
+  `debian/patches`, debian/rules' paths and the options qemu-server's commands need) in the image
+  and copies them over the published package's. No workflow builds the whole pve-qemu-kvm package
+  on a pull request; firmware, keymaps and option ROMs stay the published ones.
+- `pve/boot-test.sh` then creates each VM through the API (`pvesh create`), starts it with
+  `qm start`, waits for the login prompt of an Alpine `virt` CD on the serial console
+  (`serial0: socket`, `vga: serial0`) and stops it with `qm stop`.
+
+| Case | Machine | Firmware | CD | Accelerator |
+| --- | --- | --- | --- | --- |
+| `i440fx` | x86_64 `pc` | SeaBIOS | `ide2` | KVM when the runner has `/dev/kvm`, else TCG |
+| `q35` | x86_64 `q35` | SeaBIOS | `ide2` (AHCI) | as above |
+| `ovmf` | x86_64 `q35` | OVMF, 4M efidisk | `ide2` (AHCI) | as above |
+| `aarch64` | `virt` | OVMF (AAVMF), efidisk | `scsi0` (virtio-scsi) | TCG |
+
+A case passes when the serial log shows firmware output (SeaBIOS, or OVMF's `BdsDxe` or GRUB on
+OVMF's console) and then `login:` on the board's console port: Alpine's issue line names the tty,
+`/dev/ttyS0` on x86_64 and `/dev/ttyAMA0` on aarch64. `login:` alone is not enough: Linux puts a
+getty on whatever serial port it finds, so a socket wired to an extra UART instead of the console
+port (#248's sparc64 bug) still gets a login prompt, on another tty and without the firmware's
+output. The reader connects to the socket before `qm start`, as soon as QEMU creates it, because
+the socket drops what the guest writes while no client is connected.
+
+Checked in the lab with broken qemu-server copies (the installed `PVE/QemuServer.pm` edited in a
+scratch container, not committed); `qemuAccepts` is the suite's check, run with the same configs:
+
+| Breakage | `qemuAccepts` | Boot test |
+| --- | --- | --- |
+| #248's `-bios` fix reverted (`-bios ovmf` for every OVMF VM) | aarch64 fails (since #249's test), x86 passes | aarch64 fails at `qm start`; x86 OVMF boots (x86 QEMU ignores `-bios` next to the pflash drives) |
+| aarch64 socket on a `pci-serial` instead of `-serial` (the PL011) | passes | aarch64 fails: no firmware output, login on `ttyS0` |
+| x86 socket on COM2 (`isa-serial,index=1`) instead of COM1 | passes | `i440fx` and `q35` fail: no SeaBIOS output, login on `ttyS1` |
+
+The ISOs (Alpine 3.24.4 `virt`, x86_64 and aarch64) are pinned by URL and sha256 in e2e.yml and
+cached on the sha256. The job summary lists the packages under test and each case's result.
+`e2e-required` includes the job, so a failed boot blocks the merge.
 
 ```bash
-docker exec -i wsh-pve-e2e sh -s -- x86_64 9001 local:iso/alpine-virt-x86_64.iso < e2e/pve/boot-test.sh
+docker exec -i wsh-pve-e2e sh -s -- q35 9001 local:iso/alpine-virt-x86_64.iso < e2e/pve/boot-test.sh
+# TCG on x86 too, as on a runner without /dev/kvm:
+docker exec -i -e BOOT_TEST_TCG=1 wsh-pve-e2e sh -s -- i440fx 9002 local:iso/alpine-virt-x86_64.iso < e2e/pve/boot-test.sh
 ```
 
 `sparc/pve.Dockerfile` adds the sparc lab to this image; there, guests do run (under TCG): VMs created
