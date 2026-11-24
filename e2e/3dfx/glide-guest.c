@@ -25,8 +25,17 @@
  * draws into the front buffer without a swap and prints "GLIDE-GUEST: FRONTDRAW", then sets a gamma
  * of 2.0, draws and swaps the scene and prints "GLIDE-GUEST: GAMMA", each held for a few seconds for
  * a screendump on the host. GLIDE_GUEST_BENCH_GAMMA=1 keeps that gamma for the bench (its frames
- * then go through the host's gamma path). Copyright 2026 WsHosting ENK, GPL-3.
+ * then go through the host's gamma path).
+ *
+ * Built with -DGLIDE_GUEST_DSO it is linked dynamically against the wrapper as a shared library
+ * instead (the libglide.so.2 of the drivers release, scripts/build-3dfx-linux-glide.sh) and first
+ * prints where its Glide came from: "glide-guest: Glide from <path of the library>".
+ * Copyright 2026 WsHosting ENK, GPL-3.
  */
+#ifdef GLIDE_GUEST_DSO
+#define _GNU_SOURCE /* dladdr */
+#include <dlfcn.h>
+#endif
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -122,6 +131,14 @@ int main(void)
 		finish("ERROR chdir", 0);
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	printf("glide-guest: Glide 2 through qemu-3dfx (front-buffer read %s)\n", front ? "counted" : "reported");
+#ifdef GLIDE_GUEST_DSO
+	{
+		Dl_info dli; /* a PIE takes grGlideInit's address from the GOT: the library's function */
+		if (!dladdr((void *)grGlideInit, &dli) || !dli.dli_fname)
+			finish("ERROR dladdr grGlideInit (not linked against a shared libglide?)", 0);
+		printf("glide-guest: Glide from %s\n", dli.dli_fname);
+	}
+#endif
 
 	grGlideInit();
 	grSstSelect(0);

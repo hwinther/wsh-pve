@@ -10,12 +10,14 @@
 #   *.dll *.exe *.sys  PE images (MinGW objdump, else objdump)
 #   *.o                DJGPP COFF objects, the DXEs' code before dxe3gen links them (DJGPP objdump)
 #   *.obj              Open Watcom OMF objects, the OVL's code (wdis)
+#   *.so *.so.N        i386 ELF shared libraries, the Linux guest wrapper (objdump)
 #
 # P6 instructions (CMOV, FCMOV, FCOMI) are counted but allowed: the MinGW runtime (printf, gdtoa,
 # the pseudo-relocation code) that the DLLs link statically is built for i686 by the toolchain.
 # TZCNT is allowed too: GCC emits `rep bsf` for __builtin_ctz where a zero input is undefined, which
 # objdump shows as tzcnt and a CPU without BMI1 runs as BSF (the same result for a non-zero input).
-# Runs in the djgpp-build image (ghcr.io/hwinther/wsh-pve/djgpp-build), which has all three tools.
+# Runs in the djgpp-build image (ghcr.io/hwinther/wsh-pve/djgpp-build), which has all three tools;
+# the ELF libraries need only binutils' objdump (scripts/build-3dfx-linux-glide.sh runs it on those).
 # Exit status: 0 all clean, 1 a file has such an instruction, 2 a file couldn't be disassembled.
 set -euo pipefail
 
@@ -30,6 +32,7 @@ tool() {
 pe_objdump=$(tool i686-w64-mingw32-objdump objdump)
 coff_objdump=$(tool i686-pc-msdosdjgpp-objdump)
 wdis=$(tool wdis)
+elf_objdump=$(tool objdump)
 
 # One instruction per line ("mnemonic operands"), lower case; objdump's and wdis's layouts
 disasm() {
@@ -40,6 +43,9 @@ disasm() {
         *.o)
             [ -n "$coff_objdump" ] || return 2
             "$coff_objdump" -d --no-show-raw-insn "$1" | sed -n 's/^ *[0-9a-f]\{1,\}:\t//p' ;;
+        *.so | *.so.[0-9]*)
+            [ -n "$elf_objdump" ] || return 2
+            "$elf_objdump" -d --no-show-raw-insn "$1" | sed -n 's/^ *[0-9a-f]\{1,\}:\t//p' ;;
         *.obj)
             [ -n "$wdis" ] || return 2
             # "0016  66 BA F8 03<tabs>mov<tabs>dx,0x03f8"; data lines have no tab after the bytes

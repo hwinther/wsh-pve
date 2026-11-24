@@ -10,6 +10,9 @@ on:
       # our change to its build (the guest CPU baseline) and the check of the result
       - "submodules/qemu-3dfx-drivers.patch"
       - "scripts/check-3dfx-drivers-isa.sh"
+      # the Linux guest library (libglide.so.2) and the release workflow itself
+      - "scripts/build-3dfx-linux-glide.sh"
+      - ".github/workflows/build-3dfx-drivers.yml"
 
 permissions:
   # for pulling the djgpp-build image from ghcr.io
@@ -48,6 +51,13 @@ jobs:
           sudo make 3dfx-drivers VERBOSE=2 DOCKER='docker' DOCKER_ARG='--user root'
           sudo chown -R "$(id -u):$(id -g)" build
           ls -la build/3dfx build/mesa
+
+      # qemu-3dfx's Linux guest wrapper as libglide.so.2 for old i386 Linux guests (Glide 2.x),
+      # i586 and glibc 2.0 symbol versions, both checked by scripts/build-3dfx-linux-glide.sh
+      - name: Build the Linux guest Glide library
+        run: |
+          sudo make 3dfx-linux-glide DOCKER='docker' DOCKER_ARG='--user root'
+          sudo chown -R "$(id -u):$(id -g)" build
 
       - name: Package drivers
         run: |
@@ -94,12 +104,23 @@ jobs:
           (cd dist && zip -r "${PKG}.zip" "${PKG}")
           ls -la "dist/${PKG}"
 
+          # The Linux guest library as a tarball of its own (it keeps the libglide2x.so symlink)
+          LPKG="qemu-3dfx-linux-glide-${QEMU3DFX_SHORT}"
+          mkdir -p "dist/${LPKG}"
+          for f in libglide.so.2 libglide2x.so README.txt; do
+            [ -e "build/linux-glide/$f" ] || { echo "::error::missing Linux guest artifact: build/linux-glide/$f"; exit 1; }
+          done
+          cp -P build/linux-glide/libglide.so.2 build/linux-glide/libglide2x.so build/linux-glide/README.txt "dist/${LPKG}/"
+          tar -C dist --owner=0 --group=0 -czf "dist/${LPKG}.tar.gz" "${LPKG}"
+          tar -tvzf "dist/${LPKG}.tar.gz"
+
       - name: Create or update release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
           ZIP="dist/qemu-3dfx-drivers-${QEMU3DFX_SHORT}.zip"
+          TGZ="dist/qemu-3dfx-linux-glide-${QEMU3DFX_SHORT}.tar.gz"
           printf '%s\n' \
             "3dfx/Mesa passthrough guest drivers built from qemu-3dfx \`${QEMU3DFX_SHA}\`." \
             "" \
@@ -109,18 +130,25 @@ jobs:
             "" \
             "Built for a Pentium-class guest CPU (i586, x87 math; no MMX, SSE or later, checked by" \
             "\`scripts/check-3dfx-drivers-isa.sh\`), so a \`cpu: pentium3\` guest runs them without KVM too." \
+            "" \
+            "\`qemu-3dfx-linux-glide-${QEMU3DFX_SHORT}.tar.gz\` is the Linux guest library (Glide 2.x only):" \
+            "\`libglide.so.2\` and the \`libglide2x.so\` symlink for old i386 Linux guests (i586, glibc 2.0" \
+            "or later), with a README on installing it. OpenGL and Glide 3 have no Linux guest wrapper." \
             > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ZIP" --clobber
+            gh release upload "$TAG" "$ZIP" "$TGZ" --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
             gh release create "$TAG" \
               --title "3dfx/Mesa drivers (${QEMU3DFX_SHORT})" \
               --notes-file release-notes.md \
-              "$ZIP"
+              "$ZIP" "$TGZ"
           fi
 
       - name: Upload build artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: qemu-3dfx-drivers-${{ env.QEMU3DFX_SHORT }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
