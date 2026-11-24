@@ -1012,8 +1012,8 @@ the sparc64 profile with 1024 MB (both kernels are 32-bit), the CD on `ide2` as 
 `as_disk`, unlike 2.5.1 on sun4m) and the SUN2.9G-labelled 3 GiB disk on `ide0`. Their kernels need
 OpenBIOS 0036 (2.6), 0037 and 0038 (2.5.1) on top of 0031, and the installed systems 0039 (the root
 named `SUNW,Ultra-5_10`, so that the installer adds the platform packages; `submodules/SPARC.md`,
-"Solaris 2.6 and 2.5.1 on sun4u: the kernels"). No published `pve-qemu-kvm` has them yet, so both have
-`matrix_skip` and their stored disks are kept out of the stored disks until one does. What the scenario
+"Solaris 2.6 and 2.5.1 on sun4u: the kernels"). `pve-qemu-kvm` 11.1.3-4+wsh15 is the first package
+with them; both targets are in the install matrix (no `matrix_skip`). What the scenario
 needed for them:
 
 - **Console messages over the screens.** Both releases' `hme` driver prints `Using Internal
@@ -1047,9 +1047,20 @@ Through PVE (the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh
 | the same with 0036-0039 | passed: suninstall, the packages, then the CD's Maintenance Update (`Installing SUNWpatch.sun4u`, `Building package data base`, about 47 minutes of the install); `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, `/` 127229 KB (22%), `/usr` 111589 KB (86%), `/export/home` 2184383 KB on `c0t0d0`, `hme0` 10.0.2.15/24; `init 5` ends QEMU; stored disk and sidecar written | 66.8 min (install 3456 s, first boot 311 s, check 223 s) |
 | `boot-test sol26-sun4u` and `boot-test sol251-sun4u` on the stored disks | passed (`console login:` after 3.4 and 3.0 min) | 4.3 and 3.9 min |
 
+With the published packages (the PVE test container built from them: pve-qemu-kvm 11.1.3-4+wsh15, whose
+`/usr/share/kvm/openbios-sparc64` is the patched one, `SUNW,Ultra-5_10` and `aligned-allocator` in it;
+qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh12; nothing mounted over the package; host builds running
+niced beside it, load average 22-43 on 14 cores; 2026-11-24):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `boot-test sol26-sun4u --disk <disks>/install-sol26-sun4u.raw` | passed: banner after 52 s, `console login:` after 4.5 min, `SunOS sol26-sun4u 5.6 Generic_105181-05 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.8 min |
+| `boot-test sol251-sun4u --disk <disks>/install-sol251-sun4u.raw` | passed: banner after 41 s, `console login:` after 4.1 min (the IDE timeouts on the way), `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.3 min |
+
 Not tried: the 9G disk, more or less memory, the network options other than the default static address,
-and a boot of the stored disks with the packaged firmware (which can't work: 0036-0039 are needed by
-the installed systems as by the CDs).
+an install with the published packages (the stored disks were installed with 0036-0039 mounted on
++wsh12), and a boot with firmware older than +wsh15 (which can't work: 0036-0039 are needed by the
+installed systems as by the CDs).
 
 ### Solaris 2.4 and 2.5.1
 
