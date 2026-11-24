@@ -111,6 +111,39 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(rec["problems"], ["no result line"])
         self.assertIsNone(rec["t_banner"])
 
+    def test_kernel_message_inside_the_result_line(self):
+        # what the smp4 profile once printed: "tsc: ..." between two of printf's pieces
+        head, tail = GOOD.split(" crc=")
+        console = lines("WISP-BANNER x",
+                        head + " tsc: Marking TSC unstable due to clocksource watchdog",
+                        "clocksource: Switched to clocksource refined-jiffies",
+                        "crc=" + tail, "reboot: Power down")
+        rec = run.evaluate("sparc32", self.raw(console), None)
+        self.assertTrue(rec["ok"], rec["problems"])
+        self.assertEqual(rec["crc"], "0x35a46014")
+        self.assertEqual(rec["loop_ms"], 96)
+        self.assertEqual(rec["result_note"], "kernel message inside the result line")
+
+    def test_kernel_message_with_timestamp_inside_the_result_line(self):
+        head, tail = GOOD.split(" loops=")
+        console = lines(head + " [    2.512345] tsc: Marking TSC unstable", "loops=" + tail)
+        rec = run.evaluate("sparc32", self.raw(console), None)
+        self.assertTrue(rec["ok"], rec["problems"])
+
+    def test_a_real_bad_field_is_still_an_error(self):
+        # no kernel message: the field is reported as it is
+        rec = run.evaluate("sparc32", self.raw(lines(GOOD.replace(" crc=", " junk crc="))), None)
+        self.assertEqual(rec["problems"], ["bad field: 'junk'"])
+
+    def test_spliced_line_that_still_does_not_parse(self):
+        # a kernel message cut off the end and nothing usable after it: the original error stays
+        head, _ = GOOD.split(" crc=")
+        console = lines(head + " tsc: Marking TSC unstable", "WISP-SMP v=1 cpus=4 status=ok")
+        rec = run.evaluate("sparc32", self.raw(console), None)
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["problems"], ["bad field: 'tsc:'"])
+        self.assertNotIn("result_note", rec)
+
     def test_unknown_loop_count_is_not_checked(self):
         good = GOOD.replace("loops=4096", "loops=999999")
         rec = run.evaluate("sparc32", self.raw(lines(good)), 999999)
