@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..345c0cb 100644
+index bc240a0..fb1c12c 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,96 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,100 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -170,6 +170,10 @@ index bc240a0..345c0cb 100644
 +wsh/0132-tests-qtest-test-display-dbus-refresh-ms.patch
 +wsh/0133-hw-sparc64-migrate-the-sabre-the-IOMMU-the-ebus-and-.patch
 +wsh/0134-tests-qtest-test-the-sabre-s-the-IOMMU-s-and-the-ebu.patch
++wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch
++wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
++wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
++wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..d6a13d7
@@ -19558,6 +19562,661 @@ index 0000000..47fab3f
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch b/debian/patches/wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch
+new file mode 100644
+index 0000000..fef619f
+--- /dev/null
++++ b/debian/patches/wsh/0135-hw-net-sunhme-stop-the-receiver-on-a-reset-until-the.patch
+@@ -0,0 +1,113 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/net/sunhme: stop the receiver on a reset until the guest
++ enables it
++
++A write of the ETX and ERX bits to the global reset register resets the
++transmitter and the receiver. The model only cleared the bits again: the
++receiver kept taking frames into the ring the guest had set up before,
++and the transmit and receive status bits that were still set stayed set,
++with the interrupt line up.
++
++Linux resets both when it takes the interface down (happy_meal_close()),
++frees the ring's buffers and then its interrupt. A frame that came in
++after that (50 ms after the reset in the trace below, 6 s in another)
++still went into the released ring and raised the NIC's interrupt.
++Linux has no handler for it any more and leaves the vector's clear
++register alone; the sabre keeps one interrupt request to the CPU at a
++time and waited for that clear, so every other interrupt stayed blocked:
++the IDE controller's above all. Debian 13 (Linux 7.0) on sun4u, sunhme on
++pciB (ino 0x10), the disk on the cmd646 (ino 0x20), the interface taken
++down and up in a loop:
++
++  ...52.102  sunhme global reset (interface down)
++  ...52.155  sunhme status RXTOHOST, line up; sabre request 0x10,
++             the CPU takes the vector; no clear follows
++  ...52.215  cmd646 line up: no request (0x10 outstanding)
++  ...53.678  interface up: the interrupt map is written, the request
++             of 0x10 is sent again, the clear comes from the new
++             handler, which runs before the rings are set up:
++             "Unable to handle kernel NULL pointer dereference" in
++             happy_meal_interrupt, "Aiee, killing interrupt handler!"
++
++A frame arriving between the reset and the end of the close panics
++the same way from within happy_meal_close().
++
++When the interface stays down, as at power-off, nothing clears the
++request: the IDE command times out, then every one after it ("ata1.00:
++failed command: READ DMA", "status: { DRDY }" every 30 s) until ext4
++aborts its journal. Seen once in 9 Debian 13 boots on a busy host. In
++the lab (Debian 13 reading its IDE disk while enp2s0 goes down and up
++every 3 s, or goes down once with frames arriving from the host side),
++11 of 18 runs failed (9 panics, 2 lost IDE interrupts); with this patch
++0 of 11, 4 of them at the load where 3 of 4 failed before.
++
++Reset the receiver's DMA enable (bit 0 of the ERX configuration register,
++which drivers set with the ring; Linux writes 0x70011) on an ERX reset
++and take no frame while it is clear, and drop the status bits of the
++engine that is reset (the ones the model sets: HOSTTOTX and TXALL for
++ETX, RXTOHOST and NORXD for ERX), updating the line. NetBSD 11.1,
++OpenBSD 8.0, FreeBSD 12.4, Debian 7 and Solaris 10 still ping through
++the NIC, also after taking it down and up. The next patch adds a qtest.
++---
++ hw/net/sunhme.c | 26 ++++++++++++++++++++++++++
++ 1 file changed, 26 insertions(+)
++
++diff --git a/hw/net/sunhme.c b/hw/net/sunhme.c
++index e2cd1b5..61b3c0b 100644
++--- a/hw/net/sunhme.c
+++++ b/hw/net/sunhme.c
++@@ -67,6 +67,7 @@
++ #define HME_ERX_REG_SIZE               0x2000
++ 
++ #define HME_ERXI_CFG                   0x0
+++#define HME_ERX_CFG_DMAENABLE          0x1
++ #define HME_ERX_CFG_RINGSIZE           0x600
++ #define HME_ERX_CFG_RINGSIZE_SHIFT     9
++ #define HME_ERX_CFG_BYTEOFFSET         0x38
++@@ -181,14 +182,33 @@ static const Property sunhme_properties[] = {
++     DEFINE_NIC_PROPERTIES(SunHMEState, conf),
++ };
++ 
+++static void sunhme_update_irq(SunHMEState *s);
+++
+++/*
+++ * The guest resets the transmitter and the receiver (Linux when it takes
+++ * the interface down and frees its interrupt, and before it sets the rings
+++ * up). The reset engine's interrupt status goes, and the receiver puts no
+++ * more frames into the ring until the guest enables its DMA again: a frame
+++ * that arrived after the reset went into the ring the guest had released
+++ * and raised an interrupt nobody handled.
+++ */
++ static void sunhme_reset_tx(SunHMEState *s)
++ {
+++    s->sebregs[HME_SEBI_STAT >> 2] &= ~(HME_SEB_STAT_HOSTTOTX |
+++                                        HME_SEB_STAT_TXALL);
+++    sunhme_update_irq(s);
+++
++     /* Indicate TX reset complete */
++     s->sebregs[HME_SEBI_RESET] &= ~HME_SEB_RESET_ETX;
++ }
++ 
++ static void sunhme_reset_rx(SunHMEState *s)
++ {
+++    s->erxregs[HME_ERXI_CFG >> 2] &= ~HME_ERX_CFG_DMAENABLE;
+++    s->sebregs[HME_SEBI_STAT >> 2] &= ~(HME_SEB_STAT_RXTOHOST |
+++                                        HME_SEB_STAT_NORXD);
+++    sunhme_update_irq(s);
+++
++     /* Indicate RX reset complete */
++     s->sebregs[HME_SEBI_RESET] &= ~HME_SEB_RESET_ERX;
++ }
++@@ -730,6 +750,12 @@ static ssize_t sunhme_receive(NetClientState *nc, const uint8_t *buf,
++         return 0;
++     }
++ 
+++    /* Drop the frame while the receiver's DMA is off (after a reset) */
+++    if (!(s->erxregs[HME_ERXI_CFG >> 2] & HME_ERX_CFG_DMAENABLE)) {
+++        trace_sunhme_rx_filter_reject();
+++        return -1;
+++    }
+++
++     trace_sunhme_rx_filter_destmac(buf[0], buf[1], buf[2],
++                                    buf[3], buf[4], buf[5]);
++ 
+diff --git a/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch b/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
+new file mode 100644
+index 0000000..6736933
+--- /dev/null
++++ b/debian/patches/wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
+@@ -0,0 +1,348 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sunhme's receiver after a reset on
++ sun4u
++
++sun4u-sunhme-reset-test puts a sunhme in slot 0 of pciB, sets up what
++the firmware and a driver would (the bridge's bus and memory window, the
++BAR, a receive ring of 32 in RAM, every interrupt enabled, promiscuous
++receive) and feeds it frames through a socket netdev, watching the
++sabre's request for ino 0x10. rx: a frame lands in descriptor 0 with an
++interrupt. no-rx-after-reset: after a global reset a frame raises no
++interrupt and leaves the ring alone; with the receiver's DMA enabled
++again the next one goes into descriptor 1. reset-drops-status: a reset
++with the receive status still set drops it and the line. The last two
++fail without the previous patch.
++---
++ tests/qtest/meson.build               |   3 +-
++ tests/qtest/sun4u-sunhme-reset-test.c | 308 ++++++++++++++++++++++++++
++ 2 files changed, 310 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4u-sunhme-reset-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 4ba5bab..24f8d6c 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -225,7 +225,8 @@ qtests_sparc64 = \
++   ['prom-env-test', 'boot-serial-test', 'sun4u-cmd646-test',
++    'sun4u-idprom-test', 'sun4u-softint-test', 'sun4u-idle-test',
++    'sun4u-sabre-irq-test', 'sun4u-sabre-reset-test',
++-   'sun4u-migration-test']
+++   'sun4u-migration-test',
+++   'sun4u-sunhme-reset-test']
++ 
++ qtests_npcm7xx = \
++   ['npcm7xx_adc-test',
++diff --git a/tests/qtest/sun4u-sunhme-reset-test.c b/tests/qtest/sun4u-sunhme-reset-test.c
++new file mode 100644
++index 0000000..1b16746
++--- /dev/null
+++++ b/tests/qtest/sun4u-sunhme-reset-test.c
++@@ -0,0 +1,308 @@
+++/*
+++ * QTest: the sunhme's receiver after a reset, on sun4u
+++ *
+++ * Linux resets the sunhme's transmitter and receiver (a write of both bits
+++ * to the global reset register) when it takes the interface down, and then
+++ * frees the interrupt. The model only acknowledged the reset: the receiver
+++ * kept putting frames into the old ring and raised an interrupt for each.
+++ * Linux has no handler for it any more and doesn't clear the sabre's
+++ * request, and the sabre, which keeps one request at a time, then held
+++ * back every other interrupt: Debian 13 lost its IDE interrupts at
+++ * power-off, or panicked in the driver's handler when the interface came
+++ * up again.
+++ *
+++ * After a reset the receiver must take no frame until the guest enables
+++ * its DMA again (ERX configuration bit 0), and the reset drops the
+++ * transmit and receive status that is still pending.
+++ *
+++ * Nothing runs on the CPU, so the test sets up what the firmware and the
+++ * driver would: bus 2 behind the simba bridge at 00:01.0 (pciB), the NIC in
+++ * its slot 0 (ino 0x10) with its registers in PCI memory, a receive ring in
+++ * RAM (the IOMMU is off, so DMA addresses are physical). Frames come in on
+++ * a socket netdev. The sabre's requests go to the test.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++#include "qemu/sockets.h"
+++#include "qobject/qdict.h"
+++#include "hw/pci/pci_regs.h"
+++
+++#define SABRE_CONFIG    0x1fe00000000ULL    /* sabre registers (big-endian) */
+++#define PCI_CONFIG      0x1fe01000000ULL    /* PCI configuration space */
+++#define PCI_MEM         0x1ff00000000ULL    /* PCI memory space */
+++#define IMR_ENABLED     0x80000000
+++/* ino 0x10: INTA of slot 0 of pciB, the NIC; slot 4's map and its clear */
+++#define INO_NIC         0x10
+++#define PCI_IMR_SLOT4   (SABRE_CONFIG + 0xc00 + 4 * 8 + 4)
+++#define PCI_CLR_NIC     (SABRE_CONFIG + 0x1400 + INO_NIC * 8 + 4)
+++
+++#define DEVFN_SIMBA_B   0x08                /* 00:01.0 */
+++#define BUS_B           2
+++#define DEVFN_HME       0x00                /* 02:00.0 */
+++#define HME_BAR         0x100000            /* in the bridge's 1 MB window */
+++#define HME             (PCI_MEM + HME_BAR)
+++
+++/* Register blocks in BAR 0 (little-endian, 32-bit) */
+++#define SEB_RESET       0x0000
+++#define  SEB_RESET_ALL  0x3                 /* ETX and ERX */
+++#define SEB_STAT        0x0100              /* read clears all but MIF */
+++#define  STAT_RXTOHOST  0x10000
+++#define SEB_IMASK       0x0104
+++#define ERX_CFG         0x4000
+++#define  ERX_DMAENABLE  0x1                 /* ring of 32, no offset */
+++#define ERX_RING        0x4004
+++#define MAC_RXCFG       0x630c
+++#define  RXCFG_ENABLE   0x1
+++#define  RXCFG_PMISC    0x40
+++
+++/* Receive ring and buffers in RAM; descriptors are little-endian */
+++#define RING            0x100000
+++#define BUF             0x110000
+++#define BUF_SIZE        0x600
+++#define XD_OWN          0x80000000
+++#define XD_LEN_SHIFT    16
+++#define XD_LEN_MASK     0x3fff0000
+++
+++static int sock[2];
+++
+++static uint64_t cfg_addr(int bus, int devfn, int reg)
+++{
+++    return PCI_CONFIG + (bus << 16) + (devfn << 8) + reg;
+++}
+++
+++/* Byte accesses only: configuration space is little-endian */
+++static void cfg_write(QTestState *qts, int bus, int devfn, int reg,
+++                      uint32_t val, int len)
+++{
+++    int i;
+++
+++    for (i = 0; i < len; i++) {
+++        qtest_writeb(qts, cfg_addr(bus, devfn, reg + i), val >> (8 * i));
+++    }
+++}
+++
+++static uint8_t cfg_read(QTestState *qts, int bus, int devfn, int reg)
+++{
+++    return qtest_readb(qts, cfg_addr(bus, devfn, reg));
+++}
+++
+++/* The CPU's stores are big-endian, the NIC's registers little-endian */
+++static void hme_write(QTestState *qts, uint32_t reg, uint32_t val)
+++{
+++    qtest_writel(qts, HME + reg, bswap32(val));
+++}
+++
+++static uint32_t hme_read(QTestState *qts, uint32_t reg)
+++{
+++    return bswap32(qtest_readl(qts, HME + reg));
+++}
+++
+++static void desc_write(QTestState *qts, int i, uint32_t status, uint32_t addr)
+++{
+++    uint32_t d[2] = { cpu_to_le32(status), cpu_to_le32(addr) };
+++
+++    qtest_memwrite(qts, RING + i * 8, d, sizeof(d));
+++}
+++
+++static uint32_t desc_status(QTestState *qts, int i)
+++{
+++    uint32_t status;
+++
+++    qtest_memread(qts, RING + i * 8, &status, sizeof(status));
+++    return le32_to_cpu(status);
+++}
+++
+++static const char *find_sabre(QTestState *qts)
+++{
+++    static char path[64];
+++    int i;
+++
+++    for (i = 0; i < 64; i++) {
+++        QDict *rsp;
+++        bool found;
+++
+++        snprintf(path, sizeof(path), "/machine/unattached/device[%d]", i);
+++        rsp = qtest_qmp(qts, "{ 'execute': 'qom-get', 'arguments': "
+++                        "{ 'path': %s, 'property': 'type' } }", path);
+++        found = qdict_haskey(rsp, "return") &&
+++                !strcmp(qdict_get_str(rsp, "return"), "sabre");
+++        qobject_unref(rsp);
+++        if (found) {
+++            return path;
+++        }
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/* The ring with every descriptor owned by the NIC, receiving from slot 0 */
+++static void give_ring(QTestState *qts)
+++{
+++    int i;
+++
+++    for (i = 0; i < 32; i++) {
+++        desc_write(qts, i, XD_OWN | (BUF_SIZE << XD_LEN_SHIFT),
+++                   BUF + i * BUF_SIZE);
+++    }
+++    hme_write(qts, ERX_RING, RING);
+++    hme_write(qts, ERX_CFG, ERX_DMAENABLE);
+++}
+++
+++static QTestState *setup(void)
+++{
+++    QTestState *qts;
+++
+++    /* Not qemu_socketpair(): QEMU inherits sock[1], so no close-on-exec */
+++    g_assert_cmpint(socketpair(AF_UNIX, SOCK_STREAM, 0, sock), ==, 0);
+++    qts = qtest_initf("-machine sun4u -nodefaults "
+++                      "-netdev socket,fd=%d,id=n0 "
+++                      "-device sunhme,netdev=n0,bus=pciB,addr=0", sock[1]);
+++    qtest_irq_intercept_out_named(qts, find_sabre(qts), "ivec-irq");
+++    qtest_writel(qts, PCI_IMR_SLOT4, IMR_ENABLED);
+++
+++    /* Bus 2 behind 00:01.0, with a memory window at 1 MB */
+++    cfg_write(qts, 0, DEVFN_SIMBA_B, PCI_SECONDARY_BUS, BUS_B, 1);
+++    cfg_write(qts, 0, DEVFN_SIMBA_B, PCI_SUBORDINATE_BUS, BUS_B, 1);
+++    cfg_write(qts, 0, DEVFN_SIMBA_B, PCI_MEMORY_BASE, HME_BAR >> 16, 2);
+++    cfg_write(qts, 0, DEVFN_SIMBA_B, PCI_MEMORY_LIMIT, HME_BAR >> 16, 2);
+++    cfg_write(qts, 0, DEVFN_SIMBA_B, PCI_COMMAND,
+++              PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER, 2);
+++    g_assert_cmphex(cfg_read(qts, BUS_B, DEVFN_HME, PCI_VENDOR_ID), ==, 0x8e);
+++    cfg_write(qts, BUS_B, DEVFN_HME, PCI_BASE_ADDRESS_0, HME_BAR, 4);
+++    cfg_write(qts, BUS_B, DEVFN_HME, PCI_COMMAND,
+++              PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER, 2);
+++
+++    /* What the driver sets up: reset, ring, every interrupt, any frame */
+++    hme_write(qts, SEB_RESET, SEB_RESET_ALL);
+++    g_assert_cmphex(hme_read(qts, SEB_RESET), ==, 0);
+++    give_ring(qts);
+++    hme_write(qts, SEB_IMASK, 0);
+++    hme_write(qts, MAC_RXCFG, RXCFG_ENABLE | RXCFG_PMISC);
+++    g_assert_false(qtest_get_irq(qts, INO_NIC));
+++    return qts;
+++}
+++
+++static void teardown(QTestState *qts)
+++{
+++    qtest_quit(qts);
+++    close(sock[0]);
+++    close(sock[1]);
+++}
+++
+++/* A broadcast frame of len bytes on the wire (length-prefixed on the socket) */
+++static void send_frame(int len)
+++{
+++    uint8_t frame[256];
+++    uint32_t be_len = htonl(len);
+++
+++    g_assert(len <= sizeof(frame));
+++    memset(frame, 0xff, 12);
+++    memset(frame + 12, len, len - 12);
+++    g_assert_cmpint(send(sock[0], &be_len, sizeof(be_len), 0), ==,
+++                    sizeof(be_len));
+++    g_assert_cmpint(send(sock[0], frame, len, 0), ==, len);
+++}
+++
+++/* Let the main loop read the socket: poll until the NIC's request, or not */
+++static bool wait_request(QTestState *qts)
+++{
+++    int i;
+++
+++    for (i = 0; i < 200; i++) {
+++        if (qtest_get_irq(qts, INO_NIC)) {
+++            return true;
+++        }
+++        qtest_clock_step(qts, 100000);
+++        g_usleep(1000);
+++    }
+++    return false;
+++}
+++
+++/* The guest handles the NIC's interrupt: reads the status, clears the request */
+++static uint32_t handle(QTestState *qts)
+++{
+++    uint32_t stat = hme_read(qts, SEB_STAT);
+++
+++    qtest_writel(qts, PCI_CLR_NIC, 0);
+++    g_assert_false(qtest_get_irq(qts, INO_NIC));
+++    return stat;
+++}
+++
+++static int rx_len(QTestState *qts, int i)
+++{
+++    return (desc_status(qts, i) & XD_LEN_MASK) >> XD_LEN_SHIFT;
+++}
+++
+++/* Received as set up: into descriptor 0, with an interrupt */
+++static void test_rx(void)
+++{
+++    QTestState *qts = setup();
+++
+++    send_frame(60);
+++    g_assert_true(wait_request(qts));
+++    g_assert_cmphex(handle(qts) & STAT_RXTOHOST, ==, STAT_RXTOHOST);
+++    g_assert_false(desc_status(qts, 0) & XD_OWN);
+++    g_assert_cmpint(rx_len(qts, 0), ==, 60);
+++    teardown(qts);
+++}
+++
+++/*
+++ * After a reset a frame is dropped: no interrupt, the ring untouched. With
+++ * DMA enabled again the next frame goes into the descriptor after the last
+++ * one used.
+++ */
+++static void test_no_rx_after_reset(void)
+++{
+++    QTestState *qts = setup();
+++
+++    send_frame(60);
+++    g_assert_true(wait_request(qts));
+++    handle(qts);
+++
+++    hme_write(qts, SEB_RESET, SEB_RESET_ALL);
+++    g_assert_cmphex(hme_read(qts, SEB_RESET), ==, 0);
+++    send_frame(100);
+++    g_assert_false(wait_request(qts));
+++    g_assert_cmphex(hme_read(qts, SEB_STAT) & STAT_RXTOHOST, ==, 0);
+++    g_assert_true(desc_status(qts, 1) & XD_OWN);
+++
+++    hme_write(qts, ERX_CFG, ERX_DMAENABLE);
+++    send_frame(80);
+++    g_assert_true(wait_request(qts));
+++    handle(qts);
+++    g_assert_false(desc_status(qts, 1) & XD_OWN);
+++    g_assert_cmpint(rx_len(qts, 1), ==, 80);
+++    g_assert_true(desc_status(qts, 2) & XD_OWN);
+++    teardown(qts);
+++}
+++
+++/* A reset drops the receive status still pending, and with it the line */
+++static void test_reset_drops_status(void)
+++{
+++    QTestState *qts = setup();
+++
+++    send_frame(60);
+++    g_assert_true(wait_request(qts));
+++
+++    hme_write(qts, SEB_RESET, SEB_RESET_ALL);
+++    qtest_writel(qts, PCI_CLR_NIC, 0);
+++    g_assert_false(qtest_get_irq(qts, INO_NIC));
+++    g_assert_cmphex(hme_read(qts, SEB_STAT) & STAT_RXTOHOST, ==, 0);
+++    teardown(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4u-sunhme-reset/rx", test_rx);
+++    qtest_add_func("sun4u-sunhme-reset/no-rx-after-reset",
+++                   test_no_rx_after_reset);
+++    qtest_add_func("sun4u-sunhme-reset/reset-drops-status",
+++                   test_reset_drops_status);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch b/debian/patches/wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
+new file mode 100644
+index 0000000..bb9b9cb
+--- /dev/null
++++ b/debian/patches/wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
+@@ -0,0 +1,55 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/pci-host/sabre: drop a slot's request when the guest
++ disables the slot
++
++The sabre keeps one interrupt request to the CPU at a time (irq_request)
++and makes the next one when the guest clears the current one. A guest
++won't clear the request of an interrupt it has disabled (Linux's
++handle_fasteoi_irq() skips the clear for a disabled interrupt, sun4u's
++irq_chip has IRQCHIP_EOI_IF_HANDLED), so a write of an interrupt-map
++register without the valid bit drops the outstanding request of that
++interrupt (sabre_config_write()). The OBIO branch does that right. The
++PCI branch has one register per slot, for the slot's four inos
++(pci_irq_map[ino >> 2]), but compared irq_request with the slot number:
++a request of ino 0x10 (pciB slot 0, where qemu-server puts the NIC)
++stayed when slot 4 was disabled, and the sabre then held back every
++other interrupt, the IDE controller's among them, waiting for a clear
++that doesn't come; a request of ino 4 went when slot 4 was disabled.
++
++Found while looking into a lost IDE interrupt on Debian 13 (the previous
++patches): Linux 7.0 leaves the NIC's map register valid when it frees the
++interrupt, so it wasn't this. No other guest was traced for it.
++
++Compare the request's slot (irq_request >> 2, PCI inos only) with the
++register's. The next patch adds qtest cases.
++---
++ hw/pci-host/sabre.c | 16 +++++++++++-----
++ 1 file changed, 11 insertions(+), 5 deletions(-)
++
++diff --git a/hw/pci-host/sabre.c b/hw/pci-host/sabre.c
++index 0a5df97..7a79d84 100644
++--- a/hw/pci-host/sabre.c
+++++ b/hw/pci-host/sabre.c
++@@ -129,11 +129,17 @@ static void sabre_config_write(void *opaque, hwaddr addr,
++         break;
++     case 0xc00 ... 0xc3f: /* PCI interrupt control */
++         if (addr & 4) {
++-            unsigned int ino = (addr & 0x3f) >> 3;
++-            s->pci_irq_map[ino] &= PBM_PCI_IMR_MASK;
++-            s->pci_irq_map[ino] |= val & ~PBM_PCI_IMR_MASK;
++-            if ((s->irq_request == ino) && !(val & ~PBM_PCI_IMR_MASK)) {
++-                sabre_clear_request(s, ino);
+++            unsigned int slot = (addr & 0x3f) >> 3;
+++            s->pci_irq_map[slot] &= PBM_PCI_IMR_MASK;
+++            s->pci_irq_map[slot] |= val & ~PBM_PCI_IMR_MASK;
+++            /*
+++             * One register for the slot's four inos: a request of any of
+++             * them goes when the guest disables the slot, as the guest
+++             * won't clear the request of an interrupt it has disabled.
+++             */
+++            if (s->irq_request < 32 && (s->irq_request >> 2) == slot
+++                && !(val & ~PBM_PCI_IMR_MASK)) {
+++                sabre_clear_request(s, s->irq_request);
++             }
++             sabre_check_irqs(s);
++         }
+diff --git a/debian/patches/wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch b/debian/patches/wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
+new file mode 100644
+index 0000000..970499b
+--- /dev/null
++++ b/debian/patches/wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
+@@ -0,0 +1,115 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test disabling a PCI interrupt on the sabre
++
++Two cases for the previous patch in sun4u-sabre-irq-test (5 in all).
++pci-disable-drops-request: with the NIC's request (ino 0x10) outstanding
++and the IDE controller's line up, the guest disables slot 4; the NIC's
++request goes and the IDE interrupt is requested without a clear of the
++NIC's; enabled again, the NIC's line (still up) is requested.
++pci-disable-other-slot: disabling slot 4 leaves the request of ino 0x14
++(slot 5) and of ino 4 (slot 1) alone. The first fails without the
++previous patch, the ino 4 part of the second too.
++---
++ tests/qtest/sun4u-sabre-irq-test.c | 68 ++++++++++++++++++++++++++++++
++ 1 file changed, 68 insertions(+)
++
++diff --git a/tests/qtest/sun4u-sabre-irq-test.c b/tests/qtest/sun4u-sabre-irq-test.c
++index a28471f..40ce842 100644
++--- a/tests/qtest/sun4u-sabre-irq-test.c
+++++ b/tests/qtest/sun4u-sabre-irq-test.c
++@@ -12,6 +12,13 @@
++  * OpenBSD 8.0 hung like that with wd0 timeouts, the network (sunhme on
++  * pciB, a PCI interrupt) racing the IDE controller (an OBIO interrupt).
++  *
+++ * A slot's interrupt-map register written without the valid bit (the guest
+++ * disabling the interrupt) dropped the outstanding request only when
+++ * its ino was the slot's number, not when it was one of the slot's inos.
+++ * A guest doesn't clear the request of an interrupt it has disabled, so
+++ * the sabre then waited for that clear forever and held back every other
+++ * interrupt.
+++ *
++  * The sabre's interrupt lines are driven from the test, and its requests
++  * go to the test instead of the CPU.
++  *
++@@ -41,6 +48,10 @@
++ #define INO_PCI2        0x14
++ #define PCI_IMR_SLOT5   (SABRE_CONFIG + 0xc00 + 5 * 8 + 4)
++ #define PCI_CLR_PCI2    (SABRE_CONFIG + 0x1400 + INO_PCI2 * 8 + 4)
+++/* ino 4: INTA of slot 1 of pciA, ino number 4 like the NIC's slot */
+++#define INO_SLOT1       0x04
+++#define PCI_IMR_SLOT1   (SABRE_CONFIG + 0xc00 + 1 * 8 + 4)
+++#define PCI_CLR_SLOT1   (SABRE_CONFIG + 0x1400 + INO_SLOT1 * 8 + 4)
++ 
++ static const char *find_sabre(QTestState *qts)
++ {
++@@ -170,6 +181,59 @@ static void test_console_after_both(void)
++     qtest_quit(qts);
++ }
++ 
+++/*
+++ * The guest disables the NIC's interrupt (its slot's interrupt-map register
+++ * without the valid bit) while the NIC's request is outstanding: the
+++ * request goes, and the IDE interrupt gets through without a clear of it.
+++ */
+++static void test_pci_disable_drops_request(void)
+++{
+++    QTestState *qts = setup();
+++
+++    line(qts, INO_NIC, 1);
+++    g_assert_true(requested(qts, INO_NIC));
+++    line(qts, INO_HDD, 1);
+++    g_assert_false(requested(qts, INO_HDD));
+++
+++    qtest_writel(qts, PCI_IMR_SLOT4, 0);
+++    g_assert_false(requested(qts, INO_NIC));
+++    g_assert_true(requested(qts, INO_HDD));
+++    handle(qts, INO_HDD, OBIO_CLR_HDD);
+++
+++    /* The NIC's line is still up: enabled again, it is requested */
+++    qtest_writel(qts, PCI_IMR_SLOT4, IMR_ENABLED);
+++    g_assert_true(requested(qts, INO_NIC));
+++    handle(qts, INO_NIC, PCI_CLR_NIC);
+++
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * Disabling another slot's interrupt leaves the request alone, also that of
+++ * ino 4 (slot 1) when slot 4 is disabled
+++ */
+++static void test_pci_disable_other_slot(void)
+++{
+++    QTestState *qts = setup();
+++
+++    line(qts, INO_PCI2, 1);
+++    g_assert_true(requested(qts, INO_PCI2));
+++    qtest_writel(qts, PCI_IMR_SLOT4, 0);
+++    g_assert_true(requested(qts, INO_PCI2));
+++    handle(qts, INO_PCI2, PCI_CLR_PCI2);
+++
+++    /* The request stays when the device drops its line, until cleared */
+++    qtest_writel(qts, PCI_IMR_SLOT1, IMR_ENABLED);
+++    line(qts, INO_SLOT1, 1);
+++    line(qts, INO_SLOT1, 0);
+++    g_assert_true(requested(qts, INO_SLOT1));
+++    qtest_writel(qts, PCI_IMR_SLOT4, 0);
+++    g_assert_true(requested(qts, INO_SLOT1));
+++    handle(qts, INO_SLOT1, PCI_CLR_SLOT1);
+++
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++@@ -180,6 +244,10 @@ int main(int argc, char **argv)
++                    test_pci_waits_for_pci);
++     qtest_add_func("sun4u-sabre-irq/console-after-both",
++                    test_console_after_both);
+++    qtest_add_func("sun4u-sabre-irq/pci-disable-drops-request",
+++                   test_pci_disable_drops_request);
+++    qtest_add_func("sun4u-sabre-irq/pci-disable-other-slot",
+++                   test_pci_disable_other_slot);
++ 
++     return g_test_run();
++ }
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides

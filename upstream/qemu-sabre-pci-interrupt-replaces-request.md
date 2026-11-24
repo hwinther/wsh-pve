@@ -83,8 +83,16 @@ the guest clears the current request.
 Not changed, and maybe worth a look upstream: the CPU still drops a vector sent while it is busy
 (the real UltraSPARC NACKs it and the sabre retries), and a sabre lowering its line
 (`sabre_clear_request()`) clears the CPU's busy bit whatever vector it holds. With one request at a
-time neither matters. The PCI interrupt-map write (`0xc00 ... 0xc3f`) compares `irq_request` with
-the slot number rather than the slot of the request.
+time neither matters. The PCI interrupt-map write (`0xc00 ... 0xc3f`) compared `irq_request` with
+the slot number rather than the slot of the request; our `wsh/0137` (qtest cases in `wsh/0138`)
+compares `irq_request >> 2`, so disabling a slot drops a request of any of its inos.
+
+One request at a time also means that an interrupt the guest never clears holds back every other
+one. On real hardware each ino has its own state, and an uncleared ino blocks only itself. Debian 13
+on sun4u hit this through QEMU's sunhme, which kept receiving after Linux had reset it and freed its
+interrupt: the NIC's request (ino 0x10) was never cleared and the IDE interrupt waited behind it
+(`READ DMA` timeouts at power-off). Our `wsh/0135` fixes the sunhme side (`submodules/SPARC.md`, "The
+lost IDE interrupt at Debian 13's power-off"); the sabre still keeps one request at a time.
 
 The qtest (`tests/qtest/sun4u-sabre-irq-test.c`) drives the sabre's `pbm-irq` lines and intercepts
 its `ivec-irq` outputs: a PCI interrupt raised while the IDE request is outstanding, or while

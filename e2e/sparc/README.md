@@ -2214,7 +2214,10 @@ The boot test on a busy host, 2026-11-24 (the stored disk's copies; pve-qemu-kvm
 The one that reached `login:` and failed was a different fault: during `poweroff` a `READ DMA` on the IDE disk
 timed out with the drive's status `DRDY` (the command done, its interrupt never seen), libata fell back to
 PIO, every further command timed out the same way, ext4 aborted its journal and `poweroff` didn't finish in
-600 s. Once in 9 boots, only at that load; not investigated further (ROADMAP.md, "Known and not fixed").
+600 s. Once in 9 boots, only at that load. The cause was QEMU's sunhme, not the IDE controller: when
+`poweroff` takes the interface down Linux resets the NIC and frees its interrupt, the model kept receiving,
+and the interrupt of the next frame was never cleared, so the sabre held every IDE interrupt behind it.
+Fixed by pve-qemu `wsh/0135` (`submodules/SPARC.md`, "The lost IDE interrupt at Debian 13's power-off").
 
 Not tried: `--apt-proxy` (the pinhole), DHCP (`--ip dhcp` is refused; the hand install used it and got
 its lease), `--user` through PVE (the lab run added one), the VGA console.
