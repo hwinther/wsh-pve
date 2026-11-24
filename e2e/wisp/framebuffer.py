@@ -15,6 +15,12 @@ from shell import MANDEL_ITER, MANDEL_X0, mandel_count
 
 DISPLAYS = {"sparc32": ("cg3", "tcx"), "sparc64": ("std",), "x86_64": ("std",),
             "aarch64": ("bochs-display",)}
+# The keyboard and mouse keytest and mousetest must find (evdev names): the pc's and sun4u's PS/2
+# devices on the 8042, the SS-5's on the ESCC, virt's on virtio.
+INPUT_DEVICES = {"sparc32": ("Sun Type 5 keyboard", "Sun Mouse"),
+                 "sparc64": ("AT Translated Set 2 keyboard", "ImExPS/2 Generic Explorer Mouse"),
+                 "x86_64": ("AT Translated Set 2 keyboard", "ImExPS/2 Generic Explorer Mouse"),
+                 "aarch64": ("QEMU Virtio Keyboard", "QEMU Virtio Mouse")}
 RGB = [bytes(255 if index & bit else 0 for bit in (4, 2, 1)) for index in range(8)]
 MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32) "
                   rb"visual=(\d+) line=(\d+) drawn=1\r?\n")
@@ -23,8 +29,12 @@ MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32
 def display_args(display, arch=None):
     """Display and input devices for the selected machine."""
     args = ["-device" if display == "bochs-display" else "-vga", display]
-    if display == "bochs-display" or arch == "sparc64":
+    if display == "bochs-display":
         args += ["-device", "virtio-keyboard-pci", "-device", "virtio-mouse-pci"]
+    elif arch == "sparc64":
+        # The EBus 8042's PS/2 keyboard and mouse: Linux's sparc i8042 probe needs the mouse child
+        # that openbios-sparc64 0035 adds with this option (older firmware ignores it)
+        args += ["-prom-env", "ps2-mouse?=true"]
     return args
 
 
@@ -71,12 +81,23 @@ async def qmp(reader, writer, command, **arguments):
             raise RuntimeError(f"{command}: {reply}")
 
 
+def input_device(line, kind, arch):
+    """The evdev name from keytest's or mousetest's WISP-KEYBOARD/WISP-MOUSE line, which must be the
+    machine's own device: a fallback keyboard or mouse would hide a broken one."""
+    match = re.search(rb"WISP-" + kind.upper().encode() + rb" dev=\S+ name=(.*?)\r?$", line)
+    want = INPUT_DEVICES[arch][kind == "mouse"]
+    if not match or match[1].decode(errors="replace") != want:
+        raise ValueError(f"{arch}: expected the {kind} {want!r}, found {line!r}")
+    return want
+
+
 async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
     proc.stdin.write(b"keytest\n")
     # Inject only after the keyboard is open.
     while True:
         line = await until(b"\n")
         if b"WISP-KEYBOARD dev=" in line:
+            input_device(line, "keyboard", arch)
             break
         if b"keytest:" in line:
             raise RuntimeError(line.decode().strip())
@@ -89,15 +110,18 @@ async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
     codes = [int(n) for n in re.findall(rb"^WISP-KEY v=1 code=(\d+) value=1\r?$", answer, re.M)]
     if codes != [30, 48, 28, 1]:
         raise ValueError(f"sent {keys}, received {answer!r}")
-    print(f"{arch}/{display} sent {keys}, received {codes}", flush=True)
+    print(f"{arch}/{display} {line.decode().strip()} sent {keys}, received {codes}", flush=True)
 
 
-def mouse_events(answer):
+def mouse_events(answer, exact=None):
+    """The mouse events; the net motion must be right and down (exactly `exact`, (dx, dy), when
+    given), the buttons left press and release, then right press."""
     events = [tuple(map(int, match)) for match in re.findall(
         rb"^WISP-MOUSE-EV type=(\d+) code=(\d+) value=(-?\d+)\r?$", answer, re.M)]
     motion = [sum(v for t, c, v in events if t == 2 and c == axis) for axis in (0, 1)]
     buttons = [(c, v) for t, c, v in events if t == 1]
-    if min(motion) <= 0 or buttons != [(272, 1), (272, 0), (273, 1)]:
+    if (min(motion) <= 0 or (exact is not None and tuple(motion) != exact)
+            or buttons != [(272, 1), (272, 0), (273, 1)]):
         raise ValueError(f"unexpected mouse motion or buttons: {answer!r}")
     return events
 
@@ -107,18 +131,21 @@ async def check_mouse(proc, arch, display, reader, writer, until, prompt):
     while True:
         line = await until(b"\n")
         if b"WISP-MOUSE dev=" in line:
+            input_device(line, "mouse", arch)
             break
         if b"mousetest:" in line:
             raise RuntimeError(line.decode().strip())
+    move = (10, 5)
     await qmp(reader, writer, "input-send-event", events=[
         {"type": "rel", "data": {"axis": axis, "value": value}}
-        for axis, value in (("x", 10), ("y", 5))])
+        for axis, value in zip(("x", "y"), move)])
     for button in ("left", "right"):
         for down in (True, False):
             await qmp(reader, writer, "input-send-event", events=[
                 {"type": "btn", "data": {"button": button, "down": down}}])
             await asyncio.sleep(0.06)
-    events = mouse_events(await until(prompt))
+    # The SS-5's Sun mouse splits the move and adds a compensating step: only its direction counts
+    events = mouse_events(await until(prompt), None if arch == "sparc32" else move)
     print(f"{arch}/{display} {line.decode().strip()} events={events}", flush=True)
 
 
@@ -192,9 +219,6 @@ async def boot(arch, display, dest, timeout):
     with tempfile.TemporaryDirectory() as tmp, stem.with_suffix(".log").open("wb") as log:
         monitor = Path(tmp) / "qmp"
         extra = [*display_args(display, arch), "-qmp", f"unix:{monitor},server=on,wait=off"]
-        if arch == "sparc64":
-            # openbios-sparc64 0035: the 8042's mouse child; older firmware ignores the variable
-            extra += ["-prom-env", "ps2-mouse?=true"]
         cmd = run.qemu_command(arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
                                firmware=os.getenv("WISP_FIRMWARE"), interactive=True, extra=extra)
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE,
