@@ -31,6 +31,12 @@ stay (the OpenGL wrapper's display timer gave it back to the VGA about 4 s after
 test passes when the guest program reports PASS (its own read-back matched), the console showed the
 frame (both times with a long hold), and Windows came back.
 
+The demo (e2e/3dfx/demo, WSHDEMO.EXE from --bin) is optional: --tests demo-glide2, demo-glide3 or
+demo-opengl (never in "auto") run it with `-api <api> -check -bench N -hold S` (--demo-bench N). It
+checks its own parts by reading them back ("CHECK part=<name> PASS"), prints their frame rates, and
+the probes of its held frame ("PROBE x y rrggbb"), which the harness checks in the console instead
+of the test scene's; such a test passes when all three parts passed too.
+
 With --pve VMID the harness runs on a PVE node (the e2e PVE container: e2e/3dfx/win98-test.sh --pve)
 and PVE starts the VM instead: `qm create` with the same devices (`cpu: pentium3`, `scsihw: lsi`,
 `vga: std,mesa=1`, with --display egl also `mesa-display=egl-headless`, an rtl8139 NIC, AC97, the
@@ -69,7 +75,12 @@ TESTS = {
     "glide2": ("GLIDE2", "GLIDETST.EXE", ""),
     "glide3": ("GLIDE3", "GLIDETST.EXE", "glide3"),
     "opengl": ("OPENGL", "GLTEST.EXE", ""),
+    # the demo (e2e/3dfx/demo, WSHDEMO.EXE -check -bench N -hold S), optional: --tests demo-glide2,...
+    "demo-glide2": ("DEMOG2", "WSHDEMO.EXE", "-api glide2 -tag DEMOG2"),
+    "demo-glide3": ("DEMOG3", "WSHDEMO.EXE", "-api glide3 -tag DEMOG3"),
+    "demo-opengl": ("DEMOGL", "WSHDEMO.EXE", "-api opengl -tag DEMOGL"),
 }
+DEMO_PARTS = ("cube", "tunnel", "plasma")
 # The guest drivers of a qemu-3dfx-drivers release and where they go on C:
 DRIVERS = {
     "fxmemmap.vxd": "WINDOWS/SYSTEM",
@@ -80,7 +91,7 @@ DRIVERS = {
     "opengl32.dll": "WIN3DFX",
 }
 STARTUP = "WINDOWS/Start Menu/Programs/StartUp"
-LINE_RE = re.compile(r"^(W3DRUN|GLIDE2|GLIDE3|OPENGL): (.*)$")
+LINE_RE = re.compile(r"^(W3DRUN|GLIDE2|GLIDE3|OPENGL|DEMOG2|DEMOG3|DEMOGL): (.*)$")
 
 
 def log(msg):
@@ -398,7 +409,11 @@ def unpack_drivers(src, dest):
     return rev
 
 
-def run_list(tests, hold, bench, timeout, delay, stay=False, gap=8):
+def is_demo(test):
+    return test.startswith("demo-")
+
+
+def run_list(tests, hold, bench, timeout, delay, stay=False, gap=8, demo_bench=300):
     """RUN.TXT for w3drun.exe (CR LF lines): a pause of gap seconds between the programs, for the
     check that the console shows Windows again."""
     lines = [f"delay {delay}"]
@@ -406,7 +421,10 @@ def run_list(tests, hold, bench, timeout, delay, stay=False, gap=8):
         if i:
             lines.append(f"delay {gap}")
         _, prog, args = TESTS[t]
-        a = " ".join(x for x in (args, f"hold={hold}", f"bench={bench}") if x)
+        if is_demo(t):
+            a = f"{args} -check -bench {demo_bench} -hold {hold}"
+        else:
+            a = " ".join(x for x in (args, f"hold={hold}", f"bench={bench}") if x)
         lines.append(f"run {timeout} {prog} {a}")
     lines.append("stay" if stay else "shutdown")
     return "\r\n".join(lines) + "\r\n"
@@ -420,11 +438,15 @@ def prepare_disk(args, raw, bindir, drivers_dir):
         dst = f"{where}/{name.upper()}"
         report[dst] = "replaced" if fat.exists(dst) else "added"
         fat.put(os.path.join(drivers_dir, name), dst)
-    for exe in ("w3drun.exe", "glidetst.exe", "gltest.exe"):
+    exes = ["w3drun.exe", "glidetst.exe", "gltest.exe"]
+    if any(is_demo(t) for t in args.tests):
+        exes.append("WSHDEMO.EXE")
+    for exe in exes:
         fat.put(os.path.join(bindir, exe), f"WIN3DFX/{exe.upper()}")
     runtxt = os.path.join(args.private, "RUN.TXT")
     with open(runtxt, "w", newline="") as f:
-        f.write(run_list(args.tests, args.hold, args.bench, args.test_timeout, args.delay, args.stay))
+        f.write(run_list(args.tests, args.hold, args.bench, args.test_timeout, args.delay, args.stay,
+                         demo_bench=args.demo_bench))
     fat.put(runtxt, "WIN3DFX/RUN.TXT")
     fat.delete("WIN3DFX/DONE.TXT")
     fat.delete("WIN3DFX/LOG.TXT")
@@ -517,7 +539,7 @@ def select_tests(spec, display, binary):
     if spec != "auto":
         return [t.strip() for t in spec.split(",") if t.strip()]
     if display == "sdl":
-        return list(TESTS)
+        return [t for t in TESTS if not is_demo(t)]
     tests = []
     if GLIDE_OFFSCREEN_MARK in binary:
         tests += ["glide2", "glide3"]
@@ -832,6 +854,32 @@ def frame_check(args, scene, mon, priv, name):
             "size": f"{w}x{h}", "probes": probes, "mismatches": bad}
 
 
+def demo_frame_check(args, mon, priv, name, probes):
+    """The demo's held frame: the probes it printed for it ("PROBE x y rrggbb", in 640x480), in the
+    console (an SDL window shows the frame scaled to the window)."""
+    if not probes:
+        return {"ok": False, "error": "the demo printed no probes"}
+    img = capture(args, mon, os.path.join(priv, f"{name}-frame.ppm"))
+    if not img:
+        return {"ok": False, "error": "no capture"}
+    w, h, pix = img
+    sx, sy = (w / 640, h / 480) if args.display == "sdl" else (1, 1)
+    out, bad = [], 0
+    for x, y, want in probes:
+        px, py = int(x * sx), int(y * sy)
+        o = (py * w + px) * 3
+        got = pix[o:o + 3] if px < w and py < h else b"\0\0\0"
+        ok = all(abs(got[c] - int(want[2 * c:2 * c + 2], 16)) <= 24 for c in range(3))
+        bad += not ok
+        out.append({"x": x, "y": y, "want": want, "got": got.hex(), "ok": ok})
+    return {"ok": bad == 0, "size": f"{w}x{h}", "probes": out, "mismatches": bad}
+
+
+DEMO_PROBE_RE = re.compile(r"PROBE (\d+) (\d+) ([0-9a-f]{6})$")
+DEMO_CHECK_RE = re.compile(r"CHECK part=(\w+) (PASS|FAIL)(.*)$")
+DEMO_BENCH_RE = re.compile(r"BENCH part=(\w+) frames=(\d+) secs=([\d.]+) fps=([\d.]+)$")
+
+
 def after_check(args, scene, mon, priv, name, desktop):
     """The console (or the SDL window) after the program closed its 3D window: Windows' picture
     again, not the scene. A capture every half second for up to --vga-wait seconds: the VGA takes
@@ -1031,6 +1079,8 @@ def run_vm(args, scene, raw):
     for t in args.tests:
         res["tests"][t] = {"tag": TESTS[t][0], "guest": None, "frame": None, "after": None, "bench": None,
                            "lines": []}
+        if is_demo(t):
+            res["tests"][t].update({"checks": {}, "parts_fps": {}, "probes": []})
     by_tag = {TESTS[t][0]: t for t in args.tests}
     desktop = None
     held_due = {}  # test -> when to check its frame again, late in a long hold
@@ -1057,8 +1107,22 @@ def run_vm(args, scene, raw):
                 continue
             r = res["tests"][t]
             r["lines"].append(text)
-            if text.startswith("START"):
+            if is_demo(t) and DEMO_CHECK_RE.match(text):
+                m = DEMO_CHECK_RE.match(text)
+                r["checks"][m.group(1)] = m.group(2) + m.group(3)
+            elif is_demo(t) and DEMO_BENCH_RE.match(text):
+                r["parts_fps"][DEMO_BENCH_RE.match(text).group(1)] = float(DEMO_BENCH_RE.match(text).group(4))
+            elif is_demo(t) and DEMO_PROBE_RE.match(text):
+                m = DEMO_PROBE_RE.match(text)
+                r["probes"].append((int(m.group(1)), int(m.group(2)), m.group(3)))
+            elif text.startswith("START"):
                 r["start_s"] = now
+            elif text == "FRAME" and is_demo(t):
+                r["frame_s"] = now
+                time.sleep(1)
+                r["frame"] = demo_frame_check(args, mon, priv, t, r["probes"])
+                log(f"{t}: the demo's held frame in the console: {'ok' if r['frame']['ok'] else 'NO'} "
+                    f"({r['frame'].get('size', '')} {r['frame'].get('mismatches', r['frame'].get('error', ''))})")
             elif text == "FRAME":
                 r["frame_s"] = now
                 if args.hold >= 6:
@@ -1128,6 +1192,10 @@ def evaluate(res, tests):
             why.append(f"the held frame was gone {r['held'].get('at_s', '?')} s after FRAME")
         if r["after"] is None or r["after"]["ok"] is False:
             why.append("Windows didn't come back in the console" if r["after"] else "never closed")
+        if is_demo(t):
+            failed = [p for p in DEMO_PARTS if not r["checks"].get(p, "").startswith("PASS")]
+            if failed:
+                why.append("demo check failed or missing: " + ", ".join(failed))
         r["verdict"] = "PASS" if not why else "FAIL: " + "; ".join(why)
         all_ok &= not why
     return all_ok
@@ -1148,6 +1216,9 @@ def summary_md(res, info):
         af = r["after"] or {}
         bench = r["bench"]
         rate = "%s fps (%d frames in %d ms)" % (bench["fps"], bench["frames"], bench["ms"]) if bench else "-"
+        if is_demo(t):
+            rate = ", ".join(f"{p} {r['parts_fps'][p]:.0f}" for p in DEMO_PARTS if p in r["parts_fps"]) or "-"
+            rate += " fps" if r["parts_fps"] else ""
         back = "ok" if af.get("ok") else ("n/a" if af and af.get("ok") is None else "no")
         hf = r.get("held")
         held = "-" if not hf else f"{'ok' if hf.get('ok') else 'no'} at {hf.get('at_s', '?')} s"
@@ -1178,7 +1249,8 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="logs and the summary (our own text only)")
     ap.add_argument("--private", required=True, help="the disk copy and the screendumps (stay on this host)")
     ap.add_argument("--tests", default="auto", help="glide2, glide3, opengl, separated by commas; auto: those the "
-                    "binary can show headless (opengl needs the Mesa offscreen display) or all with --display sdl")
+                    "binary can show headless (opengl needs the Mesa offscreen display) or all with --display sdl; "
+                    "the demo's demo-glide2, demo-glide3 and demo-opengl only when named")
     ap.add_argument("--display", choices=("vnc", "egl", "sdl"), default="vnc")
     ap.add_argument("--accel", choices=("auto", "tcg", "kvm"), default="auto")
     ap.add_argument("--cpu", default="auto", help="QEMU -cpu; auto: pentium3, under TCG with SSE2-SSE4.2 and POPCNT "
@@ -1191,6 +1263,8 @@ def main(argv=None):
     ap.add_argument("--hold", type=int, default=5, help="seconds each frame stays up; from 6 the frame is checked "
                     "again 1.5 s before the end")
     ap.add_argument("--bench", type=int, default=2000, help="frames drawn after the check, for a frame rate")
+    ap.add_argument("--demo-bench", type=int, default=300, help="frames per part for the demo tests (demo-glide2, "
+                    "demo-glide3, demo-opengl: WSHDEMO.EXE -check -bench N -hold S)")
     ap.add_argument("--delay", type=int, default=10, help="seconds w3drun waits after the desktop is up")
     ap.add_argument("--test-timeout", type=int, default=300, help="per test program, in the guest")
     ap.add_argument("--timeout", type=int, default=1500, help="the whole VM run")

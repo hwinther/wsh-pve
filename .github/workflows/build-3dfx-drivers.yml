@@ -10,8 +10,9 @@ on:
       # our change to its build (the guest CPU baseline) and the check of the result
       - "submodules/qemu-3dfx-drivers.patch"
       - "scripts/check-3dfx-drivers-isa.sh"
-      # the Linux guest library (libglide.so.2) and the release workflow itself
+      # the Linux guest library (libglide.so.2), the demo and the release workflow itself
       - "scripts/build-3dfx-linux-glide.sh"
+      - "e2e/3dfx/demo/**"
       - ".github/workflows/build-3dfx-drivers.yml"
 
 permissions:
@@ -57,6 +58,13 @@ jobs:
       - name: Build the Linux guest Glide library
         run: |
           sudo make 3dfx-linux-glide DOCKER='docker' DOCKER_ARG='--user root'
+          sudo chown -R "$(id -u):$(id -g)" build
+
+      # wshdemo (e2e/3dfx/demo): Windows (Glide 2, Glide 3, OpenGL), DOS and Linux, each checked for
+      # a Pentium by its build script
+      - name: Build the demo
+        run: |
+          sudo make 3dfx-demo DOCKER='docker' DOCKER_ARG='--user root'
           sudo chown -R "$(id -u):$(id -g)" build
 
       - name: Package drivers
@@ -114,6 +122,23 @@ jobs:
           tar -C dist --owner=0 --group=0 -czf "dist/${LPKG}.tar.gz" "${LPKG}"
           tar -tvzf "dist/${LPKG}.tar.gz"
 
+          # The demo: the Windows and DOS programs in a zip (README with CR LF), the Linux one in a tarball
+          DPKG="wshdemo-${QEMU3DFX_SHORT}"
+          for f in windows/WSHDEMO.EXE dos/WSHDEMO.EXE linux/wshdemo; do
+            [ -s "build/wshdemo/$f" ] || { echo "::error::missing demo artifact: build/wshdemo/$f"; exit 1; }
+          done
+          mkdir -p "dist/${DPKG}/DOS"
+          cp build/wshdemo/windows/WSHDEMO.EXE "dist/${DPKG}/"
+          cp build/wshdemo/dos/WSHDEMO.EXE "dist/${DPKG}/DOS/"
+          sed 's/$/\r/' e2e/3dfx/demo/README.txt > "dist/${DPKG}/README.TXT"
+          (cd dist && zip -r "${DPKG}.zip" "${DPKG}")
+          DLPKG="wshdemo-linux-${QEMU3DFX_SHORT}"
+          mkdir -p "dist/${DLPKG}"
+          cp build/wshdemo/linux/wshdemo e2e/3dfx/demo/README.txt "dist/${DLPKG}/"
+          tar -C dist --owner=0 --group=0 -czf "dist/${DLPKG}.tar.gz" "${DLPKG}"
+          unzip -l "dist/${DPKG}.zip"
+          tar -tvzf "dist/${DLPKG}.tar.gz"
+
       - name: Create or update release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -121,6 +146,8 @@ jobs:
           TAG="qemu-3dfx-drivers-${QEMU3DFX_SHORT}"
           ZIP="dist/qemu-3dfx-drivers-${QEMU3DFX_SHORT}.zip"
           TGZ="dist/qemu-3dfx-linux-glide-${QEMU3DFX_SHORT}.tar.gz"
+          DZIP="dist/wshdemo-${QEMU3DFX_SHORT}.zip"
+          DTGZ="dist/wshdemo-linux-${QEMU3DFX_SHORT}.tar.gz"
           printf '%s\n' \
             "3dfx/Mesa passthrough guest drivers built from qemu-3dfx \`${QEMU3DFX_SHA}\`." \
             "" \
@@ -134,15 +161,21 @@ jobs:
             "\`qemu-3dfx-linux-glide-${QEMU3DFX_SHORT}.tar.gz\` is the Linux guest library (Glide 2.x only):" \
             "\`libglide.so.2\` and the \`libglide2x.so\` symlink for old i386 Linux guests (i586, glibc 2.0" \
             "or later), with a README on installing it. OpenGL and Glide 3 have no Linux guest wrapper." \
+            "" \
+            "\`wshdemo-${QEMU3DFX_SHORT}.zip\` and \`wshdemo-linux-${QEMU3DFX_SHORT}.tar.gz\` are wshdemo, a small" \
+            "demo and test of the pass-through (a lit textured cube, a fogged tunnel, a plasma uploaded as a" \
+            "texture every frame, a frame-rate graph): \`WSHDEMO.EXE\` for Windows (Glide 2, Glide 3 or" \
+            "OpenGL), \`DOS/WSHDEMO.EXE\` (GLIDE2X.DXE) and \`wshdemo\` for i386 Linux (libglide.so.2)," \
+            "with \`-bench N\` and \`-check\` modes; see its README." \
             > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ZIP" "$TGZ" --clobber
+            gh release upload "$TAG" "$ZIP" "$TGZ" "$DZIP" "$DTGZ" --clobber
             gh release edit "$TAG" --notes-file release-notes.md
           else
             gh release create "$TAG" \
               --title "3dfx/Mesa drivers (${QEMU3DFX_SHORT})" \
               --notes-file release-notes.md \
-              "$ZIP" "$TGZ"
+              "$ZIP" "$TGZ" "$DZIP" "$DTGZ"
           fi
 
       - name: Upload build artifact

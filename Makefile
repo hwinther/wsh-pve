@@ -484,6 +484,27 @@ clean-qemu-3dfx:
 		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/scripts/build-3dfx-linux-glide.sh /src/submodules/qemu-3dfx $$rev /out"; \
 	ls -la build/linux-glide
 
+# wshdemo (e2e/3dfx/demo), the 3dfx demo and test tool, into build/wshdemo: windows/WSHDEMO.EXE
+# (Glide 2, Glide 3 and OpenGL; mingw-w64 in Debian 13), dos/WSHDEMO.EXE (Glide 2 through
+# GLIDE2X.DXE; the DJGPP image) and linux/wshdemo (Glide 2 through libglide.so.2; Debian 13 with
+# gcc-multilib, linked against build/linux-glide when `make 3dfx-linux-glide` made it). Each build
+# script checks its binary for a Pentium (scripts/check-3dfx-drivers-isa.sh --no-p6).
+.PHONY: 3dfx-demo
+3dfx-demo:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rm -rf build/wshdemo && mkdir -p build/wshdemo/windows build/wshdemo/dos build/wshdemo/linux; \
+	lib=""; [ ! -e build/linux-glide/libglide2x.so ] || lib=/src/build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshdemo/windows:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 > /dev/null && sh /src/e2e/3dfx/demo/build-win.sh /out"; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshdemo/dos:/out \
+		$(DJGPP_BUILD_IMAGE) sh /src/e2e/3dfx/demo/build-dos.sh /out; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshdemo/linux:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/demo/build-linux.sh /out $$lib"; \
+	ls -la build/wshdemo/*
+
 # The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
 # checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
 # version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
@@ -574,6 +595,7 @@ help:
 	@echo "  pve-qemu-bundle:         Build complete QEMU bundle with SPARC and 3dfx support"
 	@echo "  3dfx:                    Clean, prepare and build QEMU with 3dfx support"
 	@echo "  3dfx-drivers:            Build 3dfx DOS drivers"
+	@echo "  3dfx-demo:               Build wshdemo (Windows, DOS and Linux) into build/wshdemo"
 	@echo "  clean-qemu-3dfx:         Clean 3dfx-specific QEMU files"
 	@echo "  prepare-qemu-3dfx:       Initialize 3dfx submodule"
 	@echo "  restore-pve-qemu:        Restore pve-qemu to current head"

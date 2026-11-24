@@ -23,6 +23,7 @@ on:
     paths:
       - "e2e/3dfx/**"
       - "packages/wsh-openglide/tests/scene.h"
+      - "scripts/check-3dfx-drivers-isa.sh"
       - "submodules/qemu-3dfx"
       - "submodules/qemu-3dfx-drivers.patch"
       - ".github/workflows/3dfx-dos.yml"

@@ -1,8 +1,8 @@
-# The DOS Glide test (e2e/3dfx/dos-test.sh): the test program built with DJGPP in the image that
-# builds the qemu-3dfx guest drivers (djgpp.Dockerfile), then a Debian 13 with the published
-# pve-qemu-kvm's qemu-system-x86_64-3dfx, wsh-openglide (Glide on the host), Mesa (llvmpipe, EGL for
-# the offscreen console), mtools (the FreeDOS floppy) and the harness. FreeDOS is downloaded by the
-# harness at run time (by URL and sha256), the guest drivers are passed in.
+# The DOS Glide test (e2e/3dfx/dos-test.sh): the test program and the demo (e2e/3dfx/demo), built
+# with DJGPP in the image that builds the qemu-3dfx guest drivers (djgpp.Dockerfile), then a Debian
+# 13 with the published pve-qemu-kvm's qemu-system-x86_64-3dfx, wsh-openglide (Glide on the host),
+# Mesa (llvmpipe, EGL for the offscreen console), mtools (the FreeDOS floppy) and the harness.
+# FreeDOS is downloaded by the harness at run time (by URL and sha256), the guest drivers are passed in.
 #
 # Build context: the repository root, with submodules/qemu-3dfx checked out.
 #   docker build -f e2e/3dfx/dos/Dockerfile -t wsh-3dfx-dos .
@@ -13,10 +13,14 @@ COPY submodules/qemu-3dfx/wrappers/3dfx/dxe/ /src/submodules/qemu-3dfx/wrappers/
 COPY submodules/qemu-3dfx/wrappers/3dfx/src/ /src/submodules/qemu-3dfx/wrappers/3dfx/src/
 COPY packages/wsh-openglide/tests/scene.h /src/packages/wsh-openglide/tests/scene.h
 COPY e2e/3dfx/dos/ /src/e2e/3dfx/dos/
+COPY e2e/3dfx/demo/ /src/e2e/3dfx/demo/
+COPY scripts/check-3dfx-drivers-isa.sh /src/scripts/check-3dfx-drivers-isa.sh
 # The wrapper's revision only matters for the glide2x.dxe built for comparison; the test loads the
 # drivers release's
 ARG QEMU3DFX_REV=0000000
 RUN sh /src/e2e/3dfx/dos/build.sh /glidedos/bin "$QEMU3DFX_REV"
+# The demo (e2e/3dfx/demo), which the harness runs after the test program: WSHDEMO.EXE
+RUN sh /src/e2e/3dfx/demo/build-dos.sh /glidedos/bin
 
 FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive

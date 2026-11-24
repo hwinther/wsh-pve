@@ -3,7 +3,7 @@
 DOS wrapper GLIDE2X.DXE, end to end, with free software only.
 
     dos_test.py --drivers qemu-3dfx-drivers-<rev>.zip --bin DIR --out OUT \\
-        [--profiles none,xms,emm386] [--accel auto|tcg|kvm] [--cpu pentium3] [--bench N] [--hold S]
+        [--profiles none,xms,emm386] [--accel auto|tcg|kvm] [--cpu pentium3] [--bench N] [--hold S] [--demo-bench N]
         [--pve VMID]
 
 The guest is the boot floppy of the FreeDOS 1.4 Floppy Edition (downloaded once by URL and sha256
@@ -31,6 +31,14 @@ screendump of the console, where qemu-3dfx shows the frame (stage 1, read back),
 the offscreen window closed, that the console shows the VGA again (DOS's text screen, not the
 scene). A profile passes when the program reports PASS (its own read-back matched), the console had
 the frame and the VGA came back.
+
+Then, in the same boot, GLIDE.BAT runs the demo (e2e/3dfx/demo, WSHDEMO.EXE from --bin, built by
+its build-dos.sh) with `-check -bench N -hold S -wait 3 -nocom` (--demo-bench N, 0 leaves it out;
+-wait shows DOS's text screen for 3 s first, -nocom leaves COM1 to CTTY): it draws a fixed
+frame of each of its parts, reads each back and checks its probes ("WSHDEMO: CHECK part=<name>
+PASS"), prints each part's frame rate, holds the last frame and prints its probes ("WSHDEMO: PROBE x
+y rrggbb"), which the harness checks in the console on "WSHDEMO: FRAME". With the demo, a profile
+passes only when the demo passed too (its checks, the console's probes, the VGA back afterwards).
 
 With --pve VMID the harness runs on a PVE node (the e2e PVE container) and PVE starts the VM: the
 floppy goes to storage `local` (content floppy), `qm create` with `vga: std,mesa=1`, `floppy0`,
@@ -79,7 +87,12 @@ PROFILES = {
     "emm386": ["DEVICE=A:\\GLIDE\\HIMEMX.EXE", "DEVICE=A:\\GLIDE\\JEMM386.EXE X=TEST NOVME NOINVLPG"],
 }
 TAG = "GLIDEDOS"
-LINE_RE = re.compile(r"^%s: (.*)$" % TAG)
+DEMO = "WSHDEMO"  # e2e/3dfx/demo, run after GLIDEDOS.EXE in the same boot (--demo-bench 0: not)
+LINE_RE = re.compile(r"^(%s|%s): (.*)$" % (TAG, DEMO))
+DEMO_PROBE_RE = re.compile(r"PROBE (\d+) (\d+) ([0-9a-f]{6})$")
+DEMO_CHECK_RE = re.compile(r"CHECK part=(\w+) (PASS|FAIL)(.*)$")
+DEMO_BENCH_RE = re.compile(r"BENCH part=(\w+) frames=(\d+) secs=([\d.]+) fps=([\d.]+)$")
+DEMO_PARTS = ("cube", "tunnel", "plasma")
 PVE_FLOPPY_DIR = "/var/lib/vz/template/floppy"
 
 
@@ -176,7 +189,12 @@ def glide_bat(args, profile):
     status = ["A:\\GLIDE\\JEMM386.EXE"] if "JEMM386" in " ".join(PROFILES[profile]) else []
     lines = ["@ECHO OFF", "CTTY COM1", "ECHO glide.bat: start", "A:\\FREEDOS\\BIN\\MEM.EXE", *status, "A:",
              "CD \\GLIDE", "SET LD_LIBRARY_PATH=A:/GLIDE", f"GLIDEDOS.EXE hold={args.hold} bench={args.bench}",
-             "ECHO glide.bat: exit %ERRORLEVEL%", "A:\\FREEDOS\\BIN\\FDAPM.COM POWEROFF"]
+             "ECHO glide.bat: exit %ERRORLEVEL%"]
+    if args.demo_bench > 0:
+        # -nocom: CTTY COM1 sends its output there already; -wait: DOS's text screen shows a while first
+        lines += [f"WSHDEMO.EXE -check -bench {args.demo_bench} -hold {args.hold} -wait 3 -nocom",
+                  "ECHO glide.bat: demo exit %ERRORLEVEL%"]
+    lines.append("A:\\FREEDOS\\BIN\\FDAPM.COM POWEROFF")
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -191,6 +209,8 @@ def make_floppy(path, boot, files, glidedos, dxe, profile, args):
         mtools("mcopy", "-o", "-i", path, p, f"::/{name}")
     mtools("mmd", "-i", path, "::/GLIDE")
     put = {"GLIDEDOS.EXE": glidedos, "GLIDE2X.DXE": dxe, **files}
+    if args.demo_bench > 0:
+        put["WSHDEMO.EXE"] = os.path.join(args.bin, "WSHDEMO.EXE")
     for name, src in put.items():
         mtools("mcopy", "-o", "-i", path, src, f"::/GLIDE/{name}")
     return {n: {"bytes": os.path.getsize(p), "sha256": sha256(p)} for n, p in put.items()}
@@ -241,8 +261,8 @@ class Serial:
         for raw in complete:
             m = LINE_RE.match(raw.decode("latin-1").strip("\r\x00"))
             if m:
-                new.append(m.group(1))
-                self.lines.append(m.group(1))
+                new.append((m.group(1), m.group(2)))
+                self.lines.append((m.group(1), m.group(2)))
         return new
 
 
@@ -374,6 +394,55 @@ def after_check(scene, mon, path, wait=5):
     return res
 
 
+def demo_frame_check(mon, path, probes):
+    """The demo's held frame in the console: the probes it printed for it (x, y, rrggbb)."""
+    if not probes:
+        return {"ok": False, "error": "the demo printed no probes"}
+    if not mon.screendump(path):
+        return {"ok": False, "error": "no screendump"}
+    w, h, pix = w3d.read_ppm(path)
+    out, bad = [], 0
+    for x, y, want in probes:
+        o = (y * w + x) * 3
+        got = pix[o:o + 3] if x < w and y < h else b"\0\0\0"
+        ok = all(abs(got[c] - int(want[2 * c:2 * c + 2], 16)) <= 24 for c in range(3))
+        bad += not ok
+        out.append({"x": x, "y": y, "want": want, "got": got.hex(), "ok": ok})
+    return {"ok": bad == 0, "size": f"{w}x{h}", "probes": out, "mismatches": bad}
+
+
+def demo_line(res, text, mon, d, scene, t0):
+    """One WSHDEMO line into res["demo"]."""
+    r = res["demo"]
+    m = DEMO_CHECK_RE.match(text)
+    if m:
+        r["checks"][m.group(1)] = m.group(2) + m.group(3)
+        return
+    m = DEMO_BENCH_RE.match(text)
+    if m:
+        r["bench"][m.group(1)] = float(m.group(4))
+        return
+    m = DEMO_PROBE_RE.match(text)
+    if m:
+        r["probes"].append((int(m.group(1)), int(m.group(2)), m.group(3)))
+    elif text == "FRAME" and r["frame"] is None:
+        time.sleep(1)
+        r["frame"] = demo_frame_check(mon, os.path.join(d, "demo-frame.ppm"), r["probes"])
+        log(f"{res['profile']}: demo's held frame in the console: {'probes match' if r['frame']['ok'] else r['frame']}")
+    elif text == "CLOSED":
+        time.sleep(0.5)
+        r["after"] = after_check(scene, mon, os.path.join(d, "demo-after.ppm"))
+    elif text.startswith("VERSION "):
+        r["version"] = text[8:]
+    elif w3d.verdict_of(text):
+        r["verdict"] = w3d.verdict_of(text)
+
+
+def demo_passed(r):
+    return bool(r["verdict"] == "PASS" and all(r["checks"].get(p, "").startswith("PASS") for p in DEMO_PARTS)
+                and r["frame"] and r["frame"]["ok"] and r["after"] and r["after"]["ok"])
+
+
 def run_profile(args, scene, profile, boot, files, dxe, accel):
     d = os.path.join(args.out, profile)
     shutil.rmtree(d, ignore_errors=True)
@@ -385,6 +454,8 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
     vm = (PveVm if args.pve else LocalVm)(args, d, floppy, serial_path, accel)
     res = {"profile": profile, "config": PROFILES[profile], "floppy": contents, "verdict": None, "frame": None,
            "after": None, "bench": None}
+    if args.demo_bench > 0:
+        res["demo"] = {"checks": {}, "bench": {}, "probes": [], "frame": None, "after": None, "verdict": None}
     log(f"{profile}: booting FreeDOS ({'PVE VM ' + str(args.pve) if args.pve else 'QEMU'}, {accel}, cpu {args.cpu})")
     t0 = time.monotonic()
     vm.start()
@@ -392,9 +463,12 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
     closed = False
     try:
         while True:
-            for text in serial.poll():
-                log(f"{profile}: {TAG}: {text}")
-                if text == "FRAME" and res["frame"] is None:
+            for tag, text in serial.poll():
+                log(f"{profile}: {tag}: {text}")
+                if tag == DEMO:
+                    if "demo" in res:
+                        demo_line(res, text, vm.mon, d, scene, t0)
+                elif text == "FRAME" and res["frame"] is None:
                     time.sleep(1)
                     res["frame"] = frame_check(scene, vm.mon, os.path.join(d, "frame.ppm"))
                     res["frame_s"] = round(time.monotonic() - t0, 1)
@@ -433,8 +507,13 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
     res["profile_ok"] = res["xms"] == (profile != "none") and res["vcpi"] == (profile == "emm386")
     res["passed"] = bool(res["verdict"] == "PASS" and res["frame"] and res["frame"]["ok"]
                          and res["after"] and res["after"]["ok"] and res["profile_ok"])
+    demo = ""
+    if "demo" in res:
+        res["demo"]["passed"] = demo_passed(res["demo"])
+        res["passed"] = res["passed"] and res["demo"]["passed"]
+        demo = f", demo {'PASS' if res['demo']['passed'] else 'FAIL'} {res['demo']['checks']} {res['demo']['bench']}"
     log(f"{profile}: {'PASS' if res['passed'] else 'FAIL'} (XMS {res['xms']}, VCPI {res['vcpi']}, guest {res['verdict']}, "
-        f"frame {res['frame'] and res['frame']['ok']}, VGA after {res['after'] and res['after']['ok']})")
+        f"frame {res['frame'] and res['frame']['ok']}, VGA after {res['after'] and res['after']['ok']}{demo})")
     return res
 
 
@@ -453,13 +532,27 @@ def summary_md(info, results):
             ("probes match" if f["ok"] else f"{f.get('mismatches', '?')} mismatches {f.get('size', '')}") if f else "no frame",
             (f"yes ({a['size']})" if a["ok"] else f"no ({a.get('size', a.get('error'))})") if a else "not seen",
             f"{b['fps']:.0f}" if b else "-", f"{off['read_ms']}" if off else "-"))
+    demos = [r for r in results if "demo" in r]
+    if demos:
+        lines += ["", "The demo (WSHDEMO.EXE -check -bench N, e2e/3dfx/demo):", "",
+                  "| Profile | Demo | Checks | Console probes | VGA after | " + " | ".join(f"{p} frames/s" for p in DEMO_PARTS) + " |",
+                  "| --- | --- | --- | --- | --- | " + " | ".join("---" for _ in DEMO_PARTS) + " |"]
+        for r in demos:
+            dm = r["demo"]
+            checks = ", ".join(f"{p} {dm['checks'].get(p, 'none').split(' ')[0].lower()}" for p in DEMO_PARTS)
+            f, a = dm["frame"], dm["after"]
+            lines.append("| %s | %s | %s | %s | %s | %s |" % (
+                r["profile"], "pass" if dm["passed"] else f"FAIL ({dm['verdict'] or 'no verdict'})", checks,
+                ("match" if f["ok"] else f"{f.get('mismatches', f.get('error'))} mismatches") if f else "no frame",
+                ("yes" if a["ok"] else "no") if a else "not seen",
+                " | ".join(f"{dm['bench'][p]:.0f}" if p in dm["bench"] else "-" for p in DEMO_PARTS)))
     return "\n".join(lines) + "\n"
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--drivers", required=True, help="qemu-3dfx-drivers-<rev>.zip or its unpacked directory")
-    ap.add_argument("--bin", required=True, help="the directory with GLIDEDOS.EXE (build.sh)")
+    ap.add_argument("--bin", required=True, help="the directory with GLIDEDOS.EXE (build.sh) and WSHDEMO.EXE (demo/build-dos.sh)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--dxe", help="this GLIDE2X.DXE instead of the drivers' one")
     ap.add_argument("--profiles", default="none,xms,emm386")
@@ -468,7 +561,9 @@ def main():
     ap.add_argument("--memory", type=int, default=64)
     ap.add_argument("--bench", type=int, default=300)
     ap.add_argument("--hold", type=int, default=5)
-    ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--demo-bench", type=int, default=300, help="frames per part for the demo (WSHDEMO.EXE in --bin) "
+                    "after the test program; 0: no demo")
+    ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--qemu", default="/usr/bin/qemu-system-x86_64-3dfx")
     ap.add_argument("--pve", type=int, help="PVE starts the VM, with this VM ID")
     args = ap.parse_args()
@@ -478,6 +573,9 @@ def main():
             ap.error(f"unknown profile {p} (one of {', '.join(PROFILES)})")
     os.makedirs(args.out, exist_ok=True)
     args.out = os.path.abspath(args.out)
+    if args.demo_bench > 0 and not os.path.exists(os.path.join(args.bin, "WSHDEMO.EXE")):
+        log(f"WARNING: no WSHDEMO.EXE in {args.bin}: the demo is left out")
+        args.demo_bench = 0
 
     if not os.access(args.qemu, os.X_OK):
         log(f"SKIP: no {args.qemu} (the optional 3dfx extra is missing)")

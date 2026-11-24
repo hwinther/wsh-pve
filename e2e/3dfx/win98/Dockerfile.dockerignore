@@ -4,3 +4,5 @@
 !repo/conf/wsh-pve.gpg.key
 !packages/wsh-openglide/tests/scene.h
 !e2e/3dfx/win98/
+!e2e/3dfx/demo/
+!scripts/check-3dfx-drivers-isa.sh
