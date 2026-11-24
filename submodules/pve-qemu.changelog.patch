@@ -1,8 +1,14 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..c44e3e2 100644
+index 9da9d72..cc97ed6 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,155 @@
+@@ -1,10 +1,161 @@
++pve-qemu-kvm (11.1.3-4+wsh22) trixie; urgency=medium
++
++  * docs(upstream): cover every patch in the LEMU port table (#520)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 23:26:33 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh21) trixie; urgency=medium
 +
 +  * fix(pve-qemu): name OpenBIOS 0018 in wsh/0030 and update the LEMU
