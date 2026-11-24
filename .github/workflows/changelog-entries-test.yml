@@ -1,0 +1,47 @@
+name: Changelog entries test
+
+# The +wsh changelog entry of a package build (build-deb.yml, the Makefile's pve-qemu targets) lists
+# the commits since the previous build. scripts/test-wsh-changelog-entries.sh tests the scripts that
+# choose and write them against a throwaway repository; the last step prints what the next build of
+# each package would get from this repository's real history.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/wsh-changelog-entries.sh"
+      - "scripts/wsh-changelog-dch.sh"
+      - "scripts/test-wsh-changelog-entries.sh"
+      - ".github/workflows/changelog-entries-test.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # the history, for the entries of the real packages
+          fetch-depth: 0
+
+      - name: scripts/test-wsh-changelog-entries.sh
+        run: scripts/test-wsh-changelog-entries.sh
+
+      - name: Entries of the next build of each package
+        run: |
+          for package in pve-qemu pve-manager qemu-server pve-storage; do
+            echo "$package:"
+            scripts/wsh-changelog-entries.sh "$package" | sed 's/^/  /'
+          done

@@ -1055,8 +1055,8 @@ class Sol7Sun4u(unittest.TestCase):
 
 
 class Sol26Sol251Sun4u(unittest.TestCase):
-    """sol26-sun4u, sol251-sun4u: suninstall as sol7-sun4u; they need openbios 0036-0039, which no
-    published package has yet (matrix_skip)."""
+    """sol26-sun4u, sol251-sun4u: suninstall as sol7-sun4u; they need openbios 0036-0039, in
+    pve-qemu-kvm 11.1.3-4+wsh15 and later, so the matrix installs them."""
 
     def test_targets(self):
         for name, iso in (("sol26-sun4u", "solaris_2.6_598_sparc.iso"), ("sol251-sun4u", "solaris_2.5.1_1197.iso")):
@@ -1066,7 +1066,9 @@ class Sol26Sol251Sun4u(unittest.TestCase):
             self.assertEqual((t["device"], t["boot"], t["nic"], t["hostname"]), ("c0t0d0", "ide0", "hme0", name))
             self.assertEqual(t["install"]["vars"]["DISK"], "c0t0d0")
             self.assertEqual(t["media"], [{"name": iso, "drive": "ide2"}])  # an IDE CD-ROM, no as_disk
-            self.assertIn("0036-0039", t["matrix_skip"])
+            self.assertNotIn("matrix_skip", t)
+            self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-4+wsh15")
+            self.assertIn("boot-test", t["tested"]["with"])
         self.assertEqual(targets.TARGETS["sol251-sun4u"]["net_modes"], ["static"])
         self.assertEqual(targets.TARGETS["sol251-sun4u"]["install"]["vars"]["FINISH_TIMEOUT"], "6000")
 

@@ -3952,6 +3952,12 @@ Both failures of the first round were the host's load, not the firmware: the sam
 again; Solaris 10 isn't reinstalled (its installer now sees `SUNW,Ultra-5_10` and may add that
 platform's packages). wisp's Linux (above) is the only boot of a kernel from scratch with 0039.
 
+Published in pve-qemu-kvm 11.1.3-4+wsh15 (its `openbios-sparc64` has `SUNW,Ultra-5_10` and
+`aligned-allocator`). With it, nothing mounted over the package, both stored disks boot-test through
+PVE (2026-11-24, load average 22-43 on 14 cores): `sol26-sun4u` 5.8 min (`console login:` after 4.5),
+`sol251-sun4u` 5.3 min (4.1). `sol26-sun4u` and `sol251-sun4u` no longer have `matrix_skip`
+(e2e/sparc/README.md, "Solaris 2.6 and 2.5.1 on sun4u").
+
 **Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, and
 `debian/rules` (`submodules/pve-qemu.patch`) copies `build/openbios/openbios-sparc64` over
 `$(destdir)/usr/share/kvm/openbios-sparc64` when it exists, as for sparc32. It is an optional extra
