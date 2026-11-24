@@ -248,9 +248,10 @@ with `DRM_FBDEV_EMULATION` on QEMU's standard VGA display.
 The shell's `fbtest` draws eight colour bars with a white border on `/dev/fb0` and reports the
 mode; `mandel fb` draws the Mandelbrot set at the framebuffer's native resolution and reports its
 iteration checksum; `keytest` prints key codes from a keyboard until Esc or a ten-second timeout.
-On sun4u the keyboard doesn't work yet: OpenBIOS's EBus device tree has no `kdmouse`/`mouse` node
+sun4u's own PS/2 keyboard doesn't work: OpenBIOS's EBus device tree has no `kdmouse`/`mouse` node
 for the `kb_ps2` child, and Linux's `i8042-sparcio` driver needs both IRQs, so it returns
-`-ENODEV` and `keytest` reports the keyboard unavailable.
+`-ENODEV`. Its `kernel-fb` has a virtio keyboard driver instead, and QEMU gets
+`-device virtio-keyboard-pci`, as on virt.
 
 | Architecture (machine) | Display | `kernel-t2` | `kernel-fb` | Increase | Verified screendump |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -282,6 +283,66 @@ game and power-off):
 Each boot checks the demo's own command count (7,117), the reported FPS, a nonblank QMP capture
 during playback and the successful exit and power-off. The game code (fbDOOM) is GPL-2.0 and
 Freedoom is BSD-3-Clause; only the official Freedoom data is used, not id Software's WADs.
+
+## Play DOOM
+
+Two ways to play Freedoom in fbDOOM on wisp without building anything: on any Linux host with QEMU,
+or as a VM on a Proxmox VE node. Both use the prebuilt framebuffer kernels and static fbDOOM
+executables of the `wisp-fb` release (SHA-256 checked) and fetch Freedoom's WAD from Freedoom's own
+release by a pinned URL and SHA-256. The game starts at the title screen at the largest integer scale
+that fits the screen.
+
+| Key | |
+| --- | --- |
+| arrows, Ctrl, space | move, fire, open (vanilla DOOM) |
+| Esc, Enter | the menu (Esc, Enter, Enter, Enter starts episode 1) |
+| `` ` `` (left of 1) | the FPS overlay on and off |
+| Backspace | quit; wisp powers the machine off |
+
+### On a Linux host
+
+From a clone, with QEMU for the architecture and squashfs-tools installed:
+
+```sh
+cd e2e/wisp
+python3 doom.py --arch sparc32 --play --from-release           # VNC on 0.0.0.0:5900
+python3 doom.py --arch x86_64 --play --from-release --local    # a gtk/sdl window
+python3 doom.py --arch aarch64 --play --from-release --fps --vnc :2 --sound
+```
+
+The machines are the wisp framebuffer machines: pc with standard VGA, the SS-5 with cg3 (`--display
+tcx` for TCX), sun4u with standard VGA and virt with `bochs-display`, the last two with a virtio
+keyboard. The pc uses KVM when it can, the others run under TCG. `--sound` uses PipeWire,
+PulseAudio or ALSA when QEMU and the host have one, else no sound. `--kernel`, `--binary` and
+`--wad` take local files instead of the downloads.
+
+### In a PVE VM
+
+On a node with the wsh-lab package (as root):
+
+```sh
+apt install squashfs-tools
+wsh-lab wisp-vm sparc32 --doom --start
+```
+
+Then open the VM's Console in the web UI and play. `wsh-lab wisp-vm` creates the VM with the
+machine's PVE profile (pc, SS-5 with OpenBIOS, sun4u or virt), the framebuffer as the noVNC console,
+the kernel in `args` and the game on a read-only squashfs disk; `wsh-lab wisp-vm destroy --vmid N`
+removes it again. Without `--doom` it makes a wisp shell VM instead. Details in
+[Lab install targets](../lab-install/#wisp-in-a-vm-wisp-vm).
+
+### The FPS overlay
+
+`--fps` (or `` ` `` during the game) shows the frames per second in the top-left corner of the game
+frame, drawn after the frame is scaled to the screen, so it stays sharp at any scale and never
+touches DOOM's own 320x200 image. fbDOOM also prints `fbdoom: fps N` on the serial console once a
+second while it is on. In paired timedemo runs with and without `-fps` on the pc and the SS-5 the overlay cost nothing measurable: the differences went both ways and stayed inside the run-to-run spread of the shared lab host.
+
+FPS shown on the busy lab host under TCG, right after starting a game: SS-5 cg3 at 3x 40, pc at
+4x 20 (69 at the title with KVM, in a PVE VM), virt at 4x 32, sun4u at 4x 10.
+
+sun4u's own keyboard doesn't work under OpenBIOS, so its framebuffer kernel also drives a virtio
+keyboard, as virt does.
 
 ## A real C library (uClibc-ng)
 

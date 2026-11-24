@@ -322,9 +322,10 @@ typing `poweroff` on the framebuffer VT shut down the pc and SS-5.
 
 The sun4u kernel also includes i8042 and `atkbd`. OpenBIOS exposes the EBus controller
 and its `kb_ps2` child, but its device tree has no `kdmouse` or `mouse` child. Linux 7.3.4's
-`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`. The observed shell result is
-`keytest: keyboard unavailable`, and typing `poweroff` on the framebuffer VT had no effect.
-The test records this specific sun4u result and checks the key codes if a keyboard is present.
+`i8042-sparcio.h` requires both IRQs and returns `-ENODEV`, so the PS/2 keyboard stays unused.
+sun4u's `kernel-fb` therefore also has `CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`), and
+the framebuffer runs add `-device virtio-keyboard-pci`, as on virt; `keytest` then finds the virtio
+keyboard and the test checks its key codes like the others (see "Play DOOM").
 
 From `e2e/wisp` inside the build image:
 
@@ -489,7 +490,8 @@ The comparison saved PPMs and matching serial logs under `out/doom/before/` and
 The 28,482-byte `DEMO1` lump has a 13-byte header, 7,117 four-byte commands and one end
 marker. Each boot checks that independent count, the reported FPS, the successful data mount,
 centered integer-scaled pixels and game colours in a QMP capture during playback, the
-successful child exit on serial and QEMU's exit. A matching count
+successful child exit on serial and QEMU's exit. `--fps` adds `-fps` to the response file (the FPS
+overlay and its serial lines, see "Play DOOM"); the count stays 7,117. A matching count
 checks playback length across byte orders. `doom.py --scale` sets fbDOOM's `-scaling`: 1 by default and in CI (the timedemo's gametics don't depend on it, and 1x keeps the run short under TCG), 0 for the largest integer factor that fits, as when playing (3x on cg3/TCX, 4x on bochs). Wisp boot CI runs the complete demo on pc, virt and
 SS-5 cg3 on relevant PRs, with sound effects enabled on pc and virt. It caches
 both verified archives and writes serial logs, PPMs, WAV captures and timing report under `RUNNER_TEMP`.
@@ -532,6 +534,144 @@ docker exec "$vm" tar -C /wisp/out/doom -cf - . | tar -C "$w/out/doom" -xf -
 docker rm -f "$vm"
 docker image rm wispdoom-runner
 ```
+
+## Play DOOM
+
+`doom.py --play` boots the same data disk without `-timedemo`: fbDOOM starts at Freedoom's title
+screen with the machine's display and keyboard (pc `std`, SS-5 `cg3` or `tcx`, sun4u `std` with a
+virtio keyboard, virt `bochs-display` with a virtio keyboard), at the largest integer scale that fits
+(`--scale 0`, the default here; `--scale N` as for the timedemo). The screen goes to VNC on
+0.0.0.0:590N (`--vnc :N`, `:0` by default), or to a gtk or sdl window with `--local` when QEMU has
+one and there is a desktop session. The pc uses KVM when the host is x86_64 and `/dev/kvm` can be
+opened, the others TCG. Sound stays off (`-nosound`) unless `--sound`, which picks the first host
+backend QEMU and the host both have (pipewire, pa, then alsa), or QEMU's `none` with a note. The
+serial console (PID 1's and fbDOOM's lines) goes to the terminal; Ctrl-C stops QEMU.
+
+```sh
+# with a kernel build and an fbdoom built as in the timedemo above
+python3 doom.py --arch sparc32 --play --binary /tmp/fbdoom-sparc32 --wad /tmp/freedoom1.wad
+# nothing built: the published kernel-fb and fbdoom, and Freedoom by fetch.py's pin
+python3 doom.py --arch x86_64 --play --from-release --fps --vnc :1
+```
+
+`--from-release` downloads `kernel-fb-<arch>` and `fbdoom-<arch>` from the `wisp-fb` release and
+checks them against its `SHA256SUMS`; without `--wad`, `freedoom1.wad` is extracted from Freedoom's
+own 0.13.0 release, checked against the SHA-256 that `doom/fetch.py` pins. Both go to `out/wisp-fb`
+(`--cache`). `--kernel`, `--binary` and `--wad` take local files instead. The data disk needs
+`mksquashfs` (squashfs-tools).
+
+Keys are fbDOOM's (vanilla DOOM's, arrows, Ctrl to fire, space to open); Backspace quits, PID 1
+reports `WISP-RUN v=1 exit=0` and powers the machine off. `` ` `` (the key left of 1) toggles the FPS
+overlay, and `--fps` starts with it on.
+
+### The FPS overlay
+
+Patch 07 counts the frames `I_FinishUpdate` shows per second (`CLOCK_MONOTONIC`). While the overlay
+is on, it draws the number in a 3x5 digit font, white on black, in the game frame's top-left corner,
+into the scaled framebuffer rows just before they are written: each digit cell is one game pixel at
+the frame's scale (at least 2), so it is as sharp as the frame, and DOOM's own 320x200 buffer (and
+with it the screenshots `I_ReadScreen` takes, and the wipes) never sees it. On 8 bpp pseudocolour
+(cg3, TCX) it uses the palette entries nearest white and black, looked up again after each palette
+change (damage and pickup tints); in truecolour it composes white from the bitfields. Once a second
+it prints `fbdoom: fps N` on stdout, the serial console. The key is `KEY_GRAVE`: fbDOOM reads the VT in
+mediumraw mode, so it sees Linux key codes, and the pc's `atkbd`, the SS-5's `sunkbd` and the virtio
+keyboards all report the same code for that key; fbDOOM's table had no use for it. Through VNC it
+is the physical key (noVNC and QEMU's VNC server pass key codes), whatever the client's layout.
+
+Cost, measured 2026-11-24 on the shared lab host (load 7 to 14 on 14 threads) with Linux 7.3.4 and
+pve-qemu-kvm 11.1.3-4+wsh12 under TCG: the DEMO1 timedemo at 1x with and without `-fps`, the two
+runs of a pair at the same time on separate CPU pairs (`--cpuset-cpus`), then swapped. Every run
+completed 7,117 gametics.
+
+| Machine | Pairs | FPS without `-fps` | FPS with `-fps` |
+| --- | ---: | --- | --- |
+| pc std (32 bpp) | 2 | 131.80, 148.36 | 137.93, 163.45 |
+| SS-5 cg3 (8 bpp) | 4 | 95.55, 87.96, 78.16, 90.48 | 83.14, 86.85, 76.57, 91.48 |
+
+The differences go both ways and are inside the spread between pairs (up to 13% on this host): no
+cost could be measured. Per shown frame the overlay adds one `clock_gettime` and fills of about
+40 cells; the 64,000-pixel expansion of the frame is the same with and without it.
+
+`doom.py --play --check` drives a game instead of a person, for testing: it waits for fbDOOM's frame
+70, checks the QMP screendump as the timedemo does (centred, integer-scaled, game colours), with
+`--fps` waits for two `fbdoom: fps` lines and checks the overlay box (two colours, dark and bright),
+sends Esc, Enter, Enter, Enter (main menu, New Game, episode 1, the default skill), checks that the
+status bar is drawn, with `--fps` sends `` ` `` and checks that the lines stop and come back after a
+second `` ` ``, then sends Backspace and expects PID 1's `exit=0` and QEMU's exit. The screendumps
+(`<machine>-<display>-play-title|overlay|game.ppm`) and the serial log go to `--output`.
+
+`doom.py --play --check --fps` on the lab host (pve-qemu-kvm 11.1.3-4+wsh12, TCG, load 10 to 14), all
+four passed: title frame at the largest scale, two `fbdoom: fps` lines and the overlay box in the
+screendump, a game started by the injected keys (E1M1, the status bar with 50 ammo and 100% health),
+the `` ` `` toggle off and on, Backspace and `WISP-RUN v=1 exit=0`:
+
+| Machine and display | Scale | First FPS lines (title) | FPS after the toggle (in game) |
+| --- | --- | ---: | ---: |
+| SS-5 cg3 | 3x, 960x600 | 58 | 40 |
+| pc std | 4x, 1280x800 | 26 | 20 |
+| virt bochs-display | 4x, 1280x800 | 45 | 32 |
+| sun4u std (virtio keyboard) | 4x, 1280x800 | 7 | 10 |
+
+With KVM (a PVE VM, below) the pc showed 69 FPS at the title. `--sound` without a host audio server fell back
+to `none` with its note and passed the same check on the pc; `--from-release` passed against a local
+copy of the release's files served over HTTP (the release isn't published yet), downloading the WAD
+from Freedoom's release by the pin. VNC answered `RFB 003.008` on the published port. Not tried:
+`--local` (no desktop session on the lab host) and a real PipeWire, PulseAudio or ALSA backend.
+
+### The sun4u keyboard
+
+Linux can't use sun4u's own PS/2 keyboard under OpenBIOS (no mouse node on the EBus, see
+"Framebuffer tier"), so `kernel-fb` on sparc64 also has `CONFIG_VIRTIO_INPUT`
+(`config/tier-fb/sparc64.config`, layered on the shared Bochs fragment) and QEMU gets
+`-device virtio-keyboard-pci`, as on virt. `framebuffer.py`'s key test now checks sun4u's key codes
+too. The sun4u `kernel-fb` grew by 208 bytes (4,918,296 to 4,918,504). With
+it, `framebuffer.py --arch sparc64` received key codes 30, 48, 28 and 1.
+
+### Prebuilt artefacts: the wisp-fb release
+
+`.github/workflows/wisp-fb.yml` (manual) builds `kernel-fb` for the four architectures (or restores
+wisp-boot's kernel cache), builds fbdoom for each from the pinned commit with the patches, runs the
+DEMO1 timedemo with `-fps` on each pair (7,117 gametics) and uploads them as an artifact. Dispatched
+with `publish`, it replaces the assets of the `wisp-fb` prerelease:
+
+| Asset | What |
+| --- | --- |
+| `kernel-fb-x86_64`, `-sparc32`, `-sparc64`, `-aarch64` | the framebuffer kernels (PID 1 built in) |
+| `fbdoom-x86_64`, `-sparc32`, `-sparc64`, `-aarch64` | static fbdoom (uClibc-ng; glibc on sparc64), stripped |
+| `fbdoom-source.tar.gz` | the source of those executables (GPL-2.0): the pinned upstream archive, the patches, `build.sh` |
+| `VERSION` | format, kernel release, commit, date |
+| `SHA256SUMS` | the SHA-256 of all of the above |
+
+It is a release of its own, not kit format 3: the wisp-test action downloads its kit on every
+run, and the kit (tier-1 and network kernels and headers, a few MB) would grow by the four
+framebuffer kernels and the executables, about 15 MB, that no action run uses. `wisp-test.sh` is
+unchanged and still reads kit formats 1 and 2. Freedoom's WAD is not in the release: Freedoom's
+BSD-3-Clause licence would allow it with its notice, but every consumer can fetch it from Freedoom's
+own release by the pinned URL and SHA-256 instead, so there is one copy less to keep in step.
+
+### Doom in a PVE VM
+
+`wsh-lab wisp-vm` (the wsh-lab package, `e2e/sparc/wisp_vm.py`) puts the same thing into a PVE VM on
+a node: `wsh-lab wisp-vm sparc32 --doom --start`, then Console in the web UI. See the
+[lab install guide](../../docs/src/content/docs/guides/lab-install.md#wisp-in-a-vm-wisp-vm).
+
+Tested 2026-11-24 in the PVE e2e container (`e2e/pve/Dockerfile`, pve-qemu-kvm 11.1.3-4+wsh12,
+qemu-server 9.2.20+wsh7) with `lab.py wisp-vm` from the clone; the shell VMs with the published
+`wisp-test-kit`, the DOOM VMs with `--fb-from` and `--wad` pointing at local copies (the `wisp-fb`
+release isn't published yet):
+
+| VM | Profile as created | Result |
+| --- | --- | --- |
+| shell x86_64, sparc32, sparc64, aarch64 | pc / SS-5 OpenBIOS / sun4u / virt, `vga: serial0`, no disk | each: the prompt on `serial0`, `info` (Linux 7.3.4, the right arch), `poweroff` stopped the VM |
+| `--doom --fps` sparc32 | SS-5, `vga: cg3`, the data disk on `scsi0` | `WISP-DATA ... mounted=1`, `fbdoom: fps`, QMP Esc/Enter x3 started E1M1 (screendump), Backspace stopped the VM |
+| `--doom` x86_64 | pc, `kvm: 1`, `vga: std`, `ide0` | the same; `` ` `` turned the overlay on (69 FPS at the title) |
+| `--doom --fps` aarch64 | virt, `vga: std` (qemu-server's PCI `VGA`, driven by `DRM_BOCHS`), `scsi0` on virtio-scsi, virtio keyboard in `args` | the same; qemu-server's `usb-kbd` next to it doesn't take the keys |
+| `--doom` sparc64 | sun4u, `vga: std`, `ide0`, virtio keyboard in `args` | the same; `` ` `` turned the overlay on (13 FPS) |
+
+The SS-5 VM's VNC socket answered `RFB 003.008` and `vncproxy` handed out a ticket, the path the web
+UI's noVNC console takes; the console itself was not opened in a browser. `destroy` removed each VM,
+its disk and its kernel copy; a second `create` on an existing VMID and actions on untagged VMs are
+refused (unit tests).
 
 ## Updating the size budget
 

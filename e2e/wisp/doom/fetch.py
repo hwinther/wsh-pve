@@ -35,17 +35,27 @@ def fetch(directory, name, url, digest):
         download.replace(path)
 
 
+DATA_URL = f"https://github.com/freedoom/freedoom/releases/download/v{VERSION}/{DATA}"
+
+
+def wad(directory):
+    """Fetch and verify only the Freedoom archive and extract freedoom1.wad (doom.py --play)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    fetch(directory, DATA, DATA_URL, DATA_SHA)
+    with zipfile.ZipFile(directory / DATA) as archive:
+        with archive.open(f"freedoom-{VERSION}/freedoom1.wad") as src:
+            with (directory / "freedoom1.wad").open("wb") as out:
+                shutil.copyfileobj(src, out)
+    return directory / "freedoom1.wad"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     directory = parser.parse_args().directory
     directory.mkdir(parents=True, exist_ok=True)
     fetch(directory, SOURCE, f"https://codeload.github.com/maximevince/fbDOOM/tar.gz/{COMMIT}", SOURCE_SHA)
-    fetch(directory, DATA, f"https://github.com/freedoom/freedoom/releases/download/v{VERSION}/{DATA}", DATA_SHA)
-    with zipfile.ZipFile(directory / DATA) as archive:
-        with archive.open(f"freedoom-{VERSION}/freedoom1.wad") as src:
-            with (directory / "freedoom1.wad").open("wb") as out:
-                shutil.copyfileobj(src, out)
+    wad(directory)
 
 
 if __name__ == "__main__":

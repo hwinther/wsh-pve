@@ -1,0 +1,156 @@
+name: wisp-fb artefacts
+
+# The prebuilt framebuffer artefacts of wisp (e2e/wisp/README.md, "Play DOOM"): kernel-fb for x86_64 (pc),
+# sparc32 (SS-5), sparc64 (sun4u) and aarch64 (virt), and the static fbDOOM executable for each, built
+# from the pinned fbDOOM commit with e2e/wisp/doom/patches. Each pair runs the Freedoom DEMO1 timedemo
+# (7,117 gametics) with -fps before anything is published, so a published pair is known to boot and play.
+#
+# Manual only. With `publish`, the tested files replace the assets of the `wisp-fb` release (a
+# prerelease), which `doom.py --play --from-release` and `wsh-lab wisp-vm --tier fb|--doom` download:
+# kernel-fb-<arch>, fbdoom-<arch>, SHA256SUMS, VERSION and fbdoom-source.tar.gz (the corresponding
+# source of the GPL-2.0 fbdoom executables: the pinned upstream archive and the patches). Freedoom's WAD
+# is not published: the consumers fetch it from Freedoom's release by fetch.py's pinned URL and SHA-256.
+# It is a separate release, not part of the wisp-test-kit, so the wisp-test action's download stays small.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Replace the assets of the wisp-fb release with this run's files"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.ref }}'
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read # checkout
+    env:
+      IMAGE: wsh-wisp:ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The kernels wisp-boot.yml caches (same key; restored only, so this job never saves under it)
+      - name: Restore the kernels
+        id: kernels
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: e2e/wisp/out
+          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**') }}
+
+      - name: Build the wisp image
+        run: docker build --pull -f e2e/wisp/Dockerfile -t "$IMAGE" .
+
+      - name: Build the framebuffer kernels
+        if: ${{ steps.kernels.outputs.cache-hit != 'true' }}
+        run: |
+          docker run --rm -e TIER2=0 -e TIER_FB=1 -e JOBS="$(nproc)" -v "$PWD/e2e/wisp:/wisp" "$IMAGE" \
+            ./build.sh sparc32 sparc64 x86_64 aarch64
+
+      - name: Build fbDOOM and run the timedemo with -fps
+        run: |
+          set -o pipefail
+          inputs="$RUNNER_TEMP/doom-inputs"
+          dist="$RUNNER_TEMP/wisp-fb"
+          results="$RUNNER_TEMP/results"
+          mkdir -p "$dist" "$results"
+          python3 e2e/wisp/doom/fetch.py "$inputs"
+          for arch in x86_64 sparc32 aarch64 sparc64; do
+            if [ "$arch" = sparc64 ]; then
+              docker run --rm -v "$PWD/e2e/wisp/doom:/doom:ro" -v "$inputs:/inputs" "$IMAGE" sh -ec '
+                apt-get update -qq
+                apt-get install -y --no-install-recommends make patch libc6-dev-sparc64-cross >/dev/null
+                sh /doom/build.sh sparc64 /inputs/fbDOOM-*.tar.gz /inputs/fbdoom-sparc64'
+            else
+              docker run --rm -v "$PWD/e2e/wisp/doom:/doom:ro" -v "$inputs:/inputs" \
+                "ghcr.io/hwinther/wsh-pve/wisp-toolchain-$arch:2025.02.20" sh -ec '
+                apt-get update -qq
+                apt-get install -y --no-install-recommends make patch >/dev/null
+                sh /doom/build.sh "$1" /inputs/fbDOOM-*.tar.gz "/inputs/fbdoom-$1"' sh "$arch"
+            fi
+            display=
+            if [ "$arch" = sparc32 ]; then display="--display cg3"; fi
+            # shellcheck disable=SC2086 # $display is empty or two words
+            docker run --rm -v "$PWD/e2e/wisp:/wisp:ro" -v "$inputs:/inputs:ro" -v "$results:/results" "$IMAGE" \
+              python3 doom.py --arch "$arch" $display --fps --binary "/inputs/fbdoom-$arch" \
+              --wad /inputs/freedoom1.wad --output /results | tee -a "$results/metrics.txt"
+            cp e2e/wisp/out/"$arch"/kernel-fb "$dist/kernel-fb-$arch"
+            cp "$inputs/fbdoom-$arch" "$dist/fbdoom-$arch"
+          done
+          # The corresponding source of the fbdoom executables (GPL-2.0)
+          mkdir -p "$RUNNER_TEMP/source/fbdoom-source"
+          cp "$inputs"/fbDOOM-*.tar.gz e2e/wisp/doom/build.sh e2e/wisp/doom/README.md "$RUNNER_TEMP/source/fbdoom-source/"
+          cp -r e2e/wisp/doom/patches "$RUNNER_TEMP/source/fbdoom-source/"
+          tar -C "$RUNNER_TEMP/source" --owner=0 --group=0 --numeric-owner -czf "$dist/fbdoom-source.tar.gz" fbdoom-source
+          release=$(sed -n 's/.*release=\([^ ]*\).*/\1/p' e2e/wisp/out/x86_64/sizes)
+          printf 'format=1\nkernel=%s\narches=x86_64 sparc32 sparc64 aarch64\ncommit=%s\ndate=%s\n' \
+            "$release" "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dist/VERSION"
+          (cd "$dist" && sha256sum kernel-fb-* fbdoom-* VERSION > SHA256SUMS)
+          cat "$dist/VERSION" "$dist/SHA256SUMS" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the artefacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wisp-fb
+          path: ${{ runner.temp }}/wisp-fb/
+          retention-days: 14
+
+      - name: Upload the timedemo evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wisp-fb-timedemo
+          path: ${{ runner.temp }}/results/
+          retention-days: 14
+          if-no-files-found: warn
+
+  publish:
+    needs: [build]
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # gh release create/upload
+    steps:
+      - name: Download the artefacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wisp-fb
+          path: wisp-fb
+
+      - name: Publish to the wisp-fb release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          (cd wisp-fb && sha256sum -c SHA256SUMS)
+          printf '%s\n' \
+            "wisp's framebuffer kernels (kernel-fb) and static fbDOOM executables for x86_64 (pc), sparc32 (SS-5)," \
+            "sparc64 (sun4u) and aarch64 (virt), built and checked with the DEMO1 timedemo by" \
+            "\`.github/workflows/wisp-fb.yml\` from \`${SHA}\`. \`e2e/wisp/doom.py --play --from-release\` and" \
+            "\`wsh-lab wisp-vm --doom\` download them; Freedoom's WAD comes from Freedoom's own release." \
+            "" \
+            "fbDOOM is GPL-2.0: fbdoom-source.tar.gz is the source of the executables (the pinned upstream" \
+            "archive, the patches and the build script). The kernels are Linux (GPL-2.0), built from Debian's" \
+            "linux-source package with the configuration fragments in \`e2e/wisp/config\` at that commit." \
+            "" '```' "$(cat wisp-fb/VERSION)" "" "$(cat wisp-fb/SHA256SUMS)" '```' > release-notes.md
+          files=(wisp-fb/kernel-fb-* wisp-fb/fbdoom-* wisp-fb/VERSION wisp-fb/SHA256SUMS)
+          if gh release view wisp-fb -R "$REPO" >/dev/null 2>&1; then
+            gh release edit wisp-fb -R "$REPO" --notes-file release-notes.md
+            gh release upload wisp-fb -R "$REPO" --clobber "${files[@]}"
+          else
+            gh release create wisp-fb -R "$REPO" --prerelease --title "wisp framebuffer artefacts" \
+              --notes-file release-notes.md "${files[@]}"
+          fi

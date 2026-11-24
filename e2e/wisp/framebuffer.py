@@ -20,9 +20,13 @@ MODE = re.compile(rb"WISP-FB v=1 dev=/dev/fb0 xres=(\d+) yres=(\d+) bpp=(8|16|32
                   rb"visual=(\d+) line=(\d+) drawn=1\r?\n")
 
 
-def display_args(display):
+def display_args(display, arch=None):
+    """The display's QEMU options and the machine's keyboard where it has none of its own."""
     if display == "bochs-display":
         return ["-device", display, "-device", "virtio-keyboard-pci"]
+    if arch == "sparc64":
+        # Linux can't probe sun4u's EBus i8042 under OpenBIOS (no mouse node), so a virtio keyboard
+        return ["-vga", display, "-device", "virtio-keyboard-pci"]
     return ["-vga", display]
 
 
@@ -76,11 +80,6 @@ async def check_keyboard(proc, arch, display, reader, writer, until, prompt):
         line = await until(b"\n")
         if b"WISP-KEYBOARD dev=" in line:
             break
-        if arch == "sparc64" and line.strip() == b"keytest: keyboard unavailable":
-            # OpenBIOS omits the mouse child required by Linux's EBus i8042 probe.
-            await until(prompt)
-            print(f"{arch}/{display} keyboard unavailable (OpenBIOS EBus)", flush=True)
-            return
         if b"keytest:" in line:
             raise RuntimeError(line.decode().strip())
     keys = ("a", "b", "ret", "esc")
@@ -165,7 +164,7 @@ async def boot(arch, display, dest, timeout):
         monitor = Path(tmp) / "qmp"
         cmd = run.qemu_command(arch, kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
                                firmware=os.getenv("WISP_FIRMWARE"), interactive=True,
-                               extra=[*display_args(display), "-qmp", f"unix:{monitor},server=on,wait=off"])
+                               extra=[*display_args(display, arch), "-qmp", f"unix:{monitor},server=on,wait=off"])
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE,
                                                     stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.STDOUT)

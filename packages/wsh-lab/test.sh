@@ -6,8 +6,8 @@
 #
 # apt installs it with its dependencies; wsh-lab --version/--help, targets, media --dir, the refusal
 # off a PVE node, mirror sync/list/prune and a description file's init/import/apply/plan and timer units
-# (on a storage.cfg of its own) work; the catalogue's and the
-# mirror tool's unit tests pass against the installed copy; wsh-sun-proms's unit tests pass and it
+# (on a storage.cfg of its own) work; wisp-vm is refused off a PVE node; the catalogue's, the
+# mirror tool's and wisp-vm's unit tests pass against the installed copy; wsh-sun-proms's unit tests pass and it
 # installs, verifies and removes fake PROMs (a test manifest) in /usr/share/kvm; wsh-lab-mcp explains its setup; with WSH_LAB_TEST_MCP=1 also `wsh-lab-mcp --setup` (network: PyPI) and the server's
 # --check from the venv. Then `apt purge` must leave nothing of the package behind: no file of it, no
 # venv, no __pycache__, no /var/lib/wsh-lab. Exit 0 when everything passed.
@@ -106,9 +106,19 @@ grep -q '^ExecStart=/usr/bin/wsh-lab mirror apply --storage mirror --quiet$' /tm
 unset WSH_LAB_STORAGE_CFG
 rm -r /tmp/nas /tmp/mirror /tmp/units /tmp/storage.cfg /tmp/mirror.out
 
-step "the catalogue's and the mirror tool's unit tests against the installed copy"
+step "the catalogue's, the mirror tool's and wisp-vm's unit tests against the installed copy"
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_targets.py')
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_mirror.py')
+(cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/tests -p 'test_wisp_vm.py')
+
+step "wsh-lab wisp-vm: --help, and refused off a PVE node"
+wsh-lab wisp-vm --help | grep -q 'start,stop,destroy' || fail "wisp-vm --help doesn't list its actions"
+rc=0
+wsh-lab wisp-vm x86_64 --vmid 900 > /tmp/wisp.out 2>&1 || rc=$?
+cat /tmp/wisp.out
+[ "$rc" != 0 ] && grep -q 'runs on the PVE node' /tmp/wisp.out || fail "wisp-vm without qm wasn't refused (rc $rc)"
+[ ! -e /var/lib/wsh-lab/wisp ] || fail "the refused wisp-vm left /var/lib/wsh-lab/wisp"
+rm /tmp/wisp.out
 
 step "wsh-sun-proms: its unit tests against the installed copy"
 (cd / && python3 -m unittest discover -v -s /usr/share/wsh-lab/sun-proms -p 'test_sun_proms.py')

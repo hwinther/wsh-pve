@@ -21,6 +21,7 @@ Suggests: git,
           python3-venv,
           qemu-server,
           mtools,
+          squashfs-tools,
           tesseract-ocr,
           vpx-tools,
 Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
@@ -31,9 +32,13 @@ Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
  a Proxmox VE node, from install media the user provides, and leaves a powered
  off VM with known, publicly documented login details.
  .
- Commands: wsh-lab (install, targets, media, run, serve, ...), wsh-sun-proms
- and wsh-lab-mcp, an MCP server that lets an AI assistant see and type on an
- allowed VM. The MCP server's Python SDK is not packaged in Debian:
+ wsh-lab wisp-vm puts wisp, the project's tiny Linux test system, or Freedoom
+ in fbDOOM into a new VM from the project's published, SHA-256 checked files
+ (squashfs-tools builds the game's data disk).
+ .
+ Commands: wsh-lab (install, targets, media, wisp-vm, run, serve, ...),
+ wsh-sun-proms and wsh-lab-mcp, an MCP server that lets an AI assistant see and
+ type on an allowed VM. The MCP server's Python SDK is not packaged in Debian:
  wsh-lab-mcp --setup installs it into a venv under /var/lib/wsh-lab from the
  pinned, hash-checked requirements in this package.
  .
