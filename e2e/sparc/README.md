@@ -1003,7 +1003,64 @@ pve-manager 9.2.31+wsh4; up to three other guests on the host, 2026-11-20):
 | `boot-test sol7-sun4u --disk /mnt/os/disks/install-sol7-sun4u.raw` | passed (`console login:` after 3.4 min) | 4.4 min |
 
 Not tried: the 9G disk, a 32-bit-only install (64-bit off), `--ip dhcp` and the other network options,
-and 2.6 or 2.5.1 on sun4u (with OpenBIOS 0031 their boot blocks work, then the kernels stop: 2.6 at the root mount, 2.5.1 before its banner; `submodules/SPARC.md`, "Solaris 2.5.1 and 2.6 on sun4u: the boot block").
+and 2.6 or 2.5.1 with this target (they have their own, below).
+
+### Solaris 2.6 and 2.5.1 on sun4u
+
+`sol26-sun4u` (2.6 5/98) and `sol251-sun4u` (2.5.1 11/97) run the same suninstall as `sol7-sun4u` on
+the sparc64 profile with 1024 MB (both kernels are 32-bit), the CD on `ide2` as an IDE CD-ROM (no
+`as_disk`, unlike 2.5.1 on sun4m) and the SUN2.9G-labelled 3 GiB disk on `ide0`. Their kernels need
+OpenBIOS 0036 (2.6), 0037 and 0038 (2.5.1) on top of 0031, and the installed systems 0039 (the root
+named `SUNW,Ultra-5_10`, so that the installer adds the platform packages; `submodules/SPARC.md`,
+"Solaris 2.6 and 2.5.1 on sun4u: the kernels"). `pve-qemu-kvm` 11.1.3-4+wsh15 is the first package
+with them; both targets are in the install matrix (no `matrix_skip`). What the scenario
+needed for them:
+
+- **Console messages over the screens.** Both releases' `hme` driver prints `Using Internal
+  Transceiver` and `Link Up` while the installer runs, at times every few seconds for minutes. They
+  landed on `Select Disks` over the `[ ] c0t0d0` entry, and on `Preserve Data?` they scrolled the title
+  off the terminal, so the scenario saw no screen. The installer doesn't redraw on Ctrl-L. So the
+  scenario now also reads the screens from the serial stream since its last F2 (`f2_cursor`): a title
+  drawn there counts as the next screen when the terminal shows none (`drawn_title()`), and the disk
+  entry is taken as drawn when it is hidden (`disks()`).
+- **A slow preinstall phase.** After the last `Confirm Information` 2.6 printed its preinstall and begin
+  script lines for over 180 s before the next screen; with `KEY_RETRY` the scenario found no screen
+  title and gave up. `press_on()` now waits again without F2 while no screen is up and the installer
+  wrote something besides console messages; with nothing but console messages since F2 the screen is
+  the old one, scrolled, and F2 goes again.
+- **The prompt after `halt`.** OpenBIOS's prompt shows the stack depth, and 2.6's `halt` returns with
+  14 cells on it: `e > `, not `0 > `. `halt_sun4u()` takes any depth.
+- **Warnings that cost nothing:** the 8042 node's (`Out of range register specification from device
+  node <8042>`, `kd_attach regs map setup 2nd failed`) and, on 2.6, the IDE timeouts on the way to the
+  first prompt that Solaris 7 prints too.
+
+Through PVE (the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh12, qemu-server
+9.2.20+wsh7, pve-manager 9.2.32+wsh12, and `openbios-sparc64` built from `openbios/` with 0001-0034 and
+0036-0039 mounted over the package's; other guests on the host, load average 11-15 on 14 cores; 2026-11-23):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install sol26-sun4u --check --export` (`pve_matrix.py install --reinstall`), first runs with 0036-0038 | failed in the scenario on the console messages, the preinstall phase and the prompt after `halt` (the bullets above), one after the other | |
+| the same, scenario fixed, 0036-0038 | install passed; the first boot from the IDE disk stopped after the boot block (`krtld: error during initial load/link phase`): the platform packages were missing, hence 0039 | install 20.5 min |
+| the same with 0036-0039 | passed: `SunOS sol26-sun4u 5.6 Generic_105181-05 sun4u sparc SUNW,Ultra-5_10`, the marker, `/` 87586 KB (31% used), `/usr` 237749 KB (73%), `/export/home` 2146879 KB on `c0t0d0`, `hme0` 10.0.2.15/24; stored disk and sidecar written | 28.0 min (install 1026 s, first boot 378 s, check 261 s) |
+| `install sol251-sun4u --check --export`, first runs with 0036-0038 | failed in the scenario on the console messages over the disk list (the first bullet above) | |
+| the same with 0036-0039 | passed: suninstall, the packages, then the CD's Maintenance Update (`Installing SUNWpatch.sun4u`, `Building package data base`, about 47 minutes of the install); `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, `/` 127229 KB (22%), `/usr` 111589 KB (86%), `/export/home` 2184383 KB on `c0t0d0`, `hme0` 10.0.2.15/24; `init 5` ends QEMU; stored disk and sidecar written | 66.8 min (install 3456 s, first boot 311 s, check 223 s) |
+| `boot-test sol26-sun4u` and `boot-test sol251-sun4u` on the stored disks | passed (`console login:` after 3.4 and 3.0 min) | 4.3 and 3.9 min |
+
+With the published packages (the PVE test container built from them: pve-qemu-kvm 11.1.3-4+wsh15, whose
+`/usr/share/kvm/openbios-sparc64` is the patched one, `SUNW,Ultra-5_10` and `aligned-allocator` in it;
+qemu-server 9.2.20+wsh7, pve-manager 9.2.32+wsh12; nothing mounted over the package; host builds running
+niced beside it, load average 22-43 on 14 cores; 2026-11-24):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `boot-test sol26-sun4u --disk <disks>/install-sol26-sun4u.raw` | passed: banner after 52 s, `console login:` after 4.5 min, `SunOS sol26-sun4u 5.6 Generic_105181-05 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.8 min |
+| `boot-test sol251-sun4u --disk <disks>/install-sol251-sun4u.raw` | passed: banner after 41 s, `console login:` after 4.1 min (the IDE timeouts on the way), `SunOS sol251-sun4u 5.5.1 Generic_105428-01 sun4u sparc SUNW,Ultra-5_10`, the marker, power-off | 5.3 min |
+
+Not tried: the 9G disk, more or less memory, the network options other than the default static address,
+an install with the published packages (the stored disks were installed with 0036-0039 mounted on
++wsh12), and a boot with firmware older than +wsh15 (which can't work: 0036-0039 are needed by the
+installed systems as by the CDs).
 
 ### Solaris 2.4 and 2.5.1
 

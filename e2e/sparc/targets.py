@@ -137,6 +137,15 @@ PACKAGES_2026_11_22_FBSD = {"pve-qemu-kvm": "11.1.3-4+wsh4 + wsh/0114-0115, open
 PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
                             "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
 PACKAGES_2026_11_22_WSH4 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11"}
+# Solaris 2.6 and 2.5.1 on sun4u: the published packages with openbios-sparc64 built from openbios/ with
+# 0036-0039 mounted over the package's
+PACKAGES_2026_11_24_SOL4U = {"pve-qemu-kvm": "11.1.3-4+wsh12 + openbios 0036-0039 (lab build)",
+                             "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh12",
+                             "libpve-storage-perl": "9.1.18+wsh2"}
+# The same targets' stored disks boot-tested with the published packages (pve-qemu-kvm +wsh15 and later
+# have openbios 0036-0039)
+PACKAGES_2026_11_24_SOL4U_WSH15 = {"pve-qemu-kvm": "11.1.3-4+wsh15", "qemu-server": "9.2.20+wsh7",
+                                   "pve-manager": "9.2.32+wsh12", "libpve-storage-perl": "9.1.18+wsh2"}
 # Debian 7 on sun4u (published packages; the install needs none of the sparc64 patches after them)
 PACKAGES_2026_11_22_DEB7 = {"pve-qemu-kvm": "11.1.3-4+wsh4", "qemu-server": "9.2.20+wsh7",
                             "pve-manager": "9.2.32+wsh11", "libpve-storage-perl": "9.1.18+wsh2"}
@@ -1154,6 +1163,58 @@ TARGETS = {
         # 24.5 min with up to two other guests on the host: install 13.6, first boot 6.3, --check 4.2
         "minutes": 25,
         "tested": {"date": "2026-11-20", "packages": PACKAGES_2026_11_20, "with": "--check --export; boot-test"},
+    },
+    # Solaris 2.6 5/98 and 2.5.1 11/97 on sun4u: suninstall as for sol7-sun4u. Their kernels need
+    # openbios 0036 (2.6's pci driver wants four sabre ranges), 0037 (2.5.1's boot program aligns the
+    # kernel to 4 MB only with /openprom aligned-allocator), 0038 (2.5.1 panics on a locked firmware
+    # translation) and 0039 (the root named SUNW,Ultra-5_10, or the installer leaves out the platform
+    # packages), in pve-qemu-kvm 11.1.3-4+wsh15 and later. README.md, "Solaris 2.6 and 2.5.1 on sun4u"
+    "sol26-sun4u": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.6 5/98 End User on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        "install": {**SOLARIS_SCRIPTED["install"], "vars": {"DISK": "c0t0d0", "FIRST_PROMPT_TIMEOUT": "1200",
+                                                             "KEY_RETRY": "180"},
+                    "timeout": 7200},
+        "firstboot": {**SOLARIS_SCRIPTED["firstboot"], "timeout": 3600},
+        "check": {**SOLARIS_SCRIPTED["check"], "timeout": 2400},
+        "profile": {**SUN4U_SOLARIS},
+        "disk": sun_disk("3G", bus="ide0"),
+        "device": "c0t0d0",
+        "media": [{"name": "solaris_2.6_598_sparc.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "sol26-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],
+        # 28.0 min through PVE with other guests on the host: install 17.1, first boot 6.3, --check 4.3
+        "minutes": 28,
+        "tested": {"date": "2026-11-24", "packages": PACKAGES_2026_11_24_SOL4U_WSH15,
+                   "with": "--check --export (openbios 0036-0039 mounted on +wsh12); boot-test of the stored disk (+wsh15)"},
+    },
+    "sol251-sun4u": {
+        **SOLARIS_SCRIPTED,
+        "title": "Solaris 2.5.1 11/97 End User on sun4u (OpenBIOS, IDE disk)",
+        "status": "automated",
+        # the Maintenance Update keeps the installer busy for most of an hour (sol251-ss5)
+        "install": {**SOLARIS_SCRIPTED["install"], "vars": {"DISK": "c0t0d0", "FIRST_PROMPT_TIMEOUT": "1200",
+                                                             "KEY_RETRY": "180", "FINISH_TIMEOUT": "6000"},
+                    "timeout": 9000},
+        "firstboot": {**SOLARIS_SCRIPTED["firstboot"], "timeout": 3600},
+        "check": {**SOLARIS_SCRIPTED["check"], "timeout": 2400},
+        "profile": {**SUN4U_SOLARIS},
+        "disk": sun_disk("3G", bus="ide0"),
+        "device": "c0t0d0",
+        "media": [{"name": "solaris_2.5.1_1197.iso", "drive": "ide2"}],
+        "boot": "ide0",
+        "hostname": "sol251-sun4u",
+        "nic": "hme0",
+        "network": "hme0: a static address (10.0.2.15/24 unless --ip/--netmask; --gateway, --dns, --domain)",
+        "net_modes": ["static"],  # no DHCP client before 2.6
+        # 66.8 min through PVE: install 57.6 (47 of them the Maintenance Update), first boot 5.2, --check 3.7
+        "minutes": 67,
+        "tested": {"date": "2026-11-24", "packages": PACKAGES_2026_11_24_SOL4U_WSH15,
+                   "with": "--check --export (openbios 0036-0039 mounted on +wsh12); boot-test of the stored disk (+wsh15)"},
     },
     # The live CD's own installer (live_install.sh -G: SMI label, ZFS root pool rpool, base overlay;
     # ROOT_FS=ufs in the install scenario uses ufs_install.sh) from a root shell on ttya; the first

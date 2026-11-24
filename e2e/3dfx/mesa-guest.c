@@ -33,8 +33,20 @@
  *
  *   MESA-GUEST: GAMMA
  *
- * (the host checks the console's clear colour then); GLIDE_GUEST_BENCH=<n> draws the scene <n> more
- * times, a swap each, and prints
+ * (the host checks the console's clear colour then); MESA_GUEST_HOLD=<s> runs with the Windows
+ * wrapper's default display timer (DispTimerMS 2000; the guest has it off otherwise), holds the
+ * first frame <s> seconds after the swap instead of 5, prints
+ *
+ *   MESA-GUEST: HELD
+ *
+ * (the console must still show the frame: a game that doesn't redraw keeps its picture), holds it
+ * 3 s more, then deactivates its window the way the wrapper's WM_ACTIVATE hook does and prints
+ *
+ *   MESA-GUEST: DEACTIVATED
+ *
+ * (the console must show the VGA), and holds 3 s again; the next swap (the gamma phase, or the
+ * bench) shows the frames again. GLIDE_GUEST_BENCH=<n> draws the scene <n> more times, a swap
+ * each, and prints
  *
  *   MESA-GUEST: BENCH <n> frames in <s> s, <fps> fps
  *
@@ -218,7 +230,7 @@ static uint32_t set_gamma_2(void)
 int main(void)
 {
 	char verdict[128];
-	int msaa = 0, gamma = 0, bench = 0;
+	int msaa = 0, gamma = 0, bench = 0, hold = 0;
 	const char *env = getenv("MESA_GUEST_MSAA"); /* the kernel passes unknown key=value as env */
 	if (env)
 		msaa = atoi(env);
@@ -228,6 +240,9 @@ int main(void)
 	env = getenv("GLIDE_GUEST_BENCH");
 	if (env)
 		bench = atoi(env);
+	env = getenv("MESA_GUEST_HOLD");
+	if (env)
+		hold = atoi(env);
 
 	mkdir("/dev", 0755);
 	if (mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) && errno != EBUSY)
@@ -263,12 +278,17 @@ int main(void)
 	printf("init: ok (%#x)\n", ver);
 
 	/* wglChoosePixelFormat: the wrapper's options in xppfd[0] (ContextMSAA 4x, 8x, 16x as 0x04,
-	 * 0x08, 0x0c), display timer off (xppfd[1] = 0), a zero PIXELFORMATDESCRIPTOR */
+	 * 0x08, 0x0c), the display timer in xppfd[1] (off: 0; with MESA_GUEST_HOLD the wrapper's
+	 * default, DISPTMR_DEFAULT, 2000 ms), a zero PIXELFORMATDESCRIPTOR */
 	uint32_t *a = wgl_args();
 	memset(a, 0, 64);
 	a[0] = (msaa >= 16) ? 0x0c : (msaa >= 8) ? 0x08 : (msaa > 0) ? 0x04 : 0;
 	if (msaa)
 		printf("ContextMSAA: %d (%#x)\n", msaa, a[0]);
+	if (hold > 0) {
+		a[1] = DISPTMR_DEFAULT;
+		printf("DispTimerMS: %u\n", a[1]);
+	}
 	mmio_write(0xFEC, MESAGL_MAGIC);
 	for (int i = 0; !ptm[0xFB8 >> 2]; i++) { /* the window is made on QEMU's main loop */
 		if (i == 10000000)
@@ -314,7 +334,18 @@ int main(void)
 	/* wglSwapBuffers: the frame goes to the window, the host captures it now */
 	printf("wglSwapBuffers: %#x\n", swap_buffers());
 	printf("MESA-GUEST: FRAME\n");
-	sleep(5);
+	sleep(hold > 5 ? hold : 5);
+
+	/* A frame held longer than the display timer's two rounds: still shown; then the window
+	 * deactivated (wrapgl32.c's CallWndProc: WM_ACTIVATE's state in the last page, 0xFD8) */
+	if (hold > 0) {
+		printf("MESA-GUEST: HELD\n");
+		sleep(3);
+		wgl_args()[0] = 0; /* WA_INACTIVE */
+		mmio_write(0xFD8, MESAGL_MAGIC);
+		printf("MESA-GUEST: DEACTIVATED\n");
+		sleep(3);
+	}
 
 	/* The scene again with a gamma ramp of 2.0: the host checks the clear colour in the console
 	 * (the guest's own read shows the frame without it, as on a real card) */

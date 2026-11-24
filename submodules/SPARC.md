@@ -2777,6 +2777,34 @@ serial console unless stated.
 | Debian 7.11 (wheezy) netinst and CD 1 | yes: SILO 1.4.14 from the CD (`Trying cdrom:f...`), Return at `boot:`, then "Select a language" (Linux 3.2.0-4) | not tried | yes, from CD 1 with a preseed file (target `debian7-sun4u`): the base system with SSH, 84 min to the reset in the lab's own QEMU, nothing fetched | yes: SILO boots `/vmlinuz` and its initrd, `login:` 152-164 s from QEMU start, DHCP and static on `eth0` (`sunhme`), `poweroff` ends QEMU (exit 0); `reboot` with pve-qemu `wsh/0112` ("Debian 7 on sun4u" below) |
 | Ubuntu 9.04 server (jaunty) | yes: SILO 1.4.14, Return at `boot:`, then "Choose language" 31 s later (Linux 2.6.28-6; the boot is `quiet`) | not tried | not tried | |
 
+**X on std VGA (measured).** NetBSD 11.1/sparc64 ran ctwm 4.1.0 and xterm 397 at 1024×768,
+8-bit PseudoColor (X.Org 1.21.1.25, wsfb 0.4.0, pixman 0.46.4). The run used one TCG CPU,
+1024 MB and OpenBIOS 1.1 from pve-qemu-kvm 11.1.3-2+wsh16 on 2026-11-23/24 UTC.
+
+| Test | Result |
+| --- | --- |
+| Warm `startx` to visible xterm | 29.03 s from sending the command on serial to the first QMP frame with the cyan xterm. The preceding frame at 28.82 s still lacked the window. |
+| Scroll 2,000 lines (134,000 bytes) | 0.38 s in a 100×56 xterm with the 6×13 font, 4.00 s on the 85×34 wscons VGA console. Guest `time -p` reported 0.35 and 3.93 s real, respectively. |
+| Guest CPU while scrolling | One-second `vmstat` intervals averaged 61% user, 39% system, 0% idle across 30 consecutive xterm scrolls (5 samples). One console scroll averaged 17%, 83%, 0% (3 samples). Both exclude the initial since-boot report. |
+| `x11perf` 1.2, one 3 s trial per test | 238,000 10×10 rectangles/s, 11,900 filled 100-pixel circles/s, 472,000 characters/s in 80-character lines (6×13), 3,320 scrolls/s and 2,930 window-to-window copies/s (both 500×500). |
+| Move a window | A QMP relative-pointer drag on the ctwm title bar moved xterm's left edge from 2 to 170 pixels. Its top stayed at 23 pixels (`xwininfo`). |
+
+To reproduce, boot a writable overlay of the installed disk and mount the install CD read-only.
+Extract `sparc64/binary/sets/x*.tgz` into `/` with `tar -xzpf` for each set. Boot with
+`-M sun4u -m 1024 -vga std` and leave OpenBIOS output on the screen. With output on `ttya`,
+`genfb0` probed but opening `/dev/ttyE0` returned “Device not configured”. With VGA as console,
+`wsdisplay0` attached to `genfb0` and a separate getty on `com0` provided serial control.
+Set `Driver "wsfb"` and `Option "device" "/dev/ttyE0"` in the Xorg Device section, reference it
+from the Screen section, then run `startx` with a client script that starts ctwm and xterm.
+
+For scrolling, number the lines 0001 through 2000, pad each to 66 printable characters and
+end each with a newline. Time `cat` between serial markers with a host monotonic clock.
+In xterm, include the reply to a trailing cursor-position query (`ESC [ 6 n`) so buffered output
+is consumed. On wscons, direct the same file to the active `/dev/ttyE0` and time through command
+completion. Run `x11perf -repeat 1 -time 3 -rect10 -fcircle100 -ftext -scroll500 -copywinwin500`.
+For a separate full-frame workload, the [wisp framebuffer timedemo](../e2e/wisp/README.md#freedoom-framebuffer-timedemo)
+measured 15.54 FPS on sun4u at 4× scaling (1280×800) under Linux.
+
 OpenBSD's installed `/bsd` (GENERIC, 10.6 MB text) stops right after the loader:
 
 ```
@@ -3239,7 +3267,7 @@ directory, the same source as `openbios/Dockerfile` builds):
 | 8 (1/01) Installation CD | `SunOS Release 5.8 Version Generic_108528-05 64-bit`, then `panic[cpu0]/thread=10408000: boot_alloc: pp is NULL or free`. With 0024: the installer's `Do you want to format /dev/dsk/c0t0d0?` at 1024 and 2048 MB |
 | 8 2/02 Installation CD | `SunOS Release 5.8 Version Generic_108528-13 64-bit`, then the same panic in `setup_ddi` ← `startup_modules`: `boot_alloc(0x300001be000, 0x14000)` at 1024 MB (`0x300001f6000` at 2048 MB) for `impl_ddi_callback_init` (published firmware, as 9 9/05). With 0024: the installer at 1024 and 2048 MB; at 1024 MB the mini-root and Web Start install End User to the IDE disk (a fresh QEMU between the two) and the installed system boots to `console login:` |
 | 7 (3/99) | `SunOS Release 5.7 Version Generic_106541-02`, then `panic[cpu0]/thread=10404040: kmem_getpages: pp is NULL or free`. With 0024: the installer's `Select a Language` at 1024 and 2048 MB (IDE timeouts and `Interrupt not seen after set_features` on the way) |
-| 2.6 (5/98), 2.5.1 (11/97) | in the boot block: `open isn't unique.`, `?go:`, `byte-load: exception caught!`. With 0031: the kernel starts; 2.6 can't mount root from the CD, 2.5.1 traps before its banner ("Solaris 2.5.1 and 2.6 on sun4u: the boot block") |
+| 2.6 (5/98), 2.5.1 (11/97) | in the boot block: `open isn't unique.`, `?go:`, `byte-load: exception caught!`. With 0031: the kernel starts; 2.6 can't mount root from the CD, 2.5.1 traps before its banner ("Solaris 2.5.1 and 2.6 on sun4u: the boot block"). With 0036 (2.6) and 0037-0038 (2.5.1): the installers; with 0039 as well the installed systems boot ("Solaris 2.6 and 2.5.1 on sun4u: the kernels") |
 
 How each patch moved them (each verified by booting with and without it):
 
@@ -3824,25 +3852,10 @@ nothing to do with the boot block:
 | 2.6 (5/98) | ufsboot loads the kernel (`SunOS Release 5.6 Version Generic_105181-05`), then `Cannot assemble drivers for root /pci@1f,0/pci@1,1/ide@3/cdrom@2,0:b`, `vfs_mountroot: cannot mount root` (the same with 512 and 1024 MB; with `-v`, no driver attach line before it) |
 | 2.5.1 (11/97) | ufsboot loads the kernel and starts it; before the banner, `Unhandled Exception 0x30` with the PC in the kernel's `sfmmu_add_nucleus_hblks`, reading the first page past the kernel's data segment (`0x104cc000`, the nucleus hme blocks the kernel puts in the rest of its 4 MB data page) |
 
-What is known about the two (not traced further):
-
-- 2.6: the path's nodes carry what the 2.6 drivers bind to (`pci` by name, `pci108e,5000`,
-  `pci1095,646`, `ide-cdrom`). No driver on the path prints an attach line, so the first one (the
-  sabre's `pci` driver, which 2.6 has under `/platform/sun4u/kernel/drv`) probably fails its
-  attach; its messages name the register sets it maps (`unable to map reg set 0`/`2`) and the
-  properties it needs (`upa-portid`, `bus-range`, `ranges`, `interrupt-map`), and OpenBIOS's sabre
-  node has two `reg` entries. Solaris 10's `pcipsy` attaches with the same node. Next step:
-  compare the node with an Ultra 5's OBP and boot with `kadb` or a firmware trace of the client
-  calls.
-- 2.5.1: QEMU's log shows a fast data access MMU miss on that page, which OpenBIOS's DTLB miss
-  handler answered with a TTE of `-1` (`find_tte()`'s "not found" value is non-zero, so the handler
-  loads it instead of failing), and the access then traps with 0x30 (the all-ones TTE has the
-  no-fault-only bit set). So the page isn't mapped: on OBP the kernel's data page is mapped as one
-  4 MB page by the boot program, here only the claimed part is. Next step: trace ufsboot's `claim`s
-  and `map`s. (The handler loading `-1` is an OpenBIOS bug of its own; fixing it would only change
-  the message.)
-
-So 2.5.1 and 2.6 stay out of the install targets; the boot block is no longer what stops them.
+Both are traced and fixed in "Solaris 2.6 and 2.5.1 on sun4u: the kernels" below (openbios
+0036-0039). The guesses that stood here were half right: 2.6 did fail in the sabre's `pci` driver, but
+on `ranges`, not `reg`; 2.5.1's page was indeed never mapped, because its boot program aligned
+nothing without a property OpenBIOS lacked.
 
 Regression with firmware built from 0001-0029 + 0031 (`openbios/Dockerfile`), bind-mounted over the
 package's in the lab image (pve-qemu-kvm 11.1.3-4+wsh2), copies of the stored disks: the installed
@@ -3854,6 +3867,103 @@ the Solaris 10 1/13 DVD and the Solaris 7 CD reach their installers' first quest
 `sparc64-reboot.py` on the stored NetBSD 11.1 disk (5.6 min) and Solaris 10 disk (31 min) passed,
 login, a reboot from the guest through 0030 back to the banner and to login again; the 2.6 CD
 reaches `SunOS Release 5.6` and the 2.5.1 CD its `Unhandled Exception 0x30`, as above.
+
+**Solaris 2.6 and 2.5.1 on sun4u: the kernels (OpenBIOS 0036-0039, 2026-11-23).** Traced on the lab
+with the published pve-qemu-kvm 11.1.3-4+wsh12 and `openbios-sparc64` built from `openbios/` (0001-0034),
+the CDs on `ide.1`, 1024 MB, `-nographic`. Neither kernel has a working debugger under OpenBIOS, so the
+tools were QEMU's gdbstub (`-s`, breakpoints by address in `unix`, in `genunix` found through a call
+into `unix`, and in the loaded `pci` module; the `genunix` that runs is `/platform/sun4u/kernel/genunix`,
+not `/kernel/genunix`), QEMU's trace events, and breakpoints on OpenBIOS's own `ofmem_claim*`/`ofmem_map`
+for the boot program's memory requests. Sun's 2.6 source on the lab served as the reference for what
+the kernel expects; nothing of it is in the repository.
+
+- **2.6: the sabre's `ranges`.** `boot cdrom -v` added nothing (the boot arguments do reach ufsboot:
+  `-a` asks for the kernel's name), and the kernel never touched the sabre: no write to its control or
+  IOMMU registers, no PCI configuration access after the banner. The root path is resolved one
+  component at a time; `/pci@1f,0` binds to the `pci` driver (major 111), `drv/pci` loads (module id
+  21) and is unloaded again because no instance attached (`moddebug` set through the gdbstub shows the
+  load and unload, nothing else). In the driver, `pci_identify` succeeds and `pci_attach` returns
+  failure from its `ranges` check without printing anything: 2.6's `pci` (psycho and sabre in one
+  driver) takes a `ranges` property only with at least four entries of seven cells. OpenBIOS's sabre
+  had three (configuration, I/O, 32-bit memory); OBP lists the 64-bit memory space as a fourth.
+  Solaris 7 and later (`pcipsy`) accept three. openbios 0036 adds the fourth entry, 64-bit memory over
+  the same window. With it 2.6 attaches the bridge, simba, `uata`, `dad` and `atapicd`, mounts root
+  from the CD and reaches the installer's `Select a Language`.
+- **2.5.1: the 4 MB nucleus and `aligned-allocator`.** The kernel's ELF carries a page-size hint (4
+  MB): the kernel expects its text and its data to be loaded as whole 4 MB pages and puts the hme
+  hash and the nucleus hme blocks in the rest of the data page (from `0x104cc000` here, up to
+  `0x10800000`). 2.6's ufsboot always honours the hint on sun4u: it claims `0x10000000` and
+  `0x10400000` with 4 MB each, 4 MB aligned. 2.5.1's ufsboot claimed only the segments' sizes (text
+  `0x40000`, data `0x26000`, then krtld's pieces up to `0x10440000`), so the kernel's first access to
+  the nucleus blocks was a miss on an unmapped page. Its ufsboot honours the hint only when `/openprom`
+  has an `aligned-allocator` property (as sun4m's ufsboot does in the 2.6 source); OBP has it, and
+  OpenBIOS's sparc32 tree has it, the sparc64 tree didn't. openbios 0037 adds it.
+- **2.5.1: locked translations.** With 0037 the banner came (`SunOS Release 5.5.1 Version
+  Generic_103640-12`), then `panic: map_prom: locked translation is not global`. When it takes the
+  firmware's `translations` over, 2.5.1 panics on an entry above the kernel base that has the TTE lock
+  bit without the global bit; 2.6 and later panic on a global entry and clear the lock bit. OpenBIOS
+  listed its own text and heap (locked in the TLB) with the lock bit. openbios 0038 leaves the lock bit
+  out of the property, as OBP's list must for both releases to boot; the firmware's TLB entries stay
+  locked. With 0036-0038 2.5.1 reaches the installer's `What type of terminal are you using?`.
+- **The installed system: the platform name.** With 0036-0038 the 2.6 install to the IDE disk
+  finished, and its first boot stopped right after the boot block: `krtld: error during initial
+  load/link phase`, then `Unhandled Exception 0x0a` at PC 0. The installed root lacked
+  `/platform/sun4u/kernel/cpu/SUNW,UltraSPARC-IIi` (the CD's mini-root has it), which the kernel
+  linker loads before anything else. In 2.6 that entry is a link in a platform package (SMCC platform
+  links), and the installer adds such packages by the root node's name (its dynamic cluster tests
+  compare the first node name `prtconf` prints with a list of platforms: `SUNW,Ultra-5_10` is on it).
+  OpenBIOS's root was `OpenBiosTeam,OpenBIOS`, so only the generic sun4u set went on. openbios 0039
+  names the root `SUNW,Ultra-5_10`, as OBP does on that machine; Solaris looks for its kernel under
+  `/platform/<name>` first and falls back to `/platform/sun4u`, so disks installed under the old name
+  boot as before (the regression below), and the 2.6 and 2.5.1 CDs boot with it too (2.5.1 now also
+  prints `kbd: Unknown keyboard type, Type 3 assumed`).
+
+Both installers print the 8042 warnings of the sun4u keyboard node (`Out of range register
+specification from device node <8042>`, `kd_attach regs map setup 2nd failed`), harmless here (the
+console is ttya), and 2.6 the IDE timeouts on the way to the first prompt that Solaris 7 prints too
+(about 3 minutes from the banner to `Select a Language`). Two more things seen, not followed further:
+both releases' `hme` driver prints `Using Internal Transceiver` and `100 Mbps half-duplex Link Up`
+again and again while the installer runs (at times every few seconds for minutes; Solaris 7 every 30
+s), as if it kept renegotiating with QEMU's `sunhme` PHY, and 2.6 printed `WARNING: interrupt level 12
+not serviced` (a spurious interrupt at PIL 12) once or twice per boot. Neither stopped anything; the
+install scenario had to learn to read its screens past them (e2e/sparc/README.md, "Solaris 2.6 and
+2.5.1 on sun4u").
+
+Results through PVE (the PVE test container with the published pve-qemu-kvm 11.1.3-4+wsh12, qemu-server
+9.2.20+wsh7, pve-manager 9.2.32+wsh12, `openbios-sparc64` from `openbios/` with 0001-0034 and 0036-0039
+mounted over the package's; 2026-11-24):
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `lab.py install sol26-sun4u --check --export` | passed: suninstall End User on `c0t0d0`, `SunOS sol26-sun4u 5.6 Generic_105181-05 sun4u sparc SUNW,Ultra-5_10`, `hme0` static; `init 5` ends QEMU | 28.0 min |
+| `lab.py install sol251-sun4u --check --export` | passed, with the CD's Maintenance Update (kernel `Generic_105428-01` afterwards); `init 5` ends QEMU | 66.8 min |
+| `lab.py boot-test` of both stored disks | passed, `console login:` after 3.0-3.4 min | 3.9-4.3 min |
+| `e2e/wisp` `run.py --arch sparc64 --repeat 2` (wisp's Linux) | passed, both runs | 3.4-3.6 s each |
+
+Regression, boot-tests of the stored sun4u disks (`pve_matrix.py install`, each disk imported into a new
+VM, the target's check: login, the marker, commands, power-off), with 0036-0038 and with 0036-0039:
+
+| Stored disk | 0036-0038 (load 5-15) | 0036-0039 (load 2-6) |
+| --- | --- | --- |
+| NetBSD 11.1, 9.3 | passed (155 s, 133 s) | passed (123 s, 83 s) |
+| OpenBSD 8.0 | passed (450 s) | passed (270 s) |
+| FreeBSD 12.4 | passed (251 s) | passed (123 s) |
+| Solaris 10 1/13 | passed (872 s) | passed (621 s) |
+| Solaris 9 9/05, 8 2/02, 7 3/99 | passed (248 s, 319 s, 281 s) | passed (222 s, 275 s, 251 s) |
+| Tribblix m34 | logged in, checked; `init 5` still stopping services at the 3600 s limit (services timing out under the load), counted as failed | passed (1514 s) |
+| Debian 13 | emergency mode: `/boot` and swap by UUID timed out (udev under the load), counted as failed | passed (319 s; also alone, 5.3 min) |
+| Debian 7.11 | passed (666 s) | passed (268 s) |
+
+Both failures of the first round were the host's load, not the firmware: the same disks passed with
+0036-0039 once the load was lower. The CDs of NetBSD, OpenBSD, Debian and Solaris 7-10 weren't booted
+again; Solaris 10 isn't reinstalled (its installer now sees `SUNW,Ultra-5_10` and may add that
+platform's packages). wisp's Linux (above) is the only boot of a kernel from scratch with 0039.
+
+Published in pve-qemu-kvm 11.1.3-4+wsh15 (its `openbios-sparc64` has `SUNW,Ultra-5_10` and
+`aligned-allocator`). With it, nothing mounted over the package, both stored disks boot-test through
+PVE (2026-11-24, load average 22-43 on 14 cores): `sol26-sun4u` 5.8 min (`console login:` after 4.5),
+`sol251-sun4u` 5.3 min (4.1). `sol26-sun4u` and `sol251-sun4u` no longer have `matrix_skip`
+(e2e/sparc/README.md, "Solaris 2.6 and 2.5.1 on sun4u").
 
 **Packaging.** `openbios/Dockerfile` builds `openbios-sparc64` next to `openbios-sparc32`, and
 `debian/rules` (`submodules/pve-qemu.patch`) copies `build/openbios/openbios-sparc64` over

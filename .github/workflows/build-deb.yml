@@ -202,7 +202,11 @@ jobs:
           fi
 
           echo "::group::Add tag to submodule"
-          GIT_SUBJECT=$(git log -1 --pretty=format:%s -- submodules/${{ inputs.package }}.patch)
+          # One changelog line per commit since the previous build of this package (computed here,
+          # where the history is; the build image only runs dch). The release notes list them too.
+          # For pve-qemu the Makefile's pve-qemu target writes the shipped entry the same way.
+          WSH_CHANGELOG_ENTRIES=$(scripts/wsh-changelog-entries.sh "$PACKAGE")
+          printf '%s\n' "$WSH_CHANGELOG_ENTRIES" > "$RUNNER_TEMP/wsh-changes.txt"
           GIT_AUTHOR=$(git log -1 --pretty=format:%an -- submodules/${{ inputs.package }}.patch)
           GIT_EMAIL=$(git log -1 --pretty=format:%ae -- submodules/${{ inputs.package }}.patch)
           docker run --rm \
@@ -210,8 +214,9 @@ jobs:
             -w /src/submodules/${{ inputs.package }} \
             -e DEBEMAIL="$GIT_EMAIL" \
             -e DEBFULLNAME="$GIT_AUTHOR" \
+            -e WSH_CHANGELOG_ENTRIES="$WSH_CHANGELOG_ENTRIES" \
             ghcr.io/hwinther/wsh-pve/pve-build:13 \
-            dch -l +wsh -D trixie "$GIT_SUBJECT"
+            bash /src/scripts/wsh-changelog-dch.sh trixie
           echo -e "\n\n\n\n*********************************\n\nChangelog entries related to WSH:\n\n"
           grep -A4 "\+wsh" submodules/${{ inputs.package }}/debian/changelog
           echo -e "\n\n*********************************\n\n\n\n"
@@ -378,6 +383,18 @@ jobs:
           echo "Creating release with tag: $RELEASE_TAG"
 
           RELEASE_NOTES="Release of ${{ inputs.package }} version $WSH_VERSION"
+
+          # The changelog entry's lines (scripts/wsh-changelog-entries.sh, saved by Build and push);
+          # GitHub links the (#N) at their ends
+          CHANGES=$(sed -e '/^$/d' -e 's/^/- /' "$RUNNER_TEMP/wsh-changes.txt" 2>/dev/null || true)
+          if [ -n "$CHANGES" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}
+
+          ## Changes
+
+          ${CHANGES}"
+          fi
+
           if [ -n "$PROXMOX_CHANGELOG" ] && [ "$PROXMOX_CHANGELOG" != "(upstream changelog not found)" ]; then
             RELEASE_NOTES="${RELEASE_NOTES}
 

@@ -5,23 +5,30 @@ to the CPU (getOffscreenFrame) and copies it into the VM's console. When QEMU's 
 (-display egl-headless, -display dbus,gl=on) it can take the frame as a dmabuf instead, a buffer
 both EGL displays share, with no copy through system memory:
 
-- getOffscreenDmabuf() creates a third renderbuffer of the window's size and exports it once as a
-  dmabuf through EGL_MESA_image_dma_buf_export (fd, stride, offset, fourcc, modifier; the caller
-  closes the fd). Mesa's llvmpipe exports through /dev/udmabuf, a GPU driver through its render
-  node; without the extension it returns 0 and says why.
-- getOffscreenScanout() blits the front buffer into it (unscaled and unflipped, which llvmpipe
-  does as a memory copy; the rows stay bottom up, which the host program tells its display), and
-  finishes the GL work (an EGL fence waited on, EGL_KHR_fence_sync, else glFinish), so the display
-  can read it from its own context and thread at once. A buffer of its own, so that the next swap
-  can't change a frame the display still reads.
+- getOffscreenDmabufAt(i, ...) creates scanout buffer i (0 or 1), a renderbuffer of the window's
+  size, and exports it once as a dmabuf through EGL_MESA_image_dma_buf_export (fd, stride, offset,
+  fourcc, modifier; the caller closes the fd). Mesa's llvmpipe exports through /dev/udmabuf, a GPU
+  driver through its render node; without the extension it returns 0 and says why.
+- getOffscreenScanoutAt(i) blits the front buffer into buffer i (unscaled and unflipped, which
+  llvmpipe does as a memory copy; the rows stay bottom up, which the host program tells its
+  display), and finishes the GL work (an EGL fence waited on, EGL_KHR_fence_sync, else glFinish),
+  so the display can read it from its own context and thread at once. Buffers of their own, so that
+  the next swap can't change a frame the display still reads; two, so that the host program can
+  copy the next frame into one while its display still reads the other (double buffering, since
+  wsh-openglide 0.8). getOffscreenDmabuf() and getOffscreenScanout() are buffer 0, as before.
 - While a gamma ramp is set (grGammaCorrectionValue, grLoadGammaTable) the copy applies it, in the
   same rows: a context of its own that shares OpenGLide's objects (so none of OpenGLide's state is
   touched) copies the front buffer into a texture and draws it into the scanout buffer through a
   256x1 lookup texture (a GLSL 1.20 shader, the same lookup getOffscreenFrame applies on the CPU).
   Only if that pass can't be had (no context, no shader) does getOffscreenScanout() refuse (returns
   0) a frame with a ramp: the caller then reads it back with getOffscreenFrame().
+- On a GPU the gamma pass's context waits for OpenGLide's frame in its own GL stream
+  (EGL_KHR_wait_sync, a fence flushed in OpenGLide's context) instead of the CPU waiting for it;
+  not with Mesa's software renderers, which don't all wait in the stream. QEMU_3DFX_WAIT_SYNC=1
+  or 0 in the environment decides instead. The copy itself is always finished on the CPU, as the
+  display reads it from a context of its own.
 
-The scanout buffer goes with the window (EGLFinaliseWindow). Nothing changes for a host program
+The scanout buffers go with the window (EGLFinaliseWindow). Nothing changes for a host program
 that doesn't call the new exports.
 
 No eglTerminate when the window closes any more: an EGL platform display is one handle per process,
@@ -33,7 +40,7 @@ For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit ups
 after 0002-egl-offscreen.patch.
 ---
 diff --git a/openglide/platform/linux/egl.cpp b/openglide/platform/linux/egl.cpp
-index f3237c2..a6cb3a7 100644
+index f3237c2..cc988a3 100644
 --- a/openglide/platform/linux/egl.cpp
 +++ b/openglide/platform/linux/egl.cpp
 @@ -22,6 +22,8 @@
@@ -107,47 +114,83 @@ index f3237c2..a6cb3a7 100644
      egl_dpy = EGL_NO_DISPLAY;
      egl_ctx = EGL_NO_CONTEXT;
      egl_pbuf = EGL_NO_SURFACE;
-@@ -364,4 +378,360 @@ extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
+@@ -364,4 +378,447 @@ extern "C" int getOffscreenFrame(void *dst, int width, int height, int stride)
      return 1;
  }
  
 +//*************************************************
 +//* dmabuf scanout: instead of reading every frame back to the CPU, the host program can ask for
-+//* a buffer it shares with its display as a dmabuf (getOffscreenDmabuf, once per window), and then
-+//* have each frame copied into it on the GPU (getOffscreenScanout). The buffer is a third
-+//* renderbuffer of the window's size, exported through EGL_MESA_image_dma_buf_export (Mesa's
-+//* llvmpipe exports through /dev/udmabuf, a GPU driver through its render node); the copy is a
-+//* framebuffer blit of the front buffer, unscaled and unflipped (llvmpipe then copies memory), so
-+//* the rows are in OpenGL's order, bottom up: the display is told so (QEMU's y0_top). A separate
-+//* buffer, not the front buffer itself, so that the next swap can't change a frame the display
-+//* still reads. While a gamma ramp is set the copy is a shader pass instead (scan_gamma: the
-+//* front buffer through a 256-entry lookup per channel, the same lookup as getOffscreenFrame
-+//* applies), in the same rows; only if that pass can't be had is the copy refused, and the host
-+//* program reads that frame back with getOffscreenFrame.
++//* buffers it shares with its display as dmabufs (getOffscreenDmabufAt, once per window and
++//* buffer), and then have each frame copied into one of them on the GPU (getOffscreenScanoutAt).
++//* There are two, renderbuffers of the window's size besides the back and front buffers, each
++//* exported through EGL_MESA_image_dma_buf_export (Mesa's llvmpipe exports through /dev/udmabuf,
++//* a GPU driver through its render node), so that the host program can copy a frame into one
++//* while its display still reads the other (double buffering); getOffscreenDmabuf and
++//* getOffscreenScanout are buffer 0 (the one buffer before). The copy is a framebuffer blit of the
++//* front buffer, unscaled and unflipped (llvmpipe then copies memory), so the rows are in OpenGL's
++//* order, bottom up: the display is told so (QEMU's y0_top). Buffers of their own, not the front
++//* buffer itself, so that the next swap can't change a frame the display still reads. While a
++//* gamma ramp is set the copy is a shader pass instead (scan_gamma: the front buffer through a
++//* 256-entry lookup per channel, the same lookup as getOffscreenFrame applies), in the same rows;
++//* only if that pass can't be had is the copy refused, and the host program reads that frame back
++//* with getOffscreenFrame.
 +//*************************************************
-+static GLuint fbo_scan, rb_scan;
-+static EGLImageKHR scan_img = EGL_NO_IMAGE_KHR;
++#define SCAN_BUFFERS 2
++static GLuint fbo_scan[SCAN_BUFFERS], rb_scan[SCAN_BUFFERS];
++static EGLImageKHR scan_img[SCAN_BUFFERS] = { EGL_NO_IMAGE_KHR, EGL_NO_IMAGE_KHR };
 +
 +//*************************************************
 +//* The GL work so far finished, before another context or the display reads its result: an EGL
 +//* fence (EGL_KHR_fence_sync) waited on, else glFinish. Same rendering context, same thread.
++//* Where the reader is a context of ours (the gamma pass's), it can wait for the frame in its own
++//* GL stream instead (EGL_KHR_wait_sync, wait_sync_begin/wait_sync_end): on a GPU, not with Mesa's
++//* software renderers, which don't all wait in the stream; QEMU_3DFX_WAIT_SYNC=1 or 0 in the
++//* environment decides instead.
 +//*************************************************
 +static PFNEGLCREATESYNCKHRPROC pCreateSyncKHR;
 +static PFNEGLCLIENTWAITSYNCKHRPROC pClientWaitSyncKHR;
 +static PFNEGLDESTROYSYNCKHRPROC pDestroySyncKHR;
++static PFNEGLWAITSYNCKHRPROC pWaitSyncKHR;
++static bool wait_sync;
++
++static void fence_init(void)
++{
++    const char *ext = eglQueryString(egl_dpy, EGL_EXTENSIONS), *env = getenv("QEMU_3DFX_WAIT_SYNC");
++    const char *r = (const char *) glGetString(GL_RENDERER);
++    bool soft = !r || strstr(r, "llvmpipe") || strstr(r, "softpipe");
++
++    if (has_ext(ext, "EGL_KHR_fence_sync")) {
++        pCreateSyncKHR = (PFNEGLCREATESYNCKHRPROC) eglGetProcAddress("eglCreateSyncKHR");
++        pClientWaitSyncKHR = (PFNEGLCLIENTWAITSYNCKHRPROC) eglGetProcAddress("eglClientWaitSyncKHR");
++        pDestroySyncKHR = (PFNEGLDESTROYSYNCKHRPROC) eglGetProcAddress("eglDestroySyncKHR");
++    }
++    fence_state = (pCreateSyncKHR && pClientWaitSyncKHR && pDestroySyncKHR)? 1:-1;
++    pWaitSyncKHR = (fence_state > 0 && has_ext(ext, "EGL_KHR_wait_sync"))?
++        (PFNEGLWAITSYNCKHRPROC) eglGetProcAddress("eglWaitSyncKHR"):NULL;
++    wait_sync = pWaitSyncKHR && (env? !strcmp(env, "1"):!soft);
++    fprintf(stderr, "Info: EGL offscreen: the scanout copies are finished with %s%s\n",
++        (fence_state > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)",
++        wait_sync? "; the gamma pass waits for the frame in the GL stream (EGL_KHR_wait_sync)":"");
++}
++
++/* Before the gamma pass, in OpenGLide's context: a fence after its frame, flushed, for the
++ * pass's context to wait on (wait_sync_end), or the frame finished on the CPU (EGL_NO_SYNC_KHR) */
++static EGLSyncKHR wait_sync_begin(void);
++
++/* With the pass's context current: its GL stream waits for the fence, which goes */
++static void wait_sync_end(EGLSyncKHR sync)
++{
++    if (sync == EGL_NO_SYNC_KHR)
++        return;
++    if (pWaitSyncKHR(egl_dpy, sync, 0) != EGL_TRUE)
++        pClientWaitSyncKHR(egl_dpy, sync, 0, EGL_FOREVER_KHR);
++    pDestroySyncKHR(egl_dpy, sync);
++}
 +
 +static void finish_gl(void)
 +{
-+    if (!fence_state) {
-+        if (has_ext(eglQueryString(egl_dpy, EGL_EXTENSIONS), "EGL_KHR_fence_sync")) {
-+            pCreateSyncKHR = (PFNEGLCREATESYNCKHRPROC) eglGetProcAddress("eglCreateSyncKHR");
-+            pClientWaitSyncKHR = (PFNEGLCLIENTWAITSYNCKHRPROC) eglGetProcAddress("eglClientWaitSyncKHR");
-+            pDestroySyncKHR = (PFNEGLDESTROYSYNCKHRPROC) eglGetProcAddress("eglDestroySyncKHR");
-+        }
-+        fence_state = (pCreateSyncKHR && pClientWaitSyncKHR && pDestroySyncKHR)? 1:-1;
-+        fprintf(stderr, "Info: EGL offscreen: the scanout copies are finished with %s\n",
-+            (fence_state > 0)? "an EGL fence (EGL_KHR_fence_sync)":"glFinish (no EGL_KHR_fence_sync)");
-+    }
++    if (!fence_state)
++        fence_init();
 +    if (fence_state > 0) {
 +        EGLSyncKHR sync = pCreateSyncKHR(egl_dpy, EGL_SYNC_FENCE_KHR, NULL);
 +        if (sync != EGL_NO_SYNC_KHR) {
@@ -158,6 +201,21 @@ index f3237c2..a6cb3a7 100644
 +        }
 +    }
 +    glFinish();
++}
++
++static EGLSyncKHR wait_sync_begin(void)
++{
++    EGLSyncKHR sync = EGL_NO_SYNC_KHR;
++
++    if (!fence_state)
++        fence_init();
++    if (wait_sync)
++        sync = pCreateSyncKHR(egl_dpy, EGL_SYNC_FENCE_KHR, NULL);
++    if (sync != EGL_NO_SYNC_KHR)
++        glFlush();
++    else
++        finish_gl();
++    return sync;
 +}
 +
 +//*************************************************
@@ -195,7 +253,7 @@ index f3237c2..a6cb3a7 100644
 +#define E_CLAMP_TO_EDGE   0x812F
 +
 +static EGLContext gamma_ctx = EGL_NO_CONTEXT;
-+static GLuint gamma_read_fbo, gamma_draw_fbo, gamma_prog, gamma_tex[2]; /* frame, lookup */
++static GLuint gamma_read_fbo, gamma_draw_fbo[SCAN_BUFFERS], gamma_prog, gamma_tex[2]; /* frame, lookup */
 +static bool gamma_failed;
 +
 +static void destroy_gamma_ctx(void)
@@ -208,11 +266,11 @@ index f3237c2..a6cb3a7 100644
 +    if (gamma_ctx != EGL_NO_CONTEXT)
 +        eglDestroyContext(egl_dpy, gamma_ctx);
 +    gamma_ctx = EGL_NO_CONTEXT;
-+    gamma_read_fbo = gamma_draw_fbo = gamma_prog = gamma_tex[0] = gamma_tex[1] = 0;
++    gamma_read_fbo = gamma_draw_fbo[0] = gamma_draw_fbo[1] = gamma_prog = gamma_tex[0] = gamma_tex[1] = 0;
 +    gamma_failed = false;
 +}
 +
-+/* With gamma_ctx current: its framebuffers, the program and the textures; false when they
++/* With gamma_ctx current: its read framebuffer, the program and the textures; false when they
 + * can't be had */
 +static bool gamma_init(void)
 +{
@@ -244,13 +302,8 @@ index f3237c2..a6cb3a7 100644
 +    pBindFramebuffer(E_READ_FRAMEBUFFER, gamma_read_fbo);
 +    pFramebufferRenderbuffer(E_READ_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_color[1]);
 +    glReadBuffer(E_COLOR_ATTACHMENT0);
-+    pGenFramebuffers(1, &gamma_draw_fbo);
-+    pBindFramebuffer(E_DRAW_FRAMEBUFFER, gamma_draw_fbo);
-+    pFramebufferRenderbuffer(E_DRAW_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan);
-+    glDrawBuffer(E_COLOR_ATTACHMENT0);
-+    if (pCheckFramebufferStatus(E_READ_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE ||
-+        pCheckFramebufferStatus(E_DRAW_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE) {
-+        fprintf(stderr, "Error: EGL offscreen: the gamma pass's framebuffers are incomplete\n");
++    if (pCheckFramebufferStatus(E_READ_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE) {
++        fprintf(stderr, "Error: EGL offscreen: the gamma pass's read framebuffer is incomplete\n");
 +        return false;
 +    }
 +    gamma_prog = pCreateProgram();
@@ -292,15 +345,33 @@ index f3237c2..a6cb3a7 100644
 +    return true;
 +}
 +
-+/* The front buffer into the scanout buffer through the gamma ramp, finished; called with
++/* With gamma_ctx current: the framebuffer of scanout buffer i (made the first time) bound for
++ * drawing; false when it is incomplete */
++static bool gamma_draw_target(int i)
++{
++    if (!gamma_draw_fbo[i]) {
++        pGenFramebuffers(1, &gamma_draw_fbo[i]);
++        pBindFramebuffer(E_DRAW_FRAMEBUFFER, gamma_draw_fbo[i]);
++        pFramebufferRenderbuffer(E_DRAW_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan[i]);
++        glDrawBuffer(E_COLOR_ATTACHMENT0);
++        if (pCheckFramebufferStatus(E_DRAW_FRAMEBUFFER) != E_FRAMEBUFFER_COMPLETE) {
++            fprintf(stderr, "Error: EGL offscreen: the gamma pass's framebuffer %d is incomplete\n", i);
++            return false;
++        }
++    }
++    pBindFramebuffer(E_DRAW_FRAMEBUFFER, gamma_draw_fbo[i]);
++    return true;
++}
++
++/* The front buffer into scanout buffer i through the gamma ramp, finished; called with
 + * OpenGLide's context current, which it is again after. false: read this frame back */
-+static bool scan_gamma(void)
++static bool scan_gamma(int i)
 +{
 +    bool ok = false;
++    EGLSyncKHR sync;
 +
 +    if (gamma_failed)
 +        return false;
-+    finish_gl();  // OpenGLide's frame done: gamma_ctx reads it
 +    if (gamma_ctx == EGL_NO_CONTEXT) {
 +        gamma_ctx = eglCreateContext(egl_dpy, egl_cfg, egl_ctx, NULL);
 +        if (gamma_ctx == EGL_NO_CONTEXT) {
@@ -310,11 +381,15 @@ index f3237c2..a6cb3a7 100644
 +            return false;
 +        }
 +    }
++    sync = wait_sync_begin();  // OpenGLide's frame done before gamma_ctx reads it
 +    if (!eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, gamma_ctx)) {
++        if (sync != EGL_NO_SYNC_KHR)
++            pDestroySyncKHR(egl_dpy, sync);
 +        eglMakeCurrent(egl_dpy, egl_pbuf, egl_pbuf, egl_ctx);
 +        return false;
 +    }
-+    if (!gamma_prog && !gamma_init()) {
++    wait_sync_end(sync);
++    if ((!gamma_prog && !gamma_init()) || !gamma_draw_target(i)) {
 +        fprintf(stderr, "Info: EGL offscreen: no gamma pass, frames with a gamma ramp are read back\n");
 +        gamma_failed = true;
 +        goto out;
@@ -341,31 +416,38 @@ index f3237c2..a6cb3a7 100644
 +    return ok;
 +}
 +
-+static void destroy_scanout(void)
++/* Scanout buffer i, with OpenGLide's context current */
++static void destroy_scan_buffer(int i)
 +{
-+    destroy_gamma_ctx();
-+    if (scan_img != EGL_NO_IMAGE_KHR) {
++    if (scan_img[i] != EGL_NO_IMAGE_KHR) {
 +        PFNEGLDESTROYIMAGEKHRPROC destroyImage =
 +            (PFNEGLDESTROYIMAGEKHRPROC) eglGetProcAddress("eglDestroyImageKHR");
 +        if (destroyImage)
-+            destroyImage(egl_dpy, scan_img);
-+        scan_img = EGL_NO_IMAGE_KHR;
++            destroyImage(egl_dpy, scan_img[i]);
++        scan_img[i] = EGL_NO_IMAGE_KHR;
 +    }
-+    if (fbo_scan)
-+        pDeleteFramebuffers(1, &fbo_scan);
-+    if (rb_scan)
-+        pDeleteRenderbuffers(1, &rb_scan);
-+    fbo_scan = rb_scan = 0;
++    if (fbo_scan[i])
++        pDeleteFramebuffers(1, &fbo_scan[i]);
++    if (rb_scan[i])
++        pDeleteRenderbuffers(1, &rb_scan[i]);
++    fbo_scan[i] = rb_scan[i] = 0;
++}
++
++static void destroy_scanout(void)
++{
++    destroy_gamma_ctx();
++    for (int i = 0; i < SCAN_BUFFERS; i++)
++        destroy_scan_buffer(i);
 +}
 +
 +//*************************************************
-+//* The scanout buffer as a dmabuf: one plane, its file descriptor (the caller's to close), the
-+//* bytes from one row to the next, the offset of the first, the DRM fourcc and format modifier.
++//* Scanout buffer i (0 or 1) as a dmabuf: one plane, its file descriptor (the caller's to close),
++//* the bytes from one row to the next, the offset of the first, the DRM fourcc and format modifier.
 +//* Called on the thread that opened the Glide window, while it is open. Returns 1, or 0 when the
 +//* EGL display can't export (no EGL_MESA_image_dma_buf_export, or llvmpipe without /dev/udmabuf).
 +//*************************************************
-+extern "C" int getOffscreenDmabuf(int *fd, int *stride, int *offset, unsigned int *fourcc,
-+                                  unsigned long *modifier)
++extern "C" int getOffscreenDmabufAt(int i, int *fd, int *stride, int *offset, unsigned int *fourcc,
++                                    unsigned long *modifier)
 +{
 +    const char *ext;
 +    PFNEGLCREATEIMAGEKHRPROC createImage;
@@ -376,7 +458,7 @@ index f3237c2..a6cb3a7 100644
 +    EGLint pitch = 0, off = 0;
 +    int f = -1;
 +
-+    if (!fbo)
++    if (!fbo || i < 0 || i >= SCAN_BUFFERS)
 +        return 0;
 +    ext = eglQueryString(egl_dpy, EGL_EXTENSIONS);
 +    if (!has_ext(ext, "EGL_MESA_image_dma_buf_export") || !has_ext(ext, "EGL_KHR_gl_renderbuffer_image")) {
@@ -390,14 +472,14 @@ index f3237c2..a6cb3a7 100644
 +    if (!createImage || !exportQuery || !exportImage)
 +        return 0;
 +
-+    if (!fbo_scan) {
-+        pGenFramebuffers(1, &fbo_scan);
-+        pGenRenderbuffers(1, &rb_scan);
-+        pBindRenderbuffer(E_RENDERBUFFER, rb_scan);
++    if (!fbo_scan[i]) {
++        pGenFramebuffers(1, &fbo_scan[i]);
++        pGenRenderbuffers(1, &rb_scan[i]);
++        pBindRenderbuffer(E_RENDERBUFFER, rb_scan[i]);
 +        pRenderbufferStorage(E_RENDERBUFFER, GL_RGBA8, fbo_w, fbo_h);
 +        pBindRenderbuffer(E_RENDERBUFFER, 0);
-+        pBindFramebuffer(E_FRAMEBUFFER, fbo_scan);
-+        pFramebufferRenderbuffer(E_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan);
++        pBindFramebuffer(E_FRAMEBUFFER, fbo_scan[i]);
++        pFramebufferRenderbuffer(E_FRAMEBUFFER, E_COLOR_ATTACHMENT0, E_RENDERBUFFER, rb_scan[i]);
 +        GLenum status = pCheckFramebufferStatus(E_FRAMEBUFFER);
 +        if (status == E_FRAMEBUFFER_COMPLETE) {
 +            glClearColor(0, 0, 0, 0);
@@ -406,25 +488,25 @@ index f3237c2..a6cb3a7 100644
 +        pBindFramebuffer(E_FRAMEBUFFER, fbo);
 +        if (status != E_FRAMEBUFFER_COMPLETE) {
 +            fprintf(stderr, "Error: EGL offscreen: scanout framebuffer incomplete (0x%04x)\n", status);
-+            destroy_scanout();
++            destroy_scan_buffer(i);
 +            return 0;
 +        }
 +        glFinish();
-+        scan_img = createImage(egl_dpy, egl_ctx, EGL_GL_RENDERBUFFER_KHR,
-+                               (EGLClientBuffer)(uintptr_t) rb_scan, NULL);
-+        if (scan_img == EGL_NO_IMAGE_KHR) {
++        scan_img[i] = createImage(egl_dpy, egl_ctx, EGL_GL_RENDERBUFFER_KHR,
++                                  (EGLClientBuffer)(uintptr_t) rb_scan[i], NULL);
++        if (scan_img[i] == EGL_NO_IMAGE_KHR) {
 +            fprintf(stderr, "Error: EGL offscreen: eglCreateImage of the scanout buffer 0x%04x\n", eglGetError());
-+            destroy_scanout();
++            destroy_scan_buffer(i);
 +            return 0;
 +        }
 +    }
-+    if (!exportQuery(egl_dpy, scan_img, &fmt, &planes, &mod) || planes != 1 ||
-+        !exportImage(egl_dpy, scan_img, &f, &pitch, &off) || f < 0) {
++    if (!exportQuery(egl_dpy, scan_img[i], &fmt, &planes, &mod) || planes != 1 ||
++        !exportImage(egl_dpy, scan_img[i], &f, &pitch, &off) || f < 0) {
 +        fprintf(stderr, "Error: EGL offscreen: the scanout buffer can't be exported as a dmabuf "
 +            "(planes %d, fd %d, 0x%04x)\n", planes, f, eglGetError());
 +        if (f >= 0)
 +            close(f);
-+        destroy_scanout();
++        destroy_scan_buffer(i);
 +        return 0;
 +    }
 +    *fd = f;
@@ -435,29 +517,36 @@ index f3237c2..a6cb3a7 100644
 +    return 1;
 +}
 +
++extern "C" int getOffscreenDmabuf(int *fd, int *stride, int *offset, unsigned int *fourcc,
++                                  unsigned long *modifier)
++{
++    return getOffscreenDmabufAt(0, fd, stride, offset, fourcc, modifier);
++}
++
 +//*************************************************
-+//* The front buffer (what a window would show) into the scanout buffer, finished, so that the
-+//* display can read it from another context (and thread) at once. Called on the thread that opened
-+//* the Glide window. With a gamma ramp set the copy applies it (scan_gamma). Returns 1, or 0 when
-+//* there is no scanout buffer, or a ramp is set and the gamma pass can't be had (the caller then
-+//* reads the frame back with getOffscreenFrame, which applies the ramp).
++//* The front buffer (what a window would show) into scanout buffer i, finished, so that the
++//* display can read it from another context (and thread) at once; the other buffer isn't touched.
++//* Called on the thread that opened the Glide window. With a gamma ramp set the copy applies it
++//* (scan_gamma). Returns 1, or 0 when there is no such scanout buffer, or a ramp is set and the
++//* gamma pass can't be had (the caller then reads the frame back with getOffscreenFrame, which
++//* applies the ramp).
 +//*************************************************
-+extern "C" int getOffscreenScanout(void)
++extern "C" int getOffscreenScanoutAt(int i)
 +{
 +    GLint read_buf;
 +    GLboolean scissor;
 +
-+    if (!fbo || !fbo_scan || (gamma_on && gamma_failed))
++    if (!fbo || i < 0 || i >= SCAN_BUFFERS || !fbo_scan[i] || (gamma_on && gamma_failed))
 +        return 0;
 +    RenderDrawTriangles();
 +    if (gamma_on)
-+        return scan_gamma()? 1:0;
++        return scan_gamma(i)? 1:0;
 +    glGetIntegerv(GL_READ_BUFFER, &read_buf);
 +    scissor = glIsEnabled(GL_SCISSOR_TEST);
 +    if (scissor)
 +        glDisable(GL_SCISSOR_TEST);
 +    glReadBuffer(FBO_FRONT);
-+    pBindFramebuffer(E_DRAW_FRAMEBUFFER, fbo_scan);
++    pBindFramebuffer(E_DRAW_FRAMEBUFFER, fbo_scan[i]);
 +    pBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 +    pBindFramebuffer(E_DRAW_FRAMEBUFFER, fbo);
 +    glReadBuffer(read_buf);
@@ -465,6 +554,11 @@ index f3237c2..a6cb3a7 100644
 +        glEnable(GL_SCISSOR_TEST);
 +    finish_gl();
 +    return 1;
++}
++
++extern "C" int getOffscreenScanout(void)
++{
++    return getOffscreenScanoutAt(0);
 +}
 +
  #endif // !C_USE_SDL && !WIN32

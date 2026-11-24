@@ -47,6 +47,8 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol9-sun4u` | Solaris 9 9/05, End User (64-bit), Web Start from the DVD | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the DVD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh25 or later (OpenBIOS patches 0024 and 0025) | `solaris-2.9-sparc.iso` | `root` / `wshlab` | ~70 min |
 | `sol8-sun4u` | Solaris 8 2/02, End User (64-bit), Web Start from the Installation CD and Software 1 of 2 (swapped by the install) | as `sol9-sun4u`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol8.0202.Sparc.iso`, `Sol8.0202.Sparc-Software_1of2.iso` | `root` / `wshlab` | ~55 min |
 | `sol7-sun4u` | Solaris 7 3/99, End User (64-bit), suninstall from the Installation CD | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a Sun-labelled 3G disk on `ide0`, the CD on `ide2`, `sunhme`; needs `pve-qemu-kvm` 11.1.3-2+wsh23 or later (OpenBIOS patch 0024) | `Sol7.399InstallationSparc.iso` | `root` / `wshlab` | ~25 min |
+| `sol26-sun4u` | Solaris 2.6 5/98, End User, suninstall from the CD | as `sol7-sun4u` with 1024 MB; needs pve-qemu-kvm 11.1.3-4+wsh15 or later (OpenBIOS patches 0036-0039) | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~28 min |
+| `sol251-sun4u` | Solaris 2.5.1 11/97, End User, suninstall from the CD | as `sol26-sun4u` (static address only) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~67 min |
 | `tribblix-m34-sun4u` | Tribblix m34 for SPARC (illumos), the base system on a ZFS root | sparc64 (sun4u), OpenBIOS, 2048 MB, serial console, a blank 8 GiB disk on `ide0`, the live CD on `ide2`, `sunhme`; needs pve-qemu-kvm 11.1.3-2+wsh20 or later (OpenBIOS patches 0016 and 0017, QEMU `wsh/0036`) | `tribblix-sparc-0m34.iso` | `root` / `wshlab` | ~4.3 h |
 | `debian13-sun4u` | Debian 13 (debian-ports sparc64, sid) with the SSH server | sparc64 (sun4u), OpenBIOS, 1024 MB, serial console, a blank 8 GiB disk on `ide0`, the netinst on `ide2` (the answer CD on `ide3` while it installs), `sunhme`; needs pve-qemu-kvm 11.1.3-4+wsh4 or later and `--gateway`/`--dns` that reach deb.debian.org (or `--apt-proxy`) | `debian-13.0.0-sparc64-NETINST-1-2026-06-11.iso` | `root` / `wshlab` | ~3 h |
 | `sunos414-ss5` | SunOS 4.1.4 (Solaris 1.1.2), Programmer, suninstall's Quick install | SS-5, OpenBIOS, 256 MB (64 MB during the install), serial console, 3 GiB disk on `scsi3` (SUN2.9G label, `/usr` slice cut to 1 GB), lance | `sunos414-cd.iso` (made from the CD's raw BIN, see "Media") | `root` / `wshlab` | ~6 min |
@@ -139,6 +141,12 @@ the IDE disk gets the Sun label of the 3G template, as the sun4m targets' SCSI d
 prints IDE timeouts and `Interrupt not seen after set_features` (the installed system once); they
 cost a few minutes and nothing else. At the end the tool halts the installer at the firmware prompt
 and stops the VM there, as for the other sun4u targets.
+
+`sol26-sun4u` and `sol251-sun4u` do the same with the 2.6 5/98 and 2.5.1 11/97 CDs (Ultra 5/10 media)
+and 1024 MB; both kernels are 32-bit. They need `pve-qemu-kvm` 11.1.3-4+wsh15 or later (OpenBIOS
+patches 0036-0039): with older firmware 2.6 stops at the root mount from the CD and 2.5.1 before its
+banner, and the installed systems don't boot. 2.5.1 has no DHCP client, and its install runs the CD's Maintenance Update as on
+sun4m.
 
 `tribblix-m34-sun4u` boots Tribblix's live CD (it imports its service descriptions on every boot,
 so its login prompt takes 45-70 minutes), answers the keyboard question with US-English, logs in

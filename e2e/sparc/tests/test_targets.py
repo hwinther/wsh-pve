@@ -355,9 +355,22 @@ class FakeScreen:
 
     def __init__(self, screen):
         self.screen, self.typed = screen, []
+        self.raw = ""  # the serial output (escape sequences removed), for the stream-based checks
 
     def screen_text(self):
         return self.screen
+
+    def serial_cursor(self):
+        return len(self.raw)
+
+    def serial_since(self, cursor=None, limit=4000):
+        return {"text": self.raw[cursor:cursor + limit]}
+
+    def serial_wait(self, pattern, cursor=None, timeout=60, context=1000):
+        m = re.compile(pattern, re.M).search(self.raw, cursor)
+        if not m:
+            return {"matched": False}
+        return {"matched": True, "groups": list(m.groups()), "cursor": m.end()}
 
     def key(self, *names):
         self.typed += names
@@ -937,11 +950,38 @@ class Sol7Sun4u(unittest.TestCase):
             def expect(self, rx, timeout=60, screen=False):
                 if not re.search(rx, self.screen):
                     raise lab.Timeout(rx)
+
+            def quiet(self, seconds, timeout=600):
+                pass
+
+            def send(self, text):
+                super().send(text)
+                if text == "\r":
+                    self.screen = self.screen.replace("[ ] c0t0d0", "[X] c0t0d0")
         m = M("─ Select Disks ────\n  [X] c0t0d0   2775 MB  (boot disk)\n")
         self.sc.disks(m, {**self.sc.DEFAULTS, "DISK": "c0t0d0"})
         self.assertEqual(m.typed, [])  # already selected
         with self.assertRaises(lab.Timeout):  # sun4m's default disk isn't there
             self.sc.disks(M("─ Select Disks ────\n  [X] c0t0d0   2775 MB\n"), dict(self.sc.DEFAULTS))
+        m = M("─ Select Disks ────\n  [ ] c0t0d0   2775 MB\n")
+        self.sc.disks(m, {**self.sc.DEFAULTS, "DISK": "c0t0d0"})
+        self.assertEqual(m.typed, ["\r"])
+        # sol26/sol251-sun4u: hme0's link messages written over the list: the entry as drawn
+        hidden = ("─ Disks ────\n        SUNW,hme0: Using Internal Transceiver 2775 MB\n"
+                  "            Total Selected:      0 MB\n")
+        try:
+            for drawn, typed in (("[ ] c0t0d0", ["\r"]), ("[X] c0t0d0", [])):
+                m = M(hidden)
+                self.sc.f2_cursor = 0
+                m.raw = f"\x0eq\x0fDisks \x0eqqqq\n        {drawn}   2775 MB\nSUNW,hme0: 100 Mbps half-duplex Link Up\n"
+                self.sc.disks(m, {**self.sc.DEFAULTS, "DISK": "c0t0d0"})
+                self.assertEqual(m.typed, typed)
+            m = M(hidden)
+            m.raw = "SUNW,hme0: 100 Mbps half-duplex Link Up\n"
+            with self.assertRaises(lab.Timeout):
+                self.sc.disks(m, {**self.sc.DEFAULTS, "DISK": "c0t0d0"})
+        finally:
+            self.sc.f2_cursor = None
 
     def test_f2_again_on_an_unchanged_screen(self):
         self.assertEqual(self.t["install"]["vars"]["KEY_RETRY"], "180")
@@ -968,8 +1008,38 @@ class Sol7Sun4u(unittest.TestCase):
                 self.sc.press_on(m, old, 180)
             calls[:] = [0]
             self.assertEqual(self.sc.press_on(m, old, 0), new)  # KEY_RETRY 0: next_screen's own wait
+            # sol26-sun4u: no screen up while the preinstall phase writes: wait again without F2
+            calls.clear()
+            m.typed.clear()
+            self.sc.f2_cursor = 0
+            m.screen = m.raw = "Executing SolStart preinstall phase...\n"
+            self.assertEqual(self.sc.press_on(m, old, 180), new)
+            self.assertEqual((calls, m.typed), ([180, 180], []))
+            # only hme0's messages since F2, the title scrolled off: the old screen, F2 again
+            calls.clear()
+            m.screen = m.raw = "SUNW,hme0: Using Internal Transceiver\nSUNW,hme0: 100 Mbps half-duplex Link Up\n"
+            self.assertEqual(self.sc.press_on(m, old, 180), new)
+            self.assertEqual((calls, m.typed), ([180, 180], ["f2"]))
         finally:
             self.sc.next_screen = orig
+            self.sc.f2_cursor = None
+
+    def test_screen_scrolled_off_by_console_messages(self):
+        # sol26-sun4u: Preserve Data? drawn after F2, then hme0's messages scrolled its title away
+        m = FakeScreen("─ Select Disks ────\n  [X] c0t0d0\n")
+        m.quiet = lambda seconds, timeout=600: None
+        m.raw = "\x0eq\x0fSelect Disks \x0eqqqqqqqq\n  [X] c0t0d0\n"
+        self.sc.press_f2(m)
+        self.assertEqual(m.typed, ["f2"])
+        m.raw += "\x0eq\x0fPreserve Data? \x0eqqqqqqqq\n  Do you want to preserve existing data?\n"
+        m.raw += "SUNW,hme0: 100 Mbps half-duplex Link Up\n" * 30
+        m.screen = "SUNW,hme0: 100 Mbps half-duplex Link Up\n" * 20
+        try:
+            screen = self.sc.next_screen(m, "─ Select Disks ────\n  [X] c0t0d0\n", timeout=5)
+            self.assertEqual(re.search(self.sc.TITLE, screen, re.M).group(1), "Preserve Data?")
+            self.assertFalse(self.sc.only_console_noise(m))
+        finally:
+            self.sc.f2_cursor = None
 
     def test_panic_during_the_packages_fails_the_install(self):
         self.assertTrue(re.search(self.sc.PANIC, "panic[cpu0]/thread=70179200: segkp_badop"))
@@ -979,6 +1049,28 @@ class Sol7Sun4u(unittest.TestCase):
         m = ScriptedConsole("syncing file systems... done\nProgram terminated\n0 > ")
         self.sc.halt_sun4u(m)
         self.assertEqual((m.sent, m.stopped), (["sync; halt\r"], True))
+        m = ScriptedConsole("syncing file systems... done\r\nEXIT\r\ne > ")  # Solaris 2.6
+        self.sc.halt_sun4u(m)
+        self.assertTrue(m.stopped)
+
+
+class Sol26Sol251Sun4u(unittest.TestCase):
+    """sol26-sun4u, sol251-sun4u: suninstall as sol7-sun4u; they need openbios 0036-0039, in
+    pve-qemu-kvm 11.1.3-4+wsh15 and later, so the matrix installs them."""
+
+    def test_targets(self):
+        for name, iso in (("sol26-sun4u", "solaris_2.6_598_sparc.iso"), ("sol251-sun4u", "solaris_2.5.1_1197.iso")):
+            t = targets.TARGETS[name]
+            self.assertEqual(t["profile"], targets.SUN4U_SOLARIS)
+            self.assertEqual((t["disk"]["bus"], t["disk"]["label"]), ("ide0", "sun"))
+            self.assertEqual((t["device"], t["boot"], t["nic"], t["hostname"]), ("c0t0d0", "ide0", "hme0", name))
+            self.assertEqual(t["install"]["vars"]["DISK"], "c0t0d0")
+            self.assertEqual(t["media"], [{"name": iso, "drive": "ide2"}])  # an IDE CD-ROM, no as_disk
+            self.assertNotIn("matrix_skip", t)
+            self.assertEqual(t["tested"]["packages"]["pve-qemu-kvm"], "11.1.3-4+wsh15")
+            self.assertIn("boot-test", t["tested"]["with"])
+        self.assertEqual(targets.TARGETS["sol251-sun4u"]["net_modes"], ["static"])
+        self.assertEqual(targets.TARGETS["sol251-sun4u"]["install"]["vars"]["FINISH_TIMEOUT"], "6000")
 
 
 class SunOS4(unittest.TestCase):
