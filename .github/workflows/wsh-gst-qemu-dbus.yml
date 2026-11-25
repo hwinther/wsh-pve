@@ -9,8 +9,8 @@ name: wsh-gst-qemu-dbus package
 #
 # Pull requests: build and lintian, then packages/wsh-gst-qemu-dbus/test.sh in a clean Debian 13:
 # the published pve-qemu-kvm runs wisp's framebuffer kernel (from the wisp-fb release) on x86 (PS/2
-# mouse, AC97), on aarch64's virt (virtio tablet, AC97) and, with /dev/udmabuf, in the 3dfx binary
-# with -display dbus,gl=on; gst-launch-1.0 pipelines and the bridge, as a member of wsh-display,
+# mouse, AC97), on aarch64's virt (virtio tablet, AC97), on the SS-5 (cg3, CS4231, Sun mouse) and,
+# with /dev/udmabuf, in the 3dfx binary with -display dbus,gl=on; gst-launch-1.0 pipelines and the bridge, as a member of wsh-display,
 # check the picture against QEMU's screendump, the keyboard, the mouse, a 440 Hz tone and the end of
 # stream. Nothing is published. main (or by hand on main): the same, then a GitHub release
 # wsh-gst-qemu-dbus-<version> with the .deb, tagged on the tip of main, unless one exists already,
@@ -75,7 +75,7 @@ jobs:
           retention-days: 14
 
   test:
-    name: Test (x86, aarch64 and GL guests through GStreamer)
+    name: Test (x86, aarch64, GL and SS-5 guests through GStreamer)
     needs: [build]
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -102,8 +102,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/kernels"
           cd "$RUNNER_TEMP/kernels"
-          gh release download wisp-fb --pattern SHA256SUMS --pattern kernel-fb-x86_64 --pattern kernel-fb-aarch64
-          grep -E ' (kernel-fb-x86_64|kernel-fb-aarch64)$' SHA256SUMS | sha256sum -c
+          gh release download wisp-fb --pattern SHA256SUMS --pattern kernel-fb-x86_64 --pattern kernel-fb-aarch64 \
+            --pattern kernel-fb-sparc32
+          grep -E ' (kernel-fb-x86_64|kernel-fb-aarch64|kernel-fb-sparc32)$' SHA256SUMS | sha256sum -c
 
       # the GL run (dbus,gl=on with llvmpipe) needs /dev/udmabuf (GitHub's runners have it) and is
       # skipped without

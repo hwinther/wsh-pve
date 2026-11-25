@@ -13,7 +13,7 @@
 #      with the group wsh-display, with qemu-server's policy (src/usr/dbus-display.conf, taken from
 #      submodules/qemu-server.patch), on /run/wsh-dbus-display/100.sock. The clients run as the
 #      user "streamer", a member of wsh-display, as a streaming server on the node would.
-#   3. For each run in RUNS (default "x86_64 aarch64 x86_64-gl"): QEMU paused with wisp's
+#   3. For each run in RUNS (default "x86_64 aarch64 x86_64-gl sparc32"): QEMU paused with wisp's
 #      framebuffer kernel (KERNELS/kernel-fb-<arch>, from the wisp-fb release), -display dbus and
 #      the audio driver dbus at 48 kHz, as qemu-server starts it; tests/stream_test.py runs the
 #      pipelines and the bridge and checks the picture, the keyboard, the mouse, the sound and the
@@ -24,7 +24,7 @@
 #        x86_64-gl  as x86_64 with qemu-system-x86_64-3dfx and -display dbus,gl=on (Mesa's
 #                   llvmpipe through /dev/udmabuf): the picture as dmabufs, read before each
 #                   UpdateDMABUF is answered; skipped without /dev/udmabuf
-#        sparc32    SS-5, cg3, CS4231, Sun keyboard and mouse (not in the default runs)
+#        sparc32    SS-5, cg3, CS4231, Sun keyboard and mouse (relative): the shared map
 #
 # OUTDIR gets summary.txt, and per run the serial log, QEMU's screendump, the newest frame as PPM,
 # the WAV the audio pipeline wrote and the logs of the pipelines and the bridge. Exit 0 when every
@@ -34,7 +34,7 @@ DEB=${1:?usage: test.sh WSH-GST-QEMU-DBUS-DEB OUTDIR}
 OUT=${2:?usage: test.sh WSH-GST-QEMU-DBUS-DEB OUTDIR}
 SRC=${SRC:-/src}
 KERNELS=${KERNELS:-/kernels}
-RUNS=${RUNS:-x86_64 aarch64 x86_64-gl}
+RUNS=${RUNS:-x86_64 aarch64 x86_64-gl sparc32}
 VMID=100
 BUS=/run/wsh-dbus-display/$VMID.sock
 RUN=/run/stream-test

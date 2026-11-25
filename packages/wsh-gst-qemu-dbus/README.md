@@ -36,7 +36,7 @@ D-Bus covers the listener protocol in a few hundred lines, with no crates to ven
 
 ```sh
 make wsh-gst-qemu-dbus                   # build/wsh-gst-qemu-dbus/wsh-gst-qemu-dbus_<version>_amd64.deb
-# the guests: kernel-fb-x86_64 and kernel-fb-aarch64 of the wisp-fb release (SHA256SUMS there)
+# the guests: kernel-fb-x86_64, -aarch64 and -sparc32 of the wisp-fb release (SHA256SUMS there)
 docker run --rm --device /dev/udmabuf -v "$PWD:/src:ro" -v "$PWD/build/wsh-gst-qemu-dbus:/deb:ro" \
   -v "$KERNELS:/kernels:ro" -v "$OUT:/out" debian:trixie sh /src/packages/wsh-gst-qemu-dbus/test.sh \
   /deb/wsh-gst-qemu-dbus_<version>_amd64.deb /out
@@ -46,7 +46,8 @@ docker run --rm --device /dev/udmabuf -v "$PWD:/src:ro" -v "$PWD/build/wsh-gst-q
 policy, and the clients as an unprivileged member of `wsh-display`. Runs (`RUNS`): `x86_64` (std
 VGA, PS/2 mouse, AC97: the shared map), `aarch64` (virt, bochs-display, virtio tablet, AC97,
 `shared-map=false`: pixels in the messages), `x86_64-gl` (the 3dfx binary with `dbus,gl=on`,
-llvmpipe through `/dev/udmabuf`: dmabufs; skipped without `/dev/udmabuf`), and `sparc32` by hand.
+llvmpipe through `/dev/udmabuf`: dmabufs; skipped without `/dev/udmabuf`) and `sparc32` (SS-5, cg3,
+CS4231, Sun mouse).
 Each checks the newest frame against QEMU's screendump pixel for pixel, `keytest` and `mousetest`
 in the guest through the bridge, a 440 Hz tone from `soundtest` in the WAV the audio pipeline
 wrote, and that the video pipeline ends by itself when QEMU quits.

@@ -734,13 +734,13 @@ merged; what is left of them is item 2 under "Next".
        (`wsh-gst-qemu-dbus.yml`, `test.sh`): the published pve-qemu-kvm runs wisp's framebuffer
        kernels with the D-Bus display on a bus with qemu-server's policy, the clients run as a member
        of `wsh-display`: x86 (std VGA, PS/2, AC97, the shared map), aarch64 virt (bochs-display,
-       virtio tablet, AC97, `shared-map=false`) and x86 in the 3dfx binary with `dbus,gl=on`
-       (llvmpipe, `/dev/udmabuf`); `gst-launch-1.0 qemudbussrc ! videoconvert ! multifilesink` and
+       virtio tablet, AC97, `shared-map=false`), the SS-5 (cg3, CS4231, Sun mouse) and x86 in the
+       3dfx binary with `dbus,gl=on` (llvmpipe, `/dev/udmabuf`); `gst-launch-1.0 qemudbussrc ! videoconvert ! multifilesink` and
        `qemudbusaudiosrc ! wavenc`. Lab, also through PVE (`qm start` of a `display=dbus` and a
        `mesa-display=dbus` VM, TCG): the newest frame identical to QEMU's screendump (1280x800, 0 of
        1,024,000 pixels differ) on every path; `UpdateDMABUF` answered in 0.07-0.08 ms on average and
        at most 0.6-0.8 ms; keys (30, 48, 1) in the guest 5.1-10.6 ms after the line reached the
-       bridge; PS/2 motion exact (+40, +25 from `rel 10 5` and two `abs`), virtio tablet absolute X
+       bridge; PS/2 and Sun mouse motion exact (+40, +25 from `rel 10 5` and two `abs`), virtio tablet absolute X
        16383 then 16639 of 32767 (`abs 640 400`, `rel 10 0` on 1280x800); a 2.00 s tone at 440.0 Hz in
        the WAV; the pipeline ends by itself when QEMU quits. `e2e/3dfx/test.sh` takes another listener
        (`DBUS_LISTENER`): with `tests/gst-listener.py` (qemudbussrc and an appsink) the Glide and Mesa
@@ -752,7 +752,7 @@ merged; what is left of them is item 2 under "Next".
        spread) against 818 with `dbus-listener.py`, which copies nothing on the reply (it maps the
        dmabuf and reads it every 100 ms); a first Mesa run during the heaviest load gave 60 frames/s
        and replies up to 51 ms. Not verified: a GPU node (tiled dmabufs aren't read yet), the
-       SS-5 (cg3, CS4231, Sun mouse; the run exists in `test.sh` but wasn't run), a client in an LXC.
+       SS-5 through PVE (it passes `test.sh`), a client in an LXC.
      - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
        encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU),
        an EGL import for tiled dmabufs (a GPU node), the cursor drawn in or passed on, and

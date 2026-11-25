@@ -206,7 +206,8 @@ qemu-dbus-input --vmid 130                                                 # inp
   the mode and the console's size, `sync` waits for QEMU's answers. Keys still down when its input
   ends are released. `man qemu-dbus-input` has the whole protocol.
 - **Tested** (`packages/wsh-gst-qemu-dbus/test.sh`, in CI; TCG, no GPU): wisp's framebuffer
-  kernels on x86 (std VGA, PS/2, AC97), on aarch64's virt (virtio tablet, AC97) and on x86 with
+  kernels on x86 (std VGA, PS/2, AC97), on aarch64's virt (virtio tablet, AC97), on the SS-5 (cg3,
+  CS4231, Sun mouse) and on x86 with
   `dbus,gl=on`: the frame identical to QEMU's screendump, keys in the guest 5 ms after the bridge
   read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at 440.0 Hz, the end
   of stream when QEMU quits. Also through PVE (`qm start` of a `display=dbus` and a
