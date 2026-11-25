@@ -130,8 +130,11 @@ has nothing else to do.
 `matrix.py` runs the cases of a named list one after another, each in `<runs>/<case>/`, with a sparse
 copy of the installed disk it boots (the images themselves are never booted, and the copies are
 deleted when a case is done). It prints a Markdown table, writes it to `<runs>/summary.md` too, and
-exits 1 if any case failed. The install CDs and the installed disks are separate directories, both
-mounted read only:
+exits 1 if any case failed. A `solaris-boot-cd.py` case that never reaches the installer's first
+question boots once more, in `<runs>/<case>-retry1/` (`RETRY`: Solaris's init can lose the end of
+the installer's `rcS`, `submodules/SPARC.md`, "The CD boot that stops after `Configuring
+devices...`"). The install CDs and the installed disks are separate directories, both mounted read
+only:
 
 ```sh
 docker run --rm -v /mnt/os/iso:/mnt/os/iso:ro -v /mnt/os/disks:/mnt/os/disks:ro \
