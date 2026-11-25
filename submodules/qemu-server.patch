@@ -1,3 +1,17 @@
+diff --git a/debian/control b/debian/control
+index 9cd89dd8..b32661c6 100644
+--- a/debian/control
++++ b/debian/control
+@@ -32,7 +32,8 @@ Homepage: https://www.proxmox.com
+ 
+ Package: qemu-server
+ Architecture: any
+-Depends: conntrack,
++Depends: acl,
++         conntrack,
+          dbus,
+          genisoimage,
+          libclass-methodmaker-perl,
 diff --git a/debian/postinst b/debian/postinst
 index 126b20e9..29e1e113 100644
 --- a/debian/postinst
@@ -190,7 +204,7 @@ index 29a4b8b3..4a63a963 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 1d665877..5e35862a 100644
+index 1d665877..003ac38c 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -104,6 +104,7 @@ use PVE::QemuServer::USB;
@@ -210,7 +224,7 @@ index 1d665877..5e35862a 100644
          ],
      },
      memory => {
-@@ -192,6 +193,65 @@ my $vga_fmt = {
+@@ -192,6 +193,66 @@ my $vga_fmt = {
          enum => ['vnc'],
          optional => 1,
      },
@@ -256,7 +270,8 @@ index 1d665877..5e35862a 100644
 +    display => {
 +        description => "QEMU's displays besides the VNC console. With 'dbus', QEMU also exports"
 +            . " the screen, sound (audio driver 'dbus') and input over D-Bus, on a bus of the VM's"
-+            . " own (/run/wsh-dbus-display/<vmid>.sock, for root and the group 'wsh-display'), for"
++            . " own (/run/wsh-dbus-display/<vmid>.sock, for root, the group 'wsh-display' and the"
++            . " uids in 'dbus-display-uids'), for"
 +            . " a client on the same node such as a streaming server. Types std, cirrus, vmware,"
 +            . " virtio, tcx and cg3.",
 +        type => 'string',
@@ -276,7 +291,7 @@ index 1d665877..5e35862a 100644
  };
  
  my $ivshmem_fmt = {
-@@ -213,15 +273,31 @@ my $ivshmem_fmt = {
+@@ -213,15 +274,31 @@ my $ivshmem_fmt = {
  my $audio_fmt = {
      device => {
          type => 'string',
@@ -312,7 +327,27 @@ index 1d665877..5e35862a 100644
      },
  };
  
-@@ -674,7 +750,9 @@ EODESCR
+@@ -521,6 +598,19 @@ EODESC
+             . " Linux guests can add displays them self.\nYou can also run without any graphic card,"
+             . " using a serial device as terminal.",
+     },
++    'dbus-display-uids' => {
++        optional => 1,
++        type => 'string',
++        pattern => '\d+(?:[;,]\d+)*',
++        format_description => 'uid[;uid...]',
++        description => "With the D-Bus display (vga: display=dbus): host uids that may use the"
++            . " VM's bus besides root and the group 'wsh-display', such as the root of an"
++            . " unprivileged container on the node that streams the VM (100000 with the default"
++            . " mapping). At the VM's start each uid gets a user on the node if it has none"
++            . " ('wsh-display-<uid>', no home, no login), the right to pass through"
++            . " /run/wsh-dbus-display, and the right to connect to this VM's bus and call QEMU on"
++            . " it, not to other VMs' buses. Only root may set it.",
++    },
+     watchdog => {
+         optional => 1,
+         type => 'string',
+@@ -674,7 +764,9 @@ EODESCR
      bios => {
          optional => 1,
          type => 'string',
@@ -323,7 +358,7 @@ index 1d665877..5e35862a 100644
          description => "Select BIOS implementation.",
          default => 'seabios',
      },
-@@ -1003,7 +1081,7 @@ PVE::JSONSchema::register_format('pve-qm-bootdev', \&verify_bootdev);
+@@ -1003,7 +1095,7 @@ PVE::JSONSchema::register_format('pve-qm-bootdev', \&verify_bootdev);
  sub verify_bootdev {
      my ($dev, $noerr) = @_;
  
@@ -332,7 +367,7 @@ index 1d665877..5e35862a 100644
      return $dev if PVE::QemuServer::Drive::is_valid_drivename($dev) && !$special;
  
      my $check = sub {
-@@ -1090,6 +1168,8 @@ sub verify_media_type {
+@@ -1090,6 +1182,8 @@ sub verify_media_type {
          $etype = 'images';
      } elsif ($media eq 'cdrom') {
          $etype = 'iso';
@@ -341,7 +376,7 @@ index 1d665877..5e35862a 100644
      } else {
          die "internal error";
      }
-@@ -1102,6 +1182,9 @@ sub verify_media_type {
+@@ -1102,6 +1196,9 @@ sub verify_media_type {
  sub cleanup_drive_path {
      my ($opt, $storecfg, $drive) = @_;
  
@@ -351,7 +386,7 @@ index 1d665877..5e35862a 100644
      # try to convert filesystem paths to volume IDs
  
      if (
-@@ -1113,7 +1196,7 @@ sub cleanup_drive_path {
+@@ -1113,7 +1210,7 @@ sub cleanup_drive_path {
          my ($vtype, $volid) = PVE::Storage::path_to_volume_id($storecfg, $drive->{file});
          raise_param_exc({ $opt => "unable to associate path '$drive->{file}' to any storage" })
              if !$vtype;
@@ -360,7 +395,7 @@ index 1d665877..5e35862a 100644
          verify_media_type($opt, $vtype, $drive->{media});
          $drive->{file} = $volid;
      }
-@@ -1121,7 +1204,9 @@ sub cleanup_drive_path {
+@@ -1121,7 +1218,9 @@ sub cleanup_drive_path {
      my $file_type = classify_drive_file($drive->{file});
  
      $drive->{media} = 'cdrom'
@@ -371,7 +406,7 @@ index 1d665877..5e35862a 100644
  }
  
  sub parse_hotplug_features {
-@@ -1170,6 +1255,89 @@ sub assert_clipboard_config {
+@@ -1170,6 +1269,94 @@ sub assert_clipboard_config {
      }
  }
  
@@ -443,7 +478,8 @@ index 1d665877..5e35862a 100644
 +
 +Dies if the C<vga> property of C<$conf> asks for the D-Bus display (C<display=dbus>,
 +C<mesa-display=dbus>) in a combination it can't have, if C<dbus-refresh> is set without it, or if
-+C<audio0> uses the driver C<dbus> without it.
++C<audio0> uses the driver C<dbus> without it, or if C<dbus-display-uids> is set without it or names
++a uid out of range.
 +
 +=cut
 +
@@ -454,14 +490,18 @@ index 1d665877..5e35862a 100644
 +    # a sparc32 VM without a type gets its machine's (the LX: serial0)
 +    $vga->{type} //= PVE::QemuServer::Machine::sparc32_default_vga($conf)
 +        if PVE::QemuServer::Helpers::get_vm_arch($conf) eq 'sparc';
-+    PVE::QemuServer::DBusDisplay::assert_config($vga, conf_has_audio($conf));
++    PVE::QemuServer::DBusDisplay::assert_config(
++        $vga,
++        scalar(conf_has_audio($conf)),
++        $conf->{'dbus-display-uids'},
++    );
 +    return;
 +}
 +
  sub print_tabletdevice_full {
      my ($conf, $arch) = @_;
  
-@@ -1210,6 +1378,8 @@ sub print_drive_commandline_full {
+@@ -1210,6 +1397,8 @@ sub print_drive_commandline_full {
      my $opts = '';
      my @qemu_drive_options = qw(media cache rerror werror discard);
      foreach my $o (@qemu_drive_options) {
@@ -470,7 +510,7 @@ index 1d665877..5e35862a 100644
          $opts .= ",$o=$drive->{$o}" if defined($drive->{$o});
      }
  
-@@ -1264,6 +1434,11 @@ sub print_drive_commandline_full {
+@@ -1264,6 +1453,11 @@ sub print_drive_commandline_full {
      die "$drive_id: explicit media parameter is required for iso images\n"
          if !defined($drive->{media}) && defined($vtype) && $vtype eq 'iso';
  
@@ -482,7 +522,7 @@ index 1d665877..5e35862a 100644
      if (!drive_is_cdrom($drive)) {
          my $detectzeroes = PVE::QemuServer::Drive::detect_zeroes_cmdline_option($drive);
  
-@@ -1319,7 +1494,8 @@ sub print_netdevice_full {
+@@ -1319,7 +1513,8 @@ sub print_netdevice_full {
          $device = 'virtio-net-pci';
      }
  
@@ -492,7 +532,7 @@ index 1d665877..5e35862a 100644
      my $tmpstr = "$device,mac=$net->{macaddr},netdev=$netid$pciaddr,id=$netid";
      if ($net->{queues} && $net->{queues} > 1 && $net->{model} eq 'virtio') {
          # Consider we have N queues, the number of vectors needed is 2 * N + 2, i.e., one per in
-@@ -1384,7 +1560,10 @@ sub print_netdevice_full {
+@@ -1384,7 +1579,10 @@ sub print_netdevice_full {
          }
      }
  
@@ -504,7 +544,7 @@ index 1d665877..5e35862a 100644
          my $romfile;
          if ($device eq 'virtio-net-pci') {
              $romfile = 'pxe-virtio.rom';
-@@ -2800,11 +2979,12 @@ sub conf_has_audio {
+@@ -2800,11 +2998,12 @@ sub conf_has_audio {
          dev_id => "audiodev$id",
          backend => $audiodriver,
          backend_id => "$audiodriver-backend${id}",
@@ -518,7 +558,7 @@ index 1d665877..5e35862a 100644
  
      my $devs = [];
  
-@@ -2816,6 +2996,23 @@ sub audio_devs {
+@@ -2816,6 +3015,23 @@ sub audio_devs {
  
      if ($audio->{dev} eq 'AC97') {
          push @$devs, '-device', "AC97,id=${id}${audiopciaddr}$audiodev";
@@ -542,7 +582,7 @@ index 1d665877..5e35862a 100644
      } elsif ($audio->{dev} =~ /intel\-hda$/) {
          push @$devs, '-device', "$audio->{dev},id=${id}${audiopciaddr}";
          push @$devs, '-device', "hda-micro,id=${id}-codec0,bus=${id}.0,cad=0$audiodev";
-@@ -2824,7 +3021,26 @@ sub audio_devs {
+@@ -2824,7 +3040,26 @@ sub audio_devs {
          die "unknown audio device '$audio->{dev}', implement me!";
      }
  
@@ -570,7 +610,7 @@ index 1d665877..5e35862a 100644
  
      return $devs;
  }
-@@ -2984,7 +3200,7 @@ sub vga_conf_has_spice {
+@@ -2984,7 +3219,7 @@ sub vga_conf_has_spice {
  # since kvm and tcg machines support different flags
  #
  sub query_supported_cpu_flags {
@@ -579,7 +619,7 @@ index 1d665877..5e35862a 100644
  
      my $host_arch = get_host_arch();
      $arch //= $host_arch;
-@@ -2993,7 +3209,7 @@ sub query_supported_cpu_flags {
+@@ -2993,7 +3228,7 @@ sub query_supported_cpu_flags {
      my $flags = {};
  
      my $kvm_supported = defined(kvm_version()) && $arch eq $host_arch;
@@ -588,7 +628,7 @@ index 1d665877..5e35862a 100644
      my $qemu_binary_version = kvm_user_version($qemu_cmd);
      my $fakevmid = -1;
      my $pidfile = PVE::QemuServer::Helpers::vm_pidfile_name($fakevmid);
-@@ -3078,7 +3294,7 @@ sub query_supported_cpu_flags {
+@@ -3078,7 +3313,7 @@ sub query_supported_cpu_flags {
  my sub should_disable_smm {
      my ($conf, $vga, $machine) = @_;
  
@@ -597,7 +637,7 @@ index 1d665877..5e35862a 100644
  
      return
          (!defined($conf->{bios}) || $conf->{bios} eq 'seabios')
-@@ -3097,6 +3313,8 @@ my sub get_vga_properties {
+@@ -3097,6 +3332,8 @@ my sub get_vga_properties {
      if (!$vga->{type}) {
          if ($arch eq 'aarch64') {
              $vga->{type} = 'virtio';
@@ -606,7 +646,7 @@ index 1d665877..5e35862a 100644
          } elsif (min_version($machine_version, 2, 9)) {
              $vga->{type} = (!$winversion || $winversion >= 6) ? 'std' : 'cirrus';
          } else {
-@@ -3150,7 +3368,17 @@ sub config_to_command {
+@@ -3150,7 +3387,17 @@ sub config_to_command {
      my $machine_conf = PVE::QemuServer::Machine::parse_machine($conf->{machine});
  
      my $arch = PVE::QemuServer::Helpers::get_vm_arch($conf);
@@ -625,7 +665,7 @@ index 1d665877..5e35862a 100644
      my $kvmver = kvm_user_version($kvm_binary);
  
      if (!$kvmver || $kvmver !~ m/^(\d+)\.(\d+)/ || $1 < 6) {
-@@ -3261,7 +3489,9 @@ sub config_to_command {
+@@ -3261,7 +3508,9 @@ sub config_to_command {
              $value =~ s/,/,,/g;
              $smbios_string .= "," . $key . "=" . $value if $value;
          }
@@ -636,7 +676,7 @@ index 1d665877..5e35862a 100644
      }
  
      if ($conf->{bios} && $conf->{bios} eq 'ovmf') {
-@@ -3281,6 +3511,10 @@ sub config_to_command {
+@@ -3281,6 +3530,10 @@ sub config_to_command {
          push $machineFlags->@*, $ovmf_machine_flags->@*;
      }
  
@@ -647,7 +687,7 @@ index 1d665877..5e35862a 100644
      if ($q35) { # tell QEMU to load q35 config early
          # we use different pcie-port hardware for qemu >= 4.0 for passthrough
          if (min_version($machine_version, 4, 0)) {
-@@ -3295,17 +3529,20 @@ sub config_to_command {
+@@ -3295,17 +3548,20 @@ sub config_to_command {
      }
  
      my $max_scsihw = PVE::QemuServer::DriveDevice::get_max_scsihw_index($conf);
@@ -670,7 +710,7 @@ index 1d665877..5e35862a 100644
  
      my ($vga, $qxlnum) = get_vga_properties($conf, $arch, $machine_version, $winversion);
  
-@@ -3316,6 +3553,7 @@ sub config_to_command {
+@@ -3316,6 +3572,7 @@ sub config_to_command {
          $tablet = 0 if $qxlnum; # disable for spice because it is not needed
          $tablet = 0 if $vga->{type} =~ m/^serial\d+$/; # disable if we use serial terminal (no vga card)
      }
@@ -678,7 +718,7 @@ index 1d665877..5e35862a 100644
  
      if ($tablet) {
          push @$devices, '-device', print_tabletdevice_full($conf, $arch) if $tablet;
-@@ -3324,7 +3562,6 @@ sub config_to_command {
+@@ -3324,7 +3581,6 @@ sub config_to_command {
      }
  
      my $bootorder = device_bootorder($conf);
@@ -686,7 +726,7 @@ index 1d665877..5e35862a 100644
      # host pci device passthrough
      my ($kvm_off, $gpu_passthrough, $legacy_igd, $pci_devices) =
          PVE::QemuServer::PCI::print_hostpci_devices(
-@@ -3337,6 +3574,22 @@ sub config_to_command {
+@@ -3337,6 +3593,22 @@ sub config_to_command {
  
      # serial devices
      for (my $i = 0; $i < $MAX_SERIAL_PORTS; $i++) {
@@ -709,7 +749,7 @@ index 1d665877..5e35862a 100644
          my $path = $conf->{"serial$i"} or next;
          if ($path eq 'socket') {
              my $socket = "/var/run/qemu-server/${vmid}.serial$i";
-@@ -3367,8 +3620,8 @@ sub config_to_command {
+@@ -3367,8 +3639,8 @@ sub config_to_command {
      }
  
      if (min_version($machine_version, 4, 0) && (my $audio = conf_has_audio($conf))) {
@@ -720,7 +760,7 @@ index 1d665877..5e35862a 100644
          push @$devices, @$audio_devs;
      }
  
-@@ -3403,18 +3656,55 @@ sub config_to_command {
+@@ -3403,18 +3675,55 @@ sub config_to_command {
      }
      push @$cmd, '-nodefaults';
  
@@ -779,7 +819,7 @@ index 1d665877..5e35862a 100644
  
          my $socket = PVE::QemuServer::Helpers::vnc_socket($vmid);
          push @$cmd, '-vnc', "unix:$socket,password=on";
-@@ -3428,9 +3718,21 @@ sub config_to_command {
+@@ -3428,9 +3737,21 @@ sub config_to_command {
      my $cfg2cmd = PVE::QemuServer::Cfg2Cmd->new($conf, $defaults, $version_guard, $cfg2cmd_opts);
      my $generated = $cfg2cmd->generate();
      push $cmd->@*, '-global', $_ for ($generated->global_flags() // [])->@*;
@@ -801,7 +841,7 @@ index 1d665877..5e35862a 100644
      if ($forcecpu) {
          push @$cmd, '-cpu', $forcecpu;
      } else {
-@@ -3446,6 +3748,7 @@ sub config_to_command {
+@@ -3446,6 +3767,7 @@ sub config_to_command {
                  $kvmver,
              );
      }
@@ -809,7 +849,7 @@ index 1d665877..5e35862a 100644
  
      my $virtiofs_enabled = PVE::QemuServer::Virtiofs::virtiofs_enabled($conf);
  
-@@ -3549,8 +3852,9 @@ sub config_to_command {
+@@ -3549,8 +3871,9 @@ sub config_to_command {
          }
      }
  
@@ -821,7 +861,7 @@ index 1d665877..5e35862a 100644
          my $pciaddr = print_pci_addr("balloon0", $arch);
          my $ballooncmd = "virtio-balloon-pci,id=balloon0$pciaddr";
          $ballooncmd .= ",free-page-reporting=on" if min_version($machine_version, 6, 2);
-@@ -3567,6 +3871,7 @@ sub config_to_command {
+@@ -3567,6 +3890,7 @@ sub config_to_command {
  
      my $scsicontroller = {};
      my $ahcicontroller = {};
@@ -829,7 +869,7 @@ index 1d665877..5e35862a 100644
      my $scsihw = defined($conf->{scsihw}) ? $conf->{scsihw} : $defaults->{scsihw};
  
      # Add iscsi initiator name if available
-@@ -3583,10 +3888,13 @@ sub config_to_command {
+@@ -3583,10 +3907,13 @@ sub config_to_command {
              return if $drive->{interface} eq 'efidisk';
              # similar for TPM
              return if $drive->{interface} eq 'tpmstate';
@@ -844,7 +884,7 @@ index 1d665877..5e35862a 100644
  
              if ($drive->{interface} eq 'virtio') {
                  push @$cmd, '-object', "iothread,id=iothread-$ds" if $drive->{iothread};
-@@ -3628,9 +3936,11 @@ sub config_to_command {
+@@ -3628,9 +3955,11 @@ sub config_to_command {
                      $queues = ",num_queues=$drive->{queues}";
                  }
  
@@ -857,7 +897,7 @@ index 1d665877..5e35862a 100644
                  $scsicontroller->{$controller} = 1;
              }
  
-@@ -3642,6 +3952,17 @@ sub config_to_command {
+@@ -3642,6 +3971,17 @@ sub config_to_command {
                  $ahcicontroller->{$controller} = 1;
              }
  
@@ -875,7 +915,7 @@ index 1d665877..5e35862a 100644
              my $live_restore = $live_restore_backing->{$ds};
  
              if (min_version($machine_version, 10, 0)) { # for the switch to -blockdev
-@@ -3686,6 +4007,24 @@ sub config_to_command {
+@@ -3686,6 +4026,24 @@ sub config_to_command {
          },
      );
  
@@ -900,7 +940,7 @@ index 1d665877..5e35862a 100644
      my $nets_host_mtu =
          { map { split('=', $_) } PVE::Tools::split_list($options->{'nets-host-mtu'}) };
      for (my $i = 0; $i < $MAX_NETS; $i++) {
-@@ -3698,7 +4037,7 @@ sub config_to_command {
+@@ -3698,7 +4056,7 @@ sub config_to_command {
  
          $use_virtio = 1 if $d->{model} eq 'virtio';
  
@@ -909,7 +949,7 @@ index 1d665877..5e35862a 100644
  
          my $netdevfull = print_netdev_full($vmid, $conf, $arch, $d, $netname);
          push @$devices, '-netdev', $netdevfull;
-@@ -3716,7 +4055,18 @@ sub config_to_command {
+@@ -3716,7 +4074,18 @@ sub config_to_command {
              $nets_host_mtu->{$netname},
          );
  
@@ -929,7 +969,7 @@ index 1d665877..5e35862a 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3975,7 +4325,7 @@ sub vm_deviceplug {
+@@ -3975,7 +4344,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -938,7 +978,7 @@ index 1d665877..5e35862a 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4546,13 +4896,16 @@ sub vmconfig_hotplug_pending {
+@@ -4546,13 +4915,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -956,7 +996,7 @@ index 1d665877..5e35862a 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4619,7 +4972,8 @@ sub vmconfig_hotplug_pending {
+@@ -4619,7 +4991,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -966,7 +1006,7 @@ index 1d665877..5e35862a 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4711,7 +5065,7 @@ sub vmconfig_hotplug_pending {
+@@ -4711,7 +5084,7 @@ sub vmconfig_hotplug_pending {
                      $machine_type->(),
                  );
              } elsif (is_valid_drivename($opt)) {
@@ -975,7 +1015,7 @@ index 1d665877..5e35862a 100644
                  # some changes can be done without hotplug
                  my $drive = parse_drive($opt, $value);
                  if (drive_is_cloudinit($drive)) {
-@@ -4979,6 +5333,9 @@ sub vmconfig_update_net {
+@@ -4979,6 +5352,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -985,7 +1025,7 @@ index 1d665877..5e35862a 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5060,6 +5417,8 @@ sub vmconfig_update_net {
+@@ -5060,6 +5436,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -994,7 +1034,7 @@ index 1d665877..5e35862a 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5110,8 +5469,10 @@ sub vmconfig_update_disk {
+@@ -5110,8 +5488,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -1007,7 +1047,7 @@ index 1d665877..5e35862a 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5195,6 +5556,11 @@ sub vmconfig_update_disk {
+@@ -5195,6 +5575,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -1019,7 +1059,7 @@ index 1d665877..5e35862a 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5211,7 +5577,7 @@ sub vmconfig_update_disk {
+@@ -5211,7 +5596,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -1028,7 +1068,7 @@ index 1d665877..5e35862a 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5608,6 +5974,22 @@ sub vm_start_nolock {
+@@ -5608,6 +5993,25 @@ sub vm_start_nolock {
          }
  
          push @$cmd, '-uuid', $uuid if defined($uuid);
@@ -1046,12 +1086,15 @@ index 1d665877..5e35862a 100644
 +        PVE::QemuServer::Helpers::assert_qemu_3dfx_gl_display_host($start_vga);
 +        # the D-Bus display (checked by config_to_command): the VM's bus first, QEMU connects to
 +        # it at its start
-+        PVE::QemuServer::DBusDisplay::start($vmid)
-+            if PVE::QemuServer::DBusDisplay::vga_display($start_vga) eq 'dbus';
++        PVE::QemuServer::DBusDisplay::start(
++            $vmid,
++            undef,
++            PVE::QemuServer::DBusDisplay::parse_uids($conf->{'dbus-display-uids'}),
++        ) if PVE::QemuServer::DBusDisplay::vga_display($start_vga) eq 'dbus';
      };
      if (my $err = $@) {
          eval { PVE::Storage::deactivate_volumes($storecfg, $vollist); };
-@@ -5722,6 +6104,9 @@ sub vm_start_nolock {
+@@ -5722,6 +6126,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -1061,7 +1104,7 @@ index 1d665877..5e35862a 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5927,7 +6312,11 @@ sub vm_start_nolock {
+@@ -5927,7 +6334,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -1074,7 +1117,7 @@ index 1d665877..5e35862a 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -6147,6 +6536,9 @@ sub vm_stop_cleanup {
+@@ -6147,6 +6558,9 @@ sub vm_stop_cleanup {
          # at this point, it should never be still running, so quiesce any warnings
          PVE::QemuServer::DBusVMState::qemu_del_dbus_vmstate($vmid, quiet => 1);
  
@@ -1084,7 +1127,7 @@ index 1d665877..5e35862a 100644
          if (!$keepActive) {
              my $vollist = get_vm_volumes($conf);
              PVE::Storage::deactivate_volumes($storecfg, $vollist);
-@@ -6695,7 +7087,7 @@ sub restore_update_config_line {
+@@ -6695,7 +7109,7 @@ sub restore_update_config_line {
      } elsif ($line =~ m/^(net\d+):\s*(\S+)\s*$/) {
          # a backup can have network devices without a MAC address
          $res .= "$1: " . PVE::QemuServer::Network::add_missing_mac($2) . "\n";
@@ -1093,7 +1136,7 @@ index 1d665877..5e35862a 100644
          my $virtdev = $1;
          my $value = $3;
          my $di = parse_drive($virtdev, $value);
-@@ -7088,8 +7480,12 @@ sub restore_proxmox_backup_archive {
+@@ -7088,8 +7502,12 @@ sub restore_proxmox_backup_archive {
              my $volid = $d->{volid};
              my $path = PVE::Storage::path($storecfg, $volid);
  
@@ -1108,7 +1151,7 @@ index 1d665877..5e35862a 100644
  
              my @ns_arg;
              if (defined(my $ns = $scfg->{namespace})) {
-@@ -7176,6 +7572,7 @@ sub restore_proxmox_backup_archive {
+@@ -7176,6 +7594,7 @@ sub restore_proxmox_backup_archive {
          # these special drives are already restored before start
          delete $devinfo->{'drive-efidisk0'};
          delete $devinfo->{'drive-tpmstate0-backup'};
@@ -1116,7 +1159,7 @@ index 1d665877..5e35862a 100644
  
          my $pbs_opts = {
              repo => $repo,
-@@ -7464,7 +7861,7 @@ sub live_import_from_files {
+@@ -7464,7 +7883,7 @@ sub live_import_from_files {
      my $sources_to_remove = [];
      for my $dev (keys %$mapping) {
          die "disk not support for live-restoring: '$dev'\n"
@@ -1125,7 +1168,7 @@ index 1d665877..5e35862a 100644
  
          die "mapping contains disk '$dev' which does not exist in the config\n"
              if !exists($conf->{$dev});
-@@ -8068,6 +8465,8 @@ sub clone_disk {
+@@ -8068,6 +8487,8 @@ sub clone_disk {
              if $src_drivename eq 'efidisk0' || $dst_drivename eq 'efidisk0';
          die "cloning from/to TPM state requires TPM state\n"
              if $src_drivename eq 'tpmstate0' || $dst_drivename eq 'tpmstate0';
@@ -1134,7 +1177,7 @@ index 1d665877..5e35862a 100644
  
          # This would lead to two device nodes in QEMU pointing to the same backing image!
          die "cannot change drive name when cloning disk from/to the same VM\n"
-@@ -8279,7 +8678,12 @@ sub bootorder_from_legacy {
+@@ -8279,7 +8700,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -1148,7 +1191,7 @@ index 1d665877..5e35862a 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8317,9 +8721,14 @@ sub get_default_bootdevices {
+@@ -8317,9 +8743,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -1250,10 +1293,10 @@ index 0d3206b2..ea6b4c44 100644
      my $base =
 diff --git a/src/PVE/QemuServer/DBusDisplay.pm b/src/PVE/QemuServer/DBusDisplay.pm
 new file mode 100644
-index 00000000..87275ffc
+index 00000000..6ad5308a
 --- /dev/null
 +++ b/src/PVE/QemuServer/DBusDisplay.pm
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,299 @@
 +package PVE::QemuServer::DBusDisplay;
 +
 +# QEMU's D-Bus display (-display dbus) for a VM with 'vga: ...,display=dbus' (or
@@ -1264,27 +1307,50 @@ index 00000000..87275ffc
 +# started as the systemd unit wsh-dbus-display@<vmid> before QEMU, listening on
 +# /run/wsh-dbus-display/<vmid>.sock (directory root:wsh-display 0750; the socket dbus-daemon makes
 +# in it is 0777). Its policy (/usr/share/qemu-server/dbus-display.conf) lets root own org.qemu and
-+# lets root and the members of the group wsh-display connect and call it. QEMU keeps running when the client or the daemon
-+# goes away; the display is gone for the rest of that run if the daemon is.
++# lets root and the members of the group wsh-display connect and call it. QEMU keeps running when
++# the client or the daemon goes away; the display is gone for the rest of that run if the daemon is.
++#
++# 'dbus-display-uids' (root only) names more host uids that may use the VM's bus: a client in an
++# unprivileged container, whose root is a host uid such as 100000 with no user on the node and
++# not in wsh-display. At the VM's start qemu-server writes the VM's bus configuration
++# (/run/qemu-server/<vmid>.dbus-display.conf: the shared policy plus each uid), makes sure each
++# uid has a user on the node (dbus-daemon refuses a uid it can't look up, whatever the policy
++# says; a missing one is added as 'wsh-display-<uid>', without a home or a login shell) and lets
++# each uid through /run/wsh-dbus-display (an ACL entry, --x) while a VM that names it runs. The
++# other VMs' buses still refuse the uid.
 +
 +use strict;
 +use warnings;
 +
-+use PVE::Tools qw(run_command);
++use PVE::Tools qw(run_command file_set_contents lock_file);
 +
 +use constant UNIT => 'wsh-dbus-display';
 +
 +# The vga types with a QemuConsole the D-Bus display can show (next to VNC, as VNC shows it)
 +my $display_types = qr/^(?:std|cirrus|vmware|virtio|tcx|cg3)$/;
 +
-+# A sub, so the tests can point it elsewhere
++# Subs, so the tests can point them elsewhere
 +sub socket_dir {
 +    return '/run/wsh-dbus-display';
++}
++
++sub config_dir {
++    return '/run/qemu-server';
++}
++
++sub lock_path {
++    return '/run/lock/wsh-dbus-display.lck';
 +}
 +
 +sub socket_path {
 +    my ($vmid) = @_;
 +    return socket_dir() . "/$vmid.sock";
++}
++
++# The VM's bus configuration, which the unit reads
++sub config_path {
++    my ($vmid) = @_;
++    return config_dir() . "/$vmid.dbus-display.conf";
 +}
 +
 +sub unit_name {
@@ -1305,16 +1371,35 @@ index 00000000..87275ffc
 +    return ($vga->{'mesa-display'} // 'none') eq 'dbus';
 +}
 +
-+# Dies on a combination the D-Bus display can't have. $audio is conf_has_audio()'s result.
++# The uids of a 'dbus-display-uids' value ("100000;101000"), sorted, each once. Dies on a uid
++# out of range: 0 is root, which has the bus anyway, and 4294967295 is no uid.
++sub parse_uids {
++    my ($value) = @_;
++    return [] if !defined($value);
++    my %uids;
++    for my $uid (split(/[;,\s]+/, $value)) {
++        next if $uid eq '';
++        die "dbus-display-uids: '$uid' is not a uid\n" if $uid !~ m/^\d+$/;
++        die "dbus-display-uids: uid $uid out of range (1 to 4294967294)\n"
++            if $uid < 1 || $uid > 4294967294;
++        $uids{ $uid + 0 } = 1;
++    }
++    return [sort { $a <=> $b } keys %uids];
++}
++
++# Dies on a combination the D-Bus display can't have. $audio is conf_has_audio()'s result,
++# $uids the 'dbus-display-uids' value.
 +sub assert_config {
-+    my ($vga, $audio) = @_;
++    my ($vga, $audio, $uids) = @_;
 +
 +    my $display = vga_display($vga);
 +    my $refresh = $vga->{'dbus-refresh'};
++    my $uid_list = parse_uids($uids);
 +    if ($display ne 'dbus') {
 +        die "vga: 'dbus-refresh' needs the D-Bus display ('display=dbus')\n" if defined($refresh);
 +        die "audio0: driver 'dbus' needs the D-Bus display (vga: 'display=dbus')\n"
 +            if $audio && $audio->{backend} eq 'dbus';
++        die "dbus-display-uids needs the D-Bus display (vga: 'display=dbus')\n" if @$uid_list;
 +        return;
 +    }
 +
@@ -1342,36 +1427,171 @@ index 00000000..87275ffc
 +    return $arg;
 +}
 +
-+# A sub, so the tests can do without systemd
++# The VM's bus configuration: the shared policy, and each uid allowed to connect and to call
++# org.qemu (as a member of wsh-display may; it can't own the name)
++sub bus_config {
++    my ($uids) = @_;
++
++    my $conf = <<'EOF';
++<?xml version="1.0"?>
++<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
++        "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
++<!-- written by qemu-server at the VM's start (vga: display=dbus, dbus-display-uids) -->
++<busconfig>
++  <include>/usr/share/qemu-server/dbus-display.conf</include>
++EOF
++    for my $uid (@$uids) {
++        $conf .= <<"EOF";
++  <policy context="default">
++    <allow user="$uid"/>
++  </policy>
++  <policy user="$uid">
++    <allow send_destination="org.qemu"/>
++  </policy>
++EOF
++    }
++    $conf .= "</busconfig>\n";
++    return $conf;
++}
++
++# The uids a bus configuration allows (none if it isn't there)
++sub config_uids {
++    my ($path) = @_;
++    my @uids;
++    open(my $fh, '<', $path) or return [];
++    while (my $line = <$fh>) {
++        push @uids, $1 if $line =~ m/<policy user="(\d+)">/;
++    }
++    close($fh);
++    return \@uids;
++}
++
++# The uids the bus configurations in config_dir() allow: the running D-Bus VMs'
++sub configured_uids {
++    my %uids;
++    for my $path (glob(config_dir() . '/*.dbus-display.conf')) {
++        $uids{$_} = 1 for @{ config_uids($path) };
++    }
++    return [sort { $a <=> $b } keys %uids];
++}
++
++# Subs, so the tests can do without systemd, the user database and ACLs
 +sub systemctl {
 +    my (@args) = @_;
 +    run_command(['systemctl', @args]);
 +}
 +
-+# Starts the VM's bus before QEMU, which connects to it at its start (and stops without it)
++sub uid_exists {
++    my ($uid) = @_;
++    return defined(getpwuid($uid));
++}
++
++sub add_user {
++    my ($uid) = @_;
++    run_command([
++        'useradd',
++        '--system',
++        '--no-create-home',
++        '--home-dir' => '/nonexistent',
++        '--shell' => '/usr/sbin/nologin',
++        '--gid' => 'nogroup',
++        '--uid' => $uid,
++        '--comment' => 'D-Bus display client (qemu-server dbus-display-uids)',
++        "wsh-display-$uid",
++    ]);
++}
++
++sub dir_acl_uids {
++    my ($dir) = @_;
++    my %uids;
++    run_command(
++        ['getfacl', '--omit-header', '--absolute-names', '--numeric', $dir],
++        outfunc => sub {
++            $uids{$1} = 1 if $_[0] =~ m/^user:(\d+):/;
++        },
++    );
++    return [sort { $a <=> $b } keys %uids];
++}
++
++sub setfacl {
++    my (@args) = @_;
++    run_command(['setfacl', @args]);
++}
++
++# dbus-daemon looks every connecting uid up in the user database and refuses one it can't find
++sub ensure_users {
++    my ($uids) = @_;
++    for my $uid (@$uids) {
++        next if uid_exists($uid);
++        eval { add_user($uid) };
++        my $err = $@;
++        # another VM's start may have added it meanwhile
++        die "dbus-display-uids: can't add a user for uid $uid: $err" if !uid_exists($uid);
++    }
++    return;
++}
++
++# The socket directory's named-user ACL entries: --x for each uid a running VM allows, none for
++# any other
++sub sync_dir_acl {
++    my $dir = socket_dir();
++    return if !-d $dir;
++    lock_file(
++        lock_path(),
++        10,
++        sub {
++            my %want = map { $_ => 1 } @{ configured_uids() };
++            my %have = map { $_ => 1 } @{ dir_acl_uids($dir) };
++            my @add = grep { !$have{$_} } sort { $a <=> $b } keys %want;
++            my @del = grep { !$want{$_} } sort { $a <=> $b } keys %have;
++            setfacl('-m', join(',', map { "u:$_:x" } @add), $dir) if @add;
++            setfacl('-x', join(',', map { "u:$_" } @del), $dir) if @del;
++        },
++    );
++    die $@ if $@;
++    return;
++}
++
++# Starts the VM's bus before QEMU, which connects to it at its start (and stops without it);
++# $uids: the parsed dbus-display-uids
 +sub start {
-+    my ($vmid, $timeout) = @_;
++    my ($vmid, $timeout, $uids) = @_;
 +
 +    $timeout //= 10;
++    $uids //= [];
 +    my $socket = socket_path($vmid);
 +    # a bus left from an earlier run that wasn't cleaned up
 +    eval { systemctl('stop', unit_name($vmid)) };
 +    unlink $socket;
++    my $had_uids = @{ config_uids(config_path($vmid)) };
++    ensure_users($uids);
++    file_set_contents(config_path($vmid), bus_config($uids));
 +    eval { systemctl('start', unit_name($vmid)) };
 +    die "failed to start the D-Bus display bus of VM $vmid: $@" if $@;
 +    for (my $i = 0; $i < $timeout * 10; $i++) {
-+        return if -S $socket;
++        if (-S $socket) {
++            # the directory is there from the unit's first start on
++            sync_dir_acl() if @$uids || $had_uids;
++            return;
++        }
 +        select(undef, undef, undef, 0.1);
 +    }
 +    die "the D-Bus display bus of VM $vmid didn't create $socket in ${timeout}s\n";
 +}
 +
-+# At the VM's cleanup; a VM without the D-Bus display has no socket, and no systemctl call
++# At the VM's cleanup; a VM without the D-Bus display has neither a socket nor a bus
++# configuration, and no systemctl call
 +sub stop {
 +    my ($vmid) = @_;
-+    return if !-e socket_path($vmid);
++    return if !-e socket_path($vmid) && !-e config_path($vmid);
 +    eval { systemctl('stop', unit_name($vmid)) };
 +    unlink socket_path($vmid);
++    my $had_uids = @{ config_uids(config_path($vmid)) };
++    unlink config_path($vmid);
++    if ($had_uids) {
++        eval { sync_dir_acl() };
++        warn "D-Bus display of VM $vmid: the ACL of " . socket_dir() . ": $@" if $@;
++    }
 +    return;
 +}
 +
@@ -2871,6 +3091,27 @@ index 00000000..7e02823e
 +audio0: device=AC97,driver=wav,server=/tmp/elsewhere.wav
 +ostype: l26
 +smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
+diff --git a/src/test/cfg2cmd/dbus-display-uids-no-display-error.conf b/src/test/cfg2cmd/dbus-display-uids-no-display-error.conf
+new file mode 100644
+index 00000000..43bbb83d
+--- /dev/null
++++ b/src/test/cfg2cmd/dbus-display-uids-no-display-error.conf
+@@ -0,0 +1,15 @@
++# TEST: dbus-display-uids without the D-Bus display is refused
++# EXPECT_ERROR: dbus-display-uids needs the D-Bus display (vga: 'display=dbus')
++balloon: 0
++boot: order=ide0
++cpu: pentium
++dbus-display-uids: 100000
++ide0: local:8006/vm-8006-disk-0.raw,size=1G
++kvm: 0
++memory: 32
++name: wolf3d
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++tablet: 0
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
++vga: std
 diff --git a/src/test/cfg2cmd/floppy.conf b/src/test/cfg2cmd/floppy.conf
 new file mode 100644
 index 00000000..d606dfbf
@@ -5083,6 +5324,63 @@ index 00000000..7c4e7b28
 +tablet: 0
 +vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
 +vga: std,display=dbus,server=:0
+diff --git a/src/test/cfg2cmd/vga-dbus-display-uids.conf b/src/test/cfg2cmd/vga-dbus-display-uids.conf
+new file mode 100644
+index 00000000..2e9f404f
+--- /dev/null
++++ b/src/test/cfg2cmd/vga-dbus-display-uids.conf
+@@ -0,0 +1,14 @@
++# TEST: dbus-display-uids lets more uids onto the VM's bus; QEMU's command line stays the same
++balloon: 0
++boot: order=ide0
++cpu: pentium
++dbus-display-uids: 100000;101000
++ide0: local:8006/vm-8006-disk-0.raw,size=1G
++kvm: 0
++memory: 32
++name: wolf3d
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++tablet: 0
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
++vga: std,display=dbus
+diff --git a/src/test/cfg2cmd/vga-dbus-display-uids.conf.cmd b/src/test/cfg2cmd/vga-dbus-display-uids.conf.cmd
+new file mode 100644
+index 00000000..f5765768
+--- /dev/null
++++ b/src/test/cfg2cmd/vga-dbus-display-uids.conf.cmd
+@@ -0,0 +1,31 @@
++/usr/bin/kvm \
++  -id 8006 \
++  -name wolf3d \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -display 'dbus,addr=unix:path=/run/wsh-dbus-display/8006.sock' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu 'pentium,vendor=GenuineIntel' \
++  -m 32 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
++  -machine 'accel=tcg,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-dbus-display.conf b/src/test/cfg2cmd/vga-dbus-display.conf
 new file mode 100644
 index 00000000..7a710fb2
@@ -6345,10 +6643,10 @@ index 332d7802..e802993f 100755
          if (!$err) {
 diff --git a/src/test/run_dbus_display_tests.pl b/src/test/run_dbus_display_tests.pl
 new file mode 100755
-index 00000000..4afd66d6
+index 00000000..7b75e837
 --- /dev/null
 +++ b/src/test/run_dbus_display_tests.pl
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,267 @@
 +#!/usr/bin/perl
 +
 +# PVE::QemuServer::DBusDisplay: which vga property asks for the D-Bus display, the -display
@@ -6429,12 +6727,76 @@ index 00000000..4afd66d6
 +);
 +is($check->({ type => 'std' }, { backend => 'alsa' }), '', 'VNC only, another driver: allowed');
 +
-+# start/stop: systemctl and the socket directory mocked
++# dbus-display-uids
++my $uids = sub { PVE::QemuServer::DBusDisplay::parse_uids(@_) };
++is_deeply($uids->(undef), [], 'no dbus-display-uids: none');
++is_deeply($uids->('100000'), [100000], 'one uid');
++is_deeply($uids->('101000;100000,101000'), [100000, 101000], 'sorted, each once');
++like(eval { $uids->('0') } // $@, qr/uid 0 out of range/, 'uid 0 (root) refused');
++like(eval { $uids->('4294967295') } // $@, qr/out of range/, '4294967295 refused');
++like(eval { $uids->('1x') } // $@, qr/'1x' is not a uid/, 'not a number: refused');
++is($check->({ type => 'std', display => 'dbus' }, undef, '100000'), '', 'uids with the D-Bus display');
++like(
++    $check->({ type => 'std' }, undef, '100000'),
++    qr/dbus-display-uids needs the D-Bus display/,
++    'uids without it: refused',
++);
++like($check->({ type => 'std', display => 'dbus' }, undef, '0'), qr/out of range/, 'uid 0: refused');
++
++my $bus_config = PVE::QemuServer::DBusDisplay::bus_config([]);
++like($bus_config, qr{<include>/usr/share/qemu-server/dbus-display\.conf</include>}, 'bus config: the shared policy');
++unlike($bus_config, qr/<allow user=/, 'bus config without uids: nobody else');
++$bus_config = PVE::QemuServer::DBusDisplay::bus_config([100000, 101000]);
++for my $uid (100000, 101000) {
++    like(
++        $bus_config,
++        qr{<policy context="default">\s*<allow user="$uid"/>\s*</policy>},
++        "bus config: $uid may connect",
++    );
++    like(
++        $bus_config,
++        qr{<policy user="$uid">\s*<allow send_destination="org\.qemu"/>\s*</policy>},
++        "bus config: $uid may call org.qemu",
++    );
++}
++unlike($bus_config, qr/own=/, 'bus config: the uids may not own a name');
++
++# start/stop: systemctl, the socket and configuration directories, the user database and the
++# directory's ACL mocked
 +my $dir = tempdir(CLEANUP => 1);
++my $confdir = tempdir(CLEANUP => 1);
 +my @calls;
 +my $fake_daemon;
++my %users = (0 => 1);
++my %acl;
 +my $mock = Test::MockModule->new($dd);
 +$mock->redefine(socket_dir => sub { return $dir });
++$mock->redefine(config_dir => sub { return $confdir });
++$mock->redefine(lock_path => sub { return "$confdir/.lock" });
++$mock->redefine(uid_exists => sub { return $users{ $_[0] } });
++$mock->redefine(
++    add_user => sub {
++        push @calls, "useradd $_[0]";
++        die "useradd failed
++" if $_[0] == 4242;
++        $users{ $_[0] } = 1;
++    },
++);
++$mock->redefine(dir_acl_uids => sub { return [sort { $a <=> $b } keys %acl] });
++$mock->redefine(
++    setfacl => sub {
++        push @calls, join(' ', 'setfacl', @_);
++        my ($op, $spec) = @_;
++        for my $entry (split(/,/, $spec)) {
++            my (undef, $uid) = split(/:/, $entry);
++            if ($op eq '-m') {
++                $acl{$uid} = 1;
++            } else {
++                delete $acl{$uid};
++            }
++        }
++    },
++);
 +$mock->redefine(
 +    systemctl => sub {
 +        push @calls, join(' ', @_);
@@ -6447,6 +6809,8 @@ index 00000000..4afd66d6
 +
 +$fake_daemon = 1;
 +PVE::QemuServer::DBusDisplay::start(100, 2);
++my $conf100 = do { local (@ARGV, $/) = ("$confdir/100.dbus-display.conf"); <> };
++is($conf100, PVE::QemuServer::DBusDisplay::bus_config([]), "start: the VM's bus configuration written");
 +is_deeply(
 +    \@calls,
 +    ['stop wsh-dbus-display@100.service', 'start wsh-dbus-display@100.service'],
@@ -6463,7 +6827,89 @@ index 00000000..4afd66d6
 +PVE::QemuServer::DBusDisplay::stop(101);
 +is_deeply(\@calls, [], 'stop: no socket, no systemctl call (a VM without the D-Bus display)');
 +
-+$fake_daemon = 0;
++# with dbus-display-uids: two VMs share uid 100000, the second also allows 101000
++my $fake_socket = sub {
++    my ($vmid) = @_;
++    $mock->redefine(
++        systemctl => sub {
++            push @calls, join(' ', @_);
++            IO::Socket::UNIX->new(Type => SOCK_STREAM, Local => "$dir/$vmid.sock", Listen => 1)
++                if $_[0] eq 'start';
++        },
++    );
++};
++@calls = ();
++$fake_socket->(200);
++PVE::QemuServer::DBusDisplay::start(200, 2, [100000]);
++is_deeply(
++    \@calls,
++    [
++        'stop wsh-dbus-display@200.service',
++        'useradd 100000',
++        'start wsh-dbus-display@200.service',
++        'setfacl -m u:100000:x ' . $dir,
++    ],
++    "start with a uid: a user for it, the bus, then the directory's ACL",
++);
++is_deeply(
++    PVE::QemuServer::DBusDisplay::config_uids("$confdir/200.dbus-display.conf"),
++    [100000],
++    "start with a uid: in the VM's bus configuration",
++);
++
++@calls = ();
++$fake_socket->(201);
++PVE::QemuServer::DBusDisplay::start(201, 2, [100000, 101000]);
++is_deeply(
++    \@calls,
++    [
++        'stop wsh-dbus-display@201.service',
++        'useradd 101000',
++        'start wsh-dbus-display@201.service',
++        'setfacl -m u:101000:x ' . $dir,
++    ],
++    'a second VM: only the new uid gets a user and an ACL entry',
++);
++
++@calls = ();
++PVE::QemuServer::DBusDisplay::stop(200);
++is_deeply(\@calls, ['stop wsh-dbus-display@200.service'], 'stop: 100000 kept, VM 201 still has it');
++ok(!-e "$confdir/200.dbus-display.conf", 'stop: the bus configuration removed');
++
++@calls = ();
++PVE::QemuServer::DBusDisplay::stop(201);
++is_deeply(
++    \@calls,
++    ['stop wsh-dbus-display@201.service', "setfacl -x u:100000,u:101000 $dir"],
++    'stop of the last VM with the uids: their ACL entries removed',
++);
++is_deeply([sort keys %acl], [], 'no ACL entries left');
++
++# a VM restarted without the uids it had (its configuration left from a run without cleanup)
++@calls = ();
++$fake_socket->(202);
++PVE::QemuServer::DBusDisplay::start(202, 2, [100000]);
++@calls = ();
++unlink "$dir/202.sock";
++PVE::QemuServer::DBusDisplay::start(202, 2, []);
++is_deeply(
++    \@calls,
++    ['stop wsh-dbus-display@202.service', 'start wsh-dbus-display@202.service', "setfacl -x u:100000 $dir"],
++    'restart without the uids: their ACL entry removed',
++);
++PVE::QemuServer::DBusDisplay::stop(202);
++
++# a uid that can't get a user: the bus isn't started
++@calls = ();
++eval { PVE::QemuServer::DBusDisplay::start(203, 2, [4242]) };
++like($@, qr/can't add a user for uid 4242: useradd failed/, 'start: dies without a user for a uid');
++is_deeply(
++    \@calls,
++    ['stop wsh-dbus-display@203.service', 'useradd 4242'],
++    'start: no bus without the user',
++);
++
++$mock->redefine(systemctl => sub { push @calls, join(' ', @_) });
 +eval { PVE::QemuServer::DBusDisplay::start(100, 1) };
 +like($@, qr/didn't create \Q$dir\E\/100\.sock in 1s/, 'start: dies without the socket');
 +
@@ -6688,17 +7134,19 @@ index 1365544b..4f9d56a5 100644
  clean:
 diff --git a/src/usr/dbus-display.conf b/src/usr/dbus-display.conf
 new file mode 100644
-index 00000000..b8bbda57
+index 00000000..708f89f9
 --- /dev/null
 +++ b/src/usr/dbus-display.conf
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,54 @@
 +<?xml version="1.0"?>
 +<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
 +        "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 +<!--
 +  The bus of one VM's D-Bus display (wsh-dbus-display@<vmid>.service, qemu-server): QEMU (root)
 +  owns org.qemu on it; root and the members of the group wsh-display may connect and talk to it
-+  (a streaming server on the node). Nobody else may connect.
++  (a streaming server on the node). Nobody else may connect, except the uids in the VM's
++  dbus-display-uids: the unit reads /run/qemu-server/<vmid>.dbus-display.conf, which qemu-server
++  writes at the VM's start (this file plus a policy for each of those uids).
 +-->
 +<busconfig>
 +  <type>wsh-dbus-display</type>
@@ -6746,23 +7194,25 @@ index 00000000..b8bbda57
 +</busconfig>
 diff --git a/src/usr/wsh-dbus-display@.service b/src/usr/wsh-dbus-display@.service
 new file mode 100644
-index 00000000..2c22d52d
+index 00000000..5d7d8f89
 --- /dev/null
 +++ b/src/usr/wsh-dbus-display@.service
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,21 @@
 +[Unit]
 +Description=D-Bus display bus of VM %i (QEMU -display dbus)
 +Documentation=man:dbus-daemon(1)
 +
 +[Service]
 +Slice=qemu.slice
-+# root, with the group of the socket and its directory; the policy keeps everyone else out
++# root, with the group of the socket and its directory; the policy keeps everyone else out.
++# qemu-server writes the VM's configuration (/usr/share/qemu-server/dbus-display.conf and the
++# VM's dbus-display-uids) to /run/qemu-server/<vmid>.dbus-display.conf before it starts the unit.
 +Group=wsh-display
 +# /run/wsh-dbus-display, root:wsh-display 0750, shared by every VM's bus: kept when one stops
 +RuntimeDirectory=wsh-dbus-display
 +RuntimeDirectoryMode=0750
 +RuntimeDirectoryPreserve=yes
-+ExecStart=/usr/bin/dbus-daemon --nofork --nopidfile --syslog-only --config-file=/usr/share/qemu-server/dbus-display.conf --address=unix:path=/run/wsh-dbus-display/%i.sock
++ExecStart=/usr/bin/dbus-daemon --nofork --nopidfile --syslog-only --config-file=/run/qemu-server/%i.dbus-display.conf --address=unix:path=/run/wsh-dbus-display/%i.sock
 +ExecStopPost=/bin/rm -f /run/wsh-dbus-display/%i.sock
 +NoNewPrivileges=yes
 +ProtectSystem=strict

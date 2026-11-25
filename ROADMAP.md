@@ -152,6 +152,7 @@ come after that, not before.
 | More than 512 MB on SS-10/SS-20, up to 2048 MB with OpenBIOS: Solaris counts only memory below 512 MB as memory behind the SS-10's and SS-20's controllers (eight SIMM slots of 64 MB, read from the ECC controller's implementation bits), so with more it panicked at boot (2.6: `kernel read fault at addr=0x0` in `kvm_init`); the `/memory` layout played no part. pve-qemu `wsh/0143` presents the SS-600MP's MCC above 512 MB under OpenBIOS (512 MB and less, and the Sun PROM, unchanged), `wsh/0144` its qtest; OpenBIOS ran out of heap at 1 GB, 0040 takes the SRMMU tables in chunks and makes the heap 288K. Lab: Solaris 2.5.1, 2.6, 7, 8, 9 on SS-20 and 2.6, 7 on SS-10 boot the stored disks with 2048 MB (2.6 with 2 and 4 CPUs); NetBSD, SunOS 4.1.x, Debian 4.0 and Solaris 2.4/2.6 at 512/256 MB on SS-20/SS-5 unchanged. qemu-server and the UI take up to 2048 MB on SS-10/SS-20 with OpenBIOS (wizard preset 512), the SS-20 PROM stays at 512. Not verified: installs and the PVE path with more than 512 MB, more than 2048 MB (`submodules/SPARC.md`, "More than 512 MB on SS-10 and SS-20") | in review | |
 | Audio signature for guest sound tests: one fixed signal in `e2e/wisp/audiosig.h` (integer math, no C library or libm, no 64-bit division): 8 segments of 500 ms, triangle waves of 400 + 100 k Hz left and 600 + 150 k Hz right in segment k, -6 dBFS, 4 s, at any rate from 8000 to 48000 Hz; `e2e/audio/wavcheck.py --signature [N]` finds N of them in a `-audiodev wav` recording and checks each segment's frequency per channel (3 %), the duration, gaps over 2 ms per channel, swapped channels and mono, and tells an old-samples tail from a dropout (unit tests: resampled, 8-bit, swapped, mono, cut after one buffer, dropouts, tails, the header against its Python model). wisp: `soundtest sig [rate..]` (8000, 22050, 44100 Hz by default); `sound.py` boots once more per machine for it, in wisp-boot's sound step. wshspace: `-audiotest` through each platform's own backend, no display; its Linux OSS backend now keeps two fragments queued and writes no more than fits (the test found a 7 ms dropout after the first fragment on AC97), its DOS backend plays 8-bit stereo at exactly 22050 Hz on a DSP 4.x (SB16; mono at 22222 Hz before, still so on older DSPs) and no longer loses a ring of sound to a torn read of the DMA address (the two bytes read while the DMA moved; seen in CI without a memory manager) or to a step back of `uclock()`: it reads the address until the bytes agree, counts bytes written and played, and mixes 186 ms ahead in a 743 ms ring; new `e2e/3dfx/space/audio-test.sh` (Linux guest, AC97, job in `audio-matrix.yml`) and a last step in each boot of `dos-test.sh` (`-device sb16`, `3dfx-dos.yml`): the DOS test the audio matrix asked for. Lab with pve-qemu-kvm 11.1.3-4+wsh27: every segment within 0.01 % on pc, sun4u, virt and the SS-5 at all three rates (4.000-4.003 s, no gap), wshspace on Linux (KVM and TCG) and DOS (all three memory profiles) 4.000 s, no gap. Windows `-audiotest` builds (96,768 of 98,304 bytes), not run in a guest | in review | |
 | 3dfx/streaming stage 3d, Moonlight to Wolf: a Moonlight client streams a VM's D-Bus display (picture, sound, keyboard, mouse) through Wolf (games-on-whales) with `qemudbussrc` (and a `compositor` that repeats the newest picture at the client's frame rate) into x264, `qemudbusaudiosrc` into Opus and `wolf-input-bridge` (Wolf's uinput keyboard and mice into `qemu-dbus-input`) as an app's runner; `e2e/streaming` builds Wolf, moonlight-embedded and a measuring client (`wsh-moonlight-probe`) from source at pinned commits and measures (`test.sh`, workflow `streaming.yml` for PRs touching it and by hand). Lab, published pve-qemu-kvm, TCG, 1280x800 H.264 at 60 frames/s: pairing with a PIN entered on the node, the picture 1.6/255 from QEMU's screendump, guest draw to decoded frame 48-61 ms median, keys and buttons in the guest 1.3-2.2 ms after the client, a 440.0 Hz tone in the client's audio, with and without `dbus,gl=on`; on a PVE node with an NVIDIA GPU, Wolf in a privileged container (template from the Dockerfile's `ct` stage) streamed a `qm start` VM with every check passed (x264 54 ms, NVENC 50 ms median); an unprivileged container is refused by the VM's bus (dbus-daemon checks the group against the node's user database). Wolf needed a patch for apps without a compositor (ROADMAP, Stage 3, "Stage 3d") | in review | |
+| 3dfx/streaming stage 3d, an unprivileged container: qemu-server's VM option `dbus-display-uids` (root only) lets host uids such as an unprivileged container's root (100000) onto that VM's D-Bus display bus: a bus configuration per VM (`/run/qemu-server/<vmid>.dbus-display.conf`, the shared policy plus each uid), a node user `wsh-display-<uid>` for a uid without one (dbus-daemon refuses a uid it can't look up, whatever the policy says) and an ACL entry `--x` on `/run/wsh-dbus-display` while a VM names the uid; `wsh-gst-qemu-dbus` authenticates without a uid (GLib's `CROSS_NAMESPACE`). CI and lab: the clients as root of a user namespace mapped to 100000 get the picture, sound and input; uid 200000, uid 100000 on another VM's bus and a node user outside `wsh-display` are refused; no real node yet (ROADMAP, Stage 3, "Stage 3d: an unprivileged container") | in review | |
 
 ## In progress
 
@@ -821,12 +822,40 @@ merged; what is left of them is item 2 under "Next".
        paired and its libraries streamed; its own SDL or X11 output wasn't run), the absolute
        pointer (wisp's x86 kernel has no USB HID and its `mousetest` takes the PS/2 mouse), a 3dfx
        game through it.
+     - **Stage 3d: an unprivileged container (in review).** The two refusals above, one each:
+       `wsh-gst-qemu-dbus` connects with GLib's `G_DBUS_CONNECTION_FLAGS_CROSS_NAMESPACE`
+       (`AUTH EXTERNAL` without a uid, on the bus and on the listener's connection QEMU
+       authenticates), and qemu-server's new VM option `dbus-display-uids` (`uid[;uid...]`, root
+       only, needs the D-Bus display) names host uids for that VM's bus. dbus-daemon has no way
+       round its user database: `bus_policy_allow_unix_user()` refuses a uid it can't look up
+       before any rule is read, and `<allow user="100000"/>` without a user is "Unknown username"
+       at load. So at the VM's start qemu-server writes the VM's bus configuration
+       (`/run/qemu-server/<vmid>.dbus-display.conf`: an `<include>` of the shared policy, then per
+       uid `<allow user>` in the default context and `<policy user>` with `send_destination=org.qemu`;
+       the unit reads it), adds a user `wsh-display-<uid>` (system, no home, `nologin`) for a uid
+       without one, and gives each uid `--x` on `/run/wsh-dbus-display` by an ACL entry, which goes
+       when no running VM names it (qemu-server now depends on `acl`); no group mapping or
+       `/etc/subgid` entry in the container. Considered and not taken: `ANONYMOUS` with
+       `<allow_anonymous/>` (no uid at all on the bus, only the directory left as the gate), a
+       directory open to all (`0751`), an include directory for hand-written policies (a per-node
+       edit, and per node, not per VM). Tests: qemu-server's `run_dbus_display_tests.pl` (parsing,
+       the generated configuration, users, the ACL across two VMs sharing a uid, a restart without
+       the uids, a uid without a user) and cfg2cmd (`dbus-display-uids` with and without the
+       display); `packages/wsh-gst-qemu-dbus/test.sh` gains a run with the clients in a user
+       namespace whose root is the host's uid 100000 (`unshare`; CI now runs the container with
+       `seccomp=unconfined`) on a bus set up by qemu-server's own `DBusDisplay.pm`: `qemu-dbus-input`,
+       a picture from `qemudbussrc` and the listener of `qemudbusaudiosrc` get in; the e2e spec
+       `dbus-display.spec.ts` checks the same on PVE with a node process as uid 100000 (skipped
+       until a qemu-server with the option is published); uid 200000, uid 100000
+       on a VM's bus that doesn't name it and a node user outside `wsh-display` are refused. Not
+       verified: a real node and `pct` (the bind mount and the default idmap in an unprivileged
+       container), Wolf's input devices in an unprivileged container (`root:input 0660` on the
+       node's `/dev/input`), the `wsh-qemu-rdp` and probe clients from a container.
      - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
        encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU),
        an EGL import for tiled dmabufs (needed for `dbus,gl=on` on an NVIDIA node), the cursor drawn
-       in or passed on, and `ScanoutDMABUF2`; 3d: an unprivileged container (a place in qemu-server's
-       bus policy for a container's uid, e.g. an include directory, or a user for that uid in the
-       node's `wsh-display`), the audio dropout at a tone's start, the frame interval spread while
+       in or passed on, and `ScanoutDMABUF2`; 3d: the unprivileged container on a real node (with
+       Wolf's input devices given to the container), the audio dropout at a tone's start, the frame interval spread while
        the picture changes (still pictures come at an even 16.7 ms), Wolf's no-compositor patch
        upstream, and a repeat in `qemudbussrc` itself instead of the compositor.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
