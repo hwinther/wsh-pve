@@ -1,4 +1,5 @@
-# The DOS Glide test (e2e/3dfx/dos-test.sh): the test program and the demo (e2e/3dfx/demo), built
+# The DOS Glide test (e2e/3dfx/dos-test.sh): the test program, the demo (e2e/3dfx/demo) and wshspace
+# (e2e/3dfx/space, for its -audiotest on an sb16, checked by e2e/audio/wavcheck.py), built
 # with DJGPP in the image that builds the qemu-3dfx guest drivers (djgpp.Dockerfile), then a Debian
 # 13 with the published pve-qemu-kvm's qemu-system-x86_64-3dfx, wsh-openglide (Glide on the host),
 # Mesa (llvmpipe, EGL for the offscreen console), mtools (the FreeDOS floppy) and the harness, with
@@ -16,6 +17,8 @@ COPY submodules/qemu-3dfx/wrappers/3dfx/src/ /src/submodules/qemu-3dfx/wrappers/
 COPY packages/wsh-openglide/tests/scene.h /src/packages/wsh-openglide/tests/scene.h
 COPY e2e/3dfx/dos/ /src/e2e/3dfx/dos/
 COPY e2e/3dfx/demo/ /src/e2e/3dfx/demo/
+COPY e2e/3dfx/space/ /src/e2e/3dfx/space/
+COPY e2e/wisp/audiosig.h /src/e2e/wisp/audiosig.h
 COPY scripts/check-3dfx-drivers-isa.sh /src/scripts/check-3dfx-drivers-isa.sh
 # The wrapper's revision only matters for the glide2x.dxe built for comparison; the test loads the
 # drivers release's
@@ -23,6 +26,8 @@ ARG QEMU3DFX_REV=0000000
 RUN sh /src/e2e/3dfx/dos/build.sh /glidedos/bin "$QEMU3DFX_REV"
 # The demo (e2e/3dfx/demo), which the harness runs after the test program: WSHDEMO.EXE
 RUN sh /src/e2e/3dfx/demo/build-dos.sh /glidedos/bin
+# wshspace (e2e/3dfx/space), which the harness runs last with -audiotest on an sb16: WSHSPACE.EXE
+RUN sh /src/e2e/3dfx/space/build-dos.sh /glidedos/bin
 
 FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
@@ -47,5 +52,6 @@ COPY packages/wsh-openglide/tests/scene.h /w3d/packages/wsh-openglide/tests/scen
 COPY e2e/3dfx/win98/win98_test.py /w3d/e2e/3dfx/win98/win98_test.py
 COPY e2e/3dfx/dos/ /w3d/e2e/3dfx/dos/
 COPY e2e/sparc/targets_dos.py e2e/sparc/fetch_media.py /w3d/e2e/sparc/
+COPY e2e/audio/wavcheck.py /w3d/e2e/audio/wavcheck.py
 COPY --from=build /glidedos/bin/ /w3d/bin/
 ENTRYPOINT ["python3", "/w3d/e2e/3dfx/dos/dos_test.py"]

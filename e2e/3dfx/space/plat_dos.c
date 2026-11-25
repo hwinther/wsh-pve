@@ -2,7 +2,8 @@
  * wshspace's DOS front end: DJGPP + Glide 2 (GLIDE2X.DXE), avoiding stdio printf/fopen bloat to
  * stay comfortably below 96 KB. Tracks simultaneous held flight keys through a chained IRQ 9
  * protected-mode scancode handler, supports optional INT 33h mouse flight, and streams procedural
- * synth audio over Sound Blaster 8-bit auto-init DMA when BLASTER/DSP is present.
+ * synth audio over Sound Blaster 8-bit auto-init DMA when BLASTER/DSP is present (stereo at
+ * exactly 22050 Hz on a Sound Blaster 16, mono on older DSPs).
  * Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <dlfcn.h>
@@ -199,9 +200,11 @@ void plat_poll(struct plat_input *in)
 /* --- Sound Blaster 8-bit Auto-Init DMA streaming audio (IRQ-free) ----------------------------- */
 
 #define SB_RATE 22050
-#define SB_BUF  4096
+#define SB_BUF  8192
 
-static int sb_base = 0x220, sb_dma = 1, sb_on, sb_dos_sel;
+/* sb_stereo: a DSP 4.x (Sound Blaster 16) plays 8-bit stereo at exactly SB_RATE (commands 41h and
+ * C6h, still on the 8-bit DMA channel); older DSPs mono at the time constant's 22222 Hz */
+static int sb_base = 0x220, sb_dma = 1, sb_on, sb_dos_sel, sb_stereo;
 static uint32_t sb_phys;
 static int sb_write_pos;
 static int16_t mix_tmp[512 * 2];
@@ -211,6 +214,14 @@ static void sb_write_dsp(uint8_t v)
 	for (int i = 0; i < 30000 && (inportb(sb_base + 0x0c) & 0x80); i++)
 		;
 	outportb(sb_base + 0x0c, v);
+}
+
+static int sb_read_dsp(void)
+{
+	for (int i = 0; i < 30000; i++)
+		if (inportb(sb_base + 0x0e) & 0x80)
+			return inportb(sb_base + 0x0a);
+	return -1;
 }
 
 static int sb_reset_dsp(void)
@@ -247,8 +258,11 @@ void plat_audio_init(int enable)
 	}
 	if (!sb_reset_dsp())
 		return;
+	sb_write_dsp(0xe1); /* DSP version: major, minor */
+	sb_stereo = sb_read_dsp() >= 4;
+	sb_read_dsp();
 
-	/* Allocate 2 * SB_BUF (8 KB = 512 paragraphs) so one 4 KB half is guaranteed not to cross a 64 KB DMA page */
+	/* Allocate 2 * SB_BUF (16 KB = 1024 paragraphs) so one 8 KB half is guaranteed not to cross a 64 KB DMA page */
 	int seg = __dpmi_allocate_dos_memory((SB_BUF * 2) >> 4, &sb_dos_sel);
 	if (seg < 0)
 		return;
@@ -273,14 +287,26 @@ void plat_audio_init(int enable)
 	outportb(sb_dma * 2 + 1, (uint8_t)(((SB_BUF - 1) >> 8) & 0xffU));
 	outportb(0x0a, sb_dma);
 
-	/* Turn speaker on, set 22050 Hz time constant (211) and launch auto-init 8-bit playback */
-	sb_write_dsp(0xd1);
-	sb_write_dsp(0x40);
-	sb_write_dsp((uint8_t)(256 - 1000000 / SB_RATE));
-	sb_write_dsp(0x48);
-	sb_write_dsp(0xff);
-	sb_write_dsp(0x07);
-	sb_write_dsp(0x1c);
+	sb_write_dsp(0xd1); /* speaker on */
+	if (sb_stereo) {
+		/* SB16: output rate, then 8-bit auto-init playback with the FIFO, unsigned stereo; the
+		 * length (bytes - 1) only sets how often it interrupts, and nothing here listens */
+		sb_write_dsp(0x41);
+		sb_write_dsp(SB_RATE >> 8);
+		sb_write_dsp(SB_RATE & 0xff);
+		sb_write_dsp(0xc6);
+		sb_write_dsp(0x20);
+		sb_write_dsp((SB_BUF / 2 - 1) & 0xff);
+		sb_write_dsp((SB_BUF / 2 - 1) >> 8);
+	} else {
+		/* 22050 Hz time constant (211, really 22222 Hz), 2 KB blocks, auto-init 8-bit mono */
+		sb_write_dsp(0x40);
+		sb_write_dsp((uint8_t)(256 - 1000000 / SB_RATE));
+		sb_write_dsp(0x48);
+		sb_write_dsp(0xff);
+		sb_write_dsp(0x07);
+		sb_write_dsp(0x1c);
+	}
 	sb_on = 1;
 }
 
@@ -292,21 +318,27 @@ void plat_audio_tick(void)
 	int lo = inportb(sb_dma * 2);
 	int hi = inportb(sb_dma * 2);
 	int cur = (int)(((uint32_t)((hi << 8) | lo) - (sb_phys & 0xffffU)) & (SB_BUF - 1));
-	/* Keep ~2048 samples mixed ahead of hardware DMA pointer */
-	int target = (cur + 2048) & (SB_BUF - 1);
+	/* Keep ~2048 frames (93 ms) mixed ahead of hardware DMA pointer, whole frames in stereo */
+	int target = ((cur + (2048 << sb_stereo)) & (SB_BUF - 1)) & ~sb_stereo;
 	int todo = (target - sb_write_pos) & (SB_BUF - 1);
-	while (todo > 64) {
-		int chunk = todo > 512 ? 512 : todo;
+	while (todo > (64 << sb_stereo)) {
+		int chunk = todo >> sb_stereo;
+		if (chunk > 512)
+			chunk = 512;
 		space_audio_mix(mix_tmp, chunk, SB_RATE);
 		for (int i = 0; i < chunk; i++) {
-			int m = ((int)mix_tmp[i * 2] + (int)mix_tmp[i * 2 + 1]) >> 9;
-			int u8 = m + 128;
-			if (u8 < 0) u8 = 0;
-			if (u8 > 255) u8 = 255;
-			_farpokeb(_dos_ds, sb_phys + (uint32_t)sb_write_pos, (uint8_t)u8);
-			sb_write_pos = (sb_write_pos + 1) & (SB_BUF - 1);
+			for (int c = 0; c <= sb_stereo; c++) {
+				int u8 = (mix_tmp[i * 2 + c] >> 8) + 128;
+				if (!sb_stereo) {
+					u8 = (((int)mix_tmp[i * 2] + (int)mix_tmp[i * 2 + 1]) >> 9) + 128;
+					if (u8 < 0) u8 = 0;
+					if (u8 > 255) u8 = 255;
+				}
+				_farpokeb(_dos_ds, sb_phys + (uint32_t)sb_write_pos, (uint8_t)u8);
+				sb_write_pos = (sb_write_pos + 1) & (SB_BUF - 1);
+			}
 		}
-		todo -= chunk;
+		todo -= chunk << sb_stereo;
 	}
 }
 

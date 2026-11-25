@@ -68,6 +68,8 @@
 #include <linux/soundcard.h>
 #include <linux/sysinfo.h>
 
+#include "audiosig.h"
+
 #ifndef WISP_ARCH
 #define WISP_ARCH "unknown"
 #endif
@@ -1011,6 +1013,7 @@ static void cmd_help(const char *arg)
 	       "  crc <n>         the loop's checksum after n rounds\n"
 	       "  fbtest          draw eight colour bars on /dev/fb0\n"
 	       "  soundtest [hz] [ms]  play a square wave (default 440 Hz, 1000 ms)\n"
+	       "  soundtest sig [rate..]  the audio signature (default 8000, 22050, 44100 Hz)\n"
 	       "  keytest         read keyboard presses until Esc or a 10-second timeout\n"
 	       "  mousetest       read mouse events until right click or a 10-second timeout\n"
 	       "  mandel fb       draw the Mandelbrot set on /dev/fb0\n"
@@ -1240,37 +1243,153 @@ static int sound_arg(const char **arg, int fallback, int limit)
 	return n;
 }
 
-static void cmd_soundtest(const char *arg)
+/*
+ * /dev/dsp at `rate`, signed 16-bit little-endian stereo, with the PCM (and master) volume at 100;
+ * the descriptor, or -1 with errno set (EINVAL when the device settles on another format).
+ */
+static int dsp_open(int rate)
 {
-	const int rate = 44100;
-	int hz = sound_arg(&arg, 440, rate / 2);
-	int ms = sound_arg(&arg, 1000, 10000);
-	int frames, done = 0, phase = 0, fd = -1, err = EINVAL;
 	int fmt = AFMT_S16_LE, speed = rate, channels = 2;
-	int mask, level = 0x6464;
-	unsigned char samples[1024];
+	int mask, level = 0x6464, fd;
 
-	if (hz <= 0 || ms <= 0 || *arg)
-		goto fail;
-	frames = rate * ms / 1000;
 	mount_dev();
 	fd = open("/dev/mixer", O_RDWR);
 	if (fd < 0 || ioctl(fd, SOUND_MIXER_READ_DEVMASK, &mask) < 0 ||
 	    ioctl(fd, SOUND_MIXER_WRITE_PCM, &level) < 0)
-		goto io_error;
+		goto fail;
 	level = 0x6464;
 	if ((mask & SOUND_MASK_VOLUME) && ioctl(fd, SOUND_MIXER_WRITE_VOLUME, &level) < 0)
-		goto io_error;
+		goto fail;
 	close(fd);
 	fd = open("/dev/dsp", O_WRONLY);
 	if (fd < 0 || ioctl(fd, SNDCTL_DSP_SETFMT, &fmt) < 0 ||
 	    ioctl(fd, SNDCTL_DSP_CHANNELS, &channels) < 0 ||
 	    ioctl(fd, SNDCTL_DSP_SPEED, &speed) < 0)
-		goto io_error;
-	if (fmt != AFMT_S16_LE || channels != 2 || speed != rate)
 		goto fail;
+	if (fmt == AFMT_S16_LE && channels == 2 && speed == rate)
+		return fd;
+	errno = EINVAL;
+fail:
+	if (fd >= 0) {
+		int err = errno;
+
+		close(fd);
+		errno = err;
+	}
+	return -1;
+}
+
+/* All of buf to the device: 0, or the errno (EIO for a write of nothing) */
+static int dsp_write(int fd, const unsigned char *buf, int len)
+{
+	int off = 0;
+
+	while (off < len) {
+		ssize_t written = write(fd, buf + off, len - off);
+
+		if (written < 0 && errno == EINTR)
+			continue;
+		if (written < 0)
+			return errno;
+		if (!written)
+			return EIO;
+		off += written;
+	}
+	return 0;
+}
+
+/* Wait for the device to play everything, then close it: 0 or the errno */
+static int dsp_close(int fd)
+{
+	int err = ioctl(fd, SNDCTL_DSP_SYNC, 0) < 0 ? errno : 0;
+
+	close(fd);
+	return err;
+}
+
+/*
+ * soundtest sig [rate ...]: the audio signature (audiosig.h, checked by e2e/audio/wavcheck.py
+ * --signature) at each rate in turn (8000, 22050 and 44100 Hz by default), each followed by
+ * 500 ms of silence; one line per rate.
+ */
+static void cmd_soundsig(const char *arg)
+{
+	static const int rates[] = {8000, 22050, 44100};
+	unsigned char samples[1024];
+	struct audiosig sig;
+	int i = 0, given, rate, fd, err, frames, l, r;
+
+	while (*arg == ' ')
+		arg++;
+	given = *arg != 0;
+	for (;;) {
+		err = EINVAL;
+		fd = -1;
+		if (given ? !*arg : i == 3)
+			return;
+		rate = given ? sound_arg(&arg, 0, 48000) : rates[i++];
+		if (rate < 8000)
+			goto fail;
+		fd = dsp_open(rate);
+		if (fd < 0)
+			goto io_error;
+		audiosig_init(&sig, rate);
+		frames = 0;
+		do {
+			int n = 0;
+
+			while (n < (int)sizeof(samples) && audiosig_next(&sig, &l, &r)) {
+				/* little-endian whatever the CPU's byte order */
+				samples[n++] = l & 0xff;
+				samples[n++] = (l >> 8) & 0xff;
+				samples[n++] = r & 0xff;
+				samples[n++] = (r >> 8) & 0xff;
+			}
+			err = dsp_write(fd, samples, n);
+			if (err)
+				goto fail;
+			frames += n / 4;
+		} while (frames < AUDIOSIG_FRAMES(rate));
+		err = dsp_close(fd);
+		fd = -1;
+		if (err)
+			goto fail;
+		printf("WISP-SOUND v=1 dev=/dev/dsp rate=%d fmt=s16le ch=2 sig=1 frames=%d ok=1\n",
+		       rate, frames);
+		poll(NULL, 0, 500);
+		continue;
+io_error:
+		err = errno;
+fail:
+		if (fd >= 0)
+			close(fd);
+		printf("WISP-SOUND v=1 sig=1 rate=%d ok=0 errno=%d\n", rate, err);
+		return;
+	}
+}
+
+static void cmd_soundtest(const char *arg)
+{
+	const int rate = 44100;
+	int hz, ms, frames, done = 0, phase = 0, fd = -1, err = EINVAL;
+	unsigned char samples[1024];
+
+	while (*arg == ' ')
+		arg++;
+	if (arg[0] == 's' && arg[1] == 'i' && arg[2] == 'g' && (!arg[3] || arg[3] == ' ')) {
+		cmd_soundsig(arg + 3);
+		return;
+	}
+	hz = sound_arg(&arg, 440, rate / 2);
+	ms = sound_arg(&arg, 1000, 10000);
+	if (hz <= 0 || ms <= 0 || *arg)
+		goto fail;
+	frames = rate * ms / 1000;
+	fd = dsp_open(rate);
+	if (fd < 0)
+		goto io_error;
 	while (done < frames) {
-		int n = frames - done, i, off = 0;
+		int n = frames - done, i;
 
 		if (n > (int)sizeof(samples) / 4)
 			n = sizeof(samples) / 4;
@@ -1282,24 +1401,15 @@ static void cmd_soundtest(const char *arg)
 			if (phase >= rate)
 				phase -= rate;
 		}
-		while (off < n * 4) {
-			ssize_t written = write(fd, samples + off, n * 4 - off);
-
-			if (written < 0 && errno == EINTR)
-				continue;
-			if (written < 0)
-				goto io_error;
-			if (!written) {
-				err = EIO;
-				goto fail;
-			}
-			off += written;
-		}
+		err = dsp_write(fd, samples, n * 4);
+		if (err)
+			goto fail;
 		done += n;
 	}
-	if (ioctl(fd, SNDCTL_DSP_SYNC, 0) < 0)
-		goto io_error;
-	close(fd);
+	err = dsp_close(fd);
+	fd = -1;
+	if (err)
+		goto fail;
 	printf("WISP-SOUND v=1 dev=/dev/dsp rate=%d fmt=s16le ch=2 hz=%d ms=%d frames=%d ok=1\n",
 	       rate, hz, ms, frames);
 	return;

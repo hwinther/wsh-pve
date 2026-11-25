@@ -10,6 +10,7 @@
 
 #include "space.h"
 #include "font.h"
+#include "audiosig.h" /* e2e/wisp: the build scripts add -I for it */
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
@@ -1649,11 +1650,41 @@ static int run_game(int total_secs, int show_hud, int start_auto, uint32_t seed)
 	return 0;
 }
 
+/* -audiotest: the audio signature through the platform's own backend, no display. Done when the
+ * whole signal has been mixed and 500 ms of silence more (what the device still had buffered). */
+static int run_audiotest(void)
+{
+	space_log("START api=%s mode=audiotest", be->api);
+	atest.on = 1;
+	plat_audio_init(1);
+	uint32_t t0 = plat_us(), done = 0;
+	int status = 1;
+	for (;;) {
+		plat_audio_tick();
+		uint32_t now = plat_us();
+		if (!done && atest.rate && atest.sig_frames >= (uint32_t)AUDIOSIG_FRAMES(atest.rate))
+			done = now ? now : 1;
+		if (done && (uint32_t)(now - done) >= 500000U) {
+			status = 0;
+			break;
+		}
+		if ((!atest.rate && now - t0 > 2000000U) || now - t0 > 20000000U || plat_key() == 27)
+			break;
+		plat_sleep(5);
+	}
+	plat_audio_close();
+	space_log("AUDIOTEST rate=%d frames=%u of %d secs=%.2f", atest.rate, atest.sig_frames,
+		  AUDIOSIG_FRAMES(atest.rate), (uint32_t)(plat_us() - t0) / 1e6);
+	space_log(!atest.rate ? "FAIL no audio device" : status ? "FAIL the signature did not play to the end" : "PASS");
+	space_log("CLOSED");
+	return status;
+}
+
 static void usage(void)
 {
 	static const char *lines[] = {
 		"usage: wshspace [-res WxH] [-auto] [-seed N] [-nosound] [-nohud] [-gamma G] [-time S]",
-		"                [-check] [-bench N] [-hold S] [-wait S] [-tag NAME]",
+		"                [-check] [-bench N] [-hold S] [-wait S] [-tag NAME] [-audiotest]",
 		"                [-api glide2|glide3|opengl] [-hostgl (Windows)] [-nocom (Windows/DOS)]",
 		"flight: Arrows/Mouse pitch+yaw, W/S thrust+brake, A/D or Q/E roll, Space fire, Shift/B boost",
 		"systems: M/Tab starmap, J hyperspace jump, U upgrades/synthesizer, T target, F fps, R res, Esc quit",
@@ -1666,6 +1697,7 @@ int space_main(int argc, char **argv, const struct backend *backend)
 {
 	be = backend;
 	int check = 0, bench = 0, hold = 0, w = 640, h = 480, total = 0, show_hud = 0, start_auto = 0, wait = 0, sound = 1;
+	int audiotest = 0;
 	uint32_t seed = 0x3df02026U;
 	double gamma = 1.0;
 
@@ -1676,6 +1708,7 @@ int space_main(int argc, char **argv, const struct backend *backend)
 		else if (str_eq(a, "-hud"))    show_hud = 1;
 		else if (str_eq(a, "-nohud"))  show_hud = 0;
 		else if (str_eq(a, "-nosound")) sound = 0;
+		else if (str_eq(a, "-audiotest")) audiotest = 1;
 		else if (str_eq(a, "-nocom") || str_eq(a, "-hostgl")) ;
 		else if (v && str_eq(a, "-wait"))  { wait = to_int(v); i++; }
 		else if (v && str_eq(a, "-bench")) { bench = to_int(v); i++; }
@@ -1708,6 +1741,8 @@ int space_main(int argc, char **argv, const struct backend *backend)
 		}
 	}
 
+	if (audiotest)
+		return run_audiotest();
 	const char *mode = check && bench ? "check+bench" : check ? "check" : bench ? "bench" : start_auto ? "auto" : "game";
 	space_log("START api=%s res=%dx%d mode=%s", be->api, w, h, mode);
 	if (!be->res_ok(w, h)) {

@@ -14,6 +14,12 @@ off or QEMU gets `quit`, SIGTERM or SIGKILL (upstream/qemu-audio-wav-header-size
 takes everything after the data chunk's header as the data, and reports the header against the file
 (`header` in the result: the fmt fields, the sizes and `sizes`, see sizes_state). header_problems()
 checks a header against the expected format.
+
+    python3 wavcheck.py out.wav --signature [N]
+
+checks the recording for N (default 1) copies of the audio signature (e2e/wisp/audiosig.h, played
+by wisp's `soundtest sig` and wshspace's `-audiotest`): 8 segments of 500 ms, triangle waves of
+400 + 100 k Hz on the left and 600 + 150 k Hz on the right in segment k, 4 s in all. See signatures().
 """
 import argparse
 import json
@@ -72,6 +78,22 @@ def read_wav(path, header=None):
     """(rate, channels, mono samples as floats in -1..1). PCM 8, 16 or 32 bit. A dict passed as
     `header` gets the header's sizes and what the file holds (riff_size, data_size, data_bytes,
     data_offset, sizes_ok, sizes: see sizes_state) and the fmt chunk's fields (FMT_FIELDS)."""
+    rate, ch, raw = read_interleaved(path, header)
+    if ch == 1:
+        return rate, ch, raw
+    n = len(raw) // ch
+    mono = [sum(raw[i:i + ch]) / ch for i in range(0, n * ch, ch)]
+    return rate, ch, mono
+
+
+def read_channels(path, header=None):
+    """(rate, channels, one list of floats in -1..1 per channel); `header` as read_wav."""
+    rate, ch, raw = read_interleaved(path, header)
+    return rate, ch, [raw[c::ch] for c in range(ch)]
+
+
+def read_interleaved(path, header=None):
+    """(rate, channels, the samples of every channel interleaved, as floats in -1..1)."""
     with open(path, "rb") as f:
         d = f.read()
     if d[:4] != b"RIFF" or d[8:12] != b"WAVE":
@@ -108,10 +130,7 @@ def read_wav(path, header=None):
     else:
         code, scale = ("h", 32768.0) if bits == 16 else ("i", 2147483648.0)
         raw = [v / scale for v in struct.unpack(f"<{n * ch}{code}", data[:n * ch * sw])]
-    if ch == 1:
-        return rate, ch, raw
-    mono = [sum(raw[i:i + ch]) / ch for i in range(0, n * ch, ch)]
-    return rate, ch, mono
+    return rate, ch, raw
 
 
 def dbfs(x):
@@ -194,12 +213,197 @@ def check(result, expect=(), absent=(), tol=0.04):
     return not reasons, reasons
 
 
+# --- the audio signature (e2e/wisp/audiosig.h) ---------------------------------------------------
+
+SIG_SEGMENTS = 8
+SIG_SEGMENT_S = 0.5
+SIG_SECONDS = SIG_SEGMENTS * SIG_SEGMENT_S
+SIG_LEFT_HZ = tuple(400 + 100 * k for k in range(SIG_SEGMENTS))
+SIG_RIGHT_HZ = tuple(600 + 150 * k for k in range(SIG_SEGMENTS))
+SIG_PEAK = 16384
+SIG_QUIET = 0.08      # a sample is quiet below this fraction of the recording's peak
+SIG_GAP_MS = 2.0      # the longest quiet stretch on one channel inside the signal
+SIG_BREAK_MS = 10.0   # both channels quiet this long: the signal has ended
+SIG_TAIL_S = 0.05     # sound after the end (old ring samples) that isn't more of the signal
+SIG_TAIL_WINDOW_S = 0.06  # where a tail may start after the end
+SIG_SEPARATE_MS = 30.0  # sound this long after the end is another signal, sooner a dropout
+SIG_TOL = 0.03        # frequencies and the duration (a card's rate may be off by about 1 %)
+
+
+def signature_frames(rate):
+    """The signature as audiosig.h makes it: a list of (left, right) integers, -16384..16384."""
+    def step(hz):
+        hi, rem = divmod(hz << 16, rate)
+        return ((hi << 16) | ((rem << 16) // rate)) & 0xFFFFFFFF
+
+    def triangle(phase):
+        x = phase >> 16
+        return x if x < 16384 else 32768 - x if x < 49152 else x - 65536
+
+    out, pl, pr = [], 0, 0
+    for k in range(SIG_SEGMENTS):
+        sl, sr = step(SIG_LEFT_HZ[k]), step(SIG_RIGHT_HZ[k])
+        for _ in range(rate // 2):
+            out.append((triangle(pl), triangle(pr)))
+            pl, pr = (pl + sl) & 0xFFFFFFFF, (pr + sr) & 0xFFFFFFFF
+    return out
+
+
+def _quiet_runs(quiet, a, b):
+    """The longest run of True in quiet[a:b] and where it starts."""
+    best = best_at = run = 0
+    for i in range(a, b):
+        if quiet[i]:
+            run += 1
+            if run > best:
+                best, best_at = run, i - run + 1
+        else:
+            run = 0
+    return best, best_at
+
+
+def _near(f, want, tol):
+    return f is not None and abs(f - want) <= tol * want
+
+
+def _loud_until_break(ql, qr, a, b, brk):
+    """From a to at most b: (index after the last loud sample, whether SIG_BREAK_MS of quiet on both
+    channels (brk samples) or the end of the recording ended it)."""
+    last, run = a, 0
+    for i in range(a, b):
+        if ql[i] and qr[i]:
+            run += 1
+            if run >= brk:
+                return last, True
+        else:
+            last, run = i + 1, 0
+    return last, b == len(ql)
+
+
+def _one_signature(rate, left, right, ql, qr, onset, tol, gap_ms):
+    """The signature that starts at `onset`: (result, index after it and its tail, index of its end)."""
+    n = len(left)
+    brk = max(1, int(rate * SIG_BREAK_MS / 1000))
+    # the end: SIG_BREAK_MS of quiet, or the last sound before the end of the recording
+    end, _ = _loud_until_break(ql, qr, onset, n, brk)
+    res = {"start_s": round(onset / rate, 3), "duration_s": round((end - onset) / rate, 3)}
+    reasons = []
+    # sound that starts within SIG_TAIL_WINDOW_S after the end: old samples from a ring when it is
+    # short and silence follows (a tail), more of the signal after a dropout when it starts within
+    # SIG_SEPARATE_MS; later or longer sound is the next signal, left to the caller
+    nxt = end
+    first = next((i for i in range(end, min(n, end + int(rate * SIG_TAIL_WINDOW_S))) if not (ql[i] and qr[i])), None)
+    if first is not None:
+        last, ended = _loud_until_break(ql, qr, first, min(n, first + int(rate * SIG_TAIL_S) + brk + 1), brk)
+        silent_ms = 1000 * (first - end) / rate
+        if ended and last - first <= rate * SIG_TAIL_S:
+            res["tail"] = {"after_s": round((first - end) / rate, 4), "duration_s": round((last - first) / rate, 4)}
+            nxt = last
+        elif silent_ms < SIG_SEPARATE_MS:
+            reasons.append(f"a gap of {silent_ms:.1f} ms at {end / rate:.3f} s, then more sound")
+    if abs(res["duration_s"] - SIG_SECONDS) > tol * SIG_SECONDS:
+        reasons.append(f"{res['duration_s']:.3f} s long, not {SIG_SECONDS:g} s")
+    gaps = []
+    for q in (ql, qr):
+        g, at = _quiet_runs(q, onset, end)
+        gaps.append({"ms": round(1000 * g / rate, 2), "at_s": round(at / rate, 3)})
+    res["max_gap_ms"] = [g["ms"] for g in gaps]
+    for name, g in zip(("left", "right"), gaps):
+        if g["ms"] > gap_ms:
+            reasons.append(f"{name}: a gap of {g['ms']} ms at {g['at_s']} s")
+    seg = (end - onset) / SIG_SEGMENTS
+    segments, swapped = [], 0
+    for k in range(SIG_SEGMENTS):
+        a = int(onset + (k + 0.1) * seg)
+        b = int(onset + (k + 0.9) * seg)
+        fl = window_freq(left[a:b], rate) if b - a > 16 else None
+        fr = window_freq(right[a:b], rate) if b - a > 16 else None
+        segments.append({"left_hz": round(fl, 1) if fl else None, "right_hz": round(fr, 1) if fr else None})
+        if not _near(fl, SIG_LEFT_HZ[k], tol) or not _near(fr, SIG_RIGHT_HZ[k], tol):
+            reasons.append(f"segment {k}: {fl and round(fl, 1)} Hz left, {fr and round(fr, 1)} Hz right, "
+                           f"not {SIG_LEFT_HZ[k]} and {SIG_RIGHT_HZ[k]}")
+        swapped += _near(fl, SIG_RIGHT_HZ[k], tol) and _near(fr, SIG_LEFT_HZ[k], tol)
+    res["segments"] = segments
+    res["swapped"] = swapped >= SIG_SEGMENTS // 2
+    if res["swapped"]:
+        reasons.append(f"left and right swapped ({swapped} of {SIG_SEGMENTS} segments)")
+    span = max(1, end - onset)
+    res["rms_dbfs"] = [round(dbfs(math.sqrt(sum(x * x for x in ch[onset:end]) / span)), 1) for ch in (left, right)]
+    res["reasons"] = reasons
+    return res, nxt, end
+
+
+def signatures(path, count=1, tol=SIG_TOL, gap_ms=SIG_GAP_MS):
+    """Find `count` audio signatures (signature_frames) one after the other in a recording and check
+    each: its duration (4 s, within tol), every segment's frequency on each channel (within tol, in
+    the middle 80 % of the segment, the segments being an eighth of the measured duration each), no
+    quiet stretch longer than gap_ms on either channel inside it, channels not swapped and not the
+    same (mono). A signature starts at the first sound that lasts (no SIG_BREAK_MS of silence on both
+    channels in its first 100 ms) and ends at SIG_BREAK_MS of silence on both channels (or its last
+    sound before the end of the file). Sound that starts within SIG_TAIL_WINDOW_S after the end is a
+    tail when it lasts at most SIG_TAIL_S and silence follows (old samples a DMA ring plays out after
+    the stop, as the SS-5's CS4231 did), a dropout when it starts sooner than SIG_SEPARATE_MS after
+    the end, else the next signal. Quiet is below SIG_QUIET of the recording's peak. A dict with
+    `ok`, `reasons` and `signatures`."""
+    header = {}
+    rate, ch, chans = read_channels(path, header)
+    out = {"file": path, "rate": rate, "channels": ch, "seconds": round(len(chans[0]) / rate, 3) if rate else 0,
+           "header": header, "signatures": [], "reasons": []}
+    if ch != 2:
+        out["reasons"].append(f"{ch} channel(s), not 2")
+        out["ok"] = False
+        return out
+    left, right = chans
+    n = len(left)
+    peak = max(max((abs(x) for x in left), default=0), max((abs(x) for x in right), default=0))
+    out["peak_dbfs"] = round(dbfs(peak), 1)
+    thresh = max(1.5 / 32768, SIG_QUIET * peak)
+    ql = [abs(x) < thresh for x in left]
+    qr = [abs(x) < thresh for x in right]
+    brk = max(1, int(rate * SIG_BREAK_MS / 1000))
+    settle = int(rate * 0.1)
+    pos = 0
+    while pos < n and len(out["signatures"]) < count + 1:
+        onset = next((i for i in range(pos, n) if not (ql[i] and qr[i])), None)
+        if onset is None:
+            break
+        b, _ = (0, 0) if onset + settle > n else _quiet_both(ql, qr, onset, onset + settle)
+        if onset + settle > n or b >= brk:
+            pos = onset + max(1, b)  # a click, not a signal
+            continue
+        res, pos, end = _one_signature(rate, left, right, ql, qr, onset, tol, gap_ms)
+        same = sum(1 for i in range(onset, end)
+                   if abs(left[i] - right[i]) < thresh)
+        res["mono"] = same > 0.9 * (end - onset)
+        if res["mono"]:
+            res["reasons"].append("both channels the same (mono)")
+        out["signatures"].append(res)
+    found = len(out["signatures"])
+    if found != count:
+        out["reasons"].append(f"{found} signature(s) in the recording, not {count}")
+    for i, s in enumerate(out["signatures"][:count]):
+        out["reasons"] += [f"signature {i + 1}: {r}" for r in s["reasons"]]
+    out["ok"] = not out["reasons"]
+    return out
+
+
+def _quiet_both(ql, qr, a, b):
+    """The longest stretch in [a, b) where both channels are quiet, and where it starts."""
+    return _quiet_runs([x and y for x, y in zip(ql[a:b], qr[a:b])], 0, b - a)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("wav")
     p.add_argument("--expect", type=float, action="append", default=[], help="a tone that must be there (Hz)")
     p.add_argument("--absent", type=float, action="append", default=[], help="a tone that must not be (Hz)")
+    p.add_argument("--signature", type=int, nargs="?", const=1, metavar="N",
+                   help="check for N copies of the audio signature (default 1) instead of tones")
     a = p.parse_args(argv)
+    if a.signature is not None:
+        r = signatures(a.wav, a.signature)
+        print(json.dumps(r, indent=2))
+        return 0 if r["ok"] else 1
     r = analyse(a.wav)
     ok, reasons = check(r, a.expect, a.absent)
     r["ok"], r["reasons"] = ok, reasons

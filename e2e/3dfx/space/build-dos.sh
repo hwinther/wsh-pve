@@ -22,7 +22,7 @@ $CC -march=pentium -I"$Q3/wrappers/3dfx/src" -I"$Q3/qemu-0/hw/3dfx" -D__REV__="\
 (cd "$work" && DXE_LD_LIBRARY_PATH=$(dirname "$(dirname "$(command -v $CC)")")/i686-pc-msdosdjgpp/lib \
 	dxe3gen -o glide2x.dxe -Y libfxgl2.a -E _Convert -E _gr -E _gu glidedxe.o -lc)
 
-CFLAGS="-march=pentium -Os -Wall -Wextra -Wno-unused-parameter -std=gnu99 -fno-math-errno -fno-asynchronous-unwind-tables -I$D"
+CFLAGS="-march=pentium -Os -Wall -Wextra -Wno-unused-parameter -std=gnu99 -fno-math-errno -fno-asynchronous-unwind-tables -I$D -I$SRC/e2e/wisp"
 for f in space be_glide2 plat_dos; do
 	# shellcheck disable=SC2086
 	$CC $CFLAGS -S -o "$work/$f.s" "$D/$f.c"

@@ -26,7 +26,7 @@ fi
 [ -e "$libdir/libglide2x.so" ] || fail "no libglide2x.so in $libdir"
 
 "$CC" -m32 -march=pentium -mtune=generic -Os -Wall -Wextra -Wno-unused-parameter -std=gnu99 \
-	-I"$here" -fno-pic -no-pie -fno-stack-protector -U_FORTIFY_SOURCE -fcf-protection=none \
+	-I"$here" -I"$top/e2e/wisp" -fno-pic -no-pie -fno-stack-protector -U_FORTIFY_SOURCE -fcf-protection=none \
 	-fno-asynchronous-unwind-tables -fno-math-errno -nostartfiles -static-libgcc \
 	-Wl,--hash-style=both -Wl,-z,noseparate-code -Wl,-z,noexecstack -Wl,--as-needed -s \
 	-o "$out/wshspace" "$here/space.c" "$here/be_glide2.c" "$here/plat_linux.c" -L"$libdir" -lglide2x

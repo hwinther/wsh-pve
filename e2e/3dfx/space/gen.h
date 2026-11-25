@@ -730,10 +730,30 @@ static float midi_freq(int semi)
 	return f;
 }
 
+/* -audiotest: the audio signature (e2e/wisp/audiosig.h) instead of the synth, at the backend's rate */
+static struct {
+	int on, rate;
+	uint32_t sig_frames;
+	struct audiosig sig;
+} atest;
+
 void space_audio_mix(int16_t *stereo_pcm, int frames, int rate)
 {
 	if (rate <= 0)
 		return;
+	if (atest.on) {
+		if (!atest.rate) {
+			atest.rate = rate;
+			audiosig_init(&atest.sig, (unsigned)rate);
+		}
+		for (int i = 0; i < frames; i++) {
+			int l, r;
+			atest.sig_frames += (uint32_t)audiosig_next(&atest.sig, &l, &r);
+			stereo_pcm[i * 2] = (int16_t)l;
+			stereo_pcm[i * 2 + 1] = (int16_t)r;
+		}
+		return;
+	}
 	if (!syn.rng)
 		syn.rng = 0x12345678U;
 	float dt = 1.0f / (float)rate;

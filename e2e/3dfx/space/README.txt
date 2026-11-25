@@ -53,7 +53,28 @@ Options
   -time S         quit after S seconds
   -bench N        benchmark N frames of full star-system flight without vsync
   -check          render deterministic scenes and verify pixel probes (exit 1 on mismatch)
+  -audiotest      play the audio signature (below) through the platform's own sound backend, open
+                  no display, and exit: PASS (exit 0) once the whole signal was mixed and 500 ms
+                  more played out, FAIL (exit 1) without a sound device or after a 20 s timeout
   -nocom          (Windows, DOS) do not write to COM1
+
+Audio test
+  -audiotest plays the audio signature of e2e/wisp/audiosig.h (the header wisp's `soundtest sig`
+  uses too): 8 segments of 500 ms, triangle waves of 400 + 100 k Hz on the left and 600 + 150 k Hz
+  on the right in segment k, peak -6 dBFS, 4 s in all, at the backend's rate (22050 Hz on all
+  three). e2e/audio/wavcheck.py --signature checks a recording of it (QEMU's -audiodev wav): each
+  segment's frequency on each channel, the duration, no gaps over 2 ms, channels not swapped.
+    Linux    OSS /dev/dsp, 16-bit stereo: audio-test.sh (a Debian kernel and initramfs, AC97;
+             CI: audio-matrix.yml)
+    DOS      Sound Blaster: 8-bit stereo auto-init DMA at exactly 22050 Hz on a DSP 4.x
+             (SB16; older DSPs mono at 22222 Hz, which the check refuses as mono), BLASTER's
+             A and D (default 220h, DMA 1), polled without an IRQ handler: e2e/3dfx/dos-test.sh
+             runs it last in each boot on QEMU's sb16 (CI: 3dfx-dos.yml)
+    Windows  WinMM waveOut, 16-bit stereo: builds, not run in a guest yet. The Windows 98 harness
+             (e2e/3dfx/win98-test.sh, on the operator's own installed disk) could add a run of
+             `WSHSPACE.EXE -audiotest` with `-device sb16` (or es1370/AC97 with their drivers)
+             and `-audiodev wav`, then wavcheck.py --signature on the recording, as dos-test.sh
+             does; COM1 carries the AUDIOTEST and PASS lines
 
 Build
   make 3dfx-space
