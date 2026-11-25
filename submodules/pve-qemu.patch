@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..54b1ce5 100644
+index bc240a0..8450397 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,121 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,124 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -195,6 +195,9 @@ index bc240a0..54b1ce5 100644
 +wsh/0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe.patch
 +wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
 +wsh/0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre.patch
++wsh/0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi.patch
++wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch
++wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -24608,6 +24611,744 @@ index 0000000..77d68c6
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 + 
 +     return g_test_run();
+diff --git a/debian/patches/wsh/0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi.patch b/debian/patches/wsh/0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi.patch
+new file mode 100644
+index 0000000..ff9c658
+--- /dev/null
++++ b/debian/patches/wsh/0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi.patch
+@@ -0,0 +1,241 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: let a SuperSPARC load bus error trap with the
++ MMU off
++
++Sun's SPARCserver 600MP boot PROM (progress 0xc1 of its power-on self
++test) reads every power-of-two offset from 1 to 0x800 of the lance's
++page with byte, word and doubleword loads through the MMU bypass ASI,
++with the MMU off, and wants each to take a data access exception (trap
++0x09) with SFSR 0x436 (bus error bit 10, supervisor data load, FT 5,
++FAV) and the address in the SFAR. QEMU raised no trap for a bus error
++with the MMU off, and trap 0x29 without bit 10 through the bypass ASIs,
++so the PROM looped on error.
++
++New CPU feature buserr-trap, on no CPU model by default; the machine
++sets it (the SS-600MP, next patch). With it:
++
++- A failed load (nothing at the address, or a size the device doesn't
++  take) traps as a data access exception whether the MMU is on or off,
++  through the bypass ASIs too, with the BE bit (bit 10, SunOS's
++  MMU_SFSR_BE) added to the SFSR. Its memory probe takes the same traps
++  on empty banks and expects them.
++- A failed store goes to a board hook (SPARCCPU store_error, called
++  under the BQL) that reports it asynchronously; when the hook takes it,
++  nothing is recorded in the CPU. A failed access that doesn't trap (a
++  store or a fetch with the MMU off) leaves the SFSR and SFAR alone:
++  the PROM's earlier write to a board register QEMU doesn't model left
++  FT 5 there, and the first lance load then had the overwrite bit set
++  (0x437).
++- In boot mode a fetch's TLB entry serves fetches only and a load's or
++  store's data only. A fetch from the trap table's page filled an entry
++  that also allowed loads, so the PROM's probe of memory bank 15
++  (physical 0x0f0000000) read the PROM instead of timing out, and a
++  later fetch of the trap vector from a page a load had filled ran the
++  bus's zeros (trap 0x02 in error mode).
++
++Trace event sparc_bus_error_load_trap. Without buserr-trap nothing
++changes; no new state.
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             |  3 +++
++ target/sparc/cpu.h             | 12 +++++++++
++ target/sparc/ldst_helper.c     | 48 +++++++++++++++++++++++++++++++++-
++ target/sparc/mmu_helper.c      | 17 ++++++++++--
++ target/sparc/trace-events      |  1 +
++ 6 files changed, 79 insertions(+), 3 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index 238c40e..eb8195d 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -20,3 +20,4 @@ FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
++ FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off */
++ FEATURE(SBUF_DIAG) /* SuperSPARC store buffer diagnostic registers */
++ FEATURE(CACHE_DIAG) /* SuperSPARC cache tag and data RAMs (ASI 0x0c-0x0f) */
+++FEATURE(BUSERR_TRAP) /* A failed load traps, MMU on or off (SS-600MP) */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 5e7d6d6..eb4c2ed 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -582,6 +582,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_BOOT_MODE_IFETCH] = "boot-mode-ifetch",
++     [CPU_FEATURE_BIT_SBUF_DIAG] = "sbuf-diag",
++     [CPU_FEATURE_BIT_CACHE_DIAG] = "cache-diag",
+++    [CPU_FEATURE_BIT_BUSERR_TRAP] = "buserr-trap",
++ #endif
++ };
++ 
++@@ -1027,6 +1028,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_SBUF_DIAG, false),
++     DEFINE_PROP_BIT("cache-diag", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_CACHE_DIAG, false),
+++    DEFINE_PROP_BIT("buserr-trap", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_BUSERR_TRAP, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index ad41ad2..ae30ec5 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -643,6 +643,18 @@ struct ArchCPU {
++     CPUState parent_obj;
++ 
++     CPUSPARCState env;
+++#if !defined(TARGET_SPARC64) && !defined(CONFIG_USER_ONLY)
+++    /*
+++     * With buserr-trap: the board's handler for a store that failed on the
+++     * bus, which the board reports asynchronously (the SS-600MP's M-to-S
+++     * write error), given the physical address, the size, the CPU's MBus
+++     * module ID and whether it was in supervisor mode. Returns false for an
+++     * address the board doesn't report on.
+++     */
+++    bool (*store_error)(void *opaque, hwaddr addr, unsigned size,
+++                        unsigned mid, bool supervisor);
+++    void *store_error_opaque;
+++#endif
++ };
++ 
++ /**
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 9289075..95d4baf 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -19,6 +19,7 @@
++ 
++ #include "qemu/osdep.h"
++ #include "qemu/log.h"
+++#include "qemu/main-loop.h"
++ #include "qemu/range.h"
++ #include "cpu.h"
++ #include "tcg/tcg.h"
++@@ -420,6 +421,9 @@ static void dump_asi(const char *txt, target_ulong addr, int asi, int size,
++ 
++ #ifndef CONFIG_USER_ONLY
++ #ifndef TARGET_SPARC64
+++/* SFSR: the access ended in a bus error (an error acknowledge) */
+++#define SFSR_BE (1 << 10)
+++
++ /*
++  * A failed physical access (a bus error: nothing at the address, or an error
++  * acknowledge). is_asi is set for an access through an ASI the CPU doesn't
++@@ -432,7 +436,41 @@ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++                                   uintptr_t retaddr)
++ {
++     CPUSPARCState *env = cpu_env(cs);
+++    SPARCCPU *cpu = SPARC_CPU(cs);
++     int fault_type;
+++    /*
+++     * buserr-trap (set by the SPARCserver 600MP machine): a load that
+++     * nothing answers comes back to the SuperSPARC as an error acknowledge.
+++     * It traps as a data access exception whether the MMU is on or off,
+++     * also through the MMU bypass ASIs, with the bus error bit (BE, bit 10
+++     * in SunOS's mmu.h) in the SFSR. The board's boot PROM checks this on
+++     * the offsets of a device's page that the device doesn't decode.
+++     */
+++    bool buserr_trap = env->def.features & CPU_FEATURE_BUSERR_TRAP;
+++    bool load_trap = buserr_trap && !is_write && !is_exec && !is_asi;
+++
+++    if (buserr_trap && is_write && !is_asi && cpu->store_error) {
+++        /*
+++         * A store goes through the store buffer and its error is
+++         * asynchronous: the board reports it where it can (on the SS-600MP
+++         * a store to the SBus is an M-to-S write error with a level 15
+++         * interrupt), and nothing is recorded here.
+++         */
+++        BQL_LOCK_GUARD();
+++
+++        if (cpu->store_error(cpu->store_error_opaque, addr, size,
+++                             (env->mxccregs[7] >> 24) & 0xf, env->psrs)) {
+++            return;
+++        }
+++    }
+++    if (buserr_trap && !load_trap && !(env->mmuregs[0] & MMU_E)) {
+++        /*
+++         * It doesn't trap (a store or a fetch with the MMU off): leave the
+++         * SFSR and SFAR alone. Status left there would set the overwrite
+++         * bit of the next fault, which the boot PROM checks.
+++         */
+++        return;
+++    }
++ 
++ #ifdef DEBUG_UNASSIGNED
++     if (is_asi) {
++@@ -464,6 +502,9 @@ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++             env->mmuregs[3] |= 1 << 7;
++         }
++         env->mmuregs[3] |= (5 << 2) | 2;
+++        if (load_trap) {
+++            env->mmuregs[3] |= SFSR_BE;
+++        }
++         /* SuperSPARC will never place instruction fault addresses in the FAR */
++         if (!is_exec) {
++             env->mmuregs[4] = addr; /* Fault address register */
++@@ -474,7 +515,8 @@ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++         env->mmuregs[3] |= 1;
++     }
++ 
++-    if ((env->mmuregs[0] & MMU_E) && !(env->mmuregs[0] & MMU_NF)) {
+++    if ((env->mmuregs[0] & MMU_E || load_trap) &&
+++        !(env->mmuregs[0] & MMU_NF)) {
++         int tt = is_exec ? TT_CODE_ACCESS : TT_DATA_ACCESS;
++ 
++         /*
++@@ -492,6 +534,10 @@ static void sparc_raise_mmu_fault(CPUState *cs, hwaddr addr,
++             tt = is_exec ? TT_TFAULT : TT_DFAULT;
++             trace_sparc_bus_error_access_exc(addr, tt);
++         }
+++        if (load_trap) {
+++            tt = TT_DFAULT;
+++            trace_sparc_bus_error_load_trap(addr, size, env->mmuregs[3]);
+++        }
++         cpu_raise_exception_ra(env, tt, retaddr);
++     }
++ 
++diff --git a/target/sparc/mmu_helper.c b/target/sparc/mmu_helper.c
++index a62a470..104a37d 100644
++--- a/target/sparc/mmu_helper.c
+++++ b/target/sparc/mmu_helper.c
++@@ -85,15 +85,28 @@ static int get_physical_address(CPUSPARCState *env, CPUTLBEntryFull *full,
++     is_user = mmu_idx == MMU_USER_IDX;
++ 
++     if (mmu_idx == MMU_PHYS_IDX) {
+++        /*
+++         * In boot mode a fetch and a load from one address go to different
+++         * places, the PROM and the bus, but share a TLB entry here. With
+++         * buserr-trap, where a load from nothing traps, keep them apart: a
+++         * fetch's entry serves fetches only and a load's or store's data
+++         * only. Otherwise a load from the page of the trap table finds the
+++         * PROM there instead of a time-out, and a fetch after a load from
+++         * that page runs whatever the bus returned.
+++         */
+++        bool split = (env->def.features & CPU_FEATURE_BUSERR_TRAP) &&
+++                     (env->mmuregs[0] & env->def.mmu_bm);
+++
++         full->lg_page_size = TARGET_PAGE_BITS;
++         /* Boot mode: instruction fetches are taken from PROM */
++         if (rw == 2 && (env->mmuregs[0] & env->def.mmu_bm)) {
++             full->phys_addr = env->prom_addr | (address & 0x7ffffULL);
++-            full->prot = PAGE_READ | PAGE_EXEC;
+++            full->prot = split ? PAGE_EXEC : PAGE_READ | PAGE_EXEC;
++             return 0;
++         }
++         full->phys_addr = address;
++-        full->prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
+++        full->prot = split ? PAGE_READ | PAGE_WRITE
+++                           : PAGE_READ | PAGE_WRITE | PAGE_EXEC;
++         return 0;
++     }
++ 
++diff --git a/target/sparc/trace-events b/target/sparc/trace-events
++index 124fc05..c038477 100644
++--- a/target/sparc/trace-events
+++++ b/target/sparc/trace-events
++@@ -14,6 +14,7 @@ mmu_helper_mmu_fault(uint64_t address, uint64_t paddr, int mmu_idx, uint32_t tl,
++ # ldst_helper.c
++ sparc_mmu_ctrl_flush(uint32_t old, uint32_t val) "MMU control register 0x%08x -> 0x%08x: TLB flush"
++ sparc_bus_error_access_exc(uint64_t addr, int tt) "bus error at 0x%"PRIx64" taken as trap 0x%x"
+++sparc_bus_error_load_trap(uint64_t addr, unsigned size, uint32_t sfsr) "load bus error at 0x%"PRIx64" size %u, sfsr 0x%x"
++ 
++ # int32_helper.c
++ sun4m_cpu_interrupt(unsigned int level) "Set CPU IRQ %d"
+diff --git a/debian/patches/wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch b/debian/patches/wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch
+new file mode 100644
+index 0000000..3d70143
+--- /dev/null
++++ b/debian/patches/wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch
+@@ -0,0 +1,197 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: report SS-600MP SBus store errors as M-to-S
++ write errors
++
++After the loads of its lance register size check, Sun's SPARCserver
++600MP boot PROM stores a byte, a word and a doubleword at the same
++offsets of the lance's page and wants each to come back as an
++asynchronous write error: a level 15 interrupt (trap 0x1f) and, in the
++IOMMU's M-to-S AFSR and AFAR at 0xf.e000_1000, the error and SBus
++error-acknowledge bits, the transaction size, supervisor mode, the
++CPU's module ID, address bits 4-0, the SBus transfer size and physical
++address bits 35-32 (SunOS's async.h, MTSAFSR_*), and the address bits
++31-0. For a byte store at 0xe.f006_0001 from CPU 0 that is 0x9180120e.
++
++New function sun4m_iommu_cpu_write_error() fills them and raises the
++IOMMU's interrupt; a second error before the AFSR is cleared only sets
++the multiple error bit. The SS-600MP (hwdef field sbus_bus_errors)
++sets the CPU feature buserr-trap and points the CPUs' store_error hook
++at it for physical addresses 0xe.xxxx_xxxx (the SBus); the other
++machines are unchanged. The IOMMU's interrupt stays on system interrupt
++bit 30, where QEMU has it; on the board the M-to-S write error is bit
++29. No new state.
++
++The PROM then passes the lance register size checks (progress 0xc1),
++0xc2 passes or is skipped, and it stops at 0xc3, the DMA control
++register.
++---
++ hw/sparc/sun4m.c               | 39 ++++++++++++++++++++++++++++--
++ hw/sparc/sun4m_iommu.c         | 43 ++++++++++++++++++++++++++++++++++
++ hw/sparc/trace-events          |  1 +
++ include/hw/sparc/sun4m_iommu.h |  3 +++
++ 4 files changed, 84 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index f41ed15..39cef03 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -119,6 +119,7 @@ struct sun4m_hwdef {
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
+++    bool sbus_bus_errors;       /* buserr-trap, SBus write errors (M-to-S) */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -963,8 +964,23 @@ static void sun4m_set_solaris_smp_idle(Object *obj, bool value, Error **errp)
++     sun4m_solaris_smp_idle = value;
++ }
++ 
+++/*
+++ * On the SS-600MP a CPU store to the SBus that the SBus answers with an error
+++ * acknowledge comes back as an M-to-S write error in the IOMMU's AFSR and
+++ * AFAR, with an interrupt; the CPU reports nothing itself.
+++ */
+++static bool sun4m_cpu_store_error(void *opaque, hwaddr addr, unsigned size,
+++                                  unsigned mid, bool supervisor)
+++{
+++    if ((addr >> 32) != 0xe) {
+++        return false;
+++    }
+++    sun4m_iommu_cpu_write_error(opaque, addr, size, mid, supervisor);
+++    return true;
+++}
+++
++ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++-                                uint64_t prom_addr)
+++                                uint64_t prom_addr, bool buserr_trap)
++ {
++     SPARCCPU *cpu;
++     CPUSPARCState *env;
++@@ -977,6 +993,10 @@ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++     qemu_register_reset(sun4m_cpu_reset, cpu);
++     object_property_set_bool(OBJECT(cpu), "start-powered-off", id != 0,
++                              &error_abort);
+++    if (buserr_trap) {
+++        object_property_set_bool(OBJECT(cpu), "buserr-trap", true,
+++                                 &error_abort);
+++    }
++     qdev_init_gpio_in_named(cpudev, cpu_set_irq, "pil", MAX_PILS);
++     qdev_realize_and_unref(cpudev, NULL, &error_fatal);
++     cpu_sparc_set_id(env, id);
++@@ -1083,7 +1103,8 @@ static void sun4m_hw_init(MachineState *machine)
++ 
++     /* init CPUs */
++     for(i = 0; i < smp_cpus; i++) {
++-        cpus[i] = cpu_devinit(machine->cpu_type, i, hwdef->slavio_base);
+++        cpus[i] = cpu_devinit(machine->cpu_type, i, hwdef->slavio_base,
+++                              hwdef->sbus_bus_errors);
++         /* With more CPUs, one gives another work without an interrupt */
++         SPARC_CPU(cpus[i])->env.sunos_idle = sun4m_sunos_idle && smp_cpus == 1;
++         SPARC_CPU(cpus[i])->env.solaris_idle = sun4m_solaris_idle &&
++@@ -1146,6 +1167,12 @@ static void sun4m_hw_init(MachineState *machine)
++                        hwdef->iommu_base_mask, hwdef->iommu_sbcfg_mask,
++                        hwdef->iommu_tlb_data_mask,
++                        slavio_irq[30]);
+++    if (hwdef->sbus_bus_errors) {
+++        for (i = 0; i < smp_cpus; i++) {
+++            SPARC_CPU(cpus[i])->store_error = sun4m_cpu_store_error;
+++            SPARC_CPU(cpus[i])->store_error_opaque = iommu;
+++        }
+++    }
++ 
++     if (hwdef->iommu_pad_base) {
++         /* On the real hardware (SS-5, LX) the MMU is not padded, but aliased.
++@@ -1591,6 +1618,14 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * where a read takes longer than the 500 ns tick.
++          */
++         .timer_read_ahead = true,
+++        /*
+++         * Its boot PROM reads and writes the offsets of the lance's page
+++         * the lance doesn't decode and wants each load to trap with a bus
+++         * error in the SFSR, with the MMU off and through the MMU bypass
+++         * ASIs, and each store to come back as an M-to-S write error in
+++         * the IOMMU's AFSR and AFAR with a level 15 interrupt.
+++         */
+++        .sbus_bus_errors = true,
++         .iommu_version = 0x01000000,
++         /*
++          * Its IOMMU keeps all of the page table base address (bits 31-10,
++diff --git a/hw/sparc/sun4m_iommu.c b/hw/sparc/sun4m_iommu.c
++index f9cacf4..0956695 100644
++--- a/hw/sparc/sun4m_iommu.c
+++++ b/hw/sparc/sun4m_iommu.c
++@@ -283,6 +283,49 @@ static hwaddr iommu_translate_pa(hwaddr addr,
++     return pa;
++ }
++ 
+++/*
+++ * A CPU store to the SBus that the SBus answered with an error acknowledge
+++ * (nothing at the address, or a size the device doesn't take), as the M-to-S
+++ * interface reports it: an asynchronous write error in the AFSR and AFAR and
+++ * the interrupt. The AFSR takes the error and bus error bits, the size of
+++ * the MBus transaction, supervisor mode, the CPU's module ID, the address
+++ * bits 4-0, the SBus size of the transfer (SunOS's async.h, MTSAFSR_*) and
+++ * the physical address bits 35-32; the AFAR the address bits 31-0. A second
+++ * error before the AFSR is cleared only sets the multiple error bit.
+++ */
+++void sun4m_iommu_cpu_write_error(IOMMUState *s, hwaddr addr, unsigned size,
+++                                 unsigned mid, bool supervisor)
+++{
+++    uint32_t sbus_size;
+++
+++    if (s->regs[IOMMU_AFSR] & IOMMU_AFSR_ERR) {
+++        s->regs[IOMMU_AFSR] |= IOMMU_AFSR_ME;
+++        trace_sun4m_iommu_cpu_write_error(addr, size, s->regs[IOMMU_AFSR]);
+++        return;
+++    }
+++    switch (size) {
+++    case 1:
+++        sbus_size = 1;          /* byte */
+++        break;
+++    case 2:
+++        sbus_size = 2;          /* halfword */
+++        break;
+++    case 8:
+++        sbus_size = 7;          /* two-word burst */
+++        break;
+++    default:
+++        sbus_size = 0;          /* word */
+++        break;
+++    }
+++    s->regs[IOMMU_AFSR] = IOMMU_AFSR_ERR | IOMMU_AFSR_BE |
+++        (ctz32(size) << 25) | (supervisor ? IOMMU_AFSR_S : 0) |
+++        ((mid & 0xf) << 20) | ((addr & 0x1f) << 12) | (sbus_size << 9) |
+++        ((addr >> 32) & 0xf);
+++    s->regs[IOMMU_AFAR] = addr;
+++    trace_sun4m_iommu_cpu_write_error(addr, size, s->regs[IOMMU_AFSR]);
+++    qemu_irq_raise(s->irq);
+++}
+++
++ static void iommu_bad_addr(IOMMUState *s, hwaddr addr,
++                            int is_write)
++ {
++diff --git a/hw/sparc/trace-events b/hw/sparc/trace-events
++index 5c2398a..4ccc1cd 100644
++--- a/hw/sparc/trace-events
+++++ b/hw/sparc/trace-events
++@@ -19,6 +19,7 @@ sun4m_iommu_mem_writel_pgflush(uint32_t val) "page flush 0x%x"
++ sun4m_iommu_page_get_flags(uint64_t pa, uint64_t iopte, uint32_t ret) "get flags addr 0x%"PRIx64" => pte 0x%"PRIx64", *pte = 0x%x"
++ sun4m_iommu_translate_pa(uint64_t addr, uint64_t pa, uint32_t iopte) "xlate dva 0x%"PRIx64" => pa 0x%"PRIx64" iopte = 0x%x"
++ sun4m_iommu_bad_addr(uint64_t addr) "bad addr 0x%"PRIx64
+++sun4m_iommu_cpu_write_error(uint64_t addr, unsigned size, uint32_t afsr) "cpu write error at 0x%"PRIx64" size %u, afsr 0x%x"
++ 
++ # leon3.c
++ leon3_set_irq(int intno) "Set CPU IRQ %d"
++diff --git a/include/hw/sparc/sun4m_iommu.h b/include/hw/sparc/sun4m_iommu.h
++index 1c204f3..ccc5b58 100644
++--- a/include/hw/sparc/sun4m_iommu.h
+++++ b/include/hw/sparc/sun4m_iommu.h
++@@ -53,4 +53,7 @@ DECLARE_INSTANCE_CHECKER(IOMMUState, SUN4M_IOMMU,
++ 
++ #define TYPE_SUN4M_IOMMU_MEMORY_REGION "sun4m-iommu-memory-region"
++ 
+++void sun4m_iommu_cpu_write_error(IOMMUState *s, hwaddr addr, unsigned size,
+++                                 unsigned mid, bool supervisor);
+++
++ #endif
+diff --git a/debian/patches/wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch b/debian/patches/wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch
+new file mode 100644
+index 0000000..2411bfd
+--- /dev/null
++++ b/debian/patches/wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch
+@@ -0,0 +1,282 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test SS-600MP bus errors with the MMU off
++
++qtest sun4m-sbus-error-test for the two patches before: a PROM built by
++the test runs in boot mode with the MMU off and its trap table in the
++PROM and makes one access. On the SS-600MP a byte load through ASI 0x2e
++from the lance's page and a physical load from empty memory take trap
++0x09 with SFSR 0x436 and the SFAR; a byte store to the lance's page
++takes trap 0x1f with the SFSR clear and AFSR 0x9180120e, AFAR the
++address; a store to empty memory doesn't trap and leaves the SFSR
++clear; a load from the page the code is fetched from returns RAM. On
++the SS-10 nothing traps, the SFSR is as before and the AFSR stays
++clear. 7 cases; the SS-600MP ones fail without the patches, and
++ld-code-page without the TLB split alone.
++---
++ tests/qtest/meson.build             |   3 +-
++ tests/qtest/sun4m-sbus-error-test.c | 242 ++++++++++++++++++++++++++++
++ 2 files changed, 244 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-sbus-error-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 66dae63..8d2c137 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -222,7 +222,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-dbri-test',
++                 'sun4m-escc-break-test',
++                 'sun4m-ecc-test',
++-                'sun4m-iommu-regs-test'] + \
+++                'sun4m-iommu-regs-test',
+++                'sun4m-sbus-error-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-sbus-error-test.c b/tests/qtest/sun4m-sbus-error-test.c
++new file mode 100644
++index 0000000..f3d39c6
++--- /dev/null
+++++ b/tests/qtest/sun4m-sbus-error-test.c
++@@ -0,0 +1,242 @@
+++/*
+++ * QTest: bus errors on the SPARCserver 600MP with the MMU off
+++ *
+++ * The SS-600MP's boot PROM checks that every offset of a device's page the
+++ * device doesn't decode answers with an error acknowledge, with the MMU
+++ * off and through the MMU bypass ASIs: a load traps as a data access
+++ * exception (trap 0x09) with the bus error bit (BE, bit 10) in the SFSR, a
+++ * store comes back as an M-to-S write error in the IOMMU's AFSR and AFAR
+++ * with a level 15 interrupt (trap 0x1f) and leaves the SFSR alone. The
+++ * machine sets the CPU's buserr-trap feature for this. With it a load
+++ * from the page instructions are fetched from in boot mode reaches RAM,
+++ * not the PROM. On the SS-10 nothing traps with the MMU off and the AFSR
+++ * stays clear, as before.
+++ *
+++ * A tiny boot PROM runs in boot mode with the MMU off (fetches from the
+++ * PROM, loads and stores physical), enables traps with its trap table at
+++ * PROM offset 0, makes one access and records the SFSR and the register
+++ * the access loaded. Every trap goes to a handler in the PROM that stores
+++ * the trap type, the SFSR and the SFAR in RAM and stops.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define CODE            0x1000u         /* PROM offset of the code */
+++#define HANDLER         0x1800u         /* PROM offset of the trap handler */
+++#define PROM_SIZE       0x2000u
+++#define MARKS           0x3000u         /* RAM address of the markers */
+++#define MARK_STAGE      (MARKS + 0x04)
+++#define MARK_TRAP       (MARKS + 0x20)
+++#define MARK_SFSR       (MARKS + 0x24)  /* by the handler */
+++#define MARK_SFAR       (MARKS + 0x28)
+++#define MARK_LOADED     (MARKS + 0x2c)  /* what the access loaded */
+++#define MARK_SFSR_AFTER (MARKS + 0x30)  /* the SFSR after an access */
+++#define SAME_PAGE       0x17f0u         /* in the page of the code */
+++#define RAM_MAGIC       0x5a17c0deu
+++#define NOP             0x01000000
+++
+++#define TT_NONE         0
+++#define TT_DFAULT       0x09            /* data access exception */
+++#define TT_LEVEL15      0x1f            /* interrupt level 15 */
+++
+++#define SFSR_LEVEL      0x300           /* table walk level, not compared */
+++#define SFSR_LOAD_BE    0x436           /* BE, supervisor load, FT 5, FAV */
+++#define SFSR_LOAD       0x036           /* supervisor load, FT 5, FAV */
+++
+++#define AFSR            0xfe0001000ULL  /* the IOMMU's M-to-S AFSR, AFAR */
+++#define AFAR            0xfe0001004ULL
+++#define AFSR_ERR        0x80000000u
+++
+++#define LANCE_PAGE      0xf0060000u     /* slot f offset 0x60000, ASI 0x2e */
+++
+++typedef enum {
+++    ACCESS_LDUBA,       /* lduba [addr] 0x2e, %o4 */
+++    ACCESS_LDUB,        /* ldub [addr], %o4 (physical, MMU off) */
+++    ACCESS_LD,          /* ld [addr], %o4 (physical, MMU off) */
+++    ACCESS_STBA,        /* stba %g0, [addr] 0x2e */
+++    ACCESS_STB,         /* stb %g0, [addr] (physical, MMU off) */
+++} AccessKind;
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    AccessKind kind;
+++    uint32_t addr;
+++    uint32_t tt;                /* the trap expected, or TT_NONE */
+++    uint32_t sfsr;              /* the SFSR expected (masked) */
+++    uint32_t afsr;              /* the AFSR expected after a store, or 0 */
+++} TestCase;
+++
+++static char *write_prom(const TestCase *t)
+++{
+++    const uint32_t setup[] = {
+++        0x81902000,             /* wr    %g0, 0, %wim */
+++        0x81882fa0,             /* wr    %g0, 0xfa0, %psr    S, PIL 15, ET */
+++        NOP, NOP, NOP,
+++        0x0700000c,             /* sethi %hi(0x3000), %g3 */
+++        0x88102001,             /* mov   1, %g4 */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 1 */
+++        0x17000000 | (t->addr >> 10),   /* sethi %hi(addr), %o3 */
+++        0x9612e000 | (t->addr & 0x3ff), /* or    %o3, %lo(addr), %o3 */
+++    };
+++    const uint32_t end[] = {
+++        NOP,
+++        0xd820e02c,             /* st    %o4, [%g3 + 0x2c]   loaded */
+++        0x90102300,             /* mov   0x300, %o0 */
+++        0xca820080,             /* lda   [%o0] 4, %g5        SFSR */
+++        0xca20e030,             /* st    %g5, [%g3 + 0x30] */
+++        0x88102002,             /* mov   2, %g4              no trap */
+++        0xc820e004,             /* st    %g4, [%g3 + 4]      stage 2 */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    /* The handler stores the SFSR, the SFAR and the trap type (last) */
+++    const uint32_t handler[] = {
+++        0x0300000c,             /* sethi %hi(0x3000), %g1 */
+++        0x85580000,             /* rd    %tbr, %g2 */
+++        0x8530a004,             /* srl   %g2, 4, %g2 */
+++        0x8408a0ff,             /* and   %g2, 0xff, %g2      trap type */
+++        0x86102300,             /* mov   0x300, %g3 */
+++        0xc880c080,             /* lda   [%g3] 4, %g4        SFSR */
+++        0x86102400,             /* mov   0x400, %g3 */
+++        0xca80c080,             /* lda   [%g3] 4, %g5        SFAR */
+++        0xc8206024,             /* st    %g4, [%g1 + 0x24] */
+++        0xca206028,             /* st    %g5, [%g1 + 0x28] */
+++        0xc4206020,             /* st    %g2, [%g1 + 0x20] */
+++        0x10800000,             /* b     . */
+++        NOP,
+++    };
+++    uint32_t be[PROM_SIZE / 4] = { 0 };
+++    uint32_t access;
+++    char *path = NULL;
+++    int fd, i, n = CODE / 4;
+++
+++    switch (t->kind) {
+++    case ACCESS_LDUBA:
+++        access = 0xd88ac000 | (0x2e << 5);      /* lduba [%o3] 0x2e, %o4 */
+++        break;
+++    case ACCESS_LDUB:
+++        access = 0xd80ae000;                    /* ldub  [%o3], %o4 */
+++        break;
+++    case ACCESS_LD:
+++        access = 0xd802e000;                    /* ld    [%o3], %o4 */
+++        break;
+++    case ACCESS_STBA:
+++        access = 0xc0aac000 | (0x2e << 5);      /* stba  %g0, [%o3] 0x2e */
+++        break;
+++    case ACCESS_STB:
+++        access = 0xc02ae000;                    /* stb   %g0, [%o3] */
+++        break;
+++    default:
+++        g_assert_not_reached();
+++    }
+++
+++    /* The trap table: reset (trap 0) to the code, the others to the handler */
+++    for (i = 0; i < 256; i++) {
+++        uint32_t target = i ? HANDLER : CODE;
+++
+++        be[4 * i] = cpu_to_be32(0x10800000 | ((target - 16 * i) / 4));
+++        be[4 * i + 1] = cpu_to_be32(NOP);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(setup); i++) {
+++        be[n++] = cpu_to_be32(setup[i]);
+++    }
+++    be[n++] = cpu_to_be32(access);
+++    for (i = 0; i < ARRAY_SIZE(end); i++) {
+++        be[n++] = cpu_to_be32(end[i]);
+++    }
+++    for (i = 0; i < ARRAY_SIZE(handler); i++) {
+++        be[HANDLER / 4 + i] = cpu_to_be32(handler[i]);
+++    }
+++    fd = g_file_open_tmp("sun4m-sbus-error-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, be, sizeof(be)), ==, sizeof(be));
+++    close(fd);
+++    return path;
+++}
+++
+++static void test_sbus_error(const void *data)
+++{
+++    const TestCase *t = data;
+++    g_autofree char *prom = write_prom(t);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    QTestState *qts = qtest_initf("-machine %s -accel tcg -m 64 -bios %s -S",
+++                                  t->machine, prom);
+++
+++    qtest_writel(qts, SAME_PAGE, RAM_MAGIC);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'cont' }");
+++
+++    while (qtest_readl(qts, MARK_TRAP) == 0 &&
+++           qtest_readl(qts, MARK_STAGE) < 2) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    if (t->tt == TT_NONE) {
+++        g_assert_cmpuint(qtest_readl(qts, MARK_STAGE), ==, 2);
+++        g_assert_cmphex(qtest_readl(qts, MARK_TRAP), ==, 0);
+++        g_assert_cmphex(qtest_readl(qts, MARK_SFSR_AFTER) & ~SFSR_LEVEL, ==,
+++                        t->sfsr);
+++        if (t->addr == SAME_PAGE) {
+++            g_assert_cmphex(qtest_readl(qts, MARK_LOADED), ==, RAM_MAGIC);
+++        }
+++    } else {
+++        /* It got to the access, which trapped */
+++        g_assert_cmpuint(qtest_readl(qts, MARK_STAGE), ==, 1);
+++        g_assert_cmphex(qtest_readl(qts, MARK_TRAP), ==, t->tt);
+++        g_assert_cmphex(qtest_readl(qts, MARK_SFSR) & ~SFSR_LEVEL, ==,
+++                        t->sfsr);
+++        if (t->tt == TT_DFAULT) {
+++            g_assert_cmphex(qtest_readl(qts, MARK_SFAR), ==, t->addr);
+++        }
+++    }
+++    if (t->afsr) {
+++        g_assert_cmphex(qtest_readl(qts, AFSR), ==, t->afsr);
+++        g_assert_cmphex(qtest_readl(qts, AFAR), ==, t->addr);
+++    } else {
+++        g_assert_cmphex(qtest_readl(qts, AFSR) & AFSR_ERR, ==, 0);
+++    }
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        /* SS-600MP: loads trap with BE, through the bypass ASI too */
+++        { "ss600mp/lduba-lance-page", "SS-600MP", ACCESS_LDUBA,
+++          LANCE_PAGE + 1, TT_DFAULT, SFSR_LOAD_BE, 0 },
+++        { "ss600mp/ldub-no-memory", "SS-600MP", ACCESS_LDUB,
+++          0x08000000, TT_DFAULT, SFSR_LOAD_BE, 0 },
+++        /* A store to the SBus: an M-to-S write error and level 15 */
+++        { "ss600mp/stba-lance-page", "SS-600MP", ACCESS_STBA,
+++          LANCE_PAGE + 1, TT_LEVEL15, 0, 0x9180120e },
+++        /* A store elsewhere: no trap and the SFSR stays clear */
+++        { "ss600mp/stb-no-memory", "SS-600MP", ACCESS_STB,
+++          0x08000000, TT_NONE, 0, 0 },
+++        /* A load from the page the code is fetched from reaches RAM */
+++        { "ss600mp/ld-code-page", "SS-600MP", ACCESS_LD,
+++          SAME_PAGE, TT_NONE, 0, 0 },
+++        /* SS-10: no trap with the MMU off, no write error, as before */
+++        { "ss10/lduba-no-trap", "SS-10", ACCESS_LDUBA,
+++          LANCE_PAGE + 0x100, TT_NONE, SFSR_LOAD, 0 },
+++        { "ss10/stba-no-write-error", "SS-10", ACCESS_STBA,
+++          LANCE_PAGE + 0x100, TT_NONE, 0x0b6, 0 },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-sbus-error/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_sbus_error);
+++        }
+++    }
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
