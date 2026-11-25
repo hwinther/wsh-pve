@@ -20,12 +20,21 @@
 static HMODULE lib;
 static const char *lib_name, *tagname = "WSHDEMO";
 static HWND wnd;
-static int keys[32], key_head, key_tail;
+static int keys[32], key_head, key_tail, host_gl;
+static char last_err[256];
 
 /* --- output, time, keys ------------------------------------------------------------------------- */
 
 void plat_out(const char *line)
 {
+	for (const char *p = line; *p; p++) {
+		if (p[0] == ':' && p[1] == ' ' && !memcmp(p + 2, "ERROR ", 6)) {
+			lstrcpynA(last_err, p + 8, sizeof(last_err));
+			break;
+		}
+	}
+	if (!last_err[0] && !memcmp(line, "usage: ", 7))
+		lstrcpynA(last_err, line, sizeof(last_err));
 	w3d_line(line);
 }
 
@@ -79,8 +88,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
 	switch (m) {
 	case WM_SETCURSOR:
-		SetCursor(NULL);
-		return TRUE;
+		if (!host_gl) {
+			SetCursor(NULL);
+			return TRUE;
+		}
+		break;
 	case WM_CHAR:
 		push_key((int)(w & 0xff));
 		return 0;
@@ -103,13 +115,25 @@ static HWND make_window(int w, int h)
 		wc.style = CS_OWNDC;
 		wc.lpfnWndProc = wndproc;
 		wc.hInstance = hi;
+		wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
 		wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
 		wc.lpszClassName = "WSHDEMO";
 		RegisterClassA(&wc);
 		registered = 1;
 	}
-	HWND hw = CreateWindowExA(WS_EX_TOPMOST, "WSHDEMO", "wshdemo", WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-				  0, 0, w, h, NULL, NULL, hi, NULL);
+	HWND hw;
+	if (host_gl) {
+		DWORD st = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+		RECT r = {0, 0, w, h};
+		AdjustWindowRect(&r, st, FALSE);
+		int ww = r.right - r.left, wh = r.bottom - r.top;
+		int x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
+		hw = CreateWindowExA(0, "WSHDEMO", "wshdemo", st | WS_VISIBLE, x > 0 ? x : 0, y > 0 ? y : 0, ww, wh, NULL, NULL,
+				     hi, NULL);
+	} else {
+		hw = CreateWindowExA(WS_EX_TOPMOST, "WSHDEMO", "wshdemo", WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+				     0, 0, w, h, NULL, NULL, hi, NULL);
+	}
 	if (hw) {
 		SetForegroundWindow(hw);
 		SetFocus(hw);
@@ -139,12 +163,14 @@ int plat_wrapper_rev(char *buf, int n)
 
 static void fail(const char *what, int status)
 {
-	char line[200];
+	char line[240];
 	wsprintfA(line, "%s: ERROR %s", tagname, what);
 	w3d_line(line);
 	wsprintfA(line, "%s: CLOSED", tagname);
 	w3d_line(line);
 	w3d_com_release();
+	if (!w3d_in_guest())
+		MessageBoxA(NULL, what, "wshdemo", MB_OK | MB_ICONERROR);
 	ExitProcess((UINT)status);
 }
 
@@ -194,18 +220,20 @@ static BOOL(WINAPI *set_gamma)(HDC, LPVOID);
 
 int glw_open(int w, int h)
 {
-	DEVMODEA dm;
-	memset(&dm, 0, sizeof(dm));
-	dm.dmSize = sizeof(dm);
-	dm.dmPelsWidth = (DWORD)w;
-	dm.dmPelsHeight = (DWORD)h;
-	dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-	LONG r = ChangeDisplaySettingsA(&dm, CDS_FULLSCREEN);
-	if (r == DISP_CHANGE_SUCCESSFUL)
-		mode_changed = 1;
-	else
-		demo_log("INFO ChangeDisplaySettings to %dx%d: %d (the screen is %dx%d)", w, h, (int)r, GetSystemMetrics(SM_CXSCREEN),
-			 GetSystemMetrics(SM_CYSCREEN));
+	if (!host_gl) {
+		DEVMODEA dm;
+		memset(&dm, 0, sizeof(dm));
+		dm.dmSize = sizeof(dm);
+		dm.dmPelsWidth = (DWORD)w;
+		dm.dmPelsHeight = (DWORD)h;
+		dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+		LONG r = ChangeDisplaySettingsA(&dm, CDS_FULLSCREEN);
+		if (r == DISP_CHANGE_SUCCESSFUL)
+			mode_changed = 1;
+		else
+			demo_log("INFO ChangeDisplaySettings to %dx%d: %d (the screen is %dx%d)", w, h, (int)r,
+				 GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+	}
 	wnd = make_window(w, h);
 	if (!wnd)
 		return -1;
@@ -274,25 +302,34 @@ int glw_gamma(const uint16_t ramp[3][256])
 static void load_gl(void)
 {
 	load("OPENGL32.DLL");
-	/* qemu-3dfx's wrapper next to the program, not Windows' own */
-	char path[MAX_PATH], exe[MAX_PATH];
-	GetModuleFileNameA(lib, path, sizeof(path));
-	GetModuleFileNameA(NULL, exe, sizeof(exe));
-	int n = lstrlenA(exe);
-	while (n > 0 && exe[n - 1] != '\\')
-		n--;
-	CharUpperA(path);
-	CharUpperA(exe);
-	if (n == 0 || lstrlenA(path) < n || memcmp(path, exe, (size_t)n))
-		fail("Windows' own OPENGL32.DLL was loaded: put qemu-3dfx's OPENGL32.DLL next to WSHDEMO.EXE", 2);
+	/* qemu-3dfx's wrapper next to the program, not Windows' own (unless -hostgl) */
+	if (!host_gl) {
+		char path[MAX_PATH], exe[MAX_PATH];
+		GetModuleFileNameA(lib, path, sizeof(path));
+		GetModuleFileNameA(NULL, exe, sizeof(exe));
+		int n = lstrlenA(exe);
+		while (n > 0 && exe[n - 1] != '\\')
+			n--;
+		CharUpperA(path);
+		CharUpperA(exe);
+		if (n == 0 || lstrlenA(path) < n || memcmp(path, exe, (size_t)n))
+			fail("Windows' own OPENGL32.DLL was loaded: put qemu-3dfx's OPENGL32.DLL next to WSHDEMO.EXE (or pass -hostgl)",
+			     2);
+	}
 #define GL_LOAD(ret, name, args) *(FARPROC *)&glf.name = sym(#name, -1);
 	GL_FUNCS(GL_LOAD)
-	*(FARPROC *)&wgl.ChoosePixelFormat = sym("wglChoosePixelFormat", -1);
-	*(FARPROC *)&wgl.SetPixelFormat = sym("wglSetPixelFormat", -1);
+	if (host_gl) {
+		wgl.ChoosePixelFormat = ChoosePixelFormat;
+		wgl.SetPixelFormat = SetPixelFormat;
+		wgl.SwapBuffers = SwapBuffers;
+	} else {
+		*(FARPROC *)&wgl.ChoosePixelFormat = sym("wglChoosePixelFormat", -1);
+		*(FARPROC *)&wgl.SetPixelFormat = sym("wglSetPixelFormat", -1);
+		*(FARPROC *)&wgl.SwapBuffers = sym("wglSwapBuffers", -1);
+	}
 	*(FARPROC *)&wgl.CreateContext = sym("wglCreateContext", -1);
 	*(FARPROC *)&wgl.MakeCurrent = sym("wglMakeCurrent", -1);
 	*(FARPROC *)&wgl.DeleteContext = sym("wglDeleteContext", -1);
-	*(FARPROC *)&wgl.SwapBuffers = sym("wglSwapBuffers", -1);
 	*(FARPROC *)&wgl.GetProcAddress = sym("wglGetProcAddress", -1);
 }
 
@@ -376,15 +413,27 @@ static int split_args(void)
 void WinMainCRTStartup(void)
 {
 	int argc = split_args(), api = 0;
-	for (int i = 1; i + 1 < argc; i++) {
-		if (!lstrcmpiA(argv_[i], "-api"))
+	for (int i = 1; i < argc; i++) {
+		if (!lstrcmpiA(argv_[i], "-hostgl"))
+			host_gl = 1;
+		else if (!lstrcmpiA(argv_[i], "-nocom"))
+			w3d_com_off = 1;
+		else if (i + 1 < argc && !lstrcmpiA(argv_[i], "-api")) {
 			api = !lstrcmpiA(argv_[i + 1], "glide2") ? 1 : !lstrcmpiA(argv_[i + 1], "glide3") ? 2 : !lstrcmpiA(argv_[i + 1], "opengl") ? 3 : -1;
-		if (!lstrcmpiA(argv_[i], "-tag"))
+			i++;
+		} else if (i + 1 < argc && !lstrcmpiA(argv_[i], "-tag")) {
 			tagname = argv_[i + 1];
+			i++;
+		} else if (i + 1 < argc && !lstrcmpiA(argv_[i], "-log")) {
+			w3d_log_path = argv_[i + 1];
+			i++;
+		}
 	}
 	w3d_com_hold();
 	if (api < 0)
 		fail("-api is glide2, glide3 or opengl", 2);
+	if (api == 0 && host_gl)
+		api = 3;
 	if (api == 0)
 		api = menu();
 	if (api == 4) {
@@ -410,9 +459,10 @@ void WinMainCRTStartup(void)
 		g2.hwnd = (uint32_t)(uintptr_t)wnd;
 		status = demo_main(argc, argv_, &glide2_backend);
 	}
-	if (wnd)
-		DestroyWindow(wnd);
+	glw_close(1);
 	FreeLibrary(lib);
 	w3d_com_release();
+	if (status >= 2 && !w3d_in_guest())
+		MessageBoxA(NULL, last_err[0] ? last_err : "wshdemo failed", "wshdemo", MB_OK | MB_ICONERROR);
 	ExitProcess((UINT)status);
 }

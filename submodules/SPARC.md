@@ -1042,10 +1042,40 @@ core (the second vCPU is never started); with 1024 MB Solaris reports `Memory si
 A disk installed with OpenBIOS on SS-20 boots with the Sun SS-20 PROM and the reverse (both SS-20,
 `-cpu TI-SuperSparc-50` for the PROM); the SS-10 OpenBIOS install boots on SS-20 too. An SS-5 install doesn't boot on SS-10/SS-20 (above).
 
-The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops after `Configuring devices...` /
-`fdintr: nobody sleeping (c0 0 0)`, the CPU in the kernel's `idle` loop (an interrupt that never comes):
-2 of 2 such cases in one `machines` run (OpenBIOS and the Sun PROM), 1 of 6 boots in a row on an idle
-host, 0 of 18 with other guests running. Installed disks didn't show it (33 benchmark boots).
+**The CD boot that stops after `Configuring devices...`** (2.6 CD, SS-20, one CPU, 256 MB; seen
+first as 2 of 2 such cases in one `machines` run, OpenBIOS and the Sun PROM, and 1 of 6 boots on an
+idle host). The console stops after the two `fdintr: nobody sleeping (c0 0 0)` lines (every boot
+prints them: the 82077's reset interrupt, which the floppy driver doesn't wait for) and a few more
+turns of the spinner; the CPU stays in the kernel's `idle` loop. It is not QEMU's: Solaris's init
+loses the end of the installer's `rcS`.
+
+- In a hung guest (gdbstub, the threads walked from `%g7` and symbolized with the installed 2.6
+  disk's `/dev/ksyms`): `%psr` PIL 0 with traps on, nothing pending in the interrupt controller,
+  `lbolt` counting (the clock runs). Every kernel thread sleeps on its usual condition variable;
+  the only processes are `sched`, `init`, `pageout` and `fsflush`, so `rcS`, its `dial` spinner and
+  everything they started have exited and been reaped. A `stop`/`cont` in the monitor changes
+  nothing.
+- `init` sleeps in `pause()`, called from `waitproc()` (its `%o7` is the call in `waitproc`, from
+  the symbols of `/sbin/init`). Init waits for the `sysinit` entry (`rcS`) by calling
+  `waitproc()` until it reports the child dead, and `waitproc()` tests the child's "living" flag
+  and then calls `pause()`, with `SIGCLD` not held in between (the disassembly: a load and test of
+  the flag, the branch, `call pause`). When `rcS`'s `SIGCLD` comes between the two, the
+  handler (`childeath()`) reaps it and clears `LIVING`, and init then pauses with no alarm set and
+  no child left to signal it. `rcS` has run to its end (`kill $dial_pid` stops the spinner).
+- Sending init a signal from the debugger (`psignal(proc_init, SIGALRM)`) lets the hung boot go on:
+  `The system is coming up.  Please wait.` and `Select a Language` follow at once.
+
+So it is a race in the guest; QEMU's timing makes it more or less likely, and nothing in QEMU or
+OpenBIOS can close it. Lab rates (the CD to its language prompt, 2-8 boots at a time, host load
+6-14 on 14 threads, timeout 200-300 s): pve-qemu with `wsh/0001`-`0013` (the series when it was
+first seen) 2 of 213, and 0 of 68 more with `-trace` on; `wsh/0001`-`0138` 0 of 82; the same
+without `wsh/0019` 0 of 30; pve-qemu-kvm 11.1.3-2+wsh16 0 of 16. One percent or less with these
+numbers, so the later series is not shown to be better. A second boot goes through, so
+`matrix.py` boots a `solaris-boot-cd.py` case that never reaches the first question once more
+(`RETRY`), as `lab.py install` does for the Solaris 2.2-2.6 targets (`retry_on`). Installed disks
+don't run the installer's `rcS` (33 benchmark boots never showed it). The `sol23-ss20` install hang
+(e2e/sparc/README.md, "A CD boot that hangs before the installer") stopped earlier, before
+`Configuring the /devices directory`, and was not traced; this doesn't explain it.
 
 `-cpu` other than the machine's default, booting the installed 2.6 with OpenBIOS: SS-5 boots only
 with its default `Fujitsu-MB86904`; `TI-MicroSparc-I` stops QEMU (`Trap 0x21 (Instruction Access
