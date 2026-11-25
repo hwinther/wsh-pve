@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..8b5ef54 100644
+index bc240a0..8c62a80 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,101 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,105 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -175,6 +175,10 @@ index bc240a0..8b5ef54 100644
 +wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
 +wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
 +wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
++wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
++wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
++wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
++wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -20510,6 +20514,1054 @@ index 0000000..970499b
 + 
 +     return g_test_run();
 + }
+diff --git a/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch b/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
+new file mode 100644
+index 0000000..b232221
+--- /dev/null
++++ b/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
+@@ -0,0 +1,99 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt Linux's idle loop on sun4u under the BQL
++
++helper_sparc64_idle_linux() checked for a pending interrupt and then set
++cs->halted without the BQL. A tick or stick compare interrupt that fired
++between the two (tick_irq() and stick_irq() run in the main loop, under
++the BQL) set SOFTINT and cs->halted to 0 before the helper set it to 1.
++At %pil 14, where Linux 6.1 to 7.3 halt, that interrupt is masked: it
++raises no CPU_INTERRUPT_HARD, so the vCPU thread found no work and slept
++through it, and as Linux had not taken the tick, it did not arm the next
++one. The CPU then slept until the next interrupt vector, or for good on
++an idle guest with no device interrupt to come. Found by reading the
++code; not seen on a guest, the window being a few instructions wide.
++
++The helper now checks again and halts under the BQL: a tick either came
++before, and is seen in SOFTINT, or comes after and wakes the CPU.
++
++The other idle helpers share the window but not the effect. The BSDs,
++Solaris 7 to 10, illumos, FreeBSD and Linux 3.2 halt at %pil 0, where
++the tick raises CPU_INTERRUPT_HARD, which the vCPU thread checks under
++the BQL before it sleeps; the interrupt vector raises it at any %pil.
++The next patch adds a qtest case that holds the CPU in the window until
++a tick has fired.
++---
++ target/sparc/sparc64_idle.c | 35 ++++++++++++++++++++++++++++++++---
++ 1 file changed, 32 insertions(+), 3 deletions(-)
++
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index a71a79f..079cf3a 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -100,9 +100,18 @@
++  * stick compare interrupts and the interrupt vector wake a halted CPU
++  * whatever %pil (hw/sparc64/sparc64.c), and the CPU goes on at the call;
++  * the interrupt is taken when the idle loop enables interrupts again.
+++ *
+++ * At %pil 14 a tick or stick interrupt raises no CPU_INTERRUPT_HARD, so
+++ * nothing but cs->halted records that it came: the helper checks for it
+++ * and halts under the BQL, which tick_irq() and stick_irq() hold. At
+++ * %pil 0 (the BSDs, Solaris, Linux 3.2) the tick raises
+++ * CPU_INTERRUPT_HARD, which the vCPU thread checks under the BQL before
+++ * it sleeps, so a tick between helper_sparc64_idle()'s check and its halt
+++ * still wakes the CPU there.
++  */
++ 
++ #include "qemu/osdep.h"
+++#include "qemu/main-loop.h"
++ #include "qemu/timer.h"
++ #include "hw/core/cpu.h"
++ #include "cpu.h"
++@@ -212,6 +221,13 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++ 
++ #define LINUX_TIF_NEED_RESCHED  (1 << 3)
++ 
+++/* An interrupt, interrupt vector or soft interrupt (the tick) is pending */
+++static bool sparc64_idle_pending(CPUSPARCState *env)
+++{
+++    return cpu_test_interrupt(env_cpu(env), CPU_INTERRUPT_HARD) ||
+++           (env->ivec_status & 0x20) || env->softint || env->pil_in;
+++}
+++
++ /*
++  * Linux, at the call in arch_cpu_idle() or, in 3.2, cpu_idle() (pc);
++  * flags_addr is current_thread_info()->flags. Halt until the next
++@@ -227,8 +243,7 @@ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++     uint64_t flags;
++ 
++     if (!(env->pstate & PS_IE) || env->psrpil != pil ||
++-        env->tl || cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++-        (env->ivec_status & 0x20) || env->softint || env->pil_in) {
+++        env->tl || sparc64_idle_pending(env)) {
++         return;
++     }
++     if (!sparc64_idle_read(env, flags_addr, 8, &flags) ||
++@@ -240,9 +255,23 @@ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++     }
++ 
++     trace_sparc64_idle(pc);
+++    /*
+++     * A tick that fires from the check above on is masked at %pil 14: it
+++     * sets cs->halted to 0 and raises no interrupt request, so the CPU
+++     * would sleep through it if it halted after it. Check again and halt
+++     * under the BQL that the tick holds. (sun4u-idle-test holds the CPU
+++     * in the trace above until a tick has fired.)
+++     */
+++    bql_lock();
+++    if (sparc64_idle_pending(env)) {
+++        bql_unlock();
+++        return;
+++    }
+++    cs->halted = 1;
+++    bql_unlock();
+++
++     env->pc = pc;
++     env->npc = pc + 4;
++-    cs->halted = 1;
++     cs->exception_index = EXCP_HLT;
++     cpu_loop_exit(cs);
++ }
+diff --git a/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch b/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
+new file mode 100644
+index 0000000..3c6370d
+--- /dev/null
++++ b/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
+@@ -0,0 +1,180 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a tick between the idle check and the halt on sun4u
++
++sun4u-idle-test gets a tick-race case for each idle loop: QEMU writes the
++trace of the halt (sparc64_idle, which comes between the helper's check
++for a pending interrupt and the halt) to a FIFO that the test has filled,
++so the CPU stops there with nothing pending until the test reads the
++FIFO, and the tick fires meanwhile. The CPU must then take the tick and
++go on, waking for each tick after it. The case is skipped when the trace
++does not hold the CPU (QEMU without the log trace backend), and on
++Windows.
++
++Against the binary without the previous patch the three Linux layouts
++fail (no round and no tick after the CPU is let go); the BSD, Solaris,
++FreeBSD and Linux 3.2 loops, at %pil 0, pass with or without it.
++
++sun4u-idle-test now runs for about 70 s, over meson's default of 60 s:
++it gets 240 s in slow_qtests.
++---
++ tests/qtest/meson.build       |   1 +
++ tests/qtest/sun4u-idle-test.c | 113 ++++++++++++++++++++++++++++++++++
++ 2 files changed, 114 insertions(+)
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 73bf137..1e31cf0 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -15,6 +15,7 @@ slow_qtests = {
++   'pxe-test': 610,
++   'prom-env-test': 360,
++   'boot-serial-test': 360,
+++  'sun4u-idle-test': 240,
++   'qos-test': 120,
++   'vmgenid-test': 610,
++ }
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index d838df3..c11e6be 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -22,6 +22,13 @@
++  * level 0, as the BSDs do: the CPU must halt there, not at level 14 or
++  * 15, not with need_resched() set or interrupts disabled.
++  *
+++ * A tick that fires between QEMU's last check for a pending interrupt and
+++ * the halt must not be slept through: QEMU writes the trace of the halt
+++ * (sparc64_idle) between the two, to a FIFO the test has filled, so the
+++ * CPU stops there with no interrupt pending until the test reads the
+++ * FIFO, and a tick fires meanwhile. At level 14 (Linux) it raises no
+++ * interrupt request, only clears the halted state.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -573,6 +580,102 @@ static void test_idle(const void *data)
++     }
++ }
++ 
+++#ifndef _WIN32
+++/* Read what QEMU has written to the FIFO */
+++static void drain(int fd)
+++{
+++    char buf[4096];
+++
+++    while (read(fd, buf, sizeof(buf)) > 0) {
+++        /* nothing */
+++    }
+++}
+++
+++/*
+++ * The tick case with the CPU held between the helper's check and the
+++ * halt until a tick has fired there: it must take the tick and go on,
+++ * waking for each tick after it.
+++ */
+++static void test_tick_race(const void *data)
+++{
+++    const IdleTest *t = data;
+++    g_autofree char *prom = write_prom(t->kernel, t->c);
+++    g_autofree char *dir = g_dir_make_tmp("sun4u-idle-XXXXXX", NULL);
+++    g_autofree char *fifo = g_build_filename(dir, "trace", NULL);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    char buf[4096] = { 0 };
+++    QTestState *qts;
+++    uint64_t r0, k0, rounds, ticks;
+++    bool held;
+++    int fd, i;
+++
+++    g_assert_nonnull(dir);
+++    g_assert_cmpint(mkfifo(fifo, 0600), ==, 0);
+++    fd = open(fifo, O_RDWR | O_NONBLOCK);
+++    g_assert_cmpint(fd, >=, 0);
+++    /* Full: the first write of the trace waits for the test to read */
+++    while (write(fd, buf, sizeof(buf)) > 0) {
+++        /* nothing */
+++    }
+++    while (write(fd, buf, 1) > 0) {
+++        /* nothing */
+++    }
+++
+++    qts = qtest_initf("-machine %s -accel tcg -nodefaults -bios %s "
+++                      "-trace sparc64_idle -D %s", t->c->machine, prom, fifo);
+++    while (qtest_readq(qts, RAM_ROUNDS) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    /*
+++     * Held: no round and no tick for 50 ms, in which the tick (every
+++     * millisecond) fires
+++     */
+++    end = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+++    r0 = qtest_readq(qts, RAM_ROUNDS);
+++    k0 = qtest_readq(qts, RAM_TICKS);
+++    do {
+++        g_usleep(50 * 1000);
+++        rounds = qtest_readq(qts, RAM_ROUNDS);
+++        ticks = qtest_readq(qts, RAM_TICKS);
+++        held = rounds == r0 && ticks == k0;
+++        r0 = rounds;
+++        k0 = ticks;
+++    } while (!held && g_get_monotonic_time() < end);
+++
+++    /* Let it go on, and count the ticks it takes after that */
+++    for (i = 0; i < 300; i++) {
+++        drain(fd);
+++        g_usleep(1000);
+++    }
+++    r0 = qtest_readq(qts, RAM_ROUNDS);
+++    k0 = qtest_readq(qts, RAM_TICKS);
+++    for (i = 0; i < 300; i++) {
+++        drain(fd);
+++        g_usleep(1000);
+++    }
+++    rounds = qtest_readq(qts, RAM_ROUNDS) - r0;
+++    ticks = qtest_readq(qts, RAM_TICKS) - k0;
+++    g_assert_cmphex(qtest_readq(qts, RAM_TRAP), ==, 0);
+++    drain(fd);
+++    close(fd);
+++    qtest_quit(qts);
+++    unlink(fifo);
+++    rmdir(dir);
+++    unlink(prom);
+++    g_test_message("held %d, then %" PRIu64 " rounds, %" PRIu64
+++                   " ticks in 300 ms", held, rounds, ticks);
+++
+++    if (!held) {
+++        /* The trace didn't wait (QEMU built without the log backend) */
+++        g_test_skip("the trace of sparc64_idle did not hold the CPU");
+++        return;
+++    }
+++    g_assert_cmpuint(ticks, >, 50);
+++    g_assert_cmpuint(rounds, >, 0);
+++}
+++#endif
+++
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++@@ -618,6 +721,7 @@ int main(int argc, char **argv)
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
++     };
++     static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(linux_cases)];
+++    static IdleTest race_tests[ARRAY_SIZE(kernels)];
++     int k, i, n = 0;
++ 
++     g_test_init(&argc, &argv, NULL);
++@@ -638,6 +742,15 @@ int main(int argc, char **argv)
++                 t->kernel = k;
++                 t->c = &c[i];
++                 qtest_add_data_func(name, t, test_idle);
+++#ifndef _WIN32
+++                if (c[i].tick) {
+++                    g_autofree char *race = g_strdup_printf(
+++                        "sun4u-idle/%s/tick-race", kernels[k]);
+++
+++                    race_tests[k] = *t;
+++                    qtest_add_data_func(race, &race_tests[k], test_tick_race);
+++                }
+++#endif
++             }
++         }
++     }
+diff --git a/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch b/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
+new file mode 100644
+index 0000000..5586abc
+--- /dev/null
++++ b/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
+@@ -0,0 +1,440 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/char/escc: end a break, with an interrupt for its
++ start and its end
++
++A break on a serial line (the chardev's CHR_EVENT_BREAK: QMP
++chardev-send-break, a telnet BREAK, Ctrl-A b on -serial mon:stdio) set
++the Break/Abort bit of RR0 for good, and the channel's interrupt stayed
++up for as long as WR15's break enable was set. Nothing named that
++interrupt either: RR3 has no external/status bits in the model and RR2
++of channel B said "no interrupt". Solaris's zs_high_intr() found nothing
++to service, returned, and took the interrupt again at once: Solaris 2.6
++with its console on ttya of an SS-5 stopped answering after a break,
++QEMU at 100% of a core until it was killed. SunOS 4.1.4 hung the same
++way, and Linux 7.3 never reached the firmware prompt. NetBSD 9.3 never
++entered ddb, and its console took 37 s to answer a Return.
++
++On a Z8530 the bit goes to 1 when a break starts and back to 0 when it
++ends. Each change latches an external/status interrupt when WR1 bit 0
++and WR15 bit 7 enable it: RR0 keeps the latched value and the interrupt
++stays pending until the guest gives the Reset Ext/Status Interrupts
++command (WR0 0x10); a change while latched gives a new interrupt after
++that reset. The end of the break leaves a NUL character in the receiver.
++The drivers act on these changes: Solaris's and SunOS's zsa_xsint()
++enter the PROM when the bit goes from 1 to 0 on the console and throw
++the NUL away (zsa_rxint() also takes a NUL received during a break for
++part of it); Linux's sunzilog reads RR0 until the bit is 0 in its
++interrupt handler, then enters the PROM; NetBSD enters ddb at the start.
++
++Model that for the break bit, the only external/status source of the
++model: the latch as above, the interrupt in RR3 (bits 0 and 3) and in
++the vector of RR2 (Ch A/B External/Status, after receive and transmit of
++the same channel, as on the chip), and the reset command. The chardev
++gives one event without a length, so the break lasts one character time
++at the programmed rate, but at least until the guest has reset the
++interrupt that showed its start, so that it sees both changes in order
++however late it services the first. Then the bit goes to 0 with a second
++interrupt and a NUL in the receiver. Nothing is received while the break
++lasts. A channel reset drops the pending interrupt. The state goes into
++a migration subsection, sent only during a break or with the interrupt
++pending.
++
++SS-5, OpenBIOS, console on ttya, QMP chardev-send-break, two rounds
++each: Solaris 2.6, SunOS 4.1.4 and Linux 7.3 stop at the firmware
++prompt ("Type 'go' to resume") and go on after "go"; NetBSD 9.3 and 11.1
++enter ddb and go on after "c"; at the firmware's own prompt the break
++does nothing. The interrupt now also needs WR1's external/status enable,
++as on the chip; the drivers set it. The Sun keyboard and mouse don't
++change. The next patch adds a qtest.
++---
++ hw/char/escc.c         | 197 ++++++++++++++++++++++++++++++++++++-----
++ hw/char/trace-events   |   1 +
++ include/hw/char/escc.h |   6 ++
++ 3 files changed, 180 insertions(+), 24 deletions(-)
++
++diff --git a/hw/char/escc.c b/hw/char/escc.c
++index e2caab6051..c97dbac797 100644
++--- a/hw/char/escc.c
+++++ b/hw/char/escc.c
++@@ -84,6 +84,7 @@
++ #define CMD_PTR_MASK   0x07
++ #define CMD_CMD_MASK   0x38
++ #define CMD_HI         0x08
+++#define CMD_RES_EXT_INT 0x10
++ #define CMD_CLR_TXINT  0x28
++ #define CMD_CLR_IUS    0x38
++ #define W_INTR    1
++@@ -172,6 +173,10 @@
++ #define IVEC_HIRXINTA  0x30
++ #define IVEC_HIRXINTB  0x20
++ #define IVEC_HITXINTA  0x10
+++#define IVEC_LOEXTINTA 0x0a
+++#define IVEC_HIEXTINTA 0x50
+++#define IVEC_LOEXTINTB 0x02
+++#define IVEC_HIEXTINTB 0x40
++ #define R_INTR    3
++ #define INTR_EXTINTB   0x01
++ #define INTR_TXINTB    0x02
++@@ -275,22 +280,21 @@ static bool escc_tx_ip(ESCCChannelState *s)
++ 
++ static int escc_update_irq_chn(ESCCChannelState *s)
++ {
++-    return escc_tx_ip(s) || escc_rx_ip(s) ||
++-           /* break int e&p */
++-           ((s->wregs[W_EXTINT] & EXTINT_BRKINT) &&
++-            (s->rregs[R_STATUS] & STATUS_BRK));
+++    return escc_tx_ip(s) || escc_rx_ip(s) || s->ext_ip;
++ }
++ 
++ enum {
++     ESCC_IP_NONE,
++     ESCC_IP_TX,
++     ESCC_IP_RX,
+++    ESCC_IP_EXT,
++ };
++ 
++ /*
++  * The interrupt that a channel wants serviced first. Receive goes before
++- * transmit. But once the guest has reset the IUS of a receive interrupt
++- * and left the character unread, transmit goes first.
+++ * transmit, and transmit before external/status. But once the guest has
+++ * reset the IUS of a receive interrupt and left the character unread,
+++ * transmit goes first.
++  */
++ static int escc_chn_ip(ESCCChannelState *s)
++ {
++@@ -300,7 +304,10 @@ static int escc_chn_ip(ESCCChannelState *s)
++     if (escc_tx_ip(s)) {
++         return ESCC_IP_TX;
++     }
++-    return escc_rx_ip(s) ? ESCC_IP_RX : ESCC_IP_NONE;
+++    if (escc_rx_ip(s)) {
+++        return ESCC_IP_RX;
+++    }
+++    return s->ext_ip ? ESCC_IP_EXT : ESCC_IP_NONE;
++ }
++ 
++ /*
++@@ -328,12 +335,18 @@ static void escc_update_intr_regs(ESCCChannelState *s)
++     if (escc_tx_ip(a)) {
++         intr |= INTR_TXINTA;
++     }
+++    if (a->ext_ip) {
+++        intr |= INTR_EXTINTA;
+++    }
++     if (escc_rx_ip(b)) {
++         intr |= INTR_RXINTB;
++     }
++     if (escc_tx_ip(b)) {
++         intr |= INTR_TXINTB;
++     }
+++    if (b->ext_ip) {
+++        intr |= INTR_EXTINTB;
+++    }
++     a->rregs[R_INTR] = intr;
++ 
++     switch (escc_chn_ip(a)) {
++@@ -343,6 +356,9 @@ static void escc_update_intr_regs(ESCCChannelState *s)
++     case ESCC_IP_TX:
++         ivec = hi ? IVEC_HITXINTA : IVEC_LOTXINTA;
++         break;
+++    case ESCC_IP_EXT:
+++        ivec = hi ? IVEC_HIEXTINTA : IVEC_LOEXTINTA;
+++        break;
++     default:
++         switch (escc_chn_ip(b)) {
++         case ESCC_IP_RX:
++@@ -351,6 +367,9 @@ static void escc_update_intr_regs(ESCCChannelState *s)
++         case ESCC_IP_TX:
++             ivec = IVEC_TXINTB;
++             break;
+++        case ESCC_IP_EXT:
+++            ivec = hi ? IVEC_HIEXTINTB : IVEC_LOEXTINTB;
+++            break;
++         default:
++             ivec = hi ? IVEC_HINOINT : IVEC_LONOINT;
++             break;
++@@ -379,6 +398,66 @@ static void escc_update_irq(ESCCChannelState *s)
++     qemu_set_irq(s->irq, irq);
++ }
++ 
+++/*
+++ * The external/status interrupt, for RR0's Break/Abort bit, the only
+++ * external/status source here. RR0 follows the line until a change
+++ * latches it with the interrupt enabled (WR1 bit 0 and WR15 bit 7): then
+++ * RR0 keeps what the guest is to see and the interrupt stays pending until
+++ * the guest resets the external/status interrupts. A change while latched
+++ * shows at that reset, as a new interrupt.
+++ */
+++static void escc_update_ext(ESCCChannelState *s)
+++{
+++    uint8_t brk = s->brk ? STATUS_BRK : 0;
+++
+++    if (!s->ext_ip && (s->rregs[R_STATUS] & STATUS_BRK) != brk) {
+++        s->rregs[R_STATUS] = (s->rregs[R_STATUS] & ~STATUS_BRK) | brk;
+++        if ((s->wregs[W_INTR] & INTR_INTALL) &&
+++            (s->wregs[W_EXTINT] & EXTINT_BRKINT)) {
+++            s->ext_ip = true;
+++        }
+++    }
+++    escc_update_irq(s);
+++}
+++
+++/*
+++ * A break ends one character time after it began (the chardev gives no
+++ * length), but not before the guest has reset the interrupt that showed
+++ * its start: the guest must see the bit go to 1 and back to 0. The line
+++ * back at mark leaves a NUL character in the receiver, as on a real SCC;
+++ * the drivers take it as part of the break.
+++ */
+++static void escc_break_end(ESCCChannelState *s)
+++{
+++    if (!s->brk || s->brk_wait || timer_pending(s->brk_timer)) {
+++        return;
+++    }
+++    trace_escc_serial_break(CHN_C(s), 0);
+++    s->brk = false;
+++    if ((s->wregs[W_RXCTRL] & RXCTRL_RXEN) &&
+++        !(s->rregs[R_STATUS] & STATUS_RXAV)) {
+++        serial_receive_byte(s, 0);
+++    }
+++    escc_update_ext(s);
+++    qemu_chr_fe_accept_input(&s->chr);
+++}
+++
+++static void escc_break_timer(void *opaque)
+++{
+++    escc_break_end(opaque);
+++}
+++
+++static void escc_reset_ext(ESCCChannelState *s)
+++{
+++    if (s->ext_ip && (s->rregs[R_STATUS] & STATUS_BRK)) {
+++        /* The guest has seen the break start */
+++        s->brk_wait = false;
+++    }
+++    s->ext_ip = false;
+++    escc_break_end(s);
+++    escc_update_ext(s);
+++}
+++
++ static void escc_reset_chn(ESCCChannelState *s)
++ {
++     s->reg = 0;
++@@ -422,8 +501,11 @@ static void escc_soft_reset_chn(ESCCChannelState *s)
++     s->rregs[R_INTR] = 0;
++     s->rregs[R_MISC] &= MISC_2CLKMISS;
++ 
++-    /* What was pending is gone with the reset */
++-    escc_update_irq(s);
+++    /* What was pending is gone with the reset; RR0 follows the line */
+++    s->ext_ip = false;
+++    s->brk_wait = false;
+++    escc_break_end(s);
+++    escc_update_ext(s);
++ }
++ 
++ static void escc_hard_reset_chn(ESCCChannelState *s)
++@@ -473,6 +555,9 @@ static void escc_reset(DeviceState *d)
++          */
++         cs->rregs[R_STATUS] |= STATUS_TXEMPTY;
++ 
+++        cs->brk = cs->brk_wait = cs->ext_ip = false;
+++        timer_del(cs->brk_timer);
+++
++         escc_reset_chn(cs);
++     }
++ }
++@@ -513,14 +598,10 @@ static inline void clr_txint(ESCCChannelState *s)
++     escc_update_irq(s);
++ }
++ 
++-static void escc_update_parameters(ESCCChannelState *s)
+++static void escc_get_parameters(ESCCChannelState *s,
+++                                QEMUSerialSetParams *ssp)
++ {
++     int speed, parity, data_bits, stop_bits;
++-    QEMUSerialSetParams ssp;
++-
++-    if (!qemu_chr_fe_backend_connected(&s->chr) || s->type != escc_serial) {
++-        return;
++-    }
++ 
++     if (s->wregs[W_TXCTRL1] & TXCTRL1_PAREN) {
++         if (s->wregs[W_TXCTRL1] & TXCTRL1_PAREV) {
++@@ -566,14 +647,39 @@ static void escc_update_parameters(ESCCChannelState *s)
++         speed /= 64;
++         break;
++     }
++-    ssp.speed = speed;
++-    ssp.parity = parity;
++-    ssp.data_bits = data_bits;
++-    ssp.stop_bits = stop_bits;
++-    trace_escc_update_parameters(CHN_C(s), speed, parity, data_bits, stop_bits);
+++    ssp->speed = speed;
+++    ssp->parity = parity;
+++    ssp->data_bits = data_bits;
+++    ssp->stop_bits = stop_bits;
+++}
+++
+++static void escc_update_parameters(ESCCChannelState *s)
+++{
+++    QEMUSerialSetParams ssp;
+++
+++    if (!qemu_chr_fe_backend_connected(&s->chr) || s->type != escc_serial) {
+++        return;
+++    }
+++
+++    escc_get_parameters(s, &ssp);
+++    trace_escc_update_parameters(CHN_C(s), ssp.speed, ssp.parity,
+++                                 ssp.data_bits, ssp.stop_bits);
++     qemu_chr_fe_ioctl(&s->chr, CHR_IOCTL_SERIAL_SET_PARAMS, &ssp);
++ }
++ 
+++/* How long one character takes on the line at the programmed rate */
+++static int64_t escc_char_time_ns(ESCCChannelState *s)
+++{
+++    QEMUSerialSetParams ssp;
+++
+++    escc_get_parameters(s, &ssp);
+++    if (ssp.speed <= 0) {
+++        ssp.speed = 9600;
+++    }
+++    return muldiv64(1 + ssp.data_bits + (ssp.parity != 'N') + ssp.stop_bits,
+++                    NANOSECONDS_PER_SECOND, ssp.speed);
+++}
+++
++ static void escc_mem_write(void *opaque, hwaddr addr,
++                            uint64_t val, unsigned size)
++ {
++@@ -598,6 +704,9 @@ static void escc_mem_write(void *opaque, hwaddr addr,
++             case CMD_HI:
++                 newreg |= CMD_HI;
++                 break;
+++            case CMD_RES_EXT_INT:
+++                escc_reset_ext(s);
+++                break;
++             case CMD_CLR_TXINT:
++                 clr_txint(s);
++                 break;
++@@ -769,8 +878,9 @@ static int serial_can_receive(void *opaque)
++     int ret;
++ 
++     if (((s->wregs[W_RXCTRL] & RXCTRL_RXEN) == 0) /* Rx not enabled */
++-        || ((s->rregs[R_STATUS] & STATUS_RXAV) == STATUS_RXAV)) {
++-        /* char already available */
+++        || ((s->rregs[R_STATUS] & STATUS_RXAV) == STATUS_RXAV)
+++        || s->brk) {
+++        /* char already available, or a break on the line */
++         ret = 0;
++     } else {
++         ret = 1;
++@@ -786,10 +896,22 @@ static void serial_receive_byte(ESCCChannelState *s, int ch)
++     set_rxint(s);
++ }
++ 
+++/*
+++ * A break begins: RR0's Break/Abort bit goes to 1 and, when enabled,
+++ * latches an external/status interrupt. The bit used to stay 1 for ever,
+++ * and the interrupt with it.
+++ */
++ static void serial_receive_break(ESCCChannelState *s)
++ {
++-    s->rregs[R_STATUS] |= STATUS_BRK;
++-    escc_update_irq(s);
+++    trace_escc_serial_break(CHN_C(s), 1);
+++    if (!s->brk) {
+++        s->brk = true;
+++        s->brk_wait = (s->wregs[W_INTR] & INTR_INTALL) &&
+++                      (s->wregs[W_EXTINT] & EXTINT_BRKINT);
+++        escc_update_ext(s);
+++    }
+++    timer_mod(s->brk_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+++                            escc_char_time_ns(s));
++ }
++ 
++ static void serial_receive1(void *opaque, const uint8_t *buf, int size)
++@@ -806,6 +928,27 @@ static void serial_event(void *opaque, QEMUChrEvent event)
++     }
++ }
++ 
+++static bool escc_chn_break_needed(void *opaque)
+++{
+++    ESCCChannelState *s = opaque;
+++
+++    return s->brk || s->ext_ip;
+++}
+++
+++static const VMStateDescription vmstate_escc_chn_break = {
+++    .name = "escc_chn/break",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = escc_chn_break_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_BOOL(brk, ESCCChannelState),
+++        VMSTATE_BOOL(brk_wait, ESCCChannelState),
+++        VMSTATE_BOOL(ext_ip, ESCCChannelState),
+++        VMSTATE_TIMER_PTR(brk_timer, ESCCChannelState),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const VMStateDescription vmstate_escc_chn = {
++     .name = "escc_chn",
++     .version_id = 2,
++@@ -822,6 +965,10 @@ static const VMStateDescription vmstate_escc_chn = {
++         VMSTATE_BUFFER(wregs, ESCCChannelState),
++         VMSTATE_BUFFER(rregs, ESCCChannelState),
++         VMSTATE_END_OF_LIST()
+++    },
+++    .subsections = (const VMStateDescription * const []) {
+++        &vmstate_escc_chn_break,
+++        NULL
++     }
++ };
++ 
++@@ -1117,6 +1264,8 @@ static void escc_realize(DeviceState *dev, Error **errp)
++                           ESCC_SIZE << s->it_shift);
++ 
++     for (i = 0; i < 2; i++) {
+++        s->chn[i].brk_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+++                                           escc_break_timer, &s->chn[i]);
++         if (qemu_chr_fe_backend_connected(&s->chn[i].chr)) {
++             s->chn[i].clock = s->frequency / 2;
++             qemu_chr_fe_set_handlers(&s->chn[i].chr, serial_can_receive,
++diff --git a/hw/char/trace-events b/hw/char/trace-events
++index a3fcc77287..10a65186f8 100644
++--- a/hw/char/trace-events
+++++ b/hw/char/trace-events
++@@ -47,6 +47,7 @@ escc_mem_writeb_data(char channel, uint32_t val) "Write channel %c, ch %d"
++ escc_mem_readb_ctrl(char channel, uint32_t reg, uint8_t val) "Read channel %c, reg[%d] = 0x%2.2x"
++ escc_mem_readb_data(char channel, uint32_t ret) "Read channel %c, ch %d"
++ escc_serial_receive_byte(char channel, int ch) "channel %c put ch %d"
+++escc_serial_break(char channel, int on) "channel %c break %d"
++ escc_sunkbd_event_in(int ch, const char *name, int down) "QKeyCode 0x%2.2x [%s], down %d"
++ escc_sunkbd_event_out(int ch) "Translated keycode 0x%2.2x"
++ escc_kbd_command(int val) "Command %d"
++diff --git a/include/hw/char/escc.h b/include/hw/char/escc.h
++index 14156eb053..e0d945b93d 100644
++--- a/include/hw/char/escc.h
+++++ b/include/hw/char/escc.h
++@@ -5,6 +5,7 @@
++ #include "chardev/char-serial.h"
++ #include "hw/core/sysbus.h"
++ #include "qemu/bitmap.h"
+++#include "qemu/timer.h"
++ #include "ui/input.h"
++ #include "qom/object.h"
++ 
++@@ -54,6 +55,11 @@ typedef struct ESCCChannelState {
++     int sunmouse_dx;
++     int sunmouse_dy;
++     int sunmouse_buttons;
+++    /* a break on the line, and the latched external/status interrupt */
+++    bool brk;
+++    bool brk_wait;
+++    bool ext_ip;
+++    QEMUTimer *brk_timer;
++ } ESCCChannelState;
++ 
++ struct ESCCState {
+diff --git a/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch b/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
+new file mode 100644
+index 0000000..8d7f660
+--- /dev/null
++++ b/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
+@@ -0,0 +1,305 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a break on a serial line of the sun4m
++ ESCC
++
++sun4m-escc-break-test sends breaks with chardev-send-break to ttya and
++ttyb of an SS-5 (null chardevs), the channels set up for 9600 baud as
++Solaris sets up its console port, and watches RR0, RR3, the vector in
++RR2 of channel B and the chip's interrupt. start-and-end: a break raises
++the external/status interrupt of channel A with the bit set; it stays
++latched past the character time while the guest doesn't service it;
++the guest's reset ends it, with the NUL in the receiver (receive named
++first) and a second interrupt, and a second reset leaves nothing
++pending. end-after-char-time: the start reset at once (as Linux does),
++the end comes after one character time. polled: with no interrupt
++enabled the line stays down and RR0 shows the break while it lasts.
++channel-b: the vector of channel B's external/status interrupt.
++channel-reset: a channel reset drops the pending interrupt. All five fail
++without the previous patch (polled because the line went up with WR15's
++break enable alone, channel-reset because the bit never went back to 0).
++---
++ tests/qtest/meson.build             |   3 +-
++ tests/qtest/sun4m-escc-break-test.c | 260 ++++++++++++++++++++++++++++
++ 2 files changed, 262 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-escc-break-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 73bf137921..9f1f7e83e4 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -216,7 +216,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-nvram-test',
++                 'sun4m-ledma-test',
++                 'sun4m-ss600mp-test',
++-                'sun4m-dbri-test'] + \
+++                'sun4m-dbri-test',
+++                'sun4m-escc-break-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-escc-break-test.c b/tests/qtest/sun4m-escc-break-test.c
++new file mode 100644
++index 0000000000..2250180f2d
++--- /dev/null
+++++ b/tests/qtest/sun4m-escc-break-test.c
++@@ -0,0 +1,260 @@
+++/*
+++ * QTest: a break on a serial line of the sun4m ESCC
+++ *
+++ * A break sets the Break/Abort bit of RR0 and, with the external/status
+++ * interrupt enabled, latches that interrupt. The bit must go back to 0
+++ * when the break ends, with a second interrupt and the NUL character a
+++ * real SCC leaves in the receiver: Solaris and SunOS enter the PROM at the
+++ * end of a break on the console, and Linux waits for the end in its
+++ * interrupt handler. RR3 and the vector in RR2 of channel B must name the
+++ * external/status interrupt, and the guest's Reset Ext/Status Interrupts
+++ * command must take it away.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++/* SPARCstation 5: ttyb is channel B, ttya channel A, a register every 2 bytes */
+++#define ESCC            0x71100000ULL
+++#define TTYB_CTRL       (ESCC + 0)
+++#define TTYB_DATA       (ESCC + 2)
+++#define TTYA_CTRL       (ESCC + 4)
+++#define TTYA_DATA       (ESCC + 6)
+++
+++/* The pending interrupts of the machine, and the one of this chip */
+++#define INTCTL_PENDING  0x71e10000ULL
+++#define SERIAL_IRQ      (1 << 15)
+++
+++#define WR0_RES_EXT_INT 0x10
+++#define WR1_EXT_INT     0x01
+++#define WR1_RXINTALL    0x10
+++#define WR3_RX8_EN      0xc1
+++#define WR4_X16_1STOP   0x44
+++#define WR5_TX8_EN      0x68
+++#define WR9_RESET_A     0x80
+++#define WR15_BRK_IE     0x80
+++
+++#define RR0_RXAV        0x01
+++#define RR0_BRK         0x80
+++
+++#define RR3_EXTINTB     0x01
+++#define RR3_EXTINTA     0x08
+++#define RR3_RXINTA      0x20
+++
+++/* RR2 of channel B with the status in bits 1 to 3 */
+++#define RR2_EXTINTB     0x02
+++#define RR2_EXTINTA     0x0a
+++#define RR2_RXINTA      0x0c
+++#define RR2_NOINT       0x06
+++
+++/* One character at 9600 baud (10 bits) is 1.04 ms */
+++#define CHAR_TIME_NS    1100000
+++
+++static uint8_t rreg(QTestState *qts, uint64_t ctrl, uint8_t reg)
+++{
+++    qtest_writeb(qts, ctrl, reg);
+++    return qtest_readb(qts, ctrl);
+++}
+++
+++static void wreg(QTestState *qts, uint64_t ctrl, uint8_t reg, uint8_t val)
+++{
+++    qtest_writeb(qts, ctrl, reg);
+++    qtest_writeb(qts, ctrl, val);
+++}
+++
+++static bool irq(QTestState *qts)
+++{
+++    return qtest_readl(qts, INTCTL_PENDING) & SERIAL_IRQ;
+++}
+++
+++static QTestState *start(void)
+++{
+++    return qtest_init("-machine SS-5 -display none "
+++                      "-chardev null,id=ttya -chardev null,id=ttyb "
+++                      "-serial chardev:ttya -serial chardev:ttyb");
+++}
+++
+++/* 9600 baud 8N1 with the receiver on, as Solaris sets up a console port */
+++static void setup(QTestState *qts, uint64_t ctrl, uint8_t wr1, uint8_t wr15)
+++{
+++    wreg(qts, ctrl, 4, WR4_X16_1STOP);
+++    wreg(qts, ctrl, 12, 14);
+++    wreg(qts, ctrl, 13, 0);
+++    wreg(qts, ctrl, 3, WR3_RX8_EN);
+++    wreg(qts, ctrl, 5, WR5_TX8_EN);
+++    wreg(qts, ctrl, 15, wr15);
+++    wreg(qts, ctrl, 1, wr1);
+++}
+++
+++static void send_break(QTestState *qts, const char *id)
+++{
+++    qtest_qmp_assert_success(qts,
+++        "{ 'execute': 'chardev-send-break', 'arguments': { 'id': %s } }", id);
+++}
+++
+++/*
+++ * The break and its end are two interrupts. The end waits for the guest to
+++ * reset the interrupt of the start, however long the guest takes.
+++ */
+++static void test_start_and_end(void)
+++{
+++    QTestState *qts = start();
+++
+++    setup(qts, TTYA_CTRL, WR1_EXT_INT | WR1_RXINTALL, WR15_BRK_IE);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==, 0);
+++
+++    send_break(qts, "ttya");
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_BRK);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, RR3_EXTINTA);
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_EXTINTA);
+++
+++    /* Not serviced yet: the start stays latched past the character time */
+++    qtest_clock_step(qts, 10 * CHAR_TIME_NS);
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_BRK);
+++
+++    /* The guest resets it: the break ends, with a NUL in the receiver */
+++    wreg(qts, TTYA_CTRL, 0, WR0_RES_EXT_INT);
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_RXAV);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, RR3_RXINTA | RR3_EXTINTA);
+++    /* Receive goes first */
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_RXINTA);
+++    g_assert_cmphex(qtest_readb(qts, TTYA_DATA), ==, 0);
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_EXTINTA);
+++    g_assert_true(irq(qts));
+++
+++    /* The end is reset too: nothing is left, and the line is down */
+++    wreg(qts, TTYA_CTRL, 0, WR0_RES_EXT_INT);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, 0);
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_NOINT);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==, 0);
+++
+++    /* A second break works the same */
+++    send_break(qts, "ttya");
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & RR0_BRK, ==, RR0_BRK);
+++
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * The guest services the start at once, before the break has lasted a
+++ * character time (Linux then reads RR0 until the bit is 0): the end comes
+++ * after that time, as an interrupt of its own.
+++ */
+++static void test_end_after_char_time(void)
+++{
+++    QTestState *qts = start();
+++
+++    setup(qts, TTYA_CTRL, WR1_EXT_INT | WR1_RXINTALL, WR15_BRK_IE);
+++    send_break(qts, "ttya");
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & RR0_BRK, ==, RR0_BRK);
+++    wreg(qts, TTYA_CTRL, 0, WR0_RES_EXT_INT);
+++
+++    /* Still in the break: the bit follows the line, nothing is pending */
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_BRK);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, 0);
+++
+++    qtest_clock_step(qts, CHAR_TIME_NS);
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_RXAV);
+++    g_assert_cmphex(qtest_readb(qts, TTYA_DATA), ==, 0);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, RR3_EXTINTA);
+++    wreg(qts, TTYA_CTRL, 0, WR0_RES_EXT_INT);
+++    g_assert_false(irq(qts));
+++
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * A guest that polls (the firmware) has no interrupt enabled: RR0 shows the
+++ * break while it lasts and the line stays down. It used to stay raised for
+++ * as long as WR15's break bit was set, and the break never ended.
+++ */
+++static void test_polled(void)
+++{
+++    QTestState *qts = start();
+++
+++    setup(qts, TTYA_CTRL, 0, WR15_BRK_IE);
+++    send_break(qts, "ttya");
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_BRK);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, 0);
+++
+++    qtest_clock_step(qts, CHAR_TIME_NS);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_RXAV);
+++    g_assert_cmphex(qtest_readb(qts, TTYA_DATA), ==, 0);
+++
+++    qtest_quit(qts);
+++}
+++
+++/* Channel B, with no receive interrupt enabled */
+++static void test_channel_b(void)
+++{
+++    QTestState *qts = start();
+++
+++    setup(qts, TTYB_CTRL, WR1_EXT_INT, WR15_BRK_IE);
+++    send_break(qts, "ttyb");
+++    g_assert_true(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, RR3_EXTINTB);
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_EXTINTB);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & RR0_BRK, ==, 0);
+++
+++    wreg(qts, TTYB_CTRL, 0, WR0_RES_EXT_INT);
+++    qtest_clock_step(qts, CHAR_TIME_NS);
+++    /* The end, without receive interrupts: only the external/status one */
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 0) & (RR0_BRK | RR0_RXAV), ==,
+++                    RR0_RXAV);
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 3), ==, RR3_EXTINTB);
+++    wreg(qts, TTYB_CTRL, 0, WR0_RES_EXT_INT);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYB_CTRL, 2), ==, RR2_NOINT);
+++
+++    qtest_quit(qts);
+++}
+++
+++/* A channel reset ends what the break left pending */
+++static void test_channel_reset(void)
+++{
+++    QTestState *qts = start();
+++
+++    setup(qts, TTYA_CTRL, WR1_EXT_INT | WR1_RXINTALL, WR15_BRK_IE);
+++    send_break(qts, "ttya");
+++    g_assert_true(irq(qts));
+++    wreg(qts, TTYA_CTRL, 9, WR9_RESET_A);
+++    g_assert_false(irq(qts));
+++    qtest_clock_step(qts, CHAR_TIME_NS);
+++    g_assert_false(irq(qts));
+++    g_assert_cmphex(rreg(qts, TTYA_CTRL, 0) & RR0_BRK, ==, 0);
+++
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("/sun4m/escc-break/start-and-end", test_start_and_end);
+++    qtest_add_func("/sun4m/escc-break/end-after-char-time",
+++                   test_end_after_char_time);
+++    qtest_add_func("/sun4m/escc-break/polled", test_polled);
+++    qtest_add_func("/sun4m/escc-break/channel-b", test_channel_b);
+++    qtest_add_func("/sun4m/escc-break/channel-reset", test_channel_reset);
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
