@@ -920,12 +920,24 @@ test.describe('backup and restore', () => {
     return vmid
   }
 
-  /** The config without the disk line (its volume names the VMID) and the digest-like lines. */
+  /**
+   * The config without the disk line (its volume names the VMID) and the digest-like lines. From
+   * qemu-server 9.2.24 on, `meta:` also carries the guest identity (`rtime`, `uid`), which a restore
+   * to a new VMID gives fresh values, so those two are left out of the comparison.
+   */
   async function comparableConf(vmid: number): Promise<string[]> {
     return (await vmConfFile(vmid))
       .split('\n')
       .map((l) => l.trimEnd())
       .filter((l) => l && !l.startsWith('scsi3:'))
+      .map((l) =>
+        l.startsWith('meta:')
+          ? l
+              .split(',')
+              .filter((kv) => !/^(rtime|uid)=/.test(kv))
+              .join(',')
+          : l,
+      )
   }
 
   for (const p of PROFILES) {
