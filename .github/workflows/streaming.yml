@@ -1,0 +1,94 @@
+name: Streaming to Moonlight
+
+# Stage 3d of the 3dfx/streaming plan (e2e/streaming): a Moonlight client streams a VM's D-Bus
+# display through Wolf. e2e/streaming/test.sh builds Wolf (games-on-whales), moonlight-embedded and
+# our measuring client from source at pinned commits (most of the run's time), then runs the
+# published pve-qemu-kvm with wisp's framebuffer kernel and Wolf (qemudbussrc -> x264enc,
+# qemudbusaudiosrc -> Opus, wolf-input-bridge -> qemu-dbus-input) in one container and
+# moonlight-embedded's pairing and the probe client in another: pairing, the picture against QEMU's
+# screendump, latency from the guest's draw to the decoded frame, frame pacing against the D-Bus
+# display's refresh, keys and mouse from the client into the guest, a 440 Hz tone in the client's
+# decoded audio. Needs no GPU; the GL run (dbus,gl=on, llvmpipe) uses /dev/udmabuf.
+#
+# Not a required check: it runs for pull requests that change e2e/streaming and by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "RUNS for test.sh (ARCH:REFRESH_MS, spaces or commas)"
+        required: false
+        default: "x86_64:30 x86_64:8 x86_64-gl:30"
+      rounds:
+        description: "Latency samples per run"
+        required: false
+        default: "10"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "e2e/streaming/**"
+      - ".github/workflows/streaming.yml"
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Moonlight to Wolf (x86 guest, software encoding)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Wolf makes its virtual keyboard and mice through /dev/uinput; the GL run needs /dev/udmabuf
+      - name: Kernel modules
+        run: |
+          sudo modprobe uinput || true
+          sudo modprobe udmabuf || true
+          ls -l /dev/uinput /dev/udmabuf || true
+
+      - name: Download the guest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kernels"
+          cd "$RUNNER_TEMP/kernels"
+          gh release download wisp-fb --pattern SHA256SUMS --pattern kernel-fb-x86_64
+          grep -E ' kernel-fb-x86_64$' SHA256SUMS | sha256sum -c
+
+      - name: Build, stream and measure
+        env:
+          RUNS: ${{ inputs.runs || 'x86_64:30 x86_64:8 x86_64-gl:30' }}
+          ROUNDS: ${{ inputs.rounds || '10' }}
+        run: sh e2e/streaming/test.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/kernels"
+
+      - name: Make the results readable
+        if: ${{ always() }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out" || true
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/out/summary.txt" ]; then
+            { echo '## Streaming to Moonlight'; echo; echo '```'; cat "$RUNNER_TEMP/out/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the logs, frames and sound
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: streaming-test
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 14

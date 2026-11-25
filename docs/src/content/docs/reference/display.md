@@ -169,7 +169,8 @@ xfreerdp3 /v:127.0.0.1:20130 /u:rdp /p:"$(sed -n 's/^RDP_PASSWORD=//p' /etc/wsh-
 The optional package `wsh-gst-qemu-dbus` has the pieces a streaming server on the node takes a VM's
 D-Bus display from: two GStreamer sources and an input bridge (`packages/wsh-gst-qemu-dbus` in
 wsh-pve). They are the first part of the Moonlight streaming path (stage 3 in the ROADMAP); the
-server itself (Wolf, in a container on the node) isn't there yet. They need no GPU.
+server built on them, Wolf, is in [Streaming to Moonlight](#streaming-to-moonlight). They need no
+GPU.
 
 ```sh
 apt install wsh-gst-qemu-dbus gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
@@ -212,6 +213,190 @@ qemu-dbus-input --vmid 130                                                 # inp
   read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at 440.0 Hz, the end
   of stream when QEMU quits. Also through PVE (`qm start` of a `display=dbus` and a
   `mesa-display=dbus` VM).
+
+## Streaming to Moonlight
+
+A [Moonlight](https://moonlight-stream.org/) client (PC, phone, TV) can stream a VM's D-Bus display,
+picture, sound, keyboard and mouse in one H.264/Opus connection, through
+[Wolf](https://github.com/games-on-whales/wolf) (games-on-whales) on the node. This is stage 3d of
+the ROADMAP's 3dfx/streaming plan, a working prototype: `e2e/streaming` in wsh-pve builds it, runs it
+and measures it, and the steps for a node are below. It needs no GPU (x264, software encoding).
+
+Wolf was chosen over Sunshine because Wolf takes any GStreamer pipeline as an app's video and audio
+source (`[profiles.apps.video] source = ...` in its configuration), while Sunshine captures from KMS,
+X11, Wayland or NvFBC and would need a capture backend of its own. Each VM is one Moonlight app:
+
+```text
+qemudbussrc address=unix:path=/run/wsh-dbus-display/<vmid>.sock ! compositor ! video/x-raw,framerate={fps}/1
+  ! videoconvertscale ! videorate ! video/x-raw,width={width},height={height},format=I420,...
+  ! x264enc tune=zerolatency ...                      (Wolf's software H.264 encoder settings)
+qemudbusaudiosrc address=... ! ... ! opusenc ...      (Wolf's Opus settings)
+runner: wolf-input-bridge --address ...               (Moonlight's keyboard and mouse into the VM)
+```
+
+- **Video**: `qemudbussrc` sends a buffer only when the picture changes, but Moonlight ends a session
+  that gets no video for 10 seconds, so a `compositor` repeats the newest picture at the client's
+  frame rate. Wolf scales it to the client's size and encodes it.
+- **Sound**: `qemudbusaudiosrc` (the VM needs `audio0: ...,driver=dbus`).
+- **Input**: Wolf turns the client's keyboard and mouse into virtual Linux input devices
+  (`/dev/uinput`): "Wolf (virtual) keyboard" (Moonlight's Windows key codes already mapped to Linux
+  key codes), "Wolf mouse virtual device" (relative motion, buttons, wheel) and "... (absolute)"
+  (positions on a 19200 x 12000 area). The app's runner, `wolf-input-bridge`, grabs those devices
+  and writes `qemu-dbus-input` lines: `key CODE 1|0`, `btn`, `wheel`, `rel DX DY`, and
+  `abs X Y 19200 12000` for positions, which `qemu-dbus-input` scales to the console and converts to
+  what the guest's pointer takes. Wolf starts the runner with the session and stops it after.
+- **Apps without a compositor**: an app with `start_virtual_compositor = false` (ours, and Wolf's
+  own "Test ball" example) never started in Wolf (it waited for a Wayland socket that no compositor
+  makes); `e2e/streaming/wolf-no-compositor.patch` fixes that. Wolf also crashed at start without a
+  PulseAudio server to connect to, even though these apps don't use one, so one runs next to it.
+- **Files** (`e2e/streaming` in wsh-pve): `Dockerfile` (Wolf, moonlight-embedded and the probe
+  client, all from source at pinned commits on Debian 13; its `ct` stage is a container template
+  for a node), `wolf-config.py` (writes Wolf's `config.toml` with an app per VM from Wolf's
+  defaults, keeping paired clients), `wolf-start` (PulseAudio and Wolf in that container),
+  `wolf-input-bridge`, `wolf-pair` (enters a client's PIN through Wolf's API socket), `node.sh`,
+  `moonlight-probe.c`, `stream3d.py` and `test.sh`.
+
+### Measured
+
+`e2e/streaming/test.sh` in the lab: the published pve-qemu-kvm (TCG) with wisp's framebuffer kernel
+(1280x800, std VGA, AC97, PS/2 mouse) and Wolf in one container, moonlight-embedded (pairing) and
+`wsh-moonlight-probe` (a Moonlight client on moonlight-embedded's libraries that decodes every frame
+in software and reports it with its times) in another, H.264 1280x800 at 60 frames/s, about 7 Mbit/s.
+All checks passed in five runs (QEMU's refresh 30, 16 and 8 ms without GL, 30 and 8 ms with
+`dbus,gl=on` through `/dev/udmabuf`):
+
+| | refresh 30 ms | 16 ms | 8 ms | GL, 30 ms | GL, 8 ms |
+| --- | --- | --- | --- | --- | --- |
+| Guest draws -> decoded at the client, median (min-max), 10 samples | 55 ms (43-70) | 48 ms (39-63) | 51 ms (29-65) | 61 ms (43-72) | 49 ms (36-62) |
+| New pictures per second at the client while the guest draws without a pause | 33.2 | 37.9 | 40.6 | 32.2 | 41.8 |
+| Key: client -> the guest's serial line, median | 1.5 ms | 1.7 ms | 1.3 ms | 1.3 ms | 1.3 ms |
+
+A second series on the same host gave 62, 51 and 54 ms median (30 ms, 8 ms, GL at 30 ms) and the
+same rates within a picture a second. The host was shared with other jobs.
+
+- **Picture**: the decoded frame against QEMU's screendump: mean difference 1.6 of 255 per channel,
+  1.4% of the pixels off by more than 48 (the colour edges of 4:2:0 chroma).
+- **Latency**: from the guest's report that it drew (`fbtest` on its serial line) to the first
+  decoded frame that shows it; the client's own decoding is 0.7 ms of that. The rest is QEMU's
+  refresh (the wait for the next look at the screen), the compositor's frame, x264 and the network.
+- **Frame pacing**: the client gets a steady 60 frames/s (median interval 17-19 ms, but spread from
+  5 to 35 ms: standard deviation 8-9 ms). New pictures come at QEMU's refresh at 30 ms (33.3 a
+  second at most) and are bound by how fast the guest draws below that.
+- **Input**: keys A, B, Esc and the mouse buttons reach the guest 1.3-2.2 ms after the client sends
+  them; 0.3 ms of that is the way through Wolf to its virtual keyboard. Absolute positions and
+  relative motion add up exactly on the guest's PS/2 mouse (+70, +30 for a position, `move 10 0`
+  and a position 60, 30 away).
+- **Sound**: `soundtest 440 2000` in the client's decoded Opus audio: 440.0 Hz, 1.93-1.98 s; the
+  first 50-85 ms after the tone's start were lost (one dropout) in every run with input devices,
+  not in the one run without them, and the first sound reaches the client 90-160 ms after the
+  command was typed.
+
+### On a node
+
+Tested on a PVE node (pve-qemu-kvm 11.1.3-4, qemu-server with the D-Bus display, an NVIDIA GPU on
+NVIDIA's own driver): Wolf in a **privileged** container, the VM started with `qm start`.
+
+**An unprivileged container doesn't work with the bus as it is.** Mapping the container's group
+onto `wsh-display` (an `lxc.idmap` line and `root:<gid>:1` in `/etc/subgid`) does give the
+container the socket directory, but the VM's bus then refuses it, for two reasons:
+
+- GLib's D-Bus client authenticates with `AUTH EXTERNAL <uid>`, the uid it sees in the container
+  (0), while the bus sees the host's uid (100000): the bus says `REJECTED EXTERNAL`.
+- With the uid left out of `AUTH EXTERNAL` (or given as the host's), the bus accepts the
+  authentication and then drops the connection: dbus-daemon (1.16) checks `<allow group=...>`
+  against the user database of the node, not the connecting process's groups. A uid without a
+  line in the node's `/etc/passwd` and `/etc/group` (the container's root, 100000) isn't in
+  `wsh-display` for it. The same is true of a process on the node with `wsh-display` only as a
+  supplementary group.
+
+An unprivileged container would need the bus policy to name it (for example `<allow user="100000"/>`
+next to the group, which qemu-server's policy file doesn't offer a place for yet), or a user for that
+uid in the node's `wsh-display` group.
+
+**The privileged container.** The template is `e2e/streaming/Dockerfile`'s `ct` stage (Debian 13
+with systemd, Wolf, `wsh-gst-qemu-dbus`, x264, GStreamer's nvcodec, PulseAudio, `wolf-start`,
+`wolf-config.py`, `wolf-input-bridge`, `wolf-pair`, and the probe client), exported with Docker:
+
+```sh
+docker build --target ct -t wsh-stream3d-ct <context>     # the context test.sh assembles
+docker create --name ct-export wsh-stream3d-ct /bin/true
+docker export ct-export | gzip > wsh-stream3d-ct.tar.gz
+```
+
+On the node, as root (`<vmid>` the VM, `<ctid>` the container):
+
+```sh
+qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus
+qm start <vmid>              # qemu-server makes /run/wsh-dbus-display (kept from then on)
+pct create <ctid> wsh-stream3d-ct.tar.gz --hostname wolf --unprivileged 0 --ostype debian \
+  --rootfs local:4 --memory 1536 --cores 4 --features nesting=1 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
+  --dev0 /dev/uinput
+cat >> /etc/pve/lxc/<ctid>.conf <<EOF
+lxc.mount.entry: /run/wsh-dbus-display srv/wsh-dbus-display none bind,create=dir 0 0
+lxc.mount.entry: /dev/input dev/input none bind,create=dir 0 0
+lxc.cgroup2.devices.allow: c 13:* rwm
+EOF
+pct start <ctid>
+pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "wsh-vm-<vmid>"
+```
+
+- The bus directory goes to `/srv/wsh-dbus-display`, not `/run/...`: the container's systemd
+  mounts its own `/run` over a bind mount there. The directory must exist when the container
+  starts (a D-Bus VM started once since the node booted).
+- `/dev/input` is the node's: Wolf's virtual keyboard and mice appear there when a session starts,
+  and `wolf-input-bridge` grabs them (EVIOCGRAB), so the node's own desktop doesn't get the
+  client's keys. The node's real keyboard and mouse are visible in the container too (it is
+  privileged); the bridge takes only Wolf's devices.
+- When a Moonlight client pairs, it shows a PIN: `pct exec <ctid> -- wolf-pair <pin>`. Running
+  `wolf-start` again (other VMs, another encoder) keeps the paired clients.
+- Moonlight reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the
+  container's address.
+
+**NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
+(here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf
+with NVENC:
+
+```sh
+pct set <ctid> --dev1 /dev/dri/renderD128 --dev2 /dev/nvidia0 --dev3 /dev/nvidiactl --dev4 /dev/nvidia-modeset \
+  --dev5 /dev/nvidia-uvm --dev6 /dev/nvidia-uvm-tools
+for l in libcuda libnvidia-encode libnvcuvid libnvidia-ptxjitcompiler libnvidia-nvvm libnvidia-gpucomp; do
+  pct push <ctid> /usr/lib/x86_64-linux-gnu/$l.so.<version> /usr/lib/x86_64-linux-gnu/$l.so.<version>
+done
+pct exec <ctid> -- sh -c 'cd /usr/lib/x86_64-linux-gnu && for l in libcuda.so.1 libnvidia-encode.so.1 \
+  libnvcuvid.so.1 libnvidia-ptxjitcompiler.so.1; do ln -sf ${l%.so.1}.so.<version> $l; done &&
+  ln -sf libnvidia-nvvm.so.<version> libnvidia-nvvm.so.4 && ldconfig'
+pct exec <ctid> -- env H264_ENCODER=nvenc wolf-start <vmid>
+```
+
+Wolf doesn't pick NVENC by itself here: its NVIDIA pipeline also needs `cudaconvertscale`, which
+needs the CUDA toolkit's runtime compiler (`libnvrtc`), not part of the driver. `H264_ENCODER=nvenc`
+gives the apps `nvh264enc` (Wolf's settings: CBR, zero latency, preset p1, ultra-low-latency tune)
+on NV12 in system memory.
+
+**Measured on the node** (TCG guest, wisp's framebuffer kernel at 1280x800, PS/2 mouse; the probe
+client in the container on the loopback, so no network in the numbers; 10 latency samples each):
+
+| | x264, refresh 30 ms | x264, refresh 8 ms | NVENC, refresh 30 ms |
+| --- | --- | --- | --- |
+| Guest draws -> decoded at the client, median (min-max) | 54 ms (41-73) | 47 ms (43-60) | 50 ms (39-65) |
+| New pictures per second while the guest draws | 32.6 | 38.6 | (not comparable, see below) |
+| Key: client -> the guest's serial line, median | 1.1 ms | 1.3 ms | 1.5 ms |
+| Sound: `soundtest 440 2000` | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s |
+
+Every check passed in those three runs (picture against QEMU's screendump, keyboard, mouse,
+sound), with the same dropout just after the tone's start as in the lab. NVENC saved about 4 ms
+of the median against x264. Its CBR stream keeps refining a still picture for a few frames, which the
+probe counts as changes (51 "new" pictures a second at a 30 ms refresh), so its picture rate isn't
+comparable.
+
+**`dbus,gl=on` on the NVIDIA GPU** (`mesa=1,mesa-display=dbus`): QEMU's EGL and GBM work with
+NVIDIA's driver (the 3dfx binary opened the render node and started; the stream ran). But the
+console's dmabufs are NVIDIA's block-linear layout (`XB24`, modifier `0x300000000cdb014`), which
+`qemudbussrc` can't map yet (it reads linear dmabufs only), so it drops every frame and the client
+keeps its first picture. That needs 3c's second slice, an EGL import of tiled dmabufs.
+
+Not verified yet: an unprivileged container (blocked, see above), a client on another machine over
+the network, a real Moonlight client on a TV or phone, a 3dfx game through it.
 
 ## VGA retrace
 

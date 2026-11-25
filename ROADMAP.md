@@ -151,6 +151,7 @@ come after that, not before.
 | `wsh-lab wisp-vm` with sun4u's PS/2 keyboard and mouse: a sun4u framebuffer or DOOM VM gets `-prom-env 'ps2-mouse?=true'` in its `args` (qemu-server has no setting for OpenBIOS variables, and `wisp-vm` already sets `args` as root for `-kernel`) instead of the virtio keyboard. It checks first that the node's `/usr/share/kvm/openbios-sparc64` has the option (OpenBIOS 0035, pve-qemu-kvm 11.1.3-4+wsh15 and later). With older firmware it keeps the virtio keyboard and prints a note, so sparc64's `kernel-fb` keeps `CONFIG_VIRTIO_INPUT`. Other sun4u VMs (Debian 7's Linux 3.2 panics with the option) are unchanged. Lab, in the PVE e2e container (pve-qemu-kvm 11.1.3-4+wsh20, the published `wisp-fb`): `keytest` read `AT Translated Set 2 keyboard` 30, 48, 28, 1, and `mousetest` read `ImExPS/2 Generic Explorer Mouse` X +10, Y +5 and the buttons, both through QMP. The fallback was checked against a firmware file without the option (e2e/wisp/README.md, "Doom in a PVE VM"). `--doom` on sun4u was not rerun | in review | |
 | More than 512 MB on SS-10/SS-20, up to 2048 MB with OpenBIOS: Solaris counts only memory below 512 MB as memory behind the SS-10's and SS-20's controllers (eight SIMM slots of 64 MB, read from the ECC controller's implementation bits), so with more it panicked at boot (2.6: `kernel read fault at addr=0x0` in `kvm_init`); the `/memory` layout played no part. pve-qemu `wsh/0143` presents the SS-600MP's MCC above 512 MB under OpenBIOS (512 MB and less, and the Sun PROM, unchanged), `wsh/0144` its qtest; OpenBIOS ran out of heap at 1 GB, 0040 takes the SRMMU tables in chunks and makes the heap 288K. Lab: Solaris 2.5.1, 2.6, 7, 8, 9 on SS-20 and 2.6, 7 on SS-10 boot the stored disks with 2048 MB (2.6 with 2 and 4 CPUs); NetBSD, SunOS 4.1.x, Debian 4.0 and Solaris 2.4/2.6 at 512/256 MB on SS-20/SS-5 unchanged. qemu-server and the UI take up to 2048 MB on SS-10/SS-20 with OpenBIOS (wizard preset 512), the SS-20 PROM stays at 512. Not verified: installs and the PVE path with more than 512 MB, more than 2048 MB (`submodules/SPARC.md`, "More than 512 MB on SS-10 and SS-20") | in review | |
 | Audio signature for guest sound tests: one fixed signal in `e2e/wisp/audiosig.h` (integer math, no C library or libm, no 64-bit division): 8 segments of 500 ms, triangle waves of 400 + 100 k Hz left and 600 + 150 k Hz right in segment k, -6 dBFS, 4 s, at any rate from 8000 to 48000 Hz; `e2e/audio/wavcheck.py --signature [N]` finds N of them in a `-audiodev wav` recording and checks each segment's frequency per channel (3 %), the duration, gaps over 2 ms per channel, swapped channels and mono, and tells an old-samples tail from a dropout (unit tests: resampled, 8-bit, swapped, mono, cut after one buffer, dropouts, tails, the header against its Python model). wisp: `soundtest sig [rate..]` (8000, 22050, 44100 Hz by default); `sound.py` boots once more per machine for it, in wisp-boot's sound step. wshspace: `-audiotest` through each platform's own backend, no display; its Linux OSS backend now keeps two fragments queued and writes no more than fits (the test found a 7 ms dropout after the first fragment on AC97), its DOS backend plays 8-bit stereo at exactly 22050 Hz on a DSP 4.x (SB16; mono at 22222 Hz before, still so on older DSPs) and no longer loses a ring of sound to a torn read of the DMA address (the two bytes read while the DMA moved; seen in CI without a memory manager) or to a step back of `uclock()`: it reads the address until the bytes agree, counts bytes written and played, and mixes 186 ms ahead in a 743 ms ring; new `e2e/3dfx/space/audio-test.sh` (Linux guest, AC97, job in `audio-matrix.yml`) and a last step in each boot of `dos-test.sh` (`-device sb16`, `3dfx-dos.yml`): the DOS test the audio matrix asked for. Lab with pve-qemu-kvm 11.1.3-4+wsh27: every segment within 0.01 % on pc, sun4u, virt and the SS-5 at all three rates (4.000-4.003 s, no gap), wshspace on Linux (KVM and TCG) and DOS (all three memory profiles) 4.000 s, no gap. Windows `-audiotest` builds (96,768 of 98,304 bytes), not run in a guest | in review | |
+| 3dfx/streaming stage 3d, Moonlight to Wolf: a Moonlight client streams a VM's D-Bus display (picture, sound, keyboard, mouse) through Wolf (games-on-whales) with `qemudbussrc` (and a `compositor` that repeats the newest picture at the client's frame rate) into x264, `qemudbusaudiosrc` into Opus and `wolf-input-bridge` (Wolf's uinput keyboard and mice into `qemu-dbus-input`) as an app's runner; `e2e/streaming` builds Wolf, moonlight-embedded and a measuring client (`wsh-moonlight-probe`) from source at pinned commits and measures (`test.sh`, workflow `streaming.yml` for PRs touching it and by hand). Lab, published pve-qemu-kvm, TCG, 1280x800 H.264 at 60 frames/s: pairing with a PIN entered on the node, the picture 1.6/255 from QEMU's screendump, guest draw to decoded frame 48-61 ms median, keys and buttons in the guest 1.3-2.2 ms after the client, a 440.0 Hz tone in the client's audio, with and without `dbus,gl=on`; on a PVE node with an NVIDIA GPU, Wolf in a privileged container (template from the Dockerfile's `ct` stage) streamed a `qm start` VM with every check passed (x264 54 ms, NVENC 50 ms median); an unprivileged container is refused by the VM's bus (dbus-daemon checks the group against the node's user database). Wolf needed a patch for apps without a compositor (ROADMAP, Stage 3, "Stage 3d") | in review | |
 
 ## In progress
 
@@ -756,14 +757,78 @@ merged; what is left of them is item 2 under "Next".
        dmabuf and reads it every 100 ms); a first Mesa run during the heaviest load gave 60 frames/s
        and replies up to 51 ms. Not verified: a GPU node (tiled dmabufs aren't read yet), the
        SS-5 through PVE (it passes `test.sh`), a client in an LXC.
+     - **Stage 3d: Moonlight to Wolf (in review).** Wolf (games-on-whales, `db709cf`, its v2026.11)
+       rather than Sunshine: Wolf takes any GStreamer pipeline as an app's video and audio source,
+       Sunshine captures from KMS, X11, Wayland or NvFBC only. Each VM is one Moonlight app
+       (`e2e/streaming/wolf-config.py` writes Wolf's `config.toml` from Wolf's defaults): video
+       `qemudbussrc ! compositor ! video/x-raw,framerate={fps}/1`, then Wolf's software path
+       (`videoconvertscale ! videorate ! I420`, `x264enc tune=zerolatency`); the compositor repeats the
+       newest picture, since `qemudbussrc` sends a buffer per change and Moonlight ends a session with
+       no video for 10 s (and `videorate` lets a buffer go only when the next comes). Audio
+       `qemudbusaudiosrc` into Wolf's Opus path. Input: Wolf makes uinput devices for the client's
+       keyboard (Moonlight's Windows key codes mapped to Linux codes by Wolf's inputtino) and mice
+       (relative, and absolute on 19200 x 12000); the app's runner, `wolf-input-bridge`, grabs them
+       (EVIOCGRAB) and writes `qemu-dbus-input` lines (`key`, `btn`, `wheel`, `rel`, `abs X Y 19200
+       12000`), so it starts and stops with the session. Found in Wolf: an app with
+       `start_virtual_compositor = false` (also Wolf's own "Test ball") never starts (the session
+       waits for a Wayland socket with an empty name and stops; `e2e/streaming/wolf-no-compositor.patch`,
+       still so on Wolf's main of 2026-11-19, worth sending upstream), and Wolf crashes at start
+       without a PulseAudio server to connect to (a null context in its PulseAudio router), so one runs
+       next to it. `e2e/streaming`: `Dockerfile` builds Wolf (with Boost 1.87 from its source release
+       by sha256, as Debian 13 has no Boost.Process 1.87+), the interpipe elements,
+       moonlight-embedded (`33142e5`) and `wsh-moonlight-probe` (`moonlight-probe.c`: a Moonlight
+       client on moonlight-embedded's libgamestream and moonlight-common-c that decodes every frame
+       with libavcodec and reports its times and colours, decodes the audio into a WAV and sends
+       input from text commands) from source on Debian 13, no prebuilt Wolf or Moonlight;
+       `test.sh` runs QEMU, the VM's bus and Wolf in one container (`node.sh`) and the client in
+       another, pairs with a random PIN entered on the node through Wolf's API socket (`wolf-pair`),
+       and `stream3d.py` checks and measures. CI: `streaming.yml` on PRs that touch it and by hand
+       (not required; most of its time is the source build). Lab, published pve-qemu-kvm
+       11.1.3-4+wsh28 and wsh-gst-qemu-dbus 0.1+g56da148, TCG, wisp's framebuffer kernel at 1280x800, H.264 1280x800 at 60 frames/s (about 7 Mbit/s),
+       five runs, every check passed: the decoded frame 1.6/255 from QEMU's screendump (1.4% of the
+       pixels off by more than 48: 4:2:0 at the colour edges); from the guest's `fbtest` report to
+       the decoded frame 55, 48 and 51 ms median at `refresh-ms` 30, 16 and 8 (min 29-43, max 63-70,
+       10 samples each), 61 and 49 ms with `dbus,gl=on` (dmabufs through `/dev/udmabuf`) at 30 and 8
+       (a second series: 62, 51 and 54 ms at 30, 8 and GL 30); the client's decode 0.7 ms of that; while the guest draws without a pause 33.2 new pictures/s
+       reach the client at 30 ms (33.3 possible), 37.9 at 16, 40.6 at 8 (then the guest's drawing is
+       the limit), out of a steady 60 frames/s whose intervals spread from 5 to 35 ms (stdev 8-9
+       ms); keys A, B, Esc as Linux 30, 48, 1 in the guest 1.3-1.7 ms median after the client sent
+       them, 0.3 ms of that through Wolf to the bridge; mouse buttons 1.4-2.2 ms; positions and
+       relative motion add up exactly on the PS/2 mouse; `soundtest 440 2000` as 440.0 Hz in the
+       client's Opus audio, 1.93-1.98 s, with one dropout of 50-85 ms just after the tone's start in
+       every run with Wolf's input devices (none in the one run without `/dev/uinput`, where the
+       input checks are skipped), the first sound at the client 90-160 ms after the command; without
+       `/dev/uinput` the bridge stays idle so the session goes on. On a PVE node (an NVIDIA GPU on
+       NVIDIA's driver): the VM from `qm start` (`vga: std,display=dbus`, `audio0: AC97,driver=dbus`,
+       TCG), Wolf in a privileged container made from the Dockerfile's new `ct` stage (`docker
+       export` as the template; `wolf-start` starts PulseAudio and Wolf, `wolf-config.py` now keeps
+       paired clients), the bus directory bind-mounted at `/srv/wsh-dbus-display` (the container's
+       systemd mounts its own `/run` over a bind mount there), `/dev/uinput` as a device and the
+       node's `/dev/input` bind-mounted; the probe client in the container on the loopback: every
+       check passed, guest draw to decoded frame 54 ms median with x264 at refresh 30 ms, 47 ms at
+       8 ms, 50 ms with NVENC (`H264_ENCODER=nvenc`: `nvh264enc` on NV12, since Wolf's own NVIDIA
+       pipeline also wants `cudaconvertscale`, which needs the CUDA toolkit's `libnvrtc`; the driver's
+       libraries copied into the container), keys 1.1-1.5 ms, 440.0 Hz, the same audio dropout. An
+       unprivileged container with its group mapped onto `wsh-display` reaches the socket but not
+       the bus: GLib sends `AUTH EXTERNAL` with the container's uid 0 (`REJECTED`), and with the
+       uid left out the bus authenticates the host uid 100000 and then refuses it, since
+       dbus-daemon 1.16 checks `<allow group=...>` against the node's user database, not the
+       peer's groups (a process on the node with `wsh-display` only as a supplementary group is
+       refused too). `dbus,gl=on` on the NVIDIA GPU: QEMU's EGL and GBM work there, but the console's
+       dmabufs are block-linear (`XB24`, modifier `0x300000000cdb014`) and `qemudbussrc` drops them
+       (linear only), so the client keeps its first picture. Not verified: a client on another
+       machine over the network, a real Moonlight client on a TV or phone (moonlight-embedded
+       paired and its libraries streamed; its own SDL or X11 output wasn't run), the absolute
+       pointer (wisp's x86 kernel has no USB HID and its `mousetest` takes the PS/2 mouse), a 3dfx
+       game through it.
      - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
        encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU),
-       an EGL import for tiled dmabufs (a GPU node), the cursor drawn in or passed on, and
-       `ScanoutDMABUF2`; 3d, the Wolf app in an LXC on the node (the socket directory bind-mounted,
-       its user mapped into `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the dmabuf import) built
-       on `qemudbussrc`, `qemudbusaudiosrc` and `qemu-dbus-input` (Moonlight's keys to Linux codes,
-       its pointer through `abs X Y W H`), the docs, and end-to-end Moonlight runs with numbers
-       (latency, frame pacing against `dbus-refresh`).
+       an EGL import for tiled dmabufs (needed for `dbus,gl=on` on an NVIDIA node), the cursor drawn
+       in or passed on, and `ScanoutDMABUF2`; 3d: an unprivileged container (a place in qemu-server's
+       bus policy for a container's uid, e.g. an include directory, or a user for that uid in the
+       node's `wsh-display`), the audio dropout at a tone's start, the frame interval spread while
+       the picture changes (still pictures come at an even 16.7 ms), Wolf's no-compositor patch
+       upstream, and a repeat in `qemudbussrc` itself instead of the compositor.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
      services (instant messaging first; later a Battle.net-compatible server and a period IRC

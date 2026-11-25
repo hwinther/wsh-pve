@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""wolf-input-bridge: a Moonlight client's input, as Wolf delivers it, into a VM's D-Bus display.
+
+Wolf turns a Moonlight client's keyboard and mouse into virtual Linux input devices (inputtino on
+/dev/uinput): "Wolf (virtual) keyboard" (Moonlight's Windows key codes already mapped to Linux
+key codes), "Wolf mouse virtual device" (relative motion, buttons, wheel) and "Wolf mouse virtual
+device (absolute)" (positions on a 19200 x 12000 area). For an app with
+start_virtual_compositor = false nothing reads them; this bridge is that app's runner
+(run_cmd), so Wolf starts it when the session starts and stops it when the session ends. It
+finds the newest devices with those names, grabs them (EVIOCGRAB: the node's own console and
+other readers don't see the events) and writes qemu-dbus-input's commands to a qemu-dbus-input it
+runs for the VM's bus:
+
+  EV_KEY on the keyboard, value 1/0      key CODE 1|0 (autorepeat, value 2, is left to the guest)
+  BTN_LEFT/RIGHT/MIDDLE/SIDE/EXTRA       btn left|right|middle|side|extra 1|0
+  REL_X/REL_Y up to SYN_REPORT           rel DX DY
+  REL_WHEEL                              wheel N
+  ABS_X/ABS_Y up to SYN_REPORT           abs X Y W H (W, H: the device's maxima, so the bridge
+                                         scales the position to the console's size)
+
+qemu-dbus-input converts absolute and relative motion as the guest's pointer takes it.
+
+usage: wolf-input-bridge (--vmid N | --address ADDR) [--log FILE] [--wait SECONDS]
+
+With --log every forwarded command is written with the time it was read from the device
+(CLOCK_REALTIME, microseconds), for the latency measurements of e2e/streaming/test.sh.
+"""
+
+import argparse
+import fcntl
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+EV_SYN, EV_KEY, EV_REL, EV_ABS = 0, 1, 2, 3
+SYN_REPORT = 0
+REL_X, REL_Y, REL_WHEEL = 0, 1, 8
+ABS_X, ABS_Y = 0, 1
+BUTTONS = {0x110: "left", 0x111: "right", 0x112: "middle", 0x113: "side", 0x114: "extra"}
+EVIOCGRAB = 0x40044590
+EVENT = struct.Struct("llHHi")
+NAMES = {
+    "keyboard": "Wolf (virtual) keyboard",
+    "mouse": "Wolf mouse virtual device",
+    "abs": "Wolf mouse virtual device (absolute)",
+}
+
+
+def eviocgabs(axis):
+    return 0x80184540 + axis  # _IOR('E', 0x40 + axis, struct input_absinfo)
+
+
+def log(msg):
+    print(f"wolf-input-bridge: {msg}", file=sys.stderr, flush=True)
+
+
+def find_devices():
+    """{kind: /dev/input/eventN} for the newest device of each name (highest N)"""
+    found = {}
+    for path in glob.glob("/sys/class/input/event*/device/name"):
+        try:
+            name = open(path).read().strip()
+        except OSError:
+            continue
+        node = "/dev/input/" + path.split("/")[4]
+        num = int(path.split("/")[4][5:])
+        for kind, want in NAMES.items():
+            if name == want and (kind not in found or num > found[kind][0]):
+                found[kind] = (num, node)
+    return {kind: node for kind, (num, node) in found.items()}
+
+
+def open_device(node, wait):
+    deadline = time.time() + wait
+    while True:
+        try:
+            fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+            break
+        except OSError as e:
+            # the node may not be there or be readable yet (udev on the host sets its group)
+            if time.time() > deadline:
+                raise SystemExit(f"wolf-input-bridge: {node}: {e}")
+            time.sleep(0.05)
+    try:
+        fcntl.ioctl(fd, EVIOCGRAB, 1)
+    except OSError as e:
+        log(f"{node}: no exclusive grab ({e}); other readers see the events too")
+    return fd
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--vmid", type=int)
+    g.add_argument("--address")
+    ap.add_argument("--log")
+    ap.add_argument("--wait", type=float, default=10)
+    args = ap.parse_args()
+    target = ["--vmid", str(args.vmid)] if args.vmid is not None else ["--address", args.address]
+    logf = open(args.log, "a", buffering=1) if args.log else None
+
+    deadline = time.time() + args.wait
+    while True:
+        devices = find_devices()
+        if "keyboard" in devices and ("mouse" in devices or "abs" in devices):
+            break
+        if time.time() > deadline:
+            # Wolf ends the session when its runner exits: stay, without input (no /dev/uinput?)
+            log(f"Wolf's devices not found (have {devices}): no input for this session")
+            while True:
+                time.sleep(3600)
+        time.sleep(0.05)
+    fds = {}
+    for kind, node in devices.items():
+        fds[open_device(node, args.wait)] = kind
+        log(f"{kind}: {node}")
+    absmax = [19200, 12000]
+    for fd, kind in fds.items():
+        if kind == "abs":
+            for i, axis in enumerate((ABS_X, ABS_Y)):
+                info = bytearray(24)
+                fcntl.ioctl(fd, eviocgabs(axis), info)
+                absmax[i] = struct.unpack("6i", info)[2] or absmax[i]
+
+    bridge = subprocess.Popen(["qemu-dbus-input", *target], stdin=subprocess.PIPE, text=True,
+                              bufsize=1)
+
+    def send(line, t):
+        bridge.stdin.write(line + "\n")
+        if logf:
+            logf.write(f"{t} {line}\n")
+
+    state = {fd: {"dx": 0, "dy": 0, "x": None, "y": None, "moved": False} for fd in fds}
+    try:
+        while bridge.poll() is None:
+            ready, _, _ = select.select(list(fds), [], [], 0.5)
+            for fd in ready:
+                try:
+                    data = os.read(fd, EVENT.size * 64)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    # the device went away: Wolf ended the session
+                    return 0
+                if not data:
+                    return 0
+                t = time.time_ns() // 1000
+                st = state[fd]
+                for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                    _, _, typ, code, value = EVENT.unpack_from(data, off)
+                    if typ == EV_KEY and value in (0, 1):
+                        if code in BUTTONS:
+                            send(f"btn {BUTTONS[code]} {value}", t)
+                        elif fds[fd] == "keyboard":
+                            send(f"key {code} {value}", t)
+                    elif typ == EV_REL:
+                        if code == REL_X:
+                            st["dx"] += value
+                        elif code == REL_Y:
+                            st["dy"] += value
+                        elif code == REL_WHEEL:
+                            send(f"wheel {value}", t)
+                    elif typ == EV_ABS and code in (ABS_X, ABS_Y):
+                        st["x" if code == ABS_X else "y"] = value
+                        st["moved"] = True
+                    elif typ == EV_SYN and code == SYN_REPORT:
+                        if st["dx"] or st["dy"]:
+                            send(f"rel {st['dx']} {st['dy']}", t)
+                            st["dx"] = st["dy"] = 0
+                        if st["moved"] and st["x"] is not None and st["y"] is not None:
+                            send(f"abs {st['x']} {st['y']} {absmax[0]} {absmax[1]}", t)
+                            st["moved"] = False
+                bridge.stdin.flush()
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
+    finally:
+        try:
+            bridge.stdin.close()
+            bridge.wait(5)
+        except (BrokenPipeError, subprocess.TimeoutExpired, OSError):
+            bridge.kill()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

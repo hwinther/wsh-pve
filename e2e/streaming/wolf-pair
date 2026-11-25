@@ -1,0 +1,20 @@
+#!/bin/sh
+# wolf-pair PIN [SECONDS]: enter a Moonlight client's pairing PIN on the node, through Wolf's API
+# socket (as the operator would on Wolf's /pin/ page): waits up to SECONDS (default 60) for a
+# pending pair request and answers the newest with PIN.
+set -eu
+PIN=${1:?usage: wolf-pair PIN [SECONDS]}
+SECS=${2:-60}
+SOCK=${WOLF_SOCKET_PATH:-${XDG_RUNTIME_DIR:-/run/wolf}/wolf.sock}
+i=0
+while :; do
+	secret=$(curl -fsS --unix-socket "$SOCK" http://localhost/api/v1/pair/pending 2> /dev/null |
+		python3 -c 'import json, sys; r = json.load(sys.stdin).get("requests", []); print(r[-1]["pair_secret"] if r else "")' || true)
+	[ -z "$secret" ] || break
+	i=$((i + 1))
+	[ "$i" -lt "$((SECS * 5))" ] || { echo "wolf-pair: no pending pair request within $SECS s" >&2; exit 1; }
+	sleep 0.2
+done
+curl -fsS --unix-socket "$SOCK" -H 'Content-Type: application/json' \
+	-d "{\"pair_secret\": \"$secret\", \"pin\": \"$PIN\"}" http://localhost/api/v1/pair/client
+echo
