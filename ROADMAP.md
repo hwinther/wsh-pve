@@ -728,6 +728,12 @@ merged; what is left of them is item 2 under "Next".
 
 ## Later
 
+- **Hookscripts in the web UI** (from the old TODO.md). Add, change and remove a VM's `hookscript`
+  (a snippet volume) in the VM's Options, instead of only through `qm set --hookscript`. Not started.
+- **Sound with the VNC console** (from the old TODO.md). noVNC has no audio channel; today sound reaches a
+  client through qemu-rdp (stage 3b) or the GStreamer sources (stage 3c). Left open: whether a VNC
+  console should get sound at all (QEMU's VNC audio extension, which noVNC doesn't implement), or
+  whether the RDP and streaming paths cover it. Not started.
 - **Mirror storage, after step 3.** Left open: a rename that also sets the drives of the VMs that use
   the old volume ID (now the window only lists them); `pvesm` subcommands for the two calls (`pvesh`
   works); rename and link on a storage with a description file by writing its entries (refused now;
