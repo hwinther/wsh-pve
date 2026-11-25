@@ -23301,10 +23301,10 @@ index 0000000..fc06de3
 ++}
 diff --git a/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch b/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch
 new file mode 100644
-index 0000000..5c79870
+index 0000000..929b621
 --- /dev/null
 +++ b/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,272 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/timer/slavio_timer: don't read a running counter twice in
 + the same tick
@@ -23329,18 +23329,75 @@ index 0000000..5c79870
 +reset, a mode change and a reset start afresh; a limit write without a
 +reset doesn't. Counters with a limit of less than 64 ticks are left
 +alone, so that a wrap is never taken for a repeat. The counter itself
-+(the ptimer), its limit bit and its interrupt are unchanged, so an OS
-+that reads the counter in a tight loop sees time run at most 8 us
-+ahead and still monotonic. The state is not migrated (the first read on
++(the ptimer), its limit bit and its interrupt are unchanged. The state is not migrated (the first read on
 +the destination is the clock's value); trace event
 +slavio_timer_read_ahead.
-+---
-+ hw/timer/slavio_timer.c | 77 +++++++++++++++++++++++++++++++++++++++++
-+ hw/timer/trace-events   |  1 +
-+ 2 files changed, 78 insertions(+)
 +
++Only the SS-600MP has it: a new slavio_timer property read-ahead
++(default off), set from a new hwdef field timer_read_ahead. On the
++other machines (SS-5, SS-10, SS-20, LX, ...) a read returns the
++counter as it is, as before.
++---
++ hw/sparc/sun4m.c        | 14 ++++++-
++ hw/timer/slavio_timer.c | 86 +++++++++++++++++++++++++++++++++++++++++
++ hw/timer/trace-events   |  1 +
++ 3 files changed, 99 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 31ea300..cc1c8b8 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -114,6 +114,7 @@ struct sun4m_hwdef {
++     uint32_t iommu_version;
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
+++    bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -398,7 +399,8 @@ static DeviceState *slavio_intctl_init(hwaddr addr,
++ #define CPU_TIMER_OFFSET(cpu) (0x1000ULL * cpu)
++ 
++ static void slavio_timer_init_all(hwaddr addr, qemu_irq master_irq,
++-                                  qemu_irq *cpu_irqs, unsigned int num_cpus)
+++                                  qemu_irq *cpu_irqs, unsigned int num_cpus,
+++                                  bool read_ahead)
++ {
++     DeviceState *dev;
++     SysBusDevice *s;
++@@ -406,6 +408,7 @@ static void slavio_timer_init_all(hwaddr addr, qemu_irq master_irq,
++ 
++     dev = qdev_new("slavio_timer");
++     qdev_prop_set_uint32(dev, "num_cpus", num_cpus);
+++    qdev_prop_set_bit(dev, "read-ahead", read_ahead);
++     s = SYS_BUS_DEVICE(dev);
++     sysbus_realize_and_unref(s, &error_fatal);
++     sysbus_connect_irq(s, 0, master_irq);
++@@ -1127,7 +1130,8 @@ static void sun4m_hw_init(MachineState *machine)
++     sysbus_mmio_map(s, 0, hwdef->nvram_base);
++     nvram = NVRAM(dev);
++ 
++-    slavio_timer_init_all(hwdef->counter_base, slavio_irq[19], slavio_cpu_irq, smp_cpus);
+++    slavio_timer_init_all(hwdef->counter_base, slavio_irq[19], slavio_cpu_irq,
+++                          smp_cpus, hwdef->timer_read_ahead);
++ 
++     /* Slavio TTYA (base+4, Linux ttyS0) is the first QEMU serial device
++        Slavio TTYB (base+0, Linux ttyS1) is the second QEMU serial device */
++@@ -1466,6 +1470,12 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .lebuffer_base = 0xef0040000ULL,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
+++        /*
+++         * Its boot PROM reads a running counter twice a few instructions
+++         * apart and wants the second value greater, as it is on the board,
+++         * where a read takes longer than the 500 ns tick.
+++         */
+++        .timer_read_ahead = true,
++         .iommu_version = 0x01000000,
++         .max_mem = 0xf00000000ULL,
++     };
 +diff --git a/hw/timer/slavio_timer.c b/hw/timer/slavio_timer.c
-+index cc6aa87..0439221 100644
++index cc6aa87..b13b10d 100644
 +--- a/hw/timer/slavio_timer.c
 ++++ b/hw/timer/slavio_timer.c
 +@@ -57,6 +57,11 @@ typedef struct CPUTimerState {
@@ -23355,7 +23412,15 @@ index 0000000..5c79870
 + } CPUTimerState;
 + 
 + #define TYPE_SLAVIO_TIMER "slavio_timer"
-+@@ -106,6 +111,23 @@ struct SLAVIO_TIMERState {
++@@ -72,6 +77,7 @@ struct SLAVIO_TIMERState {
++     SysBusDevice parent_obj;
++ 
++     uint32_t num_cpus;
+++    bool read_ahead;    /* slavio_timer_read_count() on (the SS-600MP) */
++     uint32_t cputimer_mode;
++     CPUTimerState cputimer[MAX_CPUS + 1];
++     TimerContext timer_context[MAX_CPUS + 1];
++@@ -106,6 +112,24 @@ struct SLAVIO_TIMERState {
 + #define PERIODS_TO_USER(l)  ((l) << 9)
 + /* the timer configuration register has a bit for each of 4 CPU slots */
 + #define TIMER_MODE_MASK     0xf
@@ -23371,7 +23436,8 @@ index 0000000..5c79870
 ++ * that it holds until the clock catches up. The counter itself, its
 ++ * limit bit and its interrupt are unchanged. Counters whose range is
 ++ * less than four times READ_AHEAD are left alone, so that a wrap is
-++ * never taken for a repeat.
+++ * never taken for a repeat. Only with the read-ahead property, which only
+++ * the SS-600MP sets; elsewhere a read returns the counter as it is.
 ++ */
 ++#define READ_AHEAD          16
 ++#define READ_AHEAD_COUNT    PERIODS_TO_USER((uint64_t)READ_AHEAD)
@@ -23379,7 +23445,7 @@ index 0000000..5c79870
 + 
 + static int slavio_timer_is_user(TimerContext *tc)
 + {
-+@@ -137,6 +159,51 @@ static void slavio_timer_get_out(CPUTimerState *t)
++@@ -137,6 +161,51 @@ static void slavio_timer_get_out(CPUTimerState *t)
 +     t->counthigh = count >> 32;
 + }
 + 
@@ -23431,29 +23497,35 @@ index 0000000..5c79870
 + // timer callback
 + static void slavio_timer_irq(void *opaque)
 + {
-+@@ -173,6 +240,8 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
++@@ -173,6 +242,10 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
 +         if (slavio_timer_is_user(tc)) {
 +             // read user timer MSW
 +             slavio_timer_get_out(t);
-++            slavio_timer_read_count(t, t->run, true);
-++            t->msw_read = true;
+++            if (s->read_ahead) {
+++                slavio_timer_read_count(t, t->run, true);
+++                t->msw_read = true;
+++            }
 +             ret = t->counthigh | t->reached;
 +         } else {
 +             // read limit
-+@@ -187,8 +256,12 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
++@@ -187,8 +260,16 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
 +         // of counter (user mode)
 +         slavio_timer_get_out(t);
 +         if (slavio_timer_is_user(tc)) { // read user timer LSW
-++            slavio_timer_read_count(t, t->run, !t->msw_read);
-++            t->msw_read = false;
+++            if (s->read_ahead) {
+++                slavio_timer_read_count(t, t->run, !t->msw_read);
+++                t->msw_read = false;
+++            }
 +             ret = t->count & TIMER_MAX_COUNT64;
 +         } else { // read limit
-++            /* the counter mode counters always run */
-++            slavio_timer_read_count(t, true, true);
+++            if (s->read_ahead) {
+++                /* the counter mode counters always run */
+++                slavio_timer_read_count(t, true, true);
+++            }
 +             ret = (t->count & TIMER_MAX_COUNT32) |
 +                 t->reached;
 +         }
-+@@ -229,6 +302,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++@@ -229,6 +310,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
 +     saddr = addr >> 2;
 +     switch (saddr) {
 +     case TIMER_LIMIT:
@@ -23461,7 +23533,7 @@ index 0000000..5c79870
 +         ptimer_transaction_begin(t->timer);
 +         if (slavio_timer_is_user(tc)) {
 +             uint64_t count;
-+@@ -258,6 +332,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++@@ -258,6 +340,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
 +             uint64_t count;
 + 
 +             // set user counter LSW, reset counter
@@ -23469,7 +23541,7 @@ index 0000000..5c79870
 +             t->limit = TIMER_MAX_COUNT64;
 +             t->count = val & TIMER_MAX_COUNT64;
 +             t->reached = 0;
-+@@ -308,6 +383,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++@@ -308,6 +391,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
 +                 ptimer_transaction_begin(curr_timer->timer);
 +                 // check for a change in timer mode for this processor
 +                 if ((val & processor) != (s->cputimer_mode & processor)) {
@@ -23477,7 +23549,7 @@ index 0000000..5c79870
 +                     if (val & processor) { // counter -> user timer
 +                         qemu_irq_lower(curr_timer->irq);
 +                         // counters are always running
-+@@ -401,6 +477,7 @@ static void slavio_timer_reset(DeviceState *d)
++@@ -401,6 +485,7 @@ static void slavio_timer_reset(DeviceState *d)
 +         curr_timer->limit = 0;
 +         curr_timer->count = 0;
 +         curr_timer->reached = 0;
@@ -23485,6 +23557,14 @@ index 0000000..5c79870
 +         if (i <= s->num_cpus) {
 +             ptimer_transaction_begin(curr_timer->timer);
 +             ptimer_set_limit(curr_timer->timer,
++@@ -455,6 +540,7 @@ static void slavio_timer_finalize(Object *obj)
++ 
++ static const Property slavio_timer_properties[] = {
++     DEFINE_PROP_UINT32("num_cpus",  SLAVIO_TIMERState, num_cpus,  0),
+++    DEFINE_PROP_BOOL("read-ahead", SLAVIO_TIMERState, read_ahead, false),
++ };
++ 
++ static void slavio_timer_class_init(ObjectClass *klass, const void *data)
 +diff --git a/hw/timer/trace-events b/hw/timer/trace-events
 +index 634ba1d..b0aa717 100644
 +--- a/hw/timer/trace-events
@@ -23499,32 +23579,34 @@ index 0000000..5c79870
 + slavio_timer_mem_writel(uint64_t addr, uint32_t val) "write 0x%"PRIx64" = 0x%08x"
 diff --git a/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch b/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch
 new file mode 100644
-index 0000000..2be0735
+index 0000000..191187e
 --- /dev/null
 +++ b/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,206 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test repeated reads of the sun4m counters
 +
-+On SS-600MP and SS-10, with the qtest clock standing still between
-+steps: a second read of the free-running system counter is one tick
-+more, further reads go up to 16 ticks ahead and then hold, after a step
-+of 4 ticks the next read is one more, after a long step the clock's
-+value, and a limit write resets it (read 0); a processor counter read
-+twice and again after a limit write without reset moves one tick each
-+time; the user timer read MSW then LSW moves once per pair, the LSW
-+alone moves too, and stopped it holds; a counter with a 64-tick limit
-+reads the same twice. 4 cases per machine; read-ahead-system fails
++On SS-600MP, with the qtest clock standing still between steps: a
++second read of the free-running system counter is one tick more,
++further reads go up to 16 ticks ahead and then hold, after a step of 4
++ticks the next read is one more, after a long step the clock's value,
++and a limit write resets it (read 0); a processor counter read twice
++and again after a limit write without reset moves one tick each time;
++the user timer read MSW then LSW moves once per pair, the LSW alone
++moves too, and stopped it holds; a counter with a 64-tick limit reads
++the same twice. On SS-10, which doesn't have the read-ahead, the system
++counter, a processor counter and the user timer read the same value
++twice in the same tick. 5 new cases, 11 in all; read-ahead-system fails
 +without the previous patch.
 +---
-+ tests/qtest/sun4m-slavio-timer-test.c | 128 ++++++++++++++++++++++++++
-+ 1 file changed, 128 insertions(+)
++ tests/qtest/sun4m-slavio-timer-test.c | 151 ++++++++++++++++++++++++++
++ 1 file changed, 151 insertions(+)
 +
 +diff --git a/tests/qtest/sun4m-slavio-timer-test.c b/tests/qtest/sun4m-slavio-timer-test.c
-+index a0c7e8c..2798720 100644
++index a0c7e8c..4238218 100644
 +--- a/tests/qtest/sun4m-slavio-timer-test.c
 ++++ b/tests/qtest/sun4m-slavio-timer-test.c
-+@@ -8,6 +8,14 @@
++@@ -8,6 +8,16 @@
 +  * (bit 31 of the MSW) once the counter wraps. QEMU kept only the bits
 +  * of the CPUs it has, and its user timer never expired from the limit.
 +  *
@@ -23533,13 +23615,15 @@ index 0000000..2be0735
 ++ * where a read takes longer than the 500 ns tick. A QEMU read takes no
 ++ * virtual time: a read with no tick since the last one returns one tick
 ++ * more, at most 16 ticks ahead of the clock, never less than the read
-++ * before, and not on counters with a short limit. The qtest clock stands
-++ * still between steps, so every repeated read here is in the same tick.
+++ * before, and not on counters with a short limit. Only the SS-600MP has
+++ * that; on the other machines (SS-10 here) a read returns the counter as
+++ * it is. The qtest clock stands still between steps, so every repeated
+++ * read here is in the same tick.
 ++ *
 +  * SPDX-License-Identifier: GPL-2.0-or-later
 +  */
 + 
-+@@ -18,11 +26,15 @@
++@@ -18,11 +28,15 @@
 + #define CPU0_MSW        (COUNTER_BASE + 0x0)    /* user mode: counter MSW */
 + #define CPU0_LSW        (COUNTER_BASE + 0x4)    /* user mode: counter LSW */
 + #define CPU0_RUN        (COUNTER_BASE + 0xc)    /* user mode: start/stop */
@@ -23555,7 +23639,7 @@ index 0000000..2be0735
 + #define LIMIT_BIT       0x80000000u
 + 
 + static void test_config_bits(const void *data)
-+@@ -108,6 +120,106 @@ static void test_system_limit(const void *data)
++@@ -108,6 +122,131 @@ static void test_system_limit(const void *data)
 +     qtest_quit(qts);
 + }
 + 
@@ -23644,6 +23728,31 @@ index 0000000..2be0735
 ++    qtest_quit(qts);
 ++}
 ++
+++/* Not on the SS-10: two reads in the same tick return the same value */
+++static void test_no_read_ahead(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-10");
+++    uint32_t v;
+++    uint64_t u;
+++
+++    qtest_writel(qts, SYS_LIMIT, 0);
+++    qtest_clock_step(qts, 100 * TICK_NS);
+++    v = qtest_readl(qts, SYS_COUNTER);
+++    g_assert_cmphex(v, ==, 100 * TICK);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, v);
+++    v = qtest_readl(qts, CPU0_COUNTER);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_COUNTER), ==, v);
+++
+++    qtest_writel(qts, TIMER_CONFIG, 1);         /* CPU 0: user timer */
+++    qtest_writel(qts, CPU0_RUN, 1);
+++    user_set(qts, 0x0000000100000000ULL);
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    u = user_count(qts);
+++    g_assert_cmphex(u, ==, 0x0000000100000000ULL + 4 * TICK);
+++    g_assert_cmphex(user_count(qts), ==, u);
+++    qtest_quit(qts);
+++}
+++
 ++/* A counter with a short limit: no read ahead, a wrap stays a wrap */
 ++static void test_read_ahead_short_limit(const void *data)
 ++{
@@ -23662,32 +23771,27 @@ index 0000000..2be0735
 + int main(int argc, char **argv)
 + {
 +     static const char *machines[] = { "SS-600MP", "SS-10" };
-+@@ -126,6 +238,22 @@ int main(int argc, char **argv)
-+         qtest_add_data_func(config, machines[i], test_config_bits);
-+         qtest_add_data_func(user, machines[i], test_user_limit);
++@@ -128,5 +267,17 @@ int main(int argc, char **argv)
 +         qtest_add_data_func(sys, machines[i], test_system_limit);
-++        qtest_add_data_func(g_strdup_printf(
-++                                "sun4m-slavio-timer/%s/read-ahead-system",
-++                                machines[i]),
-++                            machines[i], test_read_ahead_system);
-++        qtest_add_data_func(g_strdup_printf(
-++                                "sun4m-slavio-timer/%s/read-ahead-processor",
-++                                machines[i]),
-++                            machines[i], test_read_ahead_processor);
-++        qtest_add_data_func(g_strdup_printf(
-++                                "sun4m-slavio-timer/%s/read-ahead-user",
-++                                machines[i]),
-++                            machines[i], test_read_ahead_user);
-++        qtest_add_data_func(g_strdup_printf(
-++                                "sun4m-slavio-timer/%s/read-ahead-short-limit",
-++                                machines[i]),
-++                            machines[i], test_read_ahead_short_limit);
 +     }
 + 
+++    /* the read-ahead is the SS-600MP's */
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-system",
+++                        "SS-600MP", test_read_ahead_system);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-processor",
+++                        "SS-600MP", test_read_ahead_processor);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-user",
+++                        "SS-600MP", test_read_ahead_user);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-short-limit",
+++                        "SS-600MP", test_read_ahead_short_limit);
+++    qtest_add_func("sun4m-slavio-timer/SS-10/no-read-ahead",
+++                   test_no_read_ahead);
+++
 +     return g_test_run();
++ }
 diff --git a/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch b/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch
 new file mode 100644
-index 0000000..92de973
+index 0000000..49fe8ff
 --- /dev/null
 +++ b/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch
 @@ -0,0 +1,188 @@
@@ -23728,7 +23832,7 @@ index 0000000..92de973
 + 3 files changed, 53 insertions(+), 4 deletions(-)
 +
 +diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
-+index 31ea300..4ad58c9 100644
++index cc1c8b8..b928dd8 100644
 +--- a/hw/sparc/sun4m.c
 ++++ b/hw/sparc/sun4m.c
 +@@ -112,6 +112,9 @@ struct sun4m_hwdef {
@@ -23740,8 +23844,8 @@ index 0000000..92de973
 ++    uint32_t iommu_tlb_data_mask; /* if set: the bits its TLB data keeps */
 +     uint16_t machine_id;
 +     uint8_t nvram_machine_id;
-+ };
-+@@ -297,13 +300,24 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++@@ -298,13 +301,24 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
 +     return kernel_size;
 + }
 + 
@@ -23767,7 +23871,7 @@ index 0000000..92de973
 +     s = SYS_BUS_DEVICE(dev);
 +     sysbus_realize_and_unref(s, &error_fatal);
 +     sysbus_connect_irq(s, 0, irq);
-+@@ -1027,6 +1041,8 @@ static void sun4m_hw_init(MachineState *machine)
++@@ -1030,6 +1044,8 @@ static void sun4m_hw_init(MachineState *machine)
 +     }
 + 
 +     iommu = iommu_init(hwdef->iommu_base, hwdef->iommu_version,
@@ -23776,9 +23880,9 @@ index 0000000..92de973
 +                        slavio_irq[30]);
 + 
 +     if (hwdef->iommu_pad_base) {
-+@@ -1467,6 +1483,19 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
-+         .nvram_machine_id = 0x71,
-+         .machine_id = ss600mp_id,
++@@ -1477,6 +1493,19 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          */
++         .timer_read_ahead = true,
 +         .iommu_version = 0x01000000,
 ++        /*
 ++         * Its IOMMU keeps all of the page table base address (bits 31-10,
@@ -24047,7 +24151,7 @@ index 0000000..e6a0492
 ++}
 diff --git a/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch b/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch
 new file mode 100644
-index 0000000..c98832d
+index 0000000..4ad0a06
 --- /dev/null
 +++ b/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch
 @@ -0,0 +1,151 @@
@@ -24074,10 +24178,10 @@ index 0000000..c98832d
 + 1 file changed, 99 insertions(+), 4 deletions(-)
 +
 +diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
-+index 4ad58c9..28c434f 100644
++index b928dd8..207a90d 100644
 +--- a/hw/sparc/sun4m.c
 ++++ b/hw/sparc/sun4m.c
-+@@ -657,6 +657,100 @@ struct AFXState {
++@@ -660,6 +660,100 @@ struct AFXState {
 +     MemoryRegion mem;
 + };
 + 
@@ -24178,7 +24282,7 @@ index 0000000..c98832d
 + /* SS-5 TCX AFX register */
 + static void afx_init(hwaddr addr)
 + {
-+@@ -1262,11 +1356,11 @@ static void sun4m_hw_init(MachineState *machine)
++@@ -1266,11 +1360,11 @@ static void sun4m_hw_init(MachineState *machine)
 +         /*
 +          * The SPARCserver 600MP's VMEbus interface registers (control,
 +          * AFSR, AFAR), which SunOS 4.1.2 sets up through the MMU bypass
@@ -24194,7 +24298,7 @@ index 0000000..c98832d
 +     }
 + 
 +     if (hwdef->bpp_base) {
-+@@ -1776,6 +1870,7 @@ static void sun4m_register_types(void)
++@@ -1786,6 +1880,7 @@ static void sun4m_register_types(void)
 + {
 +     type_register_static(&idreg_info);
 +     type_register_static(&afx_info);
@@ -24277,7 +24381,7 @@ index 0000000..85b3848
 + 
 diff --git a/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch b/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
 new file mode 100644
-index 0000000..4491691
+index 0000000..b4598c2
 --- /dev/null
 +++ b/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
 @@ -0,0 +1,126 @@
@@ -24341,7 +24445,7 @@ index 0000000..4491691
 + 
 + static void lance_class_init(ObjectClass *klass, const void *data)
 +diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
-+index 28c434f..2d076c8 100644
++index 207a90d..f41ed15 100644
 +--- a/hw/sparc/sun4m.c
 ++++ b/hw/sparc/sun4m.c
 +@@ -115,6 +115,7 @@ struct sun4m_hwdef {
@@ -24351,8 +24455,8 @@ index 0000000..4491691
 ++    uint32_t le_rap_mask;       /* if set: the bits the lance's RAP keeps */
 +     uint16_t machine_id;
 +     uint8_t nvram_machine_id;
-+ };
-+@@ -329,7 +330,8 @@ static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++@@ -330,7 +331,8 @@ static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
 + static void *sparc32_dma_init(hwaddr dma_base,
 +                               hwaddr esp_base, qemu_irq espdma_irq,
 +                               hwaddr le_base, qemu_irq ledma_irq,
@@ -24362,7 +24466,7 @@ index 0000000..4491691
 + {
 +     DeviceState *dma;
 +     ESPDMADeviceState *espdma;
-+@@ -361,6 +363,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++@@ -362,6 +364,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
 +     if (lebuffer_base) {
 +         qdev_prop_set_uint32(dma, "lebuffer-size", SUN4M_LEBUFFER_SIZE);
 +     }
@@ -24372,7 +24476,7 @@ index 0000000..4491691
 +     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
 +     if (lebuffer_base) {
 +         sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
-+@@ -1151,7 +1156,7 @@ static void sun4m_hw_init(MachineState *machine)
++@@ -1154,7 +1159,7 @@ static void sun4m_hw_init(MachineState *machine)
 +     sparc32_dma_init(hwdef->dma_base,
 +                      hwdef->esp_base, slavio_irq[18],
 +                      hwdef->le_base, slavio_irq[16],
@@ -24381,7 +24485,7 @@ index 0000000..4491691
 + 
 +     if (!graphic_width) {
 +         graphic_width = 1024;
-+@@ -1590,6 +1595,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++@@ -1600,6 +1605,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
 +         .iommu_base_mask = 0xfffffc00,
 +         .iommu_sbcfg_mask = 0x0003800f,
 +         .iommu_tlb_data_mask = 0xffffff86,
