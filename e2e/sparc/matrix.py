@@ -171,8 +171,9 @@ MATRICES = {
     # openbios/patches/0008 (before it OpenBIOS powered the machine off). At 1152x900 Solaris's X
     # server doesn't start, so the console login prompt stays on the screen; at 1024x768 dtlogin.
     # NetBSD's GENERIC kernel enters ddb instead of the firmware. The chord in the wrong order is
-    # ignored. No break on ttya here: QEMU's ESCC never ends a break and Solaris's serial console
-    # stops answering after one (submodules/SPARC.md, "Stop-A").
+    # ignored. A break on a ttya console (QMP chardev-send-break) does the same as Stop-A; it needs
+    # pve-qemu wsh/0141 (before it the ESCC never ended a break and the guest hung in its serial
+    # interrupt, submodules/SPARC.md, "Stop-A").
     "stopa": [
         ("stopa-sol26-console-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900"}),
         ("stopa-sol26-dtlogin-openbios-ss5", "stop-a.py", SOL26, None, {"AT": "dtlogin"}),
@@ -183,6 +184,13 @@ MATRICES = {
         ("stopa-sunos414-openbios-ss5", "stop-a.py", SUNOS414, None, {"GUEST": "sunos"}),
         ("stopa-netbsd111-ddb-openbios-ss5", "stop-a.py", NETBSD111, None, {"GUEST": "netbsd", "EXPECT": "db.", "RESUME": "c"}),
         ("stopa-firmware-prompt-openbios-ss5", "stop-a.py", None, None, {"GUEST": "none", "EXPECT": "none"}),
+        ("stopa-sol26-break-openbios-ss5", "stop-a.py", SOL26, None, {"CONSOLE": "serial", "BREAK": "1"}),
+        ("stopa-sunos414-break-openbios-ss5", "stop-a.py", SUNOS414, None,
+         {"GUEST": "sunos", "CONSOLE": "serial", "BREAK": "1", "SHELL": "0"}),
+        ("stopa-netbsd111-break-ddb-openbios-ss5", "stop-a.py", NETBSD111, None,
+         {"GUEST": "netbsd", "CONSOLE": "serial", "BREAK": "1", "SHELL": "0", "EXPECT": "db>", "RESUME": "c"}),
+        ("stopa-break-firmware-prompt-openbios-ss5", "stop-a.py", None, None,
+         {"GUEST": "none", "CONSOLE": "serial", "BREAK": "1", "EXPECT": "none"}),
     ],
 }
 
