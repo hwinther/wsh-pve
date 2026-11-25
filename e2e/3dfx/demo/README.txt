@@ -40,6 +40,7 @@ Keys
 
 Options
   -api glide2|glide3|opengl   (Windows) the API; without it a window asks
+  -hostgl         (Windows) allow system OPENGL32.DLL in a window for host testing
   -res WxH        start at 640x480 (default), 800x600 or 1024x768
   -part NAME      start with cube, tunnel or plasma (no title card); -secs S: seconds per part
   -time S         quit after S seconds; -gamma G: start with this gamma; -nohud: no frame rate
@@ -49,7 +50,7 @@ Options
   -hold S         after -check or -bench, keep the last frame up for S seconds
   -wait S         wait S seconds before opening the 3D display
   -tag NAME       the tag in front of every output line (default WSHDEMO)
-  -nocom          (DOS) don't write to COM1 directly (when CTTY COM1 sends the output there)
+  -nocom          (Windows, DOS) don't write to COM1 directly (when CTTY COM1 sends the output there)
 
 Output: one line per event on COM1 (Windows, DOS: 115200 8N1), standard output and /dev/console
 (Linux), e.g.

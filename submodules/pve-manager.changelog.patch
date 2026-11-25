@@ -1,108 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index f305ba44..6493fc06 100644
+index d578b516..83adc943 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,103 @@
-+pve-manager (9.2.32+wsh14) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.2.41+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager
++  * Sync with upstream pve-manager 2744df6
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Tue, 24 Nov 2026 19:22:14 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 25 Nov 2026 07:38:40 +0000
 +
-+pve-manager (9.2.32+wsh13) trixie; urgency=medium
-+
-+  * feat(3dfx): stage 3a, the D-Bus display from PVE (VNC kept, refresh-
-+    ms, a bus per VM) (#497)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Tue, 24 Nov 2026 15:27:02 +0000
-+
-+pve-manager (9.2.32+wsh12) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sun, 22 Nov 2026 15:57:32 +0000
-+
-+pve-manager (9.2.32+wsh11) trixie; urgency=medium
-+
-+  * feat(sparc): SS-600MP profile in PVE, and SunOS 4.1.2 as an
-+    automated target (#438)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sun, 22 Nov 2026 00:16:03 +0000
-+
-+pve-manager (9.2.32+wsh10) trixie; urgency=medium
-+
-+  * feat(3dfx): choose the display of a 3dfx VM in PVE (egl-headless
-+    next to VNC) (#431)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 22:06:29 +0000
-+
-+pve-manager (9.2.32+wsh9) trixie; urgency=medium
-+
-+  * fix(sparc): hide EFI disk and TPM state, keep qm showcmd output
-+    clean (#421)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 18:59:18 +0000
-+
-+pve-manager (9.2.32+wsh8) trixie; urgency=medium
-+
-+  * feat(sparc): keep the Sun PROMs' NVRAM in a per-VM volume, so they
-+    boot by themselves (#418)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 17:42:42 +0000
-+
-+pve-manager (9.2.32+wsh7) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Sat, 21 Nov 2026 15:55:52 +0000
-+
-+pve-manager (9.2.32+wsh6) trixie; urgency=medium
-+
-+  * feat(sparc): SPARCstation LX profile with its own PROM in qemu-
-+    server and pve-manager (#408)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 15:19:54 +0000
-+
-+pve-manager (9.2.32+wsh5) trixie; urgency=medium
-+
-+  * feat(vga): retrace=precise for DOS games (Wolfenstein 3D) (#394)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Sat, 21 Nov 2026 00:56:47 +0000
-+
-+pve-manager (9.2.32+wsh4) trixie; urgency=medium
-+
-+  * Refresh patches: pve-manager
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Fri, 20 Nov 2026 16:44:09 +0000
-+
-+pve-manager (9.2.32+wsh3) trixie; urgency=medium
-+
-+  * feat(dos): legacy BIOS memory layout option and idle in the DOS
-+    targets (#361)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 20 Nov 2026 14:46:04 +0000
-+
-+pve-manager (9.2.32+wsh2) trixie; urgency=medium
-+
-+  * feat(mirror): rename ISO/floppy volumes and link volumes from other
-+    storages (step 3) (#356)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 20 Nov 2026 14:32:03 +0000
-+
-+pve-manager (9.2.32+wsh1) trixie; urgency=medium
-+
-+  * feat(mirror): description file, four recipes, NFS e2e and an
-+    ISO/floppy search field (#349)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 20 Nov 2026 08:05:39 +0000
-+
- pve-manager (9.2.32) trixie; urgency=medium
+ pve-manager (9.2.41) trixie; urgency=medium
  
-   * ui: storage: drop the technology preview hint of snapshots as volume
-     chain, as the feature is ready for production use.
- 
-   * ui: firewall options: drop the technology preview note of nftables, as the
-     nftables-based proxmox-firewall is not experimental anymore. It stays
-     opt-in, the option is still off by default.
- 
-   * ui: qemu agent: show options stored as 'yes' or 'on' as enabled, for
+   * ui: SAN:
+     - also detect disabled storages of external storage plugins when opening
+       the LUN wipe confirmation, so the confirmation still asks to verify
+       that no storage plugin uses the LUN.
+     - when adding a multipath entry, also check a WWID that was typed before
+       the node's LUN list finished loading, so that Enter no longer adds only
+       a part of a listed WWID. A part of a WWID that the list does not offer,
+       for example of an NVMe namespace, no longer counts as invalid.

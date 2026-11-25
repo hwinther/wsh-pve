@@ -2,9 +2,12 @@
 
 Material for a bug report or feature request to upstream QEMU, for the owner to write and send by
 hand (QEMU doesn't take AI-written code or text). Carried in pve-qemu as
-`debian/patches/wsh/0059` (the drive and the sun4m change) and the qtest `0060`; not in a published
-package yet. Our own change to QEMU's code, independent of LEMU (column "may send" in
-[README.md](README.md)). Tested in the lab (`submodules/SPARC.md`, "The NVRAM kept in a volume").
+`debian/patches/wsh/0059` (the drive and the sun4m change) and the qtest `0060`. Since 2026-11-25
+0059 is the form LEMU ported onto its own `m48t59` storage code (`wsh/0073`, LEMU origin), so the
+carried patch is built on LEMU and not for QEMU ([README.md](README.md)); "The change" below
+describes the earlier write-through version, our own and independent of LEMU, which is what a
+patch to QEMU would have to start from again. The problem itself is plain QEMU's. Tested in the lab
+(`submodules/SPARC.md`, "The NVRAM kept in a volume").
 
 ## What happens
 

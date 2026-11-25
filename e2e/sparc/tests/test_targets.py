@@ -6,6 +6,7 @@ media swapper and the masking of secrets in result.json. Standard library only:
     cd e2e/sparc && python3 -m unittest -v tests/test_targets.py
 """
 import hashlib
+import importlib.util
 import io
 import os
 import re
@@ -40,8 +41,10 @@ def qemu_server_profiles():
     s32 = {}
     block = perl_block(text, "+our $SPARC32_PROFILES = {")
     for m in re.finditer(r"'(SS-\d+(?:MP)?)' => \{\n\+\s+'max-memory' => (\d+),(.*?)\n\+    \},", block, re.S):
-        fw = {f: {"max-cpus": int(n), "cpu": cpu}
-              for f, cpu, n in re.findall(r"'([\w.-]+)' => \{ (?:cpu => '([\w-]+)', )?'max-cpus' => (\d+) \}", m[3])}
+        # a firmware's own 'max-memory' (below the machine's) is optional
+        fw = {f: {"max-cpus": int(n), "cpu": cpu, "max-memory": int(mem) if mem else int(m[2])}
+              for f, cpu, n, mem in re.findall(r"'([\w.-]+)' => \{ (?:cpu => '([\w-]+)', )?'max-cpus' => (\d+)"
+                                               r"(?:, 'max-memory' => (\d+))? \}", m[3])}
         s32[m[1]] = {"max-memory": int(m[2]), "firmware": fw}
     vga32 = re.search(r"my \$sparc32_vga_types = \[qw\(([^)]*)\)\]", text)[1].split()
     block = perl_block(text, "+our $SPARC64_PROFILE = {")
@@ -78,6 +81,8 @@ class Catalogue(unittest.TestCase):
         s32, vga32, s64 = qemu_server_profiles()
         self.assertEqual(set(s32), {"SS-5", "SS-10", "SS-20", "SS-600MP"})  # the parser found the table
         self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["cpu"], "TI-SuperSparc-50")
+        self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["max-memory"], 512)
+        self.assertEqual(s32["SS-20"]["firmware"]["openbios-sparc32"]["max-memory"], 2048)
         for name, t in targets.TARGETS.items():
             p, disk = t["profile"], t["disk"]
             if p.get("arch", "x86_64") not in ("sparc", "sparc64"):
@@ -93,7 +98,7 @@ class Catalogue(unittest.TestCase):
                         continue
                     prof = s32[p["machine"].split(",")[0]]  # the type, without machine options
                     self.assertIn(p["bios"], prof["firmware"])
-                    self.assertLessEqual(int(p["memory"]), prof["max-memory"])
+                    self.assertLessEqual(int(p["memory"]), prof["firmware"][p["bios"]]["max-memory"])
                     self.assertLessEqual(cpus, prof["firmware"][p["bios"]]["max-cpus"])
                     self.assertIn(p["vga"], vga32)
                     self.assertEqual(p["net0"], "lance")
@@ -593,6 +598,41 @@ class SolarisEarlyHang(unittest.TestCase):
             self.assertEqual(job.phases, ["install"])
         finally:
             install.vm_running = orig
+
+
+@unittest.skipUnless(importlib.util.find_spec("matrix"), "needs the repository's e2e/sparc/matrix.py "
+                     "(the wsh-lab package ships the tests but not matrix.py)")
+class MatrixRetry(unittest.TestCase):
+    """matrix.py: a Solaris CD boot that never reaches the installer's first question (init lost the
+    SIGCLD of the installer's rcS) boots once more as <case>-retry1; other failures don't."""
+
+    def run_with(self, statuses, scenario="solaris-boot-cd.py"):
+        import matrix
+        calls = []
+
+        def run(name, *args):
+            calls.append(name)
+            status = statuses.pop(0)
+            return {"code": 0 if status == "passed" else 1, "status": status, "elapsed": 60.0}
+
+        return matrix.run_retrying("sol26-cd", scenario, None, "cd.iso", {}, None, run=run), calls
+
+    def test_language_timeout_boots_once_more(self):
+        hang = "timed out: no 'Select a Language|What type of terminal are you using' within 900s; screen:\nx"
+        res, calls = self.run_with([hang, "passed"])
+        self.assertEqual(calls, ["sol26-cd", "sol26-cd-retry1"])
+        self.assertEqual(res["code"], 0)
+        self.assertTrue(res["status"].startswith("retried after: timed out: no 'Select a Language"))
+        self.assertEqual(res["elapsed"], 120.0)
+        res, calls = self.run_with([hang, hang])  # a second hang still fails the case
+        self.assertEqual((calls, res["code"]), (["sol26-cd", "sol26-cd-retry1"], 1))
+
+    def test_other_failures_and_passes_run_once(self):
+        for statuses, scenario in ((["passed"], "solaris-boot-cd.py"),
+                                   (["timed out: no 'SunOS Release 5\\.\\d' within 900s"], "solaris-boot-cd.py"),
+                                   (["timed out: no 'Select a Language' within 900s"], "solaris-boot-disk.py")):
+            res, calls = self.run_with(list(statuses), scenario)
+            self.assertEqual(calls, ["sol26-cd"], statuses)
 
 
 class WebStart(unittest.TestCase):
