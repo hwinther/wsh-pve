@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..504c835 100644
+index bc240a0..ee6abd4 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,102 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,108 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -176,6 +176,12 @@ index bc240a0..504c835 100644
 +wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
 +wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
 +wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
++wsh/0143-target-sparc-keep-the-SuperSPARC-store-buffer-diagno.patch
++wsh/0144-target-sparc-read-back-the-MXCC-stream-data-register.patch
++wsh/0145-target-sparc-keep-the-SuperSPARC-cache-tag-and-data-.patch
++wsh/0146-tests-qtest-test-the-SuperSPARC-diagnostic-registers.patch
++wsh/0147-hw-timer-slavio_timer-let-the-user-timer-reach-its-l.patch
++wsh/0148-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -20535,6 +20541,1512 @@ index 0000000..3c6370d
 +             }
 +         }
 +     }
+diff --git a/debian/patches/wsh/0143-target-sparc-keep-the-SuperSPARC-store-buffer-diagno.patch b/debian/patches/wsh/0143-target-sparc-keep-the-SuperSPARC-store-buffer-diagno.patch
+new file mode 100644
+index 0000000..de3f43b
+--- /dev/null
++++ b/debian/patches/wsh/0143-target-sparc-keep-the-SuperSPARC-store-buffer-diagno.patch
+@@ -0,0 +1,287 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: keep the SuperSPARC store buffer diagnostic registers
++
++Sun's SPARCserver 600MP boot PROM loops silently in its power-on self
++test on QEMU. Its store buffer test writes walking ones to the eight
++store buffer tags (ASI 0x30) and data doublewords (ASI 0x31) of the
++SuperSPARC, and to its store buffer control register (ASI 0x32), and
++reads each back. QEMU ignores stores to those ASIs and reads them as 0;
++the PROM's error path then repeats the test for ever (loop on error).
++
++Add the CPU feature "sbuf-diag", set on the TI-SuperSparc-* models. With
++it the registers keep what is written: eight tags at 0x00-0x38 (bits
++42-0, the bits the PROM tests), eight data doublewords and the control
++register (bits 5-0). A word access reads or writes one half of the
++doubleword, the high word at the lower address. There is no store
++buffer behind them; nothing else uses the values. The microSPARC,
++TurboSPARC (whose ASIs 0x30-0x32 are other diagnostics) and LEON models
++are unchanged, and -cpu TI-SuperSparc-II,-sbuf-diag turns it off.
++
++The registers go in a vmstate subsection "cpu/sbuf_diag", sent only
++when one of them is not zero; OpenBIOS and the operating systems don't
++write them, so their streams still load on older QEMU.
++
++With this the PROM passes its store buffer tests and goes on to the
++MXCC registers test.
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             | 15 ++++---
++ target/sparc/cpu.h             |  9 +++++
++ target/sparc/ldst_helper.c     | 74 ++++++++++++++++++++++++++++++++--
++ target/sparc/machine.c         | 33 +++++++++++++++
++ 5 files changed, 123 insertions(+), 9 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index ca8fe3180e..09a7a0dcd2 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -18,3 +18,4 @@ FEATURE(IMA)
++ FEATURE(VIS4)
++ FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
++ FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off */
+++FEATURE(SBUF_DIAG) /* SuperSPARC store buffer diagnostic registers */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index 4e7a2e4d8d..e00e1462cc 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -449,7 +449,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-50", /* STP1020PGA */
++@@ -463,7 +463,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-51",
++@@ -478,7 +478,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-60", /* STP1020APGA */
++@@ -492,7 +492,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-61",
++@@ -507,7 +507,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-II",
++@@ -522,7 +522,7 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
++     },
++     {
++         .name = "LEON2",
++@@ -574,6 +574,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_FSMULD] = "fsmuld",
++     [CPU_FEATURE_BIT_BUSERR_ACCESS_EXC] = "buserr-access-exc",
++     [CPU_FEATURE_BIT_BOOT_MODE_IFETCH] = "boot-mode-ifetch",
+++    [CPU_FEATURE_BIT_SBUF_DIAG] = "sbuf-diag",
++ #endif
++ };
++ 
++@@ -1015,6 +1016,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_BUSERR_ACCESS_EXC, false),
++     DEFINE_PROP_BIT("boot-mode-ifetch", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_BOOT_MODE_IFETCH, false),
+++    DEFINE_PROP_BIT("sbuf-diag", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_SBUF_DIAG, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index d3d2bce319..4d61dc2a15 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -513,6 +513,15 @@ struct CPUArchState {
++     uint32_t mmubpctrv, mmubpctrc, mmubpctrs;
++     uint64_t mmubpaction;
++     uint64_t mmubpregs[4];
+++    /*
+++     * SuperSPARC store buffer diagnostic registers (CPU_FEATURE_SBUF_DIAG):
+++     * the eight tags (ASI 0x30) and data doublewords (ASI 0x31) and the
+++     * control register (ASI 0x32). Only kept for the guest to read back;
+++     * QEMU has no store buffer behind them.
+++     */
+++    uint64_t sbuf_tag[8];
+++    uint64_t sbuf_data[8];
+++    uint32_t sbuf_ctrl;
++     uint64_t prom_addr;
++     /*
++      * The TLB holds an entry that sparc_cpu_tlb_fill made for a failed
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 71932773e4..50011b242c 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -604,6 +604,62 @@ static uint64_t leon3_cache_control_ld(CPUSPARCState *env, target_ulong addr,
++     return ret;
++ }
++ 
+++/*
+++ * SuperSPARC store buffer diagnostic registers: eight doubleword tags
+++ * (ASI 0x30) and data entries (ASI 0x31) at addresses 0x00-0x38, and the
+++ * control register (ASI 0x32). The masks are the bits Sun's boot PROMs
+++ * write and read back in their store buffer tests.
+++ */
+++#define SBUF_TAG_MASK   0x000007ffffffffffULL
+++#define SBUF_CTRL_MASK  0x3f
+++
+++static uint64_t sbuf_diag_ld(CPUSPARCState *env, int asi, target_ulong addr,
+++                             int size)
+++{
+++    uint64_t val;
+++
+++    switch (asi) {
+++    case 0x30:
+++        val = env->sbuf_tag[(addr >> 3) & 7];
+++        break;
+++    case 0x31:
+++        val = env->sbuf_data[(addr >> 3) & 7];
+++        break;
+++    default:
+++        return env->sbuf_ctrl;
+++    }
+++    if (size < 8) { /* a word of the doubleword: the high one first */
+++        val = (addr & 4) ? (uint32_t)val : val >> 32;
+++    }
+++    return val;
+++}
+++
+++static void sbuf_diag_st(CPUSPARCState *env, int asi, target_ulong addr,
+++                         int size, uint64_t val)
+++{
+++    uint64_t *reg;
+++
+++    switch (asi) {
+++    case 0x30:
+++        reg = &env->sbuf_tag[(addr >> 3) & 7];
+++        break;
+++    case 0x31:
+++        reg = &env->sbuf_data[(addr >> 3) & 7];
+++        break;
+++    default:
+++        env->sbuf_ctrl = val & SBUF_CTRL_MASK;
+++        return;
+++    }
+++    if (size < 8) {
+++        if (addr & 4) {
+++            val = deposit64(*reg, 0, 32, val);
+++        } else {
+++            val = deposit64(*reg, 32, 32, val);
+++        }
+++    }
+++    *reg = asi == 0x30 ? val & SBUF_TAG_MASK : val;
+++}
+++
++ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++                        int asi, uint32_t memop)
++ {
++@@ -751,9 +807,17 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++         }
++         break;
++     }
++-    case 0x30: /* Turbosparc secondary cache diagnostic */
++-    case 0x31: /* Turbosparc RAM snoop */
++-    case 0x32: /* Turbosparc page table descriptor diagnostic */
+++    case 0x30: /* SuperSPARC store buffer tags, or Turbosparc secondary
+++                  cache diagnostic */
+++    case 0x31: /* SuperSPARC store buffer data, or Turbosparc RAM snoop */
+++    case 0x32: /* SuperSPARC store buffer control, or Turbosparc page table
+++                  descriptor diagnostic */
+++        if (env->def.features & CPU_FEATURE_SBUF_DIAG) {
+++            ret = sbuf_diag_ld(env, asi, addr, size);
+++        } else {
+++            ret = 0;
+++        }
+++        break;
++     case 0x39: /* data cache diagnostic register */
++         ret = 0;
++         break;
++@@ -1137,6 +1201,10 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++                   Turbosparc snoop RAM */
++     case 0x32: /* store buffer control or Turbosparc page table
++                   descriptor diagnostic */
+++        if (env->def.features & CPU_FEATURE_SBUF_DIAG) {
+++            sbuf_diag_st(env, asi, addr, size, val);
+++        }
+++        break;
++     case 0x36: /* I-cache flash clear */
++     case 0x37: /* D-cache flash clear */
++         break;
++diff --git a/target/sparc/machine.c b/target/sparc/machine.c
++index c27a80ea6d..d27a78553c 100644
++--- a/target/sparc/machine.c
+++++ b/target/sparc/machine.c
++@@ -242,6 +242,38 @@ static int solaris_idle_mp_post_load(void *opaque, int version_id)
++     return 0;
++ }
++ 
+++/*
+++ * The SuperSPARC store buffer diagnostic registers: sent only when the
+++ * guest has written them (Sun's boot PROMs do, OpenBIOS and the operating
+++ * systems don't), so that other streams still load on older QEMU.
+++ */
+++static bool sbuf_diag_needed(void *opaque)
+++{
+++    SPARCCPU *cpu = opaque;
+++    CPUSPARCState *env = &cpu->env;
+++    int i;
+++
+++    for (i = 0; i < 8; i++) {
+++        if (env->sbuf_tag[i] || env->sbuf_data[i]) {
+++            return true;
+++        }
+++    }
+++    return env->sbuf_ctrl != 0;
+++}
+++
+++static const VMStateDescription vmstate_sbuf_diag = {
+++    .name = "cpu/sbuf_diag",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = sbuf_diag_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT64_ARRAY(env.sbuf_tag, SPARCCPU, 8),
+++        VMSTATE_UINT64_ARRAY(env.sbuf_data, SPARCCPU, 8),
+++        VMSTATE_UINT32(env.sbuf_ctrl, SPARCCPU),
+++        VMSTATE_END_OF_LIST()
+++    },
+++};
+++
++ static const VMStateDescription vmstate_solaris_idle_mp = {
++     .name = "cpu/solaris_idle_mp",
++     .version_id = 1,
++@@ -426,6 +458,7 @@ const VMStateDescription vmstate_sparc_cpu = {
++         &vmstate_fq,
++         &vmstate_fp_pending,
++         &vmstate_solaris_idle_mp,
+++        &vmstate_sbuf_diag,
++         NULL
++     },
++ #else
+diff --git a/debian/patches/wsh/0144-target-sparc-read-back-the-MXCC-stream-data-register.patch b/debian/patches/wsh/0144-target-sparc-read-back-the-MXCC-stream-data-register.patch
+new file mode 100644
+index 0000000..6515f58
+--- /dev/null
++++ b/debian/patches/wsh/0144-target-sparc-read-back-the-MXCC-stream-data-register.patch
+@@ -0,0 +1,98 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: read back the MXCC stream data registers
++
++The MXCC (the SuperSPARC's cache controller, on TI-SuperSparc-51, -61
++and -II) has a stream data register of 32 bytes at 0x01c00000 in ASI 2:
++four doublewords, which a stream source operation fills from memory and
++a stream destination operation writes out. QEMU took stores to them and
++used them for the stream operations, but read them as 0 ("unimplemented
++address").
++
++Sun's SPARCserver 600MP boot PROM writes walking ones to each doubleword
++from 0x01c00000 to 0x01c00038 and reads it back in its MXCC registers
++test, and loops on the first mismatch. Return the registers on a
++doubleword load, and take 0x01c00020-0x01c00038 as the same four
++registers again (Linux's asm/mxcc.h gives the stream size as 32 bytes;
++the PROM writes and reads back one address at a time, so it doesn't see
++whether those addresses alias). Only on the models with an MXCC
++(mxcc_version set); the others read 0 as before. No new state.
++
++With this and the store buffer registers the PROM passes its MXCC
++registers test on the default TI-SuperSparc-II.
++---
++ target/sparc/ldst_helper.c | 54 ++++++++++++++++++--------------------
++ 1 file changed, 25 insertions(+), 29 deletions(-)
++
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 50011b242c..126885c4e1 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -686,6 +686,22 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++                                          " address, size: %d\n", addr, size);
++             }
++             break;
+++        case 0x01c00000: /* MXCC stream data registers 0-3, and again */
+++        case 0x01c00008: /* at 0x01c00020-0x01c00038 */
+++        case 0x01c00010:
+++        case 0x01c00018:
+++        case 0x01c00020:
+++        case 0x01c00028:
+++        case 0x01c00030:
+++        case 0x01c00038:
+++            if (size == 8 && env->def.mxcc_version) {
+++                ret = env->mxccdata[(addr >> 3) & 3];
+++            } else {
+++                qemu_log_mask(LOG_UNIMP,
+++                              "%08x: unimplemented access size: %d\n", addr,
+++                              size);
+++            }
+++            break;
++         case 0x01c00a00: /* MXCC control register */
++             if (size == 8) {
++                 ret = env->mxccregs[3];
++@@ -915,36 +931,16 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++             }
++             break;
++ 
++-        case 0x01c00000: /* MXCC stream data register 0 */
+++        case 0x01c00000: /* MXCC stream data registers 0-3, and again */
+++        case 0x01c00008: /* at 0x01c00020-0x01c00038 */
+++        case 0x01c00010:
+++        case 0x01c00018:
+++        case 0x01c00020:
+++        case 0x01c00028:
+++        case 0x01c00030:
+++        case 0x01c00038:
++             if (size == 8) {
++-                env->mxccdata[0] = val;
++-            } else {
++-                qemu_log_mask(LOG_UNIMP,
++-                              "%08x: unimplemented access size: %d\n", addr,
++-                              size);
++-            }
++-            break;
++-        case 0x01c00008: /* MXCC stream data register 1 */
++-            if (size == 8) {
++-                env->mxccdata[1] = val;
++-            } else {
++-                qemu_log_mask(LOG_UNIMP,
++-                              "%08x: unimplemented access size: %d\n", addr,
++-                              size);
++-            }
++-            break;
++-        case 0x01c00010: /* MXCC stream data register 2 */
++-            if (size == 8) {
++-                env->mxccdata[2] = val;
++-            } else {
++-                qemu_log_mask(LOG_UNIMP,
++-                              "%08x: unimplemented access size: %d\n", addr,
++-                              size);
++-            }
++-            break;
++-        case 0x01c00018: /* MXCC stream data register 3 */
++-            if (size == 8) {
++-                env->mxccdata[3] = val;
+++                env->mxccdata[(addr >> 3) & 3] = val;
++             } else {
++                 qemu_log_mask(LOG_UNIMP,
++                               "%08x: unimplemented access size: %d\n", addr,
+diff --git a/debian/patches/wsh/0145-target-sparc-keep-the-SuperSPARC-cache-tag-and-data-.patch b/debian/patches/wsh/0145-target-sparc-keep-the-SuperSPARC-cache-tag-and-data-.patch
+new file mode 100644
+index 0000000..2b6c2de
+--- /dev/null
++++ b/debian/patches/wsh/0145-target-sparc-keep-the-SuperSPARC-cache-tag-and-data-.patch
+@@ -0,0 +1,351 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: keep the SuperSPARC cache tag and data RAMs
++
++After the store buffer and MXCC tests, Sun's SPARCserver 600MP boot PROM
++tests the SuperSPARC's instruction and data cache RAMs through the
++diagnostic ASIs 0x0c-0x0f (I-cache tag, I-cache data, D-cache tag,
++D-cache data): it writes patterns to every set tag, physical tag and
++data doubleword and reads them back, and loops on the first mismatch
++("wrong i$ stag"). QEMU ignores stores to those ASIs and reads them as 0.
++
++Add the CPU feature "cache-diag", set on the TI-SuperSparc-* models.
++With it the ASIs reach RAMs with the TMS390Z50's geometry: the I-cache
++has 5 ways of 64 sets with 64-byte lines, the D-cache 4 ways of 128 sets
++with 32-byte lines. The way is in address bits 28-26, the set in bits
++11-6 (I-cache) or 11-5 (D-cache), the doubleword in the bits below; bit
++31 selects the physical tag and bit 30 the set tag, as Linux's
++asm/viking.h and SunOS 4.1.x use them. Tags keep the bits the PROM
++tests (set tag 0x1f1e for the I-cache, 0xf0e for the D-cache; physical
++tag 0x0300000000ffffff and 0x0101010000ffffff, with the valid, dirty
++and shared bits Linux's viking.h names); an address that selects no
++entry reads 0 and ignores stores. A word access reads or writes one half
++of a doubleword. QEMU still doesn't cache through them: no hits, misses
++or flash clear. The microSPARC, TurboSPARC and LEON models are
++unchanged, and -cpu TI-SuperSparc-II,-cache-diag turns it off.
++
++The RAMs (49 KB) go in a vmstate subsection "cpu/cache_diag", sent only
++when they are not all zero. OpenBIOS doesn't write them; SunOS 4.1.x
++writes the D-cache tags and data in its workaround for a Viking erratum,
++so its streams carry the subsection.
++
++With this the PROM passes its I- and D-cache RAM tests, and on the
++TI-SuperSparc-II its MXCC external cache RAM test is next.
++---
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             | 21 +++++---
++ target/sparc/cpu.h             | 22 ++++++++
++ target/sparc/ldst_helper.c     | 95 ++++++++++++++++++++++++++++++++++
++ target/sparc/machine.c         | 45 ++++++++++++++++
++ 5 files changed, 178 insertions(+), 6 deletions(-)
++
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index 09a7a0dcd2..238c40e2bf 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -19,3 +19,4 @@ FEATURE(VIS4)
++ FEATURE(BUSERR_ACCESS_EXC) /* Bus error on a load or fetch: access exception */
++ FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off */
++ FEATURE(SBUF_DIAG) /* SuperSPARC store buffer diagnostic registers */
+++FEATURE(CACHE_DIAG) /* SuperSPARC cache tag and data RAMs (ASI 0x0c-0x0f) */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index e00e1462cc..5e7d6d66f8 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -449,7 +449,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-50", /* STP1020PGA */
++@@ -463,7 +464,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-51",
++@@ -478,7 +480,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-60", /* STP1020APGA */
++@@ -492,7 +495,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mmu_trcr_mask = 0xffffffff,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-61",
++@@ -507,7 +511,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "TI-SuperSparc-II",
++@@ -522,7 +527,8 @@ static const sparc_def_t sparc_defs[] = {
++         .mxcc_version = 0x00000104,
++         .nwindows = 8,
++         .features = CPU_DEFAULT_FEATURES | CPU_FEATURE_BUSERR_ACCESS_EXC |
++-                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG,
+++                    CPU_FEATURE_BOOT_MODE_IFETCH | CPU_FEATURE_SBUF_DIAG |
+++                    CPU_FEATURE_CACHE_DIAG,
++     },
++     {
++         .name = "LEON2",
++@@ -575,6 +581,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_BUSERR_ACCESS_EXC] = "buserr-access-exc",
++     [CPU_FEATURE_BIT_BOOT_MODE_IFETCH] = "boot-mode-ifetch",
++     [CPU_FEATURE_BIT_SBUF_DIAG] = "sbuf-diag",
+++    [CPU_FEATURE_BIT_CACHE_DIAG] = "cache-diag",
++ #endif
++ };
++ 
++@@ -1018,6 +1025,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_BOOT_MODE_IFETCH, false),
++     DEFINE_PROP_BIT("sbuf-diag", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_SBUF_DIAG, false),
+++    DEFINE_PROP_BIT("cache-diag", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_CACHE_DIAG, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
++diff --git a/target/sparc/cpu.h b/target/sparc/cpu.h
++index 4d61dc2a15..ad41ad2503 100644
++--- a/target/sparc/cpu.h
+++++ b/target/sparc/cpu.h
++@@ -522,6 +522,28 @@ struct CPUArchState {
++     uint64_t sbuf_tag[8];
++     uint64_t sbuf_data[8];
++     uint32_t sbuf_ctrl;
+++    /*
+++     * SuperSPARC (TMS390Z50) cache tag and data RAMs as the diagnostic
+++     * ASIs 0x0c-0x0f see them (CPU_FEATURE_CACHE_DIAG): the I-cache has 5
+++     * ways of 64 sets with 64-byte lines, the D-cache 4 ways of 128 sets
+++     * with 32-byte lines; each line has a set tag and a physical tag.
+++     * Indexed [way][set] (and [doubleword]). Only kept for the guest to
+++     * read back; QEMU doesn't cache through them.
+++     */
+++#define SPARC_ICACHE_WAYS   5
+++#define SPARC_ICACHE_SETS   64
+++#define SPARC_ICACHE_DWORDS 8
+++#define SPARC_DCACHE_WAYS   4
+++#define SPARC_DCACHE_SETS   128
+++#define SPARC_DCACHE_DWORDS 4
+++    uint64_t icache_stag[SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS];
+++    uint64_t icache_ptag[SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS];
+++    uint64_t icache_data[SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS *
+++                         SPARC_ICACHE_DWORDS];
+++    uint64_t dcache_stag[SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS];
+++    uint64_t dcache_ptag[SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS];
+++    uint64_t dcache_data[SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS *
+++                         SPARC_DCACHE_DWORDS];
++     uint64_t prom_addr;
++     /*
++      * The TLB holds an entry that sparc_cpu_tlb_fill made for a failed
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 126885c4e1..9289075ee3 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -660,6 +660,94 @@ static void sbuf_diag_st(CPUSPARCState *env, int asi, target_ulong addr,
++     *reg = asi == 0x30 ? val & SBUF_TAG_MASK : val;
++ }
++ 
+++/*
+++ * SuperSPARC cache tag and data RAMs through the diagnostic ASIs (as in
+++ * Linux's asm/viking.h and SunOS's Viking module code): the way in bits
+++ * 28-26, the set in bits 11-6 (I-cache) or 11-5 (D-cache), the doubleword
+++ * of the line in the bits below it (data); bit 31 selects the physical
+++ * tag and bit 30 the set tag. The masks are the bits Sun's boot PROMs
+++ * write and read back in their cache RAM tests. Returns NULL for an
+++ * address that selects no entry.
+++ */
+++#define ICACHE_STAG_MASK    0x0000000000001f1eULL
+++#define ICACHE_PTAG_MASK    0x0300000000ffffffULL
+++#define DCACHE_STAG_MASK    0x0000000000000f0eULL
+++#define DCACHE_PTAG_MASK    0x0101010000ffffffULL
+++
+++static uint64_t *cache_diag_entry(CPUSPARCState *env, int asi,
+++                                  target_ulong addr, uint64_t *mask)
+++{
+++    unsigned int way = extract32(addr, 26, 3);
+++    unsigned int iline = way * SPARC_ICACHE_SETS + extract32(addr, 6, 6);
+++    unsigned int dline = way * SPARC_DCACHE_SETS + extract32(addr, 5, 7);
+++
+++    *mask = ~0ULL;
+++    switch (asi) {
+++    case ASI_M_TXTC_TAG:
+++        if (way >= SPARC_ICACHE_WAYS) {
+++            return NULL;
+++        } else if (addr & 0x80000000) {
+++            *mask = ICACHE_PTAG_MASK;
+++            return &env->icache_ptag[iline];
+++        } else if (addr & 0x40000000) {
+++            *mask = ICACHE_STAG_MASK;
+++            return &env->icache_stag[iline];
+++        }
+++        return NULL;
+++    case ASI_M_TXTC_DATA:
+++        if (way >= SPARC_ICACHE_WAYS) {
+++            return NULL;
+++        }
+++        return &env->icache_data[iline * SPARC_ICACHE_DWORDS +
+++                                 extract32(addr, 3, 3)];
+++    case ASI_M_DATAC_TAG:
+++        if (way >= SPARC_DCACHE_WAYS) {
+++            return NULL;
+++        } else if (addr & 0x80000000) {
+++            *mask = DCACHE_PTAG_MASK;
+++            return &env->dcache_ptag[dline];
+++        } else if (addr & 0x40000000) {
+++            *mask = DCACHE_STAG_MASK;
+++            return &env->dcache_stag[dline];
+++        }
+++        return NULL;
+++    default: /* ASI_M_DATAC_DATA */
+++        if (way >= SPARC_DCACHE_WAYS) {
+++            return NULL;
+++        }
+++        return &env->dcache_data[dline * SPARC_DCACHE_DWORDS +
+++                                 extract32(addr, 3, 2)];
+++    }
+++}
+++
+++static uint64_t cache_diag_ld(CPUSPARCState *env, int asi, target_ulong addr,
+++                              int size)
+++{
+++    uint64_t mask;
+++    uint64_t *entry = cache_diag_entry(env, asi, addr, &mask);
+++    uint64_t val = entry ? *entry : 0;
+++
+++    if (size < 8) { /* a word of the doubleword: the high one first */
+++        val = (addr & 4) ? (uint32_t)val : val >> 32;
+++    }
+++    return val;
+++}
+++
+++static void cache_diag_st(CPUSPARCState *env, int asi, target_ulong addr,
+++                          int size, uint64_t val)
+++{
+++    uint64_t mask;
+++    uint64_t *entry = cache_diag_entry(env, asi, addr, &mask);
+++
+++    if (!entry) {
+++        return;
+++    }
+++    if (size < 8) {
+++        val = deposit64(*entry, (addr & 4) ? 0 : 32, 32, val);
+++    }
+++    *entry = val & mask;
+++}
+++
++ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++                        int asi, uint32_t memop)
++ {
++@@ -791,6 +879,9 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++     case ASI_M_TXTC_DATA:  /* SparcStation 5 I-cache data */
++     case ASI_M_DATAC_TAG:  /* SparcStation 5 D-cache tag */
++     case ASI_M_DATAC_DATA: /* SparcStation 5 D-cache data */
+++        if (env->def.features & CPU_FEATURE_CACHE_DIAG) {
+++            ret = cache_diag_ld(env, asi, addr, size);
+++        }
++         break;
++     case 0x21 ... 0x2f: /* MMU passthrough, 0x100000000 to 0xfffffffff */
++     {
++@@ -1156,6 +1247,10 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, uint64_t val,
++     case ASI_M_TXTC_DATA:  /* I-cache data */
++     case ASI_M_DATAC_TAG:  /* D-cache tag */
++     case ASI_M_DATAC_DATA: /* D-cache data */
+++        if (env->def.features & CPU_FEATURE_CACHE_DIAG) {
+++            cache_diag_st(env, asi, addr, size, val);
+++        }
+++        break;
++     case ASI_M_FLUSH_PAGE:   /* I/D-cache flush page */
++     case ASI_M_FLUSH_SEG:    /* I/D-cache flush segment */
++     case ASI_M_FLUSH_REGION: /* I/D-cache flush region */
++diff --git a/target/sparc/machine.c b/target/sparc/machine.c
++index d27a78553c..9f343badfa 100644
++--- a/target/sparc/machine.c
+++++ b/target/sparc/machine.c
++@@ -1,4 +1,5 @@
++ #include "qemu/osdep.h"
+++#include "qemu/cutils.h"
++ #include "cpu.h"
++ #include "qemu/target-info.h"
++ #include "qemu/timer.h"
++@@ -274,6 +275,49 @@ static const VMStateDescription vmstate_sbuf_diag = {
++     },
++ };
++ 
+++/*
+++ * The SuperSPARC cache tag and data RAMs: sent only when the guest has
+++ * written them (Sun's boot PROMs and SunOS 4.1.x's workaround for a
+++ * Viking erratum do, OpenBIOS doesn't), so that other streams still load
+++ * on older QEMU.
+++ */
+++static bool cache_diag_needed(void *opaque)
+++{
+++    SPARCCPU *cpu = opaque;
+++    CPUSPARCState *env = &cpu->env;
+++
+++    return !buffer_is_zero(env->icache_stag, sizeof(env->icache_stag)) ||
+++           !buffer_is_zero(env->icache_ptag, sizeof(env->icache_ptag)) ||
+++           !buffer_is_zero(env->icache_data, sizeof(env->icache_data)) ||
+++           !buffer_is_zero(env->dcache_stag, sizeof(env->dcache_stag)) ||
+++           !buffer_is_zero(env->dcache_ptag, sizeof(env->dcache_ptag)) ||
+++           !buffer_is_zero(env->dcache_data, sizeof(env->dcache_data));
+++}
+++
+++static const VMStateDescription vmstate_cache_diag = {
+++    .name = "cpu/cache_diag",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = cache_diag_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT64_ARRAY(env.icache_stag, SPARCCPU,
+++                             SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS),
+++        VMSTATE_UINT64_ARRAY(env.icache_ptag, SPARCCPU,
+++                             SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS),
+++        VMSTATE_UINT64_ARRAY(env.icache_data, SPARCCPU,
+++                             SPARC_ICACHE_WAYS * SPARC_ICACHE_SETS *
+++                             SPARC_ICACHE_DWORDS),
+++        VMSTATE_UINT64_ARRAY(env.dcache_stag, SPARCCPU,
+++                             SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS),
+++        VMSTATE_UINT64_ARRAY(env.dcache_ptag, SPARCCPU,
+++                             SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS),
+++        VMSTATE_UINT64_ARRAY(env.dcache_data, SPARCCPU,
+++                             SPARC_DCACHE_WAYS * SPARC_DCACHE_SETS *
+++                             SPARC_DCACHE_DWORDS),
+++        VMSTATE_END_OF_LIST()
+++    },
+++};
+++
++ static const VMStateDescription vmstate_solaris_idle_mp = {
++     .name = "cpu/solaris_idle_mp",
++     .version_id = 1,
++@@ -459,6 +503,7 @@ const VMStateDescription vmstate_sparc_cpu = {
++         &vmstate_fp_pending,
++         &vmstate_solaris_idle_mp,
++         &vmstate_sbuf_diag,
+++        &vmstate_cache_diag,
++         NULL
++     },
++ #else
+diff --git a/debian/patches/wsh/0146-tests-qtest-test-the-SuperSPARC-diagnostic-registers.patch b/debian/patches/wsh/0146-tests-qtest-test-the-SuperSPARC-diagnostic-registers.patch
+new file mode 100644
+index 0000000..63b7dcd
+--- /dev/null
++++ b/debian/patches/wsh/0146-tests-qtest-test-the-SuperSPARC-diagnostic-registers.patch
+@@ -0,0 +1,453 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SuperSPARC diagnostic registers and RAMs
++
++A boot PROM built by the test writes through the store buffer ASIs
++(0x30-0x32), the MXCC stream data registers (ASI 2) and the cache tag
++and data ASIs (0x0c-0x0f) with stda and sta, reads them back with ldda
++and lda and stores what it read in RAM: all ones into tags (the bits
++kept come back), patterns into data, a word into one half of a
++doubleword, the stream data register again at 0x01c00030, an I-cache way
++past the fifth and a tag address with neither tag bit (both read 0).
++
++On SS-600MP and SS-10 (TI-SuperSparc-II) everything reads back; on
++SS-20 with TI-SuperSparc-50 (no MXCC) the stream data register reads 0;
++with -sbuf-diag or -cache-diag those ASIs read 0 as before, and on SS-5
++(microSPARC-II) all of them do. A migration case writes on the source,
++migrates to a file in the PROM's wait loop and reads back on the
++destination, through the "cpu/sbuf_diag" and "cpu/cache_diag"
++subsections. The markers stay out of page 0: with the MMU off, a data
++access there would take over the TLB entry the PROM's boot mode
++fetches use.
++---
++ tests/qtest/meson.build              |   1 +
++ tests/qtest/sun4m-viking-diag-test.c | 409 +++++++++++++++++++++++++++
++ 2 files changed, 410 insertions(+)
++ create mode 100644 tests/qtest/sun4m-viking-diag-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 1e31cf039f..2babba6e00 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -211,6 +211,7 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-esp-test',
++                 'sun4m-mmu-ctx-ifetch-test',
++                 'sun4m-boot-mode-ifetch-test',
+++                'sun4m-viking-diag-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++diff --git a/tests/qtest/sun4m-viking-diag-test.c b/tests/qtest/sun4m-viking-diag-test.c
++new file mode 100644
++index 0000000000..aa884c9354
++--- /dev/null
+++++ b/tests/qtest/sun4m-viking-diag-test.c
++@@ -0,0 +1,409 @@
+++/*
+++ * QTest: SuperSPARC diagnostic registers and RAMs on sun4m
+++ *
+++ * Sun's SPARCserver 600MP boot PROM tests the SuperSPARC's store buffer
+++ * diagnostic registers (ASI 0x30 tags, 0x31 data, 0x32 control), the
+++ * MXCC stream data registers (ASI 2, 0x01c00000) and the I- and D-cache
+++ * tag and data RAMs (ASI 0x0c-0x0f) by writing them and reading them
+++ * back, and loops in its power-on self test on the first mismatch.
+++ *
+++ * Each case builds a small boot PROM that writes values through those
+++ * ASIs, reads them back and stores what it read in RAM at RESULTS, then
+++ * sets DONE. The migration case writes, sets DONE to 1, waits for GO on
+++ * the destination, then reads back and sets DONE to 2.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++#include "qobject/qdict.h"
+++
+++/*
+++ * Markers and results (physical). With the MMU off a data access to the
+++ * page the code is fetched from (page 0, through boot mode from the PROM)
+++ * would take over its TLB entry, so they stay out of it.
+++ */
+++#define DONE            0x1800u
+++#define GO              0x1804u
+++#define RESULTS         0x2000u
+++#define PROM_WORDS      0x400
+++#define CODE            0x100       /* word index of the code */
+++#define NOP             0x01000000
+++
+++/* registers */
+++#define G1  1
+++#define G2  2
+++#define G4  4
+++#define O0  8
+++#define O1  9
+++#define O2  10
+++
+++enum { ST64, LD64, ST32, LD32, WAIT };
+++
+++typedef struct {
+++    int op;
+++    int asi;
+++    uint32_t addr;
+++    uint64_t val;
+++} Op;
+++
+++typedef struct {
+++    uint32_t w[PROM_WORDS];
+++    int n;
+++    int slot;
+++} Prom;
+++
+++static void emit(Prom *p, uint32_t insn)
+++{
+++    g_assert_cmpint(CODE + p->n, <, PROM_WORDS);
+++    p->w[CODE + p->n++] = cpu_to_be32(insn);
+++}
+++
+++static void emit_set(Prom *p, int rd, uint32_t v)
+++{
+++    emit(p, 0x01000000 | (rd << 25) | (v >> 10));          /* sethi */
+++    emit(p, 0x80102000 | (rd << 25) | (rd << 14) | (v & 0x3ff)); /* or */
+++}
+++
+++/* ld/st alternate, [%o0] asi, register form */
+++static void emit_asi(Prom *p, int op3, int rd, int asi)
+++{
+++    emit(p, 0xc0000000 | (rd << 25) | (op3 << 19) | (O0 << 14) | (asi << 5));
+++}
+++
+++/* ld/st [%rs1 + simm13] */
+++static void emit_mem(Prom *p, int op3, int rd, int rs1, int simm)
+++{
+++    emit(p, 0xc0000000 | (rd << 25) | (op3 << 19) | (rs1 << 14) |
+++         (1 << 13) | (simm & 0x1fff));
+++}
+++
+++static void emit_marker(Prom *p, int v)
+++{
+++    emit(p, 0x80102000 | (G1 << 25) | v);       /* mov v, %g1 */
+++    emit_mem(p, 0x04, G1, O2, 0);               /* st %g1, [DONE] */
+++}
+++
+++static char *write_prom(const Op *ops, int nops)
+++{
+++    Prom p = { .n = 0 };
+++    char *path = NULL;
+++    int fd, i;
+++
+++    p.w[0] = cpu_to_be32(0x10800000 | CODE);    /* reset: b CODE */
+++    p.w[1] = cpu_to_be32(NOP);
+++    emit_set(&p, O1, RESULTS);
+++    emit_set(&p, O2, DONE);
+++    for (i = 0; i < nops; i++) {
+++        const Op *o = &ops[i];
+++
+++        switch (o->op) {
+++        case ST64:
+++            emit_set(&p, O0, o->addr);
+++            emit_set(&p, G2, o->val >> 32);
+++            emit_set(&p, G2 + 1, (uint32_t)o->val);
+++            emit_asi(&p, 0x17, G2, o->asi);     /* stda %g2, [%o0] asi */
+++            break;
+++        case ST32:
+++            emit_set(&p, O0, o->addr);
+++            emit_set(&p, G2, (uint32_t)o->val);
+++            emit_asi(&p, 0x14, G2, o->asi);     /* sta %g2, [%o0] asi */
+++            break;
+++        case LD64:
+++            emit_set(&p, O0, o->addr);
+++            emit_asi(&p, 0x13, G4, o->asi);     /* ldda [%o0] asi, %g4 */
+++            emit_mem(&p, 0x07, G4, O1, 8 * p.slot++);   /* std */
+++            break;
+++        case LD32:
+++            emit_set(&p, O0, o->addr);
+++            emit_asi(&p, 0x10, G4, o->asi);     /* lda [%o0] asi, %g4 */
+++            emit(&p, 0x80100000 | ((G4 + 1) << 25)); /* mov %g0, %g5 */
+++            emit_mem(&p, 0x07, G4, O1, 8 * p.slot++);   /* std */
+++            break;
+++        case WAIT:
+++            emit_marker(&p, 1);
+++            emit_mem(&p, 0x00, G1, O2, GO - DONE);  /* 1: ld [GO], %g1 */
+++            emit(&p, 0x80a06000 | (G1 << 14));  /* cmp %g1, 0 */
+++            emit(&p, 0x02bffffe);               /* be 1b */
+++            emit(&p, NOP);
+++            break;
+++        }
+++    }
+++    emit_marker(&p, 2);
+++    emit(&p, 0x10800000);                       /* b . */
+++    emit(&p, NOP);
+++
+++    fd = g_file_open_tmp("sun4m-viking-diag-prom-XXXXXX", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, p.w, sizeof(p.w)), ==, sizeof(p.w));
+++    close(fd);
+++    return path;
+++}
+++
+++static void wait_done(QTestState *qts, uint32_t v)
+++{
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++
+++    while (qtest_readl(qts, DONE) != v) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++}
+++
+++static uint64_t result(QTestState *qts, int slot)
+++{
+++    return qtest_readq(qts, RESULTS + 8 * slot);
+++}
+++
+++#define PAT     0x0123456789abcdefULL
+++#define ONES    0xffffffffffffffffULL
+++
+++/*
+++ * The writes and the read-backs; reads[] are their expected values with
+++ * the features on, in the order of the LD ops.
+++ */
+++static const Op diag_writes[] = {
+++    /* store buffer: tag 3 all ones, tag 0 a pattern, data 5, control */
+++    { ST64, 0x30, 0x18, ONES },
+++    { ST64, 0x30, 0x00, PAT },
+++    { ST64, 0x31, 0x28, PAT },
+++    { ST64, 0x31, 0x30, ONES },
+++    { ST32, 0x32, 0x00, 0xff },
+++    { ST32, 0x31, 0x2c, 0x5a5a5a5a },               /* low word of data 5 */
+++    /* MXCC stream data register 2 */
+++    { ST64, 0x02, 0x01c00010, PAT },
+++    /* I-cache: way 4 set 63 ptag, way 0 set 1 stag, way 2 set 5 dword 7 */
+++    { ST64, 0x0c, 0x90000fc0, ONES },
+++    { ST64, 0x0c, 0x40000040, ONES },
+++    { ST64, 0x0d, 0x08000000 | (5 << 6) | (7 << 3), PAT },
+++    { ST64, 0x0d, 0x08000000 | (5 << 6) | (6 << 3), ONES },
+++    { ST64, 0x0d, 0x14000000, PAT },                /* way 5: no entry */
+++    /* D-cache: way 3 set 127 ptag, way 0 set 1 stag, way 3 set 127 dword 3 */
+++    { ST64, 0x0e, 0x8c000fe0, ONES },
+++    { ST64, 0x0e, 0x40000020, ONES },
+++    { ST64, 0x0f, 0x0c000000 | (127 << 5) | (3 << 3), PAT },
+++    { ST64, 0x0f, 0x0c000000 | (126 << 5) | (3 << 3), ONES },
+++};
+++
+++static const Op diag_reads[] = {
+++    { LD64, 0x30, 0x18 },
+++    { LD64, 0x30, 0x00 },
+++    { LD64, 0x31, 0x28 },
+++    { LD64, 0x31, 0x30 },
+++    { LD32, 0x32, 0x00 },
+++    { LD32, 0x30, 0x04 },                           /* low word of tag 0 */
+++    { LD64, 0x02, 0x01c00010 },
+++    { LD64, 0x02, 0x01c00030 },                     /* the same register */
+++    { LD64, 0x0c, 0x90000fc0 },
+++    { LD64, 0x0c, 0x40000040 },
+++    { LD64, 0x0d, 0x08000000 | (5 << 6) | (7 << 3) },
+++    { LD64, 0x0d, 0x08000000 | (5 << 6) | (6 << 3) },
+++    { LD64, 0x0d, 0x14000000 },
+++    { LD64, 0x0e, 0x8c000fe0 },
+++    { LD64, 0x0e, 0x40000020 },
+++    { LD64, 0x0f, 0x0c000000 | (127 << 5) | (3 << 3) },
+++    { LD64, 0x0f, 0x0c000000 | (126 << 5) | (3 << 3) },
+++    { LD64, 0x0c, 0x00000040 },                     /* no tag selected */
+++};
+++
+++static const uint64_t expect_on[] = {
+++    0x000007ffffffffffULL,
+++    PAT & 0x000007ffffffffffULL,
+++    0x0123456700000000ULL | 0x5a5a5a5a,
+++    ONES,
+++    0x3f00000000ULL,                    /* lda: the word, then %g5 = 0 */
+++    (PAT & 0xffffffff) << 32,
+++    PAT,
+++    PAT,
+++    0x0300000000ffffffULL,
+++    0x1f1e,
+++    PAT,
+++    ONES,
+++    0,
+++    0x0101010000ffffffULL,
+++    0xf0e,
+++    PAT,
+++    ONES,
+++    0,
+++};
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    const char *cpu;
+++    bool sbuf;          /* the store buffer registers read back */
+++    bool mxcc;          /* the MXCC stream data registers read back */
+++    bool cache;         /* the cache RAMs read back */
+++} TestCase;
+++
+++static bool slot_on(const TestCase *t, int i)
+++{
+++    int asi = diag_reads[i].asi;
+++
+++    if (asi >= 0x30) {
+++        return t->sbuf;
+++    } else if (asi == 0x02) {
+++        return t->mxcc;
+++    }
+++    return t->cache;
+++}
+++
+++static void run_case(const TestCase *t, QTestState *qts)
+++{
+++    int i;
+++
+++    for (i = 0; i < ARRAY_SIZE(diag_reads); i++) {
+++        uint64_t want = slot_on(t, i) ? expect_on[i] : 0;
+++
+++        if (result(qts, i) != want) {
+++            g_error("%s: read %d (asi %#x addr %#x): %#" PRIx64
+++                    ", expected %#" PRIx64, t->name, i, diag_reads[i].asi,
+++                    diag_reads[i].addr, result(qts, i), want);
+++        }
+++    }
+++}
+++
+++static Op *build_ops(bool wait, int *n)
+++{
+++    int nw = ARRAY_SIZE(diag_writes), nr = ARRAY_SIZE(diag_reads);
+++    Op *ops = g_new0(Op, nw + nr + 1);
+++    int k = 0, i;
+++
+++    for (i = 0; i < nw; i++) {
+++        ops[k++] = diag_writes[i];
+++    }
+++    if (wait) {
+++        ops[k++] = (Op) { .op = WAIT };
+++    }
+++    for (i = 0; i < nr; i++) {
+++        ops[k++] = diag_reads[i];
+++    }
+++    *n = k;
+++    return ops;
+++}
+++
+++static void test_diag(const void *data)
+++{
+++    const TestCase *t = data;
+++    int n;
+++    g_autofree Op *ops = build_ops(false, &n);
+++    g_autofree char *prom = write_prom(ops, n);
+++    QTestState *qts = qtest_initf("-machine %s%s%s -accel tcg -m 64 -bios %s",
+++                                  t->machine, t->cpu ? " -cpu " : "",
+++                                  t->cpu ? t->cpu : "", prom);
+++
+++    wait_done(qts, 2);
+++    run_case(t, qts);
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
+++static void migrate_to_file(QTestState *qts, const char *uri)
+++{
+++    QDict *rsp;
+++    const char *status;
+++    int i;
+++
+++    qtest_qmp_assert_success(qts, "{'execute': 'migrate',"
+++                             " 'arguments': {'uri': %s}}", uri);
+++    for (i = 0; i < 3000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-migrate'}");
+++        status = qdict_haskey(rsp, "status") ? qdict_get_str(rsp, "status")
+++                                             : "";
+++        if (!strcmp(status, "completed")) {
+++            qobject_unref(rsp);
+++            return;
+++        }
+++        g_assert_cmpstr(status, !=, "failed");
+++        qobject_unref(rsp);
+++        g_usleep(10 * 1000);
+++    }
+++    g_assert_not_reached();
+++}
+++
+++/* The destination resumes before the QMP client connects: poll */
+++static void wait_running(QTestState *qts)
+++{
+++    QDict *rsp;
+++    bool running;
+++    int i;
+++
+++    for (i = 0; i < 1000; i++) {
+++        rsp = qtest_qmp_assert_success_ref(qts,
+++                                           "{'execute': 'query-status'}");
+++        running = !strcmp(qdict_get_str(rsp, "status"), "running");
+++        qobject_unref(rsp);
+++        if (running) {
+++            return;
+++        }
+++        g_usleep(10 * 1000);
+++    }
+++    g_error("destination not running 10 s after -incoming");
+++}
+++
+++/*
+++ * The values written on the source must read back on the destination:
+++ * the store buffer and cache RAMs travel in their vmstate subsections.
+++ */
+++static void test_migrate(void)
+++{
+++    static const TestCase t = { "ss600mp/migrate", "SS-600MP", NULL,
+++                                true, true, true };
+++    int n, fd;
+++    g_autofree Op *ops = build_ops(true, &n);
+++    g_autofree char *prom = write_prom(ops, n);
+++    g_autofree char *path = NULL;
+++    g_autofree char *uri = NULL;
+++    QTestState *src, *dst;
+++
+++    fd = g_file_open_tmp("sun4m-viking-diag-XXXXXX.mig", &path, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    uri = g_strdup_printf("file:%s", path);
+++
+++    src = qtest_initf("-machine SS-600MP -accel tcg -m 64 -bios %s", prom);
+++    wait_done(src, 1);
+++    migrate_to_file(src, uri);
+++    qtest_quit(src);
+++
+++    dst = qtest_initf("-machine SS-600MP -accel tcg -m 64 -bios %s "
+++                      "-incoming %s", prom, uri);
+++    wait_running(dst);
+++    qtest_writel(dst, GO, 1);
+++    wait_done(dst, 2);
+++    run_case(&t, dst);
+++    qtest_quit(dst);
+++    unlink(path);
+++    unlink(prom);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const TestCase cases[] = {
+++        { "ss600mp", "SS-600MP", NULL, true, true, true },
+++        { "ss10", "SS-10", NULL, true, true, true },
+++        { "ss20-no-mxcc", "SS-20", "TI-SuperSparc-50", true, false, true },
+++        { "ss10/sbuf-diag-off", "SS-10", "TI-SuperSparc-II,-sbuf-diag",
+++          false, true, true },
+++        { "ss10/cache-diag-off", "SS-10", "TI-SuperSparc-II,-cache-diag",
+++          true, true, false },
+++        { "ss5/microsparc", "SS-5", NULL, false, false, false },
+++    };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (qtest_has_accel("tcg")) {
+++        for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-viking-diag/%s", cases[i].name);
+++            qtest_add_data_func(name, &cases[i], test_diag);
+++        }
+++        qtest_add_func("sun4m-viking-diag/ss600mp/migrate", test_migrate);
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0147-hw-timer-slavio_timer-let-the-user-timer-reach-its-l.patch b/debian/patches/wsh/0147-hw-timer-slavio_timer-let-the-user-timer-reach-its-l.patch
+new file mode 100644
+index 0000000..4c15187
+--- /dev/null
++++ b/debian/patches/wsh/0147-hw-timer-slavio_timer-let-the-user-timer-reach-its-l.patch
+@@ -0,0 +1,112 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/timer/slavio_timer: let the user timer reach its limit, keep all four mode bits
++
++Sun's SPARCserver 600MP boot PROM tests the board's counter-timers after
++the CPU module tests and loops there on QEMU ("Can not toggle
++timer/counter bits", "Limit bit not set"). Two things fail:
++
++The timer configuration register (0xf.f131_0010) has a user timer bit
++for each of the four processor counter-timers. The PROM writes all ones
++and expects four bits back; QEMU kept only the bits of the CPUs it has
++(one bit with one CPU). The bits of slots without a CPU are now kept
++too, with no timer behind them (TIMER_MODE_MASK).
++
++In user timer mode the PROM writes 0x7fffffffffffffff to the counter
++(it keeps bits 62-9: TIMER_MAX_COUNT64) and expects the limit bit, bit
++31 of the MSW, on a following read, when the counter wraps. QEMU sets
++the ptimer to LIMIT_TO_PERIODS(limit - count), which is -1 when the
++count is the limit itself, so the timer never expired; and a counter
++written while stopped read back one period less than written
++(0x7ffffffffffffc00). The user timer's ptimer now counts the ticks left
++exactly (USER_TO_PERIODS/PERIODS_TO_USER): a counter written while
++stopped reads back as written, and the limit bit comes when the counter
++reaches TIMER_MAX_COUNT64 (at once if started there), where it wraps.
++The system and processor counters in counter mode are unchanged (their
++limit is at most TIMER_MAX_COUNT32, never TIMER_MAX_COUNT64). No new
++state: the mode bits are in cputimer_mode.
++
++The PROM's user timer test also reads the running counter in pairs and
++expects it to move between them; on the board an I/O read takes about
++as long as a timer tick, in QEMU much less, so whether the test passes
++depends on the host's speed: in the lab about one run in four gets past
++it. (-icount, which would make it deterministic, stops at once on the
++PROM's device reads through the MMU bypass ASI: "Bad icount read".)
++---
++ hw/timer/slavio_timer.c | 29 ++++++++++++++++++++++++++---
++ 1 file changed, 26 insertions(+), 3 deletions(-)
++
++diff --git a/hw/timer/slavio_timer.c b/hw/timer/slavio_timer.c
++index eccdc532fb..cc6aa8712e 100644
++--- a/hw/timer/slavio_timer.c
+++++ b/hw/timer/slavio_timer.c
++@@ -94,6 +94,18 @@ struct SLAVIO_TIMERState {
++ #define TIMER_PERIOD       500ULL // 500ns
++ #define LIMIT_TO_PERIODS(l) (((l) >> 9) - 1)
++ #define PERIODS_TO_LIMIT(l) (((l) + 1) << 9)
+++/*
+++ * The user timer counts up to TIMER_MAX_COUNT64, sets the limit bit
+++ * (bit 63, bit 31 of the MSW) there and wraps. Its ptimer counts the
+++ * ticks left to TIMER_MAX_COUNT64 exactly: a counter written while
+++ * stopped reads back as written (TIMER_MAX_COUNT64 too), and one started
+++ * at TIMER_MAX_COUNT64 sets the limit bit at once. (LIMIT_TO_PERIODS()
+++ * gives -1 there, and the timer never expired.)
+++ */
+++#define USER_TO_PERIODS(l)  ((l) >> 9)
+++#define PERIODS_TO_USER(l)  ((l) << 9)
+++/* the timer configuration register has a bit for each of 4 CPU slots */
+++#define TIMER_MODE_MASK     0xf
++ 
++ static int slavio_timer_is_user(TimerContext *tc)
++ {
++@@ -114,7 +126,11 @@ static void slavio_timer_get_out(CPUTimerState *t)
++     } else {
++         limit = t->limit;
++     }
++-    count = limit - PERIODS_TO_LIMIT(ptimer_get_count(t->timer));
+++    if (t->limit == TIMER_MAX_COUNT64) { /* user timer */
+++        count = limit - PERIODS_TO_USER(ptimer_get_count(t->timer));
+++    } else {
+++        count = limit - PERIODS_TO_LIMIT(ptimer_get_count(t->timer));
+++    }
++ 
++     trace_slavio_timer_get_out(t->limit, t->counthigh, t->count);
++     t->count = count & TIMER_COUNT_MASK32;
++@@ -223,7 +239,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++             t->reached = 0;
++             count = ((uint64_t)t->counthigh << 32) | t->count;
++             trace_slavio_timer_mem_writel_limit(timer_index, count);
++-            ptimer_set_count(t->timer, LIMIT_TO_PERIODS(t->limit - count));
+++            ptimer_set_count(t->timer, USER_TO_PERIODS(t->limit - count));
++         } else {
++             // set limit, reset counter
++             qemu_irq_lower(t->irq);
++@@ -248,7 +264,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++             count = ((uint64_t)t->counthigh) << 32 | t->count;
++             trace_slavio_timer_mem_writel_limit(timer_index, count);
++             ptimer_transaction_begin(t->timer);
++-            ptimer_set_count(t->timer, LIMIT_TO_PERIODS(t->limit - count));
+++            ptimer_set_count(t->timer, USER_TO_PERIODS(t->limit - count));
++             ptimer_transaction_commit(t->timer);
++         } else {
++             trace_slavio_timer_mem_writel_counter_invalid();
++@@ -282,6 +298,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++         break;
++     case TIMER_MODE:
++         if (timer_index == 0) {
+++            uint32_t present = (1u << s->num_cpus) - 1;
++             unsigned int i;
++ 
++             for (i = 0; i < s->num_cpus; i++) {
++@@ -317,6 +334,12 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++                 }
++                 ptimer_transaction_commit(curr_timer->timer);
++             }
+++            /*
+++             * The bits of the slots without a CPU are kept too, as on
+++             * the board; there is no timer behind them.
+++             */
+++            s->cputimer_mode = (s->cputimer_mode & present) |
+++                               (val & TIMER_MODE_MASK & ~present);
++         } else {
++             trace_slavio_timer_mem_writel_mode_invalid();
++         }
+diff --git a/debian/patches/wsh/0148-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th.patch b/debian/patches/wsh/0148-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th.patch
+new file mode 100644
+index 0000000..fc06de3
+--- /dev/null
++++ b/debian/patches/wsh/0148-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th.patch
+@@ -0,0 +1,169 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the sun4m user timer's limit and the timer mode bits
++
++On SS-600MP and SS-10: the timer configuration register keeps all four
++user timer bits with one CPU (writing all ones reads 0xf); in user timer
++mode a stopped counter reads back as written, 0xffffffffffffffff as
++0x7ffffffffffffe00, and doesn't move; started there the limit bit (bit
++31 of the MSW) is set and the counter wraps; writing the counter clears
++the bit and it counts in 500 ns ticks; three ticks below the limit the
++bit comes on the third. The system counter in counter mode (limit,
++count, reached bit) is unchanged. Uses the qtest clock. Fails against
++the build without the previous patch (the configuration register reads
++1).
++---
++ tests/qtest/meson.build               |   1 +
++ tests/qtest/sun4m-slavio-timer-test.c | 132 ++++++++++++++++++++++++++
++ 2 files changed, 133 insertions(+)
++ create mode 100644 tests/qtest/sun4m-slavio-timer-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 2babba6e00..46fec8e233 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -212,6 +212,7 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-mmu-ctx-ifetch-test',
++                 'sun4m-boot-mode-ifetch-test',
++                 'sun4m-viking-diag-test',
+++                'sun4m-slavio-timer-test',
++                 'sun4m-bus-error-trap-test',
++                 'sun4m-fp-deferred-trap-test',
++                 'sun4m-onboard-sbus-test',
++diff --git a/tests/qtest/sun4m-slavio-timer-test.c b/tests/qtest/sun4m-slavio-timer-test.c
++new file mode 100644
++index 0000000000..a0c7e8c0ee
++--- /dev/null
+++++ b/tests/qtest/sun4m-slavio-timer-test.c
++@@ -0,0 +1,132 @@
+++/*
+++ * QTest: the sun4m counter-timers' user timer mode and configuration bits
+++ *
+++ * Sun's SPARCserver 600MP boot PROM tests the board's counter-timers: it
+++ * writes all ones to the timer configuration register and expects a
+++ * user timer bit for each of the four CPU slots, and in user timer mode
+++ * it writes 0x7fffffffffffffff to the counter and expects the limit bit
+++ * (bit 31 of the MSW) once the counter wraps. QEMU kept only the bits
+++ * of the CPUs it has, and its user timer never expired from the limit.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++#define COUNTER_BASE    0xff1300000ULL  /* SS-10, SS-20, SS-600MP */
+++#define CPU0_MSW        (COUNTER_BASE + 0x0)    /* user mode: counter MSW */
+++#define CPU0_LSW        (COUNTER_BASE + 0x4)    /* user mode: counter LSW */
+++#define CPU0_RUN        (COUNTER_BASE + 0xc)    /* user mode: start/stop */
+++#define SYS_LIMIT       (COUNTER_BASE + 0x10000)
+++#define SYS_COUNTER     (COUNTER_BASE + 0x10004)
+++#define TIMER_CONFIG    (COUNTER_BASE + 0x10010)
+++
+++#define TICK_NS         500
+++#define LIMIT_BIT       0x80000000u
+++
+++static void test_config_bits(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++
+++    qtest_writel(qts, TIMER_CONFIG, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, TIMER_CONFIG), ==, 0xf);
+++    qtest_writel(qts, TIMER_CONFIG, 0xa);
+++    g_assert_cmphex(qtest_readl(qts, TIMER_CONFIG), ==, 0xa);
+++    /* CPU 0 is still a processor counter: no user timer behind slot 0 */
+++    qtest_writel(qts, TIMER_CONFIG, 0);
+++    g_assert_cmphex(qtest_readl(qts, TIMER_CONFIG), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++/* the 64-bit user counter, MSW first as the guest reads it with ldd */
+++static uint64_t user_count(QTestState *qts)
+++{
+++    uint64_t msw = qtest_readl(qts, CPU0_MSW);
+++
+++    return msw << 32 | qtest_readl(qts, CPU0_LSW);
+++}
+++
+++static void user_set(QTestState *qts, uint64_t v)
+++{
+++    qtest_writel(qts, CPU0_MSW, v >> 32);
+++    qtest_writel(qts, CPU0_LSW, (uint32_t)v);
+++}
+++
+++static void test_user_limit(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++
+++    qtest_writel(qts, TIMER_CONFIG, 1);         /* CPU 0: user timer */
+++    qtest_writel(qts, CPU0_RUN, 0);
+++
+++    /* stopped, the counter reads back as written (bits 62-9) */
+++    user_set(qts, 0x0000000012345678ULL);
+++    g_assert_cmphex(user_count(qts), ==, 0x0000000012345600ULL);
+++    user_set(qts, 0xffffffffffffffffULL);
+++    g_assert_cmphex(user_count(qts), ==, 0x7ffffffffffffe00ULL);
+++    qtest_clock_step(qts, 10 * TICK_NS);
+++    g_assert_cmphex(user_count(qts), ==, 0x7ffffffffffffe00ULL);
+++
+++    /* started at the limit: the limit bit is set and the counter wraps */
+++    qtest_writel(qts, CPU0_RUN, 1);
+++    qtest_clock_step(qts, TICK_NS);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_MSW), ==, LIMIT_BIT);
+++    g_assert_cmpuint(qtest_readl(qts, CPU0_LSW), <=, 0x400);
+++
+++    /* writing the counter clears the limit bit; it counts in 500 ns ticks */
+++    user_set(qts, 0x0000000100000000ULL);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_MSW), ==, 1);
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    g_assert_cmphex(user_count(qts), ==, 0x0000000100000800ULL);
+++
+++    /* three ticks below the limit: no limit bit until it is reached */
+++    user_set(qts, 0x7ffffffffffff800ULL);
+++    qtest_clock_step(qts, 2 * TICK_NS);
+++    g_assert_cmphex(user_count(qts), ==, 0x7ffffffffffffc00ULL);
+++    qtest_clock_step(qts, TICK_NS);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_MSW), ==, LIMIT_BIT);
+++    qtest_quit(qts);
+++}
+++
+++/* The system counter in counter mode is unchanged: limit, reached bit */
+++static void test_system_limit(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++    uint32_t count;
+++
+++    qtest_writel(qts, SYS_LIMIT, 0x1000);       /* 8 ticks */
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    count = qtest_readl(qts, SYS_COUNTER);
+++    g_assert_cmphex(count & LIMIT_BIT, ==, 0);
+++    g_assert_cmphex(count, ==, 0x800);
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER) & LIMIT_BIT, ==, LIMIT_BIT);
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    static const char *machines[] = { "SS-600MP", "SS-10" };
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    for (i = 0; i < ARRAY_SIZE(machines); i++) {
+++        g_autofree char *config =
+++            g_strdup_printf("sun4m-slavio-timer/%s/config-bits", machines[i]);
+++        g_autofree char *user =
+++            g_strdup_printf("sun4m-slavio-timer/%s/user-limit", machines[i]);
+++        g_autofree char *sys =
+++            g_strdup_printf("sun4m-slavio-timer/%s/system-limit", machines[i]);
+++
+++        qtest_add_data_func(config, machines[i], test_config_bits);
+++        qtest_add_data_func(user, machines[i], test_user_limit);
+++        qtest_add_data_func(sys, machines[i], test_system_limit);
+++    }
+++
+++    return g_test_run();
+++}
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
