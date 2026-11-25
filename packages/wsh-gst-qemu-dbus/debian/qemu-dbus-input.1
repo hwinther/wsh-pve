@@ -1,0 +1,91 @@
+.TH QEMU-DBUS-INPUT 1 "2026" "wsh-gst-qemu-dbus" "User Commands"
+.SH NAME
+qemu-dbus-input \- keyboard and mouse input for QEMU's D-Bus display
+.SH SYNOPSIS
+.B qemu-dbus-input
+(\fB\-\-address\fR \fIADDRESS\fR | \fB\-\-vmid\fR \fIVMID\fR)
+[\fB\-\-console\fR \fIN\fR]
+[\fB\-\-timeout\fR \fISECONDS\fR]
+[\fB\-\-quiet\fR]
+.SH DESCRIPTION
+.B qemu-dbus-input
+reads commands from standard input, one per line, and sends them to the keyboard and mouse of a
+console of a QEMU started with \fB\-display dbus\fR (the interfaces org.qemu.Display1.Keyboard and
+org.qemu.Display1.Mouse on /org/qemu/Display1/Console_\fIN\fR). It is the input path of a
+streaming server: the server turns its client's events into these lines.
+.PP
+Each command is sent as soon as it is read; QEMU handles them in order. Errors (a refused call,
+a malformed line) are printed as lines starting with \fBerror\fR and don't stop the program. When
+standard input ends, the keys still held down are released and the program exits once QEMU has
+answered every command.
+.SH COMMANDS
+.TP
+\fBkey\fR \fICODE\fR \fB1\fR|\fB0\fR
+Press (1) or release (0) a key, by its Linux input event code (linux/input-event-codes.h:
+KEY_ESC 1, KEY_A 30, KEY_LEFTSHIFT 42, KEY_UP 103 ...). Codes 1 to 83 and the usual extended keys
+(arrows, Home, End, Page Up/Down, Insert, Delete, right Ctrl and Alt, the Windows keys, keypad
+Enter and /, Pause, SysRq, F11, F12, the volume keys) are known; others are refused (use
+\fBqkey\fR).
+.TP
+\fBqkey\fR \fIQNUM\fR \fB1\fR|\fB0\fR
+The same by QEMU's key number: the XT (set 1) make code, extended keys as 0x80 | the code after
+the 0xe0 prefix.
+.TP
+\fBbtn\fR \fIBUTTON\fR \fB1\fR|\fB0\fR
+Press or release a mouse button: \fBleft\fR, \fBmiddle\fR, \fBright\fR, \fBwheel-up\fR,
+\fBwheel-down\fR, \fBside\fR, \fBextra\fR, or QEMU's number for it, 0 to 6.
+.TP
+\fBwheel\fR \fIN\fR
+N steps of the wheel (a press and a release of wheel-up each), down if N is negative.
+.TP
+\fBrel\fR \fIDX\fR \fIDY\fR
+Relative motion. With an absolute pointer in the guest the bridge moves its own pointer position
+(clamped to the console) and sends that.
+.TP
+\fBabs\fR \fIX\fR \fIY\fR [\fIW\fR \fIH\fR]
+Absolute position in the console's pixels, or scaled from an area of W x H (the client's window)
+to the console's size. With a relative mouse in the guest the bridge sends the difference from
+the previous \fBabs\fR position as relative motion; the first \fBabs\fR only sets that position.
+The guest's own pointer acceleration then applies, so its pointer may drift from the client's.
+.TP
+.B query
+Prints \fBmode absolute\fR|\fBrelative width\fR \fIW\fR \fBheight\fR \fIH\fR.
+.TP
+.B sync
+Prints \fBsync\fR \fIN\fR once QEMU has answered the N calls sent so far (to wait for the
+commands before it, or to time them).
+.PP
+Empty lines and lines starting with # are ignored.
+.SH MOUSE MODE
+QEMU says in the Mouse interface's IsAbsolute property whether the guest's pointer takes
+absolute positions (a USB or virtio tablet: PVE's default \fBtablet: 1\fR) or relative motion (a
+PS/2 mouse, the SPARCstation's Sun mouse). QEMU refuses absolute positions for a relative pointer
+and relative motion for an absolute one; the bridge converts as described above, so a client may
+send either. The bridge prints \fBmode absolute\fR or \fBmode relative\fR when it changes (the
+guest's driver for the tablet starts, for instance).
+.SH OPTIONS
+.TP
+.BR \-a ", " \-\-address " " \fIADDRESS\fR
+The D-Bus address of the VM's display bus.
+.TP
+.BR \-v ", " \-\-vmid " " \fIVMID\fR
+The PVE VM whose bus to use: \fIunix:path=/run/wsh-dbus-display/<vmid>.sock\fR, as the wsh-pve
+qemu-server starts it for a VM with \fBdisplay=dbus\fR.
+.TP
+.BR \-c ", " \-\-console " " \fIN\fR
+The console (default 0).
+.TP
+.BR \-t ", " \-\-timeout " " \fISECONDS\fR
+How long to wait for QEMU on the bus (default 10).
+.TP
+.BR \-q ", " \-\-quiet
+Print only errors and the answers to \fBquery\fR and \fBsync\fR; without it the bridge prints
+\fBready\fR, the console's path, its mouse mode and size once connected, and mode changes.
+.SH EXAMPLE
+.nf
+printf 'key 30 1\\nkey 30 0\\nabs 640 400\\nbtn left 1\\nbtn left 0\\nsync\\n' |
+  qemu-dbus-input --vmid 130
+.fi
+.SH SEE ALSO
+The GStreamer elements \fBqemudbussrc\fR and \fBqemudbusaudiosrc\fR (gst-inspect-1.0) in the same
+package; the wsh-pve display reference, "D-Bus display".

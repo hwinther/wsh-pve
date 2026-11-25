@@ -1,0 +1,1 @@
+option('package_version', type : 'string', value : '0', description : 'The version the plugin and the tool report')

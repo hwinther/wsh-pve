@@ -33,6 +33,8 @@ interface Profile {
   wizardBios?: string
   /** the most CPUs (sockets x cores) it takes */
   maxCpus: number
+  /** the most memory where the installed pve-manager takes more than 512 MB (none: `memory`) */
+  maxMemory?: number
 }
 
 const SS5_OPENBIOS: Profile = {
@@ -73,6 +75,7 @@ const PROFILES: Profile[] = [
     firmwarePick: 'Default (OpenBIOS)',
     machine: 'SS-10',
     maxCpus: 4,
+    maxMemory: 2048,
     memory: 512,
     name: 'ss10-openbios',
   },
@@ -82,6 +85,7 @@ const PROFILES: Profile[] = [
     firmwarePick: 'Default (OpenBIOS)',
     machine: 'SS-20',
     maxCpus: 4,
+    maxMemory: 2048,
     memory: 512,
     name: 'ss20-openbios',
   },
@@ -1390,6 +1394,8 @@ test.describe('web UI', () => {
   let uiHasSs600mp = false
   /** Whether the installed pve-manager hides EFI Disk and TPM State on sparc. */
   let uiHidesFwDisks = false
+  /** Whether the installed pve-manager takes more than 512 MB on SS-10/SS-20 with OpenBIOS. */
+  let uiHasBigMemory = false
 
   test.beforeAll(async () => {
     const js = '/usr/share/pve-manager/js/pvemanagerlib.js'
@@ -1398,7 +1404,13 @@ test.describe('web UI', () => {
     if (uiHasSs600mp) machinesOffered = [...machinesOffered, 'SS-600MP']
     if (uiHasLx) machinesOffered = [...machinesOffered, 'LX']
     uiHidesFwDisks = await pveManagerHidesSparcFwDisks()
+    uiHasBigMemory = (await pveExec(['grep', '-q', 'firmwareMaxMemory', js])).code === 0
   })
+
+  /** The most memory the wizard takes for the profile with the installed pve-manager. */
+  function wizardMaxMemory(p: Profile): number {
+    return uiHasBigMemory ? (p.maxMemory ?? p.memory) : p.memory
+  }
 
   test.beforeEach(async ({ page }) => {
     await login(page)
@@ -1437,10 +1449,10 @@ test.describe('web UI', () => {
       await expect(wizard.getByLabel(fieldLabel('Cores'))).toBeEnabled({ enabled: !oneCpu })
       await next(wizard)
 
-      // Memory: preset to and capped at the machine's maximum.
+      // Memory: preset to the profile's memory and capped at the most the machine and firmware take.
       const memory = wizard.getByLabel(fieldLabel('Memory (MiB)'))
       await expect(memory).toHaveValue(String(p.memory))
-      await memory.fill(String(p.memory * 2))
+      await memory.fill(String(wizardMaxMemory(p) * 2))
       await expect(wizard.getByRole('button', { name: 'Next' })).toBeDisabled()
       await memory.fill(String(p.memory))
       await next(wizard)

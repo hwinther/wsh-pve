@@ -568,6 +568,22 @@ wsh-qemu-rdp:
 		-e WSH_QEMU_RDP_VERSION -e WSH_QEMU_RDP_COMMIT -e WSH_QEMU_RDP_EPOCH -e JOBS \
 		wsh-qemu-rdp-build /src/packages/wsh-qemu-rdp/build.sh /out
 
+# The optional wsh-gst-qemu-dbus package (packages/wsh-gst-qemu-dbus): the GStreamer plugin qemudbus
+# (qemudbussrc, qemudbusaudiosrc: the picture and sound of a VM's D-Bus display) and the input
+# bridge qemu-dbus-input, for a streaming server on the node; our own code (C, meson), built in a
+# plain Debian 13 image into build/wsh-gst-qemu-dbus/ with lintian at the end. Its version comes
+# from git (packages/wsh-gst-qemu-dbus/version.sh), so it needs the full history and no changelog.
+# packages/wsh-gst-qemu-dbus/test.sh tests the result.
+.PHONY: wsh-gst-qemu-dbus
+wsh-gst-qemu-dbus:
+	$(Q)eval "$$(packages/wsh-gst-qemu-dbus/version.sh | sed 's/^/export /')"; \
+	$(ECHO) "INFO: building wsh-gst-qemu-dbus $$WSH_GST_QEMU_DBUS_VERSION"; \
+	$(DOCKER) build -f packages/wsh-gst-qemu-dbus/build.Dockerfile -t wsh-gst-qemu-dbus-build packages/wsh-gst-qemu-dbus && \
+	mkdir -p build/wsh-gst-qemu-dbus && \
+	$(DOCKER) run --rm $(DOCKER_ARG) -v "$(CURRENT_DIR):/src:ro" -v "$(CURRENT_DIR)/build/wsh-gst-qemu-dbus:/out" \
+		-e WSH_GST_QEMU_DBUS_VERSION -e WSH_GST_QEMU_DBUS_COMMIT -e WSH_GST_QEMU_DBUS_EPOCH \
+		wsh-gst-qemu-dbus-build /src/packages/wsh-gst-qemu-dbus/build.sh /out
+
 .PHONY: repo-update
 repo-update:
 	$(Q)if [ $$(id -u) -eq 0 ]; then \
@@ -628,6 +644,7 @@ help:
 	@echo "  wsh-lab:                 Build the optional wsh-lab package (the sparc lab) into build/wsh-lab"
 	@echo "  wsh-openglide:           Build the optional wsh-openglide package (Glide host libraries for 3dfx) into build/wsh-openglide"
 	@echo "  wsh-qemu-rdp:            Build the optional wsh-qemu-rdp package (RDP server for the D-Bus display) into build/wsh-qemu-rdp"
+	@echo "  wsh-gst-qemu-dbus:       Build the optional wsh-gst-qemu-dbus package (GStreamer sources and input bridge for the D-Bus display) into build/wsh-gst-qemu-dbus"
 	@echo ""
 	@echo "Variables:"
 	@echo "  VERBOSE:                 Set to 1 or 2 to enable verbose output"
