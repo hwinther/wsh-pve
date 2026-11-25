@@ -125,6 +125,8 @@ maintains the patches.
 | `0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun` | qtest `sun4m-escc-break-test` for 0141 (breaks on ttya and ttyb of an SS-5 through null chardevs): `start-and-end` (the start latched past the character time until the guest resets it, then the end with the NUL, receive named first), `end-after-char-time`, `polled` (no interrupt enabled), `channel-b` (its vector), `channel-reset`; all five fail without 0141 | ours | |
 | `0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t` | 0070's Linux helper checked for a pending interrupt and then set `cs->halted` without the BQL. A tick or stick interrupt that fired between the two (`tick_irq()` runs in the main loop with the BQL) set `SOFTINT` and `halted = 0` before the helper set it to 1; at `%pil` 14 it is masked, raises no `CPU_INTERRUPT_HARD`, so the vCPU thread slept through it, and Linux, not having taken the tick, armed no next one: asleep until the next interrupt vector, or for good on an idle guest. The helper now checks again and halts under the BQL. The other idle helpers (0042, 0071, 0110, 0114) halt at `%pil` 0, where the tick raises `CPU_INTERRUPT_HARD`, which the vCPU thread checks under the BQL before it sleeps; they keep the window without the effect. Found by reading, never seen on a guest ("sparc64 (sun4u)", "Idle") | ours | not in QEMU |
 | `0140-tests-qtest-test-a-tick-between-the-idle-check-and-t` | `sun4u-idle-test` case `tick-race` for every idle loop (80 cases in all): QEMU writes the `sparc64_idle` trace, which comes between the check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the tick fires; let go, it must take the tick and go on. Without 0139 the three Linux layouts fail every time (no round and no tick afterwards), the `%pil` 0 loops pass either way. Skipped without the `log` trace backend and on Windows. The test now runs about 70 s: 240 s in `slow_qtests` | ours | not in QEMU |
+| `0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB` | Solaris 2.5.1-9 panicked at boot on SS-10/SS-20 with more than 512 MB (2.6: `BAD TRAP: type=9 ... kernel read fault at addr=0x0` in `kvm_init`, a reboot loop). The kernel takes the memory controller's type from bits 31:28 of the ECC memory enable register; for the SS-10's EMC (1) and the SS-20's SMC (2) it counts only page frames below 512 MB as memory (eight SIMM slots of 64 MB), and its first page table above that had no page structure. With more than 512 MB and OpenBIOS (a firmware file named `openbios*`) the two machines now present the SS-600MP's MCC (0), which has no such window; with 512 MB and less, and under the Sun PROMs (with the MCC the SS-20 PROM stops after its CPU probe), nothing changes ("More than 512 MB on SS-10 and SS-20") | ours | not in QEMU (the real machines take 512 MB) |
+| `0144-tests-qtest-test-the-memory-controller-version-with-` | qtest `sun4m-ecc-test` for 0143: the MER reads implementation 1 (SS-10) and 2 (SS-20) with 256 and 512 MB, 0 with 576 and 2048 MB and on the SS-600MP; 2 with 1024 MB under another firmware; with 1024 MB a write keeps only the MCC's bits | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -362,6 +364,7 @@ package's and the cg3 ROM with QEMU's (850 bytes; ours is 863).
 | `0027-sparc32-leave-out-the-apc-node-on-the-lx-and-the-voyager` | Every machine ID from 32 to 63 got the SS-5's APC node (`power-management` at SBus slot 4 offset `0x0a000000`, `0x6a000000`). QEMU has no APC there on `-M LX` (a real LX has none) or `-M Voyager` (its power controller is at `0x71300000`), and Linux's `apc` driver makes `apc_swift_idle()` its idle routine: the first idle took a data access error on the APC register, `do_sparc_fault()` followed the NULL from `search_exception_tables()`, and the nested faults ran the kernel stack down through the kernel text until QEMU stopped in the overwritten trap entry (`Trap 0x07` in `tsetup_patch2` on the LX, `Trap 0x02` on the Voyager; `e2e/wisp/README.md`, "The LX and the Voyager"). The node is now made only on the SS-5, SS-4, SPARCClassic and SPARCbook | not reported |
 | `0028-sparc32-name-the-ss600mp-dma-and-lebuffer-nodes-as-sunos-4.1.2-knows-them` | SunOS 4.1.2, the first release for the SS-600MP (machine ID 66), finds the on-board SCSI and Ethernet by node name: the ESP under a DMA controller named `dma` (as on the SPARCstation 1 and 2), the lance under an `lebuffer`. OpenBIOS gave the machine the SS-10's `espdma` and `ledma`, and the kernel attached no disk and no network interface. On machine ID 66 the DMA node is `dma` (`ob_esp_init()` takes the DMA node's path, so the esp and sd nodes and the disk and cdrom aliases are under `/iommu/sbus/dma/esp`) and the lance's parent `lebuffer`, `reg` slot f `0x40000` size `0x20000` (pve-qemu 0064), without the ledma's register setup ("Older Sun releases on sun4m") | not reported |
 | `0029-sparc32-leave-out-the-cs4231-node-where-qemu-has-no-codec` | Every machine ID from 32 to 63 got the SS-5's `SUNW,CS4231` node (SBus slot 4 offset `0x0c000000`, `0x6c000000`). QEMU has the codec only on the SS-5 and the SS-4, and at no other address on the Voyager, the LX, the SPARCClassic or the SPARCbook (the LX's audio is the DBRI in slot 2, `wsh/0056`). The stored `netbsd93-sparc` disk on `-M LX` panicked in autoconfiguration: `audiocs0 at sbus0 slot 4 offset 0xc000000`, then `trap 0x29` (data fault) at `0x6c000000`. 0027's APC helper is now a table of what QEMU has in slot 4 per machine ID: codec and APC on the SS-5 (32) and SS-4 (35), the APC only on the SPARCClassic (36) and SPARCbook (37), neither on the Voyager (33) or the LX (34) nor on IDs QEMU doesn't have. The disk then boots to `login:` on the LX ("SPARCstation LX with its own PROM") | not reported |
+| `0040-sparc32-take-the-srmmu-tables-from-chunks-of-a-larger-heap` | Every 256-byte SRMMU table came from `ofmem_posix_memalign()`, which rounds a block with its descriptor up to the alignment: 512 bytes a table, about 200K of the 256K heap with 512 MB. With 1 GB (and `wsh/0143`) the heap ran out while Solaris started (`out of malloc memory (28)!`, then `BAD TRAP` in the firmware). Tables now come from chunks of 16 (272 bytes each) and the heap is 288K: with 2048 MB Solaris 2.6 has 232K in use when the kernel starts and Solaris 9 243K after booting. The I/O mappings and the Forth heap (0020) move up 32K and still end 32K below 0xfff00000; the memory lists are unchanged ("More than 512 MB on SS-10 and SS-20") | not reported |
 
 Without 0002 the built `QEMU,cgthree.bin` is byte-identical to the one QEMU 11.1.3 ships; with it,
 to LEMU's.
@@ -1021,8 +1024,8 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-10 | `ss10_v2.25_rom` | SuperSparc-40/50/60 | 64-512 | `Probing Memory Bank #4 Data Access Error`, `ok` |
 | SS-20 | `ss10_v2.25_rom` | SuperSparc-50 | 256 | installer |
 | SS-20 | OpenBIOS | default | 256, 512 | installer, also `-smp 2` and `-smp 4`; scripted install boots to login |
-| SS-20 | OpenBIOS | default | 640, 768 | kernel: `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, reboot loop (SS-10: same at 1024) |
-| SS-20 | OpenBIOS | default | 1024 | `out of malloc memory (1008)!`, then `kernel write fault at addr=0x0`, `panic: Data fault` |
+| SS-20 | OpenBIOS | default | 640, 768 | kernel: `BAD TRAP: type=9 ... kernel read fault at addr=0x0`, `panic: Data fault`, reboot loop (SS-10: same at 1024). Fixed by pve-qemu `wsh/0143` ("More than 512 MB on SS-10 and SS-20") |
+| SS-20 | OpenBIOS | default | 1024 | `out of malloc memory (1008)!`, then `kernel write fault at addr=0x0`, `panic: Data fault`. Fixed by `wsh/0143` and OpenBIOS 0040; boots with up to 2048 MB |
 | SS-20 | `ss20_v2.25_rom` | default (SuperSparc-II), -51, -61 | 256 | `Cpu #0 Data Access Error`, `ok`; `banner`: `Data Access Exception`; `boot cdrom`: `qemu: fatal: Trap 0x29 (Data Access Error) while interrupts disabled` |
 | SS-20 | `ss20_v2.25_rom` | SuperSparc-40/50/60 | 256, 512, 1024 | installer; scripted install (-50) boots to login. The PROM probes 8 banks of 64 MB, so 512 MB at most (1024 runs as 512) |
 | SS-20 | `ross225r.bin` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
@@ -1245,7 +1248,7 @@ switches (fork, exec, pipe), on both machines.
 
 - With 0017, **SS-5, SS-10 and SS-20 run Solaris equally fast** (one CPU, OpenBIOS or the Sun
   PROMs). Pick the machine by what the guest needs: SS-5 for existing SS-5 disks, Solaris 2.4 (Sun
-  PROM only) and SunOS 4.1.4; SS-20 (or SS-10) for 512 MB. fork/exec are still ~1.2-1.3x slower on
+  PROM only) and SunOS 4.1.4; SS-20 (or SS-10) for more than 256 MB. fork/exec are still ~1.2-1.3x slower on
   SS-5 (not investigated further). Without 0017 (packages up to 11.1.3-2+wsh7), SS-20 runs
   call-heavy user code 4-10x faster than SS-5.
 - An SS-20 needs its own install on that machine type (the SS-5 disks don't boot there). 2.5.1, 7,
@@ -1254,8 +1257,9 @@ switches (fork, exec, pipe), on both machines.
 - More than one CPU for Solaris only with 0019 (before, it hangs), on SS-10/SS-20 with OpenBIOS, and
   only for parallel work: one job runs slower and every vCPU takes a host core even when idle ("SMP").
   NetBSD's MP kernel works with 2 CPUs (not benchmarked).
-- RAM: 256 MB on SS-5 (QEMU's limit), at most 512 MB on SS-10/SS-20; 512 shows no speed benefit over
-  256 in this benchmark.
+- RAM: 256 MB on SS-5 (QEMU's limit), up to 2048 MB on SS-10/SS-20 with OpenBIOS since `wsh/0143` and
+  OpenBIOS 0040 (512 MB before; "More than 512 MB on SS-10 and SS-20"); 512 shows no speed benefit
+  over 256 in this benchmark.
 - The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60);
   qemu-server passes -50 for `ss20_v2.25_rom` on SS-20. They bring no speed benefit over OpenBIOS. The
   SS-10 PROM doesn't run on the SS-10 machine.
@@ -1525,11 +1529,100 @@ Making it work would mean changing QEMU's sun4m: under a Sun PROM start all CPUs
 MID register and the arbiter's stop/start semantics. A possible later item, not a small one; no code
 from that repository is in this one.
 
-**512 MB on SS-10/SS-20, an unverified lead.** The same README says their OpenBIOS build splits the
-memory into several `/memory` entries because older ones list all memory in one entry and Solaris 8
-panics early. Solaris 2.6 panicking at boot with more than 512 MB under OpenBIOS ("SS-10 and SS-20")
-may be the same thing; not tried.
+**512 MB on SS-10/SS-20, a lead that didn't hold.** The same README says their OpenBIOS build splits
+the memory into several `/memory` entries because older ones list all memory in one entry and
+Solaris 8 panics early. Ours already lists it in 64 MB entries; the panic with more than 512 MB was
+the memory controller Solaris reads, and then OpenBIOS's heap ("More than 512 MB on SS-10 and
+SS-20").
 
+### More than 512 MB on SS-10 and SS-20 (pve-qemu `wsh/0143`-`0144`, OpenBIOS 0040, 2026-11-25)
+
+Before: Solaris 2.6 on SS-20 or SS-10 with OpenBIOS and 640 or 768 MB panicked in a reboot loop;
+with 1024 MB OpenBIOS ran out of heap first ("SS-10 and SS-20"). Two causes, one behind the other.
+
+**The memory controller.** With 768 MB, 2.6 stops in `startup()` → `kvm_init()` → `as_setprot()` on
+the kernel heap (`Sysbase`, 0xf5900000) → `hat_unload()` → `srmmu_unload_tree()`, which reads the
+L1 entry of that range, a page table at physical 0x2e159300, and looks up the table page's page
+structure: NULL, `kernel read fault at addr=0x0` (traced with QEMU's gdbstub against the kernel's
+symbols). The page is inside the kernel's first memseg, so the memory lists were fine;
+`pf_is_memory()` said no. On sun4m `impl_bustype()` takes a page frame in space 0 for memory only
+below 512 MB (pfn < 0x20000) when `mc_type` is 1 or 2, and then looks its bank up among eight SIMM
+slots of 64 MB (PA bits 28:26). `mc_type` is bits 31:28 of the ECC memory controller's memory
+enable register: QEMU's SS-10 has the EMC (1), the SS-20 the SMC (2), the SS-600MP the MCC (0),
+which has no such window. The real SS-10 and SS-20 take 512 MB in eight slots, so this is Solaris
+knowing the hardware, not a bug. Setting `mc_type` to 0 from gdb right after the kernel read it let
+the unchanged 2.6 boot to `login:` with 768 MB on the packaged QEMU and OpenBIOS. The `/memory`
+layout plays no part: OpenBIOS already lists RAM in 64 MB entries (`ob_init_mmu()`, the machine's
+SIMM size), which the lead under "SMP" supposed was missing.
+
+`wsh/0143`: with more than 512 MB and OpenBIOS the SS-10 and SS-20 present the MCC (MER
+implementation 0, the MCC's register mask and diagnostic block, as on the SS-600MP); with 512 MB and
+less nothing changes. Besides `impl_bustype()`, Solaris 2.6 reads `mc_type` only in memory error
+handling (`sun4m_l15_async_fault`, `aflt_add_handler`) and for the SX/VSIMM slot lookup (`nvslot`),
+neither of which QEMU raises or has. The Sun PROMs know only the machine's own controller: with the
+MCC the SS-20 PROM stopped after its CPU probe (`Cpu #3 Nothing there`, no output after it) with
+1024 MB, so the switch applies only when the firmware's file name starts with `openbios`; with the
+SMC the PROM probes its eight banks and gives Solaris 512 MB, as before. `wsh/0144` is the qtest.
+
+**OpenBIOS's heap.** With 1024 MB and the MCC, OpenBIOS printed `out of malloc memory (28)!` while
+the kernel started, and the boot program's next mapping wrote through the error code `find_pte()`
+returned instead of a page table (`BAD TRAP ... kernel write fault at addr=0x0`, PC in the
+firmware). The sparc32 heap was 256K in the firmware's BSS; with 512 MB 247K of it were in use when
+the kernel reached `kvm_init` (`next_malloc` read through gdb), about 200K of that SRMMU tables: 256
+bytes each, 512 with the allocator's descriptor and its rounding to the alignment. Their number
+grows with the memory the boot program maps for the kernel's page structures (+35K per GB). The
+heap can't grow much: openbios 0020 keeps the 128K Forth heap in the 192K between the I/O mappings
+and 0xfff00000, the top of the range a Sun PROM keeps to (Solaris 2.3/2.4 and Linux expect the PROM
+there). OpenBIOS 0040 takes the tables 16 at a time (272 bytes each) and makes the heap 288K; the I/O
+mappings and the Forth heap move up 32K and still end 32K below 0xfff00000, and the memory lists the
+client sees don't change. In use with 2048 MB after the boot to `login:`: Solaris 2.5.1 231K, 2.6
+232K, 7 234K, 9 243K (2.6 with 512 MB: 201K).
+
+**Results** (lab, `solaris-boot-disk.py` and the other `*-boot-disk.py` scenarios on copies of the
+stored install disks, OpenBIOS with 0040 unless stated; Solaris passed = root login, `prtconf`
+reports the memory, `psrinfo` lists every CPU on-line):
+
+| Guest | Machine | RAM | CPUs | Result |
+| --- | --- | --- | --- | --- |
+| Solaris 2.6 | SS-20 | 768 | 1 | passed with `wsh/0143` and the packaged OpenBIOS (no 0040) |
+| Solaris 2.6 | SS-20 | 1000 | 1 | passed, `Memory size: 960 Megabytes` (256K) |
+| Solaris 2.6 | SS-20 | 1024 | 1 | passed (256K) |
+| Solaris 2.6 | SS-20 | 2048 | 1, 2, 4 | passed (256K); 4 CPUs again with 288K; 2 CPUs again final |
+| Solaris 2.6 | SS-20 | 2048 | 2 | `smp-soak.py SOAK=600` with the bench disk: passed, 48 rounds, no `cksum` mismatch, both CPUs 100% busy, Dhrystone speed-up 2.01 (288K) |
+| Solaris 2.6 | SS-10 | 1024 | 1 | passed (final) |
+| Solaris 2.6 | SS-10 | 2048 | 1, 2 | passed (256K); 2 CPUs again with 288K |
+| Solaris 7 | SS-20, SS-10 | 2048 | 1 | passed (256K) |
+| Solaris 8 | SS-20 | 2048 | 1 | passed (256K and 288K) |
+| Solaris 9 | SS-20 | 2048 | 1 | passed (256K and 288K) |
+| Solaris 2.5.1 | SS-20 | 2048 | 1 | passed (256K) |
+| NetBSD 11.1 | SS-20 | 2048 | 1 | passed, `hw.physmem` 2130575360 (288K) |
+| Solaris 2.6, SS-20 PROM | SS-20 | 1024 | 1 | with the MCC: the PROM stops after its CPU probe; final (SMC): passed, `Memory size: 512 Megabytes` as before |
+| Solaris 2.6, SS-20 PROM | SS-20 | 512 | 1 | passed (288K run and final) |
+| Solaris 2.6 | SS-20, SS-10 | 512 | 1 (SS-20 also 2) | passed (256K); SS-20 again with 288K |
+| Solaris 2.6 | SS-5 | 256 | 1 | passed (256K and 288K) |
+| Solaris 2.4 | SS-20, SS-5 | 512, 256 | 1 | passed (288K: the Forth heap's place matters to 2.3/2.4, openbios 0020) |
+| SunOS 4.1.3_U1B | SS-20 | 512 | 1 | passed, `mem = 507772K` as before (288K) |
+| SunOS 4.1.4 | SS-5 | 256 | 1 | passed (288K) |
+| NetBSD 11.1 | SS-20, SS-5 | 512, 256 | 1 | passed (288K) |
+| Debian 4.0 (Linux 2.6.18) | SS-20 | 512 | 1 | passed, `MemTotal: 492040 kB` (288K) |
+
+`wsh/0143` came to its final form (the OpenBIOS condition) after most of these runs; the runs
+marked "final" used it, the others the same QEMU without the condition, which differs only under a
+Sun PROM. The rows marked "256K" ran OpenBIOS 0040 before its heap grew to 288K (the same tables in
+chunks). qtests: `sun4m-ecc-test` 5/5, `sun4m-ss600mp-test` 4/4. qemu-server's cfg2cmd tests for
+the new limits pass (`floppy.conf` and `q35-floppy.conf` fail in the build image without the
+patched pve-storage, unrelated).
+
+Not verified: sizes above 2048 MB (OpenBIOS stops before its banner with 3072 MB, `Unhandled
+Exception 0x0000001f`, not looked into), installs with more than 512 MB (only the stored disks
+were booted), the PVE path (`qm start`, the wizard) with the new limits, and Linux and SunOS 4
+with more than 512 MB. Sizes that aren't a multiple of 64 MB lose the rest, as before:
+OpenBIOS lists memory in banks of 64 MB (1000 MB gives Solaris 960).
+
+The limits in qemu-server and the UI: SS-10 and SS-20 with OpenBIOS take up to 2048 MB, the most
+verified (the wizard still presets 512); the SS-20 PROM stays at 512 (a firmware-level
+`max-memory` in `$SPARC32_PROFILES`, `firmwareMaxMemory` in pve-manager), since it gives Solaris
+no more.
 ### Benchmarks
 
 Recognised period benchmarks from the lab's bench disk (`e2e/sparc/README.md`, "The bench disk";
@@ -4998,8 +5091,8 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 | Machine | Firmware (`bios`) | `-cpu` | RAM | CPUs |
 | --- | --- | --- | --- | --- |
 | SS-5 (default) | `openbios-sparc32` (default), `ss5.bin` | none (machine default) | 256 MB | 1 |
-| SS-10 | `openbios-sparc32` | none | 512 MB | 1-4 |
-| SS-20 | `openbios-sparc32` | none | 512 MB | 1-4 |
+| SS-10 | `openbios-sparc32` | none | 2048 MB | 1-4 |
+| SS-20 | `openbios-sparc32` | none | 2048 MB | 1-4 |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
 | LX | `lx.bin` (only; not in any package, see "SPARCstation LX with its own PROM") | none | 128 MB | 1 |
 | SS-600MP | `openbios-sparc32` (only) | none (the machine's SuperSPARC) | 1024 MB | 1 |
@@ -5021,6 +5114,11 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   `audio0` (no sound chip), and `nvram0` as on the other OpenBIOS machines (accepted, on the M48T08).
 - `ss10_v2.25_rom` stays readable in existing configs but matches no profile (it doesn't run on
   QEMU's SS-10).
+- RAM on SS-10/SS-20 with OpenBIOS: more than 512 MB needs pve-qemu-kvm with `wsh/0143` and OpenBIOS
+  0040 (with older packages Solaris panics at boot); the wizard presets 512 (`defaultMemory`). The
+  SS-20 PROM stays at 512 MB, a firmware-level `max-memory` in `$SPARC32_PROFILES` (`firmwareMaxMemory`
+  in pve-manager), as it probes eight banks of 64 MB; its refusal says so ("More than 512 MB on SS-10
+  and SS-20").
 - CPUs: sockets x cores, one by default. 2-4 only on SS-10/SS-20 with OpenBIOS and only with
   `pve-qemu-kvm` 11.1.3-2+wsh10 or later (patch 0019; Solaris hangs without it); details, cost and
   why the Sun PROM stays at one under "SMP".

@@ -24,7 +24,7 @@ sparc64 has one CPU and gets no `-cpu` argument.
 
 SPARC emulation is sensitive to the guest operating system:
 
-- sparc32 has **one CPU**, up to 4 on SS-10/SS-20 with OpenBIOS (each one a busy host core), and at most **256 MB of RAM** on SS-5, **512 MB** on SS-10/SS-20, **1024 MB** on the SS-600MP (one CPU only: its second CPU needs a Ross RT625 module, which QEMU doesn't have).
+- sparc32 has **one CPU**, up to 4 on SS-10/SS-20 with OpenBIOS (each one a busy host core), and at most **256 MB of RAM** on SS-5, **2048 MB** on SS-10/SS-20 (512 MB with the Sun PROM), **1024 MB** on the SS-600MP (one CPU only: its second CPU needs a Ross RT625 module, which QEMU doesn't have).
 - Installation can be slow and host CPU usage may sit near 100% for the emulated core — this is expected. Pinning the VM to a low-frequency core, or keeping these guests on a test host, avoids reducing performance for other guests.
 
 ## Further reading

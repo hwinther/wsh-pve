@@ -1,0 +1,100 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc32: take the SRMMU tables from chunks of a larger heap
+
+OpenBIOS's sparc32 heap is 256K in its BSS. The second and third level
+SRMMU tables are 256 bytes each, aligned to their size, and every one
+came from ofmem_posix_memalign(), which puts an 8-byte descriptor in
+front of a block and rounds the block up to the alignment: 512 bytes a
+table. Most of the heap went to tables (about 200K of the 247K in use
+when Solaris 2.6 boots with 512 MB), and their number grows with the
+memory the Solaris boot program maps for the kernel's page structures.
+With 1 GB on SS-20 (QEMU presenting a memory controller Solaris takes
+1 GB from) the heap ran out while the kernel started, find_pte() got
+no table and OpenBIOS wrote through a bad pointer: "out of malloc
+memory (28)!", then "BAD TRAP: type=9 ... kernel write fault at
+addr=0x0" in the firmware.
+
+Take the tables from chunks of 16 (4352 bytes, 272 a table); they are
+never freed, as before. With 512 MB Solaris 2.6 then has 201K of the
+heap in use when the kernel starts, with 2048 MB 232K, and Solaris 9
+243K after booting with 2048 MB. Make the heap 288K for room above
+that. The firmware's BSS grows by 32K: the I/O mappings and the Forth
+heap above them move up by as much and still end 32K below 0xfff00000,
+inside the range a Sun PROM keeps to (see the patch that keeps the
+Forth heap there). The memory lists the client sees are unchanged.
+---
+ arch/sparc32/ofmem_sparc32.c | 40 +++++++++++++++++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/arch/sparc32/ofmem_sparc32.c b/arch/sparc32/ofmem_sparc32.c
+index 9ac7fe0..be33408 100644
+--- a/arch/sparc32/ofmem_sparc32.c
++++ b/arch/sparc32/ofmem_sparc32.c
+@@ -21,7 +21,7 @@
+ 
+ #define OF_MALLOC_BASE		((char*)OFMEM + ALIGN_SIZE(sizeof(ofmem_t), 8))
+ 
+-#define MEMSIZE (256 * 1024)
++#define MEMSIZE (288 * 1024)
+ static union {
+ 	char memory[MEMSIZE];
+ 	ofmem_t ofmem;
+@@ -173,6 +173,38 @@ void ofmem_arch_map_pages(phys_addr_t phys, ucell virt, ucell size, ucell mode)
+ 	}
+ }
+ 
++/*
++ * The SRMMU's second and third level tables are 256 bytes each, aligned to
++ * their size. ofmem_posix_memalign() puts its descriptor in front of a block
++ * and rounds the block up to the alignment, so a table on its own takes 512
++ * bytes of the heap. Take them from chunks of 16 (4352 bytes). They are
++ * never freed.
++ */
++#define SRMMU_TABLE_SIZE	256
++#define SRMMU_TABLES_PER_CHUNK	16
++
++static char *srmmu_table_chunk;
++static int srmmu_tables_left;
++
++static int srmmu_alloc_table(void **p)
++{
++    int ret;
++
++    if (srmmu_tables_left == 0) {
++        ret = ofmem_posix_memalign((void **)&srmmu_table_chunk,
++                                   SRMMU_TABLE_SIZE,
++                                   SRMMU_TABLE_SIZE * SRMMU_TABLES_PER_CHUNK);
++        if (ret != 0)
++            return ret;
++        srmmu_tables_left = SRMMU_TABLES_PER_CHUNK;
++    }
++
++    *p = srmmu_table_chunk;
++    srmmu_table_chunk += SRMMU_TABLE_SIZE;
++    srmmu_tables_left--;
++    return 0;
++}
++
+ /* Architecture-specific OFMEM helpers */
+ unsigned long
+ find_pte(unsigned long va, int alloc)
+@@ -185,8 +217,7 @@ find_pte(unsigned long va, int alloc)
+     pte = l1[(va >> SRMMU_PGDIR_SHIFT) & (SRMMU_PTRS_PER_PGD - 1)];
+     if ((pte & SRMMU_ET_MASK) == SRMMU_ET_INVALID) {
+         if (alloc) {
+-            ret = ofmem_posix_memalign(&p, SRMMU_PTRS_PER_PMD * sizeof(int),
+-                                 SRMMU_PTRS_PER_PMD * sizeof(int));
++            ret = srmmu_alloc_table(&p);
+             if (ret != 0)
+                 return ret;
+             pte = SRMMU_ET_PTD | ((va2pa((unsigned long)p)) >> 4);
+@@ -202,8 +233,7 @@ find_pte(unsigned long va, int alloc)
+     pte = *(uint32_t *)pa2va(pa);
+     if ((pte & SRMMU_ET_MASK) == SRMMU_ET_INVALID) {
+         if (alloc) {
+-            ret = ofmem_posix_memalign(&p, SRMMU_PTRS_PER_PTE * sizeof(void *),
+-                                 SRMMU_PTRS_PER_PTE * sizeof(void *));
++            ret = srmmu_alloc_table(&p);
+             if (ret != 0)
+                 return ret;
+             pte = SRMMU_ET_PTD | ((va2pa((unsigned int)p)) >> 4);

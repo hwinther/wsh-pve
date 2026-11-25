@@ -39,12 +39,13 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
 
 Last compared on 2026-11-25, by the wsh-pve side: this repository's `main` at `9051509`, LEMU's
 `master` at `af26c72531` and the branches above. Every patch here has a row now. The pve-qemu
-series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0138`; the numbers in between are not
+series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0144`; the numbers in between are not
 used (`wsh/0073` comes before `wsh/0059` in `debian/patches/series`). The code is the same for
 `wsh/0001`-`0050`, `0053`-`0072`, `0110`-`0129` and `0133`-`0138` (from `wsh/0040` on only on the
 local `feat/sparc-fixes-2`; `wsh/0030` waits for `feat/openbios-fixes`), and for OpenBIOS 0001-0018;
 the differences in `wsh/0033`, `0038`, `0053` and `0062` are the deliberate ones in their rows.
-`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052` and OpenBIOS 0019-0039. So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
+`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0144` and OpenBIOS 0019-0040 (`0139`-`0144` and OpenBIOS 0040
+added after that comparison, not checked against LEMU yet). So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
 by OpenBIOS 0026, is still open in LEMU. `wsh/0130`-`0132` are for PVE only.
 
 Whether a patch that LEMU doesn't have would apply: the pve-qemu patches were applied in order with
@@ -63,7 +64,7 @@ the one patch LEMU keeps elsewhere, so they go on top of its 0001-0018 as they g
   - *pair only*: a LEMU commit we carry, so there is nothing to compare;
   - *not forwarded*: kept here only;
   - *not in LEMU*: on no LEMU branch; then whether it would apply to LEMU: *applies*, or *needs a
-    port* and why;
+    port* and why, or *not checked yet*;
   - *not relevant to LEMU*: for PVE only, with the reason.
 
 **Changed in review** (tenox7/lemu#1):
@@ -180,6 +181,12 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset | ours | tests/qtest: test the sunhme's receiver after a reset on sun4u | `94d43a43bf` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue | ours | hw/pci-host/sabre: drop a slot's request when the guest disables the slot | `c1064c7179` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa | ours | tests/qtest: test disabling a pci interrupt on the sabre | `74e9c40d0b` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
+| wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t | built on LEMU | - | none | none | not in LEMU: not checked yet |
+| wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t | built on LEMU | - | none | none | not in LEMU: not checked yet |
+| wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s | built on LEMU | - | none | none | not in LEMU: not checked yet |
+| wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun | built on LEMU | - | none | none | not in LEMU: not checked yet |
+| wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0144-tests-qtest-test-the-memory-controller-version-with- | ours | - | none | none | not in LEMU: not checked yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|
@@ -222,3 +229,4 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | openbios/0037-sparc64-give-openprom-the-aligned-allocator-property.patch | ours | - | none | none | not in LEMU: applies on feat/openbios-fixes (same OpenBIOS base) |
 | openbios/0038-sparc64-leave-the-lock-bit-out-of-the-translations-property.patch | ours | - | none | none | not in LEMU: applies on feat/openbios-fixes (same OpenBIOS base) |
 | openbios/0039-sparc64-name-the-root-node-sun-ultra-5-10.patch | ours | - | none | none | not in LEMU: applies on feat/openbios-fixes (same OpenBIOS base) |
+| openbios/0040-sparc32-take-the-srmmu-tables-from-chunks-of-a-larger-heap.patch | ours | - | none | none | not in LEMU: not checked yet |
