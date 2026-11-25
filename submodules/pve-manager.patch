@@ -11,10 +11,10 @@ index 6c8b82e1..bf306414 100644
  	install -m 0644 spice-example-sh $(DOCDIR)/examples/spice-example-sh
  	set -e && for i in $(SUBDIRS); do $(MAKE) -C $$i $@; done
 diff --git a/www/css/ext6-pve.css b/www/css/ext6-pve.css
-index b1e0b4f8..4b93f5c6 100644
+index 91415c46..f38a9a3f 100644
 --- a/www/css/ext6-pve.css
 +++ b/www/css/ext6-pve.css
-@@ -708,3 +708,121 @@ table.osds td:first-of-type {
+@@ -727,3 +727,121 @@ table.osds td:first-of-type {
  .pmx-column-wrapped > div {
      white-space: pre-wrap;
  }
@@ -137,10 +137,10 @@ index b1e0b4f8..4b93f5c6 100644
 +
 +.fa-object-group           { color: #56bbe8 !important; }
 diff --git a/www/manager6/Makefile b/www/manager6/Makefile
-index e8e2bd0b..4af94b09 100644
+index cdf222a2..b570eacf 100644
 --- a/www/manager6/Makefile
 +++ b/www/manager6/Makefile
-@@ -97,6 +97,7 @@ JSSRC= 							\
+@@ -98,6 +98,7 @@ JSSRC= 							\
  	form/MultiFileButton.js				\
  	form/TagFieldSet.js				\
  	form/IsoSelector.js				\
@@ -148,7 +148,7 @@ index e8e2bd0b..4af94b09 100644
  	grid/BackupView.js				\
  	grid/FirewallAliases.js				\
  	grid/FirewallOptions.js				\
-@@ -141,6 +142,7 @@ JSSRC= 							\
+@@ -145,6 +146,7 @@ JSSRC= 							\
  	window/StartupEdit.js				\
  	window/DownloadUrlToStorage.js			\
  	window/UploadToStorage.js 			\
@@ -156,7 +156,7 @@ index e8e2bd0b..4af94b09 100644
  	window/ScheduleSimulator.js			\
  	window/Wizard.js				\
  	window/GuestDiskReassign.js			\
-@@ -257,6 +259,7 @@ JSSRC= 							\
+@@ -266,6 +268,7 @@ JSSRC= 							\
  	qemu/AudioEdit.js				\
  	qemu/BootOrderEdit.js				\
  	qemu/CDEdit.js					\
@@ -164,7 +164,7 @@ index e8e2bd0b..4af94b09 100644
  	qemu/CIDriveEdit.js				\
  	qemu/CloudInit.js				\
  	qemu/CmdMenu.js					\
-@@ -276,12 +279,14 @@ JSSRC= 							\
+@@ -285,12 +288,14 @@ JSSRC= 							\
  	qemu/Monitor.js					\
  	qemu/MultiHDEdit.js				\
  	qemu/NetworkEdit.js				\
@@ -193,7 +193,7 @@ index 36df8e9d..ab605518 100644
                  ) {
                      res.model = match_res[1].toLowerCase();
 diff --git a/www/manager6/Utils.js b/www/manager6/Utils.js
-index c616ab9b..3b064560 100644
+index fc3667f5..9979962a 100644
 --- a/www/manager6/Utils.js
 +++ b/www/manager6/Utils.js
 @@ -145,7 +145,7 @@ Ext.define('PVE.Utils', {
@@ -279,8 +279,8 @@ index c616ab9b..3b064560 100644
              rootdir: gettext('Container'),
              snippets: gettext('Snippets'),
              import: gettext('Import'),
-@@ -1130,6 +1145,160 @@ Ext.define('PVE.Utils', {
-             return Ext.String.htmlEncode(result);
+@@ -1162,6 +1177,160 @@ Ext.define('PVE.Utils', {
+             }
          },
  
 +        // A mirror storage (`wsh-lab mirror`) names its ISO and floppy links after their folders on
@@ -440,7 +440,7 @@ index c616ab9b..3b064560 100644
          render_serverity: function (value) {
              return PVE.Utils.log_severity_hash[value] || value;
          },
-@@ -1812,7 +1981,9 @@ Ext.define('PVE.Utils', {
+@@ -1845,7 +2014,9 @@ Ext.define('PVE.Utils', {
              serial: 4,
              rng: 1,
              tpmstate: 1,
@@ -450,7 +450,7 @@ index c616ab9b..3b064560 100644
          },
  
          // we can have usb6 and up only for specific machine/ostypes
-@@ -1954,8 +2125,8 @@ Ext.define('PVE.Utils', {
+@@ -1987,8 +2158,8 @@ Ext.define('PVE.Utils', {
                      container.mask(
                          Ext.String.format(
                              gettext('{0} not installed.') +
