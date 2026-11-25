@@ -134,6 +134,7 @@ come after that, not before.
 | Debian 13 sun4u boot test on a busy host: the stored disk's boot test failed (`no 'login: ?$' within 900s`) because systemd's 90 s device and start timeouts run in wall-clock time; under TCG udev's coldplug takes about that long idle, and on a busy host `/boot`'s device timed out, `local-fs.target` failed and systemd stopped in emergency mode. Not the disk, the package or OpenBIOS (the same disk and pve-qemu-kvm 11.1.3-4+wsh13 pass on an idle host in 4.6 min, 5.8 through PVE). The boot scenarios append `systemd.default_timeout_start_sec=600 systemd.default_device_timeout_sec=600` at GRUB's editor and wait up to 30 min for `login:`; new installs get the same in a systemd drop-in. At host load 32-43: without the options 4 of 4 boots failed, with them 4 of 4 reached `login:` and the PVE boot test passed (27.5 min). `e2e/sparc/README.md`, "Debian 13 on sun4u" | in review | |
 | sun4u PS/2 keyboard and mouse on wisp's framebuffer tier: with OpenBIOS 0035 published (pve-qemu-kvm 11.1.3-4+wsh15 and later), `framebuffer.display_args()` gives sun4u `-prom-env ps2-mouse?=true` instead of the virtio keyboard and mouse, for `framebuffer.py`, the `doom.py` timedemo and `--play`; `psmouse` (no laptop protocol extensions) moved to the shared Bochs fragment, so the pc's config and image are unchanged and sun4u's `kernel-fb` grew 1,000 bytes (4,918,504 to 4,919,504); sparc64 keeps `CONFIG_VIRTIO_INPUT` for `wsh-lab wisp-vm`, since qemu-server sets no OpenBIOS variables. The key and mouse checks are strict now: `framebuffer.py` checks the evdev name of the keyboard and mouse `keytest` and `mousetest` open (before, sun4u passed on the virtio keyboard while the PS/2 one was there too) and the exact (+10, +5) move on pc, sun4u and virt. Lab (+wsh17): `framebuffer.py` passed on all five displays (sun4u: `AT Translated Set 2 keyboard` 30, 48, 28, 1; `ImExPS/2 Generic Explorer Mouse` X +10, Y +5, left press/release, right press), the sun4u DEMO1 timedemo 7,117 gametics at 23.90 FPS, `--play --check` with and without `--fps` (one earlier `--fps` run failed on the overlay screendump before any key; the rerun passed) (e2e/wisp/README.md, "The sun4u keyboard"). Left: dispatch `wisp-fb.yml` with `publish` after the merge, so the release's `kernel-fb-sparc64` has the PS/2 mouse | in review | |
 | 3dfx/streaming stage 3b, an RDP server with sound for the D-Bus display: the optional package `wsh-qemu-rdp` (qemu-rdp from Marc-André Lureau's qemu-display at a pinned commit, crates from crates.io; patches for a credentials file, the bus name optional and relative mouse motion) with the unit `wsh-qemu-rdp@<vmid>` (bound to the VM's bus, 127.0.0.1 and port 20000 + VMID by default, a generated password, NLA, a self-signed node certificate); qemu-server gives the audio driver `dbus` 48 kHz. CI and lab (also through PVE): login, picture as QEMU's screendump, resize, keyboard, mouse, and rdpsnd sound from AC97 (x86) and the SS-5's CS4231 (ROADMAP, Stage 3, "Stage 3b") | in review | |
+| 3dfx/streaming stage 3c, first slice: GStreamer sources and an input bridge for the D-Bus display: the optional package `wsh-gst-qemu-dbus` (our own C, GLib/GIO and GStreamer 1.26, meson) with the plugin `qemudbus`, `qemudbussrc` (the console as raw video: pixels, the shared map, or a linear dmabuf copied out before each `UpdateDMABUF` is answered) and `qemudbusaudiosrc` (the `AudioOutListener` PCM, the guest mixer's volume applied), and `qemu-dbus-input` (keys, buttons, relative and absolute motion from text commands, converted as `IsAbsolute` says). CI and lab, also through PVE: frames identical to QEMU's screendump (shared map, pixels, `dbus,gl=on` dmabufs), keys in the guest 5 ms after the bridge, relative (PS/2) and absolute (virtio tablet) motion, a 440 Hz tone at 440.0 Hz, EOS when QEMU quits; the 3dfx Glide and Mesa guests pass `e2e/3dfx` through it (ROADMAP, Stage 3, "Stage 3c") | in review | |
 | 3dfx Glide for old Linux guests: qemu-3dfx's Linux guest wrapper (`wrappers/3dfx/dso/glidedso.c`, Glide 2.43) built as `libglide.so.2` with a `libglide2x.so` symlink (`scripts/build-3dfx-linux-glide.sh`, `make 3dfx-linux-glide`): i586 (`-march=pentium`, no CMOV/ENDBR32, `scripts/check-3dfx-drivers-isa.sh` now reads ELF), only `libc.so.6` at `GLIBC_2.0`, a SysV hash table for pre-2.5 loaders, no crt start files (crtbeginS.o pulled in `__cxa_finalize@GLIBC_2.1.3`), stamped with the same `__REV__`. Released as `qemu-3dfx-linux-glide-<shortsha>.tar.gz` next to the drivers zip, with a README (`/usr/lib`, `ldconfig`, root for `/dev/mem`). Glide 3 and OpenGL have no Linux guest wrapper upstream; the guide sends modern Linux guests to `vga: virtio-gl`. Test: `e2e/3dfx/test.sh`'s `glide-dso` guest (glide-guest linked with `-lglide2x`, the library in its initramfs's `/usr/lib` through ldconfig's cache) passes the scene, probes, FRONTDRAW and GAMMA headless and the window check with SDL under the published pve-qemu-kvm 11.1.3-4+wsh17 (qemu-3dfx b94d988); in qemu-3dfx-check's headless run and test.sh's default guests. Not run on an old distribution or through PVE (guide, "Linux guests") | in review | |
 | sun4u snapshots and migration: pve-qemu `wsh/0133` gives the sabre host bridge (interrupt mapping registers, raised lines, outstanding request, PCI control and reset status), the sun4u IOMMU, the PCI configuration space of the ebus and the sabre's own function, and the CPU's SOFTINT, interrupt vector and `idle_halted` (subsection `cpu/sparc64_irq`) migration state, qtest `wsh/0134` (`sun4u-migration-test`). Before it a guest resumed from `loadvm`, `-loadvm`, `-incoming`, `qm rollback` or `qm suspend --todisk` without interrupts (the serial console silent). sun4u has no versioned machine types: older streams no longer load (they resumed without interrupts anyway). The browser build takes the fix from the series now; `web/patches/sun4u-migration-state.patch` (sabre and CPU only) is gone. Lab: wisp's shell, Debian 7.11 and FreeBSD 12.4 answer after `loadvm`, a migration to a file into a new QEMU and `-loadvm` in a new QEMU (timer, raw disk reads with the stored disk's md5, ping to 10.0.2.2); with the series up to 0132 the console stays silent after each. Through PVE (e2e container, Debian 7): `qm snapshot --vmstate 1` + `qm rollback`, `qm suspend --todisk` + `qm start` pass. sparc64 qtests 21/24 (2 skipped, `qmp-test` `oob` fails with and without the patches) (SPARC.md, "Snapshots and migration on sun4u") | in review | |
 | 3dfx Glide from DOS: the drivers release's `GLIDE2X.DXE` (DJGPP) tested for the first time, in pure DOS: `e2e/3dfx/dos-test.sh` boots FreeDOS 1.4's boot floppy with our DJGPP test program (`e2e/3dfx/dos/glidedos.c`, linked with the DXE's `dxe3gen -Y` import library, the test scene read back and probed) and FreeDOS's own CWSDPMI, HIMEMX and JEMM386 (taken out of the Floppy Edition's package archive by sha256), headless as PVE runs it, and checks the frame in QEMU's screendump and DOS's text screen after it; new workflow `3dfx-dos.yml` (GitHub-hosted, free software only). With pve-qemu-kvm 11.1.3-4+wsh17 and `qemu-3dfx-drivers-b94d988`: passes with no memory manager, HIMEMX, and HIMEMX with JEMM386 (CWSDPMI as a VCPI client), under KVM, TCG and through PVE (`qm start`), 1260-1840 frames/s. `GLIDE2X.OVL` not tested: an LE library the game's DOS extender (DOS/4GW) loads, using that extender's INT 21h interface and flat model; no free extender loads it and the DJGPP image has no DOS/4GW or Watcom DOS libraries. `GLIDE3X.DXE` not tested (3dfx guide, "DOS games") | in review | |
@@ -711,14 +712,58 @@ merged; what is left of them is item 2 under "Next".
        QEMU's calls to the client (`Clipboard.Register`), so no clipboard. Not verified: Windows'
        or Remmina's client, a guest that acts on the client's size (virtio-gpu), absolute pointer
        motion in a guest, frame rates under load, a client over a real network.
-     - Left for stage 3: 3c, a `qemudbussrc` (a GStreamer source for the console: `ScanoutDMABUF`/
-       `UpdateDMABUF` imported as dmabufs, `Scanout`/`Update`/`ScanoutMap` as system memory,
-       answering each update promptly since QEMU keeps a GL console blocked until then, plus the
-       `AudioOutListener` PCM) and the input bridge (Moonlight's keyboard, mouse and absolute
-       pointer to `org.qemu.Display1.Keyboard`/`Mouse` on `Console_0`, `IsAbsolute` decides); 3d,
-       the Wolf app in an LXC on the node (the socket directory bind-mounted, its user mapped into
-       `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the dmabuf import), the docs, and
-       end-to-end Moonlight runs with numbers (latency, frame pacing against `dbus-refresh`).
+     - **Stage 3c, first slice: GStreamer sources and the input bridge (in review).** The optional
+       package `wsh-gst-qemu-dbus` (`packages/wsh-gst-qemu-dbus`), our own code in C with GLib/GIO
+       and Debian 13's GStreamer 1.26 (meson): qemu-display's Rust crates would have brought a zbus
+       runtime and gstreamer-rs to vendor, while GStreamer and QEMU's D-Bus display are both GLib and
+       GIO's D-Bus covers the listener protocol in a few hundred lines. The plugin `qemudbus`:
+       `qemudbussrc` registers a listener on `Console_<n>` of the VM's bus (`address=` or `vmid=`),
+       on a thread and main context of its own, and outputs the console as raw video in its own
+       format (BGRx), one buffer per change, live with a variable frame rate, renegotiating on mode
+       changes, EOS when QEMU closes the connection. It takes `Scanout`/`Update` (pixels),
+       `ScanoutMap`/`UpdateMap` (the surface in shared memory, offered unless `shared-map=false`) and
+       `ScanoutDMABUF`/`UpdateDMABUF`: a linear dmabuf is mapped and the changed part copied out
+       before the reply, so QEMU's gl-block lasts a copy, not the pipeline. `qemudbusaudiosrc`
+       registers an `AudioOutListener`, follows one stream, outputs its PCM (S16LE 48 kHz stereo from
+       qemu-server's driver) with continuous timestamps, and applies the guest mixer's volume and
+       mute, which QEMU passes separately (`apply-volume`). Found: QEMU sets up a listener's peer
+       connection and reads its `Interfaces` property synchronously, blocking its main loop, so the
+       client's end authenticates asynchronously with message processing held until the object is
+       registered. `qemu-dbus-input` reads `key CODE 1|0` (Linux key codes, mapped to QEMU's key
+       numbers), `qkey`, `btn`, `wheel`, `rel`, `abs X Y [W H]`, `query`, `sync` on standard input
+       and sends them to `Keyboard`/`Mouse`; QEMU refuses absolute positions for a relative pointer
+       and relative motion for an absolute one, so the bridge converts (rel moves its own pointer on
+       a tablet, abs becomes the difference on a PS/2 or Sun mouse) and prints mode changes. CI
+       (`wsh-gst-qemu-dbus.yml`, `test.sh`): the published pve-qemu-kvm runs wisp's framebuffer
+       kernels with the D-Bus display on a bus with qemu-server's policy, the clients run as a member
+       of `wsh-display`: x86 (std VGA, PS/2, AC97, the shared map), aarch64 virt (bochs-display,
+       virtio tablet, AC97, `shared-map=false`), the SS-5 (cg3, CS4231, Sun mouse) and x86 in the
+       3dfx binary with `dbus,gl=on` (llvmpipe, `/dev/udmabuf`); `gst-launch-1.0 qemudbussrc ! videoconvert ! multifilesink` and
+       `qemudbusaudiosrc ! wavenc`. Lab, also through PVE (`qm start` of a `display=dbus` and a
+       `mesa-display=dbus` VM, TCG): the newest frame identical to QEMU's screendump (1280x800, 0 of
+       1,024,000 pixels differ) on every path; `UpdateDMABUF` answered in 0.07-0.08 ms on average and
+       at most 0.6-0.8 ms; keys (30, 48, 1) in the guest 5.1-10.6 ms after the line reached the
+       bridge; PS/2 and Sun mouse motion exact (+40, +25 from `rel 10 5` and two `abs`), virtio tablet absolute X
+       16383 then 16639 of 32767 (`abs 640 400`, `rel 10 0` on 1280x800); a 2.00 s tone at 440.0 Hz in
+       the WAV; the pipeline ends by itself when QEMU quits. `e2e/3dfx/test.sh` takes another listener
+       (`DBUS_LISTENER`): with `tests/gst-listener.py` (qemudbussrc and an appsink) the Glide and Mesa
+       guests pass every probe in qemudbussrc's frames, double-buffered dmabufs, the held frame and
+       the VGA back. 3000-frame benches on a host other jobs kept busy (so the rates swing): Glide
+       493.6 frames/s with qemudbussrc (1806 updates reached it, 58.8/s; replies 0.39 ms on average,
+       at most 14 ms) against 248.5 with `dbus-listener.py`; Mesa 542 and 614 frames/s (replies 0.22-
+       0.24 ms on average, at most 1.9 ms; `DMA_BUF_IOCTL_SYNC` around the copy cost no more than the
+       spread) against 818 with `dbus-listener.py`, which copies nothing on the reply (it maps the
+       dmabuf and reads it every 100 ms); a first Mesa run during the heaviest load gave 60 frames/s
+       and replies up to 51 ms. Not verified: a GPU node (tiled dmabufs aren't read yet), the
+       SS-5 through PVE (it passes `test.sh`), a client in an LXC.
+     - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
+       encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU),
+       an EGL import for tiled dmabufs (a GPU node), the cursor drawn in or passed on, and
+       `ScanoutDMABUF2`; 3d, the Wolf app in an LXC on the node (the socket directory bind-mounted,
+       its user mapped into `wsh-display`, `/dev/dri` or `/dev/udmabuf` for the dmabuf import) built
+       on `qemudbussrc`, `qemudbusaudiosrc` and `qemu-dbus-input` (Moonlight's keys to Linux codes,
+       its pointer through `abs X Y W H`), the docs, and end-to-end Moonlight runs with numbers
+       (latency, frame pacing against `dbus-refresh`).
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
      services (instant messaging first; later a Battle.net-compatible server and a period IRC
@@ -731,6 +776,12 @@ merged; what is left of them is item 2 under "Next".
 
 ## Later
 
+- **Hookscripts in the web UI** (from the old TODO.md). Add, change and remove a VM's `hookscript`
+  (a snippet volume) in the VM's Options, instead of only through `qm set --hookscript`. Not started.
+- **Sound with the VNC console** (from the old TODO.md). noVNC has no audio channel; today sound reaches a
+  client through qemu-rdp (stage 3b) or the GStreamer sources (stage 3c). Left open: whether a VNC
+  console should get sound at all (QEMU's VNC audio extension, which noVNC doesn't implement), or
+  whether the RDP and streaming paths cover it. Not started.
 - **Mirror storage, after step 3.** Left open: a rename that also sets the drives of the VMs that use
   the old volume ID (now the window only lists them); `pvesm` subcommands for the two calls (`pvesh`
   works); rename and link on a storage with a description file by writing its entries (refused now;

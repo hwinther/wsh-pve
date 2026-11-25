@@ -1,0 +1,42 @@
+Source: wsh-gst-qemu-dbus
+Section: video
+Priority: optional
+Maintainer: WsHosting ENK <debian@wsh.no>
+Build-Depends: debhelper-compat (= 13),
+               libglib2.0-dev,
+               libgstreamer-plugins-base1.0-dev,
+               libgstreamer1.0-dev,
+               meson,
+               ninja-build,
+               pkgconf,
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/hwinther/wsh-pve
+Vcs-Browser: https://github.com/hwinther/wsh-pve/tree/main/packages/wsh-gst-qemu-dbus
+Vcs-Git: https://github.com/hwinther/wsh-pve.git
+
+Package: wsh-gst-qemu-dbus
+Architecture: any
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: gstreamer1.0-plugins-base,
+            gstreamer1.0-tools,
+            qemu-server (>= 9.2.20+wsh8),
+Description: GStreamer sources and input bridge for QEMU's D-Bus display
+ For a streaming server on a Proxmox VE node: the GStreamer plugin qemudbus
+ with two live sources, and a keyboard and mouse bridge, for a VM with the
+ D-Bus display ('vga: <type>,display=dbus' or 'mesa-display=dbus' with the
+ wsh-pve qemu-server, on the VM's own bus /run/wsh-dbus-display/<vmid>.sock).
+ .
+ qemudbussrc gives the picture of a console as raw video (BGRx for the usual
+ 32-bit consoles), from the pixels QEMU sends, its shared memory map of the
+ console, or a linear dmabuf of a display with GL, which it copies out and
+ answers at once, so the guest's GL frames don't wait for the pipeline.
+ qemudbusaudiosrc gives the guest's playback ('audio0: ...,driver=dbus') as
+ raw PCM, scaled by the guest mixer's volume.
+ .
+ qemu-dbus-input reads keyboard and mouse commands from standard input (Linux
+ key codes, buttons, relative and absolute motion) and sends them to the
+ console, as relative or absolute motion as the guest's pointer takes it.
+ .
+ Run them as root or as a member of the group wsh-display.

@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 3b036ceb..44da9621 100644
+index 3b036ceb..ebc63675 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,16 @@
+@@ -1,10 +1,23 @@
++qemu-server (9.2.24+wsh2) trixie; urgency=medium
++
++  * fix(sparc): boot Solaris on SS-10/SS-20 with up to 2048 MB (#532)
++  * Refresh patches: pve-manager,qemu-server,pve-storage
++
++ -- hwinther <hwinther@users.noreply.github.com>  Wed, 25 Nov 2026 18:27:20 +0000
++
 +qemu-server (9.2.24+wsh1) trixie; urgency=medium
 +
 +  * fix(qemu-server): refresh the patch for upstream 9.2.24 (#529)
