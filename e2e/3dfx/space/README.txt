@@ -68,8 +68,12 @@ Audio test
              CI: audio-matrix.yml)
     DOS      Sound Blaster: 8-bit stereo auto-init DMA at exactly 22050 Hz on a DSP 4.x
              (SB16; older DSPs mono at 22222 Hz, which the check refuses as mono), BLASTER's
-             A and D (default 220h, DMA 1), polled without an IRQ handler: e2e/3dfx/dos-test.sh
-             runs it last in each boot on QEMU's sb16 (CI: 3dfx-dos.yml)
+             A and D (default 220h, DMA 1), polled without an IRQ handler: 186 ms mixed ahead in
+             a 743 ms ring, the DMA address read until both bytes agree, the bytes written and
+             played counted so a bad reading or a step back of uclock() can't overwrite unplayed
+             sound (it logs "AUDIO ... torn reads, glitches, clock steps back, resyncs" on
+             close); e2e/3dfx/dos-test.sh runs it last in each boot on QEMU's sb16 (CI:
+             3dfx-dos.yml)
     Windows  WinMM waveOut, 16-bit stereo: builds, not run in a guest yet. The Windows 98 harness
              (e2e/3dfx/win98-test.sh, on the operator's own installed disk) could add a run of
              `WSHSPACE.EXE -audiotest` with `-device sb16` (or es1370/AC97 with their drivers)
