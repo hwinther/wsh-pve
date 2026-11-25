@@ -120,7 +120,7 @@ Note: There are still manual steps in this process due to the pvemanagerlib.js f
 Once the packages have been installed on a PVE host, the proxmox frontend will have additional options, some of which are listed here:
 
 * SPARC guests: sparc32 (sun4m) with OpenBIOS or an original Sun boot PROM, and sparc64 (sun4u) with OpenBIOS
-  * Limited to the tested profiles: SS-5 (up to 256 MB, one CPU), SS-10 or SS-20 (up to 512 MB, 1 to 4 CPUs with OpenBIOS), and sun4u (up to 8192 MB, one CPU, IDE disks); see the [SPARC guide](https://debian.wshosting.no/guides/sparc/).
+  * Limited to the tested profiles: SS-5 (up to 256 MB, one CPU), SS-10 or SS-20 (up to 2048 MB and 1 to 4 CPUs with OpenBIOS, 512 MB with the Sun PROM), and sun4u (up to 8192 MB, one CPU, IDE disks); see the [SPARC guide](https://debian.wshosting.no/guides/sparc/).
   * Sound on the SS-5 (CS4231, `audio0: device=cs4231`); none on the SS-10/SS-20 or sun4u.
   * Add the network device before installing Solaris: the installer configures the interfaces it finds.
   * An installed VM with known login details from one command on a node: the [lab install targets](https://debian.wshosting.no/guides/lab-install/) (`wsh-lab` package) cover SunOS 4.1.4, Solaris 2.4-10, NetBSD, Red Hat Linux 6.2 and more. Sun software and disks with it installed are not published.

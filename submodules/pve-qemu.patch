@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..8c62a80 100644
+index bc240a0..8eff72f 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,105 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,107 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -179,6 +179,8 @@ index bc240a0..8c62a80 100644
 +wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
 +wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
 +wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
++wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB.patch
++wsh/0144-tests-qtest-test-the-memory-controller-version-with-.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -21559,6 +21561,221 @@ index 0000000..8d7f660
 ++    qtest_add_func("/sun4m/escc-break/polled", test_polled);
 ++    qtest_add_func("/sun4m/escc-break/channel-b", test_channel_b);
 ++    qtest_add_func("/sun4m/escc-break/channel-reset", test_channel_reset);
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB.patch b/debian/patches/wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB.patch
+new file mode 100644
+index 0000000..1ab5a09
+--- /dev/null
++++ b/debian/patches/wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB.patch
+@@ -0,0 +1,71 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: present the MCC with more than 512 MB
++
++Solaris 2.5.1-9 panic early in startup on -M SS-10 and SS-20 with more
++than 512 MB (Solaris 2.6: "BAD TRAP: type=9 ... kernel read fault at
++addr=0x0" in kvm_init, as a reboot loop). The kernel reads the memory
++controller's implementation from bits 31:28 of the ECC memory enable
++register. For the SS-10's EMC (1) and the SS-20's SMC (2) it counts a
++page frame as memory only below 512 MB and looks the bank up among
++eight SIMM slots of 64 MB, as those controllers decode them; above that
++it takes the frame for no memory. Its first page table above 512 MB
++then has no page structure and the kernel dereferences NULL. The
++SS-600MP's MCC (0) has no such window: every page in the memory space
++is memory.
++
++The real SS-10 and SS-20 take at most 512 MB, so there is no
++configuration of theirs to follow. When the machine has more than
++512 MB, present the MCC on the SS-10 and SS-20, as on the SS-600MP:
++the MER reads implementation 0 and keeps only the MCC's bits, and the
++MCC's diagnostic register block is mapped. With 512 MB and less
++nothing changes. Solaris uses the controller type otherwise only for
++memory error reports and the SX/VSIMM, which QEMU doesn't raise or
++emulate.
++
++Only under OpenBIOS (a firmware whose file name starts with
++"openbios"): the Sun PROMs know only the machine's own controller.
++With the MCC the SS-20 PROM stops after its CPU probe; with the SMC it
++probes its eight banks and uses 512 MB, as before.
++
++Tested with Solaris 2.5.1, 2.6, 7, 8 and 9 on SS-20 and 2.6 and 7 on
++SS-10, 1024 and 2048 MB, one to four CPUs, with OpenBIOS (which needs
++more heap for page tables at 1 GB and more); the SS-20 PROM with 512
++and 1024 MB.
++---
++ hw/sparc/sun4m.c | 23 ++++++++++++++++++++---
++ 1 file changed, 20 insertions(+), 3 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 20e10bd..31ea300 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -1268,9 +1268,26 @@ static void sun4m_hw_init(MachineState *machine)
++                graphic_width, graphic_height, graphic_depth,
++                hwdef->nvram_machine_id, "Sun4m");
++ 
++-    if (hwdef->ecc_base)
++-        ecc_init(hwdef->ecc_base, slavio_irq[28],
++-                 hwdef->ecc_version);
+++    if (hwdef->ecc_base) {
+++        uint32_t ecc_version = hwdef->ecc_version;
+++        g_autofree char *prom = g_path_get_basename(machine->firmware ?:
+++                                                    PROM_FILENAME);
+++
+++        /*
+++         * The SS-10's EMC and the SS-20's SMC decode eight SIMM slots of
+++         * 64 MB, 512 MB in all, and Solaris counts a page above that as no
+++         * memory on them: with more RAM it panics in startup.  The
+++         * SS-600MP's MCC has no such limit, so present that one when the
+++         * machine has more than 512 MB and runs OpenBIOS.  The Sun PROMs
+++         * know only the machine's own controller: with the MCC the SS-20
+++         * PROM stops after its CPU probe, with the SMC it uses 512 MB.
+++         */
+++        if (machine->ram_size > 512 * MiB &&
+++            g_str_has_prefix(prom, "openbios")) {
+++            ecc_version = 0x00000000; /* MCC: version 0, implementation 0 */
+++        }
+++        ecc_init(hwdef->ecc_base, slavio_irq[28], ecc_version);
+++    }
++ 
++     dev = qdev_new(TYPE_FW_CFG_MEM);
++     fw_cfg = FW_CFG(dev);
+diff --git a/debian/patches/wsh/0144-tests-qtest-test-the-memory-controller-version-with-.patch b/debian/patches/wsh/0144-tests-qtest-test-the-memory-controller-version-with-.patch
+new file mode 100644
+index 0000000..5b64fcc
+--- /dev/null
++++ b/debian/patches/wsh/0144-tests-qtest-test-the-memory-controller-version-with-.patch
+@@ -0,0 +1,132 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the memory controller version with more
++ than 512 MB on sun4m
++
++qtest sun4m-ecc-test for the patch before: the MER's implementation
++bits read 1 (EMC) on -M SS-10 and 2 (SMC) on SS-20 with 256 and 512 MB,
++0 (MCC) on both with 576 and 2048 MB, 2 on SS-20 with 1024 MB and a
++firmware file not named openbios*, and 0 on the SS-600MP; with
++1024 MB on SS-20 a write of all ones keeps only the MCC's bits (0x103),
++with 512 MB the SMC's (0x20000bff). The cases with more than 512 MB
++fail without the patch.
++---
++ tests/qtest/meson.build      |  3 +-
++ tests/qtest/sun4m-ecc-test.c | 95 ++++++++++++++++++++++++++++++++++++
++ 2 files changed, 97 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-ecc-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 73bf137..885331a 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -217,7 +217,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-ledma-test',
++                 'sun4m-ss600mp-test',
++                 'sun4m-dbri-test',
++-                'sun4m-escc-break-test'] + \
+++                'sun4m-escc-break-test',
+++                'sun4m-ecc-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-ecc-test.c b/tests/qtest/sun4m-ecc-test.c
++new file mode 100644
++index 0000000..cd1e1bc
++--- /dev/null
+++++ b/tests/qtest/sun4m-ecc-test.c
++@@ -0,0 +1,95 @@
+++/*
+++ * QTest: the memory controller version sun4m presents with more than 512 MB
+++ *
+++ * Bits 31:28 of the ECC memory controller's memory enable register name
+++ * the chip: 0 the SS-600MP's MCC, 1 the SS-10's EMC, 2 the SS-20's SMC.
+++ * Solaris counts memory above 512 MB as none behind the EMC and SMC,
+++ * which decode eight SIMM slots of 64 MB, so with more RAM the SS-10 and
+++ * SS-20 present the MCC under OpenBIOS; with 512 MB and less, and under
+++ * a Sun PROM, they keep their own chip.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++#define ECC_MER         0xf00000000ULL
+++#define MER_IMPL_SHIFT  28
+++
+++static uint32_t mer_impl(const char *machine, int mb)
+++{
+++    QTestState *qts = qtest_initf("-machine %s -m %d", machine, mb);
+++    uint32_t impl = qtest_readl(qts, ECC_MER) >> MER_IMPL_SHIFT;
+++
+++    qtest_quit(qts);
+++    return impl;
+++}
+++
+++static void test_ss10(void)
+++{
+++    g_assert_cmpuint(mer_impl("SS-10", 256), ==, 1);
+++    g_assert_cmpuint(mer_impl("SS-10", 512), ==, 1);
+++    g_assert_cmpuint(mer_impl("SS-10", 576), ==, 0);
+++    g_assert_cmpuint(mer_impl("SS-10", 2048), ==, 0);
+++}
+++
+++static void test_ss20(void)
+++{
+++    g_assert_cmpuint(mer_impl("SS-20", 256), ==, 2);
+++    g_assert_cmpuint(mer_impl("SS-20", 512), ==, 2);
+++    g_assert_cmpuint(mer_impl("SS-20", 576), ==, 0);
+++    g_assert_cmpuint(mer_impl("SS-20", 2048), ==, 0);
+++}
+++
+++/* A Sun PROM (any firmware not named openbios*) keeps the SMC */
+++static void test_sun_prom(void)
+++{
+++    g_autofree char *path = NULL;
+++    GError *err = NULL;
+++    QTestState *qts;
+++    int fd;
+++
+++    fd = g_file_open_tmp("sun4m-ecc-prom-XXXXXX", &path, &err);
+++    g_assert_no_error(err);
+++    g_assert_cmpint(write(fd, "\x10\x00\x00\x00", 4), ==, 4);
+++    close(fd);
+++
+++    qts = qtest_initf("-machine SS-20 -m 1024 -bios %s", path);
+++    g_assert_cmpuint(qtest_readl(qts, ECC_MER) >> MER_IMPL_SHIFT, ==, 2);
+++    qtest_quit(qts);
+++    unlink(path);
+++}
+++
+++static void test_ss600mp(void)
+++{
+++    g_assert_cmpuint(mer_impl("SS-600MP", 256), ==, 0);
+++}
+++
+++/* The MCC keeps only its enable, interrupt and refresh bits in the MER */
+++static void test_mcc_mer(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-20 -m 1024");
+++
+++    qtest_writel(qts, ECC_MER, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, ECC_MER), ==, 0x00000103);
+++    qtest_quit(qts);
+++
+++    qts = qtest_init("-machine SS-20 -m 512");
+++    qtest_writel(qts, ECC_MER, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, ECC_MER), ==, 0x20000bff);
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    qtest_add_func("sun4m-ecc/ss10", test_ss10);
+++    qtest_add_func("sun4m-ecc/ss20", test_ss20);
+++    qtest_add_func("sun4m-ecc/sun-prom", test_sun_prom);
+++    qtest_add_func("sun4m-ecc/ss600mp", test_ss600mp);
+++    qtest_add_func("sun4m-ecc/mcc-mer", test_mcc_mer);
 ++
 ++    return g_test_run();
 ++}
