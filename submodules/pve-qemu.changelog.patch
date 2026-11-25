@@ -1,8 +1,16 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..7eb33b7 100644
+index 9da9d72..5956eb3 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,180 @@
+@@ -1,10 +1,188 @@
++pve-qemu-kvm (11.1.3-4+wsh26) trixie; urgency=medium
++
++  * fix(sparc): boot Solaris on SS-10/SS-20 with up to 2048 MB (#532)
++  * feat(pve-qemu): model the SuperSPARC diagnostic state Sun's SS-600MP
++    PROM tests (#533)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 25 Nov 2026 16:35:59 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh25) trixie; urgency=medium
 +
 +  * refactor(pve-qemu): keep the sun4m NVRAM with LEMU's m48t59 storage
