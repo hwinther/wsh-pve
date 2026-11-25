@@ -13,6 +13,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,11 +50,11 @@ MATRICES = {
     ],
     # SS-10/SS-20: the install CDs, and the disks installed on these machines (an SS-5 disk doesn't
     # boot there: Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and halts). More than 512 MB
-    # needs pve-qemu wsh/0150 and openbios 0040 (submodules/SPARC.md, "More than 512 MB on SS-10 and
+    # needs pve-qemu wsh/0143 and openbios 0040 (submodules/SPARC.md, "More than 512 MB on SS-10 and
     # SS-20"); 2048 MB is the most tested. The CD reaches the installer with 2 and 4 CPUs; the installed 2.6
     # with more than one CPU is in the smp matrix (it needs pve-qemu patch 0019).
-    # The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops in its idle loop after "Configuring
-    # devices..." (about 1 boot in 6, OpenBIOS and Sun PROM alike).
+    # A CD boot sometimes stops after "Configuring devices..." because Solaris's init lost the end of
+    # the installer's rcS (RETRY below); such a case boots once more.
     "machines": [
         ("sol26-cd-openbios-ss10", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-10"}),
         ("sol26-cd-openbios-ss10-512m", "solaris-boot-cd.py", None, CD26, {"MACHINE": "SS-10", "MEM": "512"}),
@@ -103,7 +104,7 @@ MATRICES = {
          {**BENCH, "MACHINE": "SS-20", "SMP": "4", "SOAK": "600"}),
         ("smp-sol26-openbios-ss10-2cpu", "smp-soak.py", SOL26SS10, None,
          {**BENCH, "MACHINE": "SS-10", "SMP": "2", "SOAK": "600"}),
-        # 2048 MB (pve-qemu wsh/0150, openbios 0040)
+        # 2048 MB (pve-qemu wsh/0143, openbios 0040)
         ("smp-sol26-openbios-ss20-2cpu-2048m", "smp-soak.py", SOL26SS20, None,
          {**BENCH, "MACHINE": "SS-20", "SMP": "2", "SOAK": "600", "MEM": "2048"}),
     ],
@@ -176,8 +177,9 @@ MATRICES = {
     # openbios/patches/0008 (before it OpenBIOS powered the machine off). At 1152x900 Solaris's X
     # server doesn't start, so the console login prompt stays on the screen; at 1024x768 dtlogin.
     # NetBSD's GENERIC kernel enters ddb instead of the firmware. The chord in the wrong order is
-    # ignored. No break on ttya here: QEMU's ESCC never ends a break and Solaris's serial console
-    # stops answering after one (submodules/SPARC.md, "Stop-A").
+    # ignored. A break on a ttya console (QMP chardev-send-break) does the same as Stop-A; it needs
+    # pve-qemu wsh/0141 (before it the ESCC never ended a break and the guest hung in its serial
+    # interrupt, submodules/SPARC.md, "Stop-A").
     "stopa": [
         ("stopa-sol26-console-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900"}),
         ("stopa-sol26-dtlogin-openbios-ss5", "stop-a.py", SOL26, None, {"AT": "dtlogin"}),
@@ -188,6 +190,13 @@ MATRICES = {
         ("stopa-sunos414-openbios-ss5", "stop-a.py", SUNOS414, None, {"GUEST": "sunos"}),
         ("stopa-netbsd111-ddb-openbios-ss5", "stop-a.py", NETBSD111, None, {"GUEST": "netbsd", "EXPECT": "db.", "RESUME": "c"}),
         ("stopa-firmware-prompt-openbios-ss5", "stop-a.py", None, None, {"GUEST": "none", "EXPECT": "none"}),
+        ("stopa-sol26-break-openbios-ss5", "stop-a.py", SOL26, None, {"CONSOLE": "serial", "BREAK": "1"}),
+        ("stopa-sunos414-break-openbios-ss5", "stop-a.py", SUNOS414, None,
+         {"GUEST": "sunos", "CONSOLE": "serial", "BREAK": "1", "SHELL": "0"}),
+        ("stopa-netbsd111-break-ddb-openbios-ss5", "stop-a.py", NETBSD111, None,
+         {"GUEST": "netbsd", "CONSOLE": "serial", "BREAK": "1", "SHELL": "0", "EXPECT": "db>", "RESUME": "c"}),
+        ("stopa-break-firmware-prompt-openbios-ss5", "stop-a.py", None, None,
+         {"GUEST": "none", "CONSOLE": "serial", "BREAK": "1", "EXPECT": "none"}),
     ],
 }
 
@@ -266,6 +275,14 @@ MATRICES["solaris10-install"] = [
 # (serial.cast, serial.fast.cast, fb.webm, fb.vtt) are evidence and stay.
 LEFTOVERS = ("disk.raw", "*.sock", "_refresh.ppm", "_fb_poll.png", "_frames")
 
+# A failure of these scenarios that matches gets one more run, its evidence in <case>-retry1/.
+# solaris-boot-cd.py: the boot that never reaches the installer's first question. In Solaris 2.6
+# (and likely the other 2.x releases) init waits for the installer's rcS with an unguarded check and
+# pause(); when rcS's SIGCLD comes in between, init sleeps for good and nothing else runs
+# (submodules/SPARC.md, "The CD boot that stops after Configuring devices"). A guest race, about 1 in
+# 100 boots in the lab; a second boot of the same CD goes through.
+RETRY = {"solaris-boot-cd.py": r"no 'Select a Language"}
+
 # bench-disk.py metrics that aren't benchmark results (they stay in the Status column)
 BENCH_META = ("boot_s", "run_s", "run_cpu_pct", "cpus", "mem_mb", "load1_start", "load1_end")
 
@@ -307,6 +324,19 @@ def run_case(name, scenario, disk, iso, variables, a):
     return res
 
 
+def run_retrying(name, scenario, disk, iso, variables, a, run=run_case):
+    """run_case, and once more as <name>-retry1 when the scenario's failure matches RETRY."""
+    res = run(name, scenario, disk, iso, variables, a)
+    rx = RETRY.get(scenario)
+    if res["code"] == 0 or not rx or not re.search(rx, res["status"]):
+        return res
+    first = res["status"].splitlines()[0][:80]
+    again = run(f"{name}-retry1", scenario, disk, iso, variables, a)
+    again["status"] = f"retried after: {first}; " + again["status"]
+    again["elapsed"] = round(res["elapsed"] + again["elapsed"], 1)
+    return again
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("matrix", choices=sorted(MATRICES))
@@ -319,7 +349,7 @@ def main():
 
     rows, failed, bench = [], 0, {}
     for name, scenario, disk, iso, variables in MATRICES[a.matrix]:
-        res = run_case(name, scenario, disk, iso, variables, a)
+        res = run_retrying(name, scenario, disk, iso, variables, a)
         failed += res["code"] != 0
         vs = " ".join(f"{k}={v}" for k, v in variables.items()).replace("|", "\\|")
         status = res["status"].splitlines()[0][:120].replace("|", "\\|")

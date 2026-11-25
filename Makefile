@@ -506,6 +506,24 @@ clean-qemu-3dfx:
 		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/demo/build-linux.sh /out $$lib"; \
 	ls -la build/wshdemo/*
 
+# wshspace (e2e/3dfx/space), the procedural <= 96 KB 3dfx space exploration & asteroid mining game,
+# built for the same three targets as wshdemo into build/wshspace/{windows,dos,linux}.
+.PHONY: 3dfx-space
+3dfx-space:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rm -rf build/wshspace && mkdir -p build/wshspace/windows build/wshspace/dos build/wshspace/linux; \
+	lib=""; [ ! -e build/linux-glide/libglide2x.so ] || lib=/src/build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshspace/windows:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 > /dev/null && sh /src/e2e/3dfx/space/build-win.sh /out"; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshspace/dos:/out \
+		$(DJGPP_BUILD_IMAGE) sh /src/e2e/3dfx/space/build-dos.sh /out; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshspace/linux:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/space/build-linux.sh /out $$lib"; \
+	ls -la build/wshspace/*
+
 # The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
 # checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
 # version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
@@ -597,6 +615,7 @@ help:
 	@echo "  3dfx:                    Clean, prepare and build QEMU with 3dfx support"
 	@echo "  3dfx-drivers:            Build 3dfx DOS drivers"
 	@echo "  3dfx-demo:               Build wshdemo (Windows, DOS and Linux) into build/wshdemo"
+	@echo "  3dfx-space:              Build wshspace (Windows, DOS and Linux) into build/wshspace"
 	@echo "  clean-qemu-3dfx:         Clean 3dfx-specific QEMU files"
 	@echo "  prepare-qemu-3dfx:       Initialize 3dfx submodule"
 	@echo "  restore-pve-qemu:        Restore pve-qemu to current head"

@@ -946,7 +946,7 @@ static void usage(void)
 {
 	static const char *lines[] = {
 		"usage: wshdemo [-check] [-bench N] [-hold S] [-res WxH] [-time S] [-secs S] [-part NAME] [-gamma G]",
-		"               [-nohud] [-wait S] [-tag NAME] [-api glide2|glide3|opengl (Windows)] [-nocom (DOS)]",
+		"               [-nohud] [-wait S] [-tag NAME] [-api glide2|glide3|opengl] [-hostgl (Windows)] [-nocom]",
 		"  -check      draw a fixed frame of each part, read it back and check probe pixels (exit 1 on a mismatch)",
 		"  -bench N    draw each part N frames without vsync and print the frame rate",
 		"  -hold S     keep the last frame up for S seconds (after -check/-bench)",
@@ -971,8 +971,8 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 			check = 1;
 		else if (str_eq(a, "-nohud"))
 			show_hud = 0;
-		else if (str_eq(a, "-nocom"))
-			; /* the DOS front end's */
+		else if (str_eq(a, "-nocom") || str_eq(a, "-hostgl"))
+			; /* front-end flags */
 		else if (v && str_eq(a, "-wait"))
 			wait = to_int(v), i++;
 		else if (v && str_eq(a, "-bench"))
@@ -986,6 +986,8 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 		else if (v && str_eq(a, "-tag"))
 			tag = v, i++;
 		else if (v && str_eq(a, "-api"))
+			i++; /* the Windows front end's */
+		else if (v && str_eq(a, "-log"))
 			i++; /* the Windows front end's */
 		else if (v && str_eq(a, "-gamma")) {
 			gamma = to_int(v);

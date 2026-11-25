@@ -6,6 +6,7 @@ media swapper and the masking of secrets in result.json. Standard library only:
     cd e2e/sparc && python3 -m unittest -v tests/test_targets.py
 """
 import hashlib
+import importlib.util
 import io
 import os
 import re
@@ -593,6 +594,41 @@ class SolarisEarlyHang(unittest.TestCase):
             self.assertEqual(job.phases, ["install"])
         finally:
             install.vm_running = orig
+
+
+@unittest.skipUnless(importlib.util.find_spec("matrix"), "needs the repository's e2e/sparc/matrix.py "
+                     "(the wsh-lab package ships the tests but not matrix.py)")
+class MatrixRetry(unittest.TestCase):
+    """matrix.py: a Solaris CD boot that never reaches the installer's first question (init lost the
+    SIGCLD of the installer's rcS) boots once more as <case>-retry1; other failures don't."""
+
+    def run_with(self, statuses, scenario="solaris-boot-cd.py"):
+        import matrix
+        calls = []
+
+        def run(name, *args):
+            calls.append(name)
+            status = statuses.pop(0)
+            return {"code": 0 if status == "passed" else 1, "status": status, "elapsed": 60.0}
+
+        return matrix.run_retrying("sol26-cd", scenario, None, "cd.iso", {}, None, run=run), calls
+
+    def test_language_timeout_boots_once_more(self):
+        hang = "timed out: no 'Select a Language|What type of terminal are you using' within 900s; screen:\nx"
+        res, calls = self.run_with([hang, "passed"])
+        self.assertEqual(calls, ["sol26-cd", "sol26-cd-retry1"])
+        self.assertEqual(res["code"], 0)
+        self.assertTrue(res["status"].startswith("retried after: timed out: no 'Select a Language"))
+        self.assertEqual(res["elapsed"], 120.0)
+        res, calls = self.run_with([hang, hang])  # a second hang still fails the case
+        self.assertEqual((calls, res["code"]), (["sol26-cd", "sol26-cd-retry1"], 1))
+
+    def test_other_failures_and_passes_run_once(self):
+        for statuses, scenario in ((["passed"], "solaris-boot-cd.py"),
+                                   (["timed out: no 'SunOS Release 5\\.\\d' within 900s"], "solaris-boot-cd.py"),
+                                   (["timed out: no 'Select a Language' within 900s"], "solaris-boot-disk.py")):
+            res, calls = self.run_with(list(statuses), scenario)
+            self.assertEqual(calls, ["sol26-cd"], statuses)
 
 
 class WebStart(unittest.TestCase):

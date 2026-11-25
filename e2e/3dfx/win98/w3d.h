@@ -34,38 +34,70 @@
 void *memset(void *d, int c, size_t n)
 {
 	unsigned char *p = d;
-	while (n--)
+	while (n--) {
 		*p++ = (unsigned char)c;
+		__asm__ volatile("" : : : "memory");
+	}
 	return d;
 }
 void *memcpy(void *d, const void *s, size_t n)
 {
 	unsigned char *p = d;
 	const unsigned char *q = s;
-	while (n--)
+	while (n--) {
 		*p++ = *q++;
+		__asm__ volatile("" : : : "memory");
+	}
 	return d;
 }
 int memcmp(const void *a, const void *b, size_t n)
 {
 	const unsigned char *p = a, *q = b;
-	for (; n; n--, p++, q++)
+	for (; n; n--, p++, q++) {
+		__asm__ volatile("" : : : "memory");
 		if (*p != *q)
 			return *p - *q;
+	}
 	return 0;
 }
 size_t strlen(const char *s)
 {
 	size_t n = 0;
-	while (s[n])
+	while (s[n]) {
 		n++;
+		__asm__ volatile("" : : : "memory");
+	}
 	return n;
 }
 
 static const char *w3d_tag = "W3D";
+static const char *w3d_log_path = W3D_LOG;
 static HANDLE w3d_com = INVALID_HANDLE_VALUE;
+static HANDLE w3d_com_ev;
+static int w3d_com_off;
+static OVERLAPPED w3d_ov;
+static char w3d_txbuf[1200];
 
-static void w3d_write(HANDLE h, const char *s, DWORD n)
+static struct {
+	volatile int state; /* 0 = opening, 1 = worker done, 2 = timed out */
+	HANDLE h;
+	DWORD err;
+} w3d_oc;
+
+static inline int w3d_xchg(volatile int *p, int v)
+{
+	__asm__ volatile("xchgl %0, %1" : "+r"(v), "+m"(*p) : : "memory");
+	return v;
+}
+
+/* C:\WIN3DFX exists inside the automated Windows 98 test guest */
+static int w3d_in_guest(void)
+{
+	DWORD a = GetFileAttributesA(W3D_DIR);
+	return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static void w3d_file_write(HANDLE h, const char *s, DWORD n)
 {
 	DWORD done;
 	while (n && WriteFile(h, s, n, &done, NULL) && done) {
@@ -74,13 +106,71 @@ static void w3d_write(HANDLE h, const char *s, DWORD n)
 	}
 }
 
-/* COM1 at 115200 8N1 without flow control: QEMU's 16550 paces its transmitter by the divisor, so a
- * slow rate would slow the test down */
+static DWORD WINAPI w3d_close_thread(LPVOID arg)
+{
+	HANDLE h = (HANDLE)arg;
+	PurgeComm(h, PURGE_TXABORT | PURGE_RXABORT | PURGE_TXCLEAR | PURGE_RXCLEAR);
+	CloseHandle(h);
+	return 0;
+}
+
+static void w3d_abandon_com(HANDLE h)
+{
+	DWORD tid;
+	w3d_com_off = 1;
+	if (w3d_com == h)
+		w3d_com = INVALID_HANDLE_VALUE;
+	PurgeComm(h, PURGE_TXABORT | PURGE_RXABORT | PURGE_TXCLEAR | PURGE_RXCLEAR);
+	HANDLE th = CreateThread(NULL, 0, w3d_close_thread, (LPVOID)h, 0, &tid);
+	if (th) {
+		WaitForSingleObject(th, 50);
+		CloseHandle(th);
+	}
+}
+
+static DWORD WINAPI w3d_open_thread(LPVOID arg)
+{
+	(void)arg;
+	HANDLE h = CreateFileA("COM1", GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+	DWORD err = GetLastError();
+	w3d_oc.h = h;
+	w3d_oc.err = err;
+	if (w3d_xchg(&w3d_oc.state, 1) == 2 && h != INVALID_HANDLE_VALUE) {
+		PurgeComm(h, PURGE_TXABORT | PURGE_RXABORT | PURGE_TXCLEAR | PURGE_RXCLEAR);
+		CloseHandle(h);
+	}
+	return 0;
+}
+
+/* COM1 at 115200 8N1 without flow control, opened asynchronously with a 200 ms timeout and
+ * FILE_FLAG_OVERLAPPED so a physical or AMT serial port on a host PC cannot hang the program */
 static HANDLE w3d_com_open(void)
 {
-	HANDLE h = CreateFileA("COM1", GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-	if (h == INVALID_HANDLE_VALUE)
-		return h;
+	if (w3d_com_off)
+		return INVALID_HANDLE_VALUE;
+	DWORD tid;
+	w3d_oc.state = 0;
+	w3d_oc.h = INVALID_HANDLE_VALUE;
+	w3d_oc.err = 0;
+	HANDLE th = CreateThread(NULL, 0, w3d_open_thread, NULL, 0, &tid);
+	if (!th) {
+		w3d_com_off = 1;
+		return INVALID_HANDLE_VALUE;
+	}
+	WaitForSingleObject(th, 200);
+	if (w3d_xchg(&w3d_oc.state, 2) != 1) {
+		CloseHandle(th);
+		w3d_com_off = 1;
+		return INVALID_HANDLE_VALUE;
+	}
+	WaitForSingleObject(th, 50);
+	CloseHandle(th);
+	HANDLE h = w3d_oc.h;
+	if (h == INVALID_HANDLE_VALUE) {
+		if (w3d_oc.err != ERROR_ACCESS_DENIED)
+			w3d_com_off = 1;
+		return INVALID_HANDLE_VALUE;
+	}
 	DCB dcb;
 	memset(&dcb, 0, sizeof(dcb));
 	dcb.DCBlength = sizeof(dcb);
@@ -89,22 +179,52 @@ static HANDLE w3d_com_open(void)
 		dcb.ByteSize = 8;
 		dcb.Parity = NOPARITY;
 		dcb.StopBits = ONESTOPBIT;
+		dcb.fBinary = TRUE;
 		dcb.fOutxCtsFlow = dcb.fOutxDsrFlow = FALSE;
+		dcb.fDsrSensitivity = FALSE;
+		dcb.fTXContinueOnXoff = TRUE;
 		dcb.fDtrControl = DTR_CONTROL_ENABLE;
 		dcb.fRtsControl = RTS_CONTROL_ENABLE;
 		dcb.fOutX = dcb.fInX = FALSE;
+		dcb.fAbortOnError = FALSE;
 		SetCommState(h, &dcb);
 	}
-	COMMTIMEOUTS to = {0, 0, 0, 10, 2000};
+	COMMTIMEOUTS to = {MAXDWORD, 0, 0, 1, 100};
 	SetCommTimeouts(h, &to);
+	if (!w3d_com_ev)
+		w3d_com_ev = CreateEventA(NULL, TRUE, FALSE, NULL);
 	return h;
+}
+
+static int w3d_com_write_line(HANDLE h, const char *s, DWORD n)
+{
+	if (!w3d_com_ev)
+		return 0;
+	if (n > sizeof(w3d_txbuf) - 2)
+		n = sizeof(w3d_txbuf) - 2;
+	memcpy(w3d_txbuf, s, n);
+	w3d_txbuf[n] = '\r';
+	w3d_txbuf[n + 1] = '\n';
+	DWORD total = n + 2, done = 0;
+	memset(&w3d_ov, 0, sizeof(w3d_ov));
+	ResetEvent(w3d_com_ev);
+	w3d_ov.hEvent = w3d_com_ev;
+	if (!WriteFile(h, w3d_txbuf, total, &done, &w3d_ov)) {
+		if (GetLastError() != ERROR_IO_PENDING ||
+		    WaitForSingleObject(w3d_com_ev, 200) != WAIT_OBJECT_0 ||
+		    !GetOverlappedResult(h, &w3d_ov, &done, FALSE)) {
+			w3d_abandon_com(h);
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /* Keep COM1 open for a while (a test program between its start and its end); w3d_com_release()
  * gives it back for the runner */
 static void w3d_com_hold(void)
 {
-	if (w3d_com == INVALID_HANDLE_VALUE)
+	if (!w3d_com_off && w3d_com == INVALID_HANDLE_VALUE)
 		w3d_com = w3d_com_open();
 }
 static void w3d_com_release(void)
@@ -118,20 +238,23 @@ static void w3d_com_release(void)
 static void w3d_line(const char *s)
 {
 	DWORD n = (DWORD)strlen(s);
-	HANDLE com = w3d_com;
-	if (com == INVALID_HANDLE_VALUE)
-		com = w3d_com_open();
-	if (com != INVALID_HANDLE_VALUE) {
-		w3d_write(com, s, n);
-		w3d_write(com, "\r\n", 2);
-		if (com != w3d_com)
-			CloseHandle(com);
+	if (!w3d_com_off) {
+		HANDLE com = w3d_com;
+		int temp = 0;
+		if (com == INVALID_HANDLE_VALUE) {
+			com = w3d_com_open();
+			temp = 1;
+		}
+		if (com != INVALID_HANDLE_VALUE) {
+			if (w3d_com_write_line(com, s, n) && temp)
+				CloseHandle(com);
+		}
 	}
-	HANDLE f = CreateFileA(W3D_LOG, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	HANDLE f = CreateFileA(w3d_log_path, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (f != INVALID_HANDLE_VALUE) {
 		SetFilePointer(f, 0, NULL, FILE_END);
-		w3d_write(f, s, n);
-		w3d_write(f, "\r\n", 2);
+		w3d_file_write(f, s, n);
+		w3d_file_write(f, "\r\n", 2);
 		CloseHandle(f);
 	}
 }
