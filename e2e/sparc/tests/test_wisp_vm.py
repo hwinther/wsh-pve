@@ -57,9 +57,9 @@ class Params(unittest.TestCase):
         self.assertEqual((sparc32["arch"], sparc32["machine"], sparc32["bios"], sparc32["vga"]),
                          ("sparc", "SS-5", "openbios-sparc32", "cg3"))
         self.assertEqual(wisp_vm.vm_params("sparc32", 1, "/k", display="tcx", fb=True)["vga"], "tcx")
-        sun4u = wisp_vm.vm_params("sparc64", 1, "/k", fb=True)
+        sun4u = wisp_vm.vm_params("sparc64", 1, "/k", fb=True, ps2=False)
         self.assertEqual((sun4u["machine"], sun4u["bios"], sun4u["vga"]), ("sun4u", "openbios-sparc64", "std"))
-        self.assertIn("-device virtio-keyboard-pci", sun4u["args"])
+        self.assertIn("-device virtio-keyboard-pci", sun4u["args"])  # firmware without the option
         virt = wisp_vm.vm_params("aarch64", 1, "/k", doom=True, disk="/d.sqfs")
         self.assertEqual((virt["arch"], virt["machine"], virt["scsihw"]), ("aarch64", "virt", "virtio-scsi-pci"))
         self.assertEqual(virt["scsi0"], "local:0,import-from=/d.sqfs,format=raw")
@@ -69,6 +69,44 @@ class Params(unittest.TestCase):
         self.assertNotIn("-device", pc["args"])  # the pc's own PS/2 keyboard
         with self.assertRaisesRegex(wisp_vm.WispError, "display tcx"):
             wisp_vm.vm_params("x86_64", 1, "/k", display="tcx", fb=True)
+
+    def test_sun4u_ps2_keyboard_and_mouse(self):
+        for kw in ({"fb": True}, {"doom": True, "disk": "/d"}):
+            with self.subTest(**kw):
+                p = wisp_vm.vm_params("sparc64", 1, "/k", ps2=True, **kw)
+                words = shlex.split(p["args"])
+                self.assertEqual(words[:2], ["-kernel", "/k"])
+                i = words.index("-prom-env")
+                self.assertEqual(words[i + 1], "ps2-mouse?=true")
+                self.assertNotIn("-device", words)  # no virtio keyboard or mouse
+                self.assertFalse(any("virtio" in w for w in words))
+                # qemu-server splits `args` like a shell (Text::ParseWords::shellwords): `?` stays quoted
+                self.assertIn("'ps2-mouse?=true'", p["args"])
+        # the shell VM has no framebuffer and so no keyboard, and only sun4u takes the option
+        self.assertNotIn("-prom-env", wisp_vm.vm_params("sparc64", 1, "/k", ps2=True)["args"])
+        for arch in ("x86_64", "sparc32", "aarch64"):
+            with self.subTest(arch=arch):
+                self.assertNotIn("-prom-env", wisp_vm.vm_params(arch, 1, "/k", fb=True, ps2=True, kvm=False)["args"])
+        self.assertIn("-device virtio-keyboard-pci", wisp_vm.vm_params("aarch64", 1, "/k", fb=True, ps2=True)["args"])
+
+    def test_ps2_follows_the_firmware(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = os.path.join(tmp, "old"), os.path.join(tmp, "new")
+            with open(old, "wb") as f:
+                f.write(b"\0OpenBIOS\0s\" false\" s\" auto-boot?\" bool-config\0")
+            with open(new, "wb") as f:
+                f.write(b"\0OpenBIOS\0kdmouse\0ps2-mouse?\0")
+            self.assertTrue(wisp_vm.firmware_has_ps2(new))
+            self.assertFalse(wisp_vm.firmware_has_ps2(old))
+            self.assertFalse(wisp_vm.firmware_has_ps2(os.path.join(tmp, "missing")))
+            for path, ps2 in ((new, True), (old, False)):
+                with self.subTest(firmware=os.path.basename(path)),                         mock.patch.object(wisp_vm, "SPARC64_FIRMWARE", path):
+                    args = wisp_vm.vm_params("sparc64", 1, "/k", fb=True)["args"]
+                    self.assertEqual("-prom-env" in args, ps2)
+                    self.assertEqual("virtio-keyboard-pci" in args, not ps2)
+                    self.assertEqual(wisp_vm.ps2_input("sparc64", fb=True), ps2)
+                    self.assertFalse(wisp_vm.ps2_input("sparc64", fb=False))
+                    self.assertFalse(wisp_vm.ps2_input("aarch64", fb=True))
 
     def test_doom_command_line(self):
         words = shlex.split(wisp_vm.vm_args("sparc32", "/var/lib/wsh-lab/wisp/vm-9/kernel", doom=True))

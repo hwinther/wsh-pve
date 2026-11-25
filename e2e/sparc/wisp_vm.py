@@ -14,9 +14,10 @@ the lab's prom_env), from a copy kept per VM, so a later release doesn't change 
 
 The VM uses the machine's PVE profile: pc (x86_64), SS-5 with OpenBIOS (sparc32), sun4u (sparc64) and virt
 (aarch64). The shell VM has `vga: serial0`, so the web UI's Console is the serial shell; --tier fb and
---doom have the machine's framebuffer (std, cg3 or tcx) on the noVNC Console and its keyboard (sun4u and
-virt: a virtio keyboard). It never touches an existing VMID, and stop/start/destroy only act on VMs it
-made (tag wsh-lab-wisp).
+--doom have the machine's framebuffer (std, cg3 or tcx) on the noVNC Console and its keyboard (virt: a
+virtio keyboard; sun4u: its PS/2 keyboard and mouse through `-prom-env ps2-mouse?=true` in `args` when the
+node's openbios-sparc64 has that option, pve-qemu-kvm 11.1.3-4+wsh15 and later, else a virtio keyboard).
+It never touches an existing VMID, and stop/start/destroy only act on VMs it made (tag wsh-lab-wisp).
 """
 import hashlib
 import json
@@ -43,10 +44,17 @@ DIR = "/var/lib/wsh-lab/wisp"
 TAG = "wsh-lab-wisp"
 ARCHES = ("x86_64", "sparc32", "sparc64", "aarch64")
 ACTIONS = ("start", "stop", "destroy")
+# sun4u's PS/2 keyboard and mouse on the EBus 8042: Linux's sparc i8042 probe needs the mouse child that
+# OpenBIOS 0035 adds with this option (in pve-qemu-kvm 11.1.3-4+wsh15 and later; off by default, since
+# Debian 7's Linux 3.2 panics once that probe succeeds, so only wisp's VMs set it). qemu-server has no
+# option for OpenBIOS variables: they go into `args` like -kernel (QEMU finds -bios in /usr/share/kvm).
+PS2_OPTION = "ps2-mouse?"
+SPARC64_FIRMWARE = "/usr/share/kvm/openbios-sparc64"
 
 # Per architecture: the PVE profile (pvesh create options without disk and display), the kernel console,
 # the framebuffer displays the profile takes (the first is the default), the data disk's drive (the
-# guest's first disk, sda) and the extra QEMU devices for the keyboard.
+# guest's first disk, sda), the extra QEMU devices for the keyboard and, on sun4u, whether the machine's
+# PS/2 keyboard and mouse can take their place (PS2_OPTION, when the firmware has it).
 MACHINES = {
     "x86_64": {"profile": {"ostype": "l26", "machine": "pc", "memory": 256, "cores": 1},
                "console": "ttyS0", "displays": ("std",), "disk": "ide0", "devices": ()},
@@ -56,8 +64,9 @@ MACHINES = {
     "sparc64": {"profile": {"arch": "sparc64", "machine": "sun4u", "bios": "openbios-sparc64", "memory": 256,
                             "ostype": "other"},
                 "console": "ttyS0", "displays": ("std",), "disk": "ide0",
-                # Linux can't use sun4u's EBus i8042 under OpenBIOS: a virtio keyboard on PCI
-                "devices": ("virtio-keyboard-pci",)},
+                # the EBus 8042's PS/2 keyboard and mouse with PS2_OPTION; with older firmware Linux
+                # can't use them (no mouse child): a virtio keyboard on PCI instead
+                "devices": ("virtio-keyboard-pci",), "ps2": True},
     "aarch64": {"profile": {"arch": "aarch64", "machine": "virt", "memory": 256, "cores": 1,
                             "ostype": "l26", "scsihw": "virtio-scsi-pci"},
                 "console": "ttyAMA0", "displays": ("std",), "disk": "scsi0",
@@ -202,19 +211,41 @@ def append_line(arch, doom=False):
     return line + " wisp=shell"
 
 
-def vm_args(arch, kernel, doom=False, fb=False):
-    """The VM's `args`: -kernel and -append, and the keyboard device where the machine needs one."""
+def firmware_has_ps2(path=None):
+    """Whether the node's openbios-sparc64 (SPARC64_FIRMWARE) knows PS2_OPTION (OpenBIOS 0035; older
+    firmware ignores it)."""
+    try:
+        with open(path or SPARC64_FIRMWARE, "rb") as f:
+            return PS2_OPTION.encode() in f.read()
+    except OSError:
+        return False
+
+
+def vm_args(arch, kernel, doom=False, fb=False, ps2=False):
+    """The VM's `args`: -kernel and -append, and for the framebuffer the keyboard: sun4u's PS/2 keyboard
+    and mouse with `ps2` (the OpenBIOS option), else the extra device where the machine needs one."""
     words = ["-kernel", kernel, "-append", append_line(arch, doom)]
     if fb or doom:
-        for device in MACHINES[arch]["devices"]:
-            words += ["-device", device]
+        if ps2 and MACHINES[arch].get("ps2"):
+            words += ["-prom-env", f"{PS2_OPTION}=true"]
+        else:
+            for device in MACHINES[arch]["devices"]:
+                words += ["-device", device]
     return " ".join(shlex.quote(w) for w in words)
 
 
+def ps2_input(arch, fb, doom=False):
+    """Whether the VM gets sun4u's PS/2 keyboard and mouse: a framebuffer VM on a node whose firmware
+    has PS2_OPTION."""
+    return bool(MACHINES[arch].get("ps2")) and (fb or doom) and firmware_has_ps2()
+
+
 def vm_params(arch, vmid, kernel, display=None, fb=False, doom=False, disk=None, storage="local",
-              name=None, kvm=None):
-    """The options for `pvesh create /nodes/<node>/qemu`."""
+              name=None, kvm=None, ps2=None):
+    """The options for `pvesh create /nodes/<node>/qemu` (`ps2` None: ps2_input())."""
     m = MACHINES[arch]
+    if ps2 is None:
+        ps2 = ps2_input(arch, fb, doom)
     p = dict(m["profile"])
     if fb or doom:
         display = display or m["displays"][0]
@@ -231,7 +262,7 @@ def vm_params(arch, vmid, kernel, display=None, fb=False, doom=False, disk=None,
     kind = "doom" if doom else "fb" if fb else "shell"
     p.update(vmid=vmid, name=name or f"wisp-{arch.replace('_', '-')}-{kind}", tags=TAG,
              description=f"wisp {kind} VM ({arch}), made by wsh-lab wisp-vm",
-             args=vm_args(arch, kernel, doom, fb))
+             args=vm_args(arch, kernel, doom, fb, ps2))
     return p
 
 
@@ -286,7 +317,12 @@ def create(a):
                 wad = fetch_wad(directory, a.wad)
                 disk = build_disk(work, files[1], wad, a.fps)
                 print(f"data disk: fbdoom, freedoom1.wad, play.rsp ({os.path.getsize(disk)} bytes)")
-            params = vm_params(a.arch, a.vmid, vm_kernel, a.display, fb, a.doom, disk, a.storage, a.name)
+            ps2 = ps2_input(a.arch, fb)
+            if MACHINES[a.arch].get("ps2") and fb and not ps2:
+                print(f"{SPARC64_FIRMWARE} has no {PS2_OPTION} option (pve-qemu-kvm older than 11.1.3-4+wsh15): "
+                      "a virtio keyboard instead of the PS/2 keyboard and mouse")
+            params = vm_params(a.arch, a.vmid, vm_kernel, a.display, fb, a.doom, disk, a.storage, a.name,
+                               ps2=ps2)
             run("pvesh", "create", f"/nodes/{node()}/qemu", *[x for k, v in params.items() for x in (f"--{k}", v)])
         except BaseException:
             shutil.rmtree(vm_dir, ignore_errors=True)

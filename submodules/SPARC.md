@@ -120,8 +120,10 @@ maintains the patches.
 | `0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset` | qtest `sun4u-sunhme-reset-test` for 0135: a sunhme in slot 0 of pciB set up as the firmware and a driver would (bridge window, BAR, a 32-entry ring in RAM), frames from a socket netdev, the sabre's request for ino 0x10 intercepted; `rx`, `no-rx-after-reset` (a frame after a global reset raises nothing and leaves the ring alone, with DMA enabled again the next goes into descriptor 1) and `reset-drops-status`. The last two fail without 0135 | ours | not in QEMU |
 | `0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue` | A PCI interrupt-map register written without the valid bit dropped the outstanding request only when the request's ino equalled the slot number (0-7), not when it was one of the slot's four inos: a request of ino 0x10 (the NIC on pciB) stayed when slot 4 was disabled, and the sabre then waited for a clear the guest doesn't send for a disabled interrupt. Now the request's slot (`irq_request >> 2`) is compared, as the OBIO branch compares the ino. Found by reading `sabre.c` while tracing the lost IDE interrupt; Linux 7.0 leaves the NIC's map register valid when it frees the interrupt, so it wasn't that, and no other guest was traced for it | ours | not fixed; see `upstream/qemu-sabre-pci-interrupt-replaces-request.md` |
 | `0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa` | `sun4u-sabre-irq-test` cases `pci-disable-drops-request` and `pci-disable-other-slot` for 0137 (5 cases in all): disabling slot 4 drops the NIC's outstanding request so the IDE request gets through, enabling it again requests the NIC's line, and leaves the requests of ino 0x14 (slot 5) and ino 4 (slot 1) alone. Both fail without 0137 | ours | not in QEMU |
-| `0160-hw-char-escc-end-a-break-with-an-interrupt-for-its-s` | A break on a serial line (QMP `chardev-send-break`, a telnet BREAK) set RR0's Break/Abort bit for good, and the interrupt stayed up with nothing in RR3 or RR2 naming it: Solaris and SunOS on ttya spun in their serial interrupt, Linux never reached the firmware prompt, NetBSD never entered ddb. The bit now goes to 1 and back to 0, each change latching an external/status interrupt (WR1 bit 0 and WR15 bit 7) that RR3 and the vector in RR2 name and the Reset Ext/Status Interrupts command clears; the break ends one character time after it began, but not before the guest has reset the interrupt of its start, with a NUL in the receiver ("Stop-A") | ours, on the LEMU ESCC patches | not fixed |
-| `0161-tests-qtest-test-a-break-on-a-serial-line-of-the-sun` | qtest `sun4m-escc-break-test` for 0160 (breaks on ttya and ttyb of an SS-5 through null chardevs): `start-and-end` (the start latched past the character time until the guest resets it, then the end with the NUL, receive named first), `end-after-char-time`, `polled` (no interrupt enabled), `channel-b` (its vector), `channel-reset`; all five fail without 0160 | ours | |
+| `0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s` | A break on a serial line (QMP `chardev-send-break`, a telnet BREAK) set RR0's Break/Abort bit for good, and the interrupt stayed up with nothing in RR3 or RR2 naming it: Solaris and SunOS on ttya spun in their serial interrupt, Linux never reached the firmware prompt, NetBSD never entered ddb. The bit now goes to 1 and back to 0, each change latching an external/status interrupt (WR1 bit 0 and WR15 bit 7) that RR3 and the vector in RR2 name and the Reset Ext/Status Interrupts command clears; the break ends one character time after it began, but not before the guest has reset the interrupt of its start, with a NUL in the receiver ("Stop-A") | ours, on the LEMU ESCC patches | not fixed |
+| `0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun` | qtest `sun4m-escc-break-test` for 0141 (breaks on ttya and ttyb of an SS-5 through null chardevs): `start-and-end` (the start latched past the character time until the guest resets it, then the end with the NUL, receive named first), `end-after-char-time`, `polled` (no interrupt enabled), `channel-b` (its vector), `channel-reset`; all five fail without 0141 | ours | |
+| `0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t` | 0070's Linux helper checked for a pending interrupt and then set `cs->halted` without the BQL. A tick or stick interrupt that fired between the two (`tick_irq()` runs in the main loop with the BQL) set `SOFTINT` and `halted = 0` before the helper set it to 1; at `%pil` 14 it is masked, raises no `CPU_INTERRUPT_HARD`, so the vCPU thread slept through it, and Linux, not having taken the tick, armed no next one: asleep until the next interrupt vector, or for good on an idle guest. The helper now checks again and halts under the BQL. The other idle helpers (0042, 0071, 0110, 0114) halt at `%pil` 0, where the tick raises `CPU_INTERRUPT_HARD`, which the vCPU thread checks under the BQL before it sleeps; they keep the window without the effect. Found by reading, never seen on a guest ("sparc64 (sun4u)", "Idle") | ours | not in QEMU |
+| `0140-tests-qtest-test-a-tick-between-the-idle-check-and-t` | `sun4u-idle-test` case `tick-race` for every idle loop (80 cases in all): QEMU writes the `sparc64_idle` trace, which comes between the check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the tick fires; let go, it must take the tick and go on. Without 0139 the three Linux layouts fail every time (no round and no tick afterwards), the `%pil` 0 loops pass either way. Skipped without the `log` trace backend and on Windows. The test now runs about 70 s: 240 s in `slow_qtests` | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -721,7 +723,7 @@ to resume` and `0 >` on the console, the CPU in the firmware, `go` resumes and t
 | Solaris 2.6 | SS-20, OpenBIOS, 2 CPUs | cg3, console, Stop-A | not run | prompt (one round) |
 | Solaris 2.6 | SS-5, OpenBIOS | cg3, console, `a` then `stop` | not run | ignored: `a` typed at the login |
 | Solaris 2.6 | SS-5, OpenBIOS | ttya, Stop-A on the keyboard | not run | ignored (the keyboard isn't the console) |
-| Solaris 2.6 | SS-5, OpenBIOS | ttya, break (QMP `chardev-send-break`) | no prompt (the hang wasn't checked; it is QEMU's) | no prompt; the guest hangs (below); with pve-qemu `wsh/0160`: prompt, a shell command after `go` works |
+| Solaris 2.6 | SS-5, OpenBIOS | ttya, break (QMP `chardev-send-break`) | no prompt (the hang wasn't checked; it is QEMU's) | no prompt; the guest hangs (below); with pve-qemu `wsh/0141`: prompt, a shell command after `go` works |
 | SunOS 4.1.4 | SS-5, OpenBIOS | cg3, Stop-A | VM off | prompt |
 | NetBSD 11.1 | SS-5, OpenBIOS | cg3, Stop-A | its kernel debugger (`db>`), `c` continues | the same |
 | none | SS-5, OpenBIOS | the firmware's own `0 >`, Stop-A | ignored | ignored |
@@ -736,7 +738,7 @@ Tested with `openbios-sparc32` and `QEMU,cgthree.bin` built by `openbios/Dockerf
 `machines` (13/13), `display` (20/20) and `idle` (10/10). No QEMU change; no qtest (the bug isn't
 in a device).
 
-**A break on ttya hung Solaris** (any firmware; QEMU's ESCC, fixed by pve-qemu `wsh/0160`).
+**A break on ttya hung Solaris** (any firmware; QEMU's ESCC, fixed by pve-qemu `wsh/0141`).
 QEMU's `serial_receive_break()` set RR0's break bit on `CHR_EVENT_BREAK` and never cleared it, and
 `escc_update_irq()` kept the channel's interrupt raised for as long as the bit and WR15's break
 enable were set. Nothing named that interrupt: the model had no external/status bits in RR3, and
@@ -761,7 +763,7 @@ the 1-to-0 change on the console and throw the NUL away (also one received durin
 Linux's `sunzilog` reads RR0 until the bit is 0 inside its interrupt handler, then enters the
 PROM; NetBSD enters ddb at the start (`cn_check_magic(CNC_BREAK)`).
 
-**Fix** (`wsh/0160`, ours, written on top of the LEMU ESCC patches 0002 and 0006): that latch for
+**Fix** (`wsh/0141`, ours, written on top of the LEMU ESCC patches 0002 and 0006): that latch for
 the break bit, the interrupt in RR3 (bits 0 and 3) and in RR2's vector (Ch A/B External/Status,
 after receive and transmit of the same channel), and the reset command. The chardev gives one
 event and no length, so the break lasts one character time at the programmed rate, but at least
@@ -770,11 +772,11 @@ however late it gets to the first; then the bit goes to 0 with a second interrup
 receiver. Nothing is received during the break; a channel reset drops the pending interrupt; the
 state is migrated in a subsection sent only during a break or with the interrupt pending. The
 interrupt now also needs WR1's external/status enable, as on the chip (the drivers set it; the
-firmware polls with no interrupt enabled and isn't disturbed). `wsh/0161` is the qtest
-(`sun4m-escc-break-test`, 5 cases, all fail without 0160); `sun4m-escc-test` (the Sun keyboard and
+firmware polls with no interrupt enabled and isn't disturbed). `wsh/0142` is the qtest
+(`sun4m-escc-break-test`, 5 cases, all fail without 0141); `sun4m-escc-test` (the Sun keyboard and
 mouse, 0005) still passes.
 
-| Guest | Machine, console | Break on ttya, 11.1.3-4+wsh22 | With `wsh/0160` (two rounds) |
+| Guest | Machine, console | Break on ttya, 11.1.3-4+wsh22 | With `wsh/0141` (two rounds) |
 | --- | --- | --- | --- |
 | Solaris 2.6 | SS-5, OpenBIOS, ttya, root shell | no prompt, shell dead for 120 s, QEMU at 100% | prompt, `go`, the shell answers |
 | SunOS 4.1.4 | SS-5, OpenBIOS, ttya, login prompt | no prompt, QEMU at 100% | prompt, `go`, the login prompt answers |
@@ -785,10 +787,10 @@ mouse, 0005) still passes.
 
 Run with `stop-a.py CONSOLE=serial BREAK=1` (plus `GUEST=sunos SHELL=0`, `GUEST=netbsd SHELL=0
 EXPECT=db> RESUME=c`, `GUEST=none EXPECT=none`) against a `qemu-system-sparc` built from the series
-with 0160 over the lab image of 11.1.3-4+wsh22; wisp with the command line of its README
-(`wisp=shell`) and a small QMP script. Also still passing with 0160: Stop-A on the Sun keyboard
+with 0141 over the lab image of 11.1.3-4+wsh22; wisp with the command line of its README
+(`wisp=shell`) and a small QMP script. Also still passing with 0141: Stop-A on the Sun keyboard
 with a cg3 console (Solaris 2.6), and the sparc qtests (`qmp-test`'s `oob` case fails with and
-without it). The `stopa` matrix has the break cases (they need a pve-qemu-kvm with 0160). Not run:
+without it). The `stopa` matrix has the break cases (they need a pve-qemu-kvm with 0141). Not run:
 Solaris 2.5.1 or the Sun PROMs (the PROM's own break handling), SS-10/SS-20, a real telnet BREAK
 (the same chardev event), migration during a break.
 
@@ -3256,6 +3258,27 @@ halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
   for migration). 0042's halt needs `%pil` 0 and stays as it was. The window read around a call grew
   from 8 to 24 words before it (Debian 13's bne layout needs 20, Solaris 7's 9); words on another page than
   the call's read as 0 (illtrap, in no layout) instead of the call being skipped.
+- **The lost tick at `%pil` 14 (`wsh/0139`-`0140`, 2026-11-25).** Found by reading, never seen on a guest:
+  `helper_sparc64_idle_linux()` checked `%softint`, the interrupt vector and `CPU_INTERRUPT_HARD` without the
+  BQL and then set `cs->halted`. The tick and stick timers run in the main loop with the BQL (`tick_irq()`
+  sets `SOFTINT` and `halted = 0`, then `cpu_check_irqs()` and a kick). One that fired between the check and
+  the halt was masked at `%pil` 14: no `CPU_INTERRUPT_HARD`, so `sparc_cpu_has_work()` was false and the
+  vCPU thread (single-threaded TCG: sparc64 has no MTTCG) slept in `rr_wait_io_event()`, the kick's
+  broadcast already gone. Linux had not taken the tick, so it armed no next one: asleep until the next
+  interrupt vector, or for good on an idle guest. 0139 checks again and halts under the BQL. The other
+  helpers keep the window without the effect: NetBSD, OpenBSD, Solaris 7-10, Tribblix (0042, 0071),
+  Linux 3.2 (0110) and FreeBSD (0114) halt at `%pil` 0, where the tick raises `CPU_INTERRUPT_HARD`, and the
+  interrupt vector raises it at any `%pil`; the vCPU thread checks it under the BQL before it sleeps.
+  The qtest (0140) makes the window as long as it likes: QEMU writes the `sparc64_idle` trace between the
+  check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the
+  1 ms tick fires. Lab build of 0001-0140 (`qemu-system-sparc64` only, Debian 13): without 0139 the three
+  Linux layouts fail 15 of 15 runs (0 rounds and 0 ticks once let go), the `%pil` 0 loops pass; with it
+  all ten pass 50 of 50 (302-307 ticks in 300 ms). `sun4u-idle-test` 80/80 in 68.2-68.8 s (three
+  `meson test` runs, 8 in parallel; meson's default of 60 s killed it, so it gets 240 s in `slow_qtests`),
+  `qtest-sparc64` 22 OK, 2 skipped, `qmp-test` `oob` failing as before. wisp (Linux 7.3.4, `wisp=shell`,
+  host load 5-7 from other jobs): host CPU at the prompt over 30 s 5.7-6.8% without 0139, 6.2-6.7% with
+  it (one run each at 9.4% and 14.9% under load spikes), 100.3-100.5% with `idle-halt=off`; `crc 100000`
+  9.2-10.7 s in all three, guest uptime 2 s behind the host's time since QEMU's start in every run (the boot).
 
 Measured on the lab host (14 threads, quiet: 1-minute load 0.1-1.1 at every start and end), one QEMU at
 a time, "before" the 0001-0067 build, "with" the same tree with 0070-0072, "off" that one with
@@ -4567,7 +4590,7 @@ NIC; and the reset stops the receiver.
   Linux helper for this turned up a different, unreproduced race: `helper_sparc64_idle_linux()` checks
   `%softint` without the BQL and then sets `cs->halted`; a tick that fires between the two (`tick_irq()` sets
   `TICK_INT` and `halted = 0`) is masked at `%pil` 14, sets no `CPU_INTERRUPT_HARD`, and the CPU sleeps until
-  the next interrupt vector. Not seen in any run; not fixed (ROADMAP "Known and not fixed").
+  the next interrupt vector. Not seen in any run; fixed since by `wsh/0139` ("Idle", above).
 - **The `%softint` race** (`wsh/0036`) and **the sabre's replaced request** (`wsh/0045`): both fixed in the
   published package and in the trace the request was not replaced but never cleared.
 - **The PCI interrupt-map register:** reading `sabre_config_write()` showed that disabling a slot dropped the
@@ -5176,7 +5199,7 @@ Tested in the e2e container (`e2e/tests/sparc-profiles.spec.ts`), without a gues
   under `ss20_v2.25_rom` ("cg3 and TCX"); with a serial console it boots.
 - **TCX depth:** qemu-server passes no `-g`, so TCX is 8-bit; 24-bit only works with OpenBIOS.
 - **Break on a serial console:** PVE's serial console can't send one (QMP `chardev-send-break`
-  can; since `wsh/0160` the guest enters its PROM or debugger, "Stop-A"). Stop-A on the keyboard
+  can; since `wsh/0141` the guest enters its PROM or debugger, "Stop-A"). Stop-A on the keyboard
   works with a framebuffer console.
 - **OpenBIOS `cdrom` alias:** it doesn't find a CD that answers as a disk; boot that by device
   path (`sd@6,0:d`).

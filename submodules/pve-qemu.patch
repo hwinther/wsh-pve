@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..1cafc79 100644
+index bc240a0..6d829e9 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,102 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,104 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -174,8 +174,10 @@ index bc240a0..1cafc79 100644
 +wsh/0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset.patch
 +wsh/0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue.patch
 +wsh/0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa.patch
-+wsh/0160-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
-+wsh/0161-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
++wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
++wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
++wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
++wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -20244,11 +20246,302 @@ index 0000000..970499b
 + 
 +     return g_test_run();
 + }
-diff --git a/debian/patches/wsh/0160-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch b/debian/patches/wsh/0160-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
+diff --git a/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch b/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
+new file mode 100644
+index 0000000..b232221
+--- /dev/null
++++ b/debian/patches/wsh/0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t.patch
+@@ -0,0 +1,99 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: halt Linux's idle loop on sun4u under the BQL
++
++helper_sparc64_idle_linux() checked for a pending interrupt and then set
++cs->halted without the BQL. A tick or stick compare interrupt that fired
++between the two (tick_irq() and stick_irq() run in the main loop, under
++the BQL) set SOFTINT and cs->halted to 0 before the helper set it to 1.
++At %pil 14, where Linux 6.1 to 7.3 halt, that interrupt is masked: it
++raises no CPU_INTERRUPT_HARD, so the vCPU thread found no work and slept
++through it, and as Linux had not taken the tick, it did not arm the next
++one. The CPU then slept until the next interrupt vector, or for good on
++an idle guest with no device interrupt to come. Found by reading the
++code; not seen on a guest, the window being a few instructions wide.
++
++The helper now checks again and halts under the BQL: a tick either came
++before, and is seen in SOFTINT, or comes after and wakes the CPU.
++
++The other idle helpers share the window but not the effect. The BSDs,
++Solaris 7 to 10, illumos, FreeBSD and Linux 3.2 halt at %pil 0, where
++the tick raises CPU_INTERRUPT_HARD, which the vCPU thread checks under
++the BQL before it sleeps; the interrupt vector raises it at any %pil.
++The next patch adds a qtest case that holds the CPU in the window until
++a tick has fired.
++---
++ target/sparc/sparc64_idle.c | 35 ++++++++++++++++++++++++++++++++---
++ 1 file changed, 32 insertions(+), 3 deletions(-)
++
++diff --git a/target/sparc/sparc64_idle.c b/target/sparc/sparc64_idle.c
++index a71a79f..079cf3a 100644
++--- a/target/sparc/sparc64_idle.c
+++++ b/target/sparc/sparc64_idle.c
++@@ -100,9 +100,18 @@
++  * stick compare interrupts and the interrupt vector wake a halted CPU
++  * whatever %pil (hw/sparc64/sparc64.c), and the CPU goes on at the call;
++  * the interrupt is taken when the idle loop enables interrupts again.
+++ *
+++ * At %pil 14 a tick or stick interrupt raises no CPU_INTERRUPT_HARD, so
+++ * nothing but cs->halted records that it came: the helper checks for it
+++ * and halts under the BQL, which tick_irq() and stick_irq() hold. At
+++ * %pil 0 (the BSDs, Solaris, Linux 3.2) the tick raises
+++ * CPU_INTERRUPT_HARD, which the vCPU thread checks under the BQL before
+++ * it sleeps, so a tick between helper_sparc64_idle()'s check and its halt
+++ * still wakes the CPU there.
++  */
++ 
++ #include "qemu/osdep.h"
+++#include "qemu/main-loop.h"
++ #include "qemu/timer.h"
++ #include "hw/core/cpu.h"
++ #include "cpu.h"
++@@ -212,6 +221,13 @@ void HELPER(sparc64_idle)(CPUSPARCState *env, target_ulong pc,
++ 
++ #define LINUX_TIF_NEED_RESCHED  (1 << 3)
++ 
+++/* An interrupt, interrupt vector or soft interrupt (the tick) is pending */
+++static bool sparc64_idle_pending(CPUSPARCState *env)
+++{
+++    return cpu_test_interrupt(env_cpu(env), CPU_INTERRUPT_HARD) ||
+++           (env->ivec_status & 0x20) || env->softint || env->pil_in;
+++}
+++
++ /*
++  * Linux, at the call in arch_cpu_idle() or, in 3.2, cpu_idle() (pc);
++  * flags_addr is current_thread_info()->flags. Halt until the next
++@@ -227,8 +243,7 @@ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++     uint64_t flags;
++ 
++     if (!(env->pstate & PS_IE) || env->psrpil != pil ||
++-        env->tl || cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) ||
++-        (env->ivec_status & 0x20) || env->softint || env->pil_in) {
+++        env->tl || sparc64_idle_pending(env)) {
++         return;
++     }
++     if (!sparc64_idle_read(env, flags_addr, 8, &flags) ||
++@@ -240,9 +255,23 @@ void HELPER(sparc64_idle_linux)(CPUSPARCState *env, target_ulong pc,
++     }
++ 
++     trace_sparc64_idle(pc);
+++    /*
+++     * A tick that fires from the check above on is masked at %pil 14: it
+++     * sets cs->halted to 0 and raises no interrupt request, so the CPU
+++     * would sleep through it if it halted after it. Check again and halt
+++     * under the BQL that the tick holds. (sun4u-idle-test holds the CPU
+++     * in the trace above until a tick has fired.)
+++     */
+++    bql_lock();
+++    if (sparc64_idle_pending(env)) {
+++        bql_unlock();
+++        return;
+++    }
+++    cs->halted = 1;
+++    bql_unlock();
+++
++     env->pc = pc;
++     env->npc = pc + 4;
++-    cs->halted = 1;
++     cs->exception_index = EXCP_HLT;
++     cpu_loop_exit(cs);
++ }
+diff --git a/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch b/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
+new file mode 100644
+index 0000000..3c6370d
+--- /dev/null
++++ b/debian/patches/wsh/0140-tests-qtest-test-a-tick-between-the-idle-check-and-t.patch
+@@ -0,0 +1,180 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test a tick between the idle check and the halt on sun4u
++
++sun4u-idle-test gets a tick-race case for each idle loop: QEMU writes the
++trace of the halt (sparc64_idle, which comes between the helper's check
++for a pending interrupt and the halt) to a FIFO that the test has filled,
++so the CPU stops there with nothing pending until the test reads the
++FIFO, and the tick fires meanwhile. The CPU must then take the tick and
++go on, waking for each tick after it. The case is skipped when the trace
++does not hold the CPU (QEMU without the log trace backend), and on
++Windows.
++
++Against the binary without the previous patch the three Linux layouts
++fail (no round and no tick after the CPU is let go); the BSD, Solaris,
++FreeBSD and Linux 3.2 loops, at %pil 0, pass with or without it.
++
++sun4u-idle-test now runs for about 70 s, over meson's default of 60 s:
++it gets 240 s in slow_qtests.
++---
++ tests/qtest/meson.build       |   1 +
++ tests/qtest/sun4u-idle-test.c | 113 ++++++++++++++++++++++++++++++++++
++ 2 files changed, 114 insertions(+)
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 73bf137..1e31cf0 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -15,6 +15,7 @@ slow_qtests = {
++   'pxe-test': 610,
++   'prom-env-test': 360,
++   'boot-serial-test': 360,
+++  'sun4u-idle-test': 240,
++   'qos-test': 120,
++   'vmgenid-test': 610,
++ }
++diff --git a/tests/qtest/sun4u-idle-test.c b/tests/qtest/sun4u-idle-test.c
++index d838df3..c11e6be 100644
++--- a/tests/qtest/sun4u-idle-test.c
+++++ b/tests/qtest/sun4u-idle-test.c
++@@ -22,6 +22,13 @@
++  * level 0, as the BSDs do: the CPU must halt there, not at level 14 or
++  * 15, not with need_resched() set or interrupts disabled.
++  *
+++ * A tick that fires between QEMU's last check for a pending interrupt and
+++ * the halt must not be slept through: QEMU writes the trace of the halt
+++ * (sparc64_idle) between the two, to a FIFO the test has filled, so the
+++ * CPU stops there with no interrupt pending until the test reads the
+++ * FIFO, and a tick fires meanwhile. At level 14 (Linux) it raises no
+++ * interrupt request, only clears the halted state.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -573,6 +580,102 @@ static void test_idle(const void *data)
++     }
++ }
++ 
+++#ifndef _WIN32
+++/* Read what QEMU has written to the FIFO */
+++static void drain(int fd)
+++{
+++    char buf[4096];
+++
+++    while (read(fd, buf, sizeof(buf)) > 0) {
+++        /* nothing */
+++    }
+++}
+++
+++/*
+++ * The tick case with the CPU held between the helper's check and the
+++ * halt until a tick has fired there: it must take the tick and go on,
+++ * waking for each tick after it.
+++ */
+++static void test_tick_race(const void *data)
+++{
+++    const IdleTest *t = data;
+++    g_autofree char *prom = write_prom(t->kernel, t->c);
+++    g_autofree char *dir = g_dir_make_tmp("sun4u-idle-XXXXXX", NULL);
+++    g_autofree char *fifo = g_build_filename(dir, "trace", NULL);
+++    gint64 end = g_get_monotonic_time() + 30 * G_TIME_SPAN_SECOND;
+++    char buf[4096] = { 0 };
+++    QTestState *qts;
+++    uint64_t r0, k0, rounds, ticks;
+++    bool held;
+++    int fd, i;
+++
+++    g_assert_nonnull(dir);
+++    g_assert_cmpint(mkfifo(fifo, 0600), ==, 0);
+++    fd = open(fifo, O_RDWR | O_NONBLOCK);
+++    g_assert_cmpint(fd, >=, 0);
+++    /* Full: the first write of the trace waits for the test to read */
+++    while (write(fd, buf, sizeof(buf)) > 0) {
+++        /* nothing */
+++    }
+++    while (write(fd, buf, 1) > 0) {
+++        /* nothing */
+++    }
+++
+++    qts = qtest_initf("-machine %s -accel tcg -nodefaults -bios %s "
+++                      "-trace sparc64_idle -D %s", t->c->machine, prom, fifo);
+++    while (qtest_readq(qts, RAM_ROUNDS) == 0) {
+++        g_assert_cmpint(g_get_monotonic_time(), <, end);
+++        g_usleep(1000);
+++    }
+++    /*
+++     * Held: no round and no tick for 50 ms, in which the tick (every
+++     * millisecond) fires
+++     */
+++    end = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+++    r0 = qtest_readq(qts, RAM_ROUNDS);
+++    k0 = qtest_readq(qts, RAM_TICKS);
+++    do {
+++        g_usleep(50 * 1000);
+++        rounds = qtest_readq(qts, RAM_ROUNDS);
+++        ticks = qtest_readq(qts, RAM_TICKS);
+++        held = rounds == r0 && ticks == k0;
+++        r0 = rounds;
+++        k0 = ticks;
+++    } while (!held && g_get_monotonic_time() < end);
+++
+++    /* Let it go on, and count the ticks it takes after that */
+++    for (i = 0; i < 300; i++) {
+++        drain(fd);
+++        g_usleep(1000);
+++    }
+++    r0 = qtest_readq(qts, RAM_ROUNDS);
+++    k0 = qtest_readq(qts, RAM_TICKS);
+++    for (i = 0; i < 300; i++) {
+++        drain(fd);
+++        g_usleep(1000);
+++    }
+++    rounds = qtest_readq(qts, RAM_ROUNDS) - r0;
+++    ticks = qtest_readq(qts, RAM_TICKS) - k0;
+++    g_assert_cmphex(qtest_readq(qts, RAM_TRAP), ==, 0);
+++    drain(fd);
+++    close(fd);
+++    qtest_quit(qts);
+++    unlink(fifo);
+++    rmdir(dir);
+++    unlink(prom);
+++    g_test_message("held %d, then %" PRIu64 " rounds, %" PRIu64
+++                   " ticks in 300 ms", held, rounds, ticks);
+++
+++    if (!held) {
+++        /* The trace didn't wait (QEMU built without the log backend) */
+++        g_test_skip("the trace of sparc64_idle did not hold the CPU");
+++        return;
+++    }
+++    g_assert_cmpuint(ticks, >, 50);
+++    g_assert_cmpuint(rounds, >, 0);
+++}
+++#endif
+++
++ int main(int argc, char **argv)
++ {
++     static const char *const kernels[] = {
++@@ -618,6 +721,7 @@ int main(int argc, char **argv)
++         { "tick", "sun4u", 0, PS_PEF_PRIV_IE, 0, true, true },
++     };
++     static IdleTest tests[ARRAY_SIZE(kernels) * ARRAY_SIZE(linux_cases)];
+++    static IdleTest race_tests[ARRAY_SIZE(kernels)];
++     int k, i, n = 0;
++ 
++     g_test_init(&argc, &argv, NULL);
++@@ -638,6 +742,15 @@ int main(int argc, char **argv)
++                 t->kernel = k;
++                 t->c = &c[i];
++                 qtest_add_data_func(name, t, test_idle);
+++#ifndef _WIN32
+++                if (c[i].tick) {
+++                    g_autofree char *race = g_strdup_printf(
+++                        "sun4u-idle/%s/tick-race", kernels[k]);
+++
+++                    race_tests[k] = *t;
+++                    qtest_add_data_func(race, &race_tests[k], test_tick_race);
+++                }
+++#endif
++             }
++         }
++     }
+diff --git a/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch b/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
 new file mode 100644
 index 0000000..5586abc
 --- /dev/null
-+++ b/debian/patches/wsh/0160-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
++++ b/debian/patches/wsh/0141-hw-char-escc-end-a-break-with-an-interrupt-for-its-s.patch
 @@ -0,0 +1,440 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] hw/char/escc: end a break, with an interrupt for its
@@ -20690,11 +20983,11 @@ index 0000000..5586abc
 + } ESCCChannelState;
 + 
 + struct ESCCState {
-diff --git a/debian/patches/wsh/0161-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch b/debian/patches/wsh/0161-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
+diff --git a/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch b/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
 new file mode 100644
 index 0000000..8d7f660
 --- /dev/null
-+++ b/debian/patches/wsh/0161-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
++++ b/debian/patches/wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun.patch
 @@ -0,0 +1,305 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test a break on a serial line of the sun4m

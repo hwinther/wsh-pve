@@ -171,7 +171,7 @@ MATRICES = {
     # server doesn't start, so the console login prompt stays on the screen; at 1024x768 dtlogin.
     # NetBSD's GENERIC kernel enters ddb instead of the firmware. The chord in the wrong order is
     # ignored. A break on a ttya console (QMP chardev-send-break) does the same as Stop-A; it needs
-    # pve-qemu wsh/0160 (before it the ESCC never ended a break and the guest hung in its serial
+    # pve-qemu wsh/0141 (before it the ESCC never ended a break and the guest hung in its serial
     # interrupt, submodules/SPARC.md, "Stop-A").
     "stopa": [
         ("stopa-sol26-console-openbios-ss5", "stop-a.py", SOL26, None, {"RES": "1152x900"}),
