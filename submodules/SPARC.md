@@ -127,6 +127,12 @@ maintains the patches.
 | `0140-tests-qtest-test-a-tick-between-the-idle-check-and-t` | `sun4u-idle-test` case `tick-race` for every idle loop (80 cases in all): QEMU writes the `sparc64_idle` trace, which comes between the check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the tick fires; let go, it must take the tick and go on. Without 0139 the three Linux layouts fail every time (no round and no tick afterwards), the `%pil` 0 loops pass either way. Skipped without the `log` trace backend and on Windows. The test now runs about 70 s: 240 s in `slow_qtests` | ours | not in QEMU |
 | `0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB` | Solaris 2.5.1-9 panicked at boot on SS-10/SS-20 with more than 512 MB (2.6: `BAD TRAP: type=9 ... kernel read fault at addr=0x0` in `kvm_init`, a reboot loop). The kernel takes the memory controller's type from bits 31:28 of the ECC memory enable register; for the SS-10's EMC (1) and the SS-20's SMC (2) it counts only page frames below 512 MB as memory (eight SIMM slots of 64 MB), and its first page table above that had no page structure. With more than 512 MB and OpenBIOS (a firmware file named `openbios*`) the two machines now present the SS-600MP's MCC (0), which has no such window; with 512 MB and less, and under the Sun PROMs (with the MCC the SS-20 PROM stops after its CPU probe), nothing changes ("More than 512 MB on SS-10 and SS-20") | ours | not in QEMU (the real machines take 512 MB) |
 | `0144-tests-qtest-test-the-memory-controller-version-with-` | qtest `sun4m-ecc-test` for 0143: the MER reads implementation 1 (SS-10) and 2 (SS-20) with 256 and 512 MB, 0 with 576 and 2048 MB and on the SS-600MP; 2 with 1024 MB under another firmware; with 1024 MB a write keeps only the MCC's bits | ours | not in QEMU |
+| `0145-target-sparc-keep-the-SuperSPARC-store-buffer-diagno` | Sun's SS-600MP boot PROM looped silently in its power-on self test (with `wsh/0120`): its store buffer test writes walking ones to the SuperSPARC's eight store buffer tags (ASI `0x30`) and data doublewords (ASI `0x31`) and its control register (ASI `0x32`) and reads them back; QEMU read 0. New CPU feature `sbuf-diag`, on the `TI-SuperSparc-*` models only: the registers keep what is written (tags bits 42-0, control bits 5-0, the bits the PROM tests), no store buffer behind them; `-cpu TI-SuperSparc-II,-sbuf-diag` turns it off. vmstate subsection `cpu/sbuf_diag`, sent only when one is not zero (OpenBIOS and the OSes never write them) ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0146-target-sparc-read-back-the-MXCC-stream-data-register` | The PROM's MXCC registers test reads back the 32-byte stream data register (ASI 2, `0x01c00000`-`0x01c00018`, and again at `0x01c00020`-`0x01c00038`); QEMU took stores (and used them for stream copies) but read 0. Doubleword loads return them on the models with an MXCC (`-51`, `-61`, `-II`); no new state | ours | not reported |
+| `0147-target-sparc-keep-the-SuperSPARC-cache-tag-and-data-` | The PROM's I- and D-cache RAM tests write and read back every set tag, physical tag and data doubleword through ASIs `0x0c`-`0x0f` ("wrong i$ stag"). New CPU feature `cache-diag` (`TI-SuperSparc-*`): RAMs with the TMS390Z50 geometry (I-cache 5 ways x 64 sets x 64 bytes, D-cache 4 ways x 128 sets x 32 bytes; way in address bits 28-26, physical tag bit 31, set tag bit 30, as Linux's `asm/viking.h` and SunOS 4.1.x use them), tags masked to the bits the PROM tests; no caching through them (no hits, misses or flash clear). vmstate subsection `cpu/cache_diag` (49 KB), sent only when not all zero; SunOS 4.1.x writes the D-cache tags in its workaround for a Viking erratum, so its streams carry it | ours | not reported |
+| `0148-tests-qtest-test-the-SuperSPARC-diagnostic-registers` | qtest `sun4m-viking-diag-test` for 0145-0147: a PROM built by the test writes and reads back the store buffer, stream data and cache ASIs (masks, word halves, the stream alias, a way past the fifth, no tag bit); everything reads back on SS-600MP and SS-10, the stream register reads 0 on SS-20 with `TI-SuperSparc-50`, those ASIs read 0 with `-sbuf-diag`/`-cache-diag` and on SS-5; a migration case reads back on the destination; 7 cases | ours | not in QEMU |
+| `0149-hw-timer-slavio_timer-let-the-user-timer-reach-its-l` | The PROM's board counter-timer test ("Can not toggle timer/counter bits", "Limit bit not set"): the timer configuration register (`0xf.f131_0010`) kept only the user timer bits of the CPUs QEMU has (one bit with one CPU) and now keeps all four; and a user timer written to 0x7fffffffffffffff never set its limit bit (`LIMIT_TO_PERIODS(0)` is -1), and one written while stopped read back one tick short. The user timer's ptimer counts the ticks left to `TIMER_MAX_COUNT64` exactly; counter mode is unchanged; no new state. The PROM's test also needs the counter to move between two back-to-back reads, which holds on the board (slow I/O) but in QEMU only on some runs ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0150-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th` | qtest `sun4m-slavio-timer-test` for 0149 on SS-600MP and SS-10 (qtest clock): all four mode bits, user timer read-back while stopped, the limit bit at the limit and three ticks below it, the system counter's limit unchanged; 6 cases; fails without 0149 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1032,7 +1038,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`), still silent ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -2231,6 +2237,62 @@ What it would take for the rest:
      I/O cache tags, VME loopback, register size checks of the lance, ESP and others); how many of
      them run without the diagnostic switch isn't known. Not tried: Cypress or Ross modules (QEMU
      has none), more than one CPU, the VME or I/O cache as the PROM sees them.
+  4. **pve-qemu `wsh/0145`-`0150` (2026-11-25, lab builds of 11.1.3 with the whole series):**
+     - *A way to watch it:* the POST prints to ttya only with bit 2 of the system control register
+       set; with that bit forced in a lab-only build it prints its banner ("sparcsystem 600
+       bootprom selftest v5.6"), the probe (`cpu0> imp.ver= tms390z50.4.0`, `cache-ctlr0>
+       dev.rev.ven= tms390z55.0.0.0` with the MXCC, 256 MB in bank 0), the memory, FPU and (skipped)
+       VME loopback tests and every CPU module test by name, and on a failure "*** cpu0> error loop
+       on ***" with the ASI, address, expected and observed value. The switch makes it run a longer
+       test list, though. Without it, the progress is in the NVRAM: the PROM keeps the number of
+       the running test at offset `0x1815` (`0x200` the module registers, `0x203` the cache RAMs,
+       `0xa0`-`0xad` the board) and sets `0x08` in `0x1814` when it loops on an error; `xp /2bx
+       0xff1201814` in the monitor reads both. Forcing the switch isn't carried: it is a lab aid, not
+       a board setting (the PROM's own diagnostic mode).
+     - *Store buffer (`wsh/0145`, `sbuf-diag`):* eight tags of 43 bits, eight data doublewords and a
+       6-bit control register, written and read back one at a time. Passes.
+     - *MXCC (`wsh/0146`):* the stream data register written and read back at `0x01c00000`-`0x01c00038`;
+       passes on the default `TI-SuperSparc-II` (`TI-SuperSparc-50` skips the MXCC tests). With the
+       diagnostic switch the PROM then also tests the MXCC's external cache: its 2 MB data RAM at
+       ASI 2 `0x0100_0000`-`0x011f_fff8` and its tags at `0x0180_0000`-`0x019f_ff80` (one per 128
+       bytes), which QEMU doesn't keep (passes in the lab only with a sparse store; not carried:
+       2 MB per CPU). Without the switch that test isn't run.
+     - *Cache RAMs (`wsh/0147`, `cache-diag`):* the I-cache tags and data (5 ways, 64 sets, 64-byte
+       lines) and D-cache tags and data (4 ways, 128 sets, 32-byte lines), the geometry read off the
+       addresses the PROM uses and matching Linux's `viking.h` and SunOS's Viking code. Passes; with
+       either feature turned off the PROM loops in that test again (progress `0x200` or `0x203`).
+     - *After the CPU module tests* both `TI-SuperSparc-II` and `-50` reach the board tests. With the
+       diagnostic switch the next one is "viking mmu root/l2 ptp cache invalid test" ("wrong root
+       ptp cache valid state"): it sets the MMU's cached root and level-2 page table pointers valid
+       through ASI 6 (`0x400`, `0x500`, `0x600`), turns the MMU on, writes the context register or
+       flushes, and expects the context write to invalidate the root pointer and a flush to keep
+       it. That is the MMU's table walk cache, which QEMU doesn't have: a model of its valid bits
+       and what clears them, not attempted. Without the switch that test is skipped.
+     - *Counter-timers (`wsh/0149`):* the timer configuration register must keep all four user timer
+       bits, and a user timer written to its limit must set the limit bit; both fixed. The test
+       then reads the running counter in pairs and expects it to move between the two reads: on
+       the board an I/O read across the MBus takes about a timer tick, in QEMU much less, so it
+       passes only when the host is slow enough at that moment (1 run in 4 or so in the lab, either
+       CPU). `-icount` would decouple the timer from the host, but QEMU stops at once with it ("Bad
+       icount read": the PROM's device reads go through the MMU bypass ASI helper).
+     - *Next (progress `0xad`):* the IOMMU's SBus slot configuration registers (`0xf.e000_1010`-`101c`).
+       The PROM writes one pattern to slot 3's register and another to slot 2's and reads slot 3:
+       QEMU keeps bits `0x00010003` (as Linux's `iommu.h` names them), and neither that, nor
+       `0x00010007`, `0x0001001f`, `0xc001001f`, all 32 bits or none satisfies it (lab-only masks),
+       so the 600MP's register isn't plain storage with a mask; it needs the board's documentation
+       or the PROM's compare read, not attempted. After it the PROM's string list has more board
+       tests (ECC memory, I/O cache tags, VME loopback, register size checks of the devices).
+     - Still silent and looping, nothing on cg3; how many more tests follow isn't known.
+     Regression for `wsh/0145`-`0150` (the series to 0150 applied with `quilt push --fuzz=0` on
+     11.1.3, lab): `make check-qtest-sparc` 34 passed, 2 skipped, 1 failed (`qmp-test`'s
+     `/sparc/qmp/oob`, as before), `sun4m-viking-diag-test` 7/7, `sun4m-slavio-timer-test` 6/6
+     (its first case fails without 0149), `sun4m-boot-mode-ifetch-test` 6/6. Under OpenBIOS the
+     stored `sol26-ss20` disk boots to `console login:` and `sunos413u1b-ss20` to its login (SS-20,
+     `TI-SuperSparc-II`), `sunos412-ss600mp` to `sunos412 login:`, and OpenBIOS on SS-10 reaches
+     its prompt. The SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) prints byte for byte the
+     same to its `ok` prompt with and without `sbuf-diag` and `cache-diag`. Linux reads the cache
+     tags only in `viking.h`'s debugging helpers, which now return what was written instead of 0;
+     no OS was seen reading the store buffer registers.
 
   **Cause:** not the CPU module type, not the MBus module IDs, and so far not the 600MP's VME,
   IOMMU or lebuffer: the PROM checks the SuperSPARC's diagnostic internals (boot mode, store

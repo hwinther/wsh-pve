@@ -39,12 +39,12 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
 
 Last compared on 2026-11-25, by the wsh-pve side: this repository's `main` at `9051509`, LEMU's
 `master` at `af26c72531` and the branches above. Every patch here has a row now. The pve-qemu
-series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0144`; the numbers in between are not
+series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0150`; the numbers in between are not
 used (`wsh/0073` comes before `wsh/0059` in `debian/patches/series`). The code is the same for
 `wsh/0001`-`0050`, `0053`-`0072`, `0110`-`0129` and `0133`-`0138` (from `wsh/0040` on only on the
 local `feat/sparc-fixes-2`; `wsh/0030` waits for `feat/openbios-fixes`), and for OpenBIOS 0001-0018;
 the differences in `wsh/0033`, `0038`, `0053` and `0062` are the deliberate ones in their rows.
-`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0144` and OpenBIOS 0019-0040 (`0139`-`0144` and OpenBIOS 0040
+`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0150` and OpenBIOS 0019-0040 (`0139`-`0150` and OpenBIOS 0040
 added after that comparison, not checked against LEMU yet). So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
 by OpenBIOS 0026, is still open in LEMU. `wsh/0130`-`0132` are for PVE only.
 
@@ -187,6 +187,12 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0142-tests-qtest-test-a-break-on-a-serial-line-of-the-sun | built on LEMU | - | none | none | not in LEMU: not checked yet |
 | wsh/0143-hw-sparc-sun4m-present-the-MCC-with-more-than-512-MB | ours | - | none | none | not in LEMU: not checked yet |
 | wsh/0144-tests-qtest-test-the-memory-controller-version-with- | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0145-target-sparc-keep-the-SuperSPARC-store-buffer-diagno | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0146-target-sparc-read-back-the-MXCC-stream-data-register | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0147-target-sparc-keep-the-SuperSPARC-cache-tag-and-data- | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0148-tests-qtest-test-the-SuperSPARC-diagnostic-registers | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0149-hw-timer-slavio_timer-let-the-user-timer-reach-its-l | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0150-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th | ours | - | none | none | not in LEMU: not checked yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|
