@@ -4,6 +4,8 @@
 # test image (the program in the DJGPP image, the published pve-qemu-kvm and wsh-openglide), fetches
 # the guest drivers that match the binary under test (the qemu-3dfx-drivers-<rev> release of this
 # repository) and runs the harness (dos_test.py) in a container. See the 3dfx guide, "DOS games".
+# Each boot ends with wshspace -audiotest on an SB16 (-device sb16, -audiodev wav), the audio
+# signature checked by e2e/audio/wavcheck.py (--no-space-audio after -- leaves it out).
 #
 #   e2e/3dfx/dos-test.sh --out OUT [options] [-- harness options]
 #

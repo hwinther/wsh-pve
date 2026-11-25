@@ -204,6 +204,7 @@ void plat_poll(struct plat_input *in)
 #define SNDCTL_DSP_SETFMT      0xc0045005UL
 #define SNDCTL_DSP_CHANNELS    0xc0045006UL
 #define SNDCTL_DSP_SETFRAGMENT 0xc004500aUL
+#define SNDCTL_DSP_GETOSPACE   0x8010500cUL
 
 static int dsp_fd = -1, dsp_rate = 22050;
 static uint32_t dsp_last_us;
@@ -241,6 +242,17 @@ void plat_audio_tick(void)
 	if (dt_us > 100000U)
 		dt_us = 100000U;
 	int frames = (int)((double)dt_us * (double)dsp_rate * 1e-6);
+	/* With the device's fill level: at least 2048 frames (two fragments, 93 ms) queued, or the
+	 * card runs dry after the first fragment (-audiotest saw a 7 ms gap there on AC97), and no
+	 * more than fits (frames mixed and then not written would be lost) */
+	struct { int fragments, fragstotal, fragsize, bytes; } space;
+	if (ioctl(dsp_fd, SNDCTL_DSP_GETOSPACE, &space) == 0) {
+		int queued = (space.fragstotal * space.fragsize - space.bytes) / 4;
+		if (frames < 2048 - queued)
+			frames = 2048 - queued;
+		if (frames > space.bytes / 4)
+			frames = space.bytes / 4;
+	}
 	if (frames < 128)
 		return;
 	if (frames > 1024)
