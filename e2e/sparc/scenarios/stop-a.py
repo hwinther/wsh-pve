@@ -5,7 +5,8 @@ stay up, the guest must land where a Sun would put it (the PROM prompt) and `go`
 
 The chord goes in through QMP `send-key`, as PVE (`qm sendkey <vmid> stop-a`) and its noVNC console
 send it: qcode `stop` is the Sun keyboard's Stop (L1). A break goes in through QMP
-`chardev-send-break` on ttya (PVE's serial console has no way to send one).
+`chardev-send-break` on ttya (PVE's serial console has no way to send one); before pve-qemu
+wsh/0160 QEMU's ESCC never ended a break and the guest hung in its serial interrupt.
 
 OpenBIOS before openbios/patches/0008 powered the machine off on the client's op_enter ("abort,
 power off" on ttya, QEMU exits 0; under PVE, which runs QEMU with -no-shutdown, qmeventd then ends
