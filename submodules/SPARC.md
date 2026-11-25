@@ -133,6 +133,14 @@ maintains the patches.
 | `0148-tests-qtest-test-the-SuperSPARC-diagnostic-registers` | qtest `sun4m-viking-diag-test` for 0145-0147: a PROM built by the test writes and reads back the store buffer, stream data and cache ASIs (masks, word halves, the stream alias, a way past the fifth, no tag bit); everything reads back on SS-600MP and SS-10, the stream register reads 0 on SS-20 with `TI-SuperSparc-50`, those ASIs read 0 with `-sbuf-diag`/`-cache-diag` and on SS-5; a migration case reads back on the destination; 7 cases | ours | not in QEMU |
 | `0149-hw-timer-slavio_timer-let-the-user-timer-reach-its-l` | The PROM's board counter-timer test ("Can not toggle timer/counter bits", "Limit bit not set"): the timer configuration register (`0xf.f131_0010`) kept only the user timer bits of the CPUs QEMU has (one bit with one CPU) and now keeps all four; and a user timer written to 0x7fffffffffffffff never set its limit bit (`LIMIT_TO_PERIODS(0)` is -1), and one written while stopped read back one tick short. The user timer's ptimer counts the ticks left to `TIMER_MAX_COUNT64` exactly; counter mode is unchanged; no new state. The PROM's test also needs the counter to move between two back-to-back reads, which holds on the board (slow I/O) but in QEMU only on some runs ("Sun's own SS-600MP boot PROM") | ours | not reported |
 | `0150-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th` | qtest `sun4m-slavio-timer-test` for 0149 on SS-600MP and SS-10 (qtest clock): all four mode bits, user timer read-back while stopped, the limit bit at the limit and three ticks below it, the system counter's limit unchanged; 6 cases; fails without 0149 | ours | not in QEMU |
+| `0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t` | The SS-600MP PROM's board counter-timer test reads a running counter twice with three or four instructions between (the system counter, a processor counter, also across a limit write without reset, and the user timer with `ldd`) and wants the second value greater; on the board a read across the MBus and SBus takes longer than the 500 ns tick, a QEMU read no virtual time, so it passed only on some runs. A read that finds no tick since the last read of that counter returns one tick more than the last one: at most 16 ticks (8 us) ahead of the clock, never less than the read before (it holds past that, and on a stopped user timer), the MSW and LSW of an `ldd` one read, reset by writes of the counter or limit, a mode change and a reset; counters with a limit under 64 ticks are left alone, so a wrap stays a wrap. The ptimer, the limit bit and the interrupt are unchanged; not migrated; trace event `slavio_timer_read_ahead` ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter` | `sun4m-slavio-timer-test` cases for 0151 on SS-600MP and SS-10 (qtest clock): `read-ahead-system` (one tick more, at most 16 ahead, then the clock's value, a limit write resets), `read-ahead-processor` (also across a limit write without reset), `read-ahead-user` (MSW+LSW once per pair, the LSW alone, stopped holds), `read-ahead-short-limit`; 14 cases in all; `read-ahead-system` fails without 0151 | ours | not in QEMU |
+| `0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a` | The PROM's IOMMU tests (progress `0xad`, `0xaf`) write `0x5a5a5a5a` and `0xa5a5a5a5` and want back the bits the 600MP's IOMMU keeps: each SBus slot configuration register bits 17-15 and 3-0 (`0x0003800f`, with the next slot written with the other pattern; QEMU kept `0x00010003`), the page table base register bits 31-10 (physical bits 35-14; QEMU kept the microSPARC-II's `0x07fffc00`) and the 16 TLB data entries at `0x200`-`0x23c`, reached with the diagnostic bit of the control register, all but bits 6-3 and 0 (`0xffffff86`, the IOPTE's page, cacheable, writable and valid bits; QEMU kept all). The masks come from the PROM's compare reads. New `sun4m-iommu` properties `base-mask`, `sbcfg-mask`, `tlb-data-mask` with the old defaults, set only on the SS-600MP; the base register is widened before the shift into the physical address; no new state | ours | not reported |
+| `0154-tests-qtest-test-the-register-bits-the-sun4m-IOMMU-k` | qtest `sun4m-iommu-regs-test` for 0153: base, slot (each slot its own, as the PROM writes them) and TLB tag and data bits on SS-600MP, the old masks on SS-10, SS-20 and SS-5; 12 cases, the three SS-600MP ones fail without 0153 | ours | not in QEMU |
+| `0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi` | The PROM's VMEbus interface test (progress `0xb0`) writes a walking one and all ones to the control register at `0xf.df01_0000` and wants bits 31-28 back (I/O cache, VME slave, loopback, VMEbus reset in NetBSD's `vmereg.h`; implementation number 0 in bits 3-0); `wsh/0063` had the page as an unimplemented device (reads 0). New device `sun4m-vme` (vmstate `sun4m-vme`): the control register keeps bits 31-28, the AFAR, AFSR and the rest of the page read 0 as before; nothing acts on the bits. SunOS 4.1.2 writes the slave enable bit before its banner and now reads it back | ours | not reported |
+| `0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe` | `sun4m-ss600mp-test` case `vme-regs` for 0155: the `sun-vme` region at priority 0, bits 31-28 of a walking one and of all ones, SunOS's slave enable bit, 0 after a system reset, the fault registers 0; fails without 0155 | ours | not in QEMU |
+| `0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r` | The PROM's lance test (progress `0xc1`) writes a walking one and all ones to the register address port and wants bits 1-0 back, as on the Am7990 (four CSRs); the PCnet core behind QEMU's lance keeps bits 6-0. New lance property `rap-mask` (default `0x7f`) and hwdef field `le_rap_mask`, `0x3` on the SS-600MP only; the drivers select only CSR0-CSR3 either way; no new state | ours | not reported |
+| `0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre` | `sun4m-ss600mp-test` case `lance-rap` for 0157 (bits 1-0 on SS-600MP, RAP 5 selects CSR1, bits 6-0 on SS-10); `lance-in-lebuffer` no longer reads the station address from CSR12-14, which the two-bit port doesn't reach, its transmit from the buffer still shows the init block came from there; 5 cases | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1038,7 +1046,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`), still silent ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; still silent ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -2274,14 +2282,14 @@ What it would take for the rest:
        the board an I/O read across the MBus takes about a timer tick, in QEMU much less, so it
        passes only when the host is slow enough at that moment (1 run in 4 or so in the lab, either
        CPU). `-icount` would decouple the timer from the host, but QEMU stops at once with it ("Bad
-       icount read": the PROM's device reads go through the MMU bypass ASI helper).
+       icount read": the PROM's device reads go through the MMU bypass ASI helper). Since
+       `wsh/0151` it passes on every run (item 5).
      - *Next (progress `0xad`):* the IOMMU's SBus slot configuration registers (`0xf.e000_1010`-`101c`).
        The PROM writes one pattern to slot 3's register and another to slot 2's and reads slot 3:
        QEMU keeps bits `0x00010003` (as Linux's `iommu.h` names them), and neither that, nor
        `0x00010007`, `0x0001001f`, `0xc001001f`, all 32 bits or none satisfies it (lab-only masks),
-       so the 600MP's register isn't plain storage with a mask; it needs the board's documentation
-       or the PROM's compare read, not attempted. After it the PROM's string list has more board
-       tests (ECC memory, I/O cache tags, VME loopback, register size checks of the devices).
+       because the PROM wants bits 17-15 too: its compare read masks with `0x0003800f` (item 5,
+       `wsh/0153`).
      - Still silent and looping, nothing on cg3; how many more tests follow isn't known.
      Regression for `wsh/0145`-`0150` (the series to 0150 applied with `quilt push --fuzz=0` on
      11.1.3, lab): `make check-qtest-sparc` 34 passed, 2 skipped, 1 failed (`qmp-test`'s
@@ -2293,16 +2301,70 @@ What it would take for the rest:
      same to its `ok` prompt with and without `sbuf-diag` and `cache-diag`. Linux reads the cache
      tags only in `viking.h`'s debugging helpers, which now return what was written instead of 0;
      no OS was seen reading the store buffer registers.
+  5. **pve-qemu `wsh/0151`-`0158` (2026-11-25, lab build of 11.1.3 with the whole series):** the
+     masks below come from the PROM's compare reads (its test routines take the register, a
+     second register written with the other pattern, the mask and the expected value; read in a
+     disassembly in the lab, nothing of it in the repository), the names of the bits from Linux's
+     and NetBSD's headers.
+     - *Counter-timers (`wsh/0151`):* the test reads the system counter and a processor counter
+       twice with three nops between (once with a limit write without reset between), and the user
+       timer with `ldd` twice with four nops between, and branches on "greater". A read that finds
+       no tick since the last read of that counter now returns one tick more than the last one,
+       never more than 16 ticks (8 us) ahead of the clock and never less than the read before;
+       counters with a limit under 64 ticks are left alone, the counter itself and its interrupt
+       are unchanged. The test passes on every run now (28 untraced runs of 28 in the lab; the series to 0150
+       stopped there in 4 runs of 4 this time, about 1 in 4 before).
+     - *IOMMU (`wsh/0153`):* progress `0xad` tests each SBus slot configuration register against
+       the next one (slot 3 with 2, 2 with 1, 1 with 0, 0 with 2) and then the page table base
+       register; the 600MP keeps bits 17-15 and 3-0 of a slot register (`0x0003800f`; Linux's
+       `iommu_32.h` names only 16, SA30, and 2-0, BA16, BA8, bypass) and bits 31-10 of the base
+       (physical bits 35-14, NetBSD's `IOMMU_BAR_IBA`; QEMU's `0x07fffc00` is the microSPARC-II's).
+       Progress `0xae` sets the control register's diagnostic access bit (bit 1, NetBSD's
+       `IOMMU_CTL_DE`) and tests the 16 TLB tags at `0x100`-`0x13c` (all bits,
+       which QEMU kept), `0xaf` the 16 TLB data entries at `0x200`-`0x23c` (all but bits 6-3 and 0,
+       the IOPTE's page, cacheable, writable and valid bits). QEMU has no IOMMU TLB; they are
+       storage. Only the SS-600MP gets the new masks.
+     - *VMEbus control register (`wsh/0155`, progress `0xb0`):* a walking one and all ones at
+       `0xf.df01_0000`, bits 31-28 back (I/O cache, slave, loopback, reset; implementation 0). Tests
+       `0xb1`-`0xc0` then pass or are skipped without the diagnostic switch.
+     - *Lance (`wsh/0157`, progress `0xc1`):* the register address port keeps bits 1-0 (CSR0-CSR3,
+       the Am7990), then CSR0-CSR3 themselves pass as QEMU has them.
+     - *Next, still `0xc1`:* the lance's register size check. With the expected-trap flag set it
+       reads every offset from 1 to `0xfff` of the lance's page with byte, word and doubleword
+       loads through the MMU bypass ASI and wants each to end in a data access exception (trap 9)
+       with the SFSR at `0x436` (bit 10, a time-out in the SuperSPARC's external bus error bits,
+       FT 5 access bus error, AT 1 supervisor data load, FAV) and the SFAR at the address. QEMU
+       takes no trap there (the loads read 0; `wsh/0049` raises trap 9 for SuperSPARC loads but
+       keeps trap 0x29 for the bypass ASIs, with FT 5 and no time-out bit), so the PROM loops. That
+       needs SBus time-outs for empty addresses in a slot, in the bypass ASIs and with the MMU off,
+       with the 600MP's SFSR bits: medium, not attempted. The string list has more board tests
+       after it (ECC memory, I/O cache tags, VME loopback, register size checks of the other
+       devices).
+     - Progress (`xp /2bx 0xff1201814`, 12-40 s after the start): `0x08 0xad` with 0151 alone (6
+       runs of 6), `0xaf` with 0153's slot and base masks (6 of 6), `0xb0` with its TLB mask (2 of
+       2), `0xc1` with 0155 and 0157 (14 of 14, among them 7 with the final series). Still silent,
+       nothing on cg3.
+     Regression for `wsh/0151`-`0158` (the series to 0158 applied with `patch -F0`, 193 patches
+     without fuzz, on 11.1.3, lab): `make check-qtest-sparc` 37 passed, 2 skipped, 1 failed
+     (`qmp-test`'s `/sparc/qmp/oob`, as before), `sun4m-slavio-timer-test` 14/14,
+     `sun4m-iommu-regs-test` 12/12, `sun4m-ss600mp-test` 5/5, `sun4m-viking-diag-test` 7/7,
+     `sun4m-boot-mode-ifetch-test` 6/6, `sun4m-esp-test` 5/5, `sun4m-ledma-test` 5/5,
+     `sun4m-dbri-test` 4/4. Under OpenBIOS (built from `openbios/`) the stored `sunos412-ss600mp`
+     disk boots to `sunos412 login:` (`esp0`, `sd0`, `le0` attached), `sol26-ss20` to `console
+     login:` and `netbsd93-sparc` on SS-5 to `login:`, and OpenBIOS on SS-5 and SS-600MP reaches
+     its prompt. The SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM (`ss5.bin`)
+     print byte for byte the same to their `ok` prompt as with the series to 0150.
 
-  **Cause:** not the CPU module type, not the MBus module IDs, and so far not the 600MP's VME,
-  IOMMU or lebuffer: the PROM checks the SuperSPARC's diagnostic internals (boot mode, store
-  buffer, cache RAMs, MXCC) and the board's counters in its POST, where QEMU models only what an
-  operating system uses, and it loops on the first failure. The SS-20 PROM's POST, by comparison,
-  passes on QEMU with `-cpu TI-SuperSparc-50` (no MXCC, "SS-10 and SS-20").
+  **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
+  SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
+  registers (counters, IOMMU, VMEbus control, lance, and next the SBus time-outs) in its POST,
+  where QEMU models only what an operating system uses, and it loops on the first failure. The
+  SS-20 PROM's POST, by comparison, passes on QEMU with `-cpu TI-SuperSparc-50` (no MXCC, "SS-10 and SS-20").
   **Scope:**
   - *Sun's PROM on a SuperSPARC SS-600MP:* medium to large. The diagnostic registers as storage are
-    small each (the store buffer; the cache tag and data RAMs need the TMS390Z50 geometry), the
-    counter tests are unknown, and each step needs a lab loop like the one above; tests that check
+    small each (the store buffer; the cache tag and data RAMs need the TMS390Z50 geometry), so
+    were the board register tests so far (`wsh/0151`-`0158`), the SBus time-outs next are medium,
+    and each step needs a lab loop like the one above; tests that check
     cache behaviour through those registers (miss and hit, MRU, lock, flash clear) need a cache
     model behind them, which is large. A way to skip or shorten the POST wasn't found.
   - *A Ross or Cypress CPU model* (RT620/RT625 hyperSPARC or CY7C601/CY7C605): large. QEMU had
