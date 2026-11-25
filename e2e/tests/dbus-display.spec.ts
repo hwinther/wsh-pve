@@ -177,7 +177,7 @@ test('a started VM gets its own bus; VNC stays; the bus goes with the VM', async
 // and no other's. qemu-server writes the VM's bus configuration, gives the uid a user if it has none
 // and an ACL entry on the socket directory while the VM runs. A process on the node with that uid
 // is what the bus sees of the container's root, so setpriv stands in for the container here.
-test('dbus-display-uids lets a container's uid onto that VM's bus, not others'', async () => {
+test("dbus-display-uids lets a container's uid onto that VM's bus, not others'", async () => {
   test.skip(!(await qemuServerHasDbusDisplayUids()), 'the installed qemu-server has no dbus-display-uids yet')
   const params = { 'dbus-display-uids': '100000', memory: 256, name: 'x86-dbus-uids' }
   const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { ...params, vga: 'std', vmid: 9397 })
