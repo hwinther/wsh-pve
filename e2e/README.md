@@ -87,6 +87,14 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   `3dfx/test.sh` with `GLIDE_DISPLAY=dbus DBUS_PICTURE=vnc` checks the Glide and Mesa frames in the
   picture VNC serves next to `dbus,gl=on`.
 
+- `streaming/test.sh` (not a Playwright spec; workflow `Streaming to Moonlight`): a Moonlight
+  client streams a VM's D-Bus display through Wolf. It builds Wolf, moonlight-embedded and our
+  measuring client from source, runs QEMU (the published pve-qemu-kvm, wisp's framebuffer kernel)
+  and Wolf in one container and the client in another, pairs them, and checks and measures the
+  picture, the latency from the guest's draw to the decoded frame, frame pacing against the D-Bus
+  display's refresh, keyboard, mouse and sound. Needs only Docker, also a remote one; see its
+  header and the display reference, "Streaming to Moonlight".
+
 "QEMU accepts it" means starting the generated command frozen (`-S`, no display, the tap swapped for a
 hubport) and killing it: QEMU validates every machine, device and bus argument at startup, so a
 command a real start would reject fails without running a guest.

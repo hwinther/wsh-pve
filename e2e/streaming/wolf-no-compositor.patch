@@ -1,0 +1,29 @@
+Wolf: an app with start_virtual_compositor = false (Wolf's own "Test ball" example, and the
+D-Bus display apps of e2e/streaming) never starts: once the session's devices are made, the
+session goes on as if it had a compositor, puts Wayland devices in place of the uinput ones and
+waits for a Wayland socket with an empty name, which fails ("Wayland socket  was not ready,
+aborting runner startup") and stops the stream. Without a compositor the runner is started at
+once and the uinput devices stay. For the Wolf commit e2e/streaming/Dockerfile pins (also
+unchanged on Wolf's main as of 2026-11-19).
+
+diff --git i/src/moonlight-server/sessions/moonlight.cpp w/src/moonlight-server/sessions/moonlight.cpp
+index f031fdf..82fdb9d 100644
+--- i/src/moonlight-server/sessions/moonlight.cpp
++++ w/src/moonlight-server/sessions/moonlight.cpp
+@@ -164,6 +164,16 @@ setup_moonlight_handlers(const immer::box<state::AppState> &app_state,
+         auto w_display_ready = on_ready->get_future().then([session, runtime_dir](auto fut) {
+           streaming::WaylandDisplayReady ready = fut.get();
+ 
++          if (!session->app->start_virtual_compositor) {
++            // No compositor: keep the uinput devices created above and start the runner at once
++            logs::log(logs::debug, "[STREAM_SESSION] Start runner (no virtual compositor)");
++            session->event_bus->fire_event(immer::box<events::StartRunner>(
++                events::StartRunner{.stop_stream_when_over = true,
++                                    .runner = session->app->runner,
++                                    .stream_session = std::make_shared<events::StreamSession>(*session)}));
++            return;
++          }
++
+           auto wl_state = virtual_display::create_wayland_display(ready.wayland_plugin, ready.wayland_socket_name);
+           // Set the wayland display
+           session->wayland_display->store(wl_state);
