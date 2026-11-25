@@ -110,10 +110,11 @@ commit. Details of each fix are in [`submodules/SPARC.md`](../submodules/SPARC.m
 | 0128, 0129 | CS4231: the APC takes up to 50 ms ahead of the codec, and on a stop in the middle of a buffer (Linux stops when its last period has played) what it had taken was still heard: ~150 frames of old samples after the tone. The taken samples wait in a FIFO in the model and go to the audiodev at the codec's time, the DMA address and count read as the codec's position, a DMA stop drops what lies past it, the end of the pipe (PMI) still plays everything; vmstate subsection `cs4231/fifo` while the FIFO holds samples; qtest cases `mid-stop` and `migrate-fifo`. Ours, offered to LEMU, not taken yet ([lemu-port.md](lemu-port.md)) | wsh-pve, on 0028 | built on LEMU: not for QEMU | | none |
 | 0135, 0136 | sunhme: a global reset (ETX and ERX) leaves the receiver on and the pending status set; after Linux has reset the NIC and freed its interrupt a frame still raises it, nobody clears the sabre's request and the IDE interrupt waits behind it for good (Debian 13 on sun4u: `READ DMA` timeouts at power-off, or a panic in `happy_meal_interrupt` at the next `up`). The ERX reset clears the receive DMA enable, no frame is taken without it, each reset drops its engine's status bits; qtest `sun4u-sunhme-reset-test` | wsh-pve | may send | not searched (added 2026-11-24) | none (`submodules/SPARC.md`, "The lost IDE interrupt at Debian 13's power-off") |
 | 0137, 0138 | sun4u: disabling a PCI slot in the sabre's interrupt map dropped the outstanding request only when its ino equalled the slot number, so a request of the slot's own inos (the NIC's 0x10 in slot 4) stayed and blocked the other interrupts; qtest cases in `sun4u-sabre-irq-test`. Found by reading the code, not hit by a traced guest | wsh-pve | may send | not searched (added 2026-11-24) | [qemu-sabre-pci-interrupt-replaces-request.md](qemu-sabre-pci-interrupt-replaces-request.md) ("Not changed") |
+| 0141, 0142 | ESCC: a serial BREAK set RR0's Break/Abort bit for good and kept an interrupt up that neither RR3 nor the vector in RR2 named: Solaris and SunOS on ttya spun in their serial interrupt, Linux never reached the firmware prompt, NetBSD never entered ddb. The external/status latch for the bit (an interrupt at the start and at the end, the Reset Ext/Status Interrupts command), the break ended after one character time but not before the guest has seen its start, a NUL in the receiver; qtest `sun4m-escc-break-test`. The hang reproduces on plain v11.1.3 | wsh-pve, on 0002 and 0006 | built on LEMU: not for QEMU (a bug report may go) | not searched (added 2026-11-25) | none (`submodules/SPARC.md` "Stop-A") |
 
 Counts: may send 48 (0001, 0007, 0011, 0017-0022, 0034-0041, 0045-0065, 0068-0069, 0112-0113, 0120-0121, 0135-0138); LEMU origin 13 (0002-0006,
-0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 29 (0014-0016, 0023-0025, 0027, 0030-0033,
-0042-0044, 0070-0072, 0110-0111, 0114-0115, 0122-0129).
+0008-0010, 0012-0013, 0026, 0028-0029); built on LEMU 31 (0014-0016, 0023-0025, 0027, 0030-0033,
+0042-0044, 0070-0072, 0110-0111, 0114-0115, 0122-0129, 0141-0142).
 
 Not carried, write-up only: the sparc64 TTE page-size bits (32 MB and 256 MB pages), needed for
 `niagara` above 1 GB; the patch is by the unix0.cc author
@@ -165,7 +166,6 @@ Reportable only after they have been reproduced on plain QEMU, without any LEMU 
 | What | Seen with | Notes |
 | --- | --- | --- |
 | QEMU's audio mixer doubles a mono voice played into a mono output (it adds left and right): a `wav` audiodev with `out.channels=1` is 6 dB too loud | LEMU's CS4231 (0028-0029) | `submodules/SPARC.md` "Audio"; needs a device without LEMU code that plays a mono voice |
-| A serial BREAK on ttya hangs Solaris: QEMU's ESCC sets RR0's break bit and never clears it | ESCC with LEMU's 0002-0006 | `submodules/SPARC.md` "Stop-A"; the code read is QEMU's own `serial_receive_break()`, but the lab binary had LEMU's ESCC patches |
 | `zs3: ring buffer overflow` under load: mouse data arrives faster than a 1200 baud mouse sends it | ESCC with LEMU's 0002-0006 | `ROADMAP.md` known issues; harmless |
 
 ## Open upstream issues that match what the lab sees, not fixed here
@@ -183,5 +183,5 @@ Reportable only after they have been reproduced on plain QEMU, without any LEMU 
 
 Seen in the lab, not in any tracker and not fixed: OpenBIOS drops the boot string of
 `reboot -- <args>` on sparc32. Since the first version of this index, NetBSD on sun4u with 4 GB
-and more is fixed by OpenBIOS 0013-0015 and the sun4u IDPROM MAC by QEMU 0034; the serial BREAK
-hang is under "Hold" above.
+and more is fixed by OpenBIOS 0013-0015, the sun4u IDPROM MAC by QEMU 0034 and the serial BREAK
+hang by QEMU 0141 (reproduced on plain v11.1.3, so out of "Hold").
