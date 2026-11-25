@@ -1,29 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index 7c4404d..d74d45b 100644
+index e48ba83..f379b26 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,24 @@
-+libpve-storage-perl (9.1.18+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++libpve-storage-perl (9.1.25+wsh1) trixie; urgency=medium
 +
-+  * feat(mirror): rename ISO/floppy volumes and link volumes from other
-+    storages (step 3) (#356)
++  * Sync with upstream pve-storage 1b20a75
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 20 Nov 2026 14:32:04 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 25 Nov 2026 03:45:51 +0000
 +
-+libpve-storage-perl (9.1.18+wsh1) trixie; urgency=medium
-+
-+  * fix(patches): pve-storage 9.1.18, qemu-server 9.2.18 and pve-manager
-+    9.2.30 (#308)
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 18 Nov 2026 07:20:35 +0000
-+
- libpve-storage-perl (9.1.18) trixie; urgency=medium
+ libpve-storage-perl (9.1.25) trixie; urgency=medium
  
-   * plugin api: support third-party plugins that isolate their properties, so
-     that their names cannot clash with those of other plugins. See the
-     ApiChangeLog for the common properties that such a plugin can use.
+   * disks: wipe: name the device that keeps a SAN LUN from being wiped, also
+     for a holder of one of its partitions, instead of a generic error. For an
+     active logical volume, also suggest to deactivate its volume group with
+     'vgchange -an' if the group is no longer in use.
  
-   * api: do not require the type for updating a storage once a plugin isolates
-     its properties, as neither the web UI nor 'pvesm set' pass it.
+  -- Proxmox Support Team <support@proxmox.com>  Tue, 24 Nov 2026 22:05:52 +0100
  
-   * plugins: do not load an isolating third-party plugin that implements an
+ libpve-storage-perl (9.1.24) trixie; urgency=medium

@@ -25,6 +25,9 @@ COPY repo/conf/wsh-pve.gpg.key /tmp/wsh-pve.gpg.key
 # Package scripts must not try to start services during the build; systemd starts them at run time.
 RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
 
+# pve-ha-manager 5.2.8 and later depend on qemu-server >= 9.2.23, and wsh-pve's qemu-server is still based
+# on 9.2.20: hold pve-ha-manager at 5.2.7 or older until the fork is rebased, or apt can't resolve the
+# stack (ROADMAP, "Known and not fixed").
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg \
     && gpg --dearmor < /tmp/wsh-pve.gpg.key > /usr/share/keyrings/wsh-pve.gpg \
@@ -35,7 +38,8 @@ RUN apt-get update \
             > /etc/apt/sources.list.d/wsh-pve.sources; \
         printf 'Package: pve-manager qemu-server pve-qemu-kvm libpve-storage-perl\nPin: origin debian.wshosting.no\nPin-Priority: 1001\n' \
             > /etc/apt/preferences.d/wsh-pve; \
-    fi
+    fi \
+    && printf 'Package: pve-ha-manager\nPin: version 5.2.[0-7]\nPin-Priority: 1001\n' > /etc/apt/preferences.d/pve-ha-manager
 
 COPY e2e/pve/debs/ /tmp/debs/
 
