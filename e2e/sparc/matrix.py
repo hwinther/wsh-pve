@@ -48,8 +48,9 @@ MATRICES = {
         ("sol26-cd-openbios-ss5", "solaris-boot-cd.py", None, CD26, {}),
     ],
     # SS-10/SS-20: the install CDs, and the disks installed on these machines (an SS-5 disk doesn't
-    # boot there: Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and halts). 512 MB is the
-    # most Solaris 2.6 boots with. The CD reaches the installer with 2 and 4 CPUs; the installed 2.6
+    # boot there: Solaris finds neither c0t3d0s6 nor le0, can't mount /usr and halts). More than 512 MB
+    # needs pve-qemu wsh/0150 and openbios 0040 (submodules/SPARC.md, "More than 512 MB on SS-10 and
+    # SS-20"); 2048 MB is the most tested. The CD reaches the installer with 2 and 4 CPUs; the installed 2.6
     # with more than one CPU is in the smp matrix (it needs pve-qemu patch 0019).
     # The 2.6 CD on SS-20 with one CPU and 256 MB sometimes stops in its idle loop after "Configuring
     # devices..." (about 1 boot in 6, OpenBIOS and Sun PROM alike).
@@ -66,6 +67,8 @@ MATRICES = {
         ("sol26-disk-openbios-ss10", "solaris-boot-disk.py", SOL26SS10, None, {"MACHINE": "SS-10"}),
         ("sol26-disk-openbios-ss20", "solaris-boot-disk.py", SOL26SS20, None, {"MACHINE": "SS-20"}),
         ("sol26-disk-openbios-ss20-512m", "solaris-boot-disk.py", SOL26SS20, None, {"MACHINE": "SS-20", "MEM": "512"}),
+        ("sol26-disk-openbios-ss10-1024m", "solaris-boot-disk.py", SOL26SS10, None, {"MACHINE": "SS-10", "MEM": "1024"}),
+        ("sol26-disk-openbios-ss20-2048m", "solaris-boot-disk.py", SOL26SS20, None, {"MACHINE": "SS-20", "MEM": "2048"}),
         ("sol26-disk-ss20prom-ss20", "solaris-boot-disk.py", SOL26SS20PROM, None, SS20PROM),
     ],
     # bench.py: the same jobs on SS-5 and SS-20 (one CPU); the numbers go to result.json. Only
@@ -100,6 +103,9 @@ MATRICES = {
          {**BENCH, "MACHINE": "SS-20", "SMP": "4", "SOAK": "600"}),
         ("smp-sol26-openbios-ss10-2cpu", "smp-soak.py", SOL26SS10, None,
          {**BENCH, "MACHINE": "SS-10", "SMP": "2", "SOAK": "600"}),
+        # 2048 MB (pve-qemu wsh/0150, openbios 0040)
+        ("smp-sol26-openbios-ss20-2cpu-2048m", "smp-soak.py", SOL26SS20, None,
+         {**BENCH, "MACHINE": "SS-20", "SMP": "2", "SOAK": "600", "MEM": "2048"}),
     ],
     # cg3 sizes (needs a package with the cg3 patches): OpenBIOS banner and the 2.6 disk to its login
     # prompt with the console on the framebuffer, each screenshot checked for the size; the Sun PROM

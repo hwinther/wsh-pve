@@ -263,9 +263,15 @@ test.describe('refused combinations', () => {
       params: {},
     },
     {
-      message: 'sparc: SS-20 takes at most 512 MB of memory, not 1024',
+      message: 'sparc: SS-20 takes at most 2048 MB of memory, not 4096',
       name: 'more memory than SS-20 takes',
-      params: { machine: 'SS-20', memory: 1024 },
+      params: { machine: 'SS-20', memory: 4096 },
+    },
+    {
+      message:
+        'sparc: SS-20 with firmware ss20_v2.25_rom takes at most 512 MB of memory, not 1024 (the Sun PROM probes eight banks of 64 MB; openbios-sparc32 takes up to 2048)',
+      name: 'more than 512 MB with the SS-20 PROM',
+      params: { bios: 'ss20_v2.25_rom', machine: 'SS-20', memory: 1024 },
     },
     {
       // the list (with LX or not, by package) is checked in 'the SPARCstation LX' below

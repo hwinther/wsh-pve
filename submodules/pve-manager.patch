@@ -874,7 +874,7 @@ index faeb530a..3cf5e0d6 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..3cb2cdd6 100644
+index b8412b6f..856c90ff 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -901,7 +901,7 @@ index b8412b6f..3cb2cdd6 100644
      },
  
      defaultProcessorModel: {
-@@ -32,11 +42,143 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -32,11 +42,151 @@ Ext.define('PVE.qemu.Architecture', {
      defaultMachines: {
          x86_64: 'pc',
          aarch64: 'virt',
@@ -932,18 +932,22 @@ index b8412b6f..3cb2cdd6 100644
 +    // cg3 by default). The LX runs only its own PROM and has no framebuffer QEMU emulates (its cgsix),
 +    // so its console is a serial port. The SS-600MP (SunOS 4.1.2) runs OpenBIOS only, with one CPU:
 +    // Sun's 600MP PROM and 4.1.2's start of a second CPU need a Ross RT625 module, which QEMU lacks.
-+    // defaultMemory: what the wizard presets, where it isn't the most (maxMemory).
++    // defaultMemory: what the wizard presets, where it isn't the most (maxMemory). firmwareMaxMemory:
++    // a firmware's own most, below the machine's: the SS-20 PROM probes eight banks of 64 MB.
 +    sparc32Profiles: {
 +        'SS-5': { maxMemory: 256, firmware: ['openbios-sparc32', 'ss5.bin'] },
 +        'SS-10': {
-+            maxMemory: 512,
++            maxMemory: 2048,
++            defaultMemory: 512,
 +            firmware: ['openbios-sparc32'],
 +            maxCpus: { 'openbios-sparc32': 4 },
 +        },
 +        'SS-20': {
-+            maxMemory: 512,
++            maxMemory: 2048,
++            defaultMemory: 512,
 +            firmware: ['openbios-sparc32', 'ss20_v2.25_rom'],
 +            maxCpus: { 'openbios-sparc32': 4 },
++            firmwareMaxMemory: { 'ss20_v2.25_rom': 512 },
 +        },
 +        'SS-600MP': { maxMemory: 1024, defaultMemory: 256, firmware: ['openbios-sparc32'] },
 +        LX: { maxMemory: 128, firmware: ['lx.bin'], displays: ['serial0', 'none'] },
@@ -979,13 +983,17 @@ index b8412b6f..3cb2cdd6 100644
 +    sparc64Profile: { defaultMemory: 512, maxMemory: 8192, maxNics: 4 },
 +
 +    // the memory a sparc VM is preset to in the wizard and capped at: { preset, max }, or undefined
-+    // for the other architectures
-+    getSparcMemory: function (arch, machine) {
++    // for the other architectures; on sparc32 per machine and firmware ('__default__' or empty:
++    // OpenBIOS)
++    getSparcMemory: function (arch, machine, bios) {
 +        let me = PVE.qemu.Architecture;
 +        if (arch === 'sparc') {
++            if (!bios || bios === '__default__') {
++                bios = me.defaultFirmware.sparc;
++            }
 +            let profile = me.getSparc32Profile(machine);
-+            let max = profile?.maxMemory;
-+            return max ? { preset: profile.defaultMemory ?? max, max } : undefined;
++            let max = profile?.firmwareMaxMemory?.[bios] ?? profile?.maxMemory;
++            return max ? { preset: Math.min(profile.defaultMemory ?? max, max), max } : undefined;
 +        } else if (arch === 'sparc64') {
 +            let p = me.sparc64Profile;
 +            return { preset: p.defaultMemory, max: p.maxMemory };
@@ -1045,7 +1053,7 @@ index b8412b6f..3cb2cdd6 100644
      },
  
      allowedScsiHw: {
-@@ -50,21 +192,50 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -50,21 +200,50 @@ Ext.define('PVE.qemu.Architecture', {
              'pvscsi',
          ],
          aarch64: ['virtio-scsi-pci', 'virtio-scsi-single'],
@@ -1097,7 +1105,7 @@ index b8412b6f..3cb2cdd6 100644
      },
  
      allowedTPMVersions: {
-@@ -79,6 +250,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -79,6 +258,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
@@ -1108,7 +1116,7 @@ index b8412b6f..3cb2cdd6 100644
              default:
                  return Proxmox.Utils.unknownText;
          }
-@@ -109,3 +284,15 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -109,3 +292,15 @@ Ext.define('PVE.qemu.Architecture', {
          return (architecture ?? hostArch) === hostArch;
      },
  });
@@ -2002,10 +2010,10 @@ index cd759703..744aed39 100644
  });
  
 diff --git a/www/manager6/qemu/MemoryEdit.js b/www/manager6/qemu/MemoryEdit.js
-index 0f6bd656..7037ce12 100644
+index 0f6bd656..2f582994 100644
 --- a/www/manager6/qemu/MemoryEdit.js
 +++ b/www/manager6/qemu/MemoryEdit.js
-@@ -16,6 +16,35 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
+@@ -16,6 +16,37 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
              },
          },
  
@@ -2015,16 +2023,18 @@ index 0f6bd656..7037ce12 100644
 +                let vm = me.getViewModel();
 +                vm.bind('{current.architecture}', () => me.applySparcLimit());
 +                vm.bind('{current.machine}', () => me.applySparcLimit());
++                vm.bind('{current.bios}', () => me.applySparcLimit());
 +            }
 +        },
 +
-+        // a sparc VM's preset and most memory ({ preset, max }), if any: per machine for sparc32
-+        // (PVE.qemu.Architecture.sparc32Profiles), the sparc64 profile's
++        // a sparc VM's preset and most memory ({ preset, max }), if any: per machine and firmware
++        // for sparc32 (PVE.qemu.Architecture.sparc32Profiles), the sparc64 profile's
 +        sparcMemory: function () {
 +            let vm = this.getViewModel();
 +            return PVE.qemu.Architecture.getSparcMemory(
 +                vm.get('current.architecture'),
 +                vm.get('current.machine'),
++                vm.get('current.bios'),
 +            );
 +        },
 +
@@ -2041,7 +2051,7 @@ index 0f6bd656..7037ce12 100644
          setMemory: function () {
              let me = this;
              let view = me.getView(),
-@@ -23,15 +52,25 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
+@@ -23,15 +54,25 @@ Ext.define('PVE.qemu.MemoryInputPanel', {
              if (view.insideWizard) {
                  let memory = view.down('pveMemoryField[name=memory]');
                  // NOTE: we only set memory but that then sets balloon in its change handler
@@ -2068,7 +2078,7 @@ index 0f6bd656..7037ce12 100644
      onGetValues: function (values) {
          let res = {};
  
-@@ -219,6 +258,14 @@ Ext.define('PVE.qemu.MemoryEdit', {
+@@ -219,6 +260,14 @@ Ext.define('PVE.qemu.MemoryEdit', {
                  };
  
                  ipanel.setValues(values);
@@ -2076,7 +2086,7 @@ index 0f6bd656..7037ce12 100644
 +                let nodename = me.pveSelNode?.data.node;
 +                let arch = PVE.qemu.Architecture.getGuestArchitecture(data.arch, nodename);
 +                let machine = PVE.Parser.parsePropertyString(data.machine, 'type').type;
-+                let sparc = PVE.qemu.Architecture.getSparcMemory(arch, machine);
++                let sparc = PVE.qemu.Architecture.getSparcMemory(arch, machine, data.bios);
 +                if (sparc) {
 +                    ipanel.setMaxMemory(sparc.max);
 +                }

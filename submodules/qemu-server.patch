@@ -1795,7 +1795,7 @@ index 5efe7736..930ffd19 100644
      my $cachedmtime = $kvm_mtime->{$binary} // -1;
      return $kvm_user_version->{$binary}
 diff --git a/src/PVE/QemuServer/Machine.pm b/src/PVE/QemuServer/Machine.pm
-index 960af5a9..e8234376 100644
+index 960af5a9..2eb2b57e 100644
 --- a/src/PVE/QemuServer/Machine.pm
 +++ b/src/PVE/QemuServer/Machine.pm
 @@ -5,9 +5,13 @@ use warnings;
@@ -1862,14 +1862,15 @@ index 960af5a9..e8234376 100644
  };
  
  sub default_machine_for_arch {
-@@ -135,6 +166,514 @@ sub default_machine_for_arch {
+@@ -135,6 +166,524 @@ sub default_machine_for_arch {
      return $machine;
  }
  
 +# The sparc32 (arch: sparc) profiles: the machine, firmware, CPU and RAM combinations that were tested
 +# to run (wsh-pve submodules/SPARC.md, "Supported profiles"). Validation and the QEMU command are both
 +# derived from this table. Per machine: the most RAM in MB and the firmware it runs, each with the
-+# '-cpu' it needs (none: the machine's default CPU) and the most CPUs (sockets x cores) it takes.
++# '-cpu' it needs (none: the machine's default CPU) and the most CPUs (sockets x cores) it takes;
++# a firmware's own 'max-memory' lowers the machine's for it.
 +# More than one CPU needs pve-qemu-kvm with wsh patch 0019 (11.1.3-2+wsh10): Solaris hangs without it.
 +# 'audio': the built-in sound chip audio0 takes (SPARC.md, "Audio"). The SS-5's CS4231 plays with wsh
 +# patches 0028-0033 and openbios patch 0016 (pve-qemu-kvm newer than 11.1.3-2+wsh16); SS-10 and
@@ -1889,18 +1890,22 @@ index 960af5a9..e8234376 100644
 +            'ss5.bin' => { 'max-cpus' => 1 },
 +        },
 +    },
++    # More than 512 MB on SS-10/SS-20 needs pve-qemu-kvm with wsh patch 0150 and openbios patch 0040:
++    # Solaris takes memory above 512 MB for none behind the SS-10's and SS-20's memory controllers,
++    # and OpenBIOS's heap ran out at 1 GB (SPARC.md, "More than 512 MB on SS-10 and SS-20").
 +    'SS-10' => {
-+        'max-memory' => 512,
++        'max-memory' => 2048,
 +        # QEMU's limit for the machine
 +        firmware => { 'openbios-sparc32' => { 'max-cpus' => 4 } },
 +    },
 +    'SS-20' => {
-+        'max-memory' => 512,
++        'max-memory' => 2048,
 +        firmware => {
 +            'openbios-sparc32' => { 'max-cpus' => 4 },
 +            # the Sun PROM doesn't start with the machine's default CPU (SuperSPARC-II), and it
-+            # starts only CPU 0: another vCPU would only keep a host core busy
-+            'ss20_v2.25_rom' => { cpu => 'TI-SuperSparc-50', 'max-cpus' => 1 },
++            # starts only CPU 0: another vCPU would only keep a host core busy. It probes eight
++            # banks of 64 MB and gives Solaris no more than 512 MB.
++            'ss20_v2.25_rom' => { cpu => 'TI-SuperSparc-50', 'max-cpus' => 1, 'max-memory' => 512 },
 +        },
 +    },
 +    # The SPARCstation LX (microSPARC-I) with Sun's own PROM (OBP 2.10), which needs pve-qemu-kvm with
@@ -2015,6 +2020,11 @@ index 960af5a9..e8234376 100644
 +    my $memory = PVE::QemuServer::Memory::get_current_memory($conf->{memory});
 +    die "sparc: $machine takes at most $profile->{'max-memory'} MB of memory, not $memory\n"
 +        if $memory > $profile->{'max-memory'};
++    my $firmware_max_memory = $profile->{firmware}->{$bios}->{'max-memory'};
++    die "sparc: $machine with firmware $bios takes at most $firmware_max_memory MB of memory,"
++        . " not $memory (the Sun PROM probes eight banks of 64 MB; $SPARC32_DEFAULT_FIRMWARE"
++        . " takes up to $profile->{'max-memory'})\n"
++        if defined($firmware_max_memory) && $memory > $firmware_max_memory;
 +
 +    # Any sockets x cores up to the profile's most: sun4m has no CPU topology, the guest sees every
 +    # vCPU as a CPU module of its own.
@@ -2377,7 +2387,7 @@ index 960af5a9..e8234376 100644
  sub assert_valid_machine_property {
      my ($machine_conf) = @_;
      if ($machine_conf->{viommu} && $machine_conf->{viommu} eq "intel") {
-@@ -169,6 +708,7 @@ my sub machine_base_type {
+@@ -169,6 +718,7 @@ my sub machine_base_type {
      return 'q35' if $machine_type =~ m/q35/;
      return 'i440fx' if $machine_type =~ m/^pc/;
      return 'virt' if $machine_type =~ m/^virt/;
@@ -2385,7 +2395,7 @@ index 960af5a9..e8234376 100644
  
      die "unable to determine machine base type '$machine_type'\n";
  }
-@@ -305,11 +845,44 @@ sub machine_version_cmp {
+@@ -305,11 +855,44 @@ sub machine_version_cmp {
      );
  }
  
@@ -2432,7 +2442,7 @@ index 960af5a9..e8234376 100644
  }
  
  sub get_machine_pve_revisions {
-@@ -319,18 +892,15 @@ sub get_machine_pve_revisions {
+@@ -319,18 +902,15 @@ sub get_machine_pve_revisions {
          return $PVE_MACHINE_VERSION->{$1};
      }
  
@@ -2455,7 +2465,7 @@ index 960af5a9..e8234376 100644
  }
  
  sub can_run_pve_machine_version {
-@@ -508,6 +1078,7 @@ sub get_power_state_flags {
+@@ -508,6 +1088,7 @@ sub get_power_state_flags {
  
      my $options = [];
  
@@ -2463,7 +2473,7 @@ index 960af5a9..e8234376 100644
      # they're enabled by default in QEMU, so only add the flags to disable them
      if (!$s3) {
          push $options->@*, '-global', "${object}.disable_s3=1";
-@@ -515,6 +1086,7 @@ sub get_power_state_flags {
+@@ -515,6 +1096,7 @@ sub get_power_state_flags {
      if (!$s4) {
          push $options->@*, '-global', "${object}.disable_s4=1";
      }
@@ -3520,6 +3530,17 @@ index 00000000..e391b93f
 +arch: sparc
 +memory: 256
 +net0: e1000=BC:24:11:B2:46:08,bridge=vmbr0
+diff --git a/src/test/cfg2cmd/sparc32-ss10-memory-error.conf b/src/test/cfg2cmd/sparc32-ss10-memory-error.conf
+new file mode 100644
+index 00000000..5508e228
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss10-memory-error.conf
+@@ -0,0 +1,5 @@
++# TEST: more than 2048 MB on SS-10 is refused
++# EXPECT_ERROR: sparc: SS-10 takes at most 2048 MB of memory, not 3072
++arch: sparc
++machine: SS-10
++memory: 3072
 diff --git a/src/test/cfg2cmd/sparc32-ss10-openbios.conf b/src/test/cfg2cmd/sparc32-ss10-openbios.conf
 new file mode 100644
 index 00000000..3c1172fa
@@ -3650,15 +3671,61 @@ index 00000000..ba8054b7
 +memory: 512
 diff --git a/src/test/cfg2cmd/sparc32-ss20-memory-error.conf b/src/test/cfg2cmd/sparc32-ss20-memory-error.conf
 new file mode 100644
-index 00000000..353a1f99
+index 00000000..2c6052ca
 --- /dev/null
 +++ b/src/test/cfg2cmd/sparc32-ss20-memory-error.conf
 @@ -0,0 +1,5 @@
-+# TEST: more than 512 MB on SS-20 is refused
-+# EXPECT_ERROR: sparc: SS-20 takes at most 512 MB of memory, not 1024
++# TEST: more than 2048 MB on SS-20 is refused
++# EXPECT_ERROR: sparc: SS-20 takes at most 2048 MB of memory, not 4096
 +arch: sparc
 +machine: SS-20
-+memory: 1024
++memory: 4096
+diff --git a/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf b/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf
+new file mode 100644
+index 00000000..9384e71a
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf
+@@ -0,0 +1,10 @@
++# TEST: sparc32 SS-20 with OpenBIOS and 2048 MB, the most it takes
++arch: sparc
++machine: SS-20
++memory: 2048
++name: sparc32-ss20-2048
++net0: lance=BC:24:11:B2:46:04,bridge=vmbr0
++ostype: solaris
++scsi3: local:8006/vm-8006-disk-0.raw,size=2G
++serial0: socket
++vga: serial0
+diff --git a/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf.cmd b/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf.cmd
+new file mode 100644
+index 00000000..d3761dca
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-openbios-2048.conf.cmd
+@@ -0,0 +1,24 @@
++/usr/bin/qemu-system-sparc \
++  -id 8006 \
++  -name sparc32-ss20-2048 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -nographic \
++  -m 2048 \
++  -object '{"id":"throttle-drive-scsi3","limits":{},"qom-type":"throttle-group"}' \
++  -chardev 'socket,id=serial0,path=/var/run/qemu-server/8006.serial0,server=on,wait=off' \
++  -serial chardev:serial0 \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"e3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"f3535d7ed268bf3c75fbd2cf010c33a","read-only":false},"node-name":"drive-scsi3","read-only":false,"throttle-group":"throttle-drive-scsi3"}' \
++  -device 'scsi-hd,channel=0,scsi-id=3,lun=0,drive=drive-scsi3,id=scsi3,device_id=drive-scsi3,write-cache=on' \
++  -netdev 'type=tap,id=net0,ifname=tap8006i0,script=/usr/libexec/qemu-server/pve-bridge,downscript=/usr/libexec/qemu-server/pve-bridgedown' \
++  -net 'nic,model=lance,macaddr=BC:24:11:B2:46:04,netdev=net0' \
++  -machine 'accel=tcg,type=SS-20+pve0'
 diff --git a/src/test/cfg2cmd/sparc32-ss20-openbios.conf b/src/test/cfg2cmd/sparc32-ss20-openbios.conf
 new file mode 100644
 index 00000000..034e2c68
@@ -3809,6 +3876,18 @@ index 00000000..8169ea6b
 +cores: 5
 +machine: SS-20
 +memory: 512
+diff --git a/src/test/cfg2cmd/sparc32-ss20-sun-prom-memory-error.conf b/src/test/cfg2cmd/sparc32-ss20-sun-prom-memory-error.conf
+new file mode 100644
+index 00000000..19d4367c
+--- /dev/null
++++ b/src/test/cfg2cmd/sparc32-ss20-sun-prom-memory-error.conf
+@@ -0,0 +1,6 @@
++# TEST: the SS-20 PROM gives the guest at most 512 MB, so more is refused with it
++# EXPECT_ERROR: sparc: SS-20 with firmware ss20_v2.25_rom takes at most 512 MB of memory, not 1024 (the Sun PROM probes eight banks of 64 MB; openbios-sparc32 takes up to 2048)
++arch: sparc
++bios: ss20_v2.25_rom
++machine: SS-20
++memory: 1024
 diff --git a/src/test/cfg2cmd/sparc32-ss20-sun-prom-smp-error.conf b/src/test/cfg2cmd/sparc32-ss20-sun-prom-smp-error.conf
 new file mode 100644
 index 00000000..61e98efe
