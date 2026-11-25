@@ -6,6 +6,7 @@ media swapper and the masking of secrets in result.json. Standard library only:
     cd e2e/sparc && python3 -m unittest -v tests/test_targets.py
 """
 import hashlib
+import importlib.util
 import io
 import os
 import re
@@ -595,6 +596,8 @@ class SolarisEarlyHang(unittest.TestCase):
             install.vm_running = orig
 
 
+@unittest.skipUnless(importlib.util.find_spec("matrix"), "needs the repository's e2e/sparc/matrix.py "
+                     "(the wsh-lab package ships the tests but not matrix.py)")
 class MatrixRetry(unittest.TestCase):
     """matrix.py: a Solaris CD boot that never reaches the installer's first question (init lost the
     SIGCLD of the installer's rcS) boots once more as <case>-retry1; other failures don't."""
