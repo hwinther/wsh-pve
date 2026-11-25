@@ -120,6 +120,8 @@ maintains the patches.
 | `0136-tests-qtest-test-the-sunhme-s-receiver-after-a-reset` | qtest `sun4u-sunhme-reset-test` for 0135: a sunhme in slot 0 of pciB set up as the firmware and a driver would (bridge window, BAR, a 32-entry ring in RAM), frames from a socket netdev, the sabre's request for ino 0x10 intercepted; `rx`, `no-rx-after-reset` (a frame after a global reset raises nothing and leaves the ring alone, with DMA enabled again the next goes into descriptor 1) and `reset-drops-status`. The last two fail without 0135 | ours | not in QEMU |
 | `0137-hw-pci-host-sabre-drop-a-slot-s-request-when-the-gue` | A PCI interrupt-map register written without the valid bit dropped the outstanding request only when the request's ino equalled the slot number (0-7), not when it was one of the slot's four inos: a request of ino 0x10 (the NIC on pciB) stayed when slot 4 was disabled, and the sabre then waited for a clear the guest doesn't send for a disabled interrupt. Now the request's slot (`irq_request >> 2`) is compared, as the OBIO branch compares the ino. Found by reading `sabre.c` while tracing the lost IDE interrupt; Linux 7.0 leaves the NIC's map register valid when it frees the interrupt, so it wasn't that, and no other guest was traced for it | ours | not fixed; see `upstream/qemu-sabre-pci-interrupt-replaces-request.md` |
 | `0138-tests-qtest-test-disabling-a-PCI-interrupt-on-the-sa` | `sun4u-sabre-irq-test` cases `pci-disable-drops-request` and `pci-disable-other-slot` for 0137 (5 cases in all): disabling slot 4 drops the NIC's outstanding request so the IDE request gets through, enabling it again requests the NIC's line, and leaves the requests of ino 0x14 (slot 5) and ino 4 (slot 1) alone. Both fail without 0137 | ours | not in QEMU |
+| `0139-target-sparc-halt-Linux-s-idle-loop-on-sun4u-under-t` | 0070's Linux helper checked for a pending interrupt and then set `cs->halted` without the BQL. A tick or stick interrupt that fired between the two (`tick_irq()` runs in the main loop with the BQL) set `SOFTINT` and `halted = 0` before the helper set it to 1; at `%pil` 14 it is masked, raises no `CPU_INTERRUPT_HARD`, so the vCPU thread slept through it, and Linux, not having taken the tick, armed no next one: asleep until the next interrupt vector, or for good on an idle guest. The helper now checks again and halts under the BQL. The other idle helpers (0042, 0071, 0110, 0114) halt at `%pil` 0, where the tick raises `CPU_INTERRUPT_HARD`, which the vCPU thread checks under the BQL before it sleeps; they keep the window without the effect. Found by reading, never seen on a guest ("sparc64 (sun4u)", "Idle") | ours | not in QEMU |
+| `0140-tests-qtest-test-a-tick-between-the-idle-check-and-t` | `sun4u-idle-test` case `tick-race` for every idle loop (80 cases in all): QEMU writes the `sparc64_idle` trace, which comes between the check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the tick fires; let go, it must take the tick and go on. Without 0139 the three Linux layouts fail every time (no round and no tick afterwards), the `%pil` 0 loops pass either way. Skipped without the `log` trace backend and on Windows. The test now runs about 70 s: 240 s in `slow_qtests` | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -3208,6 +3210,27 @@ halt (12.5-12.7 s with `fmd`): Tribblix's own timing, not the halt's.
   for migration). 0042's halt needs `%pil` 0 and stays as it was. The window read around a call grew
   from 8 to 24 words before it (Debian 13's bne layout needs 20, Solaris 7's 9); words on another page than
   the call's read as 0 (illtrap, in no layout) instead of the call being skipped.
+- **The lost tick at `%pil` 14 (`wsh/0139`-`0140`, 2026-11-25).** Found by reading, never seen on a guest:
+  `helper_sparc64_idle_linux()` checked `%softint`, the interrupt vector and `CPU_INTERRUPT_HARD` without the
+  BQL and then set `cs->halted`. The tick and stick timers run in the main loop with the BQL (`tick_irq()`
+  sets `SOFTINT` and `halted = 0`, then `cpu_check_irqs()` and a kick). One that fired between the check and
+  the halt was masked at `%pil` 14: no `CPU_INTERRUPT_HARD`, so `sparc_cpu_has_work()` was false and the
+  vCPU thread (single-threaded TCG: sparc64 has no MTTCG) slept in `rr_wait_io_event()`, the kick's
+  broadcast already gone. Linux had not taken the tick, so it armed no next one: asleep until the next
+  interrupt vector, or for good on an idle guest. 0139 checks again and halts under the BQL. The other
+  helpers keep the window without the effect: NetBSD, OpenBSD, Solaris 7-10, Tribblix (0042, 0071),
+  Linux 3.2 (0110) and FreeBSD (0114) halt at `%pil` 0, where the tick raises `CPU_INTERRUPT_HARD`, and the
+  interrupt vector raises it at any `%pil`; the vCPU thread checks it under the BQL before it sleeps.
+  The qtest (0140) makes the window as long as it likes: QEMU writes the `sparc64_idle` trace between the
+  check and the halt, to a FIFO the test has filled, so the CPU waits there with nothing pending while the
+  1 ms tick fires. Lab build of 0001-0140 (`qemu-system-sparc64` only, Debian 13): without 0139 the three
+  Linux layouts fail 15 of 15 runs (0 rounds and 0 ticks once let go), the `%pil` 0 loops pass; with it
+  all ten pass 50 of 50 (302-307 ticks in 300 ms). `sun4u-idle-test` 80/80 in 68.2-68.8 s (three
+  `meson test` runs, 8 in parallel; meson's default of 60 s killed it, so it gets 240 s in `slow_qtests`),
+  `qtest-sparc64` 22 OK, 2 skipped, `qmp-test` `oob` failing as before. wisp (Linux 7.3.4, `wisp=shell`,
+  host load 5-7 from other jobs): host CPU at the prompt over 30 s 5.7-6.8% without 0139, 6.2-6.7% with
+  it (one run each at 9.4% and 14.9% under load spikes), 100.3-100.5% with `idle-halt=off`; `crc 100000`
+  9.2-10.7 s in all three, guest uptime 2 s behind the host's time since QEMU's start in every run (the boot).
 
 Measured on the lab host (14 threads, quiet: 1-minute load 0.1-1.1 at every start and end), one QEMU at
 a time, "before" the 0001-0067 build, "with" the same tree with 0070-0072, "off" that one with
@@ -4519,7 +4542,7 @@ NIC; and the reset stops the receiver.
   Linux helper for this turned up a different, unreproduced race: `helper_sparc64_idle_linux()` checks
   `%softint` without the BQL and then sets `cs->halted`; a tick that fires between the two (`tick_irq()` sets
   `TICK_INT` and `halted = 0`) is masked at `%pil` 14, sets no `CPU_INTERRUPT_HARD`, and the CPU sleeps until
-  the next interrupt vector. Not seen in any run; not fixed (ROADMAP "Known and not fixed").
+  the next interrupt vector. Not seen in any run; fixed since by `wsh/0139` ("Idle", above).
 - **The `%softint` race** (`wsh/0036`) and **the sabre's replaced request** (`wsh/0045`): both fixed in the
   published package and in the trace the request was not replaced but never cleared.
 - **The PCI interrupt-map register:** reading `sabre_config_write()` showed that disabling a slot dropped the
