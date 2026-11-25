@@ -45,6 +45,7 @@ on:
       - main
     paths:
       - 'e2e/wisp/**'
+      - 'e2e/audio/wavcheck.py'
       - '.github/workflows/wisp-boot.yml'
 
 permissions: {}
@@ -71,6 +72,7 @@ jobs:
         with:
           patterns: |
             ^e2e/wisp/
+            ^e2e/audio/wavcheck\.py$
             ^submodules/pve-qemu\.patch$
             ^submodules/pve-qemu$
             ^\.github/workflows/wisp-boot\.yml$
@@ -148,7 +150,10 @@ jobs:
           persist-credentials: false
 
       - name: Unit tests
-        run: python3 -m unittest discover -s e2e/wisp/tests -v
+        run: |
+          python3 -m unittest discover -s e2e/wisp/tests -v
+          # sound.py's signature check (and audiosig.h against its Python model)
+          python3 -m unittest discover -s e2e/audio -p test_wavcheck.py -v
 
       # Only what goes into the kernels and PID 1: run.py, the tests and the docs don't change them
       - name: Cache the kernels
@@ -158,7 +163,7 @@ jobs:
           path: |
             e2e/wisp/out
             !e2e/wisp/out/framebuffer/**
-          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/config/**', 'e2e/wisp/linux-patches/**') }}
+          key: wisp-kernels-fb-${{ hashFiles('e2e/wisp/Dockerfile', 'e2e/wisp/build.sh', 'e2e/wisp/init.c', 'e2e/wisp/audiosig.h', 'e2e/wisp/config/**', 'e2e/wisp/linux-patches/**') }}
 
       - name: Build the wisp image
         run: |
@@ -319,17 +324,19 @@ jobs:
           done
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Capture and measure the soundtest tone
+      - name: Capture and measure the soundtest tone and the audio signature
         run: |
           set -o pipefail
           results="$RUNNER_TEMP/wisp/sound"
           mkdir -p "$results"
-          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$results:/results")
+          # /audio next to /wisp: sound.py checks the signature with e2e/audio/wavcheck.py
+          mounts=(-v "$PWD/e2e/wisp:/wisp:ro" -v "$PWD/e2e/audio:/audio:ro" -v "$results:/results")
           if [ "$QEMU_FROM" = pr ]; then
             mounts+=(-v "$PWD/build/wisp-qemu:/qemu:ro")
           fi
           # pc, sun4u, virt and the SS-5; the SS-5 needs openbios 0034 and pve-qemu wsh/0124, published
-          # in 11.1.3-4+wsh12; sound.py measures the tone as its first non-silent run
+          # in 11.1.3-4+wsh12; sound.py measures the tone as its first non-silent run, then boots again
+          # for `soundtest sig 8000 22050 44100` (the audio signature, e2e/wisp/audiosig.h)
           docker run --rm "${mounts[@]}" "$IMAGE" sh -ec \
             'PATH=/qemu:$PATH python3 sound.py --arch x86_64 --arch sparc64 --arch aarch64 --arch sparc32 --output /results' | tee "$results/metrics.txt"
           cat "$results/metrics.txt" >> "$GITHUB_STEP_SUMMARY"

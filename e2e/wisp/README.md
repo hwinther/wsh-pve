@@ -68,6 +68,7 @@ qemu-system-sparc -M SS-5 -m 128 -display none -nodefaults -serial stdio -monito
 | `crc <n>` | the loop's CRC after `n` rounds (1 to 1,000,000), with its time |
 | `fbtest` | draw eight colour bars and a white border on `/dev/fb0` and print the mode on serial (framebuffer tier) |
 | `soundtest [hz] [ms]` | play a square wave through `/dev/dsp` (framebuffer tier, default 440 Hz for 1000 ms) |
+| `soundtest sig [rate..]` | play the audio signature (`audiosig.h`) at each rate, 500 ms of silence after each (default 8000, 22050 and 44100 Hz) |
 | `mandel` | the Mandelbrot set, 78 x 20 characters, in 4.12 fixed-point 32-bit integer math (sparc32 has no libgcc for 64-bit division, and no floating point is needed) |
 | `mandel fb` | draw the set at the native framebuffer resolution and print its iteration checksum on serial |
 | `keytest` | print Linux input codes for keyboard presses until Esc or a ten-second timeout (framebuffer tier) |
@@ -472,6 +473,42 @@ in the DMA address, and drops what lies past it when the driver stops. With it, 
 1000 ms tone is followed by the 22 ms of silence Linux pads its last period with and then at most
 110 frames (2.5 ms; none in one run): what the codec plays until Linux's stop under TCG.
 See `submodules/SPARC.md`, "Audio".
+
+### The audio signature
+
+`soundtest sig [rate ...]` plays the audio signature of `audiosig.h` at each rate (8000 to
+48000 Hz; 8000, 22050 and 44100 by default): 8 segments of 500 ms, a triangle wave of
+400 + 100 k Hz on the left and 600 + 150 k Hz on the right in segment k, peak -6 dBFS. Integer
+arithmetic only, the same samples on every architecture; the header is shared with the 3dfx game
+wshspace (`e2e/3dfx/space`, `-audiotest`). Each rate opens `/dev/dsp` afresh, drains it, prints
+
+```text
+WISP-SOUND v=1 dev=/dev/dsp rate=8000 fmt=s16le ch=2 sig=1 frames=32000 ok=1
+```
+
+and waits 500 ms. A rate below 8000 or above 48000 Hz gives `WISP-SOUND v=1 sig=1 rate=N ok=0
+errno=22`. `sound.py` boots each machine a second time for `soundtest sig 8000 22050 44100` and
+checks the recording with `e2e/audio/wavcheck.py --signature 3` (so it needs `e2e/audio` next to
+`e2e/wisp`; CI mounts it at `/audio`): per segment and channel the frequency (3 %), the duration,
+no gap over 2 ms, channels not swapped. `--rates` picks the rates (`--rates ''` leaves the
+signature out) and `--no-tone` leaves out the 440 Hz tone; each recording's result is
+`<machine>-sig.json` next to `<machine>-sig.wav`.
+
+Lab, published pve-qemu-kvm 11.1.3-4+wsh27, all 16 segments of each of the three signatures:
+
+| Machine | Device | 8000 Hz | 22050 Hz | 44100 Hz |
+| --- | --- | --- | --- | --- |
+| pc (x86_64) | AC97 | 4.000 s | 4.000 s | 4.000 s |
+| sun4u (sparc64) | AC97 | 4.000 s | 4.000-4.001 s | 4.003 s |
+| virt (aarch64) | AC97 | 4.000 s | 4.000 s | 4.000-4.003 s |
+| SS-5 (sparc32) | CS4231 | 4.000 s | 4.000 s | 4.000 s |
+
+Every segment's frequency was within 0.01 % of the signal's (400.0-1100.1 Hz left, 599.9-1650.1 Hz
+right), the longest quiet stretch 0.11 ms (a zero crossing), no tail. Between two rates the
+recordings have 96-104 ms of silence after an 8000 Hz signature and 42-87 ms after a 22050 Hz
+one, not the 500 ms PID 1 waits (not looked into; presumably what is still queued in the driver
+and QEMU when the drain returns). The new code (text +1.0-1.3 KiB per architecture) took
+i386's `init` over a 4 KiB page: 25,104 to 29,392 bytes (`size-budget.json` has the new sizes).
 
 ## Freedoom framebuffer timedemo
 

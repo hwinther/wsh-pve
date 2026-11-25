@@ -170,6 +170,33 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
 
 The results table is in the workflow's job summary; the recordings and logs are its artifact.
 
+### The audio signature
+
+Some tests play one fixed test signal instead of a single tone, made by the header
+`e2e/wisp/audiosig.h` (integer arithmetic only, so a guest program without a C library can use it):
+
+- 8 segments of 500 ms (4 s in all), 16-bit stereo, at any rate from 8000 to 48000 Hz;
+- in segment k (0 to 7) a triangle wave of 400 + 100 k Hz on the left channel and 600 + 150 k Hz on
+  the right: 400 to 1100 Hz on the left, 600 to 1650 Hz on the right, peak -6 dBFS.
+
+`e2e/audio/wavcheck.py rec.wav --signature [N]` finds N of them in a recording of the `wav` driver
+and checks each: every segment's frequency on each channel (within 3 %), the duration (4 s within
+3 %), no quiet stretch over 2 ms on either channel, channels not swapped and not mono. Short
+sound right after the end (old samples a DMA ring plays out after the stop) is reported as a tail;
+more of the signal after a gap is a dropout. The signal is long enough to span many DMA buffers,
+so a device that stops after the first buffer, or skips one, fails.
+
+Played by:
+
+- wisp's `soundtest sig` (`e2e/wisp/sound.py`, CI workflow `wisp-boot.yml`): at 8000, 22050 and
+  44100 Hz through Linux's OSS emulation on pc and sun4u (AC97), virt (AC97) and the SS-5
+  (CS4231). Lab, pve-qemu-kvm 11.1.3-4+wsh27: every segment within 0.01 % on all four, 4.000 to
+  4.003 s, no gap.
+- the 3dfx game wshspace's `-audiotest` (`e2e/3dfx/space`): on Linux through OSS with AC97
+  (`audio-test.sh`, job in `audio-matrix.yml`), on DOS through its own Sound Blaster driver on the
+  SB16, 8-bit stereo DMA at 22050 Hz (`e2e/3dfx/dos-test.sh`, `3dfx-dos.yml`). Both 4.000 s, no
+  gap. The Windows build has it too but isn't run in a guest.
+
 ## Further reading
 
 - Read [about PulseAudio server strings](https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/ServerStrings/) in the official PulseAudio documentation.

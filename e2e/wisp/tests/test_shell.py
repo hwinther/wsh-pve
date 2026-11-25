@@ -286,6 +286,17 @@ class HostInit(unittest.TestCase):
         answers = shell.split_transcript(proc.stdout.decode(), echo=False)
         self.assertEqual([a[1] for a in answers[:-1]], [["WISP-SOUND v=1 ok=0 errno=22"]] * len(args))
 
+    def test_soundtest_sig_invalid_rates(self):
+        # refused before the device is opened: below 8000 Hz, above 48000 Hz, not a number
+        script = ["soundtest sig 7999", "soundtest sig 48001", "soundtest sig x", "soundtest sigx", "poweroff"]
+        answers = shell.split_transcript(self.start({"wisp": "shell"}, script).stdout.decode(), echo=False)
+        self.assertEqual([a[1] for a in answers[:-1]], [
+            ["WISP-SOUND v=1 sig=1 rate=7999 ok=0 errno=22"],
+            ["WISP-SOUND v=1 sig=1 rate=-1 ok=0 errno=22"],
+            ["WISP-SOUND v=1 sig=1 rate=0 ok=0 errno=22"],
+            ["WISP-SOUND v=1 ok=0 errno=22"],  # not the sig mode: an invalid tone
+        ])
+
     def test_line_editing_and_errors(self):
         script = ["  \x1b[Acrc\x08\x08\x08", "crc", "crc 0", "crc 1000001", "nosuch arg", "",
                   "\tcrc   1", "poweroff"]

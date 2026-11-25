@@ -186,7 +186,11 @@ a FreeDOS floppy with our own `AUDTEST.COM` and a Debian kernel + initramfs that
 through each sound device, recorded with QEMU's `wav` backend and checked by `audio/wavcheck.py`,
 directly and through qemu-server (`audio0: driver=wav`, `qm showcmd`, then a real `qm start` that
 records). The results are described in the
-[audio reference](../docs/src/content/docs/reference/audiodev.md).
+[audio reference](../docs/src/content/docs/reference/audiodev.md). `audio/wavcheck.py --signature`
+checks the audio signature of `wisp/audiosig.h` (8 segments of 500 ms, a different triangle wave
+on each channel; reference, "The audio signature"), which wisp's `soundtest sig`
+(`wisp/sound.py`) and wshspace's `-audiotest` (`3dfx/space/audio-test.sh` on Linux,
+`3dfx/dos-test.sh` on DOS with an SB16) play; the workflow also runs `3dfx/space/audio-test.sh`.
 
 ## Downloaded media in the Actions cache
 

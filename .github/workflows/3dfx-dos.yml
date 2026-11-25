@@ -8,7 +8,9 @@ name: 3dfx in DOS
 # qemu-system-x86_64-3dfx boots it headless, as PVE runs a `vga: std,mesa=1` VM, once per memory
 # profile (no memory manager, HIMEMX, HIMEMX and JEMM386); the program draws the test scene, reads
 # it back and checks it, and the harness checks the frame in QEMU's screendump of the console and
-# that DOS's text screen comes back afterwards.
+# that DOS's text screen comes back afterwards. Last in each boot, wshspace -audiotest plays the audio
+# signature (e2e/wisp/audiosig.h) through its Sound Blaster backend on QEMU's sb16, recorded with
+# `-audiodev wav` and checked by e2e/audio/wavcheck.py.
 #
 # Not a required check, so the paths filter is fine. Weekly as well, to notice a package update or a
 # new qemu-3dfx pin that breaks the DOS wrapper.
@@ -22,6 +24,8 @@ on:
       - main
     paths:
       - "e2e/3dfx/**"
+      - "e2e/wisp/audiosig.h"
+      - "e2e/audio/wavcheck.py"
       - "e2e/sparc/targets_dos.py"
       - "e2e/sparc/fetch_media.py"
       - "packages/wsh-openglide/tests/scene.h"
@@ -87,7 +91,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: FreeDOS, GLIDEDOS.EXE and GLIDE2X.DXE in the published qemu-system-x86_64-3dfx
+      - name: FreeDOS, GLIDEDOS.EXE, GLIDE2X.DXE and wshspace -audiotest in the published qemu-system-x86_64-3dfx
         env:
           GH_TOKEN: ${{ github.token }} # gh release download of the qemu-3dfx-drivers release
         run: |
@@ -116,5 +120,6 @@ jobs:
             !${{ runner.temp }}/dos/release
             !${{ runner.temp }}/dos/**/*.sock
             !${{ runner.temp }}/dos/**/*.img
+            !${{ runner.temp }}/dos/**/*.wav
           retention-days: 14
           if-no-files-found: warn

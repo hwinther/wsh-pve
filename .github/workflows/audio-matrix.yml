@@ -23,6 +23,9 @@ on:
       - main
     paths:
       - "e2e/audio/**"
+      - "e2e/wisp/audiosig.h"
+      - "e2e/3dfx/space/**"
+      - "scripts/build-3dfx-linux-glide.sh"
       - "e2e/sparc/targets_dos.py"
       - "e2e/sparc/fetch_media.py"
       - "e2e/pve/**"
@@ -127,3 +130,40 @@ jobs:
       - name: Clean up
         if: ${{ always() }}
         run: docker rm -f "$NAME" || true
+
+  # wshspace -audiotest (e2e/3dfx/space/audio-test.sh): the audio signature (e2e/wisp/audiosig.h)
+  # through the game's own OSS /dev/dsp backend in a Linux guest with AC97, recorded by the published
+  # pve-qemu-kvm's wav backend and checked by wavcheck.py. The DOS build's Sound Blaster backend is
+  # checked in 3dfx-dos.yml.
+  wshspace:
+    name: wshspace -audiotest (Linux, OSS, AC97)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The qemu-3dfx submodule (the Linux guest Glide library wshspace links)
+        run: git submodule update --init --depth 1 submodules/qemu-3dfx
+
+      - name: wshspace -audiotest in a Linux guest
+        run: |
+          mkdir -p "$RUNNER_TEMP/wshspace"
+          devices=()
+          [ ! -e /dev/kvm ] || devices=(--device /dev/kvm)
+          docker run --rm "${devices[@]}" -v "$PWD:/src:ro" -v "$RUNNER_TEMP/wshspace:/out" debian:trixie \
+            sh /src/e2e/3dfx/space/audio-test.sh /out | tee "$RUNNER_TEMP/wshspace/run.log"
+          tail -n 12 "$RUNNER_TEMP/wshspace/run.log" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the recording and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wshspace-audiotest
+          path: ${{ runner.temp }}/wshspace
+          retention-days: 14
+          if-no-files-found: warn

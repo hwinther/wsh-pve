@@ -1,7 +1,16 @@
-"""Play the shell's reference tone and check the samples captured by QEMU."""
+"""Play the shell's reference tone and the audio signature, and check the samples captured by QEMU.
+
+Two boots per architecture, each recorded with QEMU's `-audiodev wav`: `soundtest 440 1000` (a
+440 Hz square wave for 1 s, measured here), then `soundtest sig 8000 22050 44100` (the audio
+signature of audiosig.h at each rate, 500 ms of silence after each), checked by
+e2e/audio/wavcheck.py's signatures(): per segment and channel the frequency, the duration, no gaps,
+channels not swapped. --rates picks the rates ("" leaves the signature out), --no-tone leaves out
+the 440 Hz tone. Needs e2e/audio next to e2e/wisp (in a container: /audio next to /wisp).
+"""
 
 import argparse
 import io
+import json
 import os
 from pathlib import Path
 import struct
@@ -11,6 +20,12 @@ import wave
 import run
 import shell
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "audio"))
+try:
+    import wavcheck  # e2e/audio/wavcheck.py
+except ImportError:  # checked when the signature is asked for
+    wavcheck = None
+
 
 DEVICES = {
     "sparc32": ["-machine", "audiodev=snd0"],
@@ -19,6 +34,12 @@ DEVICES = {
     "sparc64": ["-device", "AC97,audiodev=snd0"],
 }
 RESULT = "WISP-SOUND v=1 dev=/dev/dsp rate=44100 fmt=s16le ch=2 hz=440 ms=1000 frames=44100 ok=1"
+SIG_RATES = (8000, 22050, 44100)
+
+
+def sig_result(rate):
+    """The line `soundtest sig` prints for one rate: 8 segments of rate / 2 frames."""
+    return f"WISP-SOUND v=1 dev=/dev/dsp rate={rate} fmt=s16le ch=2 sig=1 frames={8 * (rate // 2)} ok=1"
 
 
 def wav_device(arch, path):
@@ -114,19 +135,64 @@ def check(arch, dest):
         raise ValueError(f"unexpected soundtest response, see {log}")
 
 
+def check_signature(arch, dest, rates):
+    """`soundtest sig RATE...` in one boot; wavcheck finds one signature per rate in the recording."""
+    if wavcheck is None:
+        raise ValueError("no wavcheck.py: e2e/audio must be next to e2e/wisp")
+    machine = run.ARCHES[arch][1][1]
+    wav = dest / f"{machine}-sig.wav"
+    log = wav.with_suffix(".log")
+    cmd = run.qemu_command(arch, interactive=True, firmware=os.getenv("WISP_FIRMWARE"),
+                           kernel=str(Path(run.HERE) / "out" / arch / "kernel-fb"),
+                           extra=wav_device(arch, wav))
+    wav.unlink(missing_ok=True)
+    raw = shell.drive(cmd, ["soundtest sig " + " ".join(map(str, rates)), "poweroff"],
+                      timeout=60 + 10 * len(rates))
+    log.write_text(raw["text"])
+    lines = shell.clean(raw["text"]).splitlines()
+    reports = [line for line in lines if line.startswith("WISP-SOUND ")]
+    for line in reports:
+        print(f"{machine} {line}", flush=True)
+    if raw["exit_code"] or "  powering off" not in lines:
+        raise ValueError(f"guest did not power off cleanly, see {log}")
+    res = wavcheck.signatures(str(wav), len(rates))
+    wav.with_suffix(".json").write_text(json.dumps(res, indent=1) + "\n")
+    for rate, sig in zip(rates, res["signatures"]):
+        segs = sig["segments"]
+        tail = sig.get("tail")
+        print(f"{machine} signature {rate} Hz: {sig['duration_s']:.3f} s, "
+              f"left {segs[0]['left_hz']}..{segs[-1]['left_hz']} Hz, right {segs[0]['right_hz']}..{segs[-1]['right_hz']} Hz, "
+              f"longest gap {max(sig['max_gap_ms'])} ms"
+              + (f", tail {tail['duration_s'] * 1000:.1f} ms after {tail['after_s'] * 1000:.1f} ms" if tail else ""),
+              flush=True)
+    problems = list(res["reasons"])
+    if reports != [sig_result(r) for r in rates]:
+        problems.append(f"unexpected soundtest response, see {log}")
+    if problems:
+        raise ValueError("; ".join(problems))
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--arch", choices=DEVICES, action="append")
     parser.add_argument("--output", type=Path, default=Path(run.HERE) / "out/sound")
+    parser.add_argument("--rates", default=",".join(map(str, SIG_RATES)),
+                        help="the signature's rates, comma-separated (default %(default)s; empty: no signature)")
+    parser.add_argument("--no-tone", action="store_true", help="leave out the 440 Hz tone")
     args = parser.parse_args()
+    rates = [int(r) for r in args.rates.split(",") if r.strip()]
     args.output.mkdir(parents=True, exist_ok=True)
     failed = False
     for arch in args.arch or DEVICES:
-        try:
-            check(arch, args.output.resolve())
-        except (OSError, ValueError, wave.Error, EOFError) as exc:
-            print(f"{arch}: {exc}", file=sys.stderr)
-            failed = True
+        checks = [] if args.no_tone else [("tone", check)]
+        if rates:
+            checks.append(("signature", lambda a, d: check_signature(a, d, rates)))
+        for name, fn in checks:
+            try:
+                fn(arch, args.output.resolve())
+            except (OSError, ValueError, wave.Error, EOFError) as exc:
+                print(f"{arch} {name}: {exc}", file=sys.stderr)
+                failed = True
     return failed
 
 
