@@ -681,9 +681,13 @@ OpenBIOS 0035 with `-prom-env ps2-mouse?=true` (see "Framebuffer tier"; in pve-q
 Bochs one (`config/tier-fb/bochs.config`), which both machines use; the pc's resolved `config-fb`
 and image are unchanged.
 
-`kernel-fb` on sparc64 keeps `CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`) for
-`wsh-lab wisp-vm`: qemu-server sets no OpenBIOS variables for a sun4u VM, so such a VM has no
-`kdmouse` node and keeps a virtio keyboard in `args` ("Doom in a PVE VM").
+`wsh-lab wisp-vm` gives its sun4u framebuffer and DOOM VMs the same PS/2 devices. qemu-server
+sets no OpenBIOS variables, so the option goes into the VM's `args` as `-prom-env
+'ps2-mouse?=true'`, next to `-kernel` (only root can set `args`, and `wisp-vm` already runs as root
+on the node). When the node's `/usr/share/kvm/openbios-sparc64` doesn't contain the option
+(pve-qemu-kvm older than 11.1.3-4+wsh15), `wisp-vm` uses a virtio keyboard in `args`, as before, and
+says so. For that fallback, and for VMs created before the change, `kernel-fb` on sparc64 keeps
+`CONFIG_VIRTIO_INPUT` (`config/tier-fb/sparc64.config`) ("Doom in a PVE VM").
 
 Measured 2026-11-24 with Linux 7.3.4 and pve-qemu-kvm 11.1.3-4+wsh17 under TCG, both builds in
 the same image:
@@ -749,6 +753,19 @@ The SS-5 VM's VNC socket answered `RFB 003.008` and `vncproxy` handed out a tick
 UI's noVNC console takes; the console itself was not opened in a browser. `destroy` removed each VM,
 its disk and its kernel copy; a second `create` on an existing VMID and actions on untagged VMs are
 refused (unit tests).
+
+The sun4u PS/2 keyboard and mouse in a `wisp-vm` VM were tested on 2026-11-25 in the same container,
+built from the published packages (pve-qemu-kvm 11.1.3-4+wsh20, qemu-server 9.2.20+wsh9), with the
+published `wisp-fb` release. `lab.py wisp-vm sparc64 --tier fb --start` created
+`args: ... -prom-env 'ps2-mouse?=true'` with no virtio device, and the running QEMU got
+`-prom-env ps2-mouse?=true`. On serial, framebuffer.py's own checks ran against the VM's `serial0`
+and QMP sockets. `fbtest` reported 1280x800x32. `keytest` opened `event0` (`AT Translated Set 2
+keyboard`) and received 30, 48, 28 and 1. `mousetest` opened `event1` (`ImExPS/2 Generic Explorer
+Mouse`) and received X +10, Y +5, `BTN_LEFT` press and release and `BTN_RIGHT` press. The fallback was
+tested with the firmware path pointed at a file without the option: the VM got
+`-device virtio-keyboard-pci` and `wisp-vm` printed its note. The published firmware contains
+`ps2-mouse?`; the firmware of pve-qemu-kvm 11.1.3-2+wsh16 doesn't. `--doom` on sun4u was not rerun
+with the PS/2 devices, because fbDOOM reads the same evdev keyboard that `keytest` found.
 
 ## Updating the size budget
 
