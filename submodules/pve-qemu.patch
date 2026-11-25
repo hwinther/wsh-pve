@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..0fd0917 100644
+index bc240a0..54b1ce5 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,113 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,121 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -187,6 +187,14 @@ index bc240a0..0fd0917 100644
 +wsh/0148-tests-qtest-test-the-SuperSPARC-diagnostic-registers.patch
 +wsh/0149-hw-timer-slavio_timer-let-the-user-timer-reach-its-l.patch
 +wsh/0150-tests-qtest-test-the-sun4m-user-timer-s-limit-and-th.patch
++wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch
++wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch
++wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch
++wsh/0154-tests-qtest-test-the-register-bits-the-sun4m-IOMMU-k.patch
++wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch
++wsh/0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe.patch
++wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
++wsh/0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -23291,6 +23299,1315 @@ index 0000000..fc06de3
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch b/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch
+new file mode 100644
+index 0000000..929b621
+--- /dev/null
++++ b/debian/patches/wsh/0151-hw-timer-slavio_timer-don-t-read-a-running-counter-t.patch
+@@ -0,0 +1,272 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/timer/slavio_timer: don't read a running counter twice in
++ the same tick
++
++Sun's SPARCserver 600MP boot PROM reads a running counter twice with
++three or four instructions between and wants the second value greater:
++the system counter and a processor counter in counter mode (with a
++limit write without reset between, too) and the user timer with ldd.
++On the board a read crosses the MBus and the SBus to the Slave I/O and
++takes longer than the counter's 500 ns tick (the NCR89C105 counts in
++bit 9 every 500 ns), so it holds there. A QEMU read takes no virtual
++time: the test passed only when the host happened to be slow between
++the two reads (about one run in four), and the PROM looped in it
++otherwise.
++
++A read that finds no tick since the last read of that counter now
++returns one tick more than the last one. What a read returns stays at
++most 16 ticks (8 us) ahead of the clock and never goes back: past that,
++and on a stopped user timer, it holds until the clock catches up. The
++MSW and LSW of a user timer read with ldd count as one read (the LSW
++right after the MSW holds). Writing the counter or the limit with a
++reset, a mode change and a reset start afresh; a limit write without a
++reset doesn't. Counters with a limit of less than 64 ticks are left
++alone, so that a wrap is never taken for a repeat. The counter itself
++(the ptimer), its limit bit and its interrupt are unchanged. The state is not migrated (the first read on
++the destination is the clock's value); trace event
++slavio_timer_read_ahead.
++
++Only the SS-600MP has it: a new slavio_timer property read-ahead
++(default off), set from a new hwdef field timer_read_ahead. On the
++other machines (SS-5, SS-10, SS-20, LX, ...) a read returns the
++counter as it is, as before.
++---
++ hw/sparc/sun4m.c        | 14 ++++++-
++ hw/timer/slavio_timer.c | 86 +++++++++++++++++++++++++++++++++++++++++
++ hw/timer/trace-events   |  1 +
++ 3 files changed, 99 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 31ea300..cc1c8b8 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -114,6 +114,7 @@ struct sun4m_hwdef {
++     uint32_t iommu_version;
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
+++    bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -398,7 +399,8 @@ static DeviceState *slavio_intctl_init(hwaddr addr,
++ #define CPU_TIMER_OFFSET(cpu) (0x1000ULL * cpu)
++ 
++ static void slavio_timer_init_all(hwaddr addr, qemu_irq master_irq,
++-                                  qemu_irq *cpu_irqs, unsigned int num_cpus)
+++                                  qemu_irq *cpu_irqs, unsigned int num_cpus,
+++                                  bool read_ahead)
++ {
++     DeviceState *dev;
++     SysBusDevice *s;
++@@ -406,6 +408,7 @@ static void slavio_timer_init_all(hwaddr addr, qemu_irq master_irq,
++ 
++     dev = qdev_new("slavio_timer");
++     qdev_prop_set_uint32(dev, "num_cpus", num_cpus);
+++    qdev_prop_set_bit(dev, "read-ahead", read_ahead);
++     s = SYS_BUS_DEVICE(dev);
++     sysbus_realize_and_unref(s, &error_fatal);
++     sysbus_connect_irq(s, 0, master_irq);
++@@ -1127,7 +1130,8 @@ static void sun4m_hw_init(MachineState *machine)
++     sysbus_mmio_map(s, 0, hwdef->nvram_base);
++     nvram = NVRAM(dev);
++ 
++-    slavio_timer_init_all(hwdef->counter_base, slavio_irq[19], slavio_cpu_irq, smp_cpus);
+++    slavio_timer_init_all(hwdef->counter_base, slavio_irq[19], slavio_cpu_irq,
+++                          smp_cpus, hwdef->timer_read_ahead);
++ 
++     /* Slavio TTYA (base+4, Linux ttyS0) is the first QEMU serial device
++        Slavio TTYB (base+0, Linux ttyS1) is the second QEMU serial device */
++@@ -1466,6 +1470,12 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .lebuffer_base = 0xef0040000ULL,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
+++        /*
+++         * Its boot PROM reads a running counter twice a few instructions
+++         * apart and wants the second value greater, as it is on the board,
+++         * where a read takes longer than the 500 ns tick.
+++         */
+++        .timer_read_ahead = true,
++         .iommu_version = 0x01000000,
++         .max_mem = 0xf00000000ULL,
++     };
++diff --git a/hw/timer/slavio_timer.c b/hw/timer/slavio_timer.c
++index cc6aa87..b13b10d 100644
++--- a/hw/timer/slavio_timer.c
+++++ b/hw/timer/slavio_timer.c
++@@ -57,6 +57,11 @@ typedef struct CPUTimerState {
++     /* processor only */
++     uint32_t run;
++     uint64_t limit;
+++    /* the count the guest read last (not migrated: slavio_timer_read_count) */
+++    uint64_t last_read;
+++    int64_t last_read_ns;
+++    bool last_read_valid;
+++    bool msw_read;      /* user timer: the MSW was read, the LSW is next */
++ } CPUTimerState;
++ 
++ #define TYPE_SLAVIO_TIMER "slavio_timer"
++@@ -72,6 +77,7 @@ struct SLAVIO_TIMERState {
++     SysBusDevice parent_obj;
++ 
++     uint32_t num_cpus;
+++    bool read_ahead;    /* slavio_timer_read_count() on (the SS-600MP) */
++     uint32_t cputimer_mode;
++     CPUTimerState cputimer[MAX_CPUS + 1];
++     TimerContext timer_context[MAX_CPUS + 1];
++@@ -106,6 +112,24 @@ struct SLAVIO_TIMERState {
++ #define PERIODS_TO_USER(l)  ((l) << 9)
++ /* the timer configuration register has a bit for each of 4 CPU slots */
++ #define TIMER_MODE_MASK     0xf
+++/*
+++ * On the board a read of a running counter crosses the MBus and the SBus
+++ * to the Slave I/O, which takes longer than its 500 ns tick, so the next
+++ * read finds it moved on. Sun's 600MP boot PROM relies on that: it reads
+++ * a running counter twice with three or four instructions between and
+++ * wants the second value greater. A QEMU read takes no virtual time, so
+++ * a read that finds no tick since the last one returns one tick more
+++ * than that one (slavio_timer_read_count). What a read returns is at
+++ * most READ_AHEAD ticks ahead of the clock and never goes back: past
+++ * that it holds until the clock catches up. The counter itself, its
+++ * limit bit and its interrupt are unchanged. Counters whose range is
+++ * less than four times READ_AHEAD are left alone, so that a wrap is
+++ * never taken for a repeat. Only with the read-ahead property, which only
+++ * the SS-600MP sets; elsewhere a read returns the counter as it is.
+++ */
+++#define READ_AHEAD          16
+++#define READ_AHEAD_COUNT    PERIODS_TO_USER((uint64_t)READ_AHEAD)
+++#define READ_AHEAD_NS       (READ_AHEAD * TIMER_PERIOD)
++ 
++ static int slavio_timer_is_user(TimerContext *tc)
++ {
++@@ -137,6 +161,51 @@ static void slavio_timer_get_out(CPUTimerState *t)
++     t->counthigh = count >> 32;
++ }
++ 
+++/*
+++ * A guest read of the count slavio_timer_get_out() left in t; running is
+++ * whether the counter counts, advance whether this read may move it on
+++ * (not the LSW right after the MSW of the same user timer, as with ldd).
+++ */
+++static void slavio_timer_read_count(CPUTimerState *t, bool running,
+++                                    bool advance)
+++{
+++    uint64_t raw = ((uint64_t)t->counthigh << 32) | t->count;
+++    uint64_t count = raw;
+++    uint64_t max;
+++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+++
+++    if (t->limit == TIMER_MAX_COUNT64) {        /* user timer */
+++        max = TIMER_MAX_COUNT64;
+++    } else {                                    /* the count before the limit */
+++        max = (t->limit ? t->limit : TIMER_MAX_COUNT32) - PERIODS_TO_USER(1);
+++    }
+++    if (t->last_read_valid && max >= 4 * READ_AHEAD_COUNT &&
+++        now - t->last_read_ns < READ_AHEAD_NS &&
+++        raw <= t->last_read && t->last_read - raw <= READ_AHEAD_COUNT) {
+++        /* no tick since the last read (not a wrap: the range is larger) */
+++        count = t->last_read;
+++        if (running && advance && count - raw < READ_AHEAD_COUNT &&
+++            count < max) {
+++            count += PERIODS_TO_USER(1);
+++        }
+++    }
+++    if (count != raw) {
+++        trace_slavio_timer_read_ahead(raw, count);
+++    }
+++    t->last_read = count;
+++    t->last_read_ns = now;
+++    t->last_read_valid = true;
+++    t->count = count & TIMER_COUNT_MASK32;
+++    t->counthigh = count >> 32;
+++}
+++
+++/* the counter was set: the next read starts afresh */
+++static void slavio_timer_read_reset(CPUTimerState *t)
+++{
+++    t->last_read_valid = false;
+++    t->msw_read = false;
+++}
+++
++ // timer callback
++ static void slavio_timer_irq(void *opaque)
++ {
++@@ -173,6 +242,10 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
++         if (slavio_timer_is_user(tc)) {
++             // read user timer MSW
++             slavio_timer_get_out(t);
+++            if (s->read_ahead) {
+++                slavio_timer_read_count(t, t->run, true);
+++                t->msw_read = true;
+++            }
++             ret = t->counthigh | t->reached;
++         } else {
++             // read limit
++@@ -187,8 +260,16 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
++         // of counter (user mode)
++         slavio_timer_get_out(t);
++         if (slavio_timer_is_user(tc)) { // read user timer LSW
+++            if (s->read_ahead) {
+++                slavio_timer_read_count(t, t->run, !t->msw_read);
+++                t->msw_read = false;
+++            }
++             ret = t->count & TIMER_MAX_COUNT64;
++         } else { // read limit
+++            if (s->read_ahead) {
+++                /* the counter mode counters always run */
+++                slavio_timer_read_count(t, true, true);
+++            }
++             ret = (t->count & TIMER_MAX_COUNT32) |
++                 t->reached;
++         }
++@@ -229,6 +310,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++     saddr = addr >> 2;
++     switch (saddr) {
++     case TIMER_LIMIT:
+++        slavio_timer_read_reset(t);
++         ptimer_transaction_begin(t->timer);
++         if (slavio_timer_is_user(tc)) {
++             uint64_t count;
++@@ -258,6 +340,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++             uint64_t count;
++ 
++             // set user counter LSW, reset counter
+++            slavio_timer_read_reset(t);
++             t->limit = TIMER_MAX_COUNT64;
++             t->count = val & TIMER_MAX_COUNT64;
++             t->reached = 0;
++@@ -308,6 +391,7 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
++                 ptimer_transaction_begin(curr_timer->timer);
++                 // check for a change in timer mode for this processor
++                 if ((val & processor) != (s->cputimer_mode & processor)) {
+++                    slavio_timer_read_reset(curr_timer);
++                     if (val & processor) { // counter -> user timer
++                         qemu_irq_lower(curr_timer->irq);
++                         // counters are always running
++@@ -401,6 +485,7 @@ static void slavio_timer_reset(DeviceState *d)
++         curr_timer->limit = 0;
++         curr_timer->count = 0;
++         curr_timer->reached = 0;
+++        slavio_timer_read_reset(curr_timer);
++         if (i <= s->num_cpus) {
++             ptimer_transaction_begin(curr_timer->timer);
++             ptimer_set_limit(curr_timer->timer,
++@@ -455,6 +540,7 @@ static void slavio_timer_finalize(Object *obj)
++ 
++ static const Property slavio_timer_properties[] = {
++     DEFINE_PROP_UINT32("num_cpus",  SLAVIO_TIMERState, num_cpus,  0),
+++    DEFINE_PROP_BOOL("read-ahead", SLAVIO_TIMERState, read_ahead, false),
++ };
++ 
++ static void slavio_timer_class_init(ObjectClass *klass, const void *data)
++diff --git a/hw/timer/trace-events b/hw/timer/trace-events
++index 634ba1d..b0aa717 100644
++--- a/hw/timer/trace-events
+++++ b/hw/timer/trace-events
++@@ -3,6 +3,7 @@
++ # slavio_timer.c
++ slavio_timer_get_out(uint64_t limit, uint32_t counthigh, uint32_t count) "limit 0x%"PRIx64" count 0x%x0x%08x"
++ slavio_timer_irq(uint32_t counthigh, uint32_t count) "callback: count 0x%x0x%08x"
+++slavio_timer_read_ahead(uint64_t count, uint64_t read) "count 0x%016"PRIx64" read as 0x%016"PRIx64
++ slavio_timer_mem_readl_invalid(uint64_t addr) "invalid read address 0x%"PRIx64
++ slavio_timer_mem_readl(uint64_t addr, uint32_t ret) "read 0x%"PRIx64" = 0x%08x"
++ slavio_timer_mem_writel(uint64_t addr, uint32_t val) "write 0x%"PRIx64" = 0x%08x"
+diff --git a/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch b/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch
+new file mode 100644
+index 0000000..191187e
+--- /dev/null
++++ b/debian/patches/wsh/0152-tests-qtest-test-repeated-reads-of-the-sun4m-counter.patch
+@@ -0,0 +1,206 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test repeated reads of the sun4m counters
++
++On SS-600MP, with the qtest clock standing still between steps: a
++second read of the free-running system counter is one tick more,
++further reads go up to 16 ticks ahead and then hold, after a step of 4
++ticks the next read is one more, after a long step the clock's value,
++and a limit write resets it (read 0); a processor counter read twice
++and again after a limit write without reset moves one tick each time;
++the user timer read MSW then LSW moves once per pair, the LSW alone
++moves too, and stopped it holds; a counter with a 64-tick limit reads
++the same twice. On SS-10, which doesn't have the read-ahead, the system
++counter, a processor counter and the user timer read the same value
++twice in the same tick. 5 new cases, 11 in all; read-ahead-system fails
++without the previous patch.
++---
++ tests/qtest/sun4m-slavio-timer-test.c | 151 ++++++++++++++++++++++++++
++ 1 file changed, 151 insertions(+)
++
++diff --git a/tests/qtest/sun4m-slavio-timer-test.c b/tests/qtest/sun4m-slavio-timer-test.c
++index a0c7e8c..4238218 100644
++--- a/tests/qtest/sun4m-slavio-timer-test.c
+++++ b/tests/qtest/sun4m-slavio-timer-test.c
++@@ -8,6 +8,16 @@
++  * (bit 31 of the MSW) once the counter wraps. QEMU kept only the bits
++  * of the CPUs it has, and its user timer never expired from the limit.
++  *
+++ * The PROM also reads a running counter twice with a few instructions
+++ * between and wants the second value greater, which holds on the board,
+++ * where a read takes longer than the 500 ns tick. A QEMU read takes no
+++ * virtual time: a read with no tick since the last one returns one tick
+++ * more, at most 16 ticks ahead of the clock, never less than the read
+++ * before, and not on counters with a short limit. Only the SS-600MP has
+++ * that; on the other machines (SS-10 here) a read returns the counter as
+++ * it is. The qtest clock stands still between steps, so every repeated
+++ * read here is in the same tick.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -18,11 +28,15 @@
++ #define CPU0_MSW        (COUNTER_BASE + 0x0)    /* user mode: counter MSW */
++ #define CPU0_LSW        (COUNTER_BASE + 0x4)    /* user mode: counter LSW */
++ #define CPU0_RUN        (COUNTER_BASE + 0xc)    /* user mode: start/stop */
+++#define CPU0_COUNTER    (COUNTER_BASE + 0x4)    /* counter mode: counter */
+++#define CPU0_NORST      (COUNTER_BASE + 0x8)    /* limit, no counter reset */
++ #define SYS_LIMIT       (COUNTER_BASE + 0x10000)
++ #define SYS_COUNTER     (COUNTER_BASE + 0x10004)
++ #define TIMER_CONFIG    (COUNTER_BASE + 0x10010)
++ 
++ #define TICK_NS         500
+++#define TICK            0x200   /* one tick in the counter (bits 31-9) */
+++#define READ_AHEAD      16      /* ticks a read may run ahead of the clock */
++ #define LIMIT_BIT       0x80000000u
++ 
++ static void test_config_bits(const void *data)
++@@ -108,6 +122,131 @@ static void test_system_limit(const void *data)
++     qtest_quit(qts);
++ }
++ 
+++/* Repeated reads of the free-running system counter: one tick more each */
+++static void test_read_ahead_system(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++    uint32_t first, prev, v;
+++    int i;
+++
+++    qtest_writel(qts, SYS_LIMIT, 0);            /* free-run, counter reset */
+++    qtest_clock_step(qts, 100 * TICK_NS);
+++    first = qtest_readl(qts, SYS_COUNTER);
+++    g_assert_cmphex(first, ==, 100 * TICK);     /* the first read: the clock */
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, first + TICK);
+++
+++    /* up to READ_AHEAD ticks ahead, then it holds */
+++    prev = first + TICK;
+++    for (i = 0; i < 2 * READ_AHEAD; i++) {
+++        v = qtest_readl(qts, SYS_COUNTER);
+++        g_assert_cmphex(v, >=, prev);
+++        g_assert_cmphex(v, <=, first + READ_AHEAD * TICK);
+++        prev = v;
+++    }
+++    g_assert_cmphex(prev, ==, first + READ_AHEAD * TICK);
+++
+++    /* the clock catches up: the counter as it is, never less */
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==,
+++                    first + (READ_AHEAD + 1) * TICK);
+++    qtest_clock_step(qts, 1000 * TICK_NS);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, first + 1004 * TICK);
+++
+++    /* a limit write resets the counter: no read ahead of the reset */
+++    qtest_writel(qts, SYS_LIMIT, 0);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++/* As the PROM does it: read, write the limit without a reset, read */
+++static void test_read_ahead_processor(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++    uint32_t a, b;
+++
+++    qtest_clock_step(qts, 10 * TICK_NS);
+++    a = qtest_readl(qts, CPU0_COUNTER);
+++    b = qtest_readl(qts, CPU0_COUNTER);
+++    g_assert_cmphex(b, ==, a + TICK);
+++    qtest_writel(qts, CPU0_NORST, 0x7ffffe00);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_COUNTER), ==, b + TICK);
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * The user timer read with ldd (MSW, then LSW) moves on once per pair;
+++ * stopped, it holds.
+++ */
+++static void test_read_ahead_user(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++    uint64_t a;
+++
+++    qtest_writel(qts, TIMER_CONFIG, 1);         /* CPU 0: user timer */
+++    qtest_writel(qts, CPU0_RUN, 0);
+++    user_set(qts, 0x0000000100000000ULL);
+++    g_assert_cmphex(user_count(qts), ==, 0x0000000100000000ULL);
+++    g_assert_cmphex(user_count(qts), ==, 0x0000000100000000ULL);
+++
+++    qtest_writel(qts, CPU0_RUN, 1);
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    a = user_count(qts);
+++    g_assert_cmphex(a, ==, 0x0000000100000000ULL + 4 * TICK);
+++    g_assert_cmphex(user_count(qts), ==, a + TICK);
+++    g_assert_cmphex(user_count(qts), ==, a + 2 * TICK);
+++    /* the LSW alone moves on too */
+++    g_assert_cmphex(qtest_readl(qts, CPU0_LSW), ==, (uint32_t)a + 3 * TICK);
+++
+++    /* stopped: it holds what was read last */
+++    qtest_writel(qts, CPU0_RUN, 0);
+++    g_assert_cmphex(user_count(qts), ==, a + 3 * TICK);
+++    g_assert_cmphex(user_count(qts), ==, a + 3 * TICK);
+++    qtest_quit(qts);
+++}
+++
+++/* Not on the SS-10: two reads in the same tick return the same value */
+++static void test_no_read_ahead(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-10");
+++    uint32_t v;
+++    uint64_t u;
+++
+++    qtest_writel(qts, SYS_LIMIT, 0);
+++    qtest_clock_step(qts, 100 * TICK_NS);
+++    v = qtest_readl(qts, SYS_COUNTER);
+++    g_assert_cmphex(v, ==, 100 * TICK);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, v);
+++    v = qtest_readl(qts, CPU0_COUNTER);
+++    g_assert_cmphex(qtest_readl(qts, CPU0_COUNTER), ==, v);
+++
+++    qtest_writel(qts, TIMER_CONFIG, 1);         /* CPU 0: user timer */
+++    qtest_writel(qts, CPU0_RUN, 1);
+++    user_set(qts, 0x0000000100000000ULL);
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    u = user_count(qts);
+++    g_assert_cmphex(u, ==, 0x0000000100000000ULL + 4 * TICK);
+++    g_assert_cmphex(user_count(qts), ==, u);
+++    qtest_quit(qts);
+++}
+++
+++/* A counter with a short limit: no read ahead, a wrap stays a wrap */
+++static void test_read_ahead_short_limit(const void *data)
+++{
+++    const char *machine = data;
+++    QTestState *qts = qtest_initf("-machine %s", machine);
+++    uint32_t a;
+++
+++    qtest_writel(qts, SYS_LIMIT, 0x8000);       /* 64 ticks: too short */
+++    qtest_clock_step(qts, 4 * TICK_NS);
+++    a = qtest_readl(qts, SYS_COUNTER);
+++    g_assert_cmphex(a, ==, 4 * TICK);
+++    g_assert_cmphex(qtest_readl(qts, SYS_COUNTER), ==, a);
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     static const char *machines[] = { "SS-600MP", "SS-10" };
++@@ -128,5 +267,17 @@ int main(int argc, char **argv)
++         qtest_add_data_func(sys, machines[i], test_system_limit);
++     }
++ 
+++    /* the read-ahead is the SS-600MP's */
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-system",
+++                        "SS-600MP", test_read_ahead_system);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-processor",
+++                        "SS-600MP", test_read_ahead_processor);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-user",
+++                        "SS-600MP", test_read_ahead_user);
+++    qtest_add_data_func("sun4m-slavio-timer/SS-600MP/read-ahead-short-limit",
+++                        "SS-600MP", test_read_ahead_short_limit);
+++    qtest_add_func("sun4m-slavio-timer/SS-10/no-read-ahead",
+++                   test_no_read_ahead);
+++
++     return g_test_run();
++ }
+diff --git a/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch b/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch
+new file mode 100644
+index 0000000..49fe8ff
+--- /dev/null
++++ b/debian/patches/wsh/0153-hw-sparc-sun4m-keep-the-SS-600MP-IOMMU-s-base-slot-a.patch
+@@ -0,0 +1,188 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: keep the SS-600MP IOMMU's base, slot and TLB
++ data bits
++
++Sun's SPARCserver 600MP boot PROM tests the IOMMU's registers with
++0x5a5a5a5a and 0xa5a5a5a5 and wants back the bits the 600MP's IOMMU
++keeps (progress 0xad and 0xaf of its power-on self test, a loop on
++error otherwise):
++
++- each SBus slot configuration register (0x1010-0x101c): bits 17-15 and
++  3-0, mask 0x0003800f, written with one pattern while the next slot
++  gets the other; QEMU kept 0x00010003 (SA30, BA8, bypass). Bits 16 and
++  2-0 are SA30, BA16, BA8 and bypass as Linux's iommu_32.h names them;
++  what 17, 15 and 3 do isn't known, and nothing in QEMU acts on any of
++  these bits.
++- the page table base register (0x0004): bits 31-10 (physical address
++  bits 35-14, NetBSD's IOMMU_BAR_IBA 0xfffffc00); QEMU kept 0x07fffc00, the
++  microSPARC-II's 31-bit physical address. iommu_page_get_flags() now
++  widens the register before shifting it, so the upper bits reach the
++  physical address.
++- the TLB data entries (0x200-0x23c, reached with the diagnostic access
++  bit of the control register set, NetBSD's IOMMU_CTL_DE): all but bits 6-3 and 0, mask 0xffffff86,
++  the page, cacheable, writable and valid bits of an IOPTE; QEMU kept
++  all 32. The TLB tags (0x100-0x13c) keep all bits, as before. QEMU has
++  no IOMMU TLB; these are storage that only the PROM's tests read.
++
++New properties base-mask, sbcfg-mask and tlb-data-mask on the
++sun4m-iommu device, defaulting to the old behaviour, and hwdef fields
++that only the SS-600MP sets. The other machines are unchanged. No new
++state.
++---
++ hw/sparc/sun4m.c               | 31 ++++++++++++++++++++++++++++++-
++ hw/sparc/sun4m_iommu.c         | 23 ++++++++++++++++++++---
++ include/hw/sparc/sun4m_iommu.h |  3 +++
++ 3 files changed, 53 insertions(+), 4 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index cc1c8b8..b928dd8 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -112,6 +112,9 @@ struct sun4m_hwdef {
++     uint64_t max_ram;   /* if set: the RAM the memory controller takes */
++     uint32_t ecc_version;
++     uint32_t iommu_version;
+++    uint32_t iommu_base_mask;   /* if set: the bits the base register keeps */
+++    uint32_t iommu_sbcfg_mask;  /* if set: the bits the slot registers keep */
+++    uint32_t iommu_tlb_data_mask; /* if set: the bits its TLB data keeps */
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++@@ -298,13 +301,24 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
++     return kernel_size;
++ }
++ 
++-static void *iommu_init(hwaddr addr, uint32_t version, qemu_irq irq)
+++static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
+++                        uint32_t sbcfg_mask, uint32_t tlb_data_mask,
+++                        qemu_irq irq)
++ {
++     DeviceState *dev;
++     SysBusDevice *s;
++ 
++     dev = qdev_new(TYPE_SUN4M_IOMMU);
++     qdev_prop_set_uint32(dev, "version", version);
+++    if (base_mask) {
+++        qdev_prop_set_uint32(dev, "base-mask", base_mask);
+++    }
+++    if (sbcfg_mask) {
+++        qdev_prop_set_uint32(dev, "sbcfg-mask", sbcfg_mask);
+++    }
+++    if (tlb_data_mask) {
+++        qdev_prop_set_uint32(dev, "tlb-data-mask", tlb_data_mask);
+++    }
++     s = SYS_BUS_DEVICE(dev);
++     sysbus_realize_and_unref(s, &error_fatal);
++     sysbus_connect_irq(s, 0, irq);
++@@ -1030,6 +1044,8 @@ static void sun4m_hw_init(MachineState *machine)
++     }
++ 
++     iommu = iommu_init(hwdef->iommu_base, hwdef->iommu_version,
+++                       hwdef->iommu_base_mask, hwdef->iommu_sbcfg_mask,
+++                       hwdef->iommu_tlb_data_mask,
++                        slavio_irq[30]);
++ 
++     if (hwdef->iommu_pad_base) {
++@@ -1477,6 +1493,19 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          */
++         .timer_read_ahead = true,
++         .iommu_version = 0x01000000,
+++        /*
+++         * Its IOMMU keeps all of the page table base address (bits 31-10,
+++         * physical address bits 35-14, NetBSD's IOMMU_BAR_IBA) and bits
+++         * 17-15 and 3-0 of each SBus slot's configuration register. The
+++         * boot PROM writes 0x5a5a5a5a and 0xa5a5a5a5 to them and wants
+++         * these bits back; the default masks are the microSPARC-II's (a
+++         * 31-bit physical address) and the bits Linux names (SA30, BA8,
+++         * bypass). Nothing in QEMU acts on bits 17, 15 and 3 of the slot
+++         * registers.
+++         */
+++        .iommu_base_mask = 0xfffffc00,
+++        .iommu_sbcfg_mask = 0x0003800f,
+++        .iommu_tlb_data_mask = 0xffffff86,
++         .max_mem = 0xf00000000ULL,
++     };
++ 
++diff --git a/hw/sparc/sun4m_iommu.c b/hw/sparc/sun4m_iommu.c
++index 1534445..f9cacf4 100644
++--- a/hw/sparc/sun4m_iommu.c
+++++ b/hw/sparc/sun4m_iommu.c
++@@ -64,6 +64,16 @@
++ #define IOMMU_PGFLUSH       (0x0018 >> 2)
++ #define IOMMU_PGFLUSH_MASK  0xffffffff
++ 
+++/*
+++ * The TLB's 16 tags and data entries, which the boot PROMs reach with the
+++ * diagnostic access bit (bit 1, NetBSD's IOMMU_CTL_DE) of the control
+++ * register set. QEMU has no TLB:
+++ * they are storage, and nothing reads them but the PROM's tests.
+++ */
+++#define IOMMU_TLB_TAG       (0x0100 >> 2)
+++#define IOMMU_TLB_DATA      (0x0200 >> 2)
+++#define IOMMU_TLB_ENTRIES   16
+++
++ #define IOMMU_AFSR          (0x1000 >> 2)
++ #define IOMMU_AFSR_ERR      0x80000000 /* LE, TO, or BE asserted */
++ #define IOMMU_AFSR_LE       0x40000000 /* SBUS reports error after
++@@ -194,7 +204,7 @@ static void iommu_mem_write(void *opaque, hwaddr addr,
++         s->regs[saddr] = ((val & IOMMU_CTRL_MASK) | s->version);
++         break;
++     case IOMMU_BASE:
++-        s->regs[saddr] = val & IOMMU_BASE_MASK;
+++        s->regs[saddr] = val & s->base_mask;
++         break;
++     case IOMMU_TLBFLUSH:
++         trace_sun4m_iommu_mem_writel_tlbflush(val);
++@@ -219,7 +229,7 @@ static void iommu_mem_write(void *opaque, hwaddr addr,
++     case IOMMU_SBCFG1:
++     case IOMMU_SBCFG2:
++     case IOMMU_SBCFG3:
++-        s->regs[saddr] = val & IOMMU_SBCFG_MASK;
+++        s->regs[saddr] = val & s->sbcfg_mask;
++         break;
++     case IOMMU_ARBEN:
++         /* XXX implement SBus probing: fault when reading unmapped
++@@ -229,6 +239,9 @@ static void iommu_mem_write(void *opaque, hwaddr addr,
++     case IOMMU_MASK_ID:
++         s->regs[saddr] |= val & IOMMU_MASK_ID_MASK;
++         break;
+++    case IOMMU_TLB_DATA ... IOMMU_TLB_DATA + IOMMU_TLB_ENTRIES - 1:
+++        s->regs[saddr] = val & s->tlb_data_mask;
+++        break;
++     default:
++         s->regs[saddr] = val;
++         break;
++@@ -251,7 +264,7 @@ static uint32_t iommu_page_get_flags(IOMMUState *s, hwaddr addr)
++     hwaddr iopte;
++     hwaddr pa = addr;
++ 
++-    iopte = s->regs[IOMMU_BASE] << 4;
+++    iopte = (hwaddr)s->regs[IOMMU_BASE] << 4;
++     addr &= ~s->iostart;
++     iopte += (addr >> (IOMMU_PAGE_SHIFT - 2)) & ~3;
++     ret = address_space_ldl_be(&address_space_memory, iopte,
++@@ -371,6 +384,10 @@ static void iommu_realize(DeviceState *ds, Error **errp)
++ 
++ static const Property iommu_properties[] = {
++     DEFINE_PROP_UINT32("version", IOMMUState, version, 0),
+++    DEFINE_PROP_UINT32("base-mask", IOMMUState, base_mask, IOMMU_BASE_MASK),
+++    DEFINE_PROP_UINT32("sbcfg-mask", IOMMUState, sbcfg_mask,
+++                       IOMMU_SBCFG_MASK),
+++    DEFINE_PROP_UINT32("tlb-data-mask", IOMMUState, tlb_data_mask, 0xffffffff),
++ };
++ 
++ static void iommu_class_init(ObjectClass *klass, const void *data)
++diff --git a/include/hw/sparc/sun4m_iommu.h b/include/hw/sparc/sun4m_iommu.h
++index ccefafe..1c204f3 100644
++--- a/include/hw/sparc/sun4m_iommu.h
+++++ b/include/hw/sparc/sun4m_iommu.h
++@@ -41,6 +41,9 @@ struct IOMMUState {
++     hwaddr iostart;
++     qemu_irq irq;
++     uint32_t version;
+++    uint32_t base_mask;     /* the bits the page table base register keeps */
+++    uint32_t sbcfg_mask;    /* the bits the SBus slot configuration keeps */
+++    uint32_t tlb_data_mask; /* the bits the TLB data entries keep */
++ };
++ typedef struct IOMMUState IOMMUState;
++ 
+diff --git a/debian/patches/wsh/0154-tests-qtest-test-the-register-bits-the-sun4m-IOMMU-k.patch b/debian/patches/wsh/0154-tests-qtest-test-the-register-bits-the-sun4m-IOMMU-k.patch
+new file mode 100644
+index 0000000..e6a0492
+--- /dev/null
++++ b/debian/patches/wsh/0154-tests-qtest-test-the-register-bits-the-sun4m-IOMMU-k.patch
+@@ -0,0 +1,160 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the register bits the sun4m IOMMU keeps
++
++qtest sun4m-iommu-regs-test: on SS-600MP the base register keeps bits
++31-10, each SBus slot register bits 17-15 and 3-0 (written as the PROM
++does, one pattern there and the other to the next slot, and each slot
++keeps its own), the TLB tags all bits and the TLB data all but bits 6-3
++and 0 with the diagnostic bit set; on SS-10, SS-20 and SS-5 the old
++masks (0x07fffc00, 0x00010003, all bits). 12 cases; the three SS-600MP
++cases fail without the previous patch.
++---
++ tests/qtest/meson.build             |   3 +-
++ tests/qtest/sun4m-iommu-regs-test.c | 124 ++++++++++++++++++++++++++++
++ 2 files changed, 126 insertions(+), 1 deletion(-)
++ create mode 100644 tests/qtest/sun4m-iommu-regs-test.c
++
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 74a82af..66dae63 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -221,7 +221,8 @@ qtests_sparc = ['prom-env-test', 'm48t59-test', 'boot-serial-test',
++                 'sun4m-ss600mp-test',
++                 'sun4m-dbri-test',
++                 'sun4m-escc-break-test',
++-                'sun4m-ecc-test'] + \
+++                'sun4m-ecc-test',
+++                'sun4m-iommu-regs-test'] + \
++   qtests_filter
++ 
++ qtests_sparc64 = \
++diff --git a/tests/qtest/sun4m-iommu-regs-test.c b/tests/qtest/sun4m-iommu-regs-test.c
++new file mode 100644
++index 0000000..875ba95
++--- /dev/null
+++++ b/tests/qtest/sun4m-iommu-regs-test.c
++@@ -0,0 +1,124 @@
+++/*
+++ * QTest: the register bits the sun4m IOMMU keeps
+++ *
+++ * Sun's SPARCserver 600MP boot PROM writes 0x5a5a5a5a and 0xa5a5a5a5 to
+++ * the IOMMU's page table base register, its four SBus slot configuration
+++ * registers and, with the diagnostic bit of the control register set, its
+++ * TLB tags and data, and wants back the bits the 600MP's IOMMU keeps:
+++ * bits 31-10 of the base, bits 17-15 and 3-0 of each slot register (each
+++ * slot its own), all of a tag and all but bits 6-3 and 0 of a data entry.
+++ * QEMU kept the microSPARC-II's base bits (26-10) and bits 16 and 1-0 of
+++ * the slot registers. The other machines keep what they kept.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++
+++typedef struct {
+++    const char *machine;
+++    uint64_t iommu_base;
+++    uint32_t base_mask;
+++    uint32_t sbcfg_mask;
+++    uint32_t tlb_data_mask;
+++} IOMMUCase;
+++
+++static const IOMMUCase cases[] = {
+++    { "SS-600MP", 0xfe0000000ULL, 0xfffffc00, 0x0003800f, 0xffffff86 },
+++    { "SS-10",    0xfe0000000ULL, 0x07fffc00, 0x00010003, 0xffffffff },
+++    { "SS-20",    0xfe0000000ULL, 0x07fffc00, 0x00010003, 0xffffffff },
+++    { "SS-5",     0x10000000ULL,  0x07fffc00, 0x00010003, 0xffffffff },
+++};
+++
+++#define IOMMU_CTRL      0x0000
+++#define IOMMU_BASE      0x0004
+++#define IOMMU_TLB_TAG   0x0100
+++#define IOMMU_TLB_DATA  0x0200
+++#define IOMMU_SBCFG(n)  (0x1010 + 4 * (n))
+++#define IOMMU_CTRL_DIAG 0x2
+++
+++#define PATTERN_A       0x5a5a5a5a
+++#define PATTERN_B       0xa5a5a5a5
+++
+++static void test_base(const void *opaque)
+++{
+++    const IOMMUCase *c = opaque;
+++    QTestState *qts = qtest_initf("-machine %s", c->machine);
+++    uint64_t reg = c->iommu_base + IOMMU_BASE;
+++
+++    qtest_writel(qts, reg, PATTERN_A);
+++    g_assert_cmphex(qtest_readl(qts, reg), ==, PATTERN_A & c->base_mask);
+++    qtest_writel(qts, reg, PATTERN_B);
+++    g_assert_cmphex(qtest_readl(qts, reg), ==, PATTERN_B & c->base_mask);
+++    qtest_writel(qts, reg, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, reg), ==, c->base_mask);
+++    qtest_quit(qts);
+++}
+++
+++/* as the PROM does it: one pattern to a slot, the other to the next */
+++static void test_sbcfg(const void *opaque)
+++{
+++    const IOMMUCase *c = opaque;
+++    QTestState *qts = qtest_initf("-machine %s", c->machine);
+++    int slot;
+++
+++    for (slot = 0; slot < 4; slot++) {
+++        uint64_t reg = c->iommu_base + IOMMU_SBCFG(slot);
+++        uint64_t other = c->iommu_base + IOMMU_SBCFG((slot + 3) % 4);
+++
+++        qtest_writel(qts, reg, PATTERN_A);
+++        qtest_writel(qts, other, PATTERN_B);
+++        g_assert_cmphex(qtest_readl(qts, reg), ==, PATTERN_A & c->sbcfg_mask);
+++        qtest_writel(qts, reg, PATTERN_B);
+++        qtest_writel(qts, other, PATTERN_A);
+++        g_assert_cmphex(qtest_readl(qts, reg), ==, PATTERN_B & c->sbcfg_mask);
+++        g_assert_cmphex(qtest_readl(qts, other), ==,
+++                        PATTERN_A & c->sbcfg_mask);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++static void test_tlb(const void *opaque)
+++{
+++    const IOMMUCase *c = opaque;
+++    QTestState *qts = qtest_initf("-machine %s", c->machine);
+++    int i;
+++
+++    qtest_writel(qts, c->iommu_base + IOMMU_CTRL, IOMMU_CTRL_DIAG);
+++    for (i = 0; i < 16; i++) {
+++        uint64_t tag = c->iommu_base + IOMMU_TLB_TAG + 4 * i;
+++        uint64_t data = c->iommu_base + IOMMU_TLB_DATA + 4 * i;
+++
+++        qtest_writel(qts, tag, PATTERN_A);
+++        qtest_writel(qts, data, PATTERN_A);
+++        g_assert_cmphex(qtest_readl(qts, tag), ==, PATTERN_A);
+++        g_assert_cmphex(qtest_readl(qts, data), ==,
+++                        PATTERN_A & c->tlb_data_mask);
+++        qtest_writel(qts, data, 0xffffffff);
+++        g_assert_cmphex(qtest_readl(qts, data), ==, c->tlb_data_mask);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    int i;
+++
+++    g_test_init(&argc, &argv, NULL);
+++
+++    for (i = 0; i < ARRAY_SIZE(cases); i++) {
+++        g_autofree char *base =
+++            g_strdup_printf("sun4m-iommu-regs/%s/base", cases[i].machine);
+++        g_autofree char *sbcfg =
+++            g_strdup_printf("sun4m-iommu-regs/%s/sbcfg", cases[i].machine);
+++        g_autofree char *tlb =
+++            g_strdup_printf("sun4m-iommu-regs/%s/tlb", cases[i].machine);
+++
+++        qtest_add_data_func(base, &cases[i], test_base);
+++        qtest_add_data_func(sbcfg, &cases[i], test_sbcfg);
+++        qtest_add_data_func(tlb, &cases[i], test_tlb);
+++    }
+++
+++    return g_test_run();
+++}
+diff --git a/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch b/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch
+new file mode 100644
+index 0000000..4ad0a06
+--- /dev/null
++++ b/debian/patches/wsh/0155-hw-sparc-sun4m-keep-the-SS-600MP-VMEbus-control-regi.patch
+@@ -0,0 +1,151 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: keep the SS-600MP VMEbus control register's
++ enable bits
++
++Sun's SPARCserver 600MP boot PROM writes a walking one and all ones to
++the VMEbus interface's control register at 0xf.df01_0000 and wants back
++bits 31-28 (progress 0xb0 of its power-on self test, a loop on error
++otherwise). As NetBSD's vmereg.h names them, those are the I/O cache
++enable, VME slave enable, loopback and VMEbus reset bits, and bits 3-0
++are the interface's implementation number, here 0. The machine had the
++registers as an unimplemented device (wsh/0063), which reads 0.
++
++A small device sun4m-vme replaces it: the control register keeps bits
++31-28, the fault registers (AFAR, AFSR) and the rest of the page read 0
++and ignore writes as before. Nothing acts on the bits: no VMEbus, no I/O
++cache, no loopback. SunOS 4.1.2 writes the slave enable bit before its
++banner and now reads it back. vmstate sun4m-vme with the register; only
++the SS-600MP has the device.
++---
++ hw/sparc/sun4m.c | 103 +++++++++++++++++++++++++++++++++++++++++++++--
++ 1 file changed, 99 insertions(+), 4 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index b928dd8..207a90d 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -660,6 +660,100 @@ struct AFXState {
++     MemoryRegion mem;
++ };
++ 
+++/*
+++ * The SPARCserver 600MP's VMEbus interface registers: control, AFAR and
+++ * AFSR (NetBSD's vmereg.h). The control register keeps its four enable
+++ * bits: I/O cache, VME slave, loopback and VMEbus reset (bits 31-28);
+++ * its implementation number (bits 3-0) reads 0. The boot PROM writes a
+++ * walking one and all ones to it and wants these bits back. There is no
+++ * VMEbus or I/O cache behind them; the fault registers read 0 and the
+++ * rest of the page is ignored, as before.
+++ */
+++#define TYPE_SUN4M_VME "sun4m-vme"
+++OBJECT_DECLARE_SIMPLE_TYPE(Sun4mVMEState, SUN4M_VME)
+++
+++#define VME_REGS_SIZE   0x1000
+++#define VME_CR          0x0
+++#define VME_CR_MASK     0xf0000000
+++
+++struct Sun4mVMEState {
+++    SysBusDevice parent_obj;
+++
+++    MemoryRegion iomem;
+++    uint32_t cr;
+++};
+++
+++static uint64_t sun4m_vme_read(void *opaque, hwaddr addr, unsigned size)
+++{
+++    Sun4mVMEState *s = opaque;
+++
+++    return addr == VME_CR ? s->cr : 0;
+++}
+++
+++static void sun4m_vme_write(void *opaque, hwaddr addr, uint64_t val,
+++                            unsigned size)
+++{
+++    Sun4mVMEState *s = opaque;
+++
+++    if (addr == VME_CR) {
+++        s->cr = val & VME_CR_MASK;
+++    }
+++}
+++
+++static const MemoryRegionOps sun4m_vme_ops = {
+++    .read = sun4m_vme_read,
+++    .write = sun4m_vme_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++    .impl = {
+++        .min_access_size = 4,
+++        .max_access_size = 4,
+++    },
+++};
+++
+++static void sun4m_vme_reset(DeviceState *d)
+++{
+++    SUN4M_VME(d)->cr = 0;
+++}
+++
+++static void sun4m_vme_init(Object *obj)
+++{
+++    Sun4mVMEState *s = SUN4M_VME(obj);
+++
+++    memory_region_init_io(&s->iomem, obj, &sun4m_vme_ops, s, "sun-vme",
+++                          VME_REGS_SIZE);
+++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
+++}
+++
+++static const VMStateDescription vmstate_sun4m_vme = {
+++    .name = TYPE_SUN4M_VME,
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT32(cr, Sun4mVMEState),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
+++static void sun4m_vme_class_init(ObjectClass *oc, const void *data)
+++{
+++    DeviceClass *dc = DEVICE_CLASS(oc);
+++
+++    device_class_set_legacy_reset(dc, sun4m_vme_reset);
+++    dc->vmsd = &vmstate_sun4m_vme;
+++}
+++
+++static const TypeInfo sun4m_vme_info = {
+++    .name          = TYPE_SUN4M_VME,
+++    .parent        = TYPE_SYS_BUS_DEVICE,
+++    .instance_size = sizeof(Sun4mVMEState),
+++    .instance_init = sun4m_vme_init,
+++    .class_init    = sun4m_vme_class_init,
+++};
+++
++ /* SS-5 TCX AFX register */
++ static void afx_init(hwaddr addr)
++ {
++@@ -1266,11 +1360,11 @@ static void sun4m_hw_init(MachineState *machine)
++         /*
++          * The SPARCserver 600MP's VMEbus interface registers (control,
++          * AFSR, AFAR), which SunOS 4.1.2 sets up through the MMU bypass
++-         * before its banner. No VMEbus model: reads 0, writes ignored, and
++-         * the VMEbus spaces themselves stay empty, so the kernel's probes
++-         * for VME devices find none.
+++         * before its banner. No VMEbus model: the control register keeps
+++         * its enable bits (TYPE_SUN4M_VME), the VMEbus spaces themselves
+++         * stay empty, so the kernel's probes for VME devices find none.
++          */
++-        create_unimplemented_device("sun-vme", hwdef->vme_base, 0x1000);
+++        sysbus_create_simple(TYPE_SUN4M_VME, hwdef->vme_base, NULL);
++     }
++ 
++     if (hwdef->bpp_base) {
++@@ -1786,6 +1880,7 @@ static void sun4m_register_types(void)
++ {
++     type_register_static(&idreg_info);
++     type_register_static(&afx_info);
+++    type_register_static(&sun4m_vme_info);
++     type_register_static(&prom_info);
++     type_register_static(&ram_info);
++ }
+diff --git a/debian/patches/wsh/0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe.patch b/debian/patches/wsh/0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe.patch
+new file mode 100644
+index 0000000..85b3848
+--- /dev/null
++++ b/debian/patches/wsh/0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe.patch
+@@ -0,0 +1,67 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP VMEbus control register
++
++sun4m-ss600mp-test's vme-regs case: the region is the sun4m-vme device
++(priority 0); the control register reads 0 after start, keeps bits
++31-28 of a walking one and of all ones, keeps the slave enable bit that
++SunOS 4.1.2 writes, and is 0 again after a system reset; the fault
++registers and the rest of the page read 0. Fails without the previous
++patch.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 25 +++++++++++++++++++++----
++ 1 file changed, 21 insertions(+), 4 deletions(-)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index d68cc8d..6be5c61 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -3,8 +3,9 @@
++  *
++  * SunOS 4.1.2's kernel sets up the 600MP's VMEbus interface at physical
++  * 0xf.df01_0000 (control, AFSR, AFAR) through the MMU bypass ASI before
++- * its banner; the machine has them as an unimplemented device (reads 0,
++- * writes ignored).
+++ * its banner. The control register keeps its four enable bits (31-28),
+++ * which the boot PROM writes and reads back; its implementation number,
+++ * the fault registers and the rest of the page read 0.
++  *
++  * The 600MP's lance works in a 128 KB buffer memory of its own below its
++  * registers (the "lebuffer" node, SBus slot f offset 0x40000), not through
++@@ -21,6 +22,7 @@
++ #include "libqtest.h"
++ 
++ #define VME_REGS        0xfdf010000ULL
+++#define VME_CR_MASK     0xf0000000      /* I/O cache, slave, loopback, reset */
++ #define LEBUFFER        0xef0040000ULL
++ #define LEBUFFER_SIZE   0x20000
++ #define LE_RDP          0xef0060000ULL
++@@ -71,12 +73,27 @@ static void test_vme_regs(void)
++     QTestState *qts = qtest_init("-machine SS-600MP -m 64");
++     g_autofree char *mtree = qtest_hmp(qts, "info mtree");
++ 
+++    uint32_t bit;
+++
++     g_assert_true(has_region(mtree, "0000000fdf010000-0000000fdf010fff "
++-                             "(prio -1000, i/o): sun-vme"));
++-    qtest_writel(qts, VME_REGS, 0x40000000);
+++                             "(prio 0, i/o): sun-vme"));
++     g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, 0);
+++    /* as the PROM does it: a walking one, then all ones */
+++    for (bit = 1; bit; bit <<= 1) {
+++        qtest_writel(qts, VME_REGS, bit);
+++        g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, bit & VME_CR_MASK);
+++    }
+++    qtest_writel(qts, VME_REGS, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, VME_CR_MASK);
++     g_assert_cmphex(qtest_readl(qts, VME_REGS + 4), ==, 0);
++     g_assert_cmphex(qtest_readl(qts, VME_REGS + 8), ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS + 0x10), ==, 0);
+++    /* what SunOS 4.1.2 writes, the slave enable bit */
+++    qtest_writel(qts, VME_REGS, 0x40000000);
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, 0x40000000);
+++    qtest_qmp_assert_success(qts, "{ 'execute': 'system_reset' }");
+++    qtest_qmp_eventwait(qts, "RESET");
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, 0);
++     qtest_quit(qts);
++ }
++ 
+diff --git a/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch b/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
+new file mode 100644
+index 0000000..b4598c2
+--- /dev/null
++++ b/debian/patches/wsh/0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r.patch
+@@ -0,0 +1,126 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/net/lance: keep two bits of the SS-600MP lance's register
++ address port
++
++Sun's SPARCserver 600MP boot PROM writes a walking one and all ones to
++the lance's register address port (RAP) and wants bits 1-0 back
++(progress 0xc1 of its power-on self test, a loop on error otherwise).
++The Am7990 has four CSRs and a two-bit RAP; the PCnet core behind
++QEMU's lance has 128 CSRs and keeps bits 6-0.
++
++New property rap-mask on the lance (default 0x7f, the old behaviour),
++and an hwdef field le_rap_mask that only the SS-600MP sets, to 0x3.
++The other machines are unchanged; the drivers for the chip (SunOS,
++Solaris, NetBSD, Linux) select only CSR0-CSR3 either way. On the
++SS-600MP the PCnet core's CSR4 and up (station address, mode) are no
++longer reachable through the RAP, as on the real chip. No new state.
++---
++ hw/net/lance.c         | 12 ++++++++++++
++ hw/sparc/sun4m.c       | 16 ++++++++++++++--
++ include/hw/net/lance.h |  1 +
++ 3 files changed, 27 insertions(+), 2 deletions(-)
++
++diff --git a/hw/net/lance.c b/hw/net/lance.c
++index 5d5bf9b..acfbb9e 100644
++--- a/hw/net/lance.c
+++++ b/hw/net/lance.c
++@@ -46,6 +46,9 @@
++ #include "system/system.h"
++ 
++ 
+++/* the register address port (RDP at 0, RAP at 2) */
+++#define LANCE_RAP       2
+++
++ static void parent_lance_reset(void *opaque, int irq, int level)
++ {
++     SysBusPCNetState *d = opaque;
++@@ -59,6 +62,9 @@ static void lance_mem_write(void *opaque, hwaddr addr,
++     SysBusPCNetState *d = opaque;
++ 
++     trace_lance_mem_writew(addr, val & 0xffff);
+++    if (addr == LANCE_RAP) {
+++        val &= d->rap_mask;
+++    }
++     pcnet_ioport_writew(&d->state, addr, val & 0xffff);
++ }
++ 
++@@ -141,6 +147,12 @@ static const Property lance_properties[] = {
++     DEFINE_PROP_LINK("dma", SysBusPCNetState, state.dma_opaque,
++                      TYPE_DEVICE, DeviceState *),
++     DEFINE_NIC_PROPERTIES(SysBusPCNetState, state.conf),
+++    /*
+++     * The Am7990's register address port selects one of its four CSRs
+++     * and keeps bits 1-0; the PCnet core behind it has 128 CSRs and keeps
+++     * bits 6-0, the default here.
+++     */
+++    DEFINE_PROP_UINT32("rap-mask", SysBusPCNetState, rap_mask, 0x7f),
++ };
++ 
++ static void lance_class_init(ObjectClass *klass, const void *data)
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 207a90d..f41ed15 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -115,6 +115,7 @@ struct sun4m_hwdef {
++     uint32_t iommu_base_mask;   /* if set: the bits the base register keeps */
++     uint32_t iommu_sbcfg_mask;  /* if set: the bits the slot registers keep */
++     uint32_t iommu_tlb_data_mask; /* if set: the bits its TLB data keeps */
+++    uint32_t le_rap_mask;       /* if set: the bits the lance's RAP keeps */
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++@@ -330,7 +331,8 @@ static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
++ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr esp_base, qemu_irq espdma_irq,
++                               hwaddr le_base, qemu_irq ledma_irq,
++-                              hwaddr lebuffer_base, MACAddr *mac)
+++                              hwaddr lebuffer_base, uint32_t le_rap_mask,
+++                              MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -362,6 +364,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++     if (lebuffer_base) {
++         qdev_prop_set_uint32(dma, "lebuffer-size", SUN4M_LEBUFFER_SIZE);
++     }
+++    if (le_rap_mask) {
+++        qdev_prop_set_uint32(DEVICE(lance), "rap-mask", le_rap_mask);
+++    }
++     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
++     if (lebuffer_base) {
++         sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
++@@ -1154,7 +1159,7 @@ static void sun4m_hw_init(MachineState *machine)
++     sparc32_dma_init(hwdef->dma_base,
++                      hwdef->esp_base, slavio_irq[18],
++                      hwdef->le_base, slavio_irq[16],
++-                     hwdef->lebuffer_base, &hostid);
+++                     hwdef->lebuffer_base, hwdef->le_rap_mask, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1600,6 +1605,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .iommu_base_mask = 0xfffffc00,
++         .iommu_sbcfg_mask = 0x0003800f,
++         .iommu_tlb_data_mask = 0xffffff86,
+++        /*
+++         * Its lance's register address port keeps bits 1-0, as on the
+++         * Am7990 (CSR0-CSR3): the boot PROM writes a walking one to it and
+++         * wants them back. The other machines keep the PCnet core's 7 bits
+++         * (the drivers select only CSR0-CSR3 either way).
+++         */
+++        .le_rap_mask = 0x3,
++         .max_mem = 0xf00000000ULL,
++     };
++ 
++diff --git a/include/hw/net/lance.h b/include/hw/net/lance.h
++index be473e2..ea729ae 100644
++--- a/include/hw/net/lance.h
+++++ b/include/hw/net/lance.h
++@@ -43,6 +43,7 @@ struct SysBusPCNetState {
++     SysBusDevice parent_obj;
++ 
++     PCNetState state;
+++    uint32_t rap_mask;  /* the bits the register address port keeps */
++ };
++ 
++ #endif
+diff --git a/debian/patches/wsh/0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre.patch b/debian/patches/wsh/0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre.patch
+new file mode 100644
+index 0000000..77d68c6
+--- /dev/null
++++ b/debian/patches/wsh/0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre.patch
+@@ -0,0 +1,91 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP lance's register address port
++
++sun4m-ss600mp-test case lance-rap: on SS-600MP the RAP keeps bits 1-0
++of a walking one and of all ones, and RAP 5 selects CSR1; on SS-10 it
++keeps bits 6-0. The lance-in-lebuffer case no longer reads the station
++address from CSR12-14, which the two-bit RAP doesn't reach on the
++SS-600MP; its transmit from a descriptor in the buffer still shows
++that the lance took its init block from there. lance-rap fails without
++the previous patch, and lance-in-lebuffer fails with it until this one.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 38 ++++++++++++++++++++++++++++----
++ 1 file changed, 34 insertions(+), 4 deletions(-)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 6be5c61..51cc072 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -15,6 +15,10 @@
++  * checks that it hands the descriptor back and raises its interrupt.
++  * The SS-10 has neither.
++  *
+++ * The lance's register address port keeps bits 1-0 on the 600MP, as on
+++ * the Am7990, whose boot PROM writes a walking one to it; the SS-10 keeps
+++ * the PCnet core's bits 6-0.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -27,6 +31,7 @@
++ #define LEBUFFER_SIZE   0x20000
++ #define LE_RDP          0xef0060000ULL
++ #define LE_RAP          0xef0060002ULL
+++#define SS10_LE_RAP     0xef0c00002ULL
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++ #define IRQ_LE          (1u << 16)
++@@ -147,10 +152,11 @@ static void test_lance_in_lebuffer(void)
++     csr_write(qts, 2, 0x0000);
++     csr_write(qts, 0, CSR0_INIT);
++     g_assert_cmphex(csr_read(qts, 0) & CSR0_IDON, ==, CSR0_IDON);
++-    /* the station address came from the buffer */
++-    g_assert_cmphex(csr_read(qts, 12), ==, 0x5254);
++-    g_assert_cmphex(csr_read(qts, 13), ==, 0x0012);
++-    g_assert_cmphex(csr_read(qts, 14), ==, 0x3456);
+++    /*
+++     * (The station address is in CSR12-14 of the PCnet core, which the
+++     * Am7990's two-bit address port doesn't reach: the transmit below
+++     * shows that the lance took the init block from the buffer.)
+++     */
++ 
++     /* clear IDON, start, send */
++     csr_write(qts, 0, CSR0_IDON);
++@@ -166,6 +172,29 @@ static void test_lance_in_lebuffer(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_lance_rap(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    uint32_t bit;
+++
+++    /* as the PROM does it: a walking one, then all ones */
+++    for (bit = 1; bit <= 0x8000; bit <<= 1) {
+++        qtest_writew(qts, LE_RAP, bit);
+++        g_assert_cmphex(qtest_readw(qts, LE_RAP), ==, bit & 3);
+++    }
+++    qtest_writew(qts, LE_RAP, 0xffff);
+++    g_assert_cmphex(qtest_readw(qts, LE_RAP), ==, 3);
+++    /* CSR1 (the init block address) through RAP 5 */
+++    csr_write(qts, 5, 0x1234);
+++    g_assert_cmphex(csr_read(qts, 1), ==, 0x1234);
+++    qtest_quit(qts);
+++
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    qtest_writew(qts, SS10_LE_RAP, 0xffff);
+++    g_assert_cmphex(qtest_readw(qts, SS10_LE_RAP), ==, 0x7f);
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -185,6 +214,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/vme-regs", test_vme_regs);
++     qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
++     qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
+++    qtest_add_func("sun4m-ss600mp/lance-rap", test_lance_rap);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
