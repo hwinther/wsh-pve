@@ -27,8 +27,8 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
   (0128, qtest 0129). Taken unchanged onto `feat/sparc-fixes-2`.
 - `feat/sparc-fixes-2`: a local branch in the LEMU clone, not pushed yet, on top of
   `fix/cs4231-pi-pmi`, at `329bc9e639`. It has `wsh/0040`-`0138` except `wsh/0051`-`0052` (x86
-  VGA) and `wsh/0130`-`0132` (D-Bus display): 51 commits, equal but for the two small deviations in
-  the rows of `wsh/0053` and `wsh/0062`. `wsh/0059`-`0060` (sun4m NVRAM) are its last two commits,
+  VGA) and `wsh/0130`-`0132` (D-Bus display): 51 commits, equal but for the small deviation in the
+  row of `wsh/0062`. `wsh/0059`-`0060` (sun4m NVRAM) are its last two commits,
   ported by LEMU onto its own `m48t59` storage (`wsh/0073` here, LEMU's `ae4bb79885` and
   `4b98747213` on `master`); wsh-pve then took that form. Its hashes change when it is rebased or
   pushed.
@@ -43,7 +43,7 @@ series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0150`; the numbers in b
 used (`wsh/0073` comes before `wsh/0059` in `debian/patches/series`). The code is the same for
 `wsh/0001`-`0050`, `0053`-`0072`, `0110`-`0129` and `0133`-`0138` (from `wsh/0040` on only on the
 local `feat/sparc-fixes-2`; `wsh/0030` waits for `feat/openbios-fixes`), and for OpenBIOS 0001-0018;
-the differences in `wsh/0033`, `0038`, `0053` and `0062` are the deliberate ones in their rows.
+the differences in `wsh/0033`, `0038` and `0062` are the deliberate ones in their rows.
 `wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0150` and OpenBIOS 0019-0040 (`0139`-`0150` and OpenBIOS 0040
 added after that comparison, not checked against LEMU yet). So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
 by OpenBIOS 0026, is still open in LEMU. `wsh/0130`-`0132` are for PVE only.
@@ -135,7 +135,7 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0050-tests-qtest-test-the-trap-a-bus-error-takes-on-sun4m | ours | tests/qtest: test the trap a bus error takes on sun4m | `f4b21009a6` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0051-hw-display-vga-read-the-attribute-address-at-0x3c0-i | ours | - | none | none | not in LEMU: applies |
 | wsh/0052-tests-qtest-test-reading-the-VGA-attribute-address-a | ours | - | none | none | not in LEMU: applies |
-| wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e | ours | target/sparc: defer the fp_exception of an ieee 754 exception on sparc32 | `861eb9bbf9` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | accepted deviation: the helper is defined with `HELPER()`, as LEMU defines them |
+| wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e | ours | target/sparc: defer the fp_exception of an ieee 754 exception on sparc32 | `861eb9bbf9` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal: since 2026-11-25 the helper is defined with `HELPER()` here too, as LEMU's maintainer asked |
 | wsh/0054-tests-qtest-test-the-deferred-fp_exception-trap-on-s | ours | tests/qtest: test the deferred fp_exception trap on sun4m | `0806178a54` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0055-hw-sparc-sun4m-take-at-most-128-MB-of-RAM-on-the-mic | ours | hw/sparc/sun4m: take at most 128 mb of ram on the microsparc-i machines | `3ac66e70ae` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB | ours | hw/sparc/sun4m: map the sparcstation lx's on-board sbus devices | `cf186f8053` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
