@@ -10743,7 +10743,7 @@ index 0000000..a9b18a8
 ++}
 diff --git a/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch b/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
 new file mode 100644
-index 0000000..63436b4
+index 0000000..161c1e0
 --- /dev/null
 +++ b/debian/patches/wsh/0053-target-sparc-defer-the-fp_exception-of-an-IEEE-754-e.patch
 @@ -0,0 +1,411 @@
@@ -10865,7 +10865,7 @@ index 0000000..63436b4
 + 
 + static inline bool tb_fpu_enabled(int tb_flags)
 +diff --git a/target/sparc/fop_helper.c b/target/sparc/fop_helper.c
-+index 29fd166..e975758 100644
++index 29fd166..3ce1063 100644
 +--- a/target/sparc/fop_helper.c
 ++++ b/target/sparc/fop_helper.c
 +@@ -21,6 +21,10 @@
@@ -10916,8 +10916,8 @@ index 0000000..63436b4
 ++ * as the boot PROM of the SPARCstation LX expects.  align is the V8
 ++ * alignment mask of the access; 0 for an FPop or FBfcc.
 ++ */
-++void helper_fp_deferred_trap(CPUSPARCState *env, target_ulong addr,
-++                             uint32_t align)
+++void HELPER(fp_deferred_trap)(CPUSPARCState *env, target_ulong addr,
+++                              uint32_t align)
 ++{
 ++    if (addr & align) {
 ++        cpu_raise_exception_ra(env, TT_UNALIGNED, GETPC());
@@ -16637,7 +16637,7 @@ index 0000000..4761fe6
 +         0x07004004,             /* sethi %hi(0x01001000), %g3 */
 diff --git a/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
 new file mode 100644
-index 0000000..c5b21aa
+index 0000000..3e43fe4
 --- /dev/null
 +++ b/debian/patches/wsh/0122-hw-audio-cs4231-raise-pi-and-pmi-when-the-codec-gets.patch
 @@ -0,0 +1,425 @@
@@ -16698,7 +16698,7 @@ index 0000000..c5b21aa
 +Not tested: SimCity with this version, NetBSD, Solaris, and a migration
 +from a build without this change.
 +
-+Origin: https://github.com/hwinther/lemu/commit/ff412bc835386f6a30ff4492886e934a54c0f9b0
++Origin: https://github.com/hwinther/lemu/commit/00e72649b8c68bd019b90220deaff8b08ec3ba6a
 +---
 + hw/audio/cs4231.c | 211 ++++++++++++++++++++++++++++++++++++++++------
 + 1 file changed, 186 insertions(+), 25 deletions(-)
@@ -17068,7 +17068,7 @@ index 0000000..c5b21aa
 + static void cs4231_realize(DeviceState *dev, Error **errp)
 diff --git a/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 new file mode 100644
-index 0000000..a66322c
+index 0000000..52626d9
 --- /dev/null
 +++ b/debian/patches/wsh/0123-tests-qtest-test-the-cs4231-s-pi-and-pmi-for-a-short.patch
 @@ -0,0 +1,396 @@
@@ -17104,7 +17104,7 @@ index 0000000..a66322c
 +never comes), and short-chain without the take at load (the pipe runs
 +empty after the second buffer).
 +
-+Origin: https://github.com/hwinther/lemu/commit/c92620599a8b19e90b671e47f1b04a3a2646c22d
++Origin: https://github.com/hwinther/lemu/commit/0a78fc843fa16ce41fa723ceba1071a2d473a011
 +---
 + tests/qtest/sun4m-cs4231-test.c | 322 +++++++++++++++++++++++++++++++-
 + 1 file changed, 320 insertions(+), 2 deletions(-)
