@@ -16,7 +16,8 @@ OBJDUMP=${OBJDUMP:-i686-w64-mingw32-objdump}
 mkdir -p "$out"
 exe=$out/WSHDEMO.EXE
 "$CC" -O2 -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-cast-function-type -march=pentium -mfpmath=387 \
-	-fno-math-errno -fno-stack-protector -fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" \
+	-fno-builtin -fno-tree-loop-distribute-patterns -fno-math-errno -fno-stack-protector \
+	-fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" \
 	-I"$top/e2e/3dfx/win98" -nostdlib -nostartfiles -mwindows -Wl,--subsystem,windows:4.0 -Wl,--major-os-version,4 \
 	-Wl,--minor-os-version,0 -s -o "$exe" "$here/demo.c" "$here/be_glide2.c" "$here/be_glide3.c" "$here/be_gl.c" \
 	"$here/plat_win.c" -lgdi32 -luser32 -lkernel32 -lgcc

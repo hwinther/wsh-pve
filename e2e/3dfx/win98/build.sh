@@ -14,7 +14,8 @@ OBJDUMP=${OBJDUMP:-i686-w64-mingw32-objdump}
 mkdir -p "$out"
 for p in w3drun glidetst gltest; do
 	"$CC" -O2 -Wall -Wextra -Wno-unused-parameter -Wno-cast-function-type -march=i686 -mno-sse -mfpmath=387 \
-		-fno-stack-protector -fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" -I"$scene" \
+		-fno-tree-loop-distribute-patterns -fno-stack-protector \
+		-fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" -I"$scene" \
 		-nostdlib -nostartfiles -mwindows -Wl,--subsystem,windows:4.0 -Wl,--major-os-version,4 \
 		-Wl,--minor-os-version,0 -s -o "$out/$p.exe" "$here/$p.c" -lgdi32 -luser32 -lkernel32 -lgcc
 	dlls=$("$OBJDUMP" -p "$out/$p.exe" | sed -n 's/^\tDLL Name: //p' | tr '[:lower:]' '[:upper:]' | sort | tr '\n' ' ')
