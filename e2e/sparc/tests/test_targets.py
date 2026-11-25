@@ -41,8 +41,10 @@ def qemu_server_profiles():
     s32 = {}
     block = perl_block(text, "+our $SPARC32_PROFILES = {")
     for m in re.finditer(r"'(SS-\d+(?:MP)?)' => \{\n\+\s+'max-memory' => (\d+),(.*?)\n\+    \},", block, re.S):
-        fw = {f: {"max-cpus": int(n), "cpu": cpu}
-              for f, cpu, n in re.findall(r"'([\w.-]+)' => \{ (?:cpu => '([\w-]+)', )?'max-cpus' => (\d+) \}", m[3])}
+        # a firmware's own 'max-memory' (below the machine's) is optional
+        fw = {f: {"max-cpus": int(n), "cpu": cpu, "max-memory": int(mem) if mem else int(m[2])}
+              for f, cpu, n, mem in re.findall(r"'([\w.-]+)' => \{ (?:cpu => '([\w-]+)', )?'max-cpus' => (\d+)"
+                                               r"(?:, 'max-memory' => (\d+))? \}", m[3])}
         s32[m[1]] = {"max-memory": int(m[2]), "firmware": fw}
     vga32 = re.search(r"my \$sparc32_vga_types = \[qw\(([^)]*)\)\]", text)[1].split()
     block = perl_block(text, "+our $SPARC64_PROFILE = {")
@@ -79,6 +81,8 @@ class Catalogue(unittest.TestCase):
         s32, vga32, s64 = qemu_server_profiles()
         self.assertEqual(set(s32), {"SS-5", "SS-10", "SS-20", "SS-600MP"})  # the parser found the table
         self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["cpu"], "TI-SuperSparc-50")
+        self.assertEqual(s32["SS-20"]["firmware"]["ss20_v2.25_rom"]["max-memory"], 512)
+        self.assertEqual(s32["SS-20"]["firmware"]["openbios-sparc32"]["max-memory"], 2048)
         for name, t in targets.TARGETS.items():
             p, disk = t["profile"], t["disk"]
             if p.get("arch", "x86_64") not in ("sparc", "sparc64"):
@@ -94,7 +98,7 @@ class Catalogue(unittest.TestCase):
                         continue
                     prof = s32[p["machine"].split(",")[0]]  # the type, without machine options
                     self.assertIn(p["bios"], prof["firmware"])
-                    self.assertLessEqual(int(p["memory"]), prof["max-memory"])
+                    self.assertLessEqual(int(p["memory"]), prof["firmware"][p["bios"]]["max-memory"])
                     self.assertLessEqual(cpus, prof["firmware"][p["bios"]]["max-cpus"])
                     self.assertIn(p["vga"], vga32)
                     self.assertEqual(p["net0"], "lance")

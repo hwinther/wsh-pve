@@ -233,7 +233,21 @@ test.describe('profiles, created through the API', () => {
 })
 
 test.describe('refused combinations', () => {
-  const cases: { name: string; params: Record<string, number | string>; message: string }[] = [
+  // more than 512 MB on SS-10/SS-20 (2048 with OpenBIOS, 512 with the SS-20 PROM) needs a qemu-server
+  // that has it; CI runs against the published packages, so those cases are skipped until it does
+  let hasBigMemory = false
+
+  test.beforeAll(async () => {
+    hasBigMemory =
+      (await pveExec(['grep', '-q', "'max-memory' => 2048", '/usr/share/perl5/PVE/QemuServer/Machine.pm'])).code === 0
+  })
+
+  const cases: {
+    bigMemory?: boolean
+    name: string
+    params: Record<string, number | string>
+    message: string
+  }[] = [
     {
       message:
         "sparc: firmware (bios) 'ss20_v2.25_rom' is not supported on SS-5, use one of: openbios-sparc32, ss5.bin",
@@ -263,11 +277,13 @@ test.describe('refused combinations', () => {
       params: {},
     },
     {
+      bigMemory: true,
       message: 'sparc: SS-20 takes at most 2048 MB of memory, not 4096',
       name: 'more memory than SS-20 takes',
       params: { machine: 'SS-20', memory: 4096 },
     },
     {
+      bigMemory: true,
       message:
         'sparc: SS-20 with firmware ss20_v2.25_rom takes at most 512 MB of memory, not 1024 (the Sun PROM probes eight banks of 64 MB; openbios-sparc32 takes up to 2048)',
       name: 'more than 512 MB with the SS-20 PROM',
@@ -308,6 +324,7 @@ test.describe('refused combinations', () => {
 
   for (const c of cases) {
     test(`create: ${c.name}`, async () => {
+      test.skip(c.bigMemory === true && !hasBigMemory, 'the installed qemu-server has no more than 512 MB on SS-20 yet')
       const vmid = Number(await pve.get<string>('/cluster/nextid'))
       const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
       expect(refused.message).toContain(c.message)
