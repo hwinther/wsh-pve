@@ -895,13 +895,13 @@ merged; what is left of them is item 2 under "Next".
   supports. On the published 11.1.3-4+wsh4 it stops QEMU within seconds (`Trap 0x01`, an
   instruction fetch translated in boot mode with the MMU on): pve-qemu `wsh/0120`-`0121` (lab
   build, not published) fix that. It then looped silently in its power-on self test, which reads
-  back SuperSPARC diagnostic registers QEMU didn't keep; `wsh/0143`-`0148` (2026-11-25) keep them
+  back SuperSPARC diagnostic registers QEMU didn't keep; `wsh/0145`-`0150` (2026-11-25) keep them
   and fix the board timer bits it checks, and it now loops in the board tests.
   - **Steps for the PROM, in order:**
-    1. Keep the SuperSPARC store buffer diagnostic registers (ASI 0x30-0x32): done, pve-qemu `wsh/0143` (feature `sbuf-diag`).
-    2. Read back the MXCC stream data registers: done, `wsh/0144`.
-    3. Keep the I- and D-cache tag and data RAMs (ASI 0x0c-0x0f) with the TMS390Z50 geometry: done, `wsh/0145` (feature `cache-diag`); qtests `wsh/0146`.
-    4. Pass the board's counter-timer tests: the four user timer bits and the user timer's limit bit, done (`wsh/0147`, qtest `wsh/0148`); the test's back-to-back counter reads still pass only on some runs (QEMU's I/O is faster than a timer tick): open, small to medium (an I/O delay on the counter reads; `-icount` stops at once with "Bad icount read").
+    1. Keep the SuperSPARC store buffer diagnostic registers (ASI 0x30-0x32): done, pve-qemu `wsh/0145` (feature `sbuf-diag`).
+    2. Read back the MXCC stream data registers: done, `wsh/0146`.
+    3. Keep the I- and D-cache tag and data RAMs (ASI 0x0c-0x0f) with the TMS390Z50 geometry: done, `wsh/0147` (feature `cache-diag`); qtests `wsh/0148`.
+    4. Pass the board's counter-timer tests: the four user timer bits and the user timer's limit bit, done (`wsh/0149`, qtest `wsh/0150`); the test's back-to-back counter reads still pass only on some runs (QEMU's I/O is faster than a timer tick): open, small to medium (an I/O delay on the counter reads; `-icount` stops at once with "Bad icount read").
     5. Next: the IOMMU's SBus slot configuration register test (progress `0xad`): no read-back mask satisfies it, needs the 600MP's register layout; size unknown. Then more board tests (ECC memory, I/O cache tags, VME loopback).
     6. With the diagnostic switch (lab-only, bit 2 of the system control register) the POST prints and runs a longer list, which also needs the MXCC's 2 MB external cache RAM and the MMU's root/level-2 page table pointer cache (ASI 6): medium and large.
     - Overall still medium to large; the PROM prints nothing until its POST passes.
@@ -1003,7 +1003,7 @@ merged; what is left of them is item 2 under "Next".
 | `zs3: ring buffer overflow` in Solaris under load | Mouse data arrives faster than a 1200 baud mouse would send it; harmless. Pacing the ESCC mouse would remove it |
 | A break on a serial console hangs Solaris | QEMU's ESCC never ends a break and keeps its interrupt raised; Solaris spins in its serial interrupt. PVE can't send a break; a QEMU ESCC patch would fix it (`submodules/SPARC.md` "Stop-A") |
 | X in Solaris 2.6 only starts at 1024x768 on cg3 | Larger sizes give a text console; qemu-server has no resolution option |
-| Sun's SS-600MP boot PROM doesn't get through its power-on self test | Without `wsh/0120` QEMU stops on `Trap 0x01` within seconds; with it and `wsh/0143`-`0147` the PROM passes its CPU module tests (store buffer, MXCC, cache RAMs) and loops in the board tests: the counter-timer test passes only on some runs (timing), then the IOMMU's SBus slot configuration test fails. Silent throughout. Scope and steps in "Later" ("Sun's SS-600MP boot PROM"); qemu-server offers OpenBIOS only on the SS-600MP |
+| Sun's SS-600MP boot PROM doesn't get through its power-on self test | Without `wsh/0120` QEMU stops on `Trap 0x01` within seconds; with it and `wsh/0145`-`0149` the PROM passes its CPU module tests (store buffer, MXCC, cache RAMs) and loops in the board tests: the counter-timer test passes only on some runs (timing), then the IOMMU's SBus slot configuration test fails. Silent throughout. Scope and steps in "Later" ("Sun's SS-600MP boot PROM"); qemu-server offers OpenBIOS only on the SS-600MP |
 | More than 512 MB on SS-10/SS-20 (Solaris 2.6 panics at boot) | Unverified lead: the MiSTer SS-20 project's OpenBIOS splits memory into several `/memory` entries because Solaris 8 panics early with all of it in one (`submodules/SPARC.md`, "SMP") |
 | NeXTSTEP 3.3 and OPENSTEP 4.2 hang on the disk during their install unless the VM has `machine: SS-5,esp-irq-latency=500` | QEMU's ESP raises its interrupt in the same instruction that starts a command; NeXT's driver deadlocks. The opt-in delay (`wsh/0040`) is in pve-qemu-kvm 11.1.3-2+wsh24, qemu-server 9.2.19+wsh2 and pve-manager 9.2.31+wsh2 (the UI field); off by default, as it costs about 2 ms per disk command (`submodules/SPARC.md`, "NeXTSTEP 3.3 and OPENSTEP 4.2"; the sparc guide, "SCSI interrupt delay") |
 | OpenBIOS doesn't boot an installed NeXTSTEP/OPENSTEP disk | `Unhandled Exception 0x00000021` in NeXT's boot program before its banner; `ss5.bin` boots it (with `-v`: its boot graphics end in `Data Access Error` on the 8-bit TCX). Not diagnosed |
