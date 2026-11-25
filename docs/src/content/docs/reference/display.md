@@ -250,10 +250,11 @@ runner: wolf-input-bridge --address ...               (Moonlight's keyboard and 
   makes); `e2e/streaming/wolf-no-compositor.patch` fixes that. Wolf also crashed at start without a
   PulseAudio server to connect to, even though these apps don't use one, so one runs next to it.
 - **Files** (`e2e/streaming` in wsh-pve): `Dockerfile` (Wolf, moonlight-embedded and the probe
-  client, all from source at pinned commits on Debian 13), `wolf-config.py` (writes Wolf's
-  `config.toml` with an app per VM from Wolf's defaults), `wolf-input-bridge`, `wolf-pair` (enters a
-  client's PIN through Wolf's API socket), `node.sh`, `moonlight-probe.c`, `stream3d.py` and
-  `test.sh`.
+  client, all from source at pinned commits on Debian 13; its `ct` stage is a container template
+  for a node), `wolf-config.py` (writes Wolf's `config.toml` with an app per VM from Wolf's
+  defaults, keeping paired clients), `wolf-start` (PulseAudio and Wolf in that container),
+  `wolf-input-bridge`, `wolf-pair` (enters a client's PIN through Wolf's API socket), `node.sh`,
+  `moonlight-probe.c`, `stream3d.py` and `test.sh`.
 
 ### Measured
 
@@ -290,43 +291,112 @@ same rates within a picture a second. The host was shared with other jobs.
   not in the one run without them, and the first sound reaches the client 90-160 ms after the
   command was typed.
 
-### On a node (not tested yet)
+### On a node
 
-Wolf runs in a Debian 13 LXC on the node. Build Wolf as `e2e/streaming/Dockerfile`'s `wolf-build`
-stage does (or copy `/usr/local/bin/wolf` and the interpipe plugin out of that image) and install
-`wsh-gst-qemu-dbus`, `gstreamer1.0-plugins-ugly` (x264), `gstreamer1.0-plugins-good` and
-`pulseaudio` from the wsh-pve and Debian repositories. On the node, as root (`<ctid>` the container,
-`<gid>` the group `wsh-display`, from `getent group wsh-display`):
+Tested on a PVE node (pve-qemu-kvm 11.1.3-4, qemu-server with the D-Bus display, an NVIDIA GPU on
+NVIDIA's own driver): Wolf in a **privileged** container, the VM started with `qm start`.
+
+**An unprivileged container doesn't work with the bus as it is.** Mapping the container's group
+onto `wsh-display` (an `lxc.idmap` line and `root:<gid>:1` in `/etc/subgid`) does give the
+container the socket directory, but the VM's bus then refuses it, for two reasons:
+
+- GLib's D-Bus client authenticates with `AUTH EXTERNAL <uid>`, the uid it sees in the container
+  (0), while the bus sees the host's uid (100000): the bus says `REJECTED EXTERNAL`.
+- With the uid left out of `AUTH EXTERNAL` (or given as the host's), the bus accepts the
+  authentication and then drops the connection: dbus-daemon (1.16) checks `<allow group=...>`
+  against the user database of the node, not the connecting process's groups. A uid without a
+  line in the node's `/etc/passwd` and `/etc/group` (the container's root, 100000) isn't in
+  `wsh-display` for it. The same is true of a process on the node with `wsh-display` only as a
+  supplementary group.
+
+An unprivileged container would need the bus policy to name it (for example `<allow user="100000"/>`
+next to the group, which qemu-server's policy file doesn't offer a place for yet), or a user for that
+uid in the node's `wsh-display` group.
+
+**The privileged container.** The template is `e2e/streaming/Dockerfile`'s `ct` stage (Debian 13
+with systemd, Wolf, `wsh-gst-qemu-dbus`, x264, GStreamer's nvcodec, PulseAudio, `wolf-start`,
+`wolf-config.py`, `wolf-input-bridge`, `wolf-pair`, and the probe client), exported with Docker:
 
 ```sh
-install -d -m 0750 -g wsh-display /run/wsh-dbus-display   # qemu-server makes it at a VM's start too
-modprobe uinput
-cat >> /etc/pve/lxc/<ctid>.conf <<EOF
-lxc.mount.entry: /run/wsh-dbus-display run/wsh-dbus-display none bind,create=dir 0 0
-lxc.mount.entry: /dev/uinput dev/uinput none bind,create=file 0 0
-lxc.mount.entry: /dev/input dev/input none bind,create=dir 0 0
-lxc.cgroup2.devices.allow: c 10:223 rwm
-lxc.cgroup2.devices.allow: c 13:* rwm
-lxc.idmap: u 0 100000 65536
-lxc.idmap: g 0 100000 <gid>
-lxc.idmap: g <gid> <gid> 1
-lxc.idmap: g <gid+1> <100000+gid+1> <65535-gid>
-EOF
-echo "root:<gid>:1" >> /etc/subgid
-qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus
+docker build --target ct -t wsh-stream3d-ct <context>     # the context test.sh assembles
+docker create --name ct-export wsh-stream3d-ct /bin/true
+docker export ct-export | gzip > wsh-stream3d-ct.tar.gz
 ```
 
-In the container: `groupadd -g <gid> wsh-display`, the user that runs Wolf in that group, PulseAudio
-running for that user, the app written with
-`wolf-config.py /usr/local/share/wolf/config.include.toml /etc/wolf/cfg/config.toml "My VM=<vmid>"`,
-and Wolf started with `WOLF_CFG_FILE=/etc/wolf/cfg/config.toml WOLF_USE_ZERO_COPY=FALSE`. Moonlight
-reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the container. When a
-client pairs, enter its PIN with `wolf-pair <pin>` in the container.
+On the node, as root (`<vmid>` the VM, `<ctid>` the container):
 
-Not verified yet: the LXC itself (the uid and gid mapping onto `wsh-display`, the bus's group check
-for a mapped group, `/dev/input` nodes made after the container started), a VM started by
-`qm start`, a GPU's render node and hardware encoding, a real Moonlight client on a TV or phone, a
-3dfx game through it.
+```sh
+qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus
+qm start <vmid>              # qemu-server makes /run/wsh-dbus-display (kept from then on)
+pct create <ctid> wsh-stream3d-ct.tar.gz --hostname wolf --unprivileged 0 --ostype debian \
+  --rootfs local:4 --memory 1536 --cores 4 --features nesting=1 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
+  --dev0 /dev/uinput
+cat >> /etc/pve/lxc/<ctid>.conf <<EOF
+lxc.mount.entry: /run/wsh-dbus-display srv/wsh-dbus-display none bind,create=dir 0 0
+lxc.mount.entry: /dev/input dev/input none bind,create=dir 0 0
+lxc.cgroup2.devices.allow: c 13:* rwm
+EOF
+pct start <ctid>
+pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "wsh-vm-<vmid>"
+```
+
+- The bus directory goes to `/srv/wsh-dbus-display`, not `/run/...`: the container's systemd
+  mounts its own `/run` over a bind mount there. The directory must exist when the container
+  starts (a D-Bus VM started once since the node booted).
+- `/dev/input` is the node's: Wolf's virtual keyboard and mice appear there when a session starts,
+  and `wolf-input-bridge` grabs them (EVIOCGRAB), so the node's own desktop doesn't get the
+  client's keys. The node's real keyboard and mouse are visible in the container too (it is
+  privileged); the bridge takes only Wolf's devices.
+- When a Moonlight client pairs, it shows a PIN: `pct exec <ctid> -- wolf-pair <pin>`. Running
+  `wolf-start` again (other VMs, another encoder) keeps the paired clients.
+- Moonlight reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the
+  container's address.
+
+**NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
+(here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf
+with NVENC:
+
+```sh
+pct set <ctid> --dev1 /dev/dri/renderD128 --dev2 /dev/nvidia0 --dev3 /dev/nvidiactl --dev4 /dev/nvidia-modeset \
+  --dev5 /dev/nvidia-uvm --dev6 /dev/nvidia-uvm-tools
+for l in libcuda libnvidia-encode libnvcuvid libnvidia-ptxjitcompiler libnvidia-nvvm libnvidia-gpucomp; do
+  pct push <ctid> /usr/lib/x86_64-linux-gnu/$l.so.<version> /usr/lib/x86_64-linux-gnu/$l.so.<version>
+done
+pct exec <ctid> -- sh -c 'cd /usr/lib/x86_64-linux-gnu && for l in libcuda.so.1 libnvidia-encode.so.1 \
+  libnvcuvid.so.1 libnvidia-ptxjitcompiler.so.1; do ln -sf ${l%.so.1}.so.<version> $l; done &&
+  ln -sf libnvidia-nvvm.so.<version> libnvidia-nvvm.so.4 && ldconfig'
+pct exec <ctid> -- env H264_ENCODER=nvenc wolf-start <vmid>
+```
+
+Wolf doesn't pick NVENC by itself here: its NVIDIA pipeline also needs `cudaconvertscale`, which
+needs the CUDA toolkit's runtime compiler (`libnvrtc`), not part of the driver. `H264_ENCODER=nvenc`
+gives the apps `nvh264enc` (Wolf's settings: CBR, zero latency, preset p1, ultra-low-latency tune)
+on NV12 in system memory.
+
+**Measured on the node** (TCG guest, wisp's framebuffer kernel at 1280x800, PS/2 mouse; the probe
+client in the container on the loopback, so no network in the numbers; 10 latency samples each):
+
+| | x264, refresh 30 ms | x264, refresh 8 ms | NVENC, refresh 30 ms |
+| --- | --- | --- | --- |
+| Guest draws -> decoded at the client, median (min-max) | 54 ms (41-73) | 47 ms (43-60) | 50 ms (39-65) |
+| New pictures per second while the guest draws | 32.6 | 38.6 | (not comparable, see below) |
+| Key: client -> the guest's serial line, median | 1.1 ms | 1.3 ms | 1.5 ms |
+| Sound: `soundtest 440 2000` | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s |
+
+Every check passed in those three runs (picture against QEMU's screendump, keyboard, mouse,
+sound), with the same dropout just after the tone's start as in the lab. NVENC saved about 4 ms
+of the median against x264. Its CBR stream keeps refining a still picture for a few frames, which the
+probe counts as changes (51 "new" pictures a second at a 30 ms refresh), so its picture rate isn't
+comparable.
+
+**`dbus,gl=on` on the NVIDIA GPU** (`mesa=1,mesa-display=dbus`): QEMU's EGL and GBM work with
+NVIDIA's driver (the 3dfx binary opened the render node and started; the stream ran). But the
+console's dmabufs are NVIDIA's block-linear layout (`XB24`, modifier `0x300000000cdb014`), which
+`qemudbussrc` can't map yet (it reads linear dmabufs only), so it drops every frame and the client
+keeps its first picture. That needs 3c's second slice, an EGL import of tiled dmabufs.
+
+Not verified yet: an unprivileged container (blocked, see above), a client on another machine over
+the network, a real Moonlight client on a TV or phone, a 3dfx game through it.
 
 ## VGA retrace
 

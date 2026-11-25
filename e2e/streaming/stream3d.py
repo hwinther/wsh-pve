@@ -29,6 +29,14 @@ client), every frame of the burst in OUTDIR/pacing.txt.
 
 usage: stream3d.py --node HOST --keydir DIR --app NAME --outdir DIR [--rounds N]
                    [--refresh-ms N] [--name NAME] [--width W --height H --fps F]
+                   [--serial ADDR --qmp ADDR --start cont|reset]
+                   [--probe-prefix CMD --probe-outdir DIR] [--shared DIR]
+
+On a node (a VM from `qm start`, Wolf and the probe in a container), it runs on the node:
+  --serial unix:/var/run/qemu-server/VMID.serial0 --qmp unix:/var/run/qemu-server/VMID.qmp
+  --start reset --probe-prefix "pct exec CTID -- env HOME=/root PATH=/usr/local/bin:/usr/bin:/bin"
+  with OUTDIR and --shared in a directory bind-mounted into the container, --probe-outdir the
+  same directory as the container sees it.
 """
 
 import argparse
@@ -65,8 +73,8 @@ def result(name, ok, detail):
 class Serial:
     """The guest's serial console over TCP, read in the background, every chunk timestamped"""
 
-    def __init__(self, host, port, logpath):
-        self.sock = socket.create_connection((host, port), timeout=30)
+    def __init__(self, address, logpath):
+        self.sock = connect(address)
         self.sock.settimeout(None)
         self.buf = b""
         self.times = []  # (offset in buf, time it arrived)
@@ -139,8 +147,20 @@ class Serial:
         return m, when, t
 
 
-def qmp(host, port, cmd, **arguments):
-    s = socket.create_connection((host, port), timeout=30)
+def connect(address):
+    """a socket to unix:PATH or HOST:PORT"""
+    if address.startswith("unix:"):
+        s = socket.socket(socket.AF_UNIX)
+        s.settimeout(30)
+        s.connect(address[5:])
+    else:
+        host, _, port = address.rpartition(":")
+        s = socket.create_connection((host, int(port)), timeout=30)
+    return s
+
+
+def qmp(address, cmd, **arguments):
+    s = connect(address)
     f = s.makefile("rwb")
     json.loads(f.readline())
     reply = None
@@ -340,7 +360,15 @@ def stats(values):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--node", required=True)
+    ap.add_argument("--node", required=True, help="Wolf's host as the client reaches it")
+    ap.add_argument("--serial", help="the guest's serial line: unix:PATH or HOST:PORT (default NODE:4555)")
+    ap.add_argument("--qmp", help="QEMU's QMP: unix:PATH or HOST:PORT (default NODE:4556)")
+    ap.add_argument("--start", choices=("cont", "reset"), default="cont",
+                    help="cont (QEMU paused, test.sh) or reset (a VM already running, qm start)")
+    ap.add_argument("--probe-prefix", default="",
+                    help="run the probe through this command, e.g. 'pct exec 9300 --' on a node")
+    ap.add_argument("--probe-outdir", default="",
+                    help="OUTDIR as the probe sees it (default OUTDIR; with --probe-prefix a shared mount)")
     ap.add_argument("--keydir", required=True)
     ap.add_argument("--app", required=True)
     ap.add_argument("--outdir", required=True)
@@ -355,6 +383,8 @@ def main():
     ap.add_argument("--shared", default="/shared",
                     help="a directory both containers mount (QEMU's screendump lands there)")
     args = ap.parse_args()
+    args.serial = args.serial or f"{args.node}:4555"
+    args.qmp = args.qmp or f"{args.node}:4556"
     skip = set(filter(None, args.skip.split(",")))
     global NAME
     NAME = args.name
@@ -362,8 +392,10 @@ def main():
     os.makedirs(out, exist_ok=True)
     node = args.node
 
-    probe = Probe(["wsh-moonlight-probe", "--width", str(args.width), "--height", str(args.height),
-                   "--fps", str(args.fps), node, args.keydir, args.app, out], f"{out}/probe.log")
+    probe_out = args.probe_outdir or out
+    probe = Probe([*args.probe_prefix.split(), "wsh-moonlight-probe", "--width", str(args.width),
+                   "--height", str(args.height), "--fps", str(args.fps), node, args.keydir, args.app,
+                   probe_out], f"{out}/probe.log")
     serial = None
     try:
         conn = probe.wait_event("connected", 60)
@@ -381,8 +413,10 @@ def main():
         if not (conn and first):
             return finish(out)
 
-        serial = Serial(node, 4555, f"{out}/serial.log")
-        qmp(node, 4556, "cont")
+        serial = Serial(args.serial, f"{out}/serial.log")
+        # QEMU started paused (-S, test.sh) goes on; a VM that runs already (qm start) restarts,
+        # so its boot prompt comes and its picture starts from the console's text
+        qmp(args.qmp, "cont" if args.start == "cont" else "system_reset")
         m, _ = serial.expect(PROMPT, 300)
         if not m:
             result("boot", False, "no wisp prompt within 300 s")
@@ -400,9 +434,9 @@ def main():
                     time.sleep(0.02)
                 if shown:
                     time.sleep(1.0)  # the guest's fbdev worker may still copy; x264 refines
-                    qmp(node, 4556, "screendump", filename=f"{args.shared}/screendump.ppm")
+                    qmp(args.qmp, "screendump", filename=f"{args.shared}/screendump.ppm")
                     n = probe.nevents()
-                    probe.send(f"snap {out}/frame.ppm")
+                    probe.send(f"snap {probe_out}/frame.ppm")
                     snap = probe.wait_event("snap", 10, n)
                     dump = f"{args.shared}/screendump.ppm"
                     for _ in range(50):

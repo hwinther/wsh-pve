@@ -1,0 +1,40 @@
+#!/bin/sh
+# wolf-start VMID [VMID ...]: in the streaming container on a node (the Dockerfile's `ct`
+# template), start PulseAudio and Wolf with one Moonlight app per VM (wolf-config.py, which keeps
+# the clients paired so far). The node's /run/wsh-dbus-display is bind-mounted at BUS_DIR
+# (default /srv/wsh-dbus-display: the container's systemd mounts its own /run over a bind mount
+# there). Environment: H264_ENCODER (auto or nvenc, see wolf-config.py), BRIDGE_LOG, LOG (Wolf's
+# log, default /var/log/wolf.log), WOLF_LOG_LEVEL. A running Wolf is stopped first.
+set -eu
+[ $# -gt 0 ] || { echo "usage: wolf-start VMID [VMID ...]" >&2; exit 2; }
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export XDG_RUNTIME_DIR=/run/wolf
+BUS_DIR=${BUS_DIR:-/srv/wsh-dbus-display}
+LOG=${LOG:-/var/log/wolf.log}
+mkdir -p "$XDG_RUNTIME_DIR" /etc/wolf/cfg
+if pkill -x wolf; then
+	while pgrep -x wolf > /dev/null; do sleep 0.2; done
+fi
+# Wolf won't start without a PulseAudio server to connect to (its apps here don't use it)
+pulseaudio --check 2> /dev/null ||
+	pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=syslog || true
+apps=
+for vmid in "$@"; do
+	apps="$apps wsh-vm-$vmid=unix:path=$BUS_DIR/$vmid.sock"
+done
+# shellcheck disable=SC2086 # $apps is words without spaces
+wolf-config.py /usr/local/share/wolf/config.include.toml /etc/wolf/cfg/config.toml $apps
+export WOLF_CFG_FILE=/etc/wolf/cfg/config.toml WOLF_PRIVATE_KEY_FILE=/etc/wolf/cfg/key.pem \
+	WOLF_PRIVATE_CERT_FILE=/etc/wolf/cfg/cert.pem WOLF_USE_ZERO_COPY=FALSE \
+	WOLF_LOG_LEVEL=${WOLF_LOG_LEVEL:-INFO} WOLF_DOCKER_SOCKET=/nonexistent/docker.sock \
+	HOST_APPS_STATE_FOLDER=/etc/wolf
+nohup wolf > "$LOG" 2>&1 &
+for _ in $(seq 50); do
+	if grep -q "HTTP server listening" "$LOG"; then
+		echo "wolf-start: Wolf runs (log $LOG), apps:$apps"
+		exit 0
+	fi
+	sleep 0.2
+done
+echo "wolf-start: Wolf didn't start, see $LOG" >&2
+exit 1

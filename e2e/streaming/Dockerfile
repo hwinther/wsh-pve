@@ -130,3 +130,30 @@ RUN ldconfig \
     && gst-inspect-1.0 qemudbussrc > /dev/null \
     && groupadd --system wsh-display
 ENTRYPOINT ["/usr/local/bin/node.sh"]
+
+# A PVE container template for a node (docs: display reference, "Streaming to Moonlight"): Wolf,
+# the sources and the bridge, PulseAudio, x264 and GStreamer's nvcodec elements (NVENC, with the
+# node's NVIDIA libraries copied in), and the client for checks from inside the container, on
+# systemd. No QEMU: the VM runs on the node. `docker export` of this image is the template.
+FROM debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS ct
+ENV DEBIAN_FRONTEND=noninteractive
+COPY wsh-pve.gpg.key /tmp/wsh-pve.gpg.key
+RUN apt-get update \
+    && apt-get install --no-install-recommends --assume-yes ca-certificates gnupg \
+    && gpg --dearmor < /tmp/wsh-pve.gpg.key > /usr/share/keyrings/wsh-pve.gpg \
+    && printf 'Types: deb\nURIs: https://debian.wshosting.no/debian/\nSuites: trixie\nComponents: main\nSigned-By: /usr/share/keyrings/wsh-pve.gpg\n' \
+       > /etc/apt/sources.list.d/wsh-pve.sources \
+    && apt-get update \
+    && apt-get install --no-install-recommends --assume-yes systemd-sysv ifupdown iproute2 \
+       wsh-gst-qemu-dbus gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+       gstreamer1.0-plugins-ugly gstreamer1.0-plugins-bad python3 curl procps pulseaudio \
+       libcurl4t64 libevdev2 libudev1 libpulse0 libunwind8 libdrm2 libpci3 libicu76 libssl3t64 \
+       libopus0 libexpat1 libavahi-client3 libuuid1 libavcodec61 libavutil59 libswscale8 \
+       libasound2t64 libsdl2-2.0-0 \
+    && rm -rf /var/lib/apt/lists/* /tmp/wsh-pve.gpg.key \
+    && groupadd --system wsh-display
+COPY --from=wolf-build /out/ /
+COPY --from=wolf-build /src/wolf/src/moonlight-server/state/default/config.include.toml /usr/local/share/wolf/
+COPY --from=client-build /out/ /
+COPY --chmod=0755 wolf-input-bridge wolf-config.py wolf-pair wolf-start stream3d.py /usr/local/bin/
+RUN ldconfig && ! ldd /usr/local/bin/wolf /usr/local/bin/wsh-moonlight-probe | grep "not found"
