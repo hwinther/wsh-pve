@@ -7,3 +7,6 @@ repo/pool/*
 repo-incoming/*
 docs/src/data/packages.json
 web/dist/
+
+# Claude Code: per-user local settings (permissions, local paths); the shared .claude/settings.json may be committed
+.claude/settings.local.json
