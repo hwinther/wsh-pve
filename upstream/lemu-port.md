@@ -26,10 +26,12 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
   middle of a buffer drops what the APC took past the codec's position instead of playing it out
   (0128, qtest 0129). Taken unchanged onto `feat/sparc-fixes-2`.
 - `feat/sparc-fixes-2`: a local branch in the LEMU clone, not pushed yet, on top of
-  `fix/cs4231-pi-pmi`, at `74e9c40d0b`. It has `wsh/0040`-`0138` except `wsh/0051`-`0052` (x86
-  VGA), `wsh/0059`-`0060` (sun4m NVRAM) and `wsh/0130`-`0132` (D-Bus display): 49 commits, equal but
-  for the two small deviations in the rows of `wsh/0053` and `wsh/0062`. Its hashes change when it
-  is rebased or pushed.
+  `fix/cs4231-pi-pmi`, at `329bc9e639`. It has `wsh/0040`-`0138` except `wsh/0051`-`0052` (x86
+  VGA) and `wsh/0130`-`0132` (D-Bus display): 51 commits, equal but for the two small deviations in
+  the rows of `wsh/0053` and `wsh/0062`. `wsh/0059`-`0060` (sun4m NVRAM) are its last two commits,
+  ported by LEMU onto its own `m48t59` storage (`wsh/0073` here, LEMU's `ae4bb79885` and
+  `4b98747213` on `master`); wsh-pve then took that form. Its hashes change when it is rebased or
+  pushed.
 - `feat/openbios-fixes`: the OpenBIOS patches 0001-0018 and the one QEMU patch that goes with them
   (`wsh/0030` with OpenBIOS 0018), at `86c3a500ec`, still on LEMU's old `master` (`a71589ebda`).
   Not sent yet; its hashes change when it is rebased. OpenBIOS 0019-0039 are not on it. Patches of
@@ -37,12 +39,12 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
 
 Last compared on 2026-11-25, by the wsh-pve side: this repository's `main` at `9051509`, LEMU's
 `master` at `af26c72531` and the branches above. Every patch here has a row now. The pve-qemu
-series uses `wsh/0001`-`0072`, `0110`-`0115` and `0120`-`0138`; the numbers in between are not
-used. The code is the same for `wsh/0001`-`0050`, `0053`-`0058`, `0061`-`0072`, `0110`-`0129` and
-`0133`-`0138` (from `wsh/0040` on only on the local `feat/sparc-fixes-2`; `wsh/0030` waits for
-`feat/openbios-fixes`), and for OpenBIOS 0001-0018; the differences in `wsh/0033`, `0038`, `0053`
-and `0062` are the deliberate ones in their rows. Not in LEMU: `wsh/0051`-`0052`, `wsh/0059`-`0060`
-and OpenBIOS 0019-0039. So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
+series uses `wsh/0001`-`0073`, `0110`-`0115` and `0120`-`0138`; the numbers in between are not
+used (`wsh/0073` comes before `wsh/0059` in `debian/patches/series`). The code is the same for
+`wsh/0001`-`0050`, `0053`-`0072`, `0110`-`0129` and `0133`-`0138` (from `wsh/0040` on only on the
+local `feat/sparc-fixes-2`; `wsh/0030` waits for `feat/openbios-fixes`), and for OpenBIOS 0001-0018;
+the differences in `wsh/0033`, `0038`, `0053` and `0062` are the deliberate ones in their rows.
+`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052` and OpenBIOS 0019-0039. So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
 by OpenBIOS 0026, is still open in LEMU. `wsh/0130`-`0132` are for PVE only.
 
 Whether a patch that LEMU doesn't have would apply: the pve-qemu patches were applied in order with
@@ -138,10 +140,10 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB | ours | hw/sparc/sun4m: map the sparcstation lx's on-board sbus devices | `cf186f8053` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make | ours | hw/sparc/sun4m: give the dbri an fcode prom that makes its node | `b50db2fa7d` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m | ours | tests/qtest: test the on-board sbus devices of sun4m | `4fb4d74e07` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
-| wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it | ours | - | none | none | not in LEMU: needs a port: LEMU's `m48t59` already backs the `isa-m48t59` NVRAM with a drive ([`4b98747213`](https://github.com/tenox7/lemu/commit/4b98747213)), so the patch adds a second `blk` field |
-| wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive | ours | - | none | none | not in LEMU: applies, with 0059 |
+| wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it | built on LEMU | hw/rtc/m48t59: take a drive on the sysbus device, and leave its nvram on sun4m | `c11c33129c` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal: LEMU's port onto its `m48t59` storage (`wsh/0073`), taken here in place of the earlier write-through version |
+| wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive | ours | tests/qtest: test the sun4m nvram kept in a drive | `329bc9e639` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal; context only: its `meson.build` line follows `sun4m-onboard-sbus-test` here and `sun4m-dbri-test` on the branch |
 | wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres | ours | hw/dma/sparc32_dma: reset the lance dma's base address register to 0xff | `2f032b3258` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
-| wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist | ours | tests/qtest: test the lance dma's base address register on sun4m | `4b0c6160c9` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | accepted deviation: its `meson.build` line follows `sun4m-onboard-sbus-test`, as 0059-0060 are not on the branch |
+| wsh/0062-tests-qtest-test-the-lance-DMA-s-base-address-regist | ours | tests/qtest: test the lance dma's base address register on sun4m | `4b0c6160c9` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | accepted deviation: its `meson.build` line follows `sun4m-onboard-sbus-test`, as 0059-0060 come after it on the branch |
 | wsh/0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in | ours | hw/sparc/sun4m: map the sparcserver 600mp's vmebus interface registers | `1f106dba2a` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0064-hw-sparc-sun4m-give-the-SPARCserver-600MP-s-lance-it | ours | hw/sparc/sun4m: give the sparcserver 600mp's lance its own buffer memory | `ac11d7c20e` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0065-tests-qtest-test-the-SPARCserver-600MP-s-VMEbus-regi | ours | tests/qtest: test the sparcserver 600mp's vmebus registers and lebuffer | `946c5f1064` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
@@ -152,6 +154,7 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su | built on LEMU | target/sparc: halt the cpu in linux's idle loop on sun4u | `05707468b7` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an | built on LEMU | target/sparc: recognise the idle loop of solaris 7 and 8 on sun4u | `9e4b0e95b4` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop | built on LEMU | tests/qtest: test the linux and solaris 7/8 idle loops on sun4u | `2710ab1887` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
+| wsh/0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device | LEMU origin | hw/rtc/m48t59: keep NVRAM contents in a file; hw/rtc/m48t59: back the NVRAM with a block device | [`ae4bb79885`](https://github.com/tenox7/lemu/commit/ae4bb79885), [`4b98747213`](https://github.com/tenox7/lemu/commit/4b98747213) | master | pair only: the two squashed, without `4b98747213`'s `hw/ppc/prep.c` hunk (LEMU's 40p) |
 | wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o | built on LEMU | target/sparc: halt the cpu in linux 3.2's idle loop on sun4u | `cdbee68f88` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0111-tests-qtest-test-the-Linux-3.2-idle-loop-on-sun4u | built on LEMU | tests/qtest: test the linux 3.2 idle loop on sun4u | `b33b632a9a` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |
 | wsh/0112-hw-sparc64-drop-the-translated-code-on-a-reset | ours | hw/sparc64: drop the translated code on a reset | `45daa7e9e7` (LEMU local, not pushed) | feat/sparc-fixes-2 (LEMU local) | equal |

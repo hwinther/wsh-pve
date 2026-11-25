@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..6d829e9 100644
+index bc240a0..8c62a80 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,104 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,105 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -135,6 +135,7 @@ index bc240a0..6d829e9 100644
 +wsh/0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB.patch
 +wsh/0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make.patch
 +wsh/0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m.patch
++wsh/0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device.patch
 +wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
 +wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
 +wsh/0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres.patch
@@ -11979,12 +11980,13 @@ index 0000000..85e2603
 ++}
 diff --git a/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch b/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
 new file mode 100644
-index 0000000..c84c040
+index 0000000..9dda946
 --- /dev/null
 +++ b/debian/patches/wsh/0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it.patch
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,284 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
-+Subject: [PATCH] hw/rtc/m48t59: keep the NVRAM in a drive, and leave it on sun4m
++Subject: [PATCH] hw/rtc/m48t59: keep the NVRAM in a drive, and leave it on
++ sun4m
 +
 +The sun4m machines write OpenBIOS's NVRAM layout (a CHRP system
 +partition with the -prom-env variables, a free partition and the Sun
@@ -11995,75 +11997,129 @@ index 0000000..c84c040
 +keeps what "setenv diag-switch? false" or "setenv auto-boot? true"
 +stored.
 +
-+Give the sysbus M48Txx a "drive" property for its NVRAM bytes (not
-+the clock registers): the image is read at realize, and every byte the
-+guest changes is written through. The image must hold at least the
-+NVRAM; its first bytes are used, the rest is left alone. A read-only
-+image is loaded and not written. A blank (all-zero) image leaves the
-+NVRAM as before, so the board writes its default contents, which then
-+go to the image; any other image is the NVRAM as the guest left it.
++The ISA M48T59 already keeps its NVRAM in a "drive" (LEMU's storage
++code, the patch before). Give the sysbus M48Txx the same property, with
++the same storage code: the image is read at realize, and the bytes the
++guest changes are written back 100 ms after the first write of a batch
++and when the VM stops. A "persistent" property says that a drive is
++attached, as on the ISA device.
 +
-+On sun4m, nvram_init() then leaves such a restored NVRAM alone and
-+writes only the IDPROM, which is the machine's identity and comes from
-+the command line (machine type, the NIC's MAC address) on every start;
-+the Sun PROMs' configuration checksum does not cover it. With
-+-prom-env the OpenBIOS partitions are written on every start as
-+before, so -prom-env applies as without an image. The M48T08 gets the
-+fixed QOM path /machine/nvram, by which query-block names the device
-+of its drive. Without a drive nothing changes.
++Three things differ on the sysbus device:
++- The image holds the NVRAM bytes below the clock registers, which are
++  never loaded or stored.
++- The image must be at least as large as the chip; its first bytes are
++  used and the rest is left alone. A management layer that allocates
++  the image may have a minimum size. The ISA device still wants the
++  exact size.
++- A blank (all-zero) image leaves the NVRAM as before, so the board
++  writes its default contents, which then go to the image; any other
++  image is the NVRAM as the guest left it.
++
++A read-only image is now loaded and not written, on both devices;
++before, the ISA device refused it.
++
++On sun4m, nvram_init() leaves a restored NVRAM alone and writes only
++the IDPROM, which is the machine's identity and comes from the command
++line (machine type, the NIC's MAC address) on every start; the Sun
++PROMs' configuration checksum does not cover it. With -prom-env the
++OpenBIOS partitions are written on every start as before. The M48T08
++gets the fixed QOM path /machine/nvram, by which query-block names the
++device of its drive. Without a drive nothing changes.
 +
 +    -drive if=none,id=nvram0,format=raw,file=nvram.raw
 +    -global sysbus-m48t08.drive=nvram0
 +
-+With an 8 KB blank image and the LX PROM, "setenv diag-switch? false"
-+at the first start makes the next start boot the disk by itself
-+(Solaris 2.6 to its login prompt), also with another MAC address.
++LEMU's port of the earlier write-through version of this patch onto its
++storage code, taken back unchanged (LEMU local branch, not pushed yet).
++Against that version: the writes reach the image up to 100 ms later
++(at once when QEMU stops through QMP quit or a VM stop, not after a
++SIGKILL), a write of the same value is written again, and the IDPROM
++goes to the image at every start.
++
++Tested with the LX PROM and a blank 4 MiB image: after "setenv
++diag-switch? false" and "reset" the PROM boots the disk, and every
++later start (Solaris 2.6 to its login prompt, also with another MAC
++address) without input; the same with a qcow2 image. The SS-20 PROM
++boots the disk by itself after the setenv as well. A setenv followed
++by SIGKILL within 0.1 s is lost, one followed by QMP quit is kept.
 +---
-+ hw/rtc/m48t59-internal.h |   5 ++
-+ hw/rtc/m48t59.c          | 101 +++++++++++++++++++++++++++++++++++++--
-+ hw/sparc/sun4m.c         |  19 +++++++-
-+ include/hw/rtc/m48t59.h  |   7 +++
-+ 4 files changed, 125 insertions(+), 7 deletions(-)
++ hw/rtc/m48t59-internal.h | 10 ++++++++
++ hw/rtc/m48t59-isa.c      |  1 +
++ hw/rtc/m48t59.c          | 51 ++++++++++++++++++++++++++++++++++++----
++ hw/sparc/sun4m.c         | 19 +++++++++++++--
++ include/hw/rtc/m48t59.h  |  7 ++++++
++ 5 files changed, 82 insertions(+), 6 deletions(-)
 +
 +diff --git a/hw/rtc/m48t59-internal.h b/hw/rtc/m48t59-internal.h
-+index cd64824..65799e4 100644
++index 0e04438..df7fdc3 100644
 +--- a/hw/rtc/m48t59-internal.h
 ++++ b/hw/rtc/m48t59-internal.h
-+@@ -58,6 +58,11 @@ typedef struct M48t59State {
-+     /* NVRAM storage */
-+     uint16_t addr;
-+     uint8_t  lock;
-++    /* Backing store of the NVRAM bytes (not the clock registers) */
-++    BlockBackend *blk;
++@@ -57,6 +57,16 @@ typedef struct M48t59State {
++     QEMUTimer *flush_timer;
++     uint32_t dirty_start;
++     uint32_t dirty_end;
+++    /*
+++     * blk_whole: the image is the whole chip and must have its size (ISA).
+++     * Otherwise it holds the NVRAM bytes below the clock registers at its
+++     * start and may be larger (sysbus).
+++     */
+++    bool blk_whole;
 ++    bool blk_ro;
-++    /* The NVRAM bytes came from a backing store that wasn't blank */
+++    uint32_t blk_bytes;
+++    /* The NVRAM bytes came from an image that was not blank */
 ++    bool restored;
-+ } M48t59State;
++     /* Model parameters */
++     uint32_t model; /* 2 = m48t02, 8 = m48t08, 59 = m48t59 */
++     /* NVRAM storage */
++diff --git a/hw/rtc/m48t59-isa.c b/hw/rtc/m48t59-isa.c
++index 4b1a314..eb619b8 100644
++--- a/hw/rtc/m48t59-isa.c
+++++ b/hw/rtc/m48t59-isa.c
++@@ -118,6 +118,7 @@ static void m48t59_isa_realize(DeviceState *dev, Error **errp)
 + 
-+ uint32_t m48t59_read(M48t59State *NVRAM, uint32_t addr);
++     s->model = u->info.model;
++     s->size = u->info.size;
+++    s->blk_whole = true;
++     s->IRQ = isa_get_irq(isadev, d->isairq);
++     m48t59_realize_common(s, errp);
++     memory_region_init_io(&d->io, OBJECT(dev), &m48t59_io_ops, s, "m48t59", 4);
 +diff --git a/hw/rtc/m48t59.c b/hw/rtc/m48t59.c
-+index be4196b..6730479 100644
++index 6b14780..aa10270 100644
 +--- a/hw/rtc/m48t59.c
 ++++ b/hw/rtc/m48t59.c
-+@@ -26,7 +26,10 @@
++@@ -26,6 +26,7 @@
 + #include "qemu/osdep.h"
 + #include "hw/core/irq.h"
 + #include "hw/core/qdev-properties.h"
 ++#include "hw/core/qdev-properties-system.h"
 + #include "hw/rtc/m48t59.h"
-++#include "system/block-backend.h"
-++#include "qemu/error-report.h"
 + #include "qemu/timer.h"
 + #include "system/runstate.h"
-+ #include "system/rtc.h"
-+@@ -186,6 +189,31 @@ static void set_up_watchdog(M48t59State *NVRAM, uint8_t value)
++@@ -34,6 +35,7 @@
++ #include "hw/core/sysbus.h"
++ #include "qapi/error.h"
++ #include "qemu/bcd.h"
+++#include "qemu/cutils.h"
++ #include "qemu/log.h"
++ #include "qemu/module.h"
++ #include "system/block-backend.h"
++@@ -218,7 +220,7 @@ static void m48t59_flush_cb(void *opaque)
++ 
++ static void m48t59_mark_dirty(M48t59State *NVRAM, uint32_t addr)
++ {
++-    if (!NVRAM->blk) {
+++    if (!NVRAM->blk || NVRAM->blk_ro || addr >= NVRAM->blk_bytes) {
++         return;
++     }
++ 
++@@ -620,6 +622,19 @@ static void m48t59_vm_state_change(void *opaque, bool running, RunState state)
 +     }
 + }
 + 
 ++/* The number of NVRAM bytes below the clock registers */
-++static uint32_t m48t59_nvram_bytes(M48t59State *NVRAM)
+++static uint32_t m48t59_nvram_bytes(M48t59State *s)
 ++{
-++    switch (NVRAM->model) {
+++    switch (s->model) {
 ++    case 2:
 ++        return 0x7f8;
 ++    case 8:
@@ -12073,100 +12129,46 @@ index 0000000..c84c040
 ++    }
 ++}
 ++
-++/* Write one changed NVRAM byte through to the backing store */
-++static void m48t59_store(M48t59State *NVRAM, uint32_t addr)
-++{
-++    if (!NVRAM->blk || NVRAM->blk_ro) {
-++        return;
-++    }
-++    if (blk_pwrite(NVRAM->blk, addr, 1, &NVRAM->buffer[addr], 0) < 0) {
-++        error_report("%s: write of NVRAM data to backing store failed",
-++                     blk_name(NVRAM->blk));
-++    }
-++}
-++
-+ /* Direct access to NVRAM */
-+ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++ void m48t59_realize_common(M48t59State *s, Error **errp)
 + {
-+@@ -195,10 +223,12 @@ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
-+     trace_m48txx_nvram_mem_write(addr, val);
-+ 
-+     /* check for NVRAM access */
-+-    if ((NVRAM->model == 2 && addr < 0x7f8) ||
-+-        (NVRAM->model == 8 && addr < 0x1ff8) ||
-+-        (NVRAM->model == 59 && addr < 0x1ff0)) {
-+-        goto do_write;
-++    if (addr < m48t59_nvram_bytes(NVRAM)) {
-++        if (NVRAM->buffer[addr] != (val & 0xFF)) {
-++            NVRAM->buffer[addr] = val & 0xFF;
-++            m48t59_store(NVRAM, addr);
-++        }
-++        return;
-+     }
-+ 
-+     /* TOD access */
-+@@ -343,7 +373,6 @@ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
-+             break;
-+         if (addr >= 0x30 && addr <= 0x3F && (NVRAM->lock & 2))
-+             break;
-+-    do_write:
-+         if (addr < NVRAM->size) {
-+             NVRAM->buffer[addr] = val & 0xFF;
++     s->buffer = g_malloc0(s->size);
++@@ -637,19 +652,29 @@ void m48t59_realize_common(M48t59State *s, Error **errp)
++                              "could not get length of NVRAM backing image");
++             return;
 +         }
-+@@ -573,6 +602,66 @@ void m48t59_realize_common(M48t59State *s, Error **errp)
-+     qemu_get_timedate(&s->alarm, 0);
++-        if (len != s->size) {
+++        if (s->blk_whole && len != s->size) {
++             error_setg(errp, "NVRAM backing image must be exactly %" PRIu32
++                        " bytes, got %" PRId64, s->size, len);
++             return;
++         }
++-        if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE,
+++        if (len < s->size) {
+++            error_setg(errp, "NVRAM backing image must be at least %" PRIu32
+++                       " bytes, got %" PRId64, s->size, len);
+++            return;
+++        }
+++        /* A read-only image is loaded and not written */
+++        s->blk_ro = !blk_supports_write_perm(s->blk);
+++        if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ |
+++                         (s->blk_ro ? 0 : BLK_PERM_WRITE),
++                          BLK_PERM_ALL, errp) < 0) {
++             return;
++         }
++-        if (blk_pread(s->blk, 0, s->size, s->buffer, 0) < 0) {
+++        s->blk_bytes = s->blk_whole ? s->size : m48t59_nvram_bytes(s);
+++        if (blk_pread(s->blk, 0, s->blk_bytes, s->buffer, 0) < 0) {
++             error_setg(errp, "could not read NVRAM backing image");
++             return;
++         }
+++        s->restored = !buffer_is_zero(s->buffer, s->blk_bytes);
++ 
++         s->dirty_start = s->size;
++         s->dirty_end = 0;
++@@ -658,6 +683,21 @@ void m48t59_realize_common(M48t59State *s, Error **errp)
++     }
 + }
 + 
-++/*
-++ * Load the NVRAM bytes from the backing store, if there is one. The
-++ * image must hold at least the NVRAM; its first bytes are used. A blank
-++ * (all-zero) image leaves the NVRAM as QEMU starts it, and the board then
-++ * writes its default contents, which go through to the image; any other
-++ * image is the NVRAM as the guest left it (s->restored). The clock
-++ * registers at the end are never loaded or stored. A read-only image is
-++ * loaded but not written.
-++ */
-++static void m48t59_load_backing_store(M48t59State *s, Error **errp)
-++{
-++    uint32_t len = m48t59_nvram_bytes(s);
-++    int64_t blk_len;
-++    uint32_t i;
-++
-++    if (!s->blk) {
-++        return;
-++    }
-++
-++    s->blk_ro = !blk_supports_write_perm(s->blk);
-++    if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ |
-++                     (s->blk_ro ? 0 : BLK_PERM_WRITE),
-++                     BLK_PERM_ALL, errp) < 0) {
-++        return;
-++    }
-++
-++    blk_len = blk_getlength(s->blk);
-++    if (blk_len < 0) {
-++        error_setg_errno(errp, -blk_len,
-++                         "could not get the length of the NVRAM image");
-++        return;
-++    }
-++    if (blk_len < s->size) {
-++        error_setg(errp, "the NVRAM image has %" PRId64 " bytes, the "
-++                   "NVRAM needs %" PRIu32, blk_len, s->size);
-++        return;
-++    }
-++    if (blk_pread(s->blk, 0, len, s->buffer, 0) < 0) {
-++        error_setg(errp, "could not read the NVRAM image");
-++        return;
-++    }
-++
-++    for (i = 0; i < len; i++) {
-++        if (s->buffer[i]) {
-++            s->restored = true;
-++            break;
-++        }
-++    }
-++}
-++
 ++bool m48t59_nvram_restored(Nvram *nvram)
 ++{
 ++    Object *obj = OBJECT(nvram);
@@ -12177,18 +12179,24 @@ index 0000000..c84c040
 ++    return M48TXX_SYS_BUS(obj)->state.restored;
 ++}
 ++
+++static bool m48txx_sysbus_get_persistent(Object *obj, Error **errp)
+++{
+++    return M48TXX_SYS_BUS(obj)->state.blk != NULL;
+++}
+++
 + static void m48t59_init1(Object *obj)
 + {
 +     M48txxSysBusDeviceClass *u = M48TXX_SYS_BUS_GET_CLASS(obj);
-+@@ -598,6 +687,7 @@ static void m48t59_realize(DeviceState *dev, Error **errp)
-+     sysbus_init_mmio(sbd, &s->iomem);
-+     sysbus_init_mmio(sbd, &d->io);
-+     m48t59_realize_common(s, errp);
-++    m48t59_load_backing_store(s, errp);
++@@ -672,6 +712,8 @@ static void m48t59_init1(Object *obj)
++     memory_region_init_io(&s->iomem, obj, &nvram_ops, s, "m48t59.nvram",
++                           s->size);
++     memory_region_init_io(&d->io, obj, &m48t59_io_ops, s, "m48t59", 4);
+++    object_property_add_bool(obj, "persistent",
+++                             m48txx_sysbus_get_persistent, NULL);
 + }
 + 
-+ static uint32_t m48txx_sysbus_read(Nvram *obj, uint32_t addr)
-+@@ -620,6 +710,7 @@ static void m48txx_sysbus_toggle_lock(Nvram *obj, int lock)
++ static void m48t59_realize(DeviceState *dev, Error **errp)
++@@ -705,6 +747,7 @@ static void m48txx_sysbus_toggle_lock(Nvram *obj, int lock)
 + 
 + static const Property m48t59_sysbus_properties[] = {
 +     DEFINE_PROP_INT32("base-year", M48txxSysBusState, state.base_year, 0),
@@ -12197,7 +12205,7 @@ index 0000000..c84c040
 + 
 + static void m48txx_sysbus_class_init(ObjectClass *klass, const void *data)
 +diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
-+index 4c9e49f..faa372c 100644
++index c60c276..1c24a04 100644
 +--- a/hw/sparc/sun4m.c
 ++++ b/hw/sparc/sun4m.c
 +@@ -155,11 +155,24 @@ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
@@ -12245,7 +12253,7 @@ index 0000000..c84c040
 +     sysbus_realize_and_unref(s, &error_fatal);
 +     sysbus_connect_irq(s, 0, slavio_irq[0]);
 +diff --git a/include/hw/rtc/m48t59.h b/include/hw/rtc/m48t59.h
-+index c149374..9955d0f 100644
++index c149374..cf4f111 100644
 +--- a/include/hw/rtc/m48t59.h
 ++++ b/include/hw/rtc/m48t59.h
 +@@ -47,4 +47,11 @@ struct NvramClass {
@@ -12253,8 +12261,8 @@ index 0000000..c84c040
 + };
 + 
 ++/*
-++ * True if the NVRAM of a sysbus M48Txx was loaded from a backing store
-++ * (its "drive" property) that wasn't blank: the board must not write its
+++ * True if the NVRAM of a sysbus M48Txx was loaded from an image (its
+++ * "drive" property) that was not blank: the board must not write its
 ++ * default contents over it.
 ++ */
 ++bool m48t59_nvram_restored(Nvram *nvram);
@@ -12262,26 +12270,35 @@ index 0000000..c84c040
 + #endif /* HW_RTC_M48T59_H */
 diff --git a/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch b/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
 new file mode 100644
-index 0000000..a8d99d3
+index 0000000..cd9c18c
 --- /dev/null
 +++ b/debian/patches/wsh/0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive.patch
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,435 @@
 +From: Hans Christian Winther-Sorensen <hc@wsh.no>
 +Subject: [PATCH] tests/qtest: test the sun4m NVRAM kept in a drive
 +
-+qtest sun4m-nvram-test for the patch before, on the SS-5: without a
-+drive the NVRAM gets OpenBIOS's layout and the IDPROM as before; a
-+blank image gets the same contents and keeps them; an image with other
-+contents is left alone across two starts, the guest's writes reach it,
-+the clock registers are not stored and the IDPROM follows the NIC's
-+MAC address; -prom-env writes OpenBIOS's partitions over it; a larger
-+image keeps the bytes past the NVRAM; the drive attached with -blockdev
-+by node name works and query-block names the device /machine/nvram;
-+a read-only image is loaded and not written.
++qtest sun4m-nvram-test for the patch before, eight cases on the SS-5's
++M48T08:
++- no-image: without a drive the NVRAM gets OpenBIOS's layout and the
++  IDPROM as before.
++- blank: a blank image gets the same contents and keeps them.
++- persist: an image with a Sun PROM's contents stays as it is; a guest
++  write reaches the image, a clock register write does not; another MAC
++  address changes only the IDPROM.
++- prom-env: -prom-env writes OpenBIOS's partitions over it.
++- larger-image: a 16 KB image is accepted and its tail is left alone.
++- blockdev: with -blockdev, query-block names /machine/nvram.
++- read-only: a read-only image is loaded and not written.
++- delayed-write: a write is not in the image at once, and is 100 ms
++  later; a write followed by a system reset still reaches it.
++
++LEMU's version of the test, taken back unchanged (LEMU local branch,
++not pushed yet); the meson.build line follows sun4m-onboard-sbus-test
++here.
 +---
 + tests/qtest/meson.build        |   3 +-
-+ tests/qtest/sun4m-nvram-test.c | 347 +++++++++++++++++++++++++++++++++
-+ 2 files changed, 349 insertions(+), 1 deletion(-)
++ tests/qtest/sun4m-nvram-test.c | 388 +++++++++++++++++++++++++++++++++
++ 2 files changed, 390 insertions(+), 1 deletion(-)
 + create mode 100644 tests/qtest/sun4m-nvram-test.c
 +
 +diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
@@ -12300,10 +12317,10 @@ index 0000000..a8d99d3
 + qtests_sparc64 = \
 +diff --git a/tests/qtest/sun4m-nvram-test.c b/tests/qtest/sun4m-nvram-test.c
 +new file mode 100644
-+index 0000000..070d57a
++index 0000000..4f62213
 +--- /dev/null
 ++++ b/tests/qtest/sun4m-nvram-test.c
-+@@ -0,0 +1,347 @@
++@@ -0,0 +1,388 @@
 ++/*
 ++ * QTest: the sun4m NVRAM kept in an image
 ++ *
@@ -12312,8 +12329,9 @@ index 0000000..a8d99d3
 ++ * and the IDPROM); an image that isn't blank is the NVRAM as the guest
 ++ * left it, which QEMU doesn't overwrite, except the IDPROM, which comes
 ++ * from the command line on every start, and OpenBIOS's partitions when
-++ * -prom-env is given. The guest's writes go through to the image; the
-++ * clock registers at the end are never stored.
+++ * -prom-env is given. The guest's writes go to the image 100 ms after the
+++ * first of a batch and when the VM stops; the clock registers at the end
+++ * are never stored.
 ++ *
 ++ * SPDX-License-Identifier: GPL-2.0-or-later
 ++ */
@@ -12328,6 +12346,7 @@ index 0000000..a8d99d3
 ++#define NVRAM_SIZE      0x2000
 ++#define CLOCK_REGS      0x1ff8          /* M48T08: clock from here on */
 ++#define IDPROM          0x1fd8
+++#define FLUSH_DELAY_NS  100000000LL     /* writes go to the image then */
 ++#define IDPROM_LEN      16
 ++#define MAC_A           "08:00:20:12:34:56"
 ++#define MAC_B           "bc:24:11:00:00:07"
@@ -12597,6 +12616,44 @@ index 0000000..a8d99d3
 ++    g_free(path);
 ++}
 ++
+++/*
+++ * The guest's writes reach the image 100 ms after the first of a batch,
+++ * and a system reset in between does not lose them
+++ */
+++static void test_delayed_write(void)
+++{
+++    uint8_t sun[NVRAM_SIZE], file[NVRAM_SIZE];
+++    char *path;
+++    QTestState *qts;
+++
+++    sun_contents(sun);
+++    path = make_image(NVRAM_SIZE, sun);
+++
+++    qts = start(path, MAC_A, NULL);
+++    /* the IDPROM written at the start */
+++    qtest_clock_step(qts, FLUSH_DELAY_NS);
+++
+++    qtest_writeb(qts, NVRAM_BASE + SUN_DIAG, 0xff);
+++    read_image(path, file);
+++    g_assert_cmphex(file[SUN_DIAG], ==, 0x00);
+++    qtest_clock_step(qts, FLUSH_DELAY_NS);
+++    read_image(path, file);
+++    g_assert_cmphex(file[SUN_DIAG], ==, 0xff);
+++
+++    /* as "setenv" and then "reset" at the PROM's prompt */
+++    qtest_writeb(qts, NVRAM_BASE + SUN_AUTO_BOOT, 0x00);
+++    qtest_system_reset(qts);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM_BASE + SUN_AUTO_BOOT), ==, 0x00);
+++    qtest_clock_step(qts, FLUSH_DELAY_NS);
+++    read_image(path, file);
+++    g_assert_cmphex(file[SUN_AUTO_BOOT], ==, 0x00);
+++    g_assert_cmphex(file[SUN_DIAG], ==, 0xff);
+++    qtest_quit(qts);
+++
+++    unlink(path);
+++    g_free(path);
+++}
+++
 ++/* A read-only image is loaded, and the guest's writes stay in memory */
 ++static void test_read_only(void)
 ++{
@@ -12648,6 +12705,7 @@ index 0000000..a8d99d3
 ++    qtest_add_func("sun4m-nvram/larger-image", test_larger_image);
 ++    qtest_add_func("sun4m-nvram/blockdev", test_blockdev);
 ++    qtest_add_func("sun4m-nvram/read-only", test_read_only);
+++    qtest_add_func("sun4m-nvram/delayed-write", test_delayed_write);
 ++
 ++    return g_test_run();
 ++}
@@ -14981,6 +15039,216 @@ index 0000000..385d8a7
 +                 qtest_add_data_func(name, t, test_idle);
 +             }
 +         }
+diff --git a/debian/patches/wsh/0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device.patch b/debian/patches/wsh/0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device.patch
+new file mode 100644
+index 0000000..78ac16b
+--- /dev/null
++++ b/debian/patches/wsh/0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device.patch
+@@ -0,0 +1,204 @@
++From: Ørjan Malde <red@foxi.me>
++Subject: [PATCH] hw/rtc/m48t59: back the NVRAM with a block device
++
++Add a "drive" property to isa-m48t59: the NVRAM is read from it at
++realize, and dirty bytes are written back 100 ms after the first write
++of a batch and when the VM stops. The image must match the NVRAM size.
++A read-only "persistent" property tells boards a drive is attached.
++Unlike a plain file, this honors -snapshot.
++
++LEMU's two commits squashed: Antoni Sawicki's "filename" property
++(ae4bb79885), which 4b98747213 by Ørjan Malde replaces with the drive.
++Left out: 4b98747213's hunk in hw/ppc/prep.c, which reads "persistent"
++for LEMU's 40p NVRAM handling, not in QEMU 11.1.3. Carried as the base
++of wsh/0059, which gives the sysbus M48Txx the same storage.
++
++Origin: https://github.com/tenox7/lemu/commit/ae4bb7988508b4f60d05100cbf8d3e5096434bd5
++Origin: https://github.com/tenox7/lemu/commit/4b98747213f74ccec30a6223e667137bb7e57499
++---
++ hw/rtc/m48t59-internal.h |  4 ++
++ hw/rtc/m48t59-isa.c      | 14 +++++++
++ hw/rtc/m48t59.c          | 85 ++++++++++++++++++++++++++++++++++++++++
++ 3 files changed, 103 insertions(+)
++
++diff --git a/hw/rtc/m48t59-internal.h b/hw/rtc/m48t59-internal.h
++index cd64824..0e04438 100644
++--- a/hw/rtc/m48t59-internal.h
+++++ b/hw/rtc/m48t59-internal.h
++@@ -53,6 +53,10 @@ typedef struct M48t59State {
++     QEMUTimer *wd_timer;
++     /* NVRAM storage */
++     uint8_t *buffer;
+++    BlockBackend *blk;
+++    QEMUTimer *flush_timer;
+++    uint32_t dirty_start;
+++    uint32_t dirty_end;
++     /* Model parameters */
++     uint32_t model; /* 2 = m48t02, 8 = m48t08, 59 = m48t59 */
++     /* NVRAM storage */
++diff --git a/hw/rtc/m48t59-isa.c b/hw/rtc/m48t59-isa.c
++index ea0f307..4b1a314 100644
++--- a/hw/rtc/m48t59-isa.c
+++++ b/hw/rtc/m48t59-isa.c
++@@ -26,6 +26,7 @@
++ #include "qemu/osdep.h"
++ #include "hw/isa/isa.h"
++ #include "hw/core/qdev-properties.h"
+++#include "hw/core/qdev-properties-system.h"
++ #include "hw/rtc/m48t59.h"
++ #include "m48t59-internal.h"
++ #include "qapi/error.h"
++@@ -81,8 +82,20 @@ static const Property m48t59_isa_properties[] = {
++     DEFINE_PROP_INT32("base-year", M48txxISAState, state.base_year, 0),
++     DEFINE_PROP_UINT32("iobase", M48txxISAState, io_base, 0x74),
++     DEFINE_PROP_UINT8("irq", M48txxISAState, isairq, 8),
+++    DEFINE_PROP_DRIVE("drive", M48txxISAState, state.blk),
++ };
++ 
+++static bool m48txx_isa_get_persistent(Object *obj, Error **errp)
+++{
+++    return M48TXX_ISA(obj)->state.blk != NULL;
+++}
+++
+++static void m48txx_isa_initfn(Object *obj)
+++{
+++    object_property_add_bool(obj, "persistent",
+++                             m48txx_isa_get_persistent, NULL);
+++}
+++
++ static void m48t59_reset_isa(DeviceState *d)
++ {
++     M48txxISAState *isa = M48TXX_ISA(d);
++@@ -138,6 +151,7 @@ static const TypeInfo m48txx_isa_type_info = {
++     .name = TYPE_M48TXX_ISA,
++     .parent = TYPE_ISA_DEVICE,
++     .instance_size = sizeof(M48txxISAState),
+++    .instance_init = m48txx_isa_initfn,
++     .abstract = true,
++     .class_init = m48txx_isa_class_init,
++     .interfaces = (const InterfaceInfo[]) {
++diff --git a/hw/rtc/m48t59.c b/hw/rtc/m48t59.c
++index be4196b..6b14780 100644
++--- a/hw/rtc/m48t59.c
+++++ b/hw/rtc/m48t59.c
++@@ -34,7 +34,9 @@
++ #include "hw/core/sysbus.h"
++ #include "qapi/error.h"
++ #include "qemu/bcd.h"
+++#include "qemu/log.h"
++ #include "qemu/module.h"
+++#include "system/block-backend.h"
++ #include "trace.h"
++ #include "system/watchdog.h"
++ 
++@@ -187,6 +189,52 @@ static void set_up_watchdog(M48t59State *NVRAM, uint8_t value)
++ }
++ 
++ /* Direct access to NVRAM */
+++#define NVRAM_FLUSH_DELAY_NS (100 * SCALE_MS)
+++
+++static void m48t59_flush(M48t59State *NVRAM)
+++{
+++    uint32_t start = NVRAM->dirty_start;
+++    uint32_t len;
+++    int ret;
+++
+++    if (!NVRAM->blk || NVRAM->dirty_end <= start) {
+++        return;
+++    }
+++    len = NVRAM->dirty_end - start;
+++    NVRAM->dirty_start = NVRAM->size;
+++    NVRAM->dirty_end = 0;
+++
+++    ret = blk_pwrite(NVRAM->blk, start, len, NVRAM->buffer + start, 0);
+++    if (ret < 0) {
+++        qemu_log_mask(LOG_GUEST_ERROR,
+++                      "m48t59: could not write back NVRAM contents\n");
+++    }
+++}
+++
+++static void m48t59_flush_cb(void *opaque)
+++{
+++    m48t59_flush(opaque);
+++}
+++
+++static void m48t59_mark_dirty(M48t59State *NVRAM, uint32_t addr)
+++{
+++    if (!NVRAM->blk) {
+++        return;
+++    }
+++
+++    if (NVRAM->dirty_end == 0) {
+++        /* First byte of a new window - arm the timer. */
+++        NVRAM->dirty_start = addr;
+++        NVRAM->dirty_end = addr + 1;
+++        timer_mod(NVRAM->flush_timer,
+++                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NVRAM_FLUSH_DELAY_NS);
+++        return;
+++    }
+++
+++    NVRAM->dirty_start = MIN(NVRAM->dirty_start, addr);
+++    NVRAM->dirty_end = MAX(NVRAM->dirty_end, addr + 1);
+++}
+++
++ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++ {
++     struct tm tm;
++@@ -346,6 +394,7 @@ void m48t59_write(M48t59State *NVRAM, uint32_t addr, uint32_t val)
++     do_write:
++         if (addr < NVRAM->size) {
++             NVRAM->buffer[addr] = val & 0xFF;
+++            m48t59_mark_dirty(NVRAM, addr);
++         }
++         break;
++     }
++@@ -563,6 +612,14 @@ const MemoryRegionOps m48t59_io_ops = {
++     .endianness = DEVICE_LITTLE_ENDIAN,
++ };
++ 
+++static void m48t59_vm_state_change(void *opaque, bool running, RunState state)
+++{
+++    if (!running) {
+++        /* Get the last window on disk before the VM is torn down. */
+++        m48t59_flush(opaque);
+++    }
+++}
+++
++ void m48t59_realize_common(M48t59State *s, Error **errp)
++ {
++     s->buffer = g_malloc0(s->size);
++@@ -571,6 +628,34 @@ void m48t59_realize_common(M48t59State *s, Error **errp)
++         s->wd_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, &watchdog_cb, s);
++     }
++     qemu_get_timedate(&s->alarm, 0);
+++
+++    if (s->blk) {
+++        int64_t len = blk_getlength(s->blk);
+++
+++        if (len < 0) {
+++            error_setg_errno(errp, -len,
+++                             "could not get length of NVRAM backing image");
+++            return;
+++        }
+++        if (len != s->size) {
+++            error_setg(errp, "NVRAM backing image must be exactly %" PRIu32
+++                       " bytes, got %" PRId64, s->size, len);
+++            return;
+++        }
+++        if (blk_set_perm(s->blk, BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE,
+++                         BLK_PERM_ALL, errp) < 0) {
+++            return;
+++        }
+++        if (blk_pread(s->blk, 0, s->size, s->buffer, 0) < 0) {
+++            error_setg(errp, "could not read NVRAM backing image");
+++            return;
+++        }
+++
+++        s->dirty_start = s->size;
+++        s->dirty_end = 0;
+++        s->flush_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, &m48t59_flush_cb, s);
+++        qemu_add_vm_change_state_handler(m48t59_vm_state_change, s);
+++    }
++ }
++ 
++ static void m48t59_init1(Object *obj)
 diff --git a/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch b/debian/patches/wsh/0110-target-sparc-halt-the-CPU-in-Linux-3.2-s-idle-loop-o.patch
 new file mode 100644
 index 0000000..07d53d6

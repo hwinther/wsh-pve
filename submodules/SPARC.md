@@ -88,8 +88,8 @@ maintains the patches.
 | `0056-hw-sparc-sun4m-map-the-SPARCstation-LX-s-on-board-SB` | The SPARCstation LX has a cgsix (GX) in SBus slot 3, the DBRI in slot 2 and a parallel port (bpp) in slot 4 on the board, and its PROM (`lx.bin`) carries their FCode and probes them on every boot. `-M LX` had none: the PROM took a data access error in the cgsix probe (THC, slot 3 offset `0x301094`) and stopped at `ok` without its banner, then another one resetting the DBRI (slot 2 offset `0x10000`); NetBSD 9.3 panicked in `bppattach()` (DMA CSR at `0x7c800000`). Unimplemented devices for the three on `-M LX`, as the SS-20 has its DBRI and bpp: the DBRI at `0x50000000` (the SS-20's layout), the bpp at `0x7c800000`, and a new hwdef field `cg6_base` for the cgsix's 16 MB at `0x60000000`; read 0, writes ignored, at the low priority of unimplemented devices (the TCX or cg3 that `-vga` puts in slot 2 keeps its addresses); the other machines unchanged | ours | not reported; see `upstream/qemu-sun4m-lx-onboard-sbus.md` |
 | `0057-hw-sparc-sun4m-give-the-DBRI-an-FCode-PROM-that-make` | The DBRI's own FCode PROM, at offset `0x1000` of its slot, which the LX, SS-10 and SS-20 PROMs load, read 0, so they made its node without a `name` or `reg`: SunOS 4.1.4 on the LX panicked in its autoconfiguration (`BAD TRAP: cpu=0 type=9 ... kernel read fault at addr=0x0`), as did Solaris 2.1/2.2 on the SS-20 PROM ("Older Sun releases on sun4m"); with a name only, SunOS 4.1.4's GENERIC kernel still panicked in its `dbri` driver. The window (0x40 bytes, below a frame buffer in the same slot) now holds a small FCode program of ours that makes the node a DBRI has: `name` `SUNW,DBRIe`, `reg` at slot offset `0x10000` (the register stub) and its interrupt at SBus level 5 (`intr` 0x39). The drivers find no codec behind the stub and go without sound (SunOS 4.1.4 `dbri: DBRI Reg8 bad!`, Solaris 2.6 `WARNING: dbri: DBRI Reg8 bad!`, NetBSD 9.3 `dbri0: no codec detected, aborting`) | ours | not reported; see `upstream/qemu-sun4m-ss20-dbri-unnamed-node.md` |
 | `0058-tests-qtest-test-the-on-board-SBus-devices-of-sun4m` | qtest `sun4m-onboard-sbus-test` for 0056-0057: the LX's cgsix, DBRI and bpp regions at their addresses and priority with the default TCX's ROM above them, none on the SS-5, and the DBRI's FCode (header, checksum, length, program, zeros after it, big-endian wide reads) on the LX and the SS-20 | ours | not in QEMU |
-| `0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it` | QEMU wrote OpenBIOS's NVRAM layout into the sun4m M48T08 at every start and kept nothing across runs, so the Sun PROMs (SS-5, SS-20, LX) found their checksum wrong, set `diag-switch?` and stopped at `ok` on every power-on. A `drive` property for the sysbus M48Txx's NVRAM bytes (written through per byte, clock registers left out); on sun4m a blank image gets QEMU's contents once, any other image is left alone except the IDPROM (from `-M` and the MAC) and, with `-prom-env`, OpenBIOS's partitions; the M48T08 at `/machine/nvram` ("The NVRAM kept in a volume") | ours | not in QEMU |
-| `0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive` | qtest `sun4m-nvram-test` for 0059: no image, a blank image, persistence across two runs (guest writes stored, clock registers not, the IDPROM following the MAC), `-prom-env`, a larger image, `-blockdev` and `query-block`'s path, a read-only image | ours | not in QEMU |
+| `0059-hw-rtc-m48t59-keep-the-NVRAM-in-a-drive-and-leave-it` | QEMU wrote OpenBIOS's NVRAM layout into the sun4m M48T08 at every start and kept nothing across runs, so the Sun PROMs (SS-5, SS-20, LX) found their checksum wrong, set `diag-switch?` and stopped at `ok` on every power-on. A `drive` property for the sysbus M48Txx with LEMU's storage code (0073): the NVRAM bytes below the clock registers are read at realize and written back 100 ms after the first write of a batch and when the VM stops; the image must be at least the chip's size; on sun4m a blank image gets QEMU's contents once, any other image is left alone except the IDPROM (from `-M` and the MAC) and, with `-prom-env`, OpenBIOS's partitions; the M48T08 at `/machine/nvram` ("The NVRAM kept in a volume"). LEMU's port of the earlier write-through version, taken back unchanged | ours, on LEMU's `m48t59` storage (0073); LEMU took it (local `c11c33129c`, not pushed) | not in QEMU (built on LEMU code, not proposed) |
+| `0060-tests-qtest-test-the-sun4m-NVRAM-kept-in-a-drive` | qtest `sun4m-nvram-test` for 0059: no image, a blank image, persistence across two runs (guest writes stored, clock registers not, the IDPROM following the MAC), `-prom-env`, a larger image, `-blockdev` and `query-block`'s path, a read-only image, and the delayed write (a write is in the image after a 100 ms clock step, also when a system reset follows it) | ours; LEMU's version of it (local `329bc9e639`, not pushed) | not in QEMU |
 | `0061-hw-dma-sparc32_dma-reset-the-lance-DMA-s-base-addres` | The lance has 24-bit addresses; the ledma adds the upper 8 bits of the DVMA address from its fourth register (`E_BASE_ADDR`, "defaults to 0xff" in the DMA2 description the file cites), which QEMU reset to 0. Solaris 2.6's `le` driver never writes it, and the SS-20 PROM sets it only when it probes with `diag-switch?` true, so when the PROM booted by itself (`diag-switch?` false) the lance asked for `0x0040f000` instead of `0xff40f000`, the IOMMU (64 MB range) faulted at level 15, and the kernel recursed into its level-15 handler until QEMU stopped (`Trap 0x29`). Reset value `0xff000000` for the ledma only ("SS-20 PROM: auto-boot and the lance DMA") | ours | not in QEMU |
 | `0062-tests-qtest-test-the-lance-DMA-s-base-address-regist` | qtest `sun4m-ledma-test` for 0061: the register after start and `system_reset` (SS-5, SS-20, LX), the ESP channel's stays 0, and the lance's init block read through a 64 MB IOMMU from `0xff400000` (an IOMMU error at `0x00400000` with the register at 0); fails without 0061 | ours | not in QEMU |
 | `0063-hw-sparc-sun4m-map-the-SPARCserver-600MP-s-VMEbus-in` | SunOS 4.1.2 on `-M SS-600MP` stopped before its banner (`Unhandled Exception 0x00000029`, `pc f80a6054`): its early setup for the 600MP reads and writes the VMEbus interface registers at physical `0xf.df01_0000` (offsets 0, 4 and 8: control, AFSR, AFAR) through the MMU bypass ASI 0x2f, where QEMU had nothing (a bypass load keeps trap 0x29 with 0049). An unimplemented device over that page (reads 0, writes ignored), on the SS-600MP only; no VMEbus model, so the VME spaces stay empty and the kernel's VME probes find nothing ("Older Sun releases on sun4m") | ours | not reported; see `upstream/qemu-sun4m-ss600mp-vme-lebuffer.md` |
@@ -102,6 +102,7 @@ maintains the patches.
 | `0070-target-sparc-halt-the-CPU-in-Linux-s-idle-loop-on-su` | Linux on sun4u spun in its idle loop at 100% of a host core: `arch_cpu_idle()` only touches the NMI watchdog there (it yields to the hypervisor on sun4v), and no kernel option changes that. The translator recognises `arch_cpu_idle()` at its call of `arch_touch_nmi_watchdog()` by the `tlb_type` test next to it and the start of the sun4v branch, as gcc lays it out either way round (Linux 6.1 and 7.3: `be` to the sun4v branch; 6.17 and 7.0: `bne` around it), and halts the CPU there at `%pil` 14 (interrupts disabled, as the idle loop calls it), with nothing pending and `TIF_NEED_RESCHED` clear; the tick, stick and interrupt vector wake it whatever `%pil`, and the interrupt is taken when the loop enables interrupts. The window around a call grows to 24 words before it; words on another page read as 0 ("sparc64 (sun4u)", "Idle") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0071-target-sparc-recognise-the-idle-loop-of-Solaris-7-an` | Solaris 7 and 8 spun in `idle()` on sun4u: Sun's older compiler lays the loop out the other way round from 9 and 10 (`be` to the call through `idle_cpu`, `swtch()` first). The translator recognises that layout too and halts at the call as for Solaris 9 and 10 (`-trace sparc64_idle_match`: `Solaris 7/8`) | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0072-tests-qtest-test-the-Linux-and-Solaris-7-8-idle-loop` | qtest `sun4u-idle-test` for 0070-0071: the Solaris 7/8 layout with the cases of the others, and Linux 7.3, 6.1 and 7.0's `arch_cpu_idle()` in a loop that disables interrupts to level 14 round it: it must halt there, not with `TIF_NEED_RESCHED` set, without `PSTATE.IE`, at level 0 or 15, and a 1 ms tick must wake it at level 14 and be taken when the loop enables interrupts; 51 cases | ours | not in QEMU |
+| `0073-hw-rtc-m48t59-back-the-NVRAM-with-a-block-device` | LEMU's storage for the M48T59's NVRAM, the base of 0059: a `drive` property on `isa-m48t59` (read at realize, dirty bytes written back 100 ms after the first write of a batch and when the VM stops, the image exactly the NVRAM's size) and a read-only `persistent` property. LEMU's `ae4bb79885` and `4b98747213` squashed, without the latter's `hw/ppc/prep.c` hunk (LEMU's 40p). In `debian/patches/series` before 0059 | [LEMU `ae4bb798`](https://github.com/tenox7/lemu/commit/ae4bb7988508b4f60d05100cbf8d3e5096434bd5) by Antoni Sawicki and [LEMU `4b987472`](https://github.com/tenox7/lemu/commit/4b98747213f74ccec30a6223e667137bb7e57499) by Ørjan Malde | not in QEMU |
 | `0114-target-sparc-halt-the-CPU-in-FreeBSD-s-idle-loop-on-` | FreeBSD 12.4 on sun4u spun in its idle loop at 100% of a host core: ULE's `sched_idletd()` calls `cpu_idle()`, which is empty on sparc64. The translator recognises the call by the `tdq_cpu_idle` stores and the `tdq_load` test round it and halts there; FreeBSD's kernel runs at TL 1, so it is halted at TL 1 (the others still only at TL 0), and without the 100 us poll, which its loop (a steal attempt and its own `sched_idlespins` between calls) never ended: halted at the first call, one round of the loop after each wake (`SPARC64_IDLE_TL1`, `SPARC64_IDLE_NO_POLL`). Idle at the shell 8.7% instead of 105-107% ("FreeBSD 12.4 on sun4u") | ours, after LEMU's SunOS idle (0012) | not in QEMU |
 | `0115-tests-qtest-test-the-FreeBSD-idle-loop-on-sun4u` | qtest `sun4u-idle-test` for 0114: the FreeBSD layout at TL 1 with the cases of the others, a TL>0 trap table for the tick there, and a `tl-up` case for every layout (one trap level above where its kernel idles: no halt); 70 cases with 0111's Linux 3.2 | ours | not in QEMU |
 | `0120-target-sparc-keep-SuperSPARC-instruction-fetches-in-` | Sun's SS-600MP boot PROM stopped QEMU within seconds (`Trap 0x01 (Instruction Access Fault) while interrupts disabled`): its MMU register test, run from the PROM in boot mode with traps disabled, sets the MMU enable bit, and QEMU translated the next instruction fetch. On the SuperSPARC the boot mode bit (bit 13 of the MMU control register) sends every instruction fetch to the PROM whether the MMU is on or not, and data accesses are translated. New CPU feature `boot-mode-ifetch`, on the `TI-SuperSparc-*` models only: an instruction fetch in boot mode uses the physical MMU index, which maps it to the PROM as with the MMU off; `-cpu TI-SuperSparc-II,-boot-mode-ifetch` turns it off. OpenBIOS clears boot mode when it turns the MMU on, so it isn't affected. The PROM then loops in its later tests ("Older Sun releases on sun4m", "Sun's own SS-600MP boot PROM") | ours | not reported |
@@ -296,7 +297,10 @@ section).
 
 0059-0060 apply on top of 0001-0058 (2026-11-21, lab builds of 11.1.3; not in a package yet):
 `sun4m-nvram-test` 7/7, `qtest-sparc` 28 OK with `m48t59-test` and `prom-env-test`, 2 skipped and the
-`qmp-test` `oob` failure as before ("The NVRAM kept in a volume").
+`qmp-test` `oob` failure as before ("The NVRAM kept in a volume"). Replaced on 2026-11-25 by LEMU's
+form: 0073, then 0059-0060, after 0058; the whole series (173 patches) pushes with quilt and no fuzz
+on the pinned 11.1.3; `sun4m-nvram-test` 8/8, `qtest-sparc` and `qtest-sparc64` 54 OK, 4 skipped and
+the two `qmp-test` `oob` failures as before.
 
 0061-0062 apply on top of 0001-0060 (2026-11-21, lab build of 11.1.3; not in a package yet):
 `sun4m-ledma-test` 5/5 (its lance and reset cases fail without 0061), `qtest-sparc` 29 OK, 2 skipped
@@ -2358,23 +2362,34 @@ Still missing: a real cgsix model for a graphical console.
   with more RAM OpenBIOS's context table lands outside what the MMU can reach (`Trap 0x21`).
   pve-qemu `wsh/0055` (in review) caps `-M LX`, `SPARCClassic` and `SPARCbook` at 128 MB.
 
-### The NVRAM kept in a volume (pve-qemu `wsh/0059`-`0060`, qemu-server `nvram0`)
+### The NVRAM kept in a volume (pve-qemu `wsh/0073`, `0059`-`0060`, qemu-server `nvram0`)
 
 So that the Sun PROMs boot by themselves after a one-time `setenv diag-switch? false` (the analysis
-is under "SPARCstation LX with its own PROM", "Auto-boot"). In review, 2026-11-21; not in a package
-yet. Owner note for upstream: `upstream/qemu-sun4m-nvram-backend.md`.
+is under "SPARCstation LX with its own PROM", "Auto-boot"). In the published packages as the
+write-through version (pve-qemu-kvm 11.1.3-4+wsh2 had it); since 2026-11-25 (in review) in the
+form LEMU ported onto its own `m48t59` storage code, so both carry the same code: `wsh/0073` is LEMU's storage (LEMU origin:
+`ae4bb79885` by Antoni Sawicki and `4b98747213` by Ørjan Malde, on LEMU's `master`), `wsh/0059` is
+ours on top of it (built on LEMU; LEMU's local `c11c33129c`) and `wsh/0060` its qtest (LEMU's local
+`329bc9e639`). Built on LEMU code, so the patch is not for QEMU (`upstream/README.md`); the owner
+note `upstream/qemu-sun4m-nvram-backend.md` keeps the problem as seen on plain QEMU.
 
-**QEMU (`wsh/0059`).** The sysbus M48Txx (`sysbus-m48t02/08/59`) has a `drive` property for its
-NVRAM bytes; the clock registers at the end (from `0x1ff8` on the M48T08) are never loaded or
-stored. The image is read at realize, and each byte the guest changes is written through
-(`blk_pwrite` of one byte, only on a change, as `macio-nvram` does). The image must hold at least
-the 8 KB; a larger one is fine (the first bytes are used, the rest is left alone); a read-only one
-is loaded and not written. On sun4m, `nvram_init()`:
+**QEMU (`wsh/0073`, `wsh/0059`).** The sysbus M48Txx (`sysbus-m48t02/08/59`) has a `drive` property
+for its NVRAM bytes, with the storage code that `isa-m48t59` has from 0073; the clock registers at
+the end (from `0x1ff8` on the M48T08) are never loaded or stored. The image is read at realize. The
+bytes the guest writes are marked dirty (a write of the same value too) and written back as one
+range 100 ms (virtual clock) after the first write of a batch, and when the VM stops (any run-state
+change to not running: QMP `quit`, `stop`, SIGTERM, the guest powering off); a SIGKILL loses what is
+still pending. The image must be at least the chip's size (8 KB on the M48T08); a larger one is fine
+(the first bytes are used, the rest is left alone), a smaller one is refused (`NVRAM backing image
+must be at least 8192 bytes`); `isa-m48t59` keeps the exact-size rule. A read-only image is loaded
+and not written (the guest's changes last until QEMU exits). A read-only `persistent` property says
+whether a drive is attached. On sun4m, `nvram_init()`:
 
 - **blank image** (all zero, as qemu-server allocates it): writes OpenBIOS's layout and the IDPROM
   as without a drive, and so into the image, once;
 - **any other image**: leaves bytes `0`-`0x1fd7` alone and writes only the IDPROM (`0x1fd8`-`0x1fef`:
-  format, machine type from `-M`, the NIC's MAC address, host ID, checksum) on every start. The
+  format, machine type from `-M`, the NIC's MAC address, host ID, checksum) on every start, and so
+  into the image on every start (the same bytes unless `-M` or the MAC changed). The
   IDPROM is the machine's identity, which PVE manages through `net0`; the Sun PROMs never write it
   and their configuration checksum doesn't cover it (the LX PROM auto-boots after a start with
   another MAC, lab, and a clone with a new MAC auto-boots in PVE). Decision: refresh it;
@@ -2397,15 +2412,18 @@ QEMU's `system` and `free` headers still at `0x4` and `0x20`, the variables from
 at `0x1fd8`. So a test of the layout ("is this OpenBIOS's partition?") would misfire on a Sun
 image; the design depends on blank/not blank and `-prom-env` only.
 
-**qtest `wsh/0060`** `sun4m-nvram-test` (SS-5), 7 cases: no image (as before), blank image (QEMU's
-contents, kept in the file, clock bytes zero), persistence across two QEMU runs with a guest write
-and a clock register write (the write reaches the file, the clock isn't stored) and another MAC on
-the second (only the IDPROM changes, its checksum valid), `-prom-env` over a Sun image (OpenBIOS's
-partition back), a 16 KB image (the tail kept), `-blockdev` by node name with `query-block`'s
-`/machine/nvram`, a read-only image. With 0001-0060 (lab build, 2026-11-21) `qtest-sparc`: 28 OK
+**qtest `wsh/0060`** `sun4m-nvram-test` (SS-5), 8 cases (7 before 2026-11-25): no image (as before),
+blank image (QEMU's contents, kept in the file, clock bytes zero), persistence across two QEMU runs
+with a guest write and a clock register write (the write reaches the file, the clock isn't stored)
+and another MAC on the second (only the IDPROM changes, its checksum valid), `-prom-env` over a Sun
+image (OpenBIOS's partition back), a 16 KB image (the tail kept), `-blockdev` by node name with
+`query-block`'s `/machine/nvram`, a read-only image, and the delayed write (a write isn't in the
+image at once and is after a 100 ms `clock_step`; a write followed by `qtest_system_reset()` reaches
+it after the next step). With 0001-0060 (lab build, 2026-11-21) `qtest-sparc`: 28 OK
 (`sun4m-nvram-test` 7/7, `m48t59-test`, `prom-env-test`), 2 skipped, and the `qmp-test` `oob`
-failure as before. `checkpatch.pl`: no style errors (only the missing Signed-off-by, as in the
-other patches).
+failure as before. `checkpatch.pl`: no style errors (only the missing Signed-off-by, as in the other
+patches). LEMU's form (2026-11-25): 8/8, and `checkpatch.pl --no-signoff` finds nothing in 0073 and
+0059 and only the MAINTAINERS reminder for 0060's new file.
 
 **qemu-server (`nvram0`).** A drive key like `tpmstate0`: `nvram0: <storage>:<volume>[,format=]`,
 in `valid_drive_names` (so backup, restore, clone, move, migration, delete and unused-disk handling
@@ -2449,6 +2467,27 @@ a 0001-0060 `qemu-system-sparc` bind-mounted, copies of the stored disks; each V
 byte-identical volumes, `qm disk move ... --format qcow2` and `qm destroy --purge` work. The UI's
 Add/Remove was checked in the same container (screenshots in the PR). Not tested: live migration,
 backup of a running VM, snapshots with the volume, storages other than `dir`.
+
+**LEMU's form (2026-11-25, lab: a `qemu-system-sparc` of the whole series with 0073 and the new
+0059-0060, plain and in the PVE container built from the published packages with that binary in
+place of the package's; copies of the stored disks).**
+
+| Check | Result |
+| --- | --- |
+| LX PROM (`lx.bin`, 64 MB, the LX's Solaris 2.6 disk), blank 4 MiB raw image | `ok` after 30 s (`Setting NVRAM parameters to default values`); `setenv diag-switch? false`, `reset`: the PROM boots the disk; QMP `quit`, then two new QEMU processes: the PROM boots `sd@3,0` by itself, `console login:` after 84-86 s; a start with another MAC boots by itself too and changes only the IDPROM's MAC byte and its checksum. The image as described above: `0xc8` at 0, `0x00` at 1, QEMU's `system` and `free` headers at `0x4` and `0x20`, the variables from `0x29e`, the IDPROM at `0x1fd8`, the clock bytes and everything past 8 KB zero |
+| The same with a qcow2 image | the same bytes; the next start boots by itself to `console login:` (101 s) |
+| Read-only image | a set-up image boots by itself and isn't written (not even the IDPROM of another MAC); a blank one stays blank, so every start is a first start (`ok` after the network boot) |
+| Image of 4 KB | refused: `NVRAM backing image must be at least 8192 bytes, got 4096` |
+| `setenv diag-switch? false`, then QEMU ended at once (LX, an image that already holds the PROM's defaults) | the setenv changes one byte (1, `0xff` to `0x00`; it is outside the checksum). QMP `quit` 0.01 s after the echo: in the image, the next start boots the disk. SIGTERM at once: in the image. SIGKILL at once or 0.09 s after the echo: lost, the next start boots the network and stops at `ok`. SIGKILL 0.5 s after: in the image |
+| SS-20 PROM (`ss20_v2.25_rom`, 512 MB, the stored `sol26-enduser-ss20prom` disk), blank raw image | `ok` after 16 s; `setenv diag-switch? false`, QMP `quit`; the next start boots the disk by itself, the pending reconfiguration boot (`Configuring the /devices directory`) runs to the root password screen |
+| Through PVE: `pve_matrix.py pve --only sol26-ss20prom-nvram` (`sun-prom-nvram.py`, `nvram0: local:1`) | passed (392 s): setup to login 122 s, after `qm stop`/`qm start` the PROM boots the disk and Solaris reaches `console login:` 66 s after `qm start`, `reboot -- -r` to login 112 s, `first_boot_reconfigured` |
+| Through PVE without a disk (SS-20 PROM, 128 MB, `nvram0: local:1`, raw and qcow2) | a fresh volume is blank; first start: the long memory test, `diag-switch? = true`; `setenv diag-switch? false` and right after it `qm stop` (QMP `quit`); `qm start`: the short memory test, `printenv` shows `false`. `vzdump --mode stop` (of the stopped VM) includes `drive-nvram0`, `qmrestore` to a new ID gives a byte-identical volume, and the restored VM starts with `false` |
+
+So the 100 ms delay matters only when QEMU is killed without a chance to stop the VM: PVE's `qm stop`
+sends QMP `quit` first, and `quit` and SIGTERM both write the pending bytes; a host crash or
+SIGKILL within 100 ms of the guest's last NVRAM write loses that write. Not tested: live migration and
+snapshots with the volume, `qm shutdown` (QMP `system_powerdown`), the SS-5 PROM with this form
+(the same chip as the LX and SS-20).
 
 **SS-20 PROM: auto-boot and the lance DMA (pve-qemu `wsh/0061`-`0062`).** Before 0061, when the
 SS-20 PROM booted the disk by itself, Solaris 2.6 got to `configuring network interfaces:` and QEMU

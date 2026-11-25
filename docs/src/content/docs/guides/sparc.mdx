@@ -415,6 +415,9 @@ on the SS-5). Solaris 2.6 on the SS-20 PROM too, with `wsh/0061` (about 60 s thr
 - **The MAC address and the machine type** (the IDPROM at the end of the NVRAM) come from the VM's
   configuration at every start, as without the volume. Changing net0's MAC keeps the PROM's
   settings.
+- **When the volume is written:** QEMU writes what the PROM changed to the volume 100 ms after the
+  change and when the VM stops (`qm stop`, or Stop in the UI). Only a QEMU process killed
+  outright (SIGKILL) or a host that loses power within those 100 ms loses a `setenv`; type it again.
 - **OpenBIOS** works with and without the volume as before: QEMU writes its layout into a blank
   volume at the first start, and OpenBIOS boots the VM's boot order. `-prom-env` in `args` still
   applies at every start (it replaces OpenBIOS's part of the NVRAM each time).
