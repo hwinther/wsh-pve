@@ -62,6 +62,13 @@ const PACKAGE_DEFS = [
     releaseName: "wsh-qemu-rdp",
     patch: null,
   },
+  // Optional, built by wsh-gst-qemu-dbus.yml (the GStreamer sources and input bridge for the D-Bus
+  // display): its version comes from git too, its release tags are wsh-gst-qemu-dbus-<version>.
+  {
+    name: "wsh-gst-qemu-dbus",
+    releaseName: "wsh-gst-qemu-dbus",
+    patch: null,
+  },
 ];
 
 function parsePackagesFile(filePath) {
