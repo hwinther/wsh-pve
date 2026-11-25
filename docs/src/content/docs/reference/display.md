@@ -164,6 +164,54 @@ xfreerdp3 /v:127.0.0.1:20130 /u:rdp /p:"$(sed -n 's/^RDP_PASSWORD=//p' /etc/wsh-
   /cert:tofu /sound
 ```
 
+## Streaming sources (GStreamer)
+
+The optional package `wsh-gst-qemu-dbus` has the pieces a streaming server on the node takes a VM's
+D-Bus display from: two GStreamer sources and an input bridge (`packages/wsh-gst-qemu-dbus` in
+wsh-pve). They are the first part of the Moonlight streaming path (stage 3 in the ROADMAP); the
+server itself (Wolf, in a container on the node) isn't there yet. They need no GPU.
+
+```sh
+apt install wsh-gst-qemu-dbus gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+qm set 130 --vga std,display=dbus --audio0 device=AC97,driver=dbus
+gst-launch-1.0 qemudbussrc vmid=130 ! videoconvert ! autovideosink        # the picture
+gst-launch-1.0 qemudbusaudiosrc vmid=130 ! audioconvert ! autoaudiosink   # the sound
+qemu-dbus-input --vmid 130                                                 # input, one command per line
+```
+
+- **Who may**: root, or a member of `wsh-display` (the bus's policy, see [D-Bus display](#d-bus-display)).
+  `vmid=` is short for `address=unix:path=/run/wsh-dbus-display/<vmid>.sock`; `console=` picks
+  another console than 0. Each element registers its own listener, so they run next to each other,
+  next to qemu-rdp and next to VNC.
+- **`qemudbussrc`** gives raw video in the console's own format (`BGRx` for the usual 32-bit
+  consoles, at the guest's resolution; a mode change renegotiates), one buffer per change of the
+  picture, timestamped when it was taken (a live source with a variable frame rate: put `videorate`
+  after it for a fixed one). Without GL it takes the console's surface through a shared memory map
+  (or, with `shared-map=false`, the pixels in each update). With GL (`mesa-display=dbus`) QEMU hands
+  it each frame as a dmabuf; it copies the changed part out and answers at once, since QEMU holds
+  the guest's GL frames until the client answers (0.07-0.4 ms on average in the tests, single frames
+  up to 14 ms on a busy host). It reads linear dmabufs only (Mesa's software renderer through `/dev/udmabuf`, which the
+  tests use); a GPU's tiled dmabufs (NVIDIA's) aren't read yet: it warns and drops those frames.
+  The mouse cursor isn't drawn into the picture. When the VM stops it ends the stream (EOS).
+- **`qemudbusaudiosrc`** gives the guest's playback as raw PCM as QEMU sends it (48 kHz signed
+  16-bit stereo with qemu-server's audio driver `dbus`), in 10 ms buffers. QEMU passes the guest
+  mixer's volume and mute separately; the element applies them (`apply-volume=false` passes the
+  samples as they are).
+- **`qemu-dbus-input`** reads lines like `key 30 1` (Linux key code, press) and `key 30 0`
+  (release), `btn left 1`, `wheel -1`, `rel 10 5` and `abs 640 400` (or `abs X Y W H`, scaled from a
+  W x H client window), and sends them to the console's keyboard and mouse. QEMU takes absolute
+  positions only from an absolute pointer in the guest (PVE's USB tablet, `tablet: 1`, or virtio's)
+  and relative motion only from a relative one (PS/2 with `tablet: 0`, the Sun mouse); the bridge
+  converts either to what the guest has, and says `mode absolute` or `mode relative`. `query` gives
+  the mode and the console's size, `sync` waits for QEMU's answers. Keys still down when its input
+  ends are released. `man qemu-dbus-input` has the whole protocol.
+- **Tested** (`packages/wsh-gst-qemu-dbus/test.sh`, in CI; TCG, no GPU): wisp's framebuffer
+  kernels on x86 (std VGA, PS/2, AC97), on aarch64's virt (virtio tablet, AC97) and on x86 with
+  `dbus,gl=on`: the frame identical to QEMU's screendump, keys in the guest 5 ms after the bridge
+  read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at 440.0 Hz, the end
+  of stream when QEMU quits. Also through PVE (`qm start` of a `display=dbus` and a
+  `mesa-display=dbus` VM).
+
 ## VGA retrace
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input

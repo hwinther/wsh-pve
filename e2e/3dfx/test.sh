@@ -61,6 +61,9 @@
 # With a QEMU that takes VNC next to dbus,gl=on (pve-qemu wsh/0130: the D-Bus console reads the GL
 # scanouts back for it) the dbus run gets a VNC server too, and DBUS_PICTURE=vnc checks the probes in
 # the picture VNC serves instead of the listener's (the listener still takes every frame).
+# DBUS_LISTENER runs another listener with the same arguments and summary line, e.g.
+# packages/wsh-gst-qemu-dbus/tests/gst-listener.py (the qemudbussrc GStreamer element, with the
+# wsh-gst-qemu-dbus package and python3-gi's GStreamer bindings installed beforehand).
 # QEMU's EGL display needs a render node, or /dev/udmabuf for Mesa's surfaceless platform (docker
 # run --device /dev/udmabuf); without either the run is skipped (77).
 #
@@ -422,7 +425,7 @@ run_guest() {
 	listener=""
 	if [ "$MODE" = dbus ]; then
 		rm -f "$work/dbus-frame.ppm"
-		python3 "$SRC/e2e/3dfx/dbus-listener.py" "unix:path=$work/bus" "$work/dbus-frame.ppm" "${DBUS_DELAY_MS:-0}" \
+		python3 "${DBUS_LISTENER:-$SRC/e2e/3dfx/dbus-listener.py}" "unix:path=$work/bus" "$work/dbus-frame.ppm" "${DBUS_DELAY_MS:-0}" \
 			> "$OUT/$name-dbus.log" 2>&1 &
 		listener=$!
 	fi
