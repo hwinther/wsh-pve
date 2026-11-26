@@ -14,9 +14,20 @@
  * default) the element scales the samples by it (signed 16-bit PCM; other formats pass as they
  * are), as a sound card would.
  *
- * Timestamps: the running time a Write arrived at, minus its duration, while it stays within 40
- * ms of the end of the buffer before (then the buffers follow each other without gaps); after a
- * pause (the guest stopped playing) the arrival time again.
+ * Silence: QEMU writes only while the guest plays. Between sounds (and before the first) the
+ * element outputs silence in the stream's format in real time (silence=true, the default), so
+ * the stream has no gaps: downstream, a gap at a sound's start made audiorate (in Wolf's audio
+ * pipeline) push all the missing time as silence at once, and the leaky queue before it dropped
+ * the sound's first 50-85 ms meanwhile. A silent buffer goes out when no Write came for its 10 ms
+ * by the time it ends; while a stream is enabled, or wrote in the last 200 ms, 100 ms later (a
+ * busy guest's sound comes late now and then, and that shouldn't cut it up).
+ *
+ * Timestamps: continuous (each buffer starts where the one before ended), so nothing overlaps
+ * and nothing is dropped downstream. The start is the running time the first Write (or silent
+ * buffer) arrived at, minus its duration; when the guest's sound comes more than 40 ms later
+ * than its continuous time (a pause, without silence=true, or a late guest), it moves forward to
+ * that again, and the gap is the downstream's to fill. Sound that runs ahead (QEMU catching up
+ * with a burst of Writes) keeps its continuous time; a Write more than 200 ms ahead is dropped.
  *
  * Copyright 2026 WsHosting ENK. License: GPL-3 (see debian/copyright).
  */
@@ -54,8 +65,15 @@ GST_DEBUG_CATEGORY_STATIC (gst_qemu_dbus_audio_src_debug);
   " </interface>" \
   "</node>"
 
-/* Continuous timestamps while a buffer arrives within this of the previous one's end */
+/* Continuous timestamps unless a buffer arrives later than this after the previous one's end */
 #define RESYNC_THRESHOLD (40 * GST_MSECOND)
+/* A Write further ahead of its arrival than this is dropped */
+#define MAX_AHEAD (200 * GST_MSECOND)
+/* Silence: buffers of this length; while a stream is enabled or wrote within SILENCE_RECENT,
+ * only SILENCE_GRACE later */
+#define SILENCE_FRAMES_PER_SECOND 100
+#define SILENCE_GRACE (100 * GST_MSECOND)
+#define SILENCE_RECENT (200 * GST_MSECOND)
 /* What waits for downstream at most; older buffers are dropped */
 #define MAX_QUEUED (500 * GST_MSECOND)
 
@@ -66,12 +84,14 @@ enum
   PROP_VMID,
   PROP_TIMEOUT,
   PROP_APPLY_VOLUME,
+  PROP_SILENCE,
   PROP_STATS,
 };
 
 #define DEFAULT_VMID -1
 #define DEFAULT_TIMEOUT 10
 #define DEFAULT_APPLY_VOLUME TRUE
+#define DEFAULT_SILENCE TRUE
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC, GST_PAD_ALWAYS,
@@ -92,6 +112,7 @@ typedef struct
   GstBuffer *buf;
   GstAudioInfo info;
   GstClockTime arrival;         /* running time, or NONE */
+  gboolean silent;              /* made by the element (silence=true) */
 } Chunk;
 
 struct _GstQemuDBusAudioSrc
@@ -102,6 +123,7 @@ struct _GstQemuDBusAudioSrc
   gint vmid;
   guint timeout;
   gboolean apply_volume;
+  gboolean silence;
 
   QemuDBusPeer *peer;
   GDBusNodeInfo *node;
@@ -115,12 +137,16 @@ struct _GstQemuDBusAudioSrc
   gboolean have_active;
   GQueue chunks;
   GstClockTime queued;
+  GstAudioInfo last_info;       /* the newest stream's format, for silence */
+  gboolean have_last_info;
+  guint n_enabled;              /* streams enabled now */
+  GstClockTime last_write;      /* the running time of the newest Write, or NONE */
 
   GstAudioInfo negotiated;      /* streaming thread only */
   gboolean have_caps;
   GstClockTime next_ts;
 
-  guint64 n_writes, n_bytes, n_dropped, n_other, n_buffers;
+  guint64 n_writes, n_bytes, n_dropped, n_other, n_buffers, n_silence, n_resync, n_ahead;
 };
 
 #define gst_qemu_dbus_audio_src_parent_class parent_class
@@ -173,6 +199,8 @@ scale_s16 (GstBuffer * buf, const Stream * stream)
   gst_buffer_unmap (buf, &map);
 }
 
+static void count_enabled (GstQemuDBusAudioSrc * src);
+
 static void
 on_write (GstQemuDBusAudioSrc * src, GVariant * params)
 {
@@ -207,11 +235,19 @@ on_write (GstQemuDBusAudioSrc * src, GVariant * params)
     src->n_other++;
     goto out;
   }
+  if (!stream->enabled) {
+    /* it plays, whether or not SetEnabled said so */
+    stream->enabled = TRUE;
+    count_enabled (src);
+  }
   src->n_bytes += n;
   chunk = g_new0 (Chunk, 1);
   chunk->buf = gst_buffer_new_memdup (bytes, n);
   chunk->info = stream->info;
   chunk->arrival = running_time_now (src);
+  src->last_write = chunk->arrival;
+  GST_LOG_OBJECT (src, "Write of %" G_GSIZE_FORMAT " bytes at %" GST_TIME_FORMAT, n,
+      GST_TIME_ARGS (chunk->arrival));
   if (src->apply_volume && GST_AUDIO_INFO_FORMAT (&stream->info) == GST_AUDIO_FORMAT_S16LE)
     scale_s16 (chunk->buf, stream);
   g_queue_push_tail (&src->chunks, chunk);
@@ -258,15 +294,32 @@ on_init (GstQemuDBusAudioSrc * src, GVariant * params)
   }
   stream = g_new0 (Stream, 1);
   gst_audio_info_set_format (&stream->info, format, freq, channels, NULL);
-  stream->enabled = TRUE;
+  /* enabled with SetEnabled */
+  stream->enabled = FALSE;
   stream->n_volume = 0;
   key = g_new (guint64, 1);
   *key = id;
   g_mutex_lock (&src->lock);
   g_hash_table_replace (src->streams, key, stream);
+  src->last_info = stream->info;
+  src->have_last_info = TRUE;
   g_mutex_unlock (&src->lock);
   GST_INFO_OBJECT (src, "stream %" G_GUINT64_FORMAT ": %s, %u Hz, %u channels", id,
       gst_audio_format_to_string (format), freq, channels);
+}
+
+/* under lock */
+static void
+count_enabled (GstQemuDBusAudioSrc * src)
+{
+  GHashTableIter iter;
+  gpointer value;
+
+  src->n_enabled = 0;
+  g_hash_table_iter_init (&iter, src->streams);
+  while (g_hash_table_iter_next (&iter, NULL, &value))
+    if (((Stream *) value)->enabled)
+      src->n_enabled++;
 }
 
 static void
@@ -274,6 +327,7 @@ on_fini (GstQemuDBusAudioSrc * src, guint64 id)
 {
   g_mutex_lock (&src->lock);
   g_hash_table_remove (src->streams, &id);
+  count_enabled (src);
   if (src->have_active && src->active == id)
     src->have_active = FALSE;
   g_mutex_unlock (&src->lock);
@@ -293,7 +347,10 @@ on_set_enabled (GstQemuDBusAudioSrc * src, GVariant * params)
     stream->enabled = enabled;
   if (!enabled && src->have_active && src->active == id)
     src->have_active = FALSE;
+  count_enabled (src);
+  g_cond_broadcast (&src->cond);
   g_mutex_unlock (&src->lock);
+  GST_DEBUG_OBJECT (src, "stream %" G_GUINT64_FORMAT ": %s", id, enabled ? "enabled" : "disabled");
 }
 
 static void
@@ -381,6 +438,9 @@ reset (GstQemuDBusAudioSrc * src)
     chunk_free (chunk);
   src->queued = 0;
   src->have_active = FALSE;
+  src->have_last_info = FALSE;
+  src->n_enabled = 0;
+  src->last_write = GST_CLOCK_TIME_NONE;
 }
 
 static gboolean
@@ -403,6 +463,7 @@ gst_qemu_dbus_audio_src_start (GstBaseSrc * bsrc)
   src->eos = FALSE;
   src->flushing = FALSE;
   src->n_writes = src->n_bytes = src->n_dropped = src->n_other = src->n_buffers = 0;
+  src->n_silence = src->n_resync = src->n_ahead = 0;
   g_mutex_unlock (&src->lock);
   src->have_caps = FALSE;
   src->next_ts = GST_CLOCK_TIME_NONE;
@@ -437,9 +498,10 @@ static gchar *
 stats_string (GstQemuDBusAudioSrc * src)
 {
   return g_strdup_printf ("writes=%" G_GUINT64_FORMAT " bytes=%" G_GUINT64_FORMAT
-      " buffers=%" G_GUINT64_FORMAT " dropped=%" G_GUINT64_FORMAT " other-streams=%"
-      G_GUINT64_FORMAT, src->n_writes, src->n_bytes, src->n_buffers, src->n_dropped,
-      src->n_other);
+      " buffers=%" G_GUINT64_FORMAT " silent-buffers=%" G_GUINT64_FORMAT " dropped=%"
+      G_GUINT64_FORMAT " ahead-dropped=%" G_GUINT64_FORMAT " resyncs=%" G_GUINT64_FORMAT
+      " other-streams=%" G_GUINT64_FORMAT, src->n_writes, src->n_bytes, src->n_buffers,
+      src->n_silence, src->n_dropped, src->n_ahead, src->n_resync, src->n_other);
 }
 
 static gboolean
@@ -506,66 +568,154 @@ gst_qemu_dbus_audio_src_query (GstBaseSrc * bsrc, GstQuery * query)
   return GST_BASE_SRC_CLASS (parent_class)->query (bsrc, query);
 }
 
+/* A buffer of silence in this format, frames long */
+static GstBuffer *
+silence_buffer (const GstAudioInfo * info, guint64 frames)
+{
+  GstBuffer *buf = gst_buffer_new_allocate (NULL, frames * GST_AUDIO_INFO_BPF (info), NULL);
+  GstMapInfo map;
+
+  if (gst_buffer_map (buf, &map, GST_MAP_WRITE)) {
+    gst_audio_format_info_fill_silence (info->finfo, map.data, map.size);
+    gst_buffer_unmap (buf, &map);
+  }
+  return buf;
+}
+
+/*
+ * The next buffer (under lock): the oldest Write, or with silence=true a silent buffer once its
+ * time is over and no Write came for it; NULL at EOS or when flushing (*ret says which).
+ */
+static Chunk *
+next_chunk (GstQemuDBusAudioSrc * src, GstFlowReturn * ret)
+{
+  for (;;) {
+    GstClockTime now, due, duration;
+    const GstAudioInfo *info;
+    Chunk *chunk;
+    guint64 frames;
+
+    if (src->flushing) {
+      *ret = GST_FLOW_FLUSHING;
+      return NULL;
+    }
+    if (src->chunks.length) {
+      chunk = g_queue_pop_head (&src->chunks);
+      frames = gst_buffer_get_size (chunk->buf) / GST_AUDIO_INFO_BPF (&chunk->info);
+      duration = gst_util_uint64_scale (frames, GST_SECOND, GST_AUDIO_INFO_RATE (&chunk->info));
+      src->queued = src->queued > duration ? src->queued - duration : 0;
+      src->n_buffers++;
+      return chunk;
+    }
+    if (src->eos) {
+      *ret = GST_FLOW_EOS;
+      return NULL;
+    }
+    now = GST_CLOCK_TIME_NONE;
+    if (src->silence && src->have_last_info)
+      now = running_time_now (src);
+    if (!GST_CLOCK_TIME_IS_VALID (now)) {
+      g_cond_wait (&src->cond, &src->lock);
+      continue;
+    }
+    /* silence, in the negotiated format (the newest stream's before the first buffer) */
+    info = src->have_caps ? &src->negotiated : &src->last_info;
+    frames = MAX (1, GST_AUDIO_INFO_RATE (info) / SILENCE_FRAMES_PER_SECOND);
+    duration = gst_util_uint64_scale (frames, GST_SECOND, GST_AUDIO_INFO_RATE (info));
+    if (!GST_CLOCK_TIME_IS_VALID (src->next_ts))
+      src->next_ts = now;
+    due = src->next_ts + duration;
+    if (src->n_enabled || (GST_CLOCK_TIME_IS_VALID (src->last_write)
+            && now < src->last_write + SILENCE_RECENT))
+      due += SILENCE_GRACE;
+    if (now < due) {
+      g_cond_wait_until (&src->cond, &src->lock,
+          g_get_monotonic_time () + (gint64) ((due - now) / GST_USECOND) + 1);
+      continue;
+    }
+    chunk = g_new0 (Chunk, 1);
+    chunk->buf = silence_buffer (info, frames);
+    chunk->info = *info;
+    chunk->arrival = GST_CLOCK_TIME_NONE;
+    chunk->silent = TRUE;
+    src->n_silence++;
+    GST_LOG_OBJECT (src, "silence at %" GST_TIME_FORMAT " (now %" GST_TIME_FORMAT ", %u enabled)",
+        GST_TIME_ARGS (src->next_ts), GST_TIME_ARGS (now), src->n_enabled);
+    return chunk;
+  }
+}
+
 static GstFlowReturn
 gst_qemu_dbus_audio_src_create (GstPushSrc * psrc, GstBuffer ** outbuf)
 {
   GstQemuDBusAudioSrc *src = GST_QEMU_DBUS_AUDIO_SRC (psrc);
+  GstFlowReturn ret = GST_FLOW_OK;
   Chunk *chunk;
-  GstClockTime duration, ts;
+  GstClockTime duration, ts, from_arrival;
   guint64 frames;
 
-  g_mutex_lock (&src->lock);
-  while (!src->chunks.length && !src->flushing && !src->eos)
-    g_cond_wait (&src->cond, &src->lock);
-  if (src->flushing) {
+  for (;;) {
+    g_mutex_lock (&src->lock);
+    chunk = next_chunk (src, &ret);
     g_mutex_unlock (&src->lock);
-    return GST_FLOW_FLUSHING;
-  }
-  chunk = g_queue_pop_head (&src->chunks);
-  if (!chunk) {
-    g_mutex_unlock (&src->lock);
-    return GST_FLOW_EOS;
-  }
-  frames = gst_buffer_get_size (chunk->buf) / GST_AUDIO_INFO_BPF (&chunk->info);
-  duration = gst_util_uint64_scale (frames, GST_SECOND, GST_AUDIO_INFO_RATE (&chunk->info));
-  src->queued = src->queued > duration ? src->queued - duration : 0;
-  src->n_buffers++;
-  g_mutex_unlock (&src->lock);
+    if (!chunk)
+      return ret;
+    frames = gst_buffer_get_size (chunk->buf) / GST_AUDIO_INFO_BPF (&chunk->info);
+    duration = gst_util_uint64_scale (frames, GST_SECOND, GST_AUDIO_INFO_RATE (&chunk->info));
 
-  if (!src->have_caps || !gst_audio_info_is_equal (&chunk->info, &src->negotiated)) {
-    GstCaps *caps = gst_audio_info_to_caps (&chunk->info);
+    if (!src->have_caps || !gst_audio_info_is_equal (&chunk->info, &src->negotiated)) {
+      GstCaps *caps = gst_audio_info_to_caps (&chunk->info);
 
-    GST_INFO_OBJECT (src, "stream now %" GST_PTR_FORMAT, caps);
-    if (!gst_base_src_set_caps (GST_BASE_SRC (src), caps)) {
+      GST_INFO_OBJECT (src, "stream now %" GST_PTR_FORMAT, caps);
+      if (!gst_base_src_set_caps (GST_BASE_SRC (src), caps)) {
+        gst_caps_unref (caps);
+        chunk_free (chunk);
+        GST_ELEMENT_ERROR (src, CORE, NEGOTIATION, (NULL),
+            ("downstream doesn't take the guest's sound as it comes"));
+        return GST_FLOW_NOT_NEGOTIATED;
+      }
       gst_caps_unref (caps);
-      chunk_free (chunk);
-      GST_ELEMENT_ERROR (src, CORE, NEGOTIATION, (NULL),
-          ("downstream doesn't take the guest's sound as it comes"));
-      return GST_FLOW_NOT_NEGOTIATED;
+      if (src->have_caps && !chunk->silent)
+        src->next_ts = GST_CLOCK_TIME_NONE;
+      src->negotiated = chunk->info;
+      src->have_caps = TRUE;
     }
-    gst_caps_unref (caps);
-    src->negotiated = chunk->info;
-    src->have_caps = TRUE;
-    src->next_ts = GST_CLOCK_TIME_NONE;
-  }
 
-  ts = GST_CLOCK_TIME_NONE;
-  if (GST_CLOCK_TIME_IS_VALID (chunk->arrival))
-    ts = chunk->arrival > duration ? chunk->arrival - duration : 0;
-  if (GST_CLOCK_TIME_IS_VALID (src->next_ts) && (!GST_CLOCK_TIME_IS_VALID (ts)
-          || (ts > src->next_ts ? ts - src->next_ts : src->next_ts - ts) < RESYNC_THRESHOLD))
-    ts = src->next_ts;
-  else if (GST_CLOCK_TIME_IS_VALID (src->next_ts))
-    GST_DEBUG_OBJECT (src, "resync: %" GST_TIME_FORMAT " instead of %" GST_TIME_FORMAT,
-        GST_TIME_ARGS (ts), GST_TIME_ARGS (src->next_ts));
-  GST_BUFFER_PTS (chunk->buf) = ts;
-  GST_BUFFER_DURATION (chunk->buf) = duration;
-  if (GST_CLOCK_TIME_IS_VALID (ts))
-    src->next_ts = ts + duration;
-  *outbuf = chunk->buf;
-  chunk->buf = NULL;
-  g_free (chunk);
-  return GST_FLOW_OK;
+    /* continuous; forward to the arrival when the sound comes late; never backwards */
+    from_arrival = GST_CLOCK_TIME_NONE;
+    if (GST_CLOCK_TIME_IS_VALID (chunk->arrival))
+      from_arrival = chunk->arrival > duration ? chunk->arrival - duration : 0;
+    if (!GST_CLOCK_TIME_IS_VALID (src->next_ts)) {
+      ts = from_arrival;
+    } else if (!GST_CLOCK_TIME_IS_VALID (from_arrival)) {
+      ts = src->next_ts;
+    } else if (from_arrival > src->next_ts + RESYNC_THRESHOLD) {
+      GST_DEBUG_OBJECT (src, "resync: %" GST_TIME_FORMAT " instead of %" GST_TIME_FORMAT,
+          GST_TIME_ARGS (from_arrival), GST_TIME_ARGS (src->next_ts));
+      ts = from_arrival;
+      g_mutex_lock (&src->lock);
+      src->n_resync++;
+      g_mutex_unlock (&src->lock);
+    } else if (src->next_ts > from_arrival + MAX_AHEAD) {
+      GST_DEBUG_OBJECT (src, "%" GST_TIME_FORMAT " ahead of its arrival: dropped",
+          GST_TIME_ARGS (src->next_ts - from_arrival));
+      chunk_free (chunk);
+      g_mutex_lock (&src->lock);
+      src->n_ahead++;
+      g_mutex_unlock (&src->lock);
+      continue;
+    } else {
+      ts = src->next_ts;
+    }
+    GST_BUFFER_PTS (chunk->buf) = ts;
+    GST_BUFFER_DURATION (chunk->buf) = duration;
+    if (GST_CLOCK_TIME_IS_VALID (ts))
+      src->next_ts = ts + duration;
+    *outbuf = chunk->buf;
+    chunk->buf = NULL;
+    g_free (chunk);
+    return GST_FLOW_OK;
+  }
 }
 
 static void
@@ -587,6 +737,9 @@ gst_qemu_dbus_audio_src_set_property (GObject * object, guint prop_id, const GVa
       break;
     case PROP_APPLY_VOLUME:
       src->apply_volume = g_value_get_boolean (value);
+      break;
+    case PROP_SILENCE:
+      src->silence = g_value_get_boolean (value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -612,6 +765,9 @@ gst_qemu_dbus_audio_src_get_property (GObject * object, guint prop_id, GValue * 
       break;
     case PROP_APPLY_VOLUME:
       g_value_set_boolean (value, src->apply_volume);
+      break;
+    case PROP_SILENCE:
+      g_value_set_boolean (value, src->silence);
       break;
     case PROP_STATS:
       g_mutex_lock (&src->lock);
@@ -669,6 +825,11 @@ gst_qemu_dbus_audio_src_class_init (GstQemuDBusAudioSrcClass * klass)
           "Scale the samples by the guest mixer's volume and mute, which QEMU passes separately "
           "(signed 16-bit PCM)", DEFAULT_APPLY_VOLUME,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
+  g_object_class_install_property (gobject_class, PROP_SILENCE,
+      g_param_spec_boolean ("silence", "Silence",
+          "Output silence in real time while the guest plays nothing, so the stream has no gaps "
+          "(an encoder or audiorate downstream gets a continuous stream)", DEFAULT_SILENCE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
   g_object_class_install_property (gobject_class, PROP_STATS,
       g_param_spec_string ("stats", "Statistics", "What QEMU sent and how many buffers went out",
           NULL, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
@@ -696,6 +857,7 @@ gst_qemu_dbus_audio_src_init (GstQemuDBusAudioSrc * src)
   src->vmid = DEFAULT_VMID;
   src->timeout = DEFAULT_TIMEOUT;
   src->apply_volume = DEFAULT_APPLY_VOLUME;
+  src->silence = DEFAULT_SILENCE;
   src->node = g_dbus_node_info_new_for_xml (AUDIO_LISTENER_XML, NULL);
   g_assert (src->node);
   src->streams = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_free);

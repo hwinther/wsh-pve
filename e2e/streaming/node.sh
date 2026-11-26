@@ -4,8 +4,9 @@
 # the harness continues it), and Wolf with that VM as its Moonlight app (wolf-config.py).
 #
 # Environment:
-#   RUN          x86_64 (std VGA, the shared map) or x86_64-gl (the 3dfx binary, -display
-#                dbus,gl=on, llvmpipe: dmabufs; needs /dev/udmabuf or a render node)
+#   RUN          x86_64 (std VGA, the shared map), x86_64-gl (the 3dfx binary, -display
+#                dbus,gl=on, llvmpipe: dmabufs; needs /dev/udmabuf or a render node) or
+#                x86_64-egl (as x86_64-gl, qemudbussrc reading the dmabufs through EGL)
 #   REFRESH_MS   -display dbus,refresh-ms= (wsh/0131; qemu-server's dbus-refresh); empty: QEMU's 30
 #   MOUSE        ps2 (the PC's PS/2 mouse, relative: wisp's x86 kernel has no USB HID driver) or
 #                tablet (a virtio tablet as well, absolute, like PVE's default USB tablet)
@@ -31,7 +32,7 @@ for _ in $(seq 50); do [ -S "$BUS" ] && break; sleep 0.1; done
 display="dbus,addr=unix:path=$BUS,audiodev=snd0"
 [ -z "${REFRESH_MS:-}" ] || display="$display,refresh-ms=$REFRESH_MS"
 qemu=qemu-system-x86_64
-if [ "$RUN" = x86_64-gl ]; then
+if [ "$RUN" = x86_64-gl ] || [ "$RUN" = x86_64-egl ]; then
 	qemu=qemu-system-x86_64-3dfx
 	display="$display,gl=on"
 fi
@@ -47,6 +48,7 @@ log "QEMU ($qemu, $display) paused"
 
 # the bridge's log (when each input event left Wolf) where the harness reads it
 [ ! -d /shared ] || export BRIDGE_LOG=/shared/wolf-input-bridge.log
+[ "$RUN" != x86_64-egl ] || export SRC_PROPS=dmabuf-import=egl
 wolf-config.py /usr/local/share/wolf/config.include.toml /etc/wolf/cfg/config.toml "wsh-vm-$VMID=unix:path=$BUS"
 export WOLF_CFG_FILE=/etc/wolf/cfg/config.toml WOLF_PRIVATE_KEY_FILE=/etc/wolf/cfg/key.pem \
 	WOLF_PRIVATE_CERT_FILE=/etc/wolf/cfg/cert.pem WOLF_USE_ZERO_COPY=FALSE WOLF_LOG_LEVEL=${WOLF_LOG_LEVEL:-INFO} \

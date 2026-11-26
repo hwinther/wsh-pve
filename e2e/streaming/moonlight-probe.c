@@ -17,6 +17,10 @@
  *       fbtest's colour bars)
  *   audio-onset US / audio-quiet US
  *       the guest's sound started (a 5 ms packet louder than RMS 1000) or stopped
+ *   done frames=N audio-bytes=N audio-packets=N audio-ahead=MS
+ *       at the end; audio-ahead: how far the audio that had arrived ever ran ahead of the time
+ *       since its first packet (the most audio that came at once, in ms of sound; a few ms for a
+ *       steady stream)
  *   sent US CMD   an input command went to the host at US
  *   stage NAME / connected / terminated CODE / error TEXT
  *
@@ -232,11 +236,13 @@ static DECODER_RENDERER_CALLBACKS video_callbacks = {
 
 static OpusMSDecoder *adec;
 static FILE *wav;
-static int achannels, aframe;
+static int achannels, aframe, arate = 48000;
 static uint32_t wav_bytes;
 static int16_t *apcm;
 static int loud;
 static char wav_path[1100];
+static unsigned long long audio_first_us, audio_frames, audio_packets;
+static double audio_ahead_ms;
 
 static void wav_header(void)
 {
@@ -269,6 +275,7 @@ static int audio_init(int config, const POPUS_MULTISTREAM_CONFIGURATION oc, void
 	(void)flags;
 	achannels = oc->channelCount;
 	aframe = oc->samplesPerFrame;
+	arate = oc->sampleRate;
 	adec = opus_multistream_decoder_create(oc->sampleRate, oc->channelCount, oc->streams,
 					      oc->coupledStreams, oc->mapping, &err);
 	apcm = malloc(sizeof(int16_t) * aframe * achannels);
@@ -303,6 +310,18 @@ static void audio_sample(char *data, int length)
 
 	if (n <= 0)
 		return;
+	{
+		unsigned long long now = now_us();
+		double ahead;
+
+		if (!audio_packets)
+			audio_first_us = now;
+		audio_packets++;
+		audio_frames += n;
+		ahead = audio_frames * 1000.0 / arate - (now - audio_first_us) / 1000.0;
+		if (ahead > audio_ahead_ms)
+			audio_ahead_ms = ahead;
+	}
 	fwrite(apcm, sizeof(int16_t) * achannels, n, wav);
 	wav_bytes += n * achannels * 2;
 	for (int i = 0; i < n * achannels; i += achannels)
@@ -495,6 +514,7 @@ int main(int argc, char **argv)
 		usleep(20000);
 	LiStopConnection();
 	gs_quit_app(&server);
-	out("done frames=%lu audio-bytes=%u\n", frames, wav_bytes);
+	out("done frames=%lu audio-bytes=%u audio-packets=%llu audio-ahead=%.1f\n", frames, wav_bytes,
+	    audio_packets, audio_ahead_ms);
 	return 0;
 }

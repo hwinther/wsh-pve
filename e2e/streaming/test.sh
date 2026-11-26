@@ -18,8 +18,10 @@
 #                     wsh-moonlight-probe and checks and measures (see stream3d.py)
 #
 # RUNS (default "x86_64:30 x86_64:16 x86_64:8", spaces or commas): ARCH:REFRESH_MS, where ARCH is x86_64 (std VGA,
-# the shared map) or x86_64-gl (the 3dfx binary with -display dbus,gl=on, llvmpipe, dmabufs:
-# needs /dev/udmabuf on the Docker host) and REFRESH_MS the D-Bus display's refresh-ms
+# the shared map), x86_64-gl (the 3dfx binary with -display dbus,gl=on, llvmpipe, dmabufs:
+# needs /dev/udmabuf on the Docker host) or x86_64-egl (as x86_64-gl, with qemudbussrc reading
+# the dmabufs through EGL, dmabuf-import=egl, as it reads a GPU's tiled ones) and REFRESH_MS the
+# D-Bus display's refresh-ms
 # (qemu-server's dbus-refresh).
 #
 # Input: Wolf creates its virtual keyboard and mice through /dev/uinput, so the node container
@@ -29,7 +31,9 @@
 #
 # OUTDIR gets summary.txt and per run the probe's log (every frame with its times), the serial
 # log, Wolf's log, the bridge's log, the decoded frame and QEMU's screendump, the client's WAV.
-# Exit 0 when every check passes. ROUNDS (default 10): latency samples per run.
+# Exit 0 when every check passes. ROUNDS (default 10): latency samples per run. WSH_GST_DEB: a
+# wsh-gst-qemu-dbus package to test (e.g. build/wsh-gst-qemu-dbus/*.deb from `make
+# wsh-gst-qemu-dbus`) instead of the published one. GST_DEBUG goes to Wolf (wolf.log).
 set -eu
 OUT=${1:?usage: test.sh OUTDIR [KERNELS]}
 KERNELS=${2:-}
@@ -65,7 +69,11 @@ cp "$REPO/repo/conf/wsh-pve.gpg.key" "$CTX/"
 awk -v f="+++ b/src/usr/dbus-display.conf" '$0 == f { on = 1; next } on && /^diff --git / { exit }
 	on && /^@@/ { next } on { sub(/^\+/, ""); print }' "$REPO/submodules/qemu-server.patch" > "$CTX/dbus-display.conf"
 grep -q '<busconfig>' "$CTX/dbus-display.conf" || { echo "no bus policy in the qemu-server patch" >&2; exit 1; }
-mkdir -p "$CTX/kernels"
+mkdir -p "$CTX/kernels" "$CTX/debs"
+if [ -n "${WSH_GST_DEB:-}" ]; then
+	cp "$WSH_GST_DEB" "$CTX/debs/"
+	echo "wsh-gst-qemu-dbus: $(basename "$WSH_GST_DEB") instead of the published package"
+fi
 if [ -n "$KERNELS" ]; then
 	cp "$KERNELS/kernel-fb-x86_64" "$CTX/kernels/"
 else
@@ -100,7 +108,7 @@ for spec in $RUNS; do
 	name="$arch-refresh$refresh"
 	step "Run $name"
 	dev=
-	if [ "$arch" = x86_64-gl ]; then
+	if [ "$arch" = x86_64-gl ] || [ "$arch" = x86_64-egl ]; then
 		if docker run --rm -v /dev:/hostdev:ro "$TAG-client" test -c /hostdev/udmabuf; then
 			dev="--device /dev/udmabuf"
 		else
@@ -111,7 +119,7 @@ for spec in $RUNS; do
 	docker rm -f "$NODE" > /dev/null 2>&1 || true
 	# shellcheck disable=SC2086 # $dev is words
 	docker create --name "$NODE" --network "$NET" --network-alias node -v "$VOL:/shared" \
-		-e RUN="$arch" -e REFRESH_MS="$refresh" $dev \
+		-e RUN="$arch" -e REFRESH_MS="$refresh" -e GST_DEBUG="${GST_DEBUG:-2}" $dev \
 		${input_args:+--device /dev/uinput "--device-cgroup-rule=c 13:* rmw" -v /dev/input:/dev/input} \
 		"$TAG-node" > /dev/null
 	docker cp "$CTX/kernels/." "$NODE:/kernels/"

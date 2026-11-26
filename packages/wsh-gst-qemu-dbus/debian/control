@@ -3,6 +3,8 @@ Section: video
 Priority: optional
 Maintainer: WsHosting ENK <debian@wsh.no>
 Build-Depends: debhelper-compat (= 13),
+               libegl-dev,
+               libgles-dev,
                libglib2.0-dev,
                libgstreamer-plugins-base1.0-dev,
                libgstreamer1.0-dev,
@@ -30,8 +32,9 @@ Description: GStreamer sources and input bridge for QEMU's D-Bus display
  .
  qemudbussrc gives the picture of a console as raw video (BGRx for the usual
  32-bit consoles), from the pixels QEMU sends, its shared memory map of the
- console, or a linear dmabuf of a display with GL, which it copies out and
- answers at once, so the guest's GL frames don't wait for the pipeline.
+ console, or the dmabufs of a display with GL, which it copies out (a linear
+ one mapped, a GPU's tiled one through EGL) and answers at once, so the
+ guest's GL frames don't wait for the pipeline.
  qemudbusaudiosrc gives the guest's playback ('audio0: ...,driver=dbus') as
  raw PCM, scaled by the guest mixer's volume.
  .

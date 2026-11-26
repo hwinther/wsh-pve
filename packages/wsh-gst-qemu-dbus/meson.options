@@ -1,1 +1,3 @@
 option('package_version', type : 'string', value : '0', description : 'The version the plugin and the tool report')
+option('egl', type : 'feature', value : 'auto',
+  description : 'Read dmabufs that cannot be mapped (a GPU tiled layout) through EGL')

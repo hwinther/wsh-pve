@@ -17,7 +17,10 @@ container, and checks, each a PASS/FAIL line in OUTDIR/summary.txt:
             send to the guest's serial line
   mouse     absolute positions, relative motion and the left and right buttons from the client
             reach the guest's PS/2 mouse (`mousetest`) as the motion they add up to
-  sound     `soundtest 440 MS` in the client's decoded audio: a 440 Hz tone of about MS ms; and
+  sound     `soundtest 440 MS` in the client's decoded audio: a 440 Hz tone of about MS ms
+            without a dropout (no quiet 10 ms window inside it), and the audio steady (never
+            more than AHEAD_MS of sound arriving at once: a burst, as Wolf's audiorate made when
+            the source's stream had a gap, comes with dropped sound when the host is busy); and
             from the command to the first loud packet at the client
   pacing    a burst of BURST draws typed at once (`mandel fb` and `fbtest` in turn, rows
             written without a pause for a few seconds): frames per second at the client, how
@@ -57,6 +60,8 @@ NAME = ""
 # wisp's prompt, coloured: wisp:x86_64> with ANSI escapes (no spaces in them)
 PROMPT = r"wisp\S*> "
 BURST = 40
+# the most audio that may arrive at the client at once (ms of sound beyond the time it took)
+AHEAD_MS = 250
 BARS = [(0, 0, 0), (0, 0, 255), (0, 255, 0), (0, 255, 255), (255, 0, 0), (255, 0, 255),
         (255, 255, 0), (255, 255, 255)]
 
@@ -298,11 +303,13 @@ def read_wav(path):
     return rate, channels, struct.unpack(f"<{n * channels}h", pcm[:n * frame])[0::channels]
 
 
-def tone(samples, rate):
+def tone(samples, rate, want):
     """(seconds of sound, its frequency, dropouts) of the loud part, in 10 ms windows. The
     frequency counts rising edges through a quarter of the peak within each run of loud windows,
     over the time from the run's first to its last rising edge, so a dropout (quiet windows
-    inside the tone) shortens the sound without bending the pitch"""
+    inside the tone) shortens the sound without bending the pitch. Dropouts: quiet runs within
+    the tone, the want seconds from its first loud window (after it, AC97 may play a few ms of
+    its old buffer)"""
     window = max(1, rate // 100)
     loud = []
     for i in range(0, len(samples) - window, window):
@@ -334,7 +341,8 @@ def tone(samples, rate):
         if len(rising) > 1:
             cycles += len(rising) - 1
             span += (rising[-1] - rising[0]) / rate
-    dropouts = len(runs) - 1
+    end = runs[0][0] + int(want * rate) - 3 * window
+    dropouts = sum(1 for a, _ in runs[1:] if a < end)
     return len(loud) * window / rate, cycles / span if span else 0.0, dropouts
 
 
@@ -608,13 +616,26 @@ def main():
             onset = probe.wait_event("audio-onset", 1, n)
             time.sleep(1.0)
             probe.close()
+            # the probe prints it as it stops; its reader thread may still be on the way there
+            ahead = None
+            deadline = time.time() + 3
+            while ahead is None and time.time() < deadline:
+                with probe.lock:
+                    # in the probe's last line (done ...), which a library's log may precede
+                    ahead = next((float(m.group(1)) for e in probe.events
+                                  for m in [re.search(r"audio-ahead=([0-9.]+)", f"{e[0]} {e[2]}")] if m), None)
+                time.sleep(0.05)
             try:
                 rate, channels, samples = read_wav(f"{out}/sound.wav")
-                secs, hz, dropouts = tone(samples, rate)
                 want = args.sound_ms / 1000
-                result("sound", abs(hz - 440) < 440 * 0.01 and want * 0.9 < secs < want * 1.15,
+                secs, hz, dropouts = tone(samples, rate, want)
+                # the whole tone without a dropout (quiet 10 ms windows inside it), the audio steady
+                result("sound", abs(hz - 440) < 440 * 0.01 and want * 0.9 < secs < want * 1.15
+                       and dropouts == 0 and ahead is not None and ahead <= AHEAD_MS,
                        f"{secs:.2f} s of sound at {hz:.1f} Hz in the client's decoded audio ({rate} Hz,"
-                       f" {channels} channels, {dropouts} dropouts); guest {m.group(0).strip() if m else 'no result'};"
+                       f" {channels} channels, {dropouts} dropouts); the most audio at once"
+                       f" {'%.0f ms' % ahead if ahead is not None else 'unknown'} (at most {AHEAD_MS});"
+                       f" guest {m.group(0).strip() if m else 'no result'};"
                        + (f" soundtest typed -> first loud packet at the client {(onset[1] - t_cmd) * 1000:.0f} ms"
                           if onset and t_cmd else " no onset seen"))
             except (OSError, ValueError, struct.error, TypeError) as e:

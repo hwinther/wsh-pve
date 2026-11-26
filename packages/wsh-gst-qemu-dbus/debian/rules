@@ -9,7 +9,7 @@ include /usr/share/dpkg/pkg-info.mk
 	dh $@ --buildsystem=meson
 
 override_dh_auto_configure:
-	dh_auto_configure -- -Dpackage_version=$(DEB_VERSION_UPSTREAM)
+	dh_auto_configure -- -Dpackage_version=$(DEB_VERSION_UPSTREAM) -Degl=enabled
 
 # The plugin and the bridge need a running QEMU; packages/wsh-gst-qemu-dbus/test.sh tests them
 override_dh_auto_test:

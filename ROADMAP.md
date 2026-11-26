@@ -152,6 +152,7 @@ come after that, not before.
 | More than 512 MB on SS-10/SS-20, up to 2048 MB with OpenBIOS: Solaris counts only memory below 512 MB as memory behind the SS-10's and SS-20's controllers (eight SIMM slots of 64 MB, read from the ECC controller's implementation bits), so with more it panicked at boot (2.6: `kernel read fault at addr=0x0` in `kvm_init`); the `/memory` layout played no part. pve-qemu `wsh/0143` presents the SS-600MP's MCC above 512 MB under OpenBIOS (512 MB and less, and the Sun PROM, unchanged), `wsh/0144` its qtest; OpenBIOS ran out of heap at 1 GB, 0040 takes the SRMMU tables in chunks and makes the heap 288K. Lab: Solaris 2.5.1, 2.6, 7, 8, 9 on SS-20 and 2.6, 7 on SS-10 boot the stored disks with 2048 MB (2.6 with 2 and 4 CPUs); NetBSD, SunOS 4.1.x, Debian 4.0 and Solaris 2.4/2.6 at 512/256 MB on SS-20/SS-5 unchanged. qemu-server and the UI take up to 2048 MB on SS-10/SS-20 with OpenBIOS (wizard preset 512), the SS-20 PROM stays at 512. Not verified: installs and the PVE path with more than 512 MB, more than 2048 MB (`submodules/SPARC.md`, "More than 512 MB on SS-10 and SS-20") | in review | |
 | Audio signature for guest sound tests: one fixed signal in `e2e/wisp/audiosig.h` (integer math, no C library or libm, no 64-bit division): 8 segments of 500 ms, triangle waves of 400 + 100 k Hz left and 600 + 150 k Hz right in segment k, -6 dBFS, 4 s, at any rate from 8000 to 48000 Hz; `e2e/audio/wavcheck.py --signature [N]` finds N of them in a `-audiodev wav` recording and checks each segment's frequency per channel (3 %), the duration, gaps over 2 ms per channel, swapped channels and mono, and tells an old-samples tail from a dropout (unit tests: resampled, 8-bit, swapped, mono, cut after one buffer, dropouts, tails, the header against its Python model). wisp: `soundtest sig [rate..]` (8000, 22050, 44100 Hz by default); `sound.py` boots once more per machine for it, in wisp-boot's sound step. wshspace: `-audiotest` through each platform's own backend, no display; its Linux OSS backend now keeps two fragments queued and writes no more than fits (the test found a 7 ms dropout after the first fragment on AC97), its DOS backend plays 8-bit stereo at exactly 22050 Hz on a DSP 4.x (SB16; mono at 22222 Hz before, still so on older DSPs) and no longer loses a ring of sound to a torn read of the DMA address (the two bytes read while the DMA moved; seen in CI without a memory manager) or to a step back of `uclock()`: it reads the address until the bytes agree, counts bytes written and played, and mixes 186 ms ahead in a 743 ms ring; new `e2e/3dfx/space/audio-test.sh` (Linux guest, AC97, job in `audio-matrix.yml`) and a last step in each boot of `dos-test.sh` (`-device sb16`, `3dfx-dos.yml`): the DOS test the audio matrix asked for. Lab with pve-qemu-kvm 11.1.3-4+wsh27: every segment within 0.01 % on pc, sun4u, virt and the SS-5 at all three rates (4.000-4.003 s, no gap), wshspace on Linux (KVM and TCG) and DOS (all three memory profiles) 4.000 s, no gap. Windows `-audiotest` builds (96,768 of 98,304 bytes), not run in a guest | in review | |
 | 3dfx/streaming stage 3d, Moonlight to Wolf: a Moonlight client streams a VM's D-Bus display (picture, sound, keyboard, mouse) through Wolf (games-on-whales) with `qemudbussrc` (and a `compositor` that repeats the newest picture at the client's frame rate) into x264, `qemudbusaudiosrc` into Opus and `wolf-input-bridge` (Wolf's uinput keyboard and mice into `qemu-dbus-input`) as an app's runner; `e2e/streaming` builds Wolf, moonlight-embedded and a measuring client (`wsh-moonlight-probe`) from source at pinned commits and measures (`test.sh`, workflow `streaming.yml` for PRs touching it and by hand). Lab, published pve-qemu-kvm, TCG, 1280x800 H.264 at 60 frames/s: pairing with a PIN entered on the node, the picture 1.6/255 from QEMU's screendump, guest draw to decoded frame 48-61 ms median, keys and buttons in the guest 1.3-2.2 ms after the client, a 440.0 Hz tone in the client's audio, with and without `dbus,gl=on`; on a PVE node with an NVIDIA GPU, Wolf in a privileged container (template from the Dockerfile's `ct` stage) streamed a `qm start` VM with every check passed (x264 54 ms, NVENC 50 ms median); an unprivileged container is refused by the VM's bus (dbus-daemon checks the group against the node's user database). Wolf needed a patch for apps without a compositor (ROADMAP, Stage 3, "Stage 3d") | in review | |
+| 3dfx/streaming stage 3e, tiled dmabufs and the audio dropout: `qemudbussrc` reads dmabufs it can't map (NVIDIA's block-linear) through EGL (an EGLImage on the render node's EGL device, read back as `BGRx`, read again 20 ms later since NVIDIA's driver doesn't wait for QEMU's drawing), so `dbus,gl=on` streams on an NVIDIA node; `qemudbusaudiosrc` sends silence while the guest plays nothing, which ends the dropout at a tone's start (Wolf's `audiorate` filled the gap at once and its leaky queue dropped the tone's start); `e2e/streaming` fails on a dropout or an audio burst, takes a package build (`WSH_GST_DEB`) and gets an EGL run. Lab: every check passed, the tone without a dropout, first sound 38-56 ms after the command (was 90-160); NVIDIA node: the frame identical to QEMU's screendump through EGL, Moonlight with every check passed, GL 89-96 ms median with x264 against 53-71 ms without (ROADMAP, Stage 3, "Stage 3e") | in review | |
 
 ## In progress
 
@@ -821,13 +822,47 @@ merged; what is left of them is item 2 under "Next".
        paired and its libraries streamed; its own SDL or X11 output wasn't run), the absolute
        pointer (wisp's x86 kernel has no USB HID and its `mousetest` takes the PS/2 mouse), a 3dfx
        game through it.
+     - **Stage 3e: tiled dmabufs through EGL, and the audio dropout (in review).** `qemudbussrc`
+       reads a dmabuf it can't map (a GPU's tiled layout: NVIDIA's block-linear, `XB24` with modifier
+       `0x300000000cdb014` on the GTX 1080) through EGL (`src/qemudbusgl.c`): the EGL device of the
+       render node (`EGL_EXT_platform_device`, no GBM or window system; else a software device or
+       Mesa's surfaceless platform), the dmabuf as an EGLImage with its modifier, bound to an external
+       texture, drawn 1:1 into a framebuffer with red and blue swapped and read back with
+       `glReadPixels` (`BGRx`, the console's usual format), before the reply to `UpdateDMABUF` as the
+       linear path's copy. `dmabuf-import=auto|mmap|egl`, `render-node=`; linear dmabufs are still
+       mapped. Found: NVIDIA's driver doesn't make a read of the dmabuf wait for QEMU's drawing
+       (QEMU only flushes before `UpdateDMABUF`; Mesa's implicit synchronisation hides that), so the
+       last frame missed its lower rows now and then; the rows read through EGL are read once more
+       20 ms later, and a picture that changed goes out again (1 in about 66 updates did). The audio
+       dropout of 3d: `qemudbusaudiosrc` sent nothing until the guest played, Wolf's `audiorate`
+       then filled the whole time since the stream's start with silence at once, and the leaky queue
+       before it (`max-size-buffers=3`) dropped the tone's first 50 ms meanwhile (GStreamer's log:
+       offsets 573638 to 576038); it grew with the session's length and the host's load, hence
+       "with input devices". The source now sends silence in real time while the guest plays
+       nothing, and its timestamps run on without going back (a burst from QEMU stays continuous; a
+       Write more than 200 ms ahead is dropped). `e2e/streaming`: a dropout inside the tone fails the
+       sound check, and so does more than 250 ms of audio reaching the client at once (the probe's
+       `audio-ahead`: 11.6 s before, 5 ms now); `test.sh` takes a wsh-gst-qemu-dbus build
+       (`WSH_GST_DEB`; `streaming.yml` builds the branch's) and a run `x86_64-egl`; the package's
+       `test.sh` gets `x86_64-egl` too. Lab: every check passed with the published pve-qemu-kvm,
+       x86 at refresh 30, 16 and 8 ms and GL at 30 ms (mapped and through EGL on llvmpipe, the frame
+       identical to QEMU's screendump), 440.0 Hz for 2.03 s without a dropout, the first sound at
+       the client 38-56 ms after the command (was 90-160). On the NVIDIA node: a `mesa-display=dbus`
+       VM through EGL, the frame identical to QEMU's screendump in four runs of four (`UpdateDMABUF`
+       answered in 0.7 ms on average), and Moonlight through Wolf with every check passed: guest draw
+       to decoded frame 89-96 ms median with x264 (53-71 ms without GL in the same session) and
+       77 ms with NVENC (55 ms without GL). Not verified: a guest drawing with GL (wisp has no GL
+       program; the GL runs have QEMU's VGA picture uploaded as a texture), another GPU vendor's
+       tiled layout.
      - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
-       encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU),
-       an EGL import for tiled dmabufs (needed for `dbus,gl=on` on an NVIDIA node), the cursor drawn
-       in or passed on, and `ScanoutDMABUF2`; 3d: an unprivileged container (a place in qemu-server's
-       bus policy for a container's uid, e.g. an include directory, or a user for that uid in the
-       node's `wsh-display`), the audio dropout at a tone's start, the frame interval spread while
-       the picture changes (still pictures come at an even 16.7 ms), Wolf's no-compositor patch
+       encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU, which
+       would also spare the EGL path its read back), the cursor drawn in or passed on, and
+       `ScanoutDMABUF2`; 3e: where the 22-36 ms that `dbus,gl=on` adds on the NVIDIA node go
+       (QEMU's updates come as early as without GL, the read takes 0.7 ms), a fence from QEMU instead
+       of the second read (QEMU would have to pass one), a guest drawing with GL through it; 3d: an
+       unprivileged container (a place in qemu-server's bus policy for a container's uid, e.g. an
+       include directory, or a user for that uid in the node's `wsh-display`), the frame interval
+       spread while the picture changes (still pictures come at an even 16.7 ms), Wolf's no-compositor patch
        upstream, and a repeat in `qemudbussrc` itself instead of the compositor.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
      by modem on the serial port, serving the web of 1999 (Wayback Machine, ProtoWeb) and period
