@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 3b036ceb..fcac917a 100644
+index 3b036ceb..678b25e9 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,36 @@
+@@ -1,10 +1,43 @@
++qemu-server (9.2.24+wsh5) trixie; urgency=medium
++
++  * feat(pve-qemu): SS-600MP PROM reaches ok by itself and installs
++    SunOS 4.1.2 (#560)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 26 Nov 2026 21:58:20 +0000
++
 +qemu-server (9.2.24+wsh4) trixie; urgency=medium
 +
 +  * fix(3dfx): run mesa=1 VMs with KVM when the kvm option is on (#557)
