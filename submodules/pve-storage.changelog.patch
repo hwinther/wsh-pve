@@ -1,27 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index e48ba83..6ba9471 100644
+index 3be12cc..915f1c0 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,22 @@
-+libpve-storage-perl (9.1.25+wsh2) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++libpve-storage-perl (9.1.26+wsh1) trixie; urgency=medium
 +
-+  * Refresh patches: pve-manager,qemu-server,pve-storage
++  * Sync with upstream pve-storage 3ac027f
 +
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 25 Nov 2026 18:27:14 +0000
++ -- hwinther <hwinther@users.noreply.github.com>  Thu, 26 Nov 2026 03:05:36 +0000
 +
-+libpve-storage-perl (9.1.25+wsh1) trixie; urgency=medium
-+
-+  * Sync with upstream pve-storage 1b20a75
-+
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Wed, 25 Nov 2026 03:45:51 +0000
-+
- libpve-storage-perl (9.1.25) trixie; urgency=medium
+ libpve-storage-perl (9.1.26) trixie; urgency=medium
  
-   * disks: wipe: name the device that keeps a SAN LUN from being wiped, also
-     for a holder of one of its partitions, instead of a generic error. For an
-     active logical volume, also suggest to deactivate its volume group with
-     'vgchange -an' if the group is no longer in use.
- 
-  -- Proxmox Support Team <support@proxmox.com>  Tue, 24 Nov 2026 22:05:52 +0100
- 
- libpve-storage-perl (9.1.24) trixie; urgency=medium
+   * iscsi: only scan for newly added LUNs when activating an iSCSI
+     storage with existing sessions, instead of running a full 'iscsiadm
+     --rescan' that revalidates every known LUN path every ten seconds.
+     This stops periodic ALUA kernel log floods and request-queue freezes
+     during disk revalidation while still discovering new LUNs
+     automatically. Growing an existing iSCSI LUN now requires running
+     'iscsiadm -m session --rescan' (or per-path 'device/rescan') on each
+     node, matching Fibre Channel.
