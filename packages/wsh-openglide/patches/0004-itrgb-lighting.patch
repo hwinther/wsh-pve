@@ -1,0 +1,479 @@
+grAlphaControlsITRGBLighting: texel alpha picks the colour combine's local colour
+
+grAlphaControlsITRGBLighting( FXTRUE ) turns on the Voodoo's alpha-controlled lighting (SST-1
+fbzColorPath cc_localselect_override): the top bit of each texel's alpha then picks the colour
+combine's local colour, the iterated (vertex) colour when it is clear and the constant colour when
+it is set, whatever grColorCombine's local says. OpenGLide had the entry point as an empty stub,
+so the local colour was always the combine's own (the iterated colour, as a 1998 game sets it).
+That game draws its textures, mostly grey with colour in places, times the local colour, and keeps
+its team colour (green) in the vertex colours: the texels meant to show their own colour under the
+constant (white or grey) light came out in the team colour too, and its vehicles, their pads and
+its vehicle hangar were monochrome green.
+
+- The state is kept (GlideState.AlphaControlsITRGB, saved and restored by grGlideGetState and
+  grGlideSetState; grSstWinOpen already turns it off), and setting it draws the triangles queued
+  before.
+- RenderAddTriangle() computes each corner's colour twice while it is on: with the iterated
+  colour as local, as before, and with the constant colour as local (TColorAlt).
+- RenderDrawTriangles(), for a texture the vertex colour modulates (GL_MODULATE: the texture
+  environment of most colour combines), sets texture unit 0 to INTERPOLATE(constant, vertex
+  colour, texture alpha), with the second colour as the environment's constant, set per run of
+  triangles that share it, and unit 1, with the same texture, to multiply that by the texture's
+  colour; the alpha stays texture alpha times vertex alpha. The draw itself moves into
+  RenderDrawRange() and RenderDrawRangeChroma() (the chroma-key path), which draw a range of the
+  queued triangles, unchanged otherwise.
+- Not covered: the hardware picks by the top bit, here a texel with an alpha in between gets a
+  mix of the two colours; the colour of a triangle's first corner stands for the whole triangle
+  (it varies over a triangle only when the combine's other or factor is iterated too); the decal
+  and blend environments, a texture split over two units (AP_88), lines and points.
+
+For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins,
+after 0003-egl-dmabuf-scanout.patch.
+---
+diff --git a/openglide/GLRender.cpp b/openglide/GLRender.cpp
+index ba996e0..5d83d23 100644
+--- a/openglide/GLRender.cpp
++++ b/openglide/GLRender.cpp
+@@ -77,6 +77,7 @@ void RenderInitialize( void )
+ 
+     OGLRender.TColor    = new TColorStruct[ MAXTRIANGLES + 1 ];
+     OGLRender.TColor2   = new TColorStruct[ MAXTRIANGLES + 1 ];
++    OGLRender.TColorAlt = new TColorStruct[ MAXTRIANGLES + 1 ];
+     OGLRender.TTexture  = new TTextureStruct[ MAXTRIANGLES + 1 ];
+     OGLRender.TVertex   = new TVertexStruct[ MAXTRIANGLES + 1 ];
+     OGLRender.TFog      = new TFogStruct[ MAXTRIANGLES + 1 ];
+@@ -100,6 +101,7 @@ void RenderFree( void )
+ {
+     delete[] OGLRender.TColor;
+     delete[] OGLRender.TColor2;
++    delete[] OGLRender.TColorAlt;
+     delete[] OGLRender.TTexture;
+     delete[] OGLRender.TVertex;
+     delete[] OGLRender.TFog;
+@@ -130,6 +132,209 @@ void RenderUpdateArrays( void )
+ #endif
+ }
+ 
++// Draw the saved triangles first .. first + count - 1, with the texture coordinates on the second
++// texture unit too when two_tex
++static void RenderDrawRange( long first, long count, bool two_tex )
++{
++    if ( InternalConfig.EXT_vertex_array )
++    {
++        glDrawArrays( GL_TRIANGLES, first * 3, count * 3 );
++    }
++    else
++    {
++        glBegin( GL_TRIANGLES );
++        for ( long i = first; i < first + count; i++ )
++        {
++            glColor4fv( &OGLRender.TColor[ i ].ar );
++            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].ar );
++            p_glFogCoordfEXT( OGLRender.TFog[ i ].af );
++            glTexCoord4fv( &OGLRender.TTexture[ i ].as );
++            if ( two_tex )
++            {
++                p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].as );
++            }
++            glVertex3fv( &OGLRender.TVertex[ i ].ax );
++            
++            glColor4fv( &OGLRender.TColor[ i ].br );
++            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].br );
++            p_glFogCoordfEXT( OGLRender.TFog[ i ].bf );
++            glTexCoord4fv( &OGLRender.TTexture[ i ].bs );
++            if ( two_tex )
++            {
++                p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].bs );
++            }
++            glVertex3fv( &OGLRender.TVertex[ i ].bx );
++            
++            glColor4fv( &OGLRender.TColor[ i ].cr );
++            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].cr );
++            p_glFogCoordfEXT( OGLRender.TFog[ i ].cf );
++            glTexCoord4fv( &OGLRender.TTexture[ i ].cs );
++            if ( two_tex )
++            {
++                p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].cs );
++            }
++            glVertex3fv( &OGLRender.TVertex[ i ].cx );
++        }
++        glEnd( );
++    }
++}
++
++// The same through the chroma-key path (glColor3fv: no vertex alpha)
++static void RenderDrawRangeChroma( long first, long count, bool two_tex )
++{
++    glBegin( GL_TRIANGLES );
++    for ( long i = first; i < first + count; i++ )
++    {
++        glColor3fv( &OGLRender.TColor[ i ].ar );
++        p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].ar );
++        p_glFogCoordfEXT( OGLRender.TFog[ i ].af );
++        glTexCoord4fv( &OGLRender.TTexture[ i ].as );
++        if ( two_tex )
++        {
++            p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].as );
++        }
++        glVertex3fv( &OGLRender.TVertex[ i ].ax );
++        
++        glColor3fv( &OGLRender.TColor[ i ].br );
++        p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].br );
++        p_glFogCoordfEXT( OGLRender.TFog[ i ].bf );
++        glTexCoord4fv( &OGLRender.TTexture[ i ].bs );
++        if ( two_tex )
++        {
++            p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].bs );
++        }
++        glVertex3fv( &OGLRender.TVertex[ i ].bx );
++        
++        glColor3fv( &OGLRender.TColor[ i ].cr );
++        p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].cr );
++        p_glFogCoordfEXT( OGLRender.TFog[ i ].cf );
++        glTexCoord4fv( &OGLRender.TTexture[ i ].cs );
++        if ( two_tex )
++        {
++            p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].cs );
++        }
++        glVertex3fv( &OGLRender.TVertex[ i ].cx );
++    }
++    glEnd( );
++}
++
++// The saved triangles, through the chroma-key path or not. With grAlphaControlsITRGBLighting (itrgb),
++// each run of triangles that share the colour with the constant as local (TColorAlt) is drawn with
++// that colour as the texture environment's constant: RenderITRGBBegin() set the units up to pick it
++// or the vertex colour per texel.
++static void RenderDrawAll( bool chroma, bool two_tex, bool itrgb )
++{
++    long first = 0;
++
++    while ( first < OGLRender.NumberOfTriangles )
++    {
++        long count = OGLRender.NumberOfTriangles - first;
++
++        if ( itrgb )
++        {
++            const TColorStruct *c = &OGLRender.TColorAlt[ first ];
++            GLfloat env[ 4 ] = { c->ar, c->ag, c->ab, 1.0f };
++
++            for ( count = 1; first + count < OGLRender.NumberOfTriangles; count++ )
++            {
++                const TColorStruct *n = &OGLRender.TColorAlt[ first + count ];
++                if ( ( n->ar != c->ar ) || ( n->ag != c->ag ) || ( n->ab != c->ab ) )
++                {
++                    break;
++                }
++            }
++            for ( int i = 0; i < 3; i++ )
++            {
++                env[ i ] = ( env[ i ] < 0.0f ) ? 0.0f : ( ( env[ i ] > 1.0f ) ? 1.0f : env[ i ] );
++            }
++            glTexEnvfv( GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, env );
++        }
++        if ( chroma )
++        {
++            RenderDrawRangeChroma( first, count, two_tex );
++        }
++        else
++        {
++            RenderDrawRange( first, count, two_tex );
++        }
++        first += count;
++    }
++}
++
++// grAlphaControlsITRGBLighting with a texture the vertex colour modulates: unit 0 picks the local
++// colour per texel, INTERPOLATE( constant, vertex colour, texture alpha ), the texture environment's
++// constant being the colour with the constant as local (set per run of triangles), and unit 1, with
++// the same texture, multiplies that by the texture's colour; the alpha stays texture alpha times
++// vertex alpha, as GL_MODULATE gives it. On the hardware the top bit of the texel's alpha picks one
++// or the other; a texel with an alpha in between gets a mix of the two here. The colour of a
++// triangle's first corner stands for the whole triangle (it varies over it only when the colour
++// combine's other or factor is iterated as well).
++static GLint        itrgb_client_unit;
++static GLboolean    itrgb_client_array;
++
++static void RenderITRGBBegin( void )
++{
++    GLint tex = 0;
++
++    glGetIntegerv( GL_TEXTURE_BINDING_2D, &tex );
++    glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_RGB_ARB, GL_INTERPOLATE_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE0_RGB_ARB, GL_CONSTANT_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND0_RGB_ARB, GL_SRC_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE1_RGB_ARB, GL_PRIMARY_COLOR_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND1_RGB_ARB, GL_SRC_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE2_RGB_ARB, GL_TEXTURE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND2_RGB_ARB, GL_SRC_ALPHA );
++    glTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_ALPHA_ARB, GL_MODULATE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE0_ALPHA_ARB, GL_TEXTURE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND0_ALPHA_ARB, GL_SRC_ALPHA );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE1_ALPHA_ARB, GL_PRIMARY_COLOR_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND1_ALPHA_ARB, GL_SRC_ALPHA );
++
++    p_glActiveTextureARB( GL_TEXTURE1_ARB );
++    glBindTexture( GL_TEXTURE_2D, tex );
++    glEnable( GL_TEXTURE_2D );
++    glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_RGB_ARB, GL_MODULATE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE0_RGB_ARB, GL_PREVIOUS_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND0_RGB_ARB, GL_SRC_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE1_RGB_ARB, GL_TEXTURE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND1_RGB_ARB, GL_SRC_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_ALPHA_ARB, GL_REPLACE );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SOURCE0_ALPHA_ARB, GL_PREVIOUS_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND0_ALPHA_ARB, GL_SRC_ALPHA );
++    p_glActiveTextureARB( GL_TEXTURE0_ARB );
++
++    if ( InternalConfig.EXT_vertex_array )
++    {
++        glGetIntegerv( GL_CLIENT_ACTIVE_TEXTURE_ARB, &itrgb_client_unit );
++        p_glClientActiveTexture( GL_TEXTURE1_ARB );
++        itrgb_client_array = glIsEnabled( GL_TEXTURE_COORD_ARRAY );
++        glTexCoordPointer( 4, GL_FLOAT, 0, &OGLRender.TTexture[0] );
++        glEnableClientState( GL_TEXTURE_COORD_ARRAY );
++        p_glClientActiveTexture( itrgb_client_unit );
++    }
++}
++
++static void RenderITRGBEnd( GLint env_mode )
++{
++    if ( InternalConfig.EXT_vertex_array )
++    {
++        p_glClientActiveTexture( GL_TEXTURE1_ARB );
++        if ( !itrgb_client_array )
++        {
++            glDisableClientState( GL_TEXTURE_COORD_ARRAY );
++        }
++        p_glClientActiveTexture( itrgb_client_unit );
++    }
++
++    p_glActiveTextureARB( GL_TEXTURE1_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
++    glDisable( GL_TEXTURE_2D );
++    p_glActiveTextureARB( GL_TEXTURE0_ARB );
++    glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, env_mode );
++}
++
+ // Draw the current saved triangles
+ void RenderDrawTriangles( void )
+ {
+@@ -182,81 +387,42 @@ void RenderDrawTriangles( void )
+         }
+     }
+     
++    // grAlphaControlsITRGBLighting: texture alpha picks the local colour (see RenderAddTriangle()),
++    // for a texture the vertex colour modulates (the texture environment of most colour combines;
++    // not the decal or blend ones, nor a texture split over two units)
++    GLint env_mode = GL_MODULATE;
++    bool itrgb = Glide.State.AlphaControlsITRGB && Glide.CLocal && OpenGL.Texture && !use_two_tex &&
++                 InternalConfig.ARB_multitexture && InternalConfig.EXT_texture_env_combine;
++
++    if ( itrgb )
++    {
++        glGetTexEnviv( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, &env_mode );
++        itrgb = ( env_mode == GL_MODULATE );
++    }
++    if ( itrgb )
++    {
++        RenderITRGBBegin( );
++    }
++
+     if( !OpenGL.Blend && Glide.State.ChromaKeyMode )
+     {
+         glAlphaFunc( GL_GEQUAL, 0.5 );
+         glEnable( GL_ALPHA_TEST );
+-        
+-        glBegin( GL_TRIANGLES );
+-        for ( int i = 0; i < OGLRender.NumberOfTriangles; i++ )
+-        {
+-            glColor3fv( &OGLRender.TColor[ i ].ar );
+-            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].ar );
+-            p_glFogCoordfEXT( OGLRender.TFog[ i ].af );
+-            glTexCoord4fv( &OGLRender.TTexture[ i ].as );
+-            glVertex3fv( &OGLRender.TVertex[ i ].ax );
+-            
+-            glColor3fv( &OGLRender.TColor[ i ].br );
+-            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].br );
+-            p_glFogCoordfEXT( OGLRender.TFog[ i ].bf );
+-            glTexCoord4fv( &OGLRender.TTexture[ i ].bs );
+-            glVertex3fv( &OGLRender.TVertex[ i ].bx );
+-            
+-            glColor3fv( &OGLRender.TColor[ i ].cr );
+-            p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].cr );
+-            p_glFogCoordfEXT( OGLRender.TFog[ i ].cf );
+-            glTexCoord4fv( &OGLRender.TTexture[ i ].cs );
+-            glVertex3fv( &OGLRender.TVertex[ i ].cx );
+-        }
+-        glEnd( );
+-        
++
++        RenderDrawAll( true, use_two_tex || itrgb, itrgb );
++
+         glDisable( GL_ALPHA_TEST );
+     }
+     else
+     {
+-        if ( InternalConfig.EXT_vertex_array )
+-        {
+-            glDrawArrays( GL_TRIANGLES, 0, OGLRender.NumberOfTriangles * 3 );
+-        }
+-        else
+-        {
+-            glBegin( GL_TRIANGLES );
+-            for ( int i = 0; i < OGLRender.NumberOfTriangles; i++ )
+-            {
+-                glColor4fv( &OGLRender.TColor[ i ].ar );
+-                p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].ar );
+-                p_glFogCoordfEXT( OGLRender.TFog[ i ].af );
+-                glTexCoord4fv( &OGLRender.TTexture[ i ].as );
+-                if ( use_two_tex )
+-                {
+-                    p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].as );
+-                }
+-                glVertex3fv( &OGLRender.TVertex[ i ].ax );
+-                
+-                glColor4fv( &OGLRender.TColor[ i ].br );
+-                p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].br );
+-                p_glFogCoordfEXT( OGLRender.TFog[ i ].bf );
+-                glTexCoord4fv( &OGLRender.TTexture[ i ].bs );
+-                if ( use_two_tex )
+-                {
+-                    p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].bs );
+-                }
+-                glVertex3fv( &OGLRender.TVertex[ i ].bx );
+-                
+-                glColor4fv( &OGLRender.TColor[ i ].cr );
+-                p_glSecondaryColor3fvEXT( &OGLRender.TColor2[ i ].cr );
+-                p_glFogCoordfEXT( OGLRender.TFog[ i ].cf );
+-                glTexCoord4fv( &OGLRender.TTexture[ i ].cs );
+-                if ( use_two_tex )
+-                {
+-                    p_glMultiTexCoord4fvARB( GL_TEXTURE1_ARB, &OGLRender.TTexture[ i ].cs );
+-                }
+-                glVertex3fv( &OGLRender.TVertex[ i ].cx );
+-            }
+-            glEnd( );
+-        }
++        RenderDrawAll( false, use_two_tex || itrgb, itrgb );
+     }
+-  
++
++    if ( itrgb )
++    {
++        RenderITRGBEnd( env_mode );
++    }
++
+     if ( ! InternalConfig.EXT_secondary_color )
+     {
+         glBlendFunc( GL_ONE, GL_ONE );
+@@ -404,9 +570,14 @@ void RenderAddTriangle( const GrVertex *a, const GrVertex *b, const GrVertex *c,
+         }
+     }
+ 
++    // grAlphaControlsITRGBLighting: the colour is computed twice, with the iterated colour as local
++    // (texels whose alpha has its top bit clear) and with the constant colour (TColorAlt, the
++    // texels that have it set); RenderDrawTriangles() picks one per texel
++    bool itrgb = Glide.State.AlphaControlsITRGB && Glide.CLocal;
++
+     if ( Glide.CLocal )
+     {
+-        switch ( Glide.State.ColorCombineLocal )
++        switch ( itrgb ? GR_COMBINE_LOCAL_ITERATED : Glide.State.ColorCombineLocal )
+         {
+         case GR_COMBINE_LOCAL_ITERATED:
+             Local.ar = a->r * D1OVER255;
+@@ -469,6 +640,32 @@ void RenderAddTriangle( const GrVertex *a, const GrVertex *b, const GrVertex *c,
+ 
+     ColorFunctionFunc( pC, pC2, &Local, &Other );
+ 
++    if ( itrgb )
++    {
++        TColorStruct    Iterated = Local;
++        TColorStruct    AltC2;
++        TColorStruct    *pCAlt = &OGLRender.TColorAlt[ OGLRender.NumberOfTriangles ];
++
++        Local.ar = Local.br = Local.cr = OpenGL.ConstantColor[ 0 ];
++        Local.ag = Local.bg = Local.cg = OpenGL.ConstantColor[ 1 ];
++        Local.ab = Local.bb = Local.cb = OpenGL.ConstantColor[ 2 ];
++        ZeroMemory( &AltC2, sizeof( AltC2 ) );
++        ColorFunctionFunc( pCAlt, &AltC2, &Local, &Other );
++        if ( Glide.State.ColorCombineInvert )
++        {
++            pCAlt->ar = 1.0f - pCAlt->ar - AltC2.ar;
++            pCAlt->ag = 1.0f - pCAlt->ag - AltC2.ag;
++            pCAlt->ab = 1.0f - pCAlt->ab - AltC2.ab;
++            pCAlt->br = 1.0f - pCAlt->br - AltC2.br;
++            pCAlt->bg = 1.0f - pCAlt->bg - AltC2.bg;
++            pCAlt->bb = 1.0f - pCAlt->bb - AltC2.bb;
++            pCAlt->cr = 1.0f - pCAlt->cr - AltC2.cr;
++            pCAlt->cg = 1.0f - pCAlt->cg - AltC2.cg;
++            pCAlt->cb = 1.0f - pCAlt->cb - AltC2.cb;
++        }
++        Local = Iterated;
++    }
++
+     switch ( Glide.State.AlphaFunction )
+     {
+     case GR_COMBINE_FUNCTION_ZERO:
+diff --git a/openglide/GLRender.h b/openglide/GLRender.h
+index 02f15f8..cc963a1 100644
+--- a/openglide/GLRender.h
++++ b/openglide/GLRender.h
+@@ -75,6 +75,7 @@ struct RenderStruct
+ {
+ 	TColorStruct	*TColor;
+ 	TColorStruct	*TColor2;
++	TColorStruct	*TColorAlt;		// grAlphaControlsITRGBLighting: the colour with the constant as local
+ 	TTextureStruct	*TTexture;
+ 	TVertexStruct	*TVertex;
+ 	TFogStruct		*TFog;
+diff --git a/openglide/GlOgl.h b/openglide/GlOgl.h
+index 3b6fead..5c4784b 100644
+--- a/openglide/GlOgl.h
++++ b/openglide/GlOgl.h
+@@ -174,6 +174,7 @@ struct GlideState
+     FxU32                   STWHint;
+     FxBool                  VRetrace;
+     FxFloat		    LodBias;
++    FxBool                  AlphaControlsITRGB;     // grAlphaControlsITRGBLighting
+ };
+ 
+ struct GlideStruct
+diff --git a/openglide/grguColorAlpha.cpp b/openglide/grguColorAlpha.cpp
+index 13924cc..38dc3ea 100644
+--- a/openglide/grguColorAlpha.cpp
++++ b/openglide/grguColorAlpha.cpp
+@@ -464,9 +464,16 @@ grAlphaCombine( GrCombineFunction_t function, GrCombineFactor_t factor,
+ FX_ENTRY void FX_CALL
+ grAlphaControlsITRGBLighting( FxBool enable )
+ {
+-#ifdef OGL_NOTDONE
+-    GlideMsg("grAlphaControlsTGBALighting( %s )\n", enable ? "TRUE" : "FALSE" );
++#if defined( OGL_PARTDONE ) || defined( OGL_COMBINE )
++    GlideMsg("grAlphaControlsITRGBLighting( %s )\n", enable ? "TRUE" : "FALSE" );
+ #endif
++
++    // With it on, the most significant bit of each texel's alpha picks the local colour of the
++    // colour combine, overriding its local: 0 the iterated colour, 1 the constant colour
++    // (SST-1 fbzColorPath cc_localselect_override). See RenderDrawTriangles().
++    RenderDrawTriangles( );
++
++    Glide.State.AlphaControlsITRGB = enable ? FXTRUE : FXFALSE;
+ }
+ 
+ //*************************************************
+diff --git a/openglide/grguSstGlide.cpp b/openglide/grguSstGlide.cpp
+index f1fb23c..3c82ceb 100644
+--- a/openglide/grguSstGlide.cpp
++++ b/openglide/grguSstGlide.cpp
+@@ -196,6 +196,7 @@ grGlideSetState( const GrState *state )
+     grSstOrigin( StateTemp.OriginInformation );
+     grTexSource( GR_TMU0, StateTemp.TexSource.StartAddress, StateTemp.TexSource.EvenOdd, &StateTemp.TexSource.Info );
+     grTexLodBiasValue(GR_TMU0, StateTemp.LodBias);
++    grAlphaControlsITRGBLighting( StateTemp.AlphaControlsITRGB );
+ }
+ 
+ //*************************************************
