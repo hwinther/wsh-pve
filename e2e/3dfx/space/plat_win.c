@@ -549,9 +549,11 @@ static int split_args(void)
 
 void WinMainCRTStartup(void)
 {
-	int argc = split_args(), api = 0;
+	int argc = split_args(), api = 0, audiotest = 0;
 	for (int i = 1; i < argc; i++) {
-		if (!lstrcmpiA(argv_[i], "-hostgl"))
+		if (!lstrcmpiA(argv_[i], "-audiotest"))
+			audiotest = 1;
+		else if (!lstrcmpiA(argv_[i], "-hostgl"))
 			host_gl = 1;
 		else if (!lstrcmpiA(argv_[i], "-nocom"))
 			w3d_com_off = 1;
@@ -571,6 +573,13 @@ void WinMainCRTStartup(void)
 		fail("-api is glide2, glide3 or opengl", 2);
 	if (api == 0 && host_gl)
 		api = 3;
+	if (audiotest) {
+		/* no display: neither the renderer menu nor a renderer's DLL (a guest without them plays
+		 * the signature as well) */
+		int status = space_main(argc, argv_, api == 1 ? &glide2_backend : api == 2 ? &glide3_backend : &gl_backend);
+		w3d_com_release();
+		ExitProcess((UINT)status);
+	}
 	if (api == 0)
 		api = menu();
 	if (api == 4) {

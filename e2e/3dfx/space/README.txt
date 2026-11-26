@@ -74,11 +74,13 @@ Audio test
              sound (it logs "AUDIO ... torn reads, glitches, clock steps back, resyncs" on
              close); e2e/3dfx/dos-test.sh runs it last in each boot on QEMU's sb16 (CI:
              3dfx-dos.yml)
-    Windows  WinMM waveOut, 16-bit stereo: builds, not run in a guest yet. The Windows 98 harness
-             (e2e/3dfx/win98-test.sh, on the operator's own installed disk) could add a run of
-             `WSHSPACE.EXE -audiotest` with `-device sb16` (or es1370/AC97 with their drivers)
-             and `-audiodev wav`, then wavcheck.py --signature on the recording, as dos-test.sh
-             does; COM1 carries the AUDIOTEST and PASS lines
+    Windows  WinMM waveOut, 16-bit stereo, with no renderer (no menu, no Glide or OpenGL DLL
+             loaded; -api only names one in the log). Passed wavcheck.py --signature once, by
+             hand, in Windows 98 SE on AC97 with SigmaTel's STAC97 driver and pve-qemu-kvm's
+             wsh/0170 (stage 3f, display reference): every frequency 0.68% high from Windows'
+             22050 Hz conversion. The Windows 98 harness (e2e/3dfx/win98-test.sh, on the
+             operator's own installed disk) could add such a run with `-audiodev wav`, as
+             dos-test.sh does; COM1 carries the AUDIOTEST and PASS lines
 
 Build
   make 3dfx-space
