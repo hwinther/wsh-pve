@@ -156,6 +156,28 @@ Build times on the lab host: the tools 5 minutes per architecture (`-j14`, with 
 architecture's tools building at the same time), headers and libc about a minute, a kernel
 11-20 s; with tools and libc kept, `build.sh` for one architecture takes 24 s.
 
+## Recordings
+
+`record.py --arch sparc32 --machine SS-4 --cast wisp-netbsd-ss4.cast` boots one kernel with
+run.py's QEMU command line and writes the serial console as an asciinema v2 cast in real time
+(the sparc lab's `CastWriter`, `e2e/sparc/recording.py`), from starting QEMU to its exit, with a
+marker at NetBSD's banner, PID 1's banner and the result line. Nothing is typed. It needs the
+repository's `e2e/` around it (`e2e/sparc/recording.py`, `e2e/wisp/run.py`), so run it from a
+checkout mounted into the image:
+
+```sh
+docker run --rm -v "$PWD/e2e:/e2e" wsh-wisp-netbsd \
+  python3 /e2e/wisp-netbsd/record.py --arch sparc32 --machine SS-4 --out /e2e/wisp-netbsd/out \
+  --cast /e2e/wisp-netbsd/out/wisp-netbsd-ss4.cast
+```
+
+The docs' Living museum embeds one cast per sun4m machine that has no install recording, all
+made with this and uploaded to the `media` release by hand (not in git): `wisp-netbsd-ss4.cast`,
+`wisp-netbsd-classic.cast` (`SPARCClassic`), `wisp-netbsd-lx.cast`, `wisp-netbsd-voyager.cast`
+and `wisp-netbsd-sparcbook.cast`. Recorded 2026-11-26 with the published pve-qemu-kvm
+11.1.3-4+wsh30 on the lab host with two sparc installs running beside them: NetBSD's banner after
+1.4-1.9 s, power-off after 2.4-2.9 s, every result `status=ok` with wisp's CRC.
+
 ## Tests and CI
 
 - `tests/test_run.py`: the runner's evaluation (markers, checks, CRC, power-off, timeout) and its

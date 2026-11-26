@@ -7,6 +7,10 @@
 // that covers the sun4u-only boots (Solaris 9, Solaris 10, Tribblix m34: stored disks, no install
 // stage recorded) and wisp's Mandelbrot cast on three machines (SS-5, sun4u, pc; no installer or
 // guest OS, so tryIt is an e2e/wisp/README.md `run.py` command instead of `wsh-lab install`).
+// The install targets recorded in the 2026-11-26 sweep (guides/lab-install.md, "Regression sweep")
+// each have an install/boot pair; the five sun4m machines that never ran an install (SS-4,
+// SPARCclassic, LX, Voyager, SPARCbook) have wisp-netbsd's boot instead (sparc-recordings.mdx,
+// "wisp-netbsd on the other sun4m machines"; tryIt from e2e/wisp-netbsd/README.md).
 // Alpine on aarch64, a VM Proxmox VE started directly rather than one of the lab's own install
 // targets, has no tryIt at all. Left out on purpose: the NetBSD install CD on sparc64 under PVE in
 // the same sparc-recordings.mdx section as Alpine, which only reaches the sysinst shell and has no
@@ -433,7 +437,7 @@ const scenarios: LivingMuseumScenario[] = [
     machineLabel: "SPARCstation 5 (SS-5)",
     os: "debian40",
     osLabel: "Debian GNU/Linux 4.0 (etch)",
-    osFamily: "Debian 4",
+    osFamily: "Debian",
     blurb:
       "The netinst CD with a preseed file: one line typed at SILO's boot: loads the lab's answers " +
       "from a second CD, and debian-installer runs unattended from there (network, the base system " +
@@ -548,12 +552,1134 @@ const scenarios: LivingMuseumScenario[] = [
     },
   },
   {
+    id: "sol23-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol23",
+    osLabel: "Solaris 2.3",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.3 Edition II, the first release for the SS-5: the CD as a disk boots the installer, one system identification question per screen, Quick Install (End User). The check logs in, records uname (SunOS 5.3), the marker and df, and powers off. SS-5, OpenBIOS, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-install-ss5.cast",
+          caption: "Solaris 2.3 Edition II install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-boot-ss5.cast",
+          caption: "Solaris 2.3 Edition II booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol23-ss5 --check",
+      note: "about 10 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol23-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol23",
+    osLabel: "Solaris 2.3",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "The same Solaris 2.3 Edition II Quick Install on the SS-20 (the SS-20 needs 2.3 or later). SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-install-ss20.cast",
+          caption: "Solaris 2.3 Edition II install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-boot-ss20.cast",
+          caption: "Solaris 2.3 Edition II booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol23-ss20 --check",
+      note: "about 9 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol24-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol24",
+    osLabel: "Solaris 2.4",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.4 HW 3/95 from the CD as a disk under OpenBIOS (patches 0019-0022): the End User install, with the 4-digit year typed over 2.4's 19xx. SS-5, OpenBIOS, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-install-ss5.cast",
+          caption: "Solaris 2.4 install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-boot-ss5.cast",
+          caption: "Solaris 2.4 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol24-ss5 --check",
+      note: "about 8 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol24-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol24",
+    osLabel: "Solaris 2.4",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.4 HW 3/95 on the SS-20: the End User install from the CD as a disk, then the check boot. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-install-ss20.cast",
+          caption: "Solaris 2.4 install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-boot-ss20.cast",
+          caption: "Solaris 2.4 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol24-ss20 --check",
+      note: "about 8 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol25-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol25",
+    osLabel: "Solaris 2.5",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5 HW 1/96: the CD as a disk, then an End User install like 2.6's, without 2.5.1's Maintenance Update. SS-5, OpenBIOS, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-install-ss5.cast",
+          caption: "Solaris 2.5 install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-boot-ss5.cast",
+          caption: "Solaris 2.5 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol25-ss5 --check",
+      note: "about 9 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol25-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol25",
+    osLabel: "Solaris 2.5",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5 HW 1/96 on the SS-20, End User from the CD as a disk. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-install-ss20.cast",
+          caption: "Solaris 2.5 install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-boot-ss20.cast",
+          caption: "Solaris 2.5 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol25-ss20 --check",
+      note: "about 9 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol251-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol251",
+    osLabel: "Solaris 2.5.1",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5.1 11/97 under the SPARCstation 5 PROM (ss5.bin): the End User install from the CD as a disk, then the CD's Maintenance Update, which takes most of the 35 minutes. SS-5, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-install-ss5.cast",
+          caption: "Solaris 2.5.1 install, SS-5 with the Sun PROM under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-boot-ss5.cast",
+          caption: "Solaris 2.5.1 booting the installed disk, SS-5 with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol251-ss5 --check",
+      note: "about 45 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol251-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol251",
+    osLabel: "Solaris 2.5.1",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5.1 11/97 on the SS-20, which needs no Sun PROM: OpenBIOS boots the CD (as a disk) and the installed system. End User plus the Maintenance Update. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-install-ss20.cast",
+          caption: "Solaris 2.5.1 install, SS-20 with OpenBIOS under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-boot-ss20.cast",
+          caption: "Solaris 2.5.1 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol251-ss20 --check",
+      note: "about 47 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol26-ss10",
+    machine: "ss10",
+    machineLabel: "SPARCstation 10 (SS-10)",
+    os: "sol26",
+    osLabel: "Solaris 2.6",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "The SS-20's Solaris 2.6 5/98 End User install unchanged on QEMU's SS-10. SS-10, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol26-install-ss10.cast",
+          caption: "Solaris 2.6 install, SS-10 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol26-boot-ss10.cast",
+          caption: "Solaris 2.6 booting the installed disk, SS-10 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol26-ss10 --check",
+      note: "about 16 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol7-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol7",
+    osLabel: "Solaris 7",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 7 3/99 with suninstall: 2.6's questions plus Subnets and Select 64 Bit (no), End User on the 3G disk. The check boots to SunOS 5.7. SS-5, OpenBIOS, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-install-ss5.cast",
+          caption: "Solaris 7 install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-boot-ss5.cast",
+          caption: "Solaris 7 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol7-ss5 --check",
+      note: "about 11 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol7-ss10",
+    machine: "ss10",
+    machineLabel: "SPARCstation 10 (SS-10)",
+    os: "sol7",
+    osLabel: "Solaris 7",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 7 3/99 on the SS-10, the same suninstall answers as on the SS-5 and SS-20. SS-10, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-install-ss10.cast",
+          caption: "Solaris 7 install, SS-10 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-boot-ss10.cast",
+          caption: "Solaris 7 booting the installed disk, SS-10 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol7-ss10 --check",
+      note: "about 12 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol7-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol7",
+    osLabel: "Solaris 7",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 7 3/99 on the SS-20 with suninstall, End User. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-install-ss20.cast",
+          caption: "Solaris 7 install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-boot-ss20.cast",
+          caption: "Solaris 7 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol7-ss20 --check",
+      note: "about 10 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol251-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol251",
+    osLabel: "Solaris 2.5.1",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5.1 11/97 (the Ultra 5/10 media) on sparc64: suninstall on a Sun-labelled IDE disk, a 32-bit kernel, the Maintenance Update as on sun4m; needs OpenBIOS patches 0036-0039. sun4u, OpenBIOS, 1024 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-install-sun4u.cast",
+          caption: "Solaris 2.5.1 install, sun4u with OpenBIOS under PVE (6x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-boot-sun4u.cast",
+          caption: "Solaris 2.5.1 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol251-sun4u --check",
+      note: "about 67 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol26-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol26",
+    osLabel: "Solaris 2.6",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.6 5/98 on sparc64: suninstall with the sun4m answers and a static address on hme0, a 32-bit kernel; needs OpenBIOS patches 0036-0039. sun4u, OpenBIOS, 1024 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol26-install-sun4u.cast",
+          caption: "Solaris 2.6 install, sun4u with OpenBIOS under PVE (3x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol26-boot-sun4u.cast",
+          caption: "Solaris 2.6 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol26-sun4u --check",
+      note: "about 28 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol7-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol7",
+    osLabel: "Solaris 7",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 7 3/99 on sparc64: suninstall with the 64-bit support it selects on sun4u, End User on a Sun-labelled IDE disk. sun4u, OpenBIOS, 2048 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-install-sun4u.cast",
+          caption: "Solaris 7 install, sun4u with OpenBIOS under PVE (3x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol7-boot-sun4u.cast",
+          caption: "Solaris 7 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol7-sun4u --check",
+      note: "about 25 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sunos414-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sunos414",
+    osLabel: "SunOS 4.1.4",
+    osFamily: "SunOS",
+    blurb:
+      "SunOS 4.1.4 (Solaris 1.1.2), the last SunOS 4: the CD (converted from its raw BIN image) copies its miniroot to the swap slice, then suninstall's Quick install (Programmer). SS-5, OpenBIOS, 64 MB for the install, 256 MB after.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos414-install-ss5.cast",
+          caption: "SunOS 4.1.4 install, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos414-boot-ss5.cast",
+          caption: "SunOS 4.1.4 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sunos414-ss5 --check",
+      note: "about 6 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sunos413u1b-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sunos413u1b",
+    osLabel: "SunOS 4.1.3_U1B",
+    osFamily: "SunOS",
+    blurb:
+      "SunOS 4.1.3_U1B (Solaris 1.1.1B) on the SS-20: the miniroot, suninstall's Quick install, sys-config at the first boot. SS-20, OpenBIOS, 64 MB for the install, 512 MB after, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos413u1b-install-ss20.cast",
+          caption: "SunOS 4.1.3_U1B install, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos413u1b-boot-ss20.cast",
+          caption: "SunOS 4.1.3_U1B booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sunos413u1b-ss20 --check",
+      note: "about 6 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "netbsd111-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "netbsd111",
+    osLabel: "NetBSD 11.1",
+    osFamily: "NetBSD",
+    blurb:
+      "sysinst from the NetBSD 11.1 sparc CD on the SS-20: the microroot loads the installer, the Minimal set on a blank disk. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd111-install-ss20.cast",
+          caption: "NetBSD 11.1 sparc install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd111-boot-ss20.cast",
+          caption: "NetBSD 11.1 sparc booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install netbsd111-sparc-ss20 --check",
+      note: "about 7 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "netbsd111-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "netbsd111",
+    osLabel: "NetBSD 11.1",
+    osFamily: "NetBSD",
+    blurb:
+      "sysinst from the NetBSD 11.1 sparc64 CD: the sets without X11 on the IDE disk; the check boots to NetBSD 11.1 (GENERIC). sun4u, OpenBIOS, 512 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd111-install-sun4u.cast",
+          caption: "NetBSD 11.1 sparc64 install, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd111-boot-sun4u.cast",
+          caption: "NetBSD 11.1 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install netbsd111-sparc64 --check",
+      note: "about 11 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "netbsd93-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "netbsd93",
+    osLabel: "NetBSD 9.3",
+    osFamily: "NetBSD",
+    blurb:
+      "NetBSD 9.3's sysinst, which goes straight to its configuration menu after the sets (root's password is set at the first boot). Minimal set. SS-5, OpenBIOS, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-install-ss5.cast",
+          caption: "NetBSD 9.3 sparc install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-boot-ss5.cast",
+          caption: "NetBSD 9.3 sparc booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install netbsd93-sparc --check",
+      note: "about 7 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "netbsd93-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "netbsd93",
+    osLabel: "NetBSD 9.3",
+    osFamily: "NetBSD",
+    blurb:
+      "NetBSD 9.3 sparc, Minimal, on the SS-20. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-install-ss20.cast",
+          caption: "NetBSD 9.3 sparc install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-boot-ss20.cast",
+          caption: "NetBSD 9.3 sparc booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install netbsd93-sparc-ss20 --check",
+      note: "about 6 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "netbsd93-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "netbsd93",
+    osLabel: "NetBSD 9.3",
+    osFamily: "NetBSD",
+    blurb:
+      "NetBSD 9.3 sparc64, the sets without X11 on the IDE disk; the check boots to NetBSD 9.3 (GENERIC). sun4u, OpenBIOS, 512 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-install-sun4u.cast",
+          caption: "NetBSD 9.3 sparc64 install, sun4u with OpenBIOS under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/netbsd93-boot-sun4u.cast",
+          caption: "NetBSD 9.3 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install netbsd93-sparc64 --check",
+      note: "about 18 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "openbsd59-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "openbsd59",
+    osLabel: "OpenBSD 5.9",
+    osFamily: "OpenBSD",
+    blurb:
+      "OpenBSD 5.9, the last sparc release, on the SS-20: bsd.rd from cd59.iso, the sets from a second CD checked against SHA256.sig. One CPU: OpenBSD/sparc has no multiprocessor kernel. SS-20, OpenBIOS, 512 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/openbsd59-install-ss20.cast",
+          caption: "OpenBSD 5.9 sparc install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/openbsd59-boot-ss20.cast",
+          caption: "OpenBSD 5.9 sparc booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install openbsd59-ss20 --check",
+      note: "about 10 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "freebsd124-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "freebsd124",
+    osLabel: "FreeBSD 12.4",
+    osFamily: "FreeBSD",
+    blurb:
+      "FreeBSD 12.4, the last release with sparc64: bsdinstall's unattended script mode (VTOC8 auto layout, kernel and base from the CD, sshd on); the check boots to 12.4-RELEASE and powers off. sun4u, OpenBIOS, 512 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/freebsd124-install-sun4u.cast",
+          caption: "FreeBSD 12.4 sparc64 install, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/freebsd124-boot-sun4u.cast",
+          caption: "FreeBSD 12.4 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install freebsd124-sun4u --check",
+      note: "about 16 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "redhat62-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "redhat62",
+    osLabel: "Red Hat Linux 6.2",
+    osFamily: "Red Hat 6.2",
+    blurb:
+      "Red Hat Linux 6.2 by kickstart from an answer CD made on the node; the lab types only SILO's three screens. The check boots Linux 2.2.14 from the disk. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/redhat62-install-ss20.cast",
+          caption: "Red Hat Linux 6.2 kickstart install, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/redhat62-boot-ss20.cast",
+          caption: "Red Hat Linux 6.2 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install redhat62-ss20 --check",
+      note: "about 5 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "debian40-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "debian40",
+    osLabel: "Debian GNU/Linux 4.0 (etch)",
+    osFamily: "Debian",
+    blurb:
+      "Debian 4.0 etch from the netinst CD with a preseed file; the base system and the kernel come from archive.debian.org, so the VM needs a route out. The check boots Linux 2.6.18. SS-20, OpenBIOS, 512 MB, one CPU.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/debian40-install-ss20.cast",
+          caption: "Debian 4.0 (etch) preseeded netinst install, SS-20 with OpenBIOS under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/debian40-boot-ss20.cast",
+          caption: "Debian 4.0 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install debian40-ss20 --gateway <gw> --dns <dns> --check",
+      note: "about 17-21 minutes; needs a router and DNS that reach archive.debian.org (lab-install.md)",
+    },
+  },
+  {
+    id: "debian7-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "debian7",
+    osLabel: "Debian GNU/Linux 7.11 (wheezy)",
+    osFamily: "Debian",
+    blurb:
+      "Debian 7.11 wheezy, the last official Debian release for sparc, preseeded from CD 1 alone (nothing fetched): the base system with the OpenSSH server, SILO, Linux 3.2. sun4u, OpenBIOS, 512 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/debian7-install-sun4u.cast",
+          caption: "Debian 7.11 (wheezy) preseeded install, sun4u with OpenBIOS under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/debian7-boot-sun4u.cast",
+          caption: "Debian 7.11 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install debian7-sun4u --check",
+      note: "about 69 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol8-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol8",
+    osLabel: "Solaris 8",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 8 2/02, Entire Group, installed by Web Start from the Installation CD and two Software CDs, swapped through the PVE API when the installer asks; the install boots the mini-root at the firmware prompt itself (auto-boot? off while it runs). The check boots to SunOS 5.8. SS-5, OpenBIOS, 256 MB, 9G disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-install-ss5.cast",
+          caption: "Solaris 8 2/02 Web Start install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-boot-ss5.cast",
+          caption: "Solaris 8 2/02 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol8-ss5 --check",
+      note: "about 37 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol8-ss5-prom",
+    machine: "ss5-prom",
+    machineLabel: "SPARCstation 5 (SS-5), Sun PROM",
+    os: "sol8",
+    osLabel: "Solaris 8",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "The same Solaris 8 2/02 Web Start install under the SPARCstation 5 PROM (ss5.bin), which boots the mini-root from Web Start's boot string by itself. SS-5, 256 MB, 9G disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-install-ss5-prom.cast",
+          caption: "Solaris 8 2/02 Web Start install, SS-5 with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-boot-ss5-prom.cast",
+          caption: "Solaris 8 2/02 booting the installed disk, SS-5 with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol8-ss5-prom --check",
+      note: "about 47 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol8-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol8",
+    osLabel: "Solaris 8",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 8 1/01, Entire Group, by Web Start from three CDs swapped by the install. SS-20, OpenBIOS, 512 MB, one CPU, 9G disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-install-ss20.cast",
+          caption: "Solaris 8 1/01 Web Start install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-boot-ss20.cast",
+          caption: "Solaris 8 1/01 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol8-ss20 --check",
+      note: "about 30 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol9-ss5",
+    machine: "ss5",
+    machineLabel: "SPARCstation 5 (SS-5)",
+    os: "sol9",
+    osLabel: "Solaris 9",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 9 9/05, End User, by Web Start from the DVD: Solaris 9 is the last release for sun4m, and its installer and 32-bit kernel run on the emulated SS-5. SS-5, OpenBIOS, 256 MB, 9G disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol9-install-ss5.cast",
+          caption: "Solaris 9 9/05 Web Start install, SS-5 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol9-boot-ss5.cast",
+          caption: "Solaris 9 9/05 booting the installed disk, SS-5 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol9-ss5 --check",
+      note: "about 30 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol9-ss20",
+    machine: "ss20",
+    machineLabel: "SPARCstation 20 (SS-20)",
+    os: "sol9",
+    osLabel: "Solaris 9",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 9, End User, by Web Start from the DVD on the SS-20. SS-20, OpenBIOS, 512 MB, one CPU, 9G disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol9-install-ss20.cast",
+          caption: "Solaris 9 Web Start install, SS-20 with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol9-boot-ss20.cast",
+          caption: "Solaris 9 booting the installed disk, SS-20 with OpenBIOS under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol9-ss20 --check",
+      note: "about 27 minutes (lab-install.md)",
+    },
+  },
+  {
+    id: "sol8-sun4u",
+    machine: "sun4u",
+    machineLabel: "sun4u (sparc64)",
+    os: "sol8",
+    osLabel: "Solaris 8",
+    osFamily: "Solaris 7-10",
+    blurb:
+      "Solaris 8 2/02's Web Start on sparc64: the Installation CD copies a mini-root to the disk, the lab boots it at the firmware prompt, then End User with 64-bit support from Software 1 of 2. sun4u, OpenBIOS, 1024 MB, IDE disk.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-install-sun4u.cast",
+          caption: "Solaris 8 2/02 Web Start install, sun4u with OpenBIOS under PVE (3x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol8-boot-sun4u.cast",
+          caption: "Solaris 8 2/02 booting the installed disk, sun4u with OpenBIOS under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol8-sun4u --check",
+      note: "about 55 minutes (lab-install.md)",
+    },
+  },
+  {
     id: "sol9-sun4u",
     machine: "sun4u",
     machineLabel: "sun4u (sparc64)",
     os: "sol9",
     osLabel: "Solaris 9",
-    osFamily: "Solaris (64-bit)",
+    osFamily: "Solaris 7-10",
     blurb:
       "A boot of the stored Solaris 9 9/05 disk, installed by Web Start from the DVD: OpenBIOS " +
       "for sparc64, the kernel, the services, login, uname, the marker, df, prtvtoc, ifconfig, " +
@@ -582,7 +1708,7 @@ const scenarios: LivingMuseumScenario[] = [
     machineLabel: "sun4u (sparc64)",
     os: "sol10",
     osLabel: "Solaris 10",
-    osFamily: "Solaris (64-bit)",
+    osFamily: "Solaris 7-10",
     blurb:
       "A boot of the stored Solaris 10 1/13 disk, installed by the text installer: OpenBIOS for " +
       "sparc64, the kernel, the services, login, uname/prtconf/df/ifconfig and init 5. sun4u, " +
@@ -742,6 +1868,156 @@ const scenarios: LivingMuseumScenario[] = [
       command:
         'docker run --rm -v "$PWD/e2e/wisp:/wisp" wsh-wisp ./run.py --arch x86_64 --shell',
       note: "the prompt after 1.3 s, mandel in 6 ms, power-off by 4-5 s (e2e/wisp/README.md)",
+    },
+  },
+  {
+    id: "wisp-netbsd-ss4",
+    machine: "ss4",
+    machineLabel: "SPARCstation 4 (SS-4)",
+    os: "wisp-netbsd",
+    osLabel: "wisp-netbsd (NetBSD 11.1 test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp-netbsd, wisp's NetBSD sibling (e2e/wisp-netbsd/): a small NetBSD 11.1 kernel with a " +
+      "memory-disk root whose only program is PID 1, booted with QEMU's -kernel on the SPARCstation 4 (SS-4) " +
+      "(QEMU's SS-4 machine, OpenBIOS, serial console, 128 MB). OpenBIOS's SBus probe, NetBSD's " +
+      "autoconfiguration, then PID 1's markers, a clock check, a file check and wisp's compute loop, " +
+      "and the power-off, all in real time: the kernel's banner after 1.9 s, power-off after 2.9 s.",
+    stages: [
+      {
+        label: "Boot to power-off",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-netbsd-ss4.cast",
+          caption: "wisp-netbsd (NetBSD 11.1) on the SPARCstation 4 (SS-4): OpenBIOS to power-off, serial console",
+          poster: "npt:0:2.9",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" wsh-wisp-netbsd ./run.py --arch sparc32 --machine SS-4',
+      note: "after build.sh sparc32; power-off after about 2.3 s on an idle host (e2e/wisp-netbsd/README.md)",
+    },
+  },
+  {
+    id: "wisp-netbsd-classic",
+    machine: "classic",
+    machineLabel: "SPARCclassic",
+    os: "wisp-netbsd",
+    osLabel: "wisp-netbsd (NetBSD 11.1 test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp-netbsd, wisp's NetBSD sibling (e2e/wisp-netbsd/): a small NetBSD 11.1 kernel with a " +
+      "memory-disk root whose only program is PID 1, booted with QEMU's -kernel on the SPARCclassic " +
+      "(QEMU's SPARCClassic machine, OpenBIOS, serial console, 128 MB). OpenBIOS's SBus probe, NetBSD's " +
+      "autoconfiguration, then PID 1's markers, a clock check, a file check and wisp's compute loop, " +
+      "and the power-off, all in real time: the kernel's banner after 1.6 s, power-off after 2.5 s.",
+    stages: [
+      {
+        label: "Boot to power-off",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-netbsd-classic.cast",
+          caption: "wisp-netbsd (NetBSD 11.1) on the SPARCclassic: OpenBIOS to power-off, serial console",
+          poster: "npt:0:2.5",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" wsh-wisp-netbsd ./run.py --arch sparc32 --machine SPARCClassic',
+      note: "after build.sh sparc32; power-off after about 2.3 s on an idle host (e2e/wisp-netbsd/README.md)",
+    },
+  },
+  {
+    id: "wisp-netbsd-lx",
+    machine: "lx",
+    machineLabel: "SPARCstation LX",
+    os: "wisp-netbsd",
+    osLabel: "wisp-netbsd (NetBSD 11.1 test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp-netbsd, wisp's NetBSD sibling (e2e/wisp-netbsd/): a small NetBSD 11.1 kernel with a " +
+      "memory-disk root whose only program is PID 1, booted with QEMU's -kernel on the SPARCstation LX " +
+      "(QEMU's LX machine, OpenBIOS, serial console, 128 MB). OpenBIOS's SBus probe, NetBSD's " +
+      "autoconfiguration, then PID 1's markers, a clock check, a file check and wisp's compute loop, " +
+      "and the power-off, all in real time: the kernel's banner after 1.5 s, power-off after 2.5 s.",
+    stages: [
+      {
+        label: "Boot to power-off",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-netbsd-lx.cast",
+          caption: "wisp-netbsd (NetBSD 11.1) on the SPARCstation LX: OpenBIOS to power-off, serial console",
+          poster: "npt:0:2.5",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" wsh-wisp-netbsd ./run.py --arch sparc32 --machine LX',
+      note: "after build.sh sparc32; power-off after about 2.3 s on an idle host (e2e/wisp-netbsd/README.md)",
+    },
+  },
+  {
+    id: "wisp-netbsd-voyager",
+    machine: "voyager",
+    machineLabel: "SPARCstation Voyager",
+    os: "wisp-netbsd",
+    osLabel: "wisp-netbsd (NetBSD 11.1 test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp-netbsd, wisp's NetBSD sibling (e2e/wisp-netbsd/): a small NetBSD 11.1 kernel with a " +
+      "memory-disk root whose only program is PID 1, booted with QEMU's -kernel on the SPARCstation Voyager " +
+      "(QEMU's Voyager machine, OpenBIOS, serial console, 128 MB). OpenBIOS's SBus probe, NetBSD's " +
+      "autoconfiguration, then PID 1's markers, a clock check, a file check and wisp's compute loop, " +
+      "and the power-off, all in real time: the kernel's banner after 1.4 s, power-off after 2.4 s.",
+    stages: [
+      {
+        label: "Boot to power-off",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-netbsd-voyager.cast",
+          caption: "wisp-netbsd (NetBSD 11.1) on the SPARCstation Voyager: OpenBIOS to power-off, serial console",
+          poster: "npt:0:2.4",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" wsh-wisp-netbsd ./run.py --arch sparc32 --machine Voyager',
+      note: "after build.sh sparc32; power-off after about 2.3 s on an idle host (e2e/wisp-netbsd/README.md)",
+    },
+  },
+  {
+    id: "wisp-netbsd-sparcbook",
+    machine: "sparcbook",
+    machineLabel: "SPARCbook",
+    os: "wisp-netbsd",
+    osLabel: "wisp-netbsd (NetBSD 11.1 test kernel)",
+    osFamily: "wisp",
+    blurb:
+      "wisp-netbsd, wisp's NetBSD sibling (e2e/wisp-netbsd/): a small NetBSD 11.1 kernel with a " +
+      "memory-disk root whose only program is PID 1, booted with QEMU's -kernel on the SPARCbook " +
+      "(QEMU's SPARCbook machine, OpenBIOS, serial console, 128 MB). OpenBIOS's SBus probe, NetBSD's " +
+      "autoconfiguration, then PID 1's markers, a clock check, a file check and wisp's compute loop, " +
+      "and the power-off, all in real time: the kernel's banner after 1.5 s, power-off after 2.4 s.",
+    stages: [
+      {
+        label: "Boot to power-off",
+        media: {
+          kind: "cast",
+          src: "/recordings/wisp-netbsd-sparcbook.cast",
+          caption: "wisp-netbsd (NetBSD 11.1) on the SPARCbook: OpenBIOS to power-off, serial console",
+          poster: "npt:0:2.4",
+        },
+      },
+    ],
+    tryIt: {
+      command:
+        'docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" wsh-wisp-netbsd ./run.py --arch sparc32 --machine SPARCbook',
+      note: "after build.sh sparc32; power-off after about 2.3 s on an idle host (e2e/wisp-netbsd/README.md)",
     },
   },
 ];

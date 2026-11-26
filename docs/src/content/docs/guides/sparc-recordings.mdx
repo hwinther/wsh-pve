@@ -341,6 +341,539 @@ kernel from a ZFS root, the SMF services, login, the system state and `init 5`. 
   poster="npt:0:10"
 />
 
+### Solaris 2.3, 2.4 and 2.5 on SS-5 and SS-20
+
+Three releases whose installer boots only from a CD that answers as a disk (`cd_as_disk=1`), all
+under OpenBIOS (2.3 and 2.4 thanks to OpenBIOS patches 0019-0022). 2.3 Edition II (the first
+release for the SS-5) asks one question per screen and installs with Quick Install; 2.4 (HW 3/95)
+and 2.5 (HW 1/96) run the End User install. 2.3 and 2.4 show the year as 19xx, so the lab types the 4-digit year. The check
+boots the disk, logs in as root and records `uname`, the marker, `df` and `ifconfig` (`SunOS
+sol23-ss5 5.3`, `5.4`, `5.5`). SS-5 with 256 MB, SS-20 with 512 MB and one CPU. Recorded
+2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30, two installs at a time on the lab host:
+
+| Target | Install | Check |
+| --- | --- | --- |
+| `sol23-ss5` | 5.4 min | 1.3 min |
+| `sol23-ss20` | 4.6 min | 1.3 min |
+| `sol24-ss5` | 4.7 min | 1.2 min |
+| `sol24-ss20` | 4.5 min | 1.2 min |
+| `sol25-ss5` | 4.2 min | 1.3 min |
+| `sol25-ss20` | 4.1 min | 1.3 min |
+
+<LabCast
+  src="/recordings/sol23-install-ss5.cast"
+  caption="Solaris 2.3 Edition II install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol23-boot-ss5.cast"
+  caption="Solaris 2.3 Edition II booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol23-install-ss20.cast"
+  caption="Solaris 2.3 Edition II install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol23-boot-ss20.cast"
+  caption="Solaris 2.3 Edition II booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-install-ss5.cast"
+  caption="Solaris 2.4 install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-boot-ss5.cast"
+  caption="Solaris 2.4 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-install-ss20.cast"
+  caption="Solaris 2.4 install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-boot-ss20.cast"
+  caption="Solaris 2.4 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-install-ss5.cast"
+  caption="Solaris 2.5 install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-boot-ss5.cast"
+  caption="Solaris 2.5 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-install-ss20.cast"
+  caption="Solaris 2.5 install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-boot-ss20.cast"
+  caption="Solaris 2.5 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.5.1 on SS-5 and SS-20
+
+Solaris 2.5.1 11/97 from the CD as a disk: the End User install, then the CD's Maintenance Update,
+which takes most of the time (both installs about 35 minutes; the long quiet stretches are cut and
+the rest plays at 4x). The SS-5 runs the SPARCstation 5 PROM (`bios: ss5.bin`), the SS-20 OpenBIOS
+(512 MB, one CPU). The check boots the disk to `SunOS ... 5.5.1` and powers off. Recorded 2026-11-26
+with pve-qemu-kvm 11.1.3-4+wsh30 (install 35.1 min, check 1.6 min on the SS-5; install 33.5 min, check 1.4 min on the
+SS-20).
+
+<LabCast
+  src="/recordings/sol251-install-ss5.cast"
+  caption="Solaris 2.5.1 install, SS-5 with the Sun PROM under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-boot-ss5.cast"
+  caption="Solaris 2.5.1 booting the installed disk, SS-5 with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-install-ss20.cast"
+  caption="Solaris 2.5.1 install, SS-20 with OpenBIOS under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-boot-ss20.cast"
+  caption="Solaris 2.5.1 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.6 on SS-10
+
+The SS-20's Solaris 2.6 5/98 install unchanged on QEMU's SS-10 (`sol26-ss10`): OpenBIOS, one CPU,
+512 MB, the 3G disk, End User. Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30
+(install 7.2 min, check 2.2 min).
+
+<LabCast
+  src="/recordings/sol26-install-ss10.cast"
+  caption="Solaris 2.6 install, SS-10 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol26-boot-ss10.cast"
+  caption="Solaris 2.6 booting the installed disk, SS-10 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 7 on SS-5, SS-10 and SS-20
+
+Solaris 7 3/99 from the Installation CD with suninstall: 2.6's questions plus Subnets and Select
+64 Bit (no, on sun4m), End User on the 3G disk. The check boots to `SunOS sol7-ss5 5.7`. OpenBIOS;
+SS-5 with 256 MB, SS-10 and SS-20 with 512 MB and one CPU. Recorded 2026-11-26 with pve-qemu-kvm
+11.1.3-4+wsh30: SS-5 install 5.7 min, check 1.5 min; SS-10 install 5.6 min, check 1.5 min; SS-20 install 5.5 min, check 1.5 min.
+
+<LabCast
+  src="/recordings/sol7-install-ss5.cast"
+  caption="Solaris 7 install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-boot-ss5.cast"
+  caption="Solaris 7 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-install-ss10.cast"
+  caption="Solaris 7 install, SS-10 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-boot-ss10.cast"
+  caption="Solaris 7 booting the installed disk, SS-10 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-install-ss20.cast"
+  caption="Solaris 7 install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-boot-ss20.cast"
+  caption="Solaris 7 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 2.5.1, 2.6 and 7 on sun4u
+
+suninstall on sparc64: the sun4m targets' answers with a static address on `hme0`, End User on a
+Sun-labelled IDE disk, the CD on `ide2`. 2.5.1 and 2.6 (the Ultra 5/10 media) boot 32-bit kernels
+and need OpenBIOS patches 0036-0039; Solaris 7 selects the 64-bit support. 2.5.1 runs its
+Maintenance Update as on sun4m (played at 6x); the others play at 3x, the check boots at 2x. sun4u,
+OpenBIOS, 1024 MB (Solaris 7: 2048 MB). Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30:
+2.5.1 install 54.8 min, check 3.7 min; 2.6 install 12.8 min, check 4.2 min; 7 install 11.3 min, check 4.1 min.
+
+<LabCast
+  src="/recordings/sol251-install-sun4u.cast"
+  caption="Solaris 2.5.1 install, sun4u with OpenBIOS under PVE (6x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-boot-sun4u.cast"
+  caption="Solaris 2.5.1 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol26-install-sun4u.cast"
+  caption="Solaris 2.6 install, sun4u with OpenBIOS under PVE (3x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol26-boot-sun4u.cast"
+  caption="Solaris 2.6 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-install-sun4u.cast"
+  caption="Solaris 7 install, sun4u with OpenBIOS under PVE (3x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol7-boot-sun4u.cast"
+  caption="Solaris 7 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+### SunOS 4.1.4 on SS-5 and 4.1.3_U1B on SS-20
+
+The other two SunOS 4 targets, installed like 4.1.3_U1B on the SS-5 above: the CD's miniroot on the
+swap slice, suninstall's Quick install (Programmer), 64 MB during the install. 4.1.4's CD is
+converted from its raw BIN image on the node before the install. The checks boot to `SunOS sunos414
+4.1.4` and `4.1.3_U1`. SS-5 with 256 MB; SS-20 with 512 MB and one CPU. Recorded 2026-11-26 with
+pve-qemu-kvm 11.1.3-4+wsh30: 4.1.4 install 2.1 min, check 0.9 min; 4.1.3_U1B install 3.9 min, check 0.9 min.
+
+<LabCast
+  src="/recordings/sunos414-install-ss5.cast"
+  caption="SunOS 4.1.4 install, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos414-boot-ss5.cast"
+  caption="SunOS 4.1.4 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos413u1b-install-ss20.cast"
+  caption="SunOS 4.1.3_U1B install, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos413u1b-boot-ss20.cast"
+  caption="SunOS 4.1.3_U1B booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### NetBSD 11.1 and 9.3 on SS-5, SS-20 and sun4u
+
+sysinst on the serial console, as for NetBSD 11.1 on the SS-5 above: Minimal on sparc (the
+microroot loads the installer from the CD), the sets without X11 on sparc64. 9.3's sysinst asks
+for neither root's password nor entropy and goes straight to its configuration menu. The checks
+boot to `NetBSD ... 11.1 (GENERIC)` and `9.3 (GENERIC)`. OpenBIOS; SS-5 with 256 MB, SS-20 with 512
+MB and one CPU, sun4u with 512 MB and the IDE disk. Recorded 2026-11-26 with pve-qemu-kvm
+11.1.3-4+wsh30:
+
+| Target | Install | Check |
+| --- | --- | --- |
+| `netbsd111-sparc-ss20` | 3.1 min | 1.0 min |
+| `netbsd111-sparc64` | 6.2 min | 1.7 min |
+| `netbsd93-sparc` | 2.6 min | 0.9 min |
+| `netbsd93-sparc-ss20` | 2.5 min | 0.8 min |
+| `netbsd93-sparc64` | 12.3 min | 1.4 min |
+
+<LabCast
+  src="/recordings/netbsd111-install-ss20.cast"
+  caption="NetBSD 11.1 sparc install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd111-boot-ss20.cast"
+  caption="NetBSD 11.1 sparc booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd111-install-sun4u.cast"
+  caption="NetBSD 11.1 sparc64 install, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd111-boot-sun4u.cast"
+  caption="NetBSD 11.1 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-install-ss5.cast"
+  caption="NetBSD 9.3 sparc install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-boot-ss5.cast"
+  caption="NetBSD 9.3 sparc booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-install-ss20.cast"
+  caption="NetBSD 9.3 sparc install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-boot-ss20.cast"
+  caption="NetBSD 9.3 sparc booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-install-sun4u.cast"
+  caption="NetBSD 9.3 sparc64 install, sun4u with OpenBIOS under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/netbsd93-boot-sun4u.cast"
+  caption="NetBSD 9.3 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### OpenBSD 5.9 on SS-20
+
+The SS-5's OpenBSD 5.9 install on the SS-20 (512 MB, one CPU: OpenBSD/sparc has no multiprocessor
+kernel): `cd59.iso`'s `bsd.rd`, the sets from the second CD, checked against `SHA256.sig`. The check
+boots to `OpenBSD openbsd59-ss20 5.9 GENERIC`. Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30
+(install 3.6 min, check 0.9 min; the first boot before it, which makes the host keys, 4.7 min).
+
+<LabCast
+  src="/recordings/openbsd59-install-ss20.cast"
+  caption="OpenBSD 5.9 sparc install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/openbsd59-boot-ss20.cast"
+  caption="OpenBSD 5.9 sparc booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### FreeBSD 12.4 on sun4u
+
+FreeBSD 12.4, the last release with sparc64: disc1 boots to bsdinstall, the lab takes its Shell and
+runs `bsdinstall script` (the automatic VTOC8 layout on `ada0`, the kernel and base sets from the
+CD, a static address on `hme0`, sshd on). The check boots to `FreeBSD freebsd124-sun4u
+12.4-RELEASE` and powers off, which needs OpenBIOS patches 0032 and 0033 (the published package has
+them). sun4u, OpenBIOS, 512 MB, IDE disk. Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30
+(install 9.8 min, check 2.2 min).
+
+<LabCast
+  src="/recordings/freebsd124-install-sun4u.cast"
+  caption="FreeBSD 12.4 sparc64 install, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/freebsd124-boot-sun4u.cast"
+  caption="FreeBSD 12.4 sparc64 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+### Red Hat Linux 6.2 and Debian GNU/Linux 4.0 on SS-20
+
+The SS-5 installs above on the SS-20 (OpenBIOS, 512 MB, one CPU). Red Hat 6.2 installs by kickstart
+from an answer CD, the lab typing only SILO's three screens; the check boots Linux 2.2.14. Debian
+4.0 "etch" installs from the netinst CD with a preseed file and fetches the base system from
+archive.debian.org, so the VM had a route out through the node; the check boots Linux 2.6.18.
+Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30: Red Hat install 1.4 min, check 0.7 min; Debian
+install 13.7 min, check 1.0 min.
+
+<LabCast
+  src="/recordings/redhat62-install-ss20.cast"
+  caption="Red Hat Linux 6.2 kickstart install, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/redhat62-boot-ss20.cast"
+  caption="Red Hat Linux 6.2 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/debian40-install-ss20.cast"
+  caption="Debian 4.0 (etch) preseeded netinst install, SS-20 with OpenBIOS under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/debian40-boot-ss20.cast"
+  caption="Debian 4.0 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Debian GNU/Linux 7 on sun4u
+
+Debian 7.11 "wheezy", the last official Debian release for sparc (Linux 3.2 on a 64-bit kernel,
+32-bit programs, SILO): preseeded from CD 1 alone, nothing fetched, the base system with the
+OpenSSH server. Most of the hour goes to unpacking and configuring packages under TCG (played at
+4x, the check at 2x). sun4u, OpenBIOS, 512 MB, IDE disk. Recorded 2026-11-26 with pve-qemu-kvm
+11.1.3-4+wsh30 (install 63.3 min, check 4.3 min).
+
+<LabCast
+  src="/recordings/debian7-install-sun4u.cast"
+  caption="Debian 7.11 (wheezy) preseeded install, sun4u with OpenBIOS under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/debian7-boot-sun4u.cast"
+  caption="Debian 7.11 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+### Solaris 8 and 9 with Web Start on SS-5 and SS-20
+
+The last two Solaris releases for sun4m, installed by Web Start on the serial console: Solaris 8
+(Entire Group) from the Installation CD and the two Software CDs, which the lab swaps through the
+PVE API when the installer asks, and Solaris 9 (End User) from the DVD. During the install the VM
+has `-prom-env auto-boot?=false`: Web Start reboots with a boot string OpenBIOS ignores, so the
+lab boots the mini-root's slice at the firmware prompt itself. `sol8-ss5-prom` is the same install
+under the SPARCstation 5 PROM (`bios: ss5.bin`), which boots the mini-root by itself. The SS-5
+targets use the later updates (8 2/02, 9 9/05), the SS-20 targets 8 1/01 and the Solaris 9 DVD.
+The checks boot to `SunOS Release 5.8` and `5.9`. 9G disk; SS-5 with 256 MB, SS-20 with 512 MB and
+one CPU. Most of the half hour is the package copy, so the installs play at 2x. Recorded
+2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30, after the other installs, two at a time:
+
+| Target | Install | Check |
+| --- | --- | --- |
+| `sol8-ss5` | 30.3 min | 1.6 min |
+| `sol8-ss5-prom` | 28.0 min | 1.7 min |
+| `sol8-ss20` | 25.8 min | 1.5 min |
+| `sol9-ss5` | 23.5 min | 1.3 min |
+| `sol9-ss20` | 23.9 min | 1.7 min |
+
+<LabCast
+  src="/recordings/sol8-install-ss5.cast"
+  caption="Solaris 8 2/02 Web Start install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-boot-ss5.cast"
+  caption="Solaris 8 2/02 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-install-ss5-prom.cast"
+  caption="Solaris 8 2/02 Web Start install, SS-5 with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-boot-ss5-prom.cast"
+  caption="Solaris 8 2/02 booting the installed disk, SS-5 with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-install-ss20.cast"
+  caption="Solaris 8 1/01 Web Start install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-boot-ss20.cast"
+  caption="Solaris 8 1/01 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol9-install-ss5.cast"
+  caption="Solaris 9 9/05 Web Start install, SS-5 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol9-boot-ss5.cast"
+  caption="Solaris 9 9/05 booting the installed disk, SS-5 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol9-install-ss20.cast"
+  caption="Solaris 9 Web Start install, SS-20 with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol9-boot-ss20.cast"
+  caption="Solaris 9 booting the installed disk, SS-20 with OpenBIOS under PVE"
+  poster="npt:0:10"
+/>
+
+### Solaris 8 on sun4u
+
+Solaris 8 2/02's Web Start on sparc64: the Installation CD copies a mini-root to the disk and
+reboots into it, the firmware stops at its prompt and the lab boots the mini-root's slice; then
+End User with 64-bit support from Software 1 of 2, a static address on `hme0`, auto-layout on
+`c0t0d0`. The check boots to `SunOS Release 5.8 Version Generic_108528-13`. sun4u, OpenBIOS,
+1024 MB, IDE disk. Recorded 2026-11-26 with pve-qemu-kvm 11.1.3-4+wsh30 (install 43.1 min, check 4.4 min).
+
+<LabCast
+  src="/recordings/sol8-install-sun4u.cast"
+  caption="Solaris 8 2/02 Web Start install, sun4u with OpenBIOS under PVE (3x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol8-boot-sun4u.cast"
+  caption="Solaris 8 2/02 booting the installed disk, sun4u with OpenBIOS under PVE (2x)"
+  poster="npt:0:10"
+/>
+
 ### FreeDOS 1.4 from floppies
 
 An x86 VM (i440fx, SeaBIOS, Pentium, std VGA, 32 MB, TCG): the FreeDOS 1.4 Floppy Edition installer on
@@ -364,6 +897,49 @@ frame a second, played ten times faster; the captions are the lab's steps.
   width={640}
   height={480}
   caption="FreeDOS 1.4 booting the installed disk under PVE (time-lapse, 10x)"
+/>
+
+## wisp-netbsd on the other sun4m machines
+
+QEMU has eight sun4m machines; five of them never ran an install in the lab: the SPARCstation 4,
+the SPARCclassic, the SPARCstation LX, the SPARCstation Voyager and the SPARCbook. On each of them,
+[wisp-netbsd](https://github.com/hwinther/wsh-pve/tree/main/e2e/wisp-netbsd), wisp's NetBSD
+sibling, boots with QEMU's `-kernel` and OpenBIOS: OpenBIOS's SBus probe, NetBSD 11.1's
+autoconfiguration, then its PID 1 (a static program against NetBSD's libc) prints wisp's markers,
+runs a clock check, a file check on the memory-disk root and wisp's compute loop, and powers the
+machine off. 128 MB, serial console, in real time (nothing cut or sped up). Recorded 2026-11-26
+with `e2e/wisp-netbsd/record.py` and the published pve-qemu-kvm 11.1.3-4+wsh30, two sparc
+installs running on the same host: NetBSD's banner after 1.4-1.9 s, power-off after 2.4-2.9 s,
+every run `status=ok` with wisp's CRC.
+
+<LabCast
+  src="/recordings/wisp-netbsd-ss4.cast"
+  caption="wisp-netbsd (NetBSD 11.1) on the SPARCstation 4: OpenBIOS to power-off in 2.9 s"
+  poster="npt:0:2.9"
+/>
+
+<LabCast
+  src="/recordings/wisp-netbsd-classic.cast"
+  caption="wisp-netbsd (NetBSD 11.1) on the SPARCclassic: OpenBIOS to power-off in 2.5 s"
+  poster="npt:0:2.5"
+/>
+
+<LabCast
+  src="/recordings/wisp-netbsd-lx.cast"
+  caption="wisp-netbsd (NetBSD 11.1) on the SPARCstation LX: OpenBIOS to power-off in 2.5 s"
+  poster="npt:0:2.5"
+/>
+
+<LabCast
+  src="/recordings/wisp-netbsd-voyager.cast"
+  caption="wisp-netbsd (NetBSD 11.1) on the SPARCstation Voyager: OpenBIOS to power-off in 2.4 s"
+  poster="npt:0:2.4"
+/>
+
+<LabCast
+  src="/recordings/wisp-netbsd-sparcbook.cast"
+  caption="wisp-netbsd (NetBSD 11.1) on the SPARCbook: OpenBIOS to power-off in 2.4 s"
+  poster="npt:0:2.4"
 />
 
 ## Recording your own
