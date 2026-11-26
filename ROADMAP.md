@@ -155,6 +155,7 @@ come after that, not before.
 | 3dfx/streaming stage 3d, an unprivileged container: qemu-server's VM option `dbus-display-uids` (root only) lets host uids such as an unprivileged container's root (100000) onto that VM's D-Bus display bus: a bus configuration per VM (`/run/qemu-server/<vmid>.dbus-display.conf`, the shared policy plus each uid), a node user `wsh-display-<uid>` for a uid without one (dbus-daemon refuses a uid it can't look up, whatever the policy says) and an ACL entry `--x` on `/run/wsh-dbus-display` while a VM names the uid; `wsh-gst-qemu-dbus` authenticates without a uid (GLib's `CROSS_NAMESPACE`). CI and lab: the clients as root of a user namespace mapped to 100000 get the picture, sound and input; uid 200000, uid 100000 on another VM's bus and a node user outside `wsh-display` are refused; no real node yet (ROADMAP, Stage 3, "Stage 3d: an unprivileged container") | in review | |
 | 3dfx/streaming stage 3e, tiled dmabufs and the audio dropout: `qemudbussrc` reads dmabufs it can't map (NVIDIA's block-linear) through EGL (an EGLImage on the render node's EGL device, read back as `BGRx`, read again 20 ms later since NVIDIA's driver doesn't wait for QEMU's drawing), so `dbus,gl=on` streams on an NVIDIA node; `qemudbusaudiosrc` sends silence while the guest plays nothing, which ends the dropout at a tone's start (Wolf's `audiorate` filled the gap at once and its leaky queue dropped the tone's start); `e2e/streaming` fails on a dropout or an audio burst, takes a package build (`WSH_GST_DEB`) and gets an EGL run. Lab: every check passed, the tone without a dropout, first sound 38-56 ms after the command (was 90-160); NVIDIA node: the frame identical to QEMU's screendump through EGL, Moonlight with every check passed, GL 89-96 ms median with x264 against 53-71 ms without (ROADMAP, Stage 3, "Stage 3e") | in review | |
 | 3dfx/streaming stage 3f, a Windows 98 guest with Glide through Moonlight: `w3dstrm.exe` (`e2e/3dfx/win98`, a Glide 2/3 program that takes commands on COM1, animates at 60 frames/s with the frame number in eight cells where the probe client reads its points and reports every swap) and `e2e/streaming/stream3dfx.py` (latency for every guest frame, pacing, input to picture, keyboard, mouse, a WinMM tone, the demos); `wolf-config.py` scales before its compositor (a guest mode change, 1280x1024 desktop to 640x480 Glide, showed unscaled on a checkerboard), `wolf-pair` ignores the caller's `XDG_RUNTIME_DIR`. NVIDIA node, KVM, Wolf in a privileged container: guest swap to decoded frame 23.6-25.7 ms median with Glide read back (x264, NVENC, Glide 3) and 24.9-33.1 ms with `dbus,gl=on`, frames at `qemudbussrc` 0.7 ms (read back) and 2.0-2.6 ms (GL) after the swap, 58.8-60.1 of 60 guest frames a second at the client, input to picture 40-44 ms, keys and the tablet exact; sound fails in the guest (its AC97 driver), not in the stream. Unprivileged container: the input needs a udev rule on the node (Wolf's event devices are `root:input`), the bus waits for a qemu-server with `dbus-display-uids` on the node (ROADMAP, Stage 3, "Stage 3f") | in review | |
+| 3dfx/streaming stage 3g, the unprivileged container on a node: Wolf in an unprivileged container with a uid range of its own, the VM with `dbus-display-uids`, Wolf's input devices given to the container's root by a udev rule on the node (no way without a node change found); the `ct` template gets a DHCP client (`dhcpcd-base`); docs: the unprivileged recipe, the udev rule, Wolf's ports and PVE firewall rules, pairing a client on the network. NVIDIA node, KVM, wisp at refresh 30 ms, x264, every check passed: guest draw to decoded frame 61.3 ms median on the loopback and 60.6 ms with the probe on another machine, keys 2.6 and 3.0 ms; other uids and a VM that doesn't list the uid refused; the Windows 98 Glide guest 26.1 ms median with every check but sound passed, only with `qemudbussrc shared-map=false` (the shared map got no `UpdateMap` for the Glide surface read back) (ROADMAP, Stage 3, "Stage 3g") | in review | |
 
 ## In progress
 
@@ -934,9 +935,36 @@ merged; what is left of them is item 2 under "Next".
        so the input needs a udev rule on the node (`ATTRS{name}=="Wolf *"`, owner the container's
        root, `LIBINPUT_IGNORE_DEVICE`; checked with `udevadm verify`, not installed); the bus refuses
        the container at the socket directory until a qemu-server with `dbus-display-uids` runs on the
-       node (not yet installed there). Not verified: a commercial Glide game, the unprivileged
-       container end to end, the sound in a full Glide run (the guest with sound had no Glide
+       node (not yet installed there). Not verified: a commercial Glide game, the sound in a full Glide run (the guest with sound had no Glide
        drivers), SB16 in Windows 98 (its driver is in the CAB files).
+     - **Stage 3g: the unprivileged container on a node (in review).** On the NVIDIA node with
+       qemu-server 9.2.24+wsh3 (`dbus-display-uids`), pve-qemu-kvm 11.1.3-4+wsh29 and
+       wsh-gst-qemu-dbus 0.3 (`CROSS_NAMESPACE`, the EGL import): Wolf in an unprivileged container
+       with a uid range of its own (300000, the owners shifted before the first start), the VM with
+       `dbus-display-uids: 300000`, and the node's udev rule for Wolf's input devices (now installed
+       there: devices named `Wolf *` owned by the container's root, `LIBINPUT_IGNORE_DEVICE`). The
+       container's root gets the VM's picture, sound listener and input; a user in the container
+       (301000 on the node) and uid 200000 on the node are refused at the socket directory, the
+       container's root on a VM that doesn't list it is refused by that VM's bus. `stream3d.py` on
+       wisp's x86 kernel (KVM, refresh 30 ms, x264), every check passed: loopback 61.3 ms median
+       guest draw to decoded frame, keys 2.6 ms, the picture 1.59/255, 440.0 Hz for 2.03 s without a
+       dropout; over the network (the probe on another machine in the same VLAN, clocks within about
+       1 ms) 60.6 ms, keys 3.0 ms, the mouse exact. No way without a node change was found for the
+       input (the container can't `chown` the node's device nodes; a bind mount keeps their owner;
+       mapping the node's `input` group would hand over every input device). Found: the `ct`
+       template had no DHCP client (`ip=dhcp` failed; `dhcpcd-base` added); a directory under the
+       node's `/root` can't be bind-mounted into an unprivileged container, so `stream3d.py`'s
+       shared directory is the container's own through `/proc/<pid>/root`; Wolf's ports are TCP
+       47984, 47989, 48010 and UDP 47999, 48100, 48200 (and mDNS), not Sunshine's; the user
+       `wsh-display-<uid>` makes `useradd` warn about `SYS_UID_MAX` (harmless). Docs: the
+       unprivileged recipe, the udev rule with the uid as a placeholder, the network and PVE
+       firewall rules, pairing a client. The Windows 98 Glide guest of 3f (a full clone, the
+       drivers of `b94d988`, `w3dstrm.exe`) through the same container: 26.1 ms median guest swap
+       to decoded frame, 59.8 new frames a second, keys, tablet and input to picture (42 ms) as in
+       the privileged container, but only with `qemudbussrc shared-map=false` (`SRC_PROPS`): with
+       the shared map QEMU sent one `ScanoutMap` for the Glide surface and no `UpdateMap` after it,
+       so the client kept the first picture. Not verified: a real Moonlight client on a PC, TV or
+       phone.
      - Left for stage 3: 3c's second slice, dmabufs as dmabufs (`memory:DMABuf` caps for a hardware
        encoder, the reply to `UpdateDMABUF` held until the encoder is done or a copy on the GPU, which
        would also spare the EGL path its read back), the cursor drawn in or passed on, and
@@ -946,9 +974,10 @@ merged; what is left of them is item 2 under "Next".
        drawing with OpenGL (`gltest.exe`, the demo's OpenGL) through it; 3f: the occasional 30 ms late
        gap in the client's audio (not in QEMU's stream), the sound in a Glide run with the drivers,
        a commercial Glide game, `stream3dfx.py` as a workflow on the
-       lab runner (the operator's disk, like `3dfx-win98.yml`); 3d: the unprivileged container on a
-       real node end to end (the node's udev rule for Wolf's input devices, a qemu-server with
-       `dbus-display-uids` installed), the frame interval spread while the picture changes (still
+       lab runner (the operator's disk, like `3dfx-win98.yml`); 3d: a real Moonlight client on a PC, TV or phone (3g ran the unprivileged container end to end
+       with the probe client, also over the network); 3g: why QEMU sends no `UpdateMap` for a Glide
+       surface read back (until then `shared-map=false` for such a VM, or `qemudbussrc` falling back
+       to the pixels by itself), the frame interval spread while the picture changes (still
        pictures come at an even 16.7 ms), Wolf's no-compositor patch upstream, and a repeat in
        `qemudbussrc` itself instead of the compositor.
    - Retro net: one isolated network with a service container as its gateway, reached by NIC or
