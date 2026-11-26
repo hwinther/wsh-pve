@@ -637,6 +637,8 @@ pair -pin <pin> 127.0.0.1` there, then `wolf-pair <pin>`). `--enter-after` press
 guest while `w3dstrm.exe` doesn't answer: the clone stopped at Windows' network logon dialog at
 every boot, and at the first boot with these devices at two new-hardware wizards (the PCI bridge
 and AC97 at its new address), which Enter took through. `--api glide3` uses Glide 3.
+`--skip glide` leaves out the Glide window and the checks that need it, so a guest without
+qemu-3dfx's drivers can still be checked for the stream and its sound.
 `--tap-address unix:path=/srv/wsh-dbus-display/<vmid>.sock` adds a second listener in the
 container during the latency seconds, which splits the latency at `qemudbussrc`.
 
@@ -658,7 +660,7 @@ as it is. `wolf-config.py` now scales the picture to the client's size before th
 **Measured on the node** (the GTX 1080 node above; KVM, `cpu: pentium3`, 512 MB; Windows' desktop
 1280x1024, the Glide window 640x480; the probe in the container on the loopback, H.264 1280x800 at
 60 frames/s; 10 s of animation per run, 570-650 latency samples each; every check passed except
-the sound, see below):
+the sound, which works since `wsh/0170`, see below):
 
 | | read back, x264 | read back, NVENC | GL, x264 | GL, NVENC |
 | --- | --- | --- | --- | --- |
@@ -699,13 +701,38 @@ the sound, see below):
   699,550). Relative motion is moved in the console's pixels, which are the Glide window's
   640x480 while a game runs: `move 10 0` moved Windows' pointer by 20 and `move 0 10` by 21. The
   buttons reach the program 8-18 ms after the client.
-- **Sound: not working in this guest.** `tone 440 2000` (one 2 s `waveOutWrite` at 22050 Hz) came
-  back as done after 0.34 s and QEMU's audio stream carried 0.2-0.3 s of it before the guest
-  disabled the stream; `WSHSPACE.EXE -audiotest` (WinMM, queued buffers) never finished. QEMU's
-  writes came every 10 ms in real time while the guest played, so the D-Bus audio path isn't the
-  cause; it was the same with AC97 on bus 0 instead of behind PVE's PCI bridge, and without the
-  USB tablet on its interrupt. The guest's driver is SigmaTel's AC97 driver; another driver is
-  left to try.
+- **Sound** (pve-qemu-kvm 11.1.3-4+wsh29 with `wsh/0170` on top, wsh-gst-qemu-dbus 0.3, x264;
+  `stream3dfx.py --skip glide` on a clone without the Glide drivers; before `wsh/0170`, see
+  below): `tone 440 2000` (one 2 s
+  `waveOutWrite` at 22050 Hz) through AC97 and the guest's SigmaTel STAC97 driver arrives at the
+  client as 1.99 s at 443.0 Hz without a dropout, the first loud packet 75-93 ms after the command
+  (three runs); `tone 440 3000` as 2.98-2.99 s, 87-98 ms (one run 205 ms), and in two runs of five
+  the client's audio had one gap of about 30 ms some 2.7 s into the tone, with all of the tone there
+  (late, not lost; QEMU's own stream, recorded with `qemudbusaudiosrc` in the container, had none in
+  four runs). `WSHSPACE.EXE -audiotest` passes `wavcheck.py --signature` on QEMU's stream: eight
+  segments, 3.97 s, the largest gap 0.1 ms. Every frequency is 0.68% high (443.0 for 440, 402.7 and
+  604.1 for 400 and 600) and the signature 0.68% short, in the guest's data already: the codec runs
+  at 48000 Hz (the driver never changes its rate) and QEMU passes that on unchanged, so it comes
+  from Windows' conversion from 22050 Hz (not checked with a 48000 Hz sound).
+- **Sound before `wsh/0170`**: the 2 s tone was done after 0.32 s (0.6-0.8 s with pve-qemu-kvm
+  wsh27), the client got 0.28 s of it at 458.7 Hz with five dropouts, and QEMU's stream carried 0.05
+  s. A trace of the guest's accesses to the AC97 (QEMU's `memory_region_ops_*` trace events, enabled
+  with QMP `trace-event-set-state` around the tone) shows the cause: after each new buffer the
+  driver writes LVI and then the control register again with RPBM (run) set, and QEMU's AC97 started
+  the engine afresh at every such write, moving it to the next buffer. So each new buffer skipped
+  the one playing, the current index stayed at the last valid one, and WinMM got its buffers back
+  long before they had played. On the ICH writing RPBM while it is set changes nothing; `wsh/0170`
+  starts the engine only when RPBM goes from 0 to 1 (and resumes a paused engine in its buffer).
+  Microsoft's AC97 sample driver, which the codec vendors' Windows 98 drivers are built on, does the
+  same, so other WDM AC97 drivers should behave alike (only STAC97 tested). The AC97's bus, the
+  tablet's interrupt and the D-Bus audio path were not the cause.
+- **`WSHSPACE.EXE -audiotest` never finished** in stage 3f for another reason: on Windows it asked
+  for a renderer first (Glide 2, Glide 3 or OpenGL) and waited at that menu; it now starts no
+  renderer with `-audiotest`.
+- **Other sound cards**: qemu-server (with the wsh patch) offers `sb16` (ISA) besides AC97 and the
+  Intel HDA cards; Windows 98 SE has a driver for it in its CAB files (`SB16AWE.INF`, the legacy
+  `*PNPB003`, found by the Add New Hardware wizard), not tried here. It has none for the ES1370
+  (no `VEN_1274` in its INFs), which qemu-server doesn't offer either.
 
 ## VGA retrace
 

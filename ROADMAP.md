@@ -916,17 +916,27 @@ merged; what is left of them is item 2 under "Next".
        gave a new picture in every client frame. GL's 22-36 ms on wisp's VGA picture in 3e is not the
        EGL path (2-5 ms here): it sits with the VGA surface's texture upload at the refresh, which a
        first read can miss (about 5% of second reads changed the picture in a Glide run). Sound
-       fails in this guest: a 2 s `waveOutWrite` was done after 0.34 s with 0.2-0.3 s in QEMU's
-       stream, `WSHSPACE.EXE -audiotest` never finished, the same with AC97 on bus 0 and without the
-       tablet's shared interrupt, while QEMU wrote in real time: the guest's SigmaTel AC97 driver.
+       failed in this guest: a 2 s `waveOutWrite` was done after 0.34 s with 0.2-0.3 s in QEMU's
+       stream. The cause was QEMU's AC97, not the guest's SigmaTel STAC97 driver: the driver writes
+       the bus master's control register again with RPBM set after each new LVI, and QEMU restarted
+       the engine at each such write and skipped the buffer playing (seen in a trace of the guest's
+       AC97 accesses through QEMU's `memory_region_ops_*` events); pve-qemu-kvm `wsh/0170` starts
+       it only when RPBM goes from 0 to 1 (qtest `playback_cr_rewrite`). With it, on the node
+       (`stream3dfx.py --skip glide`, a clone without the Glide drivers): 1.99 s at 443.0 Hz
+       without a dropout at the client, first loud packet 75-93 ms after the command (before: 0.28
+       s at 458.7 Hz, five dropouts, 173 ms); 3 s tones 2.98-2.99 s, with one late gap of about 30 ms
+       at the client in two runs of five and none in QEMU's own stream; `WSHSPACE.EXE -audiotest`
+       passes the signature check (it had waited at its renderer menu, now skipped with
+       `-audiotest`). The 0.68% high pitch is in the guest's data (Windows' 22050 to 48000 Hz
+       conversion; the codec stays at 48000 Hz).
        Unprivileged container (a uid range of its own, 300000; `pct create` unpacks with the default
        100000, so the owners were shifted before the first start): Wolf runs; `/dev/uinput` works
        but the event devices it makes are `root:input 0660` on the node and `nobody` in the container,
        so the input needs a udev rule on the node (`ATTRS{name}=="Wolf *"`, owner the container's
        root, `LIBINPUT_IGNORE_DEVICE`; checked with `udevadm verify`, not installed); the bus refuses
        the container at the socket directory until a qemu-server with `dbus-display-uids` runs on the
-       node (not yet installed there). Not verified: sound from a Windows 98 guest, a commercial Glide
-       game, the unprivileged container end to end.
+       node (not yet installed there). Not verified: a commercial Glide game, the sound in a full Glide run (the guest with sound had no Glide
+       drivers), SB16 in Windows 98 (its driver is in the CAB files).
      - **Stage 3g: the unprivileged container on a node (in review).** On the NVIDIA node with
        qemu-server 9.2.24+wsh3 (`dbus-display-uids`), pve-qemu-kvm 11.1.3-4+wsh29 and
        wsh-gst-qemu-dbus 0.3 (`CROSS_NAMESPACE`, the EGL import): Wolf in an unprivileged container
@@ -961,8 +971,9 @@ merged; what is left of them is item 2 under "Next".
        `ScanoutDMABUF2`; 3e: the VGA path's 22-36 ms with `dbus,gl=on` on the NVIDIA node (3f: not
        the EGL import; most likely the VGA texture upload at the refresh and a first read that misses
        it), a fence from QEMU instead of the second read (QEMU would have to pass one), a guest
-       drawing with OpenGL (`gltest.exe`, the demo's OpenGL) through it; 3f: sound from a Windows 98
-       guest (another AC97 driver), a commercial Glide game, `stream3dfx.py` as a workflow on the
+       drawing with OpenGL (`gltest.exe`, the demo's OpenGL) through it; 3f: the occasional 30 ms late
+       gap in the client's audio (not in QEMU's stream), the sound in a Glide run with the drivers,
+       a commercial Glide game, `stream3dfx.py` as a workflow on the
        lab runner (the operator's disk, like `3dfx-win98.yml`); 3d: a real Moonlight client on a PC, TV or phone (3g ran the unprivileged container end to end
        with the probe client, also over the network); 3g: why QEMU sends no `UpdateMap` for a Glide
        surface read back (until then `shared-map=false` for such a VM, or `qemudbussrc` falling back

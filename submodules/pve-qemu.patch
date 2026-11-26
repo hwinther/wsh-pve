@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..8450397 100644
+index bc240a0..2bf1bb7 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,124 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,125 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -198,6 +198,7 @@ index bc240a0..8450397 100644
 +wsh/0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi.patch
 +wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch
 +wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch
++wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -25349,6 +25350,179 @@ index 0000000..2411bfd
 ++
 ++    return g_test_run();
 ++}
+diff --git a/debian/patches/wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch b/debian/patches/wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch
+new file mode 100644
+index 0000000..468e6e3
+--- /dev/null
++++ b/debian/patches/wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch
+@@ -0,0 +1,167 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/ac97: don't skip a buffer when CR is rewritten with
++ RPBM set
++
++Writing the bus master's control register with RPBM (run/pause) set
++always moved the engine to the next buffer descriptor (CIV = PIV,
++PIV + 1, a fetch), also when the engine was already running. On the
++ICH, RPBM going from 0 to 1 starts the engine, and writing 1 again
++changes nothing. Windows 98's AC97 drivers built on Microsoft's sample
++driver (SigmaTel's STAC97 among them) write CR with the interrupt
++enables and RPBM after each new LVI, so every new buffer made the
++engine skip the one it was playing: a 2 s WinMM sound was done after
++0.3-0.6 s, with 0.1-0.3 s of it played.
++
++Only RPBM going from 0 to 1 starts the engine now. After a reset it
++fetches the first descriptor as before; after a pause (RPBM cleared
++without a reset) it resumes in the current buffer instead of skipping
++it. Writing RPBM while it is set only updates the other bits. A halted
++engine (CIV = LVI played out) still restarts on a new LVI.
++
++qtest ac97-test playback_cr_rewrite: CR rewritten while running and a
++pause and resume keep CIV and PICB, a reset and a start fetch the first
++descriptor again; it fails without the change.
++---
++ hw/audio/ac97.c         | 21 ++++++++---
++ tests/qtest/ac97-test.c | 78 +++++++++++++++++++++++++++++++++++++++++
++ 2 files changed, 95 insertions(+), 4 deletions(-)
++
++diff --git a/hw/audio/ac97.c b/hw/audio/ac97.c
++index fd74c2499..02dcb8cb1 100644
++--- a/hw/audio/ac97.c
+++++ b/hw/audio/ac97.c
++@@ -806,14 +806,27 @@ static void nabm_writeb(void *opaque, uint32_t addr, uint32_t val)
++         if (val & CR_RR) {
++             reset_bm_regs(s, r);
++         } else {
+++            uint8_t old_cr = r->cr;
+++
++             r->cr = val & CR_VALID_MASK;
++             if (!(r->cr & CR_RPBM)) {
++                 voice_set_active(s, r - s->bm_regs, 0);
++                 r->sr |= SR_DCH;
++-            } else {
++-                r->civ = r->piv;
++-                r->piv = (r->piv + 1) % 32;
++-                fetch_bd(s, r);
+++            } else if (!(old_cr & CR_RPBM)) {
+++                /*
+++                 * RPBM going from 0 to 1 starts the engine. Writing it
+++                 * while it is already 1 (a driver that rewrites CR with
+++                 * the interrupt enables after each new LVI) changes
+++                 * nothing on the ICH, and after a pause (RPBM cleared
+++                 * without a reset) the engine resumes in the current
+++                 * buffer. Only a start after a reset fetches the first
+++                 * descriptor.
+++                 */
+++                if (!r->bd_valid) {
+++                    r->civ = r->piv;
+++                    r->piv = (r->piv + 1) % 32;
+++                    fetch_bd(s, r);
+++                }
++                 r->sr &= ~SR_DCH;
++                 voice_set_active(s, r - s->bm_regs, 1);
++             }
++diff --git a/tests/qtest/ac97-test.c b/tests/qtest/ac97-test.c
++index b71bd60a8..2f9042838 100644
++--- a/tests/qtest/ac97-test.c
+++++ b/tests/qtest/ac97-test.c
++@@ -9,6 +9,7 @@
++ 
++ #include "qemu/osdep.h"
++ #include "libqtest.h"
+++#include "qemu/bswap.h"
++ #include "qemu/module.h"
++ #include "libqos/qgraph.h"
++ #include "libqos/pci.h"
++@@ -75,6 +76,82 @@ static void ac97_record_downsample(void *obj, void *data, QGuestAllocator *alloc
++     qpci_io_writew(dev, bar0, 0x32, 0x1);
++ }
++ 
+++/* Native audio bus master (IOBAR1): the PCM out registers */
+++#define PO_BDBAR 0x10
+++#define PO_CIV   0x14
+++#define PO_LVI   0x15
+++#define PO_SR    0x16
+++#define PO_PICB  0x18
+++#define PO_CR    0x1b
+++#define CR_RPBM  0x01
+++#define CR_RR    0x02
+++#define CR_START (0x10 | 0x04 | CR_RPBM) /* IOCE, LVBIE, RPBM */
+++
+++/*
+++ * CR written again with RPBM still set must not move the engine to the next
+++ * buffer: Windows 98's AC97 drivers (Microsoft's sample driver and the codec
+++ * vendors' drivers built on it) rewrite CR after each new LVI, and every
+++ * rewrite used to skip the buffer being played. A pause (RPBM cleared without
+++ * a reset) resumes in the same buffer. The audio timer doesn't run here (the
+++ * virtual clock stands still), so nothing is transferred meanwhile.
+++ */
+++static void ac97_playback_cr_rewrite(void *obj, void *data,
+++                                     QGuestAllocator *alloc)
+++{
+++    QAC97 *ac97 = obj;
+++    QPCIDevice *dev = &ac97->dev;
+++    QPCIBar bar1;
+++    uint32_t bdl[4 * 2];
+++    uint64_t bdl_pa = guest_alloc(alloc, sizeof(bdl));
+++    uint64_t buf_pa = guest_alloc(alloc, 4 * 0x200);
+++    int i;
+++
+++    for (i = 0; i < 4; i++) {
+++        bdl[2 * i] = cpu_to_le32(buf_pa + i * 0x200);
+++        bdl[2 * i + 1] = cpu_to_le32((1u << 31) | 0x100); /* IOC, 256 samples */
+++    }
+++    qtest_memwrite(dev->bus->qts, bdl_pa, bdl, sizeof(bdl));
+++
+++    qpci_device_enable(dev);
+++    bar1 = qpci_iomap(dev, 1, NULL);
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_RR);
+++    qpci_io_writel(dev, bar1, PO_BDBAR, bdl_pa);
+++    qpci_io_writeb(dev, bar1, PO_LVI, 3);
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_START);
+++    g_assert_cmpuint(qpci_io_readb(dev, bar1, PO_CIV), ==, 0);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_PICB), ==, 0x100);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_SR) & 1, ==, 0); /* DCH */
+++
+++    /* rewritten while running: the same buffer */
+++    for (i = 0; i < 3; i++) {
+++        qpci_io_writeb(dev, bar1, PO_CR, CR_START);
+++        g_assert_cmpuint(qpci_io_readb(dev, bar1, PO_CIV), ==, 0);
+++        g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_PICB), ==, 0x100);
+++    }
+++
+++    /* paused and resumed: the same buffer, running again */
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_START & ~CR_RPBM);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_SR) & 1, ==, 1);
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_START);
+++    g_assert_cmpuint(qpci_io_readb(dev, bar1, PO_CIV), ==, 0);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_PICB), ==, 0x100);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_SR) & 1, ==, 0);
+++
+++    /* a reset and a start: the first descriptor again */
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_RR);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_PICB), ==, 0);
+++    qpci_io_writel(dev, bar1, PO_BDBAR, bdl_pa);
+++    qpci_io_writeb(dev, bar1, PO_LVI, 3);
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_START);
+++    g_assert_cmpuint(qpci_io_readb(dev, bar1, PO_CIV), ==, 0);
+++    g_assert_cmpuint(qpci_io_readw(dev, bar1, PO_PICB), ==, 0x100);
+++
+++    qpci_io_writeb(dev, bar1, PO_CR, CR_RR);
+++    qpci_iounmap(dev, bar1);
+++    guest_free(alloc, buf_pa);
+++    guest_free(alloc, bdl_pa);
+++}
+++
++ static void ac97_register_nodes(void)
++ {
++     QOSGraphEdgeOptions opts = {
++@@ -90,6 +167,7 @@ static void ac97_register_nodes(void)
++ 
++     qos_add_test("playback_upsample", "AC97", ac97_playback_upsample, NULL);
++     qos_add_test("record_downsample", "AC97", ac97_record_downsample, NULL);
+++    qos_add_test("playback_cr_rewrite", "AC97", ac97_playback_cr_rewrite, NULL);
++ }
++ 
++ libqos_init(ac97_register_nodes);
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
