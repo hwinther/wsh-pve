@@ -155,7 +155,7 @@ RUN apt-get update \
     && printf 'Types: deb\nURIs: https://debian.wshosting.no/debian/\nSuites: trixie\nComponents: main\nSigned-By: /usr/share/keyrings/wsh-pve.gpg\n' \
        > /etc/apt/sources.list.d/wsh-pve.sources \
     && apt-get update \
-    && apt-get install --no-install-recommends --assume-yes systemd-sysv ifupdown iproute2 \
+    && apt-get install --no-install-recommends --assume-yes systemd-sysv ifupdown dhcpcd-base iproute2 \
        wsh-gst-qemu-dbus gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
        gstreamer1.0-plugins-ugly gstreamer1.0-plugins-bad python3 curl procps pulseaudio \
        libcurl4t64 libevdev2 libudev1 libpulse0 libunwind8 libdrm2 libpci3 libicu76 libssl3t64 \
