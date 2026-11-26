@@ -154,6 +154,9 @@ maintains the patches.
 | `0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re` | `sun4m-ss600mp-test` case `esp-cfg2` for 0177: the PROM's walking one and all ones without bit 5, configuration register 1 all eight bits, SunOS's attach sequence (bits 3-0 of register 2, 5 in register 3) as before, the SS-10 keeps bit 5; fails without 0177 | ours | not in QEMU |
 | `0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-` | The same test then loads a halfword, word and doubleword from configuration registers 1-3 and wants each to trap (SFSR `0x436`, as in 0159) and the ESC's control register to read exactly `0x40000040` (ID 4 and the slave size error bit), then the same as stores, each an M-to-S write error with that bit; QEMU's ESP failed the loads without the ESC and took a word store as a byte. On the 600MP the ESP sits behind the ESC: with the `esc` property the SCSI DMA device has a second MMIO region, `esc-esp`, that passes byte accesses to the ESP and answers any other size with an error acknowledge and the slave size error bit (cleared by a read of the control register, as in 0171); the SS-600MP maps it instead of the ESP's own region, the other machines map the ESP as before. SunOS's esp driver makes byte accesses only. Trace event `sparc32_dma_esc_esp_size_error`; no new state ("Sun's own SS-600MP boot PROM") | ours | not reported |
 | `0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-` | `sun4m-ss600mp-test` case `esp-size-error` for 0179: the `esc-esp` region and no `esp-regs` on the SS-600MP, bytes reach the ESP and leave the ESC alone, halfword, word and doubleword loads and stores set the slave size error bit (a control register read clears it) and the stores go nowhere; the SS-10 maps `esp-regs`, takes a word store as before and its DMA2 sets no such bit; 12 cases in the test; fails without 0179 | ours | not in QEMU |
+| `0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t` | The PROM's ESP DMA read test (progress `0xe5`) writes 0 to the IOMMU's control register, turning it off, and gives the ESC the physical address of bytes it wrote to memory; QEMU's IOMMU translated every DVMA address through its page table whatever the enable bit said, so the ESC read whatever the stale table pointed at. New `sun4m-iommu` property `enable-bit` (default off) and hwdef field `iommu_enable_bit`, set on the SS-600MP only: with the enable bit clear, DVMA addresses go to memory untranslated. OpenBIOS and the OSes turn the IOMMU on before any DVMA; trace event `sun4m_iommu_bypass`; no new state ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t` | The same test resets the ESC, puts the ESP in chip test mode (configuration register 1 bit 3) with target mode forced (test register bit 0) and gives it the target command Send Data with DMA (`0xa2`), then waits for the ESC's control register to show its transfer count zero bit and DMA enable (`DMAESC_TCZERO`, `DMAGA_ENDVMA` in SunOS's `dmaga.h`) and reads the bytes back from the FIFO: one fewer than it gave, from the second on (the first presumably waits on the bus for an ACK). QEMU's ESP has no target mode (illegal command) and the ESC had no such bit. New `sysbus-esp` property `target-test` (default off), set by the sparc32 DMA device on its ESP with `esc` (the SS-600MP only): in that mode Send Data with DMA reads the transfer count's bytes by DMA, puts the first on the bus and the rest in the FIFO, counts the transfer count down and raises no interrupt; nothing else of target mode. With `esc` the ESC's byte count counts down as its DMA moves data and sets TCZERO (bit 12) at zero; a count write or a reset clears it. SunOS's esp driver writes the count before each transfer and reads neither. Trace events `esp_target_test_send_data`, `sparc32_dma_esc_transfer`; no new state ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ` | `sun4m-ss600mp-test` case `esp-dma-read` for 0181-0182, as the PROM runs it: bytes in physical memory at an odd address, the IOMMU off, counts 1-16; the ESC reads ID 4, TCZERO and DMA enable, count 0, the address moved on; the ESP's FIFO holds bytes 2 to n, no interrupt; a count write and a reset clear TCZERO; without chip test mode the command stays illegal; on the SS-10 nothing moves; 13 cases in the test; fails without 0181-0182 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1059,7 +1062,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); still silent ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); with `wsh/0181` and `0182` (lab build) past that test, the rest of the POST passes or is skipped, and it prints its MMU setup on ttya and reaches `ok` after `Cpu #0 Data Access Exception`; `banner` prints `Data Access Exception` too ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -2533,7 +2536,7 @@ What it would take for the rest:
        zero bit, so the PROM loops. The memory tests in the PROM's strings use the same ESP DMA to read
        memory into the FIFO, and an "esp dma write test" and "esp dma write error test" follow. That
        needs the ESP's test mode (target commands moving data between DMA and the FIFO) and the ESC's
-       count bits: medium, not attempted. Still silent, nothing on cg3.
+       count bits: medium, not attempted. Done in item 10. Still silent, nothing on cg3.
      Regression for `wsh/0177`-`0180` (the series to 0180 applied with `patch -p1 -s -t -F0`, 207
      patches without fuzz, the tree identical to the one tested, lab): `make check-qtest-sparc` 38
      passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as before), `sun4m-ss600mp-test`
@@ -2544,10 +2547,64 @@ What it would take for the rest:
      `esp0` an ESP200, as before) does the same and gets 2 of 2 replies. The SS-20 PROM
      (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM reach `ok` and print byte for byte what
      the published 11.1.3-4+wsh30 prints.
+  10. **pve-qemu `wsh/0181`-`0183` (2026-11-26, lab build of 11.1.3 with the whole series):** the
+     expected values come from the PROM's code (a disassembly in the lab, nothing of it in the
+     repository), the names of the bits from SunOS 4.1.4's `sbusdev/dmaga.h`.
+     - *What `0xe5` tests:* for every count from 1 to 16 at every address from 0 to `0x42`, it flushes
+       the IOMMU's TLB and writes 0 to its control register (the IOMMU off), writes bytes 1 to 32 to
+       physical memory at that address (ASI `0x20`), resets the ESC, gives the ESP a NOP, sets chip
+       test mode in configuration register 1 (`0x08`) and forces target mode in the test register
+       (`0x01`), loads the ESP's transfer count and the ESC's byte count with the count and the ESC's
+       address with the address, sets bit 20 of the SBus control register, gives the ESP Send Data
+       with DMA (`0xa2`) and then sets DMA enable in the ESC (`0x200`, no write bit: memory to the
+       device). It polls the ESC's control register until `(csr & 0x40001200) == 0x40001200`: ID 4,
+       TCZERO and DMA enable, with a timeout ("Timeout waiting for TCZERO bit to be set"). Then it
+       reads the ESP's FIFO count minus one times and wants 2, 3 ... count ("FIFO read data
+       miscompare"): the first byte isn't in the FIFO, presumably held on the SCSI bus for an ACK that
+       no initiator gives. Then it resets the ESC again.
+     - *Before the fix:* QEMU's ESP answered `0xa2` with an illegal command interrupt (no target
+       mode), the ESC had no TCZERO bit, and QEMU's IOMMU translates DVMA addresses with the enable
+       bit clear, so the data would have come from wherever the stale page table pointed.
+     - *Fix:* `wsh/0181`, `sun4m-iommu` property `enable-bit` (SS-600MP only): with the bit clear,
+       DVMA is untranslated. `wsh/0182`, `sysbus-esp` property `target-test`, set with the ESC: Send
+       Data with DMA in that mode moves the bytes by DMA, the first to the bus and the rest to the
+       FIFO, with no interrupt; and the ESC's byte count counts down and sets TCZERO. A lab build
+       with either part left out stays at `0xe5` (`0x08 0xe5`, loop on error).
+     - *The write tests:* the PROM also has an "esp dma write test" (Receive Data with DMA, `0xaa`,
+       from a FIFO the PROM fills, the ESC writing to memory, then a drain and a wait for bits 3-2 to
+       clear) and an "esp dma write error test" (the IOMMU on and the ESC given `0x7fffffff`, below
+       the DVMA range; it waits for ID 4, the interrupt summary bit `0x4000`, DMA enable, write,
+       error pending and bit 2). Neither runs without the diagnostic switch (a trace shows 1072
+       Send Data commands, 67 addresses times 16 counts, and no Receive Data), so neither is
+       modelled.
+     - *Progress:* past `0xe5`, the rest of the POST passes or is skipped (3 runs of 3; the
+       progress bytes in the NVRAM then read `0xaa 0xaa`, overwritten by the monitor), and within
+       5 s the PROM prints on ttya, for the first time without the lab-only diagnostic switch:
+       its MMU setup (`Allocating SRMMU Context Table` ... `Mapping ROM`), `ttya initialized`,
+       `Cpu #0 Data Access Exception` and `ok`. The same with the `sunos412-ss600mp` disk attached.
+       **Next blocker:** the only bus error in a trace of the run is a word load from `0xf.f8c0_0a04`,
+       where QEMU has nothing (SFSR `0x437`), so probably that is the exception; `banner` at `ok` prints
+       `Data Access Exception` too and `probe-scsi` prints nothing. Which device the PROM looks for there wasn't checked. The monitor also probes ASI 2
+       `0x0180_0000`-`0x0180_0600` (the MXCC's external cache tags, unimplemented in QEMU).
+     Regression for `wsh/0181`-`0183` (the series to 0183 applied with `patch -p1 -s -t -F0`, 210
+     patches without fuzz, the tree identical to the one tested, lab): `make check-qtest-sparc` 38
+     passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as before), `sun4m-ss600mp-test`
+     13/13, `sun4m-esp-test` 5/5 (unchanged). With the package's OpenBIOS (11.1.3-4+wsh30) the stored
+     `sunos412-ss600mp` disk boots to a root shell (`dma0`, `esp0`, `sd0`), reads 300 64 KB blocks
+     from `/dev/rsd0c` and copies and compares `/vmunix`; `sol26-ss20` reads 300 blocks from its
+     raw disk and copies and compares its kernel; `netbsd93-sparc` on SS-5 (`esp0` an ESP200) does
+     the same. The SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM reach `ok` and
+     print byte for byte what the published 11.1.3-4+wsh30 prints.
+     *Framebuffer boots:* booted with the default framebuffer, the serial log stops after OpenBIOS's
+     `switching to new context`, on the published 11.1.3-4+wsh30 too, which looked like a hang. A
+     screendump after 100 s of `netbsd93-sparc` on SS-5 shows the system running to `login:` on the
+     framebuffer console: OpenBIOS gives the OS the screen as its console when there is one, so a
+     serial-only harness sees nothing more. A harness artifact, not a hang (the run uses `-vga none`
+     or a ttya console).
 
   **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
   SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
-  registers (counters, IOMMU, VMEbus control, lance, bus errors, the DMA, a lance loopback frame, the I/O cache, the ESP's registers, and next the ESP's DMA) in its POST,
+  registers (counters, IOMMU, VMEbus control, lance, bus errors, the DMA, a lance loopback frame, the I/O cache, the ESP's registers and DMA) in its POST,
   where QEMU models only what an operating system uses, and it loops on the first failure. The
   SS-20 PROM's POST, by comparison, passes on QEMU with `-cpu TI-SuperSparc-50` (no MXCC, "SS-10 and SS-20").
   **Scope:**
