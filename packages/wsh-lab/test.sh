@@ -126,7 +126,7 @@ step "wsh-sun-proms: its unit tests against the installed copy"
 step "wsh-sun-proms: install, status, verify, remove with fake PROMs and a test manifest"
 wsh-sun-proms --help > /dev/null
 wsh-sun-proms status | tee /tmp/proms.out
-for n in ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin; do
+for n in ss5.bin ss10_v2.25_rom ss20_v2.25_rom lx.bin ss600mp.bin; do
 	grep -q "^  $n .* missing" /tmp/proms.out || fail "status doesn't list $n as missing"
 done
 mkdir -p /tmp/proms/sub

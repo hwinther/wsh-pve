@@ -28,6 +28,13 @@
       "size": 262144,
       "sha256": "27bde385245fb2e0fe39b6dbb11afb7e1f977798e90ba07255d1e6b0d04136b5",
       "description": "SPARCstation LX boot PROM (OBP 2.10): bios: lx.bin on machine LX, the only firmware it takes"
+    },
+    {
+      "name": "ss600mp.bin",
+      "machine": "SS-600MP",
+      "size": 524288,
+      "sha256": "a1a35b489834e11d5c66c0bb226dd84cf0cffde845765d823d35c190fd8caaa7",
+      "description": "SPARCserver 600MP boot PROM (ROM Rev. 2.14): bios: ss600mp.bin on machine SS-600MP (256 MB or more, one CPU; pve-qemu-kvm with wsh patch 0188)"
     }
   ]
 }

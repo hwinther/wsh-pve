@@ -39,12 +39,12 @@ Sawicki's QEMU fork for vintage machines. Our own patches are offered to LEMU fr
 
 Last compared on 2026-11-25, by the wsh-pve side: this repository's `main` at `9051509`, LEMU's
 `master` at `af26c72531` and the branches above. Every patch here has a row now. The pve-qemu
-series uses `wsh/0001`-`0073`, `0110`-`0115`, `0120`-`0161` and `0170`-`0187`; the numbers in between are not
+series uses `wsh/0001`-`0073`, `0110`-`0115`, `0120`-`0161` and `0170`-`0189`; the numbers in between are not
 used (`wsh/0073` comes before `wsh/0059` in `debian/patches/series`). The code is the same for
 `wsh/0001`-`0050`, `0053`-`0072`, `0110`-`0129` and `0133`-`0138` (from `wsh/0040` on only on the
 local `feat/sparc-fixes-2`; `wsh/0030` waits for `feat/openbios-fixes`), and for OpenBIOS 0001-0018;
 the differences in `wsh/0033`, `0038` and `0062` are the deliberate ones in their rows.
-`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0161`, `0170`-`0187` and OpenBIOS 0019-0040 (`0139`-`0161`, `0170`-`0187` and OpenBIOS 0040
+`wsh/0073` is LEMU's own code. Not in LEMU: `wsh/0051`-`0052`, `0139`-`0161`, `0170`-`0189` and OpenBIOS 0019-0040 (`0139`-`0161`, `0170`-`0189` and OpenBIOS 0040
 added after that comparison, not checked against LEMU yet). So the framebuffer console's hang on a BEL (`fb8-blink-screen`), fixed here
 by OpenBIOS 0026, is still open in LEMU. `wsh/0130`-`0132` are for PVE only.
 
@@ -222,6 +222,8 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI | ours | - | none | none | not in LEMU: not checked yet |
 | wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist | ours | - | none | none | not in LEMU: not checked yet |
 | wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers- | ours | - | none | none | not in LEMU: not checked yet |
+| wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu | built on LEMU | - | none | none | not in LEMU: not checked yet (on `wsh/0059`'s NVRAM drive) |
+| wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf | built on LEMU | - | none | none | not in LEMU: not checked yet |
 
 | OpenBIOS patch | class | LEMU side (file, commit subject) | hash | branch | status |
 |---|---|---|---|---|---|

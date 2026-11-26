@@ -161,6 +161,8 @@ maintains the patches.
 | `0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI` | The SS-600MP PROM's `probe-scsi` and `probe-scsi-all` listed every target eight times, Unit 0-7: they select each target without ATN, so with no IDENTIFY message, and ask each LUN with an INQUIRY that has the LUN in bits 7-5 of the CDB's second byte (SCSI-1 and CCS); QEMU's ESP kept the LUN of the last IDENTIFY, so every LUN reached LUN 0. New `sysbus-esp` property `cdb-lun` (default off) and hwdef field `esp_cdb_lun`, set on the SS-600MP only: after a selection without ATN the LUN comes from the CDB, so a missing LUN answers QEMU's "no such LUN" (peripheral qualifier 3); a selection with ATN takes the IDENTIFY's LUN as before. SunOS 4.1.2 under OpenBIOS selects with ATN (a boot trace); the other machines and the am53c974 are unchanged. Trace event `esp_cdb_lun`; no new state ("Sun's own SS-600MP boot PROM") | ours | not reported |
 | `0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist` | SunOS 4.1.2 booted from the SS-600MP PROM (`boot disk`, with 0184-0185) panicked after `zs1 at obio 0x0` (`BAD TRAP: cpu=0 type=29`): its audio driver attaches to the PROM's `audio` node at obio `0x500000` (8 bytes, an AMD 79C30) and writes the chip's command and data registers, where QEMU had nothing; OpenBIOS makes no such node. New hwdef field `amd_audio_base`, set on the SS-600MP only: an unimplemented device `sun-audio` over the eight registers (reads 0, writes ignored); no model of the chip. 4.1.2 then attaches `audio0` and boots from the PROM to its login ("Sun's own SS-600MP boot PROM") | ours | not reported |
 | `0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-` | `sun4m-ss600mp-test` cases for 0184-0186: `mxcc-mbus` (regions for module IDs 8 and 9 with `-smp 2`, each port address register with its module ID, the PROM's read of the control register and its write of E$ enable, the doubleword at `0xa00`, module 9 left alone; none with `TI-SuperSparc-50` or on the SS-10), `esp-cdb-lun` (an INQUIRY by programmed I/O after Select without ATN: LUN 0 of a disk is a direct access device, LUNs 1-7 answer `0x7f`; the SS-10 still answers LUN 1 as LUN 0), `audio-regs` (the `sun-audio` region, reads of 0; none on the SS-10); 16 cases in the test; each fails without its patch | ours | not in QEMU |
+| `0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu` | Sun's SS-600MP boot PROM (with 0120-0186) found QEMU's NVRAM (OpenBIOS's partitions) invalid at every power-on ("Incorrect configuration checksum"), set its defaults with `diag-switch?` true and booted from the network for ever; only Stop-A on the keyboard gave `ok`, and through PVE (`-nographic`, no keyboard) nothing did. An NVRAM volume the PROM had written that way hung the next start in its self test (the VME loopback test, progress `0xb3`, loop on error). Its configuration area, worked out in the lab from the bytes `setenv` changes: the first 6 KB of the M48T08; byte 0 the checksum, the XOR of bytes `0x20`-`0x17ff` and `0xd2`; bytes 1-4 flags the self test reads, outside the checksum (`diag-switch?`, `mfg-switch?`, `skip-vme-loopback?`); a boolean `0xff` or 0, a number a byte, a string a length byte, its characters and a NUL. New hwdef field `prom_config`, set on the SS-600MP only: when the firmware's name doesn't start with `openbios` and the NVRAM isn't an image written before, QEMU writes that area with the PROM's defaults except `diag-switch?` false, `auto-boot?` false (it stops at `ok`) and `skip-vme-loopback?` true (no VMEbus in QEMU); the IDPROM as before; `-prom-env` has no effect there (a warning). OpenBIOS and the other machines' PROMs get OpenBIOS's partitions byte for byte as before. The PROM reaches `ok` on ttya within 10 s without a keyboard, and what `setenv` stores in an NVRAM volume lasts ("Sun's own SS-600MP boot PROM") | ours, on 0059's NVRAM drive (built on LEMU code) | not in QEMU (built on LEMU code, not proposed) |
+| `0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf` | `sun4m-ss600mp-test` case `prom-nvram` for 0188: with a firmware that isn't OpenBIOS (a file of zeros; nothing runs under qtest) the SS-600MP's NVRAM has the PROM's configuration area (the checksum right, `diag-switch?` and `auto-boot?` false, `skip-vme-loopback?` true, the defaults) and the IDPROM; OpenBIOS on the SS-600MP and the SS-20 with that firmware keep OpenBIOS's first partition; an NVRAM image that isn't blank is left alone but the IDPROM; 17 cases in the test; fails without 0188 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1066,7 +1068,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); with `wsh/0181` and `0182` (lab build) past that test, the rest of the POST passes or is skipped, and it prints its MMU setup on ttya and reaches `ok` after `Cpu #0 Data Access Exception`; `banner` prints `Data Access Exception` too; with `wsh/0184`-`0186` (lab build) it probes `Cpu #0 TI,TMS390Z55`, prints its banner, tests memory and, with a blank NVRAM (`diag-switch?` true), boots from the network and waits for a RARP reply; after Stop-A on the keyboard `banner` is clean, `probe-scsi` lists the CD-ROMs at targets 2 and 6 and the disk at 3, and `boot disk` boots the stored `sunos412-ss600mp` disk to its login ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); with `wsh/0181` and `0182` (lab build) past that test, the rest of the POST passes or is skipped, and it prints its MMU setup on ttya and reaches `ok` after `Cpu #0 Data Access Exception`; `banner` prints `Data Access Exception` too; with `wsh/0184`-`0186` (lab build) it probes `Cpu #0 TI,TMS390Z55`, prints its banner, tests memory and, with a blank NVRAM (`diag-switch?` true), boots from the network and waits for a RARP reply; after Stop-A on the keyboard `banner` is clean, `probe-scsi` lists the CD-ROMs at targets 2 and 6 and the disk at 3, and `boot disk` boots the stored `sunos412-ss600mp` disk to its login; with `wsh/0188` (lab build) QEMU gives it a configuration it accepts, and it reaches `ok` on ttya without Stop-A (no keyboard needed, so through PVE too) and installs SunOS 4.1.2 from its CD (`sunos412-ss600mp-prom`, through PVE) ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -2656,10 +2658,74 @@ What it would take for the rest:
      kernel; `netbsd93-sparc` on SS-5 (`esp0` an ESP200) too, 2 of 2 replies. The SS-20 PROM
      (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM reach `ok` and print byte for byte what
      the published 11.1.3-4+wsh30 prints.
-     **Next:** the PROM boots from the network with a blank NVRAM, so a harness needs Stop-A on the
+     **Next (done in item 12):** the PROM boots from the network with a blank NVRAM, so a harness needs Stop-A on the
      keyboard (or a stored NVRAM) to reach `ok`; SunOS 4.1.2's installation from its CD under the PROM,
      and Solaris 2.x under it, are not tried. More than one CPU under the PROM isn't tried either
      (each module now has its MXCC region; the PROM printed `Nothing there` for CPUs 1-3 with one).
+  12. **pve-qemu `wsh/0188`-`0189` (2026-11-26, lab build of 11.1.3 with the whole series):** the layout
+     below comes from the bytes the PROM's `setenv` changes in an NVRAM image and from flipping single
+     bytes of a valid one (nothing of the PROM in the repository; the names are the PROM's own
+     `printenv` names).
+     - *What the PROM checks:* its configuration area is the first 6 KB of the M48T08 (`0x0000`-`0x17ff`).
+       Byte 0 is a checksum: the XOR of bytes `0x20`-`0x17ff` and `0xd2` (a flipped byte anywhere in
+       that range gives "Incorrect configuration checksum"; bytes 1-`0x1f` and `0x1800` on don't
+       matter). Bytes 1, 2 and 4 are `diag-switch?`, `mfg-switch?` and `skip-vme-loopback?`, outside
+       the checksum, which the self test reads before the monitor checks anything. A boolean is `0xff`
+       or 0, a number a byte, a string a length byte, its characters and a NUL; the PROM keeps
+       scratch data of its self test from `0x1800` (the progress bytes at `0x1814`). The IDPROM at
+       `0x1fd8` (machine type `0x71`) was right already: the banner shows `Host ID: 71...`.
+     - *What went wrong:* QEMU writes OpenBIOS's partitions there, so at every power-on the PROM
+       printed `Incorrect configuration checksum; Setting NVRAM parameters to default values.
+       Setting diag-switch? NVRAM parameter to true` and, with `diag-device` `net`, booted from the
+       network for ever. A ttya break is too short for its polling, so only Stop-A on the keyboard
+       gave `ok`, and through PVE (`-nographic`, no keyboard) nothing did. An NVRAM image the PROM had
+       written that way (now valid, `diag-switch?` true) hung the next start without a word: with a
+       valid configuration and `skip-vme-loopback?` false the self test runs its VME loopback test
+       (progress `0xb3`), which QEMU can't pass, and loops on the error. OpenBIOS's layout happens to
+       have a non-zero byte 4 (the first partition's name), which skipped that test before.
+     - *Fix (`wsh/0188`, hwdef field `prom_config`, SS-600MP only):* with a firmware whose name doesn't
+       start with `openbios` and an NVRAM that isn't an image written before (no image, or a blank
+       one), QEMU writes that configuration area: the PROM's defaults (as `printenv` lists them:
+       `boot-device` `ipi disk net`, `diag-device` `net`, `sbus-probe-list` `f0123`,
+       `scsi-initiator-id` 7, `selftest-#megs` 1, 34 rows of 80 columns, `ttya-mode` and `ttyb-mode`
+       `9600,8,n,1,-`, both `*-ignore-cd` true, `input-device` `keyboard`, `output-device` `screen`, the
+       rest 0) with `diag-switch?` false, `auto-boot?` false and `skip-vme-loopback?` true, and the
+       checksum. The IDPROM is written as before. An NVRAM image the PROM has written is left alone (but
+       the IDPROM), so `setenv` lasts in an NVRAM volume; `-prom-env` has no effect with this PROM (a
+       warning). OpenBIOS on the SS-600MP and all other machines keep OpenBIOS's partitions: the NVRAM
+       below `0x1ff0` at the start (`pmemsave`, QEMU stopped before the first instruction) is byte for
+       byte the published 11.1.3-4+wsh30's for the SS-5 with `ss5.bin` and OpenBIOS, the SS-20 with
+       `ss20_v2.25_rom` and OpenBIOS, the SS-10 and SS-600MP with OpenBIOS and the LX with `lx.bin`.
+     - *Now:* the PROM prints its banner (`No Keyboard` without one, the console then on ttya) and stops
+       at `ok` within 10 s, with or without a keyboard and with or without an NVRAM image (every start tried, about a
+       dozen); `setenv selftest-#megs 2` in a blank image is there at the next start, with `diag-switch?`
+       still false. `boot cdrom` at that `ok` boots SunOS 4.1.2's CD (`SunOS Release 4.1.2 (MUNIX)`,
+       the miniroot menu). The PROM needs 256 MB or more: with 64 or 128 MB it loops early in its self
+       test (progress `0x02`), with an image of either kind, so not because of the NVRAM.
+     - *Through PVE:* qemu-server's SS-600MP profile takes `bios: ss600mp.bin` (one CPU, up to 1024 MB;
+       the image isn't in any package: `wsh-sun-proms` knows its hash, or copy it to `/usr/share/kvm`).
+       The new lab target `sunos412-ss600mp-prom` is `sunos412-ss600mp`'s install under the PROM, with
+       256 MB in every phase and no `-prom-env`: `boot cdrom` at the first `ok`, the miniroot booted by
+       the PROM from its reboot string, suninstall's Quick install, `boot disk` for the first boot and
+       the check (sunos-install-serial.py's Sun PROM path, unchanged).
+     - *Tests:* `wsh/0189`, `sun4m-ss600mp-test` case `prom-nvram`, failing without 0188 (`cfg[0] ==
+       sum`: `0x70`, OpenBIOS's first partition).
+     Regression for `wsh/0188`-`0189` (the series to 0189 applied with `patch -p1 -s -t -F0`, 216 patches
+     without fuzz, the tree identical to the one tested, lab): `make check-qtest-sparc` 38
+     passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as before), `sun4m-ss600mp-test`
+     17/17. With the package's OpenBIOS (11.1.3-4+wsh30), `-vga none` and user networking the stored
+     `sunos412-ss600mp` disk boots to a root shell, reads 300 64 KB blocks from `/dev/rsd0c`, copies
+     and compares `/vmunix` and pings the host side; `sol26-ss20` does the same with its raw disk and
+     kernel; `netbsd93-sparc` on SS-5 too, 2 of 2 replies. The SS-20 PROM (`ss20_v2.25_rom`,
+     `TI-SuperSparc-50`) and the SS-5 PROM reach `ok` and print byte for byte what the published
+     11.1.3-4+wsh30 prints, and the NVRAM of every machine but the SS-600MP with its own PROM is byte
+     for byte the same at the start (above). Through PVE (the published packages, this
+     qemu-system-sparc and qemu-server's profile with `ss600mp.bin` copied over them):
+     `lab.py install sunos412-ss600mp-prom --check` passed twice (6.3 and 6.2 min: install 145/142
+     s, first boot 159/160 s, check 57/58 s); a first attempt's install passed and its first boot
+     saw no console output (the PROM sat at `ok`), not seen again and not explained; a VM with a copy of
+     the stored `sunos412-ss600mp` disk and a blank NVRAM volume stopped at `ok` (9.7 s), took `setenv boot-device disk` and `setenv auto-boot?
+     true`, and booted 4.1.2 by itself at the next start (its banner after 11 s).
 
   **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
   SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
@@ -2706,8 +2772,9 @@ What it would take for the rest:
   `ss20_v2.25_rom`, OpenBIOS, `cd_as_disk`). A Sun PROM for the SS-10 would need QEMU to boot it
   first; then `'ss10_v2.25_rom' => { 'max-cpus' => 1 }` (and a `cpu` if it needs one) under
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
-  it doesn't run removed. The SS-600MP has a profile since `sunos412-ss600mp` (OpenBIOS only, one
-  CPU, 1024 MB; "Supported profiles"); Solaris 2.6 still refuses the platform under OpenBIOS.
+  it doesn't run removed. The SS-600MP has a profile since `sunos412-ss600mp` (OpenBIOS, and since
+  `wsh/0188` Sun's 600MP PROM `ss600mp.bin`; one CPU, 1024 MB; "Supported profiles"); Solaris 2.6
+  still refuses the platform under OpenBIOS.
 
 ### SPARCstation LX with its own PROM (lab only)
 
@@ -5526,7 +5593,7 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
 | SS-20 | `openbios-sparc32` | none | 2048 MB | 1-4 |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` | 512 MB | 1 |
 | LX | `lx.bin` (only; not in any package, see "SPARCstation LX with its own PROM") | none | 128 MB | 1 |
-| SS-600MP | `openbios-sparc32` (only) | none (the machine's SuperSPARC) | 1024 MB | 1 |
+| SS-600MP | `openbios-sparc32`, `ss600mp.bin` (not in any package; 256 MB or more) | none (the machine's SuperSPARC) | 1024 MB | 1 |
 
 - Display: `cg3` (default), `tcx`, `none`, `serial0`/`serial1` (ttya/ttyb). No resolution option
   (`-g`): qemu-server passes none, so cg3 runs at QEMU's 1024x768. The LX takes `serial0` (its
@@ -5535,11 +5602,13 @@ and builds the command from it; pve-manager mirrors it in `PVE.qemu.Architecture
   built-in lance with `net0`'s MAC, at most one NIC.
 - SS-600MP (SunOS 4.1.2, "Older Sun releases on sun4m"): needs pve-qemu-kvm 11.1.3-3+wsh13 or later
   (`wsh/0063`-`0065`, openbios 0028); the ESP is under OpenBIOS's `dma` node and the lance under its
-  `lebuffer`, the command line is the same as for the other machines. OpenBIOS only and one CPU:
-  4.1.2's start of a second CPU wants a module ID in the MMU control register as on the real
-  machine's Ross modules, which QEMU doesn't model, and Sun's 600MP PROM loops in its power-on self
-  test (it knows the SuperSPARC, but checks diagnostic registers QEMU doesn't keep; "Sun's own
-  SS-600MP boot PROM"); both refusals say so (their text names the Ross RT625). 4.1.2 boots
+  `lebuffer`, the command line is the same as for the other machines. One CPU: 4.1.2's start of a
+  second CPU wants a module ID in the MMU control register as on the real machine's Ross modules,
+  which QEMU doesn't model (the refusal names the Ross RT625). Sun's 600MP PROM (`bios:
+  ss600mp.bin`) needs pve-qemu-kvm with `wsh/0120`-`0188` ("Sun's own SS-600MP boot PROM"; with
+  `wsh/0188` it stops at `ok` on ttya by itself) and 256 MB or more (its self test loops with 64 or
+  128 MB; the profile has no lower limit); before, the profile refused it with the Ross RT625 as the
+  reason. 4.1.2 boots
   with up to 2 GB; 1024 MB is offered, the wizard presets 256 (`defaultMemory` in pve-manager). The
   displays are the default list (OpenBIOS draws on cg3 and TCX; the target uses `serial0`), no
   `audio0` (no sound chip), and `nvram0` as on the other OpenBIOS machines (accepted, on the M48T08).

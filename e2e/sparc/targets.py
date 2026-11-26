@@ -125,6 +125,12 @@ PACKAGES_2026_11_21_3_WSH6 = {"pve-qemu-kvm": "11.1.3-3+wsh6", "qemu-server": "9
 # 0028) with qemu-server and pve-manager built from the branch that adds the SS-600MP profile
 PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": "9.2.20+wsh6 + SS-600MP profile",
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
+# SunOS 4.1.2 under Sun's 600MP PROM through PVE: the published packages with qemu-system-sparc built from
+# the series to wsh/0189 and qemu-server's SS-600MP profile with ss600mp.bin, both mounted over theirs
+PACKAGES_2026_11_26_SS600MP_PROM = {
+    "pve-qemu-kvm": "11.1.3-4+wsh30, qemu-system-sparc from the series to wsh/0189 (lab build)",
+    "qemu-server": "9.2.24+wsh3 + ss600mp.bin in the SS-600MP profile",
+    "pve-manager": "9.2.41+wsh2", "libpve-storage-perl": "9.1.18+wsh2"}
 # Debian 13 on sun4u through PVE: the published packages (pve-qemu-kvm with wsh/0070 Linux idle and openbios 0030)
 PACKAGES_2026_11_22_DEB13 = {"pve-qemu-kvm": "11.1.3-4+wsh8", "qemu-server": "9.2.20+wsh7", "pve-manager": "9.2.32+wsh11",
                              "libpve-storage-perl": "9.1.18+wsh2"}
@@ -1522,6 +1528,23 @@ TARGETS["sunos412-ss600mp"] = {
     # through PVE (two passes): 6.5-6.7 min, install 2.3-2.5, first boot 2.8, check 1.0-1.1
     "minutes": 7,
     "tested": {"date": "2026-11-22", "packages": PACKAGES_2026_11_22_SS600MP, "with": "--check"},
+}
+
+# The same install under Sun's own 600MP PROM (ss600mp.bin, ROM Rev. 2.14; wsh-sun-proms knows its hash,
+# the image itself isn't in any package). It needs pve-qemu wsh/0120-0188: the PROM's self test, the
+# monitor's probing and an NVRAM configuration it accepts (wsh/0188: QEMU's blank NVRAM had made it boot
+# from the network forever; now it stops at `ok` on ttya without a keyboard), and qemu-server with
+# ss600mp.bin in the SS-600MP profile. sunos-install-serial.py's Sun PROM path: `boot cdrom`, the PROM
+# boots the miniroot from its reboot string, `boot disk` for the first boot and the check. 256 MB in
+# every phase: with 64 or 128 MB the PROM loops in its self test, and the CD's MUNIX runs with 256 MB
+# under it (no install "memory", no prom_env: -prom-env is OpenBIOS's).
+TARGETS["sunos412-ss600mp-prom"] = {
+    **TARGETS["sunos412-ss600mp"],
+    "title": "SunOS 4.1.2 Programmer install on a SPARCserver 600MP (the Sun 600MP PROM ss600mp.bin, one CPU)",
+    "install": {k: v for k, v in TARGETS["sunos412-ss600mp"]["install"].items() if k not in ("memory", "prom_env")},
+    "profile": {**TARGETS["sunos412-ss600mp"]["profile"], "bios": "ss600mp.bin"},
+    "minutes": 7,
+    "tested": {"date": "2026-11-26", "packages": PACKAGES_2026_11_26_SS600MP_PROM, "with": "--check"},
 }
 
 # Solaris 2.1 (SunOS 5.1), the first sun4m release (SS-10 only of QEMU's machines): the 2.2 path of

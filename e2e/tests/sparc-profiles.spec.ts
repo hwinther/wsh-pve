@@ -768,17 +768,22 @@ test.describe('the SPARCstation LX (its own PROM, serial console)', () => {
 })
 
 // The SPARCserver 600MP with OpenBIOS (submodules/SPARC.md, "Supported profiles"), for SunOS 4.1.2:
-// OpenBIOS only and one CPU (Sun's 600MP PROM and 4.1.2's start of a second CPU need a Ross RT625
-// module, which QEMU doesn't have), at most 1024 MB (the wizard presets 256), no sound. CI runs
-// against the published packages: the profile needs a qemu-server that has it (probed once, skipped
-// otherwise; an older one refuses the machine name itself), and QEMU starting it a pve-qemu-kvm with
-// wsh/0063-0065 (the lebuffer).
+// one CPU (4.1.2's start of a second CPU needs a Ross RT625 module, which QEMU doesn't have), at most
+// 1024 MB (the wizard presets 256), no sound. CI runs against the published packages: the profile
+// needs a qemu-server that has it (probed once, skipped otherwise; an older one refuses the machine
+// name itself), and QEMU starting it a pve-qemu-kvm with wsh/0063-0065 (the lebuffer). Sun's own 600MP
+// PROM (bios ss600mp.bin) needs a qemu-server that lists it in the profile (probed: before, the
+// profile took OpenBIOS only and said the PROM needs a Ross module); the PROM image itself is in no
+// package, so QEMU isn't started with it here.
 test.describe('the SPARCserver 600MP (OpenBIOS, one CPU)', () => {
   let hasSs600mp = false
+  let hasSs600mpProm = false
   let qemuHasLebuffer = false
 
   test.beforeAll(async () => {
     hasSs600mp = (await pveExec(['grep', '-q', "'SS-600MP'", '/usr/share/perl5/PVE/QemuServer/Machine.pm'])).code === 0
+    hasSs600mpProm =
+      (await pveExec(['grep', '-q', "'ss600mp.bin'", '/usr/share/perl5/PVE/QemuServer/Machine.pm'])).code === 0
     const dma = await pveExec(['sh', '-c', 'qemu-system-sparc -device sparc32-dma,help 2>&1 | grep -q lebuffer-size'])
     qemuHasLebuffer = dma.code === 0
   })
@@ -824,16 +829,44 @@ test.describe('the SPARCserver 600MP (OpenBIOS, one CPU)', () => {
     })
   }
 
+  test("SS-600MP, Sun's 600MP PROM (ss600mp.bin), 256 MB, vga serial0: qm showcmd", async () => {
+    // eslint-disable-next-line playwright/no-skipped-test -- until the published qemu-server has ss600mp.bin
+    test.skip(!hasSs600mpProm, 'the installed qemu-server takes no ss600mp.bin on SS-600MP yet')
+    const vmid = await createVm({
+      ...SS600MP,
+      bios: 'ss600mp.bin',
+      name: 'sparc-ss600mp-prom',
+      serial0: 'socket',
+      vga: 'serial0',
+    })
+    expect(await vmConfFile(vmid)).toContain('bios: ss600mp.bin')
+    const cmd = await showcmd(vmid)
+    expect(cmd).toContain("-machine 'accel=tcg,type=SS-600MP+pve0'")
+    expect(cmd).toContain('-bios ss600mp.bin')
+    expect(cmd).toContain("-smp '1,sockets=1,cores=1,maxcpus=1'")
+    expect(cmd).toContain('-nographic')
+    expect(cmd).not.toContain('-cpu')
+  })
+
   const ROSS = "a Ross RT625 module, which QEMU doesn't have"
-  const refusals: { name: string; params: Record<string, number | string>; message: string }[] = [
+  // messageWithProm: the message of a qemu-server that has ss600mp.bin in the profile
+  const refusals: {
+    name: string
+    params: Record<string, number | string>
+    message: string
+    messageWithProm?: string
+  }[] = [
     {
       message:
         "sparc: firmware (bios) 'ss5.bin' is not supported on SS-600MP (Sun's 600MP PROM needs a Ross RT625 CPU module, which QEMU doesn't have), use one of: openbios-sparc32",
+      messageWithProm:
+        "sparc: firmware (bios) 'ss5.bin' is not supported on SS-600MP, use one of: openbios-sparc32, ss600mp.bin",
       name: 'a Sun PROM (ss5.bin)',
       params: { ...SS600MP, bios: 'ss5.bin' },
     },
     {
       message: "sparc: firmware (bios) 'ss20_v2.25_rom' is not supported on SS-600MP (Sun's 600MP PROM needs",
+      messageWithProm: "sparc: firmware (bios) 'ss20_v2.25_rom' is not supported on SS-600MP, use one of:",
       name: 'the SS-20 PROM',
       params: { ...SS600MP, bios: 'ss20_v2.25_rom' },
     },
@@ -871,7 +904,7 @@ test.describe('the SPARCserver 600MP (OpenBIOS, one CPU)', () => {
       test.skip(!hasSs600mp, 'the installed qemu-server has no SS-600MP profile yet')
       const vmid = Number(await pve.get<string>('/cluster/nextid'))
       const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { arch: 'sparc', vmid, ...c.params })
-      expect(refused.message).toContain(c.message)
+      expect(refused.message).toContain(hasSs600mpProm && c.messageWithProm ? c.messageWithProm : c.message)
       const { code } = await pveExec(['test', '-e', `/etc/pve/qemu-server/${vmid}.conf`])
       expect(code, 'no config is left behind').not.toBe(0)
     })

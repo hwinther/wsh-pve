@@ -103,9 +103,9 @@ class ManifestTest(Tmp):
     def test_the_shipped_manifest_loads(self):
         m = sp.load_manifest(sp.DEFAULT_MANIFEST)
         self.assertEqual(
-            [p.name for p in m.proms], ["ss5.bin", "ss10_v2.25_rom", "ss20_v2.25_rom", "lx.bin"]
+            [p.name for p in m.proms], ["ss5.bin", "ss10_v2.25_rom", "ss20_v2.25_rom", "lx.bin", "ss600mp.bin"]
         )
-        self.assertEqual({p.machine for p in m.proms}, {"SS-5", "SS-10", "SS-20", "LX"})
+        self.assertEqual({p.machine for p in m.proms}, {"SS-5", "SS-10", "SS-20", "LX", "SS-600MP"})
 
     def test_bad_entries_are_refused(self):
         good = manifest_doc()["proms"][0]

@@ -838,10 +838,10 @@ index a6630418..f65137ca 100644
 +    },
  });
 diff --git a/www/manager6/form/QemuBiosSelector.js b/www/manager6/form/QemuBiosSelector.js
-index 40abb589..6d36f322 100644
+index 40abb589..3d137851 100644
 --- a/www/manager6/form/QemuBiosSelector.js
 +++ b/www/manager6/form/QemuBiosSelector.js
-@@ -2,10 +2,12 @@ Ext.define('PVE.form.QemuBiosSelector', {
+@@ -2,10 +2,18 @@ Ext.define('PVE.form.QemuBiosSelector', {
      extend: 'PVE.form.FilteredKVComboBox',
      alias: ['widget.pveQemuBiosSelector'],
  
@@ -850,9 +850,15 @@ index 40abb589..6d36f322 100644
          ['__default__', PVE.Utils.render_qemu_bios('')],
 -        ['seabios', PVE.Utils.render_qemu_bios('seabios')],
 -        ['ovmf', PVE.Utils.render_qemu_bios('ovmf')],
-+        ...['seabios', 'ovmf', 'openbios-sparc64', 'ss5.bin', 'ss20_v2.25_rom', 'lx.bin'].map(
-+            (bios) => [bios, PVE.Utils.render_qemu_bios(bios)],
-+        ),
++        ...[
++            'seabios',
++            'ovmf',
++            'openbios-sparc64',
++            'ss5.bin',
++            'ss20_v2.25_rom',
++            'lx.bin',
++            'ss600mp.bin',
++        ].map((bios) => [bios, PVE.Utils.render_qemu_bios(bios)]),
      ],
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedFirmware,
@@ -874,7 +880,7 @@ index faeb530a..3cf5e0d6 100644
  
      allowedValuesPerCategory: PVE.qemu.Architecture.allowedMachines,
 diff --git a/www/manager6/qemu/Architecture.js b/www/manager6/qemu/Architecture.js
-index b8412b6f..856c90ff 100644
+index b8412b6f..1de00658 100644
 --- a/www/manager6/qemu/Architecture.js
 +++ b/www/manager6/qemu/Architecture.js
 @@ -10,6 +10,8 @@ Ext.define('PVE.qemu.Architecture', {
@@ -901,7 +907,7 @@ index b8412b6f..856c90ff 100644
      },
  
      defaultProcessorModel: {
-@@ -32,11 +42,151 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -32,11 +42,156 @@ Ext.define('PVE.qemu.Architecture', {
      defaultMachines: {
          x86_64: 'pc',
          aarch64: 'virt',
@@ -930,8 +936,8 @@ index b8412b6f..856c90ff 100644
 +    // SS-20 PROM starts only the first. The SS-20 PROM gets its CPU model from qemu-server. displays:
 +    // the displays the machine takes, the first being the default (without it allowedDisplays.sparc,
 +    // cg3 by default). The LX runs only its own PROM and has no framebuffer QEMU emulates (its cgsix),
-+    // so its console is a serial port. The SS-600MP (SunOS 4.1.2) runs OpenBIOS only, with one CPU:
-+    // Sun's 600MP PROM and 4.1.2's start of a second CPU need a Ross RT625 module, which QEMU lacks.
++    // so its console is a serial port. The SS-600MP (SunOS 4.1.2) runs OpenBIOS or Sun's own 600MP
++    // PROM, with one CPU: 4.1.2's start of a second CPU needs a Ross RT625 module, which QEMU lacks.
 +    // defaultMemory: what the wizard presets, where it isn't the most (maxMemory). firmwareMaxMemory:
 +    // a firmware's own most, below the machine's: the SS-20 PROM probes eight banks of 64 MB.
 +    sparc32Profiles: {
@@ -949,7 +955,11 @@ index b8412b6f..856c90ff 100644
 +            maxCpus: { 'openbios-sparc32': 4 },
 +            firmwareMaxMemory: { 'ss20_v2.25_rom': 512 },
 +        },
-+        'SS-600MP': { maxMemory: 1024, defaultMemory: 256, firmware: ['openbios-sparc32'] },
++        'SS-600MP': {
++            maxMemory: 1024,
++            defaultMemory: 256,
++            firmware: ['openbios-sparc32', 'ss600mp.bin'],
++        },
 +        LX: { maxMemory: 128, firmware: ['lx.bin'], displays: ['serial0', 'none'] },
 +    },
 +
@@ -1038,6 +1048,7 @@ index b8412b6f..856c90ff 100644
 +        'ss10_v2.25_rom': 'SPARCstation 10 PROM',
 +        'ss20_v2.25_rom': 'SPARCstation 20 PROM',
 +        'lx.bin': 'SPARCstation LX PROM',
++        'ss600mp.bin': 'SPARCserver 600MP PROM',
 +    },
 +
 +    defaultFirmware: {
@@ -1053,7 +1064,7 @@ index b8412b6f..856c90ff 100644
      },
  
      allowedScsiHw: {
-@@ -50,21 +200,50 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -50,21 +205,51 @@ Ext.define('PVE.qemu.Architecture', {
              'pvscsi',
          ],
          aarch64: ['virtio-scsi-pci', 'virtio-scsi-single'],
@@ -1080,7 +1091,8 @@ index b8412b6f..856c90ff 100644
      allowedFirmware: {
          x86_64: ['__default__', 'seabios', 'ovmf'], // default is seabios
          aarch64: ['ovmf'],
-+        sparc: ['__default__', 'ss5.bin', 'ss20_v2.25_rom', 'lx.bin'], // default is OpenBIOS
++        // default is OpenBIOS
++        sparc: ['__default__', 'ss5.bin', 'ss20_v2.25_rom', 'lx.bin', 'ss600mp.bin'],
 +        sparc64: ['__default__', 'openbios-sparc64'],
 +    },
 +
@@ -1105,7 +1117,7 @@ index b8412b6f..856c90ff 100644
      },
  
      allowedTPMVersions: {
-@@ -79,6 +258,10 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -79,6 +264,10 @@ Ext.define('PVE.qemu.Architecture', {
                  return gettext('x86 (64-bit)');
              case 'aarch64':
                  return gettext('ARM (64-bit)');
@@ -1116,7 +1128,7 @@ index b8412b6f..856c90ff 100644
              default:
                  return Proxmox.Utils.unknownText;
          }
-@@ -109,3 +292,15 @@ Ext.define('PVE.qemu.Architecture', {
+@@ -109,3 +298,15 @@ Ext.define('PVE.qemu.Architecture', {
          return (architecture ?? hostArch) === hostArch;
      },
  });
