@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..7e36e0f 100644
+index bc240a0..f0a69b3 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,127 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,131 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -201,6 +201,10 @@ index bc240a0..7e36e0f 100644
 +wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch
 +wsh/0171-hw-dma-sparc32_dma-model-the-SS-600MP-s-SCSI-DMA-as-.patch
 +wsh/0172-tests-qtest-test-the-SS-600MP-s-ESC-DMA-registers.patch
++wsh/0173-hw-net-lance-receive-loopback-frames-as-the-Am7990-o.patch
++wsh/0174-tests-qtest-test-the-SS-600MP-lance-s-loopback-recei.patch
++wsh/0175-hw-sparc-sun4m-keep-the-SS-600MP-s-I-O-cache-tags-an.patch
++wsh/0176-tests-qtest-test-the-SS-600MP-s-I-O-cache-tags-and-d.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -25979,6 +25983,733 @@ index 0000000..72542af
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 + 
 +     return g_test_run();
+diff --git a/debian/patches/wsh/0173-hw-net-lance-receive-loopback-frames-as-the-Am7990-o.patch b/debian/patches/wsh/0173-hw-net-lance-receive-loopback-frames-as-the-Am7990-o.patch
+new file mode 100644
+index 0000000..7fe7ae8
+--- /dev/null
++++ b/debian/patches/wsh/0173-hw-net-lance-receive-loopback-frames-as-the-Am7990-o.patch
+@@ -0,0 +1,172 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/net/lance: receive loopback frames as the Am7990 on the
++ SS-600MP
++
++Sun's SPARCserver 600MP boot PROM tests the lance in internal loopback
++(progress 0xc4 of its power-on self test, a loop on error otherwise):
++in its buffer memory it sets up one receive descriptor with a 40-byte
++buffer and one transmit descriptor with a 32-byte frame, starts the
++lance and waits for the receive descriptor to come back. Two things in
++the PCnet core behind QEMU's lance kept it from coming back:
++
++- The PROM leaves in the receive descriptor's message count word (RMD3)
++  what its memory test wrote there (0xa5a5). QEMU's descriptor check
++  wants bits 15-12 of that word zero and otherwise takes the ring as
++  having no descriptor, so the frame was missed (CSR0 MISS and ERR).
++  The Am7990 doesn't check that word: it writes it itself, with its
++  reserved bits as zeros.
++- QEMU sends a loopback frame back through qemu_receive_packet(), which
++  pads frames shorter than 60 bytes, so the lance received 64 bytes
++  (60 and the FCS) for 32 sent, overflowed the 40-byte buffer (OFLO,
++  BUFF, ERR) and wrote no message count. The Am7990 receives a frame in
++  loopback at the length it sent it: 36 bytes with the FCS.
++
++New lance property am7990 (default off) and hwdef field le_am7990, set
++on the SS-600MP only: the check of RMD3's reserved bits is skipped,
++those bits are written as zeros with the message count, and a loopback
++frame is received at its transmitted length. The other sun4m machines
++keep the old receive path on purpose: the SS-5 and SS-20 boot PROMs'
++own loopback test then fails ("Wrong packet length; expected 36,
++observed 64") and, with a blank NVRAM (diag-switch? true, boot from the
++network), they give up and reach "ok"; with the Am7990 behaviour their
++test passes and they wait for a RARP reply that never comes, as a real
++machine would. The PCI PCnet is unchanged; nothing changes for frames
++from the network; no new state.
++---
++ hw/net/lance.c   |  8 ++++++++
++ hw/net/pcnet.c   | 12 +++++++++++-
++ hw/net/pcnet.h   |  7 +++++++
++ hw/sparc/sun4m.c | 18 ++++++++++++++++--
++ 4 files changed, 42 insertions(+), 3 deletions(-)
++
++diff --git a/hw/net/lance.c b/hw/net/lance.c
++index acfbb9e..48cb90d 100644
++--- a/hw/net/lance.c
+++++ b/hw/net/lance.c
++@@ -153,6 +153,14 @@ static const Property lance_properties[] = {
++      * bits 6-0, the default here.
++      */
++     DEFINE_PROP_UINT32("rap-mask", SysBusPCNetState, rap_mask, 0x7f),
+++    /*
+++     * Receive as the Am7990: take a receive descriptor whatever the
+++     * reserved bits of its message count word hold, and a loopback frame
+++     * at the length it was sent. Off by default: with it the SS-5 and
+++     * SS-20 boot PROMs' loopback test passes and their default boot with
+++     * a blank NVRAM waits for a RARP reply instead of reaching "ok".
+++     */
+++    DEFINE_PROP_BOOL("am7990", SysBusPCNetState, state.am7990, false),
++ };
++ 
++ static void lance_class_init(ObjectClass *klass, const void *data)
++diff --git a/hw/net/pcnet.c b/hw/net/pcnet.c
++index 0bd7d43..c10c1fe 100644
++--- a/hw/net/pcnet.c
+++++ b/hw/net/pcnet.c
++@@ -443,7 +443,7 @@ static inline void pcnet_rmd_store(PCNetState *s, struct pcnet_RMD *rmd,
++     struct pcnet_RMD rmd;                       \
++     RMDLOAD(&rmd,(ADDR));                       \
++     (RES) |= (GET_FIELD(rmd.buf_length, RMDL, ONES) != 15) \
++-          || (GET_FIELD(rmd.msg_length, RMDM, ZEROS) != 0); \
+++          || (!s->am7990 && GET_FIELD(rmd.msg_length, RMDM, ZEROS) != 0); \
++ } while (0)
++ 
++ #define CHECK_TMD(ADDR,RES) do {                \
++@@ -1041,6 +1041,12 @@ ssize_t pcnet_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
++             struct pcnet_RMD rmd;
++             int pktcount = 0;
++ 
+++            if (s->am7990 && s->looptest &&
+++                s->xmit_pos > 0 && s->xmit_pos < size) {
+++                /* the frame as sent, without the net layer's padding */
+++                size = s->xmit_pos;
+++            }
+++
++             if (!s->looptest) {
++                 if (size > 4092) {
++ #ifdef PCNET_DEBUG_RMD
++@@ -1120,6 +1126,10 @@ ssize_t pcnet_receive(NetClientState *nc, const uint8_t *buf, size_t size_)
++             RMDLOAD(&rmd, PHYSADDR(s,crda));
++             if (remaining == 0) {
++                 SET_FIELD(&rmd.msg_length, RMDM, MCNT, size);
+++                if (s->am7990) {
+++                    /* the reserved bits, written as zeros */
+++                    SET_FIELD(&rmd.msg_length, RMDM, ZEROS, 0);
+++                }
++                 SET_FIELD(&rmd.status, RMDS, ENP, 1);
++                 SET_FIELD(&rmd.status, RMDS, PAM, !CSR_PROM(s) && is_padr);
++                 SET_FIELD(&rmd.status, RMDS, LFAM, !CSR_PROM(s) && is_ladr);
++diff --git a/hw/net/pcnet.h b/hw/net/pcnet.h
++index d12e7cb..23003ce 100644
++--- a/hw/net/pcnet.h
+++++ b/hw/net/pcnet.h
++@@ -53,6 +53,13 @@ struct PCNetState_st {
++     DeviceState *dma_opaque;
++     int tx_busy;
++     int looptest;
+++    /*
+++     * Receive as the Am7990 (the sysbus lance's am7990 property): it
+++     * doesn't check the reserved bits of a receive descriptor's message
+++     * count word, which it writes itself, and in loopback it receives a
+++     * frame at the length it sent it.
+++     */
+++    bool am7990;
++ };
++ 
++ void pcnet_h_reset(void *opaque);
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 154cc55..4c5901e 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -116,6 +116,7 @@ struct sun4m_hwdef {
++     uint32_t iommu_sbcfg_mask;  /* if set: the bits the slot registers keep */
++     uint32_t iommu_tlb_data_mask; /* if set: the bits its TLB data keeps */
++     uint32_t le_rap_mask;       /* if set: the bits the lance's RAP keeps */
+++    bool le_am7990;             /* the lance receives as the Am7990 */
++     uint16_t machine_id;
++     uint8_t nvram_machine_id;
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++@@ -334,7 +335,7 @@ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr esp_base, qemu_irq espdma_irq,
++                               hwaddr le_base, qemu_irq ledma_irq,
++                               hwaddr lebuffer_base, uint32_t le_rap_mask,
++-                              bool esp_dma_esc, MACAddr *mac)
+++                              bool le_am7990, bool esp_dma_esc, MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -369,6 +370,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++     if (le_rap_mask) {
++         qdev_prop_set_uint32(DEVICE(lance), "rap-mask", le_rap_mask);
++     }
+++    if (le_am7990) {
+++        qdev_prop_set_bit(DEVICE(lance), "am7990", true);
+++    }
++     if (esp_dma_esc) {
++         qdev_prop_set_bit(DEVICE(espdma), "esc", true);
++     }
++@@ -1191,7 +1195,7 @@ static void sun4m_hw_init(MachineState *machine)
++                      hwdef->esp_base, slavio_irq[18],
++                      hwdef->le_base, slavio_irq[16],
++                      hwdef->lebuffer_base, hwdef->le_rap_mask,
++-                     hwdef->esp_dma_esc, &hostid);
+++                     hwdef->le_am7990, hwdef->esp_dma_esc, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1652,6 +1656,16 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * (the drivers select only CSR0-CSR3 either way).
++          */
++         .le_rap_mask = 0x3,
+++        /*
+++         * Its boot PROM's lance loopback test leaves garbage in the
+++         * receive descriptor's message count word and gives a 40-byte
+++         * buffer for a 32-byte frame: the lance receives as the Am7990,
+++         * which ignores that word and doesn't pad a loopback frame. The
+++         * other machines keep QEMU's receive path: with it the SS-5 and
+++         * SS-20 PROMs' loopback test fails, so with a blank NVRAM their
+++         * default network boot gives up and they reach "ok".
+++         */
+++        .le_am7990 = true,
++         /*
++          * Its on-board SCSI DMA is the ESC gate array (device ID 4, as
++          * SunOS's esp driver knows it), not the DMA2: the boot PROM
+diff --git a/debian/patches/wsh/0174-tests-qtest-test-the-SS-600MP-lance-s-loopback-recei.patch b/debian/patches/wsh/0174-tests-qtest-test-the-SS-600MP-lance-s-loopback-recei.patch
+new file mode 100644
+index 0000000..18357fd
+--- /dev/null
++++ b/debian/patches/wsh/0174-tests-qtest-test-the-SS-600MP-lance-s-loopback-recei.patch
+@@ -0,0 +1,275 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP lance's loopback receive
++
++Cases for the patch before, as the SS-600MP boot PROM's loopback test
++sets it up: internal loopback, one receive descriptor with a 40-byte
++buffer and 0xa5a5 in its message count word, a 32-byte broadcast
++frame. With the Am7990 behaviour the receive descriptor must come back
++without an error (STP, ENP), the message count must read 36 (the frame
++and its FCS, no padding), CSR0 must show RINT without MISS or ERR, the
++frame must be in the buffer and nothing past it.
++
++- sun4m-ss600mp-test lance-loopback: in the 600MP's lebuffer.
++- sun4m-ledma-test lance-loopback/ss5 and lance-loopback/ss20: through
++  the ledma and the IOMMU with -global lance.am7990=on, and without it
++  the old result (the descriptor stays with the lance, CSR0 MISS and
++  ERR), which the SS-5 and SS-20 PROMs' default boot relies on.
++
++The three Am7990 cases fail without the patch before.
++---
++ tests/qtest/sun4m-ledma-test.c   | 111 +++++++++++++++++++++++++++++++
++ tests/qtest/sun4m-ss600mp-test.c |  91 +++++++++++++++++++++++++
++ 2 files changed, 202 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ledma-test.c b/tests/qtest/sun4m-ledma-test.c
++index 6558891..85c44d5 100644
++--- a/tests/qtest/sun4m-ledma-test.c
+++++ b/tests/qtest/sun4m-ledma-test.c
++@@ -18,6 +18,11 @@
++  * mapped at 0xff400000 by default, and an IOMMU error with the register
++  * set to 0. Nothing runs on the CPU.
++  *
+++ * With its am7990 property (set on the SS-600MP) the lance hands a short
+++ * loopback frame back at the length it sent it, and takes a receive
+++ * descriptor whatever the reserved bits of its message count word hold,
+++ * as the Am7990 does; without it the SS-5 and SS-20 keep the old result.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -161,6 +166,108 @@ static void test_lance_dvma(const void *opaque)
++     qtest_quit(qts);
++ }
++ 
+++/*
+++ * The lance in internal loopback, through the DMA and the IOMMU, with a
+++ * receive descriptor whose message count word holds 0xa5a5 and a 40-byte
+++ * buffer for a 32-byte frame. With the am7990 property (the SS-600MP's)
+++ * the frame comes back as 36 bytes, the frame and its FCS, not padded to
+++ * 60; without it (the SS-5's and SS-20's) the lance still takes no such
+++ * descriptor and misses the frame, as before.
+++ */
+++#define LB_RMD      0x020
+++#define LB_TMD      0x030
+++#define LB_TXBUF    0x100
+++#define LB_RXBUF    0x200
+++#define LB_LEN      32
+++#define LB_RXLEN    40
+++#define LB_HADR     ((INITBLK_DVMA >> 16) & 0xff)
+++#define LB_MODE     0x0044      /* internal loopback */
+++#define DESC_OWN    0x8000
+++#define DESC_STP    0x0200
+++#define DESC_ENP    0x0100
+++#define CSR0_STRT   0x0002
+++#define CSR0_ERR    0x8000
+++#define CSR0_MISS   0x1000
+++#define CSR0_RINT   0x0400
+++
+++static QTestState *lance_loopback(const LedmaCase *c, bool am7990)
+++{
+++    QTestState *qts = qtest_initf("-M %s -m 64 -nodefaults%s", c->machine,
+++                                  am7990 ? " -global lance.am7990=on" : "");
+++    uint32_t idx = (INITBLK_DVMA - DVMA_START_64M) >> 12;
+++    uint64_t pa = INITBLK_PA;
+++    int i;
+++
+++    qtest_writel(qts, IOMMU_BASE(c), IOPT_PA >> 4);
+++    qtest_writel(qts, IOMMU_CTRL(c), IOMMU_CTRL_64M_ENAB);
+++    qtest_writel(qts, IOPT_PA + idx * 4,
+++                 (INITBLK_PA >> 4) | IOPTE_WRITE | IOPTE_VALID);
+++
+++    for (i = 0; i < 0x400; i += 4) {
+++        qtest_writel(qts, pa + i, 0xa5a5a5a5);
+++    }
+++    qtest_writew(qts, pa, LB_MODE);
+++    for (i = 2; i < 16; i += 2) {
+++        qtest_writew(qts, pa + i, 0);
+++    }
+++    qtest_writew(qts, pa + 16, (INITBLK_DVMA & 0xffff) + LB_RMD);
+++    qtest_writew(qts, pa + 18, LB_HADR);
+++    qtest_writew(qts, pa + 20, (INITBLK_DVMA & 0xffff) + LB_TMD);
+++    qtest_writew(qts, pa + 22, LB_HADR);
+++    qtest_writew(qts, pa + LB_RMD, (INITBLK_DVMA & 0xffff) + LB_RXBUF);
+++    qtest_writew(qts, pa + LB_RMD + 2, DESC_OWN | LB_HADR);
+++    qtest_writew(qts, pa + LB_RMD + 4, 0xf000 | (-LB_RXLEN & 0x0fff));
+++    qtest_writew(qts, pa + LB_TMD, (INITBLK_DVMA & 0xffff) + LB_TXBUF);
+++    qtest_writew(qts, pa + LB_TMD + 2,
+++                 DESC_OWN | DESC_STP | DESC_ENP | LB_HADR);
+++    qtest_writew(qts, pa + LB_TMD + 4, 0xf000 | (-LB_LEN & 0x0fff));
+++    qtest_writew(qts, pa + LB_TMD + 6, 0);
+++    for (i = 0; i < LB_LEN; i++) {
+++        qtest_writeb(qts, pa + LB_TXBUF + i, i < 6 ? 0xff : i);
+++    }
+++
+++    le_csr_write(qts, c, 1, INITBLK_DVMA & 0xffff);
+++    le_csr_write(qts, c, 2, LB_HADR);
+++    le_csr_write(qts, c, 0, CSR0_INIT);
+++    g_assert_cmphex(le_csr_read(qts, c, 0) & CSR0_IDON, ==, CSR0_IDON);
+++    le_csr_write(qts, c, 0, CSR0_STRT);
+++    for (i = 0; i < 100 && (qtest_readw(qts, pa + LB_RMD + 2) & DESC_OWN);
+++         i++) {
+++        qtest_clock_step(qts, 1000000);
+++    }
+++    g_assert_cmphex(qtest_readl(qts, IOMMU_AFSR(c)) & IOMMU_AFSR_ERR, ==, 0);
+++    g_assert_cmphex(qtest_readw(qts, pa + LB_TMD + 2) & DESC_OWN, ==, 0);
+++    return qts;
+++}
+++
+++static void test_lance_loopback(const void *opaque)
+++{
+++    const LedmaCase *c = opaque;
+++    QTestState *qts = lance_loopback(c, true);
+++    uint64_t pa = INITBLK_PA;
+++    int i;
+++
+++    g_assert_cmphex(le_csr_read(qts, c, 0) & (CSR0_ERR | CSR0_MISS | CSR0_RINT),
+++                    ==, CSR0_RINT);
+++    g_assert_cmphex(qtest_readw(qts, pa + LB_RMD + 2), ==,
+++                    DESC_STP | DESC_ENP | LB_HADR);
+++    g_assert_cmphex(qtest_readw(qts, pa + LB_RMD + 6), ==, LB_LEN + 4);
+++    for (i = 0; i < LB_LEN; i++) {
+++        g_assert_cmphex(qtest_readb(qts, pa + LB_RXBUF + i), ==,
+++                        i < 6 ? 0xff : i);
+++    }
+++    g_assert_cmphex(qtest_readl(qts, pa + LB_RXBUF + LB_RXLEN), ==,
+++                    0xa5a5a5a5);
+++    qtest_quit(qts);
+++
+++    /* the default: the descriptor stays with the lance, the frame missed */
+++    qts = lance_loopback(c, false);
+++    g_assert_cmphex(le_csr_read(qts, c, 0) & (CSR0_ERR | CSR0_MISS | CSR0_RINT),
+++                    ==, CSR0_ERR | CSR0_MISS);
+++    g_assert_cmphex(qtest_readw(qts, pa + LB_RMD + 2), ==, DESC_OWN | LB_HADR);
+++    qtest_quit(qts);
+++}
+++
++ int main(int argc, char **argv)
++ {
++     g_test_init(&argc, &argv, NULL);
++@@ -175,6 +282,10 @@ int main(int argc, char **argv)
++                         test_lance_dvma);
++     qtest_add_data_func("/sun4m/ledma/lance-dvma/ss20", &ss20,
++                         test_lance_dvma);
+++    qtest_add_data_func("/sun4m/ledma/lance-loopback/ss5", &ss5,
+++                        test_lance_loopback);
+++    qtest_add_data_func("/sun4m/ledma/lance-loopback/ss20", &ss20,
+++                        test_lance_loopback);
++ 
++     return g_test_run();
++ }
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 1430290..ad4ff62 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -19,6 +19,11 @@
++  * the Am7990, whose boot PROM writes a walking one to it; the SS-10 keeps
++  * the PCnet core's bits 6-0.
++  *
+++ * In internal loopback the lance hands a frame back at the length it sent
+++ * it (no padding to 60 bytes), and takes a receive descriptor whatever
+++ * the reserved bits of its message count word hold, as the boot PROM's
+++ * loopback test wants.
+++ *
++  * The 600MP's on-board SCSI DMA is the ESC gate array: device ID 4 in
++  * bits 31-28 of its control register, a write keeps bits 0x00042b90, the
++  * byte count register keeps 24 bits, an address write sets no
++@@ -212,6 +217,91 @@ static void test_lance_rap(void)
++     qtest_quit(qts);
++ }
++ 
+++/*
+++ * As the boot PROM tests it (progress 0xc4): the lance in internal
+++ * loopback sends a 32-byte frame into a 40-byte receive buffer. The
+++ * receive descriptor's message count word holds what the PROM's memory
+++ * test left there; the Am7990 doesn't look at it, and writes the length
+++ * of the frame as sent plus its FCS, 36, without padding it.
+++ */
+++#define LB_INIT     0x0000      /* lance address 0x40000 */
+++#define LB_RMD      0x0020
+++#define LB_TMD      0x0030
+++#define LB_TXBUF    0x0100
+++#define LB_RXBUF    0x0200
+++#define LB_LEN      32
+++#define LB_RXLEN    40
+++#define MODE_LOOP   0x0004
+++#define MODE_INTL   0x0040
+++#define RMD1_OWN    0x8000
+++#define RMD1_ERR    0x4000
+++#define RMD1_STP    0x0200
+++#define RMD1_ENP    0x0100
+++#define CSR0_ERR    0x8000
+++#define CSR0_MISS   0x1000
+++#define CSR0_RINT   0x0400
+++
+++static void test_lance_loopback(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    int i;
+++
+++    for (i = 0; i < 0x400; i += 4) {
+++        qtest_writel(qts, LEBUFFER + i, 0xa5a5a5a5);
+++    }
+++    /* mode, station address, filter, one descriptor each */
+++    qtest_writew(qts, LEBUFFER + LB_INIT, MODE_INTL | MODE_LOOP);
+++    qtest_writew(qts, LEBUFFER + LB_INIT + 2, 0x0200);
+++    for (i = 4; i < 16; i += 2) {
+++        qtest_writew(qts, LEBUFFER + LB_INIT + i, 0);
+++    }
+++    qtest_writew(qts, LEBUFFER + LB_INIT + 16, LB_RMD);
+++    qtest_writew(qts, LEBUFFER + LB_INIT + 18, 0x0004);
+++    qtest_writew(qts, LEBUFFER + LB_INIT + 20, LB_TMD);
+++    qtest_writew(qts, LEBUFFER + LB_INIT + 22, 0x0004);
+++    /* the receive descriptor; its fourth word is left as it was */
+++    qtest_writew(qts, LEBUFFER + LB_RMD, LB_RXBUF);
+++    qtest_writew(qts, LEBUFFER + LB_RMD + 2, RMD1_OWN | 0x0004);
+++    qtest_writew(qts, LEBUFFER + LB_RMD + 4, 0xf000 | (-LB_RXLEN & 0x0fff));
+++    /* the transmit descriptor and a broadcast frame */
+++    qtest_writew(qts, LEBUFFER + LB_TMD, LB_TXBUF);
+++    qtest_writew(qts, LEBUFFER + LB_TMD + 2,
+++                 TMD1_OWN | TMD1_STP | TMD1_ENP | 0x0004);
+++    qtest_writew(qts, LEBUFFER + LB_TMD + 4, 0xf000 | (-LB_LEN & 0x0fff));
+++    qtest_writew(qts, LEBUFFER + LB_TMD + 6, 0);
+++    for (i = 0; i < LB_LEN; i++) {
+++        qtest_writeb(qts, LEBUFFER + LB_TXBUF + i, i < 6 ? 0xff : i);
+++    }
+++
+++    csr_write(qts, 0, 0x0004);
+++    csr_write(qts, 1, 0x0000);
+++    csr_write(qts, 2, 0x0004);
+++    csr_write(qts, 3, 0x0001);
+++    csr_write(qts, 0, CSR0_INIT);
+++    g_assert_cmphex(csr_read(qts, 0) & CSR0_IDON, ==, CSR0_IDON);
+++    csr_write(qts, 0, CSR0_STRT);
+++    for (i = 0; i < 100 && (qtest_readw(qts, LEBUFFER + LB_RMD + 2) & RMD1_OWN);
+++         i++) {
+++        qtest_clock_step(qts, 1000000);
+++    }
+++
+++    /* handed back without an error, the frame and its FCS, 36 bytes */
+++    g_assert_cmphex(qtest_readw(qts, LEBUFFER + LB_TMD + 2) & TMD1_OWN, ==, 0);
+++    g_assert_cmphex(csr_read(qts, 0) & (CSR0_ERR | CSR0_MISS | CSR0_RINT),
+++                    ==, CSR0_RINT);
+++    g_assert_cmphex(qtest_readw(qts, LEBUFFER + LB_RMD + 2), ==,
+++                    RMD1_STP | RMD1_ENP | 0x0004);
+++    g_assert_cmphex(qtest_readw(qts, LEBUFFER + LB_RMD + 6), ==, LB_LEN + 4);
+++    for (i = 0; i < LB_LEN; i++) {
+++        g_assert_cmphex(qtest_readb(qts, LEBUFFER + LB_RXBUF + i), ==,
+++                        i < 6 ? 0xff : i);
+++    }
+++    /* nothing written past the buffer */
+++    g_assert_cmphex(qtest_readl(qts, LEBUFFER + LB_RXBUF + LB_RXLEN), ==,
+++                    0xa5a5a5a5);
+++    qtest_quit(qts);
+++}
+++
++ static void test_dma_csr(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-600MP -m 64");
++@@ -309,6 +399,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
++     qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
++     qtest_add_func("sun4m-ss600mp/lance-rap", test_lance_rap);
+++    qtest_add_func("sun4m-ss600mp/lance-loopback", test_lance_loopback);
++     qtest_add_func("sun4m-ss600mp/dma-csr", test_dma_csr);
++     qtest_add_func("sun4m-ss600mp/dma-count", test_dma_count);
++     qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
+diff --git a/debian/patches/wsh/0175-hw-sparc-sun4m-keep-the-SS-600MP-s-I-O-cache-tags-an.patch b/debian/patches/wsh/0175-hw-sparc-sun4m-keep-the-SS-600MP-s-I-O-cache-tags-an.patch
+new file mode 100644
+index 0000000..17c6090
+--- /dev/null
++++ b/debian/patches/wsh/0175-hw-sparc-sun4m-keep-the-SS-600MP-s-I-O-cache-tags-an.patch
+@@ -0,0 +1,171 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: keep the SS-600MP's I/O cache tags and data
++
++Sun's SPARCserver 600MP boot PROM tests the VMEbus interface's I/O
++cache after the lance (progress 0xc6 of its power-on self test, a loop
++on error otherwise): it writes a walking one to the first tag at
++physical 0xf.df00_0000 and wants bits 31-20 back, a walking one through
++all 32 bits of the first data word at 0xf.df00_8000, and then a march
++test over the 1024 tags (one per 32-byte line) and the 32 KB of data.
++QEMU had nothing there and the first load took a bus error.
++
++The sun4m-vme device gets a second MMIO region, mapped 64 KB below its
++registers on the SS-600MP (SunOS's sun4m iocache.h: the tags at
++0xdf000000, 1024 lines of 32 bytes, the flush space at 0xdf020000 left
++out): a tag per line keeps bits 31-20 (the address tag and the line's
++valid and writable bits), the data keeps every word. Storage only, no
++cache behind it; the VMEbus control register's I/O cache enable bit
++still does nothing. SunOS 4.1.2 uses the I/O cache only when the boot
++PROM's vme node says it has one, which OpenBIOS doesn't. The tags and
++data go in a vmstate subsection, sun4m-vme/ioc, sent only when one is
++not zero. Only the SS-600MP has the device.
++---
++ hw/sparc/sun4m.c | 85 +++++++++++++++++++++++++++++++++++++++++++++++-
++ 1 file changed, 84 insertions(+), 1 deletion(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 4c5901e..2ca7566 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -24,6 +24,7 @@
++ 
++ #include "qemu/osdep.h"
++ #include "qemu/units.h"
+++#include "qemu/cutils.h"
++ #include "qapi/error.h"
++ #include "qemu/datadir.h"
++ #include "target/sparc/cpu.h"
++@@ -682,6 +683,12 @@ struct AFXState {
++  * walking one and all ones to it and wants these bits back. There is no
++  * VMEbus or I/O cache behind them; the fault registers read 0 and the
++  * rest of the page is ignored, as before.
+++ *
+++ * The I/O cache's tags and data, 64 KB below the registers (SunOS's
+++ * sun4m iocache.h): 1024 lines of 32 bytes, a tag per line at its line
+++ * offset in the first 32 KB (bits 31-20: the address tag and the line's
+++ * valid and writable bits), the data in the next 32 KB. The boot PROM
+++ * writes and reads back both; they are storage, no cache acts on them.
++  */
++ #define TYPE_SUN4M_VME "sun4m-vme"
++ OBJECT_DECLARE_SIMPLE_TYPE(Sun4mVMEState, SUN4M_VME)
++@@ -690,11 +697,20 @@ OBJECT_DECLARE_SIMPLE_TYPE(Sun4mVMEState, SUN4M_VME)
++ #define VME_CR          0x0
++ #define VME_CR_MASK     0xf0000000
++ 
+++#define VME_IOC_SIZE        0x10000     /* MMIO region 1, the tags and data */
+++#define VME_IOC_LINES       0x400
+++#define VME_IOC_LINE_SHIFT  5
+++#define VME_IOC_DATA        0x8000
+++#define VME_IOC_TAG_MASK    0xfff00000
+++
++ struct Sun4mVMEState {
++     SysBusDevice parent_obj;
++ 
++     MemoryRegion iomem;
+++    MemoryRegion ioc;
++     uint32_t cr;
+++    uint32_t ioc_tags[VME_IOC_LINES];
+++    uint32_t ioc_data[VME_IOC_DATA / 4];
++ };
++ 
++ static uint64_t sun4m_vme_read(void *opaque, hwaddr addr, unsigned size)
++@@ -728,6 +744,42 @@ static const MemoryRegionOps sun4m_vme_ops = {
++     },
++ };
++ 
+++static uint64_t sun4m_vme_ioc_read(void *opaque, hwaddr addr, unsigned size)
+++{
+++    Sun4mVMEState *s = opaque;
+++
+++    if (addr >= VME_IOC_DATA) {
+++        return s->ioc_data[(addr - VME_IOC_DATA) >> 2];
+++    }
+++    return s->ioc_tags[addr >> VME_IOC_LINE_SHIFT];
+++}
+++
+++static void sun4m_vme_ioc_write(void *opaque, hwaddr addr, uint64_t val,
+++                                unsigned size)
+++{
+++    Sun4mVMEState *s = opaque;
+++
+++    if (addr >= VME_IOC_DATA) {
+++        s->ioc_data[(addr - VME_IOC_DATA) >> 2] = val;
+++    } else {
+++        s->ioc_tags[addr >> VME_IOC_LINE_SHIFT] = val & VME_IOC_TAG_MASK;
+++    }
+++}
+++
+++static const MemoryRegionOps sun4m_vme_ioc_ops = {
+++    .read = sun4m_vme_ioc_read,
+++    .write = sun4m_vme_ioc_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++    .impl = {
+++        .min_access_size = 4,
+++        .max_access_size = 4,
+++    },
+++};
+++
++ static void sun4m_vme_reset(DeviceState *d)
++ {
++     SUN4M_VME(d)->cr = 0;
++@@ -740,8 +792,31 @@ static void sun4m_vme_init(Object *obj)
++     memory_region_init_io(&s->iomem, obj, &sun4m_vme_ops, s, "sun-vme",
++                           VME_REGS_SIZE);
++     sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
+++    memory_region_init_io(&s->ioc, obj, &sun4m_vme_ioc_ops, s, "sun-vme-ioc",
+++                          VME_IOC_SIZE);
+++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->ioc);
++ }
++ 
+++static bool sun4m_vme_ioc_needed(void *opaque)
+++{
+++    Sun4mVMEState *s = opaque;
+++
+++    return !buffer_is_zero(s->ioc_tags, sizeof(s->ioc_tags)) ||
+++           !buffer_is_zero(s->ioc_data, sizeof(s->ioc_data));
+++}
+++
+++static const VMStateDescription vmstate_sun4m_vme_ioc = {
+++    .name = TYPE_SUN4M_VME "/ioc",
+++    .version_id = 1,
+++    .minimum_version_id = 1,
+++    .needed = sun4m_vme_ioc_needed,
+++    .fields = (const VMStateField[]) {
+++        VMSTATE_UINT32_ARRAY(ioc_tags, Sun4mVMEState, VME_IOC_LINES),
+++        VMSTATE_UINT32_ARRAY(ioc_data, Sun4mVMEState, VME_IOC_DATA / 4),
+++        VMSTATE_END_OF_LIST()
+++    }
+++};
+++
++ static const VMStateDescription vmstate_sun4m_vme = {
++     .name = TYPE_SUN4M_VME,
++     .version_id = 1,
++@@ -749,6 +824,10 @@ static const VMStateDescription vmstate_sun4m_vme = {
++     .fields = (const VMStateField[]) {
++         VMSTATE_UINT32(cr, Sun4mVMEState),
++         VMSTATE_END_OF_LIST()
+++    },
+++    .subsections = (const VMStateDescription * const []) {
+++        &vmstate_sun4m_vme_ioc,
+++        NULL
++     }
++ };
++ 
++@@ -1404,8 +1483,12 @@ static void sun4m_hw_init(MachineState *machine)
++          * before its banner. No VMEbus model: the control register keeps
++          * its enable bits (TYPE_SUN4M_VME), the VMEbus spaces themselves
++          * stay empty, so the kernel's probes for VME devices find none.
+++         * The I/O cache's tags and data are 64 KB below the registers.
++          */
++-        sysbus_create_simple(TYPE_SUN4M_VME, hwdef->vme_base, NULL);
+++        SysBusDevice *vme = SYS_BUS_DEVICE(
+++            sysbus_create_simple(TYPE_SUN4M_VME, hwdef->vme_base, NULL));
+++
+++        sysbus_mmio_map(vme, 1, hwdef->vme_base - VME_IOC_SIZE);
++     }
++ 
++     if (hwdef->bpp_base) {
+diff --git a/debian/patches/wsh/0176-tests-qtest-test-the-SS-600MP-s-I-O-cache-tags-and-d.patch b/debian/patches/wsh/0176-tests-qtest-test-the-SS-600MP-s-I-O-cache-tags-and-d.patch
+new file mode 100644
+index 0000000..131466f
+--- /dev/null
++++ b/debian/patches/wsh/0176-tests-qtest-test-the-SS-600MP-s-I-O-cache-tags-and-d.patch
+@@ -0,0 +1,85 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP's I/O cache tags and data
++
++sun4m-ss600mp-test case vme-ioc for the patch before: the sun-vme-ioc
++region at 0xf.df00_0000, a walking one through a tag (bits 31-20 back)
++and a data word (all bits), a tag per 32-byte line (another offset in
++the line reads the line's tag, the next line its own, the last line),
++a data word per word up to the last one, and the VMEbus control
++register still reads 0. 10 cases in all; vme-ioc fails without the
++patch before.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 39 ++++++++++++++++++++++++++++++++
++ 1 file changed, 39 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index ad4ff62..a10b967 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -6,6 +6,8 @@
++  * its banner. The control register keeps its four enable bits (31-28),
++  * which the boot PROM writes and reads back; its implementation number,
++  * the fault registers and the rest of the page read 0.
+++ * The I/O cache's tags (bits 31-20 of one per 32-byte line) and data,
+++ * 64 KB below, keep what the PROM writes.
++  *
++  * The 600MP's lance works in a 128 KB buffer memory of its own below its
++  * registers (the "lebuffer" node, SBus slot f offset 0x40000), not through
++@@ -39,6 +41,9 @@
++ 
++ #define VME_REGS        0xfdf010000ULL
++ #define VME_CR_MASK     0xf0000000      /* I/O cache, slave, loopback, reset */
+++#define IOC_TAGS        0xfdf000000ULL  /* a tag per 32-byte line */
+++#define IOC_DATA        0xfdf008000ULL
+++#define IOC_TAG_MASK    0xfff00000
++ #define LEBUFFER        0xef0040000ULL
++ #define LEBUFFER_SIZE   0x20000
++ #define LE_RDP          0xef0060000ULL
++@@ -124,6 +129,39 @@ static void test_vme_regs(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_vme_ioc(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++    uint32_t bit;
+++
+++    g_assert_true(has_region(mtree, "0000000fdf000000-0000000fdf00ffff "
+++                             "(prio 0, i/o): sun-vme-ioc"));
+++    /* as the PROM does it: a walking one through a tag and a data word */
+++    for (bit = 1; bit; bit <<= 1) {
+++        qtest_writel(qts, IOC_TAGS, bit);
+++        g_assert_cmphex(qtest_readl(qts, IOC_TAGS), ==, bit & IOC_TAG_MASK);
+++        qtest_writel(qts, IOC_DATA, bit);
+++        g_assert_cmphex(qtest_readl(qts, IOC_DATA), ==, bit);
+++    }
+++    /* a tag per 32-byte line, a data word per word */
+++    qtest_writel(qts, IOC_TAGS, 0xa5a5a5a5);
+++    qtest_writel(qts, IOC_TAGS + 0x20, 0x5a5a5a5a);
+++    qtest_writel(qts, IOC_TAGS + 0x7fe0, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, IOC_TAGS), ==, 0xa5a00000);
+++    g_assert_cmphex(qtest_readl(qts, IOC_TAGS + 4), ==, 0xa5a00000);
+++    g_assert_cmphex(qtest_readl(qts, IOC_TAGS + 0x20), ==, 0x5a500000);
+++    g_assert_cmphex(qtest_readl(qts, IOC_TAGS + 0x7fe0), ==, IOC_TAG_MASK);
+++    qtest_writel(qts, IOC_DATA + 4, 0x5a5a5a5a);
+++    qtest_writel(qts, IOC_DATA + 0x7ffc, 0x12345678);
+++    g_assert_cmphex(qtest_readl(qts, IOC_DATA), ==, 0x80000000);
+++    g_assert_cmphex(qtest_readl(qts, IOC_DATA + 4), ==, 0x5a5a5a5a);
+++    g_assert_cmphex(qtest_readl(qts, IOC_DATA + 0x7ffc), ==, 0x12345678);
+++    /* the VMEbus control register is still its own */
+++    g_assert_cmphex(qtest_readl(qts, VME_REGS), ==, 0);
+++    qtest_quit(qts);
+++}
+++
++ static void test_lebuffer_memory(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-600MP -m 64");
++@@ -396,6 +434,7 @@ int main(int argc, char **argv)
++     g_test_init(&argc, &argv, NULL);
++ 
++     qtest_add_func("sun4m-ss600mp/vme-regs", test_vme_regs);
+++    qtest_add_func("sun4m-ss600mp/vme-ioc", test_vme_ioc);
++     qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
++     qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
++     qtest_add_func("sun4m-ss600mp/lance-rap", test_lance_rap);
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
