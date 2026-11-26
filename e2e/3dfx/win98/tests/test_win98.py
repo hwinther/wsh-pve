@@ -223,6 +223,7 @@ class Disk(unittest.TestCase):
         self.assertEqual(txt.split("\r\n"), ["delay 10", "run 120 GLIDETST.EXE hold=5 bench=300", "delay 8",
                                              "run 120 GLTEST.EXE hold=5 bench=300", "shutdown", ""])
         self.assertIn("run 120 GLIDETST.EXE glide3 hold=1 bench=0\r\nstay", w.run_list(["glide3"], 1, 0, 120, 0, stay=True))
+        self.assertIn("run 120 GLTEST.EXE ctx2=1 hold=5 bench=0\r\n", w.run_list(["opengl-ctx"], 5, 0, 120, 0))
 
     def test_unpack_drivers(self):
         with tempfile.TemporaryDirectory() as d:
@@ -287,9 +288,9 @@ class QemuLog(unittest.TestCase):
         stage1 = b"...glidept: offscreen %dx%d, frames to %s..."
         stage1b = b"...%s: offscreen %dx%d, frames to %s...no SDL window: rendering offscreen, EGL %d.%d..."
         self.assertEqual(w.select_tests("auto", "vnc", stage1), ["glide2", "glide3"])
-        self.assertEqual(w.select_tests("auto", "vnc", stage1b), ["glide2", "glide3", "opengl"])
+        self.assertEqual(w.select_tests("auto", "vnc", stage1b), ["glide2", "glide3", "opengl", "opengl-ctx"])
         self.assertEqual(w.select_tests("auto", "vnc", b"stage 0"), [])
-        self.assertEqual(w.select_tests("auto", "sdl", b"stage 0"), ["glide2", "glide3", "opengl"])
+        self.assertEqual(w.select_tests("auto", "sdl", b"stage 0"), ["glide2", "glide3", "opengl", "opengl-ctx"])
         self.assertEqual(w.select_tests("opengl, glide2", "vnc", b""), ["opengl", "glide2"])
 
     def test_guest_cpu(self):

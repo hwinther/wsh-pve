@@ -16,6 +16,16 @@
  *
  *   OPENGL: PASS | OPENGL: FAIL <n> | OPENGL: ERROR <what>, then OPENGL: CLOSED
  *
+ * With ctx2=1 (the harness's test opengl-ctx, tag GLCTX) it first does what Return Fire 2 does when
+ * it goes from its intro to the game: a second wglCreateContext while the first context is current,
+ * wglMakeCurrent of the new one and wglDeleteContext of the old one. Then it checks the pixel-store
+ * state a new context has (glGetIntegerv of GL_UNPACK_ALIGNMENT and the rest, with the outputs
+ * preset, so an output the call never wrote shows), and, only when that state is sane, builds a
+ * 256x256 RGB texture's mipmaps with gluBuild2DMipmaps of Windows' own GLU32.DLL (which divides by
+ * GL_UNPACK_ALIGNMENT: a 0 there is the divide error the game hit). The scene is then drawn with the
+ * new context as above. Windows' GLU32.DLL is loaded from C:\WINDOWS\SYSTEM at run time; without it
+ * that step is skipped.
+ *
  * Exit status 0 PASS, 1 FAIL, 2 ERROR. See w3d.h for the output and the build. Copyright 2026
  * WsHosting ENK, GPL-3.
  */
@@ -33,6 +43,14 @@
 #define GL_RENDERER 0x1F01
 #define GL_VERSION 0x1F02
 #define GL_PACK_ALIGNMENT 0x0D05
+#define GL_PACK_ROW_LENGTH 0x0D02
+#define GL_UNPACK_ROW_LENGTH 0x0CF2
+#define GL_UNPACK_SKIP_ROWS 0x0CF3
+#define GL_UNPACK_SKIP_PIXELS 0x0CF4
+#define GL_UNPACK_ALIGNMENT 0x0CF5
+#define GL_MAX_TEXTURE_SIZE 0x0D33
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_RGB 0x1907
 
 static struct {
 	int(WINAPI *ChoosePixelFormat)(HDC, const PIXELFORMATDESCRIPTOR *);
@@ -55,6 +73,11 @@ static struct {
 	void(WINAPI *ReadPixels)(int, int, int, int, uint32_t, uint32_t, void *);
 	void(WINAPI *Finish)(void);
 	const char *(WINAPI *GetString)(uint32_t);
+	void(WINAPI *GetIntegerv)(uint32_t, int *);
+	uint32_t(WINAPI *GetError)(void);
+	void(WINAPI *GenTextures)(int, uint32_t *);
+	void(WINAPI *BindTexture)(uint32_t, uint32_t);
+	void(WINAPI *DeleteTextures)(int, const uint32_t *);
 } gl;
 
 static HMODULE lib;
@@ -107,6 +130,97 @@ static uint8_t read_px(int x, int y, int c)
 	return pixels[((H - 1 - y) * W + x) * 4 + c]; /* GL rows go bottom up */
 }
 
+/* What a game's switch from one context to another (Return Fire 2's, from its intro to the game)
+ * does: a second context while the first one is current, made current, the first one deleted.
+ * Windows gives the new context; a wrapper that returned NULL left the game without one. */
+static int context_switch(void)
+{
+	HGLRC second = wgl.CreateContext(hdc);
+	if (!second) {
+		w3d_printf("info: a second wglCreateContext while a context is current returned NULL (Windows gives one)");
+		/* what the game did next: its NULL made current, the first context deleted */
+		wgl.MakeCurrent(hdc, NULL);
+		wgl.DeleteContext(ctx);
+		ctx = NULL;
+		return 1;
+	}
+	if (!wgl.MakeCurrent(hdc, second)) {
+		w3d_printf("info: wglMakeCurrent of the second context failed");
+		wgl.DeleteContext(second);
+		return 1;
+	}
+	if (second != ctx)
+		wgl.DeleteContext(ctx);
+	ctx = second;
+	w3d_printf("context switch: second context %08lx made current, the first one deleted", (unsigned long)(uintptr_t)second);
+	return 0;
+}
+
+/* The pixel-store state of a new context, as GLU's gluScaleImage and gluBuild2DMipmaps read it.
+ * Each output is preset: a call that never writes it (no GL context on the host) shows. */
+static int pixel_store_state(void)
+{
+	static const struct {
+		uint32_t pname;
+		const char *name;
+		int want; /* -1: at least 256 */
+	} st[] = {
+		{ GL_UNPACK_ALIGNMENT, "GL_UNPACK_ALIGNMENT", 4 },
+		{ GL_UNPACK_ROW_LENGTH, "GL_UNPACK_ROW_LENGTH", 0 },
+		{ GL_UNPACK_SKIP_ROWS, "GL_UNPACK_SKIP_ROWS", 0 },
+		{ GL_UNPACK_SKIP_PIXELS, "GL_UNPACK_SKIP_PIXELS", 0 },
+		{ GL_PACK_ALIGNMENT, "GL_PACK_ALIGNMENT", 4 },
+		{ GL_PACK_ROW_LENGTH, "GL_PACK_ROW_LENGTH", 0 },
+		{ GL_MAX_TEXTURE_SIZE, "GL_MAX_TEXTURE_SIZE", -1 },
+	};
+	int bad = 0;
+	for (unsigned i = 0; i < sizeof(st) / sizeof(st[0]); i++) {
+		int v = 0x5eedf00d;
+		gl.GetIntegerv(st[i].pname, &v);
+		int ok = (st[i].want < 0) ? (v >= 256 && v != 0x5eedf00d) : (v == st[i].want);
+		if (v == 0x5eedf00d)
+			w3d_printf("state: %s not written by glGetIntegerv (no GL context?)", st[i].name);
+		else
+			w3d_printf("state: %s %d%s", st[i].name, v, ok ? "" : " (wrong)");
+		bad += !ok;
+	}
+	return bad;
+}
+
+/* gluBuild2DMipmaps of Windows' own GLU32.DLL, as the game calls it: a 256x256 RGB texture */
+static uint8_t texels[256 * 256 * 3];
+static int glu_mipmaps(void)
+{
+	HMODULE glu = LoadLibraryA("GLU32.DLL");
+	if (!glu) {
+		w3d_printf("info: no GLU32.DLL (error %lu): gluBuild2DMipmaps skipped", GetLastError());
+		return 0;
+	}
+	int(WINAPI * build2d)(uint32_t, int, int, int, uint32_t, uint32_t, const void *);
+	*(FARPROC *)&build2d = GetProcAddress(glu, "gluBuild2DMipmaps");
+	if (!build2d) {
+		w3d_printf("info: GLU32.DLL has no gluBuild2DMipmaps: skipped");
+		FreeLibrary(glu);
+		return 0;
+	}
+	for (int i = 0; i < 256 * 256; i++) {
+		texels[i * 3] = (uint8_t)i;
+		texels[i * 3 + 1] = (uint8_t)(i >> 8);
+		texels[i * 3 + 2] = 0x80;
+	}
+	uint32_t tex = 0;
+	gl.GetError();
+	gl.GenTextures(1, &tex);
+	gl.BindTexture(GL_TEXTURE_2D, tex);
+	int r = build2d(GL_TEXTURE_2D, 3, 256, 256, GL_RGB, GL_UNSIGNED_BYTE, texels);
+	uint32_t err = gl.GetError();
+	gl.BindTexture(GL_TEXTURE_2D, 0);
+	gl.DeleteTextures(1, &tex);
+	FreeLibrary(glu);
+	w3d_printf("glu: gluBuild2DMipmaps 256x256 GL_RGB returned %d, glGetError 0x%04x", r, err);
+	return (r != 0) || (err != 0);
+}
+
 static void triangle(const float pos[3][2], const float rgb[3][3])
 {
 	gl.Begin(GL_TRIANGLES);
@@ -139,8 +253,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 void WinMainCRTStartup(void)
 {
 	char verdict[160];
-	int hold = w3d_arg_int("hold", 5), bench = w3d_arg_int("bench", 0);
-	w3d_tag = "OPENGL";
+	int hold = w3d_arg_int("hold", 5), bench = w3d_arg_int("bench", 0), ctx2 = w3d_arg_int("ctx2", 0);
+	w3d_tag = ctx2 ? "GLCTX" : "OPENGL";
 	w3d_com_hold();
 	w3d_printf("START OPENGL32.DLL from %s, 640x480, hold %d s, bench %d frames", W3D_DIR, hold, bench);
 
@@ -205,6 +319,11 @@ void WinMainCRTStartup(void)
 	*(FARPROC *)&gl.ReadPixels = sym("glReadPixels");
 	*(FARPROC *)&gl.Finish = sym("glFinish");
 	*(FARPROC *)&gl.GetString = sym("glGetString");
+	*(FARPROC *)&gl.GetIntegerv = sym("glGetIntegerv");
+	*(FARPROC *)&gl.GetError = sym("glGetError");
+	*(FARPROC *)&gl.GenTextures = sym("glGenTextures");
+	*(FARPROC *)&gl.BindTexture = sym("glBindTexture");
+	*(FARPROC *)&gl.DeleteTextures = sym("glDeleteTextures");
 
 	PIXELFORMATDESCRIPTOR pfd;
 	memset(&pfd, 0, sizeof(pfd));
@@ -235,6 +354,20 @@ void WinMainCRTStartup(void)
 	if ((s = gl.GetString(GL_VERSION)))
 		w3d_printf("GL_VERSION %s", s);
 
+	int failed = 0;
+	if (ctx2) {
+		if (context_switch()) {
+			int bad = pixel_store_state(); /* what GLU then read: outputs never written */
+			w3d_printf("info: the context switch left no context (%d of the state not right)", bad);
+			finish("FAIL 1", 1);
+		}
+		int bad = pixel_store_state();
+		if (bad)
+			failed += bad; /* GLU would divide by a GL_UNPACK_ALIGNMENT of 0: not called */
+		else
+			failed += glu_mipmaps();
+	}
+
 	gl.Viewport(0, 0, W, H);
 	for (int frame = 0; frame < 2; frame++) {
 		scene();
@@ -246,7 +379,6 @@ void WinMainCRTStartup(void)
 		}
 		wgl.SwapBuffers(hdc);
 	}
-	int failed = 0;
 	if (scene_check("guest glReadPixels", read_px, 1)) {
 		w3d_print_map("back buffer", read_px, W, H);
 		failed++;
