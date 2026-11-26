@@ -156,6 +156,7 @@ come after that, not before.
 | 3dfx/streaming stage 3e, tiled dmabufs and the audio dropout: `qemudbussrc` reads dmabufs it can't map (NVIDIA's block-linear) through EGL (an EGLImage on the render node's EGL device, read back as `BGRx`, read again 20 ms later since NVIDIA's driver doesn't wait for QEMU's drawing), so `dbus,gl=on` streams on an NVIDIA node; `qemudbusaudiosrc` sends silence while the guest plays nothing, which ends the dropout at a tone's start (Wolf's `audiorate` filled the gap at once and its leaky queue dropped the tone's start); `e2e/streaming` fails on a dropout or an audio burst, takes a package build (`WSH_GST_DEB`) and gets an EGL run. Lab: every check passed, the tone without a dropout, first sound 38-56 ms after the command (was 90-160); NVIDIA node: the frame identical to QEMU's screendump through EGL, Moonlight with every check passed, GL 89-96 ms median with x264 against 53-71 ms without (ROADMAP, Stage 3, "Stage 3e") | in review | |
 | 3dfx/streaming stage 3f, a Windows 98 guest with Glide through Moonlight: `w3dstrm.exe` (`e2e/3dfx/win98`, a Glide 2/3 program that takes commands on COM1, animates at 60 frames/s with the frame number in eight cells where the probe client reads its points and reports every swap) and `e2e/streaming/stream3dfx.py` (latency for every guest frame, pacing, input to picture, keyboard, mouse, a WinMM tone, the demos); `wolf-config.py` scales before its compositor (a guest mode change, 1280x1024 desktop to 640x480 Glide, showed unscaled on a checkerboard), `wolf-pair` ignores the caller's `XDG_RUNTIME_DIR`. NVIDIA node, KVM, Wolf in a privileged container: guest swap to decoded frame 23.6-25.7 ms median with Glide read back (x264, NVENC, Glide 3) and 24.9-33.1 ms with `dbus,gl=on`, frames at `qemudbussrc` 0.7 ms (read back) and 2.0-2.6 ms (GL) after the swap, 58.8-60.1 of 60 guest frames a second at the client, input to picture 40-44 ms, keys and the tablet exact; sound fails in the guest (its AC97 driver), not in the stream. Unprivileged container: the input needs a udev rule on the node (Wolf's event devices are `root:input`), the bus waits for a qemu-server with `dbus-display-uids` on the node (ROADMAP, Stage 3, "Stage 3f") | in review | |
 | 3dfx/streaming stage 3g, the unprivileged container on a node: Wolf in an unprivileged container with a uid range of its own, the VM with `dbus-display-uids`, Wolf's input devices given to the container's root by a udev rule on the node (no way without a node change found); the `ct` template gets a DHCP client (`dhcpcd-base`); docs: the unprivileged recipe, the udev rule, Wolf's ports and PVE firewall rules, pairing a client on the network. NVIDIA node, KVM, wisp at refresh 30 ms, x264, every check passed: guest draw to decoded frame 61.3 ms median on the loopback and 60.6 ms with the probe on another machine, keys 2.6 and 3.0 ms; other uids and a VM that doesn't list the uid refused; the Windows 98 Glide guest 26.1 ms median with every check but sound passed, only with `qemudbussrc shared-map=false` (the shared map got no `UpdateMap` for the Glide surface read back) (ROADMAP, Stage 3, "Stage 3g") | in review | |
+| wisp-netbsd, the NetBSD sibling of wisp (`e2e/wisp-netbsd/`): a second, independent OS test of the same machines. NetBSD 11.1's `build.sh -U` cross-builds its toolchain, libc and a small memory-disk kernel per architecture in a Debian container without root, from the release's source sets pinned by SHA-256; PID 1 is a static C program against NetBSD's libc that prints wisp's markers (banner, `uname`, CPUs, memory, a clock check, a file check on the remounted md root, wisp's compute loop with the same CRC) and powers off with `reboot(RB_HALT | RB_POWERDOWN)`; `run.py` reuses wisp's runner. sparc32 boots with QEMU's `-kernel` and OpenBIOS as it is (OpenBIOS starts NetBSD's ELF kernel like Linux's image) on all eight sun4m machines; sparc64 from a boot disk (Sun label, NetBSD's bootblk and `ofwboot`), since OpenBIOS's sun4u `-kernel` only starts Linux images; amd64 with `-kernel` through its PVH entry on `pc` and `q35`. No QEMU or OpenBIOS change. Kernels 2.5/4.3/7.5 MB as files (1.4/1.6/2.7 MB text and data without the ramdisk), ramdisks 0.9-1.0 MB, PID 1 613-767 KB (jemalloc through stdio). Lab, published 11.1.3-4+wsh30, 36 of 36 boots: power-off after 2.2-2.4 s on sun4m, 10.1-10.3 s on sun4u (8.7 s of it before the kernel), 2.4-2.5 s on pc/q35. Tools about 5 min per architecture on the lab host; with tools and libc cached a build takes 24 s. CI: `wisp-netbsd.yml`, one job per architecture, tools and libc cached; not a required check. Left: "Later", "wisp-netbsd, what is left" | lab-tested | #551 |
 
 ## In progress
 
@@ -1257,19 +1258,18 @@ merged; what is left of them is item 2 under "Next".
   PSRAM on its boards, with an experimental Linux BSP from Espressif (2026). A riscv32 tier tested
   in `qemu-system-riscv32 -M virt` first; real hardware once the BSP or mainline support matures.
   Smaller ESP32 parts (C-series, P4 without MMU) don't fit Linux.
-- **wisp-netbsd:** a NetBSD sibling of wisp as a second, independent OS test of the same QEMU
-  machines (sparc/sun4m V8, sparc64, amd64). NetBSD's `build.sh` cross-builds kernel and userland
-  from a Linux container without root; the kernel carries a ramdisk root (as NetBSD's install
-  kernels do), and PID 1 is a small static C program against NetBSD's own libc, which is V8 on
-  sparc, printing the same markers so `run.py` can drive it. verify: how the kernel is best loaded
-  on sparc32 (QEMU `-kernel` with OpenBIOS, or a small disk image / netboot). Not FreeBSD or
-  OpenBSD (no 32-bit sparc), not illumos (x86_64 only, needs an illumos build host).
-  - PID 1, first step: link it statically against NetBSD's libc (simplest; expect a few hundred kB
-    against today's tens of kB with nolibc, to be measured).
-  - Later, once it runs and kernel size and boot time are measured: consider dropping libc for
-    our own small syscall stubs (a "nolibc for NetBSD": about a dozen calls in assembler per
-    arch, sparc, sparc64 and amd64; NetBSD keeps old syscalls backward compatible). The kernel
-    config is likely the bigger size and boot-time lever, so look there first.
+- **wisp-netbsd, what is left** (the prototype is in Done; `e2e/wisp-netbsd/README.md`, "Next"):
+  - the `timecounter went backwards` warning NetBSD prints once in most sun4m boots (QEMU's
+    slavio counter-timer as NetBSD's `timer0` timecounter reads it, or NetBSD's code);
+  - sparc64 boot time: 8.7 s to the kernel's first line, most of it OpenBIOS reading the 3.6 MB
+    kernel from the boot disk; try a gzipped kernel (`ofwboot` reads those). A `-kernel` path
+    would need OpenBIOS to start an ELF at its entry and pass what `ofwboot` passes;
+  - PID 1 without stdio (`write(2)` and a small formatter drop jemalloc and most of the 600-720 KB),
+    then, as planned, our own syscall stubs instead of libc ("nolibc for NetBSD");
+  - kernel size (1.4 MB sparc32, 1.6 MB sparc64, 2.7 MB amd64 without the ramdisk): what is left
+    in `conf/std`, amd64's ACPI;
+  - sparc32 SMP on SS-10/SS-20 (`-smp 2`, `-smp 4`) and tier 2 as in wisp (disk controllers, a NIC).
+  Not FreeBSD or OpenBSD (no 32-bit sparc), not illumos (x86_64 only, needs an illumos build host).
 
 ## Known and not fixed
 

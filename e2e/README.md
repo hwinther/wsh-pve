@@ -112,6 +112,15 @@ from `wisp/qemu-tci.sh`) and reports times to PID 1 and power-off, the loop time
 workflow boots it on pull requests that change `wisp/` or the pve-qemu build, with the pull request's own
 QEMU when `pve-qemu.patch` or the pin changes (`wisp/README.md`, "CI").
 
+## wisp-netbsd, wisp's NetBSD sibling (`wisp-netbsd/`)
+
+The same test with a NetBSD 11.1 kernel: NetBSD's `build.sh` cross-builds its toolchain, libc and a
+memory-disk kernel per architecture from the release's source sets (pinned by SHA-256), PID 1 is a
+static program against NetBSD's libc that prints wisp's markers, and `wisp-netbsd/run.py` boots it with
+wisp's runner: sparc32 on the eight sun4m machines and x86_64 on pc and q35 with `-kernel`, sparc64 on
+sun4u from a small boot disk. See `wisp-netbsd/README.md`; the `Wisp NetBSD` workflow runs it on pull
+requests that change `wisp-netbsd/`.
+
 ## The PVE container
 
 `pve/Dockerfile` (build context: the repository root) installs `pve-manager`, `qemu-server`,

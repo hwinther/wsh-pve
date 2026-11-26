@@ -1,0 +1,113 @@
+name: Wisp NetBSD
+
+# wisp-netbsd (e2e/wisp-netbsd/README.md), the NetBSD sibling of wisp: NetBSD 11.1's build.sh
+# cross-builds its toolchain, libc and a small memory-disk kernel per architecture from the
+# release's source sets (pinned by SHA-256 in the Dockerfile), PID 1 is a static program against
+# NetBSD's libc, and run.py boots each kernel with -kernel under the published pve-qemu-kvm and
+# checks wisp's markers, the CRC and the power-off: sparc32 on the eight sun4m machines, sparc64
+# on sun4u, x86_64 on pc and q35.
+#
+# NetBSD's toolchain (tools) and libc for each architecture are cached, keyed on the Dockerfile
+# (the NetBSD version) and build.sh; a cold build of one architecture takes a few minutes on the
+# lab host and more on a hosted runner, so each architecture is its own job. A warm run builds
+# only PID 1, the ramdisk and the kernel. Not a required check: a paths filter keeps it to pull
+# requests that touch wisp-netbsd, wisp's runner or this workflow.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'e2e/wisp-netbsd/**'
+      - 'e2e/wisp/run.py'
+      - '.github/workflows/wisp-netbsd.yml'
+  # On main as well, so pull requests find the toolchain cache main saved.
+  push:
+    branches:
+      - main
+    paths:
+      - 'e2e/wisp-netbsd/**'
+      - 'e2e/wisp/run.py'
+      - '.github/workflows/wisp-netbsd.yml'
+
+permissions: {}
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: sparc32
+            machines: --machine SS-5 --machine SS-10 --machine SS-20 --machine SS-4 --machine SPARCClassic --machine SPARCbook --machine LX --machine Voyager
+          - arch: sparc64
+            machines: --machine sun4u
+          - arch: x86_64
+            machines: --machine pc --machine q35
+    env:
+      IMAGE: wsh-wisp-netbsd:ci
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s e2e/wisp-netbsd/tests -v
+
+      - name: Cache NetBSD's toolchain and libc
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            e2e/wisp-netbsd/build/${{ matrix.arch }}/tools
+            e2e/wisp-netbsd/build/${{ matrix.arch }}/dest
+          key: wisp-netbsd-tools-${{ matrix.arch }}-${{ hashFiles('e2e/wisp-netbsd/Dockerfile', 'e2e/wisp-netbsd/build.sh') }}
+
+      - name: Build the wisp-netbsd image
+        run: |
+          start=$(date +%s)
+          docker build --pull -f e2e/wisp-netbsd/Dockerfile -t "$IMAGE" .
+          echo "Image (NetBSD sources, published pve-qemu-kvm $(docker run --rm "$IMAGE" dpkg-query -W -f '${Version}' pve-qemu-kvm)): $(( $(date +%s) - start )) s" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the kernel and PID 1
+        run: |
+          start=$(date +%s)
+          docker run --rm -e JOBS="$(nproc)" -v "$PWD/e2e/wisp-netbsd/build:/wisp-netbsd/build" \
+            -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out" "$IMAGE" ./build.sh "$ARCH"
+          echo "Build of $ARCH (tools cache hit: ${{ steps.tools.outputs.cache-hit == 'true' }}): $(( $(date +%s) - start )) s" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "e2e/wisp-netbsd/out/$ARCH/sizes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Boot
+        run: |
+          mkdir -p "$RUNNER_TEMP/wisp-netbsd"
+          # shellcheck disable=SC2086
+          docker run --rm -v "$PWD/e2e/wisp-netbsd/out:/wisp-netbsd/out:ro" -v "$RUNNER_TEMP/wisp-netbsd:/results" \
+            "$IMAGE" ./run.py --arch "$ARCH" ${{ matrix.machines }} --timeout 180 \
+            --json /results/results.jsonl --log-dir /results/logs 2> "$RUNNER_TEMP/wisp-netbsd/table.md"
+
+      - name: Summary
+        if: ${{ always() }}
+        run: cat "$RUNNER_TEMP/wisp-netbsd/table.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload the results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wisp-netbsd-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/wisp-netbsd
+            e2e/wisp-netbsd/out/${{ matrix.arch }}
+          retention-days: 14
