@@ -12,7 +12,8 @@
 # ENDBR32), no stack protector, fortify or CET, its own _start (plat_linux.c) so that nothing asks
 # for a glibc symbol version newer than MAX_GLIBC (default 2.0), a SysV hash table next to the GNU
 # one, libgcc linked statically, and only libglide.so.2 and libc.so.6 needed; all of it checked
-# here, and the code with scripts/check-3dfx-drivers-isa.sh --no-p6. Copyright 2026 WsHosting ENK, GPL-3.
+# here, and the code with scripts/check-3dfx-drivers-isa.sh --no-p6. Then music-test.c checks the music
+# (music.c), built for the i386 and for the host. Copyright 2026 WsHosting ENK, GPL-3.
 set -euo pipefail
 
 [ $# -ge 1 ] || { sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0" >&2; exit 2; }
@@ -36,7 +37,7 @@ fi
 "$CC" -m32 -march=pentium -mtune=generic -O2 -Wall -Wextra -Wno-unused-parameter -std=gnu99 \
 	-fno-pic -no-pie -fno-stack-protector -U_FORTIFY_SOURCE -fcf-protection=none -fno-asynchronous-unwind-tables \
 	-fno-math-errno -nostartfiles -static-libgcc -Wl,--hash-style=both -Wl,-z,noseparate-code -Wl,-z,noexecstack \
-	-Wl,--as-needed -s -o "$out/wshdemo" "$here/demo.c" "$here/be_glide2.c" "$here/plat_linux.c" -L"$libdir" -lglide2x
+	-Wl,--as-needed -s -o "$out/wshdemo" "$here/demo.c" "$here/music.c" "$here/be_glide2.c" "$here/plat_linux.c" -L"$libdir" -lglide2x
 bin=$out/wshdemo
 
 needed=$(objdump -p "$bin" | awk '$1 == "NEEDED" { print $2 }' | sort | paste -sd ' ')
@@ -52,3 +53,16 @@ p6=$(objdump -d --no-show-raw-insn "$bin" | grep -cE $'\t(cmov|fcmov|fcomi|fucom
 size=$(wc -c < "$bin")
 [ "$size" -lt 204800 ] || fail "$bin is $size bytes (over 200 KB)"
 echo "build-linux.sh: ok $bin ($size bytes, needs $needed, newest GLIBC_$newest)"
+
+# The music (music.c) on the host, with the C library: music-test.c checks the song (order, levels,
+# stereo, the bass's notes, determinism, the section switch); built for the i386 as the program
+# (-march=pentium, x87) and for the host, whose renders have to be the same bytes
+for arch in "-m32 -march=pentium -mfpmath=387" ""; do
+	# shellcheck disable=SC2086 # arch is a list
+	"$CC" $arch -O2 -Wall -Wextra -std=gnu99 -o "$work/music-test" "$here/music-test.c" "$here/music.c" -lm
+	"$work/music-test" > "$work/music-test.log" || { cat "$work/music-test.log"; fail "music-test${arch:+ ($arch)}"; }
+	head -n 1 "$work/music-test.log" >> "$work/music-fnv"
+done
+cat "$work/music-test.log"
+[ "$(sort -u "$work/music-fnv" | wc -l)" = 1 ] || fail "the music renders differently on the i386 and the host: $(paste -sd ' ' "$work/music-fnv")"
+echo "build-linux.sh: ok music-test (the same render on the i386 and the host)"

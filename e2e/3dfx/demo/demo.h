@@ -6,7 +6,8 @@
  * (Glide 2: Linux libglide.so.2, DOS GLIDE2X.DXE, Windows GLIDE2X.DLL), be_glide3.c (Windows
  * GLIDE3X.DLL) and be_gl.c (Windows OPENGL32.DLL). The platform front ends (plat_linux.c,
  * plat_dos.c, plat_win.c) provide the plat_* functions below and call demo_main(); plat_egl.c runs
- * the OpenGL backend on the host's Mesa, to check it without Windows.
+ * the OpenGL backend on the host's Mesa, to check it without Windows. music.c is the music, which
+ * the front ends play through e2e/3dfx/audio's sound backends.
  *
  * The core uses no C library: no stdio, no libm (Windows 98's MSVCRT.DLL is too old for mingw-w64,
  * so the Windows exe has none). The front ends provide memset/memcpy (the Windows one through
@@ -83,11 +84,19 @@ void plat_sleep(int ms);
 /* The wrapper's build string (qemu-3dfx's "<rev>-<time> <date> build"), found in the loaded guest
  * wrapper, into buf; 0 if not found */
 int plat_wrapper_rev(char *buf, int n);
+/* Sound (e2e/3dfx/audio): open the device (enable 0: don't), mix ahead into it with demo_audio_mix()
+ * (polled, once a frame), close it. Without a device they do nothing. */
+void plat_audio_init(int enable);
+void plat_audio_tick(void);
+void plat_audio_close(void);
 
 /* --- provided by the core --------------------------------------------------------------------- */
 
 /* argv[0] is skipped. Returns the exit status: 0 ok, 1 a check failed, 2 an error (no device). */
 int demo_main(int argc, char **argv, const struct backend *be);
+/* The next frames of sound, 16-bit stereo at rate Hz: the music (silent when muted), or with
+ * -audiotest the audio signature */
+void demo_audio_mix(int16_t *pcm, int frames, int rate);
 /* Looks for qemu-3dfx's build string ("1234abc-12:34:56 Nov 24 2026 build") in buf */
 int demo_find_buildstr(const uint8_t *buf, uint32_t len, char *out, int n);
 /* printf-like into buf (%s %c %d %u %x with width and 0 flag, %.Nf for double); returns length */

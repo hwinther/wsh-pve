@@ -431,7 +431,7 @@ def main():
                 result("close", False, "the Glide window didn't close")
 
         if args.demo and "demo" not in skip and "glide" not in skip:
-            for tag, prog in (("WSHDEMO", "WSHDEMO.EXE -api glide2 -part tunnel -secs 60 -time 20"),
+            for tag, prog in (("WSHDEMO", "WSHDEMO.EXE -api glide2 -part tunnel -secs 60 -nosound -time 20"),
                               ("WSHSPACE", "WSHSPACE.EXE -api glide2 -auto -nosound -time 20")):
                 mark = serial.mark()
                 serial.send(f"run 60 {prog}")

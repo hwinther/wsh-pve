@@ -6,7 +6,7 @@
  * A development aid, not shipped:
  *
  *   apt-get install gcc libegl1 libgl1 libegl-mesa0 libgl1-mesa-dri
- *   gcc -O2 -o wshdemo-egl demo.c be_gl.c plat_egl.c /usr/lib/x86_64-linux-gnu/libEGL.so.1 \
+ *   gcc -O2 -o wshdemo-egl demo.c music.c be_gl.c plat_egl.c /usr/lib/x86_64-linux-gnu/libEGL.so.1 \
  *       /usr/lib/x86_64-linux-gnu/libGL.so.1
  *   ./wshdemo-egl -check -bench 300
  *   WSHDEMO_SHOTS=/tmp ./wshdemo-egl -time 40     (every 120th frame as a PPM in /tmp)
@@ -73,6 +73,18 @@ int plat_key(void)
 {
 	return -1;
 }
+/* no sound here: the music is checked by music-test.c */
+void plat_audio_init(int enable)
+{
+	(void)enable;
+}
+void plat_audio_tick(void)
+{
+}
+void plat_audio_close(void)
+{
+}
+
 void plat_sleep(int ms)
 {
 	usleep((useconds_t)ms * 1000);

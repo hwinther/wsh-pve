@@ -28,19 +28,19 @@ $CC -march=pentium -I"$Q3/wrappers/3dfx/src" -I"$Q3/qemu-0/hw/3dfx" -D__REV__="\
 	dxe3gen -o glide2x.dxe -Y libfxgl2.a -E _Convert -E _gr -E _gu glidedxe.o -lc)
 
 CFLAGS="-march=pentium -O2 -Wall -Wextra -Wno-unused-parameter -std=gnu99 -fno-math-errno -fno-asynchronous-unwind-tables"
-for f in demo be_glide2 plat_dos; do
+for f in demo music be_glide2 plat_dos; do
 	# shellcheck disable=SC2086 # CFLAGS is a list
 	$CC $CFLAGS -S -o "$work/$f.s" "$D/$f.c"
 done
 # shellcheck disable=SC2086
-$CC $CFLAGS -s -Wl,-Map,"$work/wshdemo.map" -o "$work/wshdemo.exe" "$work/demo.s" "$work/be_glide2.s" "$work/plat_dos.s" \
+$CC $CFLAGS -s -Wl,-Map,"$work/wshdemo.map" -o "$work/wshdemo.exe" "$work/demo.s" "$work/music.s" "$work/be_glide2.s" "$work/plat_dos.s" \
 	"$work/libfxgl2.a"
 cp "$work/wshdemo.exe" "$OUT/WSHDEMO.EXE"
 
 # For a Pentium: DJGPP keeps read-only data in .text, so the program's disassembly would read tables
 # as instructions; check our code in GCC's assembler output instead, and the libgcc members the link
 # took (libc and crt0 are i386 code; libgcc is built for the i686)
-"$SRC/scripts/check-3dfx-drivers-isa.sh" --no-p6 "$work/demo.s" "$work/be_glide2.s" "$work/plat_dos.s"
+"$SRC/scripts/check-3dfx-drivers-isa.sh" --no-p6 "$work/demo.s" "$work/music.s" "$work/be_glide2.s" "$work/plat_dos.s"
 libgcc=$($CC -print-libgcc-file-name)
 members=$(sed -n 's|^.*/libgcc\.a(\([^)]*\))$|\1|p' "$work/wshdemo.map" | sort -u)
 for m in $members; do

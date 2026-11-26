@@ -13,6 +13,9 @@ on:
       # the Linux guest library (libglide.so.2), the demo and the release workflow itself
       - "scripts/build-3dfx-linux-glide.sh"
       - "e2e/3dfx/demo/**"
+      # the demo's sound backends (shared with wshspace) and its -audiotest signal
+      - "e2e/3dfx/audio/**"
+      - "e2e/wisp/audiosig.h"
       - ".github/workflows/build-3dfx-drivers.yml"
 
 permissions:

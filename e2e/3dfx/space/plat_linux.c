@@ -200,76 +200,8 @@ void plat_poll(struct plat_input *in)
 
 /* --- Runtime-optional OSS /dev/dsp audio (no extra .so dependencies) -------------------------- */
 
-#define SNDCTL_DSP_SPEED       0xc0045002UL
-#define SNDCTL_DSP_SETFMT      0xc0045005UL
-#define SNDCTL_DSP_CHANNELS    0xc0045006UL
-#define SNDCTL_DSP_SETFRAGMENT 0xc004500aUL
-#define SNDCTL_DSP_GETOSPACE   0x8010500cUL
-
-static int dsp_fd = -1, dsp_rate = 22050;
-static uint32_t dsp_last_us;
-static int16_t dsp_buf[1024 * 2];
-
-void plat_audio_init(int enable)
-{
-	if (!enable || dsp_fd >= 0)
-		return;
-	dsp_fd = open("/dev/dsp", O_WRONLY | O_NONBLOCK);
-	if (dsp_fd < 0)
-		return;
-	int frag = (4 << 16) | 12; /* 4 fragments of 4096 bytes */
-	int fmt = 0x10;            /* AFMT_S16_LE */
-	int ch = 2;
-	int rate = 22050;
-	ioctl(dsp_fd, SNDCTL_DSP_SETFRAGMENT, &frag);
-	if (ioctl(dsp_fd, SNDCTL_DSP_SETFMT, &fmt) < 0 || fmt != 0x10 ||
-	    ioctl(dsp_fd, SNDCTL_DSP_CHANNELS, &ch) < 0 || ch != 2 ||
-	    ioctl(dsp_fd, SNDCTL_DSP_SPEED, &rate) < 0) {
-		close(dsp_fd);
-		dsp_fd = -1;
-		return;
-	}
-	dsp_rate = rate;
-	dsp_last_us = plat_us() - 50000U;
-}
-
-void plat_audio_tick(void)
-{
-	if (dsp_fd < 0)
-		return;
-	uint32_t now = plat_us();
-	uint32_t dt_us = now - dsp_last_us;
-	if (dt_us > 100000U)
-		dt_us = 100000U;
-	int frames = (int)((double)dt_us * (double)dsp_rate * 1e-6);
-	/* With the device's fill level: at least 2048 frames (two fragments, 93 ms) queued, or the
-	 * card runs dry after the first fragment (-audiotest saw a 7 ms gap there on AC97), and no
-	 * more than fits (frames mixed and then not written would be lost) */
-	struct { int fragments, fragstotal, fragsize, bytes; } space;
-	if (ioctl(dsp_fd, SNDCTL_DSP_GETOSPACE, &space) == 0) {
-		int queued = (space.fragstotal * space.fragsize - space.bytes) / 4;
-		if (frames < 2048 - queued)
-			frames = 2048 - queued;
-		if (frames > space.bytes / 4)
-			frames = space.bytes / 4;
-	}
-	if (frames < 128)
-		return;
-	if (frames > 1024)
-		frames = 1024;
-	space_audio_mix(dsp_buf, frames, dsp_rate);
-	ssize_t w = write(dsp_fd, dsp_buf, (size_t)frames * 4);
-	if (w > 0)
-		dsp_last_us = now;
-}
-
-void plat_audio_close(void)
-{
-	if (dsp_fd >= 0) {
-		close(dsp_fd);
-		dsp_fd = -1;
-	}
-}
+#define SND_MIX space_audio_mix
+#include "../audio/snd_oss.h"
 
 /* --- wrapper build string & custom GLIBC_2.0 _start ------------------------------------------- */
 

@@ -5,4 +5,6 @@
 !packages/wsh-openglide/tests/scene.h
 !e2e/3dfx/win98/
 !e2e/3dfx/demo/
+!e2e/3dfx/audio/
+!e2e/wisp/audiosig.h
 !scripts/check-3dfx-drivers-isa.sh

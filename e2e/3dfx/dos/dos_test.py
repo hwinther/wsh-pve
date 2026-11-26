@@ -52,8 +52,11 @@ build-dos.sh) with `-audiotest -nocom` and BLASTER=A220 I5 D1 H5 T6: the audio s
 22050 Hz on the DSP 4.x of QEMU's `-device sb16`, iobase 220h, IRQ 5, DMA 1, which the backend polls
 without an interrupt handler), recorded by `-audiodev wav` into space-audio.wav and checked by
 e2e/audio/wavcheck.py --signature (per segment and channel the frequency, the duration, no gaps,
-channels not swapped). With it a profile passes only when wshspace says PASS and the recording has
-the signature. --no-space-audio leaves it out; with --pve it is left out (PVE's audio0 has no sb16).
+channels not swapped). With the demo it then runs `WSHDEMO.EXE -audiotest -nocom`, the same
+signature through the same backend (e2e/3dfx/audio/snd_dos.h) in wshdemo, which plays its music with
+it: the recording then has the signature twice. With it a profile passes only when wshspace (and
+wshdemo) say PASS and the recording has the signatures. --no-space-audio leaves it out; with --pve it
+is left out (PVE's audio0 has no sb16).
 
 OUT gets summary.json, summary.md, and per profile the serial log, QEMU's output and the
 screendumps (they show only FreeDOS and our scene). Exit status 0 when every profile passed, 1 when
@@ -212,6 +215,8 @@ def glide_bat(args, profile):
     if args.space_audio:
         lines += [f"SET BLASTER={SPACE_BLASTER}", "WSHSPACE.EXE -audiotest -nocom",
                   "ECHO glide.bat: space exit %ERRORLEVEL%"]
+        if args.demo_bench > 0:
+            lines += ["WSHDEMO.EXE -audiotest -nocom", "ECHO glide.bat: demo audio exit %ERRORLEVEL%"]
     lines.append("A:\\FREEDOS\\BIN\\FDAPM.COM POWEROFF")
     return "\r\n".join(lines) + "\r\n"
 
@@ -466,21 +471,24 @@ def demo_passed(r):
                 and r["frame"] and r["frame"]["ok"] and r["after"] and r["after"]["ok"])
 
 
-def space_audio_check(r, wav):
-    """The recording of wshspace -audiotest: wavcheck's signature check, into r."""
+def space_audio_check(rs, wav):
+    """The recording of wshspace -audiotest (and wshdemo -audiotest after it): wavcheck's signature
+    check, one signature into each of rs, in order."""
     try:
-        sig = wavcheck.signatures(wav)
+        sig = wavcheck.signatures(wav, len(rs))
     except (OSError, ValueError) as e:
-        r["wav"] = {"ok": False, "reasons": [str(e)]}
+        for r in rs:
+            r["wav"] = {"ok": False, "reasons": [str(e)]}
         return
     with open(os.path.splitext(wav)[0] + ".json", "w") as f:
         json.dump(sig, f, indent=1)
-    w = {"ok": sig["ok"], "reasons": sig["reasons"]}
-    if sig["signatures"]:
-        s = sig["signatures"][0]
-        w.update(duration_s=s["duration_s"], max_gap_ms=max(s["max_gap_ms"]), swapped=s["swapped"], mono=s["mono"],
-                 left_hz=[g["left_hz"] for g in s["segments"]], right_hz=[g["right_hz"] for g in s["segments"]])
-    r["wav"] = w
+    for i, r in enumerate(rs):
+        w = {"ok": sig["ok"], "reasons": sig["reasons"]}
+        if i < len(sig["signatures"]):
+            s = sig["signatures"][i]
+            w.update(duration_s=s["duration_s"], max_gap_ms=max(s["max_gap_ms"]), swapped=s["swapped"], mono=s["mono"],
+                     left_hz=[g["left_hz"] for g in s["segments"]], right_hz=[g["right_hz"] for g in s["segments"]])
+        r["wav"] = w
 
 
 def run_profile(args, scene, profile, boot, files, dxe, accel):
@@ -498,16 +506,26 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
         res["demo"] = {"checks": {}, "bench": {}, "probes": [], "frame": None, "after": None, "verdict": None}
     if args.space_audio:
         res["space_audio"] = {"audiotest": None, "verdict": None, "wav": None}
+        if args.demo_bench > 0:
+            res["demo_audio"] = {"audiotest": None, "verdict": None, "wav": None}
     log(f"{profile}: booting FreeDOS ({'PVE VM ' + str(args.pve) if args.pve else 'QEMU'}, {accel}, cpu {args.cpu})")
     t0 = time.monotonic()
     vm.start()
     serial = Serial(serial_path)
-    closed = False
+    closed = audio_demo = False
     try:
         while True:
             for tag, text in serial.poll():
                 log(f"{profile}: {tag}: {text}")
-                if tag == DEMO:
+                if tag == DEMO and text.endswith(" mode=audiotest"):
+                    audio_demo = True  # wshdemo's -audiotest run: the lines that follow are its
+                elif tag == DEMO and audio_demo:
+                    if "demo_audio" in res:
+                        if text.startswith("AUDIOTEST "):
+                            res["demo_audio"]["audiotest"] = text[10:]
+                        elif text == "PASS" or text.startswith("FAIL "):
+                            res["demo_audio"]["verdict"] = text
+                elif tag == DEMO:
                     if "demo" in res:
                         demo_line(res, text, vm.mon, d, scene, t0)
                 elif tag == SPACE:
@@ -561,12 +579,13 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
         res["passed"] = res["passed"] and res["demo"]["passed"]
         demo = f", demo {'PASS' if res['demo']['passed'] else 'FAIL'} {res['demo']['checks']} {res['demo']['bench']}"
     if "space_audio" in res:
-        sa = res["space_audio"]
-        space_audio_check(sa, os.path.join(d, "space-audio.wav"))
-        sa["passed"] = bool(sa["verdict"] == "PASS" and sa["wav"]["ok"])
-        res["passed"] = res["passed"] and sa["passed"]
-        demo += (f", wshspace -audiotest {'PASS' if sa['passed'] else 'FAIL'} ({sa['audiotest']}; "
-                 f"{'signature ok' if sa['wav']['ok'] else '; '.join(sa['wav']['reasons'])})")
+        audio = [("wshspace", res["space_audio"])] + ([("wshdemo", res["demo_audio"])] if "demo_audio" in res else [])
+        space_audio_check([a for _, a in audio], os.path.join(d, "space-audio.wav"))
+        for name, sa in audio:
+            sa["passed"] = bool(sa["verdict"] == "PASS" and sa["wav"]["ok"])
+            res["passed"] = res["passed"] and sa["passed"]
+            demo += (f", {name} -audiotest {'PASS' if sa['passed'] else 'FAIL'} ({sa['audiotest']}; "
+                     f"{'signature ok' if sa['wav']['ok'] else '; '.join(sa['wav']['reasons'])})")
     log(f"{profile}: {'PASS' if res['passed'] else 'FAIL'} (XMS {res['xms']}, VCPI {res['vcpi']}, guest {res['verdict']}, "
         f"frame {res['frame'] and res['frame']['ok']}, VGA after {res['after'] and res['after']['ok']}{demo})")
     return res
@@ -603,16 +622,20 @@ def summary_md(info, results):
                 " | ".join(f"{dm['bench'][p]:.0f}" if p in dm["bench"] else "-" for p in DEMO_PARTS)))
     audio = [r for r in results if "space_audio" in r]
     if audio:
-        lines += ["", "wshspace -audiotest (e2e/3dfx/space) on QEMU's sb16, the audio signature checked by wavcheck.py:", "",
-                  "| Profile | Result | wshspace | Duration s | Longest gap ms | Left Hz (8 segments) | Right Hz (8 segments) |",
-                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        lines += ["", "-audiotest of wshspace (e2e/3dfx/space) and wshdemo (e2e/3dfx/demo) on QEMU's sb16, the audio "
+                  "signature checked by wavcheck.py:", "",
+                  "| Profile | Program | Result | Verdict | Duration s | Longest gap ms | Left Hz (8 segments) | Right Hz (8 segments) |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for r in audio:
-            sa, w = r["space_audio"], r["space_audio"]["wav"] or {}
-            lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
-                r["profile"], "pass" if sa["passed"] else "FAIL: " + "; ".join(w.get("reasons", [])),
-                sa["verdict"] or "no verdict", w.get("duration_s", "-"), w.get("max_gap_ms", "-"),
-                " ".join(f"{f:.0f}" if f else "-" for f in w.get("left_hz", [])),
-                " ".join(f"{f:.0f}" if f else "-" for f in w.get("right_hz", []))))
+            for name, key in (("wshspace", "space_audio"), ("wshdemo", "demo_audio")):
+                if key not in r:
+                    continue
+                sa, w = r[key], r[key]["wav"] or {}
+                lines.append("| %s | %s | %s | %s | %s | %s | %s | %s |" % (
+                    r["profile"], name, "pass" if sa["passed"] else "FAIL: " + "; ".join(w.get("reasons", [])),
+                    sa["verdict"] or "no verdict", w.get("duration_s", "-"), w.get("max_gap_ms", "-"),
+                    " ".join(f"{f:.0f}" if f else "-" for f in w.get("left_hz", [])),
+                    " ".join(f"{f:.0f}" if f else "-" for f in w.get("right_hz", []))))
     return "\n".join(lines) + "\n"
 
 

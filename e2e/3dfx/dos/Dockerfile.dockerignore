@@ -12,6 +12,7 @@
 !submodules/qemu-3dfx/wrappers/3dfx/src/
 !e2e/3dfx/demo/
 !e2e/3dfx/space/
+!e2e/3dfx/audio/
 !e2e/wisp/audiosig.h
 !e2e/audio/wavcheck.py
 !scripts/check-3dfx-drivers-isa.sh

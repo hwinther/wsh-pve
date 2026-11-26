@@ -9,10 +9,12 @@
  * -nocom only to standard output: for a batch file that has sent the console to COM1 already (CTTY
  * COM1, as the DOS test's does), where every line would reach the serial log twice; FreeDOS reports
  * such a COM1 as the console, so that can't be told from the device information. Keys come from the
- * BIOS keyboard. Copyright 2026 WsHosting ENK, GPL-3.
+ * BIOS keyboard. Sound goes to a Sound Blaster (e2e/3dfx/audio/snd_dos.h: BLASTER's A and D, 8-bit
+ * auto-init DMA, stereo on a DSP 4.x). Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <dlfcn.h>
 #include <dos.h>
+#include <dpmi.h>
 #include <go32.h>
 #include <pc.h>
 #include <stdio.h>
@@ -92,6 +94,11 @@ void plat_sleep(int ms)
 	delay((unsigned)ms);
 }
 
+/* Sound: a Sound Blaster (BLASTER's A and D), 8-bit auto-init DMA, polled; silent without one */
+#define SND_MIX demo_audio_mix
+#define SND_LOG demo_log
+#include "../audio/snd_dos.h"
+
 /* The build string in GLIDE2X.DXE, read from the file the import library loads */
 static uint8_t filebuf[256 * 1024];
 static int scan_file(const char *path, char *buf, int n)
@@ -125,13 +132,15 @@ int plat_wrapper_rev(char *buf, int n)
 int main(int argc, char **argv)
 {
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	int nocom = 0;
-	for (int i = 1; i < argc; i++)
+	int nocom = 0, audiotest = 0;
+	for (int i = 1; i < argc; i++) {
 		nocom |= !strcmp(argv[i], "-nocom");
+		audiotest |= !strcmp(argv[i], "-audiotest");
+	}
 	if (!nocom)
 		com1_init();
-	/* The stubs end the program when the DXE can't be loaded; say why first */
-	if (!dlopen("glide2x.dxe", RTLD_GLOBAL)) {
+	/* The stubs end the program when the DXE can't be loaded; say why first (-audiotest needs none) */
+	if (!audiotest && !dlopen("glide2x.dxe", RTLD_GLOBAL)) {
 		char line[160];
 		demo_fmt(line, sizeof(line), "WSHDEMO: ERROR dlopen glide2x.dxe: %.60s (put GLIDE2X.DXE next to WSHDEMO.EXE)", dlerror());
 		plat_out(line);
