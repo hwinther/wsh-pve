@@ -1281,6 +1281,7 @@ with `ss600mp.bin` copied over theirs, the PROM image in `/usr/share/kvm`), 2026
 | `install sunos412-ss600mp-prom --check` (VM 9601, first) | install passed (154 s: `No Keyboard`, `ok`, `boot cdrom`, the miniroot booted by the PROM, Quick install, `ok` after the reboot); the first boot then saw no console output for 4 minutes (the PROM at its `ok`, progress bytes `0xaa 0xaa`), stopped by hand; a `qm start` of the same VM by hand printed the banner and `ok` | |
 | `install sunos412-ss600mp-prom --check` (a new VM 9601) | passed; `SunOS sunos412 4.1.2 1 sun4m`, the marker, `le0` 10.0.2.15; the finished VM `bios: ss600mp.bin`, `scsi6: none,media=cdrom`, `boot: order=scsi3` | 6.3 min (install 145 s, first boot 159 s, check 57 s) |
 | `install sunos412-ss600mp-prom --check` (again, a new VM 9601) | passed; the same | 6.2 min (142 s, 160 s, 58 s) |
+| `install sunos412-ss600mp --check` (the OpenBIOS target, same node and build) | passed | 5.7 min (132 s, 147 s, 47 s) |
 | the SS-600MP cases of `sparc-profiles.spec.ts` against that node | 12 passed, 1 skipped (the older qemu-server's refusal) | |
 | unit tests (`test_targets.py`) | 137 passed | |
 

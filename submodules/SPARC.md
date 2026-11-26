@@ -2726,6 +2726,8 @@ What it would take for the rest:
      saw no console output (the PROM sat at `ok`), not seen again and not explained; a VM with a copy of
      the stored `sunos412-ss600mp` disk and a blank NVRAM volume stopped at `ok` (9.7 s), took `setenv boot-device disk` and `setenv auto-boot?
      true`, and booted 4.1.2 by itself at the next start (its banner after 11 s).
+     The OpenBIOS target `sunos412-ss600mp` through PVE with the same build: `lab.py install
+     --check` passed (5.7 min: 132 s, 147 s, 47 s).
 
   **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
   SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
