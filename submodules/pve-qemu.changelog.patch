@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 9da9d72..c19f45e 100644
+index 9da9d72..ce89d54 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,243 @@
+@@ -1,10 +1,250 @@
++pve-qemu-kvm (11.1.3-4+wsh35) trixie; urgency=medium
++
++  * feat(pve-qemu): SS-600MP PROM probes cleanly and boots SunOS 4.1.2
++    (#556)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 26 Nov 2026 19:48:47 +0000
++
 +pve-qemu-kvm (11.1.3-4+wsh34) trixie; urgency=medium
 +
 +  * feat(pve-qemu): SS-600MP PROM past its ESP DMA read test to ok
