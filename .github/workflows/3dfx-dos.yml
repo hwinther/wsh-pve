@@ -8,9 +8,9 @@ name: 3dfx in DOS
 # qemu-system-x86_64-3dfx boots it headless, as PVE runs a `vga: std,mesa=1` VM, once per memory
 # profile (no memory manager, HIMEMX, HIMEMX and JEMM386); the program draws the test scene, reads
 # it back and checks it, and the harness checks the frame in QEMU's screendump of the console and
-# that DOS's text screen comes back afterwards. Last in each boot, wshspace -audiotest plays the audio
-# signature (e2e/wisp/audiosig.h) through its Sound Blaster backend on QEMU's sb16, recorded with
-# `-audiodev wav` and checked by e2e/audio/wavcheck.py.
+# that DOS's text screen comes back afterwards. Last in each boot, wshspace -audiotest and wshdemo
+# -audiotest play the audio signature (e2e/wisp/audiosig.h) through their Sound Blaster backend
+# (e2e/3dfx/audio) on QEMU's sb16, recorded with `-audiodev wav` and checked by e2e/audio/wavcheck.py.
 #
 # Not a required check, so the paths filter is fine. Weekly as well, to notice a package update or a
 # new qemu-3dfx pin that breaks the DOS wrapper.

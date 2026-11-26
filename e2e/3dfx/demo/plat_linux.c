@@ -8,7 +8,8 @@
  * so the plain system calls (write, read, select, gettimeofday...) need nothing newer than glibc 2.0.
  *
  * Output goes to standard output and to /dev/console. Keys come from standard input when it is a
- * terminal (no echo, no line buffering while the demo runs). Run as root: the wrapper maps the
+ * terminal (no echo, no line buffering while the demo runs). Sound goes to OSS /dev/dsp
+ * (e2e/3dfx/audio/snd_oss.h; snd-pcm-oss on ALSA). Run as root: the wrapper maps the
  * glidept device through /dev/mem. As PID 1 (the /init of a test guest, e2e/3dfx/test.sh) it mounts
  * devtmpfs and proc, takes its arguments from the kernel command line after "--" and powers the VM
  * off at the end. Copyright 2026 WsHosting ENK, GPL-3.
@@ -17,6 +18,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/select.h>
@@ -84,6 +86,10 @@ void plat_sleep(int ms)
 	struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
 	select(0, 0, 0, 0, &tv);
 }
+
+/* Sound: OSS /dev/dsp (silent without it) */
+#define SND_MIX demo_audio_mix
+#include "../audio/snd_oss.h"
 
 /* The build string in the libglide the loader mapped (its path from /proc/self/maps) */
 static char filebuf[512 * 1024];

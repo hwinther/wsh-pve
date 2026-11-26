@@ -25,6 +25,8 @@ on:
       - "e2e/audio/**"
       - "e2e/wisp/audiosig.h"
       - "e2e/3dfx/space/**"
+      - "e2e/3dfx/demo/**"
+      - "e2e/3dfx/audio/**"
       - "scripts/build-3dfx-linux-glide.sh"
       - "e2e/sparc/targets_dos.py"
       - "e2e/sparc/fetch_media.py"
@@ -131,12 +133,13 @@ jobs:
         if: ${{ always() }}
         run: docker rm -f "$NAME" || true
 
-  # wshspace -audiotest (e2e/3dfx/space/audio-test.sh): the audio signature (e2e/wisp/audiosig.h)
-  # through the game's own OSS /dev/dsp backend in a Linux guest with AC97, recorded by the published
-  # pve-qemu-kvm's wav backend and checked by wavcheck.py. The DOS build's Sound Blaster backend is
-  # checked in 3dfx-dos.yml.
+  # wshspace -audiotest and wshdemo -audiotest (e2e/3dfx/space/audio-test.sh): the audio signature
+  # (e2e/wisp/audiosig.h) twice, through the OSS /dev/dsp backend the two programs share
+  # (e2e/3dfx/audio) in a Linux guest with AC97, recorded by the published pve-qemu-kvm's wav backend
+  # and checked by wavcheck.py; wshdemo's build also runs its music test (e2e/3dfx/demo/music-test.c).
+  # The DOS builds' Sound Blaster backend is checked in 3dfx-dos.yml.
   wshspace:
-    name: wshspace -audiotest (Linux, OSS, AC97)
+    name: wshspace and wshdemo -audiotest (Linux, OSS, AC97)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -147,10 +150,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: The qemu-3dfx submodule (the Linux guest Glide library wshspace links)
+      - name: The qemu-3dfx submodule (the Linux guest Glide library wshspace and wshdemo link)
         run: git submodule update --init --depth 1 submodules/qemu-3dfx
 
-      - name: wshspace -audiotest in a Linux guest
+      - name: wshspace and wshdemo -audiotest in a Linux guest
         run: |
           mkdir -p "$RUNNER_TEMP/wshspace"
           devices=()

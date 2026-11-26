@@ -29,6 +29,8 @@ RUN echo "packages: $WSH_PACKAGES" && gpg --dearmor < /tmp/wsh-pve.gpg.key > /us
 COPY packages/wsh-openglide/tests/scene.h /w3d/packages/wsh-openglide/tests/scene.h
 COPY e2e/3dfx/win98/ /w3d/e2e/3dfx/win98/
 COPY e2e/3dfx/demo/ /w3d/e2e/3dfx/demo/
+COPY e2e/3dfx/audio/ /w3d/e2e/3dfx/audio/
+COPY e2e/wisp/audiosig.h /w3d/e2e/wisp/audiosig.h
 COPY scripts/check-3dfx-drivers-isa.sh /w3d/scripts/check-3dfx-drivers-isa.sh
 # The test programs (w3drun.exe, glidetst.exe, gltest.exe)
 RUN sh /w3d/e2e/3dfx/win98/build.sh /w3d/bin

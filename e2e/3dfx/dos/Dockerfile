@@ -18,6 +18,7 @@ COPY packages/wsh-openglide/tests/scene.h /src/packages/wsh-openglide/tests/scen
 COPY e2e/3dfx/dos/ /src/e2e/3dfx/dos/
 COPY e2e/3dfx/demo/ /src/e2e/3dfx/demo/
 COPY e2e/3dfx/space/ /src/e2e/3dfx/space/
+COPY e2e/3dfx/audio/ /src/e2e/3dfx/audio/
 COPY e2e/wisp/audiosig.h /src/e2e/wisp/audiosig.h
 COPY scripts/check-3dfx-drivers-isa.sh /src/scripts/check-3dfx-drivers-isa.sh
 # The wrapper's revision only matters for the glide2x.dxe built for comparison; the test loads the
@@ -26,7 +27,7 @@ ARG QEMU3DFX_REV=0000000
 RUN sh /src/e2e/3dfx/dos/build.sh /glidedos/bin "$QEMU3DFX_REV"
 # The demo (e2e/3dfx/demo), which the harness runs after the test program: WSHDEMO.EXE
 RUN sh /src/e2e/3dfx/demo/build-dos.sh /glidedos/bin
-# wshspace (e2e/3dfx/space), which the harness runs last with -audiotest on an sb16: WSHSPACE.EXE
+# wshspace (e2e/3dfx/space), which the harness runs with -audiotest on an sb16 (then WSHDEMO.EXE's): WSHSPACE.EXE
 RUN sh /src/e2e/3dfx/space/build-dos.sh /glidedos/bin
 
 FROM debian:13

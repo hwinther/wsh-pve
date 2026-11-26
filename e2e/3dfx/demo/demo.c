@@ -17,13 +17,21 @@
  * pixels, chosen in flat areas, with the colours the part meant to draw (within TOLERANCE per
  * channel, as packages/wsh-openglide/tests/scene.h); -hold S keeps the last frame up for S seconds,
  * after printing its probes ("PROBE x y rrggbb") and "FRAME" for a host that checks the console.
- * Output lines all start with the tag ("WSHDEMO: ", -tag). Copyright 2026 WsHosting ENK, GPL-3.
+ * Output lines all start with the tag ("WSHDEMO: ", -tag).
+ *
+ * Sound: the interactive demo plays its music (music.c) through the front end's sound backend
+ * (plat_audio_*, e2e/3dfx/audio: WinMM, Sound Blaster, OSS), which the main loop polls once a frame
+ * to mix ahead into the device's own buffers; M mutes it, -nosound leaves it off. -audiotest plays
+ * the audio signature of e2e/wisp/audiosig.h instead (no display), as wshspace does.
+ * Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include <stdarg.h>
 #include <stddef.h>
 
 #include "demo.h"
 #include "font.h"
+#include "music.h"
+#include "../../wisp/audiosig.h"
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
@@ -745,7 +753,7 @@ static void part_title(double t, int check)
 	text(x0, ly += 14 * sm, sm, 0xffffffa0U, line);
 	demo_fmt(line, sizeof(line), "SCREEN:  %dX%d", demo_view.w, demo_view.h);
 	text(x0, ly += 14 * sm, sm, 0xffffffa0U, line);
-	const char *keys = "SPACE NEXT  G/SHIFT-G GAMMA  R RESOLUTION  F FPS  ESC QUIT";
+	const char *keys = "SPACE NEXT  G/SHIFT-G GAMMA  R RES  F FPS  M MUSIC  ESC QUIT";
 	int ks = sm;
 	while (ks > 1 && text_width(keys, ks) > W - 16)
 		ks--;
@@ -784,6 +792,66 @@ static void hud(const char *part, double gamma)
 	demo_fmt(line, sizeof(line), "%s G%.1f", part, gamma);
 	text(x0 + 6 * unit, y0 + 14 * unit, (int)unit, 0xffa0c0ffU, line);
 	flush();
+}
+
+/* --- sound ------------------------------------------------------------------------------------ */
+
+static int muted;
+/* -audiotest: the audio signature instead of the music, at the backend's rate */
+static struct {
+	int on, rate;
+	uint32_t frames;
+	struct audiosig sig;
+} atest;
+
+void demo_audio_mix(int16_t *pcm, int frames, int rate)
+{
+	if (atest.on) {
+		if (!atest.rate) {
+			atest.rate = rate;
+			audiosig_init(&atest.sig, (unsigned)rate);
+		}
+		for (int i = 0; i < frames; i++) {
+			int l, r;
+			atest.frames += (uint32_t)audiosig_next(&atest.sig, &l, &r);
+			pcm[i * 2] = (int16_t)l, pcm[i * 2 + 1] = (int16_t)r;
+		}
+		return;
+	}
+	/* muted, the song goes on (unmuted it is where the parts are) */
+	music_mix(pcm, frames, rate);
+	if (muted)
+		memset(pcm, 0, (size_t)frames * 4);
+}
+
+/* -audiotest: the signature through the platform's backend, no display; done when all of it has been
+ * mixed and 500 ms more played (what the device still had buffered) */
+static int run_audiotest(void)
+{
+	demo_log("START api=%s mode=audiotest", be->api);
+	atest.on = 1;
+	plat_audio_init(1);
+	uint32_t t0 = plat_us(), done = 0;
+	int status = 1;
+	for (;;) {
+		plat_audio_tick();
+		uint32_t now = plat_us();
+		if (!done && atest.rate && atest.frames >= (uint32_t)AUDIOSIG_FRAMES(atest.rate))
+			done = now ? now : 1;
+		if (done && (uint32_t)(now - done) >= 500000U) {
+			status = 0;
+			break;
+		}
+		if ((!atest.rate && now - t0 > 2000000U) || now - t0 > 20000000U || plat_key() == 27)
+			break;
+		plat_sleep(5);
+	}
+	plat_audio_close();
+	demo_log("AUDIOTEST rate=%d frames=%u of %d secs=%.2f", atest.rate, atest.frames, AUDIOSIG_FRAMES(atest.rate),
+		 (uint32_t)(plat_us() - t0) / 1e6);
+	demo_log(!atest.rate ? "FAIL no audio device" : status ? "FAIL the signature did not play to the end" : "PASS");
+	demo_log("CLOSED");
+	return status;
 }
 
 /* --- the modes -------------------------------------------------------------------------------- */
@@ -866,7 +934,7 @@ static int set_res(int w, int h)
 }
 
 /* Interactive: the title card, then the parts in turn, until Esc (or -time) */
-static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_part)
+static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_part, int sound)
 {
 	int part = start_part < 0 ? -1 : start_part, gi = 0, ri = 0;
 	for (int i = 0; i < 3; i++)
@@ -875,10 +943,17 @@ static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_p
 	uint32_t t_start = plat_us(), t_part = t_start, t_last = t_start, t_sec = t_start;
 	int frames_sec = 0;
 	double ms_sum = 0;
+	if (sound) {
+		/* the song starts with the part (the intro with the title card) and follows the parts */
+		music_reset(1);
+		music_section(MUSIC_CUBE + part);
+		plat_audio_init(1);
+	}
 	for (;;) {
 		uint32_t now = plat_us();
 		double t = (uint32_t)(now - t_part) / 1e6;
 		int key = plat_key();
+		plat_audio_tick();
 		if (key == 27 || key == 'q' || key == 'Q')
 			break;
 		if (total_secs > 0 && (uint32_t)(now - t_start) / 1000000 >= (uint32_t)total_secs)
@@ -886,9 +961,14 @@ static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_p
 		if (key == ' ' || t > (part < 0 ? 4 : secs_per_part)) {
 			part = (part + 1) % NPARTS;
 			t_part = now, t = 0;
+			music_section(MUSIC_CUBE + part);
 		}
 		if (key == 'f' || key == 'F')
 			show_hud = !show_hud;
+		if (key == 'm' || key == 'M') {
+			muted = !muted;
+			demo_log("INFO music %s", !sound ? "off (-nosound)" : muted ? "muted" : "on");
+		}
 		if (key == 'g' || key == 'G') {
 			gi = (gi + (key == 'g' ? 1 : NGAMMA - 1)) % NGAMMA;
 			if (be->gamma((float)GAMMAS[gi]))
@@ -908,6 +988,7 @@ static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_p
 					demo_log("INFO resolution %dx%d", demo_view.w, demo_view.h);
 				} else if (set_res(ow, oh) != 0) {
 					demo_log("ERROR could not open %dx%d again", ow, oh);
+					plat_audio_close();
 					return 2;
 				} else {
 					demo_log("INFO %dx%d failed, back to %dx%d", RES[n][0], RES[n][1], ow, oh);
@@ -939,6 +1020,7 @@ static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_p
 			t_sec = now, frames_sec = 0, ms_sum = 0;
 		}
 	}
+	plat_audio_close();
 	return 0;
 }
 
@@ -946,7 +1028,8 @@ static void usage(void)
 {
 	static const char *lines[] = {
 		"usage: wshdemo [-check] [-bench N] [-hold S] [-res WxH] [-time S] [-secs S] [-part NAME] [-gamma G]",
-		"               [-nohud] [-wait S] [-tag NAME] [-api glide2|glide3|opengl] [-hostgl (Windows)] [-nocom]",
+		"               [-nohud] [-nosound] [-audiotest] [-wait S] [-tag NAME] [-api glide2|glide3|opengl]",
+		"               [-hostgl (Windows)] [-nocom]",
 		"  -check      draw a fixed frame of each part, read it back and check probe pixels (exit 1 on a mismatch)",
 		"  -bench N    draw each part N frames without vsync and print the frame rate",
 		"  -hold S     keep the last frame up for S seconds (after -check/-bench)",
@@ -954,7 +1037,8 @@ static void usage(void)
 		"  -res WxH    640x480 (default), 800x600 or 1024x768",
 		"  -time S     quit the interactive demo after S seconds; -secs S: seconds per part (10)",
 		"  -part NAME  start with cube, tunnel or plasma (skips the title card)",
-		"keys: Space next part, G/Shift-G gamma up/down, R resolution, F frame rate, Esc quit",
+		"  -nosound    no music; -audiotest: play the audio signature (no display), PASS or FAIL",
+		"keys: Space next part, G/Shift-G gamma up/down, R resolution, F frame rate, M music, Esc quit",
 	};
 	for (unsigned i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
 		plat_out(lines[i]);
@@ -964,6 +1048,7 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 {
 	be = backend;
 	int check = 0, bench = 0, hold = 0, w = 640, h = 480, total = 0, secs = 10, show_hud = 1, start = -1, wait = 0;
+	int sound = 1, audiotest = 0;
 	double gamma = 1.0;
 	for (int i = 1; i < argc; i++) {
 		const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : 0;
@@ -971,6 +1056,10 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 			check = 1;
 		else if (str_eq(a, "-nohud"))
 			show_hud = 0;
+		else if (str_eq(a, "-nosound"))
+			sound = 0;
+		else if (str_eq(a, "-audiotest"))
+			audiotest = 1;
 		else if (str_eq(a, "-nocom") || str_eq(a, "-hostgl"))
 			; /* front-end flags */
 		else if (v && str_eq(a, "-wait"))
@@ -1020,6 +1109,8 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 			return a[0] == '-' && (a[1] == 'h' || a[1] == '?') ? 0 : 2;
 		}
 	}
+	if (audiotest)
+		return run_audiotest();
 	const char *mode = check && bench ? "check+bench" : check ? "check" : bench ? "bench" : "demo";
 	demo_log("START api=%s res=%dx%d mode=%s%s", be->api, w, h, mode, hold ? " hold" : "");
 	if (!be->res_ok(w, h)) {
@@ -1067,7 +1158,7 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 			}
 		}
 	} else {
-		status = run_demo(secs, total, show_hud, start);
+		status = run_demo(secs, total, show_hud, start, sound);
 	}
 	if (gamma != 1.0)
 		be->gamma(1.0f);

@@ -3,7 +3,8 @@
 # Debian's mingw-w64 (gcc-mingw-w64-i686) into OUTDIR, as e2e/3dfx/win98/build.sh builds the test
 # programs: without mingw-w64's C runtime (Windows 98's MSVCRT.DLL is too old for it; the output
 # helpers are e2e/3dfx/win98/w3d.h's), Windows 4.0 subsystem, imports from KERNEL32, USER32 and GDI32
-# only, for a Pentium (-march=pentium, x87; checked with scripts/check-3dfx-drivers-isa.sh --no-p6).
+# only (WINMM.DLL, for the music, is loaded at run time), for a Pentium (-march=pentium, x87; checked
+# with scripts/check-3dfx-drivers-isa.sh --no-p6).
 #
 #   e2e/3dfx/demo/build-win.sh OUTDIR
 # Copyright 2026 WsHosting ENK, GPL-3.
@@ -19,7 +20,7 @@ exe=$out/WSHDEMO.EXE
 	-fno-builtin -fno-tree-loop-distribute-patterns -fno-math-errno -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" \
 	-I"$top/e2e/3dfx/win98" -nostdlib -nostartfiles -mwindows -Wl,--subsystem,windows:4.0 -Wl,--major-os-version,4 \
-	-Wl,--minor-os-version,0 -s -o "$exe" "$here/demo.c" "$here/be_glide2.c" "$here/be_glide3.c" "$here/be_gl.c" \
+	-Wl,--minor-os-version,0 -s -o "$exe" "$here/demo.c" "$here/music.c" "$here/be_glide2.c" "$here/be_glide3.c" "$here/be_gl.c" \
 	"$here/plat_win.c" -lgdi32 -luser32 -lkernel32 -lgcc
 dlls=$("$OBJDUMP" -p "$exe" | sed -n 's/^\tDLL Name: //p' | tr '[:lower:]' '[:upper:]' | sort | tr '\n' ' ')
 for d in $dlls; do

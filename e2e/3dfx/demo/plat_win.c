@@ -8,6 +8,7 @@
  * (Windows 98's MSVCRT.DLL is too old for it), its own entry point, KERNEL32, USER32 and GDI32 only,
  * and the DLLs loaded with LoadLibrary. Output goes to COM1 (115200 8N1) and to C:\WIN3DFX\LOG.TXT
  * when that directory exists (w3d.h). Keys come from the 3D window (a popup over the screen).
+ * Sound goes through WinMM's waveOut (e2e/3dfx/audio/snd_win.h), with WINMM.DLL loaded at run time.
  * Copyright 2026 WsHosting ENK, GPL-3.
  */
 #include "w3d.h"
@@ -141,6 +142,11 @@ static HWND make_window(int w, int h)
 	}
 	return hw;
 }
+
+/* --- sound: WinMM waveOut, loaded at run time (silent without it) -------------------------------- */
+
+#define SND_MIX demo_audio_mix
+#include "../audio/snd_win.h"
 
 /* --- the wrapper's build string ----------------------------------------------------------------- */
 
@@ -412,9 +418,11 @@ static int split_args(void)
 
 void WinMainCRTStartup(void)
 {
-	int argc = split_args(), api = 0;
+	int argc = split_args(), api = 0, audiotest = 0;
 	for (int i = 1; i < argc; i++) {
-		if (!lstrcmpiA(argv_[i], "-hostgl"))
+		if (!lstrcmpiA(argv_[i], "-audiotest"))
+			audiotest = 1;
+		else if (!lstrcmpiA(argv_[i], "-hostgl"))
 			host_gl = 1;
 		else if (!lstrcmpiA(argv_[i], "-nocom"))
 			w3d_com_off = 1;
@@ -434,6 +442,12 @@ void WinMainCRTStartup(void)
 		fail("-api is glide2, glide3 or opengl", 2);
 	if (api == 0 && host_gl)
 		api = 3;
+	if (audiotest) {
+		/* no display: neither the menu nor an API's DLL (-api only names one in the log) */
+		int status = demo_main(argc, argv_, api == 1 ? &glide2_backend : api == 2 ? &glide3_backend : &gl_backend);
+		w3d_com_release();
+		ExitProcess((UINT)status);
+	}
 	if (api == 0)
 		api = menu();
 	if (api == 4) {
