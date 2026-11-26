@@ -2,13 +2,13 @@ name: 3dfx in DOS
 
 # The qemu-3dfx Glide pass-through from DOS (e2e/3dfx/dos-test.sh), with free software only: FreeDOS
 # 1.4's boot floppy (the Floppy Edition, from the Actions cache, saved by main only, and checked against
-# its pin by e2e/sparc/fetch_media.py and the harness), FreeDOS's CWSDPMI, HIMEMX and JEMM386 from the same floppies, our DJGPP test program
-# (e2e/3dfx/dos/glidedos.c, built in the DJGPP image) and qemu-3dfx's DOS wrapper GLIDE2X.DXE from
-# the qemu-3dfx-drivers release the published binary names. The published pve-qemu-kvm's
+# its pin by e2e/sparc/fetch_media.py and the harness), FreeDOS's CWSDPMI, HIMEMX and JEMM386 from the same floppies, our DJGPP test programs
+# (e2e/3dfx/dos/glidedos.c, built in the DJGPP image for Glide 2 and Glide 3) and qemu-3dfx's DOS
+# wrappers GLIDE2X.DXE and GLIDE3X.DXE from the qemu-3dfx-drivers release the published binary names. The published pve-qemu-kvm's
 # qemu-system-x86_64-3dfx boots it headless, as PVE runs a `vga: std,mesa=1` VM, once per memory
-# profile (no memory manager, HIMEMX, HIMEMX and JEMM386); the program draws the test scene, reads
-# it back and checks it, and the harness checks the frame in QEMU's screendump of the console and
-# that DOS's text screen comes back afterwards. Last in each boot, wshspace -audiotest and wshdemo
+# profile (no memory manager, HIMEMX, HIMEMX and JEMM386); GLIDEDOS.EXE (Glide 2) and then
+# GLID3DOS.EXE (Glide 3) each draw the test scene, read it back and check it, and the harness checks
+# each frame in QEMU's screendump of the console and that DOS's text screen comes back afterwards. Last in each boot, wshspace -audiotest and wshdemo
 # -audiotest play the audio signature (e2e/wisp/audiosig.h) through their Sound Blaster backend
 # (e2e/3dfx/audio) on QEMU's sb16, recorded with `-audiodev wav` and checked by e2e/audio/wavcheck.py.
 #
@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   dos:
-    name: Glide from FreeDOS (GLIDE2X.DXE)
+    name: Glide from FreeDOS (GLIDE2X.DXE, GLIDE3X.DXE)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -91,7 +91,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: FreeDOS, GLIDEDOS.EXE, GLIDE2X.DXE and wshspace -audiotest in the published qemu-system-x86_64-3dfx
+      - name: FreeDOS, GLIDEDOS.EXE with GLIDE2X.DXE, GLID3DOS.EXE with GLIDE3X.DXE and wshspace -audiotest in the published qemu-system-x86_64-3dfx
         env:
           GH_TOKEN: ${{ github.token }} # gh release download of the qemu-3dfx-drivers release
         run: |
